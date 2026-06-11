@@ -8,6 +8,27 @@
 
 ---
 
+## 🚀 快速安装
+
+**macOS / Linux / Windows Git Bash**
+```bash
+curl -fsSL https://raw.githubusercontent.com/AILenGarden/ae-sdd/main/scripts/install.sh | bash
+```
+
+**Windows PowerShell**
+```powershell
+irm https://raw.githubusercontent.com/AILenGarden/ae-sdd/main/scripts/install.ps1 | iex
+```
+
+**本地安装**（已 clone 仓库）
+```bash
+bash scripts/install.sh
+```
+
+安装完成后在 Claude Code 中输入 `/ae-sdd` 即可使用。
+
+---
+
 ## 📖 目录
 
 1. [什么是 auto-engineering](#1-什么是-auto-engineering)
@@ -582,3 +603,7 @@ skills/ae-sdd/
 
 **最后更新：** 2026-06-10（**AE 三项整改 + 文档架构重构 + Story Review 7 件套上下文 + 4 类需求智能路由 + SKILL 母版内部目录全面重组**（按"流程节点 + 横切依赖"分类：13 SKILL 拆 7 子目录（orchestration/phase1-design/phase2-task/phase2-coding/phase3-review/cross-cutting），constraints/ + strategies/ 合并为 standards/，project-assets/ 改名 assets/） + 人工审核点 4 → 5（加 CodingPlan 评审，删 Coding 完成评审）+ 同工程根内的小/微任务文档改用 .ae-task/ .ae-plan/ 隐藏目录 + **🆕 ae-sdd 改名 + 母版/plugins 副本目录全部改名为 ae-sdd/ + marketplace.json 修复 + 新增 CHANGELOG/ 日志机制 + **🆕 document-storage 工程解耦改造（§0.5 定位原则 + §0.6 动态定位 API + §11.5 API 化调用 + project-assets-schema gitPath 强化）** + ae-sdd-update-skill.md §步骤 4 新增"README 版本号同步"未来防御**） + **🆕🆕 marketplace 副本 `plugins/ae-sdd/` 实际落地（不再悬空）+ sync 脚本扩展为三目标统一刷新（母版根 SKILL.md / 本机安装 / plugin 副本）+ 修复 sync 脚本入口路径 bug + ae-sdd-skill / ae-sdd-update-skill frontmatter `name` 字段统一改为 `ae-sdd` / `ae-sdd-update`**）
 **下次审查：** 每月 1 号（与项目资产审计同步）
+
+---
+
+Made by [@AILenGarden](https://github.com/AILenGarden)
