@@ -5,6 +5,49 @@ description: 根据 StoryReviewUpdatePlan、Story 补充说明文档和模板更
 
 # Story Update — Story 文档更新 Skill
 
+## 📦 文档存放前置调用（🔴 横切依赖）
+
+> **🔴 强制：** 本 SKILL 涉及的所有文档（Story 主文档、Supplement、Plan 报告）在读写前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **读取**（§0.6.7 `save_doc()` + §0.6.11 `get_latest_version()`）：通过 `intent=STORY` 定位 Story 主文档；通过 `intent=STORY_SUPPLEMENT` 定位 Supplement；通过 `intent=STORY_REVIEW_UPDATE_PLAN` 定位 Plan
+> 2. **写入**（§0.6.7 `save_doc()`）：Story 主文档重入时**新增版本**（v{major}.{minor} 递增，旧版本保留）
+> 3. **命名 + 版本号**（§3.1/3.2）：Story 主文档带 v{major}.{minor}；Supplement 不带版本号；Plan 带 r{N}
+> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
+> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+
+**本 SKILL 涉及文档类型与 API 调用对应：**
+
+| 文档类型 | API 调用 | 命名规则 | 重入时动作 |
+|---------|---------|---------|----------|
+| Story 主文档 | `save_doc(intent="STORY", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
+| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
+| StoryReviewUpdatePlan | `save_doc(intent="STORY_REVIEW_UPDATE_PLAN", storyId, version={r:N})` | 带 r{N} | 新增（r 递增）|
+
+> **调用示例：** 详见 `document-storage-skill.md §15.5` API 化调用。
+
+> 🆕 **🔴 2026-06-17 修复 P1-1 显式调用示例：**
+>
+> ```javascript
+> // 写出 Story 更新报告（重入时新增版本，旧版本保留）
+> await documentStorage.resolve_path({
+>   intent: 'STORY_UPDATE',
+>   storyId: 'STORY-001-BE',
+>   version: 'v1.1',
+>   title: '需求补充'
+> });
+> // → 解析为：ae-sdd-doc/iterations/{date}/Update/STORY-001-BE-v1.1.md
+>
+> // 写出 StoryReviewUpdatePlan（按 r{N} 编号）
+> await documentStorage.resolve_path({
+>   intent: 'STORY_REVIEW_UPDATE_PLAN',
+>   storyId: 'STORY-001-BE',
+>   version: 'r1',
+>   title: 'StoryReview-r1'
+> });
+> // → 解析为：ae-sdd-doc/iterations/{date}/Review/STORY-001-BE-StoryReviewUpdatePlan-r1.md
+> ```
+
+---
+
 ## 目标
 
 根据 `StoryReviewUpdatePlan` 中记录的目标章节、修改方式和验证方式，更新 Story 主文档。同时参考 Story 补充说明文档确认问题来源，并分析问题根因是否来自模板缺陷或 DR 设计缺陷，形成向上反馈。

@@ -7,17 +7,21 @@ description: 根据稳定的 Story 文档生成完整测试用例。覆盖全场
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的测试用例在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.1 路径模板）：`design/testcase/be/{STORY-ID}/{STORY-ID}-testcase.md`
-> 2. **命名**（§3.1/3.2 命名规则）：**设计类文档不带版本号**（测试用例是"规范"，原地更新）
-> 3. **重入判定**（§4 重入 SOP）：TestCase 重入时**原地修改**（同名）
+> **🔴 强制：** 本 SKILL 生成的测试用例在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=TESTCASE` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/Test/{STORY-ID}/`
+> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
+> 3. **重入判定**（§0.6.11 `get_latest_version()`）：TestCase 重入时**新增版本**（v 递增）
+> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
+> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
 
-| 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
+| 输出文档 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| 测试用例 | `design/testcase/be/{STORY-ID}/{STORY-ID}-testcase.md` | 不带版本号 | 原地修改 |
-| TestCase-WriterReport | `design/testcase/be/{STORY-ID}/review/{STORY-ID}-TestCase-WriterReport.md` | 不带版本号 | 原地修改 |
-| 测试报告 | `design/testcase/be/{STORY-ID}/{STORY-ID}-Report-v{N}-r{M}.md` | 带 `v{N}-r{M}` | **新增**（r 递增）|
-| 合规性校验报告 | `design/testcase/be/{STORY-ID}/review/{STORY-ID}-TestCase-ComplianceReport.md` | 不带版本号 | 原地修改 |
+| 测试用例 | `save_doc(intent="TESTCASE", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
+| TestCase-WriterReport | `save_doc(intent="TESTCASE_WRITER_REPORT", storyId, version={r:N})` | 带 r{N} | 新增（r 递增）|
+| 测试报告 | `save_doc(intent="TEST_REPORT", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增**（r 递增）|
+| 合规性校验报告 | `save_doc(intent="TESTCASE_COMPLIANCE_REPORT", storyId, version={r:N})` | 带 r{N} | 新增（r 递增）|
+
+> **调用示例：** 详见 `document-storage-skill.md §15.5.2` 调用矩阵。
 
 ---
 
@@ -647,9 +651,11 @@ Story ID：{STORY-ID}
 
 ### 5.1 文件路径
 
+通过 `documentStorage.resolve_path(intent="TESTCASE", storyId, docType="Testcase")` 自动定位（详见 `document-storage-skill.md §0.6.1`）：
+
 ```
-design/testcase/be/{STORY-ID}/
-└── 2c-im-testcase-{STORY-ID}-{标题}.md
+ae-sdd-doc/iterations/{YYYY-MM-DD}/Test/{STORY-ID}/
+└── {STORY-ID}-testcase-v{major}.{minor}.md
 ```
 
 ### 5.2 文档格式

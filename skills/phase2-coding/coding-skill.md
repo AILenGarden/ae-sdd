@@ -5,6 +5,31 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 
 # Coding — Task 驱动代码生成 Skill
 
+## 📦 文档存放前置调用（🔴 横切依赖）
+
+> **🔴 强制：** 本 SKILL 涉及的所有输入/输出文档（Story / Task / TestCase / CodingPlan / CodingReport / 开发问题记录）在读写前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过各 `intent` 自动定位
+> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：CodingReport 带 `v{N}-r{M}`（事件类）
+> 3. **重入判定**（§0.6.11 `get_latest_version()`）：CodingReport 重入时 r 递增
+> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
+> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+
+**本 SKILL 涉及文档类型与 API 调用对应：**
+
+| 文档类型 | API 调用 | 命名规则 | 重入时动作 |
+|---------|---------|---------|----------|
+| Story 文档 | `resolve_path(intent="STORY", storyId)` | v{major}.{minor} | 新增版本（v 递增）|
+| Task 文档目录 | `resolve_path(intent="TASK", storyId, taskId)` | v{major}.{minor} | 新增版本（v 递增）|
+| 测试用例 | `resolve_path(intent="TESTCASE", storyId)` | v{major}.{minor} | 新增版本（v 递增）|
+| 统一版 CodingPlan | `save_doc(intent="CODING_PLAN", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
+| CodingReport | `save_doc(intent="CODING_REPORT", storyId, version={v:N,r:M})` | 带 v{N}-r{M} | 新增（r 递增）|
+| Test 报告 | `save_doc(intent="TEST_REPORT", storyId, version={v:N,r:M})` | 带 v{N}-r{M} | 新增（r 递增）|
+| 开发问题记录 | `save_doc(intent="CODING_ISSUE_LOG", storyId)` | 不带版本号 | 原地累加 |
+
+> **调用示例：** 详见 `document-storage-skill.md §15.5.2` 调用矩阵。
+
+---
+
 ## 目标
 
 根据 Story 文档中的 Task 执行顺序，逐个读取 Task 文档，结合测试用例定义的验收场景，按 Task 内的核心代码和设计生成完整的生产代码。编码过程中发现问题时，记录问题、分析根因、修复文档，形成闭环。
@@ -99,8 +124,8 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 |------|------|---------------|
 | Story 文档路径 | 当前 Story | 重/小任务必填；**🆕 微任务不传**（无 Story 上下文）|
 | TestCase 文档路径 | 已生成 TestCase | 重任务必填；小任务按需；**🆕 微任务按需** |
-| Task 文档目录 | `design/story/be/task/{STORY-ID}/`（重/小任务）<br>**🆕 微任务不传** | 条件必填 |
-| 统一版 CodingPlan 路径 | `{STORY-ID}-CodingPlan.md`（重/小任务）<br>**🆕 微任务**：`{工程根}/Plan/Plan-{事务简称}/CodingPlan-v{N}.md` | 必填 |
+| Task 文档目录 | `documentStorage.resolve_path(intent="TASK", storyId, taskId)`（重/小任务）<br>**🆕 微任务不传** | 条件必填 |
+| 统一版 CodingPlan 路径 | `documentStorage.resolve_path(intent="CODING_PLAN", storyId)`（重/小任务）<br>**🆕 微任务**：`documentStorage.resolve_path(intent="CODING_PLAN", taskName=事务简称, scope="service")` | 必填 |
 | 项目资产 | `document-storage-skill.get_assets(projectKey).assetsPath` | ✅ 必填 |
 | 工程目录 | `document-storage-skill.get_git_path(projectKey)`（不再由用户直接传入磁盘路径）| ✅ 必填 |
 | CodingModel | `document-storage-skill.get_thinking_engine()` | ✅ 必填 |
@@ -178,13 +203,13 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 
 ```
 请提供：
-1. Story 文档路径（.md 文件）
-2. Task 文档目录（该 Story 的 task/ 子目录）
-3. 测试用例文档路径（design/testcase/be/{story}/ 下的用例文件）
+1. Story 文档路径（.md 文件）— 通过 `documentStorage.resolve_path(intent="STORY", storyId)` 取得
+2. Task 文档目录（该 Story 的 task/ 子目录）— 通过 `documentStorage.resolve_path(intent="TASK", storyId, taskId)` 取得
+3. 测试用例文档路径 — 通过 `documentStorage.resolve_path(intent="TESTCASE", storyId)` 取得
 4. 工作目录（各工程所在的磁盘根路径，如 E:\softWare\Project）
 ```
 
-如果开发者已在消息中提供了这些信息，直接进入第二步。Task 文档目录和测试用例路径如未显式提供，按约定路径自动定位（Task：`design/story/be/task/{STORY-ID}/`；测试用例：`design/testcase/be/{STORY-ID}/`）。
+如果开发者已在消息中提供了这些信息，直接进入第二步。Task 文档目录和测试用例路径如未显式提供，按 `documentStorage.resolve_path()` API 自动定位（详见 `document-storage-skill.md §0.6.1`）。
 
 ---
 
@@ -653,13 +678,13 @@ cd {service-root} && mvn test
 
 每次测试执行后，必须生成测试报告文档：
 
-**文件路径：** `design/testcase/be/{story}/` — 按 Story 分子目录存放，与测试用例同目录
+**文件路径：** 通过 `documentStorage.resolve_path(intent="TEST_REPORT", storyId, version={v:N,r:M})` 自动定位（详见 `document-storage-skill.md §0.6.1`），按 Story 分子目录存放
 
 ```
-design/testcase/be/
+ae-sdd-doc/iterations/{YYYY-MM-DD}/Test/
 ├── STORY-002-BE/
-│   ├── 2c-im-testcase-002-融云对接-BE.md         ← 测试用例
-│   └── 2c-im-testcase-002-融云对接-BE-Report.md  ← 测试报告
+│   ├── STORY-002-BE-testcase-v1.0.md         ← 测试用例
+│   └── STORY-002-BE-Report-v1-r1.md          ← 测试报告
 ├── STORY-007-BE/
 │   ├── 2c-im-testcase-007-客服会话状态机-BE.md
 │   └── 2c-im-testcase-007-客服会话状态机-BE-Report.md
@@ -898,7 +923,7 @@ python document/life-team-ai-standards/skills/ae-sdd/scripts/test_authenticity_s
 
 > 实时追溯的结果必须落到问题记录里，供后续审计/复盘。
 
-**文件位置：** Story 所在目录 `design/story/be/coding/{STORY-ID}/{STORY-ID}-开发问题记录.md`
+**文件位置：** 通过 `documentStorage.resolve_path(intent="CODING_ISSUE_LOG", storyId)` 自动定位（详见 `document-storage-skill.md §0.6.1`），与 CodingReport 同目录
 
 **每条问题格式：**
 

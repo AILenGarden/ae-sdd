@@ -13,18 +13,22 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的 Task 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.1 路径模板）：`design/story/be/task/{STORY-ID}/task-{N}-{X}-{任务简写}.md`
-> 2. **命名**（§3.1/3.2 命名规则）：**设计类文档不带版本号**（Task 文档是"活的"，原地更新）
-> 3. **重入判定**（§4 重入 SOP）：Task 重入时**原地修改**（同名，不带版本号）
+> **🔴 强制：** 本 SKILL 生成的 Task 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=TASK` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/{STORY-ID}/`
+> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
+> 3. **重入判定**（§0.6.11 `get_latest_version()`）：Task 重入时**新增版本**（v 递增）
+> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
+> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
 
-| 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
+| 输出文档 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| Task 0（公共依赖）| `design/story/be/task/{STORY-ID}/task-0-公共依赖说明.md` | 不带版本号 | 原地修改 |
-| 各 Task 文档 | `design/story/be/task/{STORY-ID}/task-{N}-{X}-{任务简写}.md` | 不带版本号 | 原地修改 |
-| Task 补充说明 | `design/story/be/task/{STORY-ID}/{STORY-ID}-Supplement.md` | 不带版本号 | 原地累加 |
-| Task-WriterReport | `design/story/be/task/{STORY-ID}/review/{STORY-ID}-Task-WriterReport.md` | 不带版本号 | 原地修改 |
-| Task Review 报告 | `design/story/be/task/{STORY-ID}/review/{STORY-ID}-TaskReview-r{N}.md` | 带 r{N} | **新增**（r 递增）|
+| Task 0（公共依赖）| `save_doc(intent="TASK", storyId, taskId="task-0-公共依赖说明", version={major:1,minor:0})` | v{major}.{minor} | 新增版本（v 递增）|
+| 各 Task 文档 | `save_doc(intent="TASK", storyId, taskId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
+| Task 补充说明 | `save_doc(intent="TASK_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
+| Task-WriterReport | `save_doc(intent="TASK_WRITER_REPORT", storyId)` | 带 r{N} | 新增（r 递增）|
+| Task Review 报告 | `save_doc(intent="TASK_REVIEW", storyId, version={r:N})` | 带 r{N} | **新增**（r 递增）|
+
+> **调用示例：** 详见 `document-storage-skill.md §15.5.2` 调用矩阵。
 
 ---
 
@@ -202,21 +206,21 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 
 ### 4.0 存放路径
 
-Task 文档按 Story 分子目录存放：
+Task 文档按 Story 分子目录存放，由 `documentStorage.resolve_path(intent="TASK", storyId, taskId, docType="Task")` 自动定位：
 
 ```
-design/story/be/task/
+ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 ├── STORY-010-BE/
-│   ├── Task-0.md
-│   ├── Task-1.md
-│   └── Task-2.md
+│   ├── task-0-公共依赖说明-v1.0.md
+│   ├── task-1-BossUserQuery-v1.0.md
+│   └── task-2-BossUserCreate-v1.0.md
 ├── STORY-011-BE/
-│   ├── Task-0.md
-│   └── Task-1.md
+│   ├── task-0-公共依赖说明-v1.0.md
+│   └── task-1-OrderQuery-v1.0.md
 └── ...
 ```
 
-**完整路径示例：** `life-team-project-docs/20260513-2c的im客服系统/design/story/be/task/STORY-010-BE/Task-1.md`
+**完整路径示例：** `d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\2026-06-17\Task\STORY-010-BE\task-1-BossUserQuery-v1.0.md`（具体路径通过 `documentStorage.resolve_path()` 获取）
 
 ### 4.1 生成规则
 

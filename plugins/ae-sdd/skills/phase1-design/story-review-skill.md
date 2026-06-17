@@ -13,17 +13,21 @@ description: 根据 DR + PRD + 产品原型 + Story 模板，执行固定五阶�
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的 Story Review 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.3 路径模板）：`design/story/be/review/{STORY-ID}/{STORY-ID}-StoryReviewReport-r{N}.md`
-> 2. **命名**（§3.1/3.2 命名规则）：**Review 类文档带 r{N}**（Review 轮次）
-> 3. **重入判定**（§4 重入 SOP）：Story Review 重入时**新增报告**（r 递增）
+> **🔴 强制：** 本 SKILL 生成的 Story Review 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=STORY_REVIEW` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/CR/{STORY-ID}/`
+> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**Review 类文档带 r{N}**（Review 轮次）
+> 3. **重入判定**（§0.6.11 `get_latest_version()`）：Story Review 重入时**新增报告**（r 递增）
+> 4. **ChangeLog**（§5 ChangeLog 机制）：`save_doc()` 自动追加
+> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
 
-| 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
+| 输出文档 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| Story Review 报告 | `design/story/be/review/{STORY-ID}/{STORY-ID}-StoryReviewReport-r{N}.md` | 带 r{N} | **新增**（r 递增）|
-| Story Review UpdatePlan | `design/story/be/review/{STORY-ID}/{STORY-ID}-StoryReviewUpdatePlan-r{N}.md` | 带 r{N} | **新增**（🆕 2026-06-06 改造：改为 Proposal 指针 → `proposal-skill.md`）|
-| Story Supplement | `design/story/be/review/{STORY-ID}/{STORY-ID}-Supplement.md` | 不带版本号 | 原地累加 |
-| 跨轮 Review 对比表 | `design/story/be/review/{STORY-ID}/{STORY-ID}-ReviewCompare-v1-to-v2.md` | 带 v1-to-v2 | **新增** |
+| Story Review 报告 | `save_doc(intent="STORY_REVIEW", storyId, version={r:N})` | 带 r{N} | **新增**（r 递增）|
+| Story Review UpdatePlan | `save_doc(intent="STORY_REVIEW_UPDATE_PLAN", storyId, version={r:N})` | 带 r{N} | **新增**（🆕 2026-06-06 改造：改为 Proposal 指针 → `proposal-skill.md`）|
+| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
+| 跨轮 Review 对比表 | `save_doc(intent="REVIEW_COMPARE", storyId, version="v1-to-v2")` | 带 v1-to-v2 | **新增** |
+
+> **调用示例：** 详见 `document-storage-skill.md §15.5.2` 调用矩阵。
 
 ---
 
@@ -156,8 +160,7 @@ description: 根据 DR + PRD + 产品原型 + Story 模板，执行固定五阶�
 **模板：** `templates/design/be-story-review-update-plan-template.md`
 
 **默认路径：**
-- 项目已有 Story 子目录时：`design/story/be/{STORY-ID}/{STORY-ID}-StoryReviewUpdatePlan-r{轮次}.md`
-- 否则与 Story 主文档同目录：`design/story/be/{STORY-ID}-StoryReviewUpdatePlan-r{轮次}.md`
+- 通过 `documentStorage.resolve_path(intent="STORY_REVIEW_UPDATE_PLAN", storyId, version={r:N})` 自动定位（详见 `document-storage-skill.md §0.6.1`）
 
 **Plan 必须包含：**
 - Story 与 DR / 模板 / 约束不一致的地方
@@ -1153,7 +1156,7 @@ sourceEventId        ->  msgUID                ->  sourceEventId         ->  sou
 > **当前规则：**
 > - Story Review 评审发现 🔴 缺陷 → **触发 `proposal-skill.md §第二步`** 生成 Proposal
 > - Proposal 渠道标识 = 2（Story Review）
-> - Proposal 文档路径：`design/proposal/{STORY-ID}-Proposal-{N}-{标题}.md`（按 `document-storage-skill.md §2.6 路径模板`）
+> - Proposal 文档路径：`documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})`（按 `document-storage-skill.md §2.6 路径模板` 🆕 2026-06-17 修复 P1-3）
 > - 走 5 步流程（proposal-skill.md §第五步）：改 Story → 改 TestCase → 改 Task → 改 Coding → 改 Test
 > - 不直接生成 StoryReviewUpdatePlan
 >
@@ -1417,7 +1420,7 @@ Story ID：{STORY-ID}
 - 前后端约定的字段类型基线（如时间格式、ID 类型、金额单位）
 
 **输出：**
-- Story 文档追加"**前端接口契约章节**"（或独立补充文件 `design/story/be/{STORY-ID}-FrontendContract.md`，本 SKILL 推荐前者——契约作为 Story 不可分割的一部分）
+- Story 文档追加"**前端接口契约章节**"（或独立补充文件 `ae-sdd-doc/iterations/{date}/Story/{STORY-ID}/STORY-ID-FrontendContract.md` 由 `documentStorage.resolve_path(intent="STORY_SUPPLEMENT", storyId)` 自动定位，本 SKILL 推荐前者——契约作为 Story 不可分割的一部分）
 - 该章节是下游 Story Review、Task 文档、测试用例、前端联调的**直接输入**
 
 ### ①bis 前端视角接口审视（🔴 强制）
@@ -1434,7 +1437,7 @@ Story ID：{STORY-ID}
 - 前后端约定的字段类型基线（如时间格式、ID 类型、金额单位）
 
 **输出：**
-- Story 文档追加"**前端接口契约章节**"（或独立补充文件 `design/story/be/{STORY-ID}-FrontendContract.md`，本 SKILL 推荐前者——契约作为 Story 不可分割的一部分）
+- Story 文档追加"**前端接口契约章节**"（或独立补充文件 `ae-sdd-doc/iterations/{date}/Story/{STORY-ID}/STORY-ID-FrontendContract.md` 由 `documentStorage.resolve_path(intent="STORY_SUPPLEMENT", storyId)` 自动定位，本 SKILL 推荐前者——契约作为 Story 不可分割的一部分）
 - 该章节是下游 Story Review、Task 文档、测试用例、前端联调的**直接输入**
 
 **🔴 强制审视的 6 个维度：**
