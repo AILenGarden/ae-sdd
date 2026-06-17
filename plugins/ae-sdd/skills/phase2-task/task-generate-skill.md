@@ -40,7 +40,7 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
   ├── 第一步：读取 Story 中的 Task 列表
   │
   ├── 第二步：读取约束文档 + Task 模板
-  │       + 加载项目资产（[project-assets-update-skill.md §6 动作 4：读取](../cross-cutting/project-assets-update-skill.md)）
+  │       + 调用 project-assets-update-skill.assets.forTaskGenerate(projectKey)
   │       + 读取测试用例文档（已生成的 TestCase）
   │
   ├── 第三步：判断新增/更新
@@ -402,7 +402,7 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 
 | 问题层级 | 判定 | 修复动作 |
 |---------|------|---------|
-| Task 层 | Task 文档本身有错（与 Story 一致，但 Task 写错了） | 直接修改 Task 文档 → 重新全局 Review |
+| Task 层 | Task 文档本身有错（与 Story 一致，但 Task 写错了） | 直接修改 Task 文档 → 重新全局 Review<br>**边界：Task 内部实现问题时可直接修；若问题影响 Story AC 或 DR 设计，必须先走 proposal-skill 流程** |
 | Story 层 | Task 错误源于 Story 描述有误/遗漏 | 先走 Story Update → Task Generate → 重新全局 Review |
 | DR 层 | Story 错误源于 DR 缺陷 | 先走 DR Update → Story Update → Task Generate → 重新全局 Review |
 
@@ -457,7 +457,7 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 | Story 文档路径 | 当前 Story |
 | TestCase 文档路径 | 已生成 TestCase |
 | 当前 Task 基础信息 | Story 实现任务映射（任务名 + 层 + 依赖） |
-| 项目资产路径 | `document-storage-skill.get_assets(projectKey).assetsPath` |
+| 项目资产 | `project-assets-update-skill.assets.forTaskGenerate(projectKey)` — 返回 §3 + §4 + §5 + §8（分层/包路径/命名/CodePlan 输入索引）|
 | 约束文档 | `document-storage-skill.get_constraints(projectKey)`（不再直接写目录路径）|
 | CodingModel 路径 | `strategies/be-coding-thinking-engine.md` |
 
@@ -536,7 +536,9 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
     │   - §6-§15 其他章节
     ↓
 3. 走 [Coding-SKILL §④bis 5 步 SOP](../phase2-coding/coding-skill.md) 重组为统一版
-    - 步骤 1：加载项目资产
+    - 步骤 1：调用 `project-assets-update-skill.assets.forTaskGenerate(projectKey)`
+      返回：§3 分层映射 + §4 DDD 落点 + §5 命名约定 + §8 Code Plan 输入索引
+      → 精准查询：`assets.module(projectKey, name)` / `assets.component(projectKey, name)`
     - 步骤 2-5：基于所有 Task 的任务级 CodePlan 整合
     ↓
 4. 跑 [be-coding-plan-template.md §15 14 条门禁自检](../../templates/coding/be-coding-plan-template.md)
@@ -569,7 +571,7 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 **触发参数：**
 - Story 文档路径
 - 统一版 CodePlan 路径（`{STORY-ID}-CodingPlan.md`）
-- 项目资产路径
+- 项目资产（`project-assets-update-skill.assets.forTaskGenerate(projectKey)`）
 - 工作目录
 
 **异常处理：**

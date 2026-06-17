@@ -705,7 +705,7 @@ sub-agent 完成后，必须输出**结构化报告**：
       "status": "completed",
       "startedAt": "...",
       "completedAt": "...",
-      "report": "design/story/be/STORY-010-BE-StoryReviewReport.md"
+      "report": "ae-sdd-doc/iterations/{date}/CR/STORY-010-BE/STORY-010-BE-StoryReviewReport.md"
     }
   ],
   "agentReports": [
@@ -830,8 +830,8 @@ AI 在本 SKILL 运行期间，**必须持续维护以下状态**，每个 Story
   "currentStep": "step-3-testcase",
   "completedSteps": ["step-1-dr2story", "step-2-story-review"],
   "pendingOutputs": {
-    "storyDoc": "design/story/be/STORY-010-BE.md",
-    "testcase": "design/testcase/be/STORY-010-BE/STORY-010-BE-testcase.md"
+    "storyDoc": "ae-sdd-doc/iterations/{date}/Story/STORY-010-BE.md",
+    "testcase": "ae-sdd-doc/iterations/{date}/Test/STORY-010-BE/STORY-010-BE-testcase.md"
   },
   "lastUpdated": "2026-05-26T10:00:00"
 }
@@ -1047,9 +1047,9 @@ Phase 3 ────────┤ 验证阶段（必须完成）
 - DR 文档
 - `strategies/be-testcase-strategy.md`（测试策略模板）
 - `templates/testcase/be-testcase-template.md`（用例模板）
-- `constraints/testing.md`（测试约束）
+- 约束通过 `document-storage-skill.get_constraints(projectKey)` 加载（或由 testcase-generate-skill §1.0b assets.forTestCase 返回）
 
-**输出：** 测试用例文档 `design/testcase/be/{STORY-ID}/2c-im-testcase-{STORY-ID}-{标题}.md`
+**输出：** 测试用例文档（路径由 `documentStorage.resolve_path(intent="TEST", storyId)` 定位）
 
 **SKILL 内部流程：**
 1. 读取 Story + 策略模板 + 用例模板 + 约束
@@ -1700,17 +1700,19 @@ BFF: {RestImpl}:{行号} → AppService: {方法}:{行号} → Domain: {方法}:
 
 | 产出物 | 路径 |
 |--------|------|
-| Story 文档（稳定版） | `design/story/be/{story}.md`（最终版） |
-| Story 补充说明 | `design/story/be/{story}-Supplement.md` |
-| Task 文档 | `design/story/be/task/{story}/` |
-| **Coding 报告** | `design/story/be/coding/{story}/{story}-CodingReport-v{N}-r{M}.md`（最后一轮） |
-| **CodeReview 报告** | `design/story/be/coding/{story}/{story}-CodeReview-v{N}-r{M}.md`（最后一轮） |
-| 测试用例文档 | `design/testcase/be/{story}/{story}-testcase.md` |
-| **测试报告** | `design/testcase/be/{story}/{story}-Report-v{N}-r{M}.md`（最后一轮） |
+| Story 文档（稳定版） | `ae-sdd-doc/iterations/{date}/Story/{story}.md`（最终版） |
+| Story 补充说明 | `ae-sdd-doc/iterations/{date}/Story/{story}-Supplement.md` |
+| Task 文档 | `ae-sdd-doc/iterations/{date}/Task/{story}/` |
+| **Coding 报告** | `ae-sdd-doc/iterations/{date}/Coding/{story}/{story}-CodingReport-v{N}-r{M}.md`（最后一轮） |
+| **CodeReview 报告** | `ae-sdd-doc/iterations/{date}/CR/{story}/{story}-CodeReview-v{N}-r{M}.md`（最后一轮） |
+| 测试用例文档 | `ae-sdd-doc/iterations/{date}/Test/{story}/{story}-testcase.md` |
+| **测试报告** | `ae-sdd-doc/iterations/{date}/Test/{story}/{story}-Report-v{N}-r{M}.md`（最后一轮） |
 | 源代码 | 工作目录下对应工程 |
-| 开发问题记录 | `design/story/be/coding/{story}/{story}-开发问题记录.md` |
+| 开发问题记录 | `ae-sdd-doc/iterations/{date}/Coding/{story}/{story}-开发问题记录.md` |
 
-> **多轮存档说明：** 每一轮 Coding 的报告（v{N}-r{1}、v{N}-r{2}...）均独立存档，不覆盖。目录 `design/story/be/coding/{story}/` 下存放该 Story 所有轮次的报告文件。
+> **路径说明：** 以上路径均通过 `documentStorage.resolve_path(intent, storyId)` 动态定位，`{date}` = 当前迭代日期。实际存储路径以 document-storage-skill 返回值为准，禁止硬编码。
+
+> **多轮存档说明：** 每一轮 Coding 的报告（v{N}-r{1}、v{N}-r{2}...）均独立存档，不覆盖。目录 `ae-sdd-doc/iterations/{date}/Coding/{story}/` 下存放该 Story 所有轮次的报告文件。
 
 ---
 

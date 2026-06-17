@@ -181,7 +181,7 @@ Code Review 结论：{STORY-ID}
 | 2 | 统一版 `{STORY-ID}-CodingPlan.md` | 全部 16 节（用户已确认） |
 | 3 | Coding 报告 | `{STORY-ID}-CodingReport-v{N}-r{M}.md`（本轮变更文件清单 + 编译/测试结果） |
 | 4 | 测试报告 | `{STORY-ID}-Report-v{N}-r{M}.md`（含 L1/L2/L3/L4 用例结果） |
-| 5 | 项目资产 | `{projectKey}.assets.md`（§3 抽象分层 / §4 DDD 落点 / §5 命名约定 / §6 工程约束） |
+| 5 | 项目资产 | 调用 `project-assets-update-skill.assets.forCodeReview(projectKey)` 返回 §6 + §C（字段索引）+ §D（组件索引）+ §3 + §4 + §5（**禁止**直接全文读取 assets.md）|
 
 **门禁判定：**
 - ✅ 5 个文件全部读取 + 用户确认 → 进入第一步
@@ -256,15 +256,25 @@ Code Review 结论：{STORY-ID}
 | 覆盖率 | 整体 / Service 核心 / Mapper XML / Controller 接口 |
 | 测试真实性 | 是否含 8 类禁止（@Disabled / assertTrue(true) / catch 吞噬 / 全 Mock / 期望值=实际值 / Thread.sleep / 凑覆盖率） |
 
-### 1.5 提取项目资产信息
+### 1.5 调用项目资产服务
 
-| 信息项 | 提取要点 |
-|--------|---------|
-| §3 抽象分层 | 本项目调用层级 |
-| §4 DDD 内部分层落点 | 精确包路径模板 |
-| §5 命名约定 | 7 类对象命名模板 + 反例 |
-| §6 工程约束 | 9 类约束（分层/工程结构/代码风格/接口/数据库/安全/测试/技术栈/隐性） |
-| §7 契约入口 | Feign 服务名 / 错误码 / SPI ServiceProviderConstants |
+> 🔴 **强制：** 禁止直接读取 `{projectKey}.assets.md` 全文。
+> 调用 `project-assets-update-skill.assets.forCodeReview(projectKey)` 返回：
+
+| 返回章节 | 用于 Code Review 的检查维度 |
+|---------|--------------------------|
+| §6 工程约束 | 9 类约束逐项对照（分层/命名/数据库/安全/测试等）|
+| §C 字段索引 | DB 字段对齐核查（E4 阶段）|
+| §D 组件索引 | 复用核查：是否重复造轮子（E5 阶段）|
+| §3 抽象分层 | 调用层级合规核查 |
+| §4 DDD 落点 | 包路径合规核查 |
+| §5 命名约定 | 7 类命名合规核查 |
+| §7 契约入口 | Feign / SPI 调用核查 |
+
+**精准查询（需要时）：**
+- 验证某字段存在：`assets.table(projectKey, tableName)`
+- 查组件是否已有复用：`assets.component(projectKey, componentName)`
+- 查跨服务 API：`assets.api(projectKey, method)`
 
 ### 1.6 读取实际代码（🔴 必须读代码本身，不读报告代劳）
 
@@ -439,7 +449,7 @@ Story ID：{STORY-ID}
 
 **目的：** 验证代码与项目资产 §3/§4/§5/§6 完全合规。
 
-**输入：** 项目资产 + 实际代码
+**输入：** `project-assets-update-skill.assets.forCodeReview(projectKey)` 返回内容 + 实际代码
 
 **输出：** 5 项合规性核查表
 
@@ -1002,6 +1012,9 @@ Code Review 发现问题
 
 ## 📋 多 Agent 评审编排
 
+> 📍 **多 Agent 编排执行遵循 [`agent-orchestration-skill.md`](../cross-cutting/agent-orchestration-skill.md)**（任务分配协议、派活卡模板、汇总流程、冲突处理规则详见该 SKILL）。
+> 本节只描述 **Code Review 场景专属配置**：何时启用多 Agent、各 reviewer 角色职责、评审维度划分。
+
 > **🔴 来源（角色 7 CodeReviewer）：** ae-sdd-skill.md 角色 7 的 prompt 模板从 AE-skill 迁入本 SKILL。
 >
 > **🔴 本节深度补全（2026-06-06）：** 增加 3 种多 Agent 模式（A/B/C）、交叉对比算法、3 套 prompt 模板（业务/架构/测试）、不一致项处理决策树。
@@ -1017,83 +1030,24 @@ Code Review 发现问题
 | 适用阶段 | Phase 3 ⑦ |
 | 数量建议 | 见下方 3 种模式（按 Story 复杂度选择 1-3 个 reviewer） |
 
-### 3 种多 Agent 模式（按 Story 复杂度选择）
+### 3 种多 Agent 模式触发条件（Code Review 场景专属）
 
-#### 模式 A：单 Reviewer（轻量 — 小/低风险 Story）
+| 模式 | 触发条件 | reviewer 数 |
+|------|---------|------------|
+| A 单 Reviewer | Bug 修复 / 单方法调整 / Tier 1 编码 / ≤5 行改动 / 无状态机/事务 | 1（`reviewer-general`） |
+| B 双 Reviewer | 增量功能（≤3 Task）/ 含 AC 验收 / 涉及新接口/新表 / 含状态机/事务/接口契约等关键决策点 | 2（`reviewer-BE` + `reviewer-AR`） |
+| C 三 Reviewer | 全新微服务 / 全新表 / 全新 SPI / 涉及资金/状态/权限 / 跨 4 Task+ / Tier 3 编码 | 3（`reviewer-BE` + `reviewer-AR` + `reviewer-QA`） |
 
-**适用：** Bug 修复 / 单方法调整 / Tier 1 编码 / 5 行改动 / 无状态机/事务
+### reviewer 角色分工（Code Review 场景专属）
 
-```
-┌─────────────────────────────────────┐
-│ root agent                          │
-│                                     │
-│ 派 1 个 reviewer 完成完整 6 阶段评审  │
-│                                     │
-│   ┌──────────────────┐              │
-│   │ reviewer-general │              │
-│   │ 6 阶段全跑        │              │
-│   └────────┬─────────┘              │
-│            │                        │
-│            ▼                        │
-│   root agent 直接采用                │
-└─────────────────────────────────────┘
-```
+| 角色 | 评审重点 | 覆盖 §2 阶段 |
+|------|---------|------------|
+| `reviewer-general` | 完整 6 阶段全跑（适用模式 A） | A + B + C + D + E + F |
+| `reviewer-BE` | 业务实现 + 分层职责 | A + B + F 重点，其余基础核查 |
+| `reviewer-AR` | 架构 + 规范（DDL/SQL 性能、命名约定、包路径、调用层级） | C + E + F 重点，⑤⑥ 道闸侧重 |
+| `reviewer-QA` | 测试真实性 + 数据库逻辑链（仅模式 C） | D + C + F 重点，⑦ 道闸侧重 |
 
-**派活指令：** 1 个 sub-agent，模式 `general`。
-
-#### 模式 B：双 Reviewer（推荐 — 90% Story）
-
-**适用：** 增量功能（单 Task 或 ≤3 Task）/ 含 AC 验收 / 涉及新接口/新表
-
-```
-┌─────────────────────────────────────────────────┐
-│ root agent                                      │
-│                                                 │
-│ 检测到：涉及状态机/事务/接口契约/新表等关键决策   │
-│ 决策：派 2 个 reviewer 独立审，最后交叉对比         │
-│                                                 │
-│   ┌──────────────────┐  ┌──────────────────┐   │
-│   │ reviewer-BE      │  │ reviewer-AR      │   │
-│   │ 看业务实现 + 分层 │  │ 看架构 + 规范    │   │
-│   └────────┬─────────┘  └────────┬─────────┘   │
-│            │                     │              │
-│            └──────────┬──────────┘              │
-│                       ▼                         │
-│   root agent 交叉对比                            │
-│   （一致 = 接受；不一致 = 升级用户）             │
-└─────────────────────────────────────────────────┘
-```
-
-**派活指令：** 2 个 sub-agent，并行执行。
-- `reviewer-BE`：业务实现 + 分层职责（§2 阶段 A + B + F 重点）
-- `reviewer-AR`：架构 + 规范（§2 阶段 C + E + F 重点）
-
-#### 模式 C：三 Reviewer（重量 — 复杂 Story）
-
-**适用：** 全新微服务 / 全新表 / 全新 SPI / 涉及资金/状态/权限 / 跨 4 Task+
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ root agent                                                  │
-│                                                             │
-│ 检测到：Tier 3 编码 / 全新域 / 高风险 / 跨 4+ Task              │
-│ 决策：派 3 个 reviewer，独立审，交叉对比                        │
-│                                                             │
-│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│   │ reviewer-BE  │  │ reviewer-AR  │  │ reviewer-QA  │     │
-│   │ 业务 + 分层   │  │ 架构 + 规范   │  │ 测试 + DB    │     │
-│   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
-│          │                 │                 │              │
-│          └────────┬────────┴────────┬────────┘              │
-│                   ▼                 ▼                       │
-│   root agent 三方交叉对比（3 张表 → 取交集 + 处理不一致）        │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**派活指令：** 3 个 sub-agent，并行执行。
-- `reviewer-BE`：业务 + 分层（§2 阶段 A + B + F）
-- `reviewer-AR`：架构 + 规范（§2 阶段 C + E + F）
-- `reviewer-QA`：测试 + DB（§2 阶段 D + C + F）
+> 📍 派活卡模板 / 报告回传协议 / 汇总流程 / 冲突处理规则 → 见 [`agent-orchestration-skill.md §任务分配协议`](../cross-cutting/agent-orchestration-skill.md)，此处不再重复。
 
 ### 交叉对比算法（root agent 执行）
 
@@ -1150,138 +1104,16 @@ Code Review 发现问题
 | 7 | 生成最终 CodeReview 报告（模板套用） | 最终报告 |
 | 8 | 触发人工审核点 4（用户确认） | — |
 
-### 3 套 Prompt 模板（业务 / 架构 / 测试 Reviewer）
+### 各 reviewer 评审重点补充（Code Review 场景专属）
 
-#### Prompt 模板 BE：业务 + 分层 Reviewer
+| reviewer | §2 阶段侧重 | 7 道闸侧重 | 输出文件名 |
+|----------|------------|----------|----------|
+| `reviewer-BE` | A（业务逻辑）+ B（分层职责红线）+ F（跨文档） | ①-④ | `{STORY-ID}-CodeReview-BE-r{M}.md` |
+| `reviewer-AR` | C（数据库逻辑链）+ E（项目资产合规性）+ F（跨文档） | ⑤-⑥ | `{STORY-ID}-CodeReview-AR-r{M}.md` |
+| `reviewer-QA` | D（测试真实性）+ C（数据库逻辑链） | ⑦ | `{STORY-ID}-CodeReview-QA-r{M}.md` |
 
-```yaml
-# 任务分配卡 - 业务 + 分层 Reviewer
-agent_role: code-reviewer-BE
-story_id: STORY-XXX-BE
-task_id: codereview-BE-{STORY-ID}-r{M}
-priority: P0
-review_mode: business_layer
-
-input:
-  - {STORY-ID}-CodingReport-v{N}-r{M}.md
-  - {STORY-ID}-Report-v{N}-r{M}.md
-  - {projectKey}.assets.md
-  - Story 文档 + 统一版 CodingPlan
-  - 实际代码（git diff {base}..{head}）
-
-output:
-  deliverable: {STORY-ID}-CodeReview-BE-r{M}.md
-  report: 同上
-
-standards:
-  - 走 code-review-skill.md §第二/三/四/六/七步 完整流程
-  - 重点跑 §2 阶段 A（业务逻辑）+ 阶段 B（分层职责红线）+ 阶段 F（跨文档）
-  - 其他阶段做基础核查
-  - 7 道闸全过（侧重 ①-④ 闸）
-  - 每个 ✅ 必附证据
-  - 🔴 阻断型 0 才能出报告
-  - 输出结构：6 阶段评审 + 🔴 缺陷清单 + 业务/分层专项评审
-
-context:
-  - 评审焦点：业务逻辑 + 分层职责
-  - 项目分层来源: {projectKey}.assets.md §3
-  - 配套 reviewer: reviewer-AR（架构+规范）/ reviewer-QA（测试+DB，如有）
-
-deadline: {最长执行时间}
-
-report_back:
-  channel: mavis communication
-  target: {root session id}
-  format: {STORY-ID}-CodeReview-BE-r{M}.md
-```
-
-#### Prompt 模板 AR：架构 + 规范 Reviewer
-
-```yaml
-# 任务分配卡 - 架构 + 规范 Reviewer
-agent_role: code-reviewer-AR
-story_id: STORY-XXX-BE
-task_id: codereview-AR-{STORY-ID}-r{M}
-priority: P0
-review_mode: architecture_norms
-
-input:
-  - {STORY-ID}-CodingReport-v{N}-r{M}.md
-  - {STORY-ID}-Report-v{N}-r{M}.md
-  - {projectKey}.assets.md
-  - Story 文档 + 统一版 CodingPlan
-  - 实际代码（git diff {base}..{head}）
-
-output:
-  deliverable: {STORY-ID}-CodeReview-AR-r{M}.md
-  report: 同上
-
-standards:
-  - 走 code-review-skill.md §第二/三/四/六/七步 完整流程
-  - 重点跑 §2 阶段 C（数据库逻辑链）+ 阶段 E（项目资产合规性）+ 阶段 F（跨文档）
-  - 7 道闸全过（侧重 ⑤ 报告-代码对账 + ⑥ 产出物对账）
-  - 重点核查：DDL/SQL 性能、命名约定、包路径、调用层级
-  - 每个 ✅ 必附 grep/file:line 证据
-  - 🔴 阻断型 0 才能出报告
-  - 输出结构：6 阶段评审 + 架构/规范专项评审
-
-context:
-  - 评审焦点：架构 + 规范
-  - 项目分层来源: {projectKey}.assets.md §3
-  - 配套 reviewer: reviewer-BE（业务+分层）/ reviewer-QA（测试+DB，如有）
-
-deadline: {最长执行时间}
-
-report_back:
-  channel: mavis communication
-  target: {root session id}
-  format: {STORY-ID}-CodeReview-AR-r{M}.md
-```
-
-#### Prompt 模板 QA：测试 + DB Reviewer（仅模式 C）
-
-```yaml
-# 任务分配卡 - 测试 + DB Reviewer
-agent_role: code-reviewer-QA
-story_id: STORY-XXX-BE
-task_id: codereview-QA-{STORY-ID}-r{M}
-priority: P0
-review_mode: testing_database
-
-input:
-  - {STORY-ID}-CodingReport-v{N}-r{M}.md
-  - {STORY-ID}-Report-v{N}-r{M}.md
-  - {projectKey}.assets.md
-  - Story 文档 + 统一版 CodingPlan
-  - 实际代码（git diff {base}..{head}）
-  - 测试代码（git diff 包含 src/test）
-
-output:
-  deliverable: {STORY-ID}-CodeReview-QA-r{M}.md
-  report: 同上
-
-standards:
-  - 走 code-review-skill.md §第二/三/四/六/七步 完整流程
-  - 重点跑 §2 阶段 D（测试真实性 + 真实 DB/HTTP 覆盖）+ 阶段 C（数据库逻辑链）
-  - 7 道闸全过（侧重 ⑦ 真实 DB/HTTP 覆盖核查闸）
-  - 🔴 必扫：8 类测试禁止（@Disabled/assertTrue(true)/catch 吞噬/全 Mock/期望值=实际值/Thread.sleep/凑覆盖率/无效数据）
-  - 🔴 必查：5 类必真实场景（核心落库/事务回滚/分布式锁/Feign HTTP/Redis 缓存失效）
-  - 🔴 必扫：5 类 SQL 反模式（外键级联/SELECT */3 表 JOIN/IN>1000/${} 拼接）
-  - 🔴 阻断型 0 才能出报告
-  - 输出结构：6 阶段评审 + 测试/DB 专项评审 + EXPLAIN 验证结果
-
-context:
-  - 评审焦点：测试真实性 + 数据库逻辑
-  - 项目分层来源: {projectKey}.assets.md §3
-  - 配套 reviewer: reviewer-BE（业务+分层）/ reviewer-AR（架构+规范）
-
-deadline: {最长执行时间}
-
-report_back:
-  channel: mavis communication
-  target: {root session id}
-  format: {STORY-ID}-CodeReview-QA-r{M}.md
-```
+各 reviewer 的输入清单（Coding 报告 + 测试报告 + Story + 项目资产 + 实际代码）、deadline 字段、report_back 协议
+→ 按 [`agent-orchestration-skill.md §任务分配协议`](../cross-cutting/agent-orchestration-skill.md) 中派活卡模板填写，此处不再重复。
 
 ### 与子 SKILL 的协同
 

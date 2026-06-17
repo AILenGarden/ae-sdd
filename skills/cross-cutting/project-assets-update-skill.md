@@ -40,6 +40,7 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 |---------|---------|---------|----------|
 | 项目资产主体（含索引层） | `skills/ae-sdd/project-assets/{projectKey}/{projectKey}.assets.md` | 不带版本号 | 原地修改（变更加日志）|
 | 项目资产更新日志 | `skills/ae-sdd/project-assets/{projectKey}/{projectKey}.update-log.md` | 不带版本号 | 原地累加（每变更 1 条）|
+| **🆕 待确认问题清单** | `skills/ae-sdd/project-assets/{projectKey}/{projectKey}.pending-questions.md` | 不带版本号 | 原地维护（新增追加 / 解决则消掉）|
 
 > 🔴 **关键：** 项目资产是"单一权威源"，**永不通过文件名识别版本**，所有变更通过 `{projectKey}.update-log.md` 追踪。
 > 🆕 **索引层与内容层同文件**：§A-G 索引项与 §0-§10 内容同处一文件，确保"一处改、索引与内容同步"。
@@ -142,11 +143,45 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 | **10** 🆕 | **生成 7 层索引**（§A 大纲 / §B 模块 / §C 字段 / §D 组件 / §E API / §F 反向） | **§A-§F 索引章节** |
 | 11 | 审计 + 写 §1 lastAuditedAt | §1 |
 | 12 | 写更新日志 initial 条目 | log |
+| **13** 🆕 | **生成 `{projectKey}.pending-questions.md`**（待确认问题清单）| pending-questions 文件 |
+
+**第 13 步说明：** 探查过程中凡是"发现了问题但无法自行确认"的事项，统一写入 pending-questions.md，**不要写进 assets.md 正文**（避免污染资产主体）。格式见下方 §3.3.1。
 
 ### 3.3 输出物
 
 - `skills/ae-sdd/project-assets/{project-key}/{project-key}.assets.md`（按 schema 12 节 + §A-§F 索引层填写，含 §10 经验文档）
 - `skills/ae-sdd/project-assets/{project-key}/{project-key}.update-log.md`（更新日志，首次条目 = initial）
+- **🆕 `skills/ae-sdd/project-assets/{project-key}/{project-key}.pending-questions.md`**（待确认问题清单，探查中无法自行确认的事项）
+
+#### 3.3.1 🆕 pending-questions.md 格式
+
+```markdown
+# {projectKey} 项目资产 — 待确认问题清单
+
+> 本文件记录探查过程中发现的、**无法自行确认的问题**。
+> - **问题解决后：直接删除对应条目**（不需要归档，消掉就好）
+> - **不要把"待确认问题"写进 assets.md 正文**，保持资产主体只含已确认的事实
+> - 解决时机：涉及该问题的 Story 生成前 / 偶然发现了答案 / 专项排查时
+
+---
+
+## 待确认问题
+
+| ID | 问题描述 | 影响章节 | 严重度 | 发现时间 | 解决线索 |
+|----|---------|---------|--------|---------|---------|
+| Q-001 | {描述} | §2 / §7 | 🟡 一般 | {YYYY-MM-DD} | {可选，如"可查 bootstrap.yml"} |
+| Q-002 | {描述} | §4 | 🟠 严重 | {YYYY-MM-DD} | |
+
+---
+
+> 上次检查：{YYYY-MM-DD}  /  当前待确认数：{N}
+```
+
+**严重度定义：**
+- 🔴 阻断：影响下一个 Story 的正常生成（必须先解决）
+- 🟠 严重：可能导致 Story 生成偏差（涉及该域的 Story 生成前解决）
+- 🟡 一般：不影响当前工作，有空再确认
+- 🟢 建议：纯优化型问题，不解决也没影响
 
 ### 3.4 门禁
 
@@ -255,6 +290,19 @@ diff <(grep "^### 6\." {projectKey}.assets.md) <(ls constraints/*.md)
 格式见 `templates/project-assets/project-assets-update-log-template.md`。
 🆕 **日志条目必须列出"哪些索引项已同步"**（如：§B 模块索引新增 1 行 / §C 字段索引新增 3 行）。
 
+#### 步骤 6：🆕 消掉 pending-questions.md 中已解决的问题
+
+更新完成后检查 `{projectKey}.pending-questions.md`：
+
+```
+For each 待确认问题 Q in pending-questions.md：
+  ├─ 本次更新已探查到答案 → 删除该行（直接删，不需要归档）
+  ├─ 本次更新部分解答 → 更新"解决线索"列，降低严重度
+  └─ 与本次更新无关 → 保留不动
+```
+
+**禁止：** 把"已解决的问题"归档到别处——解决了就消掉，保持文件干净。
+
 ### 4.3 门禁
 
 - 🔴 更新前先在 log 写"待更新"条目（**先记录再修改**，防"修完忘记录"）
@@ -334,9 +382,15 @@ ls constraints/*.md | xargs -n1 basename
 | 缺口进度 | {已补}/{总数} ({百分比}%) | 🟠/🟡/🟢 |
 | 🆕 索引有效性（§A-G 一致性） | {一致项}/{总项} ({百分比}%) | ✅/⚠️ |
 | 知识衰减（包路径/命名/微服务清单/索引） | {N} 处漂移 | ✅/🔴 |
+| 🆕 待确认问题（pending-questions.md）| {N} 条（🔴{n1} 🟠{n2} 🟡{n3} 🟢{n4}）| ✅/⚠️ |
 | 与上次审计的变更数 | {N} 条 | - |
 | 建议 | {1-3 条具体建议} | - |
 ```
+
+**🆕 审计时同步过 pending-questions.md：**
+- 逐条检查是否有偶然得到答案的问题（如本月 Story 生成中探查到了相关代码）
+- 消掉已解决的条目
+- 把 🔴 阻断型问题提到 AE-skill 下次工作的"工作区检查"注意事项中
 
 #### 步骤 7：更新 §1 lastAuditedAt
 
@@ -807,51 +861,322 @@ exists = assets.search("MySpecialConcept")
 
 ---
 
-## §G 资产读取 API 实现 SOP（🆕 索引层 7/7）
+## §G 资产读取 API 对外服务契约（🆕 索引层 7/7）
+
+> **定位：** 本节是 `project-assets-update-skill` 对所有调用方 SKILL 的**正式服务契约**。
+> 任何 SKILL 需要读取项目资产时，必须查阅本节找到对应 API 并按 §G.5 的标准写法调用，**禁止直接全文 Read 资产文件**。
+
+---
 
 ### G.1 目标
 
-把 §A-F 的索引层**封装为可调用的 API**，让其他 SKILL 不需要懂 Markdown 解析也能按需加载。
+把 §A-F 的索引层**封装为两层可调用的 API**：
+
+- **场景化 API（高层）**：按阶段聚合返回，调用方只需知道自己处于哪个 SKILL 阶段，传入 `projectKey` 即可拿到该阶段所需的全部资产信息。
+- **底层 API（精准查询）**：单项查询，供需要精确定位某模块/表/组件时使用，也是场景化 API 的内部实现基础。
+
+设计原则：**调用方越不了解资产结构越好**——理想状态是调一个 `assets.forCoding(projectKey)` 就能开始干活。
+
+---
 
 ### G.2 触发场景
 
-- 任何 SKILL 需查项目事实时（**优先调用本 API，而非全文加载**）
-- ae-sdd 整体"按需加载"能力落地时
+| 触发时机 | 推荐调用 |
+|---------|---------|
+| 任何 SKILL 的"读取项目资产"步骤 | `assets.forXxx(projectKey)`（场景化 API）|
+| 需要精准查某个模块/表/组件/API | 对应底层 API |
+| ae-sdd 整体"按需加载"能力落地 | 场景化 API 作为标准入口 |
+| 资产是否存在/是否过期的前置检查 | `assets.last_audited(projectKey)` |
 
-### G.3 API 协议
+---
 
-> **实现方式：** 自然语言协议 + 伪代码。实际执行时由调用 SKILL 解析 Markdown 表格或通过 Grep 工具实现。
+### G.3 场景化 API（高层，推荐调用）
+
+> **实现方式：** 自然语言协议。执行时由调用 SKILL 通过 Read/Grep 工具组合读取对应章节，拼装返回结果。
+
+#### G.3.1 API 列表
+
+| API | 入参 | 适用阶段 | 返回章节 |
+|-----|------|---------|---------|
+| `assets.forRequirementAnalysis(projectKey)` | `projectKey: str` | requirement-analysis | §A + §B + §C |
+| `assets.forDrGenerate(projectKey)` | `projectKey: str` | dr-generate | §3 + §5 + §6 + §7 + §D + §E |
+| `assets.forStoryGenerate(projectKey)` | `projectKey: str` | story-generate | §3 + §4 + §5 + §6.5 + §7 |
+| `assets.forStoryReview(projectKey)` | `projectKey: str` | story-review | §4 + §6 + §7 + §B（相关模块） |
+| `assets.forTaskGenerate(projectKey)` | `projectKey: str` | task-generate | §3 + §4 + §5 + §8 |
+| `assets.forCoding(projectKey)` | `projectKey: str` | coding | §4 + §5 + §6 |
+| `assets.forCodeReview(projectKey)` | `projectKey: str` | code-review | §6 + §C（字段索引）+ §D（组件索引）|
+| `assets.forTestCase(projectKey)` | `projectKey: str` | testcase-generate | §D（组件）+ §6.7（测试规范）|
+
+#### G.3.2 各 API 返回内容说明
+
+**`assets.forRequirementAnalysis(projectKey)`**
+
+```
+返回内容：
+  §A  资产大纲（项目速览 + 一级目录速查）
+  §B  模块索引（所有微服务列表 + 职责 + 表关联）
+  §C  字段索引（业务实体维度，用于识别已有数据结构）
+用途：需求分析阶段快速了解项目已有业务域、模块边界、核心实体
+```
+
+**`assets.forDrGenerate(projectKey)`**
+
+```
+返回内容：
+  §3  抽象分层（DDD 分层映射）
+  §5  命名约定（7 类命名规范）
+  §6  工程约束（技术栈 / 分层规则 / 事务规则）
+  §7  跨服务契约（SPI 命令清单 + Feign 契约）
+  §D  组件索引（可复用组件清单）
+  §E  API 索引（已有跨服务 API 清单）
+用途：DR 设计时对齐分层、命名、约束、现有契约，避免重复建设
+```
+
+**`assets.forStoryGenerate(projectKey)`**
+
+```
+返回内容：
+  §3  抽象分层（BFF → SPI → Service 映射）
+  §4  包路径（各模块实际包路径）
+  §5  命名约定
+  §6.5 错误码规范
+  §7  跨服务契约入口
+用途：Story 拆解时确定代码落点（哪层/哪个包/哪个服务）
+```
+
+**`assets.forStoryReview(projectKey)`**
+
+```
+返回内容：
+  §4  包路径（验证 Story 中代码落点是否正确）
+  §6  工程约束（验证是否违反约束）
+  §7  跨服务契约（验证接口定义是否一致）
+  §B  相关模块详情（按 Story 涉及模块过滤）
+用途：Story Review 时核对代码落点、约束合规、契约一致性
+```
+
+**`assets.forTaskGenerate(projectKey)`**
+
+```
+返回内容：
+  §3  抽象分层
+  §4  包路径
+  §5  命名约定
+  §8  CodePlan 输入索引（TaskGenerate 输入参考）
+用途：Task 拆解时明确每个子任务的代码落点和命名规范
+```
+
+**`assets.forCoding(projectKey)`**
+
+```
+返回内容：
+  §4  包路径（确认新类放在哪个包）
+  §5  命名约定（类名/方法名/常量名规则）
+  §6  工程约束（事务 / 分层 / 注解 / 禁用项）
+用途：编码时直接查命名规范、包路径、工程约束，无需翻整个资产
+```
+
+**`assets.forCodeReview(projectKey)`**
+
+```
+返回内容：
+  §6  工程约束（Review 检查违规项的基准）
+  §C  字段索引（验证字段命名/类型/存在性）
+  §D  组件索引（验证是否应复用已有组件）
+用途：CodeReview 时核对约束合规 + 字段存在性 + 组件复用检查
+```
+
+**`assets.forTestCase(projectKey)`**
+
+```
+返回内容：
+  §D  组件索引（测试 Mock 对象清单）
+  §6.7 测试规范（测试框架 / 覆盖率要求 / 命名规范）
+用途：TestCase 生成时了解可 Mock 的组件 + 项目测试规范
+```
+
+---
+
+### G.4 底层 API 协议（精准查询）
+
+> **实现方式：** 调用 SKILL 通过 Grep 工具精确匹配对应章节的 Markdown 表格行。场景化 API 内部亦通过这些底层 API 组合实现。
 
 | API | 入参 | 返回 | 实现思路 |
 |-----|------|------|---------|
-| `assets.outline()` | 无 | §A 全部内容 | 读 §A 章节 |
-| `assets.module(name)` | `name: str` | 该 module 的 §2 行 + §4 行 + §6.4 错误码 + §7.1 契约 | grep `\| \`{name}\` \|` in §B + 跳转 |
-| `assets.table(name)` | `name: str` | 该表的 §C.1 字段清单 | grep `\| \`{name}\` \|` in §C.1 |
-| `assets.table.search(keyword)` | `keyword: str` | 所有表含该字段的行 | grep 关键词 in §C.1 + §C.2 + §C.3 |
-| `assets.component(name)` | `name: str` | 该组件的 §D 行 | grep `\| \`{name}\` \|` in §D |
-| `assets.api(method)` | `method: str` | 该方法的 §E 行 | grep `\| \`{method}(` in §E |
-| `assets.search(keyword)` | `keyword: str` | §F 中所有匹配行 | grep `\| \`{keyword}\` \|` in §F |
-| `assets.sections(§X.Y)` | `section: str` | 该章节全文 | 读 §X.Y 章节 |
-| `assets.last_audited()` | 无 | §1 lastAuditedAt | grep `lastAuditedAt` in §1 |
+| `assets.outline(projectKey)` | 无 | §A 全部内容 | 读 §A 章节 |
+| `assets.module(projectKey, name)` | `name: str` | 该 module 的 §2 行 + §4 行 + §6.4 错误码 + §7.1 契约 | grep `\| \`{name}\` \|` in §B + 跳转 |
+| `assets.table(projectKey, name)` | `name: str` | 该表的 §C.1 字段清单 | grep `\| \`{name}\` \|` in §C.1 |
+| `assets.table.search(projectKey, keyword)` | `keyword: str` | 所有表含该字段的行 | grep 关键词 in §C.1 + §C.2 + §C.3 |
+| `assets.component(projectKey, name)` | `name: str` | 该组件的 §D 行 | grep `\| \`{name}\` \|` in §D |
+| `assets.api(projectKey, method)` | `method: str` | 该方法的 §E 行 | grep `\| \`{method}(` in §E |
+| `assets.search(projectKey, keyword)` | `keyword: str` | §F 中所有匹配行 | grep `\| \`{keyword}\` \|` in §F |
+| `assets.sections(projectKey, section)` | `section: str` | 该章节全文 | 读 §X.Y 章节 |
+| `assets.last_audited(projectKey)` | 无 | §1 lastAuditedAt 值 | grep `lastAuditedAt` in §1 |
 
-### G.4 调用示例（伪代码）
+---
+
+### G.5 各 SKILL 调用标准写法
+
+> **这是最重要的部分。** 所有 SKILL 在编写"读取项目资产"步骤时，**必须**使用以下标准写法，不得自行设计调用方式。
+
+#### G.5.1 标准写法模板
+
+在 SKILL 的"第零步准入检查"或"第一步读取输入"中，统一按如下格式编写：
+
+````markdown
+#### 调用 project-assets-update-skill 读取项目资产
+
+> 🔴 **强制：** 禁止直接 Read {projectKey}.assets.md 全文。
+> 必须调用 project-assets-update-skill 的场景化 API，由它通过索引路由返回对应数据。
+
+**调用方式：**
+```
+# Step 1：前置检查
+last_audit = project-assets-update-skill.assets.last_audited(projectKey)
+→ 资产不存在     → 停止，提示用户先生成项目资产（`project-assets-update-skill §3`）
+→ 超过 90 天未审计 → 停止，提示用户先审计（`project-assets-update-skill §5`）
+
+# Step 2：按场景调用（替换 forXxx 为本 SKILL 对应的场景）
+assets_data = project-assets-update-skill.assets.forXxx(projectKey)
+
+# Step 3：如需精准查询单项
+module_detail = project-assets-update-skill.assets.module(projectKey, moduleName)
+field_info    = project-assets-update-skill.assets.table(projectKey, tableName)
+```
+
+**返回内容：** {列出对应场景 API 会返回的章节，参见 §G.3.2}
+
+**调用失败处理：**
+- 资产不存在 → 停止，提示用户先生成项目资产（`project-assets-update-skill §3`）
+- 资产过期（lastAuditedAt > 90 天）→ 停止，提示用户先审计（`project-assets-update-skill §5`）
+- 章节缺失（返回空）→ 记录警告，以现有内容继续，在报告中标注"资产缺口"
+````
+
+#### G.5.2 各 SKILL 具体调用示例
+
+**story-generate-skill（Story 拆解阶段）**
+
+```markdown
+# 第一步：读取项目资产
+assets_data = project-assets-update-skill.assets.forStoryGenerate(projectKey)
+# 返回：§3 分层映射 + §4 包路径 + §5 命名约定 + §6.5 错误码 + §7 跨服务契约入口
+# 用途：确定 Story 中每个任务的代码落点（哪层/哪个包/哪个服务）
+```
+
+**story-review-skill（Story 评审阶段）**
+
+```markdown
+# 第一步：读取项目资产
+assets_data = project-assets-update-skill.assets.forStoryReview(projectKey)
+# 返回：§4 包路径 + §6 工程约束 + §7 跨服务契约 + §B 相关模块详情
+# 用途：Review 时核对代码落点正确性 + 约束合规 + 契约一致性
+
+# 如需精准查某模块
+module_detail = project-assets-update-skill.assets.module(projectKey, "boss-user-bff")
+```
+
+**coding-skill（编码阶段）**
+
+```markdown
+# 第零步：读取项目资产（准入检查后执行）
+assets_data = project-assets-update-skill.assets.forCoding(projectKey)
+# 返回：§4 包路径 + §5 命名约定 + §6 工程约束
+# 用途：编码前确认包路径、命名规范、禁用项（如禁用 AccessUserInfoContext）
+```
+
+**code-review-skill（CodeReview 阶段）**
+
+```markdown
+# 第一步：读取项目资产
+assets_data = project-assets-update-skill.assets.forCodeReview(projectKey)
+# 返回：§6 工程约束 + §C 字段索引 + §D 组件索引
+# 用途：Review 时核对约束违规 + 字段存在性 + 是否应复用已有组件
+
+# 验证字段是否存在
+field_exists = project-assets-update-skill.assets.table(projectKey, "boss_user")
+# 验证组件是否可复用
+component = project-assets-update-skill.assets.component(projectKey, "TokenService")
+```
+
+**requirement-analysis-skill（需求分析阶段）**
+
+```markdown
+# 第一步：读取项目资产
+assets_data = project-assets-update-skill.assets.forRequirementAnalysis(projectKey)
+# 返回：§A 资产大纲 + §B 模块索引 + §C 字段索引
+# 用途：快速了解项目已有业务域、模块边界、核心实体，避免需求分析脱离现实
+```
+
+**dr-generate-skill（DR 设计阶段）**
+
+```markdown
+# 第一步：读取项目资产
+assets_data = project-assets-update-skill.assets.forDrGenerate(projectKey)
+# 返回：§3 分层 + §5 命名 + §6 约束 + §7 跨服务契约 + §D 组件 + §E API
+# 用途：DR 设计时对齐分层、命名、约束、现有契约，避免重复建设
+```
+
+**task-generate-skill（Task 拆解阶段）**
+
+```markdown
+# 第一步：读取项目资产
+assets_data = project-assets-update-skill.assets.forTaskGenerate(projectKey)
+# 返回：§3 分层 + §4 包路径 + §5 命名约定 + §8 CodePlan 输入索引
+# 用途：Task 拆解时明确每个子任务的代码落点
+```
+
+**testcase-generate-skill（测试用例生成阶段）**
+
+```markdown
+# 第一步：读取项目资产
+assets_data = project-assets-update-skill.assets.forTestCase(projectKey)
+# 返回：§D 组件索引（可 Mock 对象）+ §6.7 测试规范
+# 用途：了解项目测试框架、覆盖率要求、可 Mock 的组件清单
+```
+
+---
+
+### G.6 调用示例（端到端伪代码）
 
 ```python
-# 示例 1：④bis CodePlan 阶段拉模块详情
-def plan_module_detail(projectKey, moduleName):
-    outline = assets.outline(projectKey)            # 拉 §A
-    module = assets.module(projectKey, moduleName)  # 拉 §B 行
-    if assets.last_audited(projectKey) < 30 days:  # 校验时效
-        return {
-            "overview": outline,
-            "module": module,
-            "tables": assets.table.search(projectKey, "id"),  # 拉该模块主表
-            "components": assets.component.search(projectKey, moduleName),  # 拉模块内组件
-        }
+# 示例 1：coding-skill 阶段拉取资产并开始编码
+def coding_phase_start(projectKey, moduleName):
+    # 前置检查
+    last_audit = assets.last_audited(projectKey)
+    assert last_audit < 90_days, "资产过期，请先审计"
 
-# 示例 2：Story Review 阶段跨服务契约核对
+    # 场景化调用
+    assets_data = assets.forCoding(projectKey)
+    # assets_data 包含：§4 包路径 + §5 命名约定 + §6 工程约束
+
+    # 精准查询（如需）
+    module = assets.module(projectKey, moduleName)
+    return {
+        "packagePath": assets_data["§4"],
+        "namingConvention": assets_data["§5"],
+        "constraints": assets_data["§6"],
+        "moduleDetail": module,
+    }
+
+
+# 示例 2：code-review-skill 阶段验证字段存在
+def review_verify_field(projectKey, tableName, fieldName):
+    assets_data = assets.forCodeReview(projectKey)
+    # assets_data 包含：§6 约束 + §C 字段索引 + §D 组件索引
+
+    fields = assets.table(projectKey, tableName)
+    field_exists = any(f.field == fieldName for f in fields)
+    if not field_exists:
+        raise ReviewIssue(f"🔴 阻断：字段 {fieldName} 在 {tableName} 中不存在")
+    return True
+
+
+# 示例 3：story-review-skill 阶段跨服务契约核对
 def review_api_contract(projectKey, methodName):
-    api = assets.api(projectKey, methodName)  # 拉 §E 行
+    assets_data = assets.forStoryReview(projectKey)
+    # assets_data 包含：§4 + §6 + §7 + §B 相关模块
+
+    api = assets.api(projectKey, methodName)
     return {
         "spi": api.spi,
         "service": api.service,
@@ -861,30 +1186,45 @@ def review_api_contract(projectKey, methodName):
         "docs": api.docs,
     }
 
-# 示例 3：CodeReview 阶段验证字段存在
-def verify_field_exists(projectKey, tableName, fieldName):
-    fields = assets.table(projectKey, tableName)  # 拉 §C 行
-    return any(f.field == fieldName for f in fields)
+
+# 示例 4：requirement-analysis-skill 阶段了解已有业务域
+def analyze_existing_domain(projectKey):
+    assets_data = assets.forRequirementAnalysis(projectKey)
+    # assets_data 包含：§A 大纲 + §B 模块索引 + §C 字段索引
+
+    modules = assets.outline(projectKey)  # 快速获取所有模块
+    return {
+        "modules": modules,
+        "fields": assets_data["§C"],  # 现有业务实体字段
+    }
 ```
 
-### G.5 关联性分析整合
+---
+
+### G.7 关联性分析整合
 
 | 关联性类型 | 实现路径 |
 |-----------|---------|
-| **B1 业务域关联** | `assets.module(name)` 返回的 `module` + `tables` + `components` 共同表达 |
-| **B2 业务场景关联** | `assets.search(keyword)` 跨章节定位 |
-| **B3 业务实体关联** | `assets.table(name)` + `assets.search(entityName)` |
-| **B4 业务规则关联** | `assets.search(ruleName)` + `assets.sections(§6.X)` |
-| **L1 代码调用关联** | `assets.component(name).callers` 字段 |
-| **L2 数据流关联** | `assets.table(name).relations` 字段（如 boss_user_role.user_id 关联 boss_user.id）|
-| **L3 状态流转关联** | `assets.search("status")` + `assets.sections(§4.5)` |
-| **L4 组件复用关联** | `assets.component(name).callers` 字段 |
+| **B1 业务域关联** | `assets.module(projectKey, name)` 返回的 `module` + `tables` + `components` 共同表达 |
+| **B2 业务场景关联** | `assets.search(projectKey, keyword)` 跨章节定位 |
+| **B3 业务实体关联** | `assets.table(projectKey, name)` + `assets.search(projectKey, entityName)` |
+| **B4 业务规则关联** | `assets.search(projectKey, ruleName)` + `assets.sections(projectKey, "§6.X")` |
+| **L1 代码调用关联** | `assets.component(projectKey, name).callers` 字段 |
+| **L2 数据流关联** | `assets.table(projectKey, name).relations` 字段（如 boss_user_role.user_id 关联 boss_user.id）|
+| **L3 状态流转关联** | `assets.search(projectKey, "status")` + `assets.sections(projectKey, "§4.5")` |
+| **L4 组件复用关联** | `assets.component(projectKey, name).callers` 字段 |
 
-### G.6 门禁
+---
 
-- 🔴 §G.3 API 协议表 9 个 API **全部定义**（缺一不可）
-- 🆕 §G.4 调用示例**至少 3 个**（覆盖 ④bis / Story Review / CodeReview 3 个阶段）
-- 🆕 §G.5 关联性分析覆盖 B1-B4 + L1-L4 **8 种**
+### G.8 门禁
+
+- 🔴 §G.4 底层 API 协议表 **9 个 API 全部定义**（缺一不可）
+- 🔴 §G.3 场景化 API **8 个全部定义**（forRequirementAnalysis / forDrGenerate / forStoryGenerate / forStoryReview / forTaskGenerate / forCoding / forCodeReview / forTestCase）
+- 🔴 §G.3.2 每个场景化 API 必须有**返回章节说明**（不能只写 API 名）
+- 🔴 §G.5.2 **至少覆盖 5 个 SKILL 的具体调用示例**（story-generate / story-review / coding / code-review / requirement-analysis）
+- 🟠 §G.6 调用示例**至少 3 个**（覆盖 coding / code-review / story-review 3 个阶段）
+- 🟠 §G.7 关联性分析覆盖 B1-B4 + L1-L4 **8 种**
+- 🟢 各 SKILL 文档中的"读取项目资产"步骤应与 §G.5 标准写法保持一致
 
 ---
 
@@ -927,7 +1267,7 @@ def verify_field_exists(projectKey, tableName, fieldName):
 - [ ] 🆕 生成 §D 组件索引（每行 1 个公共组件，4 列齐全）
 - [ ] 🆕 生成 §E API 索引（每行 1 个跨服务方法，5 列齐全）
 - [ ] 🆕 生成 §F 反向索引（≥20 个关键词，位置精确到 §X.Y 或文件:行号）
-- [ ] 🆕 生成 §G 读取 API（9 个 API + 3 个调用示例 + 8 种关联性分析）
+- [ ] 🆕 生成 §G 读取 API（8 个场景化 API + 9 个底层 API + ≥5 个 SKILL 调用示例 + 4 个端到端伪代码示例 + 8 种关联性分析）
 - [ ] 写 §1 lastAuditedAt
 - [ ] 写更新日志 initial 条目
 
@@ -963,12 +1303,13 @@ def verify_field_exists(projectKey, tableName, fieldName):
 
 ### 动作 5：🆕 索引读取（被其他 SKILL 调用）
 
-- [ ] 调用 `assets.outline()` 拉资产总览
-- [ ] 调用 `assets.module(name)` 拉模块详情
-- [ ] 调用 `assets.table(name)` 拉表字段
-- [ ] 调用 `assets.component(name)` 拉组件位置
-- [ ] 调用 `assets.api(method)` 拉 API 契约
-- [ ] 调用 `assets.search(keyword)` 反向定位
+- [ ] 场景化调用：`assets.forXxx(projectKey)`（forCoding / forCodeReview / forStoryGenerate / forStoryReview / forTaskGenerate / forRequirementAnalysis / forDrGenerate / forTestCase）
+- [ ] 前置检查：`assets.last_audited(projectKey)` 确认资产未过期（≤90 天）
+- [ ] 精准查询（如需）：`assets.module(projectKey, name)` 拉模块详情
+- [ ] 精准查询（如需）：`assets.table(projectKey, name)` 拉表字段
+- [ ] 精准查询（如需）：`assets.component(projectKey, name)` 拉组件位置
+- [ ] 精准查询（如需）：`assets.api(projectKey, method)` 拉 API 契约
+- [ ] 精准查询（如需）：`assets.search(projectKey, keyword)` 反向定位
 
 ---
 
@@ -976,6 +1317,6 @@ def verify_field_exists(projectKey, tableName, fieldName):
 
 - **维护人：** 架构组 + 各项目 owner
 - **更新频率：** 触发"生成/更新/审计"时立即执行
-- **同步对象：** ① 与 `project-assets-schema.md` 配套 ② ④bis CodePlan 步骤 1 已迁入本 SKILL §6 ③ 🆕 §A-G 索引层为 7 项新内容
+- **同步对象：** ① 与 `project-assets-schema.md` 配套 ② ④bis CodePlan 步骤 1 已迁入本 SKILL §6 ③ 🆕 §A-G 索引层为 7 项新内容 ④ 🆕 §G 已升级为「对外服务契约」，各 SKILL 的"读取项目资产"步骤应按 §G.5 标准写法更新
 - **双源一致性审计：** 每月动作 3 中执行
 - **🆕 索引层维护：** §A-G 索引项随 §0-§10 内容同步维护（生成时一次性建立；更新时增量维护；审计时验证一致性）

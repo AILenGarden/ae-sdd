@@ -2,7 +2,7 @@
 
 > **定位：** 本目录是 `auto-engineering` 体系（简称 AE）的**母版**，包含 15 个 SKILL + 模板 + 项目资产 + 策略 + 脚本。本 README 是**使用指导书**（如何用 AE 跑项目）和**功能说明书**（每个 SKILL 做什么）。
 >
-> **版本：** 2026-06-17（**🆕 需求分析体系重大重构**：新增 requirement-analysis / dr-generate / dr-review 3 个核心 SKILL + 3 个新模板 + 文档系统统一（ae-sdd-doc/）+ 路由 4 维增强 + 9 SKILL 迁移 + 存量迁移工具；详见 CHANGELOG/2026-06-17-requirement-analysis-full.md）
+> **版本：** 2026-06-17（**🆕 SKILL 间能力调用规范化**：项目资产 §G 升级为场景化服务 API + 7 个 SKILL 改为调用 assets.forXxx() + ae-sdd-doc/ 路径全面修正 + code-review 多 Agent 编排去 DRY + pending-questions 机制）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -222,7 +222,7 @@ docs/                                     # 🆕
 | **proposal-skill** | `skills/cross-cutting/proposal-skill.md` | **统一问题载体**。4 段必填（原本/目标/方案/涉及）+ 7 道闸 + 5 步走流程（改 Story → TestCase → Task → Coding → Test）+ 7 渠道接入 |
 | **🆕 document-storage-skill**（强化） | `skills/cross-cutting/document-storage-skill.md` | **横切依赖标准 + 文档系统统一**。8 类流程目录（PRD/RA/DR/Story/Task/Coding/Test/CR）+ 版本号 v{major}.{minor} + ChangeLog + 关联性分析（业务 0/1 + 逻辑 0/1）+ gitignore 自动生成 + 存量迁移 API（migrate_old_docs）|
 | **agent-orchestration-skill** | `skills/cross-cutting/agent-orchestration-skill.md` | 任务节点**内**子任务拆分 + 多 Agent 并行（5 Agent 上限）+ 4 级故障补救 + 负载均衡 + 状态跟踪 + **§13 跨 AI 工具适配抽象层**（SubAgent Adapter Interface）|
-| **🆕 project-assets-update-skill**（强化） | `skills/cross-cutting/project-assets-update-skill.md` | **7 层索引**（§A 资产大纲 / §B 模块索引 / §C 字段索引 / §D 组件索引 / §E API 索引 / §F 关键词反向索引 / §G 资产读取 API）；按需加载而非全文加载 |
+| **🆕 project-assets-update-skill**（强化） | `skills/cross-cutting/project-assets-update-skill.md` | **7 层索引**（§A 资产大纲 / §B 模块索引 / §C 字段索引 / §D 组件索引 / §E API 索引 / §F 关键词反向索引 / §G 资产读取 API）；按需加载而非全文加载；🆕 §G 升级为对外服务契约（8 个场景化 API：assets.forStoryGenerate / forStoryReview / forCoding / forCodeReview 等，调用方 SKILL 禁止直接全文读取 assets.md） |
 
 ### 3.4 模板与标准（`templates/` + `standards/` + `assets/` + `scripts/`）
 
@@ -666,7 +666,7 @@ skills/ae-sdd/
 | 场景 | 涉及文件 |
 |------|---------|
 | 新增流程节点 | 1. 新 SKILL 2. auto-engineering-skill §智能路由表 3. auto-engineering-update-skill 边界表 4. **README §3 + §4.2 + §8.5 + 末行日期** |
-| 修改横切依赖 | 1. 横切依赖 SKILL 2. 各调用方 SKILL 的"📦 文档存放前置调用"段 3. auto-engineering-update-skill 边界表 4. **README §3 功能清单对应行 + 末行日期** |
+| 修改横切依赖 | 1. 横切依赖 SKILL 2. 各调用方 SKILL 的"📦 文档存放前置调用"段 3. auto-engineering-update-skill 边界表 4. **README §3 功能清单对应行 + 末行日期**；🆕 修改 project-assets-update-skill §G（场景 API 增减）时，同步更新所有调用方 SKILL 的 assets.forXxx() 调用 |
 | 改造节点 SKILL | 1. 节点 SKILL 2. **README §3 功能清单对应行 + 末行日期** 3. auto-engineering-skill §智能路由表（场景）|
 | 废弃 SKILL | 1. SKILL 顶部加"DEPRECATED" 2. **README §3 标记"已废弃" + 末行日期** 3. auto-engineering-update-skill 边界表删行 |
 | 🆕 新增需求分析 SKILL 链路 | 1. 3 个新 SKILL 2. ae-sdd-skill §智能路由表 3. ae-sdd-update-skill 边界表 4. README §1.2/§3.2/§4.1/§5.6/末行日期 5. CHANGELOG/ |
@@ -708,7 +708,7 @@ skills/ae-sdd/
 
 ---
 
-**最后更新：** 2026-06-17（**需求分析体系重大重构（13 项任务 11 Agent 协作）**：🆕 新增 3 个核心 SKILL（requirement-analysis 1056 行 / dr-generate 1056 行 / dr-review 1082 行）+ 3 个新模板（PRD / Issue / RA）+ 文档系统统一（ae-sdd-doc/ 8 类流程目录 + 版本号 v{major}.{minor} + ChangeLog + 关联性分析业务 0/1 + 逻辑 0/1 + gitignore 自动生成）+ 路由 4 维增强（来源×规模×现有产物×项目类型，融合旧 4 类需求 fallback）+ 9 个现有 SKILL 路径从硬编码改为 documentStorage.resolve_path() API（25 处旧路径残留全部清空）+ 存量迁移工具（scripts/migrate-docs.mjs 444 行 默认 DRY-RUN + docs/migration-guide.md 287 行）+ 项目资产 7 层索引化（§A 资产大纲 / §B 模块 / §C 字段 / §D 组件 / §E API / §F 反向 / §G 读取 API，按需加载而非全文加载））
+**最后更新：** 2026-06-17（SKILL 间能力调用规范化（二轮）：项目资产 §G 场景化 API 8 个 + 7 SKILL 调用方式统一 + ae-sdd-doc 路径全面修正 + code-review 多 Agent 去重 DRY -160行 + agent-orchestration 示例路径修正 + pending-questions 机制 + 直接修改边界说明 + 并行执行引用声明）
 **下次审查：** 每月 1 号（与项目资产审计同步）
 
 ---

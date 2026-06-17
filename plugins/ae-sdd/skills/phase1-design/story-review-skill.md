@@ -123,7 +123,7 @@ description: 根据 DR + PRD + 产品原型 + Story 模板，执行固定五阶�
 │                                             │
 │  第一步：读取输入（7 件套）                   │
 │    DR + PRD + 产品原型 + Story + 模板         │
-│    + 约束 + 项目资产                          │
+│    + 约束 + 项目资产（§4/§6/§7/§B）              │
 │       ↓                                     │
 │  第二步：挖掘缺陷                            │
 │       │  ┌─ 五阶段并行挖掘（A-E 各派 1 Agent，只读）│
@@ -289,11 +289,27 @@ DR 是 Story 的设计源头，所有 Story 内容必须可追溯到 DR：
 
 ### 1.4 读取约束文档
 
-`life-team-ai-standards/constraints/` 下所有约束。
+调用 `document-storage-skill.get_constraints(projectKey)` 动态定位并读取当前项目的所有约束文件。
 
 ### 1.5 读取已有补充说明（仅作上下文参考，不得作为跳过依据）
 
 读取补充说明文档仅为了解历史 Review 记录，**不得基于历史完成状态跳过任何检查项**。每次进入 Story Review 都必须执行完整的五阶段审查，对所有检查项重新判定，不受历史结论影响。即使上一轮某项判定为"误报"，本轮仍需重新检查，因为 Story 内容可能已变更。
+
+### 1.6 读取项目资产（via project-assets-update-skill）
+
+**项目资产（via project-assets-update-skill）：**
+
+> 🔴 **强制：** 禁止直接读取 `{projectKey}.assets.md` 全文。
+> 调用 `project-assets-update-skill.assets.forStoryReview(projectKey)` 返回：
+> - §4 DDD 内部分层落点（包路径 / 角色 / 典型类）
+> - §6 工程约束（分层 / 命名 / 数据库 / 安全 / 测试规范）
+> - §7 跨服务契约入口（Feign 服务名 / 错误码段）
+> - §B 相关模块索引（涉及模块的详情）
+>
+> **精准查询（需要时）：**
+> - 验证字段：`assets.table(projectKey, tableName)`
+> - 核查 API 契约：`assets.api(projectKey, method)`
+> - 模块详情：`assets.module(projectKey, moduleName)`
 
 ---
 
@@ -310,6 +326,8 @@ DR 是 Story 的设计源头，所有 Story 内容必须可追溯到 DR：
 > **降级规则：** 若运行环境不支持并行 Agent，则按 A → B → C → D → E 顺序串行执行，每阶段产出结论后进入下一阶段。无论并行还是串行，**五个阶段的全部检查项都必须执行，不得跳过任何阶段或检查项**。
 >
 > **重要：** 并行的只是"挖掘缺陷"（只读）。第三步起的判定、记录、修复都是写操作，必须由主 Agent 串行执行。子 Agent 只负责挖掘和报告缺陷，不得修改任何文档。
+>
+> **并行执行机制：** 当前为逻辑并行（同一 AI 轮流推进每个阶段）。若需物理 sub-agent 并行，参见 [`agent-orchestration-skill.md`](../cross-cutting/agent-orchestration-skill.md) 的任务拆分协议。
 
 ### 阶段 A：DR-Story 一致性审查（逐字段对比）
 
@@ -1322,7 +1340,7 @@ Story ID：{STORY-ID}
 | # | 动作 | 产出物 | 门禁 |
 |---|------|--------|------|
 | 0 | **Story 准入检查** | 准入检查记录 | 🔴 8 项准入全过；未过 → 拒绝进入第 1 步 |
-| 1 | 读取 DR + Story + 模板 + 约束 + 已有 Supplement | — | 全部文件已读取 |
+| 1 | 读取 DR + PRD + 原型 + Story + 模板 + 约束 + 已有 Supplement + 项目资产（调用 `project-assets-update-skill.assets.forStoryReview(projectKey)`） | — | 全部文件已读取；项目资产 §4/§6/§7/§B 已加载 |
 | 2A0 | 阶段 A0：DR 应审查对象清单 | A0 清单 | 🔴 清单覆盖全部维度，逐项有"应被覆盖/实际覆盖"两列对比 |
 | 2A | 阶段 A：DR-Story 一致性审查 | 阶段 A 结论（含 A0） | 逐字段对比完成，结论已产出，每条结论附 cite 证据 |
 | 2B | 阶段 B：AC 完整性审查 | 阶段 B 结论 | 全部 AC 项已检查，结论已产出 |

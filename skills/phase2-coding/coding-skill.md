@@ -78,7 +78,7 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 | Story 文档路径 | 当前 Story | 重/小任务必填；**🆕 微任务不传**（无 Story 上下文）|
 | TestCase 文档路径 | 已生成 TestCase | 重任务必填；小任务按需；**🆕 微任务按需** |
 | 当前 Task 基础信息 / Task 列表 | Story 实现任务映射（重/小任务）<br>**🆕 微任务**：任务简述 + 涉及工程 + 涉及文件范围 | 必填 |
-| 项目资产 | `document-storage-skill.get_assets(projectKey).assetsPath` | ✅ 必填 |
+| 项目资产 | `project-assets-update-skill.assets.forCoding(projectKey)` — 返回 §4 + §5 + §6 | ✅ 必填 |
 | 约束文档 | `document-storage-skill.get_constraints(projectKey)` | ✅ 必填 |
 | CodingModel | `document-storage-skill.get_thinking_engine()` | ✅ 必填 |
 
@@ -126,7 +126,7 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 | TestCase 文档路径 | 已生成 TestCase | 重任务必填；小任务按需；**🆕 微任务按需** |
 | Task 文档目录 | `documentStorage.resolve_path(intent="TASK", storyId, taskId)`（重/小任务）<br>**🆕 微任务不传** | 条件必填 |
 | 统一版 CodingPlan 路径 | `documentStorage.resolve_path(intent="CODING_PLAN", storyId)`（重/小任务）<br>**🆕 微任务**：`documentStorage.resolve_path(intent="CODING_PLAN", taskName=事务简称, scope="service")` | 必填 |
-| 项目资产 | `document-storage-skill.get_assets(projectKey).assetsPath` | ✅ 必填 |
+| 项目资产 | `project-assets-update-skill.assets.forCoding(projectKey)` — 返回 §4 + §5 + §6 | ✅ 必填 |
 | 工程目录 | `document-storage-skill.get_git_path(projectKey)`（不再由用户直接传入磁盘路径）| ✅ 必填 |
 | CodingModel | `document-storage-skill.get_thinking_engine()` | ✅ 必填 |
 | **🆕 任务规模标识** | `task_scale: heavy / small / micro` | ✅ 必填（决定 §4.2 / §6 走哪条分支）|
@@ -1422,8 +1422,8 @@ public class Ticket {
 > **本章配套资产（🆕 2026-06-10 路由改造：不再直接引用路径）：**
 > - 项目资产 schema：`document-storage-skill.get_assets_schema()`
 > - 项目资产 starter 模板：`document-storage-skill.get_assets_template()`
-> - **当前项目资产：`document-storage-skill.get_assets(projectKey)` 返回的 `assetsPath`**（不再硬编码 `icec-cloud-boss`）
-> - **当前项目资产更新日志：`document-storage-skill.get_assets(projectKey)` 返回的 `updateLogPath`**
+> - **当前项目资产：`project-assets-update-skill.assets.forCoding(projectKey)` — 返回 §4 DDD 内部分层落点 + §5 命名约定 + §6 工程约束**（不再硬编码 `icec-cloud-boss`）
+> - **精准查询（按需）：`assets.module(name)` / `assets.component(name)` / `assets.table(name)`**
 > - Code Plan 模板：`../../templates/coding/be-coding-plan-template.md`（SKILL 内模板，不随工程变化）
 
 ### 核心设计哲学
@@ -1439,13 +1439,15 @@ public class Ticket {
 **输入：** `{STORY-ID}` + `{project-key}`
 
 **动作：**
-> **📍 详细 4 步操作（检查存在/读取核心章节/确认 lastAuditedAt/写 Plan 头部声明）已迁入 [`project-assets-update-skill.md` §6 动作 4：读取](../cross-cutting/project-assets-update-skill.md)。** 本节只保留编排级门禁与衔接说明。
+> **📍 直接调用场景化 API，不再跳转 project-assets-update-skill §6 动作 4。**
 
-1. **加载并执行** [`project-assets-update-skill.md` §6 动作 4：读取](../cross-cutting/project-assets-update-skill.md)
-2. 项目资产缺 → 走 `project-assets-update-skill.md §3 动作 1：生成`（**禁止**继续 ④bis）
-3. 项目资产过期（`lastAuditedAt > 90 天`）→ 走 `project-assets-update-skill.md §5 动作 3：审计`（**禁止**继续 ④bis）
-4. 项目资产在 30-90 天 → 建议先跑 `project-assets-update-skill.md §4 动作 2：更新`（推荐）
-5. 完成后在 Plan 头部 §1 写"项目资产已就绪"声明（4 字段：路径/版本/引用章节/lastAuditedAt）
+1. 调用 `project-assets-update-skill.assets.forCoding(projectKey)`
+   返回：§4 DDD 内部分层落点 + §5 命名约定 + §6 工程约束
+   → 精准查询（需要时）：`assets.module(name)` / `assets.component(name)` / `assets.table(name)`
+2. 资产不存在 → 停止，先运行 `project-assets-update-skill §3 生成动作`（**禁止**继续 ④bis）
+3. 资产过期（`lastAuditedAt > 90 天`）→ 停止，先运行 `project-assets-update-skill §5 审计`（**禁止**继续 ④bis）
+4. 资产 30-90 天 → 建议先跑 `project-assets-update-skill §4 更新`（推荐）
+5. 完成后在 Plan 头部 §1 写"项目资产已就绪"声明（路径/lastAuditedAt/引用章节）
 
 **输出：** 已在 Plan §1 项目资产引用块填写完整
 
@@ -1504,7 +1506,7 @@ public class Ticket {
 **输入：** §2 分层归类结果 + 项目资产 §4 DDD 内部分层落点
 
 **动作：**
-1. 读项目资产 §4，匹配每个类对应的精确包路径
+1. 调用 `assets.sections(projectKey, "§4")` 或直接使用步骤 1 返回的 §4 内容，匹配每个类对应的精确包路径
 2. 例：Application 层的 `BossUserAppService` → `icec-cloud-boss-user/icec-cloud-boss-user-application/src/main/java/com/casstime/cloud/boss/user/application/appservice/BossUserAppService.java`
 3. 填入 Code Plan §5 类骨架的"包路径"列
 
@@ -1924,6 +1926,9 @@ TicketPriority priority = TicketPriority.HIGH;  // 枚举值
 │                  │                                               │
 │                  ├─ 否 → 直接修改 Task → 重新 Coding              │
 │                  │         （Task 本身描述与 Story/AC 不符）        │
+│                  │         ⚠️ 边界：Task 层问题且与 Story/DR 无关时方可直接修；│
+│                  │         若问题根因在 Story 或 DR，必须先走 proposal-skill │
+│                  │         触发 story-update / dr-update，不可直接改 Task。  │
 │                  │                                               │
 │                  └─ 是 → ④ 判定：是否 DR 问题？                    │
 │                              │                                   │

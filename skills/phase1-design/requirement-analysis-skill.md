@@ -327,6 +327,8 @@ For each 输入类型：
 ## 第一步：8 维度并行挖掘
 
 > **🔴 关键：** 8 维度**并行执行**（不是顺序），每个阶段独立产出，最后汇总为 RA 文档 12 章节。
+>
+> **并行执行机制：** 当前为逻辑并行（同一 AI 轮流填充每个维度）。若需物理 sub-agent 并行，参见 [`agent-orchestration-skill.md`](../cross-cutting/agent-orchestration-skill.md) 的任务拆分协议。
 
 ### 阶段 A：角色分析（→ RA §2）
 

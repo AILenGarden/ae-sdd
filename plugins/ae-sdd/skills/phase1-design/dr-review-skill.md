@@ -177,7 +177,7 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 | 0-1 | DR 必填章节全部非空 | 检查 dr-template 标注 `核心` 的章节（§2/§3/§4/§5/§7/§12）是否都有实质内容（非占位符、非"待补充"、非"TBD"） | "必填章节 [X/Y] 为空，请补完" |
 | 0-2 | RA 文档已生成 | RA 文档存在且 12 章节完整 | "无 RA 文档，DR Review 缺少需求对照基准" |
 | 0-3 | PRD 已提供 | PRD 文档存在或用户明确说"无 PRD" | "无 PRD，无法做 A 阶段业务目标对齐" |
-| 0-4 | 项目资产已加载 | 项目资产大纲（assets/）已自动加载 | "项目资产未加载，无法做 B 阶段架构对齐" |
+| 0-4 | 项目资产已加载 | 调用 `project-assets-update-skill.assets.forDrGenerate(projectKey)` 返回 §3 + §5 + §6 + §7 + §D + §E（**禁止**直接全文读取 assets.md） | "项目资产未加载，无法做 B 阶段架构对齐" |
 | 0-5 | 设计目标 ≥ 3 条 | 统计 DR §2 设计目标数量 | "设计目标不足 3 条，颗粒度过粗" |
 | 0-6 | 关键决策 ≥ 1 条 | 统计 DR §4 关键决策数量，且每条必须有"接受的代价" | "无关键决策或决策缺'接受的代价'" |
 | 0-7 | 至少 1 个 Story | DR §12 已拆分至少 1 个 Story | "无 Story 拆分，DR 未向下输出" |
@@ -215,7 +215,7 @@ DR ID：{DR-ID}
 > 1. DR 草稿（18 章节）
 > 2. RA 文档（12 章节）
 > 3. PRD 文档（用户提供）
-> 4. 项目资产（assets/ 自动加载）
+> 4. 项目资产（调用 `project-assets-update-skill.assets.forDrGenerate(projectKey)` 加载，**禁止**直接全文读取 assets.md）
 > 5. dr-template + 约束文档（standards/constraints/）
 
 ### 1.1 读取 DR 草稿
@@ -260,15 +260,28 @@ PRD 是需求的源头，DR 是 PRD 的技术化映射。**PRD 是 A 阶段业�
 - 业务流程图（高层）
 - 涉及角色与权限矩阵
 
-### 1.4 读取项目资产
+### 1.4 调用项目资产服务
 
-**项目资产（assets/）**是 DR 评审的工程基线：
-- §3 分层架构定义
-- §4 DDD 落点
-- §7 契约入口
-- §C 字段索引
-- §D 复用扫描
-- §standards/constraints/ 9 个约束文件
+> 🔴 **强制：** 禁止直接读取 `{projectKey}.assets.md` 全文。
+> 调用 `project-assets-update-skill.assets.forDrGenerate(projectKey)` 返回：
+
+| 返回章节 | DR Review 用途 |
+|---------|--------------|
+| §3 抽象分层 | 验证 DR §5 架构概览与分层是否对齐 |
+| §5 命名约定 | 验证 DR §12 Story 拆分中的类/方法命名 |
+| §6 工程约束 | 阶段 B 架构合理性核查 |
+| §7 跨服务契约入口 | 阶段 C 接口契约完整性核查 |
+| §D 组件索引 | 验证设计方案是否有可复用的现有组件 |
+| §E API 索引 | 验证跨服务调用是否与现有 API 契约一致 |
+
+**精准查询（需要时）：**
+- 验证接口契约：`assets.api(projectKey, method)`
+- 验证表结构：`assets.table(projectKey, tableName)`
+- 查现有组件：`assets.component(projectKey, componentName)`
+
+**调用失败处理：**
+- 资产不存在 → 停止，提示用户先生成项目资产
+- 资产过期 > 90 天 → 停止，提示用户先审计
 
 ### 1.5 读取 DR 模板
 
