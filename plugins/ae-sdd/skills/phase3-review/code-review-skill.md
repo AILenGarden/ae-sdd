@@ -17,16 +17,18 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的 CodeReview 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.2 路径模板）：`design/story/be/coding/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md`
-> 2. **命名**（§3.1/3.2 命名规则）：**事件类文档带版本号 `v{N}-r{M}`**
-> 3. **重入判定**（§4 重入 SOP）：CodeReview 重入时**新增报告**（r 递增），不修改历史
+> **🔴 强制：** 本 SKILL 生成的 CodeReview 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=CODE_REVIEW` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/CR/{STORY-ID}/`
+> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**事件类文档带 `v{N}-r{M}`**
+> 3. **重入判定**（§0.6.11 `get_latest_version()`）：CodeReview 重入时**新增报告**（r 递增），不修改历史
+> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
+> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
 
-| 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
+| 输出文档 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| CodeReview 报告 | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md` | 带 `v{N}-r{M}` | **新增**（r 递增）|
-| ⑦bis 追溯矩阵 | `design/story/be/coding/{STORY-ID}/{STORY-ID}-追溯矩阵-v{N}-r{M}.md` | 带 `v{N}-r{M}` | **新增** |
-| CodeReviewer 报告（如多 reviewer 模式）| `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodeReview-{BE/AR/QA}-r{M}.md` | 带 reviewer 类型 + r{M} | **新增** |
+| CodeReview 报告 | `save_doc(intent="CODE_REVIEW", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增**（r 递增）|
+| ⑦bis 追溯矩阵 | `save_doc(intent="TRACE_MATRIX", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增** |
+| CodeReviewer 报告（如多 reviewer 模式）| `save_doc(intent="CODE_REVIEW", storyId, docType="CodeReview-{BE/AR/QA}", version={r:M})` | 带 reviewer 类型 + r{M} | **新增** |
 | CodeReviewUpdatePlan | 嵌入 CodeReview 报告 §十（**2026-06-06 改造：改为 Proposal 指针 → `proposal-skill.md`）** | 走 Proposal | Proposal 替代 |
 
 > 🔴 **关键：** 评审通过后**触发下游 Proposal 流程**（proposal-skill.md），评审发现的问题统一用 Proposal 描述。
@@ -575,7 +577,7 @@ Story ID：{STORY-ID}
 > **当前规则：**
 > - Code Review 评审发现 🔴 缺陷 → **触发 `proposal-skill.md §第二步`** 生成 Proposal
 > - Proposal 渠道标识 = 1（Code Review）
-> - Proposal 文档路径：`design/proposal/{STORY-ID}-Proposal-{N}-{标题}.md`（按 `document-storage-skill.md §2.6 路径模板`）
+> - Proposal 文档路径：`documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})`（按 `document-storage-skill.md §2.6 路径模板` 🆕 2026-06-17 修复 P1-3）
 > - 走 5 步流程（proposal-skill.md §第五步）：改 Story → 改 TestCase → 改 Task → 改 Coding → 改 Test
 > - 不直接生成 CodeReviewUpdatePlan
 >
@@ -807,15 +809,15 @@ Code Review 发现问题
 
 **🔴 强制：** AI 必须验证以下每个产出物真实存在，并与报告描述一致。
 
-| 产出物 | 实际路径 | 是否存在 | 与报告一致 |
+| 产出物 | 实际路径（由 `documentStorage.resolve_path()` 自动定位） | 是否存在 | 与报告一致 |
 |--------|---------|---------|----------|
-| Story 文档 | `design/story/be/{STORY-ID}.md` | □ | □ |
-| 统一版 CodePlan | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodingPlan.md` | □ | □ |
-| Coding 报告 | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodingReport-v{N}-r{M}.md` | □ | □ |
-| 测试用例 | `design/testcase/be/{STORY-ID}/{STORY-ID}-testcase.md` | □ | □ |
-| 测试报告 | `design/testcase/be/{STORY-ID}/{STORY-ID}-Report-v{N}-r{M}.md` | □ | □ |
+| Story 文档 | `documentStorage.resolve_path(intent="STORY", storyId)` | □ | □ |
+| 统一版 CodePlan | `documentStorage.resolve_path(intent="CODING_PLAN", storyId)` | □ | □ |
+| Coding 报告 | `documentStorage.resolve_path(intent="CODING_REPORT", storyId, version={v:N,r:M})` | □ | □ |
+| 测试用例 | `documentStorage.resolve_path(intent="TESTCASE", storyId)` | □ | □ |
+| 测试报告 | `documentStorage.resolve_path(intent="TEST_REPORT", storyId, version={v:N,r:M})` | □ | □ |
 | 源代码 | 工作目录对应工程 | □ | □ |
-| CodeReview 报告 | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md` | □ | □ |
+| CodeReview 报告 | `documentStorage.resolve_path(intent="CODE_REVIEW", storyId, version={v:N,r:M})` | □ | □ |
 
 > **🔴 任何产出物不存在或不一致 → 必须修正报告或补充产出物，不得跳过。**
 

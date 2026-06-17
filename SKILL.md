@@ -65,6 +65,9 @@ description: 端到端自动化工程 SKILL。从 DR 出发，经过 Story 生�
 
 | 用户输入关键词 / 场景 | 路由到 SKILL | 节点 |
 |---------------------|------------|------|
+| "分析需求" / "从 PRD 开始" / "需求拆解" / "需求分析" | **`requirement-analysis-skill.md`** | **Phase 1 入口 🆕** |
+| "生成 DR" / "写 DR" / "从 RA 生成 DR" / "DR 起草" | **`dr-generate-skill.md`** | **Phase 1 ① 🆕（规模=大时）** |
+| "DR 评审" / "DR Review" / "检查 DR" | **`dr-review-skill.md`** | **Phase 1 ② 🆕** |
 | "从 DR 开始" / "生成 Story" / "写 Story" / "Story 起草" | `story-generate-skill.md` | Phase 1 ① |
 | "Story 评审" / "审 Story" / "Story Review" | `story-review-skill.md` | Phase 1 ② |
 | "生成测试用例" / "补测试用例" | `testcase-generate-skill.md` | Phase 1 ③ |
@@ -102,6 +105,64 @@ description: 端到端自动化工程 SKILL。从 DR 出发，经过 Story 生�
 - 任务简述：业务名 / 功能名（2-3 个单词，尽量简短保留语义）
 - 完整例子：`cssv-rongcloud-callback`、`usv-cache-preheat`、`ubff-user-export`
 
+#### 🆕 4 维判定智能路由（2026-06-17 增强 — 与 4 类需求并存）
+
+> **核心立场（用户原话："保留原有能力的条件下新增能力"）：** 在 4 类需求（传统路径）之上**叠加** 4 维判定（增强入口）。**新旧并存，不替换**：
+> - **4 维判定优先尝试**——拿到 PRD/Issue/对话需求/BUG 等多源输入时优先走 4 维判定
+> - **4 维判据不全时 fallback**——来源或规模未知时 → 套用旧 4 类需求的 Story 7 区模板判定
+> - **完全保留**旧 4 类需求判定逻辑（标记为"传统路径"），绝不废弃
+
+**4 维判定（增强入口）：**
+
+```
+4 维判定（增强入口，优先尝试）：
+├─ 维度 1：来源
+│   ├─ PRD → requirement-analysis-skill
+│   ├─ Issue → requirement-analysis-skill（轻量）
+│   ├─ 对话需求 → requirement-analysis-skill（多轮对话）
+│   ├─ BUG/配置类 → coding-skill
+│   └─ 无输入 → 引导用户
+│
+├─ 维度 2：规模（来自 requirement-analysis 输出）
+│   ├─ 大 → dr-generate-skill
+│   ├─ 中 → story-generate-skill
+│   ├─ 小 → task-generate-skill
+│   ├─ 微 → coding-skill
+│   └─ 特殊(BUG/非代码) → coding-skill
+│
+├─ 维度 3：现有产物
+│   ├─ 无 → requirement-analysis-skill
+│   ├─ 有 RA + 无 DR → dr-generate-skill
+│   ├─ 有 DR 草稿 → dr-review-skill
+│   ├─ 有 DR + 无 Story → story-generate-skill
+│   └─ 有 Story → story-review-skill
+│
+└─ 维度 4：项目类型
+    ├─ 重任务 → `ae-sdd-doc/iterations/{date}/{DocType}/{STORY-ID}/`（由 documentStorage.resolve_path() 定位）
+    ├─ 小任务 → `ae-sdd-doc/iterations/{date}/Task/{事务简称}/`
+    └─ 微任务 → `ae-sdd-doc/iterations/{date}/Coding/{事务简称}/`
+```
+
+**融合策略：**
+- 入口：先尝试 4 维判定（来源 + 规模 + 现有产物 + 项目类型）
+- 4 维判据不完整时（未知来源或规模），fallback 到旧的 4 类需求
+- 旧的 4 类需求判定逻辑完全保留（标记为"传统路径"）
+- 新旧并存，路由表合并展示
+
+#### 🆕 4 维判定 vs 4 类需求对照（2026-06-17）
+
+> **目的：** 让用户清晰理解新旧关系——4 维判定是"增强入口"，4 类需求是"传统 fallback"，**不是替代关系**。
+
+| 维度 | 4 类需求（传统） | 4 维判定（增强） |
+|------|----------------|---------------|
+| 判定依据 | 套 Story 7 区模板 | 来源 × 规模 × 现有产物 × 项目类型 |
+| 起点 | 已有 Story / 手动任务 | 任何输入（PRD/Issue/对话/BUG） |
+| 规模裁定 | 隐含（套模板） | 显式（5 维评分） |
+| 路由目标 | 4 个固定 | 动态 6 类（requirement-analysis / dr-generate / dr-review / story-generate / task-generate / coding） |
+| 适用范围 | 中大/小/微任务 | 任意规模 + 任意来源 |
+| 关系 | fallback | 优先入口 |
+| 入口 SKILL | 直接套模板 | 必走 `requirement-analysis-skill` 先做来源识别 + 规模裁定 |
+
 **判定算法（路由决策算法第 2.2 步）：**
 
 ```
@@ -123,14 +184,15 @@ description: 端到端自动化工程 SKILL。从 DR 出发，经过 Story 生�
   3. 统计能填满的区数 → 套模板判定
 ```
 
-**路径差异：**
-- **类型 1-2（重任务）：** 文档收束到 `{STORY-ID} Doc/`，6 大顶层分类（Design/Review/Output/Update/TestReport/Runtime），归属 `design/` 相对路径
-- **类型 3（小任务）：** 文档收束到 `{工程根}/.ae-task/Task-{事务简称}/`（隐藏目录，如 `d:\Item\icec-cloud-boss\icec-cloud-life-cs-service\.ae-task\Task-cssv-rongcloud-callback\`）
-- **类型 4（微任务）：** 文档收束到 `{工程根}/.ae-plan/Plan-{事务简称}/`（隐藏目录，如 `d:\Item\icec-cloud-boss\icec-cloud-life-cs-service\.ae-plan\Plan-cssv-enum-fix\`）
+**路径差异（由 documentStorage.resolve_path() 自动定位）：**
+
+- **类型 1-2（重任务）：** 文档存到 `ae-sdd-doc/iterations/{date}/{DocType}/{STORY-ID}/`（如 `ae-sdd-doc/iterations/2026-06-17/Story/STORY-001-BE/`）
+- **类型 3（小任务）：** 文档存到 `ae-sdd-doc/iterations/{date}/Task/{事务简称}/`（由 `documentStorage.resolve_path(intent="TASK_SMALL", ...)` 定位）
+- **类型 4（微任务）：** 文档存到 `ae-sdd-doc/iterations/{date}/Coding/{事务简称}/`（由 `documentStorage.resolve_path(intent="PLAN_MICRO", ...)` 定位）
 
 **完整路径模板见 `document-storage-skill.md §2.9`。**
 
-### 路由决策算法（5 步）
+### 路由决策算法（🆕 2026-06-17 扩展为 7 步：保留原 5 步 + 新增 1.6 来源识别 + 1.7 规模识别）
 
 ```
 0. 【🆕 工作区与项目资产检查】（每次 SKILL 启动时执行，任何后续流程的前置）
@@ -171,7 +233,27 @@ description: 端到端自动化工程 SKILL。从 DR 出发，经过 Story 生�
    │              / "ae-sdd skill" + 任意变更动词
    ├─ 命中 → 路由到 `ae-sdd-update-skill.md`（自身维护工作流）
    │         跳过步骤 2-5，直接按 update-skill 的 5 步流程执行
-   └─ 未命中 → 进入步骤 2
+   └─ 未命中 → 进入步骤 1.6
+   ↓
+1.6 【🆕 来源识别】（2026-06-17 新增 — 4 维判定维度 1）
+   ├─ 识别输入类型：PRD / Issue / 对话需求 / BUG / 配置类 / 无输入
+   │   ├─ PRD / Issue / 对话需求 → 路由到 `requirement-analysis-skill.md`
+   │   │     （由 RA SKILL 内部完成规模裁定 → 进一步路由到 dr-generate / story-generate / task-generate / coding）
+   │   ├─ BUG / 配置类 → 路由到 `coding-skill.md`（直接走代码）
+   │   └─ 无输入 → 引导用户提供需求
+   └─ 完成来源识别后进入步骤 1.7
+   ↓
+1.7 【🆕 规模识别】（2026-06-17 新增 — 4 维判定维度 2）
+   ├─ 已有规模结果（来自 requirement-analysis 5 维评分）→ 用规模结果
+   │   ├─ 大 → dr-generate-skill
+   │   ├─ 中 → story-generate-skill
+   │   ├─ 小 → task-generate-skill
+   │   ├─ 微 → coding-skill
+   │   └─ 特殊（BUG/非代码）→ coding-skill
+   └─ 无规模结果（fallback 到旧 4 类需求）→ 套 Story 7 区模板判定
+       ├─ 套满 4+ 区 → 类型 2（中大任务，story-generate-skill）
+       ├─ 套满 2-3 区 → 类型 3（小任务，task-generate-skill）
+       └─ 套不出或只套 1 区 → 类型 4（微任务，coding-skill）
    ↓
 2. 关键词匹配（智能路由表 §1）
    ├─ 命中 6 大节点之一 → 路由到对应 SKILL
@@ -1684,6 +1766,9 @@ DR（需求文档）→ Story → Task → Coding
 
 | SKILL | 文件 | 职责 |
 |-------|------|------|
+| **🆕 Requirement Analysis** | [requirement-analysis-skill.md](../phase1-design/requirement-analysis-skill.md) | **需求分析 SKILL — Phase 1 起点。从 PRD/Issue/对话需求生成 RA 文档 + 规模裁定 + 路由决策** |
+| **🆕 DR Generate** | [dr-generate-skill.md](../phase1-design/dr-generate-skill.md) | **DR 生成 SKILL — 从 RA 文档生成 DR 草稿（规模=大 时触发）** |
+| **🆕 DR Review** | [dr-review-skill.md](../phase1-design/dr-review-skill.md) | **DR Review SKILL — 对 DR 草稿进行 5 阶段评审** |
 | DRtoStory | （已有，非本目录） | DR → Story 生成 |
 | Story Review | [story-review-skill.md](../phase1-design/story-review-skill.md) | Story 缺陷挖掘循环 |
 | TestCase Generate | [testcase-generate-skill.md](../phase1-design/testcase-generate-skill.md) | 测试用例生成（全场景覆盖 + 合规性校验） |
@@ -1729,6 +1814,9 @@ DR（需求文档）→ Story → Task → Coding
 | 0c | **（资产缺失时）** 明确告知用户，调用 `project-assets-update-skill.md §3 生成动作` | `{gitPath}/.ae-project/assets.md` | 生成完成后 AI 报告摘要（微服务数/分层/技术栈）；用户确认资产内容准确 |
 | 1 | 收集输入（DR 路径 + Story ID + 工作目录） | — | 三项信息已确认 |
 | 1a | **🤖 多 Agent 模式决策**（在 Step 2 之前，可选） | `state.json` 中 `multiAgentMode: true/false` | 检测到"何时启用"表任一条件时主动提议；用户明确同意后启用；启用后从角色库选 sub-agent；⑥.10 测试真实性强制派 `test-verifier` 独立验证 |
+| **1.5** | **🆕 自更新识别**（AE SKILL 自身维护，命中即短路） | — | 命中 `ae-sdd-update-skill.md`；未命中进入 1.6 |
+| **1.6** | **🆕 来源识别**（2026-06-17 4 维判定维度 1） | — | 来源=PRD/Issue/对话 → `requirement-analysis-skill.md`；BUG/配置类 → `coding-skill.md`；无输入 → 引导用户 |
+| **1.7** | **🆕 规模识别**（2026-06-17 4 维判定维度 2） | — | 已有规模结果 → 按规模路由（dr-generate / story-generate / task-generate / coding）；无规模结果 → fallback 套 Story 7 区模板（保留旧 4 类需求判定）|
 | 2 | 生成 Story（DRtoStory SKILL） | `{story}.md` | 文件已生成或已存在 |
 | 2b | **🔴 前端视角接口审视** | Story 文档追加"前端接口契约"章节（含 6 个维度：契约完整性/调用流程/状态展示/错误码/边界场景/联调支持） | 6 个维度门禁全部通过；至少 1 个完整请求+响应示例；不确定项已标注"需前端确认"；未通过禁止进入 Story Review |
 | 3 | Story Review（Story Review SKILL，含 F-Stage 前端契约 Review） | `{story}-Supplement.md` + `{STORY-ID}-StoryReviewUpdatePlan-r{轮次}.md`（有确认缺陷时） | Review 循环已退出；每轮确认缺陷均先出 Plan 再修改 Story；F-Stage 6 项检查全部通过 |

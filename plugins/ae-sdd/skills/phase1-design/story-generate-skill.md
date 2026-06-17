@@ -20,23 +20,24 @@ description: Story 生成 SKILL — Phase 1 ① 节点的环节内具体规则�
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的 Story 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.1 路径模板）：`design/story/be/{STORY-ID}.md`
-> 2. **命名**（§3.1/3.2 命名规则）：**设计类文档不带版本号**（Story 文档是"活的"，原地更新）
-> 3. **重入判定**（§4 重入 SOP）：Story 重入时**原地修改**（同名，不带版本号）
->
-> **本 SKILL 输出文档与 document-storage-skill §X 的对应：**
-> - Story 文档 → document-storage-skill §2.1 路径模板（设计文档类）
-> - Story Supplement（补充说明）→ §2.4 路径模板（review 类）
-> - Story-WriterReport → §2.2 路径模板（review 类）
-> - Story Review 报告（评审反馈）→ §2.3 路径模板（review 类）
+> **🔴 强制：** 本 SKILL 生成的 Story 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=STORY` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/Story/`
+> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
+> 3. **重入判定**（§0.6.11 `get_latest_version()`）：Story 重入时**新增版本**（v 递增），不修改历史
+> 4. **关联性分析**（§0.6.8 `choose_iteration()`）：业务=0 ∧ 逻辑=0 → 强制问用户
+> 5. **ChangeLog**（§5 ChangeLog 机制）：`save_doc()` 自动追加
+> 6. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
 
-| 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
+**本 SKILL 输出文档与 document-storage-skill API 调用对应：**
+
+| 输出文档 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| Story 主文档 | `design/story/be/{STORY-ID}.md` | 不带版本号 | 原地修改（同名）|
-| Story Supplement | `design/story/be/review/{STORY-ID}/{STORY-ID}-Supplement.md` | 不带版本号 | 原地累加 |
-| Story-WriterReport | `design/story/be/{阶段}/{STORY-ID}-Story-WriterReport.md` | 不带版本号 | 原地修改 |
-| 跨轮 Review 对比表 | `design/story/be/review/{STORY-ID}/{STORY-ID}-ReviewCompare-v1-to-v2.md` | 带 v1-to-v2 | 新增（每对比）|
+| Story 主文档 | `save_doc(intent="STORY", storyId, version={major:1,minor:0})` | v{major}.{minor} | 新增版本（v 递增）|
+| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
+| Story-WriterReport | `save_doc(intent="STORY_WRITER_REPORT", storyId)` | 带 r{N} | 新增（r 递增）|
+| 跨轮 Review 对比表 | `save_doc(intent="REVIEW_COMPARE", storyId, version="v1-to-v2")` | 带 v1-to-v2 | 新增（每对比）|
+
+> **调用示例：** 详见 `document-storage-skill.md §15.5.3` 完整调用流程。
 
 ---
 
@@ -640,7 +641,9 @@ Story ID：{STORY-ID}
 
 ### 第二步产出：Story 文档初稿
 
-按 `templates/design/story-template.md` 模板汇总 7 阶段产出，写入 `design/story/be/{STORY-ID}.md`。
+按 `templates/design/story-template.md` 模板汇总 7 阶段产出。
+
+**文件路径：** 通过 `documentStorage.resolve_path(intent="STORY", storyId, docType="Story")` 取得（详见 `document-storage-skill.md §0.6.1`）。
 
 ---
 
@@ -669,9 +672,10 @@ Story ID：{STORY-ID}
 
 ## 第四步：写入 Story 文档
 
-按 [`templates/design/story-template.md`](../../templates/design/story-template.md) 模板汇总 7 阶段产出，写入 Story 文档。
+按 [`templates/design/story-template.md`](../../templates/design/story-template.md) 模板汇总 7 阶段产出。
 
-**文件路径：** `design/story/be/{STORY-ID}.md`（具体路径见 `document-storage-skill.md` 文档存放标准）
+**文件路径：** 通过 `documentStorage.resolve_path(intent="STORY", storyId, docType="Story")` 自动定位（详见 `document-storage-skill.md §0.6.1`）
+**🔴 强制：** 写入前必须先调用 `save_doc()`（自动版本号 + ChangeLog + .gitignore 维护），用户确认初稿后再写入磁盘。
 
 **🔴 强制：** 写入前先打印 Story 文档初稿（用 Read 显示），用户确认后再写入磁盘。
 
@@ -902,8 +906,8 @@ input:
   - templates/design/story-template.md
 
 output:
-  deliverable: design/story/be/{STORY-ID}.md
-  report: {STORY-ID}-Story-WriterReport.md
+  deliverable: 由 documentStorage.resolve_path(intent="STORY", storyId, docType="Story") 自动定位
+  report: 由 documentStorage.resolve_path(intent="STORY_WRITER_REPORT", storyId) 自动定位
 
 standards:
   - 走 story-generate-skill.md §第一步 bis/第二/三/四/六/七步 完整流程

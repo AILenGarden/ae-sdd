@@ -186,7 +186,7 @@ report_back:
 | 原则 | 说明 |
 |------|------|
 | **input 必填具体文件路径** | 不写"看 Story"，写"design/story/be/STORY-001-BE.md" |
-| **output 必填具体产出路径** | 不写"出报告"，写"design/proposal/STORY-001-BE-Proposal-001.md" |
+| **output 必填具体产出路径** | 不写"出报告"，写"`documentStorage.resolve_path(intent="PROPOSAL", storyId="STORY-001-BE", version=1, title="示例")`" 🆕 2026-06-17 修复 P1-3 |
 | **standards 必填可验证标准** | 不写"做对"，写"7 道闸全 ✅" |
 | **context 必填足够上下文** | sub-agent 没有 root 的全上下文，必须给够 |
 | **deadline 必填** | 不写"尽快"，写"30 分钟" |
