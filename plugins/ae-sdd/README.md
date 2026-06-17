@@ -2,7 +2,7 @@
 
 > **定位：** 本目录是 `auto-engineering` 体系（简称 AE）的**母版**，包含 15 个 SKILL + 模板 + 项目资产 + 策略 + 脚本。本 README 是**使用指导书**（如何用 AE 跑项目）和**功能说明书**（每个 SKILL 做什么）。
 >
-> **版本：** 2026-06-11（最新变更：+ 路由自更新识别 + 项目资产经验文档 + 审核节点双支柱（讲解+对话内直接呈现）
+> **版本：** 2026-06-17（**🆕 需求分析体系重大重构**：新增 requirement-analysis / dr-generate / dr-review 3 个核心 SKILL + 3 个新模板 + 文档系统统一（ae-sdd-doc/）+ 路由 4 维增强 + 9 SKILL 迁移 + 存量迁移工具；详见 CHANGELOG/2026-06-17-requirement-analysis-full.md）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -48,7 +48,7 @@ bash scripts/install.sh
 
 ### 1.1 核心价值
 
-- **流程自动化**：9 步流程从 DR 到上线的全自动化（人工仅在 4 个审核节点介入）
+- **流程自动化**：从 PRD/Issue/对话需求出发，9 步流程到上线的全自动化（人工仅在 5 个审核节点介入：🆕 RA 审核 + Story Review + Task Review + CodingPlan + CodeReview）
 - **质量可追溯**：每一步都有节点闸门 + 实时追溯链 + 证据要求（grep / 文件:行号 / 测试方法）
 - **跨项目复用**：模板 + 策略 + 项目资产 三层解耦，新项目零成本启动
 - **多 Agent 协作**：任务节点内可拆子任务并行（5 Agent 上限 + 4 级故障补救）
@@ -56,35 +56,40 @@ bash scripts/install.sh
 ### 1.2 9 步流程总览
 
 ```
-[DR 文档]
+[PRD / Issue / 对话需求]
+    ↓
+[🆕 Phase 0 需求分析] (requirement-analysis-skill)
+  ① 需求分析 (requirement-analysis-skill)         ← 8 维度挖掘 + 5 问自检 + 5 维规模裁定 + 6 类路由
+  ①.5 规模=大 → DR 生成 (dr-generate-skill)        ← 18 章节 DR
+  ①.6 DR 评审 (dr-review-skill)                    ← 5 阶段评审 + 4 条标尺
     ↓
 Phase 1 设计阶段
-  ① 生成 Story (story-generate-skill)        ← 7 阶段挖掘 + 实现方案决策基线 + 8 道闸
-  ② Story Review (story-review-skill)          ← 5 阶段并行挖掘 + ①bis 6 维度
-  ③ 生成测试用例 (testcase-generate-skill)    ← 3 层覆盖
+  ② 生成 Story (story-generate-skill)        ← 7 阶段挖掘 + 实现方案决策基线 + 8 道闸
+  ③ Story Review (story-review-skill)          ← 5 阶段并行挖掘 + ①bis 6 维度
+  ④ 生成测试用例 (testcase-generate-skill)    ← 3 层覆盖
     ↓
 Phase 2 实现阶段
-  ④ Task 生成 (task-generate-skill)           ← 含任务级 CodePlan
-  ⑤ Coding (coding-skill)                     ← 实时追溯链
+  ⑤ Task 生成 (task-generate-skill)           ← 含任务级 CodePlan
+  ⑥ Coding (coding-skill)                     ← 实时追溯链
     ↓
 Phase 3 验证阶段
-  ⑥ 测试真实性验证 (coding-skill 集成)         ← 8 类禁止 + 5 类必真实
-  ⑦ Code Review (code-review-skill)            ← 6 阶段评审 + 7 道闸
+  ⑦ 测试真实性验证 (coding-skill 集成)         ← 8 类禁止 + 5 类必真实
+  ⑧ Code Review (code-review-skill)            ← 6 阶段评审 + 7 道闸
     ↓
 [可上线的代码 + 完整报告 + 审计日志]
 ```
 
-### 1.3 4 个审核节点（人工介入）
+### 1.3 5 个审核节点（人工介入）
 
 | 节点 | 触发 | 内容 |
 |------|------|------|
+| 🔍 人工审核点 0 | **🆕 2026-06-17**：RA 文档生成后 | 用户审阅需求分析（角色矩阵 / 场景清单 / 规模评分表）|
 | 🔍 人工审核点 1 | Story Review 完成后 | 用户审阅 Story，确认设计决策 |
 | 🔍 人工审核点 2 | Task Review 完成后 | 用户审阅 Task，确认实现拆解 |
-| 🔍 人工审核点 2.5 | **🆕 2026-06-10**：CodingPlan 评审 | 用户审阅统一版 CodingPlan + 14 条门禁全过 |
-| 🔍 人工审核点 3 | ~~Coding 完成后（🗑️ 2026-06-10 删除，合并到 4）~~ | ~~用户审阅 Coding 报告~~ |
-| 🔍 人工审核点 4 | **🆕 2026-06-10 改名**：CodeReview 阶段完成确认（含 ⑥bis 一致性 + ⑦bis 对称性） | 用户审阅 CR 报告 + 确认评审通过 |
+| 🔍 人工审核点 2.5 | CodingPlan 评审 | 用户审阅统一版 CodingPlan + 14 条门禁全过 |
+| 🔍 人工审核点 4 | CodeReview 阶段完成确认 | 用户审阅 CR 报告 + ⑥bis 一致性 + ⑦bis 对称性 |
 
-> 4 → 5 个审核节点，加 CodingPlan 评审，删 Coding 完成后评审。
+> 5 个审核节点：🆕 RA 审核 + Story Review + Task Review + CodingPlan + CodeReview。
 
 ---
 
@@ -103,6 +108,9 @@ skills/ae-sdd/                                     # 母版根
 │   │   └── ae-sdd-update-skill.md               # SKILL 边界维护规范
 │   │
 │   ├── phase1-design/                                    # 第 2 层：Phase 1 ①+②+③
+│   │   ├── requirement-analysis-skill.md     # 🆕 Phase 0 需求分析（1056 行）
+│   │   ├── dr-generate-skill.md              # 🆕 DR 生成（1056 行）
+│   │   ├── dr-review-skill.md                # 🆕 DR 评审（1082 行）
 │   │   ├── story-generate-skill.md
 │   │   ├── story-review-skill.md
 │   │   ├── story-update-skill.md
@@ -139,13 +147,21 @@ skills/ae-sdd/                                     # 母版根
 ├── templates/                                             # 模板
 │   ├── coding/                                            # CodingPlan / CodeReview / Coding 报告
 │   ├── design/                                            # DR / Story / Task
+│   │   ├── prd-template.md                    # 🆕 PRD 模板
+│   │   ├── issue-template.md                  # 🆕 Issue 模板
+│   │   ├── ra-template.md                     # 🆕 RA 需求分析模板
+│   │   └── (DR / Story / Task 模板)
 │   ├── testcase/                                          # TestCase / 测试报告
 │   ├── proposal/                                          # Proposal
 │   └── project-assets/                                    # 项目资产更新日志
 │
 └── scripts/                                               # 辅助脚本
     ├── sync-to-plugin.sh
-    └── test_authenticity_scan.py
+    ├── test_authenticity_scan.py
+    └── migrate-docs.mjs                  # 🆕 存量迁移工具（DRY-RUN）
+
+docs/                                     # 🆕
+└── migration-guide.md                 # 存量迁移指南
 ```
 
 **AE 体系按"层级 + 职责"组织为 **4 层架构**（不变）：**
@@ -182,18 +198,21 @@ skills/ae-sdd/                                     # 母版根
 | **auto-engineering-skill** | `skills/orchestration/ae-sdd-skill.md` | **AE 体系核心**。统一入口 + 智能路由（**🆕 2026-06-10 4 类需求**：已有 Story / 中大任务 / 小任务 / 微任务）+ 流程编排（9 步流程）+ **🆕 5 审核节点（加 CodingPlan 评审，删 Coding 完成评审）** + 角色库（8 角色）|
 | **auto-engineering-update-skill** | `skills/orchestration/ae-sdd-update-skill.md` | SKILL 边界维护规范。判定"内容放哪个文件" + 健康度自检清单；步骤 4 新增：改动 AE-skill 时必须同步更新 README §3/§4.2/§8.5 及"最后更新"日期 |
 
-### 3.2 第 2 层：节点 SKILL（9 个）→ `skills/phase1-design/` + `phase2-task/` + `phase2-coding/` + `phase3-review/`
+### 3.2 第 2 层：节点 SKILL（12 个）→ `skills/phase1-design/` + `phase2-task/` + `phase2-coding/` + `phase3-review/`
 
 | Phase | SKILL | 文件 | 功能 |
 |------|-------|------|------|
-| 1 ① | **story-generate-skill** | `skills/phase1-design/story-generate-skill.md` | 从 DR 生成 Story（含 ①bis 6 维度前端契约）+ 7 阶段挖掘 + 实现方案决策基线 + 8 道闸 |
-| 1 ② | **story-review-skill** | `skills/phase1-design/story-review-skill.md` | Story 评审（5 阶段挖掘 + F-Stage 前端契约 + 4 标尺 + Plan-first）；退出后控制权交还主流程编排；**🆕 2026-06-10 上下文 7 件套（+PRD+产品原型）+ §A-UI 8 项 + §B-PRD 6 项** |
-| 1 ② | story-update-skill | `skills/phase1-design/story-update-skill.md` | 按 StoryReviewUpdatePlan 改 Story（已简化为 Proposal 指针）|
-| 1 ③ | **testcase-generate-skill** | `skills/phase1-design/testcase-generate-skill.md` | 生成测试用例（3 层覆盖 + Story/DR/PRD/原型 6 文件输入）|
-| 2 ④ | **task-generate-skill** | `skills/phase2-task/task-generate-skill.md` | Task 生成（任务级 CodePlan + 调 coding-skill ④bis SOP）+ 全局 Task Review；**🆕 2026-06-10 加"无 Story 上级文档"分支（小任务场景）** |
-| 2 ⑤ | **coding-skill** | `skills/phase2-coding/coding-skill.md` | ⑤ Coding 怎么写（④bis 5 步 SOP + 实时追溯链 Task→Story→DR→AI 犯蠢）；**🆕 2026-06-10 加"无 Story 上下文"独立决策分支（微任务场景）** |
-| 2 ⑤ | **coding-report-skill** | `skills/phase2-coding/coding-report-skill.md` | Coding 完成后出 Coding 报告（9 章节 + 7 道闸自检）|
-| 3 ⑦ | **code-review-skill** | `skills/phase3-review/code-review-skill.md` | Code Review（6 阶段评审 + 7 道闸 + 多 Agent 编排 + 3 种评审模式 A/B/C）|
+| **0 ①** | **🆕 requirement-analysis-skill** | `skills/phase1-design/requirement-analysis-skill.md` | 需求分析（8 维度挖掘 + 5 问自检 + 4 级缺口 + 5 维规模裁定 + 6 类路由）|
+| **0 ①.5** | **🆕 dr-generate-skill** | `skills/phase1-design/dr-generate-skill.md` | DR 生成（18 章节 + 实现方案决策基线 + 8 道闸）|
+| **0 ①.6** | **🆕 dr-review-skill** | `skills/phase1-design/dr-review-skill.md` | DR 评审（5 阶段 A-E + 4 标尺 + 漏报升级）|
+| 1 ② | **story-generate-skill** | `skills/phase1-design/story-generate-skill.md` | 从 DR 生成 Story（含 ①bis 6 维度前端契约）+ 7 阶段挖掘 + 实现方案决策基线 + 8 道闸 |
+| 1 ③ | **story-review-skill** | `skills/phase1-design/story-review-skill.md` | Story 评审（5 阶段挖掘 + F-Stage 前端契约 + 4 标尺 + Plan-first）；退出后控制权交还主流程编排；**🆕 2026-06-10 上下文 7 件套（+PRD+产品原型）+ §A-UI 8 项 + §B-PRD 6 项** |
+| 1 ③ | story-update-skill | `skills/phase1-design/story-update-skill.md` | 按 StoryReviewUpdatePlan 改 Story（已简化为 Proposal 指针）|
+| 1 ④ | **testcase-generate-skill** | `skills/phase1-design/testcase-generate-skill.md` | 生成测试用例（3 层覆盖 + Story/DR/PRD/原型 6 文件输入）|
+| 2 ⑤ | **task-generate-skill** | `skills/phase2-task/task-generate-skill.md` | Task 生成（任务级 CodePlan + 调 coding-skill ④bis SOP）+ 全局 Task Review；**🆕 2026-06-10 加"无 Story 上级文档"分支（小任务场景）** |
+| 2 ⑥ | **coding-skill** | `skills/phase2-coding/coding-skill.md` | ⑤ Coding 怎么写（④bis 5 步 SOP + 实时追溯链 Task→Story→DR→AI 犯蠢）；**🆕 2026-06-10 加"无 Story 上下文"独立决策分支（微任务场景）** |
+| 2 ⑥ | **coding-report-skill** | `skills/phase2-coding/coding-report-skill.md` | Coding 完成后出 Coding 报告（9 章节 + 7 道闸自检）|
+| 3 ⑧ | **code-review-skill** | `skills/phase3-review/code-review-skill.md` | Code Review（6 阶段评审 + 7 道闸 + 多 Agent 编排 + 3 种评审模式 A/B/C）|
 | - | dr-update-skill | `skills/phase1-design/dr-update-skill.md` | 按 DR 缺陷更新 DR 文档 |
 
 ### 3.3 第 2 层：横切依赖（4 个）→ `skills/cross-cutting/`
@@ -201,9 +220,9 @@ skills/ae-sdd/                                     # 母版根
 | SKILL | 文件 | 功能 |
 |-------|------|------|
 | **proposal-skill** | `skills/cross-cutting/proposal-skill.md` | **统一问题载体**。4 段必填（原本/目标/方案/涉及）+ 7 道闸 + 5 步走流程（改 Story → TestCase → Task → Coding → Test）+ 7 渠道接入 |
-| **document-storage-skill** | `skills/cross-cutting/document-storage-skill.md` | **横切依赖标准**。路径模板 + 命名规则（设计类不带 / 事件类带）+ 重入 SOP + 状态码 + 生命周期 + §0.5 重任务 `{STORY-ID} Doc/` 6 分类归档 + §2.6 三类任务规模路径（**🆕 2026-06-10 小任务 `.ae-task/` 微任务 `.ae-plan/` 隐藏目录**）|
+| **🆕 document-storage-skill**（强化） | `skills/cross-cutting/document-storage-skill.md` | **横切依赖标准 + 文档系统统一**。8 类流程目录（PRD/RA/DR/Story/Task/Coding/Test/CR）+ 版本号 v{major}.{minor} + ChangeLog + 关联性分析（业务 0/1 + 逻辑 0/1）+ gitignore 自动生成 + 存量迁移 API（migrate_old_docs）|
 | **agent-orchestration-skill** | `skills/cross-cutting/agent-orchestration-skill.md` | 任务节点**内**子任务拆分 + 多 Agent 并行（5 Agent 上限）+ 4 级故障补救 + 负载均衡 + 状态跟踪 + **§13 跨 AI 工具适配抽象层**（SubAgent Adapter Interface）|
-| **project-assets-update-skill** | `skills/cross-cutting/project-assets-update-skill.md` | 项目特定资产（微服务清单 / DDD 分层 / 命名约定 / 工程约束 / 契约入口）的生成/更新/审计/读取 4 动作；步骤 1 三路输入：CLAUDE.md（最高优先级）> README > AGENTS.md |
+| **🆕 project-assets-update-skill**（强化） | `skills/cross-cutting/project-assets-update-skill.md` | **7 层索引**（§A 资产大纲 / §B 模块索引 / §C 字段索引 / §D 组件索引 / §E API 索引 / §F 关键词反向索引 / §G 资产读取 API）；按需加载而非全文加载 |
 
 ### 3.4 模板与标准（`templates/` + `standards/` + `assets/` + `scripts/`）
 
@@ -225,7 +244,45 @@ skills/ae-sdd/                                     # 母版根
 
 ## 4. 使用指导：从 0 到 1 跑一个 Story
 
-### 4.1 前置准备（一次性）
+### 4.1 🆕 需求分析流程（从 PRD / Issue / 对话需求 开始 — 2026-06-17）
+
+**场景：** 用户只有一份 PRD / Issue / 一段对话需求，不知道怎么往下走。
+
+```
+Step 1：用户输入 "从 PRD 开始" / "帮我分析 XX 需求"
+    ↓
+AE-skill 智能路由（关键词"从 PRD 开始"→ Phase 0 ①）
+    ↓
+加载 requirement-analysis-skill.md
+    ↓
+按 8 维度挖掘 SOP：
+  A 角色矩阵（谁会用）
+  B 场景清单（什么场景）
+  C 业务流程（怎么走）
+  D 数据模型（需要什么数据）
+  E 业务规则（约束是什么）
+  F 设计方向（技术决策基线）
+  G 验收标准（AC）
+  H 假设与风险
+    ↓
+5 问自检 + 4 级缺口管理 + 5 维规模评分
+    ↓
+按规模结果路由：
+  - 大 → 走 dr-generate → dr-review → 续 Phase 1 ②
+  - 中 → 直接进 Phase 1 ② story-generate
+  - 小 → 跳过 Story 直出 Task + CodingPlan
+  - 微 → 直接 CodingPlan + Coding
+    ↓
+输出：ae-sdd-doc/iterations/{date}/RA/{requirement-id}.md
+    ↓
+触发 🔍 人工审核点 0（用户审阅需求分析）
+```
+
+### 4.2 后续流程（已分析后 — 从 DR 开始）
+
+**场景：** 用户已完成需求分析并拿到 DR，本节描述从 DR 到上线的标准流程。
+
+### 4.3 前置准备（一次性）
 
 **步骤 1：项目资产初始化**
 ```
@@ -243,7 +300,7 @@ AE-skill 路由 → project-assets-update-skill.md §3 生成动作
 - 读 `agent-orchestration-skill.md §1-3`（任务拆分原则）
 - 读 `proposal-skill.md`（统一问题载体）
 
-### 4.2 单个 Story 跑完（典型流程）
+### 4.4 单个 Story 跑完（典型流程）
 
 **场景：** 用户有 1 个 Story 要从 DR 写到上线。
 
@@ -332,7 +389,7 @@ Step 6：用户说 "全部通过"
 Story 完成，可上线
 ```
 
-### 4.3 重入流程
+### 4.5 重入流程
 
 **场景：** 用户跑了 1-2 轮 Coding 发现问题，需要重入。
 
@@ -348,7 +405,7 @@ AE-skill 读 state.json → 解析 currentPhase + currentStep
 Coding 完成 → CodingReport-v1-r2.md（r 递增，不修改历史）
 ```
 
-### 4.4 发现问题
+### 4.6 发现问题
 
 **场景：** 用户反馈 / Test 失败 / Code Review 发现问题。
 
@@ -419,21 +476,49 @@ AE-skill 路由（"修一下"→ 渠道 5 用户反馈）→ proposal-skill.md
     ↓ 纯实现问题直接改代码
 ```
 
+### 5.6 三语言翻译链（🆕 2026-06-17）
+
+**🔴 原则：** PRD（业务语言）→ DR（技术语言）→ Story（工程语言）
+
+- 业务侧：PRD 用业务语言描述（"用户能..."、"系统应..."）
+- 技术侧：DR 用技术语言描述（"领域模型"、"接口契约"、"状态机"）
+- 工程侧：Story 用工程语言描述（"实现方法"、"数据模型"、"Task 拆分"）
+
+`requirement-analysis-skill` 负责业务 → 技术翻译
+`dr-generate-skill` 负责技术方案落地
+`story-generate-skill` 负责工程实现拆分
+
 ---
 
 ## 6. 横切依赖（3 个）
 
-### 6.1 `document-storage-skill.md`（路径 + 命名 + 重入）
+### 6.1 `document-storage-skill.md`（🆕 2026-06-17 文档系统统一）
 
 **何时调用：** 任何生成/更新文档的 SKILL 在落地前**第一步**调用。
 
-**核心规则：**
-- **设计类**（Story/Task/CodePlan/TestCase/Supplement）→ **不带版本号**（原地更新）
-- **事件类**（Coding 报告/测试报告/CodeReview 报告）→ **带 v{N}-r{M}**（r 递增不修改历史）
-- **基础设施类**（项目资产/状态文件）→ **不带版本号**（更新走日志追踪）
-- **Proposal** → **按 N 编号**，**永不修改**（一次性写完，多处引用）
+**8 类流程目录（🆕）：**
+- PRD / RA / DR / Story / Task / Coding / Test / CR
 
-**完整路径模板见** `document-storage-skill.md §2`
+**统一存放：**
+- 主目录：`{工程根}/ae-sdd-doc/`
+- 迭代目录：`ae-sdd-doc/iterations/{YYYY-MM-DD}/`
+- ChangeLog：`iterations/{date}/{DocType}/ChangeLog/{doc-id}-changelog.md`
+
+**版本号（🆕）：**
+- 设计类文档：v{major}.{minor}（v1.0 → v1.1 → v2.0，旧版保留）
+- 事件类报告：v{N}-r{M}（r 递增）
+
+**关联性分析（🆕）：**
+- 业务关联 0/1（B1 业务域 / B2 业务场景 / B3 业务实体 / B4 业务规则）
+- 逻辑关联 0/1（L1 代码调用 / L2 数据流 / L3 状态流转 / L4 组件复用）
+- 强关联/中关联：默认入当前迭代；无关联：强制问用户
+
+**存量迁移（🆕）：**
+- `scripts/migrate-docs.mjs`（默认 DRY-RUN）
+- 旧路径：design/、.ae-task/、.ae-plan/、.spec/iterations/
+- 新路径：ae-sdd-doc/iterations/{date}/{DocType}/
+
+**完整 API 见** `document-storage-skill.md §11.5`
 
 ### 6.2 `proposal-skill.md`（统一问题载体）
 
@@ -505,6 +590,22 @@ AE-skill 路由（"修一下"→ 渠道 5 用户反馈）→ proposal-skill.md
 - `ae-sdd-skill.md` = 流程编排 + 智能路由（用户怎么用）
 - `ae-sdd-update-skill.md` = SKILL 边界维护规范（开发者怎么维护 SKILL 家族）
 
+### Q11：用户输入"从 PRD 开始"该走哪个 SKILL？（🆕 2026-06-17）
+
+**A：** AE-skill 智能路由 → `requirement-analysis-skill.md`。先生成 RA 文档 + 5 维规模裁定 → 按规模结果路由到大/中/小/微。
+
+### Q12：requirement-analysis 阶段是做什么的？（🆕 2026-06-17）
+
+**A：** 8 维度并行挖掘（角色/场景/流程/数据/规则/设计方向/AC/假设）+ 5 问自检 + 缺口管理。**不容许杜撰、不容许有歧义**。
+
+### Q13：关联性分析是什么？（🆕 2026-06-17）
+
+**A：** 文档存放前的关联度判定。业务关联 + 逻辑关联双维 0/1，命中即关联；全部 0 强制问用户放哪个迭代。详见 `document-storage-skill.md §6`。
+
+### Q14：ae-sdd-doc/ 与 design/、.ae-task/、.ae-plan/ 是什么关系？（🆕 2026-06-17）
+
+**A：** ae-sdd-doc/ 是新统一目录。design/、.ae-task/、.ae-plan/ 是旧路径，存量文档可通过 `scripts/migrate-docs.mjs` 一次性迁移（默认 DRY-RUN）。
+
 ---
 
 ## 8. 维护与扩展
@@ -568,6 +669,9 @@ skills/ae-sdd/
 | 修改横切依赖 | 1. 横切依赖 SKILL 2. 各调用方 SKILL 的"📦 文档存放前置调用"段 3. auto-engineering-update-skill 边界表 4. **README §3 功能清单对应行 + 末行日期** |
 | 改造节点 SKILL | 1. 节点 SKILL 2. **README §3 功能清单对应行 + 末行日期** 3. auto-engineering-skill §智能路由表（场景）|
 | 废弃 SKILL | 1. SKILL 顶部加"DEPRECATED" 2. **README §3 标记"已废弃" + 末行日期** 3. auto-engineering-update-skill 边界表删行 |
+| 🆕 新增需求分析 SKILL 链路 | 1. 3 个新 SKILL 2. ae-sdd-skill §智能路由表 3. ae-sdd-update-skill 边界表 4. README §1.2/§3.2/§4.1/§5.6/末行日期 5. CHANGELOG/ |
+| 🆕 文档系统统一 | 1. document-storage-skill §1-§8 2. 各调用方 SKILL 的"📦 文档存放前置调用"段 3. README §6.1/§3.3 4. ae-sdd-update-skill 边界表 5. README 末行日期 |
+| 🆕 路由 4 维增强 | 1. ae-sdd-skill §1.4/§1.5/§1.6/§1.7 2. ae-sdd-update-skill 边界表 3. README §1.1/§1.2/§1.3/末行日期 |
 
 ---
 
@@ -581,15 +685,18 @@ skills/ae-sdd/
 | 4 | document-storage-skill | 横向基础设施 | 任何生成/更新文档前 |
 | 5 | proposal-skill | 横向基础设施 | "修一下 XX" / 任何问题发现 |
 | 6 | project-assets-update-skill | 横向基础设施 | "生成/更新/审计/读取项目资产" |
-| 7 | story-generate-skill | 节点（Phase 1 ①）| "从 DR 开始" / "生成 Story" |
-| 8 | story-review-skill | 节点（Phase 1 ②）| "Story 评审" |
-| 9 | story-update-skill | 节点（Phase 1 ②）| "修改/补 Story" |
-| 10 | testcase-generate-skill | 节点（Phase 1 ③）| "生成测试用例" |
-| 11 | task-generate-skill | 节点（Phase 2 ④）| "生成 Task" |
-| 12 | coding-skill | 节点（Phase 2 ⑤）| "开始 Coding" / "代码写错了" |
-| 13 | coding-report-skill | 节点（Phase 2 ⑤）| "出 Coding 报告" |
-| 14 | code-review-skill | 节点（Phase 3 ⑦）| "Code Review 报告" |
-| 15 | dr-update-skill | 节点（-）| "修改/补 DR" |
+| 7 | requirement-analysis-skill | 节点（Phase 0 ①）| "分析需求" / "从 PRD 开始" / "需求拆解" |
+| 8 | dr-generate-skill | 节点（Phase 0 ①.5）| "生成 DR" / "写 DR" |
+| 9 | dr-review-skill | 节点（Phase 0 ①.6）| "DR 评审" / "DR Review" |
+| 10 | story-generate-skill | 节点（Phase 1 ②）| "从 DR 开始" / "生成 Story" |
+| 11 | story-review-skill | 节点（Phase 1 ③）| "Story 评审" |
+| 12 | story-update-skill | 节点（Phase 1 ③）| "修改/补 Story" |
+| 13 | testcase-generate-skill | 节点（Phase 1 ④）| "生成测试用例" |
+| 14 | task-generate-skill | 节点（Phase 2 ⑤）| "生成 Task" |
+| 15 | coding-skill | 节点（Phase 2 ⑥）| "开始 Coding" / "代码写错了" |
+| 16 | coding-report-skill | 节点（Phase 2 ⑥）| "出 Coding 报告" |
+| 17 | code-review-skill | 节点（Phase 3 ⑧）| "Code Review 报告" |
+| 18 | dr-update-skill | 节点（-）| "修改/补 DR" |
 
 ---
 
@@ -601,7 +708,7 @@ skills/ae-sdd/
 
 ---
 
-**最后更新：** 2026-06-10（**AE 三项整改 + 文档架构重构 + Story Review 7 件套上下文 + 4 类需求智能路由 + SKILL 母版内部目录全面重组**（按"流程节点 + 横切依赖"分类：13 SKILL 拆 7 子目录（orchestration/phase1-design/phase2-task/phase2-coding/phase3-review/cross-cutting），constraints/ + strategies/ 合并为 standards/，project-assets/ 改名 assets/） + 人工审核点 4 → 5（加 CodingPlan 评审，删 Coding 完成评审）+ 同工程根内的小/微任务文档改用 .ae-task/ .ae-plan/ 隐藏目录 + **🆕 ae-sdd 改名 + 母版/plugins 副本目录全部改名为 ae-sdd/ + marketplace.json 修复 + 新增 CHANGELOG/ 日志机制 + **🆕 document-storage 工程解耦改造（§0.5 定位原则 + §0.6 动态定位 API + §11.5 API 化调用 + project-assets-schema gitPath 强化）** + ae-sdd-update-skill.md §步骤 4 新增"README 版本号同步"未来防御**） + **🆕🆕 marketplace 副本 `plugins/ae-sdd/` 实际落地（不再悬空）+ sync 脚本扩展为三目标统一刷新（母版根 SKILL.md / 本机安装 / plugin 副本）+ 修复 sync 脚本入口路径 bug + ae-sdd-skill / ae-sdd-update-skill frontmatter `name` 字段统一改为 `ae-sdd` / `ae-sdd-update`**）
+**最后更新：** 2026-06-17（**需求分析体系重大重构（13 项任务 11 Agent 协作）**：🆕 新增 3 个核心 SKILL（requirement-analysis 1056 行 / dr-generate 1056 行 / dr-review 1082 行）+ 3 个新模板（PRD / Issue / RA）+ 文档系统统一（ae-sdd-doc/ 8 类流程目录 + 版本号 v{major}.{minor} + ChangeLog + 关联性分析业务 0/1 + 逻辑 0/1 + gitignore 自动生成）+ 路由 4 维增强（来源×规模×现有产物×项目类型，融合旧 4 类需求 fallback）+ 9 个现有 SKILL 路径从硬编码改为 documentStorage.resolve_path() API（25 处旧路径残留全部清空）+ 存量迁移工具（scripts/migrate-docs.mjs 444 行 默认 DRY-RUN + docs/migration-guide.md 287 行）+ 项目资产 7 层索引化（§A 资产大纲 / §B 模块 / §C 字段 / §D 组件 / §E API / §F 反向 / §G 读取 API，按需加载而非全文加载））
 **下次审查：** 每月 1 号（与项目资产审计同步）
 
 ---
