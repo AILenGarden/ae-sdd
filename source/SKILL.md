@@ -1984,16 +1984,16 @@ ae-sdd health
 
 ### 5. 版本管理
 
-- **本文件 = ae-sdd 母版**。任何项目实例（`~/.claude/skills/ae-sdd/` 或 `plugins/ae-sdd/`）都从母版派生。
-- **母版更新 → 跑 `bash sync-to-plugin.sh` → 项目实例跟随升级。**
-- **CHANGELOG 每次发版必更新**，格式见 `CHANGELOG/` 目录。
+- **本文件 (`source/SKILL.md`) = ae-sdd 母版（SSOT）**。任何项目实例（`~/.claude/skills/ae-sdd/`）都从母版构建。
+- **母版更新 → 跑 `bash scripts/build-dist.sh` → 生成 `dist/ae-sdd/` 实例化分发包 → 装到本地 Claude 或发布到 GitHub release。**
+- **CHANGELOG 每次发版必更新**，格式见 `source/CHANGELOG/` 目录。
 
-### 6. 实例化机制（🆕 v3.0 Layer 3）
+### 6. 实例化机制（🆕 v3.0 三层架构）
 
-> **Layer 1: 母版** = `D:\Item\ae-sdd\`（SSOT）
-> **Layer 2: 插件副本** = `plugins/ae-sdd/`（`sync-to-plugin.sh` 生成的构建产物）
-> **Layer 2: 安装副本** = `~/.claude/skills/ae-sdd/skills/ae-sdd/`（Claude Code 实际加载）
-> **Layer 3: 项目实例** = `<project>/.ae-sdd/`（具体项目，引用 + overrides 模式）
+> **Layer 1: 母版（SSOT）** = `source/`（开发者编辑这里，git 跟踪）
+> **Layer 2: 实例化分发包** = `dist/ae-sdd/`（`bash scripts/build-dist.sh` 构建产物，git ignored）
+> **Layer 3: 用户安装** = `~/.claude/skills/ae-sdd/`（由 `bash scripts/install.sh` 从 dist 装入，Claude Code 实际加载）
+> **Layer 4: 项目实例** = `<project>/.ae-sdd/`（具体项目，引用 + overrides 模式）
 
 **项目实例化命令：**
 

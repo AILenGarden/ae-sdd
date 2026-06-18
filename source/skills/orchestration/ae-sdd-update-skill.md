@@ -93,7 +93,7 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 
 > 当你发现某段内容"放错位置了"（或新增内容不知放哪），按此流程操作。
 
-> **母版声明：** `skills/ae-sdd/` 是 AE 体系唯一母版。所有 SKILL、templates、strategies、scripts 的日常维护只改母版；`plugins/ae-sdd/`、本地 Claude skills 目录等均视为发布/安装产物，不手工维护。
+> **母版声明（🆕 v3.0 改造）：** `source/` 是 AE 体系唯一母版（SSOT，git 跟踪）。所有 SKILL、templates、standards、assets、scripts 的日常维护只改 `source/`；`dist/ae-sdd/`（构建产物，git ignored）、本地 Claude skills 目录（`~/.claude/skills/ae-sdd/`）等均视为发布/安装产物，不手工维护。
 
 ### 步骤 1：识别内容类型
 
@@ -205,58 +205,84 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 - `project-assets/`
 - `README.md`
 
-### 默认规则
+### 默认规则（🆕 v3.0 双目录分层）
 
 | 对象 | 定位 | 维护方式 |
 |------|------|---------|
-| `D:\Item\ae-sdd\`（仓库根） | **唯一母版**（含根 `SKILL.md`） | 直接修改 |
-| `plugins/ae-sdd/` | 发布/插件副本（被 `.claude-plugin/marketplace.json` 引用） | 不手工改；由 `bash scripts/sync-to-plugin.sh` 从母版生成 |
-| `%USERPROFILE%/.claude/skills/ae-sdd/skills/ae-sdd` | 本地 Claude skills 安装目录 | 不手工改；需要即时生效时由同步脚本覆盖 |
-| **🆕 v3.0 母版根 `SKILL.md`**（仓库顶层入口） | 让 `git clone` / GitHub 浏览者一眼看到的 SKILL 入口 | **手工编辑（直接修改主入口）；tar 同步时自动包含** |
-| `SKILL.md`（任一目标下） | 插件/本地运行入口 | 不手工改；由母版 tar 同步自动覆盖 |
+| `source/`（仓库根 `source/`） | **唯一母版（SSOT）** | 直接修改（开发者编辑这里） |
+| `dist/ae-sdd/` | **实例化分发包**（构建产物，git ignored） | 不手工改；由 `bash scripts/build-dist.sh` 从 `source/` 构建 |
+| `~/.claude/skills/ae-sdd/` | **本地 Claude skills 安装** | 不手工改；由 `bash scripts/install.sh` 从 `dist/ae-sdd/` 装入 |
+| **🆕 v3.0 母版根 `SKILL.md`**（`source/SKILL.md`） | ae-sdd 唯一主入口 | **手工编辑（直接修改主入口）；build 时自动包含** |
+| `dist/ae-sdd/SKILL.md`（构建产物） | 分发包入口 | 不手工改；由 build-dist.sh 自动从 `source/SKILL.md` 复制 |
+| `~/.claude/skills/ae-sdd/SKILL.md`（安装副本） | 本地 Claude 加载入口 | 不手工改；由 install.sh 自动从 `dist/ae-sdd/SKILL.md` 复制 |
 
-> **🆕 v3.0 重大变更：** 母版根 `SKILL.md` 即为 ae-sdd 唯一主入口（直接编辑），不再从 `skills/orchestration/ae-sdd-skill.md` 派生。原派生文件 `skills/orchestration/ae-sdd-skill.md` **已删除**。同步脚本不再做"复制 SKILL.md"操作（tar 已包含）。
+> **🆕 v3.0 重大变更（2026-06-18）：**
+> 1. **目录结构重组**：仓库根改为 `source/`（母版）+ `dist/ae-sdd/`（分发包）双目录。
+> 2. **主入口已就位**：`source/SKILL.md` 即为 ae-sdd 唯一主入口（直接编辑），不再从 `skills/orchestration/ae-sdd-skill.md` 派生（原派生文件已删除）。
+> 3. **废弃 `plugins/ae-sdd/`**：v3.0 起 marketplace plugin 副本路径改为 `dist/ae-sdd/`，`plugins/ae-sdd/` 整个废弃。
+> 4. **脚本重命名**：`sync-to-plugin.sh` → `build-dist.sh`（构建）+ `install.sh`（安装）+ `dev-sync.sh`（开发者工具）。
+> 5. **安装路径简化**：`~/.claude/skills/ae-sdd/skills/ae-sdd/` → `~/.claude/skills/ae-sdd/`（去掉多余中间层）。
 
-### 修改后动作
+### 修改后动作（🆕 v3.0 工作流）
 
-1. 完成母版修改（直接改 `D:\Item\ae-sdd\SKILL.md` 等主入口文件）。
+1. 完成母版修改（直接改 `source/SKILL.md`、`source/skills/xxx-skill.md` 等主入口文件）。
 2. 执行本文件 §"内容回写到正确位置的 5 步流程" 中的重复性校验。
 3. 如本次变更需要在本地 Claude Skill 中立即生效，运行：
 
    ```bash
-   bash scripts/sync-to-plugin.sh
+   # 开发者推荐：build + install 一步到位
+   bash scripts/dev-sync.sh
+
+   # 或显式两步：
+   bash scripts/build-dist.sh  # source/ → dist/ae-sdd/
+   bash scripts/install.sh     # dist/ae-sdd/ → ~/.claude/skills/ae-sdd/
    ```
 
-4. 确认同步目标目录（**三个**，由同一次脚本调用产出）：
+4. 确认同步目标目录（**两个**，由 dev-sync 链式调用产出）：
 
    ```text
-   1) <仓库根>/SKILL.md                                    # 母版根入口（git clone/GitHub 首屏可见，直接编辑）
-   2) %USERPROFILE%/.claude/skills/ae-sdd/skills/ae-sdd   # 本地 Claude skills 安装目录（tar 复制）
-   3) <仓库根>/plugins/ae-sdd                              # marketplace plugin 副本（tar 复制）
+   1) <仓库根>/dist/ae-sdd/SKILL.md                      # 实例化分发包（build 产物）
+   2) ~/.claude/skills/ae-sdd/SKILL.md                   # 本地 Claude skills 安装（install 产物）
    ```
 
-5. 三个目标下的 `SKILL.md` 应**完全一致**（tar 整树复制保证）。
-6. 在最终回复中明确说明：本次是否已执行同步脚本；如未执行，说明"仅修改母版子文件，尚未同步到三个 SKILL.md 入口"。
+5. 两个产物下的 `SKILL.md` 应与 `source/SKILL.md` **完全一致**（tar 整树复制保证）。
+6. 在最终回复中明确说明：本次是否已执行 dev-sync / build-dist / install；如未执行，说明"仅修改母版，尚未分发/安装"。
 
-### 同步脚本说明
+### 同步脚本说明（🆕 v3.0 三脚本分工）
 
-- 脚本位置：`scripts/sync-to-plugin.sh`
-- 脚本职责（🆕 v3.0 简化）：
-  1. **校验母版根 `SKILL.md` 存在性**（不存在则终止同步）。
-  2. 将母版整树覆盖同步到本地 Claude skills 安装目录 `%USERPROFILE%/.claude/skills/ae-sdd/skills/ae-sdd`。
-  3. 同步生成仓库内的 marketplace plugin 副本 `plugins/ae-sdd/`（被 `.claude-plugin/marketplace.json` 引用）。
-  4. 三个 `SKILL.md` 入口**完全一致**（tar 整树复制保证）。
-  5. 剥离副本中的仓库管理产物：`plugins/`（防递归）、`.claude-plugin/marketplace.json`（plugin 副本不携带 marketplace 注册表），但**保留** `.claude-plugin/plugin.json`（plugin 自描述元数据）。
+| 脚本 | 位置 | 职责 |
+|------|------|------|
+| `build-dist.sh` | `scripts/build-dist.sh` | 从 `source/` 构建 `dist/ae-sdd/`（注入 VERSION + plugin.json，剥离 CHANGELOG/docs/marketplace.json）|
+| `install.sh` / `install.ps1` | `scripts/install.{sh,ps1}` | 从 `dist/ae-sdd/` 装到 `~/.claude/skills/ae-sdd/`（跨平台 + 本地/远程两模式）|
+| `dev-sync.sh` | `scripts/dev-sync.sh` | 开发者工具：build + install 组合 + `--watch` 监听模式 + `--uninstall` |
+
+**build-dist.sh 详细职责：**
+1. **校验母版 `source/SKILL.md` 存在性**（不存在则终止）。
+2. 从 `source/SKILL.md` YAML frontmatter 提取 `version` 字段。
+3. `tar` 整树复制 `source/` → `dist/ae-sdd/`，剥离 `CHANGELOG/` `docs/` `.idea/`。
+4. 剥离 `.claude-plugin/marketplace.json`（分发包不携带 marketplace 注册表）。
+5. 注入 `dist/ae-sdd/VERSION`（含 version + buildDate）。
+6. 注入 `dist/ae-sdd/.claude-plugin/plugin.json`（plugin 自描述元数据）。
+7. 验证 `dist/ae-sdd/SKILL.md` 存在性。
+
+**install.sh 详细职责：**
+1. 检测运行模式（远程 git clone / 远程 zip / 本地 build / 本地 dist）。
+2. 自动调 `build-dist.sh`（如果 dist 不存在）。
+3. 备份旧版（`${DST}.bak.<时间戳>`）。
+4. `cp -r dist/ae-sdd/. ~/.claude/skills/ae-sdd/`。
+5. 验证 SKILL.md + VERSION 写入。
 
 ### 禁止
 
 | 禁止 | 原因 | 正确做法 |
 |------|------|---------|
-| 只改 `plugins/ae-sdd/` 或本地 Claude skills 目录 | 产物会被下次同步覆盖，且母版丢失变更 | 只改 `D:\Item\ae-sdd\` 母版 |
-| 同时手工维护母版和插件副本 | 双源漂移，无法判断哪个是权威版本 | 母版单点维护，产物由脚本/发布流程生成 |
-| 修改母版后假设运行环境已自动更新 | 当前没有自动触发同步机制 | 需要即时生效时显式运行 `bash scripts/sync-to-plugin.sh` |
-| ~~手工编辑 `SKILL.md`~~ | ❌ v3.0 已废除此规则 | ✅ **v3.0 起，`SKILL.md` 是主入口，**直接编辑即可** |
-| ~~修改 `ae-sdd-skill.md` 后同步~~ | ❌ v3.0 已废除 | ✅ **v3.0 起，**直接修改 `SKILL.md`**，然后跑 `sync-to-plugin.sh`** |
+| 只改 `dist/ae-sdd/` 或本地 Claude skills 目录 | 产物会被下次 build/install 覆盖，母版丢失变更 | 只改 `source/` 母版 |
+| 同时手工维护母版和分发包 | 双源漂移，无法判断哪个是权威版本 | 母版单点维护，分发包由 `build-dist.sh` 生成 |
+| 修改母版后假设运行环境已自动更新 | 当前没有自动触发同步机制 | 需要即时生效时显式运行 `bash scripts/dev-sync.sh` |
+| ~~手工编辑 `SKILL.md`~~ | ❌ v3.0 已废除此规则 | ✅ **v3.0 起，`source/SKILL.md` 是主入口，**直接编辑即可** |
+| ~~修改 `ae-sdd-skill.md` 后同步~~ | ❌ v3.0 已废除 | ✅ **v3.0 起，**直接修改 `source/SKILL.md`**，然后跑 `dev-sync.sh`** |
+| ~~运行 `sync-to-plugin.sh`~~ | ❌ v3.0 已重命名 | ✅ **v3.0 起，**运行 `build-dist.sh` + `install.sh`（或 `dev-sync.sh` 一步到位）** |
+| ~~把构建产物 commit 到 git~~ | ❌ v3.0 已加 gitignore | ✅ **`dist/` 在 .gitignore 内，不应 commit** |
 
 ---
 
@@ -295,7 +321,7 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 - [ ] 任何 SKILL 不重复定义"DR 是什么 / Story 是什么"等基础概念（依赖上下文）
 - [ ] **README.md §3 SKILL 功能清单与目录中实际 `*-skill.md` 文件数量一致**（不多不少）
 - [ ] **README.md 末行"最后更新"日期 ≥ 本次变更日期**（每次修改任一 SKILL 后必须更新）
-- [ ] 如本次变更需要即时生效，已运行 `bash scripts/sync-to-plugin.sh`，并确认本地 `SKILL.md` 已刷新；如未运行，最终回复已明确说明"仅修改母版"
+- [ ] 如本次变更需要即时生效，已运行 `bash scripts/dev-sync.sh`（或显式 `build-dist.sh` + `install.sh`），并确认 `dist/ae-sdd/SKILL.md` 与 `~/.claude/skills/ae-sdd/SKILL.md` 已刷新；如未运行，最终回复已明确说明"仅修改母版"
 
 ---
 
@@ -367,7 +393,7 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 | `project-assets/` 改名 `assets/` | `assets/{projectKey}/` | 实际项目资产 |
 | 小任务/微任务 `.ae-task/` `.ae-plan/` 隐藏目录 | `document-storage-skill.md §2.6` | 避免污染 IDE 视图 |
 | 人工审核点 4 → 5（加 CodingPlan 评审，删 Coding 完成评审）| `ae-sdd-skill.md` 整体流程 + 整体执行清单 + 人工节点表 | 节点编号 1 → 1.5 → 2 → 2.5 → 4 |
-| 同步 `sync-to-plugin.sh` 后的新目录 | 母版 → `~/.claude/skills/ae-sdd/skills/ae-sdd/` | 不改同步机制，目录树原样同步 |
+| 同步 `sync-to-plugin.sh` 后的新目录 | 母版 → `~/.claude/skills/ae-sdd/skills/ae-sdd/` | ❌ v3.0 已废弃此机制，改为 `source/` → `dist/ae-sdd/` → `~/.claude/skills/ae-sdd/` 三层构建 + 安装 |
 
 **Why：**
 - 之前按"文件类型"分（`templates/` `constraints/` `strategies/` `project-assets/` 散落），无法一眼看出"哪个 SKILL 用于哪个流程节点"

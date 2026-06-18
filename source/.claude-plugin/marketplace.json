@@ -1,21 +1,23 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "ae-sdd",
-  "description": "AE 体系 — 端到端自动化工程 SKILL 母版（auto-engineering skills, standards, templates, assets）",
+  "description": "AE 体系 — 端到端自动化工程 SKILL 体系（v3.0 主入口 + 母版/分发包双目录分层）",
   "owner": {
     "name": "AILenGarden"
   },
   "metadata": {
-    "description": "AE 体系 — 端到端自动化工程 SKILL 母版（auto-engineering skills, standards, templates, assets）",
-    "version": "1.0.0",
-    "pluginRoot": "./plugins"
+    "description": "AE 体系 — 端到端自动化工程 SKILL 体系（v3.0 主入口 + 母版/分发包双目录分层）",
+    "version": "3.0.0",
+    "pluginRoot": "./source",
+    "buildCommand": "bash scripts/build-dist.sh",
+    "installCommand": "bash scripts/install.sh"
   },
   "plugins": [
     {
       "name": "ae-sdd",
-      "source": "./plugins/ae-sdd",
-      "description": "端到端自动化工程 SKILL 体系：4 层架构、18 个 SKILL、9 步流程、5 审核节点、Story → Task → Coding → CodeReview 全链路自动化",
-      "version": "1.0.0",
+      "source": "./source",
+      "description": "ae-sdd v3.0 — 端到端自动化工程 SKILL 体系：4 层架构、15 个 SKILL、9 步流程、5 审核节点、Story → Task → Coding → CodeReview 全链路自动化；🆕 G-00 项目资产门卫 + 声明式规则 + tools/bin/ae-sdd CLI。",
+      "version": "3.0.0",
       "author": {
         "name": "AILenGarden"
       },
@@ -30,9 +32,11 @@
         "story",
         "task",
         "coding",
-        "code-review"
+        "code-review",
+        "v3"
       ],
-      "category": "development"
+      "category": "development",
+      "tags": ["v3.0", "main-entry", "g-00", "declarative-rules"]
     }
   ]
 }
