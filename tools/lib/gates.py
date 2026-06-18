@@ -382,16 +382,25 @@ def _locate_authenticity_scanner(master_source: Optional[Path]) -> Optional[Path
 
 def check_g09(project_dir: Path, st: dict, current_story: str,
               master_source: Optional[Path] = None) -> GateResult:
-    """G-09 测试真实性扫描通过 — 调 test_authenticity_scan.py 跑 8 类禁止检查"""
-    # 当前需要传 master_source（call_g09 通过字典传）
+    """G-09 测试真实性扫描通过 — 调 test_authenticity_scan.py 跑 8 类禁止检查
+
+    v1.1 修复（2026-06-18）：
+      - 总是跑扫描（不卡 phase），保证发现违规测试
+      - 仅当 0 测试文件 + pre-coding phase → 标记 stub（避免"什么都没扫到"的虚假 pass）
+      - 0 测试文件 + phase ≥ coding → warn（应有测试但没有）
+    """
+    phase = st.get("phase", "initialized")
+    PRE_CODING_PHASES = {"initialized", "dr-generated", "story-generated",
+                         "story-reviewed", "task-generated", "task-reviewed"}
+
     scanner = _locate_authenticity_scanner(master_source)
     if scanner is None:
         return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
                           "未找到母版 test_authenticity_scan.py（跳过）",
                           action="确认母版路径",
-                          details={"scanned": False, "skipped": True})
+                          details={"scanned": False, "skipped": True, "stub": True})
 
-    # 跑扫描（--format json 输出可解析）
+    # 跑扫描（不卡 phase：保证能发现违规测试）
     try:
         result = _subprocess.run(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
@@ -415,20 +424,40 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                           f"stdout 前 200 字符: {result.stdout[:200]}")
 
     status = report.get("status", "UNKNOWN")
+    java_test_files = report.get("javaTestFiles", 0)
     blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
     n_total = len(report.get("findings", []))
 
-    if status == "PASS":
-        return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
-                          f"扫描通过：{n_total} findings / 0 BLOCKER",
-                          details={"scanned": True, "n_findings": n_total, "n_blockers": 0})
+    # 有 findings / BLOCKER → 直接 fail（无论 phase）
+    if status != "PASS" or blockers > 0:
+        return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
+                          f"扫描失败：{n_total} findings / {blockers} BLOCKER",
+                          f"修复测试代码中的 8 类禁止（{scanner.name}）",
+                          details={"scanned": True, "n_findings": n_total, "n_blockers": blockers,
+                                   "status": status, "n_test_files": java_test_files})
 
-    # FAIL 或未知状态
-    return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
-                      f"扫描失败：{n_total} findings / {blockers} BLOCKER",
-                      f"修复测试代码中的 8 类禁止（{scanner.name}）",
-                      details={"scanned": True, "n_findings": n_total, "n_blockers": blockers,
-                               "status": status})
+    # 0 测试文件：
+    # - pre-coding → stub（还没到写测试的阶段，扫描无对象不算 pass）
+    # - ≥ coding → warn（应该写测试但没写）
+    if java_test_files == 0:
+        if phase in PRE_CODING_PHASES:
+            return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
+                              f"phase = {phase}（pre-coding，扫描无对象，按 stub 算）",
+                              action="进入 coding 阶段后此门禁生效",
+                              details={"scanned": True, "skipped": True, "stub": True,
+                                       "current_phase": phase, "n_test_files": 0})
+        else:
+            return GateResult("G-09", "测试真实性扫描通过", "warn", True,
+                              f"phase = {phase} 但 0 测试文件（应编写测试）",
+                              action="确认是否漏写测试代码",
+                              details={"scanned": True, "n_findings": 0, "n_test_files": 0,
+                                       "current_phase": phase, "stub": False})
+
+    # 有测试文件 + 0 BLOCKER → 真 pass
+    return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
+                      f"扫描通过：{n_total} findings / 0 BLOCKER（{java_test_files} 测试文件）",
+                      details={"scanned": True, "n_findings": n_total, "n_blockers": 0,
+                               "n_test_files": java_test_files})
 
 
 # ─── G-13：DR ↔ Story ↔ Task ↔ Coding 五层引用追溯 ──────────────────────────
@@ -565,6 +594,19 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
             results.append(_stub_v31(g["id"], g["name"]))
 
     return results
+
+
+def _stub_v31(gate_id: str, name: str) -> GateResult:
+    """v3.1 stub 门禁（实现未到位）— 标记 stub=True，不算 pass 也不算 fail"""
+    return GateResult(
+        gate_id=gate_id,
+        name=name,
+        severity="blocker",
+        pass_=True,           # stub 不阻断
+        message=f"v3.1 stub（实现未到位，留 v3.1+ 升级）",
+        action=f"等待 v3.1+ 升级 {gate_id} 实现",
+        details={"stub": True, "version_target": "v3.1+"},
+    )
 
 
 def summarize(results: list[GateResult]) -> dict:

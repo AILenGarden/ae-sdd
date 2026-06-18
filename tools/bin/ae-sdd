@@ -61,16 +61,23 @@ def cmd_state_read(args, parser):
 def cmd_state_write(args, parser):
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
-        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        output.err("未找�?.ae-sdd/ 目录（请先跑 ae-sdd init�?)")
         return 1
     s = state.read_state(paths.state_path(ade_sdd))
-    state.set_phase(s, args.phase, by="ae-sdd state write")
+    try:
+        changed = state.set_phase(s, args.phase, by="ae-sdd state write")
+    except ValueError as e:
+        output.err(str(e))
+        return 1
     if args.story:
         s["currentStory"] = args.story
     if args.task:
         s["currentTask"] = args.task
     state.write_state(paths.state_path(ade_sdd), s)
-    output.ok(f"state 更新：phase={args.phase}")
+    if changed:
+        output.ok(f"state 更新：phase={args.phase}")
+    else:
+        output.warn(f"state 未变更：phase 已为 {args.phase}（history 不累加）")
     return 0
 
 
@@ -120,16 +127,18 @@ def cmd_gates_check(args, parser):
 
 def cmd_classify(args, parser):
     text = args.text
+    filename = None
     if args.file:
         p = Path(args.file)
         if not p.is_file():
-            output.err(f"文件不存在: {p}")
+            output.err(f"文件不存�? {p}")
             return 1
         text = p.read_text(encoding="utf-8")
+        filename = p.name
     if not text:
-        output.err("必须提供 --text 或 --file")
+        output.err("必须提供 --text �?--file")
         return 1
-    c = classify.classify(text)
+    c = classify.classify(text, filename=filename)
     if args.json:
         output.emit({
             "source": c.source,
@@ -139,6 +148,8 @@ def cmd_classify(args, parser):
             "confidence": c.confidence,
             "rationale": c.rationale,
             "next_action": c.next_action,
+            "needs_review": c.needs_review,
+            "review_reasons": c.review_reasons,
         }, as_json=True)
     else:
         output.info(f"4 维判定结果：")
@@ -150,6 +161,11 @@ def cmd_classify(args, parser):
         output.info(f"判定理由：")
         for k, v in c.rationale.items():
             output.info(f"  {k}: {v}")
+        if c.needs_review:
+            output.info(f"")
+            output.warn(f"⚠ 低置信度告警：以下维度需人工复核")
+            for r in c.review_reasons:
+                output.warn(f"  - {r}")
         output.info(f"")
         output.ok(f"建议下一步: {c.next_action}")
     return 0

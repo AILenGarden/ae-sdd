@@ -137,47 +137,48 @@ class TestNextStepSuggestion(unittest.TestCase):
     def test_initialized_to_dr_generate(self):
         s = {"phase": "initialized"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "dr-generate")
+        # v1.1: 'next' 必须与 PHASE_FLOW 一致（可直接传给 state write --phase）
+        self.assertEqual(sug["next"], "dr-generated")
 
     def test_dr_generated_to_story_generate(self):
         s = {"phase": "dr-generated"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "story-generate")
+        self.assertEqual(sug["next"], "story-generated")
 
     def test_story_generated_to_story_review(self):
         s = {"phase": "story-generated"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "story-review")
+        self.assertEqual(sug["next"], "story-reviewed")
 
     def test_story_reviewed_to_testcase(self):
         s = {"phase": "story-reviewed"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "testcase-generate")
+        self.assertEqual(sug["next"], "task-generated")
 
     def test_task_generated_to_task_review(self):
         s = {"phase": "task-generated"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "task-review")
+        self.assertEqual(sug["next"], "task-reviewed")
 
     def test_task_reviewed_to_coding_plan(self):
         s = {"phase": "task-reviewed"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "coding-plan")
+        self.assertEqual(sug["next"], "coding")
 
     def test_coding_to_test_run(self):
         s = {"phase": "coding"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "test-run")
+        self.assertEqual(sug["next"], "test-running")
 
     def test_test_running_to_coding_report(self):
         s = {"phase": "test-running"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "coding-report")
+        self.assertEqual(sug["next"], "code-reviewed")
 
     def test_code_reviewed_to_user_confirm(self):
         s = {"phase": "code-reviewed"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "user-confirm")
+        self.assertEqual(sug["next"], "completed")
 
     def test_completed_terminates(self):
         s = {"phase": "completed"}
