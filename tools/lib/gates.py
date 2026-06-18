@@ -431,16 +431,91 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                                "status": status})
 
 
-# ─── G-13：v3.1 实施 ────────────────────────────────────────────────────────
-def _stub_v31(gate_id: str, name: str) -> GateResult:
-    return GateResult(gate_id, name, "blocker", True,
-                      "v3.1 实施（当前 stub 返回通过）",
-                      action="v3.1 实施",
-                      details={"stub": True, "milestone": "v3.1"})
-
-
+# ─── G-13：DR ↔ Story ↔ Task ↔ Coding 五层引用追溯 ──────────────────────────
 def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    return _stub_v31("G-13", "全链路对称性核查通过")
+    """
+    G-13 全链路对称性核查通过
+
+    简化版 v1：检查"已存在文档"的引用闭环
+      Story → 引用 DR ID
+      Task  → 引用 Story ID
+      Coding Report → 引用 Task ID
+      CodeReview → 引用 Story ID
+
+    v3.2 升级方向：解析每个文档的 AC 列表，做 AC 覆盖率追溯
+    """
+    if not current_story:
+        return GateResult("G-13", "全链路对称性核查通过", "blocker", False,
+                          "state.currentStory 为空")
+
+    design = paths.project_design_dir(project_dir)
+    if not design.is_dir():
+        return GateResult("G-13", "全链路对称性核查通过", "blocker", False,
+                          f"design/ 目录不存在",
+                          f"先生成设计文档")
+
+    issues: list[str] = []
+
+    # 1. Story → DR 引用追溯
+    story = paths.find_doc(project_dir, current_story, ".md")
+    if story is not None:
+        # 找 design/ 下的所有 DR
+        drs = sorted(set(design.glob("*DR*.md")) | set(design.glob("*dr*.md")))
+        if not drs:
+            issues.append("无 DR 文档可追溯（design/ 目录无 *DR*.md）")
+        else:
+            # 至少一个 DR ID 在 Story 文档里被引用
+            story_content = story.read_text(encoding="utf-8")
+            dr_refs = [d.stem for d in drs if d.stem in story_content]
+            if not dr_refs:
+                # 用更宽松的检测：DR 文档的 ID（如 DR-001）出现在 Story 文档
+                dr_id_pattern = re.compile(r"DR-\d+", re.IGNORECASE)
+                dr_ids = set()
+                for d in drs:
+                    dr_ids.update(dr_id_pattern.findall(d.stem))
+                # 加上文件名
+                dr_ids.update(d.stem for d in drs)
+                ref_hits = [did for did in dr_ids if did in story_content]
+                if not ref_hits:
+                    issues.append(f"Story 文档未引用任何 DR（{len(drs)} 个 DR 可选）")
+    else:
+        # Story 文档不存在 → 链路断
+        issues.append(f"Story 文档不存在：{current_story}.md（无法建立追溯）")
+
+    # 2. Task → Story 引用追溯
+    tasks = paths.list_docs(project_dir, current_story, "-task-*.md")
+    for t in tasks:
+        task_content = t.read_text(encoding="utf-8")
+        if current_story not in task_content:
+            issues.append(f"Task 文档未引用 Story ID {current_story}：{t.name}")
+
+    # 3. Coding Report → Task 引用追溯（如果存在）
+    coding_report = paths.find_doc(project_dir, current_story, "-Coding-Report.md")
+    if coding_report is not None:
+        cr_content = coding_report.read_text(encoding="utf-8")
+        for t in tasks:
+            # 引用判定：Task 的 stem（如 STORY-001-task-001）在 Coding Report 里出现
+            if t.stem not in cr_content:
+                issues.append(f"Coding Report 未引用 Task：{t.stem}")
+
+    # 4. CodeReview → Story 引用追溯（如果存在）
+    code_review = paths.find_doc(project_dir, current_story, "-CodeReview.md")
+    if code_review is not None:
+        cv_content = code_review.read_text(encoding="utf-8")
+        if current_story not in cv_content:
+            issues.append(f"CodeReview 报告未引用 Story ID {current_story}")
+
+    if issues:
+        return GateResult("G-13", "全链路对称性核查通过", "blocker", False,
+                          f"链路追溯发现 {len(issues)} 个问题：{issues[0]}" + ("..." if len(issues) > 1 else ""),
+                          "修复文档间的引用关系",
+                          details={"issues": issues, "n_issues": len(issues)})
+
+    return GateResult("G-13", "全链路对称性核查通过", "blocker", True,
+                      f"五层追溯完整（DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview）",
+                      details={"current_story": current_story,
+                               "n_tasks": len(tasks),
+                               "n_drs": len(list(design.glob("*DR*.md")) + list(design.glob("*dr*.md")))})
 
 
 # ─── 路由表 ─────────────────────────────────────────────────────────────────
