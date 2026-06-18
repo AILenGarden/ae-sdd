@@ -299,20 +299,144 @@ def check_g12(project_dir: Path, st: dict, current_story: str) -> GateResult:
                          action=f"CodeReview 后生成 {current_story}-CodeReview.md")
 
 
-# ─── G-08 / G-09 / G-13：v3.1 实施 ──────────────────────────────────────────
+# ─── G-08：解析 CodingPlan 14 门禁表 ─────────────────────────────────────────
+# 按 coding-skill §6.7 ④bis CodingPlan 14 门禁必含关键词
+CODINGPLAN_14GATES_KEYWORDS = [
+    "DR-Story-Task",     # 1. 三层链路追溯
+    "AC 100%",            # 2. AC 100% 覆盖
+    "文件顺序",            # 3. 文件顺序
+    "类骨架",              # 4. 类骨架
+    "数据",                # 5. 数据模型
+    "Mapper SQL",          # 6. Mapper SQL
+    "测试对应",            # 7. 测试对应
+    "验证点",              # 8. 验证点
+    "调试回滚",            # 9. 调试回滚
+    "资源隔离",            # 10. 资源隔离
+    "核心链路",            # 11. 核心链路保护
+    "CodingModel",         # 12. CodingModel 决策记录
+    "混合压测",            # 13. 混合压测
+    "测试真实性",          # 14. 测试真实性 8 类禁止
+]
+
+
+def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-08 CodingPlan 14 门禁通过 — 解析 CodingPlan 文档 14 门禁表"""
+    if not current_story:
+        return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
+                          "state.currentStory 为空")
+
+    cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+    if cp is None:
+        return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
+                          f"CodingPlan 文档不存在",
+                          f"先生成 {current_story}-CodingPlan.md（coding-skill §6.7）")
+
+    content = cp.read_text(encoding="utf-8")
+
+    # 1. 14 关键词必须全在文档里
+    missing_kw = [k for k in CODINGPLAN_14GATES_KEYWORDS if k not in content]
+    if missing_kw:
+        return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
+                          f"CodingPlan 缺 14 门禁关键词: {missing_kw}",
+                          f"补全 14 门禁表（coding-skill §6.7）",
+                          details={"missing_keywords": missing_kw})
+
+    # 2. 统计 ✅ / ❌ / 🟡 标记 — 必须有 ≥ 14 条状态记录
+    n_pass = content.count("✅")
+    n_fail = content.count("❌")
+    n_warn = content.count("🟡")
+    n_total = n_pass + n_fail + n_warn
+
+    if n_total < 14:
+        return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
+                          f"门禁记录数不足 14（实际 {n_total}：✅ {n_pass} / ❌ {n_fail} / 🟡 {n_warn}）",
+                          "补全 14 门禁表",
+                          details={"n_pass": n_pass, "n_fail": n_fail, "n_warn": n_warn})
+
+    # 3. 不能有 ❌ 标记
+    if n_fail > 0:
+        return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
+                          f"14 门禁中有 {n_fail} 条 ❌ 未通过",
+                          f"修复 {current_story}-CodingPlan.md 中标 ❌ 的门禁",
+                          details={"n_pass": n_pass, "n_fail": n_fail, "n_warn": n_warn})
+
+    return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", True,
+                      f"14 门禁全通过（✅ {n_pass} / 🟡 {n_warn}）",
+                      details={"n_pass": n_pass, "n_fail": n_fail, "n_warn": n_warn,
+                               "file": str(cp)})
+
+
+# ─── G-09：调 test_authenticity_scan.py 扫测试代码 ───────────────────────────
+import json as _json
+import subprocess as _subprocess
+
+
+def _locate_authenticity_scanner(master_source: Optional[Path]) -> Optional[Path]:
+    """在母版找 test_authenticity_scan.py"""
+    if master_source is None:
+        return None
+    # 母版布局：master/../scripts/test_authenticity_scan.py
+    candidate = master_source.parent / "scripts" / "test_authenticity_scan.py"
+    return candidate if candidate.is_file() else None
+
+
+def check_g09(project_dir: Path, st: dict, current_story: str,
+              master_source: Optional[Path] = None) -> GateResult:
+    """G-09 测试真实性扫描通过 — 调 test_authenticity_scan.py 跑 8 类禁止检查"""
+    # 当前需要传 master_source（call_g09 通过字典传）
+    scanner = _locate_authenticity_scanner(master_source)
+    if scanner is None:
+        return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
+                          "未找到母版 test_authenticity_scan.py（跳过）",
+                          action="确认母版路径",
+                          details={"scanned": False, "skipped": True})
+
+    # 跑扫描（--format json 输出可解析）
+    try:
+        result = _subprocess.run(
+            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except _subprocess.TimeoutExpired:
+        return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
+                          "test_authenticity_scan.py 跑超过 60 秒",
+                          "缩小扫描范围或增加超时")
+    except Exception as e:
+        return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
+                          f"扫描器异常: {e}",
+                          "检查 test_authenticity_scan.py 是否可执行")
+
+    # 解析 JSON 输出
+    try:
+        report = _json.loads(result.stdout) if result.stdout else {}
+    except _json.JSONDecodeError as e:
+        return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
+                          f"扫描器 JSON 输出无法解析: {e}",
+                          f"stdout 前 200 字符: {result.stdout[:200]}")
+
+    status = report.get("status", "UNKNOWN")
+    blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
+    n_total = len(report.get("findings", []))
+
+    if status == "PASS":
+        return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
+                          f"扫描通过：{n_total} findings / 0 BLOCKER",
+                          details={"scanned": True, "n_findings": n_total, "n_blockers": 0})
+
+    # FAIL 或未知状态
+    return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
+                      f"扫描失败：{n_total} findings / {blockers} BLOCKER",
+                      f"修复测试代码中的 8 类禁止（{scanner.name}）",
+                      details={"scanned": True, "n_findings": n_total, "n_blockers": blockers,
+                               "status": status})
+
+
+# ─── G-13：v3.1 实施 ────────────────────────────────────────────────────────
 def _stub_v31(gate_id: str, name: str) -> GateResult:
     return GateResult(gate_id, name, "blocker", True,
                       "v3.1 实施（当前 stub 返回通过）",
                       action="v3.1 实施",
                       details={"stub": True, "milestone": "v3.1"})
-
-
-def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    return _stub_v31("G-08", "CodingPlan 14 门禁通过")
-
-
-def check_g09(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    return _stub_v31("G-09", "测试真实性扫描通过")
 
 
 def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
@@ -357,6 +481,9 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
     for g in targets:
         if g["id"] == "G-00":
             results.append(check_g00(master_source, ade_sdd, project_key))
+        elif g["id"] == "G-09":
+            # G-09 需要 master_source 调子脚本
+            results.append(check_g09(project_dir, st, current_story, master_source=master_source))
         elif g["id"] in CHECK_FUNCS:
             results.append(CHECK_FUNCS[g["id"]](project_dir, st, current_story))
         else:
