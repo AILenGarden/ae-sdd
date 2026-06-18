@@ -106,19 +106,20 @@ def classify(text: str) -> Classification:
     multi_agent = scale in ("中", "大")
 
     # 下一步建议
-    next_action_map = {
-        "PRD":   "requirement-analysis",
-        "Issue": "requirement-analysis",
-        "对话":   "requirement-analysis",
-        "DR":    "dr-generate",
-    }
-    next_action = next_action_map.get(source, "requirement-analysis")
+    # 优先级：scale 优先（规模决定流程粒度）
+    # 微 → coding（小任务跳过完整流程）
+    # 小 → task-generate（已足够清晰，跳过 DR）
+    # 中/大 → dr-generate（先写 DR）
+    # source = PRD/Issue/对话 + scale = 微 → coding
+    # source = PRD/Issue/对话 + scale = 小/中/大 → requirement-analysis（先做需求分析）
     if scale == "微":
         next_action = "coding"
-    elif scale == "小":
-        next_action = "task-generate"
-    elif scale in ("中", "大"):
+    elif source in ("PRD", "Issue", "对话"):
+        next_action = "requirement-analysis"
+    elif source == "DR":
         next_action = "dr-generate"
+    else:
+        next_action = "requirement-analysis"
 
     return Classification(
         source=source,
