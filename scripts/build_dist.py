@@ -5,6 +5,9 @@ build_dist.py — ae-sdd 母版 → 实例化分发包 构建脚本
 🆕 v3.0.1 跨平台化（2026-06-18）：用 Python 替代 bash，零外部依赖（仅标准库）。
 🆕 v3.0 双目录分层：source/（SSOT） → dist/ae-sdd/（构建产物）。
 
+⚠️ v3.0.1 Windows 兼容：用 `git archive` 从 commit 读取 source/（不经过 working tree），
+   避免 Windows 的 core.autocrlf 把 LF 转 CRLF。
+
 用法:
     python scripts/build_dist.py
     python scripts/build_dist.py --source /path/to/source --dist /path/to/dist
@@ -15,7 +18,9 @@ import argparse
 import hashlib
 import re
 import shutil
+import subprocess
 import sys
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,11 +58,66 @@ def _ignore_func(_src_dir: str, names: list[str]) -> list[str]:
 
 
 # ─── 工具函数 ────────────────────────────────────────────────────────────────
-def parse_version(skill_md: Path) -> str:
-    """从 source/SKILL.md YAML frontmatter 提取 version 字段（找不到则默认 3.0.0）"""
-    content = skill_md.read_text(encoding="utf-8")
-    m = re.search(r"^version:\s*(\S+)", content, re.MULTILINE)
+def parse_version_from_bytes(skill_md_bytes: bytes) -> str:
+    """从 SKILL.md 字节提取 version 字段（找不到则默认 3.0.0）"""
+    text = skill_md_bytes.decode("utf-8")
+    m = re.search(r"^version:\s*(\S+)", text, re.MULTILINE)
     return m.group(1) if m else "3.0.0"
+
+
+def _archive_source_via_git(src: Path) -> bytes:
+    """
+    用 `git archive` 把 source/ 目录的 commit 版本打成 tar 字节流。
+
+    ⚠ Windows 兼容：直接读 working tree 会被 core.autocrlf 转 CRLF，
+       跟 commit 不一致。git archive 输出 commit 字节级。
+    """
+    # src 形如 .../ae-sdd/source，仓库根 = src.parent
+    repo_root = src.parent
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "archive", "HEAD", "--", "source/"],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git archive 失败: {result.stderr.decode('utf-8', errors='replace')}"
+        )
+    return result.stdout
+
+
+def _extract_tar_to(tar_bytes: bytes, dst: Path, ignore_dirs: set, ignore_files: list[Path]) -> None:
+    """
+    从 tar 字节流解压到 dst，应用 ignore 规则。
+    替代 shutil.copytree（避免 working tree 转换行尾）。
+    """
+    import io
+    dst.mkdir(parents=True, exist_ok=True)
+
+    ignore_files_set = {Path(rel).as_posix() for rel in ignore_files}
+
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tar:
+        for member in tar.getmembers():
+            # member.name 形如 "source/SKILL.md"（带 source/ 前缀）
+            rel = Path(member.name)
+            if len(rel.parts) < 2 or rel.parts[0] != "source":
+                continue
+            rel_in_src = Path(*rel.parts[1:])  # 去掉 source/ 前缀
+
+            # 排除规则
+            parts = rel_in_src.parts
+            if any(p in ignore_dirs for p in parts):
+                continue
+            if rel_in_src.as_posix() in ignore_files_set:
+                continue
+
+            target = dst / rel_in_src
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif member.isfile():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                f = tar.extractfile(member)
+                if f is not None:
+                    target.write_bytes(f.read())
 
 
 def dir_size(path: Path) -> int:
@@ -100,20 +160,41 @@ def main() -> int:
         err(f"致命：{skill_md} 缺失或为空，主入口未就绪")
         return 1
 
-    version = parse_version(skill_md)
+    # ⚠ 关键：用 git archive 读 commit 字节级（不经过 working tree）
+    # working tree 在 Windows 下会被 core.autocrlf 转 CRLF，破坏 hash 一致性
+    info("从 git commit 读取 source/（git archive，避免 working tree CRLF 转换）")
+    try:
+        tar_bytes = _archive_source_via_git(src)
+    except RuntimeError as e:
+        # Fallback: working tree（无 git 仓库环境）
+        warn(f"git archive 失败: {e}")
+        warn("回退到 working tree 读取（Windows 上可能 hash 不一致）")
+        return _fallback_build(src, dst)
+
+    # 从 tar 字节流读取 SKILL.md 提取 version
+    import io
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tar:
+        skill_member = next((m for m in tar.getmembers()
+                            if m.name == "source/SKILL.md"), None)
+        if skill_member is None:
+            err("致命：git archive 中找不到 source/SKILL.md")
+            return 1
+        f = tar.extractfile(skill_member)
+        skill_bytes = f.read() if f else b""
+
+    version = parse_version_from_bytes(skill_bytes)
     build_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     info(f"母版根:   {src}")
     info(f"目标:     {dst}")
     info(f"版本:     {version}")
     info(f"构建时间: {build_date}")
 
-    # ── 整树复制 ────────────────────────────────────────────────────────────
+    # ── 整树复制（从 tar 流）────────────────────────────────────────────────
     step("构建实例化分发包")
     if dst.exists():
         shutil.rmtree(dst)
-    # 不预先 mkdir(dst) — 让 shutil.copytree 自己创建
-    shutil.copytree(src, dst, ignore=_ignore_func)
-    ok("整树复制完成")
+    _extract_tar_to(tar_bytes, dst, EXCLUDE_DIRS, EXCLUDE_FILES)
+    ok("整树复制完成（git archive → 字节级一致）")
 
     # ── 剥离母版专有产物 ────────────────────────────────────────────────────
     step("剥离母版专有产物")
@@ -125,20 +206,20 @@ def main() -> int:
 
     # ── 注入版本信息 ────────────────────────────────────────────────────────
     step("注入版本信息")
-    (dst / "VERSION").write_text(f"{version}\n{build_date}\n", encoding="utf-8")
+    # ⚠ Windows 兼容：强制 binary 模式 + LF
+    (dst / "VERSION").write_bytes(f"{version}\n{build_date}\n".encode("utf-8"))
     ok(f"VERSION 文件已写入: {version}")
 
     plugin_dir = dst / ".claude-plugin"
     plugin_dir.mkdir(exist_ok=True)
-    (plugin_dir / "plugin.json").write_text(
+    (plugin_dir / "plugin.json").write_bytes(
         "{\n"
         f'  "name": "ae-sdd",\n'
         f'  "version": "{version}",\n'
         '  "description": "ae-sdd 端到端自动化工程 SKILL 体系（v3.0 实例化分发包）",\n'
         f'  "buildDate": "{build_date}",\n'
         '  "mainEntry": "SKILL.md"\n'
-        "}\n",
-        encoding="utf-8",
+        "}\n".encode("utf-8"),
     )
     ok(f"plugin.json 已生成: {version} @ {build_date}")
 
@@ -163,9 +244,42 @@ def main() -> int:
     return 0
 
 
+def _fallback_build(src: Path, dst: Path) -> int:
+    """无 git 仓库环境的回退方案（用 working tree）"""
+    warn("⚠ 回退模式：使用 working tree（Windows 上 hash 可能不匹配 commit）")
+
+    skill_md = src / "SKILL.md"
+    version = parse_version_from_bytes(skill_md.read_bytes())
+    build_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst, ignore=_ignore_func, copy_function=shutil.copyfile)
+
+    for rel in EXCLUDE_FILES:
+        target = dst / rel
+        if target.exists():
+            target.unlink()
+
+    (dst / "VERSION").write_bytes(f"{version}\n{build_date}\n".encode("utf-8"))
+    plugin_dir = dst / ".claude-plugin"
+    plugin_dir.mkdir(exist_ok=True)
+    (plugin_dir / "plugin.json").write_bytes(
+        "{\n"
+        f'  "name": "ae-sdd",\n'
+        f'  "version": "{version}",\n'
+        '  "description": "ae-sdd 端到端自动化工程 SKILL 体系（v3.0 实例化分发包）",\n'
+        f'  "buildDate": "{build_date}",\n'
+        '  "mainEntry": "SKILL.md"\n'
+        "}\n".encode("utf-8"),
+    )
+    return 0
+
+
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
         err("用户中断")
         sys.exit(130)
+
