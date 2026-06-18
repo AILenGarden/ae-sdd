@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""
+ae-sdd — ae-sdd CLI 入口
+
+🆕 v3.0 P0 三件套（2026-06-18）：
+  - state    : 项目状态管理（read / write / next-step）
+  - gates    : 14 门禁检查（pre-flight）
+  - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
+
+辅助：
+  - version  : 输出版本
+  - health   : 健康度自检
+
+用法:
+    ae-sdd version
+    ae-sdd state read
+    ae-sdd state next-step
+    ae-sdd gates check [--only G-00]
+    ae-sdd classify --text "..."
+    ae-sdd classify --file <path>
+    ae-sdd health
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# 强制 stdout / stderr 用 UTF-8（Windows 默认 GBK 导致中文输出 "?"）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
+
+# 让 import lib 找得到
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib import classify, gates, output, paths, state  # noqa: E402
+
+
+def cmd_version(args, parser):
+    output.emit({
+        "name": "ae-sdd",
+        "version": paths.MASTER_VERSION,
+        "python": sys.version.split()[0],
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_state_read(args, parser):
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    s = state.read_state(paths.state_path(ade_sdd))
+    output.emit(s, as_json=args.json)
+    return 0
+
+
+def cmd_state_write(args, parser):
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    s = state.read_state(paths.state_path(ade_sdd))
+    state.set_phase(s, args.phase, by="ae-sdd state write")
+    if args.story:
+        s["currentStory"] = args.story
+    if args.task:
+        s["currentTask"] = args.task
+    state.write_state(paths.state_path(ade_sdd), s)
+    output.ok(f"state 更新：phase={args.phase}")
+    return 0
+
+
+def cmd_state_next_step(args, parser):
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    s = state.read_state(paths.state_path(ade_sdd))
+    suggestion = state.next_step_suggestion(s)
+    if args.json:
+        output.emit(suggestion, as_json=True)
+    else:
+        output.info(f"当前 phase: {suggestion['current']}")
+        output.info(f"下一步:     {suggestion['next']}")
+        output.info(f"动作:       {suggestion['action']}")
+        output.info(f"SKILL:      {suggestion['skill']}")
+    return 0
+
+
+def cmd_gates_check(args, parser):
+    master = paths.locate_master_source()
+    ade_sdd = paths.locate_project_ae_sdd()
+    project_key = None
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey")
+    if not project_key:
+        project_key = "unknown"
+
+    results = gates.check_all(master, ade_sdd, project_key, only=args.only)
+    summary = gates.summarize(results)
+
+    if args.json:
+        output.emit(summary, as_json=True)
+    else:
+        output.info(f"跑了 {summary['total']} 门禁：✅ {summary['passed']} / ❌ {summary['failed']} / 🟡 {summary['stubs']} stub")
+        for r in summary["results"]:
+            mark = "✅" if r["pass"] else "❌"
+            output.info(f"  {mark} {r['gate_id']} {r['name']}: {r['message']}")
+            if r.get("action"):
+                output.info(f"      → {r['action']}")
+
+    # 任何 blocker 失败 → exit 1
+    return 0 if summary["all_pass"] else 1
+
+
+def cmd_classify(args, parser):
+    text = args.text
+    if args.file:
+        p = Path(args.file)
+        if not p.is_file():
+            output.err(f"文件不存在: {p}")
+            return 1
+        text = p.read_text(encoding="utf-8")
+    if not text:
+        output.err("必须提供 --text 或 --file")
+        return 1
+    c = classify.classify(text)
+    if args.json:
+        output.emit({
+            "source": c.source,
+            "scale": c.scale,
+            "ai_fit": c.ai_fit,
+            "multi_agent": c.multi_agent,
+            "confidence": c.confidence,
+            "rationale": c.rationale,
+            "next_action": c.next_action,
+        }, as_json=True)
+    else:
+        output.info(f"4 维判定结果：")
+        output.info(f"  来源（source）:     {c.source}    (置信度 {c.confidence['source']})")
+        output.info(f"  规模（scale）:      {c.scale}     (置信度 {c.confidence['scale']})")
+        output.info(f"  AI 适配（ai_fit）:  {c.ai_fit}     (置信度 {c.confidence['ai_fit']})")
+        output.info(f"  多 Agent:           {'启用' if c.multi_agent else '不启用'}")
+        output.info(f"")
+        output.info(f"判定理由：")
+        for k, v in c.rationale.items():
+            output.info(f"  {k}: {v}")
+        output.info(f"")
+        output.ok(f"建议下一步: {c.next_action}")
+    return 0
+
+
+def cmd_health(args, parser):
+    """健康度自检（v1 最小实现）"""
+    master = paths.locate_master_source()
+    ade_sdd = paths.locate_project_ae_sdd()
+
+    items = []
+
+    # 1. 母版 source/ 存在
+    items.append({
+        "name": "母版 source/ 存在",
+        "pass": master is not None,
+        "message": str(master) if master else "未找到（设环境变量 AE_SDD_MASTER）",
+    })
+
+    # 2. .ae-sdd/ 存在
+    items.append({
+        "name": "项目 .ae-sdd/ 存在",
+        "pass": ade_sdd is not None,
+        "message": str(ade_sdd) if ade_sdd else "未在当前目录或上级找到 .ae-sdd/config.yaml",
+    })
+
+    # 3. state.json 可读
+    state_ok = False
+    state_msg = "（无 .ae-sdd/）"
+    if ade_sdd:
+        sp = paths.state_path(ade_sdd)
+        if sp.is_file():
+            try:
+                json.loads(sp.read_text(encoding="utf-8"))
+                state_ok = True
+                state_msg = f"可读 ({sp.stat().st_size} 字节)"
+            except Exception as e:
+                state_msg = f"JSON 解析失败: {e}"
+        else:
+            state_msg = f"不存在: {sp}"
+    items.append({
+        "name": "state.json 可读",
+        "pass": state_ok,
+        "message": state_msg,
+    })
+
+    # 4. master SKILL.md 可读
+    skill_ok = False
+    skill_msg = "（无母版）"
+    if master:
+        sm = master / "SKILL.md"
+        if sm.is_file():
+            skill_ok = True
+            skill_msg = f"可读 ({sm.stat().st_size} 字节, version {paths.MASTER_VERSION})"
+        else:
+            skill_msg = f"不存在: {sm}"
+    items.append({
+        "name": "master SKILL.md 可读",
+        "pass": skill_ok,
+        "message": skill_msg,
+    })
+
+    # 5. tools/lib/ 模块可 import
+    items.append({
+        "name": "tools/lib/ 模块可 import",
+        "pass": True,
+        "message": f"classify / gates / output / paths / state ({sys.version.split()[0]})",
+    })
+
+    # 6. G-00 门禁
+    project_key = "unknown"
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey", "unknown")
+    g00 = gates.check_g00(master, ade_sdd, project_key)
+    items.append({
+        "name": "G-00 项目资产门禁",
+        "pass": g00.pass_,
+        "message": g00.message,
+    })
+
+    summary = {
+        "total": len(items),
+        "passed": sum(1 for i in items if i["pass"]),
+        "failed": sum(1 for i in items if not i["pass"]),
+        "items": items,
+    }
+    if args.json:
+        output.emit(summary, as_json=True)
+    else:
+        output.info(f"健康度自检 ({summary['passed']}/{summary['total']} 通过)：")
+        for i in items:
+            mark = "✅" if i["pass"] else "❌"
+            output.info(f"  {mark} {i['name']}: {i['message']}")
+    return 0 if summary["failed"] == 0 else 1
+
+
+# ─── CLI 主入口 ──────────────────────────────────────────────────────────────
+def main() -> int:
+    # 共享 --json 参数（让所有子 subparser 都能识别）
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", help="所有输出走 JSON 格式")
+
+    parser = argparse.ArgumentParser(
+        prog="ae-sdd",
+        description="ae-sdd CLI v3.0 — 端到端自动化工程工具集",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[common],
+    )
+    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
+
+    # version
+    p = sub.add_parser("version", help="输出版本", parents=[common])
+    p.set_defaults(func=cmd_version)
+
+    # state
+    p_state = sub.add_parser("state", help="项目状态管理", parents=[common])
+    state_sub = p_state.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_state_read = state_sub.add_parser("read", help="读 state.json", parents=[common])
+    p_state_read.set_defaults(func=cmd_state_read)
+    p_state_next = state_sub.add_parser("next-step", help="下一步建议", parents=[common])
+    p_state_next.set_defaults(func=cmd_state_next_step)
+    p_state_write = state_sub.add_parser("write", help="更新 state", parents=[common])
+    p_state_write.add_argument("--phase", required=True, help="新 phase")
+    p_state_write.add_argument("--story", help="当前 Story ID")
+    p_state_write.add_argument("--task", help="当前 Task ID")
+    p_state_write.set_defaults(func=cmd_state_write)
+
+    # gates
+    p_gates = sub.add_parser("gates", help="14 门禁检查", parents=[common])
+    gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
+    p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00）")
+    p_gates_check.set_defaults(func=cmd_gates_check)
+
+    # classify
+    p_classify = sub.add_parser("classify", help="4 维判定", parents=[common])
+    p_classify.add_argument("--text", help="待判定的文本")
+    p_classify.add_argument("--file", help="待判定的文件路径")
+    p_classify.set_defaults(func=cmd_classify)
+
+    # health
+    p_health = sub.add_parser("health", help="健康度自检", parents=[common])
+    p_health.set_defaults(func=cmd_health)
+
+    args = parser.parse_args()
+    if not hasattr(args, "func"):
+        parser.print_help()
+        return 1
+    try:
+        return args.func(args, parser)
+    except KeyboardInterrupt:
+        output.err("用户中断")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
