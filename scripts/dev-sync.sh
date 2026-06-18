@@ -91,9 +91,12 @@ sync_tree() {
   # 剥离 marketplace 注册表
   rm -f "$DST/.claude-plugin/marketplace.json"
 
-  # 修复主入口 SKILL.md
-  if [[ -f "$DST/skills/orchestration/ae-sdd-skill.md" ]]; then
-    cp "$DST/skills/orchestration/ae-sdd-skill.md" "$DST/SKILL.md"
+  # 🆕 v3.0：主入口 SKILL.md 已是根目录文件，tar 复制时已包含，
+  #          不再需要从 skills/orchestration/ae-sdd-skill.md 派生。
+  #          但保留主入口存在性校验：
+  if [[ ! -f "$DST/SKILL.md" ]] || [[ ! -s "$DST/SKILL.md" ]]; then
+    err "致命：$DST/SKILL.md 缺失或为空，主入口未同步成功"
+    exit 1
   fi
 
   ok "$LABEL 同步完成 → $DST"
@@ -146,10 +149,10 @@ EOF
 do_sync() {
   info "母版: $SRC"
 
-  # 母版根 SKILL.md 也由本脚本刷新
-  if [[ -f "$SRC/skills/orchestration/ae-sdd-skill.md" ]]; then
-    cp "$SRC/skills/orchestration/ae-sdd-skill.md" "$SRC/SKILL.md"
-    ok "母版根 SKILL.md 已刷新"
+  # 🆕 v3.0：母版根 SKILL.md 即主入口，校验存在性后无需任何"刷新"操作。
+  if [[ ! -f "$SRC/SKILL.md" ]] || [[ ! -s "$SRC/SKILL.md" ]]; then
+    err "致命：母版根 SKILL.md 缺失或为空，请先修复主入口"
+    exit 1
   fi
 
   if [[ $DO_LOCAL -eq 1 ]]; then

@@ -195,7 +195,7 @@ docs/                                     # 🆕
 
 | SKILL | 文件 | 功能 |
 |-------|------|------|
-| **auto-engineering-skill** | `skills/orchestration/ae-sdd-skill.md` | **AE 体系核心**。统一入口 + 智能路由（**🆕 2026-06-10 4 类需求**：已有 Story / 中大任务 / 小任务 / 微任务）+ 流程编排（9 步流程）+ **🆕 5 审核节点（加 CodingPlan 评审，删 Coding 完成评审）** + 角色库（8 角色）|
+| **auto-engineering-skill** | `SKILL.md`（🆕 v3.0 提升为主入口，原 `skills/orchestration/ae-sdd-skill.md` 已删除）| **AE 体系核心**。统一入口 + 智能路由（**🆕 2026-06-10 4 类需求**：已有 Story / 中大任务 / 小任务 / 微任务）+ 流程编排（9 步流程）+ **🆕 5 审核节点（加 CodingPlan 评审，删 Coding 完成评审）** + 角色库（8 角色）+ **🆕 v3.0 G-00 项目资产门卫 + 工具 API 速查** |
 | **auto-engineering-update-skill** | `skills/orchestration/ae-sdd-update-skill.md` | SKILL 边界维护规范。判定"内容放哪个文件" + 健康度自检清单；步骤 4 新增：改动 AE-skill 时必须同步更新 README §3/§4.2/§8.5 及"最后更新"日期 |
 
 ### 3.2 第 2 层：节点 SKILL（12 个）→ `skills/phase1-design/` + `phase2-task/` + `phase2-coding/` + `phase3-review/`
