@@ -121,3 +121,42 @@ def find_asset_file(ade_sdd: Path, project_key: str) -> Optional[Path]:
         return None
     cand = assets / f"{project_key}.assets.md"
     return cand if cand.is_file() else None
+
+
+# ─── 项目文档目录辅助（G-XX 门禁检查用） ─────────────────────────────────────
+def project_root(ade_sdd: Path) -> Path:
+    """项目根目录 = .ae-sdd/ 的父目录"""
+    return ade_sdd.parent
+
+
+def project_design_dir(project_root: Path) -> Path:
+    """项目设计文档目录（DR / Story / TestCase 存放处）"""
+    return project_root / "design"
+
+
+def project_task_dir(project_root: Path) -> Path:
+    """项目 Task 文档目录"""
+    return project_root / "task"
+
+
+def find_doc(project_root: Path, story_id: str, suffix: str) -> Optional[Path]:
+    """
+    在 project/design/ 和 project/ 两个位置找 {story_id}{suffix} 文档。
+    返回第一个存在的；都不存在返回 None。
+    """
+    candidates = [
+        project_design_dir(project_root) / f"{story_id}{suffix}",
+        project_root / f"{story_id}{suffix}",
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    return None
+
+
+def list_docs(project_root: Path, story_id: str, suffix: str) -> list[Path]:
+    """在 project/task/ 下找 {story_id}{suffix} 文档列表（按文件名排序）"""
+    task_dir = project_task_dir(project_root)
+    if not task_dir.is_dir():
+        return []
+    return sorted(task_dir.glob(f"{story_id}{suffix}"))
