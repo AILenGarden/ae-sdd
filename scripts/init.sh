@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# install.sh — ae-sdd SKILL 安装（薄壳）
+# init.sh — ae-sdd 项目实例化（薄壳）
 #
-# 🆕 v3.0.1 跨平台化（2026-06-18）：
-#   旧：此文件包含完整 install 逻辑（依赖 bash + tar/date 等）
-#   新：薄壳，仅做"找 Python + exec install.py"
+# 🆕 v3.0 P0 三件套之 init（2026-06-18）：
+#   给具体项目（如 icec-cloud-boss）创建 .ae-sdd/ 骨架。
 #
-# 真正的实现见 scripts/install.py（跨平台，零外部依赖）。
+# 真正的实现见 scripts/init.py（跨平台，零外部依赖）。
 #
-# 用法: bash scripts/install.sh [--from-build | --uninstall]
+# 用法: bash scripts/init.sh <project-dir> <project-key> [选项]
 
 set -e
 
@@ -31,4 +30,4 @@ if [[ -z "$PYTHON" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-exec "$PYTHON" "$SCRIPT_DIR/install.py" "$@"
+exec "$PYTHON" "$SCRIPT_DIR/init.py" "$@"

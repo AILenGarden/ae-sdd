@@ -1,0 +1,699 @@
+#!/usr/bin/env python3
+"""
+ae-sdd — ae-sdd CLI 入口
+
+🆕 v3.0 P0 三件套（2026-06-18）：
+  - state    : 项目状态管理（read / write / next-step）
+  - gates    : 14 门禁检查（pre-flight）
+  - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
+
+辅助：
+  - version  : 输出版本
+  - health   : 健康度自检
+
+用法:
+    ae-sdd version
+    ae-sdd state read
+    ae-sdd state next-step
+    ae-sdd gates check [--only G-00]
+    ae-sdd classify --text "..."
+    ae-sdd classify --file <path>
+    ae-sdd health
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# 强制 stdout / stderr 用 UTF-8（Windows 默认 GBK 导致中文输出 "?"）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
+
+# 让 import lib 找得到
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib import classify, gates, gate_intercept, output, paths, prompt_inject, state, stop_check  # noqa: E402
+
+
+def cmd_version(args, parser):
+    output.emit({
+        "name": "ae-sdd",
+        "version": paths.MASTER_VERSION,
+        "python": sys.version.split()[0],
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_state_read(args, parser):
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    s = state.read_state(paths.state_path(ade_sdd))
+    output.emit(s, as_json=args.json)
+    return 0
+
+
+def cmd_state_write(args, parser):
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    s = state.read_state(paths.state_path(ade_sdd))
+    try:
+        changed = state.set_phase(s, args.phase, by="ae-sdd state write")
+    except ValueError as e:
+        output.err(str(e))
+        return 1
+    if args.story:
+        s["currentStory"] = args.story
+    if args.task:
+        s["currentTask"] = args.task
+    state.write_state(paths.state_path(ade_sdd), s)
+    if changed:
+        output.ok(f"state 更新：phase={args.phase}")
+    else:
+        output.warn(f"state 未变更：phase 已为 {args.phase}（history 不累加）")
+    return 0
+
+
+def cmd_state_next_step(args, parser):
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    s = state.read_state(paths.state_path(ade_sdd))
+    suggestion = state.next_step_suggestion(s)
+    if args.json:
+        output.emit(suggestion, as_json=True)
+    else:
+        output.info(f"当前 phase: {suggestion['current']}")
+        output.info(f"下一步:     {suggestion['next']}")
+        output.info(f"动作:       {suggestion['action']}")
+        output.info(f"SKILL:      {suggestion['skill']}")
+    return 0
+
+
+def cmd_gates_check(args, parser):
+    master = paths.locate_master_source()
+    ade_sdd = paths.locate_project_ae_sdd()
+    project_key = None
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey")
+    if not project_key:
+        project_key = "unknown"
+
+    results = gates.check_all(master, ade_sdd, project_key, only=args.only)
+    summary = gates.summarize(results)
+
+    if args.json:
+        output.emit(summary, as_json=True)
+    else:
+        output.info(f"跑了 {summary['total']} 门禁：✅ {summary['passed']} / ❌ {summary['failed']} / 🟡 {summary['stubs']} stub")
+        for r in summary["results"]:
+            mark = "✅" if r["pass"] else "❌"
+            output.info(f"  {mark} {r['gate_id']} {r['name']}: {r['message']}")
+            if r.get("action"):
+                output.info(f"      → {r['action']}")
+
+    # 任何 blocker 失败 → exit 1
+    return 0 if summary["all_pass"] else 1
+
+
+def cmd_classify(args, parser):
+    text = args.text
+    filename = None
+    if args.file:
+        p = Path(args.file)
+        if not p.is_file():
+            output.err(f"文件不存在: {p}")
+            return 1
+        text = p.read_text(encoding="utf-8")
+        filename = p.name
+    if not text:
+        output.err("必须提供 --text 或 --file")
+        return 1
+    c = classify.classify(text, filename=filename)
+    if args.json:
+        output.emit({
+            "source": c.source,
+            "scale": c.scale,
+            "ai_fit": c.ai_fit,
+            "multi_agent": c.multi_agent,
+            "confidence": c.confidence,
+            "rationale": c.rationale,
+            "next_action": c.next_action,
+            "needs_review": c.needs_review,
+            "review_reasons": c.review_reasons,
+        }, as_json=True)
+    else:
+        output.info(f"4 维判定结果：")
+        output.info(f"  来源（source）:     {c.source}    (置信度 {c.confidence['source']})")
+        output.info(f"  规模（scale）:      {c.scale}     (置信度 {c.confidence['scale']})")
+        output.info(f"  AI 适配（ai_fit）:  {c.ai_fit}     (置信度 {c.confidence['ai_fit']})")
+        output.info(f"  多 Agent:           {'启用' if c.multi_agent else '不启用'}")
+        output.info(f"")
+        output.info(f"判定理由：")
+        for k, v in c.rationale.items():
+            output.info(f"  {k}: {v}")
+        if c.needs_review:
+            output.info(f"")
+            output.warn(f"⚠ 低置信度告警：以下维度需人工复核")
+            for r in c.review_reasons:
+                output.warn(f"  - {r}")
+        output.info(f"")
+        output.ok(f"建议下一步: {c.next_action}")
+    return 0
+
+
+def cmd_gate_intercept(args, parser):
+    """
+    PreToolUse hook 入口（v1.4）。
+
+    v1.3 变更：
+      - MultiEdit 工具的 file_path 从 tool_input.file_path 读取
+      - 快速通道从 .ae-sdd/.quick_channel 文件读取（跨 hook 共享状态）
+      - MultiEdit 与 Write/Edit 共享路径感知逻辑
+
+    stdin 格式:
+      {"hook_event_name": "PreToolUse", "tool_name": "Write",
+       "tool_input": {"file_path": "...", "content": "..."}}
+
+    stdout 格式（允许）: {}
+    stdout 格式（拒绝）:
+      {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny"},
+       "systemMessage": "拒绝原因"}
+    exit: 始终 0
+    """
+    import json as _json
+
+    input_data: dict = {}
+    tool_name = args.tool or ""
+    bash_command = args.bash_command or None
+    file_path = args.file_path or None
+
+    if not sys.stdin.isatty():
+        try:
+            input_data = _json.load(sys.stdin)
+            tool_name = tool_name or input_data.get("tool_name", "")
+            tool_input = input_data.get("tool_input", {})
+            # Bash 命令
+            if not bash_command and tool_name == "Bash":
+                bash_command = tool_input.get("command") or None
+            # Write / Edit / MultiEdit 的文件路径
+            if not file_path and tool_name in ("Write", "Edit", "MultiEdit"):
+                file_path = tool_input.get("file_path") or None
+        except (_json.JSONDecodeError, Exception):
+            pass
+
+    if not tool_name:
+        print(_json.dumps({}))
+        return 0
+
+    # 快速通道检测：优先从 .ae-sdd/.quick_channel 文件读（跨 hook 共享）
+    # 其次从 --context 参数（手动测试用）
+    # 设计原则：文件存在本身即激活信号（UserPromptSubmit 只在检测到标记时才创建文件）
+    project_dir = Path(args.project) if args.project else None
+    context = args.context or ""
+    quick_channel_from_file = False
+    if not context:
+        # 尝试从持久化文件读快速通道状态
+        ade_sdd = paths.locate_project_ae_sdd(project_dir)
+        if ade_sdd:
+            qc_file = ade_sdd / ".quick_channel"
+            if qc_file.is_file():
+                # 文件存在 = 快速通道激活（不依赖文件内容包含标记词）
+                quick_channel_from_file = True
+                try:
+                    context = qc_file.read_text(encoding="utf-8").strip()
+                except (OSError, IOError):
+                    context = "quick_channel_active"  # 读取失败也认为激活
+
+    if quick_channel_from_file or gate_intercept.is_quick_channel_active(context):
+        print(_json.dumps({}))
+        return 0
+
+    try:
+        allowed, reason = gate_intercept.check_intercept(
+            tool_name,
+            bash_command=bash_command,
+            file_path=file_path,
+            allow_readonly=not args.no_readonly,
+            project_dir=project_dir,
+        )
+    except Exception:
+        # 任何内部异常（state.json 损坏等）→ 放行（不阻断工具调用）
+        print(_json.dumps({}))
+        return 0
+
+    if allowed:
+        print(_json.dumps({}))
+        return 0
+    else:
+        deny = gate_intercept._deny_response(tool_name, reason)
+        print(_json.dumps(deny, ensure_ascii=False))
+        return 0
+
+
+def cmd_init_hooks(args, parser):
+    """
+    在 .claude/settings.json 写入三个 hook 配置：
+      PreToolUse      → gate-intercept（物理拦截违规工具调用）
+      UserPromptSubmit → prompt-inject（自动注入状态到 context）
+      Stop            → stop-check（检查响应状态头）
+
+    --use-python : hook command 用绝对路径 python + 脚本路径，不依赖 PATH（Windows 推荐）
+    --global     : 写入 ~/.claude/settings.json（用户级），默认写项目级
+    """
+    import json as _json
+
+    # --global：写用户级配置；否则写项目级
+    if getattr(args, "global_hooks", False):
+        claude_dir = Path.home() / ".claude"
+        settings_path = claude_dir / "settings.json"
+    else:
+        project_dir = Path(args.project_dir).resolve()
+        claude_dir = project_dir / ".claude"
+        settings_path = claude_dir / "settings.json"
+
+    # --use-python：生成绝对路径调用，不依赖 PATH（Windows Claude Code hook 推荐）
+    if getattr(args, "use_python", False):
+        # 优先用安装路径（~/.claude/skills/ae-sdd/tools/bin/ae-sdd）
+        # 如果没安装，fallback 到当前 __file__ 路径（仓库开发环境）
+        installed_cli = Path.home() / ".claude" / "skills" / "ae-sdd" / "tools" / "bin" / "ae-sdd"
+        cli_path = installed_cli if installed_cli.is_file() else Path(__file__).resolve()
+        python_exe = sys.executable
+        _cmd = lambda sub: f'"{python_exe}" "{cli_path}" {sub}'
+    else:
+        _cmd = lambda sub: f"ae-sdd {sub}"
+
+    # 三个 hook 定义（v1.3：matcher 加入 MultiEdit）
+    pre_tool_entry = {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [{
+            "type": "command",
+            "command": _cmd("gate-intercept")
+        }]
+    }
+    prompt_inject_entry = {
+        "hooks": [{
+            "type": "command",
+            "command": _cmd("prompt-inject")
+        }]
+    }
+    stop_check_entry = {
+        "hooks": [{
+            "type": "command",
+            "command": _cmd("stop-check")
+        }]
+    }
+
+    # 读现有配置
+    existing: dict = {}
+    if settings_path.is_file():
+        try:
+            existing = _json.loads(settings_path.read_text(encoding="utf-8"))
+        except Exception:
+            output.warn("settings.json 解析失败，将覆写")
+
+    hooks_cfg: dict = existing.setdefault("hooks", {})
+
+    def _upsert(section: str, entry: dict, matcher_key: Optional[str] = None) -> bool:
+        """
+        幂等写入 hook，返回 True = 新写入，False = 已存在跳过。
+
+        去重策略（v1.4 修复）：
+        - matcher_key 模式：按 matcher 字段精确匹配
+        - 否则：按命令中是否含 ae-sdd 子命令关键词精确匹配
+          （原来用 startswith cmd[0:2]，--use-python 模式下会误匹配同路径其他 hook）
+        --force 时只删除匹配到的 hook，不清空整个 section（避免误删用户自定义 hook）
+        """
+        lst: list = hooks_cfg.setdefault(section, [])
+        # 提取要插入 hook 命令中的子命令标识（如 "prompt-inject"、"stop-check"）
+        new_cmd = entry["hooks"][0]["command"]
+        if matcher_key:
+            def _is_target(h: dict) -> bool:
+                return h.get("matcher") == matcher_key
+        else:
+            # 取命令的最后一个 token 作为子命令标识（如 "prompt-inject"）
+            new_subcmd = new_cmd.split()[-1]
+            def _is_target(h: dict) -> bool:
+                cmd = h.get("hooks", [{}])[0].get("command", "")
+                return new_subcmd in cmd.split()
+
+        matching = [h for h in lst if _is_target(h)]
+        if matching and not args.force:
+            return False
+        if matching:
+            # 只删除匹配的 hook，保留用户自定义 hook
+            lst[:] = [h for h in lst if not _is_target(h)]
+        lst.append(entry)
+        return True
+
+    # 清理旧版 ae-sdd gate-intercept hook（matcher 可能是旧值，如 "Write|Edit|Bash"）
+    pre_hooks_list = hooks_cfg.setdefault("PreToolUse", [])
+    pre_hooks_list[:] = [
+        h for h in pre_hooks_list
+        if not any(
+            "gate-intercept" in hook_def.get("command", "")
+            for hook_def in h.get("hooks", [])
+        )
+    ]
+
+    added = []
+    if _upsert("PreToolUse", pre_tool_entry, "Write|Edit|MultiEdit|Bash"):
+        added.append("PreToolUse → gate-intercept")
+    else:
+        output.warn("PreToolUse hook 已存在（跳过），加 --force 覆写")
+
+    if _upsert("UserPromptSubmit", prompt_inject_entry):
+        added.append("UserPromptSubmit → prompt-inject")
+    else:
+        output.warn("UserPromptSubmit hook 已存在（跳过），加 --force 覆写")
+
+    if _upsert("Stop", stop_check_entry):
+        added.append("Stop → stop-check")
+    else:
+        output.warn("Stop hook 已存在（跳过），加 --force 覆写")
+
+    if args.dry_run:
+        output.info(f"[dry-run] 将写入 {settings_path}:")
+        print(_json.dumps(existing, ensure_ascii=False, indent=2))
+        return 0
+
+    if not added:
+        output.warn("全部 hook 已存在，无变更。加 --force 覆写。")
+        return 0
+
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        _json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8"
+    )
+    output.ok(f"hook 已写入: {settings_path}")
+    return 0
+
+
+def cmd_prompt_inject(args, parser):
+    """
+    UserPromptSubmit hook 入口（v1.4）。
+
+    stdin 格式:
+      {"hook_event_name": "UserPromptSubmit", "user_prompt": "..."}
+
+    stdout 格式:
+      {"systemMessage": "◆ HARNESS STATE ..."}  注入到 AI context
+      {}  无注入（非 ae-sdd 项目）
+
+    exit: 始终 0
+    """
+    import json as _json
+
+    input_data: dict = {}
+    if not sys.stdin.isatty():
+        try:
+            input_data = _json.load(sys.stdin)
+        except (_json.JSONDecodeError, Exception):
+            pass
+
+    user_prompt = input_data.get("user_prompt", "")
+    project_dir = Path(args.project) if args.project else None
+    try:
+        result = prompt_inject.inject(project_dir=project_dir, user_prompt=user_prompt)
+    except Exception:
+        # 任何异常（state.json 损坏等）→ 放行（不注入），不阻断对话
+        result = {}
+    print(_json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+def cmd_stop_check(args, parser):
+    """
+    Stop hook 入口（v1.3）。
+
+    stdin 格式:
+      {"hook_event_name": "Stop", "reason": "...", "transcript_path": "/tmp/..."}
+
+    stdout 格式（允许停止）:  {}
+    stdout 格式（阻止停止）:
+      {"decision": "block", "reason": "...", "systemMessage": "..."}
+
+    exit: 始终 0
+    """
+    import json as _json
+    from lib import paths as paths_mod
+
+    input_data: dict = {}
+    if not sys.stdin.isatty():
+        try:
+            input_data = _json.load(sys.stdin)
+        except (_json.JSONDecodeError, Exception):
+            pass
+
+    # 读对话记录（从 transcript_path 文件）
+    transcript_content = ""
+    transcript_read_failed = False
+    transcript_path = input_data.get("transcript_path", "")
+    if transcript_path:
+        try:
+            transcript_content = Path(transcript_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, IOError):
+            # transcript 文件读取失败 → 放行（无法检查就不阻断）
+            transcript_read_failed = True
+
+    project_dir = Path(args.project) if args.project else None
+    ade_sdd = paths_mod.locate_project_ae_sdd(project_dir)
+
+    # transcript 读取失败 → 放行
+    if transcript_read_failed:
+        print(_json.dumps({}))
+        return 0
+
+    try:
+        should_stop, inject_msg = stop_check.check_output(
+            transcript_content, ade_sdd=ade_sdd
+        )
+    except Exception:
+        # stop_check 内部异常 → 放行（不阻断对话）
+        print(_json.dumps({}))
+        return 0
+
+    if should_stop:
+        print(_json.dumps({}))
+    else:
+        result = {
+            "decision": "block",
+            "reason": inject_msg,
+            "systemMessage": inject_msg,
+        }
+        print(_json.dumps(result, ensure_ascii=False))
+    return 0  # 始终 exit 0
+
+
+def cmd_health(args, parser):
+    """健康度自检（v1 最小实现）"""
+    master = paths.locate_master_source()
+    ade_sdd = paths.locate_project_ae_sdd()
+
+    items = []
+
+    # 1. 母版 source/ 存在
+    items.append({
+        "name": "母版 source/ 存在",
+        "pass": master is not None,
+        "message": str(master) if master else "未找到（设环境变量 AE_SDD_MASTER）",
+    })
+
+    # 2. .ae-sdd/ 存在
+    items.append({
+        "name": "项目 .ae-sdd/ 存在",
+        "pass": ade_sdd is not None,
+        "message": str(ade_sdd) if ade_sdd else "未在当前目录或上级找到 .ae-sdd/config.yaml",
+    })
+
+    # 3. state.json 可读
+    state_ok = False
+    state_msg = "（无 .ae-sdd/）"
+    if ade_sdd:
+        sp = paths.state_path(ade_sdd)
+        if sp.is_file():
+            try:
+                json.loads(sp.read_text(encoding="utf-8"))
+                state_ok = True
+                state_msg = f"可读 ({sp.stat().st_size} 字节)"
+            except Exception as e:
+                state_msg = f"JSON 解析失败: {e}"
+        else:
+            state_msg = f"不存在: {sp}"
+    items.append({
+        "name": "state.json 可读",
+        "pass": state_ok,
+        "message": state_msg,
+    })
+
+    # 4. master SKILL.md 可读
+    skill_ok = False
+    skill_msg = "（无母版）"
+    if master:
+        sm = master / "SKILL.md"
+        if sm.is_file():
+            skill_ok = True
+            skill_msg = f"可读 ({sm.stat().st_size} 字节, version {paths.MASTER_VERSION})"
+        else:
+            skill_msg = f"不存在: {sm}"
+    items.append({
+        "name": "master SKILL.md 可读",
+        "pass": skill_ok,
+        "message": skill_msg,
+    })
+
+    # 5. tools/lib/ 模块可 import
+    items.append({
+        "name": "tools/lib/ 模块可 import",
+        "pass": True,
+        "message": f"classify / gates / output / paths / state ({sys.version.split()[0]})",
+    })
+
+    # 6. G-00 门禁
+    project_key = "unknown"
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey", "unknown")
+    g00 = gates.check_g00(master, ade_sdd, project_key)
+    items.append({
+        "name": "G-00 项目资产门禁",
+        "pass": g00.pass_,
+        "message": g00.message,
+    })
+
+    summary = {
+        "total": len(items),
+        "passed": sum(1 for i in items if i["pass"]),
+        "failed": sum(1 for i in items if not i["pass"]),
+        "items": items,
+    }
+    if args.json:
+        output.emit(summary, as_json=True)
+    else:
+        output.info(f"健康度自检 ({summary['passed']}/{summary['total']} 通过)：")
+        for i in items:
+            mark = "✅" if i["pass"] else "❌"
+            output.info(f"  {mark} {i['name']}: {i['message']}")
+    return 0 if summary["failed"] == 0 else 1
+
+
+# ─── CLI 主入口 ──────────────────────────────────────────────────────────────
+def main() -> int:
+    # 共享 --json 参数（让所有子 subparser 都能识别）
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", help="所有输出走 JSON 格式")
+
+    parser = argparse.ArgumentParser(
+        prog="ae-sdd",
+        description="ae-sdd CLI v3.0 — 端到端自动化工程工具集",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[common],
+    )
+    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
+
+    # version
+    p = sub.add_parser("version", help="输出版本", parents=[common])
+    p.set_defaults(func=cmd_version)
+
+    # state
+    p_state = sub.add_parser("state", help="项目状态管理", parents=[common])
+    state_sub = p_state.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_state_read = state_sub.add_parser("read", help="读 state.json", parents=[common])
+    p_state_read.set_defaults(func=cmd_state_read)
+    p_state_next = state_sub.add_parser("next-step", help="下一步建议", parents=[common])
+    p_state_next.set_defaults(func=cmd_state_next_step)
+    p_state_write = state_sub.add_parser("write", help="更新 state", parents=[common])
+    p_state_write.add_argument("--phase", required=True, help="新 phase")
+    p_state_write.add_argument("--story", help="当前 Story ID")
+    p_state_write.add_argument("--task", help="当前 Task ID")
+    p_state_write.set_defaults(func=cmd_state_write)
+
+    # gates
+    p_gates = sub.add_parser("gates", help="14 门禁检查", parents=[common])
+    gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
+    p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00）")
+    p_gates_check.set_defaults(func=cmd_gates_check)
+
+    # classify
+    p_classify = sub.add_parser("classify", help="4 维判定", parents=[common])
+    p_classify.add_argument("--text", help="待判定的文本")
+    p_classify.add_argument("--file", help="待判定的文件路径")
+    p_classify.set_defaults(func=cmd_classify)
+
+    # gate-intercept（PreToolUse hook 入口）
+    p_gi = sub.add_parser("gate-intercept", help="PreToolUse hook 拦截器", parents=[common])
+    p_gi.add_argument("--tool", help="工具名（Write / Edit / Bash / ...）")
+    p_gi.add_argument("--bash-command", dest="bash_command", default="",
+                      help="Bash 命令内容（仅 Bash 工具时有意义）")
+    p_gi.add_argument("--file-path", dest="file_path", default="",
+                      help="Write/Edit 的目标文件路径（路径感知检查用）")
+    p_gi.add_argument("--context", default="",
+                      help="用户最近消息（快速通道检测用）")
+    p_gi.add_argument("--project", default="",
+                      help="项目根目录（默认 cwd）")
+    p_gi.add_argument("--no-readonly", action="store_true",
+                      help="禁用只读工具放行（测试用）")
+    p_gi.set_defaults(func=cmd_gate_intercept)
+
+    # prompt-inject（UserPromptSubmit hook 入口）
+    p_pi = sub.add_parser("prompt-inject", help="UserPromptSubmit hook：注入状态到 context",
+                           parents=[common])
+    p_pi.add_argument("--project", default="", help="项目根目录（默认 cwd）")
+    p_pi.set_defaults(func=cmd_prompt_inject)
+
+    # stop-check（Stop hook 入口）
+    p_sc = sub.add_parser("stop-check", help="Stop hook：检查响应状态头",
+                           parents=[common])
+    p_sc.add_argument("--project", default="", help="项目根目录（默认 cwd）")
+    p_sc.set_defaults(func=cmd_stop_check)
+
+    # init-hooks（写入 .claude/settings.json）
+    p_ih = sub.add_parser("init-hooks", help="写入三个 hook 到 .claude/settings.json",
+                           parents=[common])
+    p_ih.add_argument("project_dir", nargs="?", default=".",
+                      help="项目根目录（默认 cwd，--global 时忽略）")
+    p_ih.add_argument("--force", action="store_true", help="覆写已有 hook")
+    p_ih.add_argument("--dry-run", action="store_true", help="只打印，不写文件")
+    p_ih.add_argument(
+        "--use-python", dest="use_python", action="store_true",
+        help=(
+            "hook command 用绝对路径 python + 脚本路径，不依赖 PATH"
+            "（Windows Claude Code hook 推荐）"
+        ),
+    )
+    p_ih.add_argument(
+        "--global", dest="global_hooks", action="store_true",
+        help="写入 ~/.claude/settings.json（用户级，适合多项目统一配置）",
+    )
+    p_ih.set_defaults(func=cmd_init_hooks)
+
+    # health
+    p_health = sub.add_parser("health", help="健康度自检", parents=[common])
+    p_health.set_defaults(func=cmd_health)
+
+    args = parser.parse_args()
+    if not hasattr(args, "func"):
+        parser.print_help()
+        return 1
+    try:
+        return args.func(args, parser)
+    except KeyboardInterrupt:
+        output.err("用户中断")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
