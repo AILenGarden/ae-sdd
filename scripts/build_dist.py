@@ -4,9 +4,26 @@ build_dist.py — ae-sdd 母版 → 实例化分发包 构建脚本
 
 🆕 v3.0.1 跨平台化（2026-06-18）：用 Python 替代 bash，零外部依赖（仅标准库）。
 🆕 v3.0 双目录分层：source/（SSOT） → dist/ae-sdd/（构建产物）。
+🆕 v3.1 Harness 层（2026-06-22）：HARNESS.md + harness/ 已纳入分发包（默认包含）。
 
 ⚠️ v3.0.1 Windows 兼容：用 `git archive` 从 commit 读取 source/（不经过 working tree），
    避免 Windows 的 core.autocrlf 把 LF 转 CRLF。
+
+分发包包含（source/ 下，排除项外）：
+  SKILL.md          — 主入口
+  HARNESS.md        — Agent Harness（v3.1 新增）
+  harness/          — Harness 相关目录（v3.1 新增）
+  templates/        — 模板
+  standards/        — 约束规则
+  skills/           — SKILL 节点
+  assets/           — 项目资产模板
+  docs/ae-sdd-conventions.md — 约定文档（docs/ 整体被排除，但 ae-sdd-conventions.md 单独保留）
+
+分发包排除（母版专有，不发给用户）：
+  CHANGELOG/        — 开发记录
+  docs/plans/       — 设计方案
+  .idea/            — IDE 配置
+  .claude-plugin/marketplace.json — 内部注册
 
 用法:
     python scripts/build_dist.py
@@ -48,8 +65,17 @@ def step(msg: str) -> None: print(f"\n{C_BLUE}== {msg} =={C_RESET}")
 
 
 # ─── 排除规则（母版专有产物，dist 不携带） ────────────────────────────────────
+#
+# 注意：docs/ 整体排除，但 docs/ae-sdd-conventions.md 是面向用户的约定文档，
+# 在 _extract_tar_to 里做特例保留（DOCS_KEEP 白名单）。
+#
 EXCLUDE_DIRS = {"CHANGELOG", "docs", ".idea"}
 EXCLUDE_FILES = [".claude-plugin/marketplace.json"]
+
+# docs/ 目录内例外保留的文件（相对 source/ 的路径）
+DOCS_KEEP: frozenset[str] = frozenset({
+    "docs/ae-sdd-conventions.md",
+})
 
 
 def _ignore_func(_src_dir: str, names: list[str]) -> list[str]:
@@ -89,6 +115,8 @@ def _extract_tar_to(tar_bytes: bytes, dst: Path, ignore_dirs: set, ignore_files:
     """
     从 tar 字节流解压到 dst，应用 ignore 规则。
     替代 shutil.copytree（避免 working tree 转换行尾）。
+
+    特例：DOCS_KEEP 中的文件即使父目录在 ignore_dirs 也保留。
     """
     import io
     dst.mkdir(parents=True, exist_ok=True)
@@ -103,11 +131,13 @@ def _extract_tar_to(tar_bytes: bytes, dst: Path, ignore_dirs: set, ignore_files:
                 continue
             rel_in_src = Path(*rel.parts[1:])  # 去掉 source/ 前缀
 
-            # 排除规则
-            parts = rel_in_src.parts
-            if any(p in ignore_dirs for p in parts):
-                continue
-            if rel_in_src.as_posix() in ignore_files_set:
+            # 排除规则（白名单例外：DOCS_KEEP 中的文件跳过排除）
+            rel_posix = rel_in_src.as_posix()
+            if rel_posix not in DOCS_KEEP:
+                parts = rel_in_src.parts
+                if any(p in ignore_dirs for p in parts):
+                    continue
+            if rel_posix in ignore_files_set:
                 continue
 
             target = dst / rel_in_src
@@ -119,6 +149,61 @@ def _extract_tar_to(tar_bytes: bytes, dst: Path, ignore_dirs: set, ignore_files:
                 if f is not None:
                     target.write_bytes(f.read())
 
+
+def _copy_tools_to_dist(repo_root: Path, dst: Path) -> None:
+    """把 tools/ 复制到 dist，排除 tools/tests/"""
+    tools_src = repo_root / "tools"
+    tools_dst = dst / "tools"
+    if not tools_src.is_dir():
+        warn(f"tools/ 目录不存在: {tools_src}，跳过")
+        return
+    if tools_dst.exists():
+        shutil.rmtree(tools_dst)
+
+    def _ignore_tests(_src_dir: str, names: list[str]) -> list[str]:
+        return [n for n in names if n == "tests"]
+
+    shutil.copytree(tools_src, tools_dst, ignore=_ignore_tests, copy_function=shutil.copyfile)
+    ok("tools/ 已复制到 dist（排除 tools/tests/）")
+
+
+def _patch_new_source_files(
+    src: Path, dst: Path, ignore_dirs: set, ignore_files: list
+) -> None:
+    """
+    把 source/ 里存在于 working tree 但不在 dist 里的文件补充进去。
+
+    用途：git archive 只读已 commit 的文件，staged/untracked 的新文件会漏掉。
+    本函数把这些遗漏文件从 working tree 直接复制（补丁模式，只补不覆盖）。
+    """
+    ignore_files_posix = {Path(f).as_posix() for f in ignore_files}
+    patched = []
+
+    for src_file in src.rglob("*"):
+        if not src_file.is_file():
+            continue
+        rel = src_file.relative_to(src)
+        rel_posix = rel.as_posix()
+
+        # 排除规则
+        if any(p in rel.parts for p in ignore_dirs) and rel_posix not in DOCS_KEEP:
+            continue
+        if rel_posix in ignore_files_posix:
+            continue
+
+        dst_file = dst / rel
+        if dst_file.exists():
+            continue  # 已存在，不覆盖（保留 git archive 版本）
+
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src_file, dst_file)
+        patched.append(rel_posix)
+
+    if patched:
+        for p in patched:
+            ok(f"补丁（working tree）: {p}")
+    else:
+        info("working tree 补丁：无新增文件")
 
 def dir_size(path: Path) -> int:
     """递归计算目录总大小（字节）"""
@@ -196,13 +281,22 @@ def main() -> int:
     _extract_tar_to(tar_bytes, dst, EXCLUDE_DIRS, EXCLUDE_FILES)
     ok("整树复制完成（git archive → 字节级一致）")
 
+    # ── 复制 tools/（working tree，非 git archive，无 CRLF 问题）────────────
+    _copy_tools_to_dist(repo_root, dst)
+
+    # ── 补充 source/ 里未 commit 的新文件（working tree 补丁）─────────────────
+    # git archive 只读已提交的 HEAD，staged/untracked 的新文件不会被打进 tar。
+    # 对于 HARNESS.md / harness/ 这类新增文件，从 working tree 直接复制。
+    # 只补充存在于 working tree 但不在 dist 里的文件（不覆盖已存在的）。
+    _patch_new_source_files(src, dst, EXCLUDE_DIRS, EXCLUDE_FILES)
+
     # ── 剥离母版专有产物 ────────────────────────────────────────────────────
     step("剥离母版专有产物")
     for rel in EXCLUDE_FILES:
         target = dst / rel
         if target.exists():
             target.unlink()
-    ok("剥离完成（marketplace.json / CHANGELOG / docs / .idea）")
+    ok("剥离完成（marketplace.json / CHANGELOG / docs（保留 ae-sdd-conventions.md）/ .idea）")
 
     # ── 注入版本信息 ────────────────────────────────────────────────────────
     step("注入版本信息")
@@ -231,6 +325,32 @@ def main() -> int:
         return 1
     ok("主入口 SKILL.md 存在且非空")
 
+    # ── 验证 Harness（v3.1）─────────────────────────────────────────────────
+    dst_harness = dst / "HARNESS.md"
+    if dst_harness.is_file():
+        ok(f"HARNESS.md 已包含 ({dst_harness.stat().st_size} 字节)")
+    else:
+        warn("HARNESS.md 未找到（可能 source/HARNESS.md 尚未 commit）")
+
+    dst_harness_dir = dst / "harness"
+    if dst_harness_dir.is_dir():
+        ok("harness/ 目录已包含")
+    else:
+        warn("harness/ 目录未找到")
+
+    # ── 验证 tools/（v3.1）──────────────────────────────────────────────────
+    dst_tools_cli = dst / "tools" / "bin" / "ae-sdd"
+    if dst_tools_cli.is_file():
+        ok(f"tools/bin/ae-sdd 已包含 ({dst_tools_cli.stat().st_size} 字节)")
+    else:
+        warn("tools/bin/ae-sdd 未找到（tools/ 复制可能失败）")
+
+    dst_gate_intercept = dst / "tools" / "lib" / "gate_intercept.py"
+    if dst_gate_intercept.is_file():
+        ok(f"tools/lib/gate_intercept.py 已包含 ({dst_gate_intercept.stat().st_size} 字节)")
+    else:
+        warn("tools/lib/gate_intercept.py 未找到（tools/ 复制可能失败）")
+
     # ── 摘要 ────────────────────────────────────────────────────────────────
     step("构建摘要")
     print(f"  母版大小:    {human_size(dir_size(src))}")
@@ -256,10 +376,21 @@ def _fallback_build(src: Path, dst: Path) -> int:
         shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=_ignore_func, copy_function=shutil.copyfile)
 
+    # 回填 DOCS_KEEP 白名单中的文件（因为 _ignore_func 整体排除了 docs/）
+    for rel_posix in DOCS_KEEP:
+        src_file = src / rel_posix
+        dst_file = dst / rel_posix
+        if src_file.is_file():
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src_file, dst_file)
+
     for rel in EXCLUDE_FILES:
         target = dst / rel
         if target.exists():
             target.unlink()
+
+    # fallback 同样复制 tools/
+    _copy_tools_to_dist(src.parent, dst)
 
     (dst / "VERSION").write_bytes(f"{version}\n{build_date}\n".encode("utf-8"))
     plugin_dir = dst / ".claude-plugin"

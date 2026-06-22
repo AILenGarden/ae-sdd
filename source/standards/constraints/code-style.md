@@ -50,6 +50,34 @@
   - `log.debug()`：调试信息，生产环境不输出
 - 禁止在循环内打印 info/error 日志
 
+### 日志格式三要素（🔴 强制）
+
+每条 `log.*` 语句必须同时包含以下三段，缺任何一段均不合格：
+
+| 要素 | 说明 | 示例 |
+|------|------|------|
+| **① 位置** | `[服务名][类名][方法名]` | `[icec-cloud-life-cs][CsConsultAppService][transferToManual]` |
+| **② 业务动作** | 当前代码段的业务语义，用短语描述 | `[开始转人工]`、`[推送APP参数]`、`[查询工单列表]` |
+| **③ 数据** | 实际打印的变量或结果，`key=value` 格式 | `consultId={}, operatorId={}` |
+
+**格式模板：** `[服务][类][方法][业务动作] key=value, key=value`
+
+```java
+// 方法入口
+log.info("[icec-cloud-life-cs][CsConsultAppService][transferToManual][开始转人工] consultId={}, operatorId={}", consultId, operatorId);
+
+// 中间关键节点
+log.info("[icec-cloud-life-cs][CsConsultAppService][transferToManual][推送APP参数] param={}", JsonUtils.toJson(param));
+
+// 方法出口
+log.info("[icec-cloud-life-cs][CsConsultAppService][transferToManual][转人工完成] result={}", result);
+
+// 异常
+log.error("[icec-cloud-life-cs][CsConsultAppService][transferToManual][转人工异常] consultId={}", consultId, e);
+```
+
+> **Code Review 判定：** 三要素缺任意一段 → 🟡 一般型问题，48 小时内修复。
+
 ---
 
 ## 四、常量定义

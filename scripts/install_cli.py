@@ -261,6 +261,10 @@ def main() -> int:
         info("  ae-sdd version")
         info("  ae-sdd health")
         print()
+        info("提示：如果已用 --use-python 模式配置 hook，安装完成后请重新运行：")
+        info("  python scripts/install_cli.py --check")
+        info("  若 hook 路径仍指向旧路径，重跑：ae-sdd init-hooks --use-python --force")
+        print()
 
     return rc
 

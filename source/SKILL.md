@@ -5,7 +5,7 @@ description: |
   从 DR 出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
   当开发者说"启动自动化工程"、"从 DR 开始实现"、"端到端实现"、"继续流程"、
   "继续上次"、"/ae-sdd" 时触发。支持流程状态跟踪与中断后恢复。
-version: 3.0.0
+version: 3.1.0
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -14,13 +14,30 @@ triggers:
   - "继续流程"
   - "继续上次"
   - "/ae-sdd"
+  - "ae-sdd-quick"   # 🆕 v3.1：快速通道触发（参见入口段硬前置声明）
 allowed_tools:
   - "ae-sdd"   # 主 CLI（见 §🛠️ 工具 API 速查）
 ---
 
-# Auto Engineering — 端到端自动化工程 Skill（v3.0 主入口）
+> ## 🔴 第一动作（硬前置，v3.1 加固 — 2026-06-22，禁止跳过）
+>
+> 收到 `/ae-sdd` 触发后，**第一动作 = 跑 §🛡️ G-00 项目资产门卫**（读 `assets/<projectKey>/<projectKey>.assets.md` 或确认 CLI `ae-sdd assets check` 已通过）。
+>
+> 禁止直接读用户问题内容、禁止直接动代码、禁止主观归类为"对话轻量通道"、禁止跳过 §🎯 统一入口路由判定、禁止越层派 sub-agent。
+>
+> **违规代价**：跳过 G-00 = 本次任务失信，下游所有产物需标"事后回溯"。
+>
+> **快速通道**：用户**显式说** `/ae-sdd-quick` 或 `走快速通道` 时可豁免 G-00 完整 7 步路由，但**仍需落档**（注明快速通道来源 + 项目资产摘要）。
 
-> **🆕 v3.0 改造说明（2026-06-18）：**
+# Auto Engineering — 端到端自动化工程 Skill（v3.1 主入口）
+
+> **🆕 v3.1 加固说明（2026-06-22）：**
+> - **入口段加"🔴 第一动作（硬前置）"声明**（见上方）—— 解决"root agent 收到 /ae-sdd 触发后跳 G-00 / 跳路由判定 / 直接动手改代码"问题（实测案例：life 项目 STORY-020-BE v3-r2 CodeReview 复盘）
+> - 新增 **`source/docs/ae-sdd-conventions.md`**（项目级 SOP 模板）—— 解决"L2 流程纪律承接缺失"
+> - 各使用方项目新建 **`ae-sdd-instance.md`**（项目实例化）—— 解决"root agent 没有项目级 ae-sdd 流程可参照"
+> - L4 失职检测 hook（`pre-ae-sdd-check.sh`）**延期到 v3.2**（mavis daemon 兼容性未验证）
+>
+> > **🆕 v3.0 改造说明（2026-06-18）：**
 > - 本文件（`SKILL.md`）= **ae-sdd 唯一主入口**。原 `skills/orchestration/ae-sdd-skill.md` 已并入本文件并删除。
 > - 强化 **G-00 项目资产门卫**：每个调用必过项目资产完整性检查，缺失时自动触发生成。
 > - 新增 **🛠️ 工具 API 速查** 章节：列出 `ae-sdd` CLI 全部 8 个子命令。

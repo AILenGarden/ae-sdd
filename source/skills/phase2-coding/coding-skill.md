@@ -188,7 +188,7 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 | `technology-stack` | Java 版本、Spring Boot 版本、框架版本 |
 | `project-structure` | 包路径规范、模块结构、分层职责红线 |
 | `layered-arch` | 分层依赖方向、各层职责 |
-| `code-style` | 命名规范、Lombok 使用、异常定义、枚举结构 |
+| `code-style` | 命名规范、Lombok 使用、异常定义、枚举结构、**日志格式三要素（`[服务][类][方法][业务动作] key=value`）** |
 | `api` | URL 命名、HTTP 方法、响应结构 |
 | `database` | 建表规范、必备字段、索引命名 |
 | `security` | 鉴权方式、@SkipAuth 使用 |
@@ -224,7 +224,7 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 | technology-stack | Java 版本、Spring Boot 版本、框架版本 |
 | project-structure | 包路径规范、模块结构 |
 | layered-arch | 分层依赖方向、各层职责 |
-| code-style | 命名规范、Lombok 使用、异常定义、枚举结构 |
+| code-style | 命名规范、Lombok 使用、异常定义、枚举结构、**日志格式三要素（`[服务][类][方法][业务动作] key=value`）** |
 | api | URL 命名、HTTP 方法、响应结构 |
 | database | 建表规范、必备字段、索引命名 |
 | security | 鉴权方式、@SkipAuth 使用 |

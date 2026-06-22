@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.0.0（🆕 2026-06-18：母版/分发包双目录分层 + G-00 项目资产门卫 + 声明式规则）
+> **版本：** v3.1.0（🆕 2026-06-22：纪律层加固 — 根 agent 硬前置 + 项目 SOP 模板 + life 实例化；触发词新增 `ae-sdd-quick` 快速通道）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -121,8 +121,9 @@ bash scripts/dev-sync.sh --watch
 - **[`source/templates/`](source/templates/)** — 17 份模板（Story/Task/DR/Report/...）
 - **[`source/standards/`](source/standards/)** — 11 份约束（API/DB/分层/安全/...）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
-- **[`source/docs/`](source/docs/)** — 规划/迁移文档
-- **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史
+- **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md)）
+- **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）
+- 🆕 v3.1：[`source/docs/ae-sdd-conventions.md`](source/docs/ae-sdd-conventions.md) — 项目级 SOP 模板（root agent 必读）
 
 ---
 
@@ -157,6 +158,9 @@ bash scripts/dev-sync.sh --uninstall
 3. 在 `source/SKILL.md` 路由表里注册触发词
 4. 跑 `bash scripts/dev-sync.sh` 验证
 5. 提 PR 到 `main` 分支
+
+### Q6（🆕 v3.1）：触发 `/ae-sdd` 后被强制走 G-00 / 路由判定 / 派 sub-agent 怎么办？
+v3.1 起 SKILL 入口段加「🔴 第一动作（硬前置）」声明：收到 `/ae-sdd` 触发后必须先跑 G-00、跑路由判定、必要时派 sub-agent，禁止直接动手改代码。如确认是小修小补（单文件单改），用户**显式说** `/ae-sdd-quick` 或 `走快速通道` 可豁免完整 7 步路由，但仍需落档。详见 [v3.1 纪律加固 CHANGELOG](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)。
 
 ---
 

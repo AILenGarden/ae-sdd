@@ -5,6 +5,10 @@ init.py — ae-sdd 项目实例化（Layer 4）
 🆕 v3.0 P0 三件套之 init（2026-06-18）：
   给具体项目（如 icec-cloud-boss）创建 .ae-sdd/ 骨架 + 项目资产 + overrides 模板。
 
+🆕 v3.1 Harness 自动注入（2026-06-22）：
+  init 完成后自动调用 ae-sdd init-hooks，将 PreToolUse hook 写入项目 .claude/settings.json。
+  可用 --no-hooks 跳过（e.g. CI 环境）。
+
 用法:
     python scripts/init.py <project-dir> <project-key> [选项]
 
@@ -13,12 +17,14 @@ init.py — ae-sdd 项目实例化（Layer 4）
     python scripts/init.py . icec-cloud-boss --asset-path ./my.assets.md
     python scripts/init.py D:/Item/icec-cloud-boss icec-cloud-boss --dry-run
     python scripts/init.py D:/Item/icec-cloud-boss icec-cloud-boss --force
+    python scripts/init.py D:/Item/icec-cloud-boss icec-cloud-boss --no-hooks
 """
 from __future__ import annotations
 
 import argparse
 import json
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,6 +158,7 @@ def init_project(
     force: bool = False,
     dry_run: bool = False,
     master_source_rel: str = "../ae-sdd",
+    no_hooks: bool = False,
 ) -> int:
     """执行项目实例化；返回 0 成功 / 1 失败"""
 
@@ -288,7 +295,41 @@ def init_project(
     print(f"  4. 在 .ae-sdd/overrides/ 添加项目特化规则（可选）")
     print(f"  5. 在 Claude Code 中启动 /ae-sdd 开始第一个 Story")
     print()
+
+    # ── 自动注入 PreToolUse hook（v3.1 Harness 层） ─────────────────────────
+    if no_hooks:
+        warn("跳过 hook 注入（--no-hooks）")
+        warn("      后续可手动跑：ae-sdd init-hooks " + str(project_dir))
+    else:
+        _run_init_hooks(project_dir)
+
     return 0
+
+
+def _run_init_hooks(project_dir: Path) -> None:
+    """调用 ae-sdd init-hooks，将 PreToolUse hook 写入项目 .claude/settings.json"""
+    step("注入 Harness Hook（PreToolUse）")
+    try:
+        result = subprocess.run(
+            ["ae-sdd", "init-hooks", str(project_dir)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.returncode == 0:
+            ok("Harness hook 已注入 .claude/settings.json")
+            info("  Claude Code 将在每次 Write/Edit/Bash 前执行 ae-sdd gate-intercept")
+        else:
+            warn(f"ae-sdd init-hooks 退出码 {result.returncode}，请检查输出")
+            if result.stderr:
+                warn(result.stderr)
+            warn("可手动补跑：ae-sdd init-hooks " + str(project_dir))
+    except FileNotFoundError:
+        warn("ae-sdd 命令未找到（可能未安装到 PATH）")
+        warn("请安装后手动跑：ae-sdd init-hooks " + str(project_dir))
+        warn("参考：python scripts/install.py 或配置 PATH 指向 tools/bin/")
 
 
 # ─── CLI 入口 ────────────────────────────────────────────────────────────────
@@ -307,6 +348,8 @@ def main() -> int:
                         help="不创建项目资产（待用户后续生成）")
     parser.add_argument("--master-source", default="../ae-sdd",
                         help="master.source 字段值（默认: ../ae-sdd）")
+    parser.add_argument("--no-hooks", action="store_true",
+                        help="不自动注入 PreToolUse hook 到 .claude/settings.json")
     parser.add_argument("--force", action="store_true",
                         help="覆盖已有 .ae-sdd/")
     parser.add_argument("--dry-run", action="store_true",
@@ -325,6 +368,7 @@ def main() -> int:
         force=args.force,
         dry_run=args.dry_run,
         master_source_rel=args.master_source,
+        no_hooks=args.no_hooks,
     )
 
 
