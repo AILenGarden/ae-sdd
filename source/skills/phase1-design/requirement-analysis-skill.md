@@ -43,14 +43,11 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 | Issue（无输入时生成）| `{工程根}/ae-sdd-doc/PRD/Issue-{编号}.md` | 不带版本号 | 原地修改（按 issue-template）|
 | RAGeneratePlan | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/RA/ChangeLog/{RA-ID}-RAGeneratePlan-r{N}.md` | 带 r{N} | 新增（每轮生成 1 份）|
 
-**项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §G 索引化 API 按需加载：
-- `assets.outline()` — 拉资产总览（5 秒了解项目范围）
-- `assets.module(name)` — 拉单微服务详情（入口/主表/关键类）
-- `assets.table(name)` — 拉单表所有字段（数据要素维度必备）
-- `assets.component(name)` — 拉公共组件位置（设计方向论证必备）
-- `assets.api(method)` — 拉跨服务 API 契约（接口契约必读）
-- `assets.search(keyword)` — 关键词反查（避免重复造轮子）
-- `assets.sections(§X.Y)` — 按需拉章节内容（不全文加载）
+**项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
+- `ae-sdd assets read requirement-analysis --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/DomainService/Service + §A/§B 整章）
+- `ae-sdd assets outline --project <projectKey>` — 拉资产总览（5 秒了解项目范围）
+- `ae-sdd assets query "<name>" --project <projectKey>` — 精准查模块/组件/字段/API（支持类名/字段名/业务词）
+- `ae-sdd assets section <§X.Y> --project <projectKey>` — 按需拉章节内容（不全文加载）
 
 **🔴 关键约束：**
 - ❌ 不允许直接读 `design/`、`.ae-task/`、`.ae-plan/`、`.spec/iterations/` 等旧路径
@@ -112,7 +109,7 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
 |---------|------------|------------------|
 | "角色 X 有需求 Y" | `PRD §X.Y` 段落 + 行号 / `Issue #N 描述` / `用户对话第 N 轮` | "用户需要这个" |
 | "场景 X 走主流程" | `PRD §X.Y 业务场景` + 行号 | "应该是这样" |
-| "实体 X 有字段 Y" | `PRD §X.Y 数据字段` + `assets.table(X).Y` | "应该有这个字段" |
+| "实体 X 有字段 Y" | `PRD §X.Y 数据字段` + `ae-sdd assets query "X"` 确认 | "应该有这个字段" |
 | "规则 R1 适用" | `PRD §X.Y 业务规则` + `用户确认时间戳` | "我觉得要这样" |
 | "AC-001 覆盖主流程" | `PRD §主流程步骤清单` + `AC-001 Given-When-Then` | "覆盖了" |
 
@@ -149,10 +146,10 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
 | **RA-03 角色与权限边界** | 谁使用、谁受影响、谁决策、谁被限制？ | 角色矩阵 + 权限边界 + 冲突清单 | 角色只列"用户/管理员"等泛称 |
 | **RA-04 场景拓扑** | 主流程、异常、边界、组合场景是否穷举？ | 场景拓扑图 + 场景清单 | 写了主流程但缺异常/边界/组合 |
 | **RA-05 状态与生命周期** | 是否存在状态机、生命周期、反向流程？ | 状态机 + 生命周期表 + 终态/回滚说明 | 有状态变化但无合法/非法流转 |
-| **RA-06 数据语义与所有权** | 哪些实体/字段参与，谁创建、修改、读取？ | 实体关系 + 字段约束 + 所有权 | 字段凭空编造，未用 assets.table() 反查 |
+| **RA-06 数据语义与所有权** | 哪些实体/字段参与，谁创建、修改、读取？ | 实体关系 + 字段约束 + 所有权 | 字段凭空编造，未用 `ae-sdd assets query` 反查 |
 | **RA-07 业务规则与衍生规则** | 主规则触发后会衍生哪些规则？ | 主规则表 + R' 衍生规则登记表 | 状态变更类需求未跑 E.5 |
 | **RA-08 跨域级联** | 状态/规则是否影响其他域、缓存、MQ、外部系统？ | 跨域级联效应表 | 涉及跨服务却写"无影响"且无证据 |
-| **RA-09 现有能力复用** | 项目里是否已有模块、接口、组件、规则可复用？ | 复用扫描表 + 不复用理由 | 未查 assets.search()/component()/api() |
+| **RA-09 现有能力复用** | 项目里是否已有模块、接口、组件、规则可复用？ | 复用扫描表 + 不复用理由 | 未查 `ae-sdd assets query`（search/component/api） |
 | **RA-10 非功能与约束** | 性能、安全、合规、审计、可观测是否有要求？ | 非功能约束矩阵 | 只写业务功能，不写约束 |
 | **RA-11 AC 与测试可验证性** | 每个场景/规则/衍生影响是否能被验收？ | AC 覆盖矩阵 + 衍生 AC 覆盖率 | AC 不能追溯到场景或规则 |
 | **RA-12 规模与路由置信度** | 规模裁定是否有证据，路由是否正确？ | 5 维评分 + 路由置信度 + 反例 | 路由只凭感觉，无评分依据 |
@@ -233,10 +230,10 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
 - 阶段 A 角色分析：{从 PRD 角色段 + 现有项目角色反推}
 - 阶段 B 场景分析：{PRD 业务场景 + 项目资产业务流程}
 - 阶段 C 业务流程：{PRD 流程图 + 补充文档}
-- 阶段 D 数据要素：{PRD 字段 + assets.table() 反查}
-- 阶段 E 业务规则：{PRD 规则段 + assets.sections(§6.X) 约束}
+- 阶段 D 数据要素：{PRD 字段 + `ae-sdd assets query "<tableName>"` 反查}
+- 阶段 E 业务规则：{PRD 规则段 + `ae-sdd assets section §6.X` 约束}
 - 阶段 E.5 衍生规则强制追问：{主规则 R → 衍生规则 R' 登记表，命中 H.5 模式编号}
-- 阶段 F 设计方向：{PRD 功能 + assets.component() 复用扫描}
+- 阶段 F 设计方向：{PRD 功能 + `ae-sdd assets query "<componentName>"` 复用扫描}
 - 阶段 G AC 雏形：{PRD 业务场景 + 业务流程}
 - 阶段 G.5 衍生 AC 强制覆盖：{主场景 AC → 衍生 AC，配套 E.5 衍生规则}
 - 阶段 H 假设挖掘：{PRD 全文反推}
@@ -383,10 +380,10 @@ For each 输入类型：
 |---|------|------|---------|------|
 | 1 | 用户提供 | PRD/Issue 文件 | 全文 | Read 全文 |
 | 2 | 用户提供 | PRD 补充文档 | 全文（如有）| Read 全文 |
-| 3 | 自动加载 | 项目资产大纲 | 关键模块 | `assets.outline()` |
-| 4 | 自动加载 | 相关模块详情 | 按需 | `assets.module(name)` |
-| 5 | 自动加载 | 相关表字段 | 按需 | `assets.table(name)` |
-| 6 | 自动加载 | 相关公共组件 | 按需 | `assets.component(name)` |
+| 3 | 自动加载 | 项目资产大纲 | 关键模块 | `ae-sdd assets outline --project <projectKey>` |
+| 4 | 自动加载 | 相关模块详情 | 按需 | `ae-sdd assets query "<name>" --project <projectKey>` |
+| 5 | 自动加载 | 相关表字段 | 按需 | `ae-sdd assets query "<tableName>" --project <projectKey>` |
+| 6 | 自动加载 | 相关公共组件 | 按需 | `ae-sdd assets query "<componentName>" --project <projectKey>` |
 | 7 | 自动加载 | 历史 RA 摘要（如有重入）| 同模块或同业务域 | 文件系统扫描 `ae-sdd-doc/iterations/*/RA/*.md` |
 | 8 | 模板 | RA 模板 | 必读 | Read `templates/design/ra-template.md` |
 
@@ -403,10 +400,10 @@ For each 输入类型：
 |---|------|------|------|
 | 1 | PRD/Issue | ✅ 已读 / ❌ 未读 | {路径} |
 | 2 | 补充文档 | ✅ 已读 / ❌ 无 | {路径} |
-| 3 | 项目资产大纲 | ✅ assets.outline() / ❌ | 关键模块：{N} 个 |
-| 4 | 相关模块详情 | ✅ assets.module({X}) / ❌ | 涉及：{模块列表} |
-| 5 | 相关表字段 | ✅ assets.table({X}) / ❌ | 涉及：{表列表} |
-| 6 | 相关组件 | ✅ assets.component({X}) / ❌ | 涉及：{组件列表} |
+| 3 | 项目资产大纲 | ✅ `ae-sdd assets outline` / ❌ | 关键模块：{N} 个 |
+| 4 | 相关模块详情 | ✅ `ae-sdd assets query "<{X}>"` / ❌ | 涉及：{模块列表} |
+| 5 | 相关表字段 | ✅ `ae-sdd assets query "<{X}>"` / ❌ | 涉及：{表列表} |
+| 6 | 相关组件 | ✅ `ae-sdd assets query "<{X}>"` / ❌ | 涉及：{组件列表} |
 | 7 | 历史 RA | ✅ {N} 份 / ❌ 无 | 关联：{列表} |
 | 8 | RA 模板 | ✅ 已读 / ❌ | |
 | 9 | RAModel 12 维 | ✅ 已准备 / ❌ | 将写入 RA §0.5 |
@@ -425,7 +422,7 @@ For each 输入类型：
 1. 逐维填写 RA-01 ~ RA-12 决策记录。
 2. 每个维度必须给出"结论 + 证据 + 风险等级 + 后续动作"四列。
 3. 风险等级为 🔴 或 🟠 的维度必须进入缺口管理，不允许在 RA 中用模糊文字绕过。
-4. RA-09 现有能力复用必须至少调用一次 `assets.search()` 或 `assets.component()`；如资产无结果，写明调用记录。
+4. RA-09 现有能力复用必须至少调用一次 `ae-sdd assets query "<关键词>"`；如资产无结果，写明调用记录。
 5. RA-12 规模与路由置信度必须同时写"支持当前路由的证据"和"可能推翻当前路由的反例"。
 
 ### 0.5.2 需求风险预判表（RA §0.6 必填）
@@ -467,8 +464,8 @@ For each 输入类型：
 
 **输入：**
 - PRD/Issue 角色段
-- `assets.module(name)` 中的"已涉及角色"反查
-- `assets.search("角色")` 关键词反查
+- `ae-sdd assets query "<moduleName>"` 中的"已涉及角色"反查
+- `ae-sdd assets query "角色"` 关键词反查
 
 **产出（RA §2）：**
 - §2.1 角色枚举（穷举，不许"其他"）
@@ -537,8 +534,8 @@ stateDiagram-v2
 
 **输入：**
 - PRD 数据字段段
-- `assets.table(name)` 查实际表结构
-- `assets.search(字段名)` 反查字段是否在多表出现
+- `ae-sdd assets query "<tableName>"` 查实际表结构
+- `ae-sdd assets query "<字段名>"` 反查字段是否在多表出现
 
 **产出（RA §5）：**
 - §5.1 核心实体列表（主表/关系表/历史表，穷举）
@@ -548,21 +545,21 @@ stateDiagram-v2
 - §5.5 数据所有权（创建方/修改方/查询方）
 
 **🔴 必填字段（每实体）：**
-- 表名（来自 `assets.table()` 确认存在）
-- 字段清单（来自 `assets.table()` 实际字段，禁止猜测）
+- 表名（来自 `ae-sdd assets query` 确认存在）
+- 字段清单（来自 `ae-sdd assets query` 实际字段，禁止猜测）
 - 主键 + 索引（PK/UK/普通索引）
 - 审计四字段（id/created_by/created_date/last_updated_by/last_updated_date）
 - 逻辑删除字段（deleted_flag）
 
 **🔴 必禁：**
-- 禁止凭空编造字段（必须 `assets.table()` 反查确认）
+- 禁止凭空编造字段（必须 `ae-sdd assets query` 反查确认）
 - 禁止使用过时的项目资产（`lastAuditedAt > 90 天` 时先触发资产更新）
 
 ### 阶段 E：业务规则与约束（→ RA §6）
 
 **输入：**
 - PRD 业务规则段
-- `assets.sections(§6.X)` 读工程约束
+- `ae-sdd assets section §6.X` 读工程约束
 - `standards/constraints/` 8 个 .md
 
 **产出（RA §6）：**
@@ -637,8 +634,8 @@ stateDiagram-v2
 
 **输入：**
 - PRD 功能清单
-- `assets.component(name)` 查公共组件（避免重复造轮子）
-- `assets.api(method)` 查现有 API 契约
+- `ae-sdd assets query "<componentName>"` 查公共组件（避免重复造轮子）
+- `ae-sdd assets query "<method>"` 查现有 API 契约
 - 团队既有实现（项目资产 §10 经验文档）
 
 **产出（RA §7）：**
@@ -825,11 +822,11 @@ def generate_pattern_checklist(requirement_keywords):
 
 | # | 追问 | 验证方式 | 你的场景示例 |
 |---|------|---------|------------|
-| **1** | 状态变更 → 触发哪些**域**的状态机？ | `assets.module()` 反查 + 业务全景 | 账号锁定 → IM 状态机 + CS 状态机 |
-| **2** | 状态变更 → 触发哪些**事件**？（域内 + 跨域）| `assets.api()` 反查事件订阅 + `assets.search("event")` | `t_user_locked` 事件 |
-| **3** | 状态变更 → 哪些**缓存**需要失效？（Redis / 本地缓存 / 前端本地存储）| 代码反查缓存 key + `assets.component("cache")` | `user:profile:{id}`、`user:session:{id}`、`im:presence:{id}` |
-| **4** | 状态变更 → 哪些**异步消息**要发？（MQ / WebSocket / SSE）| 代码反查 MQ topic + `assets.search("mq")` | `im.presence.update`、`cs.away.trigger` |
-| **5** | 状态变更 → 哪些**聚合根**要重建？（CQRS 场景）| `assets.search("aggregate")` 反查 | User 聚合根重建、Session 聚合根清理 |
+| **1** | 状态变更 → 触发哪些**域**的状态机？ | `ae-sdd assets query` 反查 + 业务全景 | 账号锁定 → IM 状态机 + CS 状态机 |
+| **2** | 状态变更 → 触发哪些**事件**？（域内 + 跨域）| `ae-sdd assets query "event"` 反查事件订阅 | `t_user_locked` 事件 |
+| **3** | 状态变更 → 哪些**缓存**需要失效？（Redis / 本地缓存 / 前端本地存储）| 代码反查缓存 key + `ae-sdd assets query "cache"` | `user:profile:{id}`、`user:session:{id}`、`im:presence:{id}` |
+| **4** | 状态变更 → 哪些**异步消息**要发？（MQ / WebSocket / SSE）| 代码反查 MQ topic + `ae-sdd assets query "mq"` | `im.presence.update`、`cs.away.trigger` |
+| **5** | 状态变更 → 哪些**聚合根**要重建？（CQRS 场景）| `ae-sdd assets query "aggregate"` 反查 | User 聚合根重建、Session 聚合根清理 |
 
 #### H.6.2 跨域级联效应表（🔴 RA §9-ter 必填）
 
@@ -1147,7 +1144,7 @@ target_iteration = choose_iteration(doc={
 ### 6. 与下游 SKILL 衔接
 - 触发 SKILL：{name}
 - 传入文件：RA 路径 + PRD/Issue 路径
-- 项目资产引用：{assets.outline() + assets.module({X})}
+- 项目资产引用：{`ae-sdd assets outline` + `ae-sdd assets query "<{X}>"`}
 
 ### 7. 未解决问题清单
 - {Q1}：{描述}（负责人：{X}，截止：{Y}）
@@ -1328,7 +1325,7 @@ else → 规模=小（默认）
 |--------|------|------|
 | RA 文档路径 | `ae-sdd-doc/iterations/{date}/RA/{RA-ID}-v{major}.{minor}.md` | 完整 RA |
 | PRD/Issue 路径 | `ae-sdd-doc/PRD/{PRD-ID}.md` 或 `Issue-{ID}.md` | 原始需求 |
-| 项目资产引用 | `assets.outline() + assets.module({X})` 调用记录 | 用于下游 SKILL 精准加载 |
+| 项目资产引用 | `ae-sdd assets outline` + `ae-sdd assets query "<{X}>"` 调用记录 | 用于下游 SKILL 精准加载 |
 | 规模结果 | §11 规模 | 决定下游 SKILL 类型 |
 | 业务/逻辑标签 | `business + logic` | 用于下游 SKILL 关联性分析 |
 | 缺口清单 | §10 缺口 | 下游 SKILL 需知 |
@@ -1358,10 +1355,10 @@ else → 规模=小（默认）
 | **RA-G04** | 角色穷举 | §2 角色清单覆盖 PRD/Issue/资产/对话中的全部角色，且无泛称逃避 | 补 §2 |
 | **RA-G05** | 场景拓扑完整 | §3 覆盖主流程/异常/边界/组合四类场景 | 补 §3 |
 | **RA-G06** | 状态与生命周期完整 | 涉及状态变更时 §4 有合法/非法流转、初态/终态、反向流程 | 补 §4，必要时触发 E.5/G.5 |
-| **RA-G07** | 数据语义真实 | §5 实体/字段均来自输入或 assets.table()/assets.search()，无凭空字段 | 补 §5 或列缺口 |
+| **RA-G07** | 数据语义真实 | §5 实体/字段均来自输入或 `ae-sdd assets query` 反查，无凭空字段 | 补 §5 或列缺口 |
 | **RA-G08** | 主规则与衍生规则完整 | §6 主规则均有证据；状态变更类需求有 §6.5 R' 表 | 补 §6/§6.5 |
 | **RA-G09** | 跨域级联完整 | 命中跨域风险时 §9-ter 列出受影响域、事件、缓存、MQ、时效 | 补 §9-ter |
-| **RA-G10** | 复用扫描完成 | §7 设计方向前已查 assets.search()/component()/api()，不复用有理由 | 补 §7 |
+| **RA-G10** | 复用扫描完成 | §7 设计方向前已查 `ae-sdd assets query`（search/component/api），不复用有理由 | 补 §7 |
 | **RA-G11** | AC 可验证 | §8 AC 均有 Given/When/Then，能追溯到场景/规则/数据 | 补 §8 |
 | **RA-G12** | 衍生 AC 覆盖 | 有 R' 时 §8.5 每条 R' 至少 1 个 AC，时效要求明确率 100% | 补 §8.5/§8.6 |
 | **RA-G13** | 5 问自检通过 | 每条结论都有证据/反例/边界/冲突/缺口判定，通过率 100%；不得用 90% 逃避阻断项 | 回到第一步 bis |
@@ -1433,7 +1430,7 @@ else → 规模=小（默认）
 | 13 | 禁止用户未确认就触发下游 | 流程失控 | §第四步（双支柱 + 等待用户回复）|
 | 14 | 禁止 16 道 RA 质量闸未过就结束 | 流程不闭环 | §第七步（RA-G01~RA-G16 全过）|
 | 15 | 禁止项目资产过期（lastAuditedAt > 90 天）直接使用 | 决策失据 | §第零步（先触发 `project-assets-update-skill` §4 更新）|
-| 16 | 禁止凭空编造字段（必须 `assets.table()` 反查）| 数据要素失真 | §阶段 D（用 `assets.table()` 查实际表结构）|
+| 16 | 禁止凭空编造字段（必须 `ae-sdd assets query` 反查）| 数据要素失真 | §阶段 D（用 `ae-sdd assets query "<tableName>"` 查实际表结构）|
 | 17 | 禁止跳过 RAModel 直接写 RA | 需求理解不可审计 | §第 0.5 步（12 维决策 + 风险预判）|
 | 18 | 禁止需求风险命中后不落地章节 | 风险被识别但未闭环 | §0.6 风险预判 → 对应章节 |
 | 19 | 🆕 **禁止 RA 修订不评估下游影响** | 下游文档过期 / 漏改 | §RA 修订影响分析（v3.2 新增）|

@@ -198,7 +198,7 @@ Story 结论：{STORY-ID}
 | 1 | DR 文档 | 全部章节（含背景 / 业务规则 / 验收标准 / 接口契约 / 数据模型）|
 | 2 | PRD 文档 | 业务背景 / 业务规则 / 用户场景 |
 | 3 | 产品原型 | 全部页面 + 关键交互流程 |
-| 4 | 项目资产 | 调用 `project-assets-update-skill.assets.forStoryGenerate(projectKey)` 返回 §3 + §4 + §5 + §6.5 + §7（**禁止**直接全文读取 assets.md）|
+| 4 | 项目资产 | 调用 `ae-sdd assets read story-generate --project <projectKey>` 返回 §3 + §4 + §5 + §6.5 + §7（**禁止**直接全文读取 assets.md）|
 | 5 | Story 模板 | `templates/design/story-template.md`（含全部必填章节）|
 | 6 | 测试策略模板 | `strategies/be-testcase-strategy.md`（读取第一层类型策略、第二层通用维度、用例数量自检公式，用于生成 AC 覆盖基线；不在本阶段生成完整测试用例）|
 
@@ -254,7 +254,7 @@ Story 结论：{STORY-ID}
 ### 1.3 调用项目资产服务
 
 > 🔴 **强制：** 禁止直接读取 `{projectKey}.assets.md` 全文。
-> 调用 `project-assets-update-skill.assets.forStoryGenerate(projectKey)` — 由 project-assets-update-skill 通过索引路由返回以下内容：
+> 调用 `ae-sdd assets read story-generate --project <projectKey>` — 由 `ae-sdd assets read` 通过索引路由返回以下内容：
 
 | 返回章节 | 用途 |
 |---------|------|
@@ -269,8 +269,8 @@ Story 结论：{STORY-ID}
 - 资产过期（lastAuditedAt > 90 天）→ 停止，提示用户先运行 `project-assets-update-skill §5 审计`
 
 **精准查询（需要时）：**
-- 查单个模块详情：`assets.module(projectKey, moduleName)`
-- 查接口/字段：`assets.api(projectKey, method)` / `assets.table(projectKey, tableName)`
+- 查单个模块详情：`ae-sdd assets query "<moduleName>" --project <projectKey>`
+- 查接口/字段：`ae-sdd assets query "<method>" --project <projectKey>` / `ae-sdd assets query "<tableName>" --project <projectKey>`
 
 ### 1.4 产出：输入清单
 
@@ -284,7 +284,7 @@ Story ID：{STORY-ID}
 - [x] DR 文档（{N} 章 / {M} AC）
 - [x] PRD 文档（{N} 段 / {M} 业务规则）
 - [x] 产品原型（{N} 页面 / {M} 关键交互）
-- [x] 项目资产（via `assets.forStoryGenerate(projectKey)` 已加载）
+- [x] 项目资产（via `ae-sdd assets read story-generate --project <projectKey>` 已加载）
 - [x] Story 模板
 
 【请确认：以上输入是否完整？】

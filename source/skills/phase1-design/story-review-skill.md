@@ -300,16 +300,16 @@ DR 是 Story 的设计源头，所有 Story 内容必须可追溯到 DR：
 **项目资产（via project-assets-update-skill）：**
 
 > 🔴 **强制：** 禁止直接读取 `{projectKey}.assets.md` 全文。
-> 调用 `project-assets-update-skill.assets.forStoryReview(projectKey)` 返回：
+> 调用 `ae-sdd assets read story-review --project <projectKey>` 返回：
 > - §4 DDD 内部分层落点（包路径 / 角色 / 典型类）
 > - §6 工程约束（分层 / 命名 / 数据库 / 安全 / 测试规范）
 > - §7 跨服务契约入口（Feign 服务名 / 错误码段）
 > - §B 相关模块索引（涉及模块的详情）
 >
 > **精准查询（需要时）：**
-> - 验证字段：`assets.table(projectKey, tableName)`
-> - 核查 API 契约：`assets.api(projectKey, method)`
-> - 模块详情：`assets.module(projectKey, moduleName)`
+> - 验证字段：`ae-sdd assets query "<tableName>" --project <projectKey>`
+> - 核查 API 契约：`ae-sdd assets query "<method>" --project <projectKey>`
+> - 模块详情：`ae-sdd assets query "<moduleName>" --project <projectKey>`
 
 ---
 
@@ -1340,7 +1340,7 @@ Story ID：{STORY-ID}
 | # | 动作 | 产出物 | 门禁 |
 |---|------|--------|------|
 | 0 | **Story 准入检查** | 准入检查记录 | 🔴 8 项准入全过；未过 → 拒绝进入第 1 步 |
-| 1 | 读取 DR + PRD + 原型 + Story + 模板 + 约束 + 已有 Supplement + 项目资产（调用 `project-assets-update-skill.assets.forStoryReview(projectKey)`） | — | 全部文件已读取；项目资产 §4/§6/§7/§B 已加载 |
+| 1 | 读取 DR + PRD + 原型 + Story + 模板 + 约束 + 已有 Supplement + 项目资产（调用 `ae-sdd assets read story-review --project <projectKey>`） | — | 全部文件已读取；项目资产 §4/§6/§7/§B 已加载 |
 | 2A0 | 阶段 A0：DR 应审查对象清单 | A0 清单 | 🔴 清单覆盖全部维度，逐项有"应被覆盖/实际覆盖"两列对比 |
 | 2A | 阶段 A：DR-Story 一致性审查 | 阶段 A 结论（含 A0） | 逐字段对比完成，结论已产出，每条结论附 cite 证据 |
 | 2B | 阶段 B：AC 完整性审查 | 阶段 B 结论 | 全部 AC 项已检查，结论已产出 |

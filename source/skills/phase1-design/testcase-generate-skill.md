@@ -70,7 +70,7 @@ description: 根据稳定的 Story 文档生成完整测试用例。覆盖全场
 | 4 | 测试约束文档 | `constraints/testing.md`（如存在） | 全文读完 |
 | 5 | 🆕 **PRD 文档** | 开发者提供（产品/业务侧） | 全部章节读完 |
 | 6 | 🆕 **产品原型** | 开发者提供（设计/产品侧，含交互流程） | 全部页面 + 关键交互流程读完 |
-| 7 | 🆕 **项目资产**（测试组件 + 测试规范） | 调用 `project-assets-update-skill.assets.forTestCase(projectKey)` | 测试工具 / 测试规范（如存在）读完 |
+| 7 | 🆕 **项目资产**（测试组件 + 测试规范） | 调用 `ae-sdd assets read testcase --project <projectKey>` | 测试工具 / 测试规范（如存在）读完 |
 
 **门禁判定：**
 - ✅ 7 个文件全部读取 → 进入 1.1
@@ -84,13 +84,13 @@ description: 根据稳定的 Story 文档生成完整测试用例。覆盖全场
 
 ### 1.0b 调用项目资产服务（🆕 2026-06-17）
 
-> 调用 `project-assets-update-skill.assets.forTestCase(projectKey)` 返回：
+> 调用 `ae-sdd assets read testcase --project <projectKey>` 返回：
 > - **§D 组件索引**：测试工具类 / Mock 工具 / 测试 helper（避免重复造轮子）
 > - **§6.7 测试规范**：L1/L2/L3/L4 测试分层要求 + 覆盖率标准
 
 **精准查询（需要时）：**
-- 查某测试工具是否已有：`assets.component(projectKey, "XxxTestHelper")`
-- 查测试约束：`assets.sections(projectKey, "§6.7")`
+- 查某测试工具是否已有：`ae-sdd assets query "XxxTestHelper" --project <projectKey>`
+- 查测试约束：`ae-sdd assets section §6.7 --project <projectKey>`
 
 **调用失败处理：**
 - 资产不存在或未提供 → 仅使用 `constraints/testing.md`（降级处理），在用例文档中标注"项目资产未加载"

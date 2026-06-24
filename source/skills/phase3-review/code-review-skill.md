@@ -181,7 +181,7 @@ Code Review 结论：{STORY-ID}
 | 2 | 统一版 `{STORY-ID}-CodingPlan.md` | 全部 16 节（用户已确认） |
 | 3 | Coding 报告 | `{STORY-ID}-CodingReport-v{N}-r{M}.md`（本轮变更文件清单 + 编译/测试结果） |
 | 4 | 测试报告 | `{STORY-ID}-Report-v{N}-r{M}.md`（含 L1/L2/L3/L4 用例结果） |
-| 5 | 项目资产 | 调用 `project-assets-update-skill.assets.forCodeReview(projectKey)` 返回 §6 + §C（字段索引）+ §D（组件索引）+ §3 + §4 + §5（**禁止**直接全文读取 assets.md）|
+| 5 | 项目资产 | 调用 `ae-sdd assets read code-review --project <projectKey>` 返回 §6 + §C（字段索引）+ §D（组件索引）+ §3 + §4 + §5（**禁止**直接全文读取 assets.md）|
 
 **门禁判定：**
 - ✅ 5 个文件全部读取 + 用户确认 → 进入第一步
@@ -259,7 +259,7 @@ Code Review 结论：{STORY-ID}
 ### 1.5 调用项目资产服务
 
 > 🔴 **强制：** 禁止直接读取 `{projectKey}.assets.md` 全文。
-> 调用 `project-assets-update-skill.assets.forCodeReview(projectKey)` 返回：
+> 调用 `ae-sdd assets read code-review --project <projectKey>` 返回：
 
 | 返回章节 | 用于 Code Review 的检查维度 |
 |---------|--------------------------|
@@ -272,9 +272,9 @@ Code Review 结论：{STORY-ID}
 | §7 契约入口 | Feign / SPI 调用核查 |
 
 **精准查询（需要时）：**
-- 验证某字段存在：`assets.table(projectKey, tableName)`
-- 查组件是否已有复用：`assets.component(projectKey, componentName)`
-- 查跨服务 API：`assets.api(projectKey, method)`
+- 验证某字段存在：`ae-sdd assets query "<tableName>" --project <projectKey>`
+- 查组件是否已有复用：`ae-sdd assets query "<componentName>" --project <projectKey>`
+- 查跨服务 API：`ae-sdd assets query "<method>" --project <projectKey>`
 
 ### 1.6 读取实际代码（🔴 必须读代码本身，不读报告代劳）
 
@@ -449,7 +449,7 @@ Story ID：{STORY-ID}
 
 **目的：** 验证代码与项目资产 §3/§4/§5/§6 完全合规。
 
-**输入：** `project-assets-update-skill.assets.forCodeReview(projectKey)` 返回内容 + 实际代码
+**输入：** `ae-sdd assets read code-review --project <projectKey>` 返回内容 + 实际代码
 
 **输出：** 5 项合规性核查表
 

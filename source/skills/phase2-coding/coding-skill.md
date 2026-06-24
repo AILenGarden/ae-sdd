@@ -104,7 +104,7 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 | Story 文档路径 | 当前 Story | 重/小任务必填；**🆕 微任务不传**（无 Story 上下文）|
 | TestCase 文档路径 | 已生成 TestCase | 重任务必填；小任务按需；**🆕 微任务按需** |
 | 当前 Task 基础信息 / Task 列表 | Story 实现任务映射（重/小任务）<br>**🆕 微任务**：任务简述 + 涉及工程 + 涉及文件范围 | 必填 |
-| 项目资产 | `project-assets-update-skill.assets.forCoding(projectKey)` — 返回 §4 + §5 + §6 | ✅ 必填 |
+| 项目资产 | `ae-sdd assets read coding --project <projectKey>` — 返回 §4 + §5 + §6 | ✅ 必填 |
 | 约束文档 | `document-storage-skill.get_constraints(projectKey)` | ✅ 必填 |
 | CodingModel | `document-storage-skill.get_thinking_engine()` | ✅ 必填 |
 
@@ -152,7 +152,7 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 | TestCase 文档路径 | 已生成 TestCase | 重任务必填；小任务按需；**🆕 微任务按需** |
 | Task 文档目录 | `documentStorage.resolve_path(intent="TASK", storyId, taskId)`（重/小任务）<br>**🆕 微任务不传** | 条件必填 |
 | 统一版 CodingPlan 路径 | `documentStorage.resolve_path(intent="CODING_PLAN", storyId)`（重/小任务）<br>**🆕 微任务**：`documentStorage.resolve_path(intent="CODING_PLAN", taskName=事务简称, scope="service")` | 必填 |
-| 项目资产 | `project-assets-update-skill.assets.forCoding(projectKey)` — 返回 §4 + §5 + §6 | ✅ 必填 |
+| 项目资产 | `ae-sdd assets read coding --project <projectKey>` — 返回 §4 + §5 + §6 | ✅ 必填 |
 | 工程目录 | `document-storage-skill.get_git_path(projectKey)`（不再由用户直接传入磁盘路径）| ✅ 必填 |
 | CodingModel | `document-storage-skill.get_thinking_engine()` | ✅ 必填 |
 | **🆕 任务规模标识** | `task_scale: heavy / small / micro` | ✅ 必填（决定 §4.2 / §6 走哪条分支）|
@@ -1448,8 +1448,8 @@ public class Ticket {
 > **本章配套资产（🆕 2026-06-10 路由改造：不再直接引用路径）：**
 > - 项目资产 schema：`document-storage-skill.get_assets_schema()`
 > - 项目资产 starter 模板：`document-storage-skill.get_assets_template()`
-> - **当前项目资产：`project-assets-update-skill.assets.forCoding(projectKey)` — 返回 §4 DDD 内部分层落点 + §5 命名约定 + §6 工程约束**（不再硬编码 `icec-cloud-boss`）
-> - **精准查询（按需）：`assets.module(name)` / `assets.component(name)` / `assets.table(name)`**
+> - **当前项目资产：`ae-sdd assets read coding --project <projectKey>` — 返回 §4 DDD 内部分层落点 + §5 命名约定 + §6 工程约束**（不再硬编码 `icec-cloud-boss`）
+> - **精准查询（按需）：`ae-sdd assets query "<name>"`（module/component/table 通用）**
 > - Code Plan 模板：`../../templates/coding/be-coding-plan-template.md`（SKILL 内模板，不随工程变化）
 
 ### 核心设计哲学
@@ -1467,9 +1467,9 @@ public class Ticket {
 **动作：**
 > **📍 直接调用场景化 API，不再跳转 project-assets-update-skill §6 动作 4。**
 
-1. 调用 `project-assets-update-skill.assets.forCoding(projectKey)`
+1. 调用 `ae-sdd assets read coding --project <projectKey>`
    返回：§4 DDD 内部分层落点 + §5 命名约定 + §6 工程约束
-   → 精准查询（需要时）：`assets.module(name)` / `assets.component(name)` / `assets.table(name)`
+   → 精准查询（需要时）：`ae-sdd assets query "<name>"`（module/component/table 通用）
 2. 资产不存在 → 停止，先运行 `project-assets-update-skill §3 生成动作`（**禁止**继续 ④bis）
 3. 资产过期（`lastAuditedAt > 90 天`）→ 停止，先运行 `project-assets-update-skill §5 审计`（**禁止**继续 ④bis）
 4. 资产 30-90 天 → 建议先跑 `project-assets-update-skill §4 更新`（推荐）
@@ -1532,7 +1532,7 @@ public class Ticket {
 **输入：** §2 分层归类结果 + 项目资产 §4 DDD 内部分层落点
 
 **动作：**
-1. 调用 `assets.sections(projectKey, "§4")` 或直接使用步骤 1 返回的 §4 内容，匹配每个类对应的精确包路径
+1. 调用 `ae-sdd assets section §4 --project <projectKey>` 或直接使用步骤 1 返回的 §4 内容，匹配每个类对应的精确包路径
 2. 例：Application 层的 `BossUserAppService` → `icec-cloud-boss-user/icec-cloud-boss-user-application/src/main/java/com/casstime/cloud/boss/user/application/appservice/BossUserAppService.java`
 3. 填入 Code Plan §5 类骨架的"包路径"列
 

@@ -46,7 +46,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, prompt_inject, state, stop_check, update_graph  # noqa: E402
+from lib import assets_index, classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, prompt_inject, state, stop_check, update_graph  # noqa: E402
 
 
 def cmd_version(args, parser):
@@ -879,6 +879,208 @@ def cmd_stop_check(args, parser):
     return 0  # 始终 exit 0
 
 
+def _resolve_asset_file(args) -> tuple[Path | None, str, Path | None]:
+    """解析资产文件路径 + 缓存路径。
+
+    返回 (asset_path, project_key, cache_path)。
+    project_key 优先级：--project 参数 > .ae-sdd/config.yaml > "unknown"。
+    asset_path 优先级：--asset-file 直接指定 > .ae-sdd/assets/{key}.assets.md。
+    """
+    ade_sdd = paths.locate_project_ae_sdd()
+    project_key = ""
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey") or ""
+    # --project 覆盖（对齐 SKILL.md `ae-sdd assets ... --project <key>` 契约）
+    if getattr(args, "project", "") and args.project:
+        project_key = args.project
+    if not project_key:
+        project_key = "unknown"
+
+    # --asset-file 直接指定资产文件
+    asset_file = getattr(args, "asset_file", None)
+    if asset_file:
+        asset_path = Path(asset_file)
+    elif ade_sdd:
+        asset_path = paths.find_asset_file(ade_sdd, project_key)
+    else:
+        asset_path = None
+
+    cache_path = None
+    if ade_sdd and asset_path:
+        cache_path = paths.assets_dir(ade_sdd) / f"{project_key}.index.json"
+    return asset_path, project_key, cache_path
+
+
+def _build_index(args):
+    """解析资产文件并构建索引（带缓存）。资产不存在时返回 (None, key, cache)。"""
+    asset_path, project_key, cache_path = _resolve_asset_file(args)
+    if asset_path is None or not asset_path.is_file():
+        return None, project_key, cache_path
+    idx = assets_index.AssetsIndex.build_from_file(asset_path, cache_path=cache_path)
+    return idx, project_key, cache_path
+
+
+def cmd_assets_query(args, parser):
+    """assets query — 给 key，返回倒排索引命中的 top-N 结果（BM25 排序）
+
+    把 project-assets-update-skill §G 的 assets.search() 自然语言协议
+    变成可执行命令：输入关键词 → 分词 → 倒排索引 → BM25 评分 → top-N。
+    """
+    idx, project_key, _ = _build_index(args)
+    if idx is None:
+        output.err(f"项目资产不存在（projectKey={project_key}）。"
+                   f"先用 `ae-sdd assets generate` 或 project-assets-update-skill §3 生成。")
+        return 1
+
+    query = args.query
+    top_n = args.top
+    hits = idx.search(query, top_n=top_n)
+    data = {
+        "projectKey": project_key,
+        "query": query,
+        "top_n": top_n,
+        "n_hits": len(hits),
+        "hits": assets_index.hits_to_jsonable(hits),
+    }
+    if args.json:
+        output.emit(data, as_json=True)
+    else:
+        output.info(f"查询「{query}」→ {len(hits)} 命中（top {top_n}，BM25 降序）")
+        for i, h in enumerate(hits, 1):
+            output.info(f"  {i}. [{h.section} L{h.line}] score={h.score} "
+                        f"matched={','.join(h.matched_tokens)}")
+            output.info(f"     {h.snippet[:120]}")
+    return 0
+
+
+def cmd_assets_outline(args, parser):
+    """assets outline — 资产大纲（§A 总览：章节列表 + 索引统计）"""
+    idx, project_key, _ = _build_index(args)
+    if idx is None:
+        output.err(f"项目资产不存在（projectKey={project_key}）。")
+        return 1
+    stats = idx.stats()
+    data = {"projectKey": project_key, "stats": stats}
+    if args.json:
+        output.emit(data, as_json=True)
+    else:
+        output.info(f"项目资产大纲（projectKey={project_key}）")
+        output.info(f"  文档单元数: {stats['n_docs']}")
+        output.info(f"  索引 token 数: {stats['n_tokens']}")
+        output.info(f"  章节数: {stats['n_sections']}")
+        output.info(f"  章节列表:")
+        for sec in stats["sections"]:
+            output.info(f"    {sec}")
+    return 0
+
+
+def cmd_assets_section(args, parser):
+    """assets section — 取整章原文（替代 assets.sections 协议）"""
+    idx, project_key, _ = _build_index(args)
+    if idx is None:
+        output.err(f"项目资产不存在（projectKey={project_key}）。")
+        return 1
+    sec_text = idx.section(args.name)
+    if sec_text is None:
+        output.err(f"未找到章节：{args.name}")
+        return 1
+    if args.json:
+        output.emit({"projectKey": project_key, "section": args.name, "content": sec_text}, as_json=True)
+    else:
+        print(sec_text)
+    return 0
+
+
+def cmd_assets_stats(args, parser):
+    """assets stats — 索引统计（token 数 / doc 数 / 覆盖章节 / 缓存状态）"""
+    idx, project_key, cache_path = _build_index(args)
+    if idx is None:
+        output.err(f"项目资产不存在（projectKey={project_key}）。")
+        return 1
+    stats = idx.stats()
+    cache_status = "hit" if (cache_path and cache_path.is_file()) else "miss"
+    data = {**stats, "projectKey": project_key, "cache": str(cache_path) if cache_path else None,
+            "cache_status": cache_status}
+    if args.json:
+        output.emit(data, as_json=True)
+    else:
+        output.info(f"索引统计（projectKey={project_key}，cache={cache_status}）")
+        output.info(f"  文档单元数: {stats['n_docs']}")
+        output.info(f"  索引 token 数: {stats['n_tokens']}")
+        output.info(f"  平均文档长度: {stats['avg_doc_len']}")
+        output.info(f"  章节数: {stats['n_sections']}")
+        if cache_path:
+            output.info(f"  缓存: {cache_path} ({cache_status})")
+    return 0
+
+
+def cmd_assets_read(args, parser):
+    """assets read — 资产 SKILL 的核心入口（对标 §G 场景化 API 真实实现）
+
+    流程（用户设计）：
+      1. 检查索引是否就绪（没就绪则 build，含 mtime 缓存）
+      2. 通过 STAGE_KEY_MAP 把阶段意图 → 一组固定 KEY
+      3. 跑脚本取每个 KEY 的简约 v（section/line/snippet/score）
+      4. 同时跑 LLM 追加的 --keys（精准查）
+      5. 取 STAGE_SECTION_MAP 要求的整章原文
+      6. 返回 ReadResult
+
+    这是 LLM 经资产 SKILL 读资产的统一入口：LLM 只说阶段 + 可选追加 KEY，
+    脚本返回简约定位信息（行号），LLM 拿到后按需精读。
+    """
+    stage = args.stage
+    valid_stages = list(assets_index.STAGE_KEY_MAP.keys())
+    if stage not in valid_stages:
+        output.err(f"未知阶段：{stage}（允许：{valid_stages}）")
+        return 1
+
+    idx, project_key, cache_path = _build_index(args)
+    if idx is None:
+        output.err(f"项目资产不存在（projectKey={project_key}）。"
+                   f"先用 `ae-sdd assets generate` 或 project-assets-update-skill §3 生成。")
+        return 1
+
+    # 缓存状态：判断本次是否新建索引
+    cache_status = "hit" if (cache_path and cache_path.is_file()
+                             and cache_path.stat().st_mtime >= 0) else "miss"
+    index_ready = cache_status == "hit"
+
+    extra_keys = args.keys.split(",") if args.keys else []
+    extra_keys = [k.strip() for k in extra_keys if k.strip()]
+
+    result = assets_index.read_assets(
+        idx, stage=stage, extra_keys=extra_keys, project_key=project_key,
+    )
+    data = assets_index.read_result_to_jsonable(result)
+    data["index_ready"] = index_ready  # 标注本次是否复用缓存
+
+    if args.json:
+        output.emit(data, as_json=True)
+    else:
+        output.info(f"资产读取（stage={stage}, projectKey={project_key}, "
+                    f"index={'缓存命中' if index_ready else '本次新建'}）")
+        if result.baseline_hits:
+            output.info(f"  基线命中（固定 KEY × {len(result.baseline_hits)}）:")
+            for key, hits in result.baseline_hits.items():
+                output.info(f"    [{key}] → {len(hits)} 命中:")
+                for h in hits[:3]:
+                    output.info(f"      {h['section']} L{h['line']} score={h['score']}: {h['snippet'][:80]}")
+        if result.extra_hits:
+            output.info(f"  精准命中（自定义 KEY × {len(result.extra_hits)}）:")
+            for key, hits in result.extra_hits.items():
+                output.info(f"    [{key}] → {len(hits)} 命中:")
+                for h in hits[:3]:
+                    output.info(f"      {h['section']} L{h['line']} score={h['score']}: {h['snippet'][:80]}")
+        if result.sections:
+            output.info(f"  整章原文（{len(result.sections)} 章）:")
+            for name, text in result.sections.items():
+                output.info(f"    {name}（{len(text)} 字符）")
+        if not result.baseline_hits and not result.extra_hits:
+            output.info("  无命中（资产可能为空或 KEY 未匹配）")
+    return 0
+
+
 def cmd_health(args, parser):
     """健康度自检（v1 最小实现）"""
     master = paths.locate_master_source()
@@ -1215,6 +1417,44 @@ def main() -> int:
         help="写入 ~/.claude/settings.json（用户级，适合多项目统一配置）",
     )
     p_ih.set_defaults(func=cmd_init_hooks)
+
+    # assets（🆕 ES 化索引：把 §G 自然语言协议变成可执行查询）
+    # 对标 project-assets-update-skill §G：assets.query/search/outline/section/stats
+    p_assets = sub.add_parser("assets", help="项目资产 ES 化索引查询", parents=[common])
+    assets_sub = p_assets.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    p_assets_query = assets_sub.add_parser("query", help="给 key 返回倒排索引命中（BM25 排序）", parents=[common])
+    p_assets_query.add_argument("query", help="查询关键词（支持 camelCase / 中文）")
+    p_assets_query.add_argument("--top", type=int, default=20, help="返回 top-N（默认 20）")
+    p_assets_query.add_argument("--project", default="", help="projectKey（默认从 .ae-sdd/config.yaml 读）")
+    p_assets_query.add_argument("--asset-file", default="", help="直接指定资产文件路径（覆盖 --project 定位）")
+    p_assets_query.set_defaults(func=cmd_assets_query)
+
+    p_assets_outline = assets_sub.add_parser("outline", help="资产大纲（章节列表 + 索引统计）", parents=[common])
+    p_assets_outline.add_argument("--project", default="", help="projectKey（默认从 .ae-sdd/config.yaml 读）")
+    p_assets_outline.add_argument("--asset-file", default="", help="直接指定资产文件路径")
+    p_assets_outline.set_defaults(func=cmd_assets_outline)
+
+    p_assets_section = assets_sub.add_parser("section", help="取整章原文（如 §4 / §B）", parents=[common])
+    p_assets_section.add_argument("name", help="章节名（如 4 / §4 / §B / §6.4）")
+    p_assets_section.add_argument("--project", default="", help="projectKey（默认从 .ae-sdd/config.yaml 读）")
+    p_assets_section.add_argument("--asset-file", default="", help="直接指定资产文件路径")
+    p_assets_section.set_defaults(func=cmd_assets_section)
+
+    p_assets_stats = assets_sub.add_parser("stats", help="索引统计（token/doc/章节/缓存状态）", parents=[common])
+    p_assets_stats.add_argument("--project", default="", help="projectKey（默认从 .ae-sdd/config.yaml 读）")
+    p_assets_stats.add_argument("--asset-file", default="", help="直接指定资产文件路径")
+    p_assets_stats.set_defaults(func=cmd_assets_stats)
+
+    # assets read — 资产 SKILL 核心入口（阶段→KEY 映射 + 初始化检查 + 脚本调度）
+    # LLM 经资产 SKILL 读资产的统一入口：说阶段 + 可选追加 KEY，返回简约定位 v
+    p_assets_read = assets_sub.add_parser("read", help="按阶段读取资产（映射表+BM25，返回简约定位）", parents=[common])
+    p_assets_read.add_argument("stage", help="阶段名（requirement-analysis/dr-generate/story-generate/"
+                                             "story-review/task-generate/coding/code-review/testcase）")
+    p_assets_read.add_argument("--keys", default="", help="追加自定义 KEY（逗号分隔，精准查某类名/字段）")
+    p_assets_read.add_argument("--project", default="", help="projectKey（默认从 .ae-sdd/config.yaml 读）")
+    p_assets_read.add_argument("--asset-file", default="", help="直接指定资产文件路径")
+    p_assets_read.set_defaults(func=cmd_assets_read)
 
     # health
     p_health = sub.add_parser("health", help="健康度自检", parents=[common])

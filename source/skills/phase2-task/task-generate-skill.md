@@ -55,7 +55,7 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
   ├── 第一步：读取 Story 中的 Task 列表
   │
   ├── 第二步：读取约束文档 + Task 模板
-  │       + 调用 project-assets-update-skill.assets.forTaskGenerate(projectKey)
+  │       + 调用 ae-sdd assets read task-generate --project <projectKey>
   │       + 读取测试用例文档（已生成的 TestCase）
   │
   ├── 第三步：判断新增/更新
@@ -472,7 +472,7 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 | Story 文档路径 | 当前 Story |
 | TestCase 文档路径 | 已生成 TestCase |
 | 当前 Task 基础信息 | Story 实现任务映射（任务名 + 层 + 依赖） |
-| 项目资产 | `project-assets-update-skill.assets.forTaskGenerate(projectKey)` — 返回 §3 + §4 + §5 + §8（分层/包路径/命名/CodePlan 输入索引）|
+| 项目资产 | `ae-sdd assets read task-generate --project <projectKey>` — 返回 §3 + §4 + §5 + §8（分层/包路径/命名/CodePlan 输入索引）|
 | 约束文档 | `document-storage-skill.get_constraints(projectKey)`（不再直接写目录路径）|
 | CodingModel 路径 | `standards/thinking/be-coding-thinking-engine.md` |
 
@@ -551,9 +551,9 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
     │   - §6-§15 其他章节
     ↓
 3. 走 [Coding-SKILL §④bis 5 步 SOP](../phase2-coding/coding-skill.md) 重组为统一版
-    - 步骤 1：调用 `project-assets-update-skill.assets.forTaskGenerate(projectKey)`
+    - 步骤 1：调用 `ae-sdd assets read task-generate --project <projectKey>`
       返回：§3 分层映射 + §4 DDD 落点 + §5 命名约定 + §8 Code Plan 输入索引
-      → 精准查询：`assets.module(projectKey, name)` / `assets.component(projectKey, name)`
+      → 精准查询：`ae-sdd assets query "<name>"`
     - 步骤 2-5：基于所有 Task 的任务级 CodePlan 整合
     ↓
 4. 跑 [be-coding-plan-template.md §15 14 条门禁自检](../../templates/coding/be-coding-plan-template.md)
@@ -586,7 +586,7 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 **触发参数：**
 - Story 文档路径
 - 统一版 CodePlan 路径（`{STORY-ID}-CodingPlan.md`）
-- 项目资产（`project-assets-update-skill.assets.forTaskGenerate(projectKey)`）
+- 项目资产（`ae-sdd assets read task-generate --project <projectKey>`）
 - 工作目录
 
 **异常处理：**

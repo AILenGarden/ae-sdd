@@ -37,7 +37,7 @@ description: icec-cloud-life 项目资产实例 — 基于 2026-06-17 Explore Ag
 | mainClass | 各 Service `-service` 子模块的 `WebApplication.java` / `Bootstrap.java` |
 | packaging | `jar` |
 | portRange | `6001-6100`（web/api/spi）/ `10086-10097`（BFF）/ `20081-20093`（business service） |
-| lastAuditedAt | `2026-06-17` |
+| lastAuditedAt | `2026-06-24` |
 | owner | 架构组 / 各域负责人 |
 | isGitRepo | false（工程根目录非 git 仓库） |
 | hasMavenRootPom | false（各模块独立，无 root pom） |
@@ -441,6 +441,7 @@ find D:\Item\life\2c\ -name "bootstrap*.yml" -not -path "*/target/*" -exec grep 
 | 8 | icec-cloud-life-auth-bff 的认证流程（Token 颁发/刷新/Cookie 写入）细节未探查 | 🟠 P1 | 待补 | 2026-07 |
 | 9 | icec-cloud-life-configuration 的配置中心集成方式（Nacos/Panda）未探查 | 🟢 P3 | 待补 | 2026-Q4 |
 | 10 | 各 BFF 工程的 Feign Client 注册方式（是否所有 BFF 都有 Facade 层）未全量验证 | 🟡 P2 | 待补 | 2026-07 |
+| 11 | **✅ 已补 2026-06-24**：§F 反向索引此前仅 9 词（门禁要求 ≥20）且位置为粗粒度章节号，本次扩到 28 词并精确到 §X.Y + 行号；§G 读取 API 从"自然语言协议"升级为 `ae-sdd assets` 脚本化实现 | 🟢 P3 | ✅ 已补 | - |
 
 ---
 
@@ -535,39 +536,84 @@ find D:\Item\life\2c\ -name "bootstrap*.yml" -not -path "*/target/*" -exec grep 
 
 ---
 
-## §F 关键词反向索引
+## §F 关键词反向索引（Reverse Index）
 
-| 关键词 | 查哪里 | 说明 |
-|--------|--------|------|
-| 工单状态机 | §4 Domain Service 节 / §C | `CsTicketDomainService` |
-| 融云回调 | §4 Interfaces 层 / §6.9 | `ImMessageEventNotifyServiceImpl` in im; `ImMessageEventNotifyClient` feign to cs |
-| 超时任务 | §4 Interfaces JobHandler / §C | `TimeoutWaitingJobHandler` / `TimeoutAgentJobHandler` |
-| BFF 认证 | §6.6 | Cookie `security_context`; `TokenService.getCurUserId()` |
-| 分页 | §6.4 | `PageRequest<T>` + `PagedModels<T>` |
-| 错误码 | §6.4 | life 域 16000-23999 |
-| Feign 服务名 | §7.1 | `ServiceProviderConstants` |
-| 异步通知线程池 | §6.9 | `csNotificationExecutor` core=4/max=8 |
-| @UtilityClass | §4 Converter 节 / §5 | cs 域 Converter 已确认使用 |
+> **调用：** `ae-sdd assets query "<keyword>" --project icec-cloud-life` — 关键词跨章节定位
+> 位置标注为 §X.Y + 行号；脚本运行时 `ae-sdd assets query` 返回的 `line` 字段可精确定位（行号随文件编辑可能漂移，以脚本实时返回为准）。
+
+| 关键词 | 出现位置 | 说明 |
+|--------|---------|------|
+| 工单状态机 | §4 Domain Service 节 L128 / §C L489 | `CsTicketDomainService`（含状态机逻辑） |
+| 融云回调 | §4 Interfaces 层 L120 / §6.9 L302 | `ImMessageEventNotifyServiceImpl`(im) / `ImMessageEventNotifyClient`(feign→cs) |
+| 超时任务 | §4 Interfaces JobHandler L120 / §C L490 | `TimeoutWaitingJobHandler` / `TimeoutAgentJobHandler` / `WaitingReminderJobHandler` |
+| BFF 认证 | §6.6 L270-271 / §D L519 | Cookie `security_context`；`TokenService.getCurUserId()`（禁 `AccessUserInfoContext`） |
+| 分页 | §6.4 L241 / §D L517 | `PageRequest<T>` + `PagedModels<T>` |
+| 错误码 | §6.4 L246-254 | life 域 16000-23999（8 段，CS 16xxx / IM 17xxx / 触点 18xxx / 验证码 19xxx / 2C用户 20xxx / 工单 21xxx / 运营通知 22xxx / 车辆 23xxx） |
+| Feign 服务名 | §7.1 L368-380 | `ServiceProviderConstants`（11 个 SPI 子模块） |
+| 异步通知线程池 | §6.9 L301 | `csNotificationExecutor` core=4/max=8/queue=200 + `CallerRunsPolicy` |
+| @UtilityClass | §4 Converter 节 L124 / §5 L191 | cs 域 Converter 已确认（`CsTicketConverter`）；im 用 `public final class` |
+| `AppService` | §4 L123 / §5 L184-185 / §6.3 L230 / §B L471-472 | 命名模板 `{Resource}AppService` |
+| `@Transactional` | §4 L123 / §6.3 L230 / §4.5.2 L166 | 事务在 AppService，事务内禁远程调用 |
+| `Facade` | §4 L142 / §6.3 L233 / §6.9 L304 | BFF AppService 必须经 Facade 调 Feign |
+| `FeignClient` | §4 L134 / §6.3 L232 / §7.2 L386-390 | Feign Client 必须 extends SPI 接口 |
+| `Converter` | §4 L124 / §5 L191-192 | Application 层 `@UtilityClass`；Infra 层 `PersistenceConverter` |
+| `CsTicket` | §2 L51 / §4 L123-128 / §5 L184 / §7 L368 / §C L487-491 | 客服域核心实体 |
+| `ImSession` | §2 L53 / §4 L127 / §5 L189 / §7 L531 / §C L501-502 | IM 会话域核心实体 |
+| `ServiceProviderConstants` | §4 L138 / §7.1 L368-380 / §7.2 L396 | 禁硬编码服务名 |
+| `security_context` | §6.6 L270 / §6.9 | JWT 经 Cookie 传递（禁 Authorization: Bearer） |
+| `AccessUserInfoContext` | §6.6 L271 | BFF **禁用**，改用 `TokenService.getCurUserId()` |
+| `ApiResult` | §4 / §6.4 L242 / §D L516 | 统一返回包装 |
+| `PagedModels` | §6.4 L242 / §D L517 | 分页返回包装 |
+| `cellphone` | §6.6 L272 | 手机号脱敏 `DesensitizeUtils.handleCellphone` |
+| `BCrypt` | §6.6 L273 | 密码 BCrypt 单向哈希 |
+| `deleted_flag` | §6.5 L261 / §C | 逻辑删除标记 `TINYINT(1) DEFAULT 0` |
+| `双启动模块` | §2 L54/57/65 / §6.9 L299 | life-user / life-notification / life-obs（service + web） |
+| `LocalDateTime` | §5 L198 / §6.3 L227 | 禁用，统一 `java.util.Date` |
+| `job-spring-boot-starter` | §6.8 L291 / §5 L195 | 定时任务（禁 `@Scheduled`） |
+| `MapStruct` | §5 L199 / §6.8 L288 | 禁用，用显式 Converter |
 
 ---
 
-## §G 资产读取 API（调用方式说明）
+## §G 资产读取 API（🆕 已由 ae-sdd assets 脚本实现）
 
-```text
-# 读取整份资产（Code Plan 文首引用）
-assets.outline()     → §A 大纲（各章速查）
-assets.module(name)  → §B 模块索引中对应行 + §4 该域包路径
-assets.table(name)   → §C 字段索引中对应表的关键字段
-assets.spi(domain)   → §7.1 SPI 清单中该域的行
-assets.naming(role)  → §5 命名约定中该类角色的行
-assets.port(service) → §2 微服务清单中的 port/contextPath
+> **本节原为"自然语言协议"（调用 SKILL 通过 Read/Grep 组合读取），2026-06-24 起由
+> `ae-sdd assets` 子命令组真正实现（倒排索引 + 分词 + BM25 评分）。**
 
-# 典型 Code Plan 使用模式：
-1. 引用 §1 确认 projectKey / gitPath
-2. 引用 §3-§4 确认分层包路径
-3. 引用 §5 确认类命名
-4. 引用 §6 做约束合规自审
-5. 引用 §7 确认跨服务 Feign 服务名
+### G.1 场景化 API（推荐调用）
+
+| API | CLI 命令 | 适用阶段 | 返回 |
+|-----|---------|---------|------|
+| `forRequirementAnalysis` | `ae-sdd assets outline` + `assets query "<module>"` | 需求分析 | §A 大纲 + §B 模块 + §C 字段 |
+| `forDrGenerate` | `ae-sdd assets section 3` + `assets section 5` + `assets section 7` | DR 设计 | §3 分层 + §5 命名 + §7 契约 |
+| `forStoryGenerate` | `ae-sdd assets section 4` + `assets section 5` | Story 拆解 | §4 包路径 + §5 命名 |
+| `forCoding` | `ae-sdd assets query "<类名>"` + `assets section 6` | 编码 | §4 落点 + §5 命名 + §6 约束 |
+| `forCodeReview` | `ae-sdd assets section 6` + `assets query "<field>"` | CodeReview | §6 约束 + §C 字段 + §D 组件 |
+
+### G.2 底层 API（精准查询）
+
+| API | CLI 命令 | 说明 |
+|-----|---------|------|
+| `outline()` | `ae-sdd assets outline --project <key>` | §A 大纲 + 索引统计 |
+| `module(name)` | `ae-sdd assets query "<name>"` | 关键词 → BM25 top-N 命中 |
+| `table(name)` | `ae-sdd assets query "<table>"` | 表名/字段反查 |
+| `sections(section)` | `ae-sdd assets section <name>` | 取整章原文 |
+| `search(keyword)` | `ae-sdd assets query "<keyword>"` | 倒排索引查询（核心） |
+| `stats()` | `ae-sdd assets stats --project <key>` | 索引统计 + 缓存状态 |
+
+### G.3 调用示例
+
+```bash
+# 查 "AppService" 在项目里所有出现位置（BM25 排序）
+ae-sdd assets query "AppService" --project icec-cloud-life --top 10
+
+# 取 §4 DDD 落点整章
+ae-sdd assets section 4 --project icec-cloud-life
+
+# JSON 输出（pipeline 友好）
+ae-sdd assets query "融云" --project icec-cloud-life --json
+
+# 直接指定资产文件（绕过 .ae-sdd 定位）
+ae-sdd assets query "TokenService" --asset-file path/to/assets.md
 ```
 
 ---
@@ -585,7 +631,7 @@ assets.port(service) → §2 微服务清单中的 port/contextPath
     "profile": ["dev", "test", "prod", "beta-kunlun"],
     "packaging": "jar",
     "portRange": "6001-6100 (web/api/spi) / 10086-10097 (BFF) / 20081-20093 (service)",
-    "lastAuditedAt": "2026-06-17",
+    "lastAuditedAt": "2026-06-24",
     "isGitRepo": false,
     "hasMavenRootPom": false
   },

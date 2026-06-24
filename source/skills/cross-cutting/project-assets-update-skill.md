@@ -419,43 +419,73 @@ ls constraints/*.md | xargs -n1 basename
 - 🆕 Story Review 上下文加载时
 - 🆕 TestCase 编写前事实核对时
 
-### 6.2 4 步操作
+### 6.2 读取流程（🆕 2026-06-24 脚本化：初始化检查 + 映射表 + BM25 查询）
 
-#### 步骤 1：检查项目资产是否存在
+> **🔴 架构（用户设计）：** LLM 调本 SKILL 读资产 → 本 SKILL 检查索引是否就绪（没就绪则初始化）
+> → 通过"阶段→KEY 映射表"把意图转成查询 KEY → 内部跑 `ae-sdd assets read` 脚本
+> → 返回简约 v（section/line/snippet/score，行号定位）→ LLM 拿到定位后按需精读。
+> **LLM 不直接碰脚本**，只跟本 SKILL 对话。
+
+#### 步骤 1：检查项目资产 + 索引是否就绪
 
 ```bash
-# 目标路径（按 projectKey 定位）
-ls "skills/ae-sdd/project-assets/{projectKey}/{projectKey}.assets.md"
+# 检查资产文件存在
+ae-sdd assets stats --project <projectKey>
+# → 返回索引统计 + cache_status（hit=复用缓存 / miss=本次新建）
+# → 资产不存在 → 禁止继续，先执行本 SKILL §3 生成动作
 ```
 
-- 存在 → 步骤 2
-- 不存在 → **禁止**继续 ④bis，**先执行本 SKILL §3 生成动作**
+- 资产不存在 → **禁止**继续下游 SKILL，先执行 §3 生成
+- 索引 cache=miss → 本次首次读取会自动 build 倒排索引（带 mtime 缓存，后续复用）
+- 索引 cache=hit → 直接复用，零开销
 
-#### 步骤 2：读取项目资产核心章节
+#### 步骤 2：按阶段调用 `ae-sdd assets read`（核心入口）
 
-| 阶段 | 必读章节 | 选读章节 | 🆕 索引 API（替代全文加载）|
-|------|---------|---------|---------------------------|
-| ④bis CodePlan | §3 分层映射 / §4 DDD 落点 / §5 命名约定 | §6 工程约束 / §7 契约入口 | `assets.outline()` 拉大纲 + `assets.module(name)` 按需拉模块 |
-| ⑤ Coding | §4 DDD 落点 / §5 命名约定 | §6 工程约束 / §7 契约入口 | `assets.search(keyword)` 关键词反查 |
-| ⑦ CodeReview | §6 工程约束 / §10 缺口 | §4 DDD 落点 | `assets.table(name)` 字段对齐核对 |
-| 🆕 Story Review | §4 DDD 落点 / §6 工程约束 | §7 契约入口 | `assets.api(method)` 跨服务契约核对 |
-| 🆕 TestCase | §6.7 测试规范 / §4 DDD 落点 | §5 命名约定 | `assets.component(name)` 测试工具定位 |
+```bash
+# LLM 只说阶段 + 可选追加精准 KEY，脚本返回简约定位 v
+ae-sdd assets read <stage> [--keys "KEY1,KEY2"] --project <projectKey>
+```
 
-🆕 **优先调用 §G 索引 API**（避免全文加载 ~2000 行），需要详细章节时再回退到全文读取。
+| 阶段参数 `<stage>` | 对应流程节点 | 脚本内部自动跑的固定 KEY（基线） | 自动返回的整章 |
+|-------------------|------------|------------------------------|--------------|
+| `requirement-analysis` | Phase 1 需求分析 | AppService / Repository / DomainService / Service | §A §B |
+| `dr-generate` | Phase 1 ① DR | AppService / Repository / Converter / Facade / FeignClient / ServiceProviderConstants | §3 §5 §7 |
+| `story-generate` | Phase 1 ① Story | AppService / Controller / ServiceImpl / Repository / Converter / FeignClient | §3 §4 §5 |
+| `story-review` | Phase 1 ② | AppService / Repository / @Transactional / Facade / deleted_flag / cellphone | §4 §6 |
+| `task-generate` | Phase 2 ④ | AppService / Repository / Mapper / Converter / Command / Query | §3 §4 §5 |
+| `coding` | Phase 2 ⑤ | AppService / Repository / Converter / PO / DO / Mapper / @Transactional / Facade | §4 §5 §6 |
+| `code-review` | Phase 3 ⑦ | @Transactional / Facade / FeignClient / AccessUserInfoContext / LocalDateTime / cellphone / deleted_flag / 错误码 | §6 |
+| `testcase` | Phase 1 ③ | TestRestTemplate / @SpringBootTest / Mockito / @Rollback / ApiResult / PagedModels | — |
+
+**返回的简约 v（每个命中）:**
+```
+{section: "§4", line: 123, snippet: "| AppService | .../application/appservice/ | CsTicketAppService", score: 6.08, matched_tokens: ["app","service"]}
+```
+
+**LLM 拿到 v 后:** 按行号定位精读（如需看 §4 完整内容，再调 `ae-sdd assets section 4`），无需加载整份资产文件。
+
+#### 步骤 2bis：精准查（LLM 追加自定义 KEY）
+
+```bash
+# 例：coding 阶段，额外精准查某个具体类名/字段
+ae-sdd assets read coding --keys "CsTicketAppService,融云" --project icec-cloud-life
+# → extra_hits 字段返回这两个 KEY 的 BM25 命中
+```
 
 #### 步骤 3：确认 §1 lastAuditedAt 在合理范围
 
-- 上次审计 < 30 天 → 资产可信，直接使用
-- 上次审计 30-90 天 → 资产**可能过期**，建议跑一次增量更新（§4）
-- 上次审计 > 90 天 → 资产**已过期**，**禁止**直接使用，先跑审计（§5）
+```bash
+ae-sdd assets stats --project <projectKey>
+# → stats 含 lastAuditedAt；> 90 天 → 禁止使用，先跑审计（§5）
+```
 
 #### 步骤 4：在 CodePlan 头部写"项目资产已就绪"声明
 
 ```markdown
 项目资产路径: skills/ae-sdd/project-assets/{projectKey}/{projectKey}.assets.md
 项目资产版本: v{N} (lastAuditedAt: {YYYY-MM-DD})
-本次引用章节: §3, §4, §5, §6
-🆕 索引调用记录: assets.outline() + assets.module("boss-user") + assets.search("AppService")
+本次读取: ae-sdd assets read coding --keys "CsTicketAppService" --project {projectKey}
+索引状态: cache=hit（复用）/ miss（本次新建）
 ```
 
 ### 6.3 门禁
@@ -865,6 +895,25 @@ exists = assets.search("MySpecialConcept")
 
 > **定位：** 本节是 `project-assets-update-skill` 对所有调用方 SKILL 的**正式服务契约**。
 > 任何 SKILL 需要读取项目资产时，必须查阅本节找到对应 API 并按 §G.5 的标准写法调用，**禁止直接全文 Read 资产文件**。
+
+> **🆕 2026-06-24 脚本化落地：** 本节原为"自然语言协议"（由调用 SKILL 通过 Read/Grep 组合读取）。
+> 现已由 `ae-sdd assets` CLI 子命令组真正实现（`tools/lib/assets_index.py` 提供
+> 倒排索引 + 分词 + BM25 评分）。下方 G.3/G.4 的 API 与 CLI 命令一一对应：
+>
+> | 协议 API | CLI 命令 |
+> |---------|---------|
+> | `assets.forXxx(projectKey)`（场景化） | `ae-sdd assets read <stage> [--keys "..."] --project <key>`（**核心入口**，见 §6.2） |
+> | `assets.outline()` | `ae-sdd assets outline --project <key>` |
+> | `assets.search(keyword)` | `ae-sdd assets query "<keyword>" --project <key>` |
+> | `assets.module(name)` | `ae-sdd assets query "<name>" --project <key>` |
+> | `assets.table(name)` | `ae-sdd assets query "<table>" --project <key>` |
+> | `assets.sections(section)` | `ae-sdd assets section <name> --project <key>` |
+> | `assets.last_audited()` | `ae-sdd assets stats --project <key>`（含缓存状态） |
+>
+> **🔴 调用架构（用户设计）：** LLM 不直接碰脚本，只调本 SKILL。本 SKILL 内部通过
+> `STAGE_KEY_MAP`（阶段→固定 KEY 映射表）+ `read_assets()` 调度函数实现"意图→KEY→脚本→简约 v"。
+> 下游 SKILL 的"读取项目资产"步骤应调 `ae-sdd assets read <stage>`（见 §6.2），
+> 而非旧的 `assets.forXxx()` 伪 API。
 
 ---
 

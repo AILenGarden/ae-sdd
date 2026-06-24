@@ -38,7 +38,7 @@ description: icec-cloud-boss 项目资产实例 — 基于 Explore Agent 2026-06
 | mainClass | 各 Service `-service` 子模块的 `Bootstrap.java`（典型） |
 | packaging | `jar` |
 | portRange | `12002-12004`（boss）/ `10087-10097`（life BFF） |
-| lastAuditedAt | `2026-06-05` |
+| lastAuditedAt | `2026-06-24` |
 | owner | 架构组 / 各域负责人 |
 
 ---
@@ -511,6 +511,227 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
 | 8 | 其他 Service 工程的 DDD 内部分层是否与 icec-cloud-boss-user 完全一致未逐一验证 | 🟡 P2 | 待补（life-cs/life-im/life-vehicle 等仅探查到模块名，DDD 子模块是否四层完整未逐一验证）| 2026-08 |
 | **9** | **🔴 新增**：icec-cloud-boss-webagent 的 server.port 仍未读到（仅有 application.yml 无 bootstrap.yml）| 🟡 P2 | 待补 | 2026-07 |
 | **10** | **🔴 新增**：life-cs / life-im / life-vehicle / life-workticket / life-notification 等域的 5 位错误码段位仅占位，具体使用码值未探查 | 🟡 P2 | 待补 | 2026-07 |
+| **11** | **✅ 已补 2026-06-24**：§A-§G 索引层此前完全缺失（G-00 靠子串匹配侥幸通过），本次补齐（§B 9 行 / §C 11+7 行 / §D 12 行 / §E 11 行 / §F 25 词 / §G 脚本化），并由 `ae-sdd assets query` 脚本提供倒排索引+BM25 查询 | 🟢 P3 | ✅ 已补 | - |
+
+---
+
+## §A 资产大纲（Outline）
+
+> **调用：** `ae-sdd assets outline --project icec-cloud-boss` — 拉取本总览
+> **用途：** 5 秒了解项目范围 + 一级目录速查
+
+### A.1 项目速览
+
+| 维度 | 值 |
+|------|---|
+| 微服务数 | 22（含 6 聚合工程 + 1 公共库 + 1 安全组件 + 14 业务 Service/BFF） |
+| 主表数 | 9（boss_user / boss_role / boss_menu / boss_menu_icon / boss_user_role / boss_role_menu / boss_role_closure / boss_user_extension / boss_user_api_perms） |
+| 公共组件数 | 12（ApiResult / PagedModels / PageRequest / TokenService / @SkipAuth / @RequiresPermissions / JsonUtils / DesensitizeUtils / BCryptUtil / MybatisPlusConfig / BaseMapper / KafkaDomainEventPublisher） |
+| 跨服务 API 数 | 11 个 SPI 子模块 |
+| 业务域 | boss / life |
+| 上次审计 | 2026-06-24 |
+| 索引关键词数 | 25（见 §F） |
+
+### A.2 一级目录速查
+
+| 章节 | 标题 | 一句话说明 |
+|------|------|-----------|
+| §0 | 摘要与使用场景 | 何时查 / 谁负责 / 与 constraints 关系 |
+| §1 | 项目资产元信息 | projectKey / gitPath / 端口段 |
+| §2 | 微服务清单 | 22 个微服务的职责/端口/SPI 依赖 |
+| §3 | 抽象分层映射 | 4 层 DDD → 本项目工程模块 |
+| §4 | DDD 内部分层落点 | 类角色 → 精确包路径 |
+| §5 | 命名约定 | 13 类命名模板 + 反例 |
+| §6 | 工程约束 | 8 类 constraints 映射 |
+| §7 | 跨服务契约入口 | 11 个 SPI 服务名清单 |
+| §8 | Code Plan 输入索引 | CodePlan 章节 → 资产章节引用 |
+| §9 | 探查 SOP | 9 步研究流程 |
+| §10 | 项目资产缺口 | 待补充项 |
+| §A | 资产大纲（本节）| 总览 |
+| §B | 模块索引 | 9 行微服务索引 |
+| §C | 字段索引 | 主表关键字段索引 |
+| §D | 组件索引 | 12 行公共组件索引 |
+| §E | API 索引 | 11 行跨服务契约索引 |
+| §F | 关键词反向索引 | 25 行关键词定位 |
+| §G | 资产读取 API | 调用协议（已由 ae-sdd assets 脚本实现） |
+
+---
+
+## §B 模块索引（Module Index）
+
+> **调用：** `ae-sdd assets query "<name>" --project icec-cloud-boss` — 关键词反查定位
+
+| module | 概述 | 基础包 | 类型 | 入口 Controller | 关键 AppService | 文档 |
+|--------|------|--------|------|----------------|----------------|------|
+| `icec-cloud-boss-user` | Boss 用户域（用户/角色/菜单/权限） | `com.casstime.cloud.boss.user` | service | `BossUserServiceImpl` / `BossMenuServiceImpl` / `BossRoleServiceImpl` | `BossUserAppService` / `BossMenuAppService` / `BossRoleAppService` | §4 |
+| `icec-cloud-boss-user-bff` | Boss 用户 BFF 聚合层 | `com.casstime.cloud.boss.bff.user` | bff | `BossUserManagementRestImpl` / `BossMenuRestImpl` | `BossUserManagementAppService` / `BossMenuAppService` | §4 BFF 节 |
+| `icec-cloud-boss-auth-bff` | 登录鉴权 BFF（Token/Cookie） | `com.casstime.cloud.boss.bff.auth` | bff | `BossAuthRestImpl` | `BossAuthAppService` | §2 |
+| `icec-cloud-boss-security` | 安全公共组件（TokenService/@SkipAuth） | `com.casstime.cloud.boss.security` | lib | — | — | §6.6 |
+| `icec-cloud-boss-abnormal` | Boss 异常处理域（双启动模块） | `com.casstime.cloud.boss.abnormal` | service | `BossAbnormalServiceImpl` | `BossAbnormalAppService` | §2 |
+| `icec-cloud-life-cs` | 客服域 Service（工单/会话/状态机） | `com.casstime.cloud.life.cs` | service | `CsTicketServiceImpl` | `CsTicketAppService` | §2 |
+| `icec-cloud-life-im` | IM 域 Service（会话/消息/融云） | `com.casstime.cloud.life.im` | service | `ImSessionServiceImpl` | `ImSessionAppService` | §2 |
+| `icec-cloud-life-spi` | SPI 聚合父工程（11 子模块） | `com.casstime.cloud.life.spi` | spi | — | — | §7.1 |
+| `icec-cloud-boss-api` | Boss API 聚合工程（8 BFF-api） | `com.casstime.cloud.boss.api` | api | — | — | §7 |
+
+> 其余 13 个微服务（vehicle/workticket/notification/ops-notification/webagent/content-feed/touchpoint/captcha/configuration/obs/event-integration/user-journey-bff/agent-workbench-bff/notification-bff）见 §2 微服务清单。
+
+---
+
+## §C 字段索引（Table/Field Index）
+
+> **调用：** `ae-sdd assets query "<table>" --project icec-cloud-boss` — 表名/字段反查
+
+### C.1 主表关键字段（boss_user 域，基于冰山模块探查）
+
+| 表名 | 字段 | 类型 | 业务含义 | 关联模块 |
+|------|------|------|---------|---------|
+| `boss_user` | `id` | bigint | 主键 | boss-user |
+| `boss_user` | `user_name` | varchar(64) | 用户名 | boss-user |
+| `boss_user` | `password` | varchar(128) | BCrypt 哈希密码 | boss-user |
+| `boss_user` | `cellphone` | varchar(20) | 手机号（脱敏） | boss-user |
+| `boss_user` | `status` | tinyint(1) | 0=禁用 1=启用 | boss-user |
+| `boss_user` | `created_by` / `created_date` / `last_updated_by` / `last_updated_date` | — | 审计四字段 | common |
+| `boss_role` | `id` / `role_name` / `status` | — | 角色表 | boss-user |
+| `boss_menu` | `id` / `menu_name` / `parent_id` / `sort` | — | 菜单表（树形） | boss-user |
+| `boss_user_role` | `user_id` / `role_id` | bigint | 用户-角色关系 | boss-user |
+| `boss_role_menu` | `role_id` / `menu_id` | bigint | 角色-菜单关系 | boss-user |
+| `boss_role_closure` | `ancestor` / `descendant` / `depth` | bigint | 角色闭包表（树形权限） | boss-user |
+
+### C.2 错误码占用值（boss-user 域，真实探查）
+
+| 错误码 | 含义 | 来源类 |
+|--------|------|--------|
+| 11101 | 用户不存在 | `BossUserErrorCode` |
+| 11102 | 角色不能为空 | `BossUserErrorCode` |
+| 11103 | 用户名格式无效 | `BossUserErrorCode` |
+| 11104 | 密码不能为空 | `BossUserErrorCode` |
+| 11105 | 用户名或密码错误 | `BossUserErrorCode` |
+| 11106 | 账号已被禁用 | `BossUserErrorCode` |
+| 11107 | 账号锁定 | `BossUserErrorCode` |
+
+> 其余 9 个 SPI 域错误码段位见 §6.4（仅范围，具体值待补，见 §10 缺口 10）。
+
+---
+
+## §D 组件索引（Component Index）
+
+> **调用：** `ae-sdd assets query "<component>" --project icec-cloud-boss` — 组件复用查询
+
+| 组件名 | 功能 | 路径 | 调用方 |
+|--------|------|------|--------|
+| `TokenService` | JWT Token 创建/解析/刷新/删除；`getCurUserId()` 取当前用户 | `icec-cloud-boss-security/.../service/TokenService.java` | 所有 BFF（禁用 AccessUserInfoContext） |
+| `@SkipAuth` | 跳过认证注解 | `icec-cloud-boss-security/.../annotation/SkipAuth.java` | 公开接口 Controller（如 /public/auth/login） |
+| `@RequiresPermissions` | 方法级权限校验 | `icec-cloud-boss-security/.../annotation/RequiresPermissions.java` | 所有需鉴权 BFF Controller |
+| `@NeedLogin` | 强制登录注解 | `icec-cloud-boss-security/.../annotation/NeedLogin.java` | BFF Controller |
+| `ApiResult<T>` | 统一返回包装 | `boss-common/.../result/ApiResult.java` | 所有 Controller |
+| `PagedModels<T>` | 分页返回 | `boss-common/.../result/PagedModels.java` | 所有分页接口 |
+| `PageRequest<T>` | 分页请求包装 | `boss-common/.../request/PageRequest.java` | 所有分页接口 |
+| `JsonUtils` | JSON 序列化 | `com.casstime.commons.utils.JsonUtils` | 所有 Service |
+| `DesensitizeUtils.handleCellphone` | 手机号脱敏 | `com.casstime.commons.utils.DesensitizeUtils` | 所有展示层 |
+| `BCryptUtil.matches` | 密码 BCrypt 校验 | `com.casstime.commons.utils.BCryptUtil` | 登录服务 |
+| `MybatisPlusConfig` | MyBatis-Plus 配置 | `icec-cloud-boss-user-infrastructure/.../config/MybatisPlusConfig.java` | 所有 Service |
+| `KafkaDomainEventPublisher` | 领域事件发布（MQ） | `icec-cloud-boss-user-infrastructure/.../messaing/publisher/KafkaDomainEventPublisher.java` | boss-user 事件 |
+
+---
+
+## §E API 索引（API Index）
+
+> **调用：** `ae-sdd assets query "<method>" --project icec-cloud-boss` — 跨服务契约查询
+
+| Feign/SPI | 服务 | 方法 | 入参 | 出参 |
+|----------|------|------|------|------|
+| `BossUserService` | `boss-user-service` | `getUserById` | `Long userId` | `ApiResult<BossUserDTO>` |
+| `BossUserManagementService` | `boss-user-service` | 用户管理（增删改查） | `BossUserManagementRequest` | `ApiResult<BossUserManagementDTO>` |
+| `BossUserInfoService` | `boss-user-service` | 用户扩展信息 | — | `ApiResult<BossUserDTO>` |
+| `CsTicketService` | `life-cs-service` | 工单查询/操作 | — | `ApiResult<CsTicketDTO>` |
+| `ImMessageService` | `life-im-service` | 消息发送/查询 | `ImMessageRequest` | `ApiResult<ImMessageDTO>` |
+| `ImSessionService` | `life-im-service` | 会话管理 | — | `ApiResult<ImSessionDTO>` |
+| `NotificationService` | `life-notification-service` | 通用通知发送 | — | `ApiResult<...>` |
+| `OpsNotificationService` | `life-ops-notification-service` | 运营通知 | — | `ApiResult<...>` |
+| `VehicleService` | `life-vehicle-service` | 车辆域 | — | `ApiResult<...>` |
+| `CaptchaService` | `life-captcha-service` | 验证码 | — | `ApiResult<...>` |
+| `TouchpointService` | `life-touchpoint-service` | 触点/行为 | — | `ApiResult<...>` |
+
+> SPI 接口包路径见 §4 "SPI（被消费方）"节；服务名常量见 §7.1 ServiceProviderConstants。
+
+---
+
+## §F 关键词反向索引（Reverse Index）
+
+> **调用：** `ae-sdd assets query "<keyword>" --project icec-cloud-boss` — 关键词跨章节定位
+> 位置精确到 §X.Y（脚本运行时可进一步精确到行号：`ae-sdd assets query` 返回 line 字段）
+
+| 关键词 | 出现位置 |
+|--------|---------|
+| `AppService` | §4 / §5 / §6.3 / §B |
+| `@Transactional` | §4 / §6.3 / §4.5.2 |
+| `Facade` | §4 / §6.9 / §4.5.3 |
+| `FeignClient` | §4 / §6.9 / §7 |
+| `Converter` | §4 / §5 |
+| `BossUser` | §2 / §4 / §5 / §6.4 / §7 / §C |
+| `ServiceProviderConstants` | §4 / §7.1 / §7.2 |
+| `security_context` | §6.6 / §6.9 |
+| `@SkipAuth` | §4 / §6.6 / §6.9 / §D |
+| `@RequiresPermissions` | §4 / §6.6 / §D |
+| `ApiResult` | §4 / §6.3 / §6.4 / §D |
+| `PagedModels` | §4 / §6.4 / §D |
+| `PageRequest` | §4 / §6.4 / §D |
+| `BCrypt` | §6.6 / §D |
+| `TokenService` | §4 / §6.6 / §6.9 / §D |
+| `deleted_flag` | §6.5 |
+| `cellphone` | §6.6 / §C |
+| `错误码` | §6.4 / §C.2 / §10 |
+| `闭包表` | §C / §4（BossRoleClosureDO） |
+| `双启动模块` | §2 / §6.9（boss-abnormal / life-user / life-notification） |
+| `操作日志` | §4 / §6.9（{Resource}OperationLoggable） |
+| `LocalDateTime` | §5 / §6.3（禁用，用 java.util.Date） |
+| `job-spring-boot-starter` | §6.8（禁 @Scheduled） |
+| `casslog` | §6.8（禁直配 logback） |
+| `AccessUserInfoContext` | §6.6（BFF 禁用） |
+
+---
+
+## §G 资产读取 API（🆕 已由 ae-sdd assets 脚本实现）
+
+> **本节原为"自然语言协议"（调用 SKILL 通过 Read/Grep 组合读取），2026-06-24 起由
+> `ae-sdd assets` 子命令组真正实现（倒排索引 + 分词 + BM25 评分）。**
+
+### G.1 场景化 API（推荐调用）
+
+| API | CLI 命令 | 适用阶段 | 返回 |
+|-----|---------|---------|------|
+| `forRequirementAnalysis` | `ae-sdd assets outline` + `assets query "<module>"` | 需求分析 | §A 大纲 + §B 模块 + §C 字段 |
+| `forDrGenerate` | `ae-sdd assets section 3` + `assets section 5` + `assets section 7` | DR 设计 | §3 分层 + §5 命名 + §7 契约 |
+| `forStoryGenerate` | `ae-sdd assets section 4` + `assets section 5` | Story 拆解 | §4 包路径 + §5 命名 |
+| `forCoding` | `ae-sdd assets query "<类名>"` + `assets section 6` | 编码 | §4 落点 + §5 命名 + §6 约束 |
+| `forCodeReview` | `ae-sdd assets section 6` + `assets query "<field>"` | CodeReview | §6 约束 + §C 字段 + §D 组件 |
+
+### G.2 底层 API（精准查询）
+
+| API | CLI 命令 | 说明 |
+|-----|---------|------|
+| `outline()` | `ae-sdd assets outline --project <key>` | §A 大纲 + 索引统计 |
+| `module(name)` | `ae-sdd assets query "<name>"` | 关键词 → BM25 top-N 命中 |
+| `table(name)` | `ae-sdd assets query "<table>"` | 表名/字段反查 |
+| `sections(section)` | `ae-sdd assets section <name>` | 取整章原文 |
+| `search(keyword)` | `ae-sdd assets query "<keyword>"` | 倒排索引查询（核心） |
+| `stats()` | `ae-sdd assets stats --project <key>` | 索引统计 + 缓存状态 |
+
+### G.3 调用示例
+
+```bash
+# 查 "AppService" 在项目里所有出现位置（BM25 排序）
+ae-sdd assets query "AppService" --project icec-cloud-boss --top 10
+
+# 取 §4 DDD 落点整章
+ae-sdd assets section 4 --project icec-cloud-boss
+
+# JSON 输出（pipeline 友好）
+ae-sdd assets query "融云" --project icec-cloud-boss --json
+
+# 直接指定资产文件（绕过 .ae-sdd 定位）
+ae-sdd assets query "TokenService" --asset-file path/to/assets.md
+```
 
 ---
 
@@ -526,7 +747,7 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
     "profile": ["dev", "test", "prod", "beta-kunlun"],
     "packaging": "jar",
     "portRange": "12002-12004 (boss) / 10087-10097 (life BFF)",
-    "lastAuditedAt": "2026-06-04",
+    "lastAuditedAt": "2026-06-24",
     "owner": "架构组"
   },
   "microservices": [

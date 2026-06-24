@@ -133,7 +133,9 @@ def check_uc02_gates_registry(repo_root: Path) -> UpdateCheckResult:
 
 # ─── UC-03 命令契约闭环 ──────────────────────────────────────────────────────
 # SKILL.md 引用但 CLI 未实现的历史"未来命令"（v3.2 前就声明，本次不实现，只 warn）
-HISTORICAL_UNIMPLEMENTED = {"assets", "fork", "run", "skill", "sync-tools", "init"}
+# 注：`assets` 组已于 2026-06-24 实现 query/outline/section/stats（ES 化索引），
+# 从此集合移除；assets check/generate/update/audit/read 仍走 SKILL 协议，后续迭代补。
+HISTORICAL_UNIMPLEMENTED = {"fork", "run", "skill", "sync-tools", "init"}
 
 
 def _extract_cli_commands(cli_path: Path) -> set:

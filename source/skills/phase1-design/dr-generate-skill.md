@@ -37,13 +37,10 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 | DR ChangeLog | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/DR/ChangeLog/DR-{ID}-changelog.md` | 不带版本号 | 追加新行（每次 DR 修订追加 1 行）|
 | DRGeneratePlan | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/DR/ChangeLog/DR-{ID}-DRGeneratePlan-r{N}.md` | 带 r{N} | 新增（每轮生成 1 份）|
 
-**项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §G 索引化 API 按需加载：
-- `assets.outline()` — 拉资产总览
-- `assets.module(name)` — 拉单微服务详情（架构概览必备）
-- `assets.component(name)` — 拉公共组件位置（实现方案决策基线必备）
-- `assets.table(name)` — 拉单表所有字段（数据模型必备）
-- `assets.api(method)` — 拉跨服务 API 契约（接口契约必读）
-- `assets.sections(§X.Y)` — 按需拉章节内容
+**项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
+- `ae-sdd assets read dr-generate --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/Converter/Facade/FeignClient/ServiceProviderConstants + §3/§5/§7 整章）
+- `ae-sdd assets query "<name>" --project <projectKey>` — 精准查单个模块/组件/字段/API
+- `ae-sdd assets section <§X.Y> --project <projectKey>` — 按需拉章节内容
 
 **🔴 关键约束：**
 - ❌ 不允许直接读 `design/`、`.ae-task/`、`.ae-plan/`、`.spec/iterations/` 等旧路径
@@ -200,8 +197,8 @@ DR 中所有非平凡实现点都必须先完成决策基线（与 story-generat
 | 1 | 用户提供 | PRD 文档 | 全文 |
 | 2 | 来自 requirement-analysis | RA 文档 | 全文（8 维度结论）|
 | 3 | 用户提供 | 产品原型（可选）| 关键页面 + 交互 |
-| 4 | 自动加载 | 项目资产大纲 | 全部（`assets.outline()`）|
-| 5 | 自动加载 | 相关模块详情 | 按需（`assets.module(name)`）|
+| 4 | 自动加载 | 项目资产大纲 | 全部（`ae-sdd assets outline --project <projectKey>`）|
+| 5 | 自动加载 | 相关模块详情 | 按需（`ae-sdd assets query "<name>" --project <projectKey>`）|
 | 6 | 模板 | dr-template.md | 全部 18 章节 |
 | 7 | 约束 | `standards/constraints/` 全部 9 个 .md | 必读（用于 §3 约束承接）|
 
@@ -220,8 +217,8 @@ DR 中所有非平凡实现点都必须先完成决策基线（与 story-generat
 | 1 | PRD 文档 | ✅ 已读 / ❌ 未读 | {路径} |
 | 2 | RA 文档 | ✅ 已读 / ❌ 未读 | {路径} |
 | 3 | 产品原型 | ✅ 已读 / ❌ 无 | {路径} |
-| 4 | 项目资产大纲 | ✅ assets.outline() / ❌ | 关键模块：{N} 个 |
-| 5 | 相关模块详情 | ✅ assets.module({X}) / ❌ | 涉及：{模块列表} |
+| 4 | 项目资产大纲 | ✅ `ae-sdd assets outline` / ❌ | 关键模块：{N} 个 |
+| 5 | 相关模块详情 | ✅ `ae-sdd assets query "<{X}>"` / ❌ | 涉及：{模块列表} |
 | 6 | DR 模板 | ✅ 已读 / ❌ | |
 | 7 | 约束文件 | ✅ 9 个 / ❌ | 必读：{列表} |
 
@@ -918,7 +915,7 @@ flowchart TD
 | # | 禁止 | 危害 | 正确做法 |
 |---|------|------|---------|
 | 1 | 禁止跳过 RA 直接写 DR | 漏业务规则 / 漏边界场景 | §第零步 必读 RA 全文 |
-| 2 | 禁止不参考项目资产 | 命名/分层/契约错乱 | §第零步 必读 `assets.outline()` |
+| 2 | 禁止不参考项目资产 | 命名/分层/契约错乱 | §第零步 必读 `ae-sdd assets outline --project <projectKey>` |
 | 3 | 禁止不调用实现方案决策基线 | 重复造轮子 / 方案不可评审 | §第一步 bis 4 步强制 |
 | 4 | 禁止把 RA 维度直接照搬到 DR | 章节结构混乱 | §1.1 RA → DR 章节映射表 |
 | 5 | 禁止 DR §12 Story 矩阵与 RA §11 规模裁定不一致 | 规模不一致 = 流程错乱 | §第三步 自检 |

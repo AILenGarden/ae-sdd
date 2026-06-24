@@ -46,6 +46,24 @@
 
 ---
 
+### v1.1 — 2026-06-24（补全 §F 反向索引 + §G 脚本化）
+
+**变更类型：** 增量更新（索引层补全）
+
+**触发原因：** 用户指出"项目资产索引做得差"，要求对标 ES 思想并脚本化。life 资产 §F 反向索引仅 9 词（门禁要求 ≥20），且位置为粗粒度章节号；§G 读取 API 为"自然语言协议"无脚本实现。
+
+**变更内容：**
+- §1 lastAuditedAt：2026-06-17 → 2026-06-24
+- §F 反向索引：9 词 → 28 词，位置从粗粒度"§4 / §6.9"精确到"§X.Y + 行号"（新增 AppService / @Transactional / Facade / FeignClient / Converter / CsTicket / ImSession / security_context / AccessUserInfoContext / ApiResult / PagedModels / cellphone / BCrypt / deleted_flag / 双启动模块 / LocalDateTime / job-spring-boot-starter / MapStruct 等 19 词）
+- §G 读取 API：从伪代码协议升级为 `ae-sdd assets` 脚本化说明（含场景化 API 表 + 底层 API 表 + 调用示例）
+- §10 缺口新增 #11（✅ 已补 2026-06-24）
+
+**配套脚本：** `tools/lib/assets_index.py`（倒排索引 + 分词 + BM25 评分）+ `ae-sdd assets query/outline/section/stats` CLI 子命令
+
+**验证状态：** 已验证（`ae-sdd assets query "AppService" --asset-file .../icec-cloud-life.assets.md` 精确命中 CsTicketAppService / ImSessionAppService，BM25 排序合理）
+
+---
+
 ## 变更记录模板
 
 ```
