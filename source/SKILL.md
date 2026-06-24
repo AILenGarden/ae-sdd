@@ -6,7 +6,7 @@ description: |
   当开发者说"启动自动化工程"、"从 DR 开始实现"、"端到端实现"、"继续流程"、
   "继续上次"、"/ae-sdd" 时触发。支持流程状态跟踪与中断后恢复。
   🆕 v3.1.2：安装 ae-sdd 触发词分流到 `ae-sdd-install-skill.md`（"安装 ae-sdd"/"装 ae-sdd"/"重装"）。
-version: 3.1.2
+version: 3.2.0
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -92,6 +92,79 @@ ae-sdd assets read <method>  # 索引按需读取（替代 SKILL 内文字调用
 
 ---
 
+## 🛡️ G-RA 需求分析准入门卫（🔴 v3.2 加固 — 解决"RA 被绕过"问题）
+
+> **🆕 v3.2 新增（2026-06-24）：** G-00 项目资产门卫解决"有没有项目资产"问题；本 G-RA 门卫解决"Phase 1 下游节点能不能在无 RA 时启动"问题。
+>
+> **🆕 v3.2 加固说明：**
+> - **入口段扩展为 G-00 + G-RA 双门卫**——解决"路由表说 PRD/Issue → requirement-analysis，但旧 4 类需求 fallback 路径仍会绕过 RA"问题（实测案例：life 项目 6 个 Story 全部无 RA 文档）
+> - **新增 §🎯 智能路由表 强制门禁列**——每条路由后显式标注"是否需要 RA 前置"
+> - **新增 §路由决策算法 1.8 RA 准入门禁**——硬阻断"无 RA 直接进 dr-generate/story-generate/task-generate"
+
+### 为什么需要 G-RA（背景）
+
+**旧版问题（v3.1 及之前）**：
+
+| # | 路径 | 用户输入示例 | 旧路由结果 | 旧 RA 状态 |
+|---|------|-----------|-----------|-----------|
+| 1 | 4 类需求类型 2 | "做个用户管理功能" | `story-generate-skill.md` | 🔴 无 RA 文档 |
+| 2 | 4 类需求类型 3 | "加个缓存预热" | `task-generate-skill.md` | 🔴 无 RA 文档 |
+| 3 | 4 类需求类型 4 | "改个枚举值" | `coding-skill.md` | 🟢 跳过 RA（合理）|
+| 4 | 4 维判定 | "生成 DR" / "写 DR" | `dr-generate-skill.md` | 🔴 无 RA 文档 |
+
+**实测证据：** life 项目 STORY-002 / 007 / 009 / 010 / 011 / 020 六个 Story 全部无 RA 文档。根因是 4 类需求 fallback 路径说"中大任务 → story-generate"，**没有强制 RA 前置**。
+
+### G-RA 强制规则（不可跳过）
+
+| # | 规则 | 工具强制 | 行为 |
+|---|------|---------|------|
+| 1 | **进 dr-generate / story-generate / task-generate 前必须存在 RA 文档** | `ae-sdd gate ra-required --project <projectKey> --story <STORY-ID>` | RA 不存在 → 🔴 阻断 |
+| 2 | **RA 文档必须含 8 个核心维度**（角色/场景/流程/数据/规则/设计方向/AC/假设）| `ae-sdd gate ra-required` | 任一维度缺失 → 🔴 阻断 |
+| 3 | **RA 文档必须过 5 问自检**（通过率 ≥ 90%）| `ae-sdd gate ra-required` | 通过率 < 90% → 🔴 阻断 |
+| 4 | **RA 文档必须解决所有 🔴 阻断型缺口** | `ae-sdd gate ra-required` | 任一 🔴 缺口未解决 → 🔴 阻断 |
+| 5 | **RA 距今 ≤ 30 天**（防止用过时 RA）| `ae-sdd gate ra-required` | 超 30 天 → 🟡 警告（不阻断，但提示重审）|
+| 6 | **微任务（类型 4）豁免** —— 单文件/单枚举值级改动无需 RA | — | 走 coding-skill 直接编码 |
+| 7 | **BUG/配置类豁免** —— BUG 修复/配置调整无需 RA（RA 反向通道 §见 requirement-analysis-skill §反向通道）| — | 走 coding-skill BUG 路径 |
+
+### 执行时机
+
+- **任何 `dr-generate-skill` / `story-generate-skill` / `task-generate-skill` 启动前 → 先跑 G-RA**
+- **CLI 自动调用**：用户不需要手动跑 `ae-sdd gate ra-required`，CLI 在内部会先调
+- **AI Agent 手动调用**：加载下游 SKILL 后，先确认 G-RA 通过；不通过时输出 ⚠️ 阻断提示并自动路由到 requirement-analysis-skill
+
+### 详细 SOP
+
+完整 SOP 见 **§🎯 统一入口与智能路由 → 步骤 1.8 RA 准入门禁**。本节只是把"必须做"提到顶部，避免被埋在长文里被忽略。
+
+### 工具命令
+
+```bash
+ae-sdd gate ra-required --project <projectKey> --story <STORY-ID>
+  # 返回: { ra_exists, ra_path, dimensions_complete, self_check_pass_rate, blocking_gaps, ra_age_days, blocked, reason }
+  # blocked=true → 🔴 阻断 + 输出自动路由建议
+
+ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analysis-skill
+  # 走 §第 -1 步 → 第零步 → 第一步 → ... → 第三步
+  # 产出 RA 文档后回到原路径
+```
+
+> **🔴 不允许跳过 G-RA**：即使用户说"直接出 Story"，也必须先确认 RA 文档存在 + 8 维度齐全 + 🔴 缺口已解决。RA 缺失时自动调用 `ae-sdd gate ra-required --fix` 而非放行。
+
+### 与旧版 fallback 的兼容性
+
+| 路径 | v3.1 行为 | v3.2 行为 |
+|------|----------|----------|
+| 4 类需求类型 2（中大任务）| `story-generate-skill`（无 RA 检查）| `story-generate-skill` + G-RA 前置 |
+| 4 类需求类型 3（小任务）| `task-generate-skill`（无 RA 检查）| `task-generate-skill` + G-RA 前置 |
+| 4 维判定 → dr-generate | `dr-generate-skill`（无 RA 检查）| `dr-generate-skill` + G-RA 前置 |
+| 4 维判定 → story-generate | `story-generate-skill`（无 RA 检查）| `story-generate-skill` + G-RA 前置 |
+| 类型 4（微任务）| `coding-skill` | `coding-skill`（豁免 G-RA）|
+| BUG/配置类 | `coding-skill` | `coding-skill`（豁免 G-RA）|
+
+**升级原则**：v3.2 不破坏 v3.1 的任何路由能力，只是给"中大/小任务"和"dr-generate"3 个路径加 RA 前置门禁；微任务和 BUG 类保持不变。
+
+---
+
 ## 🔴 输出核心原则（最高优先级，贯穿所有 SKILL 和所有阶段）
 
 > **AI 生成任何内容时必须遵守以下三条，违反即视为输出无效：**
@@ -148,28 +221,28 @@ ae-sdd assets read <method>  # 索引按需读取（替代 SKILL 内文字调用
 
 #### 基础路由表（流程节点）
 
-| 用户输入关键词 / 场景 | 路由到 SKILL | 节点 |
-|---------------------|------------|------|
-| "分析需求" / "从 PRD 开始" / "需求拆解" / "需求分析" | **`requirement-analysis-skill.md`** | **Phase 1 入口 🆕** |
-| "生成 DR" / "写 DR" / "从 RA 生成 DR" / "DR 起草" | **`dr-generate-skill.md`** | **Phase 1 ① 🆕（规模=大时）** |
-| "DR 评审" / "DR Review" / "检查 DR" | **`dr-review-skill.md`** | **Phase 1 ② 🆕** |
-| "从 DR 开始" / "生成 Story" / "写 Story" / "Story 起草" | `story-generate-skill.md` | Phase 1 ① |
-| "Story 评审" / "审 Story" / "Story Review" | `story-review-skill.md` | Phase 1 ② |
-| "生成测试用例" / "补测试用例" | `testcase-generate-skill.md` | Phase 1 ③ |
-| "生成 Task" / "写 Task 文档" | `task-generate-skill.md` | Phase 2 ④ |
-| "开始 Coding" / "写代码" / "实现 Story" | `coding-skill.md` | Phase 2 ⑤ |
-| "出 Coding 报告" / "Coding 完成" | `coding-report-skill.md` | Phase 2 ⑤ |
-| "Code Review 报告" / "出 CR 报告" / "评审代码" | `code-review-skill.md` | Phase 3 ⑦ |
-| "从 X 继续" / "重入 Y 流程" / "续接" | **🔴 先读 state.json** 判定重入点，再路由到对应 SKILL | 任意 |
-| "修一下 XX" / "发现 XX 问题" / "生产故障" / "客户反馈" | `proposal-skill.md` | 任意渠道 |
-| "代码写错了" / "编译失败" / "测试失败" | `coding-skill.md §异常路径` → 触发 `proposal-skill.md` | 异常渠道 3 |
-| "审计项目资产" / "双源一致性" / "每月审计" | `project-assets-update-skill.md §5 审计` | 横向 |
-| "修改/补 Story" / "Story Update" | `story-update-skill.md` | 任意（携带 Proposal）|
-| "修改/补 Task" / "Task Update" | `task-generate-skill.md §5bis 全局 Task Review` | 任意（携带 Proposal）|
-| "修改/补 Coding" / "改代码" | `coding-skill.md` + 携带 `proposal-skill.md` 输出的 Proposal | 任意（携带 Proposal）|
-| "放文档哪里" / "命名" / "重入新建还是修改" | `document-storage-skill.md`（横切依赖）| 任意 |
-| "修改 SKILL" / "更新 SKILL" / "新增 SKILL" / "重构 SKILL" / "SKILL 边界" / "SKILL 维护" / "优化 ae-sdd" / "改 ae-sdd" | **`ae-sdd-update-skill.md`**（自身维护） | 横向（自治） |
-| 🆕 **"安装 ae-sdd" / "装 ae-sdd" / "重装 ae-sdd" / "升级 ae-sdd" / "卸载 ae-sdd" / "给 <项目> 接 ae-sdd"** | **`ae-sdd-install-skill.md`** | **横向（安装引导 🆕）** |
+| 用户输入关键词 / 场景 | 路由到 SKILL | 节点 | 🆕 G-RA 门禁（v3.2） |
+|---------------------|------------|------|---------------------|
+| "分析需求" / "从 PRD 开始" / "需求拆解" / "需求分析" | **`requirement-analysis-skill.md`** | **Phase 1 入口 🆕** | 🟢 不需要（入口本身）|
+| "生成 DR" / "写 DR" / "从 RA 生成 DR" / "DR 起草" | **`dr-generate-skill.md`** | **Phase 1 ① 🆕（规模=大时）** | 🔴 **必过 G-RA** |
+| "DR 评审" / "DR Review" / "检查 DR" | **`dr-review-skill.md`** | **Phase 1 ② 🆕** | 🔴 **必过 G-RA**（dr-review 要看 RA）|
+| "从 DR 开始" / "生成 Story" / "写 Story" / "Story 起草" | `story-generate-skill.md` | Phase 1 ① | 🔴 **必过 G-RA** |
+| "Story 评审" / "审 Story" / "Story Review" | `story-review-skill.md` | Phase 1 ② | 🔴 **必过 G-RA** |
+| "生成测试用例" / "补测试用例" | `testcase-generate-skill.md` | Phase 1 ③ | 🔴 **必过 G-RA** |
+| "生成 Task" / "写 Task 文档" | `task-generate-skill.md` | Phase 2 ④ | 🔴 **必过 G-RA**（规模≥小）|
+| "开始 Coding" / "写代码" / "实现 Story" | `coding-skill.md` | Phase 2 ⑤ | 🟢 仅当规模≥中时需要 RA |
+| "出 Coding 报告" / "Coding 完成" | `coding-report-skill.md` | Phase 2 ⑤ | 🟢 不需要（事后总结）|
+| "Code Review 报告" / "出 CR 报告" / "评审代码" | `code-review-skill.md` | Phase 3 ⑦ | 🟢 不需要（评审对象是代码）|
+| "从 X 继续" / "重入 Y 流程" / "续接" | **🔴 先读 state.json** 判定重入点，再路由到对应 SKILL | 任意 | 🟡 看 state.json currentStep（已完成的步骤豁免）|
+| "修一下 XX" / "发现 XX 问题" / "生产故障" / "客户反馈" | `proposal-skill.md` | 任意渠道 | 🟢 不需要（渠道入口）|
+| "代码写错了" / "编译失败" / "测试失败" | `coding-skill.md §异常路径` → 触发 `proposal-skill.md` | 异常渠道 3 | 🟢 不需要（BUG 类豁免）|
+| "审计项目资产" / "双源一致性" / "每月审计" | `project-assets-update-skill.md §5 审计` | 横向 | 🟢 不需要（资产本身）|
+| "修改/补 Story" / "Story Update" | `story-update-skill.md` | 任意（携带 Proposal）| 🟡 看修改类型（RA 维度变更 → 需重审）|
+| "修改/补 Task" / "Task Update" | `task-generate-skill.md §5bis 全局 Task Review` | 任意（携带 Proposal）| 🟡 看修改类型 |
+| "修改/补 Coding" / "改代码" | `coding-skill.md` + 携带 `proposal-skill.md` 输出的 Proposal | 任意（携带 Proposal）| 🟢 不需要（BUG 类豁免）|
+| "放文档哪里" / "命名" / "重入新建还是修改" | `document-storage-skill.md`（横切依赖）| 任意 | 🟢 不需要（横切工具）|
+| "修改 SKILL" / "更新 SKILL" / "新增 SKILL" / "重构 SKILL" / "SKILL 边界" / "SKILL 维护" / "优化 ae-sdd" / "改 ae-sdd" | **`ae-sdd-update-skill.md`**（自身维护） | 横向（自治） | 🟢 不需要（自治）|
+| 🆕 **"安装 ae-sdd" / "装 ae-sdd" / "重装 ae-sdd" / "升级 ae-sdd" / "卸载 ae-sdd" / "给 <项目> 接 ae-sdd"** | **`ae-sdd-install-skill.md`** | **横向（安装引导 🆕）** | 🟢 不需要（安装引导）|
 
 #### 🆕 4 类需求智能路由（2026-06-10 任务规模分级）
 
@@ -340,6 +413,26 @@ ae-sdd assets read <method>  # 索引按需读取（替代 SKILL 内文字调用
        ├─ 套满 4+ 区 → 类型 2（中大任务，story-generate-skill）
        ├─ 套满 2-3 区 → 类型 3（小任务，task-generate-skill）
        └─ 套不出或只套 1 区 → 类型 4（微任务，coding-skill）
+   ↓
+1.8 【🆕 RA 准入门禁】（🆕 v3.2 加固 — 2026-06-24）
+   ├─ 触发场景：步骤 1.7 路由到 dr-generate-skill / story-generate-skill / task-generate-skill 时
+   ├─ 检查项（缺一项即阻断）：
+   │   ├─ RA 文档存在（ae-sdd-doc/iterations/{date}/RA/{RA-ID}-vN.m.md）
+   │   ├─ 8 个核心维度齐全（角色/场景/流程/数据/规则/设计方向/AC/假设）
+   │   ├─ 5 问自检通过率 ≥ 90%
+   │   ├─ 所有 🔴 阻断型缺口已解决
+   │   └─ RA 距今 ≤ 30 天（超期 → 🟡 警告但不阻断）
+   ├─ 调用：`ae-sdd gate ra-required --project <projectKey> --story <STORY-ID>`
+   ├─ 通过 → 进入步骤 2（加载下游 SKILL）
+   ├─ 🔴 不通过：
+   │   ├─ 阻断原路由，输出 ⚠️ 提示："RA 文档缺失/不完整，无法启动 dr-generate/story-generate/task-generate"
+   │   ├─ 自动路由建议：`requirement-analysis-skill.md`（首次生成 RA）或 `requirement-analysis-skill.md §RA 修订`（RA 已存在但需补维度）
+   │   ├─ 用户显式确认豁免（如"我就要跳过 RA"）→ 标记本次任务为"事后回溯"+ 继续
+   │   └─ 否则按自动路由建议走 RA → 完成后回到本路由
+   ├─ 豁免场景（不触发 G-RA）：
+   │   ├─ 类型 4（微任务）→ coding-skill 直接编码
+   │   ├─ BUG/配置类 → coding-skill BUG 路径
+   │   └─ 重入到 state.json 已记录的完成步骤（如 step-4-coding-r2 不需要 RA）
    ↓
 2. 关键词匹配（智能路由表 §1）
    ├─ 命中 6 大节点之一 → 路由到对应 SKILL
