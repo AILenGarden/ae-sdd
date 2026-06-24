@@ -18,6 +18,8 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+# Windows reserved device name created by `> nul` redirection misuse
+nul
 
 # =============================================
 # Claude Code 本地数据
