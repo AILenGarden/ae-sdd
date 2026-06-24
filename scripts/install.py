@@ -61,6 +61,7 @@ SKILL_NAME   = "ae-sdd"
 CLAUDE_DST   = Path.home() / ".claude" / "skills" / SKILL_NAME
 CODEX_DST    = Path.home() / ".codex" / "skills" / SKILL_NAME
 DST          = CLAUDE_DST  # 向后兼容：历史代码/文档默认指 Claude 目标
+BAK_KEEP_DEFAULT = 2  # 每次 install 后保留最近 N 个 .bak 备份（防止 .bak 累积噪音）
 
 
 # ─── 子流程：调 build_dist.py ────────────────────────────────────────────────
@@ -167,6 +168,36 @@ def backup_existing(dst: Path) -> None:
         warn(f"检测到已有安装版本，备份到：")
         warn(f"  {bak}")
         dst.rename(bak)
+
+
+def cleanup_old_backups(skills_dir: Path, skill_name: str, keep: int = BAK_KEEP_DEFAULT) -> None:
+    """清理 skills_dir 下 {skill_name}.bak.* 旧备份，保留最近 keep 个。
+
+    排序：按目录名（`.bak.YYYYMMDDHHMMSS`）字典序降序，新→旧。
+    只清理 .bak.*，不动 .uninstalled.*（用户主动卸载的产物另算）。
+    keep=0 表示全部清理；keep<0 表示不清理。
+    """
+    if keep < 0:
+        return
+    pattern = f"{skill_name}.bak.*"
+    baks = sorted(
+        (p for p in skills_dir.glob(pattern) if p.is_dir()),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if len(baks) <= keep:
+        return
+    to_remove = baks[keep:]
+    removed = 0
+    for old in to_remove:
+        try:
+            shutil.rmtree(old)
+            warn(f"清理旧备份: {old.name}")
+            removed += 1
+        except OSError as e:
+            warn(f"清理失败 {old.name}: {e}")
+    if removed:
+        info(f"已清理 {removed} 个旧备份（保留最近 {keep} 个）")
 
 
 def install_from_dist(dist_src: Path, dst: Path) -> None:
@@ -284,6 +315,8 @@ def main() -> int:
     parser.add_argument("--target", choices=["auto", "claude", "codex", "all"],
                         default="auto",
                         help="安装目标：auto=Claude + 已存在/可用 Codex；all=两者都装")
+    parser.add_argument("--keep-bak", type=int, default=BAK_KEEP_DEFAULT,
+                        help=f"每个目标保留的 .bak 备份数（默认 {BAK_KEEP_DEFAULT}；0=全清；负数=不清理）")
     args = parser.parse_args()
     targets = _target_paths(args.target)
 
@@ -321,6 +354,7 @@ def main() -> int:
 
     for dst in targets:
         backup_existing(dst)
+        cleanup_old_backups(dst.parent, SKILL_NAME, args.keep_bak)
     for dst in targets:
         install_from_dist(dist_src, dst)
         verify(dst)
