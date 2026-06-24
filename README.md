@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.1.0（🆕 2026-06-22：纪律层加固 — 根 agent 硬前置 + 项目 SOP 模板 + life 实例化；触发词新增 `ae-sdd-quick` 快速通道）
+> **版本：** v3.1.2（🆕 2026-06-24：新增 ae-sdd-install-skill — Agent 安装引导 + install.py 智能引导；v3.1.1 增量：requirement-analysis-skill 阶段 H 深度强化 — 通用业务模式 Checklist + 跨域级联 Checklist + 衍生规则强制追问 + 衍生 AC 强制覆盖；v3.1.0 增量：纪律层加固 — 根 agent 硬前置 + 项目 SOP 模板 + life 实例化；触发词新增 `ae-sdd-quick` 快速通道）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -122,7 +122,7 @@ bash scripts/dev-sync.sh --watch
 - **[`source/standards/`](source/standards/)** — 11 份约束（API/DB/分层/安全/...）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
 - **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md)）
-- **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）
+- **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1.2 install-skill + 智能引导](source/CHANGELOG/2026-06-24-ae-sdd-install-skill.md) + [v3.1.1 阶段 H 深度强化](source/CHANGELOG/2026-06-23-requirement-analysis-阶段H深度强化.md) + [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）
 - 🆕 v3.1：[`source/docs/ae-sdd-conventions.md`](source/docs/ae-sdd-conventions.md) — 项目级 SOP 模板（root agent 必读）
 
 ---
