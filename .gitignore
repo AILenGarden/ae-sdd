@@ -24,6 +24,9 @@ desktop.ini
 # =============================================
 # 本地插件元数据（plugin.json 由 sync 脚本生成）
 .claude-plugin/plugin.json
+# 本地 dev hooks（开发者在 ae-sdd 母版仓库里 dogfooding 用的硬编码路径配置）
+# 真实目标项目的 hooks 写到目标项目自己的 .claude/settings.json（init-hooks 流程）
+.claude/
 
 # =============================================
 # Python

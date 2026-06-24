@@ -191,6 +191,21 @@ def uninstall() -> None:
 
 
 # ─── 打印使用提示 ────────────────────────────────────────────────────────────
+def _detect_agents() -> dict:
+    """检测可用的 Agent CLI（Claude Code / Codex / Mavis 等）。"""
+    agents = {}
+    # Claude Code: `claude --version` 或 `which claude`
+    if shutil.which("claude") or shutil.which("claude.exe"):
+        agents["claude"] = "Claude Code"
+    # Codex CLI
+    if shutil.which("codex") or shutil.which("codex.exe"):
+        agents["codex"] = "Codex CLI"
+    # Mavis daemon
+    if shutil.which("mavis") or shutil.which("mavis.exe"):
+        agents["mavis"] = "Mavis daemon"
+    return agents
+
+
 def print_usage() -> None:
     print()
     success("ae-sdd SKILL 安装成功！")
@@ -201,8 +216,27 @@ def print_usage() -> None:
         ver = version_file.read_text(encoding="utf-8").split("\n")[0]
         print(f"  安装版本: {ver}")
     print()
-    print("  在 Claude Code 中使用：")
-    print("    输入  /ae-sdd  启动自动化工程助手")
+
+    # 🆕 v3.1.2：智能引导 — 检测 Agent CLI 存在则给启动命令
+    agents = _detect_agents()
+    print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    if agents:
+        print(f"  ✅ 检测到以下 Agent CLI 可用：")
+        for cmd, name in agents.items():
+            print(f"     • {name}（命令: {cmd}）")
+        print()
+        print(f"  → 下一步（任选其一）：")
+        print(f"    1. 启动 Claude Code：claude")
+        print(f"    2. 启动后输入 /ae-sdd 启动自动化工程助手")
+        print(f"    3. 或输入\"装 ae-sdd\"让 ae-sdd-install-skill 引导后续配置")
+    else:
+        print(f"  ⚠️ 未检测到 Claude Code / Codex / Mavis 等 Agent CLI")
+        print(f"  → 推荐安装 Claude Code：")
+        print(f"     https://docs.claude.com/en/docs/claude-code/installation")
+        print()
+        print(f"  → 装好 Agent 后，输入 /ae-sdd 即可启动自动化工程助手")
+    print()
+    print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print()
     print(f"  更多信息：{REPO_URL}")
     print()

@@ -5,7 +5,8 @@ description: |
   从 DR 出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
   当开发者说"启动自动化工程"、"从 DR 开始实现"、"端到端实现"、"继续流程"、
   "继续上次"、"/ae-sdd" 时触发。支持流程状态跟踪与中断后恢复。
-version: 3.1.0
+  🆕 v3.1.2：安装 ae-sdd 触发词分流到 `ae-sdd-install-skill.md`（"安装 ae-sdd"/"装 ae-sdd"/"重装"）。
+version: 3.1.2
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -168,6 +169,7 @@ ae-sdd assets read <method>  # 索引按需读取（替代 SKILL 内文字调用
 | "修改/补 Coding" / "改代码" | `coding-skill.md` + 携带 `proposal-skill.md` 输出的 Proposal | 任意（携带 Proposal）|
 | "放文档哪里" / "命名" / "重入新建还是修改" | `document-storage-skill.md`（横切依赖）| 任意 |
 | "修改 SKILL" / "更新 SKILL" / "新增 SKILL" / "重构 SKILL" / "SKILL 边界" / "SKILL 维护" / "优化 ae-sdd" / "改 ae-sdd" | **`ae-sdd-update-skill.md`**（自身维护） | 横向（自治） |
+| 🆕 **"安装 ae-sdd" / "装 ae-sdd" / "重装 ae-sdd" / "升级 ae-sdd" / "卸载 ae-sdd" / "给 <项目> 接 ae-sdd"** | **`ae-sdd-install-skill.md`** | **横向（安装引导 🆕）** |
 
 #### 🆕 4 类需求智能路由（2026-06-10 任务规模分级）
 
@@ -1863,6 +1865,7 @@ DR（需求文档）→ Story → Task → Coding
 | Coding | [coding-skill.md](../phase2-coding/coding-skill.md) | 代码实现 + 问题反馈 |
 | DR Update | [dr-update-skill.md](../phase1-design/dr-update-skill.md) | DR 文档更新 |
 | **🆕 Project Assets Update** | [project-assets-update-skill.md](../cross-cutting/project-assets-update-skill.md) | **项目资产生成/更新/审计 — G-00 门卫的 SOP** |
+| **🆕 ae-sdd Install** | [ae-sdd-install-skill.md](../orchestration/ae-sdd-install-skill.md) | **安装引导 SKILL — 平台检测 → 选模式 → 执行 install → 写 hooks → 验证** |
 | **🆕 Document Storage** | [document-storage-skill.md](../cross-cutting/document-storage-skill.md) | **文档存放路径解析、命名规则、重入判定** |
 | **🆕 Proposal** | [proposal-skill.md](../cross-cutting/proposal-skill.md) | **跨域改动 / 缺陷修复的 4 段 Proposal SOP** |
 | **🆕 Agent Orchestration** | [agent-orchestration-skill.md](../cross-cutting/agent-orchestration-skill.md) | **多 Agent 编排、SubAgent 派活协议、报告回传** |
