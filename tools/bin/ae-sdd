@@ -4,8 +4,11 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 14 门禁检查（pre-flight）
+  - gates    : 18 门禁检查（pre-flight；v3.2 含 G-RA 需求分析准入门卫）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
+
+🆕 v3.2 G-RA（2026-06-24）：
+  - gate ra-required : 需求分析准入门卫（进 dr/story/task-generate 前必过 G-RA-1~4）
 
 辅助：
   - version  : 输出版本
@@ -16,6 +19,7 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd state read
     ae-sdd state next-step
     ae-sdd gates check [--only G-00]
+    ae-sdd gate ra-required [--project <key>]   # 跑 G-RA-1~4（SKILL.md §🛡️ G-RA 契约）
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health

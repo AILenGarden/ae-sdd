@@ -54,7 +54,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 14 门禁元信息
+# 门禁元信息（14 主门禁 G-00~G-13 + 4 G-RA 需求分析准入门卫 = 18）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
