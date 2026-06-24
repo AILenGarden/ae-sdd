@@ -41,6 +41,21 @@ description: Story 生成 SKILL — Phase 1 ① 节点的环节内具体规则�
 
 ---
 
+## 🧠 阶段记忆强制调用（🔴 横切依赖）
+
+> **🔴 强制：** Story 生成必须读取 RA / design 记忆，避免重复遗漏用户已确认的规则、缺口和边界。Story 输出后必须写入 design 记忆。
+
+```bash
+ae-sdd memory enter --phase design --story <STORY-ID>
+# 生成 Story
+ae-sdd memory write --phase design --story <STORY-ID> --kind decision --summary "<Story关键设计决策/冲突/未决项>"
+ae-sdd memory exit --phase design --story <STORY-ID>
+```
+
+`memory exit` 未通过 = Story 节点未完成，禁止进入 Story Review 或 TestCase。
+
+---
+
 ## 目标
 
 从 DR 文档生成**完整、可执行、可评审**的 Story 文档，目标：

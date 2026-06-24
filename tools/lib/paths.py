@@ -1,7 +1,7 @@
 """
-paths.py — ae-sdd CLI 路径工具
+paths.py - ae-sdd CLI path helpers.
 
-跨平台路径解析：定位母版 source/、项目 .ae-sdd/、state.json、assets/。
+Resolves master source, project .ae-sdd, state.json, assets, and project docs.
 """
 from __future__ import annotations
 
@@ -11,19 +11,19 @@ from pathlib import Path
 from typing import Optional
 
 
-# 母版版本（与 source/SKILL.md YAML frontmatter 同步）
-MASTER_VERSION = "3.2.0"
+# Keep in sync with source/SKILL.md YAML frontmatter.
+MASTER_VERSION = "3.2.3"
 
 
 def locate_master_source(start: Optional[Path] = None) -> Optional[Path]:
     """
-    定位母版 source/ 目录。
+    Locate the master source directory.
 
-    优先级：
-    1. 环境变量 AE_SDD_MASTER（可指向 source/ 或分发包根）
-    2. 当前工作目录的 ./source 或当前工作目录本身（含 SKILL.md）
-    3. 工具所在仓库/分发包的 ./source 或根目录（含 SKILL.md）
-    4. ~/.claude/skills/ae-sdd 与 ~/.codex/skills/ae-sdd 安装目录
+    Priority:
+    1. AE_SDD_MASTER environment variable, pointing to source/ or package root.
+    2. Current working directory ./source or current directory itself.
+    3. Repository/package root relative to this tool.
+    4. Installed ~/.claude/skills/ae-sdd and ~/.codex/skills/ae-sdd directories.
     """
     candidates: list[Path] = []
 
@@ -36,13 +36,11 @@ def locate_master_source(start: Optional[Path] = None) -> Optional[Path]:
     candidates.append(cwd / "source")
     candidates.append(cwd)
 
-    # tools/bin/ae-sdd → tools/bin/ → tools/ → 仓库根
     cli_path = Path(start) if start else Path(__file__).resolve()
     repo_root = cli_path.parent.parent.parent
     candidates.append(repo_root / "source")
     candidates.append(repo_root)
 
-    # 全局安装位置
     home = Path.home()
     candidates.append(home / ".claude" / "skills" / "ae-sdd" / "source")
     candidates.append(home / ".claude" / "skills" / "ae-sdd")
@@ -63,7 +61,7 @@ def locate_master_source(start: Optional[Path] = None) -> Optional[Path]:
 
 
 def locate_project_ae_sdd(cwd: Optional[Path] = None) -> Optional[Path]:
-    """定位当前目录的 .ae-sdd/（向上最多 5 级查找）"""
+    """Locate .ae-sdd/ from cwd upward, up to five parent levels."""
     cur = (cwd or Path.cwd()).resolve()
     for _ in range(5):
         cand = cur / ".ae-sdd"
@@ -76,9 +74,7 @@ def locate_project_ae_sdd(cwd: Optional[Path] = None) -> Optional[Path]:
 
 
 def read_config(ade_sdd: Path) -> dict:
-    """
-    读项目 .ae-sdd/config.yaml（极简解析，仅 key: value 不依赖 PyYAML）。
-    """
+    """Read .ae-sdd/config.yaml with a tiny key/value parser."""
     cfg_path = ade_sdd / "config.yaml"
     if not cfg_path.is_file():
         return {}
@@ -90,9 +86,7 @@ def read_config(ade_sdd: Path) -> dict:
         line = line.split("#", 1)[0].rstrip()
         if not line.strip():
             continue
-        # section 头（key: 无值）
         if line.startswith(" ") and current_section:
-            # 嵌套（缩进）
             key, _, val = line.strip().partition(":")
             val = val.strip().strip('"').strip("'")
             if val:
@@ -102,7 +96,6 @@ def read_config(ade_sdd: Path) -> dict:
         key = key.strip()
         val = val.strip()
         if not val:
-            # section 头
             current_section = key
             out.setdefault(key, {})
         else:
@@ -129,7 +122,7 @@ def reports_dir(ade_sdd: Path) -> Path:
 
 
 def find_asset_file(ade_sdd: Path, project_key: str) -> Optional[Path]:
-    """在 .ae-sdd/assets/ 找项目资产文件"""
+    """Find the project asset file under .ae-sdd/assets/."""
     assets = assets_dir(ade_sdd)
     if not assets.is_dir():
         return None
@@ -137,27 +130,23 @@ def find_asset_file(ade_sdd: Path, project_key: str) -> Optional[Path]:
     return cand if cand.is_file() else None
 
 
-# ─── 项目文档目录辅助（G-XX 门禁检查用） ─────────────────────────────────────
 def project_root(ade_sdd: Path) -> Path:
-    """项目根目录 = .ae-sdd/ 的父目录"""
+    """Project root is the parent directory of .ae-sdd/."""
     return ade_sdd.parent
 
 
 def project_design_dir(project_root: Path) -> Path:
-    """项目设计文档目录（DR / Story / TestCase 存放处）"""
+    """Project design docs directory for DR, Story, and TestCase docs."""
     return project_root / "design"
 
 
 def project_task_dir(project_root: Path) -> Path:
-    """项目 Task 文档目录"""
+    """Project Task docs directory."""
     return project_root / "task"
 
 
 def find_doc(project_root: Path, story_id: str, suffix: str) -> Optional[Path]:
-    """
-    在 project/design/ 和 project/ 两个位置找 {story_id}{suffix} 文档。
-    返回第一个存在的；都不存在返回 None。
-    """
+    """Find the first existing {story_id}{suffix} doc in design/ or project root."""
     candidates = [
         project_design_dir(project_root) / f"{story_id}{suffix}",
         project_root / f"{story_id}{suffix}",
@@ -169,7 +158,7 @@ def find_doc(project_root: Path, story_id: str, suffix: str) -> Optional[Path]:
 
 
 def list_docs(project_root: Path, story_id: str, suffix: str) -> list[Path]:
-    """在 project/task/ 下找 {story_id}{suffix} 文档列表（按文件名排序）"""
+    """List {story_id}{suffix} docs under the project task directory."""
     task_dir = project_task_dir(project_root)
     if not task_dir.is_dir():
         return []

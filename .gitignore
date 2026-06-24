@@ -28,6 +28,9 @@ desktop.ini
 # 真实目标项目的 hooks 写到目标项目自己的 .claude/settings.json（init-hooks 流程）
 .claude/
 
+# ae-sdd local toolset secrets (DB profiles, tokens, local-only adapters)
+.ae-sdd/secrets/
+
 # =============================================
 # Python
 # =============================================

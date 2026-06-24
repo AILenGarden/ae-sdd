@@ -1,0 +1,235 @@
+"""
+test_update_graph.py — update_graph.py 单元测试（UC-01~UC-05）
+
+覆盖每项检查的核心场景：通过、失败、反例。
+"""
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib import update_graph as ug  # noqa: E402
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _setup_repo(files: dict) -> Path:
+    """构造临时仓库目录。files 是 {relpath: content}。"""
+    tmp = Path(tempfile.mkdtemp())
+    for rel, content in files.items():
+        p = tmp / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    return tmp
+
+
+# ─── UC-01 版本号一致性 ──────────────────────────────────────────────────────
+class TestUC01(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        # 真实仓库当前版本号一致（3.2.1）
+        r = ug.check_uc01_version(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+
+    def test_version_drift_blocks(self):
+        tmp = _setup_repo({
+            "source/SKILL.md": "---\nversion: 3.2.1\n---\n# ae-sdd\n",
+            "tools/lib/paths.py": 'MASTER_VERSION = "3.2.0"\n',
+            "README.md": "> **版本：** v3.2.1（...）\n",
+        })
+        r = ug.check_uc01_version(tmp)
+        self.assertFalse(r.pass_)
+        self.assertIn("漂移", r.message)
+
+    def test_version_aligned_passes(self):
+        tmp = _setup_repo({
+            "source/SKILL.md": "---\nversion: 3.2.1\n---\n# ae-sdd\n",
+            "tools/lib/paths.py": 'MASTER_VERSION = "3.2.1"\n',
+            "README.md": "> **版本：** v3.2.1（最新变更）\n",
+        })
+        r = ug.check_uc01_version(tmp)
+        self.assertTrue(r.pass_)
+
+    def test_missing_version_blocks(self):
+        tmp = _setup_repo({
+            "source/SKILL.md": "# ae-sdd no frontmatter\n",
+            "tools/lib/paths.py": 'MASTER_VERSION = "3.2.1"\n',
+            "README.md": "> **版本：** v3.2.1\n",
+        })
+        r = ug.check_uc01_version(tmp)
+        self.assertFalse(r.pass_)
+
+
+# ─── UC-02 门禁注册一致性 ────────────────────────────────────────────────────
+class TestUC02(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        r = ug.check_uc02_gates_registry(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+        self.assertGreater(r.details.get("n_gates", 0), 14)
+
+
+# ─── UC-03 命令契约闭环 ──────────────────────────────────────────────────────
+class TestUC03(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        # 真实仓库：本次命令全闭环，历史遗留 warn
+        r = ug.check_uc03_command_contract(REPO_ROOT)
+        self.assertTrue(r.pass_)  # warn 也算 pass
+        # 历史遗留应被识别
+        self.assertTrue(r.details.get("historical"))
+
+    def test_new_command_missing_blocks(self):
+        # SKILL.md 引用一个本次新增命令但 CLI 没实现
+        tmp = _setup_repo({
+            "source/SKILL.md": "---\nversion: 3.2.1\n---\n# ae-sdd\n跑 `ae-sdd newcmd --x`\n",
+            "tools/bin/ae-sdd": '# cli\nsub.add_parser("gates")\n',
+        })
+        r = ug.check_uc03_command_contract(tmp)
+        self.assertFalse(r.pass_)
+        self.assertIn("newcmd", r.details.get("new_missing", []))
+
+    def test_frontmatter_not_matched_as_command(self):
+        # description: 字段不应被当成命令
+        tmp = _setup_repo({
+            "source/SKILL.md": "---\nname: ae-sdd\ndescription: 测试\nversion: 3.2.1\n---\n# ae-sdd\n正文\n",
+            "tools/bin/ae-sdd": '# cli\n',
+        })
+        referenced = ug._extract_skill_referenced_commands(tmp / "source" / "SKILL.md")
+        self.assertNotIn("description", referenced)
+
+
+# ─── UC-04 扫描器分发一致性 ──────────────────────────────────────────────────
+class TestUC04(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        r = ug.check_uc04_scanner_distribution(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+
+    def test_scanner_not_in_whitelist_blocks(self):
+        tmp = _setup_repo({
+            "scripts/new_scan.py": "# scanner\n",
+            "scripts/build_dist.py": 'runtime_scripts = ["test_authenticity_scan.py"]\n',
+        })
+        r = ug.check_uc04_scanner_distribution(tmp)
+        self.assertFalse(r.pass_)
+        self.assertIn("new_scan.py", r.details.get("missing", []))
+
+
+# ─── UC-05 健康度清单覆盖 ────────────────────────────────────────────────────
+class TestUC05(unittest.TestCase):
+
+    def test_real_repo(self):
+        # 真实仓库：update_graph 项可能缺失（本次要补）
+        r = ug.check_uc05_health_checklist(REPO_ROOT)
+        # warn 项 pass_=True，只验证不崩
+        self.assertIsNotNone(r.pass_)
+
+    def test_missing_component_warns(self):
+        tmp = _setup_repo({
+            "source/skills/orchestration/ae-sdd-update-skill.md": "# 健康度\n- [ ] story-review\n",
+        })
+        r = ug.check_uc05_health_checklist(tmp)
+        self.assertTrue(r.pass_)  # warn 算 pass
+        self.assertGreater(len(r.details.get("missing", [])), 0)
+
+
+# ─── check_all / summarize ───────────────────────────────────────────────────
+class TestCheckAll(unittest.TestCase):
+
+    def test_check_all_returns_5(self):
+        results = ug.check_all(REPO_ROOT)
+        self.assertEqual(len(results), 5)
+
+    def test_check_all_only_filter(self):
+        results = ug.check_all(REPO_ROOT, only="UC-01")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].check_id, "UC-01")
+
+    def test_check_all_unknown(self):
+        results = ug.check_all(REPO_ROOT, only="UC-99")
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].pass_)
+
+    def test_summarize(self):
+        results = ug.check_all(REPO_ROOT)
+        s = ug.summarize(results)
+        self.assertEqual(s["total"], 5)
+        self.assertEqual(s["passed"] + s["failed"], 5)
+        self.assertIn("checks", s)
+
+
+# ─── query_affected 查询 API（v3.2 Agent 可读）───────────────────────────────
+class TestQueryAffected(unittest.TestCase):
+
+    def setUp(self):
+        ug.reload_graph(REPO_ROOT)
+
+    def test_load_graph_returns_rules(self):
+        graph = ug.load_graph(REPO_ROOT)
+        self.assertIn("rules", graph)
+        self.assertGreaterEqual(len(graph["rules"]), 8)
+
+    def test_query_gates_py_hits_ug02(self):
+        # 改 gates.py → 命中 UG-02 + UG-08
+        qr = ug.query_affected(["tools/lib/gates.py"], REPO_ROOT)
+        rule_ids = [r["id"] for r in qr.matched_rules]
+        self.assertIn("UG-02", rule_ids)
+        self.assertIn("UC-02", qr.checks_to_run)
+
+    def test_query_new_scanner_hits_ug04(self):
+        # 新增扫描器 → 命中 UG-04（含 build_dist 白名单连带项）
+        qr = ug.query_affected(["scripts/ra_authenticity_scan.py"], REPO_ROOT)
+        rule_ids = [r["id"] for r in qr.matched_rules]
+        self.assertIn("UG-04", rule_ids)
+        # 应提示 build_dist.py 白名单
+        paths = [a["path"] for a in qr.affected_items]
+        self.assertIn("scripts/build_dist.py", paths)
+
+    def test_query_skill_md_hits_version_rule(self):
+        # 改 SKILL.md → 命中 UG-01（版本号连带项）
+        qr = ug.query_affected(["source/SKILL.md"], REPO_ROOT)
+        rule_ids = [r["id"] for r in qr.matched_rules]
+        self.assertIn("UG-01", rule_ids)
+        paths = [a["path"] for a in qr.affected_items]
+        self.assertIn("tools/lib/paths.py", paths)
+        self.assertIn("README.md", paths)
+
+    def test_query_glob_pattern_subskill(self):
+        # 改子 SKILL（glob source/skills/**/*.md）→ 命中 UG-05
+        qr = ug.query_affected(["source/skills/phase1-design/story-generate-skill.md"], REPO_ROOT)
+        rule_ids = [r["id"] for r in qr.matched_rules]
+        self.assertIn("UG-05", rule_ids)
+
+    def test_query_dedup_affected_items(self):
+        # 多个文件命中同一连带项 → 按 (path, action) 去重
+        qr = ug.query_affected(["tools/lib/gates.py", "source/SKILL.md"], REPO_ROOT)
+        # gates.py 的 UG-02 "GATE_REGISTRY 一致" 与 UG-04 "新增 _locate_scanner" action 不同，
+        # 各算一条；但同一 (path, action) 不应重复
+        keys = [(a["path"], a["action"]) for a in qr.affected_items]
+        self.assertEqual(len(keys), len(set(keys)), "连带项应按 (path,action) 去重")
+
+    def test_query_no_match_returns_empty(self):
+        # 改一个不存在的文件 → 无命中
+        qr = ug.query_affected(["nonexistent/file.txt"], REPO_ROOT)
+        self.assertEqual(len(qr.matched_rules), 0)
+        self.assertEqual(len(qr.affected_items), 0)
+        self.assertEqual(len(qr.checks_to_run), 0)
+
+    def test_query_windows_path_normalized(self):
+        # Windows 反斜杠路径应被归一化
+        qr = ug.query_affected(["tools\\lib\\gates.py"], REPO_ROOT)
+        self.assertEqual(qr.changed_files, ["tools/lib/gates.py"])
+        self.assertGreater(len(qr.matched_rules), 0)
+
+    def test_query_checks_to_run_deduped(self):
+        # 多规则指向同一 UC → 去重
+        qr = ug.query_affected(["tools/lib/gates.py", "tools/bin/ae-sdd"], REPO_ROOT)
+        # UC-03 被多条规则引用，应只出现一次
+        self.assertEqual(qr.checks_to_run.count("UC-03"), 1)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

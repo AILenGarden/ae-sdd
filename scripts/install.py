@@ -11,11 +11,14 @@ install.py — ae-sdd SKILL 安装脚本（跨平台）
     3) 远程 git clone
     4) 远程 zip 下载
 
-安装目标: ~/.claude/skills/ae-sdd/
+安装目标:
+  - ~/.claude/skills/ae-sdd/
+  - ~/.codex/skills/ae-sdd/（当目录已存在或检测到 codex CLI 时自动同步）
 
 用法:
-    python scripts/install.py                    # 自动检测模式
+    python scripts/install.py                    # 自动检测模式 + 自动安装到可用 Agent
     python scripts/install.py --from-build       # 强制本地 build + install
+    python scripts/install.py --target codex     # 只安装到 Codex skills
     python scripts/install.py --uninstall        # 卸载本地安装
 """
 from __future__ import annotations
@@ -55,7 +58,9 @@ def success(msg: str) -> None: print(f"{C_GREEN}[ae-sdd] ✅{C_RESET} {msg}")
 REPO_URL     = "https://github.com/AILenGarden/ae-sdd"
 RELEASE_URL  = "https://github.com/AILenGarden/ae-sdd/archive/refs/heads/main.zip"
 SKILL_NAME   = "ae-sdd"
-DST          = Path.home() / ".claude" / "skills" / SKILL_NAME
+CLAUDE_DST   = Path.home() / ".claude" / "skills" / SKILL_NAME
+CODEX_DST    = Path.home() / ".codex" / "skills" / SKILL_NAME
+DST          = CLAUDE_DST  # 向后兼容：历史代码/文档默认指 Claude 目标
 
 
 # ─── 子流程：调 build_dist.py ────────────────────────────────────────────────
@@ -138,18 +143,34 @@ def fetch_remote() -> Path:
 
 
 # ─── 备份 + 安装 + 验证 ──────────────────────────────────────────────────────
-def backup_existing() -> None:
+def _target_paths(selection: str) -> list[Path]:
+    """解析安装目标。auto 保持 Claude 兼容，同时同步已有/可用 Codex。"""
+    if selection == "claude":
+        return [CLAUDE_DST]
+    if selection == "codex":
+        return [CODEX_DST]
+    if selection == "all":
+        return [CLAUDE_DST, CODEX_DST]
+
+    # auto：永远保持原 Claude 目标；Codex 已安装或 codex CLI 存在时追加。
+    targets = [CLAUDE_DST]
+    if CODEX_DST.exists() or shutil.which("codex") or shutil.which("codex.exe"):
+        targets.append(CODEX_DST)
+    return targets
+
+
+def backup_existing(dst: Path) -> None:
     """备份已有安装到 .bak.<时间戳>"""
-    if DST.exists():
+    if dst.exists():
         ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        bak = DST.with_name(f"{DST.name}.bak.{ts}")
+        bak = dst.with_name(f"{dst.name}.bak.{ts}")
         warn(f"检测到已有安装版本，备份到：")
         warn(f"  {bak}")
-        DST.rename(bak)
+        dst.rename(bak)
 
 
-def install_from_dist(dist_src: Path) -> None:
-    """从 dist/ae-sdd/ 复制到 ~/.claude/skills/ae-sdd/"""
+def install_from_dist(dist_src: Path, dst: Path) -> None:
+    """从 dist/ae-sdd/ 复制到指定 Agent skills 目录。"""
     if not dist_src.is_dir():
         error(f"未找到 {dist_src}，仓库结构异常")
         sys.exit(1)
@@ -158,36 +179,42 @@ def install_from_dist(dist_src: Path) -> None:
         error(f"未找到 {skill_md}，请先跑 python scripts/build_dist.py")
         sys.exit(1)
 
-    if DST.exists():
-        shutil.rmtree(DST)
-    DST.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(dist_src, DST)
-    info(f"文件已复制到 {DST}")
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(dist_src, dst)
+    info(f"文件已复制到 {dst}")
 
 
-def verify() -> None:
+def verify(dst: Path) -> None:
     """验证安装：SKILL.md 存在 + VERSION 可读"""
-    skill_md = DST / "SKILL.md"
+    skill_md = dst / "SKILL.md"
     if not skill_md.is_file():
         error(f"安装验证失败：{skill_md} 不存在")
         sys.exit(1)
-    version_file = DST / "VERSION"
+    version_file = dst / "VERSION"
     if version_file.is_file():
         ver = version_file.read_text(encoding="utf-8").split("\n")[0]
-        info(f"安装版本: {ver}")
+        info(f"安装版本: {ver} ({dst})")
 
 
 # ─── 卸载 ────────────────────────────────────────────────────────────────────
-def uninstall() -> None:
-    if not DST.exists():
-        info(f"未找到 {DST}，无需卸载")
+def uninstall(targets: list[Path]) -> None:
+    any_removed = False
+    for dst in targets:
+        if not dst.exists():
+            info(f"未找到 {dst}，无需卸载")
+            continue
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        bak = dst.with_name(f"{dst.name}.uninstalled.{ts}")
+        warn(f"卸载本地安装: {dst}")
+        warn(f"备份到: {bak}")
+        dst.rename(bak)
+        success(f"已卸载（备份在 {bak}）")
+        any_removed = True
+    if not any_removed:
+        info("没有可卸载的 ae-sdd 安装")
         return
-    ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    bak = DST.with_name(f"{DST.name}.uninstalled.{ts}")
-    warn(f"卸载本地安装: {DST}")
-    warn(f"备份到: {bak}")
-    DST.rename(bak)
-    success(f"已卸载（备份在 {bak}）")
 
 
 # ─── 打印使用提示 ────────────────────────────────────────────────────────────
@@ -206,15 +233,17 @@ def _detect_agents() -> dict:
     return agents
 
 
-def print_usage() -> None:
+def print_usage(targets: list[Path]) -> None:
     print()
     success("ae-sdd SKILL 安装成功！")
     print()
-    print(f"  安装路径：{DST}")
-    version_file = DST / "VERSION"
-    if version_file.is_file():
-        ver = version_file.read_text(encoding="utf-8").split("\n")[0]
-        print(f"  安装版本: {ver}")
+    print("  安装路径：")
+    for dst in targets:
+        print(f"    - {dst}")
+        version_file = dst / "VERSION"
+        if version_file.is_file():
+            ver = version_file.read_text(encoding="utf-8").split("\n")[0]
+            print(f"      版本: {ver}")
     print()
 
     # 🆕 v3.1.2：智能引导 — 检测 Agent CLI 存在则给启动命令
@@ -252,10 +281,14 @@ def main() -> int:
                         help="强制本地 build + install（先跑 build_dist.py）")
     parser.add_argument("--uninstall", action="store_true",
                         help="卸载本地安装")
+    parser.add_argument("--target", choices=["auto", "claude", "codex", "all"],
+                        default="auto",
+                        help="安装目标：auto=Claude + 已存在/可用 Codex；all=两者都装")
     args = parser.parse_args()
+    targets = _target_paths(args.target)
 
     if args.uninstall:
-        uninstall()
+        uninstall(targets)
         return 0
 
     print()
@@ -286,10 +319,12 @@ def main() -> int:
             run_build(repo_root)
             dist_src = repo_root / "dist" / "ae-sdd"
 
-    backup_existing()
-    install_from_dist(dist_src)
-    verify()
-    print_usage()
+    for dst in targets:
+        backup_existing(dst)
+    for dst in targets:
+        install_from_dist(dist_src, dst)
+        verify(dst)
+    print_usage(targets)
     return 0
 
 

@@ -11,6 +11,8 @@ ae-sdd — ae-sdd CLI 入口
   - gate ra-required : 需求分析准入门卫（进 dr/story/task-generate 前必过 G-RA-1~4）
 🆕 v3.2.1 G-CODE（2026-06-24）：
   - gate coding-required : Coding 真实性门卫（Coding 完成/CodeReview 前必过 G-CODE-1）
+🆕 v3.2 更新图谱（2026-06-24）：
+  - update-check : 更新依赖图谱检查（改了 A 是否同步了 BCDEFG，兜底防漏更新）
 
 辅助：
   - version  : 输出版本
@@ -23,6 +25,7 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd gates check [--only G-00]
     ae-sdd gate ra-required [--project <key>]   # 跑 G-RA-1~4（SKILL.md §🛡️ G-RA 契约）
     ae-sdd gate coding-required [--project <dir>] # 跑 G-CODE-1（Coding 反模式扫描）
+    ae-sdd update-check [--only UC-01]          # 更新闭环检查（v3.2）
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health
@@ -43,7 +46,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import classify, gates, gate_intercept, output, paths, prompt_inject, state, stop_check  # noqa: E402
+from lib import classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, prompt_inject, state, stop_check, update_graph  # noqa: E402
 
 
 def cmd_version(args, parser):
@@ -71,6 +74,24 @@ def cmd_state_write(args, parser):
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
     s = state.read_state(paths.state_path(ade_sdd))
+    effective_state = dict(s)
+    if args.story and not effective_state.get("currentStory"):
+        effective_state["currentStory"] = args.story
+    if args.task and not effective_state.get("currentTask"):
+        effective_state["currentTask"] = args.task
+    memory_result = memory_gate.check_state_transition(
+        ade_sdd=ade_sdd,
+        state_data=effective_state,
+        target_phase=args.phase,
+        allow_empty=getattr(args, "allow_empty_memory", False),
+    )
+    if memory_result.get("blocked"):
+        msg = memory_gate.format_transition_block(memory_result)
+        if args.json:
+            output.emit({"ok": False, "blocked": True, "memory": memory_result, "message": msg}, as_json=True)
+        else:
+            output.err(msg)
+        return 1
     try:
         changed = state.set_phase(s, args.phase, by="ae-sdd state write")
     except ValueError as e:
@@ -223,6 +244,267 @@ def cmd_gate_coding_required(args, parser):
             output.info("   修复后重跑 `ae-sdd gate coding-required`。")
 
     return 0 if summary["all_pass"] else 1
+
+
+def cmd_update_check(args, parser):
+    """update-check — 更新依赖图谱（v3.2 — 改了 A 要同步 BCDEFG）
+
+    两种模式：
+    1. 查询模式（--affected <files>）：改了这些文件，连带项是什么 + 该跑哪些检查
+       用法：ae-sdd update-check --affected tools/lib/gates.py,source/SKILL.md
+    2. 检查模式（默认/--only）：跑 UC-01~UC-05 验证无漏更新
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    # ── 查询模式：改了文件，问连带项 ──
+    if args.affected:
+        files = [f.strip() for f in args.affected.split(",") if f.strip()]
+        qr = update_graph.query_affected(files, repo_root)
+        payload = {
+            "changed_files": qr.changed_files,
+            "matched_rules": qr.matched_rules,
+            "affected_items": qr.affected_items,
+            "checks_to_run": qr.checks_to_run,
+        }
+        if args.json:
+            output.emit(payload, as_json=True)
+        else:
+            output.info(f"🔗 查询：改了 {len(qr.changed_files)} 个文件 → 命中 {len(qr.matched_rules)} 条图谱规则")
+            output.info("")
+            output.info("📋 连带项（必须同步检查，去重后）：")
+            for a in qr.affected_items:
+                auto = " [自动可检]" if a["auto_checkable"] else " [人工确认]"
+                output.info(f"  • [{a['from_rule']}] {a['path']}{auto}")
+                output.info(f"      → {a['action']}")
+            output.info("")
+            output.info(f"🔍 该跑检查：{qr.checks_to_run}")
+            output.info(f"   跑 `ae-sdd update-check --only {qr.checks_to_run[0]}` 逐项验证（或直接 `ae-sdd update-check` 全量）")
+        return 0
+
+    # ── 检查模式：跑 UC-01~UC-05 ──
+    results = update_graph.check_all(repo_root, only=args.only)
+    summary = update_graph.summarize(results)
+
+    if args.json:
+        output.emit(summary, as_json=True)
+    else:
+        output.info(f"🔗 更新依赖图谱检查（{summary['total']} 项：✅ {summary['passed']} / ❌ {summary['failed']} / 🟡 {summary['warnings']} warn）")
+        for c in summary["checks"]:
+            mark = "✅" if c["pass"] else ("🟡" if c["severity"] == "warn" else "❌")
+            output.info(f"  {mark} {c['check_id']} {c['name']}: {c['message']}")
+            if c.get("fix") and not c["pass"]:
+                output.info(f"      → {c['fix']}")
+        if summary["failed"] > 0:
+            output.info("⚠️ 存在漏更新：按上述 fix 修复后重跑 `ae-sdd update-check`。")
+        else:
+            output.info("✅ 更新闭环完整，无漏更新。")
+
+    return 0 if summary["failed"] == 0 else 1
+
+
+def _memory_scope_from_args(args):
+    return memory_store.locate_scope(
+        project=getattr(args, "project", "") or None,
+        phase=args.phase,
+        story=getattr(args, "story", None),
+        task=getattr(args, "task", None),
+    )
+
+
+def cmd_memory_enter(args, parser):
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.enter(scope, actor=args.actor, note=args.note or "")
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_memory_write(args, parser):
+    evidence = getattr(args, "evidence", None) or []
+    tags = getattr(args, "tag", None) or []
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.write(
+            scope,
+            summary=args.summary,
+            layer=args.layer,
+            kind=args.kind,
+            evidence=evidence,
+            actor=args.actor,
+            tags=tags,
+        )
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_memory_exit(args, parser):
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.exit_phase(scope, actor=args.actor, allow_empty=args.allow_empty)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    if result.get("blocked"):
+        output.err("memory exit blocked: phase memory must be written before leaving this node")
+        return 1
+    return 0
+
+
+def cmd_memory_read(args, parser):
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.read(scope, include_project=not args.no_project, limit=args.limit)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit({"entries": result, "count": len(result)}, as_json=args.json)
+    return 0
+
+
+def cmd_memory_search(args, parser):
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.search(scope, query=args.query, limit=args.limit)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit({"entries": result, "count": len(result)}, as_json=args.json)
+    return 0
+
+
+def cmd_memory_promote(args, parser):
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.promote(scope, from_layer=args.from_layer, to_layer=args.to_layer, actor=args.actor)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_memory_summarize(args, parser):
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.summarize(scope)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_db_profiles(args, parser):
+    try:
+        if args.init:
+            result = db_tool.ensure_template(args.project or None)
+        else:
+            result = {"profiles": db_tool.list_profiles(args.project or None)}
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_db_query(args, parser):
+    try:
+        sql = db_tool.read_sql(sql=args.sql, sql_file=args.sql_file)
+        result = db_tool.query(
+            profile_name=args.profile,
+            sql=sql,
+            project=args.project or None,
+            write=args.write,
+            limit=args.limit,
+        )
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0 if result.get("ok") else 1
+
+
+def cmd_db_explain(args, parser):
+    try:
+        sql = db_tool.read_sql(sql=args.sql, sql_file=args.sql_file)
+        result = db_tool.explain(
+            profile_name=args.profile,
+            sql=sql,
+            project=args.project or None,
+            limit=args.limit,
+        )
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0 if result.get("ok") else 1
+
+
+def cmd_db_audit(args, parser):
+    try:
+        result = db_tool.audit(args.project or None)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_git_status(args, parser):
+    try:
+        result = git_insight.status(args.project or None)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_git_diff(args, parser):
+    try:
+        result = git_insight.diff(args.project or None, base=args.base, head=args.head, stat=args.stat)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_git_log(args, parser):
+    try:
+        result = git_insight.log(args.project or None, path=args.path, limit=args.limit)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_git_blame(args, parser):
+    try:
+        result = git_insight.blame(args.project or None, file=args.file, start=args.start, end=args.end)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_git_impact(args, parser):
+    try:
+        result = git_insight.impact(args.project or None, files=args.file or None, base=args.base, head=args.head)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
 
 
 def cmd_classify(args, parser):
@@ -736,6 +1018,8 @@ def main() -> int:
     p_state_write.add_argument("--phase", required=True, help="新 phase")
     p_state_write.add_argument("--story", help="当前 Story ID")
     p_state_write.add_argument("--task", help="当前 Task ID")
+    p_state_write.add_argument("--allow-empty-memory", action="store_true",
+                               help="maintenance override: allow phase transition without mandatory memory")
     p_state_write.set_defaults(func=cmd_state_write)
 
     # gates
@@ -756,6 +1040,128 @@ def main() -> int:
                                       parents=[common])
     p_gate_code.add_argument("--project", default="", help="项目根目录（默认 cwd）")
     p_gate_code.set_defaults(func=cmd_gate_coding_required)
+
+    # update-check（v3.2 — 更新依赖图谱检查，兜底验证无漏更新）
+    p_uc = sub.add_parser("update-check", help="更新依赖图谱检查（改了A是否同步了BCDEFG）",
+                           parents=[common])
+    p_uc.add_argument("--only", help="只查指定检查（如 UC-01）")
+    p_uc.add_argument("--affected", help="查询模式：改了这些文件，连带项是什么（逗号分隔，如 gates.py,SKILL.md）")
+    p_uc.set_defaults(func=cmd_update_check)
+
+    # memory toolset (P0): mandatory phase-aware memory hooks
+    p_mem = sub.add_parser("memory", help="phase-aware memory toolset", parents=[common])
+    mem_sub = p_mem.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    def _memory_common(p):
+        p.add_argument("--project", default="", help="project root (default cwd)")
+        p.add_argument("--phase", required=True, help="ra / design / coding-plan / coding / review")
+        p.add_argument("--story", default="", help="Story ID")
+        p.add_argument("--task", default="", help="Task ID")
+        p.add_argument("--actor", default="ae-sdd", help="actor name")
+
+    p_mem_enter = mem_sub.add_parser("enter", help="mandatory memory pre-read marker", parents=[common])
+    _memory_common(p_mem_enter)
+    p_mem_enter.add_argument("--note", default="", help="enter note")
+    p_mem_enter.set_defaults(func=cmd_memory_enter)
+
+    p_mem_write = mem_sub.add_parser("write", help="write phase memory", parents=[common])
+    _memory_common(p_mem_write)
+    p_mem_write.add_argument("--summary", required=True, help="memory summary")
+    p_mem_write.add_argument("--layer", default="L1", help="L0/L1/L2/L3/L4")
+    p_mem_write.add_argument("--kind", default="observation", help="decision / finding / issue / observation")
+    p_mem_write.add_argument("--evidence", action="append", default=[], help="evidence reference")
+    p_mem_write.add_argument("--tag", action="append", default=[], help="tag")
+    p_mem_write.set_defaults(func=cmd_memory_write)
+
+    p_mem_exit = mem_sub.add_parser("exit", help="mandatory memory post-write gate", parents=[common])
+    _memory_common(p_mem_exit)
+    p_mem_exit.add_argument("--allow-empty", action="store_true", help="allow no write (explicit exception)")
+    p_mem_exit.set_defaults(func=cmd_memory_exit)
+
+    p_mem_read = mem_sub.add_parser("read", help="read phase memory", parents=[common])
+    _memory_common(p_mem_read)
+    p_mem_read.add_argument("--limit", type=int, default=20, help="max entries")
+    p_mem_read.add_argument("--no-project", action="store_true", help="do not include L2 project memory")
+    p_mem_read.set_defaults(func=cmd_memory_read)
+
+    p_mem_search = mem_sub.add_parser("search", help="search memory", parents=[common])
+    _memory_common(p_mem_search)
+    p_mem_search.add_argument("--query", required=True, help="search query")
+    p_mem_search.add_argument("--limit", type=int, default=20, help="max entries")
+    p_mem_search.set_defaults(func=cmd_memory_search)
+
+    p_mem_promote = mem_sub.add_parser("promote", help="promote memories across layers", parents=[common])
+    _memory_common(p_mem_promote)
+    p_mem_promote.add_argument("--from-layer", default="L1", help="source layer")
+    p_mem_promote.add_argument("--to-layer", default="L2", help="target layer")
+    p_mem_promote.set_defaults(func=cmd_memory_promote)
+
+    p_mem_sum = mem_sub.add_parser("summarize", help="summarize memory store", parents=[common])
+    _memory_common(p_mem_sum)
+    p_mem_sum.set_defaults(func=cmd_memory_summarize)
+
+    # db toolset (P0): local-profile, read-first database access
+    p_db = sub.add_parser("db", help="database toolset", parents=[common])
+    db_sub = p_db.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_db_profiles = db_sub.add_parser("profiles", help="list or init local DB profiles", parents=[common])
+    p_db_profiles.add_argument("--project", default="", help="project root (default cwd)")
+    p_db_profiles.add_argument("--init", action="store_true", help="create local profile template")
+    p_db_profiles.set_defaults(func=cmd_db_profiles)
+
+    p_db_query = db_sub.add_parser("query", help="run SQL through a local profile", parents=[common])
+    p_db_query.add_argument("--project", default="", help="project root (default cwd)")
+    p_db_query.add_argument("--profile", required=True, help="profile name")
+    p_db_query.add_argument("--sql", default="", help="SQL text")
+    p_db_query.add_argument("--sql-file", default="", help="SQL file")
+    p_db_query.add_argument("--write", action="store_true", help="allow write SQL")
+    p_db_query.add_argument("--limit", type=int, default=100, help="max returned rows")
+    p_db_query.set_defaults(func=cmd_db_query)
+
+    p_db_explain = db_sub.add_parser("explain", help="run EXPLAIN through a local profile", parents=[common])
+    p_db_explain.add_argument("--project", default="", help="project root (default cwd)")
+    p_db_explain.add_argument("--profile", required=True, help="profile name")
+    p_db_explain.add_argument("--sql", default="", help="SQL text")
+    p_db_explain.add_argument("--sql-file", default="", help="SQL file")
+    p_db_explain.add_argument("--limit", type=int, default=100, help="max returned rows")
+    p_db_explain.set_defaults(func=cmd_db_explain)
+
+    p_db_audit = db_sub.add_parser("audit", help="audit DB profile policy", parents=[common])
+    p_db_audit.add_argument("--project", default="", help="project root (default cwd)")
+    p_db_audit.set_defaults(func=cmd_db_audit)
+
+    # git toolset (P0): read-only repository evidence
+    p_git = sub.add_parser("git", help="read-only git insight toolset", parents=[common])
+    git_sub = p_git.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_git_status = git_sub.add_parser("status", help="structured git status", parents=[common])
+    p_git_status.add_argument("--project", default="", help="project root (default cwd)")
+    p_git_status.set_defaults(func=cmd_git_status)
+
+    p_git_diff = git_sub.add_parser("diff", help="structured git diff", parents=[common])
+    p_git_diff.add_argument("--project", default="", help="project root (default cwd)")
+    p_git_diff.add_argument("--base", default="", help="base ref")
+    p_git_diff.add_argument("--head", default="", help="head ref")
+    p_git_diff.add_argument("--stat", action="store_true", help="show stat only")
+    p_git_diff.set_defaults(func=cmd_git_diff)
+
+    p_git_log = git_sub.add_parser("log", help="structured git log", parents=[common])
+    p_git_log.add_argument("--project", default="", help="project root (default cwd)")
+    p_git_log.add_argument("--path", default="", help="optional path")
+    p_git_log.add_argument("--limit", type=int, default=20, help="max commits")
+    p_git_log.set_defaults(func=cmd_git_log)
+
+    p_git_blame = git_sub.add_parser("blame", help="structured git blame", parents=[common])
+    p_git_blame.add_argument("--project", default="", help="project root (default cwd)")
+    p_git_blame.add_argument("--file", required=True, help="file path")
+    p_git_blame.add_argument("--start", type=int, default=None, help="start line")
+    p_git_blame.add_argument("--end", type=int, default=None, help="end line")
+    p_git_blame.set_defaults(func=cmd_git_blame)
+
+    p_git_impact = git_sub.add_parser("impact", help="changed-file impact summary", parents=[common])
+    p_git_impact.add_argument("--project", default="", help="project root (default cwd)")
+    p_git_impact.add_argument("--file", action="append", default=[], help="changed file")
+    p_git_impact.add_argument("--base", default="", help="base ref")
+    p_git_impact.add_argument("--head", default="", help="head ref")
+    p_git_impact.set_defaults(func=cmd_git_impact)
 
     # classify
     p_classify = sub.add_parser("classify", help="4 维判定", parents=[common])

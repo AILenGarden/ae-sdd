@@ -4,11 +4,13 @@ test_gate_intercept.py — gate_intercept 模块单元测试
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib import memory_store
 from lib.gate_intercept import (
     PHASE_PERMIT,
     READONLY_TOOLS,

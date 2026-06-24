@@ -223,7 +223,8 @@ def _patch_new_source_files(
             continue
 
         dst_file = dst / rel
-        if dst_file.exists():
+        # Overlay changed working-tree files; skip only when bytes are identical.
+        if dst_file.exists() and dst_file.read_bytes() == src_file.read_bytes():
             continue  # 已存在，不覆盖（保留 git archive 版本）
 
         dst_file.parent.mkdir(parents=True, exist_ok=True)
@@ -335,6 +336,7 @@ def main() -> int:
     # ── 注入版本信息 ────────────────────────────────────────────────────────
     step("注入版本信息")
     # ⚠ Windows 兼容：强制 binary 模式 + LF
+    version = parse_version_from_bytes((dst / "SKILL.md").read_bytes())
     (dst / "VERSION").write_bytes(f"{version}\n{build_date}\n".encode("utf-8"))
     ok(f"VERSION 文件已写入: {version}")
 

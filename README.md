@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.2.1（🆕 2026-06-24：Coding 能力工具层加固 — 新增 G-CODE-1 Coding 真实性门禁 + coding_authenticity_scan.py 扫描 AP-1~AP-6 可静态命中的 Coding 反模式 + `ae-sdd gate coding-required` + dev-sync watch 覆盖 scripts/tools；v3.2.0：需求分析能力全维度对标 Coding — RequirementAnalysisModel 12 维决策 + 16 道 RA 质量闸（软门禁）+ gates.py G-RA-1~4 硬门禁 + ra_authenticity_scan.py + G-13 六层追溯接入 RA 层）
+> **版本：** v3.2.3（🆕 2026-06-24：Memory 强制门禁升级 — `ae-sdd state write --phase ...` 在离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 `memory enter → memory write`；v3.2.2：Toolset Layer P0 — 新增 `ae-sdd memory/db/git` 三组工程工具，DB 采用本地 profile + read-first 策略，Git Insight 只读输出结构化历史/影响证据；v3.2.1：Coding 工具层加固 — G-CODE-1 + coding_authenticity_scan.py + gate coding-required；v3.2.0：需求分析全维度对标 Coding — RAModel 12 维 + 16 道 RA-G 闸 + G-RA-1~4 硬门禁 + ra_authenticity_scan.py + G-13 六层追溯）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -80,7 +80,9 @@ bash scripts/install.sh
 bash scripts/install.sh --from-build
 ```
 
-安装路径：`~/.claude/skills/ae-sdd/`
+安装路径：
+- Claude Code：`~/.claude/skills/ae-sdd/`
+- Codex：`~/.codex/skills/ae-sdd/`（当目录已存在或检测到 Codex CLI 时自动同步）
 
 装完后在 Claude Code 中输入 `/ae-sdd` 即可启动。
 
@@ -105,8 +107,8 @@ bash scripts/dev-sync.sh --watch
 | 工具 | 职责 |
 |------|------|
 | `bash scripts/build-dist.sh` | 从 `source/` 构建 `dist/ae-sdd/`（注入 VERSION + plugin.json，剥离 CHANGELOG/docs/marketplace.json）|
-| `bash scripts/dev-sync.sh` | build + install 组合，开发者用 |
-| `bash scripts/install.sh` | 从 `dist/ae-sdd/` 装到本地 Claude skills（用户/测试用）|
+| `bash scripts/dev-sync.sh` | build + install 组合，开发者用；默认同步 Claude + 已存在/可用 Codex |
+| `bash scripts/install.sh` | 从 `dist/ae-sdd/` 装到本地 Agent skills（Claude/Codex，用户/测试用）|
 | `bash scripts/dev-sync.sh --uninstall` | 卸载本地安装（带备份）|
 
 ### 修改 SKILL 自身的 SOP
@@ -136,6 +138,7 @@ bash scripts/dev-sync.sh --watch
 ```bash
 bash scripts/dev-sync.sh --uninstall
 # 或者手动：mv ~/.claude/skills/ae-sdd ~/.claude/skills/ae-sdd.uninstalled.<时间戳>
+# Codex 目录同理：mv ~/.codex/skills/ae-sdd ~/.codex/skills/ae-sdd.uninstalled.<时间戳>
 ```
 
 ### Q2: 改了 `source/` 里的内容，本地没生效？

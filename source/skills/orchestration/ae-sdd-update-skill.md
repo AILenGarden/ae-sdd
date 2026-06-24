@@ -286,6 +286,116 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 
 ---
 
+## 更新依赖图谱（🆕 v3.2 — 改了 A 要同步 BCDEFG，杜绝漏更新）
+
+> **设计动机：** 原同步规则是线性的"改母版 → 跑 dev-sync"，但**改了 A 之后要同步哪些 B/C/D 无表可查**，靠人记忆必然漏。本节固化"变更触发源 → 连带项"的依赖图谱，配套 `ae-sdd update-check` 自动兜底检查。
+
+### 📍 权威源（机器可读，Agent 必须从这里消费）
+
+> 🔴 **权威源是 `source/standards/update-graph.json`，不是下面的 Markdown 表。** Markdown 表仅供人快速浏览，可能与 JSON 漂移。Agent（含 ae-sdd 自身）查询连带项时，**必须**通过程序化 API 消费 JSON，禁止解析 Markdown 表格。
+
+**图谱数据文件**：`source/standards/update-graph.json`
+
+结构（每条 rule = 一个"改了 trigger → 同步 affected → 跑 checks"的依赖）：
+```json
+{
+  "rules": [
+    {
+      "id": "UG-02",
+      "name": "gates.py 门禁变更",
+      "trigger": ["tools/lib/gates.py"],
+      "trigger_condition": "新增/修改/删除门禁",
+      "affected": [
+        {"path": "tools/tests/test_gates.py", "action": "...", "auto_checkable": false},
+        ...
+      ],
+      "checks": ["UC-02", "UC-03"]
+    }
+  ]
+}
+```
+
+### 🤖 Agent 程序化消费协议（强制 — Agent 改完文件后必做）
+
+Agent 完成任何 `source/` 或 `tools/` 改动后，**必须**执行以下两步，禁止跳过：
+
+**第 1 步：查询连带项**（改了什么 → 该同步什么）
+```bash
+ae-sdd update-check --affected tools/lib/gates.py,scripts/ra_authenticity_scan.py
+```
+或 Python API：
+```python
+from lib import update_graph
+qr = update_graph.query_affected(["tools/lib/gates.py"])
+# qr.affected_items  → 连带项清单（path/action/auto_checkable）
+# qr.checks_to_run   → 该跑的 UC-XX 检查 ID
+```
+Agent 拿到 `affected_items` 后，**逐项确认是否已同步**：
+- `auto_checkable=true` 的项 → 第 2 步会自动验证
+- `auto_checkable=false` 的项 → Agent 必须人工核对并补齐
+
+**第 2 步：跑检查验证**（兜底，防漏）
+```bash
+ae-sdd update-check          # 全量跑 UC-01~UC-05
+# 或只跑第 1 步返回的 checks_to_run
+ae-sdd update-check --only UC-02
+```
+- 全 ✅ → 闭环完整，可 dev-sync
+- 有 ❌ → 按 fix 提示补齐，重跑直到全 ✅
+
+> 🔴 **门禁：** dev-sync 前必须 `ae-sdd update-check` 全绿（error 级 0 failed）。Agent 不得在 update-check 有 failed 时跑 dev-sync。
+
+### 人读视图（仅供参考，非权威）
+
+> ⚠️ 下表是 JSON 的简化视图，可能漂移。精确连带项以 `ae-sdd update-check --affected` 输出为准。
+
+| 触发源 | 连带项（简）| 检查 |
+|--------|------------|------|
+| SKILL.md version | paths.py MASTER_VERSION / README.md:5 / dist VERSION | UC-01 |
+| gates.py 门禁 | CHECK_FUNCS 一致 / test_gates 断言 / CLI 注释 / SKILL 命令契约 | UC-02+UC-03 |
+| ae-sdd 子命令 | SKILL 引用存在 / 注释 / 测试 | UC-03 |
+| *_scan.py 扫描器 | build_dist 白名单 / gates _locate / SKILL 引用 | UC-04 |
+| 子 SKILL .md | 健康度清单 / templates / constraints | UC-05 |
+| templates .md | 子 SKILL 锚点 / 章节 1:1 | UC-05 |
+| update_graph.py/json | 图谱表 / 测试 / CLI / 本章节 | 全量 |
+| 任意 source/tools | CHANGELOG / README:5 / dev-sync | UC-01+03+04+05 |
+
+### 图谱使用 SOP（Agent 流程）
+
+```
+改动前：
+  1. `ae-sdd update-check --affected <改动的文件>`  → 拿到 affected_items + checks_to_run
+
+改动中：
+  2. 按 affected_items 逐项同步（auto_checkable=false 的项必须人工核对）
+
+改动后：
+  3. `ae-sdd update-check` 兜底验证 → 全绿（0 failed）才继续
+  4. 跑 dev-sync 分发
+  5. 写 CHANGELOG
+```
+
+> 详见上方「🤖 Agent 程序化消费协议」。人工维护者也可直接读 `source/standards/update-graph.json`。
+
+### 检查器 5 项（`tools/lib/update_graph.py`）
+
+| 检查 ID | 检查内容 | 严重度 | 通过条件 |
+|---------|---------|--------|---------|
+| **UC-01** | 版本号一致性：SKILL.md / paths.py / README.md 三处 | error | 完全一致 |
+| **UC-02** | 门禁注册一致性：GATE_REGISTRY 每个 id 在 CHECK_FUNCS 或 check_all 特判 | error | 全覆盖 |
+| **UC-03** | 命令契约闭环：SKILL.md 引用的 `ae-sdd <cmd>` 在 CLI 实现 | error（本次新增）/ warn（历史遗留）| 本次新增全实现 |
+| **UC-04** | 扫描器分发一致性：scripts/*_scan.py 在 build_dist.py 白名单 | error | 全在白名单 |
+| **UC-05** | 健康度清单覆盖：本文件清单含关键组件 | warn | 关键组件齐 |
+
+### 图谱维护规则
+
+- **新增组件类型**（如未来加 `*.validator.py`）→ 在 `source/standards/update-graph.json` 追加一条 rule + update_graph.py 加对应 UC-XX 检查 + 本章节人读视图追加一行
+- **权威源是 JSON**：图谱表与 JSON 漂移时，以 JSON 为准并修正 Markdown 表。检查器 UC-XX 验证的是 JSON 描述的依赖，不是 Markdown 表
+- **图谱与检查器必须同步**：JSON 每条 rule 的 `checks` 字段指向的 UC-XX，必须在 update_graph.py 有实现
+- **历史遗留命令**（assets/fork/init/run/skill/sync-tools）在 UC-03 标 warn，不阻断，待后续迭代实现
+
+---
+
 ## SKILL 健康度自检清单（每月或重大变更后跑一次）
 
 ### AE-skill 健康度
@@ -319,6 +429,11 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 - [ ] 🆕 v3.2 `scripts/ra_authenticity_scan.py` 存在，8 类禁止规则（vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness）+ JSON 输出契约与 test_authenticity_scan.py 一致
 - [ ] 🆕 v3.2 `tools/lib/gates.py` check_g13 接入 RA 层（六层追溯：RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview），RA 为可选层不阻断
 - [ ] 🆕 v3.2 `SKILL.md` 含 `## 🛡️ G-RA 需求分析准入门卫` 章节 + 智能路由表 G-RA 门禁列
+- [ ] 🆕 v3.2 `tools/lib/update_graph.py` 存在，含 UC-01~UC-05 五项检查 + `check_all`/`summarize`
+- [ ] 🆕 v3.2 `tools/bin/ae-sdd` 含 `update-check` 子命令（跑 UC-01~UC-05）
+- [ ] 🆕 v3.2 `tools/tests/test_update_graph.py` 存在，覆盖 UC-01~UC-05 各场景
+- [ ] 🆕 v3.2 本文件含 `## 更新依赖图谱` 章节（图谱表 + 使用 SOP + 5 项检查说明）
+- [ ] 🆕 v3.2.1 `tools/lib/gates.py` 含 `G-CODE-1` 门禁（Coding 真实性）+ `scripts/coding_authenticity_scan.py` 存在
 
 ### 跨 SKILL 一致性
 

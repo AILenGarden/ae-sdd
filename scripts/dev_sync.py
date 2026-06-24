@@ -79,7 +79,7 @@ def sync_once(repo_root: Path, do_build: bool, do_install: bool) -> bool:
             return False
 
     if do_install:
-        step("Install: dist/ae-sdd/ → 本地 Claude skills")
+        step("Install: dist/ae-sdd/ → 本地 Agent skills")
         rc = run_script(repo_root / "scripts" / "install.py")
         if rc != 0:
             err("install.py 执行失败")

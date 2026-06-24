@@ -7,7 +7,7 @@ description: |
   "继续上次"、"/ae-sdd" 时触发。支持流程状态跟踪与中断后恢复。
   🆕 v3.2.0：需求分析能力对标 Coding，新增 G-RA 准入门卫、RequirementAnalysisModel 12 维决策、16 道 RA 质量闸与 RA 真实性扫描。
   🆕 v3.2.1：Coding 能力对标需求分析，新增 G-CODE-1 Coding 真实性门禁、AI Coding 反模式库（AP-1~AP-6）与 coding_authenticity_scan.py 扫描器；微任务快速通道 §0.5。
-version: 3.2.1
+version: 3.2.3
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -1991,6 +1991,22 @@ DR（需求文档）→ Story → Task → Coding
 
 ### 完整命令清单
 
+### Toolset Layer (v3.2.3)
+
+| Command | Purpose | Priority | When |
+|---|---|---|---|
+| `ae-sdd memory enter/write/exit` | Phase-aware mandatory memory gate | P0 | RA/design/coding-plan/coding/review associated nodes |
+| `ae-sdd memory read/search/promote/summarize` | Layered memory read and lifecycle management | P0 | Before phase work, reuse/project learning |
+| `ae-sdd db profiles/query/explain/audit` | Local-profile DB evidence, read-first policy | P0 | RA schema checks, CodingPlan SQL/EXPLAIN, Coding DB evidence |
+| `ae-sdd git status/diff/log/blame/impact` | Read-only Git evidence and impact analysis | P0 | CodingPlan, CodingReport, CodeReview |
+
+Memory is mandatory for associated nodes: run `memory enter` before the node,
+`memory write` after the Agent output, and `memory exit` before leaving the node.
+`memory exit` fails when no write happened after the latest enter.
+As of v3.2.3, `ae-sdd state write --phase ...` also checks this lifecycle
+automatically before leaving associated phases. The transition is blocked when
+the current phase has no matching `memory enter` and later `memory write`.
+
 ```bash
 ae-sdd <command> [options]
 
@@ -2106,6 +2122,7 @@ ae-sdd health
 - **本文件 (`source/SKILL.md`) = ae-sdd 母版（SSOT）**。任何项目实例（`~/.claude/skills/ae-sdd/`）都从母版构建。
 - **母版更新 → 跑 `bash scripts/build-dist.sh` → 生成 `dist/ae-sdd/` 实例化分发包 → 装到本地 Claude 或发布到 GitHub release。**
 - **CHANGELOG 每次发版必更新**，格式见 `source/CHANGELOG/` 目录。
+- **🆕 v3.2 更新闭环门禁：** 任何 `source/` 或 `tools/` 改动后，**dev-sync / build-dist 前必须跑 `ae-sdd update-check` 全绿**（error 级 0 failed）。改了文件后先查连带项：`ae-sdd update-check --affected <改动文件>`，再跑全量 `ae-sdd update-check` 兜底。详见 [`ae-sdd-update-skill.md` §更新依赖图谱](ae-sdd-update-skill.md)（权威源 `source/standards/update-graph.json`）。
 
 ### 6. 实例化机制（🆕 v3.0 三层架构）
 

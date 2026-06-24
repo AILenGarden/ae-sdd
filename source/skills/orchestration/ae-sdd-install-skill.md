@@ -19,9 +19,9 @@ allowed_tools:
 
 | 用户说 | 目标产物 |
 |--------|---------|
-| "安装 ae-sdd" / "装 ae-sdd" / "给 <项目> 接 ae-sdd" | ae-sdd 已装到 `~/.claude/skills/ae-sdd/`，hooks 已配置 |
+| "安装 ae-sdd" / "装 ae-sdd" / "给 <项目> 接 ae-sdd" | ae-sdd 已装到本地 Agent skills（Claude：`~/.claude/skills/ae-sdd/`；Codex：`~/.codex/skills/ae-sdd/`），hooks 已配置 |
 | "重装 ae-sdd" / "升级 ae-sdd" / "Python 路径变了" | 重新 build + install + 重写 hooks |
-| "卸载 ae-sdd" | 删除 `~/.claude/skills/ae-sdd/` + 清理 hooks |
+| "卸载 ae-sdd" | 删除本地 Agent skills 中的 ae-sdd 安装 + 清理 hooks |
 | "把 ae-sdd 装到 <项目路径>" | 仅写 hooks（前提：ae-sdd 已全局装好）|
 
 ---
@@ -50,6 +50,7 @@ which codex 2>&1 || where.exe codex 2>&1
 
 # 6. ae-sdd 是否已装
 ls ~/.claude/skills/ae-sdd/SKILL.md 2>&1
+ls ~/.codex/skills/ae-sdd/SKILL.md 2>&1
 
 # 7. 项目根（如果是给项目接 ae-sdd）
 test -d <项目路径> && echo "项目存在" || echo "项目不存在"
@@ -90,7 +91,9 @@ irm https://raw.githubusercontent.com/AILenGarden/ae-sdd/main/scripts/install.ps
 ```
 [ae-sdd] 开始安装 ae-sdd SKILL...
 [ae-sdd] ✅ ae-sdd SKILL 安装成功！
-  安装路径：~/.claude/skills/ae-sdd/
+  安装路径：
+    - ~/.claude/skills/ae-sdd/
+    - ~/.codex/skills/ae-sdd/（当目录已存在或检测到 codex CLI 时自动同步）
   安装版本：3.1.1
   在 Claude Code 中使用：
     输入  /ae-sdd  启动自动化工程助手
@@ -226,7 +229,9 @@ ls ~/.claude/skills/ae-sdd/ 2>&1   # 应该不存在
 
 ```text
 ✅ ae-sdd 安装完成
-  - 安装路径：~/.claude/skills/ae-sdd/
+  - 安装路径：
+    - ~/.claude/skills/ae-sdd/
+    - ~/.codex/skills/ae-sdd/（如当前环境使用 Codex）
   - 安装版本：3.1.1
   - Hooks 配置：项目级（<项目路径>/.claude/settings.json）/ 全局（~/.claude/settings.json）/ 未配置
   - CLI 可执行：✅

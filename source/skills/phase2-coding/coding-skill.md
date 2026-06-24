@@ -30,6 +30,32 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 
 ---
 
+## 🧠 阶段记忆强制调用（🔴 横切依赖）
+
+> **🔴 强制：** CodingPlan 与 Coding 执行都必须使用 ae-sdd 阶段记忆。禁止只凭 Agent 对话上下文继续实现。
+
+### CodingSkill.Plan
+
+```bash
+ae-sdd memory enter --phase coding-plan --story <STORY-ID>
+# 生成或修订 CodingPlan
+ae-sdd memory write --phase coding-plan --story <STORY-ID> --kind decision --summary "<架构决策/风险预判/复用决策/资源边界>"
+ae-sdd memory exit --phase coding-plan --story <STORY-ID>
+```
+
+### CodingSkill.Execute
+
+```bash
+ae-sdd memory enter --phase coding --story <STORY-ID>
+# 编码、编译、测试、真实 DB/HTTP 验证
+ae-sdd memory write --phase coding --story <STORY-ID> --kind finding --summary "<实现结果/失败修复/测试证据/残余风险>"
+ae-sdd memory exit --phase coding --story <STORY-ID>
+```
+
+`memory exit` 未通过 = 当前 Coding 节点未完成，禁止进入 CodingReport / CodeReview。
+
+---
+
 ## 目标
 
 根据 Story 文档中的 Task 执行顺序，逐个读取 Task 文档，结合测试用例定义的验收场景，按 Task 内的核心代码和设计生成完整的生产代码。编码过程中发现问题时，记录问题、分析根因、修复文档，形成闭环。

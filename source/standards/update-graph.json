@@ -1,0 +1,103 @@
+{
+  "$schema": "ae-sdd-update-graph/v1",
+  "description": "ae-sdd 更新依赖图谱（机器可读权威源）。改了 trigger 中的文件 → 必须检查/同步 affected 中的连带项 → 用 checks 中的 UC-XX 验证。本文件是权威源，ae-sdd-update-skill.md 的 Markdown 表是人读视图。",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "id": "UG-01",
+      "name": "SKILL.md 版本号变更",
+      "trigger": ["source/SKILL.md"],
+      "trigger_condition": "frontmatter version 字段被修改",
+      "affected": [
+        {"path": "tools/lib/paths.py", "action": "MASTER_VERSION 改为与 SKILL.md 一致", "auto_checkable": true},
+        {"path": "README.md", "action": "第 5 行版本行改为与 SKILL.md 一致", "auto_checkable": true},
+        {"path": "dist/ae-sdd/VERSION", "action": "build_dist.py 运行时自动生成", "auto_checkable": true}
+      ],
+      "checks": ["UC-01"]
+    },
+    {
+      "id": "UG-02",
+      "name": "gates.py 门禁变更",
+      "trigger": ["tools/lib/gates.py"],
+      "trigger_condition": "新增/修改/删除门禁（GATE_REGISTRY / check_xxx / CHECK_FUNCS）",
+      "affected": [
+        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 与 CHECK_FUNCS 一致；check_all 含新门禁特判", "auto_checkable": true},
+        {"path": "tools/tests/test_gates.py", "action": "门禁总数断言更新；新增对应测试类", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "头注释门禁数更新；若 SKILL.md 声明了新命令则加子命令", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "若新增门禁有准入门卫语义，在 SKILL.md 声明命令契约", "auto_checkable": true}
+      ],
+      "checks": ["UC-02", "UC-03"]
+    },
+    {
+      "id": "UG-03",
+      "name": "CLI 子命令变更",
+      "trigger": ["tools/bin/ae-sdd"],
+      "trigger_condition": "新增/修改子命令（add_parser）",
+      "affected": [
+        {"path": "source/SKILL.md", "action": "若 SKILL.md 引用该命令则确认存在；头注释用法示例更新", "auto_checkable": true},
+        {"path": "tools/bin/ae-sdd", "action": "头注释用法示例更新", "auto_checkable": false},
+        {"path": "tools/tests/", "action": "新增对应子命令测试", "auto_checkable": false}
+      ],
+      "checks": ["UC-03"]
+    },
+    {
+      "id": "UG-04",
+      "name": "扫描器变更",
+      "trigger": ["scripts/*_scan.py"],
+      "trigger_condition": "新增扫描器脚本",
+      "affected": [
+        {"path": "scripts/build_dist.py", "action": "_copy_runtime_scripts_to_dist 的 runtime_scripts 白名单追加新扫描器", "auto_checkable": true},
+        {"path": "tools/lib/gates.py", "action": "新增对应 _locate_xxx_scanner 函数 + 门禁调用", "auto_checkable": false},
+        {"path": "source/skills/**/*.md", "action": "引用该扫描器的 SKILL/子 SKILL 更新", "auto_checkable": false}
+      ],
+      "checks": ["UC-04"]
+    },
+    {
+      "id": "UG-05",
+      "name": "子 SKILL 变更",
+      "trigger": ["source/skills/**/*.md"],
+      "trigger_condition": "修改子 SKILL 内容",
+      "affected": [
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "健康度清单对应项更新", "auto_checkable": true},
+        {"path": "source/templates/**/*.md", "action": "引用的模板章节锚点同步", "auto_checkable": false},
+        {"path": "source/standards/**/*.md", "action": "引用的 constraints 是否存在", "auto_checkable": false}
+      ],
+      "checks": ["UC-05"]
+    },
+    {
+      "id": "UG-06",
+      "name": "模板变更",
+      "trigger": ["source/templates/**/*.md"],
+      "trigger_condition": "修改模板",
+      "affected": [
+        {"path": "source/skills/**/*.md", "action": "对应子 SKILL 的章节锚点引用同步；模板章节与 SKILL 要求 1:1", "auto_checkable": false}
+      ],
+      "checks": ["UC-05"]
+    },
+    {
+      "id": "UG-07",
+      "name": "update_graph 检查器变更",
+      "trigger": ["tools/lib/update_graph.py", "source/standards/update-graph.json"],
+      "trigger_condition": "修改检查器或图谱数据",
+      "affected": [
+        {"path": "source/standards/update-graph.json", "action": "图谱表追加对应规则；与检查器 UC-XX 对齐", "auto_checkable": false},
+        {"path": "tools/tests/test_update_graph.py", "action": "新增对应测试", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "update-check 子命令覆盖新检查", "auto_checkable": false},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "图谱章节同步新规则", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
+    },
+    {
+      "id": "UG-08",
+      "name": "任意 source/ 或 tools/ 改动",
+      "trigger": ["source/**", "tools/**"],
+      "trigger_condition": "任何改动",
+      "affected": [
+        {"path": "source/CHANGELOG/", "action": "新增 CHANGELOG 文件", "auto_checkable": false},
+        {"path": "README.md", "action": "第 5 行版本行更新", "auto_checkable": true},
+        {"path": "(分发)", "action": "跑 dev-sync 重同步", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-03", "UC-04", "UC-05"]
+    }
+  ]
+}

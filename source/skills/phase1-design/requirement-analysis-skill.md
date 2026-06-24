@@ -59,6 +59,32 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 ---
 
+## 🧠 阶段记忆强制调用（🔴 横切依赖）
+
+> **🔴 强制：** 需求分析是 ae-sdd 的上游事实入口，必须在开始前读取 RA/设计/项目记忆，并在输出 RA 后写入阶段记忆。禁止只依赖 Agent 对话记忆。
+
+**进入本 SKILL 第一动作：**
+
+```bash
+ae-sdd memory enter --phase ra --story <STORY-ID>
+```
+
+**输出 RA 后必须写入：**
+
+```bash
+ae-sdd memory write --phase ra --story <STORY-ID> --kind decision --summary "<RA关键结论/缺口/假设/用户确认>"
+```
+
+**离开本节点前必须检查：**
+
+```bash
+ae-sdd memory exit --phase ra --story <STORY-ID>
+```
+
+`memory exit` 未通过 = RA 节点未完成，禁止进入 DR / Story / Task 下游。
+
+---
+
 ## 0. 目标
 
 从 PRD/Issue/对话需求生成 **完整、可评审、可路由** 的需求分析（RA）文档，5 大目标：

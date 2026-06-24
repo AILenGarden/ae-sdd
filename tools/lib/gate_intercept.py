@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import paths, state as state_mod  # noqa: E402
+from lib import memory_gate, paths, state as state_mod  # noqa: E402
 
 
 # ─── Phase → 允许工具表 ─────────────────────────────────────────────────────
@@ -177,6 +177,14 @@ def _check_path_permission(
 _STATE_WRITE_CMD_RE = re.compile(r"^python\s+\S*ae-sdd\b", re.IGNORECASE)
 
 
+def _extract_option_value(bash_command: str, option: str) -> Optional[str]:
+    stripped = bash_command.strip()
+    if not (stripped.startswith("ae-sdd") or _STATE_WRITE_CMD_RE.match(stripped)):
+        return None
+    m = re.search(rf"{re.escape(option)}\s+(\S+)", stripped, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
 def _extract_target_phase(bash_command: str) -> Optional[str]:
     """
     从 Bash 命令中提取目标 phase（仅针对真实执行的 ae-sdd state write 命令）。
@@ -188,8 +196,7 @@ def _extract_target_phase(bash_command: str) -> Optional[str]:
     # 命令头检查：以 ae-sdd 开头，或以 python .../ae-sdd 开头
     if not (stripped.startswith("ae-sdd") or _STATE_WRITE_CMD_RE.match(stripped)):
         return None
-    m = re.search(r"--phase\s+(\S+)", stripped, re.IGNORECASE)
-    return m.group(1) if m else None
+    return _extract_option_value(bash_command, "--phase")
 
 
 def _check_state_write(
@@ -197,6 +204,7 @@ def _check_state_write(
     current_phase: str,
     ade_sdd: Optional[Path],
     project_key: str,
+    state_data: Optional[dict] = None,
 ) -> tuple[bool, str]:
     target_phase = _extract_target_phase(bash_command)
     if not target_phase:
@@ -220,6 +228,20 @@ def _check_state_write(
         )
 
     # 向前跳 1 步：验证进入条件
+    effective_state = dict(state_data or {"phase": current_phase})
+    if not effective_state.get("currentStory"):
+        effective_state["currentStory"] = _extract_option_value(bash_command, "--story")
+    if not effective_state.get("currentTask"):
+        effective_state["currentTask"] = _extract_option_value(bash_command, "--task")
+
+    memory_result = memory_gate.check_state_transition(
+        ade_sdd=ade_sdd,
+        state_data=effective_state,
+        target_phase=target_phase,
+    )
+    if memory_result.get("blocked"):
+        return False, memory_gate.format_transition_block(memory_result)
+
     PHASE_ENTRY_GATES: dict[str, list[str]] = {
         "dr-generated":    ["G-00", "G-01"],
         "story-generated": ["G-00", "G-01", "G-02"],
@@ -331,11 +353,13 @@ def check_intercept(
         phase = st.get("phase", "initialized")
         cfg = paths.read_config(ade_sdd)
         project_key = cfg.get("projectKey", "unknown")
+    else:
+        st = {"phase": phase}
 
     # 3. ae-sdd state write 保护
     if tool_name == "Bash" and bash_command:
         if "ae-sdd" in bash_command and "state" in bash_command and "write" in bash_command:
-            allowed, reason = _check_state_write(bash_command, phase, ade_sdd, project_key)
+            allowed, reason = _check_state_write(bash_command, phase, ade_sdd, project_key, state_data=st)
             if not allowed:
                 return False, reason
             return True, ""

@@ -32,6 +32,21 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 
 ---
 
+## 🧠 阶段记忆强制调用（🔴 横切依赖）
+
+> **🔴 强制：** Task 生成与 CodingPlan 汇总属于总体 Coding 设计阶段，必须读取 RA / design / coding-plan 记忆，输出后写入 coding-plan 记忆。
+
+```bash
+ae-sdd memory enter --phase coding-plan --story <STORY-ID>
+# 生成 Task / 统一 CodingPlan
+ae-sdd memory write --phase coding-plan --story <STORY-ID> --kind decision --summary "<Task拆分/分层归属/事务边界/风险决策>"
+ae-sdd memory exit --phase coding-plan --story <STORY-ID>
+```
+
+`memory exit` 未通过 = Task/CodingPlan 节点未完成，禁止进入 CodingSkill.Execute。
+
+---
+
 ## 整体流程
 
 ```
