@@ -7,7 +7,10 @@ description: |
   "继续上次"、"/ae-sdd" 时触发。支持流程状态跟踪与中断后恢复。
   🆕 v3.2.0：需求分析能力对标 Coding，新增 G-RA 准入门卫、RequirementAnalysisModel 12 维决策、16 道 RA 质量闸与 RA 真实性扫描。
   🆕 v3.2.1：Coding 能力对标需求分析，新增 G-CODE-1 Coding 真实性门禁、AI Coding 反模式库（AP-1~AP-6）与 coding_authenticity_scan.py 扫描器；微任务快速通道 §0.5。
-version: 3.2.3
+  🆕 v3.2.2：Toolset Layer P0，新增 ae-sdd memory/db/git 三组工程工具，DB 本地 profile + read-first，Git Insight 只读输出结构化历史/影响证据。
+  🆕 v3.2.3：Memory 强制门禁升级，ae-sdd state write --phase 离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 memory enter → memory write。
+  🆕 v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节，固化 6 大子系统总览/协同关系图/维护边界，补齐健康度清单 v3.2.2/v3.2.3 条目，修正 README 正文门禁数与子 SKILL 数。
+version: 3.2.4
 main_entry: true
 triggers:
   - "启动自动化工程"

@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.2.3（🆕 2026-06-24：Memory 强制门禁升级 — `ae-sdd state write --phase ...` 在离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 `memory enter → memory write`；v3.2.2：Toolset Layer P0 — 新增 `ae-sdd memory/db/git` 三组工程工具，DB 采用本地 profile + read-first 策略，Git Insight 只读输出结构化历史/影响证据；v3.2.1：Coding 工具层加固 — G-CODE-1 + coding_authenticity_scan.py + gate coding-required；v3.2.0：需求分析全维度对标 Coding — RAModel 12 维 + 16 道 RA-G 闸 + G-RA-1~4 硬门禁 + ra_authenticity_scan.py + G-13 六层追溯）
+> **版本：** v3.2.4（🆕 2026-06-24：ae-sdd-update-skill 新增「项目结构与设计说明」章节 — 固化 ae-sdd 项目 6 大子系统（SKILL 本体/实例化体系/构建安装脚本/安装引导 SKILL/工具链/Harness 适配层）的总览、协同关系图与维护边界，让维护者改任一子系统时知道连带影响；同步补齐健康度清单 v3.2.2/v3.2.3 缺失条目、修正 README 正文门禁数 14→19 与子 SKILL 数 15→22；v3.2.3：Memory 强制门禁升级 — `ae-sdd state write --phase ...` 在离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 `memory enter → memory write`；v3.2.2：Toolset Layer P0 — 新增 `ae-sdd memory/db/git` 三组工程工具，DB 采用本地 profile + read-first 策略，Git Insight 只读输出结构化历史/影响证据；v3.2.1：Coding 工具层加固 — G-CODE-1 + coding_authenticity_scan.py + gate coding-required；v3.2.0：需求分析全维度对标 Coding — RAModel 12 维 + 16 道 RA-G 闸 + G-RA-1~4 硬门禁 + ra_authenticity_scan.py + G-13 六层追溯）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -16,9 +16,9 @@ ae-sdd v3.0 引入**母版 vs 分发**双目录分层，**用户拿分发包，�
 ae-sdd/                                # 仓库根（GitHub 直发）
 ├── source/                            # 🟢 母版 SSOT（开发者编辑这里）
 │   ├── SKILL.md                       #    ae-sdd 唯一主入口
-│   ├── skills/                        #    15 个子 SKILL
+│   ├── skills/                        #    22 个子 SKILL（phase1/phase2/phase3/cross-cutting/orchestration）
 │   ├── assets/                        #    项目资产（icec-cloud-boss / icec-cloud-life）
-│   ├── standards/                     #    约束（11 份）+ 项目资产标准
+│   ├── standards/                     #    约束 + 思维引擎 + 测试策略 + 资产标准 + toolset 标准（18 份）
 │   ├── templates/                     #    模板（17 份：Story/Task/DR/Report/...）
 │   ├── .claude-plugin/                #    marketplace 注册表
 │   ├── CHANGELOG/                     #    发版历史
@@ -121,10 +121,10 @@ bash scripts/dev-sync.sh --watch
 
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
-- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 14 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
-- **[`source/skills/`](source/skills/)** — 15 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
+- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 19 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
+- **[`source/skills/`](source/skills/)** — 22 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
 - **[`source/templates/`](source/templates/)** — 17 份模板（Story/Task/DR/Report/...）
-- **[`source/standards/`](source/standards/)** — 11 份约束（API/DB/分层/安全/...）
+- **[`source/standards/`](source/standards/)** — 18 份标准（constraints 9 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
 - **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md)）
 - **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1.2 install-skill + 智能引导](source/CHANGELOG/2026-06-24-ae-sdd-install-skill.md) + [v3.1.1 阶段 H 深度强化](source/CHANGELOG/2026-06-23-requirement-analysis-阶段H深度强化.md) + [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）

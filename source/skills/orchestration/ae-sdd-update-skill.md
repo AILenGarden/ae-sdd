@@ -45,6 +45,140 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 
 ---
 
+## 项目结构与设计说明（🆕 v3.2.4 — 维护者的项目地图）
+
+> **定位：** 本节是 ae-sdd **整个项目**的结构地图与子系统设计说明，回答"ae-sdd 不只是 SKILL 文档，还由哪些部分组成、各部分职责、如何协同"。维护者在改动任何文件前，先对照本节确认"我改的是哪个子系统、会连带影响哪些子系统"。
+>
+> **与上文「核心设计哲学」的区别：** 上文讲"SKILL 文档内容边界"（哪些规则写哪个 .md）；本节讲"项目工程边界"（scripts/tools/harness/实例化等非 SKILL 子系统怎么协同）。
+
+### 6 大子系统总览
+
+ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
+
+| # | 子系统 | 物理位置 | 职责一句话 | 维护方式 |
+|---|--------|---------|-----------|---------|
+| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(22 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
+| ② | **实例化体系（4 层架构）** | `dist/ae-sdd/`(Layer2) + `~/.claude/skills/ae-sdd/`(Layer3) + `<project>/.ae-sdd/`(Layer4) | 母版→分发包→用户安装→项目实例，引用+override 模式 | 不手工改 Layer2/3/4；由 build/install/init 生成 |
+| ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
+| ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |
+| ⑤ | **工具链（CLI + lib + tests）** | `tools/bin/ae-sdd`(14 子命令) + `tools/lib/`(13 模块) + `tools/tests/`(12 测试) | 门禁检查、状态管理、记忆层、DB/Git 工具集、hook 拦截、update-check | 直接编辑 `tools/`，独立于 `source/` 但被 update-graph 联动 |
+| ⑥ | **Harness 适配层** | `harness/.harness/agent.md` + `.adapter.lock` | 由 ae-sdd-harness-adapter SKILL 自动生成，转译为 Mavis 团队级 agent | ❌ 不手工改；母版升级后重跑 adapter SKILL 重新生成 |
+
+### 子系统协同关系图
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ① SKILL 本体（SSOT）                                           │
+│  source/SKILL.md + skills/ + standards/ + templates/ + assets/  │
+└──────────────┬───────────────────────────────────┬──────────────┘
+               │                                   │
+        ③ build_dist.py                    ⑤ 工具链 tools/
+        (构建分发包)                        (CLI + lib + tests)
+               │                                   │
+               ▼                                   │
+┌──────────────────────────┐                       │
+│ ② Layer2 实例化分发包     │ ◄── build 时把 tools/  │
+│ dist/ae-sdd/             │     scanner 注入 dist  │
+└──────────┬───────────────┘                       │
+           │ ③ install.py                          │
+           ▼                                       │
+┌──────────────────────────┐                       │
+│ ② Layer3 用户安装         │ ◄─ CLI 直接从 tools/  │
+│ ~/.claude/skills/ae-sdd/ │   运行，不进 dist     │
+└──────────┬───────────────┘                       │
+           │ ③ init.py (ae-sdd init <dir> <key>)   │
+           ▼                                       │
+┌──────────────────────────┐                       │
+│ ② Layer4 项目实例         │ ── 引用 Layer3 ──►    │
+│ <project>/.ae-sdd/       │   + overrides 覆盖    │
+│   config.yaml            │                       │
+│   state.json             │                       │
+│   assets/ (引用)          │                       │
+│   overrides/ (项目定制)   │                       │
+└──────────────────────────┘                       │
+                                                   │
+┌──────────────────────────────────────────────────┘
+│
+│  ④ 安装引导 SKILL 串联 ②③④：
+│     install-skill.md → 调 install.py → 装到 Layer3 → 调 init.py → 建 Layer4
+│
+│  ⑥ Harness 适配层（派生，非本体）：
+│     source/SKILL.md + HARNESS.md ──adapter SKILL──► harness/.harness/agent.md
+│     （Mavis 团队级 agent 入口，由 .adapter.lock 标记来源 commit）
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### 各子系统维护边界判定（扩展原判定表）
+
+> 当你改动文件时，先确认属于哪个子系统，再查"连带项"。
+
+| 改动源（子系统） | 连带影响的子系统 | 必做同步动作 | 权威检查 |
+|----------------|----------------|------------|---------|
+| **① SKILL 本体**（改 `source/*.md`） | ②③（build+install 重新分发） | 改完跑 `dev-sync.sh`；更新 README:5 版本号 | `update-check` UC-01/05 |
+| **③ 构建脚本**（改 `scripts/build_dist.py`） | ②（dist 产出内容变化） | 确认白名单含新 scanner；重跑 build 验证 dist 完整 | `update-check` UC-04 |
+| **③ 安装脚本**（改 `scripts/install.py` / `init.py`） | ②Layer3/4 安装行为变化 | ④ install-skill.md 的 §3/§4 流程可能需同步 | 人工核对 |
+| **④ 安装引导 SKILL**（改 `install-skill.md`） | 无连带（纯文档） | 确认与 ③ install.py 实际行为一致 | 人工核对 |
+| **⑤ 工具链**（改 `tools/lib/*.py` 或 `tools/bin/ae-sdd`） | ①（SKILL 引用的 CLI 命令契约）+ ⑤（测试） | 同步 SKILL.md 命令引用；补/改对应 `tools/tests/test_*.py` | `update-check` UC-02/03 |
+| **⑤ 新增 scanner**（`scripts/*_scan.py`） | ③（build 白名单）+ ①（gates.py 注册）+ ⑤（gates _locate） | 加入 `build_dist.py` 白名单；gates.py 注册门禁；SKILL 引用 | `update-check` UC-04 |
+| **⑥ Harness 适配层** | ❌ 不手工改 | 母版升级后重跑 `ae-sdd-harness-adapter` SKILL 重新生成 | `.adapter.lock` commit hash 一致性 |
+| **任意 source/ 或 tools/** | ①（CHANGELOG）+ README:5 + dev-sync | 写 CHANGELOG；更新 README:5；跑 update-check 全绿才 dev-sync | `update-check` 全量 |
+
+### 维护者 SOP（按子系统）
+
+> **原则：** 本 SOP 是「更新依赖图谱」章节的人读速查版。权威连带项以 `source/standards/update-graph.json` + `ae-sdd update-check --affected` 输出为准，本表不重复 JSON 内容。
+
+**改 ① SKILL 本体（最常见）：**
+```
+1. 直接编辑 source/*.md
+2. （涉及门禁/子 SKILL 数变化）同步 README.md 正文计数 + §3 清单
+3. 跑 ae-sdd update-check → 全绿
+4. 跑 dev-sync.sh 分发
+5. 写 CHANGELOG
+```
+
+**改 ③ 构建脚本：**
+```
+1. 编辑 scripts/build_dist.py
+2. 若新增 scanner → 确认加入白名单（UC-04 会查）
+3. 若 dist 剥离/注入规则变化 → 同步本文件「母版修改后的同步规则」+ README Q3
+4. 重跑 build_dist.py 验证 dist/ae-sdd/ 完整
+5. 写 CHANGELOG
+```
+
+**改 ⑤ 工具链：**
+```
+1. 编辑 tools/lib/*.py 或 tools/bin/ae-sdd
+2. 新增/修改门禁 → 同步 gates.py GATE_REGISTRY + CHECK_FUNCS（UC-02）+ test_gates.py
+3. 新增/修改 CLI 子命令 → 同步 SKILL.md 命令引用（UC-03）+ 补 tools/tests/
+4. 跑 ae-sdd update-check → 全绿
+5. 跑 tools/tests/ 对应测试
+6. 写 CHANGELOG
+```
+
+**改 ⑥ Harness 适配层：**
+```
+❌ 禁止手工编辑 harness/.harness/agent.md
+正确流程：
+1. 改 source/SKILL.md 或 HARNESS.md（母版）
+2. 重跑 ae-sdd-harness-adapter SKILL（convert-ae-sdd-to-harness.ps1）
+3. 检查 .adapter.lock 的 commit hash 已更新
+```
+
+### 实例化 4 层架构速查（与 SKILL.md §6 互补）
+
+> **📍 权威定义在 [`SKILL.md` §6 实例化机制](../../SKILL.md)，本节只给维护者视角速查。**
+
+| Layer | 名称 | 路径 | 谁生成 | git 跟踪 | 维护者动作 |
+|-------|------|------|--------|---------|-----------|
+| 1 | 母版 SSOT | `source/` | 开发者编辑 | ✅ | 唯一手工维护点 |
+| 2 | 实例化分发包 | `dist/ae-sdd/` | `build_dist.py` | ❌ (gitignored) | 不手工改，构建产物 |
+| 3 | 用户安装 | `~/.claude/skills/ae-sdd/` | `install.py` | ❌ | 不手工改，安装产物 |
+| 4 | 项目实例 | `<project>/.ae-sdd/` | `init.py`（`ae-sdd init`） | ❌ (项目侧) | 不手工改，项目侧产物 |
+
+**⚠️ 已知缺口（2026-06-24 核实）：** SKILL.md §6 描述的 `ae-sdd init <project-dir> <project-key>` 与 `ae-sdd fork` 命令，当前 CLI（`tools/bin/ae-sdd`）**尚未注册这两个子命令**（仅有 `init-hooks` 写 hooks 配置）。项目实例化（Layer4）目前由 `scripts/init.py` 承载但未挂到 CLI。维护者若补全此能力，需同步：CLI 注册 + SKILL.md §6 + install-skill.md + 本节。
+
+---
+
 ## SKILL 边界判定表（新增/修改内容时使用）
 
 > 当你拿到一段内容，问自己"这段应该写在哪？"——用本表判定。
@@ -400,7 +534,7 @@ ae-sdd update-check --only UC-02
 
 ### AE-skill 健康度
 
-- [ ] AE-skill 总行数 < 1500（当前 1362，已达成）
+- [ ] AE-skill 主入口（`source/SKILL.md`）总行数 < 2500（🆕 v3.2.4 修正：v3.0 起 AE-skill 已并入 `source/SKILL.md` 主入口，原"AE-skill 1362 行"锚点已失效；维护者以 `source/SKILL.md` 实际行数为准，目标保持"流程编排为主、具体规则下沉子 SKILL"）
 - [ ] AE-skill 中不出现以下关键词的实质内容（出现只能是 1 行指针）：
   - `接口契约完整性` / `调用流程` / `状态展示` / `错误码` / `边界场景` / `联调支持`（6 维度前端契约）
   - `文件顺序` / `类骨架` / `Mapper SQL` / `测试对应` / `验证点` / `调试回滚`（CodingPlan 7 章节）
@@ -434,6 +568,18 @@ ae-sdd update-check --only UC-02
 - [ ] 🆕 v3.2 `tools/tests/test_update_graph.py` 存在，覆盖 UC-01~UC-05 各场景
 - [ ] 🆕 v3.2 本文件含 `## 更新依赖图谱` 章节（图谱表 + 使用 SOP + 5 项检查说明）
 - [ ] 🆕 v3.2.1 `tools/lib/gates.py` 含 `G-CODE-1` 门禁（Coding 真实性）+ `scripts/coding_authenticity_scan.py` 存在
+- [ ] 🆕 v3.2.2 `source/skills/cross-cutting/` 含 4 个 toolset SKILL（`database-tool-skill.md` / `git-insight-skill.md` / `memory-management-skill.md` / `toolset-orchestration-skill.md`）
+- [ ] 🆕 v3.2.2 `source/standards/toolsets/` 含 4 份 toolset 标准（`db-connection-profile.schema.md` / `git-insight.md` / `memory-layering.md` / `toolset-security.md`）
+- [ ] 🆕 v3.2.2 `tools/lib/` 含 3 个 toolset 实现模块（`db_tool.py` 只读优先 + 本地 profile / `git_insight.py` 只读 JSON 输出 / `memory_store.py` 阶段感知 JSONL）
+- [ ] 🆕 v3.2.2 `tools/bin/ae-sdd` CLI 含 `memory` / `db` / `git` 三组子命令（`memory enter/write/exit/read/search/promote/summarize`、`db profiles/query/explain/audit`、`git status/diff/log/blame/impact`）
+- [ ] 🆕 v3.2.2 `tools/tests/test_toolsets.py` 存在，覆盖三组 toolset 子命令
+- [ ] 🆕 v3.2.3 `tools/lib/memory_gate.py` 存在，阶段切换强制记忆检查（CLI 与 PreToolUse gate 共用 `check_exit_ready`）
+- [ ] 🆕 v3.2.3 `tools/lib/gate_intercept.py` 在 entry-gate 检查前运行 memory gate；`ae-sdd state write --phase <next>` 离开 RA/design/coding-plan/coding/review 关联阶段时阻断（无 `memory enter→write`）
+- [ ] 🆕 v3.2.3 `tools/tests/test_memory_gate.py` 存在，覆盖阶段切换记忆门禁各场景
+- [ ] 🆕 v3.2.3 `memory_store.py` 含非破坏性 `check_exit_ready()`（gates 可校验 memory 而不写 exit 事件）+ `--allow-empty-memory` 维护 override
+- [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
+- [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（G-00~13 + G-RA-1~4 + G-CODE-1 = 19）
+- [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 22）
 
 ### 跨 SKILL 一致性
 
