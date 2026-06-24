@@ -24,7 +24,9 @@ install.py — ae-sdd SKILL 安装脚本（跨平台）
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import urllib.request
@@ -61,7 +63,9 @@ SKILL_NAME   = "ae-sdd"
 CLAUDE_DST   = Path.home() / ".claude" / "skills" / SKILL_NAME
 CODEX_DST    = Path.home() / ".codex" / "skills" / SKILL_NAME
 DST          = CLAUDE_DST  # 向后兼容：历史代码/文档默认指 Claude 目标
-BAK_KEEP_DEFAULT = 2  # 每次 install 后保留最近 N 个 .bak 备份（防止 .bak 累积噪音）
+BAK_KEEP_DEFAULT     = 2  # 每次 install 后保留最近 N 个 .bak 备份（防止 .bak 累积噪音）
+MAVIS_KEEP_DEFAULT   = 0  # 清理 mavis 端 ae-sdd-N 副本时保留的数量（0=全清；负数=不清理）
+MAVIS_SQLITE_DB      = Path.home() / ".mavis" / "sqlite.db"
 
 
 # ─── 子流程：调 build_dist.py ────────────────────────────────────────────────
@@ -200,6 +204,81 @@ def cleanup_old_backups(skills_dir: Path, skill_name: str, keep: int = BAK_KEEP_
         info(f"已清理 {removed} 个旧备份（保留最近 {keep} 个）")
 
 
+def cleanup_mavis_duplicates(skill_name: str = SKILL_NAME,
+                             mavis_home: Optional[Path] = None,
+                             keep: int = MAVIS_KEEP_DEFAULT) -> int:
+    """清理 mavis 端 {skill_name}-N 副本（`mavis skill install` 自动加后缀累积的）。
+
+    只删形如 `{skill_name}-\\d+` 的目录（数字后缀），不动：
+    - `{skill_name}` 本体（用户可能特意装在 mavis 端）
+    - `{skill_name}-harness-adapter` 等带语义后缀的合法 SKILL
+    - 其它非 ae-sdd 前缀的 skill
+
+    同步清理 mavis 的 sqlite.db `skills` 表对应记录（带 .bak 备份）。
+    keep=0 表示全清 -N 副本；keep<0 表示不清理。
+    返回删除的物理目录数。
+    """
+    if keep < 0:
+        return 0
+    if mavis_home is None:
+        mavis_home = Path.home() / ".mavis"
+    skills_dir = mavis_home / "skills"
+    if not skills_dir.is_dir():
+        return 0
+
+    # 只匹配 数字后缀副本（ae-sdd-2 / ae-sdd-3 ...），不碰 ae-sdd-harness-adapter
+    pattern = re.compile(rf"^{re.escape(skill_name)}-\d+$")
+    dupes = sorted(
+        [p for p in skills_dir.iterdir() if p.is_dir() and pattern.match(p.name)],
+        key=lambda p: p.name,  # 数字后缀字典序 = 数字序
+    )
+    if not dupes:
+        return 0
+
+    # keep>0 时保留最近 keep 个（按数字后缀倒序 = 留最大的 N 个）
+    if keep > 0 and len(dupes) > keep:
+        dupes = dupes[:-keep]
+
+    # 1. 同步 sqlite 记录（带备份）
+    db_path = mavis_home / "sqlite.db"
+    db_deleted = 0
+    if db_path.is_file():
+        try:
+            db_backup = db_path.with_suffix(
+                f".db.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            )
+            shutil.copy2(db_path, db_backup)
+            conn = sqlite3.connect(str(db_path))
+            cur = conn.cursor()
+            for d in dupes:
+                cur.execute("DELETE FROM skills WHERE name = ?", (d.name,))
+                db_deleted += cur.rowcount
+            conn.commit()
+            conn.close()
+            warn(f"已备份 mavis sqlite.db → {db_backup.name}")
+        except Exception as e:
+            warn(f"同步清理 mavis sqlite 记录失败（物理目录仍会清理）: {e}")
+    else:
+        warn("未找到 mavis sqlite.db，跳过索引同步（仅清物理目录）")
+
+    # 2. 删物理目录
+    removed = 0
+    for d in dupes:
+        try:
+            shutil.rmtree(d)
+            warn(f"清理 mavis 端 -N 副本: {d.name}")
+            removed += 1
+        except OSError as e:
+            warn(f"删除 {d.name} 失败: {e}")
+
+    if removed:
+        info(f"已清理 mavis 端 {removed} 个 {skill_name}-N 副本（sqlite 同步删 {db_deleted} 条）")
+        if db_deleted < removed:
+            warn("注意：mavis daemon 内存中的 skill 缓存可能未同步，")
+            warn("      如有残留请通过 MiniMax 桌面应用重启 daemon 后再 list 一次。")
+    return removed
+
+
 def install_from_dist(dist_src: Path, dst: Path) -> None:
     """从 dist/ae-sdd/ 复制到指定 Agent skills 目录。"""
     if not dist_src.is_dir():
@@ -317,6 +396,13 @@ def main() -> int:
                         help="安装目标：auto=Claude + 已存在/可用 Codex；all=两者都装")
     parser.add_argument("--keep-bak", type=int, default=BAK_KEEP_DEFAULT,
                         help=f"每个目标保留的 .bak 备份数（默认 {BAK_KEEP_DEFAULT}；0=全清；负数=不清理）")
+    parser.add_argument("--cleanup-mavis", dest="cleanup_mavis", action="store_true",
+                        default=True,
+                        help="清理 mavis 端 ae-sdd-N 副本（默认开启）")
+    parser.add_argument("--no-cleanup-mavis", dest="cleanup_mavis", action="store_false",
+                        help="跳过 mavis 端 ae-sdd-N 副本清理")
+    parser.add_argument("--mavis-keep", type=int, default=MAVIS_KEEP_DEFAULT,
+                        help=f"mavis 端 ae-sdd-N 副本保留数（默认 {MAVIS_KEEP_DEFAULT}=全清；负数=不清理）")
     args = parser.parse_args()
     targets = _target_paths(args.target)
 
@@ -358,6 +444,8 @@ def main() -> int:
     for dst in targets:
         install_from_dist(dist_src, dst)
         verify(dst)
+    if args.cleanup_mavis:
+        cleanup_mavis_duplicates(keep=args.mavis_keep)
     print_usage(targets)
     return 0
 
