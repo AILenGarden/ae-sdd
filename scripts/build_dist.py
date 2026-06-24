@@ -5,6 +5,7 @@ build_dist.py — ae-sdd 母版 → 实例化分发包 构建脚本
 🆕 v3.0.1 跨平台化（2026-06-18）：用 Python 替代 bash，零外部依赖（仅标准库）。
 🆕 v3.0 双目录分层：source/（SSOT） → dist/ae-sdd/（构建产物）。
 🆕 v3.1 Harness 层（2026-06-22）：HARNESS.md + harness/ 已纳入分发包（默认包含）。
+🆕 v3.2 RA 门禁层（2026-06-24）：运行时真实性扫描器已纳入分发包。
 
 ⚠️ v3.0.1 Windows 兼容：用 `git archive` 从 commit 读取 source/（不经过 working tree），
    避免 Windows 的 core.autocrlf 把 LF 转 CRLF。
@@ -18,6 +19,8 @@ build_dist.py — ae-sdd 母版 → 实例化分发包 构建脚本
   skills/           — SKILL 节点
   assets/           — 项目资产模板
   docs/ae-sdd-conventions.md — 约定文档（docs/ 整体被排除，但 ae-sdd-conventions.md 单独保留）
+  scripts/test_authenticity_scan.py — 测试真实性扫描器（G-09 运行时依赖）
+  scripts/ra_authenticity_scan.py — RA 真实性扫描器（G-RA-4 运行时依赖）
 
 分发包排除（母版专有，不发给用户）：
   CHANGELOG/        — 开发记录
@@ -167,6 +170,31 @@ def _copy_tools_to_dist(repo_root: Path, dst: Path) -> None:
     ok("tools/ 已复制到 dist（排除 tools/tests/）")
 
 
+def _copy_runtime_scripts_to_dist(repo_root: Path, dst: Path) -> None:
+    """复制门禁运行时依赖脚本到 dist/scripts/。"""
+    scripts_dst = dst / "scripts"
+    scripts_dst.mkdir(parents=True, exist_ok=True)
+
+    runtime_scripts = [
+        "test_authenticity_scan.py",
+        "ra_authenticity_scan.py",
+    ]
+
+    copied = []
+    for name in runtime_scripts:
+        src_file = repo_root / "scripts" / name
+        if not src_file.is_file():
+            warn(f"运行时脚本不存在: {src_file}，跳过")
+            continue
+        shutil.copyfile(src_file, scripts_dst / name)
+        copied.append(name)
+
+    if copied:
+        ok(f"运行时脚本已复制到 dist/scripts/: {', '.join(copied)}")
+    else:
+        warn("没有运行时脚本被复制")
+
+
 def _patch_new_source_files(
     src: Path, dst: Path, ignore_dirs: set, ignore_files: list
 ) -> None:
@@ -284,6 +312,9 @@ def main() -> int:
     # ── 复制 tools/（working tree，非 git archive，无 CRLF 问题）────────────
     _copy_tools_to_dist(repo_root, dst)
 
+    # ── 复制门禁运行时脚本（G-09 / G-RA-4 需要）────────────────────────────
+    _copy_runtime_scripts_to_dist(repo_root, dst)
+
     # ── 补充 source/ 里未 commit 的新文件（working tree 补丁）─────────────────
     # git archive 只读已提交的 HEAD，staged/untracked 的新文件不会被打进 tar。
     # 对于 HARNESS.md / harness/ 这类新增文件，从 working tree 直接复制。
@@ -351,6 +382,12 @@ def main() -> int:
     else:
         warn("tools/lib/gate_intercept.py 未找到（tools/ 复制可能失败）")
 
+    dst_ra_scanner = dst / "scripts" / "ra_authenticity_scan.py"
+    if dst_ra_scanner.is_file():
+        ok(f"scripts/ra_authenticity_scan.py 已包含 ({dst_ra_scanner.stat().st_size} 字节)")
+    else:
+        warn("scripts/ra_authenticity_scan.py 未找到（G-RA-4 将无法执行扫描）")
+
     # ── 摘要 ────────────────────────────────────────────────────────────────
     step("构建摘要")
     print(f"  母版大小:    {human_size(dir_size(src))}")
@@ -391,6 +428,7 @@ def _fallback_build(src: Path, dst: Path) -> int:
 
     # fallback 同样复制 tools/
     _copy_tools_to_dist(src.parent, dst)
+    _copy_runtime_scripts_to_dist(src.parent, dst)
 
     (dst / "VERSION").write_bytes(f"{version}\n{build_date}\n".encode("utf-8"))
     plugin_dir = dst / ".claude-plugin"

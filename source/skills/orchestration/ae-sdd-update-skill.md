@@ -313,6 +313,12 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 - [ ] `document-storage-skill.md` 🆕 2026-06-10 包含 `§2.6 三类任务规模 × 文档路径`（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）
 - [ ] `templates/coding/be-codereview-template.md` 9 章节齐全
 - [ ] `templates/design/be-story-review-update-plan-template.md` 存在，且包含问题清单、更新计划、字段链路明细表、横向流转对照图、影响分析、执行后验收
+- [ ] 🆕 v3.2 `requirement-analysis-skill.md` 包含 `## 🔴 RequirementAnalysisModel（12 维需求分析决策模型）` + `## 第七步：16 道 RA 质量闸`
+- [ ] 🆕 v3.2 `templates/design/ra-template.md` 包含 §6.5 衍生规则登记表 + §8.5 衍生 AC 登记表 + §8.6 衍生覆盖率 + §9-bis 业务模式匹配表 + §9-ter 跨域级联效应表 + §13 RA-G01~16 质量闸自检
+- [ ] 🆕 v3.2 `tools/lib/gates.py` GATE_REGISTRY 包含 G-RA-1~G-RA-4（RA 文档存在 / 8 维度完整 / 衍生章节完整 / 真实性扫描通过）+ CHECK_FUNCS 注册 + check_all G-RA-4 特判
+- [ ] 🆕 v3.2 `scripts/ra_authenticity_scan.py` 存在，8 类禁止规则（vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness）+ JSON 输出契约与 test_authenticity_scan.py 一致
+- [ ] 🆕 v3.2 `tools/lib/gates.py` check_g13 接入 RA 层（六层追溯：RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview），RA 为可选层不阻断
+- [ ] 🆕 v3.2 `SKILL.md` 含 `## 🛡️ G-RA 需求分析准入门卫` 章节 + 智能路由表 G-RA 门禁列
 
 ### 跨 SKILL 一致性
 

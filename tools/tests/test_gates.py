@@ -355,16 +355,23 @@ class TestG13(unittest.TestCase):
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
-    def test_check_all_returns_14(self):
+    def test_check_all_returns_all(self):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
-        self.assertEqual(len(results), 14)
+        # v3.2：14 主门禁 + 4 G-RA = 18
+        self.assertEqual(len(results), 18)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test", only="G-00")
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].gate_id, "G-00")
+
+    def test_check_all_only_filter_gra(self):
+        ade_sdd = _full_ade_sdd()
+        results = gates.check_all(None, ade_sdd, "test", only="G-RA-1")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].gate_id, "G-RA-1")
 
     def test_check_all_unknown_gate(self):
         results = gates.check_all(None, None, "test", only="G-99")
@@ -375,9 +382,221 @@ class TestCheckAll(unittest.TestCase):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
         summary = gates.summarize(results)
-        self.assertEqual(summary["total"], 14)
-        self.assertEqual(summary["passed"] + summary["failed"], 14)
+        # v3.2：14 主门禁 + 4 G-RA = 18
+        self.assertEqual(summary["total"], 18)
+        self.assertEqual(summary["passed"] + summary["failed"], 18)
         self.assertIn("results", summary)
+
+
+# ─── G-RA 需求分析准入门卫（v3.2）─────────────────────────────────────────────
+def _ra_doc(content: str = "") -> str:
+    """构造一份含 8 维度 + RAModel 12 维的合规 RA 文档内容。"""
+    base = """# 需求分析报告：测试需求
+
+## §0.5 RequirementAnalysisModel 决策记录
+| 维度 | 结论 | 证据 | 风险等级 | 后续动作 |
+|------|------|------|----------|----------|
+| RA-01 输入保真 | {x} | PRD §1 | 🟢 | {x} |
+| RA-02 目标与成功标准 | {x} | PRD §2 | 🟢 | {x} |
+| RA-03 角色与权限边界 | {x} | PRD §3 | 🟢 | {x} |
+| RA-04 场景拓扑 | {x} | PRD §4 | 🟢 | {x} |
+| RA-05 状态与生命周期 | {x} | PRD §5 | 🟢 | {x} |
+| RA-06 数据语义与所有权 | {x} | assets.table | 🟢 | {x} |
+| RA-07 业务规则与衍生规则 | {x} | PRD §6 | 🟢 | {x} |
+| RA-08 跨域级联 | {x} | PRD §7 | 🟢 | {x} |
+| RA-09 现有能力复用 | {x} | assets.search | 🟢 | {x} |
+| RA-10 非功能与约束 | {x} | PRD §8 | 🟢 | {x} |
+| RA-11 AC 与测试可验证性 | {x} | PRD §9 | 🟢 | {x} |
+| RA-12 规模与路由置信度 | {x} | §11 | 🟢 | {x} |
+
+## §2 角色分析
+角色枚举：C 端用户、运营人员。
+
+## §3 场景分析
+主流程场景、异常场景、边界场景。
+
+## §4 业务流程
+状态机、时序。
+
+## §5 数据要素
+实体、字段。
+
+## §6 业务规则
+R1：{规则}
+
+## §7 设计方向
+备选方案、方案对比。
+
+## §8 验收标准
+AC-001 Given When Then。
+
+## §9 隐性假设
+假设清单。
+"""
+    return base + content
+
+
+class TestGRA1(unittest.TestCase):
+    """G-RA-1 RA 文档存在"""
+
+    def test_pre_ra_phase_no_doc_stub_passes(self):
+        tmp = _setup_project({})
+        # initialized 阶段无 RA 文档 → stub 通过
+        r = gates.check_ra_required(tmp, {"phase": "initialized"}, "")
+        self.assertTrue(r.pass_)
+        self.assertTrue(r.details.get("stub"))
+
+    def test_post_ra_phase_no_doc_blocks(self):
+        tmp = _setup_project({})
+        # 已进入下游节点（story-generated）却无 RA → 阻断
+        r = gates.check_ra_required(tmp, {"phase": "story-generated"}, "STORY-001")
+        self.assertFalse(r.pass_)
+        self.assertIn("未找到 RA 文档", r.message)
+
+    def test_with_ra_passes(self):
+        tmp = _setup_project({"design/RA-001-v1.0.md": _ra_doc()})
+        r = gates.check_ra_required(tmp, {"phase": "story-generated"}, "STORY-001")
+        self.assertTrue(r.pass_)
+        self.assertGreaterEqual(r.details.get("ra_files", 0), 1)
+
+    def test_stale_ra_warns_but_passes(self):
+        import os
+        tmp = _setup_project({"design/RA-001-v1.0.md": _ra_doc()})
+        # 把 mtime 改到 60 天前
+        p = tmp / "design" / "RA-001-v1.0.md"
+        old_time = p.stat().st_mtime - 60 * 86400
+        os.utime(p, (old_time, old_time))
+        r = gates.check_ra_required(tmp, {"phase": "story-generated"}, "STORY-001")
+        self.assertTrue(r.pass_)  # warn 不阻断
+        self.assertEqual(r.severity, "warn")
+
+
+class TestGRA2(unittest.TestCase):
+    """G-RA-2 RA 8 维度完整 + RAModel 12 维"""
+
+    def test_no_ra_stub_passes(self):
+        tmp = _setup_project({})
+        r = gates.check_ra_dimensions(tmp, {}, "STORY-001")
+        self.assertTrue(r.details.get("stub"))
+
+    def test_full_ra_passes(self):
+        tmp = _setup_project({"design/RA-001-v1.0.md": _ra_doc()})
+        r = gates.check_ra_dimensions(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+    def test_missing_dimension_blocks(self):
+        # 缺 §9 假设维度（同时去掉所有 "§9"/"假设" 痕迹，避免 RAModel 证据列误命中）
+        bad = _ra_doc().replace("## §9 隐性假设\n假设清单。", "")
+        bad = bad.replace("假设", "推测").replace("PRD §9", "PRD §A")
+        tmp = _setup_project({"design/RA-001-v1.0.md": bad})
+        r = gates.check_ra_dimensions(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_missing_ramodel_blocks(self):
+        bad = _ra_doc().replace("RA-12", "RA-XX")
+        tmp = _setup_project({"design/RA-001-v1.0.md": bad})
+        r = gates.check_ra_dimensions(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+
+class TestGRA3(unittest.TestCase):
+    """G-RA-3 RA 衍生章节完整"""
+
+    def test_no_ra_stub_passes(self):
+        tmp = _setup_project({})
+        r = gates.check_ra_derivatives(tmp, {}, "STORY-001")
+        self.assertTrue(r.details.get("stub"))
+
+    def test_state_machine_missing_derivatives_blocks(self):
+        # 含状态变更关键词但缺衍生章节
+        bad = "# 需求分析\n账号锁定触发状态变更。\n## §2 角色\n## §3 场景\n## §4 流程\n状态机\n## §5 数据\n## §6 规则\n## §7 设计方向\n## §8 AC\n## §9 假设\n"
+        tmp = _setup_project({"design/RA-001-v1.0.md": bad})
+        r = gates.check_ra_derivatives(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+        self.assertTrue(r.details.get("state_machine"))
+
+    def test_non_state_machine_without_notapplicable_blocks(self):
+        # 非状态机需求缺衍生章节且无"不适用"声明
+        bad = "# 需求分析\n纯查询需求。\n## §2 角色\n## §3 场景\n## §4 流程\n## §5 数据\n## §6 规则\n## §7 设计方向\n## §8 AC\n## §9 假设\n"
+        tmp = _setup_project({"design/RA-001-v1.0.md": bad})
+        r = gates.check_ra_derivatives(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_non_state_machine_with_notapplicable_passes(self):
+        good = "# 需求分析\n纯查询需求，不涉及状态变更。\n## §6.5 衍生规则登记表\n不适用：纯 CRUD 无衍生（PRD §3）。\n## §8.5 衍生 AC 登记表\n不适用。\n## §8.6 衍生覆盖率\n不适用。\n## §9-bis 业务模式匹配表\n不适用。\n## §9-ter 跨域级联效应表\n不适用。\n"
+        tmp = _setup_project({"design/RA-001-v1.0.md": good})
+        r = gates.check_ra_derivatives(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+
+class TestGRA4(unittest.TestCase):
+    """G-RA-4 RA 真实性扫描通过"""
+
+    def test_no_master_source_skips(self):
+        tmp = _setup_project({})
+        r = gates.check_ra_authenticity(tmp, {}, "STORY-001", master_source=None)
+        self.assertTrue(r.details.get("skipped", False))
+
+    def test_pre_ra_no_doc_stub_passes(self):
+        # master_source 指向本仓库 source/（其 parent 有 scripts/ra_authenticity_scan.py）
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({})
+        r = gates.check_ra_authenticity(tmp, {"phase": "initialized"}, "STORY-001",
+                                        master_source=repo_source)
+        self.assertTrue(r.details.get("stub"))
+
+    def test_clean_ra_passes(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        clean = "# 需求分析\n纯 CRUD 查询，经 H.5 模式 1-6 全检后确认无衍生，理由：不涉及状态变更（PRD §3）。\n"
+        tmp = _setup_project({"design/RA-001-v1.0.md": clean})
+        r = gates.check_ra_authenticity(tmp, {"phase": "ra-generated"}, "STORY-001",
+                                        master_source=repo_source)
+        self.assertTrue(r.pass_)
+        self.assertEqual(r.details.get("blockers", -1), 0)
+
+    def test_fabricated_ra_blocks(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        # 含 vague-ellipsis + missing-timeliness + masked-gap
+        bad = "# 需求分析\n账号锁定等等。\n- 锁定后尽快下线。\n- 已解决。\n"
+        tmp = _setup_project({"design/RA-001-v1.0.md": bad})
+        r = gates.check_ra_authenticity(tmp, {"phase": "ra-generated"}, "STORY-001",
+                                        master_source=repo_source)
+        self.assertFalse(r.pass_)
+        self.assertGreater(r.details.get("blockers", 0), 0)
+
+
+# ─── G-13 RA 层追溯（v3.2 升级）──────────────────────────────────────────────
+class TestG13RaLayer(unittest.TestCase):
+
+    def test_no_ra_layer_passes(self):
+        # 无 RA 文档（可选层）→ 不阻断
+        tmp = _setup_project({
+            "design/DR-001.md": "# DR\n引用 RA-001",
+            "design/STORY-001.md": "# Story\n引用 DR-001",
+        })
+        r = gates.check_g13(tmp, {"phase": "story-generated"}, "STORY-001")
+        self.assertTrue(r.pass_)
+        self.assertFalse(r.details.get("ra_layer", {}).get("present", True))
+
+    def test_ra_layer_dr_not_ref_blocks(self):
+        # RA 存在但 DR 未引用 RA-ID → issue
+        tmp = _setup_project({
+            "design/RA-001-v1.0.md": "# RA",
+            "design/DR-001.md": "# DR\n没有引用任何 RA",
+            "design/STORY-001.md": "# Story\nDR-001",
+        })
+        r = gates.check_g13(tmp, {"phase": "story-generated"}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_ra_layer_full_trace_passes(self):
+        tmp = _setup_project({
+            "design/RA-001-v1.0.md": "# RA",
+            "design/DR-001.md": "# DR\n基于 RA-001 编写",
+            "design/STORY-001.md": "# Story\n参考 DR-001",
+        })
+        r = gates.check_g13(tmp, {"phase": "story-generated"}, "STORY-001")
+        self.assertTrue(r.pass_)
+        self.assertTrue(r.details.get("ra_layer", {}).get("present"))
 
 
 # ─── GateResult 数据类 ─────────────────────────────────────────────────────

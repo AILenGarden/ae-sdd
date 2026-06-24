@@ -12,7 +12,7 @@ from typing import Optional
 
 
 # 母版版本（与 source/SKILL.md YAML frontmatter 同步）
-MASTER_VERSION = "3.0.0"
+MASTER_VERSION = "3.2.0"
 
 
 def locate_master_source(start: Optional[Path] = None) -> Optional[Path]:
@@ -20,31 +20,45 @@ def locate_master_source(start: Optional[Path] = None) -> Optional[Path]:
     定位母版 source/ 目录。
 
     优先级：
-    1. 环境变量 AE_SDD_MASTER
-    2. 当前工作目录的 ./source（含 SKILL.md）
-    3. 工具所在仓库的 ./source（含 SKILL.md，从 tools/bin/ae-sdd 向上两级）
-    4. ~/.claude/skills/ae-sdd/source
+    1. 环境变量 AE_SDD_MASTER（可指向 source/ 或分发包根）
+    2. 当前工作目录的 ./source 或当前工作目录本身（含 SKILL.md）
+    3. 工具所在仓库/分发包的 ./source 或根目录（含 SKILL.md）
+    4. ~/.claude/skills/ae-sdd 与 ~/.codex/skills/ae-sdd 安装目录
     """
     candidates: list[Path] = []
 
     if env := os.environ.get("AE_SDD_MASTER"):
-        candidates.append(Path(env))
+        env_path = Path(env)
+        candidates.append(env_path)
+        candidates.append(env_path / "source")
 
     cwd = Path.cwd()
     candidates.append(cwd / "source")
+    candidates.append(cwd)
 
     # tools/bin/ae-sdd → tools/bin/ → tools/ → 仓库根
     cli_path = Path(start) if start else Path(__file__).resolve()
     repo_root = cli_path.parent.parent.parent
     candidates.append(repo_root / "source")
+    candidates.append(repo_root)
 
     # 全局安装位置
     home = Path.home()
     candidates.append(home / ".claude" / "skills" / "ae-sdd" / "source")
+    candidates.append(home / ".claude" / "skills" / "ae-sdd")
+    candidates.append(home / ".codex" / "skills" / "ae-sdd" / "skills" / "ae-sdd" / "source")
+    candidates.append(home / ".codex" / "skills" / "ae-sdd" / "skills" / "ae-sdd")
+    candidates.append(home / ".codex" / "skills" / "ae-sdd" / "source")
+    candidates.append(home / ".codex" / "skills" / "ae-sdd")
 
+    seen: set[Path] = set()
     for cand in candidates:
-        if cand.is_dir() and (cand / "SKILL.md").is_file():
-            return cand
+        resolved = cand.expanduser()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_dir() and (resolved / "SKILL.md").is_file():
+            return resolved
     return None
 
 

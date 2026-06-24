@@ -791,6 +791,95 @@ PRD 是需求的源头，DR 是 PRD 的技术化映射。**PRD 是 A 阶段业�
 | AC 未覆盖某个极端边界，但 RA 明确标注为"非目标" | RA 范围定义 |
 | 决策"接受的代价"写"无"，但确实是单选项 | 决策人已记录且无备选 |
 
+### 3.4 RA-DEFECT 闭环触发流程（🆕 v3.2 加固 — 2026-06-24）
+
+> **🆕 v3.2 新增：** v3.1 之前的归属标签表已说"RA-DEFECT → 必触发 RA Update 改 RA，再同步 DR"，但**没有显式定义"谁负责闭环 / 怎么闭环 / 何时回到 DR 重审"**。本节固化闭环流程。
+
+#### 3.4.1 触发条件
+
+DR Review 发现缺陷归属为 `RA-DEFECT`（即 DR 正确反映了 RA，但 RA 本身有缺陷）时触发本流程。
+
+#### 3.4.2 闭环 SOP（5 步强制）
+
+```
+DR Review 发现 RA-DEFECT
+    ↓
+第 1 步：标记缺陷为 RA-DEFECT 归属（§3.2 表）
+    ↓
+第 2 步：触发 requirement-analysis-skill §RA 修订影响分析（见 RA SKILL §3.4.3）
+    ├─ RA 修订前：评估"该缺陷是否会让已生成的 DR/Story/Task 进入过期态"
+    │   ├─ 是 → 列出受影响的 DR/Story/Task 清单
+    │   └─ 否 → 仅修 RA 即可
+    ↓
+第 3 步：RA 修订完成（新版本 RA 落盘）
+    ├─ RA §13 关联矩阵显式标注"本次修订影响了 N 个 DR/Story/Task"
+    └─ 通过 document-storage-skill.save_doc() 写新版本
+    ↓
+第 4 步：🔴 触发下游重审（按影响清单）
+    ├─ DR 在草稿/Review 阶段 → 触发 dr-update-skill（按 RA 修订内容回改 DR）
+    ├─ DR 已 Review 通过 → 触发 dr-review-skill 新一轮 Review（CR-DR-XXX-vN.m+1.md）
+    ├─ Story 已生成 → 触发 story-update-skill（按 RA 修订内容回改 Story）
+    └─ Task 已生成 → 触发 task-generate-skill §5bis 全局 Task Review
+    ↓
+第 5 步：闸门检查
+    ├─ 🔴 RA-DEFECT 修复完成
+    ├─ 🔴 下游 DR/Story/Task 已重审通过
+    └─ 才能标记 DR Review 整轮为 ✅ 通过
+```
+
+#### 3.4.3 闭环产物清单（🔴 必填）
+
+| # | 产物 | 路径 | 命名规则 |
+|---|------|------|----------|
+| 1 | RA 新版本 | `ae-sdd-doc/iterations/{date}/RA/{RA-ID}-v{N+1}.0.md` | v 递增 |
+| 2 | RA ChangeLog 行 | `ae-sdd-doc/iterations/{date}/RA/ChangeLog/{RA-ID}-changelog.md` | 追加 1 行 |
+| 3 | RA §13 关联矩阵修订记录 | RA 文档内 §13 | 标注"本次修订影响 N 个下游文档" |
+| 4 | DR 重审报告 | `ae-sdd-doc/iterations/{date}/CR/CR-DR-XXX-vN.m+1.md` | m 递增 |
+| 5 | Story 重审报告 | `ae-sdd-doc/iterations/{date}/CR/CR-STORY-XXX-vN.m+1.md` | m 递增 |
+| 6 | 闭环审计行 | `ae-sdd-doc/iterations/{date}/CR/ChangeLog/RA-DEFECT-闭环-{RA-ID}.md` | 独立审计文件 |
+
+#### 3.4.4 闭环审计行模板
+
+```markdown
+## RA-DEFECT 闭环审计 - {RA-ID} - {YYYY-MM-DD}
+
+| # | 缺陷 ID | RA 版本 | RA 修订摘要 | 影响 DR | 影响 Story | 重审状态 | 闭环确认 |
+|---|--------|--------|-----------|--------|-----------|---------|---------|
+| DR-CR-{N1} | RA-DEFECT | v{N+1}.0 | {修订内容} | DR-{N} | STORY-{N} | ✅ 通过 | {审计人} {时间} |
+| DR-CR-{N2} | RA-DEFECT | v{N+1}.0 | {修订内容} | DR-{N} | — | ✅ 通过 | {审计人} {时间} |
+| DR-CR-{N3} | RA-DEFECT | v{N+1}.0 | {修订内容} | DR-{N}, DR-{N+1} | STORY-{N}, STORY-{N+1} | 🟡 Review 中 | 待重审 |
+
+**闭环统计：**
+- 🔴 阻断型 RA-DEFECT：{N1} 项，已闭环 {M1} / 待闭环 {K1}
+- 🟠 严重型 RA-DEFECT：{N2} 项，已闭环 {M2} / 待闭环 {K2}
+- 🟡 一般型 RA-DEFECT：{N3} 项，已闭环 {M3} / 待闭环 {K3}
+
+**未闭环项处理：**
+- {缺陷 ID}：{未闭环原因 + 截止时间}
+```
+
+#### 3.4.5 与 requirement-analysis-skill §RA 修订影响分析的联动
+
+dr-review-skill 发现 RA-DEFECT → 调用 requirement-analysis-skill §RA 修订影响分析 → RA SKILL 输出"下游影响清单" → 触发对应 DR/Story/Task 重审。
+
+**双向追溯闭环：**
+
+```
+            ┌─────────────────────────────────────────┐
+            │                                         │
+            ▼                                         │
+requirement-analysis-skill §RA 修订影响分析                │
+（输出：受影响 DR/Story/Task 清单 + 重审建议）              │
+            │                                         │
+            ├─→ dr-review-skill §3.4 闭环 SOP         │
+            │     ├─ DR 草稿 → dr-update 回改          │
+            │     └─ DR 通过 → dr-review 新一轮 ◀──────┤
+            ├─→ story-update-skill                      │
+            │     └─ Story 重审 ◀──────────────────────┤
+            └─→ task-generate-skill §5bis              │
+                  └─ Task Review ◀─────────────────────┘
+```
+
 ---
 
 ## 第四步：生成 DR Review UpdatePlan
@@ -822,13 +911,15 @@ PRD 是需求的源头，DR 是 PRD 的技术化映射。**PRD 是 A 阶段业�
 
 ## 1. 缺陷清单
 
-| 缺陷 ID | 等级 | 阶段 | 章节 | 归属标签 | 描述 | 修复建议 |
-|--------|------|------|------|---------|------|----------|
-| DR-CR-001 | 🔴 | A | §4 决策 2 | DR-DEFECT | "接受的代价"为空 | 补充"极端并发下重试 3 次后失败告警" |
-| DR-CR-002 | 🔴 | C | §8 接口 | DR-DEFECT | /api/order/create 写接口幂等性未声明 | 补充幂等键 = orderId，标注唯一约束 |
-| DR-CR-003 | 🟠 | D | §7 数据模型 | DR-DEFECT | 字段 user_id 类型应为 BIGINT UNSIGNED | 修正类型并补充注释 |
-| DR-CR-004 | 🟠 | E | §12 Story | DR-DEFECT | STORY-005 与 STORY-007 循环依赖 | 重排依赖顺序或拆分 STORY-007 |
-| DR-CR-005 | 🟡 | A | §16 风险 | DR-DEFECT | 风险 R3 缺缓解方式 | 补充"启用限流 + 告警" |
+| 缺陷 ID | 等级 | 阶段 | 章节 | 归属标签 | 描述 | 修复建议 | 🆕 下游重审触发（v3.2）|
+|--------|------|------|------|---------|------|----------|---------------------|
+| DR-CR-001 | 🔴 | A | §4 决策 2 | DR-DEFECT | "接受的代价"为空 | 补充"极端并发下重试 3 次后失败告警" | — |
+| DR-CR-002 | 🔴 | C | §8 接口 | DR-DEFECT | /api/order/create 写接口幂等性未声明 | 补充幂等键 = orderId，标注唯一约束 | — |
+| DR-CR-003 | 🟠 | D | §7 数据模型 | DR-DEFECT | 字段 user_id 类型应为 BIGINT UNSIGNED | 修正类型并补充注释 | — |
+| DR-CR-004 | 🟠 | E | §12 Story | DR-DEFECT | STORY-005 与 STORY-007 循环依赖 | 重排依赖顺序或拆分 STORY-007 | — |
+| DR-CR-005 | 🟡 | A | §16 风险 | DR-DEFECT | 风险 R3 缺缓解方式 | 补充"启用限流 + 告警" | — |
+| DR-CR-006 | 🔴 | A | §2 业务全景 | 🆕 **RA-DEFECT** | RA §1.2 业务背景遗漏 X 场景 | 触发 RA Update 改 RA，再回改 DR §2 | 🔴 **触发 dr-review-skill 新一轮 Review（CR-DR-XXX-vN.m+1）** |
+| DR-CR-007 | 🟠 | C | §8 接口 | 🆕 **RA-DEFECT** | RA §6.2 缺失 Y 接口约束 | 触发 RA Update 改 RA，再回改 DR §8 | 🔴 **触发 dr-update-skill + story-update-skill（若 Story 已生成）** |
 
 ---
 
