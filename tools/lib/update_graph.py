@@ -92,6 +92,100 @@ def check_uc01_version(repo_root: Path) -> UpdateCheckResult:
                              details={"version": skill_v})
 
 
+# ─── 版本号 bump（UC-01 的操作侧，Agent 可调）────────────────────────────────
+def _write_skill_version(skill_md: Path, new_version: str) -> None:
+    """写 SKILL.md frontmatter 的 version 字段。"""
+    text = skill_md.read_text(encoding="utf-8", errors="replace")
+    new_text, n = re.subn(
+        r"(^version:\s*)\S+",
+        rf"\g<1>{new_version}",
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if n == 0:
+        raise ValueError(f"SKILL.md frontmatter 未找到 version 字段，无法 bump")
+    skill_md.write_text(new_text, encoding="utf-8")
+
+
+def _write_paths_master_version(paths_py: Path, new_version: str) -> None:
+    """写 paths.py 的 MASTER_VERSION。"""
+    text = paths_py.read_text(encoding="utf-8", errors="replace")
+    new_text, n = re.subn(
+        r'(MASTER_VERSION\s*=\s*")([^"]+)(")',
+        rf'\g<1>{new_version}\g<3>',
+        text,
+        count=1,
+    )
+    if n == 0:
+        raise ValueError(f"paths.py 未找到 MASTER_VERSION，无法 bump")
+    paths_py.write_text(new_text, encoding="utf-8")
+
+
+def _write_readme_version(readme: Path, new_version: str) -> None:
+    """写 README.md:5 的版本号（v3.2.x 格式，保留括号说明原文）。
+
+    匹配 `版本：** v3.2.x` 或 `版本：v3.2.x`，只替换版本号部分。
+    """
+    text = readme.read_text(encoding="utf-8", errors="replace")
+    new_text, n = re.subn(
+        r"(版本[：:]\s*\*?\*?\s*v)(\d+\.\d+\.\d+)",
+        rf"\g<1>{new_version}",
+        text,
+        count=1,
+    )
+    if n == 0:
+        raise ValueError(f"README.md 未找到版本行（格式：版本：vX.Y.Z），无法 bump")
+    readme.write_text(new_text, encoding="utf-8")
+
+
+def bump_version(repo_root: Path, new_version: str) -> dict:
+    """同步三处版本号：SKILL.md frontmatter / paths.py MASTER_VERSION / README.md:5。
+
+    写入后立即调 UC-01 校验一致性，不一致则报错（文件已改，需人工回滚）。
+    版本号格式校验：必须为 X.Y.Z（数字.数字.数字）。
+
+    Args:
+        repo_root: 仓库根目录
+        new_version: 新版本号，如 "3.2.5"（不带 v 前缀）
+    Returns:
+        {old, new, written: [文件列表], verified: bool}
+    Raises:
+        ValueError: 版本号格式非法或写入后 UC-01 校验失败
+    """
+    # 格式校验
+    if not re.fullmatch(r"\d+\.\d+\.\d+", new_version):
+        raise ValueError(f"版本号格式非法（需 X.Y.Z）：{new_version}")
+
+    skill_md = repo_root / "source" / "SKILL.md"
+    paths_py = repo_root / "tools" / "lib" / "paths.py"
+    readme = repo_root / "README.md"
+
+    old = _extract_skill_version(skill_md)
+    if old == new_version:
+        return {"old": old, "new": new_version, "written": [], "verified": True,
+                "skipped": "版本号未变化"}
+
+    written = []
+    _write_skill_version(skill_md, new_version)
+    written.append("source/SKILL.md")
+    _write_paths_master_version(paths_py, new_version)
+    written.append("tools/lib/paths.py")
+    _write_readme_version(readme, new_version)
+    written.append("README.md")
+
+    # 写入后立即校验
+    result = check_uc01_version(repo_root)
+    verified = result.pass_
+    if not verified:
+        raise ValueError(
+            f"bump 后 UC-01 校验失败：{result.message}。"
+            f"文件已改（{written}），需人工核对或回滚。"
+        )
+
+    return {"old": old, "new": new_version, "written": written, "verified": verified}
+
+
 # ─── UC-02 门禁注册一致性 ────────────────────────────────────────────────────
 def check_uc02_gates_registry(repo_root: Path) -> UpdateCheckResult:
     """UC-02 门禁注册一致性：GATE_REGISTRY 每个 id 都在 CHECK_FUNCS 或 check_all 特判中。"""
@@ -135,7 +229,9 @@ def check_uc02_gates_registry(repo_root: Path) -> UpdateCheckResult:
 # SKILL.md 引用但 CLI 未实现的历史"未来命令"（v3.2 前就声明，本次不实现，只 warn）
 # 注：`assets` 组已于 2026-06-24 实现 query/outline/section/stats（ES 化索引），
 # 从此集合移除；assets check/generate/update/audit/read 仍走 SKILL 协议，后续迭代补。
-HISTORICAL_UNIMPLEMENTED = {"fork", "run", "skill", "sync-tools", "init"}
+# 注：`init` 已于 2026-06-25（v3.2.5）挂到 CLI（subprocess 调 scripts/init.py），
+# 从此集合移除，UC-03 warn 清零该项。
+HISTORICAL_UNIMPLEMENTED = {"fork", "run", "skill", "sync-tools"}
 
 
 def _extract_cli_commands(cli_path: Path) -> set:

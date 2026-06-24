@@ -10,7 +10,8 @@ description: |
   🆕 v3.2.2：Toolset Layer P0，新增 ae-sdd memory/db/git 三组工程工具，DB 本地 profile + read-first，Git Insight 只读输出结构化历史/影响证据。
   🆕 v3.2.3：Memory 强制门禁升级，ae-sdd state write --phase 离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 memory enter → memory write。
   🆕 v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节，固化 6 大子系统总览/协同关系图/维护边界，补齐健康度清单 v3.2.2/v3.2.3 条目，修正 README 正文门禁数与子 SKILL 数。
-version: 3.2.4
+  🆕 v3.2.5：脚本化补齐 4 缺口——ae-sdd init 挂载 CLI（补 UC-03 warn）、新增 ae-sdd bump 同步三处版本号（UC-01 操作侧）、新建 CHANGELOG _template.md、dev_sync.py 增仓库根残留清理。
+version: 3.2.5
 main_entry: true
 triggers:
   - "启动自动化工程"

@@ -13,6 +13,9 @@ ae-sdd — ae-sdd CLI 入口
   - gate coding-required : Coding 真实性门卫（Coding 完成/CodeReview 前必过 G-CODE-1）
 🆕 v3.2 更新图谱（2026-06-24）：
   - update-check : 更新依赖图谱检查（改了 A 是否同步了 BCDEFG，兜底防漏更新）
+🆕 v3.2.5 脚本化补齐（2026-06-25）：
+  - bump : 同步三处版本号（SKILL.md/paths.py/README.md:5，UC-01 操作侧）
+  - init : 项目实例化（挂载 scripts/init.py，补 UC-03 历史遗留 warn）
 
 辅助：
   - version  : 输出版本
@@ -26,6 +29,8 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd gate ra-required [--project <key>]   # 跑 G-RA-1~4（SKILL.md §🛡️ G-RA 契约）
     ae-sdd gate coding-required [--project <dir>] # 跑 G-CODE-1（Coding 反模式扫描）
     ae-sdd update-check [--only UC-01]          # 更新闭环检查（v3.2）
+    ae-sdd bump 3.2.5                            # 同步三处版本号（v3.2.5）
+    ae-sdd init <project-dir> <project-key>      # 项目实例化（v3.2.5）
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health
@@ -300,6 +305,81 @@ def cmd_update_check(args, parser):
             output.info("✅ 更新闭环完整，无漏更新。")
 
     return 0 if summary["failed"] == 0 else 1
+
+
+def cmd_bump(args, parser):
+    """bump — 同步三处版本号（SKILL.md / paths.py / README.md:5）
+
+    v3.2.5：UC-01 只校验不操作，本命令补"操作侧"——自动写入三处版本号
+    并立即跑 UC-01 校验一致性。README.md:5 括号内的"最新变更"说明需维护者另行更新。
+
+    用法：ae-sdd bump 3.2.5
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    new_version = args.version
+
+    try:
+        result = update_graph.bump_version(repo_root, new_version)
+    except ValueError as e:
+        output.err(f"bump 失败：{e}")
+        return 1
+
+    if args.json:
+        output.emit(result, as_json=True)
+        return 0
+
+    if result.get("skipped"):
+        output.info(f"ℹ️  版本号未变化（{result['new']}），跳过写入。")
+        return 0
+
+    output.ok(f"版本号 {result['old']} → {result['new']}，已同步 {len(result['written'])} 处：")
+    for f in result["written"]:
+        output.info(f"  • {f}")
+    if result["verified"]:
+        output.ok("UC-01 校验通过：三处版本号一致。")
+    else:
+        output.err("UC-01 校验失败，需人工核对。")
+        return 1
+    output.info("⚠️  README.md:5 括号内的「最新变更」说明需手动更新（bump 只同步版本号）。")
+    return 0
+
+
+def cmd_init(args, parser):
+    """init — 项目实例化（Layer 4，挂载 scripts/init.py 到 CLI）
+
+    v3.2.5：init.py 实现已就绪但未挂 CLI（UC-03 历史遗留 warn），本次补注册。
+    通过 subprocess 调 scripts/init.py，透传全部参数（对齐 init.py 的 argparse 定义）。
+
+    用法：ae-sdd init <project-dir> <project-key> [init.py 选项]
+    """
+    import subprocess
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    init_script = repo_root / "scripts" / "init.py"
+
+    if not init_script.is_file():
+        output.err(f"init 脚本不存在：{init_script}")
+        return 1
+
+    # 透传 init.py 自身的 argparse（project_dir / project_key 位置参数 + 选项）
+    # 用 args.argv 收集 init 之后的所有原始参数，交给 init.py 解析
+    init_args = args.init_args if hasattr(args, "init_args") else []
+    cmd = [sys.executable, str(init_script), *init_args]
+
+    # 校验必填位置参数（init.py 要求 project_dir + project_key）
+    if len(init_args) < 2:
+        output.err("init 需要 2 个位置参数：<project-dir> <project-key>")
+        output.info("  用法：ae-sdd init <project-dir> <project-key> [选项]")
+        output.info("  示例：ae-sdd init D:/Item/my-project my-project")
+        output.info("  完整选项见：python scripts/init.py --help")
+        return 1
+
+    try:
+        result = subprocess.run(cmd)
+        return result.returncode
+    except OSError as e:
+        output.err(f"调用 init.py 失败：{e}")
+        return 1
 
 
 def _memory_scope_from_args(args):
@@ -1459,6 +1539,19 @@ def main() -> int:
     # health
     p_health = sub.add_parser("health", help="健康度自检", parents=[common])
     p_health.set_defaults(func=cmd_health)
+
+    # bump（v3.2.5 — 同步三处版本号，UC-01 的操作侧）
+    p_bump = sub.add_parser("bump", help="同步三处版本号（SKILL.md/paths.py/README.md）",
+                            parents=[common])
+    p_bump.add_argument("version", help="新版本号，如 3.2.5（不带 v 前缀）")
+    p_bump.set_defaults(func=cmd_bump)
+
+    # init（v3.2.5 — 项目实例化，挂载 scripts/init.py，补 UC-03 历史遗留）
+    p_init = sub.add_parser("init", help="项目实例化（Layer 4，创建 .ae-sdd/ 骨架）",
+                            parents=[common])
+    p_init.add_argument("init_args", nargs=argparse.REMAINDER,
+                        help="透传给 scripts/init.py 的参数：<project-dir> <project-key> [选项]")
+    p_init.set_defaults(func=cmd_init)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):

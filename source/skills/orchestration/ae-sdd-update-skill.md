@@ -175,7 +175,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | 3 | 用户安装 | `~/.claude/skills/ae-sdd/` | `install.py` | ❌ | 不手工改，安装产物 |
 | 4 | 项目实例 | `<project>/.ae-sdd/` | `init.py`（`ae-sdd init`） | ❌ (项目侧) | 不手工改，项目侧产物 |
 
-**⚠️ 已知缺口（2026-06-24 核实）：** SKILL.md §6 描述的 `ae-sdd init <project-dir> <project-key>` 与 `ae-sdd fork` 命令，当前 CLI（`tools/bin/ae-sdd`）**尚未注册这两个子命令**（仅有 `init-hooks` 写 hooks 配置）。项目实例化（Layer4）目前由 `scripts/init.py` 承载但未挂到 CLI。维护者若补全此能力，需同步：CLI 注册 + SKILL.md §6 + install-skill.md + 本节。
+**⚠️ 已知缺口（2026-06-25 更新）：** SKILL.md §6 描述的 `ae-sdd init <project-dir> <project-key>` 命令已于 v3.2.5（2026-06-25）挂载到 CLI（`tools/bin/ae-sdd`，通过 subprocess 调 `scripts/init.py`，透传全部参数），UC-03 历史遗留 warn 已清零该项。`ae-sdd fork` 仍为**未来命令**（v3.0 双目录分层 + overrides/ 机制已覆盖 fork 语义，暂不实现），保留在 UC-03 `HISTORICAL_UNIMPLEMENTED` 集合中（warn 状态）。`run`/`skill`/`sync-tools` 同属历史声明，标未来命令。维护者若补全 fork 等，需同步：CLI 注册 + SKILL.md §6 + install-skill.md + 本节 + update_graph.py `HISTORICAL_UNIMPLEMENTED` 集合。
 
 ---
 

@@ -81,6 +81,15 @@ class TestUC03(unittest.TestCase):
         # 历史遗留应被识别
         self.assertTrue(r.details.get("historical"))
 
+    def test_init_no_longer_historical(self):
+        # v3.2.5：init 已挂 CLI，不应再出现在历史遗留集合
+        self.assertNotIn("init", ug.HISTORICAL_UNIMPLEMENTED)
+        r = ug.check_uc03_command_contract(REPO_ROOT)
+        historical = r.details.get("historical", [])
+        self.assertNotIn("init", historical, "init 已挂 CLI，不应是历史遗留")
+        # fork/run/skill/sync-tools 仍为未来命令
+        self.assertIn("fork", ug.HISTORICAL_UNIMPLEMENTED)
+
     def test_new_command_missing_blocks(self):
         # SKILL.md 引用一个本次新增命令但 CLI 没实现
         tmp = _setup_repo({
@@ -134,6 +143,70 @@ class TestUC05(unittest.TestCase):
         r = ug.check_uc05_health_checklist(tmp)
         self.assertTrue(r.pass_)  # warn 算 pass
         self.assertGreater(len(r.details.get("missing", [])), 0)
+
+
+# ─── bump_version 版本号同步（v3.2.5 UC-01 操作侧）──────────────────────────
+class TestBumpVersion(unittest.TestCase):
+
+    def _setup_versioned_repo(self, old: str = "3.2.4") -> Path:
+        """构造三处版本号一致的临时仓库。"""
+        return _setup_repo({
+            "source/SKILL.md": f"---\nname: ae-sdd\ndescription: test\nversion: {old}\n---\n# ae-sdd\n",
+            "tools/lib/paths.py": f'MASTER_VERSION = "{old}"\n',
+            "README.md": f"> **版本：** v{old}（最新变更）\n",
+        })
+
+    def test_bump_syncs_three_places(self):
+        tmp = self._setup_versioned_repo("3.2.4")
+        result = ug.bump_version(tmp, "3.2.5")
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["old"], "3.2.4")
+        self.assertEqual(result["new"], "3.2.5")
+        self.assertEqual(len(result["written"]), 3)
+        # 验证三处实际写入
+        self.assertEqual(ug._extract_skill_version(tmp / "source" / "SKILL.md"), "3.2.5")
+        self.assertEqual(ug._extract_paths_master_version(tmp / "tools" / "lib" / "paths.py"), "3.2.5")
+        self.assertEqual(ug._extract_readme_version(tmp / "README.md"), "3.2.5")
+
+    def test_bump_same_version_skips(self):
+        tmp = self._setup_versioned_repo("3.2.4")
+        result = ug.bump_version(tmp, "3.2.4")
+        self.assertTrue(result["verified"])
+        self.assertIn("skipped", result)
+        self.assertEqual(result["written"], [])
+
+    def test_bump_invalid_format_raises(self):
+        tmp = self._setup_versioned_repo("3.2.4")
+        with self.assertRaises(ValueError) as ctx:
+            ug.bump_version(tmp, "3.2")
+        self.assertIn("格式非法", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            ug.bump_version(tmp, "v3.2.5")  # 带 v 前缀非法
+        with self.assertRaises(ValueError):
+            ug.bump_version(tmp, "3.2.5.1")  # 四段非法
+
+    def test_bump_preserves_readme_paren_note(self):
+        # README 括号说明应保留，只换版本号
+        tmp = _setup_repo({
+            "source/SKILL.md": "---\nversion: 3.2.4\n---\n# ae-sdd\n",
+            "tools/lib/paths.py": 'MASTER_VERSION = "3.2.4"\n',
+            "README.md": "> **版本：** v3.2.4（🆕 2026-06-24：某变更；v3.2.3：另一变更）\n",
+        })
+        ug.bump_version(tmp, "3.2.5")
+        readme_text = (tmp / "README.md").read_text(encoding="utf-8")
+        self.assertIn("v3.2.5", readme_text)
+        self.assertIn("🆕 2026-06-24：某变更", readme_text)  # 括号说明保留
+        self.assertNotIn("v3.2.4", readme_text)  # 旧版本号已替换
+
+    def test_bump_verify_failure_raises(self):
+        # 写入后 UC-01 校验失败的场景：SKILL.md 无 version 字段
+        tmp = _setup_repo({
+            "source/SKILL.md": "# ae-sdd no version field\n",
+            "tools/lib/paths.py": 'MASTER_VERSION = "3.2.4"\n',
+            "README.md": "> **版本：** v3.2.4\n",
+        })
+        with self.assertRaises(ValueError):
+            ug.bump_version(tmp, "3.2.5")
 
 
 # ─── check_all / summarize ───────────────────────────────────────────────────
