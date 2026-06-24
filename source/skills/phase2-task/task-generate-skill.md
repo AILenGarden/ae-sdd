@@ -459,7 +459,7 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 | 当前 Task 基础信息 | Story 实现任务映射（任务名 + 层 + 依赖） |
 | 项目资产 | `project-assets-update-skill.assets.forTaskGenerate(projectKey)` — 返回 §3 + §4 + §5 + §8（分层/包路径/命名/CodePlan 输入索引）|
 | 约束文档 | `document-storage-skill.get_constraints(projectKey)`（不再直接写目录路径）|
-| CodingModel 路径 | `strategies/be-coding-thinking-engine.md` |
+| CodingModel 路径 | `standards/thinking/be-coding-thinking-engine.md` |
 
 ### `CodingSkill.Plan(task-level)` 必须返回
 

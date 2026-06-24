@@ -1,9 +1,10 @@
 """
-gates.py — ae-sdd 门禁检查（14 主门禁 + 4 G-RA 需求分析准入门卫）
+gates.py — ae-sdd 门禁检查（14 主门禁 + 4 G-RA + G-CODE Coding 真实性门禁）
 
 v3.0.1 完整实现 G-01~G-07 + G-10~G-12（11 个"检查文档/状态存在"类门禁）。
 v3.1 实施 G-08（解析 CodingPlan 14 门禁）+ G-09（调 test_authenticity_scan.py）+ G-13（全链路对称性核查）。
 v3.2 实施 G-RA-1~G-RA-4（需求分析准入门卫）+ G-13 接入 RA 层（五层→六层追溯）。
+v3.2.1 实施 G-CODE-1（Coding 真实性/反模式扫描，调 coding_authenticity_scan.py）。
 
 14 主门禁（v3.0）：
   G-00  项目资产完整性（pre-flight）       ✅ 完整
@@ -28,6 +29,9 @@ G-RA 需求分析准入门卫（v3.2 — 对标 SKILL.md §🛡️ G-RA）：
   G-RA-2  RA 8 维度完整 + RAModel 12 维     ✅ 完整
   G-RA-3  RA 衍生章节完整                   ✅ 完整（状态机类需求必填）
   G-RA-4  RA 真实性扫描通过                 ✅ 完整（调 ra_authenticity_scan.py）
+
+G-CODE Coding 真实性门禁（v3.2.1 — 对标 CodingModel §6 AI Coding 反模式库）：
+  G-CODE-1 Coding 真实性扫描通过             ✅ 完整（调 coding_authenticity_scan.py）
 """
 from __future__ import annotations
 
@@ -54,7 +58,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 4 G-RA 需求分析准入门卫 = 18）
+# 门禁元信息（14 主门禁 G-00~G-13 + 4 G-RA + 1 G-CODE = 19）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -76,6 +80,7 @@ GATE_REGISTRY: list[dict] = [
     {"id": "G-RA-2", "name": "RA 8 维度完整",        "severity": "blocker"},
     {"id": "G-RA-3", "name": "RA 衍生章节完整",      "severity": "blocker"},
     {"id": "G-RA-4", "name": "RA 真实性扫描通过",    "severity": "blocker"},
+    {"id": "G-CODE-1", "name": "Coding 真实性扫描通过", "severity": "blocker"},
 ]
 
 # Story Review 之后允许的 phase
@@ -411,6 +416,11 @@ def _locate_authenticity_scanner(master_source: Optional[Path]) -> Optional[Path
     return _locate_runtime_script(master_source, "test_authenticity_scan.py")
 
 
+def _locate_coding_scanner(master_source: Optional[Path]) -> Optional[Path]:
+    """在母版找 coding_authenticity_scan.py"""
+    return _locate_runtime_script(master_source, "coding_authenticity_scan.py")
+
+
 def check_g09(project_dir: Path, st: dict, current_story: str,
               master_source: Optional[Path] = None) -> GateResult:
     """G-09 测试真实性扫描通过 — 调 test_authenticity_scan.py 跑 8 类禁止检查
@@ -489,6 +499,86 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                       f"扫描通过：{n_total} findings / 0 BLOCKER（{java_test_files} 测试文件）",
                       details={"scanned": True, "n_findings": n_total, "n_blockers": 0,
                                "n_test_files": java_test_files})
+
+
+def check_gcode1(project_dir: Path, st: dict, current_story: str,
+                 master_source: Optional[Path] = None) -> GateResult:
+    """G-CODE-1 Coding 真实性扫描通过 — 调 coding_authenticity_scan.py。
+
+    对标 CodingModel §6 AI Coding 反模式库，把 AP-1~AP-6 中可静态命中的
+    反模式先变成可执行门禁。pre-coding 阶段无代码可扫时按 stub 通过；进入
+    coding/test-running/code-reviewed/completed 后，如果生产代码为 0，则降为 warn。
+    """
+    phase = st.get("phase", "initialized")
+    PRE_CODING_PHASES = {"initialized", "dr-generated", "story-generated",
+                         "story-reviewed", "task-generated", "task-reviewed"}
+
+    scanner = _locate_coding_scanner(master_source)
+    if scanner is None:
+        return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", True,
+                          "未找到母版 coding_authenticity_scan.py（跳过）",
+                          action="确认母版路径",
+                          details={"scanned": False, "skipped": True, "stub": True})
+
+    try:
+        result = _subprocess.run(
+            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except _subprocess.TimeoutExpired:
+        return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                          "coding_authenticity_scan.py 跑超过 60 秒",
+                          "缩小扫描范围或增加超时")
+    except Exception as e:
+        return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                          f"扫描器异常: {e}",
+                          "检查 coding_authenticity_scan.py 是否可执行")
+
+    try:
+        report = _json.loads(result.stdout) if result.stdout else {}
+    except _json.JSONDecodeError as e:
+        return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                          f"扫描器 JSON 输出无法解析: {e}",
+                          f"stdout 前 200 字符: {result.stdout[:200]}")
+
+    status = report.get("status", "UNKNOWN")
+    code_files = report.get("codeFiles", 0)
+    coding_reports = report.get("codingReports", 0)
+    blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
+    n_total = len(report.get("findings", []))
+
+    if status != "PASS" or blockers > 0:
+        blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
+                                if f.get("severity") == "BLOCKER"})
+        return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                          f"Coding 真实性扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}",
+                          "修复 Coding 反模式命中项，或在 CodeReview 中显式评审通过",
+                          details={"scanned": True, "n_findings": n_total,
+                                   "n_blockers": blockers, "status": status,
+                                   "n_code_files": code_files,
+                                   "n_coding_reports": coding_reports,
+                                   "blocker_rules": blocker_rules})
+
+    if code_files == 0:
+        if phase in PRE_CODING_PHASES:
+            return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", True,
+                              f"phase = {phase}（pre-coding，扫描无对象，按 stub 算）",
+                              action="进入 coding 阶段后此门禁生效",
+                              details={"scanned": True, "skipped": True, "stub": True,
+                                       "current_phase": phase, "n_code_files": 0,
+                                       "n_coding_reports": coding_reports})
+        return GateResult("G-CODE-1", "Coding 真实性扫描通过", "warn", True,
+                          f"phase = {phase} 但 0 个生产代码文件（请确认是否漏扫项目根）",
+                          action="确认 --project / cwd 是否指向服务根或仓库根",
+                          details={"scanned": True, "n_findings": n_total,
+                                   "n_code_files": 0, "n_coding_reports": coding_reports,
+                                   "current_phase": phase, "stub": False})
+
+    return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", True,
+                      f"Coding 真实性扫描通过（{code_files} 个代码文件，{coding_reports} 份 Coding 报告，0 BLOCKER，{n_total} WARN）",
+                      details={"scanned": True, "n_findings": n_total,
+                               "n_blockers": 0, "n_code_files": code_files,
+                               "n_coding_reports": coding_reports})
 
 
 # ─── G-13：RA ↔ DR ↔ Story ↔ Task ↔ Coding 六层引用追溯 ──────────────────────
@@ -883,13 +973,14 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-13": check_g13,
     "G-RA-1": check_ra_required, "G-RA-2": check_ra_dimensions,
     "G-RA-3": check_ra_derivatives, "G-RA-4": check_ra_authenticity,
+    "G-CODE-1": check_gcode1,
 }
 
 
 # ─── 主入口 ─────────────────────────────────────────────────────────────────
 def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
               project_key: str, only: Optional[str] = None) -> list[GateResult]:
-    """跑全部门禁（14 主门禁 + 4 G-RA）；only 指定时只跑那一个"""
+    """跑全部门禁（14 主门禁 + 4 G-RA + G-CODE）；only 指定时只跑那一个"""
     results: list[GateResult] = []
 
     # 读 state（如果 .ae-sdd 存在）
@@ -919,6 +1010,9 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
         elif g["id"] == "G-RA-4":
             # G-RA-4 同样需要 master_source 调 ra_authenticity_scan.py
             results.append(check_ra_authenticity(project_dir, st, current_story, master_source=master_source))
+        elif g["id"] == "G-CODE-1":
+            # G-CODE-1 需要 master_source 调 coding_authenticity_scan.py
+            results.append(check_gcode1(project_dir, st, current_story, master_source=master_source))
         elif g["id"] in CHECK_FUNCS:
             results.append(CHECK_FUNCS[g["id"]](project_dir, st, current_story))
         else:

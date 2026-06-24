@@ -155,7 +155,7 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 
 > `CodingSkill.Plan` 和 `CodingSkill.Execute` 的入口门禁。未完成本步，禁止进入后续步骤。
 
-**加载路径：** `strategies/be-coding-thinking-engine.md`
+**加载路径：** `standards/thinking/be-coding-thinking-engine.md`
 
 **必须产出本轮 CodingModel 决策记录：**
 

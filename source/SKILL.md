@@ -6,7 +6,8 @@ description: |
   当开发者说"启动自动化工程"、"从 DR 开始实现"、"端到端实现"、"继续流程"、
   "继续上次"、"/ae-sdd" 时触发。支持流程状态跟踪与中断后恢复。
   🆕 v3.2.0：需求分析能力对标 Coding，新增 G-RA 准入门卫、RequirementAnalysisModel 12 维决策、16 道 RA 质量闸与 RA 真实性扫描。
-version: 3.2.0
+  🆕 v3.2.1：Coding 能力对标需求分析，新增 G-CODE-1 Coding 真实性门禁、AI Coding 反模式库（AP-1~AP-6）与 coding_authenticity_scan.py 扫描器；微任务快速通道 §0.5。
+version: 3.2.1
 main_entry: true
 triggers:
   - "启动自动化工程"

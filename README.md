@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.2.0（🆕 2026-06-24：需求分析能力全维度对标 Coding — RequirementAnalysisModel 12 维决策 + 16 道 RA 质量闸（软门禁）+ gates.py G-RA-1~4 硬门禁（RA 文档存在/8 维度完整/衍生章节完整/真实性扫描）+ ra_authenticity_scan.py 8 类禁止扫描器 + G-13 六层追溯接入 RA 层 + G-RA 准入门卫（进 dr/story/task-generate 前必过）；v3.1.2：ae-sdd-install-skill + install.py 智能引导；v3.1.1：requirement-analysis 阶段 H 深度强化；v3.1.0：纪律层加固）
+> **版本：** v3.2.1（🆕 2026-06-24：Coding 能力工具层加固 — 新增 G-CODE-1 Coding 真实性门禁 + coding_authenticity_scan.py 扫描 AP-1~AP-6 可静态命中的 Coding 反模式 + `ae-sdd gate coding-required` + dev-sync watch 覆盖 scripts/tools；v3.2.0：需求分析能力全维度对标 Coding — RequirementAnalysisModel 12 维决策 + 16 道 RA 质量闸（软门禁）+ gates.py G-RA-1~4 硬门禁 + ra_authenticity_scan.py + G-13 六层追溯接入 RA 层）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -37,7 +37,8 @@ ae-sdd/                                # 仓库根（GitHub 直发）
 │   ├── install.ps1                    #    Windows PowerShell 安装
 │   ├── dev-sync.sh                    #    开发者工具：build + install + watch
 │   ├── test_authenticity_scan.py      #    测试真实性扫描器（G-09 运行时依赖）
-│   └── ra_authenticity_scan.py        #    RA 真实性扫描器（G-RA-4 运行时依赖）
+│   ├── ra_authenticity_scan.py        #    RA 真实性扫描器（G-RA-4 运行时依赖）
+│   └── coding_authenticity_scan.py    #    Coding 真实性扫描器（G-CODE-1 运行时依赖）
 │
 ├── .gitignore                         # 忽略 dist/、IDE 数据、临时文件
 └── README.md                          # 📍 你正在看的文件
@@ -150,7 +151,7 @@ bash scripts/dev-sync.sh --uninstall
 并**注入**：
 - `VERSION`（含版本号 + 构建时间戳）
 - `.claude-plugin/plugin.json`（plugin 自描述元数据）
-- `scripts/test_authenticity_scan.py` 与 `scripts/ra_authenticity_scan.py`（门禁运行时扫描器）
+- `scripts/test_authenticity_scan.py`、`scripts/ra_authenticity_scan.py` 与 `scripts/coding_authenticity_scan.py`（门禁运行时扫描器）
 
 ### Q4: 我是项目 owner，想给项目加 ae-sdd 怎么用？
 安装 ae-sdd 后，在你的项目目录下跑 `ae-sdd init <project-dir> <project-key>`（v3.0 实施中，详见 source/SKILL.md §6 实例化机制）。

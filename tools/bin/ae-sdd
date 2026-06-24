@@ -4,11 +4,13 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 18 门禁检查（pre-flight；v3.2 含 G-RA 需求分析准入门卫）
+  - gates    : 19 门禁检查（pre-flight；v3.2 含 G-RA；v3.2.1 含 G-CODE）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
 
 🆕 v3.2 G-RA（2026-06-24）：
   - gate ra-required : 需求分析准入门卫（进 dr/story/task-generate 前必过 G-RA-1~4）
+🆕 v3.2.1 G-CODE（2026-06-24）：
+  - gate coding-required : Coding 真实性门卫（Coding 完成/CodeReview 前必过 G-CODE-1）
 
 辅助：
   - version  : 输出版本
@@ -20,6 +22,7 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd state next-step
     ae-sdd gates check [--only G-00]
     ae-sdd gate ra-required [--project <key>]   # 跑 G-RA-1~4（SKILL.md §🛡️ G-RA 契约）
+    ae-sdd gate coding-required [--project <dir>] # 跑 G-CODE-1（Coding 反模式扫描）
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health
@@ -126,6 +129,99 @@ def cmd_gates_check(args, parser):
                 output.info(f"      → {r['action']}")
 
     # 任何 blocker 失败 → exit 1
+    return 0 if summary["all_pass"] else 1
+
+
+def cmd_gate_ra_required(args, parser):
+    """gate ra-required — 需求分析准入门卫（SKILL.md §🛡️ G-RA 契约）
+
+    跑 G-RA-1~4 四个 RA 门禁：RA 文档存在 / 8 维度完整 / 衍生章节完整 / 真实性扫描。
+    进 dr-generate / story-generate / task-generate 前必过（微任务/BUG 豁免）。
+    """
+    master = paths.locate_master_source()
+    # 优先用 --project 指定的目录，否则从 cwd 向上找 .ae-sdd/
+    if getattr(args, "project", "") and args.project:
+        ade_sdd = paths.locate_project_ae_sdd(Path(args.project))
+    else:
+        ade_sdd = paths.locate_project_ae_sdd()
+    project_key = None
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey")
+    if not project_key:
+        project_key = "unknown"
+
+    ra_gate_ids = ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"]
+    results = []
+    for gid in ra_gate_ids:
+        # G-RA-4 需要 master_source 调扫描器（与 check_all 的 G-09/G-RA-4 特判一致）
+        r = gates.check_all(master, ade_sdd, project_key, only=gid)
+        results.extend(r)
+
+    summary = gates.summarize(results)
+    if args.json:
+        output.emit(summary, as_json=True)
+    else:
+        output.info(f"🛡️ G-RA 需求分析准入门卫（{summary['total']} 门禁：✅ {summary['passed']} / ❌ {summary['failed']} / 🟡 {summary['stubs']} stub）")
+        for r in summary["results"]:
+            mark = "✅" if r["pass"] else "❌"
+            output.info(f"  {mark} {r['gate_id']} {r['name']}: {r['message']}")
+            if r.get("action"):
+                output.info(f"      → {r['action']}")
+        if not summary["all_pass"]:
+            output.info("⚠️ G-RA 未通过：下游 dr-generate / story-generate / task-generate 被阻断。")
+            output.info("   修复后重跑 `ae-sdd gate ra-required`，或触发 requirement-analysis-skill 生成 RA。")
+
+    return 0 if summary["all_pass"] else 1
+
+
+def cmd_gate_coding_required(args, parser):
+    """gate coding-required — Coding 真实性准入门卫（CodingModel §6 反模式库）
+
+    跑 G-CODE-1：调用 coding_authenticity_scan.py 扫 AP-1~AP-6 中可静态命中的
+    Coding 反模式。进入 CodeReview / 完成判定前必过。
+    """
+    master = paths.locate_master_source()
+    if getattr(args, "project", "") and args.project:
+        ade_sdd = paths.locate_project_ae_sdd(Path(args.project))
+        project_root = Path(args.project).resolve()
+    else:
+        ade_sdd = paths.locate_project_ae_sdd()
+        project_root = Path.cwd()
+
+    project_key = None
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey")
+    if not project_key:
+        project_key = "unknown"
+
+    # check_all 会在无 .ae-sdd 时用 cwd；--project 指向非 ae-sdd 根时临时切 cwd。
+    old_cwd = Path.cwd()
+    try:
+        if not ade_sdd and project_root:
+            import os
+            os.chdir(project_root)
+        results = gates.check_all(master, ade_sdd, project_key, only="G-CODE-1")
+    finally:
+        if old_cwd != Path.cwd():
+            import os
+            os.chdir(old_cwd)
+
+    summary = gates.summarize(results)
+    if args.json:
+        output.emit(summary, as_json=True)
+    else:
+        output.info(f"🛡️ G-CODE Coding 真实性门卫（{summary['total']} 门禁：✅ {summary['passed']} / ❌ {summary['failed']} / 🟡 {summary['stubs']} stub）")
+        for r in summary["results"]:
+            mark = "✅" if r["pass"] else "❌"
+            output.info(f"  {mark} {r['gate_id']} {r['name']}: {r['message']}")
+            if r.get("action"):
+                output.info(f"      → {r['action']}")
+        if not summary["all_pass"]:
+            output.info("⚠️ G-CODE 未通过：Coding 完成 / CodeReview 前被阻断。")
+            output.info("   修复后重跑 `ae-sdd gate coding-required`。")
+
     return 0 if summary["all_pass"] else 1
 
 
@@ -577,6 +673,24 @@ def cmd_health(args, parser):
         "message": g00.message,
     })
 
+    # 7. G-RA 扫描器可用性（v3.2 — ra_authenticity_scan.py 是否可定位）
+    ra_scanner = gates._locate_ra_scanner(master) if master else None
+    items.append({
+        "name": "G-RA 真实性扫描器",
+        "pass": ra_scanner is not None,
+        "message": f"ra_authenticity_scan.py 可定位：{ra_scanner}" if ra_scanner
+                   else "未定位到 ra_authenticity_scan.py（纯安装环境将 stub 跳过 G-RA-4）",
+    })
+
+    # 8. G-CODE 扫描器可用性（v3.2.1 — coding_authenticity_scan.py 是否可定位）
+    coding_scanner = gates._locate_coding_scanner(master) if master else None
+    items.append({
+        "name": "G-CODE Coding 真实性扫描器",
+        "pass": coding_scanner is not None,
+        "message": f"coding_authenticity_scan.py 可定位：{coding_scanner}" if coding_scanner
+                   else "未定位到 coding_authenticity_scan.py（纯安装环境将 stub 跳过 G-CODE-1）",
+    })
+
     summary = {
         "total": len(items),
         "passed": sum(1 for i in items if i["pass"]),
@@ -625,11 +739,23 @@ def main() -> int:
     p_state_write.set_defaults(func=cmd_state_write)
 
     # gates
-    p_gates = sub.add_parser("gates", help="14 门禁检查", parents=[common])
+    p_gates = sub.add_parser("gates", help="19 门禁检查（14 主 + 4 G-RA + 1 G-CODE）", parents=[common])
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
-    p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00）")
+    p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")
     p_gates_check.set_defaults(func=cmd_gates_check)
+
+    # gate ra-required（v3.2 — SKILL.md §🛡️ G-RA 准入门卫契约）
+    p_gate = sub.add_parser("gate", help="单门卫检查（如 ra-required）", parents=[common])
+    gate_sub = p_gate.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_gate_ra = gate_sub.add_parser("ra-required", help="需求分析准入门卫（G-RA-1~4）",
+                                     parents=[common])
+    p_gate_ra.add_argument("--project", default="", help="项目根目录（默认 cwd）")
+    p_gate_ra.set_defaults(func=cmd_gate_ra_required)
+    p_gate_code = gate_sub.add_parser("coding-required", help="Coding 真实性门卫（G-CODE-1）",
+                                      parents=[common])
+    p_gate_code.add_argument("--project", default="", help="项目根目录（默认 cwd）")
+    p_gate_code.set_defaults(func=cmd_gate_coding_required)
 
     # classify
     p_classify = sub.add_parser("classify", help="4 维判定", parents=[common])

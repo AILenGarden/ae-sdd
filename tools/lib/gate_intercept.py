@@ -228,7 +228,7 @@ def _check_state_write(
         "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
         "coding":          ["G-00", "G-07", "G-08"],
         "test-running":    ["G-00"],
-        "code-reviewed":   ["G-00", "G-09", "G-10", "G-11"],
+        "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
         "completed":       ["G-00", "G-12", "G-13"],
     }
     required_gates = PHASE_ENTRY_GATES.get(target_phase, [])

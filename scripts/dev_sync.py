@@ -10,7 +10,7 @@ dev_sync.py — ae-sdd 开发者工具
     python scripts/dev_sync.py                # 单次 build + install
     python scripts/dev_sync.py --build-only   # 只 build
     python scripts/dev_sync.py --install-only # 只 install（假设 dist/ 已存在）
-    python scripts/dev_sync.py --watch        # 监听 source/ 变化自动 build + install
+    python scripts/dev_sync.py --watch        # 监听 source/、tools/、scripts/ 变化自动 build + install
     python scripts/dev_sync.py --uninstall    # 卸载本地安装
 """
 from __future__ import annotations
@@ -56,6 +56,11 @@ def _max_mtime(root: Path) -> float:
     )
 
 
+def _watched_mtime(roots: list[Path]) -> float:
+    """返回多个监听根的最大 mtime。"""
+    return max((_max_mtime(root) for root in roots), default=0.0)
+
+
 def run_script(script: Path, *args: str) -> int:
     """调 Python 脚本"""
     cmd = [sys.executable, str(script), *args]
@@ -85,19 +90,20 @@ def sync_once(repo_root: Path, do_build: bool, do_install: bool) -> bool:
 
 
 def watch_mode(repo_root: Path, do_build: bool, do_install: bool, interval: int = 2) -> None:
-    """Polling 监听 source/ 变化（每 N 秒），变化则触发 sync"""
-    src = repo_root / "source"
-    info(f"监听模式: 关注 {src} 变化（每 {interval} 秒检查，按 Ctrl+C 停止）")
+    """Polling 监听母版与运行时工具变化（每 N 秒），变化则触发 sync。"""
+    watched_roots = [repo_root / "source", repo_root / "tools", repo_root / "scripts"]
+    watched_desc = ", ".join(str(root) for root in watched_roots if root.exists())
+    info(f"监听模式: 关注 {watched_desc} 变化（每 {interval} 秒检查，按 Ctrl+C 停止）")
     if not sync_once(repo_root, do_build, do_install):
         sys.exit(1)
 
-    last_mtime = _max_mtime(src)
+    last_mtime = _watched_mtime(watched_roots)
     try:
         while True:
             time.sleep(interval)
-            current = _max_mtime(src)
+            current = _watched_mtime(watched_roots)
             if current > last_mtime:
-                info(f"检测到 source/ 变化（mtime {last_mtime:.1f} → {current:.1f}）")
+                info(f"检测到母版/工具变化（mtime {last_mtime:.1f} → {current:.1f}）")
                 last_mtime = current
                 if not sync_once(repo_root, do_build, do_install):
                     err("sync 失败，但继续监听")

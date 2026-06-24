@@ -6,6 +6,7 @@ build_dist.py — ae-sdd 母版 → 实例化分发包 构建脚本
 🆕 v3.0 双目录分层：source/（SSOT） → dist/ae-sdd/（构建产物）。
 🆕 v3.1 Harness 层（2026-06-22）：HARNESS.md + harness/ 已纳入分发包（默认包含）。
 🆕 v3.2 RA 门禁层（2026-06-24）：运行时真实性扫描器已纳入分发包。
+🆕 v3.2.1 Coding 门禁层（2026-06-24）：Coding 真实性扫描器已纳入分发包。
 
 ⚠️ v3.0.1 Windows 兼容：用 `git archive` 从 commit 读取 source/（不经过 working tree），
    避免 Windows 的 core.autocrlf 把 LF 转 CRLF。
@@ -21,6 +22,7 @@ build_dist.py — ae-sdd 母版 → 实例化分发包 构建脚本
   docs/ae-sdd-conventions.md — 约定文档（docs/ 整体被排除，但 ae-sdd-conventions.md 单独保留）
   scripts/test_authenticity_scan.py — 测试真实性扫描器（G-09 运行时依赖）
   scripts/ra_authenticity_scan.py — RA 真实性扫描器（G-RA-4 运行时依赖）
+  scripts/coding_authenticity_scan.py — Coding 真实性扫描器（G-CODE-1 运行时依赖）
 
 分发包排除（母版专有，不发给用户）：
   CHANGELOG/        — 开发记录
@@ -178,6 +180,7 @@ def _copy_runtime_scripts_to_dist(repo_root: Path, dst: Path) -> None:
     runtime_scripts = [
         "test_authenticity_scan.py",
         "ra_authenticity_scan.py",
+        "coding_authenticity_scan.py",
     ]
 
     copied = []
@@ -312,7 +315,7 @@ def main() -> int:
     # ── 复制 tools/（working tree，非 git archive，无 CRLF 问题）────────────
     _copy_tools_to_dist(repo_root, dst)
 
-    # ── 复制门禁运行时脚本（G-09 / G-RA-4 需要）────────────────────────────
+    # ── 复制门禁运行时脚本（G-09 / G-RA-4 / G-CODE-1 需要）──────────────────
     _copy_runtime_scripts_to_dist(repo_root, dst)
 
     # ── 补充 source/ 里未 commit 的新文件（working tree 补丁）─────────────────
@@ -387,6 +390,12 @@ def main() -> int:
         ok(f"scripts/ra_authenticity_scan.py 已包含 ({dst_ra_scanner.stat().st_size} 字节)")
     else:
         warn("scripts/ra_authenticity_scan.py 未找到（G-RA-4 将无法执行扫描）")
+
+    dst_coding_scanner = dst / "scripts" / "coding_authenticity_scan.py"
+    if dst_coding_scanner.is_file():
+        ok(f"scripts/coding_authenticity_scan.py 已包含 ({dst_coding_scanner.stat().st_size} 字节)")
+    else:
+        warn("scripts/coding_authenticity_scan.py 未找到（G-CODE-1 将无法执行扫描）")
 
     # ── 摘要 ────────────────────────────────────────────────────────────────
     step("构建摘要")

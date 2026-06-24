@@ -1,5 +1,5 @@
 """
-test_gates.py — gates.py 单元测试（14 门禁）
+test_gates.py — gates.py 单元测试（19 门禁：14 主 G-00~G-13 + 4 G-RA + 1 G-CODE）
 
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
@@ -299,6 +299,66 @@ class TestG09(unittest.TestCase):
         self.assertTrue(r.details.get("skipped", False))
 
 
+# ─── G-CODE-1 ───────────────────────────────────────────────────────────────
+class TestGCode1(unittest.TestCase):
+
+    def test_clean_code_passes(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({
+            "src/main/java/com/example/SampleService.java": (
+                "package com.example;\n"
+                "public class SampleService {\n"
+                "    public int sum(int a, int b) { return a + b; }\n"
+                "}\n"
+            ),
+            "design/STORY-001-Coding-Report.md": (
+                "# Coding Report\n"
+                "`src/main/java/com/example/SampleService.java`\n"
+            ),
+        })
+        r = gates.check_gcode1(tmp, {"phase": "coding"}, "STORY-001",
+                               master_source=repo_source)
+        self.assertTrue(r.pass_)
+        self.assertEqual(r.details.get("n_blockers", -1), 0)
+
+    def test_hardcoded_secret_blocks(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({
+            "src/main/java/com/example/BadService.java": (
+                "package com.example;\n"
+                "public class BadService {\n"
+                "    private String token = \"abcdefg\";\n"
+                "}\n"
+            ),
+        })
+        r = gates.check_gcode1(tmp, {"phase": "coding"}, "STORY-001",
+                               master_source=repo_source)
+        self.assertFalse(r.pass_)
+        self.assertGreater(r.details.get("n_blockers", 0), 0)
+
+    def test_missing_code_file_in_report_blocks(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({
+            "src/main/java/com/example/SampleService.java": (
+                "package com.example;\n"
+                "public class SampleService {}\n"
+            ),
+            "design/STORY-001-Coding-Report.md": (
+                "# Coding Report\n"
+                "`src/main/java/com/example/MissingService.java`\n"
+            ),
+        })
+        r = gates.check_gcode1(tmp, {"phase": "coding"}, "STORY-001",
+                               master_source=repo_source)
+        self.assertFalse(r.pass_)
+        self.assertIn("coding-report-missing-code-file", r.details.get("blocker_rules", []))
+
+    def test_no_master_source_skips(self):
+        tmp = _setup_project({})
+        r = gates.check_gcode1(tmp, {"phase": "coding"}, "STORY-001", master_source=None)
+        self.assertTrue(r.details.get("skipped", False))
+
+
 # ─── G-10 / G-11 / G-12 ─────────────────────────────────────────────────────
 class TestG10(unittest.TestCase):
 
@@ -358,8 +418,8 @@ class TestCheckAll(unittest.TestCase):
     def test_check_all_returns_all(self):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
-        # v3.2：14 主门禁 + 4 G-RA = 18
-        self.assertEqual(len(results), 18)
+        # v3.2.1：14 主门禁 + 4 G-RA + 1 G-CODE = 19
+        self.assertEqual(len(results), 19)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -382,9 +442,9 @@ class TestCheckAll(unittest.TestCase):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
         summary = gates.summarize(results)
-        # v3.2：14 主门禁 + 4 G-RA = 18
-        self.assertEqual(summary["total"], 18)
-        self.assertEqual(summary["passed"] + summary["failed"], 18)
+        # v3.2.1：14 主门禁 + 4 G-RA + 1 G-CODE = 19
+        self.assertEqual(summary["total"], 19)
+        self.assertEqual(summary["passed"] + summary["failed"], 19)
         self.assertIn("results", summary)
 
 
