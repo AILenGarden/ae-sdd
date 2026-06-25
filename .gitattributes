@@ -1,0 +1,5 @@
+# ae-sdd git attributes
+# 强制 .githooks/* 使用 LF（Windows 上 Git 默认会转 CRLF，bash hook 会失败）
+.githooks/*  text eol=lf
+*.sh        text eol=lf
+*.bash      text eol=lf
