@@ -69,9 +69,13 @@ master:
   source: {master_source}
   # 或远程 URL：
   # source: https://github.com/AILenGarden/ae-sdd
-  version: "3.0.0"
+  # 🆕 v3.4.0：不再硬编码 3.0.0，由 init 时读母版 source/SKILL.md frontmatter 填充
+  version: "{master_version}"
   # 母版根目录：master 的 source/ 子目录（v3.0 双目录分层）
   masterDir: source
+  # 🆕 v3.4.0：记录 init 时的母版检查时间 + 分发闭环版本号（PostToolUse hook 检测漂移用）
+  lastCheckedAt: "{timestamp}"
+  expectedDispChain: build_dist -> install -> harness_adapter -> mavis_remount
 
 # 项目资产（必填）
 assetPath: assets/{project_key}.assets.md
@@ -148,6 +152,41 @@ def locate_master_assets(master_source: Path, project_key: str) -> Optional[Path
     return asset if asset.is_file() else None
 
 
+def _read_master_version(master_source: Path) -> str:
+    """🆕 v3.4.0：从母版 source/SKILL.md frontmatter 解析 version 字段。
+
+    失败时回退到 paths.MASTER_VERSION（install.py/ae-sdd CLI 一致性来源）。
+    返回 "unknown" 表示母版不可读（不影响 init 主流程）。
+    """
+    skill_md = master_source / "SKILL.md"
+    if not skill_md.is_file():
+        return "unknown"
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except OSError:
+        return "unknown"
+    # YAML frontmatter 形式：
+    # ---
+    # version: 3.4.0
+    # ---
+    import re
+    m = re.search(r"^---\s*\n.*?^version:\s*([\d.]+)\s*\n.*?^---", text, re.MULTILINE | re.DOTALL)
+    if m:
+        return m.group(1)
+    # fallback: 读 tools/lib/paths.py MASTER_VERSION 常量
+    try:
+        import importlib.util
+        paths_py = master_source.parent / "tools" / "lib" / "paths.py"
+        if paths_py.is_file():
+            spec = importlib.util.spec_from_file_location("ae_paths", paths_py)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore
+            return getattr(mod, "MASTER_VERSION", "unknown")
+    except Exception:
+        pass
+    return "unknown"
+
+
 # ─── 核心流程 ────────────────────────────────────────────────────────────────
 def init_project(
     project_dir: Path,
@@ -219,11 +258,16 @@ def init_project(
 
     # ── config.yaml ─────────────────────────────────────────────────────────
     step("生成 config.yaml")
+    # 🆕 v3.4.0：从母版 SKILL.md frontmatter 读实际 version，硬编码 3.0.0 已废弃
+    master_version = _read_master_version(master_source) if master_source else "unknown"
+    if master_source:
+        info(f"母版 version: {master_version}")
     config_content = CONFIG_TEMPLATE.format(
         timestamp=timestamp,
         project_key=project_key,
         git_path=str(project_dir).replace("\\", "/"),
         master_source=master_source_rel,
+        master_version=master_version,
     )
     (target / "config.yaml").write_text(config_content, encoding="utf-8")
     ok(f"已创建 {target/'config.yaml'}")

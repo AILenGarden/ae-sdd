@@ -15,6 +15,34 @@ from typing import Optional
 MASTER_VERSION = "3.4.0"
 
 
+def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:
+    """🆕 v3.4.0：版本对比工具，返回 None 表示一致或无法判断；返回字符串表示落后。
+
+    用于 gate_intercept / health 子命令探测"已安装 SKILL 是否落后于母版"。
+    支持 semver 形式（"3.4.0"）；非 semver 字符串统一按 0.0.0 处理。
+
+    Examples:
+        compare_versions("3.4.0", "3.4.0")  -> None
+        compare_versions("3.2.3", "3.4.0")  -> "installed 3.2.3 < master 3.4.0"
+        compare_versions("4.0.0", "3.4.0")  -> None  (新于母版不告警)
+        compare_versions(None,   "3.4.0")  -> "installed unknown < master 3.4.0"
+    """
+    if not installed:
+        return f"installed unknown < master {master}"
+    if installed == master:
+        return None
+
+    def _parse(v: str) -> tuple[int, ...]:
+        try:
+            return tuple(int(x) for x in v.split(".")[:3])
+        except (ValueError, AttributeError):
+            return (0, 0, 0)
+
+    if _parse(installed) < _parse(master):
+        return f"installed {installed} < master {master}"
+    return None  # 新于母版不告警（可能是开发版）
+
+
 def locate_master_source(start: Optional[Path] = None) -> Optional[Path]:
     """
     Locate the master source directory.

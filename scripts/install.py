@@ -62,6 +62,7 @@ RELEASE_URL  = "https://github.com/AILenGarden/ae-sdd/archive/refs/heads/main.zi
 SKILL_NAME   = "ae-sdd"
 CLAUDE_DST   = Path.home() / ".claude" / "skills" / SKILL_NAME
 CODEX_DST    = Path.home() / ".codex" / "skills" / SKILL_NAME
+ZCODE_DST    = Path.home() / ".zcode" / "skills" / SKILL_NAME   # 🆕 v3.4.0：zcode CLI skills 目录
 DST          = CLAUDE_DST  # 向后兼容：历史代码/文档默认指 Claude 目标
 BAK_KEEP_DEFAULT     = 2  # 每次 install 后保留最近 N 个 .bak 备份（防止 .bak 累积噪音）
 MAVIS_KEEP_DEFAULT   = 0  # 清理 mavis 端 ae-sdd-N 副本时保留的数量（0=全清；负数=不清理）
@@ -149,18 +150,25 @@ def fetch_remote() -> Path:
 
 # ─── 备份 + 安装 + 验证 ──────────────────────────────────────────────────────
 def _target_paths(selection: str) -> list[Path]:
-    """解析安装目标。auto 保持 Claude 兼容，同时同步已有/可用 Codex。"""
+    """解析安装目标。auto 保持 Claude 兼容，同时同步已有/可用 Codex + zcode。
+    🆕 v3.4.0：post-commit 钩子依赖 --target <PATH> 形式，所以支持自定义路径（"path" 模式）。
+    """
     if selection == "claude":
         return [CLAUDE_DST]
     if selection == "codex":
         return [CODEX_DST]
+    if selection == "zcode":
+        return [ZCODE_DST]
     if selection == "all":
-        return [CLAUDE_DST, CODEX_DST]
+        return [CLAUDE_DST, CODEX_DST, ZCODE_DST]
 
-    # auto：永远保持原 Claude 目标；Codex 已安装或 codex CLI 存在时追加。
+    # auto：永远保持原 Claude 目标；Codex 已安装或 codex CLI 存在时追加；
+    # zcode 已安装或 zcode CLI 存在时追加（v3.4.0+：post-commit hook 默认装 zcode）。
     targets = [CLAUDE_DST]
     if CODEX_DST.exists() or shutil.which("codex") or shutil.which("codex.exe"):
         targets.append(CODEX_DST)
+    if ZCODE_DST.exists() or shutil.which("zcode") or shutil.which("zcode.exe"):
+        targets.append(ZCODE_DST)
     return targets
 
 
@@ -391,9 +399,13 @@ def main() -> int:
                         help="强制本地 build + install（先跑 build_dist.py）")
     parser.add_argument("--uninstall", action="store_true",
                         help="卸载本地安装")
-    parser.add_argument("--target", choices=["auto", "claude", "codex", "all"],
+    parser.add_argument("--target", choices=["auto", "claude", "codex", "zcode", "all"],
                         default="auto",
-                        help="安装目标：auto=Claude + 已存在/可用 Codex；all=两者都装")
+                        help="安装目标：auto=Claude + 已存在/可用 Codex/Zcode；all=三者都装；指定名字=单目标")
+    parser.add_argument("--target-path", type=str, default=None,
+                        help="(v3.4.0+ post-commit hook 用) 显式指定安装目标绝对路径，优先级高于 --target")
+    parser.add_argument("--quiet", action="store_true",
+                        help="(v3.4.0+ post-commit hook 用) 静默模式，只输出关键状态")
     parser.add_argument("--keep-bak", type=int, default=BAK_KEEP_DEFAULT,
                         help=f"每个目标保留的 .bak 备份数（默认 {BAK_KEEP_DEFAULT}；0=全清；负数=不清理）")
     parser.add_argument("--cleanup-mavis", dest="cleanup_mavis", action="store_true",
@@ -404,15 +416,20 @@ def main() -> int:
     parser.add_argument("--mavis-keep", type=int, default=MAVIS_KEEP_DEFAULT,
                         help=f"mavis 端 ae-sdd-N 副本保留数（默认 {MAVIS_KEEP_DEFAULT}=全清；负数=不清理）")
     args = parser.parse_args()
-    targets = _target_paths(args.target)
+    # --target-path 优先级最高（post-commit hook 调用形式）
+    if args.target_path:
+        targets = [Path(args.target_path).expanduser().resolve()]
+    else:
+        targets = _target_paths(args.target)
 
     if args.uninstall:
         uninstall(targets)
         return 0
 
-    print()
-    info("开始安装 ae-sdd SKILL...")
-    print()
+    if not args.quiet:
+        print()
+        info("开始安装 ae-sdd SKILL...")
+        print()
 
     if args.from_build:
         # 强制本地 build + install
@@ -420,20 +437,23 @@ def main() -> int:
         if not repo_root:
             error("--from-build 模式必须在 ae-sdd 仓库根目录运行")
             return 1
-        info("本地 build + install 模式 (--from-build)")
+        if not args.quiet:
+            info("本地 build + install 模式 (--from-build)")
         run_build(repo_root)
         dist_src = repo_root / "dist" / "ae-sdd"
     else:
         # 自动检测
         repo_root = resolve_local_repo()
         if repo_root:
-            info("本地仓库模式")
+            if not args.quiet:
+                info("本地仓库模式")
             dist_src = repo_root / "dist" / "ae-sdd"
             if not dist_src.is_dir() or not (dist_src / "SKILL.md").is_file():
                 warn("本地 dist/ae-sdd/ 不存在或主入口缺失，先跑 build...")
                 run_build(repo_root)
         else:
-            info("远程模式")
+            if not args.quiet:
+                info("远程模式")
             repo_root = fetch_remote()
             run_build(repo_root)
             dist_src = repo_root / "dist" / "ae-sdd"
@@ -446,7 +466,8 @@ def main() -> int:
         verify(dst)
     if args.cleanup_mavis:
         cleanup_mavis_duplicates(keep=args.mavis_keep)
-    print_usage(targets)
+    if not args.quiet:
+        print_usage(targets)
     return 0
 
 

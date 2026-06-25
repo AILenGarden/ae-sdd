@@ -1567,6 +1567,32 @@ def cmd_health(args, parser):
                    else "未定位到 coding_authenticity_scan.py（纯安装环境将 stub 跳过 G-CODE-1）",
     })
 
+    # 9. 🆕 v3.4.0：master-freshness（母版 vs 已安装 SKILL vs 业务仓 config.yaml）
+    # 探测三个版本是否一致，输出漂移报告 + 修复建议
+    installed_version = paths.MASTER_VERSION  # 当前 CLI 自身 version = 已装 SKILL version
+    master_version = _read_master_skill_version(master)
+    project_master_version = _read_project_config_master_version(ade_sdd)
+
+    freshness_msgs = []
+    freshness_ok = True
+    if master_version and installed_version != master_version:
+        freshness_msgs.append(f"CLI {installed_version} ≠ source/SKILL.md {master_version}")
+        freshness_ok = False
+    if project_master_version and installed_version != project_master_version:
+        freshness_msgs.append(f"CLI {installed_version} ≠ .ae-sdd/config.yaml master.version {project_master_version}")
+        freshness_ok = False
+    # 探测 post-commit hook 是否安装（v3.4.0 闭环必备）
+    post_commit_hook = _check_post_commit_hook(master)
+    if not post_commit_hook["installed"]:
+        freshness_msgs.append(f"post-commit hook 未装: {post_commit_hook['detail']}")
+        # 不阻断，仅 warn
+    freshness_msg = "；".join(freshness_msgs) if freshness_msgs else f"全部一致 (master={master_version or installed_version}, project={project_master_version or 'N/A'}, hook={'✅' if post_commit_hook['installed'] else '❌'})"
+    items.append({
+        "name": "master-freshness（v3.4.0 分发闭环）",
+        "pass": freshness_ok and post_commit_hook["installed"],
+        "message": freshness_msg,
+    })
+
     summary = {
         "total": len(items),
         "passed": sum(1 for i in items if i["pass"]),
@@ -1581,6 +1607,74 @@ def cmd_health(args, parser):
             mark = "✅" if i["pass"] else "❌"
             output.info(f"  {mark} {i['name']}: {i['message']}")
     return 0 if summary["failed"] == 0 else 1
+
+
+# ─── master-freshness 辅助函数（🆕 v3.4.0） ──────────────────────────────────
+import re as _re_fresh
+
+def _read_master_skill_version(master: Optional[Path]) -> Optional[str]:
+    """读母版 source/SKILL.md frontmatter 的 version 字段"""
+    if not master:
+        return None
+    sm = master / "SKILL.md"
+    if not sm.is_file():
+        return None
+    try:
+        text = sm.read_text(encoding="utf-8")
+        m = _re_fresh.search(r"^---\s*\n.*?^version:\s*([\d.]+)", text, _re_fresh.MULTILINE | _re_fresh.DOTALL)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def _read_project_config_master_version(ade_sdd: Optional[Path]) -> Optional[str]:
+    """读业务仓 .ae-sdd/config.yaml 的 master.version 字段"""
+    if not ade_sdd:
+        return None
+    cfg = ade_sdd / "config.yaml"
+    if not cfg.is_file():
+        return None
+    try:
+        text = cfg.read_text(encoding="utf-8")
+        m = _re_fresh.search(
+            r"master:\s*\n(?:\s+\S+:\s*\S+\s*\n)*\s+version:\s*\"?([\d.]+)\"?",
+            text,
+        )
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def _check_post_commit_hook(master: Optional[Path]) -> dict:
+    """检查 ae-sdd 母版仓库 .githooks/post-commit 是否安装 + 可执行 + git hooksPath 指向它"""
+    if not master:
+        return {"installed": False, "detail": "无母版路径"}
+    repo_root = master.parent  # master = source/ 的话，父目录是仓库根
+    githooks_post_commit = repo_root / ".githooks" / "post-commit"
+    git_hooks_post_commit = repo_root / ".git" / "hooks" / "post-commit"
+    if not githooks_post_commit.is_file():
+        return {"installed": False, "detail": ".githooks/post-commit 不存在"}
+    # 检查 git core.hooksPath
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["git", "config", "--get", "core.hooksPath"],
+            cwd=str(repo_root), capture_output=True, text=True, timeout=5,
+        )
+        hooks_path = r.stdout.strip() if r.returncode == 0 else ""
+        if hooks_path != ".githooks":
+            return {"installed": False, "detail": f"git core.hooksPath={hooks_path or '(默认 .git/hooks)'}，未指向 .githooks"}
+    except Exception:
+        return {"installed": False, "detail": "无法读取 git config（git 命令失败）"}
+    # 检查可执行（用 os.access 跨平台，Windows 上 st_mode 可能不反映）
+    import os as _os_fresh
+    if not _os_fresh.access(str(githooks_post_commit), _os_fresh.X_OK):
+        return {"installed": False, "detail": ".githooks/post-commit 不可执行（chmod +x）"}
+    return {"installed": True, "detail": ".githooks/post-commit 已装 + hooksPath 正确"}
 
 
 # ─── CLI 主入口 ──────────────────────────────────────────────────────────────

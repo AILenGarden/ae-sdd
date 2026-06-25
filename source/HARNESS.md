@@ -153,6 +153,55 @@ G-RA-1~4 需求分析门卫  G-CODE-1 Coding真实性
 
 ---
 
+## 🔄 分发闭环（v3.4.0+ 必备）
+
+> **🔴 v3.4.0 之前的问题**：母版 `source/` → `dist/ae-sdd/` → `~/.claude/skills/ae-sdd` + `~/.zcode/skills/ae-sdd` → 业务仓 `.ae-sdd/` 四层之间**没有任何自动触发器**，全靠开发者手工跑 `dev-sync.sh`。
+> 结果：12 次 commit 之间没人跑 → `harness/.harness/agent.md` 停在 v3.1.2、`~/.zcode/skills/ae-sdd/` 停在 v3.2.3、`.adapter.lock` 漂移到 3.3.0。
+
+### 自动触发链
+
+| # | 事件 | 触发器 | 动作 |
+|---|------|--------|------|
+| 1 | ae-sdd 母版 commit | `.githooks/post-commit`（git hooksPath）| ① `build_dist.py` (source → dist) ② `install.py --target-path ~/.claude/skills/ae-sdd --quiet` ③ `install.py --target-path ~/.zcode/skills/ae-sdd --quiet` ④ `convert-ae-sdd-to-harness.ps1` (SKILL+HARNESS → agent.md) ⑤ `mavis harness remount` |
+| 2 | 业务仓 `ae-sdd init` | `init.py` | 写 `.claude/settings.json` (3 hook) + `.ae-sdd/config.yaml` (master.version = 母版实时 frontmatter version) |
+| 3 | 业务仓每次 UserPromptSubmit | `prompt_inject.py` | 若 `installed MASTER_VERSION < config.yaml master.version` → 注入 `⚠️ master-freshness` 文本（不阻断）|
+| 4 | 任意位置跑 `ae-sdd health` | CLI | 比对 4 个版本源（CLI / source / dist / installed），输出 `master-freshness` 报告 + 修复建议 |
+
+### 跳过策略（post-commit hook）
+
+- 非母版仓库（无 `source/SKILL.md`）→ 静默退出 0
+- 仅修改 `source/CHANGELOG/` 或 `README.md` → 跳过（无功能性变更）
+- `SKIP_AE_SDD_HOOK=1` 环境变量 → 跳过（紧急旁路）
+- 任何步骤失败 → 不回滚 commit（commit 已落库），仅输出错误，不阻断 git
+
+### 兜底人工流程
+
+```bash
+# 1. git hook 失效时（开发机禁用 hook / Windows 权限问题）
+bash scripts/dev-sync.sh                       # build + install + harness adapter
+
+# 2. Harness 适配器独立重转
+powershell -File "$HOME/.zcode/skills/ae-sdd-harness-adapter/scripts/convert-ae-sdd-to-harness.ps1" \
+  -Source "D:\Item\ae-sdd"
+
+# 3. 健康度自检（含分发闭环检查）
+ae-sdd health
+```
+
+### 验收清单（手动触发一次完整 commit 验证）
+
+```bash
+cd D:\Item\ae-sdd
+touch source/SKILL.md                            # 触发功能性 commit
+git add . && git commit -m "test: post-commit hook"
+# 应看到 4-5 行 "✅" 输出（build / install / harness / mavis）
+
+ae-sdd health
+# 应看到 9 项健康度，其中 master-freshness 显示 "全部一致"
+```
+
+---
+
 ## ⚠️ 升级注意
 
 若已用 `ae-sdd init-hooks --use-python` 配置 hook，重装 CLI（`python scripts/install_cli.py`）后 hook 内的 Python 路径可能失效。

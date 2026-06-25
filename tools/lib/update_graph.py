@@ -456,6 +456,81 @@ def check_uc06_doc_impl_consistency(repo_root: Path) -> UpdateCheckResult:
                              details={"cli_cmds_count": len(cli_cmds)})
 
 
+def check_uc07_distribution_closure(repo_root: Path) -> UpdateCheckResult:
+    """🆕 v3.4.0 UC-07 分发闭环：post-commit hook 必须存在 + git hooksPath 指向它 + hooksPath 与 SKILL.md/HARNESS.md 声明一致。
+
+    v3.4.0 之前的债：母版改了 12 个 commit 没人跑 dev-sync.sh → harness/agent.md 停在 v3.1.2。
+    v3.4.0 修复：.githooks/post-commit 强制分发链自动跑。
+
+    验证项：
+    1. `.githooks/post-commit` 文件存在 + 可执行
+    2. `git config core.hooksPath` = `.githooks`
+    3. HARNESS.md 包含"分发闭环"章节 + 引用 .githooks/post-commit
+    4. ae-sdd-update-skill.md 包含"v3.4.0 自动分发闭环"章节
+    """
+    name = "v3.4.0 分发闭环（post-commit hook）"
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    # 1. .githooks/post-commit 存在 + 可执行
+    githooks_post_commit = repo_root / ".githooks" / "post-commit"
+    if not githooks_post_commit.is_file():
+        issues.append(f".githooks/post-commit 不存在（v3.4.0 必备）")
+    else:
+        import os as _os_uc07
+        if not _os_uc07.access(str(githooks_post_commit), _os_uc07.X_OK):
+            issues.append(f".githooks/post-commit 不可执行（chmod +x）")
+
+    # 2. git config core.hooksPath = .githooks
+    try:
+        import subprocess as _sp_uc07
+        r = _sp_uc07.run(
+            ["git", "config", "--get", "core.hooksPath"],
+            cwd=str(repo_root), capture_output=True, text=True, timeout=5,
+        )
+        hooks_path = r.stdout.strip() if r.returncode == 0 else ""
+        if hooks_path != ".githooks":
+            issues.append(
+                f"git core.hooksPath={hooks_path or '(默认 .git/hooks)'}，应设为 .githooks "
+                f"（跑 bash scripts/install-hooks.sh）"
+            )
+    except Exception as e:
+        warnings.append(f"无法读 git config（{e}）")
+
+    # 3. HARNESS.md 包含"分发闭环"章节
+    harness_md = repo_root / "source" / "HARNESS.md"
+    if harness_md.is_file():
+        text = harness_md.read_text(encoding="utf-8", errors="replace")
+        if "分发闭环" not in text or ".githooks/post-commit" not in text:
+            issues.append("source/HARNESS.md 缺少'分发闭环'章节或 .githooks/post-commit 引用")
+    else:
+        warnings.append("source/HARNESS.md 不存在")
+
+    # 4. update-skill 包含"v3.4.0 自动分发闭环"章节
+    update_skill = repo_root / "source" / "skills" / "orchestration" / "ae-sdd-update-skill.md"
+    if update_skill.is_file():
+        text = update_skill.read_text(encoding="utf-8", errors="replace")
+        if "v3.4.0 自动分发闭环" not in text and "post-commit" not in text:
+            warnings.append("ae-sdd-update-skill.md 缺 v3.4.0 自动分发闭环章节")
+    else:
+        warnings.append("ae-sdd-update-skill.md 不存在")
+
+    passed = len(issues) == 0
+    if passed:
+        msg = "post-commit hook 已装 + hooksPath 正确 + 文档章节齐全"
+    else:
+        msg = f"{len(issues)} 项缺失：{'；'.join(issues[:3])}"
+    return UpdateCheckResult(
+        "UC-07",
+        name,
+        "error" if not passed else "ok",
+        passed,
+        msg,
+        "跑 bash scripts/install-hooks.sh + 编辑 HARNESS.md / ae-sdd-update-skill.md",
+        {"issues_count": len(issues), "warnings_count": len(warnings)},
+    )
+
+
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
 CHECK_FUNCS = {
     "UC-01": check_uc01_version,
@@ -464,6 +539,7 @@ CHECK_FUNCS = {
     "UC-04": check_uc04_scanner_distribution,
     "UC-05": check_uc05_health_checklist,
     "UC-06": check_uc06_doc_impl_consistency,
+    "UC-07": check_uc07_distribution_closure,
 }
 
 

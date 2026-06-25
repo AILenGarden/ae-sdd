@@ -95,9 +95,32 @@
       "affected": [
         {"path": "source/CHANGELOG/", "action": "新增 CHANGELOG 文件", "auto_checkable": false},
         {"path": "README.md", "action": "第 5 行版本行更新", "auto_checkable": true},
-        {"path": "(分发)", "action": "跑 dev-sync 重同步", "auto_checkable": false}
+        {"path": "(分发闭环 v3.4.0)", "action": ".githooks/post-commit 自动触发 build_dist → install → harness adapter → mavis remount；不再依赖手工 dev-sync", "auto_checkable": true},
+        {"path": ".githooks/post-commit", "action": "🆕 v3.4.0：hook 自身必须存在且可执行（UC-07 验证）", "auto_checkable": true},
+        {"path": "git config core.hooksPath", "action": "🆕 v3.4.0：必须 = .githooks（UC-07 验证）", "auto_checkable": true}
       ],
-      "checks": ["UC-01", "UC-03", "UC-04", "UC-05", "UC-06"]
+      "checks": ["UC-01", "UC-03", "UC-04", "UC-05", "UC-06", "UC-07"]
+    },
+    {
+      "id": "UG-11",
+      "name": "🆕 v3.4.0 分发闭环变更",
+      "trigger": [
+        ".githooks/post-commit",
+        "scripts/install-hooks.sh",
+        "scripts/install.py",
+        "scripts/init.py",
+        "tools/lib/prompt_inject.py",
+        "tools/lib/paths.py",
+        "tools/bin/ae-sdd"
+      ],
+      "trigger_condition": "修改分发闭环任一节点（post-commit hook、install.py 的 --target-path/init.py 的 master.version 写入、prompt_inject 的 master-freshness 探测、ae-sdd health master-freshness 项）",
+      "affected": [
+        {"path": "source/HARNESS.md", "action": "§\"分发闭环 v3.4.0+\" 章节与实现一致；自动触发链表格四行齐", "auto_checkable": true},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "§\"v3.4.0 自动分发闭环\" 章节与触发链同步", "auto_checkable": true},
+        {"path": "harness/.harness/agent.md", "action": "convert-ae-sdd-to-harness.ps1 重转；agent.md templateHash 与 .adapter.lock 一致", "auto_checkable": true},
+        {"path": "$HOME/.zcode/skills/ae-sdd-harness-adapter/", "action": "适配器 SKILL 包版本号 → 0.2.0；SKILL.md 描述与新触发链一致", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-07"]
     },
     {
       "id": "UG-10",

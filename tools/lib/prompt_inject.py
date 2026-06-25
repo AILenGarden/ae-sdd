@@ -147,5 +147,39 @@ def inject(
     if entry_reminder:
         lines.insert(1, "\n".join(entry_reminder))
 
+    # 🆕 v3.4.0：母版版本漂移探测（仅文本提醒，不阻断）
+    # 检测已安装的 ae-sdd SKILL 是否落后于母版，若落后则在注入块末尾追加提醒
+    try:
+        from lib.paths import compare_versions, MASTER_VERSION  # type: ignore
+        # 已装版本：本仓库 tools/lib/paths.py 的 MASTER_VERSION
+        installed_v = MASTER_VERSION
+        # 母版版本：从本脚本所在仓库（业务仓）的 .ae-sdd/config.yaml master.version 读
+        master_v = _read_project_master_version(ade_sdd)
+        drift = compare_versions(installed_v, master_v or MASTER_VERSION)
+        if drift and master_v and master_v != installed_v:
+            lines.append(f"⚠️  master-freshness: {drift}")
+            lines.append("   建议: bash scripts/dev-sync.sh  或  ae-sdd install --target-path ~/.zcode/skills/ae-sdd")
+    except Exception:
+        pass  # 探测失败不影响主流程
+
     return {"systemMessage": "\n".join(lines)}
+
+
+def _read_project_master_version(ade_sdd: Optional[Path]) -> Optional[str]:
+    """🆕 v3.4.0：从业务仓 .ae-sdd/config.yaml 读 master.version。"""
+    if ade_sdd is None:
+        return None
+    cfg = ade_sdd / "config.yaml"
+    if not cfg.is_file():
+        return None
+    try:
+        import re
+        text = cfg.read_text(encoding="utf-8")
+        # 匹配 "  version: \"3.4.0\"" 或 "  version: 3.4.0"
+        m = re.search(r"master:\s*\n(?:\s+\S+:\s*\S+\s*\n)*\s+version:\s*\"?([\d.]+)\"?", text)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return None
 

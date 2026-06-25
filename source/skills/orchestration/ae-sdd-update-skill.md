@@ -421,6 +421,50 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 | `install.sh` / `install.ps1` | `scripts/install.{sh,ps1}` | 从 `dist/ae-sdd/` 装到 `~/.claude/skills/ae-sdd/`（跨平台 + 本地/远程两模式）|
 | `dev-sync.sh` | `scripts/dev-sync.sh` | 开发者工具：build + install 组合 + `--watch` 监听模式 + `--uninstall` |
 
+### 🆕 v3.4.0 自动分发闭环（post-commit hook）
+
+> **v3.4.0 之前的债**：母版改完后，**全靠开发者主动跑 `dev-sync.sh`**。12 个 v3.2.x commit 期间没人跑 → `harness/.harness/agent.md` 停在 v3.1.2、已装 SKILL 停在 v3.2.3、`.adapter.lock` 漂移到 3.3.0。
+>
+> **v3.4.0 解决方案**：母版仓根目录 `.githooks/post-commit` 自动跑分发链，git hooksPath 设为 `.githooks`，让 hook 跟仓库一起分发。
+
+**自动触发链**（详见 HARNESS.md §"分发闭环 v3.4.0+"）：
+
+```
+[ae-sdd 母版 commit]
+   ↓ .githooks/post-commit (git hooksPath = .githooks)
+build_dist.py (source → dist/ae-sdd)
+   ↓
+install.py --target-path ~/.claude/skills/ae-sdd --quiet
+install.py --target-path ~/.zcode/skills/ae-sdd --quiet
+   ↓
+ae-sdd-harness-adapter/scripts/convert-ae-sdd-to-harness.ps1
+   ↓
+mavis harness remount
+```
+
+**跳过策略**：
+- 非母版仓库 → 静默跳过
+- 仅修改 `source/CHANGELOG/` 或 `README.md` → 跳过（无功能性变更）
+- `SKIP_AE_SDD_HOOK=1` → 跳过（紧急旁路）
+- 任一步骤失败 → 不回滚 commit，仅报错
+
+**何时仍需手工 dev-sync**（hook 失效场景）：
+1. **开发机全局禁用 hook**（`git config --global core.hooksPath /dev/null`）
+2. **Windows 上 Git Bash 路径含空格**导致子进程失败
+3. **mavis daemon 没跑**但想强制 build+install（不依赖 mavis mount）
+4. **首次安装**：clone 完仓库后还没装 hook → 跑一次 `bash scripts/install-hooks.sh`（自动 git config core.hooksPath = .githooks）
+
+**`ae-sdd health master-freshness` 输出解读**：
+
+| 场景 | 输出 |
+|------|------|
+| 完全一致 | `✅ 全部一致 (master=3.4.0, project=3.4.0, hook=✅)` |
+| CLI ≠ source | `❌ CLI 3.4.0 ≠ source/SKILL.md 3.5.0` |
+| CLI ≠ project | `❌ CLI 3.4.0 ≠ .ae-sdd/config.yaml master.version 3.3.0` |
+| hook 未装 | `❌ post-commit hook 未装: .githooks/post-commit 不存在` |
+
+**反向兜底**：母版分发链路 4 个版本源（C LI / source / dist / installed）任一漂移 → `ae-sdd health` 会立即报告，**修复建议**显示在 message 字段。
+
 **build-dist.sh 详细职责：**
 1. **校验母版 `source/SKILL.md` 存在性**（不存在则终止）。
 2. 从 `source/SKILL.md` YAML frontmatter 提取 `version` 字段。

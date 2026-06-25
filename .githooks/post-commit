@@ -66,7 +66,8 @@ fi
 # ── 5. install ───────────────────────────────────────────────
 if [ -f "$AE_SDD/scripts/install.py" ]; then
     for target in "$HOME/.claude/skills/ae-sdd" "$HOME/.zcode/skills/ae-sdd"; do
-        if "$PYTHON" "$AE_SDD/scripts/install.py" --quiet --target "$target" 2>&1 | tail -10; then
+        # 用 --target-path= 形式避免 argparse 把路径当成 --target positional
+        if "$PYTHON" "$AE_SDD/scripts/install.py" --quiet "--target-path=$target" 2>&1 | tail -10; then
             echo "✅ install → $target: OK"
         else
             echo "⚠️  install → $target: 失败"
@@ -80,13 +81,14 @@ fi
 ADAPTER="$HOME/.zcode/skills/ae-sdd-harness-adapter/scripts/convert-ae-sdd-to-harness.ps1"
 if [ -f "$ADAPTER" ]; then
     if command -v powershell >/dev/null 2>&1; then
-        if powershell -NoProfile -ExecutionPolicy Bypass -File "$ADAPTER" -Source "$AE_SDD" -DryRun:$false 2>&1 | tail -15; then
+        # bash 不能直接转义 PowerShell 的 $false，需要写到 .ps1 里设默认 $false 即可
+        if powershell -NoProfile -ExecutionPolicy Bypass -File "$ADAPTER" -Source "$AE_SDD" 2>&1 | tail -15; then
             echo "✅ harness adapter: OK"
         else
             echo "⚠️  harness adapter: 失败（agent.md 可能停留在旧版本）"
         fi
     elif command -v pwsh >/dev/null 2>&1; then
-        if pwsh -NoProfile -File "$ADAPTER" -Source "$AE_SDD" -DryRun:$false 2>&1 | tail -15; then
+        if pwsh -NoProfile -File "$ADAPTER" -Source "$AE_SDD" 2>&1 | tail -15; then
             echo "✅ harness adapter: OK"
         else
             echo "⚠️  harness adapter: 失败"
@@ -99,22 +101,27 @@ else
 fi
 
 # ── 7. mavis remount ─────────────────────────────────────────
-MAVIS_CMD=""
-if command -v mavis >/dev/null 2>&1; then
-    MAVIS_CMD="mavis"
-elif [ -x "$HOME/.mavis/bin/mavis.cmd" ]; then
-    MAVIS_CMD="$HOME/.mavis/bin/mavis.cmd"
-fi
-
-if [ -n "$MAVIS_CMD" ] && [ -d "$AE_SDD/harness" ]; then
-    "$MAVIS_CMD" harness unmount d-item-ae-sdd-harness >/dev/null 2>&1 || true
-    if "$MAVIS_CMD" harness mount "$AE_SDD/harness" 2>&1 | tail -5; then
-        echo "✅ mavis harness remount: OK"
+if [ -d "$AE_SDD/harness" ]; then
+    if command -v mavis >/dev/null 2>&1; then
+        MAVIS_RUN="mavis"
+    elif [ -f "$HOME/.mavis/bin/mavis.cmd" ]; then
+        # Windows: mavis 是 .cmd，通过 cmd.exe 调用
+        MAVIS_RUN='cmd.exe //c "mavis"'
     else
-        echo "⚠️  mavis harness remount: 失败（产物已写入，需手动 mount）"
+        MAVIS_RUN=""
+    fi
+    if [ -n "$MAVIS_RUN" ]; then
+        "$MAVIS_RUN" harness unmount d-item-ae-sdd-harness >/dev/null 2>&1 || true
+        if "$MAVIS_RUN" harness mount "$AE_SDD/harness" 2>&1 | tail -5; then
+            echo "✅ mavis harness remount: OK"
+        else
+            echo "⚠️  mavis harness remount: 失败（产物已写入，需手动 mount）"
+        fi
+    else
+        echo "⏭️  mavis 未安装，跳过 remount（产物已写入 harness/.harness/agent.md）"
     fi
 else
-    echo "⏭️  mavis 未安装或 harness/ 不存在，跳过 remount"
+    echo "⏭️  harness/ 目录不存在，跳过 remount"
 fi
 
 echo "✅ ae-sdd post-commit: 分发闭环结束"
