@@ -63,6 +63,7 @@ from lib import memory_gate, paths, state as state_mod  # noqa: E402
 # ─── Phase → 允许工具表 ─────────────────────────────────────────────────────
 PHASE_PERMIT: dict[str, frozenset[str]] = {
     "initialized":     frozenset({"Write", "Edit", "MultiEdit"}),
+    "ra-generated":    frozenset({"Write", "Edit", "MultiEdit"}),  # 🆕 v3.4.0 RA 阶段
     "dr-generated":    frozenset({"Write", "Edit", "MultiEdit"}),
     "story-generated": frozenset({"Write", "Edit", "MultiEdit"}),
     "story-reviewed":  frozenset({"Write", "Edit", "MultiEdit"}),
@@ -112,7 +113,8 @@ BASH_READONLY_PREFIXES: tuple[str, ...] = (
 # - 设计阶段（initialized → task-generated）：只写设计文档
 # - code-reviewed：只写 CR 报告，不应改源代码（改了就是绕过 CR）
 _DESIGN_PHASES = frozenset({
-    "initialized", "dr-generated", "story-generated",
+    "initialized", "ra-generated",  # 🆕 v3.4.0 RA 阶段也禁写 src/
+    "dr-generated", "story-generated",
     "story-reviewed", "task-generated",
     "code-reviewed",  # CR 阶段：只写报告，不改源码
 })
@@ -139,6 +141,90 @@ _ALWAYS_ALLOW_PATTERNS: tuple[re.Pattern, ...] = tuple(re.compile(p) for p in [
     # 改用 _check_path_permission 逻辑：先查 source code patterns，再查 always_allow
 ])
 
+# ─── 🆕 v3.4.0 关卡2：ae-sdd 流程产物路径模式 + 产物-Phase 映射（建议书4）─────────
+# 命中这些模式的流程产物，落地前校验 entry token + 当前 phase 允许写该类产物。
+_PRODUCT_PATTERNS: tuple[tuple[re.Pattern, str], ...] = tuple(
+    (re.compile(p), label) for p, label in [
+        (r".*-CodingPlan\.md$", "CodingPlan"),
+        (r".*-CodingReport-.*\.md$", "CodingReport"),
+        (r".*-CodeReview.*\.md$", "CodeReview"),
+        (r".*-Story\.md$", "Story"),
+        (r".*-TestCase\.md$", "TestCase"),
+        (r".*-task-.*\.md$", "Task"),
+        (r".*-DR\.md$", "DR"),
+        (r".*-RA\.md$", "RA"),
+        (r".*-业务逻辑汇总\.md$", "业务逻辑汇总"),
+    ]
+)
+
+# 产物类型 → 允许写入的 phase（关卡2校验依据）
+_PRODUCT_PHASE_MAP: dict[str, frozenset[str]] = {
+    "DR": frozenset({"dr-generated"}),
+    "RA": frozenset({"ra-generated", "dr-generated"}),
+    "Story": frozenset({"story-generated", "story-reviewed"}),
+    "TestCase": frozenset({"story-reviewed", "task-generated"}),
+    "Task": frozenset({"task-generated", "task-reviewed"}),
+    "CodingPlan": frozenset({"task-reviewed", "coding"}),
+    "CodingReport": frozenset({"coding", "test-running", "code-reviewed"}),
+    "CodeReview": frozenset({"code-reviewed"}),
+    "业务逻辑汇总": frozenset({"story-reviewed", "task-generated"}),
+}
+
+
+def _match_product_type(file_path: str) -> Optional[str]:
+    """若路径匹配某 ae-sdd 流程产物模式，返回产物类型；否则 None。"""
+    normalized = file_path.replace("\\", "/")
+    for pat, label in _PRODUCT_PATTERNS:
+        if pat.search(normalized):
+            return label
+    return None
+
+
+def _check_product_landing(
+    file_path: str, phase: str, ade_sdd: Optional[Path]
+) -> tuple[bool, str]:
+    """关卡2：ae-sdd 流程产物落地校验（🆕 v3.4.0，建议书4）。
+
+    命中产物模式时：
+    1. 校验当前 session 有有效 entry token（关卡1领凭证）
+    2. 校验当前 phase 允许写该类产物（产物-Phase 映射）
+    不合规 → 物理拦截。
+    返回 (allowed, deny_reason)。
+    """
+    product_type = _match_product_type(file_path)
+    if product_type is None:
+        return True, ""
+
+    # 从 state 读 currentStory（用于定位 session.json）
+    st = state_mod.read_state(paths.state_path(ade_sdd)) if ade_sdd else {}
+    current_story = st.get("currentStory", "") if ade_sdd else ""
+
+    # 关卡1：entry token 校验
+    try:
+        from lib import session as session_mod
+        if ade_sdd is not None and not session_mod.has_valid_entry_token(ade_sdd, current_story):
+            return False, (
+                f"ae-sdd 流程产物（{product_type}）落地前须先领取 entry token。\n"
+                f"目标文件: {file_path}\n"
+                f"请先运行: ae-sdd enter <projectKey> --story {current_story or '<STORY-ID>'}\n"
+                f"（关卡1 入口凭证缺失，建议书4）"
+            )
+    except Exception:
+        # session 模块异常不阻断（兜底放行，避免误伤）
+        pass
+
+    # 关卡2：产物-Phase 映射校验
+    allowed_phases = _PRODUCT_PHASE_MAP.get(product_type)
+    if allowed_phases and phase not in allowed_phases:
+        return False, (
+            f"当前 phase={phase} 不允许写入 {product_type} 类产物（允许 phase: {sorted(allowed_phases)}）。\n"
+            f"目标文件: {file_path}\n"
+            f"请先切换到允许的 phase：ae-sdd state write --phase {sorted(allowed_phases)[0]}\n"
+            f"（关卡2 产物-Phase 映射，建议书4）"
+        )
+
+    return True, ""
+
 
 def _is_source_code_path(file_path: str) -> bool:
     normalized = file_path.replace("\\", "/")
@@ -154,13 +240,22 @@ def _check_path_permission(
     tool_name: str,
     file_path: Optional[str],
     phase: str,
+    ade_sdd: Optional[Path] = None,
 ) -> tuple[bool, str]:
     if tool_name not in WRITE_TOOLS:
         return True, ""
     if not file_path:
         return True, ""
     if _is_always_allowed_path(file_path):
+        # 🆕 v3.4.0 关卡2：即使 always-allow，若是 ae-sdd 流程产物仍校验 entry token + 产物-Phase
+        allowed, reason = _check_product_landing(file_path, phase, ade_sdd)
+        if not allowed:
+            return False, reason
         return True, ""
+    # 🆕 v3.4.0 关卡2：非 always-allow 路径若命中产物模式也校验（如 d:\tmp\*-CodingPlan.md）
+    allowed, reason = _check_product_landing(file_path, phase, ade_sdd)
+    if not allowed:
+        return False, reason
     if phase in _DESIGN_PHASES and _is_source_code_path(file_path):
         return False, (
             f"设计阶段（phase={phase}）禁止写入源码目录。\n"
@@ -168,6 +263,23 @@ def _check_path_permission(
             f"请先完成设计文档，通过 Task Review 后切换到 task-reviewed phase。\n"
             f"切换命令: ae-sdd state write --phase task-reviewed\n"
         )
+    # 🆕 v3.4.0 关卡3：代码改动准入（建议书4）— coding/test-running phase 写 src/ 须有审核点 2.5 确认 token
+    if phase in ("coding", "test-running") and _is_source_code_path(file_path):
+        try:
+            from lib import session as session_mod
+            if ade_sdd is not None:
+                st = state_mod.read_state(paths.state_path(ade_sdd))
+                current_story = st.get("currentStory", "")
+                # 进 coding phase 前须有 task-reviewed 审核点确认（CodingPlan 评审通过）
+                if not session_mod.is_phase_confirmed(ade_sdd, "task-reviewed", current_story):
+                    return False, (
+                        f"代码改动准入未通过：coding phase 写源码须先完成审核点 2.5（CodingPlan 评审）。\n"
+                        f"目标文件: {file_path}\n"
+                        f"用户确认后运行: ae-sdd state confirm --phase task-reviewed --story {current_story or '<STORY-ID>'}\n"
+                        f"（关卡3 代码改动准入，建议书4）"
+                    )
+        except Exception:
+            pass  # session 模块异常不阻断（兜底放行）
     return True, ""
 
 
@@ -243,6 +355,7 @@ def _check_state_write(
         return False, memory_gate.format_transition_block(memory_result)
 
     PHASE_ENTRY_GATES: dict[str, list[str]] = {
+        "ra-generated":    ["G-00"],  # 🆕 v3.4.0 RA 阶段入口（G-RA 由 agent 在路由步骤 1.8 手动校验）
         "dr-generated":    ["G-00", "G-01"],
         "story-generated": ["G-00", "G-01", "G-02"],
         "story-reviewed":  ["G-00", "G-02", "G-03"],
@@ -368,9 +481,9 @@ def check_intercept(
     if tool_name == "Bash" and _is_readonly_bash(bash_command):
         return True, ""
 
-    # 5. 路径感知
+    # 5. 路径感知（🆕 v3.4.0 关卡2 产物落地校验内嵌）
     if file_path:
-        allowed, reason = _check_path_permission(tool_name, file_path, phase)
+        allowed, reason = _check_path_permission(tool_name, file_path, phase, ade_sdd)
         if not allowed:
             return False, reason
 

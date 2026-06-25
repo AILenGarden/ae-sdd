@@ -11,7 +11,8 @@ description: |
   🆕 v3.2.3：Memory 强制门禁升级，ae-sdd state write --phase 离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 memory enter → memory write。
   🆕 v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节，固化 6 大子系统总览/协同关系图/维护边界，补齐健康度清单 v3.2.2/v3.2.3 条目，修正 README 正文门禁数与子 SKILL 数。
   🆕 v3.2.5：脚本化补齐 4 缺口——ae-sdd init 挂载 CLI（补 UC-03 warn）、新增 ae-sdd bump 同步三处版本号（UC-01 操作侧）、新建 CHANGELOG _template.md、dev_sync.py 增仓库根残留清理。
-version: 3.2.5
+  🆕 v3.4.0：门禁体系加固（4 份建议书全量采纳 P0-P3）——P0 修复 3 处文档撒谎（L-1 gate ra-required --fix / L-2 assets check/generate/audit/update / L-3 G-RA CLI 自动调用）；P1 中段门禁 G-CODEPLAN-SRC 源码核对 + G-DOC-STORAGE 文档存放 + G-14 Story 一致性 + 入口关卡三道闸（enter/session.py/gate_intercept 产物-Phase 映射）+ F-1 假门禁修复（stop_check GATE 交叉验证）；P2 G-08 内容校验升级 + ra-generated phase（修复 B3-6）+ 审核点 token（state confirm）+ test-verifier 独立 session_id；P3 UC-06 文档-实现一致性自动检测。门禁 19→22，PHASE_FLOW 10→11，CLI 新增 enter/state confirm/gate doc-storage。
+version: 3.4.0
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -25,15 +26,17 @@ allowed_tools:
   - "ae-sdd"   # 主 CLI（见 §🛠️ 工具 API 速查）
 ---
 
-> ## 🔴 第一动作（硬前置，v3.1 加固 — 2026-06-22，禁止跳过）
+> ## 🔴 第一动作（硬前置，v3.4.0 加固 — 2026-06-25，禁止跳过）
 >
-> 收到 `/ae-sdd` 触发后，**第一动作 = 跑 §🛡️ G-00 项目资产门卫**（读 `assets/<projectKey>/<projectKey>.assets.md` 或确认 CLI `ae-sdd assets check` 已通过）。
+> 收到 `/ae-sdd` 触发后，**第一动作 = 领入口凭证 + 跑 §🛡️ G-00 项目资产门卫**：
+> 1. 🆕 v3.4.0 关卡1：跑 `ae-sdd enter <projectKey> --story <STORY-ID>` 领取 entry token（写 `.auto-engineering/<STORY>/session.json`）。未领凭证的流程产物落地/代码改动将被关卡2/3 物理拦截（HS-9/10/11）。
+> 2. 跑 G-00：`ae-sdd gates check --only G-00`（校验项目资产 `assets/<projectKey>/<projectKey>.assets.md` 存在 + 7 层索引齐备）。
 >
 > 禁止直接读用户问题内容、禁止直接动代码、禁止主观归类为"对话轻量通道"、禁止跳过 §🎯 统一入口路由判定、禁止越层派 sub-agent。
 >
-> **违规代价**：跳过 G-00 = 本次任务失信，下游所有产物需标"事后回溯"。
+> **违规代价**：跳过 G-00 / 跳过 enter 领凭证 = 本次任务失信，下游所有产物需标"事后回溯"。
 >
-> **快速通道**：用户**显式说** `/ae-sdd-quick` 或 `走快速通道` 时可豁免 G-00 完整 7 步路由，但**仍需落档**（注明快速通道来源 + 项目资产摘要）。
+> **快速通道**：用户**显式说** `/ae-sdd-quick` 或 `走快速通道` 时可豁免 G-00 完整 7 步路由，但**仍需落档**（注明快速通道来源 + 项目资产摘要）。快速通道豁免路由，但关卡2/3 物理拦截仍生效（领凭证后产物才能落地）。
 
 # Auto Engineering — 端到端自动化工程 Skill（v3.2 主入口）
 
@@ -62,15 +65,15 @@ allowed_tools:
 
 | # | 规则 | 工具强制 | 行为 |
 |---|------|---------|------|
-| 1 | **项目资产文件必须存在** | `ae-sdd assets check --project <projectKey>` | 不存在 → 🔴 阻断 |
-| 2 | **7 层索引层必须齐备**（§A-G）| `ae-sdd assets check` | 缺失任一层 → 🔴 阻断 |
-| 3 | **距 `lastAuditedAt` ≤ 30 天** | `ae-sdd assets check` | 过期 → 🟡 警告（不阻断）|
-| 4 | **资产不存在时自动触发生成** | `ae-sdd assets generate` | 调 `project-assets-update-skill.md §3` |
+| 1 | **项目资产文件必须存在** | `ae-sdd gates check --only G-00` | 不存在 → 🔴 阻断 |
+| 2 | **7 层索引层必须齐备**（§A-G）| `ae-sdd gates check --only G-00` | 缺失任一层 → 🔴 阻断 |
+| 3 | **距 `lastAuditedAt` ≤ 30 天** | `ae-sdd gates check --only G-00` | 过期 → 🟡 警告（不阻断）|
+| 4 | **资产不存在时由 AI Agent 触发生成** | 加载 `project-assets-update-skill.md §3` | 调 `project-assets-update-skill.md §3` 生成动作 |
 
 ### 执行时机
 
 - **任何 `ae-sdd run` / `state next-step` / `classify` / `gates check` 调用前 → 先跑 G-00**
-- **CLI 自动调用**：用户不需要手动跑 `ae-sdd assets check`，CLI 在内部会先调
+- **AI Agent 手动调用**：G-00 由 Agent 在路由步骤 0 手动跑 `ae-sdd gates check --only G-00` 验证；G-00 不通过时路由到 `project-assets-update-skill §3` 生成资产
 - **AI Agent 手动调用**：进入步骤 1 之前必须先确认 G-00 通过
 
 ### 详细 SOP
@@ -80,20 +83,23 @@ allowed_tools:
 ### 工具命令
 
 ```bash
-ae-sdd assets check --project <projectKey>
+ae-sdd gates check --only G-00
+  # G-00 内部校验：项目资产存在 + 7 层索引齐备 + lastAuditedAt ≤ 30 天
   # 返回: { exists, last_audited_at, missing_sections, stale }
-  # exists=false → 自动触发 assets generate
+  # exists=false → 由 AI Agent 路由到 project-assets-update-skill §3 生成
 
-ae-sdd assets generate --project <projectKey>
-  # 调 project-assets-update-skill.md §3 生成动作
-  # 产出: assets/{projectKey}/{projectKey}.assets.md（含 7 层索引）
+# 资产生成（无独立 CLI 子命令，由 project-assets-update-skill §3 引导 AI 生成）：
+#   加载 project-assets-update-skill.md §3 → 9 步探查 SOP → 产出 assets/{projectKey}/{projectKey}.assets.md
 
-ae-sdd assets update   # 增量更新（新增微服务/修改分层）
-ae-sdd assets audit    # 双源一致性审计
-ae-sdd assets read <method>  # 索引按需读取（替代 SKILL 内文字调用）
+# 资产读取（ES 倒排索引 + BM25，Agent 按需读资产用）：
+ae-sdd assets read <stage>          # 按阶段读取资产（基线 KEY × BM25）
+ae-sdd assets outline               # 资产大纲（章节列表 + 索引统计）
+ae-sdd assets section <name>        # 取整章原文
+ae-sdd assets query "<关键词>"      # 精准查（倒排索引命中）
+ae-sdd assets stats                 # 索引统计
 ```
 
-> **🔴 不允许跳过 G-00**：即使用户说"直接开始"，也必须先确认项目资产存在。缺失时自动调用 `ae-sdd assets generate` 而非阻断。
+> **🔴 不允许跳过 G-00**：即使用户说"直接开始"，也必须先确认项目资产存在。缺失时由 AI Agent 路由到 `project-assets-update-skill §3` 生成资产，而非放行。
 
 ---
 
@@ -136,8 +142,8 @@ ae-sdd assets read <method>  # 索引按需读取（替代 SKILL 内文字调用
 ### 执行时机
 
 - **任何 `dr-generate-skill` / `story-generate-skill` / `task-generate-skill` 启动前 → 先跑 G-RA**
-- **CLI 自动调用**：用户不需要手动跑 `ae-sdd gate ra-required`，CLI 在内部会先调
-- **AI Agent 手动调用**：加载下游 SKILL 后，先确认 G-RA 通过；不通过时输出 ⚠️ 阻断提示并自动路由到 requirement-analysis-skill
+- **AI Agent 手动调用**：G-RA 不在 PHASE_ENTRY_GATES（不由 CLI 自动触发）；Agent 在路由步骤 1.8 手动跑 `ae-sdd gate ra-required` 验证，不通过时路由到 `requirement-analysis-skill`
+- 🆕 v3.4.0：RA 需求分析在 `ra-generated` phase 进行（PHASE_FLOW 中 initialized → **ra-generated** → dr-generated）；离开 ra-generated 前自动校验 memory（`STATE_PHASE_TO_MEMORY_PHASE` 含 ra-generated→ra，修复 B3-6）
 
 ### 详细 SOP
 
@@ -148,14 +154,14 @@ ae-sdd assets read <method>  # 索引按需读取（替代 SKILL 内文字调用
 ```bash
 ae-sdd gate ra-required --project <projectKey> --story <STORY-ID>
   # 返回: { ra_exists, ra_path, dimensions_complete, self_check_pass_rate, blocking_gaps, ra_age_days, blocked, reason }
-  # blocked=true → 🔴 阻断 + 输出自动路由建议
-
-ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analysis-skill
-  # 走 §第 -1 步 → 第零步 → 第一步 → ... → 第三步
-  # 产出 RA 文档后回到原路径
+  # blocked=true → 🔴 阻断 + 输出路由建议
+  #
+  # ⚠️ RA 缺失/不完整时，由 AI Agent 加载 requirement-analysis-skill 生成或补全 RA
+  #    （CLI 不自动触发；G-RA 不在 PHASE_ENTRY_GATES，由 Agent 在路由步骤 1.8 手动调用本命令验证）
+  #    完成后回到原路径，重跑本命令确认通过
 ```
 
-> **🔴 不允许跳过 G-RA**：即使用户说"直接出 Story"，也必须先确认 RA 文档存在 + 8 维度齐全 + RAModel 12 维完整 + RA-G01~RA-G16 全过 + 🔴 缺口已解决。RA 缺失时自动调用 `ae-sdd gate ra-required --fix` 而非放行。
+> **🔴 不允许跳过 G-RA**：即使用户说"直接出 Story"，也必须先确认 RA 文档存在 + 8 维度齐全 + RAModel 12 维完整 + RA-G01~RA-G16 全过 + 🔴 缺口已解决。RA 缺失时由 AI Agent 路由到 `requirement-analysis-skill` 生成 RA，而非放行。
 
 ### 与旧版 fallback 的兼容性
 
@@ -169,6 +175,103 @@ ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analys
 | BUG/配置类 | `coding-skill` | `coding-skill`（豁免 G-RA）|
 
 **升级原则**：v3.2 不破坏 v3.1 的任何路由能力，只是给"中大/小任务"和"dr-generate"3 个路径加 RA 前置门禁；微任务和 BUG 类保持不变。
+
+---
+
+## 🛡️ G-CODEPLAN-SRC CodingPlan 源码核对门卫（🔴 v3.4.0 加固 — 解决"CodingPlan 凭推测设计类骨架"问题）
+
+> **🆕 v3.4.0 新增（2026-06-25，建议书1）：** G-00 解决"有没有项目资产"，G-RA 解决"Phase 1 下游能不能在无 RA 时启动"，本门卫解决"Phase 2 CodingPlan 阶段类骨架是否核对过现有同类源码"问题。
+>
+> **背景：** life 项目 STORY-020 实测中，AI 出 CodingPlan 时未读 `LatestSideMessagePOConverter`、现有 PO 建模范式、测试范式，凭推测设计"嵌套 Anchor 值对象 + 新增 Converter 映射"，导致改错文件、漏改真正受影响的 Converter、与现有扁平 PO 范式不符。CodeReview 阶段（事后）有"读源码"要求但时序错位——代码都写完了才读，对 CodingPlan（事前）毫无约束力。本门禁把"读源码"前置到 CodingPlan 阶段。
+
+### 强制规则（不可跳过）
+
+| # | 规则 | 工具强制 | 行为 |
+|---|------|---------|------|
+| 1 | **CodingPlan 关键类骨架章节每个新增/修改类必须附来源标记** | `ae-sdd gates check --only G-CODEPLAN-SRC` | 无任何标记 → 🔴 阻断 |
+| 2 | **标记为【已读源码：{路径}】时该文件必须真实存在** | `ae-sdd gates check --only G-CODEPLAN-SRC` | 标已读但文件不存在 → 🔴 阻断（防伪造标记）|
+| 3 | **待核实清单非空 → CodingPlan 视为草案，禁止进 ⑤ Coding** | `ae-sdd gates check --only G-CODEPLAN-SRC` | 有【待核实源码】未闭环 → 🔴 阻断 |
+| 4 | **微任务豁免** —— CodingPlan 无关键类骨架章节时跳过 | — | 标记 skipped，不阻断 |
+
+### 执行时机
+
+- **④bis CodingPlan 生成后、审核点 2.5 之前 → 跑 G-CODEPLAN-SRC**
+- **AI Agent 手动调用**：`ae-sdd gates check --only G-CODEPLAN-SRC`；不通过时回 ④bis 补读源码、把【待核实源码】改为【已读源码：】
+- **详细判定标准**（"现有同类源码"= 同包同类 / 同职责类 / Converter·PO·DO 同类型）+ 待核实清单格式见 [`coding-skill.md` §④bis G-CODEPLAN-SRC](../phase2-coding/coding-skill.md)
+
+### 工具命令
+
+```bash
+ae-sdd gates check --only G-CODEPLAN-SRC
+  # 扫 {STORY-ID}-CodingPlan.md §2 关键类骨架章节的【已读源码：】/【待核实源码】标记
+  # 返回: { n_read, n_pending, pending[], missing_read_files[], skipped }
+  # n_pending>0 或 missing_read_files 非空 → 🔴 阻断
+```
+
+> **🔴 不允许跳过 G-CODEPLAN-SRC**：CodingPlan 阶段凭推测写类骨架、标【待核实源码】未补读、或伪造【已读源码】标记，均禁止进 ⑤ Coding。
+
+---
+
+## 🛡️ G-DOC-STORAGE 文档落地存放门卫（🔴 v3.4.0 加固 — 解决"文档乱放/绕过 resolve_path"问题）
+
+> **🆕 v3.4.0 新增（2026-06-25，建议书2）：** document-storage-skill §0 声明"落地前必须先调 resolve_path"，但这是文档约定无门禁拦截。life 项目 STORY-020 实测中 AI 未调 resolve_path、自行把 CodingPlan 写到 `d:\tmp\`。本门禁把"路径/命名合规"变成可执行门禁。
+
+### 强制规则（不可跳过）
+
+| # | 规则 | 工具强制 | 行为 |
+|---|------|---------|------|
+| 1 | **流程产出文档（Story/Task/CodingPlan/报告等）必须落在合规根目录**（`ae-sdd-doc/`/`design/`/`.ae-task/`/`.ae-plan/`/`.auto-engineering/`）| `ae-sdd gates check --only G-DOC-STORAGE` | 落在 `d:\tmp\`/根目录等游离位置 → 🔴 阻断 |
+| 2 | **落地前必须调 `document-storage.resolve_path()` 推导路径** | AI Agent 调用 resolve_path API | 硬编码绝对路径 → 🔴 阻断 |
+| 3 | **E003（gitPath 不存在）落地前强制触发** | resolve_path step 2 | gitPath 无效 → 🔴 阻断（非仅事后 health）|
+
+### 执行时机
+
+- **任何 SKILL 写入流程产出文档前 → 跑 G-DOC-STORAGE**
+- **AI Agent 手动调用**：`ae-sdd gates check --only G-DOC-STORAGE` 扫描游离产物；`ae-sdd gate doc-storage --path <实际路径> --intent <intent> --project <key>` 单点校验路径合规性
+- **详细四维路径模型**（项目根/微服务根/Story 根/文档工作区根 docWorkspacePath）+ E003 升级见 [`document-storage-skill.md` §0.5.1/§0.6.5](../cross-cutting/document-storage-skill.md)
+
+### 工具命令
+
+```bash
+ae-sdd gates check --only G-DOC-STORAGE
+  # 扫 project_dir 下 .md，校验流程产物是否落在合规根目录、无游离位置
+  # 返回: { stray_files[], checked }
+
+ae-sdd gate doc-storage --path <实际写入路径> --intent <intent> --project <projectKey>
+  # 单点校验：给定路径是否合规（匹配 §2.2 8 类流程目录模板 + 命名规则）
+  # 不通过 → exit 1
+```
+
+> **🔴 不允许跳过 G-DOC-STORAGE**：流程产物乱放游离位置（`d:\tmp\` 等）即阻断；必须经 resolve_path 推导路径。
+
+---
+
+## 🛡️ G-14 CodingPlan-Story 一致性门卫（🔴 v3.4.0 加固 — 对应建议书4 G-08-15）
+
+> **🆕 v3.4.0 新增（2026-06-25，建议书4）：** 入口关卡让 CodingPlan 落对位置，但 Plan 内容是否与 Story 一致仍需检查。本门禁校验 CodingPlan 引用 Story + AC 对齐 + 偏离项有 Proposal，与 G-CODEPLAN-SRC（内容源码核对）正交。
+
+### 强制规则（不可跳过）
+
+| # | 规则 | 工具强制 | 行为 |
+|---|------|---------|------|
+| 1 | **CodingPlan 须含 Story 文档引用且文件存在** | `ae-sdd gates check --only G-14` | 无 Story 引用或文件不存在 → 🔴 阻断 |
+| 2 | **CodingPlan 测试章节 AC ID 与 Story AC 对齐**（Story 含 AC 时至少一个 AC ID 出现在 Plan）| `ae-sdd gates check --only G-14` | Story 有 AC 但 Plan 无 AC ID → 🔴 阻断 |
+| 3 | **偏离 Story 设计须有 Proposal 引用** | `ae-sdd gates check --only G-14` | 含"偏离声明"但无 Proposal 引用 → 🔴 阻断 |
+
+### 执行时机
+
+- **④bis CodingPlan 生成后、进 ⑤ Coding 之前 → 跑 G-14**（与 G-CODEPLAN-SRC 同阶段，两者正交）
+- **AI Agent 手动调用**：`ae-sdd gates check --only G-14`
+
+### 工具命令
+
+```bash
+ae-sdd gates check --only G-14
+  # 校验 {STORY-ID}-CodingPlan.md 与 Story 一致性：引用 + AC 对齐 + 偏离 Proposal
+  # 返回: { issues[], ac_ids_in_cp[], story_doc_exists }
+```
+
+> **🔴 不允许跳过 G-14**：CodingPlan 偏离 Story 设计且无 Proposal 闭环即阻断。
 
 ---
 
@@ -247,7 +350,7 @@ ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analys
 | "修改/补 Story" / "Story Update" | `story-update-skill.md` | 任意（携带 Proposal）| 🟡 看修改类型（RA 维度变更 → 需重审）|
 | "修改/补 Task" / "Task Update" | `task-generate-skill.md §5bis 全局 Task Review` | 任意（携带 Proposal）| 🟡 看修改类型 |
 | "修改/补 Coding" / "改代码" | `coding-skill.md` + 携带 `proposal-skill.md` 输出的 Proposal | 任意（携带 Proposal）| 🟢 不需要（BUG 类豁免）|
-| "放文档哪里" / "命名" / "重入新建还是修改" | `document-storage-skill.md`（横切依赖）| 任意 | 🟢 不需要（横切工具）|
+| "放文档哪里" / "命名" / "重入新建还是修改" | `document-storage-skill.md`（横切依赖）| 任意 | 🔴 **必过 G-DOC-STORAGE**（文档落地前强制，🆕 v3.4.0）|
 | "修改 SKILL" / "更新 SKILL" / "新增 SKILL" / "重构 SKILL" / "SKILL 边界" / "SKILL 维护" / "优化 ae-sdd" / "改 ae-sdd" | **`ae-sdd-update-skill.md`**（自身维护） | 横向（自治） | 🟢 不需要（自治）|
 | 🆕 **"安装 ae-sdd" / "装 ae-sdd" / "重装 ae-sdd" / "升级 ae-sdd" / "卸载 ae-sdd" / "给 <项目> 接 ae-sdd"** | **`ae-sdd-install-skill.md`** | **横向（安装引导 🆕）** | 🟢 不需要（安装引导）|
 
@@ -587,6 +690,7 @@ ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analys
 | **单 Story 多 Phase 并行** | 设计/实现/验证可解耦（如 Story 已稳定，只需补全测试用例和 CodeReview） | Phase 级别 |
 | **单 Phase 多 Task 并行** | Task 之间无强依赖（如 Task-3 SPI 定义和 Task-5 Controller 实现可并行） | Task 级别 |
 | **需独立验证** | 关键决策点（状态机设计、事务边界、错误码）需要"第二意见" | 验证 sub-agent 独立审阅 |
+| 🆕 **Review 节点默认多 reviewer**（2026-06-25）| DR/Story/Task/Code Review 节点 Tier 2+ **默认**启用多 reviewer 交叉审（RA Review 无独立节点，不触发） | 按 [`agent-orchestration-skill.md §8.4`](../cross-cutting/agent-orchestration-skill.md) Tier 判定选 1/2/3 个 reviewer，对抗 AI 逻辑自洽陷阱 |
 | **跨多源/多工具** | 需要同时跑 DB 测试、HTTP 测试、前端组件测试 | 测试 sub-agent 各自负责一层 |
 | **高错误代价** | 涉及资金/数据/权限/线上行为的接口 | 实现 sub-agent + 验证 sub-agent 双跑 |
 
@@ -636,7 +740,7 @@ ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analys
 | 标准 | 跑完 Story Review SKILL 完整的 A-E 阶段 + F-Stage 前端契约 Review |
 | 报告格式 | `{STORY-ID}-StoryReviewReport.md`：缺陷 ID / 严重度 / 位置 / 修复建议 |
 | 适用阶段 | Phase 1 ② |
-| 数量建议 | 1-2 个 reviewer 并行（一个看后端，一个看前端契约） |
+| 数量建议 | 按 [`agent-orchestration-skill.md §8.4`](../cross-cutting/agent-orchestration-skill.md) Tier 判定选 1/2/3 个（Tier 2 = 设计实现 + 前端契约 双审；Tier 3 + 数据模型三审）|
 
 #### 角色 3：测试用例生成 Agent（`testcase-writer`）
 
@@ -684,7 +788,7 @@ ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analys
 | 标准 | 见 [`code-review-skill.md` §多 Agent 评审编排](../phase3-review/code-review-skill.md)（含 prompt 模板 + 多 Reviewer 交叉对比模式） |
 | 报告格式 | `{STORY-ID}-CodeReview-v{N}-r{M}.md`：架构师级审阅报告 |
 | 适用阶段 | Phase 3 ⑦ |
-| 数量建议 | 1-2 个 reviewer 并行（一个看业务实现，一个看架构/规范） |
+| 数量建议 | 按 [`agent-orchestration-skill.md §8.4`](../cross-cutting/agent-orchestration-skill.md) Tier 判定选 1/2/3 个（即 A/B/C 模式：Tier 2 = BE + AR 双审；Tier 3 + QA 三审）|
 | **🔴 【2026-06-06 重构】** | **6 大闸门（⑥bis 一致性 / ⑦bis 对称性 / 全文档回扫 / 禁裸 ✅ / 报告-代码对账 / 产出物对账 / 真实 DB-HTTP 覆盖）已迁出到 `code-review-skill.md §第七步`，本角色仅作 AE 编排层指针，详见该 SKILL。** |
 
 #### 角色 8：测试验证 Agent（`test-verifier` 🔴 强制）
@@ -694,9 +798,10 @@ ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analys
 | 输入 | 测试报告 + 测试代码 + Story AC |
 | 输出 | 测试真实性核查报告 |
 | 标准 | 见 `🔴 测试真实性强制规范` 8 类禁止手段 + 5 条保障要求 |
-| 报告格式 | `{STORY-ID}-TestVerification-Report.md`：8 类手段扫描结果 + 关键测试代码摘录 + AC 覆盖率 |
+| 报告格式 | `{STORY-ID}-TestVerification-Report.md`：8 类手段扫描结果 + 关键测试代码摘录 + AC 覆盖率 + 🆕 v3.4.0 独立 session_id |
 | 适用阶段 | Phase 3 ⑥.10（⑥ 完成判定的硬前置） |
 | **关键角色** | **这是 ⑥.10 强制要求的独立验证位——sub-agent 不依赖主 agent 的报告，独立跑一遍测试** |
+| 🆕 v3.4.0 独立性 | 报告头部须声明 `verifier session_id`（≠ 主 agent session_id，读 `.auto-engineering/<STORY>/session.json` 对比）；G-09 校验无独立 session_id → warn（防 AI 自跑冒充 sub-agent，建议书3 B2-7）|
 
 ### 任务分配模式（典型场景）
 
@@ -752,26 +857,38 @@ ae-sdd gate ra-required --fix  # 当 ra 不存在时自动调 requirement-analys
 └─────────────────────────────────────────────────┘
 ```
 
-#### 模式 C：单 Story 双 Reviewer 独立审阅（关键决策点）
+#### 模式 C：单 Story 双/多 Reviewer 独立审阅（🆕 2026-06-25 — 按 Tier 默认启用，详见 §8.4）
+
+> **🔴 2026-06-25 升级：** 原为"关键决策点才触发"的反应式模式，现升级为**按 Tier 默认启用**（[`agent-orchestration-skill.md §8.4`](../cross-cutting/agent-orchestration-skill.md)）。Tier 2+ Review 节点默认走双/多 reviewer 交叉审，不再等"检测到关键决策点"才触发。对抗 AI 逻辑自洽陷阱。
 
 ```
 ┌─────────────────────────────────────────────────┐
 │ root agent                                      │
 │                                                 │
-│ 检测到：状态机 / 事务边界 / 错误码 等关键决策点   │
-│ 决策：派 2 个 reviewer 独立审，最后交叉对比        │
+│ Review 节点准入通过后判定 Tier（§8.4.1）          │
+│ Tier 2/3 → 默认派 2-3 个 reviewer 独立审          │
+│ Tier 1 → 单 reviewer（微/小规模 + 无关键决策）    │
 │                                                 │
 │   ┌──────────────────┐  ┌──────────────────┐   │
-│   │ reviewer-BE      │  │ reviewer-FE      │   │
-│   │ 看后端实现        │  │ 看前端契约 / 联调 │   │
+│   │ reviewer-视角A    │  │ reviewer-视角B    │   │
+│   │ (视角分工见各节点  │  │ (视角分工见各节点  │   │
+│   │  SKILL 多 reviewer │  │  SKILL 多 reviewer │   │
+│   │  视角切分小节)     │  │  视角切分小节)     │   │
 │   └────────┬─────────┘  └────────┬─────────┘   │
 │            │                     │              │
 │            └──────────┬──────────┘              │
 │                       ▼                         │
-│           root agent 交叉对比                    │
-│           （一致 = 接受；不一致 = 升级用户）      │
+│      root agent 跑 §8.4.3 交叉对比算法           │
+│      + §8.4.4 冲突决策树                          │
+│      （一致 = 接受；不一致 = 按决策树处置）       │
 └─────────────────────────────────────────────────┘
 ```
+
+> **各节点视角切分速查（详见 [`agent-orchestration-skill.md §8.4.2`](../cross-cutting/agent-orchestration-skill.md)）：**
+> - Story Review：设计实现 + 前端契约（+ 数据模型 for Tier 3）
+> - Code Review：BE 业务实现 + AR 架构规范（+ QA 测试真实性 for Tier 3，即 A/B/C 模式）
+> - DR Review / Task Review：详见各节点 SKILL 的多 reviewer 视角切分小节（2026-06-25 已落地：dr-review §第一步 bis / task-generate §5bis）
+
 
 #### 模式 D：测试真实性独立验证（🔴 强制，⑥.10）
 
@@ -1086,6 +1203,17 @@ AI 在本 SKILL 运行期间，**必须持续维护以下状态**，每个 Story
 3. 用户确认后，切换到新 Story ID，读取或创建 `.auto-engineering/{新STORY-ID}/state.json`
 4. 两个 Story 的状态文件互不影响，可随时切换回来
 
+#### 场景五：PRD 完成 / 进入下一个 PRD（🆕 v3.3.0）
+
+**触发条件：** 用户说「PRD 收尾了 / 进入下一个 PRD」或所有 Story 完成后 AI 检测到 PRD 完成时机。
+
+**AI 动作（强制）：**
+1. **自动先校验 4 层 AND 闸**（`ae-sdd state prd-check-complete --prd {PRD-ID}`），输出未达成项
+2. 若 4 层 AND 未全过 → 列出阻塞项，**不**直接进入 compact
+3. 若 4 层 AND 全过 → 提示用户「PRD 完成确认」（🔍 人工审核点 5，参见 §1.5）
+4. 用户确认后 → 执行 `ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime-name}`
+5. compact 完成后 → 写 `.auto-engineering/{PRD-ID}/summary.md` + 预生成 `PRD-NEXT` 模板指针
+
 ---
 
 ### 再启动判定规则
@@ -1097,6 +1225,114 @@ AI 在本 SKILL 运行期间，**必须持续维护以下状态**，每个 Story
 | 放弃当前，重新开始 | 确认后删除 `.auto-engineering/{STORY-ID}/state.json`，从 Phase 1 ① 重启 |
 | 切换到另一个 Story | 保留当前 Story 的 state.json，切换到新 Story 的 `.auto-engineering/{新STORY-ID}/state.json` |
 | 偏离流程（其他话题） | 简短回应，不更新 state，保持步骤不变 |
+| **PRD 完成 / 进入下一个 PRD**（🆕 v3.3.0） | 读 `.auto-engineering/{PRD-ID}/state.json`，校验 prdStatus=compacted，写 next-prd 指针 | `.auto-engineering/{PRD-ID}/state.json` + `.auto-engineering/PRD-NEXT/state.json` 模板预生成 |
+
+---
+
+### § 流程状态跟踪与再启动（PRD 级）— 🆕 v3.3.0
+
+> **状态机归属（🔴 单点持有）：** 本节由 `ae-sdd-skill.md` 单点持有 PRD 级状态机定义；子 SKILL（`phase1-design` / `phase2-coding` / `phase3-review`）通过指针引用本节，**不**独立发明 PRD 级状态字段。如发现子 SKILL 写了自己的 PRD 级状态字段 → 视为违规。
+
+#### 1.1 PRD 级状态文件路径
+
+| 文件 | 路径 | 写入方 | 读取方 |
+|------|------|--------|--------|
+| `state.json` | `.auto-engineering/{PRD-ID}/state.json` | Story 完成 hook、PRD 收尾 CLI | 所有 phase SKILL、CLI |
+| `state.md` | `.auto-engineering/{PRD-ID}/state.md` | `ae-sdd state prd-complete`（一次性） | 用户、handoff 包 |
+| `summary.md` | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` | 下一个 session / 下一个 PRD |
+
+> **🔴 与 Story 级 state.json 共存：** PRD 级 `state.json` 与 Story 级 `.auto-engineering/{STORY-ID}/state.json` 互不替换；PRD 级聚合 Story 级数据。详见 §1.3 schema。
+
+#### 1.2 PRD ID 命名规范
+
+格式：`PRD-<业务域>-<序号>`（3 段，kebab-case）
+
+- 业务域：CS / IM / USER / LIFE（与 `dr-review-skill.md:184` DR ID 业务域对齐）
+- 序号：3 位数字，从 001 起
+- 示例：`PRD-CS-001`、`PRD-IM-002`、`PRD-USER-001`
+
+#### 1.3 PRD 级 `state.json` schema（SSOT）
+
+完整 schema 定义在 `document-storage-skill.md §3.5`（包含 5 核心 + 3 runtime 字段）。本节只列指针：
+
+```json
+{
+  "prdId": "PRD-CS-001",
+  "storyIds": [...],
+  "crossStoryDeps": [...],
+  "crossStoryResidualRisks": [...],
+  "sizeBudget": {...},
+  "prdReview": {...},
+  "memoryLifecycle": {...},
+  "runtimeHooks": {...},
+  "gateRegistry": {"G-PRD-1": "pending", ...},
+  "prdStatus": "in_progress | prd_complete_pending_user | awaiting_compact | compacted | prd_aborted",
+  "compactHistory": []
+}
+```
+
+字段演进：所有新字段均为 **optional + 默认值**，旧 PRD 级 state.json 缺字段不报错（v3.3.0 兼容策略）。
+
+#### 1.4 流程脱离场景扩展（5 场景）
+
+将 §流程脱离与再启动 章节（4 场景）扩展到 **5 场景**，新增「场景 5：PRD 完成 / 进入下一个 PRD」。详见 `document-storage-skill.md §4.3` 的扩展决策树，本 SKILL 不再重复定义。
+
+---
+
+### § PRD 完成判定 SOP（4 层 AND + 跨 Story 闸）— 🆕 v3.3.0
+
+#### 1.5 🔍 人工审核点 5：PRD 完成确认（新增）
+
+与现有 4 个 Story 级人工审核点（`SKILL.md:1167` 审核点 4、Phase 1 审核、Phase 2 审核、CodingPlan 审核 2.5）同级，编号 **5**。
+
+**触发时机：** 4 层 AND 全过 + 用户说「PRD 收尾了 / 进入下一个 PRD」
+
+**AI 主动讲解模板（基于 §SKILL.md:1300-1343 现有讲解模板扩展，PRD 级视角）：**
+
+1. PRD 业务全貌（PRD 文档 + DR 摘要）
+2. 各 Story 完成情况（聚合自 state.json.storyIds）
+3. **跨 Story 关键决策**（从 `crossStoryDeps` + `crossStoryResidualRisks` 提取）
+4. **sizeBudget 实际 vs 估算**（新增维度）
+5. 残留风险清单（owner + dueDate）
+
+**记录字段：**
+```json
+{
+  "prdReview": {
+    "confirmedAt": "2026-06-25T...",
+    "confirmedBy": "<user-id>",
+    "storytoldAt": "2026-06-25T...",
+    "openQuestions": []
+  }
+}
+```
+
+#### 1.6 PRD 完成判定闸（4 层 AND）
+
+```
+G-PRD-1 (Story 全部完成):
+  ∀ STORY-ID ∈ prdState.storyIds:
+    story.codeReviewReport 存在
+    ∧ story.sevenBisPassed == true
+    ∧ story.userConfirmedAt 非空
+
+G-PRD-2 (Story ⑦bis 全通过):
+  ∀ STORY-ID: story.sevenBisMatrix 无 🔴 断链
+  ∧ ∀ STORY-ID: story.sevenBisMatrix 出闸条件满足
+
+G-PRD-3 (跨 Story 残留风险已闭环):
+  crossStoryDeps[].verifiedAt 全部非空
+  ∧ crossStoryResidualRisks[].mitigationPlan 全部非空
+  ∧ ∀ risk.severity == "🟢" 或 risk.dueDate > now
+
+G-PRD-4 (PRD 级人工审核通过):
+  prdReview.confirmedAt 非空
+  ∧ prdReview.confirmedBy 存在
+```
+
+**CLI 入口：**
+- `ae-sdd state prd-check-complete --prd {PRD-ID}` — 只校验 4 层 AND，输出未达成项，**不改状态**
+- `ae-sdd state prd-complete --prd {PRD-ID} --runtime {mavis|claude-code|codex}` — 校验通过后执行 compact，更新 prdStatus
 
 ---
 
@@ -1565,27 +1801,32 @@ Phase 3 ────────┤ 验证阶段（必须完成）
 | Task-3 | 外部依赖 | 调融云 API，可能超时 | 超时重试+降级 |
 ...（有则列，无则写"本 Story 无高风险 Task"）
 
-四、关键类骨架预览（每层各1个最核心的类）
+四、关键类骨架预览（每层各1个最核心的类，每条强制附源码核对来源标记 — 🆕 v3.4.0 G-CODEPLAN-SRC）
 Domain：
 ```java
-// 示例骨架（≤15行）
+// {文件路径假设}
 public class {聚合根}DO {
     public void {核心方法}() { ... }
 }
+【已读源码：domain/message/model/entity/ImMessageDO.java】   ← 已核对的现有同类源码
+   或 【待核实源码：Converter 写法】                          ← 未核对项，须补读后改为【已读源码：】
 ```
 Application：
 ```java
 @Transactional
 public void {核心方法}({Command} command) { ... }
+【已读源码：application/.../XxxAppService.java】
 ```
 ...（其他层类似）
-```
+
+> 🆕 v3.4.0 G-CODEPLAN-SRC：每条骨架强制附"已读源码"或"待核实源码"标记之一；待核实清单非空 → CodingPlan 视为草案，禁止进 ⑤ Coding。
 
 **请您重点确认（逐条回复）：**
 1. 14 条门禁全部通过，是否有你认为需要额外关注的？
 2. CodingModel 11 维决策中，哪个维度的方案与你预期不符？
 3. 风险 Task 的应对方案是否充分？
 4. 关键类骨架是否与项目现有风格一致？
+5. 🆕 每条骨架的【已读源码：】标记是否真实？有无凭推测设计、应标【待核实源码】却未标的？
 
 **用户选项：**
 - ✅ 确认 CodingPlan，无误
@@ -1600,7 +1841,7 @@ public void {核心方法}({Command} command) { ... }
 
 > **📍 详细 7 章节 + 14 条门禁已下沉：** 原 AE-skill 中 ④bis 的 7 章节（文件顺序/类骨架/数据/Mapper SQL/测试对应/验证点/调试回滚）+ 14 条门禁 + 节点职责已统一存放在 [`coding-skill.md`](../phase2-coding/coding-skill.md) 和 [`be-coding-plan-template.md`](../../templates/coding/be-coding-plan-template.md)，本 SKILL 不再重复。
 
-**AE 编排层 Phase ④→⑤ 调用协议（7 项前置条件，全部满足后才触发 `CodingSkill.Execute`）：**
+**AE 编排层 Phase ④→⑤ 调用协议（9 项前置条件，全部满足后才触发 `CodingSkill.Execute`）：**
 
 | # | 前置条件 | 验证方式 |
 |---|---------|---------|
@@ -1611,6 +1852,8 @@ public void {核心方法}({Command} command) { ... }
 | 5 | 统一版 `{STORY-ID}-CodingPlan.md` 已生成，14 条门禁全部通过 | CodingPlan 门禁自检表全 ✅ |
 | 6 | 统一版 CodingPlan 已获用户明确确认（"确认"/"同意"/"可以开始"） | 用户回复记录中有明确确认词 |
 | 7 | 统一版 CodingPlan 中的 CodingModel 决策记录已复核（与各 Task 一致） | 无冲突项 |
+| 8 | 🆕 v3.4.0 **G-CODEPLAN-SRC 源码核对通过**：新增/修改类建模范式已核对现有源码（待核实清单为空） | `ae-sdd gates check --only G-CODEPLAN-SRC` ✅ |
+| 9 | 🆕 v3.4.0 **G-14 CodingPlan-Story 一致性通过**：Plan 引用 Story + AC 对齐 + 偏离项有 Proposal | `ae-sdd gates check --only G-14` ✅ |
 
 > **任一前置条件未满足 → 禁止触发 `CodingSkill.Execute`。** AI 不得以"用户整体确认"等模糊信号绕过。
 
@@ -1990,8 +2233,28 @@ DR（需求文档）→ Story → Task → Coding
 | `ae-sdd assets audit` | 双源一致性审计 | 🟡 P1 | 每月一次 |
 | `ae-sdd state next-step` | 状态机下一步判定 | 🔴 P0 | 重入判定 |
 | `ae-sdd classify` | 4 类需求识别 | 🟡 P1 | 入口路由 |
-| `ae-sdd gates check` | 14 门禁扫描 | 🔴 P0 | 阶段门禁 |
+| `ae-sdd gates check` | 22 门禁扫描 | 🔴 P0 | 阶段门禁 |
 | `ae-sdd sync-tools` | 规则→工具同步 | 🟢 P2 | 改了 rules.yaml 后 |
+
+### PRD 级子命令（🆕 v3.3.0）
+
+| 命令 | 用途 | 优先级 | 何时用 |
+|------|------|--------|--------|
+| `ae-sdd state prd-check-complete` | 校验 4 层 AND，输出未达成项，**不改状态** | 🔴 P0 | PRD 收尾前 |
+| `ae-sdd state prd-complete` | 校验通过后执行 compact，更新 prdStatus | 🔴 P0 | 用户确认收尾后 |
+| `ae-sdd state prd-archive` | 归档 compactHistory 到 state.archive.json | 🟡 P1 | 5+ 次 compact 后清理 |
+| `ae-sdd runtime compact` | runtime-specific compact 适配层 | 🔴 P0 | `prd-complete` 调用后 |
+
+**完整命令签名：**
+
+```bash
+ae-sdd state prd-check-complete --prd {PRD-ID}
+ae-sdd state prd-complete --prd {PRD-ID} --runtime {mavis|claude-code|codex}
+ae-sdd state prd-archive --prd {PRD-ID} --keep-last 5
+ae-sdd runtime compact --runtime {mavis|claude-code|codex} --prd {PRD-ID}
+```
+
+> **🔴 CLI 命名一致性（v3.3.0 起）：** PRD 级命令固定为 `state prd-*` 单层结构（区别于 `state next-step` Story 级单层命令），避免多层子命令导致 `add_parser` 嵌套过深。
 
 ### 完整命令清单
 
@@ -2033,7 +2296,7 @@ ae-sdd <command> [options]
   route <type>       # 返回下一步 phase/skill
 
 门禁类:
-  gates check <target>  # 14 门禁扫描
+  gates check <target>  # 22 门禁扫描
   review <story-id>     # TR-1~TR-7 全局 Task Review
 
 维护类:
@@ -2054,7 +2317,7 @@ ae-sdd <command> [options]
 ### AI 调用约定
 
 - **CLI 命令必须可执行**——不能"我打算跑 ae-sdd classify"但实际不跑
-- **所有 G-00 检查在内部自动触发**——AI 不需要手动跑 `ae-sdd assets check`
+- **G-00 由 AI Agent 手动调用**——Agent 在路由步骤 0 跑 `ae-sdd gates check --only G-00` 验证；G-00 不通过时路由到 `project-assets-update-skill §3` 生成
 - **输出必须可解析**——CLI 走 stdout 输出 JSON，stderr 写日志，pipeline 友好
 
 ---
@@ -2103,7 +2366,7 @@ ae-sdd health
   # 3. 项目资产双源一致性
   # 4. 规则-工具同步状态
   # 5. 文档存放路径合规
-  # 6. 14 门禁覆盖度
+  # 6. 22 门禁覆盖度
   # 7. TR-1~TR-7 覆盖度
   # 8. 测试真实性扫描器就绪
   # 9. CHANGELOG 最新条目版本号一致
@@ -2200,7 +2463,7 @@ ae-sdd init <project-dir> <project-key>
 | 5a | **全局 Task Review（结合约束+Story+测试用例）** | Review 结论 | TR-1~TR-7 全部通过；发现问题 → Task 修复 → 重新 Review；连续一轮无新增问题才退出，然后输出实现方案 |
 | 5b | 人工审核：Task 文档 + 实现方案完成确认（🔴 强制逐文件自上而下核对，禁止一锅端确认） | 用户逐文件确认记录（每个 Task 文件 + 实现方案 + CodingPlan 各 1 条） | 每个文件单独获得用户 ✅；模糊回复追问后再判定；跳过/整体确认视为违规 |
 | 5b-📖 | **🔴 AI 主动讲解 Task 故事**（在 5b 之前） | Task 故事讲解输出 | 已讲清"拆 Task 故事/依赖链路/DB 变更/事务边界/风险 Task"5 个维度；每 Task 文件核对前已讲"本 Task 故事"；未讲解禁止进入 5b |
-| 5c | **🔴 CodingPlan 输出**（④bis，⑤ 之前） | `{STORY-ID}-CodingPlan.md` | 7 章节齐全；**14 条门禁全部通过**（含 CodingModel 决策记录完整 + 核心链路保护 + 资源隔离 + 混合压测）；Phase ④→⑤ 调用协议 7 项前置条件全满足；未通过禁止触发 `CodingSkill.Execute` |
+| 5c | **🔴 CodingPlan 输出**（④bis，⑤ 之前） | `{STORY-ID}-CodingPlan.md` | 7 章节齐全；**14 条门禁全部通过**（含 CodingModel 决策记录完整 + 核心链路保护 + 资源隔离 + 混合压测）；🆕 v3.4.0 G-CODEPLAN-SRC 源码核对通过 + G-14 Story 一致性通过；Phase ④→⑤ 调用协议 9 项前置条件全满足；未通过禁止触发 `CodingSkill.Execute` |
 | **5b.5** | **🆕 2026-06-10 人工审核：CodingPlan 评审**（在 5c 之后，⑤ 之前） | 用户确认记录 | 用户已确认 CodingPlan；模糊回复追问后再判定；未确认禁止进入 ⑤ Coding |
 | 5c-🚫 | **🔴 测试真实性扫描**（在 6.7 之前，⑥ 完成判定硬前置） | 原始日志 + XML 对账 + `test-authenticity-scan` 报告 | `test_authenticity_scan.py` BLOCKER=0；Surefire/Failsafe XML 与报告统计一致；无跳测/忽略失败参数；关键测试代码已呈现；测试数据可追溯；无未授权"修复测试"；AC 覆盖率 100%。任一未达成 → 测试报告作废，⑤ Coding 返工 |
 | 6 | Coding（Coding SKILL） | 源代码 + 开发问题记录 | 编译通过 + 服务启动成功 + 接口测试 Pass + 测试全部 Pass |

@@ -153,6 +153,9 @@ ASSETS_SYNC="$HOME/.claude/skills/ae-sdd/skills/ae-sdd/assets/${PROJECT_KEY}/${P
 | CodeReview 报告 | `code-review-report-v{N}-r{N}.md` | `source/templates/coding/be-codereview-template.md` |
 | Coding 报告 | `CodingReport-{事务简称}.md` | `source/templates/coding/be-coding-report-template.md` |
 | Coding Plan | `CodingPlan-{事务简称}.md` | `source/templates/coding/be-coding-plan-template.md` |
+| **PRD ID 命名** | **`PRD-<业务域>-<序号>`**（3 位数字）| `dr-review-skill.md:184` + `ae-sdd-skill.md §1.2` |
+| **PRD 级 state.json** | `.auto-engineering/{PRD-ID}/state.json` | `document-storage-skill.md §3.5` |
+| **PRD 级 handoff** | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` |
 
 ---
 

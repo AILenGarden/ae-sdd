@@ -333,6 +333,34 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 
 > **闭环规则：** 每次修复后必须重新执行完整的全局 Review（不是只看修复项），直到一轮 Review 无任何新增问题才能退出。退出计数器：本轮发现新问题 → 计数器归零；连续一轮无新增问题 → 满足退出条件。
 
+### 多 reviewer 视角切分（🆕 2026-06-25 — 落地 §8.4.2 节点专属配置）
+
+> **📍 归属：** 本节是 [`agent-orchestration-skill.md §8.4 多 reviewer 默认编排框架`](../cross-cutting/agent-orchestration-skill.md) 在 Task Review 节点的**视角切分配置**。Tier 判定 / 交叉对比算法 / 冲突决策树 / 降级规则统一查 §8.4。
+
+**Tier 判定（引用 §8.4.1，本节点关键决策点识别）：**
+
+| Tier | Task Review 触发条件（任一命中即取高 Tier） | reviewer 数 |
+|------|------------------------------------------|------------|
+| Tier 1 | Task ≤ 2 **且** 无状态机/事务/外部集成/资金·权限 | 1 |
+| Tier 2 | Task 3-4 **或** 含状态机/事务/接口契约/外部集成等关键决策 | 2 |
+| Tier 3 | Task ≥ 4 **或** 全新表/资金·状态·权限/跨服务集成/含风险 Task（TR-7.3 回调/Webhook/支付/状态更新） | 3 |
+
+**判定结果写入报告头部** `## Review 元信息` 的 `reviewerTier` 字段。
+
+**Task Review reviewer 视角分工（§8.4.2 三原则落地）：**
+
+| 视角 | Tier | 审视重点 | 覆盖检查项 |
+|------|------|---------|----------|
+| `reviewer-Story 覆盖` | Tier 2/3 | TR-1 Story 覆盖完整性 + TR-2 测试用例覆盖性（Task 是否完整实现 Story AC/接口/数据）| TR-1 + TR-2 |
+| `reviewer-实现可行` | Tier 2/3 | TR-5 实现可行性 + TR-4 约束合规性 + TR-7 CodingModel 合规性（Task 能否被正确实现）| TR-4 + TR-5 + TR-7 |
+| `reviewer-风险 Task` | 仅 Tier 3 | TR-7.3 核心链路保护 + TR-7.4 异步/批量 + TR-7.5 外部依赖 + TR-7.6 高并发（风险 Task 专项）| TR-7.3~7.6 + TR-3 + TR-6 |
+
+**视角正交性核查（§8.4.2 原则①/②）：**
+- Tier 2：Story 覆盖视角（TR-1+2）∩ 实现可行视角（TR-4+5+7）= 无交集 ✅；并集覆盖 TR-1/2/4/5/7（TR-3/6 由两视角基础核查）✅
+- Tier 3：三视角并集覆盖 TR-1~7 全部 HARD 项 ✅
+
+**与 TR 检查清单的关系：** 多 reviewer 是叠加在 TR-1~7 之上的交叉审层。单 reviewer（Tier 1）也要跑全部 TR-1~7；多 reviewer 让不同视角聚焦不同 TR 项，但每个 reviewer 各自完整跑一遍 TR（满足"不得跳过任何检查项"），靠 prompt lens 制造视角差异，sub-agent 总数按 reviewer 数计（≤3）。
+
 ### Review 检查清单
 
 **TR-1 Story 覆盖完整性**
@@ -404,12 +432,16 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 - TR-5 实现可行性：✅ 通过 / 🔴 X 个问题
 - TR-6 复用与能力归属：✅ 通过 / 🔴 X 个问题
 - TR-7 CodingModel 合规性：✅ 通过 / 🔴 X 个问题
+- 多 reviewer 模式：reviewerTier={Tier 1/2/3} / reviewerMode={physical-multi-reviewer | logical-multi-perspective}
+- 上游 Story Review reviewerMode：{读取 Story Review 退出摘要}（若=logical-multi-perspective，本节点已标注"上游逻辑多视角，交叉验证强度降低"）
 
 发现问题：
 - [TR-1.1] xxx：xxx
 
 本轮结论：发现 X 个问题 → 启动修复 / 无新增问题 → 退出 Review
 ```
+
+> **🆕 2026-06-25 降级提示落地（§8.4.5）：** Review 结论新增 `reviewerMode`（本节点）+ `上游 Story Review reviewerMode`（读取上游）两字段。读取上游 `logical-multi-perspective` 时必须标注风险，闭环 §8.4.5 的下游提示机制。
 
 ### Task 修复流程
 

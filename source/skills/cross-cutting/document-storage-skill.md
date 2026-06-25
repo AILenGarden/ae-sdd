@@ -127,15 +127,20 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 
 > **原则：** ae-sdd SKILL 家族与工程代码**解耦**——SKILL 家族不知道工程在哪、工程不知道 SKILL 家族在哪。**document-storage-skill 是中间的"目录路由器"**，接收调用方的"意图"（哪个项目、哪个 STORY-ID、哪个微服务、什么任务），输出"文档/代码/产出物"的完整路径。
 
-### 0.5.1 三维定位模型
+### 0.5.1 四维定位模型（🆕 v3.4.0 升级三维→四维，新增"文档工作区根"）
 
-AE 流程涉及 3 类不同维度的位置，必须分别定位：
+> **🆕 v3.4.0（2026-06-25，建议书2）：** 原三维模型假设"工程目录=文档目录"（`design/` 相对路径基于 gitPath）。但 life 项目等"工程目录≠文档目录分离"项目（工程在 `d:\Item\life`，文档在 `D:\Item\doc\icec-cloud-boss\`）原模型推导不出正确路径。本次新增第四维"文档工作区根"（`docWorkspacePath`，可选，缺省回退 gitPath，向后兼容）。
+
+AE 流程涉及 4 类不同维度的位置，必须分别定位：
 
 | 维度 | 定位依据 | 谁消费 |
 |------|---------|--------|
-| **项目根** | `assets.md` §1 `gitPath` 字段 | 所有"项目级"操作（统一目录根）|
+| **项目根** | `assets.md` §1 `gitPath` 字段 | 所有"项目级"操作（代码、构建、跑测试）|
 | **微服务根** | `{gitPath} + "/" + {serviceName}`（拼接约定）| 微服务级文档 |
-| **Story 根** | `{项目根}/ae-sdd-doc/Story/{STORY-ID}`（新统一路径）| 重任务 Story/Task/Coding 文档 |
+| **Story 根** | `{文档工作区根}/ae-sdd-doc/Story/{STORY-ID}`（新统一路径）| 重任务 Story/Task/Coding 文档 |
+| 🆕 **文档工作区根** | `assets.md` §1 新增 `docWorkspacePath` 字段（可选，缺省=gitPath）| 工程目录与文档目录分离的项目（如 life）—— 设计类文档（DR/Story/Task/CodingPlan/测试用例/报告）路径基于此维度 |
+
+**向后兼容：** `docWorkspacePath` 缺省时（assets.md §1 未填）回退到 `gitPath`，旧项目行为不变。仅当 assets.md §1 显式声明 `docWorkspacePath` 时，设计类文档路径基于该值。
 
 ### 0.5.2 动态定位算法
 
@@ -144,12 +149,14 @@ AE 流程涉及 3 类不同维度的位置，必须分别定位：
     ↓
 document-storage-skill.定位(projectKey, intent)
     ↓
-1. 读 {projectKey}.assets.md §1 获取 gitPath
-2. 校验 gitPath 存在性（文件系统可达）
-3. 根据 intent 选择路径模板：
-   ├─ "重任务 STORY-XXX" → 路径前缀 = {gitPath}/ae-sdd-doc/Story/ + 迭代目录
-   ├─ "小任务 ServiceX-任务" → 路径前缀 = {gitPath}/ae-sdd-doc/Task/ + 迭代目录
-   └─ "微任务 ServiceX-任务" → 路径前缀 = {gitPath}/ae-sdd-doc/Coding/ + 迭代目录
+1. 读 {projectKey}.assets.md §1 获取 gitPath（+ 🆕 docWorkspacePath，缺省=gitPath）
+2. 校验 gitPath 存在性（文件系统可达）← 🆕 v3.4.0 落地前强制触发 E003（非仅事后 health）
+3. 根据 intent 选择路径模板 + 路径根：
+   ├─ 设计类文档（DR/Story/Task/CodingPlan/测试用例/报告）→ 路径根 = docWorkspacePath（🆕）
+   │   ├─ "重任务 STORY-XXX" → {docWorkspacePath}/ae-sdd-doc/Story/{STORY-ID}/ + 迭代目录
+   │   ├─ "小任务 ServiceX-任务" → {docWorkspacePath}/ae-sdd-doc/Task/{事务简称}/
+   │   └─ "微任务 ServiceX-任务" → {docWorkspacePath}/ae-sdd-doc/Coding/{事务简称}/
+   └─ 工程类操作（代码、构建）→ 路径根 = gitPath
 4. 拼接具体文档路径
 5. 返回：{完整路径, 文件名, 版本号, ChangeLog 路径, STORING 索引待更新项}
 ```
@@ -157,7 +164,8 @@ document-storage-skill.定位(projectKey, intent)
 ### 0.5.3 项目资产依赖
 
 **document-storage-skill 强依赖** `assets.md`（作为"工程根"事实基线）：
-- 项目级定位读 §1 `gitPath`
+- 项目级定位读 §1 `gitPath`（工程目录，代码/构建根）
+- 🆕 v3.4.0 文档工作区根读 §1 `docWorkspacePath`（可选，缺省=gitPath；设计类文档路径基于此）
 - 微服务级定位读 §2 `microservices[].name`（拼接命名约定）
 - 路径规范读 §3-§5（分层映射 / 命名约定 / 包路径）
 
@@ -348,11 +356,12 @@ interface ResolvedPath {
 |--------|------|------|
 | `E001` | `assets.md` 不存在 | 提示运行 `project-assets-update-skill.md §3 生成动作` |
 | `E002` | `gitPath` 字段为空 | 提示检查 assets.md §1 |
-| `E003` | `gitPath` 路径不存在 | 提示检查文件系统 |
+| `E003` | `gitPath` 路径不存在 | 提示检查文件系统。🆕 v3.4.0：**落地前强制触发**（resolve_path step 2，非仅事后 health）—— gitPath 无效即阻断文档落地，由 G-DOC-STORAGE 门禁兜底 |
 | `E004` | 微服务名不在 §2 列表 | 提示检查 assets.md §2 |
 | `E005` | 业务+逻辑都无关联（0/0）| 🔴 强制询问用户 |
 | `E006` | 旧路径写入尝试 | 提示改用新路径 `ae-sdd-doc/` |
 | `E007` | 版本号未递增 | 重入时必须 major/minor 至少一个递增 |
+| 🆕 `E008` | `docWorkspacePath` 声明但路径不存在 | 提示检查 assets.md §1 docWorkspacePath 字段（落地前强制触发，同 E003）|
 
 ---
 
@@ -492,6 +501,11 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | **跨轮 Review 对比表** | **带 v1-to-v2** | `STORY-001-BE-ReviewCompare-v1-to-v2.md` | 表示对比的 2 个版本 |
 | **项目资产 + 更新日志** | **不带版本号** | `icec-cloud-boss.assets.md` + `icec-cloud-boss.update-log.md` | 资产是"单一权威源" |
 | **流程状态文件** | **不带版本号** | `.auto-engineering/{STORY-ID}/state.json` | 状态实时变化 |
+| **流程状态文件（PRD 级）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.json` | 状态实时变化；Story 完成 hook 写入 |
+| **流程状态文件（PRD 级，handoff）**| **不带版本号** | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` 时生成 |
+| **流程状态文件（PRD 级，人类读）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.md` | `ae-sdd state prd-complete` 时一次性生成 |
+
+> **🔴 PRD ID 命名规范（与 `ae-sdd-skill.md §1.2` SSOT）：** 格式 `PRD-<业务域>-<序号>`（CS / IM / USER / LIFE + 3 位数字）。示例：`PRD-CS-001`。
 
 ### 3.3 版本号含义
 
@@ -518,6 +532,132 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 - `save_doc()` API 自动调用 `get_latest_version()` 获取当前最大版本
 - 根据 doc.metadata.changeType（`major` / `minor`）递增
 - 严禁手动跳过版本号
+
+---
+
+### 3.5 PRD 级 `state.json` 完整 schema（🆕 v3.3.0）— SSOT
+
+> **🔴 单点持有：** PRD 级 `state.json` schema 定义在本节，ae-sdd-skill.md §1.3 仅放指针。如发生字段冲突以本节为准。
+
+```json
+{
+  "$schema": "https://ae-sdd.dev/schema/prd-state-v1.0.0.json",
+  "schemaVersion": "1.0.0",
+  "prdId": "PRD-CS-001",
+  "prdTitle": "客服系统 v1",
+  "prdDocPath": "ae-sdd-doc/PRD/PRD-CS-001.md",
+  "drId": "DR-CS-001",
+  "storyIds": [
+    {
+      "storyId": "STORY-002-BE",
+      "state": "completed",
+      "taskIds": ["TASK-002-01", "TASK-002-02"],
+      "codingPlanIds": ["CP-002-01", "CP-002-02"],
+      "codeReviewReport": ".auto-engineering/STORY-002-BE/CR-r1.md",
+      "sevenBisPassed": true,
+      "userConfirmedAt": "2026-06-25T10:30:00Z",
+      "completedAt": "2026-06-25T10:30:00Z"
+    }
+  ],
+
+  "crossStoryDeps": [
+    {
+      "fromStory": "STORY-002-BE",
+      "toStory": "STORY-007-FE",
+      "depType": "api",
+      "critical": true,
+      "verifiedAt": null,
+      "verifiedBy": null
+    }
+  ],
+
+  "crossStoryResidualRisks": [
+    {
+      "riskId": "RISK-PRD-CS-001-001",
+      "description": "...",
+      "owner": "...",
+      "severity": "🟠",
+      "dueDate": "2026-07-15",
+      "mitigationPlan": "..."
+    }
+  ],
+
+  "sizeBudget": {
+    "estimated": { "storyCount": 5, "taskCount": 18, "hours": 240 },
+    "actual": { "storyCount": 6, "taskCount": 22, "hours": 310 },
+    "variance": { "storyCountPct": 20, "taskCountPct": 22, "hoursPct": 29 }
+  },
+
+  "prdReview": {
+    "confirmedAt": null,
+    "confirmedBy": null,
+    "storytoldAt": null,
+    "openQuestions": []
+  },
+
+  "memoryLifecycle": {
+    "enterHistory": [{ "at": "2026-06-01T...", "phase": "ra" }],
+    "writeHistory": [{ "at": "2026-06-15T...", "phase": "design", "kind": "decision" }],
+    "exitHistory": [{ "at": "2026-06-25T...", "phase": "review" }]
+  },
+
+  "runtimeHooks": {
+    "mavis": { "compactCmd": "mavis session rotate", "args": ["--handoff-file", "{summary.md}"] },
+    "claude-code": { "hookType": "UserPromptSubmit", "injectCmd": "..." },
+    "codex": {
+      "compactCmd": "codex plugin add ae-sdd-prd-state",
+      "hookSupport": {
+        "PostToolUse": "supported",
+        "Stop": "supported",
+        "PreToolUse": "fallback-to-PostToolUse-rollback",
+        "UserPromptSubmit": "fallback-to-output-last-message"
+      },
+      "eventStream": "codex exec --json",
+      "status": "hook-supported-with-fallback",
+      "fallback": null
+    }
+  },
+
+  "gateRegistry": {
+    "G-PRD-1": "pending",
+    "G-PRD-2": "pending",
+    "G-PRD-3": "pending",
+    "G-PRD-4": "pending"
+  },
+
+  "prdStatus": "in_progress | prd_complete_pending_user | awaiting_compact | compacted | prd_aborted",
+  "lastUpdated": "2026-06-25T10:30:00Z",
+  "compactHistory": []
+}
+```
+
+**字段职责矩阵（5 核心 + 3 runtime 字段）：**
+
+| 类别 | 字段 | 写入方 | 读取方 |
+|------|------|--------|--------|
+| **核心标识** | `prdId` / `prdTitle` / `prdDocPath` / `drId` | `ae-sdd state prd-init` | 所有 |
+| **Story 聚合** | `storyIds[]` | Story 完成 hook | G-PRD-1 闸 |
+| **跨 Story 依赖** | `crossStoryDeps[]` | Story 完成 hook | G-PRD-3 闸 |
+| **残留风险** | `crossStoryResidualRisks[]` | AI + 用户协作 | G-PRD-3 闸 |
+| **规模预算** | `sizeBudget` | 聚合自 Story | 🔍 人工审核点 5 |
+| **PRD 审核** | `prdReview` | 用户确认后 | G-PRD-4 闸 |
+| **memory lifecycle** | `memoryLifecycle`（v3.2.3+ 强制门禁）| `ae-sdd memory enter/write/exit` | `ae-sdd state write` 前置校验 |
+| **runtime 适配** | `runtimeHooks` | 项目实例化时一次 | `ae-sdd runtime compact` |
+| **闸注册表** | `gateRegistry` | G-PRD-* 闸 hook | PRD 完成判定 CLI |
+
+**`prdStatus` 枚举扩展：**
+
+| 值 | 含义 | 触发条件 |
+|----|------|---------|
+| `in_progress` | 进行中 | 默认 |
+| `prd_complete_pending_user` | 4 层 AND 全过，等用户确认收尾 | G-PRD-1·2·3 全 pass |
+| `awaiting_compact` | 用户已确认，等 compact 钩子触发 | `prdReview.confirmedAt` 非空 |
+| `compacted` | compact 完成，可进入下一个 PRD | `summary.md` 已生成 |
+| `prd_aborted` | 异常终止（保留现场，不删 state.json）| 人工触发或门禁失败 |
+
+**memory lifecycle 强制门禁（v3.2.3+ SSOT）：** `ae-sdd state write --phase <next>` 必须先查 `memoryLifecycle.enterHistory` 有对应 phase 的 `enter` 记录 + `writeHistory` 有 `write` 记录，否则 `state write` 被拒。
+
+**字段演进策略：** 所有新字段均为 **optional + 默认值**，旧 PRD 级 state.json 缺字段不报错（v3.3.0 兼容策略）。
 
 ---
 

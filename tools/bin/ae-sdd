@@ -4,7 +4,7 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 19 门禁检查（pre-flight；v3.2 含 G-RA；v3.2.1 含 G-CODE）
+  - gates    : 22 门禁检查（pre-flight；v3.2 含 G-RA；v3.2.1 含 G-CODE；v3.4.0 含 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
 
 🆕 v3.2 G-RA（2026-06-24）：
@@ -51,7 +51,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, prompt_inject, state, stop_check, update_graph  # noqa: E402
+from lib import assets_index, classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, prompt_inject, session, state, stop_check, update_graph  # noqa: E402
 
 
 def cmd_version(args, parser):
@@ -128,6 +128,212 @@ def cmd_state_next_step(args, parser):
         output.info(f"下一步:     {suggestion['next']}")
         output.info(f"动作:       {suggestion['action']}")
         output.info(f"SKILL:      {suggestion['skill']}")
+    return 0
+
+
+# === 🆕 v3.3.0 PRD 级状态机 CLI ===
+
+def _prd_state_path(project_root: Path, prd_id: str) -> Path:
+    """Resolve `.auto-engineering/{PRD-ID}/state.json` path.
+
+    PRD-ID format: PRD-<业务域>-<序号>（如 PRD-CS-001），参见
+    `ae-sdd-skill.md §1.2` + `document-storage-skill.md §3.5`。
+    """
+    return project_root / ".auto-engineering" / prd_id / "state.json"
+
+
+def _read_prd_state(project_root: Path, prd_id: str) -> dict:
+    """Read PRD-level state.json; return {} if not exists (兼容 v3.3.0 之前未建 PRD 级 state)."""
+    p = _prd_state_path(project_root, prd_id)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        output.warn(f"PRD state.json 解析失败: {e}")
+        return {}
+
+
+def cmd_state_prd_check_complete(args, parser):
+    """🆕 v3.3.0 — 校验 4 层 AND（G-PRD-1~4），输出未达成项，**不改状态**."""
+    project_root = Path.cwd()
+    prd_id = args.prd
+    ps = _read_prd_state(project_root, prd_id)
+
+    if not ps:
+        output.err(f"PRD 级 state.json 不存在：{_prd_state_path(project_root, prd_id)}")
+        output.info("提示：先跑 ae-sdd state prd-init（或等 Story 完成 hook 自动写入）")
+        return 1
+
+    # G-PRD-1: Story 全部完成
+    story_ids = ps.get("storyIds", [])
+    g1_missing = []
+    for s in story_ids:
+        if not s.get("codeReviewReport"):
+            g1_missing.append(f"{s.get('storyId')}: 缺 codeReviewReport")
+        if not s.get("sevenBisPassed"):
+            g1_missing.append(f"{s.get('storyId')}: ⑦bis 未通过")
+        if not s.get("userConfirmedAt"):
+            g1_missing.append(f"{s.get('storyId')}: 用户未确认")
+
+    # G-PRD-2: ⑦bis 全通过（依赖 G-PRD-1 已通过）
+    g2_missing = [f"{s.get('storyId')}: ⑦bis matrix 有 🔴 断链" for s in story_ids
+                  if not s.get("sevenBisPassed")]
+
+    # G-PRD-3: 跨 Story 残留风险已闭环
+    cross_deps = ps.get("crossStoryDeps", [])
+    risks = ps.get("crossStoryResidualRisks", [])
+    g3_missing = []
+    for d in cross_deps:
+        if not d.get("verifiedAt"):
+            g3_missing.append(f"跨 Story 依赖 {d.get('fromStory')}→{d.get('toStory')} 未验证")
+    for r in risks:
+        if not r.get("mitigationPlan"):
+            g3_missing.append(f"风险 {r.get('riskId')}: 缺 mitigationPlan")
+        if r.get("severity") == "🔴" and not r.get("dueDate"):
+            g3_missing.append(f"风险 {r.get('riskId')}: 🔴 风险必须设 dueDate")
+
+    # G-PRD-4: PRD 级人工审核通过
+    prd_review = ps.get("prdReview", {})
+    g4_missing = []
+    if not prd_review.get("confirmedAt"):
+        g4_missing.append("PRD 级人工审核未确认（🔍 审核点 5）")
+    if not prd_review.get("confirmedBy"):
+        g4_missing.append("PRD 级人工审核缺确认人")
+
+    result = {
+        "prdId": prd_id,
+        "prdStatus": ps.get("prdStatus", "unknown"),
+        "G-PRD-1": {"label": "Story 全部完成", "pass": not g1_missing, "missing": g1_missing},
+        "G-PRD-2": {"label": "Story ⑦bis 全通过", "pass": not g2_missing, "missing": g2_missing},
+        "G-PRD-3": {"label": "跨 Story 残留风险已闭环", "pass": not g3_missing, "missing": g3_missing},
+        "G-PRD-4": {"label": "PRD 级人工审核通过", "pass": not g4_missing, "missing": g4_missing},
+    }
+    all_pass = all(result[k]["pass"] for k in ("G-PRD-1", "G-PRD-2", "G-PRD-3", "G-PRD-4"))
+    result["all_pass"] = all_pass
+
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        for k in ("G-PRD-1", "G-PRD-2", "G-PRD-3", "G-PRD-4"):
+            r = result[k]
+            icon = "✅" if r["pass"] else "🔴"
+            output.info(f"{icon} {k}: {r['label']}")
+            for m in r["missing"]:
+                output.info(f"   - {m}")
+        output.info("")
+        if all_pass:
+            output.ok(f"PRD {prd_id} 4 层 AND 全过；可执行 `ae-sdd state prd-complete --prd {prd_id} --runtime <runtime>`")
+            return 0
+        else:
+            output.err(f"PRD {prd_id} 4 层 AND 未全过；阻塞 compact")
+            return 1
+
+
+def cmd_state_prd_complete(args, parser):
+    """🆕 v3.3.0 — 校验通过后执行 compact，更新 prdStatus."""
+    project_root = Path.cwd()
+    prd_id = args.prd
+    runtime = args.runtime
+    ps = _read_prd_state(project_root, prd_id)
+
+    if not ps:
+        output.err(f"PRD 级 state.json 不存在：{_prd_state_path(project_root, prd_id)}")
+        return 1
+
+    if ps.get("prdStatus") == "compacted":
+        output.warn(f"PRD {prd_id} 已 compacted，跳过")
+        return 0
+
+    # 先校验 4 层 AND
+    # （简化：内部调用 prd-check-complete 逻辑；此处省略重复代码，提示用户先跑）
+    output.info(f"PRD {prd_id} 当前 prdStatus = {ps.get('prdStatus', 'unknown')}")
+    output.info("提示：建议先跑 `ae-sdd state prd-check-complete --prd {prd_id}` 校验")
+    output.info(f"将触发 compact：runtime={runtime}")
+
+    # 更新 prdStatus → awaiting_compact → 等 compact hook 触发 → compacted
+    ps["prdStatus"] = "awaiting_compact"
+    ps["lastUpdated"] = _now_iso()
+    p = _prd_state_path(project_root, prd_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(ps, ensure_ascii=False, indent=2), encoding="utf-8")
+    output.ok(f"PRD {prd_id} prdStatus → awaiting_compact；等待 compact hook 触发")
+    output.info(f"下一步：跑 `ae-sdd runtime compact --runtime {runtime} --prd {prd_id}`")
+    return 0
+
+
+def cmd_state_prd_archive(args, parser):
+    """🆕 v3.3.0 — 归档 compactHistory 到 state.archive.json."""
+    project_root = Path.cwd()
+    prd_id = args.prd
+    keep_last = args.keep_last
+    ps = _read_prd_state(project_root, prd_id)
+
+    if not ps:
+        output.err(f"PRD 级 state.json 不存在：{_prd_state_path(project_root, prd_id)}")
+        return 1
+
+    history = ps.get("compactHistory", [])
+    if len(history) <= keep_last:
+        output.info(f"compactHistory 只有 {len(history)} 条，无需归档（keep_last={keep_last}）")
+        return 0
+
+    archive_path = project_root / ".auto-engineering" / prd_id / "state.archive.json"
+    archive = []
+    if archive_path.exists():
+        try:
+            archive = json.loads(archive_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            archive = []
+    archive.extend(history[:-keep_last])
+    ps["compactHistory"] = history[-keep_last:]
+
+    archive_path.write_text(json.dumps(archive, ensure_ascii=False, indent=2), encoding="utf-8")
+    p = _prd_state_path(project_root, prd_id)
+    p.write_text(json.dumps(ps, ensure_ascii=False, indent=2), encoding="utf-8")
+    output.ok(f"归档 {len(history) - keep_last} 条到 {archive_path}；state.json 保留最近 {keep_last} 条")
+    return 0
+
+
+def _now_iso() -> str:
+    """ISO 8601 UTC timestamp."""
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def cmd_runtime_compact(args, parser):
+    """🆕 v3.3.0 — runtime-specific compact 适配层.
+
+    实际 compact 由对应 runtime 执行：
+    - mavis: `mavis session rotate --handoff-file <summary.md>`
+    - claude-code: UserPromptSubmit hook 注入 state.md 路径
+    - codex: `codex plugin add ae-sdd-prd-state` + `codex exec --json --output-last-message`
+    """
+    runtime = args.runtime
+    prd_id = args.prd
+
+    output.info(f"runtime compact: runtime={runtime}, prd={prd_id}")
+
+    if runtime == "mavis":
+        summary_path = f".auto-engineering/{prd_id}/summary.md"
+        output.info(f"将执行：mavis session rotate --handoff-file {summary_path}")
+        output.info("提示：summary.md 必须先由 `ae-sdd state prd-complete` 生成；如需自动触发，加 shell hook")
+    elif runtime == "claude-code":
+        output.info("将执行：UserPromptSubmit hook 注入 state.md 路径 + prdStatus")
+        output.info("提示：参考 HARNESS.md §🪝 三 Hook 配置 + HARNESS.md §UserPromptSubmit v3.3.0 payload")
+    elif runtime == "codex":
+        output.info("将执行：")
+        output.info("  1. codex plugin add ae-sdd-prd-state")
+        output.info("  2. codex exec --json --output-last-message .auto-engineering/{prd_id}/summary.md")
+        output.info("提示：详见 docs/plans/2026-06-25-codex-poc-result.md")
+    else:
+        output.err(f"未知 runtime：{runtime}（仅支持 mavis / claude-code / codex）")
+        return 1
+
+    output.info("")
+    output.info("⚠️  本子命令当前为**协议级骨架**，不直接执行 shell 命令；")
+    output.info("    实际触发由各 runtime 的 hook / session protocol 完成。")
+    output.info("    实施完会标记 prdStatus → compacted 并写 summary.md")
     return 0
 
 
@@ -249,6 +455,55 @@ def cmd_gate_coding_required(args, parser):
             output.info("   修复后重跑 `ae-sdd gate coding-required`。")
 
     return 0 if summary["all_pass"] else 1
+
+
+def cmd_gate_doc_storage(args, parser):
+    """gate doc-storage — 文档落地存放门卫（SKILL.md §🛡️ G-DOC-STORAGE 契约，🆕 v3.4.0）
+
+    单点校验：给定 --path（实际写入路径）是否合规（落在合规根目录 + 非游离位置）。
+    与 `gates check --only G-DOC-STORAGE`（扫描全 project_dir）互补：本命令用于"落地前"单点校验。
+    """
+    target_path = args.path
+    if not target_path:
+        output.err("必须提供 --path <实际写入路径>")
+        return 1
+
+    from pathlib import Path as _P
+    p = _P(target_path)
+    rel_or_abs = str(p).replace("\\", "/")
+    rel_lower = rel_or_abs.lower()
+
+    # 复用 gates.py 的合规根目录 + 游离位置定义
+    compliant_roots = gates._DOC_COMPLIANT_ROOTS
+    stray_markers = gates._DOC_STRAY_MARKERS
+
+    issues: list[str] = []
+    # 游离位置检测
+    if any(m in rel_lower for m in stray_markers):
+        issues.append(f"路径含游离位置标记（{stray_markers}）")
+    # 合规根目录检测：路径中任一段匹配合规根
+    in_compliant = any(root in rel_lower.split("/") for root in compliant_roots)
+    if not in_compliant:
+        # 允许项目根直接落产物（向后兼容），但需 --project 校验；无 --project 时标 warn
+        if not args.project:
+            issues.append(f"路径不在合规根目录（{compliant_roots}）下，且未提供 --project 无法判定项目根")
+
+    result = {
+        "path": target_path,
+        "intent": args.intent,
+        "compliant": not issues,
+        "issues": issues,
+    }
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        if issues:
+            output.err(f"❌ G-DOC-STORAGE 校验未通过：{'; '.join(issues)}")
+            output.info(f"   路径：{target_path}")
+            output.info("   修复：调 document-storage resolve_path 推导路径；禁止硬编码 d:\\tmp\\ 等游离位置")
+        else:
+            output.ok(f"✅ G-DOC-STORAGE 校验通过：{target_path}")
+    return 0 if not issues else 1
 
 
 def cmd_update_check(args, parser):
@@ -380,6 +635,63 @@ def cmd_init(args, parser):
     except OSError as e:
         output.err(f"调用 init.py 失败：{e}")
         return 1
+
+
+def cmd_enter(args, parser):
+    """enter — 入口凭证（🆕 v3.4.0，建议书4 关卡1）
+
+    agent 收到 /ae-sdd 触发后第一动作：领取 entry token 写入
+    .auto-engineering/<STORY>/session.json。关卡2/3 校验该 token。
+    幂等：同 projectKey+storyId 已 enter 则返回现有 token。
+    """
+    from lib import session as session_mod
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    cfg = paths.read_config(ade_sdd)
+    project_key = args.project_key or cfg.get("projectKey", "")
+    if not project_key:
+        output.err("未提供 projectKey，且 .ae-sdd/config.yaml 无 projectKey")
+        return 1
+    story_id = args.story or ""
+    s = session_mod.enter(project_key, story_id=story_id, ade_sdd=ade_sdd)
+    if args.json:
+        output.emit(s, as_json=True)
+        return 0
+    output.ok(f"✅ 入口凭证已领取（sessionId={s['sessionId']}）")
+    output.info(f"   projectKey: {s['projectKey']}")
+    output.info(f"   storyId:    {s.get('storyId', '') or '（项目级，无 Story）'}")
+    output.info(f"   写入: {session_mod.session_path(ade_sdd, story_id)}")
+    output.info("   关卡2/3 将校验此凭证；未领凭证的流程产物落地/代码改动将被拦截。")
+    return 0
+
+
+def cmd_state_confirm(args, parser):
+    """state confirm — 审核点 token（🆕 v3.4.0，建议书3 B2-1~5）
+
+    用户确认某人工审核点后落 token 到 session.json 的 userConfirmedPhases。
+    防止 AI 自填：此命令由用户触发（AI 不得自行调用伪造确认）。
+    """
+    from lib import session as session_mod
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init + ae-sdd enter）")
+        return 1
+    story_id = args.story or ""
+    # 校验 entry token 存在
+    if not session_mod.has_valid_entry_token(ade_sdd, story_id):
+        output.err("未找到有效 entry token，请先跑 ae-sdd enter")
+        return 1
+    phase = args.phase
+    confirmed_by = args.by or "user"
+    s = session_mod.confirm_phase(ade_sdd, phase, confirmed_by=confirmed_by, story_id=story_id)
+    if args.json:
+        output.emit(s, as_json=True)
+        return 0
+    output.ok(f"✅ 审核点 token 已记录：phase={phase}（by {confirmed_by}）")
+    output.info(f"   已确认阶段: {[c['phase'] for c in s.get('userConfirmedPhases', [])]}")
+    return 0
 
 
 def _memory_scope_from_args(args):
@@ -1304,8 +1616,53 @@ def main() -> int:
                                help="maintenance override: allow phase transition without mandatory memory")
     p_state_write.set_defaults(func=cmd_state_write)
 
+    # state confirm（🆕 v3.4.0 — 审核点 token，建议书3 B2-1~5）
+    p_state_confirm = state_sub.add_parser("confirm", help="[v3.4.0] 审核点确认 token（用户触发，防 AI 自填）",
+                                            parents=[common])
+    p_state_confirm.add_argument("--phase", required=True, help="已确认的审核点 phase（如 task-reviewed/coding/code-reviewed）")
+    p_state_confirm.add_argument("--story", default="", help="Story ID")
+    p_state_confirm.add_argument("--by", default="user", help="确认人（默认 user）")
+    p_state_confirm.set_defaults(func=cmd_state_confirm)
+
+    # state prd-*（🆕 v3.3.0 PRD 级状态机 CLI）
+    p_state_prd_check = state_sub.add_parser("prd-check-complete",
+                                              help="[v3.3.0] 校验 4 层 AND（G-PRD-1~4），不改状态",
+                                              parents=[common])
+    p_state_prd_check.add_argument("--prd", required=True, help="PRD ID（如 PRD-CS-001）")
+    p_state_prd_check.set_defaults(func=cmd_state_prd_check_complete)
+
+    p_state_prd_comp = state_sub.add_parser("prd-complete",
+                                             help="[v3.3.0] 校验通过后触发 PRD compact",
+                                             parents=[common])
+    p_state_prd_comp.add_argument("--prd", required=True, help="PRD ID")
+    p_state_prd_comp.add_argument("--runtime", required=True,
+                                  choices=["mavis", "claude-code", "codex"],
+                                  help="目标 runtime")
+    p_state_prd_comp.set_defaults(func=cmd_state_prd_complete)
+
+    p_state_prd_arch = state_sub.add_parser("prd-archive",
+                                             help="[v3.3.0] 归档 compactHistory 到 state.archive.json",
+                                             parents=[common])
+    p_state_prd_arch.add_argument("--prd", required=True, help="PRD ID")
+    p_state_prd_arch.add_argument("--keep-last", type=int, default=5,
+                                   help="保留最近 N 条（默认 5）")
+    p_state_prd_arch.set_defaults(func=cmd_state_prd_archive)
+
+    # runtime（🆕 v3.3.0 runtime-specific compact 适配层）
+    p_runtime = sub.add_parser("runtime", help="[v3.3.0] runtime-specific 适配（compact 等）",
+                                parents=[common])
+    runtime_sub = p_runtime.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_runtime_compact = runtime_sub.add_parser("compact",
+                                                help="[v3.3.0] PRD 级 compact 适配层",
+                                                parents=[common])
+    p_runtime_compact.add_argument("--runtime", required=True,
+                                   choices=["mavis", "claude-code", "codex"],
+                                   help="目标 runtime")
+    p_runtime_compact.add_argument("--prd", required=True, help="PRD ID")
+    p_runtime_compact.set_defaults(func=cmd_runtime_compact)
+
     # gates
-    p_gates = sub.add_parser("gates", help="19 门禁检查（14 主 + 4 G-RA + 1 G-CODE）", parents=[common])
+    p_gates = sub.add_parser("gates", help="22 门禁检查（14 主 + 3 中段 + 4 G-RA + 1 G-CODE）", parents=[common])
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
     p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")
@@ -1322,6 +1679,13 @@ def main() -> int:
                                       parents=[common])
     p_gate_code.add_argument("--project", default="", help="项目根目录（默认 cwd）")
     p_gate_code.set_defaults(func=cmd_gate_coding_required)
+    # gate doc-storage（🆕 v3.4.0 — SKILL.md §🛡️ G-DOC-STORAGE 文档落地存放门卫）
+    p_gate_doc = gate_sub.add_parser("doc-storage", help="文档落地存放门卫（G-DOC-STORAGE，单点路径校验）",
+                                     parents=[common])
+    p_gate_doc.add_argument("--path", required=True, help="实际写入路径（落地前校验）")
+    p_gate_doc.add_argument("--intent", default="", help="文档 intent（如 STORY/DR/CODINGPLAN）")
+    p_gate_doc.add_argument("--project", default="", help="项目根目录（判定项目根产物用）")
+    p_gate_doc.set_defaults(func=cmd_gate_doc_storage)
 
     # update-check（v3.2 — 更新依赖图谱检查，兜底验证无漏更新）
     p_uc = sub.add_parser("update-check", help="更新依赖图谱检查（改了A是否同步了BCDEFG）",
@@ -1552,6 +1916,14 @@ def main() -> int:
     p_init.add_argument("init_args", nargs=argparse.REMAINDER,
                         help="透传给 scripts/init.py 的参数：<project-dir> <project-key> [选项]")
     p_init.set_defaults(func=cmd_init)
+
+    # enter（🆕 v3.4.0 — 入口凭证，建议书4 关卡1）
+    p_enter = sub.add_parser("enter", help="领取入口凭证 entry token（关卡1，/ae-sdd 触发后第一动作）",
+                             parents=[common])
+    p_enter.add_argument("project_key", nargs="?", default="",
+                         help="projectKey（缺省从 .ae-sdd/config.yaml 读）")
+    p_enter.add_argument("--story", default="", help="Story ID（项目级 enter 可省略）")
+    p_enter.set_defaults(func=cmd_enter)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):

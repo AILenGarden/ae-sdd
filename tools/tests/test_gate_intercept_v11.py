@@ -94,16 +94,17 @@ class TestStateMachineProtection:
         向前跳 1 步 + 无 .ae-sdd →
         gate 跑不完整（G-01 会失败因为没有 design/ 目录），应被拦截。
         这是有意为之：没有 .ae-sdd 就无法跑 gate，切 phase 应被阻止。
+        🆕 v3.4.0：initialized → ra-generated 是单步（G-00 失败因无 .ae-sdd）；initialized → dr-generated 现是跨步（ra-generated 插入）。
         """
         allowed, reason = _check_state_write(
-            "ae-sdd state write --phase dr-generated",
+            "ae-sdd state write --phase ra-generated",
             current_phase="initialized",
             ade_sdd=None,
             project_key="test",
         )
-        # G-01 DR 文档不存在 → gate 失败 → 拒绝
+        # ra-generated 入口门禁 = [G-00]；无 .ae-sdd → G-00 失败 → 拒绝
         assert not allowed
-        assert "gate" in reason.lower() or "G-01" in reason or "DR" in reason
+        assert "gate" in reason.lower() or "G-00" in reason or "资产" in reason or "init" in reason
 
     def test_state_write_intercepted_by_check_intercept(self, tmp_path):
         """
@@ -158,7 +159,7 @@ class TestPathAwareness:
         assert not _is_source_code_path(path), f"不应识别为源码路径: {path}"
 
     @pytest.mark.parametrize("phase", [
-        "initialized", "dr-generated", "story-generated",
+        "initialized", "ra-generated", "dr-generated", "story-generated",
         "story-reviewed", "task-generated",
     ])
     def test_write_java_blocked_in_design_phases(self, phase):

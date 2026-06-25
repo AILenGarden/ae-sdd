@@ -1,20 +1,20 @@
 ---
 name: agent-orchestration
-description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 Agent 并行 + 负载均衡 + 故障检测 + 故障补救。**澄清（2026-06-06）：** 任务拆分不是按流程节点（流程串行无法并行），而是按同一节点内的子任务（可并行）。🆕 新建，补全 AE 体系的多 Agent 协作能力。
+description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 Agent 并行 + 负载均衡 + 故障检测 + 故障补救 + 多 reviewer 默认编排。**澄清（2026-06-06）：** 任务拆分不是按流程节点（流程串行无法并行），而是按同一节点内的子任务（可并行）。🆕 2026-06-25：新增 §8.4 多 reviewer 默认编排框架（横切规范 SSOT）——所有 Review 节点的"是否启用多 reviewer / 启用几个 / 视角怎么切 / 冲突怎么解"统一归本 SKILL 管理，对抗 AI 逻辑自洽陷阱。
 ---
 
 # Agent Orchestration — 任务节点内子任务编排 Skill
 
-> **🔴 核心定位（2026-06-06 修订）：**
+> **🔴 核心定位（2026-06-06 修订 / 2026-06-25 扩展）：**
 > - **不是**按流程节点拆（Phase 1 ① → Phase 1 ② → ... 是串行的，无法并行）
 > - **是**按**同一节点内**的子任务拆（如 Coding 一个 Task 时，可拆成"写 Domain 类"/"写 Application 类"/"写 Infrastructure 类"/"写 Tests"等多个子任务并行跑）
 >
 > **与现有 SKILL 的关系：**
 > - `ae-sdd-skill.md` = 流程编排 + 智能路由（决定走哪个节点 SKILL）
-> - **`agent-orchestration-skill.md`（本文件）** = 任务节点**内**的子任务编排（决定同节点内如何拆/分 Agent/补救）
+> - **`agent-orchestration-skill.md`（本文件）** = 任务节点**内**的子任务编排（决定同节点内如何拆/分 Agent/补救）**+ 多 reviewer 默认编排（§8.4，所有 Review 节点的多 reviewer 决策 SSOT）**
 > - 节点 SKILL（`story-generate / coding / code-review` 等）= 各自节点的执行
 >
-> **🔴 触发场景：** 任何节点 SKILL 在执行复杂任务时，可调用本 SKILL 决定"是否拆子任务 / 拆多少 / 分几个 Agent / 故障如何补救"。
+> **🔴 触发场景：** 任何节点 SKILL 在执行复杂任务时，可调用本 SKILL 决定"是否拆子任务 / 拆多少 / 分几个 Agent / 故障如何补救"。**Review 类节点额外调用 §8.4 决定"是否启用多 reviewer / Tier 几 / 视角怎么切 / 冲突怎么解"。**
 
 ---
 
@@ -79,6 +79,8 @@ description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 
 | `story-generate-skill.md` §2 7 阶段 | 按章节拆：业务背景 + 主流程 + AC + 接口 + 数据 + Task + ①bis | 5-7 |
 | `task-generate-skill.md` §4 生成 Task | 按 Task 拆：每个 Task 1 个 sub-agent | N（Task 数）|
 
+> **🆕 2026-06-25 与多 reviewer 的关系：** 上表是"5 阶段并行挖掘"（按检查维度拆）。Review 节点还可能叠加"多 reviewer 交叉审"（按审视视角拆，见 §8.4）。两者正交，但 sub-agent 总数受 §2.2 硬上限 5 约束。叠加时按 §8.4.6 实践建议处理（如 Tier 3 reviewer 各自只跑相关阶段，避免 3×5=15 超上限）。
+
 ### 1.3 不拆的反例（🔴 严禁拆）
 
 | 反例 | 为什么不拆 |
@@ -124,13 +126,15 @@ description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 
 | 角色 | 适用节点 | 适用场景 |
 |------|---------|---------|
 | `story-writer` | Phase 1 ① | Story 起草 |
-| `story-reviewer` | Phase 1 ② | Story 评审（业务 / 前端契约 双 reviewer）|
+| `story-reviewer` | Phase 1 ② | Story 评审（按 §8.4 Tier 判定选 1/2/3 个：设计实现 / 前端契约 / 数据模型 视角）|
 | `testcase-writer` | Phase 1 ③ | 测试用例生成 |
 | `task-writer` | Phase 2 ④ | Task 生成（含任务级 CodePlan）|
 | `plan-writer` | Phase 2 ④ter | 🆕 2026-06-06 合并入 task-writer |
 | `coder` | Phase 2 ⑤ | Coding |
-| `code-reviewer` | Phase 3 ⑦ | Code Review（业务 / 架构 双 reviewer）|
+| `code-reviewer` | Phase 3 ⑦ | Code Review（按 §8.4 Tier 判定选 1/2/3 个：BE / AR / QA 视角，即 A/B/C 模式）|
 | `test-verifier` | Phase 3 ⑥.10 | 测试真实性验证 🔴 强制 |
+
+> **🆕 2026-06-25 对齐说明：** reviewer 类角色（`story-reviewer` / `code-reviewer`）的"选几个"统一由 **§8.4 多 reviewer 默认编排框架** 的 Tier 判定决定，不再在各角色描述里硬编码"1-2 个"。节点 SKILL 负责"视角怎么切"，本 SKILL 负责"选几个 + 怎么交叉"，职责分离。
 
 ### 3.2 角色与子任务匹配
 
@@ -345,6 +349,222 @@ root agent 收集所有产出物
 - 一致 → 接受
 - 不一致 → 走 Proposal 流程（用户决策）
 
+> **🔴 本节 2026-06-25 升级说明：** 原 3 行简表不足以支撑"默认多 reviewer"。下方新增 **§8.4 多 reviewer 默认编排框架**（Tier 判定 + 视角切分 + 交叉对比算法 + 冲突决策树 + 降级规则），作为所有 Review 节点的横切规范。本 §8.3 的 3 行结论作为 §8.4 的速记结论保留，详细算法以 §8.4 为准。
+
+---
+
+## 8.4 多 reviewer 默认编排框架（🔴 横切规范 — 所有 Review 节点适用）
+
+> **📍 定位（2026-06-25 新增）：** 本节是**多 reviewer 决策的 SSOT（唯一真相源）**。所有 Review 节点（DR Review / Story Review / Task Review / Code Review / RA Review 等）的"是否启用多 reviewer / 启用几个 / 视角怎么切 / 冲突怎么解"**统一查本节**，节点 SKILL 只负责"本节点的 reviewer 视角分工"（见各节点 SKILL 的 §多 reviewer 视角切分小节）。
+>
+> **为什么需要本节：**
+> 1. **对抗 AI 逻辑自洽陷阱**——AI 审自己产出的东西，天然倾向沿生成时的推理路径自我合理化（把疑似缺陷判为误报）。单 reviewer 无法自纠此偏差。
+> 2. **对抗同模型同盲区**——多个 reviewer 若是同一模型（如都是 GLM-5.2），会共享同一套认知盲区。单纯堆 reviewer 数量无法消除盲区，必须靠**视角切分**制造人为差异。
+> 3. **结构化对账 > 主观意见**——多 reviewer 互审防的是"主观合理化"，但更致命的"凭空编造"要靠结构化对账门禁（如 Code Review 7 道闸、报告-代码对账）。本节负责前者，后者仍归各节点门禁。
+>
+> **与 §8.3 / 各节点 SKILL 的关系：**
+> - §8.3 = 本节的速记结论（一致→接受 / 不一致→升级），详细算法见本节 §8.4.3
+> - 本节（agent-orchestration）= **编排规则 SSOT**：Tier 判定 + 视角切分原则 + 交叉对比算法 + 冲突决策树 + 降级规则
+> - 各节点 SKILL = **节点专属配置**：本节点的 reviewer 视角分工（如 Story Review = 设计实现视角 + 前端契约视角）
+> - `code-review-skill.md §多 Agent 评审编排` = Code Review 节点对本节的应用范例（A/B/C 模式 = 本节 Tier 1/2/3 的实例化，已在 Code Review 落地验证）
+
+### 8.4.1 何时启用多 reviewer（Tier 判定 — 默认启用，按复杂度分级）
+
+> **🔴 核心立场：多 reviewer 是默认能力，不是反应式兜底。** 旧版"准确率 < 70% 才升级交叉验证"是**事后补救**，违反"缺陷越早发现代价越低"原则。本节改为**按 Tier 默认分级启用**。
+
+**Tier 判定标准（统一口径，与 Code Review A/B/C 模式对齐）：**
+
+| Tier | 判定（任一命中即取高 Tier） | reviewer 数 | 对应 Code Review 模式 |
+|------|--------------------------|------------|---------------------|
+| **Tier 1** | 微/小规模 **且** 无状态机/事务/资金/权限/外部集成等关键决策 | 1（单审） | 模式 A |
+| **Tier 2** | 中规模 **或** 含状态机/事务/接口契约/跨服务集成等关键决策 | 2（双审交叉） | 模式 B |
+| **Tier 3** | 大规模 **或** 全新微服务/全新表/全新 SPI/涉及资金·状态·权限/跨 4 Task+ | 3（三审交叉） | 模式 C |
+
+**Tier 判定输入来源：**
+- **规模**：来自 RA（requirement-analysis-skill）的 5 维评分输出（大/中/小/微）
+- **关键决策点**：各节点本地判定（节点 SKILL 在准入检查时标注本节点是否含关键决策）
+
+**Tier 判定时机：**
+- Review 节点**准入检查通过后、第一步挖掘前**完成 Tier 判定
+- 判定结果写入报告头部（`## Review 元信息` 的 `reviewerTier` 字段），供追溯
+
+**降级豁免（用户显式确认才生效）：**
+- 用户显式说"这次单审就行" / "Tier 降一级" → 可降级，但**必须在报告标注"用户豁免降级"**
+- AI **不得自行降级**（违反 §8.4.5 降级规则）
+
+### 8.4.2 reviewer 视角切分原则（🔴 反"同模型同盲区"的核心）
+
+> **🔴 核心原则：reviewer 之间的差异靠"视角 lens"制造，不是靠"派两个一样的"。** 同模型 reviewer 若看同一批检查项，只会得到高度相似的结论（同盲区）。必须让每个 reviewer 聚焦**不同的审视维度**，人为制造认知差异。
+
+**视角切分三原则：**
+
+| 原则 | 要求 | 反模式 |
+|------|------|--------|
+| **① 视角正交** | 各 reviewer 的审视维度尽量不重叠（如"业务实现"vs"架构规范"） | 两个 reviewer 都跑完整 6 阶段（重叠 → 同盲区） |
+| **② 覆盖本节点全部硬门禁** | N 个 reviewer 的视角并集 = 本节点全部 HARD 检查项 | 某维度无人审 → 漏审 |
+| **③ 与本节点已有机制对齐** | 视角切分尽量复用本节点已有概念（如 Story Review 复用 F-Stage 前端契约） | 凭空发明新视角，与节点 SKILL 脱节 |
+
+**各节点 reviewer 视角切分（节点 SKILL 专属配置，本表为速查索引）：**
+
+| 节点 | Tier 2 双审视角 | Tier 3 三审视角 | 视角配置出处 |
+|------|---------------|---------------|------------|
+| RA Review | 需求完整性 + 场景可行性 | + 风险预判闭环 | `requirement-analysis-skill.md` |
+| DR Review | 业务价值对齐 + 架构拆分合理性 | + 跨 Story 边界 | `dr-review-skill.md` |
+| Story Review | 设计实现 + 前端契约(F-Stage) | + 数据模型/DB | `story-review-skill.md` |
+| Task Review | Story 覆盖完整性 + 实现可行性 | + 风险 Task 专项 | `task-generate-skill.md §5bis` |
+| Code Review | BE 业务实现 + AR 架构规范 | + QA 测试真实性 | `code-review-skill.md §多 Agent 评审编排`（已落地 A/B/C） |
+
+> **📍 节点 SKILL 落地要求：** 上述每个节点 SKILL 应新增 `### 多 reviewer 视角切分`（或等价小节）写明本节点 Tier 2/3 的具体视角分工。**落地状态（2026-06-25 已全量落地）**：Story Review / Code Review / DR Review / Task Review 四节点均已新增视角切分小节；**RA Review 无独立节点**（requirement-analysis 无独立 RA Review 流程，RA 修订走 requirement-analysis §修订影响），故本表 RA Review 行仅作概念占位，实际不触发多 reviewer 编排。
+
+### 8.4.3 交叉对比算法（root agent 执行，reviewer 全部返回后跑）
+
+> **🔴 适用场景：** Tier 2/3 启用 ≥ 2 个 reviewer 时，必须跑本算法。Tier 1 单 reviewer 跳过本节。
+
+**算法 5 步：**
+
+```
+1. 收集所有 reviewer 报告（2-3 份，按位置聚合）
+   ↓
+2. 建立"缺陷-评级-位置"三维表
+   行 = 缺陷 ID（按位置聚合：章节号/文件:行号/检查项编号）
+   列 = reviewer 名称（如 reviewer-BE / reviewer-AR / reviewer-QA）
+   值 = 该 reviewer 对该缺陷的评级（🔴/🟠/🟡/🟢/未发现）
+   ↓
+3. 分类判定（逐行）：
+   ├─ 所有 reviewer 一致（同一评级）        → 接受该评级
+   ├─ 评级不同但有 ≥1 名给 🔴             → 升级为 🔴 阻断型（取最高）
+   ├─ 评级不同但都 ≤ 🟠                   → 取最高评级（🟠 严重型）
+   └─ 某 reviewer 发现某缺陷但其他未发现    → 列为"存疑项"，走 §8.4.4 决策树
+   ↓
+4. 一致性核查：每个最终 🔴/🟠 缺陷必须有对应客观证据
+   （引用到 DR/Story/Task/代码 的具体位置，禁裸结论）
+   ↓
+5. 生成最终 Review 报告（按聚合表 + 节点模板生成）
+```
+
+**三维表示例：**
+
+| 缺陷 ID | 位置 | reviewer-BE | reviewer-AR | reviewer-QA | 最终判定 |
+|---------|------|------------|------------|------------|---------|
+| D-001 | Story §3.2 状态机 | 🔴 | ✅ | — | 🔴（取最高） |
+| D-002 | Task-2 事务边界 | 🟠 | 🟡 | — | 🟠（取最高） |
+| D-003 | 接口契约字段 | ✅ | 未发现 | 🔴 | 🔴（存疑→决策树） |
+
+### 8.4.4 不一致项处理决策树
+
+> **🔴 适用：** §8.4.3 第 3 步的"存疑项"（某 reviewer 发现、其他未发现，或评级严重冲突）。
+
+```
+存疑项判定
+    ↓
+情况 1：业务视角 reviewer 给 🔴 / 其他给 ✅
+  → 视为 🔴 阻断型（业务实现错是核心，宁严勿松）
+  → 触发对应节点的修复循环
+
+情况 2：架构视角 reviewer 给 🔴 / 其他给 ✅
+  → 视为 🔴 阻断型（架构错影响全局）
+  → 触发修复循环 + 评估是否需更新项目资产
+
+情况 3：评级仅差一级（如 🟠 vs 🟡）
+  → 取高评级（🟠）
+  → 写入本节点 UpdatePlan（如 StoryReviewUpdatePlan）
+
+情况 4：某 reviewer 发现某缺陷、其他全部未发现
+  → 列入"存疑项"
+  → root agent 自己读产出物复核（不得默认信任任一方）
+  → 复核后确认 → 纳入最终报告；复核后否决 → 记录否决理由
+
+情况 5：所有 reviewer 评级一致
+  → 接受，无不一致
+```
+
+> **🔴 root agent 复核职责（防默认信任）：** 情况 4 中，root agent **必须自己读双方产出物**判断对错，不得"哪边 reviewer 多就信哪边"或"默认信评级高的"。违反 = 汇总失败（对齐 §门禁与规则第 3 条）。
+
+### 8.4.5 降级规则（环境不支持物理 sub-agent 时）
+
+> **为什么需要降级：** 部分运行环境（单 session、无 mavis spawn 能力）无法派物理 sub-agent。此时不能阻断流程，但也不能假装"多 reviewer 已达标"。
+
+**降级执行方式：**
+
+| 情况 | 降级动作 | 强制标注 |
+|------|---------|---------|
+| 环境不支持物理 sub-agent | 同一 AI 用**不同视角的 prompt** 跑 N 遍（每遍聚焦一个视角 lens） | 报告头部标注 `reviewerMode: "logical-multi-perspective"`（逻辑多视角，非物理独立） |
+| token 预算不足 | Tier 3 → Tier 2（减一个 reviewer） | 报告头部标注 `tierDowngraded: true` + 降级原因 |
+| 用户显式要求单审 | Tier 2/3 → Tier 1 | 报告头部标注 `userWaiver: true` |
+
+**🔴 降级非等效：**
+- 逻辑多视角**仍受同模型同盲区影响**——同一 AI 切换视角，盲区并未消除，只是降低。这是退路，不是"多 reviewer 已达标"的替代品。
+- 标注 `reviewerMode: "logical-multi-perspective"` 的报告，在下游节点（如 Story Review 结论被 Task Review 引用时）**必须显式提示"上游为逻辑多视角，交叉验证强度降低"**，让下游知悉风险。
+  - **落地位置（2026-06-25 已全链路落地）**：上游节点在"退出状态摘要"输出 `reviewerMode` 字段（Story Review / DR Review 均已落地）；下游 Task Review 读取该字段并在其报告标注"上游逻辑多视角，交叉验证强度降低"。链路闭合：DR Review → Story Review → Task Review。
+
+**禁止的降级：**
+- ❌ AI 自行决定"这次不派多 reviewer"（必须有用户豁免或环境/预算硬约束）
+- ❌ 降级后不标注（等于隐瞒风险）
+- ❌ 把逻辑多视角当成物理多 reviewer 宣称"已交叉验证"
+
+### 8.4.6 与 5 阶段并行挖掘的关系（🔴 正交叠加，不冲突）
+
+> **📍 概念澄清（2026-06-25）：** ae-sdd 现有 Review 节点已有"5 阶段并行挖掘"（A-E 各派一个 sub-agent，按**检查维度**分工）。本节的"多 reviewer"是**另一层**（按**审视视角**分工）。两者正交，可叠加。
+
+| 维度 | 5 阶段并行挖掘 | 多 reviewer 交叉审（本节） |
+|------|--------------|------------------------|
+| 分工依据 | 检查维度（A 一致性 / B AC / C 数据 / D 模板 / E 约束） | 审视视角（业务 / 架构 / 前端 / 测试） |
+| 每个 sub-agent 跑什么 | 跑**一个阶段**的全部检查项 | 跑**全部阶段**但聚焦一个视角 |
+| 防什么 | 效率（并行提速） | 逻辑自洽（交叉防漏） |
+| 关系 | 与多 reviewer **正交**，可叠加 | 与 5 阶段并行 **正交**，可叠加 |
+
+**叠加示意（Tier 3 Story Review）：**
+
+```
+reviewer-设计实现视角 ──┐
+                       ├── 各自内部可 5 阶段并行挖掘（A-E）
+reviewer-前端契约视角 ──┤    （sub-agent 内部的事）
+                       │
+reviewer-数据模型视角 ──┘
+        │
+        ▼
+   root agent 跑 §8.4.3 交叉对比算法
+        │
+        ▼
+   生成最终 Story Review 报告
+```
+
+> **🔴 叠加规则（2026-06-25 修订 — 解决与节点"不得跳过阶段"硬门禁的冲突）：**
+> - **5 阶段并行挖掘 = 单 reviewer 内部机制**：每个 reviewer 各自完整跑本节点全部阶段（满足各节点"不得跳过任何阶段"硬门禁）。
+> - **多 reviewer 之间串行**：N 个 reviewer 依次执行，sub-agent 总数按 **reviewer 数**计（≤3），**不是** reviewer×阶段数。
+> - **上限核算**：Tier 2/3 的峰值 sub-agent 数 = max(单 reviewer 内部并行阶段数, 通常 ≤5)，reviewer 串行不叠加 → 不超 §2.2 硬上限 5。
+> - **视角差异靠 prompt lens 制造**，不靠"切分阶段"——各 reviewer 跑同样阶段但聚焦点不同（如设计实现视角在 A/B/C 投入更深，前端契约视角在 F-Stage 投入更深）。
+>
+> **❌ 已废弃表述（2026-06-25 删除）：** 早期草稿曾建议"各 reviewer 只跑自己视角相关阶段（如前端契约视角只跑 A+F）"以绕开 5 上限——此建议与各 Review 节点"不得跳过任何阶段"硬门禁冲突，已删除。改用"reviewer 串行 + 单 reviewer 内部并行"模型。
+
+### 8.4.7 多 reviewer 与现有机制的兼容性
+
+| 现有机制 | 与多 reviewer 的关系 | 是否改动 |
+|---------|-------------------|---------|
+| Code Review A/B/C 模式 | A/B/C = 本节 Tier 1/2/3 的实例化（已落地） | ❌ 不改（作为范本） |
+| Code Review 交叉对比算法（code-review-skill §多 Agent） | 算法上提到本节 §8.4.3，code-review 改为引用本节（去重） | ✅ 已完成（2026-06-25）：code-review §多 Agent 评审编排 已改为引用 §8.4.3/§8.4.4，保留 Code Review 专属配置 |
+| Story Review 漏报升级规则（准确率<70% 引入交叉验证） | 从"反应式兜底"升级为"Tier 2+ 默认已有" | ✅ 已完成（2026-06-25）：story-review 漏报升级规则改为"Tier 1→升 Tier 2 / Tier 2-3→换 reviewer"，并新增 §第一步 bis 视角切分配置 |
+| 各节点 5 阶段并行挖掘 | 与多 reviewer 正交叠加（§8.4.6） | ❌ 不改（保留） |
+| 各节点检查清单/门禁条目（TR-1~7 等） | 单 reviewer 也要跑全部，多 reviewer 是叠加的交叉层 | ❌ 不改（保留） |
+| test-verifier 独立验证（⑥.10） | 与多 reviewer 互补（一个防主观、一个防伪造） | ❌ 不改（保留） |
+| DR Review 节点视角切分配置 | §8.4.2 要求各节点落地 | ✅ 已完成（2026-06-25）：dr-review 新增 §第一步 bis 视角切分（业务价值/架构拆分/跨边界）；3 处旧版"多 reviewer 冲突→升级最高等级"措辞改为引用 §8.4.4；退出流转落地 reviewerMode 字段 |
+| Task Review 节点视角切分配置 | §8.4.2 要求各节点落地 | ✅ 已完成（2026-06-25）：task-generate §5bis 新增多 reviewer 视角切分（Story 覆盖/实现可行/风险 Task）；Review 结论产出落地 reviewerMode（本节点）+ 读取上游 Story Review reviewerMode |
+| reviewerMode 降级提示下游落地 | §8.4.5 要求下游节点读取并标注 | ✅ 已完成（2026-06-25）：Story Review 退出摘要输出 reviewerMode；DR Review 退出流转输出 reviewerMode；Task Review 结论产出读取上游 reviewerMode 并标注风险。链路闭合（DR→Story→Task） |
+| RA Review 节点 | §8.4.2 索引列为占位，但 requirement-analysis 无独立 RA Review 流程 | ❌ 不触发多 reviewer 编排（RA 修订走 requirement-analysis §修订影响）|
+
+### 8.4.8 多 reviewer 执行清单（root agent）
+
+| # | 动作 | 产出 | 门禁 |
+|---|------|------|------|
+| 1 | 准入通过后判定 Tier（§8.4.1） | `reviewerTier` 字段 | 必有判定 + 写入报告头部 |
+| 2 | 查节点 SKILL §多 reviewer 视角切分，确定视角分工 | 视角列表 | 视角并集 = 本节点全部 HARD 项 |
+| 3 | 派 N 个 reviewer（按 §4 任务分配卡） | N 个任务卡 | 各卡 input/output/standards 齐 |
+| 4 | 各 reviewer 内部执行（可 5 阶段并行挖掘） | N 份 Review 报告 | 各报告含客观证据 |
+| 5 | 跑 §8.4.3 交叉对比算法 | 聚合三维表 | 逐行判定有结论 |
+| 6 | 跑 §8.4.4 不一致决策树（如有存疑项） | 决策日志 | root agent 复核存疑项 |
+| 7 | 生成最终 Review 报告（含 reviewer 元信息） | 最终报告 | `reviewerMode` 字段齐 |
+| 8 | 降级时标注（§8.4.5） | 降级标注 | 不得隐瞒降级 |
+
 ---
 
 ## 9. 状态跟踪
@@ -456,7 +676,10 @@ root agent 收集所有产出物
 | 7 | 故障检测（按 §6 4 大故障源）| 故障日志 | 每 5 分钟检查 1 次 |
 | 8 | 故障补救（按 §7 4 级补救 SOP）| 补救记录 | ≤ 3 次重试 |
 | 9 | 结果汇总（按 §8 一致性检查）| 汇总报告 | 跨 Agent 一致性 ✅ |
+| 9b | **多 reviewer 节点额外**：跑 §8.4.3 交叉对比 + §8.4.4 冲突决策树 | 聚合表 + 决策日志 | 存疑项 root 已复核 |
 | 10 | 触发原 SKILL 循环判定 | 评审通过 | 走完流程 |
+
+> **🆕 2026-06-25：** 第 9b 步仅当 Review 节点启用多 reviewer（Tier 2/3）时执行。Tier 1 单 reviewer 跳过 9b。是否启用多 reviewer 由 §8.4.1 Tier 判定决定。
 
 ---
 
@@ -475,3 +698,9 @@ root agent 收集所有产出物
   - 🆕 4 级故障补救 SOP（重试 / 重新分配 / 降级 / 升级用户）
   - 🆕 8 个角色库（与 AE-skill 角色 1-8 对齐）
   - 🆕 状态跟踪（state.json 加 agentOrchestration 字段）
+- **关键变化（2026-06-25 升级 — 多 reviewer 默认编排）：**
+  - 🆕 §8.4 新增"多 reviewer 默认编排框架"（横切规范 SSOT）：Tier 判定 + 视角切分原则 + 交叉对比算法 + 冲突决策树 + 降级规则 + 与 5 阶段并行挖掘的正交关系
+  - 🆕 §3.1 角色库 reviewer 数量从硬编码改为"由 §8.4 Tier 判定决定"
+  - 🆕 §1.2 拆法表标注与多 reviewer 的正交叠加关系
+  - 🆕 §12 执行清单新增 9b 步（多 reviewer 交叉对比）
+  - 🔴 设计哲学升级：多 reviewer 从"反应式兜底"（准确率<70% 才升级）改为"按 Tier 默认启用"，对抗 AI 逻辑自洽陷阱

@@ -68,7 +68,7 @@ class TestMultiEditInterception:
         assert "设计阶段" in reason
 
     def test_multiedit_allowed_in_coding_phase(self, tmp_path):
-        """coding phase + MultiEdit 写 Java → 允许"""
+        """coding phase + MultiEdit 写 Java → 允许（🆕 v3.4.0 须先确认 task-reviewed 审核点 token）"""
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
@@ -77,6 +77,10 @@ class TestMultiEditInterception:
             "phase": "coding", "currentStory": "STORY-001",
             "currentTask": None, "history": [],
         }))
+        # 🆕 v3.4.0 关卡3：coding phase 写 src/ 须有 task-reviewed 审核点确认 token
+        from lib import session as session_mod
+        session_mod.enter("test", story_id="STORY-001", ade_sdd=ae_sdd)
+        session_mod.confirm_phase(ae_sdd, "task-reviewed", story_id="STORY-001")
         allowed, _ = check_intercept(
             "MultiEdit",
             file_path="src/main/java/Service.java",

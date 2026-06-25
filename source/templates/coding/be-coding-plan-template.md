@@ -1,6 +1,6 @@
 ---
 name: be-coding-plan-template
-description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项目资产"分层归类 + 编排 Task 执行顺序 + 输出类骨架（不写完整实现）。含 3 个 Tier 分级（Bug 修复/增量开发/全新模块）和 10 条门禁（含判定 SOP）。
+description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项目资产"分层归类 + 编排 Task 执行顺序 + 输出类骨架（不写完整实现）。含 3 个 Tier 分级（Bug 修复/增量开发/全新模块）和 15 条门禁（含判定 SOP，🆕 v3.4.0 G-CODEPLAN-SRC 源码核对）。
 ---
 
 # BE Code Plan 模板
@@ -127,6 +127,12 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 > **每个类一张子卡**：类签名 + 所在层 + 包路径（步骤 4 已定） + 核心字段 + 核心方法签名 + 方法伪代码（10-30 行）。
 >
+> **🆕 v3.4.0 G-CODEPLAN-SRC 源码核对（强制）：** 每个新增/修改的类骨架，必须附**来源标记**之一：
+> - `【已读源码：{相对路径}】` — 已核对现有同类源码的建模范式（命名/字段/注解/Converter 写法/PO 映射/测试范式/依赖注入）；标记的文件必须真实存在
+> - `【待核实源码】` 或 `【待核实源码：{待核对项}】` — 未核对，须补读现有同类源码后改为【已读源码：】
+>
+> **判定标准**（"现有同类源码"= 同包同类 / 同职责类 / Converter·PO·DO 同类型）。待核实清单非空 → CodingPlan 视为草案，禁止进 ⑤ Coding。
+>
 > **方法伪代码分级：**
 > - 简单方法（单一职责）≤ 10 行
 > - 中等方法（含分支/循环）≤ 20 行
@@ -145,6 +151,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 | 包路径 | `com.casstime.cloud.{xxx}.{yyy}.domain.{boss}.{xxx}.model.entity` |
 | 核心字段 | `{id: Long, name: String, status: StatusEnum, createdDate: Date, ...}`（一句话说明每个） |
 | 充血方法 | `transitionTo(NewStatus) {校验 from→to 是否合法；改 status；记录领域事件}` |
+| 🆕 源码核对 | `【已读源码：domain/.../model/entity/ExistingDO.java】` 或 `【待核实源码：DO 建模范式】` |
 
 **伪代码（@简单 ≤ 10 行）：**
 ```
@@ -480,10 +487,11 @@ Task-6 Test (单测 + 集成测试 + 真实 HTTP)
 
 ---
 
-## 15. 门禁自检（🔴 14 条全部 ✅ 才允许进入 `CodingSkill.Execute`）
+## 15. 门禁自检（🔴 15 条全部 ✅ 才允许进入 `CodingSkill.Execute`）
 
 > **每条门禁附判定 SOP，避免"自我声明 ✅"通过。**  
 > 任一门禁未通过，禁止进入 `CodingSkill.Execute`，必须回到 `CodingSkill.Plan` 阶段修补。
+> 🆕 v3.4.0 第 15 条 G-CODEPLAN-SRC 源码核对：新增/修改类建模范式须核对现有同类源码。
 
 | # | 门禁 | 判定 SOP | ✅/❌ |
 |---|------|---------|------|
@@ -501,10 +509,12 @@ Task-6 Test (单测 + 集成测试 + 真实 HTTP)
 | 12 | 核心链路保护已标注 | 回调/Webhook/支付/状态更新/消息落库/通知类 Task，"核心链路保护"表格已填写，无空值 | ☐ |
 | 13 | 资源隔离已证明 | 涉及异步/批量/外部通知时，线程池/队列/连接池/DB 共享情况已说明；共享的必须有隔离方案或容量证据 | ☐ |
 | 14 | 混合压测场景已覆盖 | 涉及核心链路 + 批量任务时，测试映射中必须包含"批量任务满载 + 核心接口并发"混合场景 | ☐ |
+| 15 | 🆕 G-CODEPLAN-SRC 源码核对通过 | §5 每个类骨架附【已读源码：】标记（文件真实存在）或【待核实源码】；待核实清单为空才 ✅ | ☐ |
 
 **Code Plan 失败回退机制：**
 - 门禁 1-10 不通过 → **只修补对应章节**，其他章节复用
 - 门禁 11-14 不通过 → **回到各 Task 文档**，由 `CodingSkill.Plan(task-level)` 补充缺失内容，再重新汇总
+- 门禁 15 不通过 → **补读现有同类源码**，把【待核实源码】改为【已读源码：】；或确认文件存在
 - 修补后重跑门禁；全 ✅ 后进入 `CodingSkill.Execute`
 
 ---

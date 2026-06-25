@@ -146,6 +146,15 @@ def check_output(
     # 只检查最后一段 AI 响应
     last_response = extract_last_assistant_text(transcript_content)
     if _STATE_HEADER_RE.search(last_response):
+        # 🆕 v3.4.0 F-1 修复：状态头存在时，交叉验证 ◆ GATE: 声明与实际文档一致
+        gate_issue = _verify_gate_claims(last_response, ade_sdd)
+        if gate_issue:
+            # GATE 声明与实际不符 → 阻止停止（防 AI 谎报 GATE 状态，建议书3 F-1）
+            count = get_retry_count(ade_sdd)
+            if count >= MAX_RETRY:
+                return True, ""
+            increment_retry(ade_sdd)
+            return False, gate_issue
         return True, ""
 
     # 防无限循环
@@ -162,3 +171,56 @@ def check_output(
         "◆ NEXT:   <下一个必须做的操作>\n"
     )
     return False, msg
+
+
+# ─── 🆕 v3.4.0 F-1 修复：GATE 声明交叉验证（建议书3 §5 F-1）─────────────────
+_GATE_LINE_RE = re.compile(r"◆\s*GATE\s*:([^\n]*)", re.MULTILINE)
+_G08_CLEAR_RE = re.compile(r"G[-_]?08[^✅❌]*✅|✅[^✅❌]*G[-_]?08", re.IGNORECASE)
+
+
+def _verify_gate_claims(last_response: str, ade_sdd: Optional[Path]) -> str:
+    """交叉验证 AI 自报的 ◆ GATE: 声明与实际文档/状态一致（防谎报，建议书3 F-1）。
+
+    当前覆盖：
+    - G-08 ✅ CLEAR 声明 → 校验实际 {STORY}-CodingPlan.md 含 14 关键词 + 无 ❌ 标记
+      （AI 谎报 G-08 通过但 CodingPlan 缺关键词/有 ❌ → 阻断）
+
+    返回非空字符串 = 阻断原因；空字符串 = 通过。
+    """
+    if ade_sdd is None:
+        return ""
+
+    gate_line_match = _GATE_LINE_RE.search(last_response)
+    if gate_line_match is None:
+        return ""  # 无 GATE 声明，不校验（向后兼容）
+
+    gate_line = gate_line_match.group(1)
+
+    # G-08 ✅ CLEAR 声明校验
+    if _G08_CLEAR_RE.search(gate_line):
+        try:
+            from lib import paths, state as state_mod, gates as gates_mod
+            st = state_mod.read_state(paths.state_path(ade_sdd))
+            current_story = st.get("currentStory", "") or ""
+            if not current_story:
+                return ""  # 无 Story，跳过
+            project_dir = paths.project_root(ade_sdd)
+            cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+            if cp is None:
+                return (
+                    "[ae-sdd harness] GATE 声明与实际不符：AI 声称 G-08 ✅ CLEAR，"
+                    f"但 {current_story}-CodingPlan.md 不存在（F-1 假门禁修复）。\n"
+                    "请勿谎报 GATE 状态；先生成 CodingPlan 或修正 GATE 声明。"
+                )
+            # 跑真实 G-08 检查
+            r = gates_mod.check_g08(project_dir, st, current_story)
+            if not r.pass_:
+                return (
+                    f"[ae-sdd harness] GATE 声明与实际不符：AI 声称 G-08 ✅ CLEAR，"
+                    f"但实际 G-08 未通过（{r.message}）（F-1 假门禁修复）。\n"
+                    "请勿谎报 GATE 状态；修复 CodingPlan 14 门禁后再声明 ✅。"
+                )
+        except Exception:
+            return ""  # 校验异常不阻断（兜底放行）
+
+    return ""

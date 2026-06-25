@@ -1427,6 +1427,57 @@ public class Ticket {
 - [ ] 核心接口标记"真实 HTTP"
 - [ ] 编译与测试验证点覆盖到每个文件/每层/每个 Task
 - [ ] 调试与回滚策略完整（至少 5 种失败类型）
+- [ ] 🆕 v3.4.0 **G-CODEPLAN-SRC 源码核对**：关键类骨架每个类附【已读源码：】（文件存在）或【待核实源码】标记，待核实清单为空
+- [ ] 🆕 v3.4.0 **G-14 CodingPlan-Story 一致性**：Plan 引用 Story 文档 + 测试章节 AC ID 对齐 + 偏离项有 Proposal
+
+> **📍 完整 15 条门禁自检表（含判定 SOP）在 [`be-coding-plan-template.md` §15](../../templates/coding/be-coding-plan-template.md)。** 本处列出 12 条概览，门禁 11-14（CodingModel/核心链路/资源隔离/混合压测）见模板 §15。
+
+### 📋 G-CODEPLAN-SRC 源码核对详细判定标准（🆕 v3.4.0 — 对标建议书1）
+
+> 本节是 `SKILL.md §🛡️ G-CODEPLAN-SRC` 的下沉详细规则。CLI：`ae-sdd gates check --only G-CODEPLAN-SRC`。
+
+**为什么需要**（实战复盘，life 项目 STORY-020）：
+
+| # | Plan 中的错误 | 源码实际事实 | 危害 |
+|---|---|---|---|
+| 1 | 把 application 层 `ImMessageConverter` 当成要改的 | 实际要改的是 infrastructure 层 `LatestSideMessagePOConverter` | 改错文件 |
+| 2 | 说"新增 Converter 映射" | `ImMessageConverter.toDTO` 已存在 | 重复造轮子（红线 #10）|
+| 3 | 设计嵌套 Anchor 值对象 | 现有 PO/DO 全是扁平字段 | 与现有建模范式不符 |
+| 4 | 测试范式标"JUnit4/5 待确认" | 代码里就是 JUnit4 + SpringRunner + H2 | 本可读源码确认却标待确认 |
+| 5 | Converter 写法按 AGENTS.md 写 `@UtilityClass` | 实际代码用 `@NoArgsConstructor(PRIVATE)`+static | AGENTS.md 与实际有出入，应以代码为准 |
+
+**判定标准——"现有同类源码"范围：**
+
+| 类别 | 同类范围 |
+|------|---------|
+| DO/实体 | 同包同类（如 `domain/.../entity/` 下已有 DO 的字段/注解写法）|
+| Converter | 同类型 Converter（application 层 DTO Converter / infrastructure 层 PO Converter 各自对照）|
+| PO | 同包 PO 的扁平/嵌套范式、`@TableName`/`@TableId` 用法 |
+| Repository Impl | 同层 Repository 的 Mapper 注入方式、事务边界 |
+| 测试 | 同模块测试的框架（JUnit4/5）、Runner、H2/真实 DB 范式 |
+
+**标记格式：**
+
+```
+【已读源码：domain/message/model/entity/ImMessageDO.java】   ← 已核对，文件存在
+【待核实源码：Converter 写法】                                ← 未核对，须补读
+【待核实源码】                                                ← 未核对（简写）
+```
+
+**待核实清单格式**（CodingPlan 文档内独立小节）：
+
+```markdown
+### 待核实源码清单（G-CODEPLAN-SRC）
+- [ ] ImMessageConverter 现有 toDTO 方法签名（domain/.../ImMessageConverter.java）
+- [ ] LatestSideMessagePO 扁平/嵌套范式（infrastructure/.../LatestSideMessagePO.java）
+- [ ] 测试框架版本（src/test/java/.../现有测试类）
+```
+
+**门禁规则：**
+- 类骨架章节**无任何标记** → 🔴 阻断（每个新增/修改类须附标记）
+- 标【已读源码：】但**文件不存在** → 🔴 阻断（防伪造标记）
+- **待核实清单非空** → 🔴 阻断（CodingPlan 视为草案，须补读后改为【已读源码：】才进 ⑤ Coding）
+- CodingPlan **无关键类骨架章节**（微任务场景）→ 跳过，不阻断
 
 **禁止（违者视为 CodingPlan 不完整）：**
 - ❌ 7 个章节中任一缺失
@@ -1434,6 +1485,7 @@ public class Ticket {
 - ❌ 关键类只有方法名没有方法体伪代码
 - ❌ SQL 写法模糊（"按主键更新" → 必须明确 WHERE 条件）
 - ❌ 测试数据来源标注"假设" / "随便填" / "TODO"
+- ❌ 🆕 v3.4.0 类骨架无来源标记 / 标已读但文件不存在 / 待核实清单未闭环
 
 **与已有步骤的衔接：**
 - ④ Task Generate 的"全局 Task Review"负责 Review Task 文档的"做什么"层面

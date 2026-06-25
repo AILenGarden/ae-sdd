@@ -78,10 +78,16 @@ Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
 
 - **HS-1** 没有 CodingPlan 写源码（PreToolUse hook 物理拦截）
 - **HS-2** `ae-sdd state write` 跨步跳跃（PreToolUse hook 物理拦截）
-- **HS-3** 用模糊回复（"好"/"行"/"OK"）当用户确认 → 必须追问
+- **HS-3** 用模糊回复（"好"/"行"/"OK"）当用户确认 → 必须追问（🆕 v3.4.0：声明但无物理实现，靠 agent 自律 + 审核点 token 机制 `ae-sdd state confirm` 兜底防 AI 自填）
 - **HS-4** 跳过 ⑥bis / ⑦bis 一致性核查
-- **HS-5** 猜测业务信息 → 必须标 `{待确认}` 并停下来
+- **HS-5** 猜测业务信息 → 必须标 `{待确认}` 并停下来（声明但无物理实现，靠 G-CODEPLAN-SRC 源码核对门禁兜底）
 - **HS-6** 未经确认修改已审核通过的测试代码
+- **HS-7**（🆕 v3.3.0）未通过 4 层 AND 闸就触发 `ae-sdd state prd-complete`（PreToolUse hook 物理阻断）
+- **HS-8**（🆕 v3.3.0）PRD 级 compact 失败时未保留旧 PRD state.json（Stop hook 阻断 + 报警）
+- **HS-9**（🆕 v3.4.0，建议书4 关卡1）收到 `/ae-sdd` 触发后未跑 `ae-sdd enter` 领 entry token 就落地流程产物（UserPromptSubmit 注入强提醒 + 关卡2/3 物理拦截兜底）
+- **HS-10**（🆕 v3.4.0，建议书4 关卡2）流程产物（Story/Task/CodingPlan/报告）落地未经 `resolve_path` 推导、落在 `d:\tmp\` 等游离位置（PreToolUse hook 物理拦截 + G-DOC-STORAGE 门禁）
+- **HS-11**（🆕 v3.4.0，建议书4 关卡3）非 coding/test-running phase 或无审核点 2.5 确认 token 写 src/ 源码（PreToolUse hook 物理拦截）
+- **HS-12**（🆕 v3.4.0，建议书3 F-1）AI 谎报 `◆ GATE: ✅ CLEAR` 但实际门禁未通过（Stop hook 交叉验证 G-08 与 CodingPlan 文档一致）
 
 ---
 
@@ -92,6 +98,8 @@ G-00 项目资产  G-01 DR文档    G-02 Story文档  G-03 Story Review通过
 G-04 TestCase  G-05 Task文档  G-06 Task Review G-07 CodingPlan
 G-08 Plan14禁  G-09 测试真实性 G-10 测试报告   G-11 Coding报告
 G-12 CR报告    G-13 全链路对称性
+G-14 CP-Story一致性  G-CODEPLAN-SRC 源码核对  G-DOC-STORAGE 文档存放
+G-RA-1~4 需求分析门卫  G-CODE-1 Coding真实性
 ```
 
 一键检查：`ae-sdd gates check --json`
@@ -126,6 +134,22 @@ G-12 CR报告    G-13 全链路对称性
 | `Stop`             | `transcript_path`            | `{}`     | `decision = "block"`, `reason`, `systemMessage`     |
 
 **exit 始终为 0。** Claude Code 通过 JSON 字段判断是否允许，不通过 exit code。
+
+**v3.3.0 UserPromptSubmit PRD 级 payload（🆕）：**
+
+`UserPromptSubmit` 在 PRD 完成场景下，注入 `systemMessage` 字段补充：
+
+```json
+{
+  "systemMessage": "PRD 级状态：prdStatus=awaiting_compact；下一动作：`ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime-name}`；详见 .auto-engineering/{PRD-ID}/state.md"
+}
+```
+
+**触发条件：** `state.json.prdStatus ∈ {prd_complete_pending_user, awaiting_compact}` 时由 `prompt-inject` hook 自动注入；其他状态不注入。
+
+**Mavis 等价物：** 复用 `mavis session rotate --handoff-file` 协议，由 `ae-sdd runtime compact --runtime mavis` 调用后自动注入下个 session context。
+
+**Codex 等价物：** 由 R-3 Codex PoC 决定具体 payload 协议（待 PoC 落档 `docs/plans/2026-06-25-codex-poc-result.md`）。
 
 ---
 

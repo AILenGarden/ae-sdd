@@ -337,6 +337,9 @@ HEALTH_CHECKLIST_REQUIRED = [
     ("RequirementAnalysisModel", "RAModel 12 维"),
     ("16 道 RA 质量闸", "16 道 RA-G 闸"),
     ("update_graph", "更新图谱检查器"),
+    ("G-CODEPLAN-SRC", "🆕 v3.4.0 源码核对门禁"),
+    ("G-DOC-STORAGE", "🆕 v3.4.0 文档存放门禁"),
+    ("UC-06", "🆕 v3.4.0 文档-实现一致性检查"),
 ]
 
 
@@ -363,6 +366,96 @@ def check_uc05_health_checklist(repo_root: Path) -> UpdateCheckResult:
                              details={"covered": [desc for _, desc in HEALTH_CHECKLIST_REQUIRED]})
 
 
+# ─── UC-06 文档-实现一致性（🆕 v3.4.0，建议书3 §7.6）─────────────────────────
+# 检测"文档承诺门禁但门禁不存在"的文档撒谎复发：
+# (a) source/SKILL.md + 子 SKILL 引用的 ae-sdd <cmd> 都在 CLI 实现（扩展 UC-03 到子 SKILL）
+# (b) HARNESS.md 声明的 HS-X 硬停止规则在 gate_intercept/stop_check/prompt_inject 有实现
+
+# HARNESS.md HS 规则 → 实现文件关键词映射（声明但无对应实现 → warn）
+_HARNESS_HS_IMPL_MAP = {
+    "HS-1": ("gate_intercept.py", "_DESIGN_PHASES"),
+    "HS-2": ("gate_intercept.py", "_check_state_write"),
+    "HS-3": (None, None),   # 声明但无物理实现（模糊回复）— 标 warn
+    "HS-7": ("gate_intercept.py", "prd-complete"),  # 声明，部分实现
+    "HS-8": ("stop_check.py", "compact"),           # 声明，部分实现
+    "HS-9": ("prompt_inject.py", "AE_SDD_TRIGGER_MARKERS"),
+    "HS-10": ("gate_intercept.py", "_PRODUCT_PHASE_MAP"),
+    "HS-11": ("gate_intercept.py", "task-reviewed"),
+    "HS-12": ("stop_check.py", "_verify_gate_claims"),
+}
+
+
+def check_uc06_doc_impl_consistency(repo_root: Path) -> UpdateCheckResult:
+    """UC-06 文档-实现一致性：SKILL/子SKILL 引用命令都在 CLI + HARNESS HS 规则有实现（建议书3 §7.6）。"""
+    name = "文档-实现一致性"
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    # (a) 子 SKILL 引用的命令都在 CLI 实现（扩展 UC-03 到 source/skills/**/*.md）
+    cli_cmds = _extract_cli_commands(repo_root / "tools" / "bin" / "ae-sdd")
+    skills_dir = repo_root / "source" / "skills"
+    if skills_dir.is_dir():
+        for skill_md in skills_dir.rglob("*-skill.md"):
+            try:
+                text = skill_md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            # 跳过 YAML frontmatter
+            body = text
+            if text.startswith("---"):
+                end = text.find("\n---", 3)
+                if end != -1:
+                    body = text[end + 4:]
+            # 严格匹配实际命令调用：ae-sdd <cmd> 后紧跟 --flag / 反引号闭合 / 行尾
+            # 防止 "ae-sdd 生成的文档" 这类正文误匹配（建议书3 §7.6）
+            refs = set(re.findall(
+                r"ae-sdd\s+([a-z][a-z-]*)(?=\s+--|`|\s*$)", body, re.MULTILINE))
+            refs -= {"description", "version", "name"}
+            missing = refs - cli_cmds - HISTORICAL_UNIMPLEMENTED - {"v"}
+            if missing:
+                issues.append(f"{skill_md.relative_to(repo_root)} 引用未实现命令：{sorted(missing)}")
+
+    # (b) HARNESS.md 声明的 HS 规则有实现
+    harness = repo_root / "source" / "HARNESS.md"
+    if harness.is_file():
+        harness_text = harness.read_text(encoding="utf-8", errors="replace")
+        declared_hs = set(re.findall(r"\bHS-(\d+)\b", harness_text))
+        for hs_num in sorted(declared_hs, key=int):
+            hs_id = f"HS-{hs_num}"
+            impl_file, impl_kw = _HARNESS_HS_IMPL_MAP.get(hs_id, (None, None))
+            if impl_file is None:
+                # 无映射的 HS 规则 → 声明但无实现 → warn
+                warnings.append(f"{hs_id} 声明但无物理实现（靠 agent 自律 + 兜底机制）")
+                continue
+            impl_path = repo_root / "tools" / "lib" / impl_file
+            if not impl_path.is_file():
+                issues.append(f"{hs_id} 声明但实现文件缺失：{impl_file}")
+                continue
+            try:
+                impl_text = impl_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                issues.append(f"{hs_id} 实现文件不可读：{impl_file}")
+                continue
+            if impl_kw and impl_kw not in impl_text:
+                warnings.append(f"{hs_id} 声明在 {impl_file} 但未找到 '{impl_kw}' 实现")
+
+    if issues:
+        return UpdateCheckResult("UC-06", name, "error", False,
+                                 f"文档-实现不一致（{len(issues)} 项）：{issues[:5]}",
+                                 "实现承诺的命令/HS 规则，或删除文档中的虚假承诺（建议书3 §7.6）",
+                                 details={"issues": issues, "warnings": warnings})
+
+    if warnings:
+        return UpdateCheckResult("UC-06", name, "warn", True,
+                                 f"文档-实现基本一致（{len(warnings)} 项声明但无物理实现，warn）：{warnings[:5]}",
+                                 "这些 HS 规则靠 agent 自律 + 兜底机制，可后续补物理实现",
+                                 details={"warnings": warnings})
+
+    return UpdateCheckResult("UC-06", name, "error", True,
+                             "文档-实现一致：SKILL/子SKILL 命令全实现 + HARNESS HS 规则全有实现",
+                             details={"cli_cmds_count": len(cli_cmds)})
+
+
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
 CHECK_FUNCS = {
     "UC-01": check_uc01_version,
@@ -370,6 +463,7 @@ CHECK_FUNCS = {
     "UC-03": check_uc03_command_contract,
     "UC-04": check_uc04_scanner_distribution,
     "UC-05": check_uc05_health_checklist,
+    "UC-06": check_uc06_doc_impl_consistency,
 }
 
 

@@ -1,5 +1,5 @@
 """
-test_gates.py — gates.py 单元测试（19 门禁：14 主 G-00~G-13 + 4 G-RA + 1 G-CODE）
+test_gates.py — gates.py 单元测试（22 门禁：14 主 G-00~G-13 + 3 中段 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 4 G-RA + 1 G-CODE）
 
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
@@ -412,14 +412,141 @@ class TestG13(unittest.TestCase):
         self.assertFalse(r.pass_)
 
 
+# ─── G-14 CodingPlan-Story 一致性（v3.4.0）──────────────────────────────────
+class TestG14(unittest.TestCase):
+
+    def _cp(self, body: str) -> str:
+        return f"# STORY-001-CodingPlan\n{body}\n"
+
+    def test_no_codingplan_blocks(self):
+        tmp = _setup_project({"design/STORY-001.md": "# STORY-001 AC-001"})
+        r = gates.check_g14(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_no_story_ref_blocks(self):
+        tmp = _setup_project({
+            "design/STORY-002-CodingPlan.md": "# Plan 无任何 Story 引用也无 AC",
+        })
+        r = gates.check_g14(tmp, {}, "STORY-002")
+        self.assertFalse(r.pass_)
+
+    def test_ac_misalign_blocks(self):
+        # CodingPlan 无 AC 对齐，但 Story 含 AC-001/AC-002
+        tmp = _setup_project({
+            "design/STORY-001.md": "# STORY-001\nAC-001 ... \nAC-002 ...",
+            "design/STORY-001-CodingPlan.md": "# Plan 引用 STORY-001 但测试章节无 AC 编号",
+        })
+        r = gates.check_g14(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_deviation_without_proposal_blocks(self):
+        tmp = _setup_project({
+            "design/STORY-001.md": "# STORY-001 AC-001",
+            "design/STORY-001-CodingPlan.md": "# Plan STORY-001\n## 偏离声明\n接口路径偏离 Story\nAC-001 覆盖",
+        })
+        r = gates.check_g14(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_full_pass(self):
+        tmp = _setup_project({
+            "design/STORY-001.md": "# STORY-001 AC-001 AC-002",
+            "design/STORY-001-CodingPlan.md": "# Plan STORY-001\n## 测试对应\nAC-001 ... \nAC-002 ...",
+        })
+        r = gates.check_g14(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+
+# ─── G-CODEPLAN-SRC CodingPlan 源码核对（v3.4.0）─────────────────────────────
+class TestGCodeplanSrc(unittest.TestCase):
+
+    def _skeleton_cp(self, marks: list[str]) -> str:
+        body = "# STORY-001-CodingPlan\n## §2 关键类骨架\n"
+        for i, m in enumerate(marks, 1):
+            body += f"\npublic class Foo{i} {{}}\n{m}\n"
+        return body + "\n## §3 数据\n...\n"
+
+    def test_no_codingplan_blocks(self):
+        tmp = _setup_project({"design/STORY-001.md": "# STORY-001"})
+        r = gates.check_g_codeplan_src(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_no_marks_blocks(self):
+        tmp = _setup_project({
+            "design/STORY-001-CodingPlan.md": self._skeleton_cp(["（无标记）"]),
+        })
+        r = gates.check_g_codeplan_src(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_pending_mark_blocks(self):
+        tmp = _setup_project({
+            "design/STORY-001-CodingPlan.md": self._skeleton_cp(["【已读源码：src/Foo.java】", "【待核实源码】"]),
+            "src/Foo.java": "public class Foo {}",
+        })
+        r = gates.check_g_codeplan_src(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+        self.assertGreater(r.details.get("n_pending", 0), 0)
+
+    def test_missing_read_file_blocks(self):
+        # 标已读但文件不存在 → 阻断
+        tmp = _setup_project({
+            "design/STORY-001-CodingPlan.md": self._skeleton_cp(["【已读源码：src/NotExist.java】"]),
+        })
+        r = gates.check_g_codeplan_src(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+
+    def test_all_read_passes(self):
+        tmp = _setup_project({
+            "design/STORY-001-CodingPlan.md": self._skeleton_cp(["【已读源码：src/Foo.java】", "【已读源码：src/Bar.java】"]),
+            "src/Foo.java": "public class Foo {}",
+            "src/Bar.java": "public class Bar {}",
+        })
+        r = gates.check_g_codeplan_src(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+    def test_no_skeleton_section_skips(self):
+        # 无类骨架章节（微任务）→ 跳过不阻断
+        tmp = _setup_project({
+            "design/STORY-001-CodingPlan.md": "# Plan\n## §3 数据\n无类骨架\n",
+        })
+        r = gates.check_g_codeplan_src(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+        self.assertTrue(r.details.get("skipped"))
+
+
+# ─── G-DOC-STORAGE 文档落地存放合规（v3.4.0）─────────────────────────────────
+class TestGDocStorage(unittest.TestCase):
+
+    def test_clean_dir_passes(self):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp())
+        r = gates.check_g_doc_storage(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+    def test_stray_tmp_path_blocks(self):
+        tmp = _setup_project({
+            "tmp/STORY-001-CodingPlan.md": "# stray plan in tmp",
+        })
+        r = gates.check_g_doc_storage(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+        self.assertGreater(len(r.details.get("stray_files", [])), 0)
+
+    def test_compliant_design_root_passes(self):
+        tmp = _setup_project({
+            "design/STORY-001-CodingPlan.md": "# plan in design/",
+            "ae-sdd-doc/Story/STORY-001.md": "# story in ae-sdd-doc/",
+        })
+        r = gates.check_g_doc_storage(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
     def test_check_all_returns_all(self):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
-        # v3.2.1：14 主门禁 + 4 G-RA + 1 G-CODE = 19
-        self.assertEqual(len(results), 19)
+        # v3.4.0：14 主门禁 + 3 中段门禁 + 4 G-RA + 1 G-CODE = 22
+        self.assertEqual(len(results), 22)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -442,9 +569,9 @@ class TestCheckAll(unittest.TestCase):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
         summary = gates.summarize(results)
-        # v3.2.1：14 主门禁 + 4 G-RA + 1 G-CODE = 19
-        self.assertEqual(summary["total"], 19)
-        self.assertEqual(summary["passed"] + summary["failed"], 19)
+        # v3.4.0：14 主门禁 + 3 中段门禁 + 4 G-RA + 1 G-CODE = 22
+        self.assertEqual(summary["total"], 22)
+        self.assertEqual(summary["passed"] + summary["failed"], 22)
         self.assertIn("results", summary)
 
 

@@ -1,5 +1,5 @@
 """
-test_update_graph.py — update_graph.py 单元测试（UC-01~UC-05）
+test_update_graph.py — update_graph.py 单元测试（UC-01~UC-06）
 
 覆盖每项检查的核心场景：通过、失败、反例。
 """
@@ -145,6 +145,44 @@ class TestUC05(unittest.TestCase):
         self.assertGreater(len(r.details.get("missing", [])), 0)
 
 
+# ─── UC-06 文档-实现一致性（🆕 v3.4.0）────────────────────────────────────────
+class TestUC06(unittest.TestCase):
+
+    def test_real_repo(self):
+        r = ug.check_uc06_doc_impl_consistency(REPO_ROOT)
+        # 真实仓库应通过（warn 或 pass，不应 error）
+        self.assertTrue(r.pass_, f"UC-06 真实仓库应通过：{r.message}")
+
+    def test_subskill_missing_command_blocks(self):
+        # 子 SKILL 引用一个未实现命令（实际命令调用形式）→ error
+        tmp = _setup_repo({
+            "source/skills/phase1-design/x-skill.md": "# x\n跑 `ae-sdd newcmd --x`\n",
+            "tools/bin/ae-sdd": '# cli\nsub.add_parser("gates")\n',
+        })
+        r = ug.check_uc06_doc_impl_consistency(tmp)
+        self.assertFalse(r.pass_)
+        self.assertTrue(any("newcmd" in i for i in r.details.get("issues", [])))
+
+    def test_subskill_prose_not_matched(self):
+        # 正文 "ae-sdd 生成的文档" 不应被误匹配为命令
+        tmp = _setup_repo({
+            "source/skills/phase1-design/x-skill.md": "# x\nae-sdd 生成的文档应存档\n",
+            "tools/bin/ae-sdd": '# cli\nsub.add_parser("gates")\n',
+        })
+        r = ug.check_uc06_doc_impl_consistency(tmp)
+        self.assertTrue(r.pass_, f"正文提及不应误报：{r.message}")
+
+    def test_harness_hs_no_impl_warns(self):
+        # HARNESS.md 声明 HS-99 但无映射 → warn（不 error）
+        tmp = _setup_repo({
+            "source/HARNESS.md": "# HARNESS\n- **HS-99** 某规则\n",
+            "tools/bin/ae-sdd": '# cli\nsub.add_parser("gates")\n',
+        })
+        r = ug.check_uc06_doc_impl_consistency(tmp)
+        # HS-99 无映射 → 进 warnings，pass=True
+        self.assertTrue(r.pass_)
+
+
 # ─── bump_version 版本号同步（v3.2.5 UC-01 操作侧）──────────────────────────
 class TestBumpVersion(unittest.TestCase):
 
@@ -212,14 +250,19 @@ class TestBumpVersion(unittest.TestCase):
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
-    def test_check_all_returns_5(self):
+    def test_check_all_returns_6(self):
         results = ug.check_all(REPO_ROOT)
-        self.assertEqual(len(results), 5)
+        self.assertEqual(len(results), 6)  # 🆕 v3.4.0: +UC-06
 
     def test_check_all_only_filter(self):
         results = ug.check_all(REPO_ROOT, only="UC-01")
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].check_id, "UC-01")
+
+    def test_check_all_only_uc06(self):
+        results = ug.check_all(REPO_ROOT, only="UC-06")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].check_id, "UC-06")
 
     def test_check_all_unknown(self):
         results = ug.check_all(REPO_ROOT, only="UC-99")
@@ -229,8 +272,8 @@ class TestCheckAll(unittest.TestCase):
     def test_summarize(self):
         results = ug.check_all(REPO_ROOT)
         s = ug.summarize(results)
-        self.assertEqual(s["total"], 5)
-        self.assertEqual(s["passed"] + s["failed"], 5)
+        self.assertEqual(s["total"], 6)
+        self.assertEqual(s["passed"] + s["failed"], 6)
         self.assertIn("checks", s)
 
 

@@ -65,7 +65,7 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 **漏报升级机制（🔴 标尺 2 配套强制规则）：**
 - **一阶段漏报**：本阶段检查项未发现，但下一阶段发现 → 升级为 🟠 严重型
 - **多阶段漏报**：同一缺陷在 2+ 阶段均未发现 → 升级为 🔴 阻断型
-- **多 reviewer 冲突**：同一缺陷被多 reviewer 提及但等级判定冲突 → 升级为最高等级
+- **多 reviewer 冲突**：同一缺陷被多 reviewer 提及但等级判定冲突 → 按 [`agent-orchestration-skill.md §8.4.4 不一致项处理决策树`](../cross-cutting/agent-orchestration-skill.md) 处置（取最高等级 + 存疑项 root 复核），🆕 2026-06-25 改为引用横切规范，不再本节点自行定义冲突算法
 
 ### 标尺 3：完整性度量（🔴 "覆盖所有"必须先有穷举清单）
 
@@ -290,6 +290,40 @@ PRD 是需求的源头，DR 是 PRD 的技术化映射。**PRD 是 A 阶段业�
 ### 1.6 读取已有 Review 记录（仅作上下文参考，不得作为跳过依据）
 
 读取历史 Review 记录仅为了解历史 Review 结论，**不得基于历史完成状态跳过任何检查项**。每次进入 DR Review 都必须执行完整的 5 阶段评审，对所有检查项重新判定，不受历史结论影响。即使上一轮某项判定为"误报"，本轮仍需重新检查，因为 DR 内容可能已变更。
+
+---
+
+## 第一步 bis：多 reviewer 视角切分（🆕 2026-06-25 — 落地 §8.4.2 节点专属配置）
+
+> **📍 归属：** 本节是 [`agent-orchestration-skill.md §8.4 多 reviewer 默认编排框架`](../cross-cutting/agent-orchestration-skill.md) 在 DR Review 节点的**视角切分配置**。Tier 判定（选几个 reviewer）、交叉对比算法、冲突决策树、降级规则统一查 §8.4；本节只写"DR Review 的 reviewer 视角怎么切"。
+
+### Tier 判定（引用 §8.4.1，本节点关键决策点识别已有支撑）
+
+DR Review 在第零步准入通过后、第二步评审前，按 [`§8.4.1`](../cross-cutting/agent-orchestration-skill.md) 判定 Tier。**本节点准入门禁 0-6（关键决策 ≥ 1 条）天然提供关键决策点识别**：
+
+| Tier | DR Review 触发条件（任一命中即取高 Tier） | reviewer 数 |
+|------|------------------------------------------|------------|
+| Tier 1 | 微/小规模 DR **且** 无状态机/事务/接口契约/跨服务集成（关键决策 = 0 或均为低风险） | 1 |
+| Tier 2 | 中规模 DR **或** 含状态机/事务/接口契约/跨服务集成等关键决策（门禁 0-6 命中） | 2 |
+| Tier 3 | 大规模 DR **或** 全新微服务/全新表/涉及资金·状态·权限/跨服务集成 | 3 |
+
+**判定结果写入报告头部** `## Review 元信息` 的 `reviewerTier` 字段。
+
+### DR Review reviewer 视角分工（§8.4.2 三原则落地）
+
+| 视角 | Tier | 审视重点 | 覆盖阶段/检查项 |
+|------|------|---------|---------------|
+| `reviewer-业务价值` | Tier 2/3 | A 阶段业务目标对齐 + B 阶段场景覆盖（DR 是否真正解决 RA 提出的问题）| A + B 阶段重点 |
+| `reviewer-架构拆分` | Tier 2/3 | C 阶段架构设计 + D 阶段数据模型 + E 阶段 Story 拆分合理性 | C + D + E 阶段重点 |
+| `reviewer-跨边界` | 仅 Tier 3 | E 阶段 Story 边界无交叉 + 跨 Story 接口/数据变更归属唯一 | E 阶段 E1/E2 重点 |
+
+**视角正交性核查（§8.4.2 原则①/②）：**
+- Tier 2：业务价值视角（A+B）∩ 架构拆分视角（C+D+E）= 无交集 ✅；并集 = A+B+C+D+E 全部 HARD 项 ✅
+- Tier 3：三视角并集覆盖全部 5 阶段 HARD 项 ✅
+
+### 与 5 阶段并行挖掘的关系（引用 §8.4.6）
+
+> **📍 叠加规则（2026-06-25）：** 5 阶段并行挖掘 = **单 reviewer 内部机制**（每个 reviewer 各自完整跑 A-E 五阶段，满足"不得跳过任何阶段"硬门禁）；多 reviewer 之间**串行**，sub-agent 总数按 reviewer 数计（≤3），不超 §2.2 硬上限 5。视角差异靠 prompt lens 制造（业务价值视角在 A/B 投入更深，架构拆分视角在 C/D/E 投入更深），不靠切分阶段。
 
 ---
 
@@ -778,7 +812,7 @@ PRD 是需求的源头，DR 是 PRD 的技术化映射。**PRD 是 A 阶段业�
 |---------|---------|
 | 一阶段漏报 → 下一阶段发现 | 升级为 🟠 严重型 |
 | 同一缺陷在 2+ 阶段漏报 | 升级为 🔴 阻断型 |
-| 同一缺陷被多 reviewer 提及但等级冲突 | 升级为最高等级 |
+| 同一缺陷被多 reviewer 提及但等级冲突 | 按 [`§8.4.4 冲突决策树`](../cross-cutting/agent-orchestration-skill.md) 处置（取最高等级 + 存疑项 root 复核），🆕 2026-06-25 引用横切规范 |
 | 🔴 阻断型 + 🟠 严重型 ≥ 5 项 | 整篇 Review 标记为 🔴 不通过，要求重做 DR |
 
 ### 3.3 常见误报场景
@@ -1150,7 +1184,7 @@ dr-update-skill 执行完成后，重新触发本 SKILL 进入下一轮评审（
 | 6 | 不调用 document-storage-skill 落盘 | 必须先调用，再写文件 |
 | 7 | 不触发 dr-update-skill | UpdatePlan 通过出闸条件后必须触发 |
 | 8 | 漏报升级机制不执行 | 一阶段漏报升级 🟠，多阶段漏报升级 🔴 |
-| 9 | 多 reviewer 结论冲突不解决 | 升级为最高等级 + 人工裁定 |
+| 9 | 多 reviewer 结论冲突不解决 | 按 [`§8.4.4 冲突决策树`](../cross-cutting/agent-orchestration-skill.md) 处置（取最高等级 + 存疑项 root 复核 + 人工裁定），🆕 2026-06-25 引用横切规范 |
 | 10 | 不更新 DR Review ChangeLog | 每轮 Review 必须在 ChangeLog 追加记录 |
 
 ---
@@ -1173,11 +1207,15 @@ dr-update-skill 执行完成后，重新触发本 SKILL 进入下一轮评审（
 - 已修复：{Y} 个
 - 待修复：{Z} 个
 - 误报：{W} 个
+- 多 reviewer 模式：reviewerTier={Tier 1/2/3} / reviewerMode={physical-multi-reviewer | logical-multi-perspective}
+  （若 reviewerMode=logical-multi-perspective，下游 Story Review 须标注"上游逻辑多视角，交叉验证强度降低"，见 §8.4.5）
 
 是否继续下一轮？
 - 回复"继续"→ 启动第 N+1 轮
 - 回复"退出"→ 标记 DR 为 Approved，交还 ae-sdd 主流程
 ```
+
+> **🆕 2026-06-25 降级提示落地（§8.4.5）：** 退出流转新增 `reviewerMode` 字段，下游 Story Review 读取后须标注上游逻辑多视角风险，避免 §8.4.5 下游提示沦为空头门禁。
 
 ---
 

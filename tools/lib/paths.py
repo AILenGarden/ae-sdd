@@ -12,7 +12,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.2.5"
+MASTER_VERSION = "3.4.0"
 
 
 def locate_master_source(start: Optional[Path] = None) -> Optional[Path]:

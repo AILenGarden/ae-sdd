@@ -22,8 +22,11 @@ from pathlib import Path
 from typing import Optional
 
 # 允许的 phase 流转（v1 简单版）
+# 🆕 v3.4.0：新增 ra-generated（RA 需求分析阶段，在 initialized → dr-generated 之间）
+#   修复 B3-6：ra 阶段 memory 覆盖（STATE_PHASE_TO_MEMORY_PHASE 加 ra-generated→ra）
 PHASE_FLOW = [
     "initialized",       # ae-sdd init 完成
+    "ra-generated",      # 🆕 v3.4.0 RA 需求分析完成（进 dr-generate 前置）
     "dr-generated",      # DR 文档生成
     "story-generated",   # Story 文档生成
     "story-reviewed",    # Story Review 通过
@@ -104,7 +107,8 @@ def next_step_suggestion(state: dict) -> dict:
     cur = state.get("phase", "initialized")
     # next 必须与 PHASE_FLOW 中的 phase 名一致，避免 next-step 建议与 state write 不匹配
     mapping = {
-        "initialized":     ("dr-generated",     "生成 DR（Design Requirement）",        "dr-generate-skill.md"),
+        "initialized":     ("ra-generated",     "🆕 v3.4.0 跑需求分析（RA）+ G-RA 门卫",  "requirement-analysis-skill.md"),
+        "ra-generated":    ("dr-generated",     "生成 DR（Design Requirement）",        "dr-generate-skill.md"),
         "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                  "story-generate-skill.md"),
         "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
         "story-reviewed":  ("task-generated",   "生成 Task",                            "testcase-generate-skill.md"),

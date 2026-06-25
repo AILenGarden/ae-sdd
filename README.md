@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.2.5（🆕 2026-06-25：脚本化补齐 4 个缺口 — `ae-sdd init` 挂载到 CLI（补 UC-03 历史遗留 warn）、新增 `ae-sdd bump <ver>` 同步三处版本号（UC-01 操作侧）、新建 `source/CHANGELOG/_template.md`（兑现 ae-sdd-update-skill 模板承诺）、`dev_sync.py` 增仓库根残留清理（nul 设备名 + plugins/*.bak 旧备份）；v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节 — 固化 ae-sdd 项目 6 大子系统（SKILL 本体/实例化体系/构建安装脚本/安装引导 SKILL/工具链/Harness 适配层）的总览、协同关系图与维护边界，让维护者改任一子系统时知道连带影响；同步补齐健康度清单 v3.2.2/v3.2.3 缺失条目、修正 README 正文门禁数 14→19 与子 SKILL 数 15→22；v3.2.3：Memory 强制门禁升级 — `ae-sdd state write --phase ...` 在离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 `memory enter → memory write`；v3.2.2：Toolset Layer P0 — 新增 `ae-sdd memory/db/git` 三组工程工具，DB 采用本地 profile + read-first 策略，Git Insight 只读输出结构化历史/影响证据；v3.2.1：Coding 工具层加固 — G-CODE-1 + coding_authenticity_scan.py + gate coding-required；v3.2.0：需求分析全维度对标 Coding — RAModel 12 维 + 16 道 RA-G 闸 + G-RA-1~4 硬门禁 + ra_authenticity_scan.py + G-13 六层追溯）
+> **版本：** v3.4.0（🆕 2026-06-25：门禁体系加固 — 4 份修订建议书全量采纳 P0-P3：P0 修复 3 处文档撒谎（L-1 `gate ra-required --fix` / L-2 `assets check/generate/audit/update` / L-3 G-RA CLI 自动调用）；P1 中段门禁 G-CODEPLAN-SRC 源码核对 + G-DOC-STORAGE 文档存放 + G-14 Story 一致性 + 入口关卡三道闸（`ae-sdd enter` + session.py + gate_intercept 产物-Phase 映射）+ F-1 假门禁修复（stop_check GATE 交叉验证）；P2 G-08 内容校验升级 + ra-generated phase（修复 B3-6）+ 审核点 token（`state confirm`）+ test-verifier 独立 session_id；P3 UC-06 文档-实现一致性自动检测。门禁 19→22，PHASE_FLOW 10→11，CLI 新增 `enter`/`state confirm`/`gate doc-storage`；v3.3.0：PRD 级状态机 + 流程级 compact — 新增 `ae-sdd-skill.md §1.1~1.6` PRD 级 state.json/state.md/summary.md 三件套 + PRD ID 命名规范 + 4 层 AND 完成判定闸（G-PRD-1~4）+ 🔍 人工审核点 5「PRD 完成确认」；`document-storage-skill.md §3.5` 落档完整 schema；HARNESS.md 新增 HS-7/HS-8 + UserPromptSubmit PRD payload；`templates/design/prd-summary-template.md` 新建；CLI 新增 `state prd-check-complete` / `state prd-complete` / `state prd-archive` / `runtime compact` 4 个子命令；v3.2.6：多 reviewer 默认编排框架；v3.2.5：脚本化补齐 4 个缺口 — `ae-sdd init` 挂载到 CLI、新增 `ae-sdd bump`、新建 CHANGELOG `_template.md`、`dev_sync.py` 增仓库根残留清理；v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节 + 健康度清单补齐 + README 门禁数 14→19 与子 SKILL 数 15→22；v3.2.3：Memory 强制门禁升级；v3.2.2：Toolset Layer P0 — `ae-sdd memory/db/git` 三组工程工具；v3.2.1：Coding 工具层加固 — G-CODE-1 + coding_authenticity_scan.py；v3.2.0：需求分析全维度对标 Coding — RAModel 12 维 + 16 道 RA-G 闸 + G-RA-1~4 + ra_authenticity_scan.py + G-13 六层追溯）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -121,7 +121,7 @@ bash scripts/dev-sync.sh --watch
 
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
-- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 19 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
+- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 22 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
 - **[`source/skills/`](source/skills/)** — 22 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
 - **[`source/templates/`](source/templates/)** — 17 份模板（Story/Task/DR/Report/...）
 - **[`source/standards/`](source/standards/)** — 18 份标准（constraints 9 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）

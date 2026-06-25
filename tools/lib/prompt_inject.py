@@ -31,6 +31,15 @@ QUICK_CHANNEL_MARKERS: tuple[str, ...] = (
     "quick mode",
 )
 
+# 🆕 v3.4.0 关卡1：/ae-sdd 触发词检测（建议书4）
+AE_SDD_TRIGGER_MARKERS: tuple[str, ...] = (
+    "/ae-sdd",
+    "[$ae-sdd]",
+    "启动自动化工程",
+    "从 DR 开始",
+    "端到端实现",
+)
+
 
 def _update_quick_channel(ade_sdd: Path, user_prompt: str) -> None:
     """
@@ -74,12 +83,30 @@ def inject(
     # 更新快速通道状态（让 PreToolUse hook 能读到）
     _update_quick_channel(ade_sdd, user_prompt)
 
-    # 读状态
+    # 读状态 + 配置（entry token 提醒需要 projectKey）
     st = state_mod.read_state(paths.state_path(ade_sdd))
     phase = st.get("phase", "initialized")
     current_story = st.get("currentStory") or "（未设定）"
     cfg = paths.read_config(ade_sdd)
     project_key = cfg.get("projectKey", "unknown")
+
+    # 🆕 v3.4.0 关卡1：/ae-sdd 触发词检测 + entry token 提醒（建议书4）
+    entry_reminder: list[str] = []
+    if any(m in user_prompt for m in AE_SDD_TRIGGER_MARKERS):
+        try:
+            from lib import session as session_mod
+            cur_story = st.get("currentStory", "") or ""
+            if not session_mod.has_valid_entry_token(ade_sdd, cur_story):
+                enter_cmd = (f"ae-sdd enter {project_key} --story {cur_story}"
+                             if cur_story else f"ae-sdd enter {project_key}")
+                entry_reminder.append(
+                    f"⚠️ 检测到 ae-sdd 触发，必须先领取流程凭证（关卡1入口关卡）：\n"
+                    f"   {enter_cmd}\n"
+                    f"   未领凭证的流程产物落地/代码改动将被关卡2/3 物理拦截。\n"
+                    f"   （建议书4 入口关卡方案）"
+                )
+        except Exception:
+            pass  # session 模块异常不阻断注入
 
     # G-00 资产检查
     master = paths.locate_master_source()
@@ -115,6 +142,10 @@ def inject(
             f"⛔ G-00 未通过，禁止继续任何业务操作。"
             f"修复: ae-sdd assets generate --project {project_key}"
         )
+
+    # 🆕 v3.4.0 关卡1：entry token 提醒前置（最高优先级，在 G-00 之前）
+    if entry_reminder:
+        lines.insert(1, "\n".join(entry_reminder))
 
     return {"systemMessage": "\n".join(lines)}
 

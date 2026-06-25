@@ -1017,7 +1017,9 @@ Code Review 发现问题
 
 > **🔴 来源（角色 7 CodeReviewer）：** ae-sdd-skill.md 角色 7 的 prompt 模板从 AE-skill 迁入本 SKILL。
 >
-> **🔴 本节深度补全（2026-06-06）：** 增加 3 种多 Agent 模式（A/B/C）、交叉对比算法、3 套 prompt 模板（业务/架构/测试）、不一致项处理决策树。
+> **🔴 本节深度补全（2026-06-06 / 2026-06-25 修订）：**
+> - 2026-06-06：增加 3 种多 Agent 模式（A/B/C）、3 套 prompt 模板（业务/架构/测试）。
+> - 2026-06-25：**交叉对比算法 + 不一致项处理决策树已上提为横切规范**，归 `agent-orchestration-skill.md §8.4`（多 reviewer 默认编排框架 SSOT）。本节 A/B/C 模式 = §8.4 Tier 1/2/3 的 Code Review 实例化，本节只保留"Code Review 专属配置"（模式触发条件 + reviewer 视角分工），算法部分改为引用 §8.4.3 / §8.4.4，避免重复定义。
 
 ### 角色 7：CodeReview Agent（`code-reviewer`）
 
@@ -1028,17 +1030,21 @@ Code Review 发现问题
 | 标准 | 见本 SKILL §第二/三/四/六/七步 |
 | 报告格式 | `{STORY-ID}-CodeReview-v{N}-r{M}.md` |
 | 适用阶段 | Phase 3 ⑦ |
-| 数量建议 | 见下方 3 种模式（按 Story 复杂度选择 1-3 个 reviewer） |
+| 数量建议 | 按 [`agent-orchestration-skill.md §8.4.1`](../cross-cutting/agent-orchestration-skill.md) Tier 判定选 1/2/3 个；本节点 A/B/C 模式即 Tier 1/2/3 的实例化 |
 
-### 3 种多 Agent 模式触发条件（Code Review 场景专属）
+### 3 种多 Agent 模式触发条件（Code Review 场景专属 = §8.4.1 Tier 判定的 Code Review 实例化）
 
-| 模式 | 触发条件 | reviewer 数 |
+> **📍 与横切规范的关系：** 下表 A/B/C = `agent-orchestration-skill.md §8.4.1` 的 Tier 1/2/3 在 Code Review 节点的具体化。Tier 判定的**通用规则**（规模来源、关键决策点判定、降级豁免）以 §8.4.1 为准；本表只写 Code Review 专属的触发条件。
+
+| 模式（= Tier） | 触发条件（Code Review 专属） | reviewer 数 |
 |------|---------|------------|
-| A 单 Reviewer | Bug 修复 / 单方法调整 / Tier 1 编码 / ≤5 行改动 / 无状态机/事务 | 1（`reviewer-general`） |
-| B 双 Reviewer | 增量功能（≤3 Task）/ 含 AC 验收 / 涉及新接口/新表 / 含状态机/事务/接口契约等关键决策点 | 2（`reviewer-BE` + `reviewer-AR`） |
-| C 三 Reviewer | 全新微服务 / 全新表 / 全新 SPI / 涉及资金/状态/权限 / 跨 4 Task+ / Tier 3 编码 | 3（`reviewer-BE` + `reviewer-AR` + `reviewer-QA`） |
+| A 单 Reviewer（= Tier 1）| Bug 修复 / 单方法调整 / Tier 1 编码 / ≤5 行改动 / 无状态机/事务/资金/权限/外部集成 | 1（`reviewer-general`） |
+| B 双 Reviewer（= Tier 2）| 增量功能（≤3 Task）/ 含 AC 验收 / 涉及新接口/新表 / 含状态机/事务/接口契约等关键决策点 | 2（`reviewer-BE` + `reviewer-AR`） |
+| C 三 Reviewer（= Tier 3）| 全新微服务 / 全新表 / 全新 SPI / 涉及资金/状态/权限 / 跨 4 Task+ / Tier 3 编码 | 3（`reviewer-BE` + `reviewer-AR` + `reviewer-QA`） |
 
-### reviewer 角色分工（Code Review 场景专属）
+### reviewer 角色分工（Code Review 场景专属 = §8.4.2 视角切分的 Code Review 实例化）
+
+> **📍 与横切规范的关系：** 下表是 `agent-orchestration-skill.md §8.4.2` 视角切分三原则在 Code Review 的落地。本节是 §8.4.2 速查索引中"Code Review = BE + AR + QA"那一行的详细配置。
 
 | 角色 | 评审重点 | 覆盖 §2 阶段 |
 |------|---------|------------|
@@ -1047,62 +1053,28 @@ Code Review 发现问题
 | `reviewer-AR` | 架构 + 规范（DDL/SQL 性能、命名约定、包路径、调用层级） | C + E + F 重点，⑤⑥ 道闸侧重 |
 | `reviewer-QA` | 测试真实性 + 数据库逻辑链（仅模式 C） | D + C + F 重点，⑦ 道闸侧重 |
 
-> 📍 派活卡模板 / 报告回传协议 / 汇总流程 / 冲突处理规则 → 见 [`agent-orchestration-skill.md §任务分配协议`](../cross-cutting/agent-orchestration-skill.md)，此处不再重复。
+> 📍 派活卡模板 / 报告回传协议 / 汇总流程 → 见 [`agent-orchestration-skill.md §任务分配协议`](../cross-cutting/agent-orchestration-skill.md)，此处不再重复。
 
-### 交叉对比算法（root agent 执行）
+### 交叉对比与冲突处理（🔴 引用横切规范，不再重复定义）
 
-**算法 5 步：**
+> **📍 2026-06-25 去重：** 原"交叉对比算法 5 步"和"不一致项处理决策树"已上提到 [`agent-orchestration-skill.md §8.4.3 交叉对比算法`](../cross-cutting/agent-orchestration-skill.md) 和 [`§8.4.4 不一致项处理决策树`](../cross-cutting/agent-orchestration-skill.md)，作为所有 Review 节点的通用算法。本节点直接复用，不再在此重复算法正文。
+>
+> **Code Review 专属补充（算法通用，补充仅限本节点语境）：**
+> - §8.4.4 情况 1/2 中的"触发 Coding 实时追溯链"——Code Review 节点命中 🔴 阻断型时，按本 SKILL §实时追溯链 处置（其他 Review 节点无此机制）。
+> - §8.4.4 情况 3 中的"写入 UpdatePlan"——Code Review 节点对应写入 `CodeReviewUpdatePlan`（其他节点写入各自 UpdatePlan）。
 
-```
-1. 收集所有 reviewer 报告（1-3 份）
-2. 建立"问题-评级-位置"三维表
-   行 = 缺陷 ID（按位置聚合）
-   列 = reviewer 名称
-   值 = 该 reviewer 对该缺陷的评级（🔴/🟠/🟡/🟢/无）
-3. 分类判定：
-   ├─ 所有 reviewer 一致（同一评级）→ 接受
-   ├─ reviewer 评级不同但有 1 名 🔴 → 升级 🔴 阻断型
-   ├─ reviewer 评级不同但都 ≤ 🟠 → 取最高评级（🟠）
-   └─ 某 reviewer 发现某缺陷但其他未发现 → 列为"存疑项"，询问用户
-4. 一致性核查：每个 🔴/🟠 缺陷在 7 道闸上有对应证据
-5. 生成最终 CodeReview 报告（按聚合表生成）
-```
+**root agent 职责清单（Code Review 场景化）：**
 
-**不一致项处理决策树：**
-
-```
-情况 1：reviewer-BE 给 🔴 / reviewer-AR 给 ✅
-  → 视为 🔴 阻断型（业务实现错是核心）
-  → 触发 Coding 实时追溯链
-
-情况 2：reviewer-BE 给 ✅ / reviewer-AR 给 🔴
-  → 视为 🔴 阻断型（架构错会影响所有 Story）
-  → 触发 Coding 实时追溯链 + 评估是否需更新项目资产
-
-情况 3：reviewer-BE 给 🟠 / reviewer-AR 给 🟡
-  → 提升到 🟠 严重型
-  → 写入 CodeReviewUpdatePlan
-
-情况 4：reviewer-BE 未发现某缺陷 / reviewer-AR 发现
-  → 列入"存疑项"
-  → 询问用户：是否纳入最终报告
-
-情况 5：所有 reviewer 评级一致
-  → 接受，无不一致
-```
-
-**root agent 职责清单：**
-
-| # | 职责 | 产出 |
-|---|------|------|
-| 1 | 评估 Story 复杂度 → 选模式 A/B/C | 模式决策日志 |
-| 2 | 创建 N 个 sub-agent 任务描述（含 prompt 模板） | N 个任务卡 |
-| 3 | 等待全部完成（或超时） | — |
-| 4 | 收集 N 份 CodeReview 报告 | 报告清单 |
-| 5 | 跑交叉对比算法 | 聚合表 |
-| 6 | 跑不一致项处理决策树 | 决策日志 |
-| 7 | 生成最终 CodeReview 报告（模板套用） | 最终报告 |
-| 8 | 触发人工审核点 4（用户确认） | — |
+| # | 职责 | 产出 | 依据 |
+|---|------|------|------|
+| 1 | 评估 Story 复杂度 → 选模式 A/B/C（= §8.4.1 Tier 判定） | 模式决策日志 | §8.4.1 |
+| 2 | 创建 N 个 sub-agent 任务描述（含 prompt 模板） | N 个任务卡 | agent-orchestration §4 |
+| 3 | 等待全部完成（或超时） | — | agent-orchestration §6 |
+| 4 | 收集 N 份 CodeReview 报告 | 报告清单 | — |
+| 5 | 跑交叉对比算法 | 聚合表 | **§8.4.3** |
+| 6 | 跑不一致项处理决策树 | 决策日志 | **§8.4.4** |
+| 7 | 生成最终 CodeReview 报告（模板套用） | 最终报告 | 本 SKILL 模板 |
+| 8 | 触发人工审核点 4（用户确认） | — | AE-skill 编排 |
 
 ### 各 reviewer 评审重点补充（Code Review 场景专属）
 

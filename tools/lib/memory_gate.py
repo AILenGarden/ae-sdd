@@ -13,6 +13,7 @@ from lib import memory_store, paths, state as state_mod
 
 
 STATE_PHASE_TO_MEMORY_PHASE: dict[str, str] = {
+    "ra-generated": "ra",          # 🆕 v3.4.0 修复 B3-6：ra 阶段 memory 覆盖
     "dr-generated": "design",
     "story-generated": "design",
     "story-reviewed": "design",

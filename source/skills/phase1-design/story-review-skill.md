@@ -313,6 +313,48 @@ DR 是 Story 的设计源头，所有 Story 内容必须可追溯到 DR：
 
 ---
 
+## 第一步 bis：多 reviewer 视角切分（🆕 2026-06-25 — 落地 §8.4.2 节点专属配置）
+
+> **📍 归属：** 本节是 [`agent-orchestration-skill.md §8.4 多 reviewer 默认编排框架`](../cross-cutting/agent-orchestration-skill.md) 在 Story Review 节点的**视角切分配置**。Tier 判定（选几个 reviewer）、交叉对比算法、冲突决策树、降级规则统一查 §8.4；本节只写"Story Review 的 reviewer 视角怎么切"。
+
+### Tier 判定（引用 §8.4.1，本节点补充关键决策点识别）
+
+Story Review 在第零步准入通过后、第二步挖掘前，按 [`§8.4.1`](../cross-cutting/agent-orchestration-skill.md) 判定 Tier：
+
+| Tier | Story Review 触发条件（任一命中即取高 Tier） | reviewer 数 |
+|------|------------------------------------------|------------|
+| Tier 1 | 微/小规模 Story **且** 无状态机/事务/接口契约/跨服务集成 | 1 |
+| Tier 2 | 中规模 Story **或** 含状态机/事务/接口契约/前端契约等关键决策 | 2 |
+| Tier 3 | 大规模 Story **或** 全新聚合根/全新表/涉及资金·状态·权限/跨服务集成 | 3 |
+
+**判定结果写入报告头部** `## Review 元信息` 的 `reviewerTier` 字段。
+
+### Story Review reviewer 视角分工（§8.4.2 三原则落地）
+
+| 视角 | Tier | 审视重点 | 覆盖阶段/检查项 |
+|------|------|---------|---------------|
+| `reviewer-设计实现` | Tier 2/3 | DR-Story 一致性 + 业务逻辑覆盖 + 数据模型/接口实现可行性 | A + B + C 阶段重点，D/E 基础核查 |
+| `reviewer-前端契约` | Tier 2/3 | **F-Stage 前端契约 Review**（接口契约完整性/调用流程/状态展示/错误码/边界场景/联调支持 6 维度）| F-Stage 全部 + A13 契约漂移检查 |
+| `reviewer-数据模型` | 仅 Tier 3 | 数据模型/DB 字段链路深度审（C8 字段链路映射 + DB 变更可行性）| C8 + D 阶段重点 |
+
+**视角正交性核查（§8.4.2 原则①）：**
+- Tier 2：设计实现视角（A+B+C）∩ 前端契约视角（F+A13）= A13 契约漂移（轻交集，可接受，双方都需看契约一致性）
+- Tier 3：三视角并集 = A+B+C+D+E+F 全部 HARD 项 ✅（满足 §8.4.2 原则②覆盖全部硬门禁）
+
+### 与 5 阶段并行挖掘的关系（引用 §8.4.6，正交叠加）
+
+> **📍 概念澄清：** 本 SKILL 第二步的"5 阶段并行挖掘"（A-E 按**检查维度**拆）与多 reviewer（按**审视视角**拆）正交，可叠加。详见 [`§8.4.6`](../cross-cutting/agent-orchestration-skill.md)。
+>
+> **🔴 叠加规则（2026-06-25 修订 — 解决硬门禁冲突）：**
+> - **5 阶段并行挖掘 = 单 reviewer 内部机制**：每个 reviewer 各自完整跑 A-E 五阶段（满足第二步"不得跳过任何阶段"硬门禁）。
+> - **多 reviewer 之间串行**：N 个 reviewer 依次执行，sub-agent 总数按 **reviewer 数**计（≤3），**不是** reviewer×5。
+> - **上限核算**：Tier 2 = 2 reviewer，每个内部 5 阶段并行 ≤5 sub-agent，2 reviewer 串行 → 峰值 5（不超 §2.2 硬上限）；Tier 3 = 3 reviewer 串行，每个内部 5 阶段并行 ≤5 → 峰值仍 5 ✅。
+> - **视角差异如何体现**：各 reviewer 跑同样 5 阶段，但**聚焦点不同**（设计实现视角在 A/B/C 投入更深，前端契约视角在 F-Stage + A13 投入更深），通过 prompt 模板的 lens 制造差异，而非靠"切分阶段"。
+>
+> **❌ 已废弃的旧表述（2026-06-25 删除）：** 早期草稿曾写"各 reviewer 只跑自己视角相关阶段"以绕开 5 上限——此表述与第二步"不得跳过任何阶段"硬门禁直接冲突，已删除。reviewer 不得跳过任何阶段，靠串行而非阶段切分控制 sub-agent 总数。
+
+---
+
 ## 第二步：挖掘缺陷（五阶段并行挖掘）
 
 > **执行方式：五阶段（A-E）是相互独立的只读检查维度，必须并行挖掘以提升效率。**
@@ -1265,6 +1307,8 @@ Story Update SKILL 执行完成后，重新触发本 SKILL 进入下一轮挖掘
 ### 漏报升级规则（🔴 防 reviewer 自我合理化）
 
 > **为什么要漏报升级：** 同一个 reviewer 连续多轮做同一份 Story 的 Review，会出现"注意力疲劳 + 自我合理化"（把疑似缺陷判为误报）。漏报升级机制强制把这类风险暴露出来。
+>
+> **🆕 2026-06-25 与多 reviewer 框架的关系：** 多 reviewer 默认编排（[`agent-orchestration-skill.md §8.4`](../cross-cutting/agent-orchestration-skill.md)）已在 Tier 2+ Story **默认**启用交叉验证（见本 SKILL §第一步 bis）。本节的漏报升级规则是**多 reviewer 之外的额外复核机制**——即使已有多 reviewer，仍可能漏报，需按本规则升级处置。两者互补，不替代。
 
 **升级触发条件（任一触发即升级）：**
 
@@ -1272,7 +1316,7 @@ Story Update SKILL 执行完成后，重新触发本 SKILL 进入下一轮挖掘
 |---------|---------|
 | 同一类型疑似缺陷在 N ≥ 2 轮内连续被判定为"误报"，但事后被证明是真缺陷（漏报） | 该类型在后续轮次强制走人工裁决，reviewer 不得自行判定 |
 | 连续 2 轮"无新增"但漏报数 > 0 | 强制打破"两轮无新增即可退出"规则，必须额外加 1 轮专项重审漏报的类型 |
-| Reviewer 准确率 < 70% | 🔴 强制要求更换 reviewer（重新读取上下文）或引入交叉验证（派一个独立子 Agent 复审） |
+| Reviewer 准确率 < 70% | 🔴 强制要求更换 reviewer（重新读取上下文）。**若当前为 Tier 1 单审** → 升级为 Tier 2 双审（补一个独立视角 reviewer 复审）；**若已为 Tier 2/3** → 更换全部 reviewer 并重新读取上下文 |
 | 单轮发现 > 30 个新缺陷（异常高） | 触发"早漏报"反向检查：本轮挖出这么多，前几轮在干什么？前 N 轮追溯漏报 |
 | Phase 1 退出后被 TestCase 阶段回退 N ≥ 1 次 | 该 Story 全量回退到第零步重新准入，前面的 Review 结论部分作废（保留作历史） |
 
@@ -1310,11 +1354,15 @@ Story Update SKILL 执行完成后，重新触发本 SKILL 进入下一轮挖掘
 Story ID：{STORY-ID}
 轮次：{N}
 退出条件：✅ Story 稳定（连续两轮无新增缺陷）+ ✅ C8 数据视角总览已完成
+多 reviewer 模式：reviewerTier={Tier 1/2/3} / reviewerMode={physical-multi-reviewer | logical-multi-perspective}
+  （若 reviewerMode=logical-multi-perspective，下游 Task Review 须标注"上游逻辑多视角，交叉验证强度降低"）
 产出物：
   - {STORY-ID}-Supplement.md（累计 Review 记录）
   - {STORY-ID}-StoryReviewUpdatePlan-r{N}.md（最终轮修复计划）
 待主流程执行：③ 生成测试用例
 ```
+
+> **🆕 2026-06-25 降级提示落地（§8.4.5）：** 退出状态摘要新增 `reviewerMode` 字段。下游节点（Task Review / Code Review）读取本摘要时，若见 `logical-multi-perspective`，须在其报告标注"上游 Story Review 为逻辑多视角，交叉验证强度降低"，让风险显式传递，避免 §8.4.5 的下游提示成为空头要求。
 
 ---
 

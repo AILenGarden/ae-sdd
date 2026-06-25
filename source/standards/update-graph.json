@@ -85,7 +85,7 @@
         {"path": "tools/bin/ae-sdd", "action": "update-check 子命令覆盖新检查", "auto_checkable": false},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "图谱章节同步新规则", "auto_checkable": false}
       ],
-      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05", "UC-06"]
     },
     {
       "id": "UG-08",
@@ -97,7 +97,41 @@
         {"path": "README.md", "action": "第 5 行版本行更新", "auto_checkable": true},
         {"path": "(分发)", "action": "跑 dev-sync 重同步", "auto_checkable": false}
       ],
-      "checks": ["UC-01", "UC-03", "UC-04", "UC-05"]
+      "checks": ["UC-01", "UC-03", "UC-04", "UC-05", "UC-06"]
+    },
+    {
+      "id": "UG-10",
+      "name": "文档-实现一致性变更（🆕 v3.4.0）",
+      "trigger": ["source/SKILL.md", "source/skills/**", "source/HARNESS.md", "tools/bin/ae-sdd", "tools/lib/gate_intercept.py", "tools/lib/stop_check.py", "tools/lib/prompt_inject.py"],
+      "trigger_condition": "SKILL/HARNESS 引用新命令或声明新 HS 规则时，须确保 CLI/hook 有对应实现",
+      "affected": [
+        {"path": "tools/bin/ae-sdd", "action": "SKILL/子SKILL 引用的 ae-sdd <cmd> 须在 CLI add_parser 注册", "auto_checkable": true},
+        {"path": "tools/lib/gate_intercept.py", "action": "HARNESS HS-X 声明的物理拦截须在此实现", "auto_checkable": true},
+        {"path": "tools/lib/stop_check.py", "action": "HARNESS HS-X 声明的 Stop hook 拦截须在此实现", "auto_checkable": true},
+        {"path": "tools/lib/prompt_inject.py", "action": "HARNESS HS-X 声明的 UserPromptSubmit 注入须在此实现", "auto_checkable": true}
+      ],
+      "checks": ["UC-03", "UC-06"]
+    },
+    {
+      "id": "UG-09",
+      "name": "PRD 级状态机变更（🆕 v3.3.0）",
+      "trigger": [
+        "source/SKILL.md",
+        "source/skills/cross-cutting/document-storage-skill.md",
+        "source/templates/design/prd-summary-template.md"
+      ],
+      "trigger_condition": "PRD 级 state.json schema / 4 层 AND 闸 / PRD ID 命名 / state.md 模板任一被修改",
+      "affected": [
+        {"path": "source/SKILL.md", "action": "§1.1~1.6 PRD 级章节与 document-storage-skill.md §3.5 schema 1:1 对齐；G-PRD-1~4 闸名一致", "auto_checkable": true},
+        {"path": "source/skills/cross-cutting/document-storage-skill.md", "action": "§3.5 schema 与 SKILL.md §1.3 指针一致；§3.2 表格 PRD 级 3 行存在", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-conventions.md", "action": "§2.3 PRD ID 命名行 + PRD 级路径行与 SKILL.md §1.2 一致", "auto_checkable": true},
+        {"path": "source/HARNESS.md", "action": "HS-7/HS-8 与 SKILL.md §1.6 G-PRD-* 闸对应；UserPromptSubmit PRD payload 引用 SKILL.md §1.3 schema", "auto_checkable": true},
+        {"path": "source/templates/design/prd-summary-template.md", "action": "模板存在；与 document-storage-skill.md §3.5 字段职责分离原则一致", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "state prd-check-complete / state prd-complete / state prd-archive / runtime compact 子命令存在", "auto_checkable": true},
+        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-PRD-1~4；check_all 覆盖", "auto_checkable": true},
+        {"path": "README.md", "action": "第 5 行版本行含 v3.3.0 + PRD 级状态机描述", "auto_checkable": true}
+      ],
+      "checks": ["UC-01", "UC-03", "UC-05"]
     }
   ]
 }

@@ -134,10 +134,16 @@ class TestRecordHistory(unittest.TestCase):
 class TestNextStepSuggestion(unittest.TestCase):
     """next_step_suggestion 测试 — 所有 10 个 phase"""
 
-    def test_initialized_to_dr_generate(self):
+    def test_initialized_to_ra_generate(self):
         s = {"phase": "initialized"}
         sug = state_mod.next_step_suggestion(s)
         # v1.1: 'next' 必须与 PHASE_FLOW 一致（可直接传给 state write --phase）
+        # 🆕 v3.4.0：initialized → ra-generated（RA 需求分析阶段）
+        self.assertEqual(sug["next"], "ra-generated")
+
+    def test_ra_generated_to_dr_generate(self):
+        s = {"phase": "ra-generated"}
+        sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "dr-generated")
 
     def test_dr_generated_to_story_generate(self):
@@ -198,8 +204,8 @@ class TestNextStepSuggestion(unittest.TestCase):
 class TestPhaseFlowCoverage(unittest.TestCase):
     """PHASE_FLOW 完整性测试"""
 
-    def test_phase_flow_has_10_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOW), 10)
+    def test_phase_flow_has_11_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOW), 11)  # 🆕 v3.4.0: +ra-generated
 
     def test_phase_flow_starts_with_initialized(self):
         self.assertEqual(state_mod.PHASE_FLOW[0], "initialized")

@@ -32,6 +32,11 @@ G-RA 需求分析准入门卫（v3.2 — 对标 SKILL.md §🛡️ G-RA）：
 
 G-CODE Coding 真实性门禁（v3.2.1 — 对标 CodingModel §6 AI Coding 反模式库）：
   G-CODE-1 Coding 真实性扫描通过             ✅ 完整（调 coding_authenticity_scan.py）
+
+中段门禁（v3.4.0 — 对标建议书1/2/4，补齐"两头强中间空"的中段强制力）：
+  G-14           CodingPlan-Story 一致性      ✅ 完整（AC 对齐 + Story 引用 + 偏离 Proposal）
+  G-CODEPLAN-SRC CodingPlan 源码核对          ✅ 完整（类骨架须附已读/待核实源码标记）
+  G-DOC-STORAGE  文档落地存放合规              ✅ 完整（产物路径/命名须合规，禁游离位置）
 """
 from __future__ import annotations
 
@@ -58,7 +63,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 4 G-RA + 1 G-CODE = 19）
+# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 4 G-RA + 1 G-CODE = 22）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -74,6 +79,13 @@ GATE_REGISTRY: list[dict] = [
     {"id": "G-11", "name": "Coding 报告存在",      "severity": "blocker"},
     {"id": "G-12", "name": "CodeReview 报告存在",  "severity": "blocker"},
     {"id": "G-13", "name": "全链路对称性核查通过", "severity": "blocker"},
+    # 🆕 v3.4.0 中段门禁（对标建议书1/2/4 — 补齐"两头强中间空"的中段强制力）
+    # G-14 CodingPlan-Story 一致性：Plan 涉及接口/DO/AC 与 Story 可对应（建议书4 G-08-15）
+    {"id": "G-14", "name": "CodingPlan-Story 一致性", "severity": "blocker"},
+    # G-CODEPLAN-SRC CodingPlan 源码核对：新增/修改类建模范式须附已读源码标记（建议书1）
+    {"id": "G-CODEPLAN-SRC", "name": "CodingPlan 源码核对", "severity": "blocker"},
+    # G-DOC-STORAGE 文档落地存放合规：产物路径/命名须经 resolve_path 推导（建议书2）
+    {"id": "G-DOC-STORAGE", "name": "文档落地存放合规", "severity": "blocker"},
     # 🆕 v3.2 G-RA 需求分析准入门卫（对标 SKILL.md §🛡️ G-RA）— 把 RA 16 道闸
     # 的核心条款从"纸面规则"变成"可执行门禁"，与 Coding G-08/G-09 对等。
     {"id": "G-RA-1", "name": "RA 文档存在",          "severity": "blocker"},
@@ -380,6 +392,23 @@ def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
                           f"修复 {current_story}-CodingPlan.md 中标 ❌ 的门禁",
                           details={"n_pass": n_pass, "n_fail": n_fail, "n_warn": n_warn})
 
+    # 🆕 v3.4.0 内容校验升级（建议书3 §7.4）：14 关键词中是否有"空壳"（关键词存在但紧邻占位符）
+    placeholder_tokens = ("待补充", "TODO", "TBD", "占位", "placeholder")
+    shell_keywords = []
+    for k in CODINGPLAN_14GATES_KEYWORDS:
+        idx = content.find(k)
+        if idx >= 0:
+            # 看关键词后 30 字符内是否含占位符
+            tail = content[idx: idx + 30]
+            if any(tok in tail for tok in placeholder_tokens):
+                shell_keywords.append(k)
+    if shell_keywords:
+        return GateResult("G-08", "CodingPlan 14 门禁通过", "warn", True,
+                          f"14 门禁关键词齐全但 {len(shell_keywords)} 项疑为空壳（紧邻占位符 {placeholder_tokens}）：{shell_keywords}",
+                          "补全空壳项的实质内容（建议书3 §7.4 质量校验升级）",
+                          details={"n_pass": n_pass, "n_fail": n_fail, "n_warn": n_warn,
+                                   "shell_keywords": shell_keywords})
+
     return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", True,
                       f"14 门禁全通过（✅ {n_pass} / 🟡 {n_warn}）",
                       details={"n_pass": n_pass, "n_fail": n_fail, "n_warn": n_warn,
@@ -431,7 +460,7 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
       - 0 测试文件 + phase ≥ coding → warn（应有测试但没有）
     """
     phase = st.get("phase", "initialized")
-    PRE_CODING_PHASES = {"initialized", "dr-generated", "story-generated",
+    PRE_CODING_PHASES = {"initialized", "ra-generated", "dr-generated", "story-generated",
                          "story-reviewed", "task-generated", "task-reviewed"}
 
     scanner = _locate_authenticity_scanner(master_source)
@@ -495,10 +524,48 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                                        "current_phase": phase, "stub": False})
 
     # 有测试文件 + 0 BLOCKER → 真 pass
+    # 🆕 v3.4.0 test-verifier 独立性校验（建议书3 B2-7）：测试真实性报告应带独立 session_id
+    verifier_warning = _check_test_verifier_independence(project_dir, current_story)
+
+    if verifier_warning:
+        return GateResult("G-09", "测试真实性扫描通过", "warn", True,
+                          f"扫描通过：{n_total} findings / 0 BLOCKER（{java_test_files} 测试文件）。⚠️ {verifier_warning}",
+                          action="test-verifier sub-agent 报告须带独立 session_id（≠ 主 agent）",
+                          details={"scanned": True, "n_findings": n_total, "n_blockers": 0,
+                                   "n_test_files": java_test_files,
+                                   "verifier_warning": verifier_warning})
+
     return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
                       f"扫描通过：{n_total} findings / 0 BLOCKER（{java_test_files} 测试文件）",
                       details={"scanned": True, "n_findings": n_total, "n_blockers": 0,
                                "n_test_files": java_test_files})
+
+
+def _check_test_verifier_independence(project_dir: Path, current_story: str) -> Optional[str]:
+    """🆕 v3.4.0 test-verifier 独立性软校验（建议书3 B2-7）。
+
+    扫描本 Story 的测试真实性报告，若存在但无 session_id 字段（或 session_id 标记为主 agent），
+    返回 warning 字符串；不存在报告或已声明独立 session_id 则返回 None（不阻断）。
+    """
+    if not current_story:
+        return None
+    # 找测试真实性报告（常见命名：*-TestVerification-*.md / *-Report.md）
+    candidates = list(project_dir.rglob(f"{current_story}*TestVerification*.md"))
+    candidates += list(project_dir.rglob(f"{current_story}*TestAuthenticity*.md"))
+    if not candidates:
+        return None  # 无报告文件，不校验（向后兼容）
+    for rep in candidates[:3]:
+        try:
+            content = rep.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # 检测 session_id 字段
+        has_session = ("session_id" in content.lower() or "sessionId" in content
+                       or "verifier session" in content.lower())
+        if not has_session:
+            return (f"测试真实性报告 {rep.name} 未声明独立 session_id；"
+                    "test-verifier sub-agent 报告须带 session_id（≠ 主 agent），防 AI 自跑冒充 sub-agent")
+    return None
 
 
 def check_gcode1(project_dir: Path, st: dict, current_story: str,
@@ -510,7 +577,7 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
     coding/test-running/code-reviewed/completed 后，如果生产代码为 0，则降为 warn。
     """
     phase = st.get("phase", "initialized")
-    PRE_CODING_PHASES = {"initialized", "dr-generated", "story-generated",
+    PRE_CODING_PHASES = {"initialized", "ra-generated", "dr-generated", "story-generated",
                          "story-reviewed", "task-generated", "task-reviewed"}
 
     scanner = _locate_coding_scanner(master_source)
@@ -963,6 +1030,240 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
                                "blockers": 0, "total": n_total})
 
 
+# ─── G-14：CodingPlan-Story 一致性（建议书4 G-08-15）─────────────────────────
+# CodingPlan 涉及的接口/DO/AC 必须与 Story 可对应；偏离项须有 Proposal 引用。
+# 设计在 ④bis（CodingPlan 生成）→ ⑤ Coding 之间硬拦截。
+def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-14 CodingPlan-Story 一致性 — Plan 须引用 Story 且关键设计可对应"""
+    name = "CodingPlan-Story 一致性"
+    if not current_story:
+        return GateResult("G-14", name, "blocker", False, "state.currentStory 为空")
+
+    cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+    if cp is None:
+        return GateResult("G-14", name, "blocker", False,
+                          "CodingPlan 文档不存在，无法核对一致性",
+                          f"先生成 {current_story}-CodingPlan.md")
+
+    # Story 文档须存在（G-02 范畴，此处只做引用校验）
+    story_doc = paths.find_doc(project_dir, current_story, ".md")
+    cp_content = cp.read_text(encoding="utf-8")
+
+    issues: list[str] = []
+
+    # 1. CodingPlan 须含 Story 文档引用（路径或 STORY-ID），且引用文件存在
+    has_story_ref = (current_story in cp_content) or ("Story" in cp_content)
+    if not has_story_ref:
+        issues.append(f"CodingPlan 未引用 Story 文档（无 '{current_story}' 或 'Story' 字样）")
+    elif story_doc is None:
+        issues.append(f"CodingPlan 引用的 Story 文档不存在：{current_story}.md")
+
+    # 2. AC ID 对齐：CodingPlan 测试章节须覆盖 Story 的 AC（至少出现 AC 编号）
+    ac_ids_in_cp = set(re.findall(r"AC[-_]?\d+", cp_content))
+    if not ac_ids_in_cp:
+        # 无 AC 引用可能是微任务场景；仅当 Story 文档含 AC 而 CodingPlan 无 → issue
+        if story_doc is not None:
+            story_content = story_doc.read_text(encoding="utf-8")
+            story_acs = set(re.findall(r"AC[-_]?\d+", story_content))
+            if story_acs and not (story_acs & ac_ids_in_cp):
+                issues.append(f"Story 含 AC {sorted(story_acs)} 但 CodingPlan 测试章节未对齐任何 AC ID")
+
+    # 3. 偏离 Story 设计须有 Proposal 引用（偏离声明段 + Proposal 文档）
+    if "偏离声明" in cp_content or "偏离" in cp_content:
+        has_proposal_ref = ("Proposal" in cp_content or "proposal" in cp_content
+                            or "PROPOSAL" in cp_content)
+        if not has_proposal_ref:
+            issues.append("CodingPlan 含'偏离声明'但未引用 Proposal 文档（偏离须有 Proposal 闭环）")
+
+    if issues:
+        return GateResult("G-14", name, "blocker", False,
+                          f"CodingPlan-Story 一致性未通过（{len(issues)} 项）：{'; '.join(issues)}",
+                          f"修复 {current_story}-CodingPlan.md 使其与 Story 一致，偏离项补 Proposal",
+                          details={"issues": issues, "ac_ids_in_cp": sorted(ac_ids_in_cp),
+                                   "story_doc_exists": story_doc is not None})
+
+    return GateResult("G-14", name, "blocker", True,
+                      f"CodingPlan-Story 一致性通过（AC 对齐 {len(ac_ids_in_cp)} 个，Story 引用存在）",
+                      details={"ac_ids_in_cp": sorted(ac_ids_in_cp),
+                               "story_doc": str(story_doc) if story_doc else None,
+                               "file": str(cp)})
+
+
+# ─── G-CODEPLAN-SRC：CodingPlan 源码核对（建议书1 G-CODEPLAN-SRC）────────────
+# CodingPlan 中每个新增/修改类的建模范式须附"已读源码"或"待核实源码"标记；
+# 待核实清单非空 → 阻断进 Coding（防凭推测设计类骨架）。
+#
+# 标记格式（见 be-coding-plan-template.md §2）：
+#   【已读源码：domain/message/model/entity/ImMessageDO.java】
+#   【待核实源码】 或 【待核实源码：Converter 写法】
+_SRC_READ_RE = re.compile(r"【已读源码[：:]([^\】]+)】")
+_SRC_PENDING_RE = re.compile(r"【待核实源码[^】]*】")
+
+
+def check_g_codeplan_src(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-CODEPLAN-SRC CodingPlan 源码核对 — 新增/修改类建模范式须附来源标记"""
+    name = "CodingPlan 源码核对"
+    if not current_story:
+        return GateResult("G-CODEPLAN-SRC", name, "blocker", False, "state.currentStory 为空")
+
+    cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+    if cp is None:
+        return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
+                          "CodingPlan 文档不存在，无法核对源码",
+                          f"先生成 {current_story}-CodingPlan.md")
+
+    content = cp.read_text(encoding="utf-8")
+
+    # 定位"关键类骨架"章节（§2 / 章节 2 / 关键类骨架）
+    skeleton_section = _extract_skeleton_section(content)
+
+    if skeleton_section is None:
+        # 无类骨架章节（微任务可能无）→ 跳过（不阻断）
+        return GateResult("G-CODEPLAN-SRC", name, "blocker", True,
+                          "CodingPlan 无关键类骨架章节（微任务场景，跳过源码核对）",
+                          details={"skipped": True, "reason": "no skeleton section"})
+
+    read_marks = _SRC_READ_RE.findall(skeleton_section)
+    pending_marks = _SRC_PENDING_RE.findall(skeleton_section)
+
+    # 校验已读源码标记的文件是否真实存在（防伪造标记）
+    missing_read_files = []
+    for ref_path in read_marks:
+        ref_clean = ref_path.strip()
+        # 尝试在 project_dir 下定位该文件
+        candidate = project_dir / ref_clean
+        if not candidate.is_file():
+            # 尝试相对 src/ 解析
+            candidate2 = project_dir / "src" / "main" / "java" / ref_clean
+            if not candidate2.is_file():
+                missing_read_files.append(ref_clean)
+
+    n_read = len(read_marks)
+    n_pending = len(pending_marks)
+    n_total_marks = n_read + n_pending
+
+    if n_total_marks == 0:
+        return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
+                          "CodingPlan 关键类骨架章节无任何源码核对标记（每个新增/修改类须附【已读源码：】或【待核实源码】）",
+                          f"在 {current_story}-CodingPlan.md §2 类骨架章节补来源标记",
+                          details={"n_read": 0, "n_pending": 0})
+
+    if n_pending > 0:
+        return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
+                          f"CodingPlan 有 {n_pending} 个待核实源码标记未闭环（待核实清单非空禁止进 Coding）：{pending_marks}",
+                          f"补读现有同类源码后，把【待核实源码】改为【已读源码：{'}路径{'}】",
+                          details={"n_read": n_read, "n_pending": n_pending,
+                                   "pending": pending_marks})
+
+    if missing_read_files:
+        return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
+                          f"CodingPlan 标注已读但源码文件不存在（{len(missing_read_files)} 个）：{missing_read_files[:5]}",
+                          "核对路径或改为【待核实源码】",
+                          details={"n_read": n_read, "n_pending": n_pending,
+                                   "missing_read_files": missing_read_files})
+
+    return GateResult("G-CODEPLAN-SRC", name, "blocker", True,
+                      f"源码核对通过（{n_read} 个已读标记，0 待核实，文件均存在）",
+                      details={"n_read": n_read, "n_pending": 0,
+                               "read_files": read_marks, "file": str(cp)})
+
+
+def _extract_skeleton_section(content: str) -> Optional[str]:
+    """从 CodingPlan 文档提取'关键类骨架'章节文本。
+
+    匹配 §2 / 章节 2 / 关键类骨架 等标题，截取到下一个同级章节。
+    """
+    # 匹配 "关键类骨架" 标题（含 §2 / 章节 2 / ## 关键类骨架 等变体）
+    m = re.search(r"(#{1,4}\s*(?:§?\s*2|章节\s*2|关键类骨架)[^\n]*)\n", content)
+    if m is None:
+        # 退一步：含"类骨架"关键词的标题
+        m = re.search(r"(#{1,4}\s*[^\n]*类骨架[^\n]*)\n", content)
+    if m is None:
+        return None
+    start = m.end()
+    # 截取到下一个 ## 或 ### 标题
+    rest = content[start:]
+    next_heading = re.search(r"\n#{1,3}\s", rest)
+    if next_heading:
+        return rest[:next_heading.start()]
+    return rest
+
+
+# ─── G-DOC-STORAGE：文档落地存放合规（建议书2 G-DOC-STORAGE）─────────────────
+# 流程产出文档路径/命名须经 document-storage resolve_path 推导，禁止硬编码游离路径。
+# 扫描 project_dir 下本 Story 产出文档，校验路径模式 + 命名规则。
+# 放行：草稿/临时文件（非 {STORY}-*.md 命名）；拦截：游离在 tmp/根目录的流程产物。
+_DOC_FLOW_TYPES = ("Story", "Task", "CodingPlan", "CodingReport", "CodeReview",
+                   "TestCase", "Report", "DR", "RA", "业务逻辑汇总")
+# 合规产物根目录（相对 project_dir）
+_DOC_COMPLIANT_ROOTS = (
+    "ae-sdd-doc", "design", ".ae-task", ".ae-plan", ".ae-sdd",
+    ".auto-engineering",
+)
+# 游离位置（绝对禁止流程产物落到这里）
+_DOC_STRAY_MARKERS = ("tmp", "temp", "$temp", "/tmp", "\\tmp", "d:\\tmp", "c:\\tmp",
+                      "desktop", "下载")
+
+
+def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-DOC-STORAGE 文档落地存放合规 — 产物路径/命名须合规"""
+    name = "文档落地存放合规"
+    issues: list[str] = []
+
+    # 扫描 project_dir 下疑似流程产物（{STORY}-* 或 {DocType} 命名的 .md）
+    # 限定 2 层深度，避免 rglob 全盘扫描耗时
+    stray_files: list[str] = []
+    checked = 0
+    for md_path in project_dir.rglob("*.md"):
+        # 限制扫描深度（跳过 node_modules/.git 等无关目录）
+        try:
+            rel = md_path.relative_to(project_dir)
+        except ValueError:
+            continue
+        rel_str = str(rel).replace("\\", "/")
+        if any(seg in rel_str for seg in ("node_modules/", ".git/", "dist/", "CHANGELOG/", "docs/plans/")):
+            continue
+        checked += 1
+        if checked > 500:  # 性能护栏
+            break
+
+        fname = md_path.name
+        # 判定是否流程产物：含 Story-ID 或 DocType 关键词
+        is_product = (current_story and current_story in fname) or any(
+            t in fname for t in _DOC_FLOW_TYPES
+        )
+        if not is_product:
+            continue
+
+        rel_lower = rel_str.lower()
+        # 1. 游离位置检测
+        if any(m in rel_lower for m in _DOC_STRAY_MARKERS):
+            stray_files.append(rel_str)
+            continue
+
+        # 2. 不在合规根目录下
+        in_compliant = any(rel_str.lower().startswith(r) or f"/{r}/" in f"/{rel_str.lower()}/"
+                           for r in _DOC_COMPLIANT_ROOTS)
+        # 允许直接在 project_dir 根的产物（向后兼容旧项目 design/ 在根的写法）
+        if "/" not in rel_str:
+            in_compliant = True
+        if not in_compliant:
+            stray_files.append(rel_str)
+
+    if stray_files:
+        issues.append(f"流程产物落在非合规位置（{len(stray_files)} 个）：{stray_files[:5]}")
+
+    if issues:
+        return GateResult("G-DOC-STORAGE", name, "blocker", False,
+                          f"文档存放不合规：{'; '.join(issues)}",
+                          "调用 document-storage resolve_path 推导路径；禁止硬编码 d:\\tmp\\ 等游离位置",
+                          details={"stray_files": stray_files, "checked": checked})
+
+    return GateResult("G-DOC-STORAGE", name, "blocker", True,
+                      f"文档存放合规（扫描 {checked} 个 .md，无游离产物）",
+                      details={"stray_files": [], "checked": checked})
+
+
 # ─── 路由表 ─────────────────────────────────────────────────────────────────
 CHECK_FUNCS: dict[str, Callable] = {
     "G-01": check_g01, "G-02": check_g02, "G-03": check_g03,
@@ -971,6 +1272,9 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-08": check_g08, "G-09": check_g09,
     "G-10": check_g10, "G-11": check_g11, "G-12": check_g12,
     "G-13": check_g13,
+    "G-14": check_g14,
+    "G-CODEPLAN-SRC": check_g_codeplan_src,
+    "G-DOC-STORAGE": check_g_doc_storage,
     "G-RA-1": check_ra_required, "G-RA-2": check_ra_dimensions,
     "G-RA-3": check_ra_derivatives, "G-RA-4": check_ra_authenticity,
     "G-CODE-1": check_gcode1,

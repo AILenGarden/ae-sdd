@@ -231,6 +231,13 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 ### 步骤 1：识别内容类型
 
+> **🔴 前置——设计意图确认（v3.2.5 新增）：** 如果本次是**修改已有功能设定**（而非新增内容归位），在对照 SKILL 边界判定表之前，**必须先查 [`source/docs/ae-sdd-design.md`](../../docs/ae-sdd-design.md) 中对应能力的设计说明**，确认设计意图后再定位修改位置。
+>
+> 典型错误：改"review 必须多 Agent"→ 直接改各子 reviewSkill 文字（错）→ 先查 ae-sdd-design.md §多 Agent 编排，理解编排层决策后，应改 `SKILL.md §角色库`（对）。
+>
+> - **能力设计有疑问** → 先读 ae-sdd-design.md 对应能力模块，再回来执行步骤 2-5
+> - **新增内容归位** → 跳过此前置，直接看下面的"SKILL 边界判定表"
+
 对照"SKILL 边界判定表"，明确这段属于"流程编排"还是"环节内具体规则"。
 
 - 流程编排 → 候选位置 `ae-sdd-skill.md`
@@ -287,6 +294,30 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
   - **操作：** `README.md:5` 的 `**版本：**` 行 = 仓库整体"代际标识"；"最新变更"括号内简述本次变更（如 `+ 4 类需求路由` `+ 工程解耦定位器`）
   - **防止：** 出现"内部大量 2026-06-10 改动但 README 还显示 2026-06-06" 的不一致
   - **章节定位：** `README.md:5` 固定格式 `> **版本：** YYYY-MM-DD（最新变更：...）`
+
+### 步骤 4.1：PRD 级状态机同步清单扩展（🆕 v3.3.0）
+
+> **触发条件：** 修改以下任一文件 → 必须按本表逐项检查/同步：
+> - `source/SKILL.md` §1.1~1.6 PRD 级章节
+> - `source/skills/cross-cutting/document-storage-skill.md` §3.5 schema
+> - `source/templates/design/prd-summary-template.md`
+> - `source/HARNESS.md` HS-7 / HS-8 / UserPromptSubmit PRD payload
+
+**PRD 级同步清单（5 项必查）：**
+
+| # | 检查项 | 检查命令 / 位置 | 自动 / 人工 |
+|---|--------|---------------|-----------|
+| 1 | `document-storage-skill.md §3.5` schema 与 `SKILL.md §1.3` 指针字段名 1:1 一致 | grep 比对 | 自动 |
+| 2 | `HARNESS.md` HS-7/HS-8 物理阻断实现存在（`tools/lib/gates.py` HS_REGISTRY） | `grep -n "HS-7\|HS-8" tools/lib/gates.py` | 自动 |
+| 3 | 4 个新 CLI 子命令存在（`state prd-check-complete` / `state prd-complete` / `state prd-archive` / `runtime compact`） | `ae-sdd --help \| grep prd-` | 自动 |
+| 4 | `standards/update-graph.json` UG-09 规则存在 | `grep -n "UG-09" source/standards/update-graph.json` | 自动 |
+| 5 | `prd-summary-template.md` 与 `document-storage-skill.md §3.5` 字段职责分离原则一致（state.md 不重复 state.json 字段）| 人工核对 | 人工 |
+
+**操作：** 改完 PRD 级任一文件 → 跑 `python tools/bin/ae-sdd update-check` → UC-01/UC-03/UC-05 全绿 + UG-09 连带项提示全勾。
+
+**禁止：** ❌ 改 `SKILL.md §1.1~1.6` 但不同步 `document-storage-skill.md §3.5` schema（视为违规）。 ❌ 改 `state.json` schema 但不同步 `ae-sdd-conventions.md §2.3` PRD ID 命名行。
+
+---
 
 ### 步骤 4.5：写入 CHANGELOG（🆕 2026-06-10 强制）
 
@@ -422,6 +453,8 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 
 ## 更新依赖图谱（🆕 v3.2 — 改了 A 要同步 BCDEFG，杜绝漏更新）
 
+> **前置——设计意图确认（v3.2.5 新增）：** 本节管的是"改了 A 之后连带同步哪些 B/C/D"（物理层）。在查本节之前，先阅读 **[`source/docs/ae-sdd-design.md`](../../docs/ae-sdd-design.md)** 中对应能力模块，确认当前修改的是正确的设计层（流程编排层 / 子 SKILL 节点内规则层 / 工具链层 / 模板层），再用本节查连带项。两步缺一不可。
+>
 > **设计动机：** 原同步规则是线性的"改母版 → 跑 dev-sync"，但**改了 A 之后要同步哪些 B/C/D 无表可查**，靠人记忆必然漏。本节固化"变更触发源 → 连带项"的依赖图谱，配套 `ae-sdd update-check` 自动兜底检查。
 
 ### 📍 权威源（机器可读，Agent 必须从这里消费）
@@ -578,8 +611,21 @@ ae-sdd update-check --only UC-02
 - [ ] 🆕 v3.2.3 `tools/tests/test_memory_gate.py` 存在，覆盖阶段切换记忆门禁各场景
 - [ ] 🆕 v3.2.3 `memory_store.py` 含非破坏性 `check_exit_ready()`（gates 可校验 memory 而不写 exit 事件）+ `--allow-empty-memory` 维护 override
 - [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
-- [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（G-00~13 + G-RA-1~4 + G-CODE-1 = 19）
+- [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.4.0：G-00~14 + G-CODEPLAN-SRC + G-DOC-STORAGE + G-RA-1~4 + G-CODE-1 = 22）
 - [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 22）
+- [ ] 🆕 v3.2.5 `source/docs/ae-sdd-design.md` 存在，包含 12 个能力模块（端到端流程编排 / 智能路由 / 状态持久化 / 多Agent编排 / 门禁体系 / 项目资产 / 实例化体系 / Harness适配 / 记忆层 / Plan-First / 真实性扫描 / 工具链CLI）
+- [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
+- [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
+- [ ] 🆕 v3.4.0 `tools/lib/gates.py` GATE_REGISTRY 含 G-14 / G-CODEPLAN-SRC / G-DOC-STORAGE（22 门禁）+ CHECK_FUNCS 注册 + check_g14/check_g_codeplan_src/check_g_doc_storage 实现
+- [ ] 🆕 v3.4.0 `tools/lib/session.py` 存在，entry token 管理（enter/read_session/has_valid_entry_token/confirm_phase/is_phase_confirmed）
+- [ ] 🆕 v3.4.0 `tools/bin/ae-sdd` 含 `enter` / `state confirm` / `gate doc-storage` 3 个新子命令
+- [ ] 🆕 v3.4.0 `tools/lib/gate_intercept.py` 含关卡2（_PRODUCT_PATTERNS + _PRODUCT_PHASE_MAP + _check_product_landing）+ 关卡3（coding phase 写 src/ 须 task-reviewed 确认）
+- [ ] 🆕 v3.4.0 `tools/lib/stop_check.py` 含 _verify_gate_claims（F-1 修复：交叉验证 ◆ GATE 与实际文档）
+- [ ] 🆕 v3.4.0 `tools/lib/state.py` PHASE_FLOW 含 ra-generated（11 phase）；`tools/lib/memory_gate.py` STATE_PHASE_TO_MEMORY_PHASE 含 ra-generated→ra（修复 B3-6）
+- [ ] 🆕 v3.4.0 `tools/lib/update_graph.py` 含 UC-06 文档-实现一致性检查 + CHECK_FUNCS 注册；`source/standards/update-graph.json` 含 UG-10 规则
+- [ ] 🆕 v3.4.0 `source/SKILL.md` 无虚假命令引用（无 `gate ra-required --fix` / `assets check/generate/audit/update` / G-RA "CLI 自动调用"），UC-03/UC-06 兜底
+- [ ] 🆕 v3.4.0 `source/skills/cross-cutting/document-storage-skill.md` §0.5.1 四维定位模型（含 docWorkspacePath）+ §0.6.5 E003 落地前强制
+- [ ] 🆕 v3.4.0 `source/templates/coding/be-coding-plan-template.md` §5 骨架含来源标记 + §15 门禁 15 条（含 G-CODEPLAN-SRC）+ front-matter 计数修正
 
 ### 跨 SKILL 一致性
 
