@@ -122,13 +122,19 @@ bash scripts/dev-sync.sh --watch
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
 - **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 22 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
-- **[`source/skills/`](source/skills/)** — 22 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
-- **[`source/templates/`](source/templates/)** — 17 份模板（Story/Task/DR/Report/...）
-- **[`source/standards/`](source/standards/)** — 18 份标准（constraints 9 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
+- **[`source/skills/`](source/skills/)** — 23 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
+- **[`source/templates/`](source/templates/)** — 18 份模板（Story/Task/DR/Report/...）
+- **[`source/standards/`](source/standards/)** — 19 份标准（constraints 10 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
 - **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md)）
 - **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1.2 install-skill + 智能引导](source/CHANGELOG/2026-06-24-ae-sdd-install-skill.md) + [v3.1.1 阶段 H 深度强化](source/CHANGELOG/2026-06-23-requirement-analysis-阶段H深度强化.md) + [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）
 - 🆕 v3.1：[`source/docs/ae-sdd-conventions.md`](source/docs/ae-sdd-conventions.md) — 项目级 SOP 模板（root agent 必读）
+- 🆕 v3.5.0：**CodingSKILL 外挂机制**（[🔌 CodingSKILL 外挂机制（v3.5.0 — 母版内置能力）](#-codingskill-外挂机制v350--母版内置能力)）— 三层 SKILL 注册表（L1 项目层 / L2 全局层 / L3 仓库根层）+ 内置 fallback 零破坏
+  - **加载协议 SKILL**：[`source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md`](source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md) — 加载协议 SOP + 注册流程引导
+  - **schema 规范**：[`source/standards/constraints/plugin-registry-spec.md`](source/standards/constraints/plugin-registry-spec.md) — 权威 schema
+  - **模板**：[`source/templates/project-assets/plugin-registry-template.yaml`](source/templates/project-assets/plugin-registry-template.yaml) — 三层通用注册表模板
+  - **设计文档**：[`source/docs/plans/2026-06-26-plugin-registry-design.md`](source/docs/plans/2026-06-26-plugin-registry-design.md) — 完整设计说明
+  - **示例 scaffolding**：[`plugins/_example-coding-style/`](plugins/_example-coding-style/) — 仓库根层（不自动加载）
 
 ---
 

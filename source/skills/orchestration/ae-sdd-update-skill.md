@@ -57,11 +57,11 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 | # | 子系统 | 物理位置 | 职责一句话 | 维护方式 |
 |---|--------|---------|-----------|---------|
-| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(22 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
+| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(23 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
 | ② | **实例化体系（4 层架构）** | `dist/ae-sdd/`(Layer2) + `~/.claude/skills/ae-sdd/`(Layer3) + `<project>/.ae-sdd/`(Layer4) | 母版→分发包→用户安装→项目实例，引用+override 模式 | 不手工改 Layer2/3/4；由 build/install/init 生成 |
 | ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
 | ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |
-| ⑤ | **工具链（CLI + lib + tests）** | `tools/bin/ae-sdd`(14 子命令) + `tools/lib/`(13 模块) + `tools/tests/`(12 测试) | 门禁检查、状态管理、记忆层、DB/Git 工具集、hook 拦截、update-check | 直接编辑 `tools/`，独立于 `source/` 但被 update-graph 联动 |
+| ⑤ | **工具链（CLI + lib + tests）** | `tools/bin/ae-sdd`(15 子命令：原 14 + v3.5.1 `plugin` 4 子命令平铺) + `tools/lib/`(14 模块：原 13 + v3.5.0 `plugin_loader.py`) + `tools/tests/`(16 测试：原 12 + v3.5.0/1 plugin 系列 4 个) | 门禁检查、状态管理、记忆层、DB/Git 工具集、hook 拦截、update-check | 直接编辑 `tools/`，独立于 `source/` 但被 update-graph 联动 |
 | ⑥ | **Harness 适配层** | `harness/.harness/agent.md` + `.adapter.lock` | 由 ae-sdd-harness-adapter SKILL 自动生成，转译为 Mavis 团队级 agent | ❌ 不手工改；母版升级后重跑 adapter SKILL 重新生成 |
 
 ### 子系统协同关系图
@@ -153,6 +153,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 4. 跑 ae-sdd update-check → 全绿
 5. 跑 tools/tests/ 对应测试
 6. 写 CHANGELOG
+7. 🆕 v3.5.0：如新增 plugin_loader 类的跨 SKILL 加载机制 → 同步 update-graph.json 加 UG-XX 规则（如 UG-12 plugin-registry）+ 新建对应 cross-cutting 加载协议 SKILL（如 ae-sdd-plugin-loader-skill.md）
 ```
 
 **改 ⑥ Harness 适配层：**
@@ -261,6 +262,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | DR Update | `../phase1-design/dr-update-skill.md` |
 | 文档存放标准 / 横切依赖 | `../cross-cutting/document-storage-skill.md` |
 | 统一问题载体 | `../cross-cutting/proposal-skill.md` |
+| 三层 SKILL 注册表加载协议（🆕 v3.5.0）| `../cross-cutting/ae-sdd-plugin-loader-skill.md` |
 | Agent 编排 / 跨 AI 工具适配 | `../cross-cutting/agent-orchestration-skill.md` |
 | 项目资产管理 | `../cross-cutting/project-assets-update-skill.md` |
 | 约束 9 个 | `../../standards/constraints/*.md` |
@@ -285,6 +287,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 - 各子 SKILL 之间相互引用 → 用相对路径 `./xxx-skill.md#锚` 跳转
 - 新增 Plan-first 类规则 → AE-skill 只增加"必须先有 Plan 才能进入下一节点"的门禁；Plan 内容、生成规则、执行规则分别放到模板和对应子 SKILL
 - **改动 `ae-sdd-skill.md`**（新增/删除流程节点、改路由场景、改角色库、改门禁数量）→ **必须同步更新 `README.md` 以下章节**：
+- **🆕 v3.5.0：** 任何 source/skills/ 下的 SKILL 改动（如新增 `ae-sdd-plugin-loader-skill.md`）→ 必须同步 ae-sdd-update-skill.md §项目结构与设计说明 的 SKILL 计数（22 → 23）+ 该 SKILL 在 "各子 SKILL = 环节内具体规则" 表格中的位置
   - §3 SKILL 功能清单（新增/删除/重命名 SKILL 时）
   - §4.2 典型流程示例（流程步骤变更时）
   - §8.5 常见变更场景表（新增变更类型时）
@@ -656,7 +659,7 @@ ae-sdd update-check --only UC-02
 - [ ] 🆕 v3.2.3 `memory_store.py` 含非破坏性 `check_exit_ready()`（gates 可校验 memory 而不写 exit 事件）+ `--allow-empty-memory` 维护 override
 - [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
 - [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.4.0：G-00~14 + G-CODEPLAN-SRC + G-DOC-STORAGE + G-RA-1~4 + G-CODE-1 = 22）
-- [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 22）
+- [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 23；v3.5.0 加 `ae-sdd-plugin-loader-skill.md`）
 - [ ] 🆕 v3.2.5 `source/docs/ae-sdd-design.md` 存在，包含 12 个能力模块（端到端流程编排 / 智能路由 / 状态持久化 / 多Agent编排 / 门禁体系 / 项目资产 / 实例化体系 / Harness适配 / 记忆层 / Plan-First / 真实性扫描 / 工具链CLI）
 - [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
