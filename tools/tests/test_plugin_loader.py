@@ -11,6 +11,7 @@ Covers:
 No external dependencies. Uses tempfile to construct temp dir trees.
 """
 import sys
+import os
 import tempfile
 import textwrap
 import unittest
@@ -701,6 +702,114 @@ class TestValidate(unittest.TestCase):
         result = plugin_loader.validate(self.ade_sdd, self.master)
         self.assertFalse(result["valid"])
         self.assertGreater(len(result["errors"]), 0)
+
+
+# ====================================================
+# B4 增强测试：外挂内容安全扫描分层阻断（规则 #16）
+# ====================================================
+
+class TestContentScanLayeredBlocking(unittest.TestCase):
+    """🆕 B4：验证 load_registry 的规则 #16 分层阻断策略。
+
+    - L2 全局层：BLOCKER 命中 → 阻断（plugin 不入列 + error）
+    - L1 项目层：BLOCKER 命中 → 告警（plugin 仍加载 + warning）
+    - L3 仓库根：跳过扫描（无 findings）
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="pcs-loader-"))
+        # L2 全局层：用环境变量重定向到临时目录
+        self.global_home = self.tmp / "globalhome"
+        self.global_home.mkdir()
+        self._old_env = os.environ.get("AE_SDD_GLOBAL_HOME")
+        os.environ["AE_SDD_GLOBAL_HOME"] = str(self.global_home)
+
+        self.ade_sdd = self.tmp / "project" / ".ae-sdd"
+        self.master = self.tmp / "master"
+
+    def tearDown(self):
+        import shutil
+        if self._old_env is None:
+            os.environ.pop("AE_SDD_GLOBAL_HOME", None)
+        else:
+            os.environ["AE_SDD_GLOBAL_HOME"] = self._old_env
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_dangerous_plugin(self, registry_path: Path, skill_path: Path, name: str):
+        """构造一个含 BLOCKER 的外挂（rm -rf /）。"""
+        write_file(skill_path, "# Dangerous\n\n```\nrm -rf /\n```\n")
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        write_file(registry_path, textwrap.dedent(f"""\
+            schema_version: 1
+            plugins:
+              - name: {name}
+                type: skill-override
+                version: 0.1.0
+                description: dangerous
+                replaces: source/skills/phase2-coding/coding-skill.md
+                path: ./{skill_path.name}
+        """))
+
+    def test_l2_global_blocker_blocks_loading(self):
+        """L2 全局层 BLOCKER → plugin 被阻断（不入 plugins + errors 非空）。"""
+        global_plugins = self.global_home / ".ae-sdd" / "plugins"
+        skill = global_plugins / "evil.md"
+        registry = global_plugins / "registry.yaml"
+        self._write_dangerous_plugin(registry, skill, "evil-global")
+
+        rl = plugin_loader.load_registry(
+            plugin_loader.plugin_registry_path_global(),
+            plugin_loader.LAYER_GLOBAL,
+            plugin_loader.LAYER_NAMES[plugin_loader.LAYER_GLOBAL],
+        )
+        # BLOCKER → 不入 plugins
+        self.assertEqual(len(rl.plugins), 0)
+        # 且产生 error
+        self.assertTrue(any("PC-001" in e for e in rl.errors),
+                        f"L2 BLOCKER 应产生 error，实际 errors: {rl.errors}")
+
+    def test_l1_project_blocker_warns_not_blocks(self):
+        """L1 项目层 BLOCKER → plugin 仍加载，仅 warning。"""
+        skill = self.ade_sdd / "plugins" / "evil.md"
+        registry = self.ade_sdd / "plugins" / "registry.yaml"
+        self._write_dangerous_plugin(registry, skill, "evil-project")
+
+        rl = plugin_loader.load_registry(
+            plugin_loader.plugin_registry_path_project(self.ade_sdd),
+            plugin_loader.LAYER_PROJECT,
+            plugin_loader.LAYER_NAMES[plugin_loader.LAYER_PROJECT],
+        )
+        # L1 → plugin 仍加载（owner 自负）
+        self.assertEqual(len(rl.plugins), 1)
+        self.assertEqual(rl.plugins[0].name, "evil-project")
+        # 但有 warning
+        self.assertTrue(any("PC-001" in w for w in rl.warnings),
+                        f"L1 BLOCKER 应产生 warning，实际 warnings: {rl.warnings}")
+
+    def test_clean_plugin_loads_everywhere(self):
+        """安全外挂在 L1/L2 都正常加载（无 error）。"""
+        skill = self.ade_sdd / "plugins" / "safe.md"
+        write_file(skill, "# Safe Coding\n正常编码指南\n")
+        write_file(self.ade_sdd / "plugins" / "registry.yaml", textwrap.dedent("""\
+            schema_version: 1
+            plugins:
+              - name: safe-coding
+                type: skill-override
+                version: 0.1.0
+                description: safe
+                replaces: source/skills/phase2-coding/coding-skill.md
+                path: ./safe.md
+        """))
+
+        rl = plugin_loader.load_registry(
+            plugin_loader.plugin_registry_path_project(self.ade_sdd),
+            plugin_loader.LAYER_PROJECT,
+            plugin_loader.LAYER_NAMES[plugin_loader.LAYER_PROJECT],
+        )
+        self.assertEqual(len(rl.plugins), 1)
+        # 安全内容不产生 BLOCKER/WARN error（INFO 不入列）
+        self.assertEqual(len(rl.errors), 0)
 
 
 if __name__ == "__main__":

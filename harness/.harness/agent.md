@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程 SKILL 体系的主入口。🆕 v3.0 起，本文件即为 ae-sdd 唯一主入口。 从 DR 出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。 当开发者说"启动自动化工程"、"从 DR 开始实现"、"端到端实现"、"继续流程"、 "继续上次"、"/ae-sdd" 时触发。支持流程状态跟踪与中断后恢复。 🆕 v3.2.0：需求分析能力对标 Coding，新增 G-RA 准入门卫、RequirementAnalysisModel 12 维决策、16 道 RA 质量闸与 RA 真实性扫描。 🆕 v3.2.1：Coding 能力对标需求分析，新增 G-CODE-1 Coding 真实性门禁、AI Coding 反模式库（AP-1~AP-6）与 coding_authenticity_scan.py 扫描器；微任务快速通道 §0.5。 🆕 v3.2.2：Toolset Layer P0，新增 ae-sdd memory/db/git 三组工程工具，DB 本地 profile + read-first，Git Insight 只读输出结构化历史/影响证据。 🆕 v3.2.3：Memory 强制门禁升级，ae-sdd state write --phase 离开 RA/design/coding-plan/coding/review 关联阶段前自动校验 memory enter → memory write。 🆕 v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节，固化 6 大子系统总览/协同关系图/维护边界，补齐健康度清单 v3.2.2/v3.2.3 条目，修正 README 正文门禁数与子 SKILL 数。 🆕 v3.2.5：脚本化补齐 4 缺口——ae-sdd init 挂载 CLI（补 UC-03 warn）、新增 ae-sdd bump 同步三处版本号（UC-01 操作侧）、新建 CHANGELOG _template.md、dev_sync.py 增仓库根残留清理。 🆕 v3.4.0：门禁体系加固（4 份建议书全量采纳 P0-P3）——P0 修复 3 处文档撒谎（L-1 gate ra-required --fix / L-2 assets check/generate/audit/update / L-3 G-RA CLI 自动调用）；P1 中段门禁 G-CODEPLAN-SRC 源码核对 + G-DOC-STORAGE 文档存放 + G-14 Story 一致性 + 入口关卡三道闸（enter/session.py/gate_intercept 产物-Phase 映射）+ F-1 假门禁修复（stop_check GATE 交叉验证）；P2 G-08 内容校验升级 + ra-generated phase（修复 B3-6）+ 审核点 token（state confirm）+ test-verifier 独立 session_id；P3 UC-06 文档-实现一致性自动检测。门禁 19→22，PHASE_FLOW 10→11，CLI 新增 enter/state confirm/gate doc-storage。 🆕 v3.4.2：state.json events 操作日志 + flow_enums 枚举体系——`tools/lib/flow_enums.py` 新增 FlowNode（6）/ FlowSkill（15）/ FlowEventType（8）三枚举 + FlowEvent 数据类 + 5 工厂函数；`tools/lib/state.py` 新增 `append_event()` / `get_events()` API，state.json schema v1→v2（append-only events 字段 + txnName 子任务标识）；`tools/tests/test_flow_enums.py` 32 个单元测试。注：本版本仅完成 schema + lib + 测试，业务调用方（router / state write / gate check / SKILL orchestrator）尚未接入 `append_event()`，留待后续 PR 闭环。 🆕 v3.4.3：Review Loop 公共协议 + 退出阈值统一 3 轮 + 删除"每3轮暂停问人"——新建 `cross-cutting/review-loop-skill.md` 公共协议（退出条件 3 轮 + 循环上限 3 轮 + Plan-first）；story-review/dr-review/code-review/task-generate/proposal/story-generate 6 个节点退出阈值统一为"连续 3 轮无新增缺陷"；废弃 story-review/dr-review/SKILL.md 三处"每 3 轮暂停问人"（与退出条件矛盾，违反 Loop Engineering 自评估原则）；修复 task-generate TR 无循环上限的安全漏洞（加 3 轮上限 + 升级用户）；agent-orchestration §8.4.6 加 A-E 术语澄清。 🆕 v3.5.0：三层 SKILL 注册表插件化体系——新增 `tools/lib/plugin_loader.py`（L1 项目层 / L2 全局层 / L3 仓库根层 三层优先级合成 + 内置 fallback，零外部依赖）+ 35 个单元测试；新建 `source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md`（加载协议 SOP + 用户注册流程引导）；新建 `source/standards/constraints/plugin-registry-spec.md`（schema 权威规范）+ `source/templates/project-assets/plugin-registry-template.yaml`（三层通用模板）；路由决策算法新增 step 2.5「🔌 SKILL 注册表加载」，加载 SKILL 前按三层优先级决定实际路径。CLI `plugin` 子命令（list/validate/trace/init）留待 v3.5.1 挂载。 🆕 v3.5.1：plugin CLI 挂载闭环——`tools/bin/ae-sdd` 新增 `plugin` 子命令（list / validate / trace / init --layer {project|global}）+ 11 个 CLI 单元测试覆盖（`tools/tests/test_plugin_cli.py`，隔离 HOME/USERPROFILE 避免污染用户配置）；修 `tools/lib/plugin_loader.py:plugin_registry_path_master` 路径解析（locate_master_source 返回 source/，L3 注册表按设计在仓库根 plugins/）。CLI 契约闭环，UC-03 不再 warn plugin 命令缺失。
+description: 端到端自动化工程 SKILL 体系的主入口（v3.5.1）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。版本变更日志见 source/CHANGELOG/。
 version: 3.5.1
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@6d15c2d14d0b88922115f448ea96712e3dd2ff4d @ 2026-06-26T08:54:02Z -->
+<!-- # AUTO-GEN @ ae-sdd@6809818b42048a9158432bedaea4240b78311da3 @ 2026-06-26T09:17:33Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-26T08:54:02Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-26T09:17:33Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `6d15c2d` (3.5.1)
+> 源版本：ae-sdd @ `6809818` (3.5.1)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-06-26T08:54:02Z
+- 生成时间：2026-06-26T09:17:33Z
 - 源 ae-sdd 版本：3.5.1
-- 源 ae-sdd commit：6d15c2d
+- 源 ae-sdd commit：6809818
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

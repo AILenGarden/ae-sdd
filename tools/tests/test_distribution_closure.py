@@ -77,11 +77,18 @@ def test_install_py_target_path():
 
 
 def test_init_read_master_version():
-    """init.py _read_master_version 应能解析 source/SKILL.md frontmatter"""
+    """init.py _read_master_version 应能解析 source/SKILL.md frontmatter
+
+    版本号不写死——以 paths.MASTER_VERSION（SSOT）为预期值，避免 bump 版本后测试过时。
+    """
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     import init
+    # 预期值取 tools/lib/paths.py 的 MASTER_VERSION（单一真相源，bump 时自动同步）
+    sys.path.insert(0, str(REPO_ROOT / "tools" / "lib"))
+    import paths as paths_mod
+    expected = paths_mod.MASTER_VERSION
     version = init._read_master_version(REPO_ROOT / "source")
-    assert version == "3.4.0", f"应读到 3.4.0，实际 {version}"
+    assert version == expected, f"应读到 {expected}，实际 {version}"
     print(f"✅ test_init_read_master_version: {version}")
 
 

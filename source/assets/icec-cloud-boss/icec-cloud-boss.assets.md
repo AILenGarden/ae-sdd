@@ -43,6 +43,37 @@ description: icec-cloud-boss 项目资产实例 — 基于 Explore Agent 2026-06
 
 ---
 
+
+### 1.1 部署信息 [已确认]
+
+> 🆕 2026-06-26 schema §1.2 新增节。本节列**项目级公共部署信息**；具体工程的部署细节（具体端口/具体 management.port/具体密码占位符）见对应 `{module}.assets.md` §1.1。
+
+| 字段 | 值 | 抽取来源 |
+|------|---|---------|
+| `profile.active` | `beta-kunlun` | 各工程 `bootstrap.yml` |
+| `db.urlTemplate` | `jdbc:mysql://${icec.database.servers}/${icec.database.dbname}?useUnicode=true&characterEncoding=utf-8&allowMultiQueries=true&autoReconnect=true` | 各工程 `bootstrap.yml` |
+| `db.pool` | HikariCP max-active=20 / min-idle=1 / timeout=30s | 各工程 `bootstrap.yml` |
+| `redis.address` | `redis-...dcs.huaweicloud.com:6379`（华为云 DCS） | 各工程 `bootstrap.yml` |
+| `redis.password.inConfig` | 🔴 **false（确认无明文）**[已确认] | 已扫描 4 工程 bootstrap.yml，均使用 `${icec.redis.password}` 占位符 |
+| `gateway` | `http://life-hwbeta-api-penglai.intra.casstime.com`（icec.api.agent） | 各工程 `bootstrap.yml` |
+| `imageRepo` | `registry.cn-shenzhen.aliyuncs.com/cassmall/` | 各 service pom.xml |
+| `nexusRepo` | `http://dev.casstime.com/nexus/content/groups/public/`（cass-public） | 父 pom.xml repositories |
+| `management.port` | 默认 30000（各工程显式错开避免冲突，详见各子文件 §1.1）| 各工程 `bootstrap.yml` |
+| `coverageTool` | JaCoCo（`target/jacoco.exec`）| 各 service pom.xml |
+
+**🔴 安全提示触发条件**（详见 §14）：
+- `redis.password.inConfig: true` → §14 S-001 登记
+- `management.port` 缺省 30000 且无 auth → §14 S-002 登记
+
+### 1.2 安全提示 [待确认]
+
+> 🆕 2026-06-26 schema §14 新增节。本节汇总项目级常见安全隐患；具体工程的隐患见对应子文件 §1.2 + §14 登记表。
+
+详见 [§14 安全隐患登记表](#14-安全隐患登记表)。
+
+---
+
+
 ## 2. 微服务清单
 
 | name | responsibility | port | contextPath | hasBff | callChain | dependsOnSpi |
@@ -400,17 +431,89 @@ grep -rn "if.*\.getStatus()\|if.*status ==\|switch.*status" \
 - 🔴 扫描发现的问题未修复就提交 → 按"伪造测试"同等级处置
 
 
-### 6.8 技术栈范围（constraints/technology-stack.md）
+### 6.8 完整技术栈版本号表（🆕 2026-06-26）
 
-- **Java 8 + Spring Boot 1.5.7 + Spring Cloud Dalston.SR4**（**注意：与 MEMORY.md 提到的 Java 17 + Spring Boot 3 不一致，以 constraints/ 为准**）
-- MyBatis-Plus 3.3.2 + Lombok 1.18.16 + MapStruct 1.5.3.Final
-- Swagger 2.8.0 + Feign + Hystrix
-- MySQL 8.0.17 / ES 7.10.2
-- 本地缓存 Caffeine + Redis
-- Kafka 必须经 courier 组件
-- 定时任务用 job-spring-boot-starter（禁 `@Scheduled`）
-- 禁直配 logback/log4j（用 casslog）
-- 基础组件：panda/casslog/cassmetrics/job-spring-boot-starter
+> 🆕 从 schema v3 "技术栈范围" 升级为"完整技术栈版本号表"，覆盖 7 个分类（主框架 / 工具库 / 安全 / 内部 starter / 测试 / 构建 / 静态分析）。**任何新增/升级依赖必须先更新本表**，否则 Code Review 不通过。
+
+#### 6.8.1 主框架与运行时
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| Java | 8 | 主版本（禁止 Java 11+ 新特性）|
+| Spring Boot | 1.5.7.RELEASE | 应用基础框架 |
+| Spring Cloud | Dalston.SR4 | 服务治理 / 配置 / Feign |
+| MyBatis-Plus | 3.3.2 | ORM；Mapper XML 路径 `classpath*:com/.../*.xml` |
+| PageHelper | 5.2.1 | 物理分页 |
+| MySQL Connector/J | 8.0.17 | 驱动（`com.mysql.cj.jdbc.Driver`）|
+| HikariCP | 2.7.9 | 连接池（max-active=20 / min-idle=1 / timeout=30s）|
+| Redis | spring-boot-starter-data-redis | database 0，pool max-active 50 |
+| Elasticsearch | 7.10.2 | 搜索（仅 life 域用，本项目 boss 域未启用）|
+
+#### 6.8.2 工具库与映射
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| MapStruct | 1.5.3.Final | DTO/PO 映射（仅引用，实际用显式 Converter）|
+| Lombok | 1.18.16 | `@Data @RequiredArgsConstructor @Slf4j` |
+| Swagger2 | 2.8.0 | 接口文档（必加）|
+| commons-lang3 | 3.9 | 字符串/通用工具（domain 层）|
+| commons-collections4 | 4.0 | 集合工具（domain 层）|
+| Caffeine | （跟随）| 本地缓存（与 Redis 配合）|
+| JSON | `com.casstime.commons.utils.JsonUtils` | 统一 JSON 序列化 |
+| 日期类型 | `java.util.Date` | 禁 LocalDateTime（防序列化踩坑）|
+
+#### 6.8.3 安全与加解密
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| spring-security-crypto | 跟随 Spring Boot | 密码 BCrypt（`BCryptUtil.matches`）|
+| DesensitizeUtils | `com.casstime.commons.utils` | 手机号脱敏 |
+| JWT 鉴权 | Cookie `security_context` | 默认需鉴权，`@SkipAuth` 显式跳过 |
+
+#### 6.8.4 内部基础组件（🔴 必须用，禁止直配）
+
+| 组件 | 版本 | 用途 | 替代 |
+|------|------|------|------|
+| panda-spring-boot-starter | 1.0.9 | 配置中心（`panda.casstime.com`）| 禁直连 Nacos |
+| casslog-spring-boot-starter | 1.5.0 | 日志组件 | 禁直配 logback/log4j |
+| cassmetrics-spring-boot-v1-starter | 1.0.4 | 监控指标 | 禁自造 metrics |
+| cass-config-spring-boot-starter | 1.1.2 | 内部配置组件 | — |
+| job-spring-boot-starter | （跟随）| 定时任务 | 禁 `@Scheduled` |
+| courier-spring-boot-starter | 3.3-SNAPSHOT | 领域事件 / MQ 投递 | Kafka 必须经 courier |
+
+#### 6.8.5 测试框架与覆盖率要求
+
+| 组件 | 版本 | 用途 |
+|------|------|------|
+| JUnit | 4.12 | 单元测试 |
+| Mockito | 1.10.19 | Mock 框架（domain 层）|
+| surefire | 2.22.2 | Maven 测试插件 |
+| JaCoCo | （跟随）| 覆盖率插件（target/jacoco.exec）|
+
+**覆盖率硬指标（🔴 阻断）：**
+- 整体 ≥ 60%
+- Service 核心 ≥ 70%
+- Mapper XML 自定义 SQL ≥ 60%
+- Controller 接口 ≥ 50%
+
+#### 6.8.6 构建与镜像
+
+| 组件 | 版本 | 用途 |
+|------|------|------|
+| spring-boot-maven-plugin | 2.7.5 | Fat JAR 打包（repackage）|
+| dockerfile-maven-plugin | 1.4.0 | Docker 镜像构建 |
+| 私服仓库 | `http://dev.casstime.com/nexus/content/groups/public/` | cass-public |
+| 镜像仓库 | `registry.cn-shenzhen.aliyuncs.com/cassmall/` | 阿里云 |
+
+#### 6.8.7 静态分析与门禁工具
+
+| 组件 | 用途 | 门禁等级 |
+|------|------|---------|
+| Checkstyle | 代码风格 | 🔴 P0 阻断 |
+| SpotBugs | Bug 模式 | 🔴 P0 阻断 |
+| 工程特定扫描 | 见 §6.11 | 🔴 P0 阻断 |
+
+---
 
 ### 6.9 隐性约定（constraints/implicit-constraints.md）
 
@@ -515,6 +618,162 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
 | **12** | **🆕 2026-06-26**：按 schema v3 §15 拆分首批工程级子文件 — boss-user（多模块 DDD Service）/ boss-user-bff（BFF 单模块）/ life-cs（客服域状态机）；其余 39 个工程按范式分批迁移 | 🟢 P3 | ✅ 已补（3 个）| 持续 |
 
 ---
+## 11. 团队惯用实现方式（经验文档）🆕 与 §10 缺口表不可混用
+
+> 🆕 2026-06-26 新增节（schema §10）。本节沉淀团队**已验证**的惯用实现模式，Coding 阶段新代码优先复用本节。**项目缺口写 §10，不要写本节**。
+>
+> **准入门禁：** ≥2 处一致使用 / 符合 constraints/ / 无已知 BUG / 可脱离具体业务复用。详见 schema §10.3。
+
+### 11.1 跨层模式
+
+#### 11.1.1 BFF→SPI→AppService→Repository 标准调用链 [已确认]
+
+**场景：** 任何 BFF / Service 编写新接口时的默认调用路径
+**惯用写法：**
+```
+[前端] → [BFF / RestImpl] → [BFF / AppService] → [Facade] → [Feign Client extends SPI]
+       → [Service / AppService] → [Domain Service] → [Repository] → [DB]
+```
+**出处：** `icec-cloud-boss-user-bff/src/main/java/.../appservice/BossUserManagementAppService.java:42` + `icec-cloud-life-cs/src/main/java/.../appservice/CsTicketAppService.java:88`
+**约束对齐：** 符合 `constraints/layered-arch.md` §1.1（外部请求 → API → BFF → SPI → Service）
+
+#### 11.1.2 Facade 异常降级模式 [已确认]
+
+**场景：** BFF / Infrastructure 调 Feign 时下游异常的处理
+**惯用写法：** Facade 异常时返回 null / 空集合 / Result.error，**不允许抛**
+**出处：** `icec-cloud-boss-user-infrastructure/src/main/java/.../facade/LoginLockFacadeImpl.java:32`
+**约束对齐：** 符合 `constraints/layered-arch.md` §1.3（BFF 异常处理）
+
+### 11.2 Domain 层模式
+
+#### 11.2.1 充血模型 DO 写法 [已确认]
+
+**场景：** 业务方法不以 get/set 开头，含业务行为
+**惯用写法：** DO 字段 + 业务方法（如 `BossUserDO.authenticate(password)` 而非 `getPassword()`）
+**出处：** `icec-cloud-boss-user-domain/src/main/java/.../model/entity/BossUserDO.java:42`
+**约束对齐：** 符合 `constraints/project-structure.md` §2.1（DO 充血）
+
+#### 11.2.2 错误码枚举（key, value）双字段 [已确认]
+
+**场景：** 项目内错误码定义
+**惯用写法：** `(int code, String message)` + getter
+**出处：** `icec-cloud-boss-user-domain/src/main/java/.../enums/error/BossUserErrorCode.java:5`
+**约束对齐：** 符合 `constraints/code-style.md` §3.4（枚举统一双字段）
+
+### 11.3 Application 层模式
+
+#### 11.3.1 事务在 AppService 用 `@Transactional`，查询不开 [已确认]
+
+**场景：** 增删改方法的边界
+**惯用写法：** 写操作方法加 `@Transactional`，读操作不加
+**出处：** `icec-cloud-boss-user-application/src/main/java/.../appservice/BossUserAppService.java:55,88`
+**约束对齐：** 符合 `constraints/code-style.md` §3.5（事务规则）
+
+#### 11.3.2 显式 Converter（不用 MapStruct）[已确认]
+
+**场景：** DO↔DTO 转换
+**惯用写法：** `@UtilityClass` 静态方法手写转换
+**出处：** `icec-cloud-boss-user-application/src/main/java/.../converter/BossUserConverter.java:18`
+**约束对齐：** 符合 `constraints/code-style.md` §3.6（禁 MapStruct）
+
+#### 11.3.3 事务内禁止远程调用 / MQ 发送 [已确认]
+
+**场景：** 事务边界划分
+**惯用写法：** 事务方法只做 DB 写，远程/MQ 移到事务外
+**出处：** `icec-cloud-life-cs/src/main/java/.../appservice/CsTicketAppService.java:155`
+**约束对齐：** 符合 `constraints/code-style.md` §3.5
+
+### 11.4 Infrastructure 层模式
+
+#### 11.4.1 Repository Impl = `extends ServiceImpl<*,*> + implements *Repository` [已确认]
+
+**场景：** MyBatis-Plus 仓储实现
+**惯用写法：** `BossUserRepositoryImpl extends ServiceImpl<BossUserMapper, BossUserPO> implements BossUserRepository`
+**出处：** `icec-cloud-boss-user-infrastructure/src/main/java/.../repository/mysql/BossUserRepositoryImpl.java:18`
+**约束对齐：** 符合 `constraints/project-structure.md` §2.4（Repository 实现）
+
+#### 11.4.2 Feign Client `extends` 对应 SPI Service [已确认]
+
+**场景：** 调外部 Service
+**惯用写法：** `BossUserInfoClient extends BossUserInfoService`，并加 `@FeignClient(name=...)`
+**出处：** `icec-cloud-boss-user-infrastructure/src/main/java/.../feign/BossUserInfoClient.java:12`
+**约束对齐：** 符合 `constraints/code-style.md` §3.7（Feign Client 必 extends SPI）
+
+### 11.5 Interfaces 层模式
+
+#### 11.5.1 BFF RestImpl 命名 `{Resource}RestImpl implements SPI` [已确认]
+
+**场景：** BFF Controller 命名
+**惯用写法：** `BossUserManagementRestImpl implements BossUserManagementService`
+**出处：** `icec-cloud-boss-user-bff/src/main/java/.../restful/BossUserManagementRestImpl.java:18`
+**约束对齐：** 符合 `constraints/project-structure.md` §2.5（Controller 命名）
+
+#### 11.5.2 Service RestImpl 命名 `{Resource}ServiceImpl implements SPI` [已确认]
+
+**场景：** Service Controller 命名
+**惯用写法：** `BossUserServiceImpl implements BossUserService`
+**出处：** `icec-cloud-boss-user-interfaces/src/main/java/.../restful/BossUserServiceImpl.java:18`
+**约束对齐：** 符合 `constraints/project-structure.md` §2.5
+
+### 11.6 异常处理模式
+
+#### 11.6.1 全局异常处理 GlobalExceptionHandler [已确认]
+
+**场景：** BFF 统一异常入口
+**惯用写法：** `@ControllerAdvice + @ExceptionHandler(Exception.class)` + `@ResponseStatus(OK)`
+**出处：** `icec-cloud-boss-user-bff/src/main/java/.../exception/GlobalExceptionHandler.java:42`
+**约束对齐：** 符合 `constraints/api.md` §4.2（统一返回码）
+
+#### 11.6.2 错误码分段（用户 11000-11999 / 工单 13000-13999）[据推断]
+
+**场景：** 错误码分配
+**惯用写法：** 按业务域分段，未统一前先查现有 ErrorCode 枚举
+**出处：** `icec-cloud-boss-user-domain/.../enums/error/BossUserErrorCode.java`（11101-11107）+ `icec-cloud-life-cs/.../enums/error/CsTicketErrorCode.java`（13001-13015）
+**约束对齐：** 符合 `constraints/code-style.md` §3.4（错误码）
+
+### 11.7 并发与幂等模式
+
+#### 11.7.1 Redis 分布式锁（Redisson）[据推断]
+
+**场景：** 多实例下需要互斥的场景
+**惯用写法：** `@Autowired RedissonClient + lock.tryLock(5s, 30s)`
+**出处：** `icec-cloud-life-cs/src/main/java/.../service/CsTicketLockService.java:55`
+**约束对齐：** 符合 `constraints/security.md` §6.2（分布式锁）
+
+### 11.8 测试模式
+
+#### 11.8.1 Controller 测试真实 HTTP（TestRestTemplate）[已确认]
+
+**场景：** Controller 集成测试
+**惯用写法：** `@SpringBootTest(webEnvironment = RANDOM_PORT) + TestRestTemplate`
+**出处：** `icec-cloud-boss-user-interfaces/src/test/java/.../BossUserControllerTest.java:18`
+**约束对齐：** 符合 `constraints/testing.md` §7.1
+
+#### 11.8.2 Service 单测禁真实 DB / 远程 [已确认]
+
+**场景：** Service 单元测试
+**惯用写法：** JUnit + Mockito，`@Mock` 所有 Repository / Feign Client
+**出处：** `icec-cloud-boss-user-application/src/test/java/.../BossUserAppServiceTest.java:32`
+**约束对齐：** 符合 `constraints/testing.md` §7.2
+
+### 11.9 配置与集成模式
+
+#### 11.9.1 定时任务用 job-spring-boot-starter（禁 @Scheduled）[据推断]
+
+**场景：** 定时任务
+**惯用写法：** 实现 `IJobHandler` + `@JobHandler("xxx")`，配置文件注册 cron
+**出处：** `icec-cloud-life-cs/src/main/java/.../job/CsTicketTimeoutJob.java:18`
+**约束对齐：** 符合 `constraints/technology-stack.md` §8.4（job starter）
+
+#### 11.9.2 领域事件经 courier-spring-boot-starter 发 Kafka [已确认]
+
+**场景：** 跨 Service 事件发布
+**惯用写法：** `KafkaDomainEventPublisher.publish(event)`
+**出处：** `icec-cloud-boss-user-infrastructure/src/main/java/.../messaging/publisher/KafkaDomainEventPublisher.java:18`
+**约束对齐：** 符合 `constraints/technology-stack.md` §8.4（courier starter）
+
+---
+
 
 ## 12. 横切专题文件索引（🆕 2026-06-26）
 
@@ -541,6 +800,70 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
 | _（暂无）_ | — | — | — |
 
 ---
+## 13. 信息可信度三态分布 [已确认]
+
+> 🆕 2026-06-26 新增节（schema §13）。本节登记本主体各章节的可信度分布。每月审计时跑 §13.4 公式核验推断占比。
+
+| 可信度 | 章节覆盖 | 占比 |
+|--------|---------|------|
+| `[已确认]` | §0 / §1 / §2 / §3 / §6.1-6.7 / §7 / §11（部分）/ §A-§G / 附录 A | 约 60% |
+| `[据推断]` | §4 / §5 / §11（部分）/ §12（索引待 Story 完成后填）| 约 25% |
+| `[待确认]` | §10 缺口 + `pending-questions.md` | 约 15% |
+
+**门禁（🔴）：** 主体中 `[据推断]` 占比应 ≤ 30%；如超阈值，触发额外探查 SOP（schema §13.3）。
+
+**月度审计命令：**
+```bash
+# 主体中"推断"占比应 ≤ 30%
+grep -c "\[据推断\]" icec-cloud-boss.assets.md
+grep -c "\[已确认\]" icec-cloud-boss.assets.md
+
+# pending-questions 中问题数（应逐步减少）
+grep -c "^| Q-" icec-cloud-boss.pending-questions.md
+```
+
+---
+
+## 14. 安全隐患登记表
+
+> 🆕 2026-06-26 新增节（schema §14）。本节登记探查过程中发现的 4 类安全隐患（明文密码 / 硬编码 Key / Actuator 外露 / DB 明文账号）。**强制扫描命令见 §14.1**，探查/审计必跑。
+
+| ID | 类型 | 位置 | 风险等级 | 描述 | 建议修复 | 状态 |
+|----|------|------|---------|------|---------|------|
+| S-001 | 明文密码（待复验）| 各工程 `bootstrap.yml` Redis 段 | 🟡 中 | 同事 `user.md §1.4` 提示"bootstrap.yml 中 Redis 明文密码直接写入配置文件"——但当前实际版本均使用 `${icec.redis.password}` 占位符，**当前实际无明文** | 维持占位符外部注入；继续月度扫描 | ✅ 已确认无 |
+| S-002 | management.port 默认 30000 | 各工程 `bootstrap.yml` | 🟢 低 | 未显式配 `management.port`，本地多服务同时启动时第二服务可能因端口冲突启动失败 | 各工程显式配置 `management.port: {30XXX}`（与 service.port 错开，详见各子文件 §1.1）| 部分已修（boss-user-bff 配 30004）|
+| S-003 | lombok scope=provided | 各模块 `pom.xml` | 🟢 低 | lombok 不传递依赖，新模块如未在 pom 显式声明可能编译失败 | 每个模块 pom 显式声明 lombok 依赖 | 已知约束 |
+| S-004 | Actuator 端点可能外露 | 各工程 `bootstrap.yml` | 🟡 中 | 默认 `exposure.include=*` 可能未配鉴权；本地启动后 `/actuator/env` 等敏感端点可能可见 | 加 `spring.security` 配置或 `exposure.include` 收紧到 `health,info,metrics` | 待复验 |
+| S-005 | icec-cloud-life-demo-spi 依赖已注释 | `icec-cloud-boss-user-infrastructure/pom.xml` | 🟢 低 | 同事 `user.md §1.2` 提示该依赖已注释——可能影响 SPI 引用 | 确认是否需要删除注释或改用其他 SPI | 待确认 |
+
+**门禁（🔴）：**
+- 🟠 高级风险 → 24h 内通知架构组 + 工程 owner
+- 🟡 中级风险 → 随下次 PR 修复
+- 🟢 低级风险 → 月底审计统一处理
+
+### 14.1 强制扫描命令（探查 SOP §3.6.2 必跑）
+
+```bash
+# 1. 配置明文密码（🔴 P0）
+grep -rEn "password\s*[:=]\s*["']?[A-Za-z0-9_-]{6,}" \
+  --include="*.yml" --include="*.yaml" --include="*.properties" \
+  {gitPath}/*/src/main/resources/
+
+# 2. 硬编码 API Key / Secret（🔴 P0）
+grep -rEn "(api[_-]?key|secret|token)\s*[:=]\s*["']?[A-Za-z0-9_-]{16,}" \
+  --include="*.java" --include="*.yml" {gitPath}/
+
+# 3. Actuator 端点外露（🔴 P0）
+grep -rEn "management\.endpoints\.web\.exposure" \
+  --include="*.yml" {gitPath}/*/src/main/resources/
+
+# 4. 数据库连接串明文账号（🔴 P0）
+grep -rEn "jdbc:mysql://[^?]*:[^@]*@" \
+  --include="*.yml" {gitPath}/*/src/main/resources/
+```
+
+---
+
 
 ## 15. 工程级粒度拆分记录（🆕 2026-06-26）
 

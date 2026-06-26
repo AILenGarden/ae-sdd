@@ -31,6 +31,44 @@ QUICK_CHANNEL_MARKERS: tuple[str, ...] = (
     "quick mode",
 )
 
+# 🆕 B1 修复：SKILL 裸文件名 → 内置 target 路径映射表
+# 依据：state.next_step_suggestion() 返回的 7 个 skill 文件名 + 它们在 source/skills/ 的真实路径。
+# registry.yaml 的 replaces 字段用的就是这个内置路径（见 plugin-registry-spec.md）。
+# 只覆盖 next_step_suggestion 会返回的文件名，不扩范围（KISS）。
+_SKILL_FILE_TO_BUILTIN_TARGET: dict[str, str] = {
+    "requirement-analysis-skill.md": "source/skills/phase1-design/requirement-analysis-skill.md",
+    "dr-generate-skill.md":          "source/skills/phase1-design/dr-generate-skill.md",
+    "story-generate-skill.md":       "source/skills/phase1-design/story-generate-skill.md",
+    "story-review-skill.md":         "source/skills/phase1-design/story-review-skill.md",
+    "testcase-generate-skill.md":    "source/skills/phase1-design/testcase-generate-skill.md",
+    "task-generate-skill.md":        "source/skills/phase2-task/task-generate-skill.md",
+    "coding-skill.md":               "source/skills/phase2-coding/coding-skill.md",
+    "coding-report-skill.md":        "source/skills/phase2-coding/coding-report-skill.md",
+}
+
+
+def _resolve_skill_path(skill_file: str, ade_sdd, master) -> Optional[str]:
+    """🆕 B1 修复：把 next_step_suggestion 返回的 SKILL 裸文件名过一遍 plugin_loader。
+
+    - 命中外挂 → 返回 "外挂名 @ 命中层 → 外挂绝对路径"
+    - fallback 内置 / 映射表未覆盖 / 任何异常 → 返回 None（保持原行为）
+
+    设计：与 entry-token / drift 探测同模式（try/except 降级，绝不阻断主流程）。
+    """
+    if not skill_file or skill_file in ("?", "—"):
+        return None
+    target = _SKILL_FILE_TO_BUILTIN_TARGET.get(skill_file)
+    if not target:
+        return None
+    try:
+        from lib import plugin_loader
+        result = plugin_loader.resolve_skill(target, ade_sdd, master)
+        if result.plugin and result.resolved_path:
+            return f"{result.plugin.name} @ {result.layer_label} → {result.resolved_path}"
+    except Exception:
+        pass  # plugin_loader 异常不阻断注入，降级为原 skill 裸文件名
+    return None
+
 # 🆕 v3.4.0 关卡1：/ae-sdd 触发词检测（建议书4）
 AE_SDD_TRIGGER_MARKERS: tuple[str, ...] = (
     "/ae-sdd",
@@ -125,6 +163,9 @@ def inject(
     else:
         next_line = f"  next:     {suggestion['action']}  （项目已完成，无需切换阶段）"
 
+    # 🆕 B1 修复：把 next-step skill 文件名过 plugin_loader，命中外挂则注入实际路径
+    plugin_line = _resolve_skill_path(suggestion['skill'], ade_sdd, master)
+
     lines = [
         f"<!-- ae-sdd harness 自动注入 @ {now} -->",
         f"◆ HARNESS STATE",
@@ -134,8 +175,10 @@ def inject(
         f"  G-00:     {g00_status}",
         next_line,
         f"  skill:    {suggestion['skill']}",
-        f"<!-- /ae-sdd harness -->",
     ]
+    if plugin_line:
+        lines.append(f"  plugin:   {plugin_line}  ⚠️ 本次必须加载此 外挂路径，禁用内置")
+    lines.append(f"<!-- /ae-sdd harness -->")
 
     if not g00.pass_:
         lines.insert(1,

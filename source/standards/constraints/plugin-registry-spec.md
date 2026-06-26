@@ -175,6 +175,38 @@ loader 跑 sanity check 时的校验项：
 | 13 | 同一注册表内 `replaces` 唯一 | 🔴 阻断 |
 | 14 | 多层冲突时按优先级选胜者 + 告警 | 🟡 告警（不阻断） |
 | 15 | `compatibility.ae_sdd_version` 不满足 | 🟡 告警（不阻断） |
+| 16 | 外挂内容安全扫描（🆕 B4 增强，PC-001~008） | 🔴 阻断（仅 L2 全局层 BLOCKER）/ 🟡 告警（L1 项目层） |
+
+---
+
+## 七-A、外挂内容安全扫描（规则 #16 详解，🆕 B4 增强）
+
+**扫描器：** `scripts/plugin_content_scan.py`（对标 `coding_authenticity_scan.py` 架构，零依赖）。
+
+**分层阻断策略**（依据威胁模型，平衡安全与可用性）：
+
+| 层 | BLOCKER 命中 | WARN/INFO 命中 | 扫描器异常 |
+|---|:---:|:---:|:---:|
+| **L2 全局层**（来源不明，风险最高）| 🔴 阻断加载 | 🟡 告警 | 降级跳过（不阻断） |
+| **L1 项目层**（团队内部，owner 自负）| 🟡 告警不阻断 | 🟡 告警 | 降级跳过 |
+| **L3 仓库根层**（git tracked，PR 兜底）| 跳过扫描 | 跳过扫描 | — |
+
+**检测规则集（PC-001 ~ PC-008）**：
+
+| 规则 | 等级 | 检测模式 |
+|------|:----:|----------|
+| PC-001 | BLOCKER | 无差别删除（`rm -rf /`、`rm -rf ~`） |
+| PC-002 | BLOCKER | 任意命令执行（`os.system`、`shell=True`、`eval`/`exec`） |
+| PC-003 | BLOCKER | 远程脚本执行（`curl\|sh`、`wget\|sh`） |
+| PC-004 | WARN | 门禁绕过语义（跳过 G-XX、禁止跑 gate） |
+| PC-005 | WARN | 硬编码密钥/token（`password=`、`secret=`、`api_key=`） |
+| PC-006 | INFO | 内网 IP（10.x、172.x、192.168.x） |
+| PC-007 | BLOCKER | 过度权限（`chmod 777`、`chmod +x /`） |
+| PC-008 | WARN | 绕过检查（`git --no-verify`、`git --force`） |
+
+**失败优先：** 扫描器自身异常 → 降级为"跳过 + 告警"，绝不阻断主流程（与 ae-sdd 其他探测同模式）。单文件超 1MB 上限 → 跳过（防 DoS）。
+
+**独立可用：** `python scripts/plugin_content_scan.py <path> --plugin <name>` 可单独扫描任意外挂文件，有 BLOCKER 则退出码 1。
 
 ---
 

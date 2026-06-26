@@ -1,0 +1,150 @@
+"""test_prompt_inject_plugin.py -- 集成测试：B1 修复（外挂运行时接入）
+
+验证 prompt_inject.inject() 会把 next_step_suggestion 的 skill 文件名过一遍
+plugin_loader，命中外挂时注入 "plugin: ..." 行，引导 Agent 加载外挂路径。
+
+覆盖场景（补 v3.5.0 的测试盲区 B3）：
+1. 命中 L1 项目层外挂 → systemMessage 含 "plugin:" + 外挂路径
+2. 无任何注册表 → systemMessage 不含 "plugin:"（保持原 skill 行）
+3. plugin_loader 异常 → 降级，不抛错（失败优先原则）
+
+接入点：tools/lib/prompt_inject.py 的 _resolve_skill_path() + inject()。
+"""
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+# Make 'lib' importable
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib import prompt_inject  # noqa: E402
+
+
+def _make_project_with_plugin(tmp: Path, skill_target: str = "coding-skill.md") -> Path:
+    """构造一个带 L1 项目层外挂注册表的项目目录，返回其 .ae-sdd 路径。
+
+    skill_target: 要外挂替换的 SKILL 裸文件名（默认 coding-skill.md）。
+    """
+    ade_sdd = tmp / ".ae-sdd"
+    plugins_dir = ade_sdd / "plugins"
+    plugins_dir.mkdir(parents=True)
+
+    # 外挂 SKILL 文件
+    ext = plugins_dir / "my-skill.md"
+    ext.write_text("# My Custom SKILL", encoding="utf-8")
+
+    # registry.yaml（replaces 用内置完整路径）
+    builtin_target = prompt_inject._SKILL_FILE_TO_BUILTIN_TARGET[skill_target]
+    registry = plugins_dir / "registry.yaml"
+    registry.write_text(
+        "schema_version: 1\n"
+        "plugins:\n"
+        "  - name: my-plugin\n"
+        "    type: skill-override\n"
+        "    version: 1.0.0\n"
+        f"    description: test\n"
+        "    path: ./my-skill.md\n"
+        f"    replaces: {builtin_target}\n",
+        encoding="utf-8",
+    )
+
+    # 项目最小配置（prompt_inject 需读 config.yaml 的 projectKey）
+    (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
+
+    # 让 phase 停在会触发 skill=coding-skill.md 的阶段
+    # next_step_suggestion: task-reviewed → coding-skill.md
+    # 注意：state.json 直接在 .ae-sdd/ 根下（见 paths.state_path），不是 .auto-engineering/<story>/
+    import json
+    (ade_sdd / "state.json").write_text(json.dumps({
+        "phase": "task-reviewed",
+        "currentStory": "STORY-001",
+    }), encoding="utf-8")
+
+    return ade_sdd
+
+
+class TestResolveSkillPath(unittest.TestCase):
+    """_resolve_skill_path 单元测试。"""
+
+    def test_returns_none_for_empty_or_dash(self):
+        self.assertIsNone(prompt_inject._resolve_skill_path("", None, None))
+        self.assertIsNone(prompt_inject._resolve_skill_path("—", None, None))
+        self.assertIsNone(prompt_inject._resolve_skill_path("?", None, None))
+
+    def test_returns_none_for_unmapped_file(self):
+        # 映射表未覆盖的文件名 → None（保持原行为）
+        self.assertIsNone(prompt_inject._resolve_skill_path("unknown-skill.md", None, None))
+
+    def test_returns_none_when_no_registry(self):
+        # 无注册表 → plugin_loader fallback → None
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
+        ade_sdd = tmp / ".ae-sdd"
+        ade_sdd.mkdir()
+        result = prompt_inject._resolve_skill_path("coding-skill.md", ade_sdd, None)
+        self.assertIsNone(result)
+
+    def test_returns_plugin_line_when_hit(self):
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
+        ade_sdd = _make_project_with_plugin(tmp)
+        result = prompt_inject._resolve_skill_path("coding-skill.md", ade_sdd, None)
+        self.assertIsNotNone(result)
+        self.assertIn("my-plugin", result)
+        self.assertIn("L1-project", result)
+
+    def test_degrades_on_plugin_loader_exception(self):
+        # plugin_loader.resolve_skill 抛异常 → 返回 None，不抛错
+        with mock.patch("lib.plugin_loader.resolve_skill", side_effect=RuntimeError("boom")):
+            tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
+            ade_sdd = _make_project_with_plugin(tmp)
+            result = prompt_inject._resolve_skill_path("coding-skill.md", ade_sdd, None)
+        self.assertIsNone(result)
+
+
+class TestInjectPluginLine(unittest.TestCase):
+    """inject() 端到端：systemMessage 是否含 plugin 行。"""
+
+    def test_inject_contains_plugin_line_when_hit(self):
+        """命中外挂 → systemMessage 含 'plugin:' 行 + 外挂路径。"""
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
+        _make_project_with_plugin(tmp)
+        payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
+        msg = payload["systemMessage"]
+        self.assertIn("plugin:", msg)
+        self.assertIn("my-plugin", msg)
+        self.assertIn("⚠️ 本次必须加载此 外挂路径", msg)
+        # harness 闭合标签仍在
+        self.assertIn("<!-- /ae-sdd harness -->", msg)
+
+    def test_inject_no_plugin_line_when_no_registry(self):
+        """无注册表 → systemMessage 不含 'plugin:'，仅含原 skill 行。"""
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
+        ade_sdd = tmp / ".ae-sdd"
+        ade_sdd.mkdir(parents=True)
+        import json
+        # state.json 直接在 .ae-sdd/ 根下（见 paths.state_path）
+        (ade_sdd / "state.json").write_text(json.dumps({
+            "phase": "task-reviewed",
+            "currentStory": "STORY-001",
+        }), encoding="utf-8")
+        (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
+
+        payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
+        msg = payload["systemMessage"]
+        self.assertNotIn("plugin:", msg)
+        # 原 skill 行仍在
+        self.assertIn("skill:", msg)
+
+    def test_inject_degrades_gracefully_on_resolve_failure(self):
+        """plugin_loader 异常 → inject 仍返回有效 payload，不含 plugin 行。"""
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
+        _make_project_with_plugin(tmp)
+        with mock.patch("lib.plugin_loader.resolve_skill", side_effect=RuntimeError("boom")):
+            payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
+        msg = payload["systemMessage"]
+        self.assertNotIn("plugin:", msg)
+        self.assertIn("skill:", msg)  # 降级为原 skill 裸文件名
+
+
+if __name__ == "__main__":
+    unittest.main()

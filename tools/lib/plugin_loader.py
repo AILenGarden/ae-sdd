@@ -583,6 +583,34 @@ def load_registry(registry_path: Path, layer: int, layer_label: str) -> Registry
             # 这里我们宽容处理：只校验 path 解析后存在（已经在上面做了）
             # replaces 的内置路径校验留给 trace/load 时做（因为 builtin 路径依赖安装状态）
 
+        # 规则 #16：外挂内容安全扫描（🆕 B4 增强，分层阻断）
+        # L2 全局层 BLOCKER → 阻断；L1 项目层 BLOCKER → 告警；L3 仓库根 → 跳过（git 兜底）
+        if layer == LAYER_MASTER:
+            pass  # L3 git tracked，跳过
+        else:
+            scan_result = _scan_plugin_content(resolved, p.name)
+            if scan_result:
+                if scan_result.skipped:
+                    rl.warnings.append(
+                        f"{plugin_repr(p)}: 内容扫描跳过（{scan_result.skip_reason}）"
+                    )
+                else:
+                    for f in scan_result.findings:
+                        # 分层：L2 BLOCKER 阻断，L1 仅告警
+                        should_block = (layer == LAYER_GLOBAL and f.severity == "BLOCKER")
+                        prefix = "🔴" if should_block else "🟡" if f.severity != "INFO" else "🔵"
+                        line = (f"{prefix} {plugin_repr(p)}: 内容扫描 {f.rule} @ L{f.line} "
+                                f"— {f.snippet}")
+                        if should_block:
+                            rl.errors.append(line + f"（{f.message}）")
+                        elif f.severity == "INFO":
+                            pass  # INFO 不入 warnings 列表，避免噪音（仅 scan_result 里可见）
+                        else:
+                            rl.warnings.append(line + f"（{f.message}）")
+                    # L2 BLOCKER 命中 → 不加入 plugins（阻断加载）
+                    if layer == LAYER_GLOBAL and scan_result.blockers > 0:
+                        continue
+
         rl.plugins.append(p)
 
     return rl
@@ -640,6 +668,27 @@ def _parse_plugin(raw: dict, idx: int, registry_path: Path, registry_dir: Path) 
 def plugin_repr(p: Plugin) -> str:
     """插件的可读表示。"""
     return f"plugin '{p.name}' ({p.layer_label})"
+
+
+def _scan_plugin_content(path: Path, plugin_name: str):
+    """🆕 B4 增强：调用 scripts/plugin_content_scan.py 扫描外挂内容。
+
+    失败优先：扫描器不可用/异常 → 返回 None（调用方按"跳过"处理，不阻断主流程）。
+    返回 ScanResult 或 None。
+    """
+    try:
+        import sys
+        from pathlib import Path as _Path
+        # plugin_loader 在 tools/lib/，扫描器在 scripts/（仓库根下）
+        repo_root = _Path(__file__).resolve().parent.parent.parent
+        scripts_dir = repo_root / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        import plugin_content_scan
+        return plugin_content_scan.scan_plugin_file(path, plugin_name)
+    except Exception:
+        # 扫描器异常不阻断主流程（与 prompt_inject / drift 探测同模式）
+        return None
 
 
 # === 三层加载 + 优先级合成 ===
