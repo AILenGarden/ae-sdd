@@ -36,6 +36,7 @@ description: Story 生成 SKILL — Phase 1 ① 节点的环节内具体规则�
 | Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
 | Story-WriterReport | `save_doc(intent="STORY_WRITER_REPORT", storyId)` | 带 r{N} | 新增（r 递增）|
 | 跨轮 Review 对比表 | `save_doc(intent="REVIEW_COMPARE", storyId, version="v1-to-v2")` | 带 v1-to-v2 | 新增（每对比）|
+| StoryGeneratePlan | `save_doc(intent="STORY_GENERATE_PLAN", storyId, version={r:N})` | 带 r{N} | 新增（r 递增） |
 
 > **调用示例：** 详见 `document-storage-skill.md §15.5.3` 完整调用流程。
 
@@ -770,6 +771,8 @@ Story ID：{STORY-ID}
 
 ```
 Story 文档写入
+    ↓
+🔴 落地存储确认（resolve_path + save_doc 成功，G-DOC-STORAGE ✅）
     ↓
 触发 Story Review SKILL
     ↓

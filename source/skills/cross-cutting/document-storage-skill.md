@@ -1186,6 +1186,40 @@ v ≥ 4 时可归档（🗑️ archived）
 | `project-assets-update-skill.md` | 项目资产 + 更新日志 | §2.4 路径模板 + §3.2 命名规则（基础设施类不带版本号，更新走日志）+ §7 .gitignore |
 | `proposal-skill.md` | Proposal | §2.2 路径模板 + §3.2 命名规则（事件类不带版本号，按 N 编号）+ §5 ChangeLog |
 
+### 15.1.1 intent 枚举表（🔴 save_doc / resolve_path 的 intent 参数必须取自此表）
+
+> **SSOT：** 所有 SKILL 的 `save_doc(intent=...)` / `resolve_path(intent=...)` 调用，**intent 值必须是下表中已登记的枚举**。如需新增 intent，先在此表补行，再在调用方 SKILL 的 save_doc 矩阵中引用。
+
+| intent 值 | 文档类型 | 产出 SKILL | 命名规则 |
+|-----------|---------|-----------|---------|
+| `STORY` | Story 主文档 | story-generate-skill | v{major}.{minor} |
+| `STORY_SUPPLEMENT` | Story 补充说明 | story-generate-skill | 不带版本号（原地累加） |
+| `DR` | DR 主文档 | dr-generate-skill | v{major}.{minor} |
+| `DR_SUPPLEMENT` | DR 补充说明 | dr-update-skill | 不带版本号（原地累加） |
+| `STORY_REVIEW` | Story Review 报告 | story-review-skill | 带 r{N} |
+| `TESTCASE` | 测试用例文档 | testcase-generate-skill | v{major}.{minor} |
+| `TESTCASE_COMPLIANCE_REPORT` | 测试用例合规性校验报告 | testcase-generate-skill | 带 r{N} |
+| `TASK` | Task 文档（含 Task-0） | task-generate-skill | v{major}.{minor} |
+| `TASK_SUPPLEMENT` | Task 补充说明 | task-generate-skill | 不带版本号（原地累加）|
+| `TASK_WRITER_REPORT` | Task 撰写报告 | task-generate-skill | 带 r{N} |
+| `TASK_REVIEW` | Task Review 报告 | task-generate-skill | 带 r{N} |
+| `TASK_IMPL_PLAN` | Task 实现方案 | task-generate-skill | 不带版本号（原地覆盖）|
+| `CODING_PLAN` | 统一版 CodingPlan | task-generate-skill | v{major}.{minor} |
+| `CODING_REPORT` | Coding 报告 | coding-report-skill | 带 v{N}-r{M} |
+| `TEST_REPORT` | 测试报告 | coding-report-skill | 带 v{N}-r{M} |
+| `TRACE_MATRIX` | ⑦bis 全链路追溯矩阵 | coding-report-skill / code-review-skill | 带 v{N}-r{M} |
+| `CODE_REVIEW` | CodeReview 报告 | code-review-skill | 带 v{N}-r{M} |
+| `PROPOSAL` | Proposal 文档 | proposal-skill | 不带版本号（按 N 编号）|
+| `PROPOSAL_ARCHIVE` | Proposal 归档文档 | proposal-skill | 不带版本号（按 N 编号）|
+| `ASSETS` | 项目资产主体 + 更新日志 | project-assets-update-skill | 不带版本号（原地修改）|
+| `RA` | 需求分析文档 | requirement-analysis-skill | v{major}.{minor} |
+| `RA_GENERATE_PLAN` | RA 生成计划 | requirement-analysis-skill | 带 r{N} |
+| `RA_IMPACT` | RA 修订影响分析报告 | requirement-analysis-skill | 带 r{N} |
+| `RA_REVERSE_ISSUES` | RA 反向问题登记 | requirement-analysis-skill | 不带版本号（原地累加） |
+| `STORY_GENERATE_PLAN` | Story 生成计划 | story-generate-skill | 带 r{N} |
+| `STORY_WRITER_REPORT` | Story 撰写报告 | story-generate-skill | 带 r{N} |
+| `REVIEW_COMPARE` | 跨轮 Review 对比表 | story-generate-skill | 带 v{N}-to-v{M} |
+
 ### 15.2 标准调用段（🔴 各 SKILL 必加）
 
 每个生成/更新文档的 SKILL 在 "§目标" 之后、"§整体流程" 之前，必须加以下段（**统一定位**）：

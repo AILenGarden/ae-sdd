@@ -42,6 +42,8 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 | PRD（无输入时生成）| `{工程根}/ae-sdd-doc/PRD/{PRD-ID}.md` | 不带版本号 | 原地修改（按 prd-template）|
 | Issue（无输入时生成）| `{工程根}/ae-sdd-doc/PRD/Issue-{编号}.md` | 不带版本号 | 原地修改（按 issue-template）|
 | RAGeneratePlan | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/RA/ChangeLog/{RA-ID}-RAGeneratePlan-r{N}.md` | 带 r{N} | 新增（每轮生成 1 份）|
+| RA 修订影响分析报告 | `save_doc(intent="RA_IMPACT", raId, version={N})` | 带 r{N} | 新增（每次修订生成） |
+| RA 反向问题登记 | `save_doc(intent="RA_REVERSE_ISSUES", raId)` | 不带版本号 | 原地累加 |
 
 **项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
 - `ae-sdd assets read requirement-analysis --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/DomainService/Service + §A/§B 整章）
@@ -1318,6 +1320,8 @@ else → 规模=小（默认）
 ---
 
 ## 第六步：触发下游 SKILL
+
+> **🔴 前置条件：** RA 文档已通过 `save_doc(intent="RA", ...)` 落地（G-DOC-STORAGE ✅）后，才能触发下游 SKILL。
 
 按 §5.3 决策触发对应 SKILL，并传入：
 

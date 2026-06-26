@@ -90,6 +90,12 @@ Coding 完成后生成**完整、客观、可评审**的 Coding 报告，目标�
     ↓
 第四步：生成 Coding 报告
     ↓
+第四步 bis：落地存储（🔴 强制）
+    ├─ resolve_path(intent="CODING_REPORT", storyId) + save_doc(...)
+    ├─ resolve_path(intent="TEST_REPORT", storyId) + save_doc(...)（如有测试报告）
+    └─ resolve_path(intent="TRACE_MATRIX", storyId) + save_doc(...)（如有追溯矩阵）
+    确认 G-DOC-STORAGE ✅ 后才能触发下游
+    ↓
 触发下游 Code Review SKILL
 ```
 
@@ -291,6 +297,7 @@ Coding 完成后生成**完整、客观、可评审**的 Coding 报告，目标�
 | 10 | 填充 §九 异常路径（如有）| 异常记录 | A1-A6 完整 |
 | 11 | §第三步 合理性自检 | 自检报告 | 4 维度全 ✅ |
 | 12 | §第四步 生成报告 | Coding 报告 | 用户确认初稿 |
+| 12.5 | **落地存储（🔴 强制）** | 落地确认 | `resolve_path + save_doc` 成功，G-DOC-STORAGE ✅ 后才能触发下游 |
 | 13 | §第五步 触发 Code Review | 评审反馈 | Code Review SKILL 启动 |
 
 ---

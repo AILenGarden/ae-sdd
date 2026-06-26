@@ -1246,6 +1246,8 @@ sourceEventId        ->  msgUID                ->  sourceEventId         ->  sou
 
 ## 第五步：触发 Story Update SKILL
 
+> **🔴 前置条件：** Story Review 报告和 StoryReviewUpdatePlan 已通过 `save_doc` 落地（G-DOC-STORAGE ✅）后，才能触发 Story Update SKILL。
+
 如果有确认缺陷（状态为 ✅），且 `StoryReviewUpdatePlan` 已通过出闸条件，触发 [Story Update SKILL](../phase1-design/story-update-skill.md) 按 Plan 执行修复。
 
 **不触发条件：**

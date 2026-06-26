@@ -27,6 +27,8 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 | Task 补充说明 | `save_doc(intent="TASK_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
 | Task-WriterReport | `save_doc(intent="TASK_WRITER_REPORT", storyId)` | 带 r{N} | 新增（r 递增）|
 | Task Review 报告 | `save_doc(intent="TASK_REVIEW", storyId, version={r:N})` | 带 r{N} | **新增**（r 递增）|
+| **统一版 CodingPlan** | `save_doc(intent="CODING_PLAN", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
+| **Task 实现方案** | `save_doc(intent="TASK_IMPL_PLAN", storyId)` | 不带版本号 | 原地覆盖 |
 
 > **调用示例：** 详见 `document-storage-skill.md §15.5.2` 调用矩阵。
 
@@ -489,6 +491,15 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 - 跳过任一章节 ❌
 - 填写内容与 Task 文档矛盾 ❌
 
+**落地存储（🔴 强制）：** 完成填写后必须调用：
+
+```text
+documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
+→ save_doc(intent="TASK_IMPL_PLAN", storyId)
+```
+
+落地成功后才能进入第六步 CodingPlan 汇总。
+
 ***
 
 ## 第四步 ter（🆕 调用 `CodingSkill.Plan(task-level)`）
@@ -594,7 +605,8 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
     - 类骨架不全 = 补
     - DO 字段不一致 / SQL WHERE 不明确 / 测试数据不可追溯 / 核心场景未标真实 DB 或 HTTP / 验证点未覆盖 / 调试回滚 < 5 类 = 修补对应章节
     ↓
-5. 🔴 输出统一版 `{STORY-ID}-CodingPlan.md` 给用户审核
+5. 🔴 调用 `documentStorage.resolve_path(intent="CODING_PLAN", storyId)` 推导路径，再调用 `save_doc(intent="CODING_PLAN", storyId, version={major,minor})` 落地存储，确认 G-DOC-STORAGE 通过
+6. 🔴 输出统一版 `{STORY-ID}-CodingPlan.md` 给用户审核
     - 用户必须明确说"确认"/"同意"/"可以开始"才能进入 ⑦ Coding
     - 模糊回复（如"好"/"行"/"看看"）需 AI 追问确认
     - 跳过/整体确认视为违规

@@ -846,6 +846,8 @@ flowchart TD
 
 ## 第六步：触发下游 SKILL
 
+> **🔴 前置条件：** DR 文档已通过 `save_doc(intent="DR", ...)` 落地（G-DOC-STORAGE ✅）后，才能触发下游。
+
 | 下游 | 触发 SKILL | 引用章节 |
 |------|-----------|---------|
 | DR Review | `dr-review-skill.md` | 整体流程（评审整个 DR） |

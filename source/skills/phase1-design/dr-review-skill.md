@@ -1091,6 +1091,8 @@ Story 拆分的合理性分析：
 
 ## 第六步：触发 dr-update-skill
 
+> **🔴 前置条件：** DR Review 报告和 UpdatePlan 已通过 `save_doc` 落地（G-DOC-STORAGE ✅）后，才能触发 dr-update-skill。
+
 按 UpdatePlan 触发 dr-update-skill：
 - 传入 UpdatePlan（路径 + 全文）
 - 传入 DR 草稿

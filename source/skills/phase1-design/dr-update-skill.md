@@ -20,6 +20,7 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 |---------|---------|---------|----------|
 | DR 主文档 | `save_doc(intent="DR", drId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
 | DR Supplement | `save_doc(intent="DR_SUPPLEMENT", drId)` | 不带版本号 | 原地累加 |
+| 受影响 Story 变更通知 | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加（写入各受影响 Story 的 Supplement） |
 
 > **调用示例：** 详见 `document-storage-skill.md §15.5` API 化调用。
 
@@ -159,6 +160,8 @@ DR 修改可能影响多个 Story，需要评估：
 ---
 
 ## 第五步：通知受影响的 Story
+
+> **🔴 前置条件：** DR 主文档已通过 `save_doc(intent="DR", ...)` 落地（G-DOC-STORAGE ✅）后，才能通知下游 Story。
 
 对每个受影响的 Story，在其补充说明文档中追加通知：
 

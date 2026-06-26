@@ -597,50 +597,6 @@ Story ID：{STORY-ID}
 >
 > **与 story-review 的差异：** Story Review 的 UpdatePlan 触发 Story Update（链短）；Code Review 的 UpdatePlan 可能触发 4 个下游 SKILL（链长）。
 
-### CodeReviewUpdatePlan 模板
-
-```markdown
-## CodeReviewUpdatePlan - {STORY-ID} - {YYYY-MM-DD HH:mm}
-
-### 1. 问题清单（按 🔴/🟠/🟡/🟢 分级）
-- 🔴 CR-001: {缺陷描述}（阶段 A）→ 改代码
-- 🔴 CR-002: {缺陷描述}（阶段 B）→ 改项目资产
-- 🟠 CR-003: {缺陷描述}（阶段 C）→ 改代码
-- ...
-
-### 2. 存疑项（评审时不确定的事项）
-- {X} 不确定是否合理 → 询问用户
-- {Y} 不确定是否符合项目资产 §6 → 询问用户
-
-### 3. 更新计划（按修复路径分组）
-- **改代码组**（CR-001, CR-003）：涉及 N 个类 / M 个方法
-  - 类 1：{修改内容}
-  - 类 2：{修改内容}
-- **改项目资产组**（CR-002）：涉及 §X.Y 章节
-  - {章节}：{修改内容}
-- **改 Story 组**（CR-005）：涉及 Story §X.Y 章节
-- **改 Task 组**（CR-006）：涉及 Task-X §X.Y 章节
-
-### 4. 字段链路影响分析（如涉及 §6 全链路映射）
-- 字段 X 改动：触入 HTTP ✓ / BFF ✓ / SPI ✓ / DO ✓ / DB ✓（5 层都要同步）
-- 字段 Y 改动：仅 DB 层（无需同步）
-
-### 5. 触发路径
-- 改代码 → 触发 Coding SKILL（按 Coding 实时追溯链：Task → Story → DR）
-- 改项目资产 → 触发 Project Assets Update SKILL
-- 改 Story → 触发 Story Update SKILL
-- 改 Task → 触发 Task Generate SKILL
-
-### 6. 执行后验收（修改后如何验证）
-- 闸门 7.1-7.7 重新过一遍
-- 重新跑 §2 六阶段评审
-- 连续 1 轮无新增问题才退出循环（§第六步）
-
-### 7. 用户确认
-- ☐ 通过，按 Plan 执行
-- ☐ 需要调整（说明）
-```
-
 ### 触发各下游 SKILL
 
 ```

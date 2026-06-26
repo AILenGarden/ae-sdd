@@ -1850,6 +1850,7 @@ public void {核心方法}({Command} command) { ... }
 | 3 | 每个 Task 均包含 `## 任务级 CodePlan`（含类骨架 + 方法级逻辑 + DB 操作 + 外部依赖 + 测试映射） | 逐 Task 文档检查该章节子节齐全 |
 | 4 | 全局 Task Review TR-1~TR-7 全部通过（无新增问题连续一轮） | Review 结论输出中 TR-1~TR-7 均显示 ✅ |
 | 5 | 统一版 `{STORY-ID}-CodingPlan.md` 已生成，14 条门禁全部通过 | CodingPlan 门禁自检表全 ✅ |
+| 5.5 | 统一版 CodingPlan 已通过 `documentStorage` 落地（`resolve_path + save_doc` 调用成功，G-DOC-STORAGE ✅）| `ae-sdd gates check --only G-DOC-STORAGE` ✅ |
 | 6 | 统一版 CodingPlan 已获用户明确确认（"确认"/"同意"/"可以开始"） | 用户回复记录中有明确确认词 |
 | 7 | 统一版 CodingPlan 中的 CodingModel 决策记录已复核（与各 Task 一致） | 无冲突项 |
 | 8 | 🆕 v3.4.0 **G-CODEPLAN-SRC 源码核对通过**：新增/修改类建模范式已核对现有源码（待核实清单为空） | `ae-sdd gates check --only G-CODEPLAN-SRC` ✅ |
@@ -1866,11 +1867,6 @@ public void {核心方法}({Command} command) { ... }
 **触发：** [Coding SKILL](../phase2-coding/coding-skill.md)
 
 **输入：** Story + Task 文档 + **{STORY-ID}-CodingPlan.md** + 测试用例 + 约束 + 工作目录
-**输出：** 可编译、可测试的代码 + Coding 报告
-
-**触发：** [Coding SKILL](../phase2-coding/coding-skill.md)
-
-**输入：** Story + Task 文档 + 测试用例 + 约束 + 工作目录
 **输出：** 可编译、可测试的代码 + Coding 报告
 
 **一轮 Coding 的定义：**

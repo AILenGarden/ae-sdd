@@ -291,6 +291,15 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 | 跨 Story 范围 | `documentStorage.resolve_path(intent="PROPOSAL", storyId="cross-story", version={N}, title={一句话标题})` |
 | 项目级范围 | `documentStorage.resolve_path(intent="PROPOSAL", storyId="project", version={N}, title={一句话标题})` |
 
+**落地存储（🔴 强制，用户确认初稿后执行）：**
+
+```text
+documentStorage.resolve_path(intent="PROPOSAL", storyId, version={N}, title={标题})
+→ save_doc(intent="PROPOSAL", storyId, version={N})
+```
+
+落地成功（G-DOC-STORAGE ✅）后才能进入第五步走流程。未落地禁止触发任何下游 SKILL。
+
 **命名规则：**
 - `{N}` = Proposal 编号（自增，跨 Story 递增；如 STORY-001 第一份 Proposal = `-001-`）
 - `{一句话标题}` = 不超过 30 字的简写（如 `roleId=0特殊语义`）
@@ -636,6 +645,7 @@ input:
 | 6 | §第三步 合理性自检 | 自检报告 | 4 维度全 ✅ |
 | 7 | §第七步 7 道闸 | 闸门结果 | 5 个 🔴 + 2 个 🟠 全 ✅ |
 | 8 | §第四步 写入 Proposal | Proposal 文档 | 用户确认初稿 |
+| 8.5 | **落地存储（🔴 强制）** | 落地确认 | `resolve_path + save_doc` 成功，G-DOC-STORAGE ✅ 后才进入下一步 |
 | 9 | §第五步 走 5 步流程 | 5 个下游修改 | 全部完成 |
 | 10 | §第六步 循环判定 | 评审通过 | 连续 1 轮无新增 |
 | 11 | §第八步 归档 | 归档到 _archive/ | 已归档 |

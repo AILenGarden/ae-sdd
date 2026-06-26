@@ -740,7 +740,8 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Test/{STORY-ID}/
 | 3 | 按三层模型生成用例 | 完整用例列表初稿 | 用例数 ≥ 公式最少用例数 + 用户已确认 |
 | 4 | 合规性校验 | 合规性校验报告 | 全部检查项通过 |
 | 5 | AC 完整性检查 | AC 反馈（如有） | 已标注缺失 AC |
-| 6 | 输出测试用例文档 | 文档已生成 | 符合模板格式 |
+| 5.5 | **合规性校验报告落地存储（🔴 强制）** | 落地确认 | `save_doc(intent="TESTCASE_COMPLIANCE_REPORT", ...)` 成功，G-DOC-STORAGE ✅ |
+| 6 | 输出测试用例文档 | 文档已生成 | 符合模板格式；`resolve_path + save_doc` 成功后才算完成 |
 
 ---
 
