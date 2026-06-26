@@ -151,25 +151,43 @@ class CopytreeDistributor(Distributor):
         ...
 
     # ── 备份 ────────────────────────────────────────────────────────────────
+    def _backup_root(self) -> Path:
+        """备份根目录：~/.ae-sdd/backups/<agent>/。
+
+        与 skills 目录隔离，避免加载器把 .bak 误识别为独立技能（根治方案X）。
+        agent 维度（self.name）区分 claude/codex/zcode，避免跨 agent 备份混在一起。
+        """
+        return Path.home() / ".ae-sdd" / "backups" / self.name
+
     def _backup_existing(self, dst: Path, ctx: DistributeContext) -> None:
-        """备份已有安装到 .bak.<时间戳>（迁自 install.py:backup_existing）。"""
+        """备份已有安装到 ~/.ae-sdd/backups/<agent>/<skill>.bak.<时间戳>。
+
+        🆕 根治方案X：备份目录从 skills/ 移到 ~/.ae-sdd/backups/，与 skills 隔离，
+        避免技能加载器把 .bak 当独立技能（迁自 install.py:backup_existing）。
+        """
         if dst.exists():
             ts = datetime.now().strftime("%Y%m%d%H%M%S")
-            bak = dst.with_name(f"{dst.name}.bak.{ts}")
+            backup_root = self._backup_root()
+            backup_root.mkdir(parents=True, exist_ok=True)
+            bak = backup_root / f"{dst.name}.bak.{ts}"
             log_warn(ctx, f"检测到已有安装版本，备份到：")
             log_warn(ctx, f"  {bak}")
             dst.rename(bak)
 
-    def _cleanup_old_backups(self, skills_dir: Path, keep: int) -> None:
-        """清理 skills_dir 下 {skill}.bak.* 旧备份，保留最近 keep 个。
+    def _cleanup_old_backups(self, keep: int) -> None:
+        """清理备份目录下 {skill}.bak.* 旧备份，保留最近 keep 个。
 
-        迁自 install.py:cleanup_old_backups。keep=0 全清；keep<0 不清理。
+        🆕 根治方案X：扫描 ~/.ae-sdd/backups/<agent>/（不再扫 skills 目录）。
+        keep=0 全清；keep<0 不清理。
         """
         if keep < 0:
             return
+        backup_root = self._backup_root()
+        if not backup_root.is_dir():
+            return
         pattern = f"{SKILL_NAME}.bak.*"
         baks = sorted(
-            (p for p in skills_dir.glob(pattern) if p.is_dir()),
+            (p for p in backup_root.glob(pattern) if p.is_dir()),
             key=lambda p: p.name,
             reverse=True,
         )
@@ -198,7 +216,7 @@ class CopytreeDistributor(Distributor):
                                      f"未找到 {skill_md}，请先跑 build_dist", time.time() - t0)
 
             self._backup_existing(dst, ctx)
-            self._cleanup_old_backups(dst.parent, ctx.keep_bak)
+            self._cleanup_old_backups(ctx.keep_bak)
 
             if dst.exists():
                 shutil.rmtree(dst)

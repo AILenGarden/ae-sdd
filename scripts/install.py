@@ -83,14 +83,26 @@ def _target_paths(selection: str) -> list[Path]:
 
 
 def uninstall(targets: list[Path]) -> None:
-    """卸载本地安装（迁自旧 install.py:uninstall）。"""
+    """卸载本地安装（迁自旧 install.py:uninstall）。
+
+    🆕 根治方案X：卸载备份移到 ~/.ae-sdd/backups/<agent>/，不再留在 skills 目录
+    （避免 .uninstalled 备份被加载器误识别为独立技能）。
+    """
     any_removed = False
     for dst in targets:
         if not dst.exists():
             info(f"未找到 {dst}，无需卸载")
             continue
         ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        bak = dst.with_name(f"{dst.name}.uninstalled.{ts}")
+        # 从路径推断 agent 名（路径形如 ~/.<agent>/skills/ae-sdd）
+        agent_name = "unknown"
+        for known in ("claude", "codex", "zcode"):
+            if f".{known}" in str(dst):
+                agent_name = known
+                break
+        backup_root = Path.home() / ".ae-sdd" / "backups" / agent_name
+        backup_root.mkdir(parents=True, exist_ok=True)
+        bak = backup_root / f"{dst.name}.uninstalled.{ts}"
         warn(f"卸载本地安装: {dst}")
         warn(f"备份到: {bak}")
         dst.rename(bak)
