@@ -39,7 +39,7 @@ mavis harness unmount ae-sdd
 
 ## 元数据
 
-- 生成时间：2026-06-26T09:50:12Z
+- 生成时间：2026-06-26T09:53:47Z
 - ae-sdd 版本：3.5.1
-- ae-sdd commit：151ef44
+- ae-sdd commit：d713296
 - 适配器：v0.2.0

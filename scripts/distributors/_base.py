@@ -152,17 +152,21 @@ class CopytreeDistributor(Distributor):
 
     # ── 备份 ────────────────────────────────────────────────────────────────
     def _backup_root(self) -> Path:
-        """备份根目录：~/.ae-sdd/backups/<agent>/。
+        """备份根目录：跟着被备份的 agent 安装走 → ~/.<agent>/ae-sdd-backups/。
 
-        与 skills 目录隔离，避免加载器把 .bak 误识别为独立技能（根治方案X）。
-        agent 维度（self.name）区分 claude/codex/zcode，避免跨 agent 备份混在一起。
+        语义：备份是"某 agent 安装的回滚副本"，应留在该 agent 域内（skills 同级），
+        而不是 skills 目录内（避免加载器把 .bak 误识别为独立技能），
+        也不混入 ae-sdd 工具配置区（~/.ae-sdd/）。
+
+        推导：target_path() = ~/.<agent>/skills/ae-sdd
+              → parent.parent = ~/.<agent>/  → 拼 ae-sdd-backups/
         """
-        return Path.home() / ".ae-sdd" / "backups" / self.name
+        return self.target_path().parent.parent / "ae-sdd-backups"
 
     def _backup_existing(self, dst: Path, ctx: DistributeContext) -> None:
-        """备份已有安装到 ~/.ae-sdd/backups/<agent>/<skill>.bak.<时间戳>。
+        """备份已有安装到 ~/.<agent>/ae-sdd-backups/<skill>.bak.<时间戳>。
 
-        🆕 根治方案X：备份目录从 skills/ 移到 ~/.ae-sdd/backups/，与 skills 隔离，
+        🆕 根治：备份目录从 skills/ 移到 skills 同级（agent 域内），与 skills 隔离，
         避免技能加载器把 .bak 当独立技能（迁自 install.py:backup_existing）。
         """
         if dst.exists():
