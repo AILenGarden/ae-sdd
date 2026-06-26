@@ -1,0 +1,63 @@
+# Plugin Registry 模板（🆕 v3.5.0）
+#
+# 用法：
+#   - 项目层：  拷贝到 <project>/.ae-sdd/plugins/registry.yaml  → ae-sdd plugin init --layer project
+#   - 全局层：  拷贝到 ~/.ae-sdd/plugins/registry.yaml           → ae-sdd plugin init --layer global
+#   - 仓库根：  写到 <ae-sdd-repo>/plugins/registry.yaml          （仅 ae-sdd 团队发布用，普通用户不要改）
+#
+# 完整 schema 见 source/standards/constraints/plugin-registry-spec.md
+# 设计文档见 source/docs/plans/2026-06-26-plugin-registry-design.md
+# 优先级链：L1 项目层 > L2 全局层 > L3 仓库根层 > L0 内置 fallback
+
+schema_version: 1
+description: |
+  <项目 / 用户 / 团队> 的 ae-sdd 插件注册表。
+  在此声明要覆盖的内置 SKILL/模板，或新增项目专属 SKILL/模板。
+
+plugins:
+  # ─────────────────────────────────────────────────────
+  # 示例 1：覆盖内置 CodingSKILL（替换整套 coding-skill.md）
+  # ─────────────────────────────────────────────────────
+  - name: my-coding-style
+    type: skill-override                       # 覆盖内置 SKILL
+    version: 0.1.0
+    author: "EDY"
+    description: 我的项目 CodingSKILL 定制（TDD + DDD 风格 + 重试幂等）
+    replaces: source/skills/phase2-coding/coding-skill.md   # 被覆盖的内置路径
+    path: ./my-coding/SKILL.md                              # 外挂 SKILL 路径（相对本注册表所在目录）
+    compatibility:
+      ae_sdd_version: ">=3.5.0"
+    tags: [team-style, tdd, ddd]
+
+  # ─────────────────────────────────────────────────────
+  # 示例 2：覆盖内置模板
+  # ─────────────────────────────────────────────────────
+  - name: my-codingplan-template
+    type: template-override
+    version: 0.1.0
+    description: 项目 CodingPlan 模板（加重试/幂等/可观测章节）
+    replaces: source/templates/coding/coding-plan-template.md
+    path: ./my-coding/coding-plan.md
+
+  # ─────────────────────────────────────────────────────
+  # 示例 3：新增 SKILL（项目专属）
+  # ─────────────────────────────────────────────────────
+  - name: finance-coding
+    type: skill-new                            # 新增 SKILL
+    version: 0.1.0
+    description: 财务领域 CodingSKILL（精度/舍入/对账）
+    provides: finance-coding-skill              # 新 SKILL 的引用 key（路由层用）
+    path: ./finance/SKILL.md
+    dependencies: [my-coding-style]             # 依赖示例 1（v3.5.0 仅声明，不强制校验）
+    tags: [finance]
+
+  # ─────────────────────────────────────────────────────
+  # 示例 4：用户全局层常用：覆盖内置 CodingSKILL 让所有项目生效
+  # （如放在 ~/.ae-sdd/plugins/registry.yaml）
+  # ─────────────────────────────────────────────────────
+  # - name: personal-coding-style
+  #   type: skill-override
+  #   version: 0.2.0
+  #   description: 我个人偏好的 Coding 风格（所有项目生效，项目层可覆盖）
+  #   replaces: source/skills/phase2-coding/coding-skill.md
+  #   path: ./personal-coding/SKILL.md

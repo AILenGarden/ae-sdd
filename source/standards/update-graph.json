@@ -155,6 +155,31 @@
         {"path": "README.md", "action": "第 5 行版本行含 v3.3.0 + PRD 级状态机描述", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-03", "UC-05"]
+    },
+    {
+      "id": "UG-12",
+      "name": "🆕 v3.5.0 Plugin Registry 三层注册表变更",
+      "trigger": [
+        "source/standards/constraints/plugin-registry-spec.md",
+        "source/templates/project-assets/plugin-registry-template.yaml",
+        "tools/lib/plugin_loader.py",
+        "tools/tests/test_plugin_loader.py",
+        "source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md",
+        "source/SKILL.md"
+      ],
+      "trigger_condition": "修改 plugin registry 体系任一文件（schema / 模板 / Python 实现 / 测试 / Loader SKILL / 主 SKILL §2.5 步骤）",
+      "affected": [
+        {"path": "source/standards/constraints/plugin-registry-spec.md", "action": "schema_version 与 plugin_loader.py SCHEMA_VERSION_SUPPORTED 一致；type 枚举与 VALID_TYPES 一致", "auto_checkable": true},
+        {"path": "source/templates/project-assets/plugin-registry-template.yaml", "action": "模板示例与 schema 字段一致；replaces/path 等示例可被 plugin_loader 解析", "auto_checkable": true},
+        {"path": "tools/lib/plugin_loader.py", "action": "SCHEMA_VERSION_SUPPORTED / VALID_TYPES / LAYER_* / 公开 API（resolve_skill/load_registry/list_plugins/validate/collect_all_layers/detect_conflicts）与 spec 对齐", "auto_checkable": true},
+        {"path": "tools/tests/test_plugin_loader.py", "action": "覆盖 spec §7 校验表每条 + 三层优先级合成 + 多层冲突", "auto_checkable": false},
+        {"path": "source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md", "action": "§1 三层定义 + §2 加载 SOP + §3 用户注册流程 与 plugin_loader.py 实现一致", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "§路由决策算法 step 2.5 调用 plugin_loader；frontmatter version 含 v3.5.0 描述", "auto_checkable": true},
+        {"path": "README.md", "action": "第 5 行版本行含 v3.5.0 + plugin registry 描述；新增 ## 🔌 SKILL 注册与外挂指南 章节", "auto_checkable": true},
+        {"path": "source/CHANGELOG/", "action": "新增 2026-06-26-plugin-registry.md changelog 文件", "auto_checkable": false},
+        {"path": "source/docs/plans/2026-06-26-plugin-registry-design.md", "action": "设计文档存在（仅参考，不强制同步实现细节）", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-05", "UC-06"]
     }
   ]
 }

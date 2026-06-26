@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.4.3（🆕 2026-06-26：Review Loop 公共协议 + 退出阈值统一 3 轮 + 删除"每3轮暂停问人" — 新建 `cross-cutting/review-loop-skill.md` 公共协议（退出条件 3 轮 + 循环上限 3 轮 + Plan-first）；story-review/dr-review/code-review/task-generate/proposal/story-generate 6 个节点退出阈值统一为"连续 3 轮无新增缺陷"；废弃 story-review/dr-review/SKILL.md 三处"每 3 轮暂停问人"（与退出条件矛盾，违反 Loop Engineering 自评估原则）；修复 task-generate TR 无循环上限的安全漏洞；🆕 2026-06-26：state.json events 操作日志 + flow_enums 枚举体系 — `tools/lib/flow_enums.py` 新增 FlowNode（6）/ FlowSkill（15）/ FlowEventType（8）三枚举 + FlowEvent 数据类 + 5 工厂函数；`tools/lib/state.py` 新增 `append_event` / `get_events` API，state.json schema v1→v2（append-only events 字段 + txnName 子任务标识）；`tools/tests/test_flow_enums.py` 32 个单元测试覆盖枚举/工厂/append/filter/向后兼容。注：业务调用方（router / state write / gate check / SKILL orchestrator）尚未接入 `append_event()`，本版本仅完成 schema + lib + 测试，调用方接入留待后续 PR；🆕 2026-06-25：门禁体系加固 — 4 份修订建议书全量采纳 P0-P3：P0 修复 3 处文档撒谎（L-1 `gate ra-required --fix` / L-2 `assets check/generate/audit/update` / L-3 G-RA CLI 自动调用）；P1 中段门禁 G-CODEPLAN-SRC 源码核对 + G-DOC-STORAGE 文档存放 + G-14 Story 一致性 + 入口关卡三道闸（`ae-sdd enter` + session.py + gate_intercept 产物-Phase 映射）+ F-1 假门禁修复（stop_check GATE 交叉验证）；P2 G-08 内容校验升级 + ra-generated phase（修复 B3-6）+ 审核点 token（`state confirm`）+ test-verifier 独立 session_id；P3 UC-06 文档-实现一致性自动检测。门禁 19→22，PHASE_FLOW 10→11，CLI 新增 `enter`/`state confirm`/`gate doc-storage`；v3.3.0：PRD 级状态机 + 流程级 compact — 新增 `ae-sdd-skill.md §1.1~1.6` PRD 级 state.json/state.md/summary.md 三件套 + PRD ID 命名规范 + 4 层 AND 完成判定闸（G-PRD-1~4）+ 🔍 人工审核点 5「PRD 完成确认」；`document-storage-skill.md §3.5` 落档完整 schema；HARNESS.md 新增 HS-7/HS-8 + UserPromptSubmit PRD payload；`templates/design/prd-summary-template.md` 新建；CLI 新增 `state prd-check-complete` / `state prd-complete` / `state prd-archive` / `runtime compact` 4 个子命令；v3.2.6：多 reviewer 默认编排框架；v3.2.5：脚本化补齐 4 个缺口 — `ae-sdd init` 挂载到 CLI、新增 `ae-sdd bump`、新建 CHANGELOG `_template.md`、`dev_sync.py` 增仓库根残留清理；v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节 + 健康度清单补齐 + README 门禁数 14→19 与子 SKILL 数 15→22；v3.2.3：Memory 强制门禁升级；v3.2.2：Toolset Layer P0 — `ae-sdd memory/db/git` 三组工程工具；v3.2.1：Coding 工具层加固 — G-CODE-1 + coding_authenticity_scan.py；v3.2.0：需求分析全维度对标 Coding — RAModel 12 维 + 16 道 RA-G 闸 + G-RA-1~4 + ra_authenticity_scan.py + G-13 六层追溯）
+> **版本：** v3.5.1（🆕 2026-06-26：三层 SKILL 注册表插件化体系 — 新增 `tools/lib/plugin_loader.py`（L1 项目层 / L2 全局层 / L3 仓库根层 三层优先级合成 + 内置 fallback，零外部依赖）+ 35 个单元测试；新建 `source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md`（加载协议 SOP + 用户注册流程引导）；新建 `source/standards/constraints/plugin-registry-spec.md`（schema 权威规范）+ `source/templates/project-assets/plugin-registry-template.yaml`（三层通用模板）；路由决策算法新增 step 2.5「🔌 SKILL 注册表加载」；`plugins/_example-coding-style/` scaffolding 示例（仓库根层不自动加载）。v3.5.1 已挂载 `plugin` 子命令（list/validate/trace/init，11 个 CLI 单测覆盖，详见 ## 🔌 SKILL 注册与外挂指南 章节）。🆕 2026-06-26：Review Loop 公共协议 + 退出阈值统一 3 轮 + 删除"每3轮暂停问人" — 新建 `cross-cutting/review-loop-skill.md` 公共协议（退出条件 3 轮 + 循环上限 3 轮 + Plan-first）；story-review/dr-review/code-review/task-generate/proposal/story-generate 6 个节点退出阈值统一为"连续 3 轮无新增缺陷"；废弃 story-review/dr-review/SKILL.md 三处"每 3 轮暂停问人"（与退出条件矛盾，违反 Loop Engineering 自评估原则）；修复 task-generate TR 无循环上限的安全漏洞；🆕 2026-06-26：state.json events 操作日志 + flow_enums 枚举体系 — `tools/lib/flow_enums.py` 新增 FlowNode（6）/ FlowSkill（15）/ FlowEventType（8）三枚举 + FlowEvent 数据类 + 5 工厂函数；`tools/lib/state.py` 新增 `append_event` / `get_events` API，state.json schema v1→v2（append-only events 字段 + txnName 子任务标识）；`tools/tests/test_flow_enums.py` 32 个单元测试覆盖枚举/工厂/append/filter/向后兼容。注：业务调用方（router / state write / gate check / SKILL orchestrator）尚未接入 `append_event()`，本版本仅完成 schema + lib + 测试，调用方接入留待后续 PR；🆕 2026-06-25：门禁体系加固 — 4 份修订建议书全量采纳 P0-P3：P0 修复 3 处文档撒谎（L-1 `gate ra-required --fix` / L-2 `assets check/generate/audit/update` / L-3 G-RA CLI 自动调用）；P1 中段门禁 G-CODEPLAN-SRC 源码核对 + G-DOC-STORAGE 文档存放 + G-14 Story 一致性 + 入口关卡三道闸（`ae-sdd enter` + session.py + gate_intercept 产物-Phase 映射）+ F-1 假门禁修复（stop_check GATE 交叉验证）；P2 G-08 内容校验升级 + ra-generated phase（修复 B3-6）+ 审核点 token（`state confirm`）+ test-verifier 独立 session_id；P3 UC-06 文档-实现一致性自动检测。门禁 19→22，PHASE_FLOW 10→11，CLI 新增 `enter`/`state confirm`/`gate doc-storage`；v3.3.0：PRD 级状态机 + 流程级 compact — 新增 `ae-sdd-skill.md §1.1~1.6` PRD 级 state.json/state.md/summary.md 三件套 + PRD ID 命名规范 + 4 层 AND 完成判定闸（G-PRD-1~4）+ 🔍 人工审核点 5「PRD 完成确认」；`document-storage-skill.md §3.5` 落档完整 schema；HARNESS.md 新增 HS-7/HS-8 + UserPromptSubmit PRD payload；`templates/design/prd-summary-template.md` 新建；CLI 新增 `state prd-check-complete` / `state prd-complete` / `state prd-archive` / `runtime compact` 4 个子命令；v3.2.6：多 reviewer 默认编排框架；v3.2.5：脚本化补齐 4 个缺口 — `ae-sdd init` 挂载到 CLI、新增 `ae-sdd bump`、新建 CHANGELOG `_template.md`、`dev_sync.py` 增仓库根残留清理；v3.2.4：ae-sdd-update-skill 新增「项目结构与设计说明」章节 + 健康度清单补齐 + README 门禁数 14→19 与子 SKILL 数 15→22；v3.2.3：Memory 强制门禁升级；v3.2.2：Toolset Layer P0 — `ae-sdd memory/db/git` 三组工程工具；v3.2.1：Coding 工具层加固 — G-CODE-1 + coding_authenticity_scan.py；v3.2.0：需求分析全维度对标 Coding — RAModel 12 维 + 16 道 RA-G 闸 + G-RA-1~4 + ra_authenticity_scan.py + G-13 六层追溯）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -132,6 +132,122 @@ bash scripts/dev-sync.sh --watch
 
 ---
 
+## 🔌 SKILL 注册与外挂指南（🆕 v3.5.0）
+
+> **本节专门讲"如何给你的项目或个人定制 CodingSKILL / 模板"，不污染 ae-sdd 母版。**
+> 与"贡献给 ae-sdd 母版"（Q5）是两条独立路径。
+
+### 1. 三层注册表是什么
+
+ae-sdd v3.5.0 起，**任何内置 SKILL / 模板都可以被外挂覆盖**。注册表分三层：
+
+| 层 | 路径 | 适用场景 | git |
+|---|------|---------|-----|
+| **L1 项目层** | `<project>/.ae-sdd/plugins/registry.yaml` | 项目团队约定（项目 owner 用） | ❌ |
+| **L2 用户全局层** | `~/.ae-sdd/plugins/registry.yaml` | 跨项目的个人偏好 | ❌ |
+| **L3 仓库根层** | `<ae-sdd-master>/plugins/registry.yaml` | ae-sdd 官方扩展（仅维护者） | ✅ |
+
+**优先级：** L1 > L2 > L3 > 内置 fallback。三层都未声明 → 行为与 v3.4.x 完全一致（零破坏）。
+
+### 2. 注册流程（5 步）
+
+#### Step 1：选层
+
+- 项目 owner 定制 → **L1**（项目层，推荐）
+- 个人跨项目偏好 → **L2**（全局层）
+- 你是 ae-sdd 维护者 → L3（仓库根层）
+
+#### Step 2：生成注册表
+
+拷贝模板到目标位置：
+
+```bash
+# 项目层
+cp source/templates/project-assets/plugin-registry-template.yaml \
+   <your-project>/.ae-sdd/plugins/registry.yaml
+
+# 或全局层
+cp source/templates/project-assets/plugin-registry-template.yaml \
+   ~/.ae-sdd/plugins/registry.yaml
+```
+
+#### Step 3：填字段 + 写外挂 SKILL
+
+示例（L1 项目层）：
+
+```yaml
+# <your-project>/.ae-sdd/plugins/registry.yaml
+schema_version: 1
+description: my project's TDD + DDD coding
+
+plugins:
+  - name: my-coding
+    type: skill-override               # 覆盖内置 SKILL
+    version: 0.1.0
+    description: my TDD + DDD style
+    replaces: source/skills/phase2-coding/coding-skill.md
+    path: ./my-coding/SKILL.md         # 相对 registry 所在目录
+    compatibility:
+      ae_sdd_version: ">=3.5.0"
+    tags: [team-style, tdd, ddd]
+```
+
+```markdown
+<!-- <your-project>/.ae-sdd/plugins/my-coding/SKILL.md -->
+---
+name: my-coding
+description: my project's TDD + DDD coding
+---
+
+# My Coding (TDD + DDD)
+
+（你的团队约定）
+```
+
+#### Step 4：验证
+
+```bash
+ae-sdd plugin validate
+# 跑三层注册表 + 每个 plugin sanity check
+
+ae-sdd plugin trace coding-skill.md
+# 看该 SKILL 实际从哪层加载
+```
+
+#### Step 5：测试实际流程
+
+- 用户说"开始 Coding" → 触发 coding-skill 加载
+- Agent 按 `ae-sdd-plugin-loader-skill.md` 协议加载 → 命中 L1 → 读外挂 SKILL
+- 流程继续
+
+### 3. 完整 schema / 设计文档
+
+- **schema 权威**：[`source/standards/constraints/plugin-registry-spec.md`](source/standards/constraints/plugin-registry-spec.md)
+- **设计文档**：[`source/docs/plans/2026-06-26-plugin-registry-design.md`](source/docs/plans/2026-06-26-plugin-registry-design.md)
+- **加载协议 SKILL**：[`source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md`](source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md)
+- **模板**：[`source/templates/project-assets/plugin-registry-template.yaml`](source/templates/project-assets/plugin-registry-template.yaml)
+- **示例 scaffolding**：[`plugins/_example-coding-style/`](plugins/_example-coding-style/)（仓库根层，不自动加载）
+
+### 4. CLI 工具（v3.5.0 实现）
+
+```bash
+# 查看已注册插件（三层合并 + 冲突检测）
+ae-sdd plugin list
+
+# 校验三层注册表
+ae-sdd plugin validate
+
+# 查看某 SKILL 的加载路径
+ae-sdd plugin trace <skill-key>
+
+# 生成新注册表
+ae-sdd plugin init --layer {project|global}
+```
+
+> **CLI 状态：** v3.5.1 已完成挂载 — `ae-sdd plugin list/validate/trace/init` 4 个子命令可用，11 个 CLI 单元测试全过（`tools/tests/test_plugin_cli.py`）。Python 模块 `tools/lib/plugin_loader.py` 完成于 v3.5.0（35 个单元测试全过）。
+
+---
+
 ## ❓ 常见问题
 
 ### Q1: 我装到本地后想卸载怎么办？
@@ -166,8 +282,19 @@ bash scripts/dev-sync.sh --uninstall
 4. 跑 `bash scripts/dev-sync.sh` 验证
 5. 提 PR 到 `main` 分支
 
+> **Q5 是"贡献给 ae-sdd 母版"。** 如果你是想**给你的项目**定制 CodingSKILL，**不要**走这条路径——请看上面的 [🔌 SKILL 注册与外挂指南](#-skill-注册与外挂指南v350) 节。
+
 ### Q6（🆕 v3.1）：触发 `/ae-sdd` 后被强制走 G-00 / 路由判定 / 派 sub-agent 怎么办？
 v3.1 起 SKILL 入口段加「🔴 第一动作（硬前置）」声明：收到 `/ae-sdd` 触发后必须先跑 G-00、跑路由判定、必要时派 sub-agent，禁止直接动手改代码。如确认是小修小补（单文件单改），用户**显式说** `/ae-sdd-quick` 或 `走快速通道` 可豁免完整 7 步路由，但仍需落档。详见 [v3.1 纪律加固 CHANGELOG](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)。
+
+### Q7（🆕 v3.5.0）：项目团队 Coding 风格不同，能不能给项目定制自己的 CodingSKILL？
+**可以。** v3.5.0 起支持三层 SKILL 注册表插件化。详见上面的 [🔌 SKILL 注册与外挂指南](#-skill-注册与外挂指南v350) 节。简单三步：
+
+1. 拷贝模板到 `<project>/.ae-sdd/plugins/registry.yaml`
+2. 写你的 CodingSKILL 文档
+3. 跑 `ae-sdd plugin validate` 验证
+
+零 PR、零污染、零等待。
 
 ---
 

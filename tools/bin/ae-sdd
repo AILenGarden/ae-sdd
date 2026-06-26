@@ -16,6 +16,11 @@ ae-sdd — ae-sdd CLI 入口
 🆕 v3.2.5 脚本化补齐（2026-06-25）：
   - bump : 同步三处版本号（SKILL.md/paths.py/README.md:5，UC-01 操作侧）
   - init : 项目实例化（挂载 scripts/init.py，补 UC-03 历史遗留 warn）
+🆕 v3.5.1 plugin CLI 挂载（2026-06-26）：
+  - plugin list                  : 列三层注册表所有已注册插件 + 冲突检测
+  - plugin validate              : 校验三层注册表 + 每个 plugin sanity check
+  - plugin trace <target>        : 查某 SKILL 的加载路径（replaces 路径 / provides key）
+  - plugin init --layer {project|global} : 从模板生成新注册表
 
 辅助：
   - version  : 输出版本
@@ -29,8 +34,12 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd gate ra-required [--project <key>]   # 跑 G-RA-1~4（SKILL.md §🛡️ G-RA 契约）
     ae-sdd gate coding-required [--project <dir>] # 跑 G-CODE-1（Coding 反模式扫描）
     ae-sdd update-check [--only UC-01]          # 更新闭环检查（v3.2）
-    ae-sdd bump 3.2.5                            # 同步三处版本号（v3.2.5）
+    ae-sdd bump 3.5.1                            # 同步三处版本号（v3.2.5）
     ae-sdd init <project-dir> <project-key>      # 项目实例化（v3.2.5）
+    ae-sdd plugin list                           # 列出已注册插件（v3.5.1）
+    ae-sdd plugin validate                       # 校验三层注册表（v3.5.1）
+    ae-sdd plugin trace coding-skill.md          # 查某 SKILL 加载路径（v3.5.1）
+    ae-sdd plugin init --layer project           # 生成项目层注册表（v3.5.1）
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health
@@ -51,7 +60,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, prompt_inject, session, state, stop_check, update_graph  # noqa: E402
+from lib import assets_index, classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, session, state, stop_check, update_graph  # noqa: E402
 
 
 def cmd_version(args, parser):
@@ -664,6 +673,163 @@ def cmd_enter(args, parser):
     output.info(f"   storyId:    {s.get('storyId', '') or '（项目级，无 Story）'}")
     output.info(f"   写入: {session_mod.session_path(ade_sdd, story_id)}")
     output.info("   关卡2/3 将校验此凭证；未领凭证的流程产物落地/代码改动将被拦截。")
+    return 0
+
+
+# === 🆕 v3.5.1 plugin CLI（plugin_loader 用户入口） ===
+
+def cmd_plugin_list(args, parser):
+    """plugin list — 列出三层注册表所有已注册插件 + 冲突检测
+
+    🆕 v3.5.1：CLI 挂载，闭环 plugin_loader.py 的用户入口。
+    """
+    ade_sdd = paths.locate_project_ae_sdd()
+    master = paths.locate_master_source()
+    result = plugin_loader.list_plugins(ade_sdd, master)
+    if args.json:
+        output.emit(result, as_json=True)
+        return 0
+
+    # 格式化输出：按层分组
+    for rl in result["layers"]:
+        label = rl["layerLabel"]
+        exists = rl["exists"]
+        if not exists:
+            output.info(f"  ⊘ {label}: 注册表不存在（跳过）")
+            continue
+        n = len(rl["plugins"])
+        if n == 0:
+            output.info(f"  ∅ {label} ({rl['registryPath']}): 0 个插件")
+            continue
+        output.info(f"  📁 {label} ({rl['registryPath']}): {n} 个插件")
+        for p in rl["plugins"]:
+            kind = "覆盖" if p.get("replaces") else "新增"
+            target = p.get("replaces") or p.get("provides")
+            output.info(f"     ✅ {p['name']} v{p['version']} → {kind} {target}")
+
+    if result["totalConflicts"] > 0:
+        output.info("")
+        output.warn(f"  ⚠️  {result['totalConflicts']} 个多层冲突（按 L1 > L2 > L3 优先级选胜者）：")
+        for c in result["conflicts"]:
+            losers = ", ".join(f"{l['name']}({l['layer']})" for l in c["losers"])
+            output.info(f"     - target '{c['target']}': {c['winner']}({c['winnerLayer']}) 胜出 vs [{losers}]")
+
+    output.info("")
+    output.ok(f"共 {result['totalPlugins']} 个插件，{result['totalConflicts']} 个冲突")
+    return 0
+
+
+def cmd_plugin_validate(args, parser):
+    """plugin validate — 校验三层注册表 + 每个 plugin sanity check
+
+    🆕 v3.5.1：CLI 挂载，跑 plugin_loader.validate()。
+    """
+    ade_sdd = paths.locate_project_ae_sdd()
+    master = paths.locate_master_source()
+    result = plugin_loader.validate(ade_sdd, master)
+    if args.json:
+        output.emit(result, as_json=True)
+        return 0 if result["valid"] else 1
+
+    # 错误（必输出）
+    for e in result["errors"]:
+        output.err(f"  ❌ {e}")
+    # 警告（不阻断）
+    for w in result["warnings"]:
+        output.warn(f"  ⚠ {w}")
+
+    output.info("")
+    if result["valid"]:
+        output.ok(f"✅ 三层注册表校验通过：{result['totalPlugins']} 个插件，{result['totalConflicts']} 个冲突（warn）")
+        return 0
+    else:
+        output.err(f"❌ 三层注册表校验未通过：{len(result['errors'])} 个错误，{len(result['warnings'])} 个警告")
+        output.info("   修复 errors 后重跑 `ae-sdd plugin validate`")
+        return 1
+
+
+def cmd_plugin_trace(args, parser):
+    """plugin trace <target> — 查某 SKILL 的加载路径 + 命中层 + 冲突告警
+
+    🆕 v3.5.1：CLI 挂载，跑 plugin_loader.resolve_skill()。
+    target 可以是：replaces 内置路径（如 source/skills/phase2-coding/coding-skill.md）
+                 或 provides key（如 finance-coding-skill）。
+    """
+    target = args.target
+    if not target:
+        output.err("必须提供 <target>（replaces 内置路径或 provides key）")
+        return 1
+
+    ade_sdd = paths.locate_project_ae_sdd()
+    master = paths.locate_master_source()
+    result = plugin_loader.resolve_skill(target, ade_sdd, master)
+
+    if args.json:
+        output.emit(result.to_dict(), as_json=True)
+        return 0
+
+    output.info(f"🔍 trace: {target}")
+    if result.plugin:
+        p = result.plugin
+        output.ok(f"  命中 {result.layer_label}: {p.name} v{p.version}")
+        output.info(f"  resolved: {result.resolved_path}")
+    else:
+        output.info(f"  fallback 到 {result.layer_label}（行为与 v3.4.x 一致）")
+
+    if result.conflicts:
+        output.info("")
+        for c in result.conflicts:
+            losers = ", ".join(f"{p.name}({p.layer_label})" for p in c.losers)
+            output.warn(f"  ⚠ 多层冲突：{c.winner.name}({c.winner.layer_label}) 胜出 vs [{losers}]")
+
+    for w in result.warnings:
+        output.info(f"  ℹ️  {w}")
+    return 0
+
+
+def cmd_plugin_init(args, parser):
+    """plugin init --layer {project|global} — 从模板生成新注册表
+
+    🆕 v3.5.1：CLI 挂载，从 source/templates/project-assets/plugin-registry-template.yaml
+    拷贝到目标位置（项目层 = <project>/.ae-sdd/plugins/registry.yaml，
+                  全局层 = ~/.ae-sdd/plugins/registry.yaml）。
+    """
+    layer = args.layer
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    template = repo_root / "source" / "templates" / "project-assets" / "plugin-registry-template.yaml"
+
+    if not template.is_file():
+        output.err(f"模板不存在: {template}")
+        return 1
+
+    if layer == "project":
+        ade_sdd = paths.locate_project_ae_sdd()
+        if ade_sdd is None:
+            output.err("未找到 .ae-sdd/ 目录（请先跑 `ae-sdd init <project-dir> <project-key>`）")
+            return 1
+        target = ade_sdd / "plugins" / "registry.yaml"
+        scope = "L1 项目层"
+    elif layer == "global":
+        target = Path.home() / ".ae-sdd" / "plugins" / "registry.yaml"
+        scope = "L2 用户全局层"
+    else:
+        output.err(f"未知 layer: {layer}（仅支持 project / global）")
+        return 1
+
+    if target.exists() and not args.force:
+        output.warn(f"已存在: {target}")
+        output.info("   加 --force 覆盖")
+        return 1
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    output.ok(f"✅ 已生成 ({scope}): {target}")
+    output.info("")
+    output.info("下一步：")
+    output.info("  1. 编辑这个文件，在 plugins 列表下添加你的插件")
+    output.info("  2. 在 path 指向的位置写你的 SKILL 文档")
+    output.info("  3. 跑 `ae-sdd plugin validate` 校验")
+    output.info("  4. 跑 `ae-sdd plugin trace <replaces 路径>` 验证加载路径")
     return 0
 
 
@@ -2018,6 +2184,30 @@ def main() -> int:
                          help="projectKey（缺省从 .ae-sdd/config.yaml 读）")
     p_enter.add_argument("--story", default="", help="Story ID（项目级 enter 可省略）")
     p_enter.set_defaults(func=cmd_enter)
+
+    # plugin（🆕 v3.5.1 — plugin_loader CLI 挂载，闭环 SKILL 注册表的用户入口）
+    p_plugin = sub.add_parser("plugin", help="Plugin Registry 管理（v3.5.1）", parents=[common])
+    plugin_sub = p_plugin.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    p_plugin_list = plugin_sub.add_parser("list", help="列出所有已注册插件（合并三层 + 冲突检测）",
+                                          parents=[common])
+    p_plugin_list.set_defaults(func=cmd_plugin_list)
+
+    p_plugin_validate = plugin_sub.add_parser("validate", help="校验三层注册表 + 每个 plugin sanity check",
+                                                parents=[common])
+    p_plugin_validate.set_defaults(func=cmd_plugin_validate)
+
+    p_plugin_trace = plugin_sub.add_parser("trace", help="查某 SKILL 的加载路径（replaces 内置路径或 provides key）",
+                                             parents=[common])
+    p_plugin_trace.add_argument("target", help="replaces 内置路径（如 source/skills/phase2-coding/coding-skill.md）或 provides key")
+    p_plugin_trace.set_defaults(func=cmd_plugin_trace)
+
+    p_plugin_init = plugin_sub.add_parser("init", help="从模板生成新注册表（项目层或全局层）",
+                                            parents=[common])
+    p_plugin_init.add_argument("--layer", choices=["project", "global"], required=True,
+                                help="注册表所在层：project = <project>/.ae-sdd/plugins/registry.yaml；global = ~/.ae-sdd/plugins/registry.yaml")
+    p_plugin_init.add_argument("--force", action="store_true", help="覆盖已存在的注册表")
+    p_plugin_init.set_defaults(func=cmd_plugin_init)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):

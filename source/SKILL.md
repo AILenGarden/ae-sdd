@@ -14,7 +14,9 @@ description: |
   🆕 v3.4.0：门禁体系加固（4 份建议书全量采纳 P0-P3）——P0 修复 3 处文档撒谎（L-1 gate ra-required --fix / L-2 assets check/generate/audit/update / L-3 G-RA CLI 自动调用）；P1 中段门禁 G-CODEPLAN-SRC 源码核对 + G-DOC-STORAGE 文档存放 + G-14 Story 一致性 + 入口关卡三道闸（enter/session.py/gate_intercept 产物-Phase 映射）+ F-1 假门禁修复（stop_check GATE 交叉验证）；P2 G-08 内容校验升级 + ra-generated phase（修复 B3-6）+ 审核点 token（state confirm）+ test-verifier 独立 session_id；P3 UC-06 文档-实现一致性自动检测。门禁 19→22，PHASE_FLOW 10→11，CLI 新增 enter/state confirm/gate doc-storage。
   🆕 v3.4.2：state.json events 操作日志 + flow_enums 枚举体系——`tools/lib/flow_enums.py` 新增 FlowNode（6）/ FlowSkill（15）/ FlowEventType（8）三枚举 + FlowEvent 数据类 + 5 工厂函数；`tools/lib/state.py` 新增 `append_event()` / `get_events()` API，state.json schema v1→v2（append-only events 字段 + txnName 子任务标识）；`tools/tests/test_flow_enums.py` 32 个单元测试。注：本版本仅完成 schema + lib + 测试，业务调用方（router / state write / gate check / SKILL orchestrator）尚未接入 `append_event()`，留待后续 PR 闭环。
   🆕 v3.4.3：Review Loop 公共协议 + 退出阈值统一 3 轮 + 删除"每3轮暂停问人"——新建 `cross-cutting/review-loop-skill.md` 公共协议（退出条件 3 轮 + 循环上限 3 轮 + Plan-first）；story-review/dr-review/code-review/task-generate/proposal/story-generate 6 个节点退出阈值统一为"连续 3 轮无新增缺陷"；废弃 story-review/dr-review/SKILL.md 三处"每 3 轮暂停问人"（与退出条件矛盾，违反 Loop Engineering 自评估原则）；修复 task-generate TR 无循环上限的安全漏洞（加 3 轮上限 + 升级用户）；agent-orchestration §8.4.6 加 A-E 术语澄清。
-version: 3.4.3
+  🆕 v3.5.0：三层 SKILL 注册表插件化体系——新增 `tools/lib/plugin_loader.py`（L1 项目层 / L2 全局层 / L3 仓库根层 三层优先级合成 + 内置 fallback，零外部依赖）+ 35 个单元测试；新建 `source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md`（加载协议 SOP + 用户注册流程引导）；新建 `source/standards/constraints/plugin-registry-spec.md`（schema 权威规范）+ `source/templates/project-assets/plugin-registry-template.yaml`（三层通用模板）；路由决策算法新增 step 2.5「🔌 SKILL 注册表加载」，加载 SKILL 前按三层优先级决定实际路径。CLI `plugin` 子命令（list/validate/trace/init）留待 v3.5.1 挂载。
+  🆕 v3.5.1：plugin CLI 挂载闭环——`tools/bin/ae-sdd` 新增 `plugin` 子命令（list / validate / trace / init --layer {project|global}）+ 11 个 CLI 单元测试覆盖（`tools/tests/test_plugin_cli.py`，隔离 HOME/USERPROFILE 避免污染用户配置）；修 `tools/lib/plugin_loader.py:plugin_registry_path_master` 路径解析（locate_master_source 返回 source/，L3 注册表按设计在仓库根 plugins/）。CLI 契约闭环，UC-03 不再 warn plugin 命令缺失。
+version: 3.5.1
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -555,6 +557,17 @@ ae-sdd gates check --only G-14
    ├─ 命中问题场景 → 路由到 proposal-skill.md（带渠道标识）
    ├─ 命中其他场景 → 路由到对应 SKILL
    └─ 多个命中 → 询问用户优先级
+   ↓
+2.5 【🆕 v3.5.0 🔌 SKILL 注册表加载】(plugin_loader 介入)
+   ├─ 加载目标 SKILL = S（如 coding-skill.md）
+   ├─ 调用 tools/lib/plugin_loader.py 的 resolve_skill(S, ade_sdd, master)：
+   │   ├─ 收集三层注册表（L1 项目层 / L2 全局层 / L3 仓库根层）
+   │   ├─ 按 L1 > L2 > L3 > L0 内置 fallback 优先级合成
+   │   ├─ 命中某层 → 用该层 path 指向的外挂 SKILL
+   │   └─ 三层都未命中 → fallback 到内置 source/skills/... 路径
+   ├─ 多层冲突时按优先级选胜者 + 🟡 警告（不阻断）
+   ├─ 详细 SOP 见 [`ae-sdd-plugin-loader-skill.md`](../skills/cross-cutting/ae-sdd-plugin-loader-skill.md)
+   └─ 整步对上层透明：路由算法不感知插件存在，仅是"加载路径"被替换
    ↓
 3. 加载对应 SKILL（从 .claude/skills 加载，或 Read 文件）
    ↓
