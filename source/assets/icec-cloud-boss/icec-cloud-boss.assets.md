@@ -7,7 +7,7 @@ description: icec-cloud-boss 项目资产实例 — 基于 Explore Agent 2026-06
 
 > **本文件是 `project-assets-schema.md` 的首份实例**，按 schema 12 节结构 + 附录 JSON 填写。
 >
-> **相对路径基准：** 本文件位于 `skills/ae-sdd/project-assets/icec-cloud-boss/`，引用同目录下 schema/template 用 `../../strategies/...`。
+> **相对路径基准：** 本文件位于 `assets/icec-cloud-boss/`，引用 schema 用 `../../standards/project-assets/project-assets-schema.md`，引用 template 用 `../../standards/project-assets/project-assets-template.md`。
 >
 > **探查时间：** 2026-06-04
 > **探查 Agent：** Workflow 一轮 Explore Agent

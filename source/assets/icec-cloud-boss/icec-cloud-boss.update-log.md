@@ -1,6 +1,6 @@
 ---
 name: icec-cloud-boss-project-assets-update-log
-description: icec-cloud-boss 项目资产更新日志 — 记录每次生成/更新/审计的条目。位于 project-assets/icec-cloud-boss/icec-cloud-boss.update-log.md，配套 icec-cloud-boss.assets.md。
+description: icec-cloud-boss 项目资产更新日志 — 记录每次生成/更新/审计的条目。位于 assets/icec-cloud-boss/icec-cloud-boss.update-log.md，配套 icec-cloud-boss.assets.md。
 ---
 
 # icec-cloud-boss Project Assets Update Log — 项目资产更新日志
@@ -10,7 +10,7 @@ description: icec-cloud-boss 项目资产更新日志 — 记录每次生成/更
 > 2. 缺口进度可视化（已补/待补/降级）
 > 3. 审计依据（每月双源一致性审计的输入）
 >
-> **配套 SKILL：** [`../../project-assets-update-skill.md`](../../project-assets-update-skill.md) — 定义何时/如何写本日志。
+> **配套 SKILL：** [`../../skills/cross-cutting/project-assets-update-skill.md`](../../skills/cross-cutting/project-assets-update-skill.md) — 定义何时/如何写本日志。
 >
 > **模板来源：** [`../../templates/project-assets/project-assets-update-log-template.md`](../../templates/project-assets/project-assets-update-log-template.md)
 >
@@ -25,7 +25,7 @@ description: icec-cloud-boss 项目资产更新日志 — 记录每次生成/更
 
 | 字段 | 值 |
 |------|---|
-| 项目资产路径 | `skills/ae-sdd/project-assets/icec-cloud-boss/icec-cloud-boss.assets.md` |
+| 项目资产路径 | `assets/icec-cloud-boss/icec-cloud-boss.assets.md` |
 | 维护人 | 架构组 + 各域负责人（boss-user：{owner1} / life-cs：{owner2} / life-im：{owner3} / ...） |
 | 创建日期 | 2026-06-04 |
 | 当前 lastAuditedAt | 2026-06-24 |
