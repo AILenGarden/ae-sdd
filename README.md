@@ -280,7 +280,7 @@ bash scripts/dev-sync.sh --uninstall
 2. 在 `source/skills/<phase>/` 下加你的 SKILL.md
 3. 在 `source/SKILL.md` 路由表里注册触发词
 4. 跑 `bash scripts/dev-sync.sh` 验证
-5. 提 PR 到 `main` 分支
+5. 提 PR 到 `master` 分支（ae-sdd 默认分支）
 
 > **Q5 是"贡献给 ae-sdd 母版"。** 如果你是想**给你的项目**定制 CodingSKILL，**不要**走这条路径——请看上面的 [🔌 SKILL 注册与外挂指南](#-skill-注册与外挂指南v350) 节。
 
