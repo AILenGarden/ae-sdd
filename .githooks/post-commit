@@ -53,11 +53,15 @@ if [ -z "$PYTHON" ]; then
 fi
 
 # ── 4. build_dist ────────────────────────────────────────────
+# 注：build_dist.py 不支持 --quiet 参数（只有 --source/--dist），直接跑即可
 if [ -f "$AE_SDD/scripts/build_dist.py" ]; then
-    if "$PYTHON" "$AE_SDD/scripts/build_dist.py" --quiet 2>&1 | tail -20; then
+    BUILD_OUT=$("$PYTHON" "$AE_SDD/scripts/build_dist.py" 2>&1)
+    BUILD_RC=$?
+    echo "$BUILD_OUT" | tail -20
+    if [ $BUILD_RC -eq 0 ]; then
         echo "✅ build_dist: OK"
     else
-        echo "⚠️  build_dist: 失败（commit 已落库，未回滚）"
+        echo "⚠️  build_dist: 失败 (rc=$BUILD_RC)（commit 已落库，未回滚）"
     fi
 else
     echo "⏭️  build_dist.py 不存在，跳过"
@@ -101,25 +105,25 @@ else
 fi
 
 # ── 7. mavis remount ─────────────────────────────────────────
-if [ -d "$AE_SDD/harness" ]; then
-    if command -v mavis >/dev/null 2>&1; then
-        MAVIS_RUN="mavis"
-    elif [ -f "$HOME/.mavis/bin/mavis.cmd" ]; then
-        # Windows: mavis 是 .cmd，通过 cmd.exe 调用
-        MAVIS_RUN='cmd.exe //c "mavis"'
+# 探测 mavis 命令路径（Windows 下 mavis 通常是 .cmd/.bat，需经 cmd.exe 调用）
+MAVIS_RUN=()
+if command -v mavis >/dev/null 2>&1; then
+    MAVIS_RUN=(mavis)
+elif [ -f "$HOME/.mavis/bin/mavis.cmd" ]; then
+    MAVIS_RUN=(cmd.exe //c "$HOME/.mavis/bin/mavis.cmd")
+elif [ -f "$HOME/.mavis/bin/mavis.bat" ]; then
+    MAVIS_RUN=(cmd.exe //c "$HOME/.mavis/bin/mavis.bat")
+fi
+
+if [ -d "$AE_SDD/harness" ] && [ ${#MAVIS_RUN[@]} -gt 0 ]; then
+    "${MAVIS_RUN[@]}" harness unmount d-item-ae-sdd-harness >/dev/null 2>&1 || true
+    if "${MAVIS_RUN[@]}" harness mount "$AE_SDD/harness" 2>&1 | tail -5; then
+        echo "✅ mavis harness remount: OK"
     else
-        MAVIS_RUN=""
+        echo "⚠️  mavis harness remount: 失败（产物已写入，需手动 mount）"
     fi
-    if [ -n "$MAVIS_RUN" ]; then
-        "$MAVIS_RUN" harness unmount d-item-ae-sdd-harness >/dev/null 2>&1 || true
-        if "$MAVIS_RUN" harness mount "$AE_SDD/harness" 2>&1 | tail -5; then
-            echo "✅ mavis harness remount: OK"
-        else
-            echo "⚠️  mavis harness remount: 失败（产物已写入，需手动 mount）"
-        fi
-    else
-        echo "⏭️  mavis 未安装，跳过 remount（产物已写入 harness/.harness/agent.md）"
-    fi
+elif [ -d "$AE_SDD/harness" ]; then
+    echo "⏭️  mavis 未安装，跳过 remount（产物已写入 harness/.harness/agent.md）"
 else
     echo "⏭️  harness/ 目录不存在，跳过 remount"
 fi
