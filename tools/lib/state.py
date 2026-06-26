@@ -1,17 +1,39 @@
 """
 state.py — ae-sdd 项目状态管理
 
-state.json 结构（v1）：
+state.json 结构（v2）：
+
+Story/Task/Plan 级（txn 级）：
 {
   "version": "1",
   "projectKey": "...",
-  "phase": "initialized" | "dr-generated" | "story-generated" | ...,
+  "phase": "initialized" | "dr-generated" | ...,
   "currentStory": "STORY-001" | null,
   "currentTask": "TASK-001" | null,
   "history": [
     { "phase": "...", "timestamp": "...", "by": "..." }
+  ],
+  "events": [               # 🆕 v3.4.1 — append-only 流程操作日志
+    {
+      "seq": 1,
+      "ts": "2026-06-26T10:00:00Z",
+      "event": "routed-to",       # FlowEventType.value
+      "node": "RA",               # FlowNode.value
+      "by": "ae-sdd",
+      "skill": "requirement-analysis-skill",   # FlowSkill.value（可选）
+      "txnName": "STORY-001-BE",  # 子任务标识（可选，PRD 级 state 用）
+      "reason": "...",            # 路由依据（可选）
+      ...
+    }
   ]
 }
+
+PRD 级（.auto-engineering/{PRD-ID}/state.json）：
+同上结构，events 中用 txnName 字段区分不同子任务的事件，
+PRD 自身事件 txnName=null。
+
+events 字段由 flow_enums.FlowEvent 定义结构，
+所有字符串值沿用 FlowNode / FlowSkill / FlowEventType 枚举的 .value。
 """
 from __future__ import annotations
 
@@ -20,6 +42,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from lib.flow_enums import FlowEvent, FlowEventType, FlowNode, FlowSkill  # noqa: F401
 
 # 允许的 phase 流转（v1 简单版）
 # 🆕 v3.4.0：新增 ra-generated（RA 需求分析阶段，在 initialized → dr-generated 之间）
@@ -126,3 +150,68 @@ def next_step_suggestion(state: dict) -> dict:
         "action": action,
         "skill": skill,
     }
+
+
+# ─── 🆕 v3.4.1 events 操作日志 ───────────────────────────────────────────────
+
+
+def _now_ts() -> str:
+    """返回当前 UTC 时间的 ISO 8601 字符串，格式 2026-06-26T10:00:00Z。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _next_seq(state: dict) -> int:
+    """返回 events 列表下一个 seq 编号（从 1 开始，自动自增）。"""
+    events = state.get("events", [])
+    if not events:
+        return 1
+    return max(e.get("seq", 0) for e in events) + 1
+
+
+def append_event(state: dict, event: FlowEvent) -> None:
+    """向 state["events"] 追加一条事件（append-only，不做去重）。
+
+    自动处理：
+      - 若 event.seq <= 0，用 _next_seq() 自动填充
+      - 若 event.ts 为空，用当前 UTC 时间填充
+      - state 中 events 键不存在时自动初始化为 []
+
+    Args:
+        state: read_state() 返回的 dict，会原地修改
+        event: FlowEvent 实例（由 flow_enums 工厂函数构造）
+    """
+    # 自动填充 seq / ts
+    if event.seq <= 0:
+        event.seq = _next_seq(state)
+    if not event.ts:
+        event.ts = _now_ts()
+
+    state.setdefault("events", []).append(event.to_dict())
+
+
+def get_events(
+    state: dict,
+    *,
+    txn_name: Optional[str] = None,
+    event_type: Optional[str] = None,
+    node: Optional[str] = None,
+) -> list[dict]:
+    """读取 events，支持按 txnName / event 类型 / node 过滤。
+
+    Args:
+        state:      read_state() 返回的 dict
+        txn_name:   过滤指定子任务（None = 返回全部）
+        event_type: FlowEventType.value 字符串，过滤指定事件类型
+        node:       FlowNode.value 字符串，过滤指定节点
+
+    Returns:
+        按 seq 升序排列的事件 dict 列表
+    """
+    events: list[dict] = state.get("events", [])
+    if txn_name is not None:
+        events = [e for e in events if e.get("txnName") == txn_name]
+    if event_type is not None:
+        events = [e for e in events if e.get("event") == event_type]
+    if node is not None:
+        events = [e for e in events if e.get("node") == node]
+    return sorted(events, key=lambda e: e.get("seq", 0))

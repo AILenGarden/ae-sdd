@@ -255,3 +255,66 @@
 - `ae-sdd update-check` 6 项检查（UC-01~06）：版本号三处一致 / 门禁注册一致 / 命令契约闭环 / 扫描器分发 / 健康度清单覆盖 / 🆕 v3.4.0 文档-实现一致性（SKILL/子SKILL 命令 + HARNESS HS 规则）；dev-sync 前必须全绿
 
 **颗粒度与边界**：db/git 工具为只读；🆕 v3.4.0 G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json（UC-03/UC-06 兜底）。
+
+---
+
+## 🆕 v3.4.2 state.json events 操作日志设计
+
+### 背景与动机
+
+v3.4.0 引入 PRD 级 state.json + 11 phase 状态机（`initialized → ra-generated → dr-generated → ... → completed`），但**子任务级操作的可追溯性弱**：
+
+- 现有 `phase` 字段只记"当前阶段"，**没有"如何到达此处"的轨迹**
+- 现有 `history` 字段只记阶段切换（`{phase, timestamp, by}`），**粒度过粗**（如 router 把请求路由到 story-generate-skill、随后该 SKILL 完成、随后用户确认 → 这三步之间发生了什么无法回溯）
+- 22 门禁拦截（`G-09` 测试真实性、`G-CODEPLAN-SRC` 源码核对等）只在被触发时记录结果，**没有"何时由谁触发拦截"的 audit trail**
+
+→ 运维场景痛点：用户问"STORY-020-BE 昨天为什么 Phase 2 没走完？"时，AI 只能查 `phase` + `history`，无法还原"哪一步门禁拦截了、是哪个 gate_id、谁确认的"。
+
+### 方案：events 操作日志
+
+**核心思路**：state.json 增加 append-only `events` 数组，每条记录一次"流程动作"（路由/门禁/阶段切换/用户确认等），提供"全程 audit trail"能力。
+
+**不替代现有字段**：events 与 `phase` / `history` / `currentStory` / `currentTask` **共存**。phase = "当前阶段"（高频读），history = "阶段切换摘要"（低频读），events = "细粒度操作"（运维审计/复盘）。
+
+### 数据结构（v3.4.2 schema v2）
+
+**3 个枚举**（`tools/lib/flow_enums.py`）：
+
+| 枚举 | 成员数 | 用途 |
+|---|---|---|
+| `FlowNode` | 6 | 流程节点原语（PRD / RA / DR / STORY / TASK / PLAN）|
+| `FlowSkill` | 15 | SKILL 标识符（与 `source/skills/` 目录文件一一对应）|
+| `FlowEventType` | 8 | 事件类型（routed-to / skill-completed / gate-blocked / gate-cleared / user-confirmed / phase-changed / reopened / aborted）|
+
+**事件数据类** `FlowEvent`（继承 `str, Enum` → JSON 序列化直接得字符串，无需额外转换）：
+- 必填：`seq`（自增）/ `ts`（ISO 8601 UTC）/ `event` / `node` / `by`
+- 条件必填：`skill`（routed-to/skill-completed）/ `gate_id`（gate-blocked/cleared）/ `phase`（phase-changed）
+- 可选：`txnName`（子任务标识，PRD 级事件为 None）/ `from_node`（路由来源）/ `reason` / `output`（产物描述）/ `meta`（预留扩展）
+
+**5 个工厂函数**（防字段拼写错）：`make_routed_to` / `make_skill_completed` / `make_gate_blocked` / `make_phase_changed` / `make_user_confirmed`。
+
+**2 个 lib API**（`tools/lib/state.py`）：
+- `append_event(state, event)` — 原地追加，自动填 `seq` / `ts`，**不**自动落盘（调用方决定何时 write_state）
+- `get_events(state, *, txn_name=None, event_type=None, node=None)` — 三维过滤（txn / event 类型 / node），按 seq 升序返回
+
+### 关键设计决策
+
+1. **继承 `str, Enum`**：避免 `.value` 解包，JSON 序列化直接得字符串，**日志人工读也能秒懂**（无需查枚举定义）。
+2. **`append-only` + 不去重**：保证 audit trail 真实性，不做"看起来更整洁"的合并/裁剪。
+3. **`txnName` 区分 PRD/Story/Task/Plan 事件**：PRD 级事件 `txnName=null`，Story/Task/Plan 用各自的 ID；`get_events(txn_name=...)` 单一过滤就能拿到"某个子任务的全过程"。
+4. **不强制落盘**：事件写入与 state.json 持久化解耦，避免高频事件导致磁盘 IO 风暴。调用方按需落盘（如 SKILL 完成时批量 write_state）。
+5. **向后兼容**：旧 v1 state.json 无 `events` 字段时 `get_events()` 返回 `[]` 不报错，`append_event()` 自动初始化 `events: []`。
+
+### 已知缺口（v3.4.2 不闭环、留待后续 PR）
+
+按 ae-sdd-update-skill §改⑤工具链 SOP 第 3 步"新增/修改门禁/CLI → 同步"原则，**当前 lib 层已发布，但业务调用方尚未接入**：
+
+| 缺失点 | 预期接入方 | v3.4.2 状态 |
+|---|---|---|
+| 路由时记录 `routed-to` | `tools/bin/ae-sdd:cmd_classify` / router | ❌ 后续 PR |
+| 阶段切换时记录 `phase-changed` | `tools/bin/ae-sdd:cmd_state_write` | ❌ 后续 PR |
+| 门禁检查时记录 `gate-blocked` / `gate-cleared` | `tools/lib/gates.py` 各 `check_gXX()` | ❌ 后续 PR |
+| SKILL 完成时记录 `skill-completed` | 各 SKILL orchestrator | ❌ 后续 PR |
+| 用户确认审核点时记录 `user-confirmed` | ae-sdd-update-skill §审核点双支柱 | ❌ 后续 PR |
+
+**当前 schema 已就绪，lib 测试已通过（32/32 PASS）**——一旦后续 PR 接入调用方，events 立即生效，无需 schema 升级。

@@ -250,9 +250,9 @@ class TestBumpVersion(unittest.TestCase):
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
-    def test_check_all_returns_6(self):
+    def test_check_all_returns_7(self):
         results = ug.check_all(REPO_ROOT)
-        self.assertEqual(len(results), 6)  # 🆕 v3.4.0: +UC-06
+        self.assertEqual(len(results), 7)  # 🆕 v3.4.1: +UC-07
 
     def test_check_all_only_filter(self):
         results = ug.check_all(REPO_ROOT, only="UC-01")
@@ -272,8 +272,8 @@ class TestCheckAll(unittest.TestCase):
     def test_summarize(self):
         results = ug.check_all(REPO_ROOT)
         s = ug.summarize(results)
-        self.assertEqual(s["total"], 6)
-        self.assertEqual(s["passed"] + s["failed"], 6)
+        self.assertEqual(s["total"], 7)  # 🆕 v3.4.1: +UC-07
+        self.assertEqual(s["passed"] + s["failed"], 7)
         self.assertIn("checks", s)
 
 
