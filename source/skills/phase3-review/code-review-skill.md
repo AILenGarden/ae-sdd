@@ -127,7 +127,7 @@ Code Review 结论：{STORY-ID}
     ├─ 改 Task → 触发 Task Generate SKILL
     └─ 改项目资产 → 触发 Project Assets Update SKILL
     ↓
-第六步：循环判定（连续 1 轮无新增问题才退出）
+第六步：循环判定（连续 3 轮无新增问题才退出）
     ↓
 第七步：CodeReview 闸门全集（7 道闸）
     ├─ 7.1 ⑥bis 一致性闸
@@ -650,7 +650,9 @@ Code Review 发现问题
     └─ 有新增问题 → 回到 §第四步 bis 生成新 Plan → 循环
 ```
 
-**退出条件：** 连续 1 轮无新增问题。
+> **📍 Review Loop 公共协议：** 本节退出条件/循环上限/Plan-first 遵守 [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md) 公共协议（v3.4.3），本节只列 code-review 专属配置。
+
+**退出条件：** 连续 3 轮无新增问题。
 
 **循环上限：** 3 轮。3 轮仍有 🔴 阻断型 → 升级用户决策。
 
@@ -888,7 +890,7 @@ Code Review 发现问题
 | 17 | §第四步 记入补充说明 | Supplement.md | 写入成功 |
 | 18 | §第四步 bis 生成 CodeReviewUpdatePlan | UpdatePlan | 用户确认 |
 | 19 | §第五步 触发下游 SKILL | 各 SKILL 触发 | 按 Plan 执行 |
-| 20 | §第六步 循环判定 | 循环结论 | 连续 1 轮无新增 → 退出 |
+| 20 | §第六步 循环判定 | 循环结论 | 连续 3 轮无新增 → 退出 |
 | 21 | §第七步 bis 报告合规性校验 | 校验报告 | 10 项全 ✅ |
 | 22 | 进入人工审核点 4 | — | 用户确认 |
 

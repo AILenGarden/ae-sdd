@@ -323,6 +323,8 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
 - `document-storage-skill.get_constraints(projectKey)` 返回的全部约束文档
 - `templates/design/be-task-template.md`
 
+> **📍 Review Loop 公共协议：** 本节退出条件/循环上限/Plan-first 遵守 [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md) 公共协议（v3.4.3），本节只列 Task Review 专属配置。
+
 **Review 循环（强制闭环）：**
 
 ```
@@ -333,7 +335,9 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
     └── 无新增问题 → 退出 Review → 进入第六步 bis
 ```
 
-> **闭环规则：** 每次修复后必须重新执行完整的全局 Review（不是只看修复项），直到一轮 Review 无任何新增问题才能退出。退出计数器：本轮发现新问题 → 计数器归零；连续一轮无新增问题 → 满足退出条件。
+> **闭环规则：** 每次修复后必须重新执行完整的全局 Review（不是只看修复项），直到连续 3 轮无任何新增问题才能退出。退出计数器：本轮发现新问题 → 计数器归零；连续 3 轮无新增 → 满足退出条件。
+>
+> **🆕 v3.4.3 循环上限：** 3 轮。3 轮仍有 🔴 阻断型问题 → 升级用户决策（修复此前 task-generate TR 无循环上限的安全漏洞，避免 AI 无限"自评通过"）。
 
 ### 多 reviewer 视角切分（🆕 2026-06-25 — 落地 §8.4.2 节点专属配置）
 
@@ -650,7 +654,7 @@ documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
 | 跳过约束检查         | 每个 Task 必须列出相关约束项 |
 | **TaskSkill 自行填写 CodingModel 决策记录或任务级 CodePlan** | **这两个章节必须来自 `CodingSkill.Plan(task-level)`，TaskSkill 只负责调用和嵌入** |
 | **跳过全局 Task Review** | **所有 Task 生成后必须执行全局 Review（TR-1~TR-7），结合约束+Story+测试用例审查** |
-| **Review 发现问题只改修复项就退出** | **每次修复后必须重新全局 Review，连续一轮无新增问题才能退出** |
+| **Review 发现问题只改修复项就退出** | **每次修复后必须重新全局 Review，连续 3 轮无新增问题才能退出；3 轮仍有 🔴 → 升级用户** |
 | **Task Review 发现 Story/DR 问题时直接改 Task** | **Story 层问题先走 Story Update，DR 层问题先走 DR Update，不在 Task 层弥补上层缺陷** |
 | **Task 绕过 Story 复用决策自行新建实现** | **先回到 Story Update 更新实现方案决策基线，再重新生成 Task** |
 | **同一业务能力散落多个 Task 重复实现** | **必须指定唯一 owner Task，其余 Task 只调用/编排，不复制业务逻辑** |
@@ -671,7 +675,7 @@ documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
 | 4.ter | **每个 Task 撰写时调用 `CodingSkill.Plan(task-level)`** | Task 文档 `## CodingModel 决策记录` + `## 任务级 CodePlan` 章节 | 7 个产出块均已嵌入 Task 文档（决策记录+类骨架+依赖工具包+方法级逻辑+DB操作+外部依赖+测试映射）；TaskSkill 不得自行填写这两个章节 |
 | 4.5 | **生成后一致性校验** | — | TC-1 ~ TC-9 全部通过；任一检查项失败则修正后重新校验；若同一检查项失败 2 次仍不通过，标记为"需人工审核"，暂停自动校验，等待人工判定 |
 | 5 | 按顺序生成/更新各 Task     | `task-{N}-{X}-*.md`    | 全部 Task 文件已生成 + 4.5 一致性校验通过 |
-| 5bis | **全局 Task Review（结合约束+Story+测试用例）** | Review 结论 | TR-1~TR-7 全部通过；发现问题 → 启动 Task 修复 → 修复完重新全局 Review；连续一轮无新增问题才能退出 |
+| 5bis | **全局 Task Review（结合约束+Story+测试用例）** | Review 结论 | TR-1~TR-7 全部通过；发现问题 → 启动 Task 修复 → 修复完重新全局 Review；连续 3 轮无新增问题才能退出；3 轮仍有 🔴 → 升级用户 |
 | 6 | **汇总所有 Task 的"任务级 CodePlan"为统一版** | `{STORY-ID}-CodingPlan.md` | 套用 be-coding-plan-template.md + **14 条门禁全过**（含 CodingModel 决策完整+核心链路保护+资源隔离+混合压测）；用户必须明确"确认"才进入下一步 |
 | 6.5 | 自检（约束合规 + 骨架完整性）   | —                      | 检查项全部通过         |
 | 6bis | 输出完整实现方案 | `{STORY-ID}-Task实现方案.md` | 基于所有 Task 文档填写，13 个核心章节均已填写，不留空白 |

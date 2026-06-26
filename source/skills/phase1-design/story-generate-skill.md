@@ -782,10 +782,12 @@ Story 文档写入
     ↓
 重新触发 Story Review
     ↓
-连续 1 轮无新增问题 → 退出循环（✅ 通过）
+连续 3 轮无新增问题 → 退出循环（✅ 通过）
 ```
 
-**退出条件：** 连续 1 轮无新增问题。
+> **📍 Review Loop 公共协议：** 本节退出条件/循环上限/Plan-first 遵守 [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md) 公共协议（v3.4.3），本节只列 story-generate 专属配置。
+
+**退出条件：** 连续 3 轮无新增问题。
 
 **循环上限：** 3 轮。3 轮仍有 🔴 → 升级用户。
 
@@ -880,7 +882,7 @@ Story 文档写入
 | 20 | §第四步 写入 Story 文档 | Story 文档 | 用户确认初稿 |
 | 21 | §第四步 bis 生成 StoryGeneratePlan | Plan | 用户确认 |
 | 22 | §第五步 触发 Story Review | Story Review 反馈 | 评审通过 |
-| 23 | §第六步 循环判定 | 循环结论 | 连续 1 轮无新增 |
+| 23 | §第六步 循环判定 | 循环结论 | 连续 3 轮无新增 |
 | 24 | §第七步 bis 报告合规性 | 校验报告 | 13 项全 ✅ |
 
 ---

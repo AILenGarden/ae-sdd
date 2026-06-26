@@ -13,7 +13,8 @@ description: |
   🆕 v3.2.5：脚本化补齐 4 缺口——ae-sdd init 挂载 CLI（补 UC-03 warn）、新增 ae-sdd bump 同步三处版本号（UC-01 操作侧）、新建 CHANGELOG _template.md、dev_sync.py 增仓库根残留清理。
   🆕 v3.4.0：门禁体系加固（4 份建议书全量采纳 P0-P3）——P0 修复 3 处文档撒谎（L-1 gate ra-required --fix / L-2 assets check/generate/audit/update / L-3 G-RA CLI 自动调用）；P1 中段门禁 G-CODEPLAN-SRC 源码核对 + G-DOC-STORAGE 文档存放 + G-14 Story 一致性 + 入口关卡三道闸（enter/session.py/gate_intercept 产物-Phase 映射）+ F-1 假门禁修复（stop_check GATE 交叉验证）；P2 G-08 内容校验升级 + ra-generated phase（修复 B3-6）+ 审核点 token（state confirm）+ test-verifier 独立 session_id；P3 UC-06 文档-实现一致性自动检测。门禁 19→22，PHASE_FLOW 10→11，CLI 新增 enter/state confirm/gate doc-storage。
   🆕 v3.4.2：state.json events 操作日志 + flow_enums 枚举体系——`tools/lib/flow_enums.py` 新增 FlowNode（6）/ FlowSkill（15）/ FlowEventType（8）三枚举 + FlowEvent 数据类 + 5 工厂函数；`tools/lib/state.py` 新增 `append_event()` / `get_events()` API，state.json schema v1→v2（append-only events 字段 + txnName 子任务标识）；`tools/tests/test_flow_enums.py` 32 个单元测试。注：本版本仅完成 schema + lib + 测试，业务调用方（router / state write / gate check / SKILL orchestrator）尚未接入 `append_event()`，留待后续 PR 闭环。
-version: 3.4.2
+  🆕 v3.4.3：Review Loop 公共协议 + 退出阈值统一 3 轮 + 删除"每3轮暂停问人"——新建 `cross-cutting/review-loop-skill.md` 公共协议（退出条件 3 轮 + 循环上限 3 轮 + Plan-first）；story-review/dr-review/code-review/task-generate/proposal/story-generate 6 个节点退出阈值统一为"连续 3 轮无新增缺陷"；废弃 story-review/dr-review/SKILL.md 三处"每 3 轮暂停问人"（与退出条件矛盾，违反 Loop Engineering 自评估原则）；修复 task-generate TR 无循环上限的安全漏洞（加 3 轮上限 + 升级用户）；agent-orchestration §8.4.6 加 A-E 术语澄清。
+version: 3.4.3
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -1458,7 +1459,7 @@ Phase 3 ────────┤ 验证阶段（必须完成）
 >
 > F-Stage 未通过 → Story Review 视为不完整，禁止退出循环。
 
-**人工节点：** 每完成 3 轮完整的 A-E 阶段循环（每轮 = 挖掘缺陷 → 判定 → 修复 → 确认无新增），自动暂停并询问用户"是否继续 Story Review？"
+> **🔴 v3.4.3 废弃"每 3 轮暂停问人"：** 之前本节有"每完成 3 轮 A-E 阶段循环自动暂停询问用户"规则，与退出条件矛盾且违反 Loop Engineering 自评估原则，已废弃。Story Review 退出条件统一遵守 [`review-loop-skill.md`](skills/cross-cutting/review-loop-skill.md) 公共协议（连续 3 轮无新增才退出；3 轮仍有 🔴 升级用户）。
 
 ---
 
@@ -1849,7 +1850,7 @@ public void {核心方法}({Command} command) { ... }
 | 1 | Task 0 ~ Task-N 全部已生成 | Task 文档目录中每个 Task 文件存在 |
 | 2 | 每个 Task 均包含 `## CodingModel 决策记录`，11 维均有明确结论 | 逐 Task 文档检查该章节无空行 |
 | 3 | 每个 Task 均包含 `## 任务级 CodePlan`（含类骨架 + 方法级逻辑 + DB 操作 + 外部依赖 + 测试映射） | 逐 Task 文档检查该章节子节齐全 |
-| 4 | 全局 Task Review TR-1~TR-7 全部通过（无新增问题连续一轮） | Review 结论输出中 TR-1~TR-7 均显示 ✅ |
+| 4 | 全局 Task Review TR-1~TR-7 全部通过（连续 3 轮无新增问题） | Review 结论输出中 TR-1~TR-7 均显示 ✅ |
 | 5 | 统一版 `{STORY-ID}-CodingPlan.md` 已生成，14 条门禁全部通过 | CodingPlan 门禁自检表全 ✅ |
 | 5.5 | 统一版 CodingPlan 已通过 `documentStorage` 落地（`resolve_path + save_doc` 调用成功，G-DOC-STORAGE ✅）| `ae-sdd gates check --only G-DOC-STORAGE` ✅ |
 | 6 | 统一版 CodingPlan 已获用户明确确认（"确认"/"同意"/"可以开始"） | 用户回复记录中有明确确认词 |
@@ -2187,7 +2188,6 @@ DR（需求文档）→ Story → Task → Coding
 | **Phase 2 → Phase 3** | ~~所有 Task 编码完成（2026-06-10 删除）~~ | ~~"编码阶段已完成，是否进入验证阶段？"~~ |
 | **🆕 CodingPlan 评审**（2026-06-10） | 统一版 CodingPlan 生成后，Coding 之前 | "CodingPlan 已生成，14 条门禁全过，请审阅并确认是否开始编码" |
 | **Phase 3 完成** | 所有测试通过 + CodeReview 报告出具 | "CodeReview 阶段完成（含 ⑥bis 一致性核查 + ⑦bis 对称性闸），是否确认工程完成？" |
-| Story Review 每 3 轮（每完成 3 轮完整的 A-E 阶段循环） | 自动 | "是否继续 Review？" |
 | 需人工裁定的缺陷 | 合理性判定为 ⚠️ | "请人工判定此项是否为缺陷？" |
 | DR 变更影响多个 Story | DR Update 评估 | "是否同步修改受影响 Story？" |
 
@@ -2211,6 +2211,7 @@ DR（需求文档）→ Story → Task → Coding
 | **🆕 ae-sdd Install** | [ae-sdd-install-skill.md](../orchestration/ae-sdd-install-skill.md) | **安装引导 SKILL — 平台检测 → 选模式 → 执行 install → 写 hooks → 验证** |
 | **🆕 Document Storage** | [document-storage-skill.md](../cross-cutting/document-storage-skill.md) | **文档存放路径解析、命名规则、重入判定** |
 | **🆕 Proposal** | [proposal-skill.md](../cross-cutting/proposal-skill.md) | **跨域改动 / 缺陷修复的 4 段 Proposal SOP** |
+| **🆕 Review Loop** | [review-loop-skill.md](../cross-cutting/review-loop-skill.md) | **🆕 v3.4.3 Review Loop 公共协议 — 所有 review 节点的 loop 骨架（退出条件 3 轮 + 循环上限 3 轮 + Plan-first）** |
 | **🆕 Agent Orchestration** | [agent-orchestration-skill.md](../cross-cutting/agent-orchestration-skill.md) | **多 Agent 编排、SubAgent 派活协议、报告回传** |
 | **🆕 ae-sdd Update** | [ae-sdd-update-skill.md](ae-sdd-update-skill.md) | **ae-sdd 自身维护 SKILL（修改 SKILL/SOP 时的入口）** |
 
@@ -2457,7 +2458,7 @@ ae-sdd init <project-dir> <project-key>
 | 4-📖 | **🔴 AI 主动讲解 Story 故事**（人工审核点 1 之前） | Story 故事讲解输出 | 已讲清"业务背景/核心流程/关键设计决策/AC 故事/已识别风险"5 个维度；未讲解禁止进入 Phase 1 → Phase 2 的人工审核点 1 |
 | 4b | **实现方案预确认** | 用户确认记录 | 用户已确认实现方案（核心业务/接口/分层/并发/异常） |
 | 5 | 生成 Task（Task Generate SKILL） | `task/{story}-task-*.md` + `{STORY-ID}-Task实现方案.md` | 全部 Task 文件已生成 |
-| 5a | **全局 Task Review（结合约束+Story+测试用例）** | Review 结论 | TR-1~TR-7 全部通过；发现问题 → Task 修复 → 重新 Review；连续一轮无新增问题才退出，然后输出实现方案 |
+| 5a | **全局 Task Review（结合约束+Story+测试用例）** | Review 结论 | TR-1~TR-7 全部通过；发现问题 → Task 修复 → 重新 Review；连续 3 轮无新增问题才退出（3 轮仍有 🔴 → 升级用户），然后输出实现方案 |
 | 5b | 人工审核：Task 文档 + 实现方案完成确认（🔴 强制逐文件自上而下核对，禁止一锅端确认） | 用户逐文件确认记录（每个 Task 文件 + 实现方案 + CodingPlan 各 1 条） | 每个文件单独获得用户 ✅；模糊回复追问后再判定；跳过/整体确认视为违规 |
 | 5b-📖 | **🔴 AI 主动讲解 Task 故事**（在 5b 之前） | Task 故事讲解输出 | 已讲清"拆 Task 故事/依赖链路/DB 变更/事务边界/风险 Task"5 个维度；每 Task 文件核对前已讲"本 Task 故事"；未讲解禁止进入 5b |
 | 5c | **🔴 CodingPlan 输出**（④bis，⑤ 之前） | `{STORY-ID}-CodingPlan.md` | 7 章节齐全；**14 条门禁全部通过**（含 CodingModel 决策记录完整 + 核心链路保护 + 资源隔离 + 混合压测）；🆕 v3.4.0 G-CODEPLAN-SRC 源码核对通过 + G-14 Story 一致性通过；Phase ④→⑤ 调用协议 9 项前置条件全满足；未通过禁止触发 `CodingSkill.Execute` |

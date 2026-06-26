@@ -1193,29 +1193,17 @@ dr-update-skill 执行完成后，重新触发本 SKILL 进入下一轮评审（
 
 ## 退出条件
 
+> **📍 Review Loop 公共协议：** 本节退出条件/循环上限/Plan-first 遵守 [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md) 公共协议（v3.4.3），本节只列 dr-review 专属配置。
+
 | 条件 | 说明 |
 |------|------|
 | 无新增缺陷 | 本轮 5 阶段全部检查项完成后，未发现任何新的确认缺陷 |
-| 连续两轮无新增缺陷 | 连续两轮均未发现新的确认缺陷。本轮发现新缺陷 → 计数器归零；本轮无新缺陷且上一轮也无新缺陷 → 满足退出条件 |
+| 连续 3 轮无新增缺陷 | 连续 3 轮均未发现新的确认缺陷。本轮发现新缺陷 → 计数器归零；连续 3 轮无新增 → 满足退出条件 |
 | DR 已达到 Approved 状态 | DR 主文档状态从 Review → Approved，退出 Review 流程 |
 
-### 人工确认节点
+**循环上限：** 3 轮。3 轮仍有 🔴 阻断型缺陷 → 升级用户决策（不无限循环）。
 
-每完成 3 轮完整的 A-E 阶段循环（每轮 = 全部检查项执行完毕）自动暂停，询问用户：
-
-```
-已完成 {N} 轮 DR Review，当前状态：
-- 累计发现缺陷：{X} 个
-- 已修复：{Y} 个
-- 待修复：{Z} 个
-- 误报：{W} 个
-- 多 reviewer 模式：reviewerTier={Tier 1/2/3} / reviewerMode={physical-multi-reviewer | logical-multi-perspective}
-  （若 reviewerMode=logical-multi-perspective，下游 Story Review 须标注"上游逻辑多视角，交叉验证强度降低"，见 §8.4.5）
-
-是否继续下一轮？
-- 回复"继续"→ 启动第 N+1 轮
-- 回复"退出"→ 标记 DR 为 Approved，交还 ae-sdd 主流程
-```
+> **🔴 v3.4.3 废弃"每 3 轮暂停问人"：** 之前本节有"每完成 3 轮 A-E 阶段循环自动暂停询问用户"规则，与退出条件矛盾且违反 Loop Engineering 自评估原则，已废弃。AI 自评估达标（连续 3 轮无新增）即退出；3 轮仍有 🔴 才升级用户。
 
 > **🆕 2026-06-25 降级提示落地（§8.4.5）：** 退出流转新增 `reviewerMode` 字段，下游 Story Review 读取后须标注上游逻辑多视角风险，避免 §8.4.5 下游提示沦为空头门禁。
 
