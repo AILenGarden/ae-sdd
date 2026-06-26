@@ -1,17 +1,18 @@
 ---
 name: project-assets-template
-description: 项目资产目录空模板（Starter）— 供新项目 cp 后填值用。结构与 project-assets-schema.md 一一对应（12 节 + 附录 JSON Schema + 维护）。
+description: 项目资产目录空模板（Starter）— 供新项目 cp 后填值用。结构与 project-assets-schema.md 一一对应（15 节 + 附录 A-F + 维护）。
 ---
 
 # Project Assets Template — 项目资产目录 Starter 模板
 
 > **使用方法：**
-> 1. `cp skills/ae-sdd/strategies/project-assets-template.md skills/ae-sdd/project-assets/{your-project-key}/{your-project-key}.assets.md`
+> 1. `cp skills/ae-sdd/standards/project-assets/project-assets-template.md skills/ae-sdd/project-assets/{your-project-key}/{your-project-key}.assets.md`
 > 2. 把所有 `{占位符}` 替换为你的项目事实
-> 3. 走 `project-assets-schema.md §9 探查 SOP` 9 步填值
-> 4. 完成后在 §1 写 `lastAuditedAt` + `owner`
+> 3. 走 `project-assets-schema.md §9 + §3.5-3.7` 探查 SOP 填值
+> 4. 完成后在 §1 写 `lastAuditedAt` + `owner` + **§1.X 部署信息**
+> 5. **🆕 主体 > 30KB 时必须按 §15 拆工程级子文件**
 >
-> **与 schema 的关系：** 本文件 = schema 12 节 + 附录的"空值版本"，schema 是"有数据的示例 + 字段定义"。两份文件结构一一对应。
+> **与 schema 的关系：** 本文件 = schema 15 节 + 附录 A-F 的"空值版本"，schema 是"有数据的示例 + 字段定义"。两份文件结构一一对应。
 
 ---
 
@@ -40,6 +41,28 @@ description: 项目资产目录空模板（Starter）— 供新项目 cp 后填�
 | portRange | `{8080-8090}` |
 | lastAuditedAt | `{YYYY-MM-DD}` |
 | owner | `{架构组 / 域负责人}` |
+
+### 1.X 部署信息（🆕 2026-06-26）
+
+> **🔴 必填**：从 coder "接手第一个本地服务" 到 "跑通" 必须能直接从本节读到所有配置。
+
+```yaml
+deployment:
+  profile.active: {beta-kunlun / dev / prod / ...}
+  db.urlTemplate: "jdbc:mysql://${host}/${dbname}?useUnicode=true&..."
+  db.pool:
+    type: HikariCP
+    max-active: 20
+    min-idle: 1
+    timeout: 30s
+  redis.address: "{redis-...dcs.huaweicloud.com:6379}"
+  redis.password.inConfig: false  # 🔴 若 true → 写 §14 安全隐患
+  gateway: "{http://...}"
+  imageRepo: "{registry..../cassmall/{projectKey}:1.0-SNAPSHOT}"
+  nexusRepo: "{http://dev.casstime.com/nexus/...}"
+  management.port: {30000 / 显式值}
+  coverageTool: jacoco
+```
 
 ---
 
@@ -192,11 +215,36 @@ description: 项目资产目录空模板（Starter）— 供新项目 cp 后填�
 - {本项目 Service 测试方式}
 - {本项目覆盖率要求}
 
-### 6.8 技术栈范围
+### 6.8 完整技术栈版本号表（🆕 2026-06-26）
 
-- {本项目 Java/Spring Boot 版本}
-- {本项目 ORM 框架}
-- {本项目禁止引入的库}
+> **🔴 必填**：从 schema §6.8 复制完整 7 张表（主框架 / 工具库 / 安全 / 内部 starter / 测试 / 构建 / 静态分析），按本项目实际情况填实际版本号 + 备注。
+>
+> 任何新增/升级依赖**必须先更新本表**，否则 Code Review 不通过。
+
+#### 6.8.1 主框架与运行时
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| Java | {8} | |
+| Spring Boot | {1.5.7.RELEASE} | |
+| Spring Cloud | {Dalston.SR4} | |
+| MyBatis-Plus | {3.3.2} | |
+| ... | | |
+
+#### 6.8.2 工具库与映射
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| MapStruct | {1.5.3.Final} | 仅引用，实际用显式 Converter |
+| Lombok | {1.18.16} | |
+| Swagger2 | {2.8.0} | |
+| ... | | |
+
+#### 6.8.3 安全与加解密
+#### 6.8.4 内部基础组件（🔴 必填）
+#### 6.8.5 测试框架与覆盖率要求
+#### 6.8.6 构建与镜像
+#### 6.8.7 静态分析与门禁工具
 
 ### 6.9 隐性约定
 
@@ -274,9 +322,125 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 
 ---
 
+## 11. 团队惯用实现方式（经验文档）
+
+> **🔴 必填 ≥ 9 条经验**：按 schema §10.1 九大类，每类 ≥ 1 条。每条 ≥ 2 个真实出处（文件路径:行号）+ 约束对齐。
+>
+> **本节是 §10 缺口的"沉淀池"**——探查中发现的惯用模式必须沉淀到本节，下次复用。
+
+### 11.1 跨层模式（≥1 条）
+
+#### 11.1.1 {模式名}
+
+**场景：** {什么时候用}
+**惯用写法：**（代码骨架，≤30 行）
+**出处：** `{file:line}` × 2
+**约束对齐：** 符合 `constraints/layered-arch.md` §{X}
+**反模式：** {如有}
+
+### 11.2 Domain 层模式（≥1 条）
+### 11.3 Application 层模式（≥1 条）
+### 11.4 Infrastructure 层模式（≥1 条）
+### 11.5 Interfaces 层模式（≥1 条）
+### 11.6 异常处理模式（≥1 条）
+### 11.7 并发与幂等模式（≥1 条）
+### 11.8 测试模式（≥1 条）
+### 11.9 配置与集成模式（≥1 条）
+
+---
+
+## 12. 横切专题文件索引（🆕 2026-06-26）
+
+> **🆕 升级背景**：单 Story 跨 ≥3 工程时，业务场景应入 `function/`，环境配置入 `config/`，业务域概览入 `domain/`——而非塞进主体。
+>
+> **🔴 必填**：本节列出本项目所有 `function/` `config/` `domain/` 文件，每个一行摘要。
+
+### 12.1 function/ 业务场景专题索引
+
+| 文件 | 涉及工程 | 摘要 | 最后更新 |
+|------|---------|------|---------|
+| `function/{Story}.md` | {A} / {B} | {一句话} | {YYYY-MM-DD} |
+
+### 12.2 config/ 环境配置专题索引
+
+| 文件 | 适用范围 | 摘要 | 最后更新 |
+|------|---------|------|---------|
+| `config/test/api-test-env.md` | {N 个工程} | {一句话} | {YYYY-MM-DD} |
+
+### 12.3 domain/ 业务域概览专题索引
+
+| 文件 | 业务域 | 摘要 | 最后更新 |
+|------|--------|------|---------|
+| `domain/{域Key}.md` | {域} | {一句话} | {YYYY-MM-DD} |
+
+### 12.4 横切专题 ↔ 主体章节映射
+
+| 横切专题 | 主体引用章节 |
+|---------|------------|
+| `function/{Story}.md` | §E.1 + §F |
+| `config/test/*.md` | §D.1 + §1.X |
+| `domain/{域}.md` | §0 + §2 |
+
+---
+
+## 13. 信息可信度三态标注（🆕 2026-06-26）
+
+> **🔴 必填**：本节登记本项目主体的可信度分布。
+
+| 可信度 | 章节覆盖 | 占比 |
+|--------|---------|------|
+| `[已确认]` | §1 / §2 / §6.1-6.5 | {X%} |
+| `[据推断]` | §4 / §5 | {Y%} |
+| `[待确认]` | §10 + `{pending-questions.md}` | {Z%} |
+
+**门禁：** 主体中 `[据推断]` 占比应 ≤ 30%；如超阈值，触发额外探查 SOP。
+
+---
+
+## 14. 安全隐患登记（🆕 2026-06-26）
+
+> **🔴 必填**：按 schema §14.1 四条扫描命令跑过；命中项记入本表。
+
+| ID | 类型 | 位置 | 风险等级 | 描述 | 建议修复 | 状态 |
+|----|------|------|---------|------|---------|------|
+| S-001 | {明文密码/Actuator外露/...} | {file:line} | {🟠/🟡} | {描述} | {建议} | {待修} |
+
+**门禁：** 🟠 高级风险 → 24h 内通知架构组 + 工程 owner。
+
+---
+
+## 15. 工程级粒度拆分记录（🆕 2026-06-26）
+
+> **🔴 必填**：主体文件 > 30KB 时按 schema §15 拆工程级子文件，本节列出本项目所有子文件。
+
+| 工程名 | 子文件路径 | 大小 | 最后更新 | 状态 |
+|--------|----------|------|---------|------|
+| {xxx} | `{projectKey}.{xxx}.assets.md` | {KB} | {YYYY-MM-DD} | ✅ 已生成 |
+
+**拆分规则：** 主体 ≤ 30KB；每个工程一份子文件；主体 §2 微服务清单每行加 `[详见]({子文件路径})` 链接。
+
+---
+
 ## 附录 A：JSON Schema 占位
 
 > 完整 JSON Schema 见 `project-assets-schema.md 附录 A`。本项目填写时按 schema 同步生成 JSON 实例，存为 `project-assets.json` 供 Code Plan 自动生成器消费。
+
+---
+
+## 附录 B-F：横切专题与工程级子文件模板
+
+> **完整模板见**：
+> - 附录 B：工程级子文件 Starter → `project-assets-schema.md 附录 B`
+> - 附录 C：function/ 业务场景专题 → `project-assets-schema.md 附录 C`
+> - 附录 D：config/ 环境配置专题 → `project-assets-schema.md 附录 D`
+> - 附录 E：domain/ 业务域概览专题 → `project-assets-schema.md 附录 E`
+> - 附录 F：横切专题 ↔ 主体映射表 → `project-assets-schema.md 附录 F`
+>
+> **🔴 配套 starter 模板路径**（如需 cp 后填值）：
+> - `skills/ae-sdd/templates/project-assets/module-assets-template.md`
+> - `skills/ae-sdd/templates/project-assets/function-topic-template.md`
+> - `skills/ae-sdd/templates/project-assets/config-topic-template.md`
+> - `skills/ae-sdd/templates/project-assets/domain-topic-template.md`
 
 ---
 
@@ -286,3 +450,4 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 - **更新频率：** `{每月审计 / 新增微服务时立即更新 / ...}`
 - **同步对象：** `{本项目所有 Story 编写者 / 跨项目模板 / ...}`
 - **双源一致性审计：** `{每月跑对照脚本检查 §6 是否引用了 constraints/ 所有 8 个文件名}`
+- **🆕 横切专题审计：** `{每月审计 function/ config/ domain/ 三个目录的文件是否齐全 + 最后更新时间}`

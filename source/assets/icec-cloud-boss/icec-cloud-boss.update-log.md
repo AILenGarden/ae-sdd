@@ -51,6 +51,48 @@ description: icec-cloud-boss 项目资产更新日志 — 记录每次生成/更
 
 > **格式：** 按时间倒序（最新在最上面）。每条 6 字段齐全。
 
+### [2026-06-26] 工程级拆分（boss-user-bff）- schema v3 BFF 单模块范本
+
+| 字段 | 值 |
+|------|---|
+| **状态** | `✅ done` |
+| **变更类型** | 🆕 新增工程级子文件（schema v3 §15 第 3 份范本 — BFF 单模块） |
+| **涉及章节** | §2 微服务清单 + §B 模块索引 link / §10 缺口 #12 / 🆕 §12 横切专题 / 🆕 §15 工程级拆分记录 |
+| **变更前** | boss 域 22 工程全部压在一个 54KB 主体文件 |
+| **变更后** | 🆕 `icec-cloud-boss.icec-cloud-boss-user-bff.assets.md`（~50KB）—— 第 3 份工程级子文件范本（多模块 Service + BFF 单模块 + 客服域状态机）|
+| **原因/触发** | 用户要求"继续"，按推荐顺序拆 boss-user-bff（形成 Service vs BFF 对比范例）|
+| **Reviewer** | 未审 |
+| **关联 PR/Commit** | - |
+
+**boss-user-bff 范本亮点：**
+- 🆕 BFF 5 条红线（禁直连 DB / Feign Client 必 extends SPI / AppService 必经 Facade / 必用 TokenService 禁 AccessUserInfoContext / Facade 异常降级）
+- 🆕 4 个 AppService 共 34 个方法（MenuIcon 5 + Menu 10 + Role 13 + UserManagement 6 + 1 私有）
+- 🆕 3 个 OperationLoggable（角色菜单权限绑定 / 角色 CRUD / 菜单 CRUD）—— BFF 独有模式
+- 🆕 GlobalExceptionHandler 8 个 handler 方法（统一 ApiResult + HTTP 200）
+- 🆕 6 个 Feign Client 全 extends SPI 接口（🔴 BFF 强约束）
+- §6.3 与 boss-user Service 工程的差异对比表（12 个维度）
+
+### [2026-06-26] 工程级拆分（boss-user）- schema v3 多模块 DDD Service 范本
+
+| 字段 | 值 |
+|------|---|
+| **状态** | `✅ done` |
+| **变更类型** | 🆕 新增工程级子文件（schema v3 §15 首份范本 — 多模块 DDD Service） |
+| **涉及章节** | §2 微服务清单 + §B 模块索引 link / §10 缺口 #12 / 🆕 §12 横切专题 / 🆕 §15 工程级拆分记录 |
+| **变更前** | boss 域 22 工程全部压在一个 54KB 主体文件 |
+| **变更后** | 🆕 `icec-cloud-boss.icec-cloud-boss-user.assets.md`（~60KB / ~860 行）—— 首份工程级子文件范本 |
+| **原因/触发** | 用户 2026-06-26 完成 ae-sdd 项目资产 v3.5.0 重构（CHANGELOG `2026-06-26-project-assets-v3-restructure.md`），要求按新结构拆分 boss 域第一个工程 |
+| **Reviewer** | 未审 |
+| **关联 PR/Commit** | - |
+
+**boss-user 范本亮点：**
+- §1.1 部署信息 10 字段全填（profile beta-kunlun、imageRepo、management.port 缺省等）
+- §1.2 安全提示 4 项（Redis 密码明文待复验 / management.port 未配置 / lombok scope=provided / icec-cloud-life-demo-spi 注释）
+- §2.1 完整 ASCII 依赖方向图（service → interfaces → application → domain）
+- §3 完整技术栈 17 项版本号（含 courier 3.3-SNAPSHOT、panda 1.0.9、casslog 1.5.0 等内部 starter）
+- §5 核心类方法级实现 30+ 方法（**BossUserConverter 11 个方法全表** + BossRole/BossMenu/BossMenuIcon Converter + AppService + Domain + Infrastructure + Interfaces 共 5 大分层全覆盖）
+- §1.2 安全提示 4 项 + §8 工程缺口 7 项
+
 ### [2026-06-24] 补全索引层 - §A-§G 从缺失到脚本化
 
 | 字段 | 值 |

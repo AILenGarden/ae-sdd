@@ -127,7 +127,7 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 - 老项目首次构建项目资产
 - 完全重构导致项目结构巨变
 
-### 3.2 12 步 SOP（详见 `project-assets-schema.md §9`，新增第 10 步生成索引层）
+### 3.2 17 步 SOP（详见 `project-assets-schema.md §9 + §12-15`，🆕 2026-06-26 增步骤 10-17）
 
 | 步骤 | 动作 | 产物 |
 |------|------|------|
@@ -144,6 +144,12 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 | 11 | 审计 + 写 §1 lastAuditedAt | §1 |
 | 12 | 写更新日志 initial 条目 | log |
 | **13** 🆕 | **生成 `{projectKey}.pending-questions.md`**（待确认问题清单）| pending-questions 文件 |
+| **14** 🆕 | **抽完整技术栈版本号表（按 schema §6.8 七张表）**| §6.8 七张表 |
+| **15** 🆕 | **抽每个工程的部署信息（schema §1.X 10 个字段）+ 跑安全隐患扫描（schema §14.1）**| §1.X + §14 |
+| **16** 🆕 | **按工程粒度拆子文件（如 schema §15 触发）+ 生成 function/ config/ domain 横切专题**| `{module}.assets.md` + 三类专题 |
+| **17** 🆕 | **应用可信度三态标注（schema §13）—— 主体每节加 `[已确认]/[据推断]/[待确认]` 前缀**| §0-§14 全标注 |
+
+**🆕 步骤 14-17 详见 §3.5-3.7。**
 
 **第 13 步说明：** 探查过程中凡是"发现了问题但无法自行确认"的事项，统一写入 pending-questions.md，**不要写进 assets.md 正文**（避免污染资产主体）。格式见下方 §3.3.1。
 
@@ -200,6 +206,192 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 - 🆕 §G 读取 API 函数模板生成（伪代码 + 自然语言协议）
 - 🔴 `lastAuditedAt` 已写
 - 🔴 更新日志 initial 条目已写
+
+---
+
+## §3.5 步骤 14 SOP：抽完整技术栈版本号表（🆕 2026-06-26）
+
+> **目的：** 主体 §6.8 从 "技术栈范围" 升级为 "完整技术栈版本号表"，覆盖 7 个分类（schema §6.8.1-§6.8.7）。
+
+### §3.5.1 七张表必填
+
+| 表 | 来源 | 必填 |
+|----|------|------|
+| §6.8.1 主框架与运行时 | 父 pom + 各 service pom 的 `<parent>` 引用 | ✅ |
+| §6.8.2 工具库与映射 | 各 service pom 的 `<dependencies>` | ✅ |
+| §6.8.3 安全与加解密 | 各 service pom 显式声明 | ✅ |
+| §6.8.4 内部基础组件（🔴 必填）| 父 pom `<dependencyManagement>` | ✅ |
+| §6.8.5 测试框架与覆盖率 | 各 service pom `src/test` + JaCoCo 配置 | ✅ |
+| §6.8.6 构建与镜像 | service pom `spring-boot-maven-plugin` + `dockerfile-maven-plugin` | ✅ |
+| §6.8.7 静态分析与门禁工具 | 父 pom `checkstyle.xml` + `spotbugs.xml` | ✅ |
+
+### §3.5.2 抽取命令清单
+
+```bash
+# 1. 主框架版本（来自 <parent>）
+grep -E "<spring-boot.version>|<spring-cloud.version>|<java.version>" \
+  {gitPath}/pom.xml
+
+# 2. 所有显式声明的依赖版本
+grep -A 1 "<artifactId>" {gitPath}/*/pom.xml | grep "<version>"
+
+# 3. 内部 starter（公司 starter 必有 cass/panda/courier/job 等关键字）
+grep -rE "<artifactId>(cass|panda|courier|job)-.*starter</artifactId>" \
+  --include="pom.xml" {gitPath}/
+
+# 4. 测试框架
+grep -E "<artifactId>(junit|mockito|jacoco|surefire)" --include="pom.xml" {gitPath}/
+
+# 5. 构建与镜像
+grep -E "<artifactId>(spring-boot-maven-plugin|dockerfile-maven-plugin)" \
+  --include="pom.xml" {gitPath}/*/pom.xml
+
+# 6. 静态分析
+grep -E "(checkstyle|spotbugs|pmd)" --include="pom.xml" {gitPath}/
+```
+
+### §3.5.3 准入规则
+
+- 🔴 **每个版本号必须有 ≥1 个 pom.xml 证据**（`<version>X.X.X</version>` 行号）
+- 🔴 **任何内部 starter 必须落到 §6.8.4**（防遗漏基础组件）
+- 🟠 **若版本不一致**（如不同模块用不同 MyBatis-Plus 版本）→ 写入 pending-questions
+
+---
+
+## §3.6 步骤 15 SOP：抽部署信息 + 跑安全隐患扫描（🆕 2026-06-26）
+
+> **目的：** 把每个工程的部署细节结构化到 §1.X；同时探查过程强制扫描 4 类安全隐患。
+
+### §3.6.1 部署信息抽取（schema §1.X 10 个字段）
+
+| # | 字段 | 抽取命令 | 必填 |
+|---|------|---------|------|
+| 1 | `profile.active` | `grep -r "spring.profiles.active" {gitPath}/*/src/main/resources/` | ✅ |
+| 2 | `db.urlTemplate` | `grep -r "jdbc:mysql" {gitPath}/*/src/main/resources/` | ✅ |
+| 3 | `db.pool` | `grep -A 5 "hikari" {gitPath}/*/src/main/resources/` | ⚠️ |
+| 4 | `redis.address` | `grep -r "spring.redis.host\|redis.*dcs" {gitPath}/*/src/main/resources/` | ✅ |
+| 5 | `redis.password.inConfig` | `grep -E "redis.*password.*:" {gitPath}/*/src/main/resources/` | 🔴 |
+| 6 | `gateway` | `grep -r "icec.api" {gitPath}/*/src/main/resources/` | ✅ |
+| 7 | `imageRepo` | `grep -B 1 -A 3 "docker.image" {gitPath}/*/pom.xml` | ✅ |
+| 8 | `nexusRepo` | `grep "cass-public" {gitPath}/pom.xml` | ⚠️ |
+| 9 | `management.port` | `grep -r "management.port" {gitPath}/*/src/main/resources/` | ⚠️ |
+| 10 | `coverageTool` | `grep "jacoco" {gitPath}/*/pom.xml` | ⚠️ |
+
+### §3.6.2 安全隐患强制扫描（schema §14.1）
+
+> **🔴 每轮探查必跑下列 4 条扫描**，未跑视为探查未完成。
+
+```bash
+# 1. 配置明文密码（🔴 P0）
+grep -rEn "password\s*[:=]\s*[\"']?[A-Za-z0-9_-]{6,}" \
+  --include="*.yml" --include="*.yaml" --include="*.properties" \
+  {gitPath}/*/src/main/resources/
+
+# 2. 硬编码 API Key / Secret（🔴 P0）
+grep -rEn "(api[_-]?key|secret|token)\s*[:=]\s*[\"']?[A-Za-z0-9_-]{16,}" \
+  --include="*.java" --include="*.yml" {gitPath}/
+
+# 3. Actuator 端点外露（🔴 P0）
+grep -rEn "management\.endpoints\.web\.exposure" \
+  --include="*.yml" {gitPath}/*/src/main/resources/
+
+# 4. 数据库连接串明文账号（🔴 P0）
+grep -rEn "jdbc:mysql://[^?]*:[^@]*@" \
+  --include="*.yml" {gitPath}/*/src/main/resources/
+```
+
+**结果处理：**
+- 命中 → 写入 schema §14.3 登记表 → 触发修复
+- 🟠 高级风险 → 24h 内通知架构组 + 工程 owner
+- 🟡 中级风险 → 随下次 PR 修复
+
+### §3.6.3 与工程级子文件的衔接
+
+主体 §1.X 只列**项目级**部署（公共 profile / 公共数据源模板 / 公共 nexus）；**每个工程特有**的部署细节（具体端口 / 具体 management.port / 具体密码占位符）写到 `{projectKey}.{module}.assets.md` 的 §1.1。
+
+---
+
+## §3.7 步骤 16-17 SOP：工程级拆文件 + 横切专题 + 可信度三态（🆕 2026-06-26）
+
+> **目的：** 主体 > 30KB 时按 schema §15 拆工程级子文件；同时建立 function/config/domain 三类横切专题；最后用可信度三态标注整个主体。
+
+### §3.7.1 步骤 16.a — 工程级子文件生成
+
+**触发条件（schema §15.1）：**
+- 主体估算 > 30KB → **必须拆**
+- 工程数 > 10 → **建议拆**
+
+**生成流程：**
+
+1. 按主体 §2 微服务清单逐工程遍历
+2. 对每个工程 cp 模板：`cp {schema 附录 B starter} → {projectKey}.{module-name}.assets.md`
+3. 填 §1 模块元信息 + §1.1 部署信息 + §2 子模块结构 + §3 完整技术栈
+4. 填 §5 核心类方法级实现（schema 附录 B §5.1-§5.5）
+5. 填 §6 工程特定约束 + §7 上下游契约
+6. 主体 §2 微服务清单对应行加 `[详见]({子文件路径})` 链接
+7. 主体 §15 表格登记所有生成的子文件
+
+### §3.7.2 步骤 16.b — function/ 业务场景专题
+
+**触发条件（schema §12.1）：**
+- 每个 Story 完成后 → 必产 1 篇（涉及 ≥3 工程）
+- 跨工程业务场景 → 即使没 Story 也应沉淀
+
+**生成流程：**
+
+1. Story 完成后，coder 在 `function/` 目录新建 `{Story编号}.md`
+2. cp `function-topic-template.md` 模板（schema 附录 C）
+3. 填 §1 接口清单 + §2 每个接口的调用链（ASCII 树状图）
+4. 填影响面（请求/响应对象字段 / SPI 接口 / Service 方法 / Redis Key）
+5. 填错误码表 + 关键约束 + 跨工程 Feign 依赖表
+6. 主体 §12.1 表格加一行 + 主体 §F 反向索引补 `function/` 关键词
+
+### §3.7.3 步骤 16.c — config/ 环境配置专题
+
+**触发条件（schema §12.1）：**
+- 新工程接入测试 → 必产 `config/test/api-test-env.md`
+- 新环境（prod / staging / pre-prod）接入 → 必产 `config/{env}/部署清单.md`
+
+**生成流程：**
+
+1. 新工程接入时，配置管理员在 `config/test/` 目录新建 `api-test-env.md`
+2. cp `config-topic-template.md` 模板（schema 附录 D）
+3. 填 §1 工程信息表（每个工程一行：路径 / 端口 / 用途）
+4. 填 §2 登录获取 Token 流程 + §3 本地测试前置检查
+5. 填 §4 测试接口 Base URL（本地 + 测试环境）
+6. 填 §5 已知踩坑（🔴 必读）
+7. 主体 §12.2 表格加一行 + 主体 §1.X 部署信息引用
+
+### §3.7.4 步骤 16.d — domain/ 业务域概览专题
+
+**触发条件（schema §12.1）：**
+- 新建业务域 / 域拆分 → 必产
+- 现有域边界重大调整 → 更新
+
+**生成流程：**
+
+1. 域负责人在 `domain/` 目录新建 `{域Key}.md`
+2. cp `domain-topic-template.md` 模板（schema 附录 E）
+3. 填 §1 业务范围 + §2 域内微服务 + §3 核心实体 + §4 域间依赖
+4. 填 §5 域事件流（ASCII 图）+ §6 关键术语表 + §7 业务规则
+5. 主体 §12.3 表格加一行 + 主体 §0 摘要引用
+
+### §3.7.5 步骤 17 — 可信度三态标注
+
+**触发条件（schema §13）：** 每次生成 / 更新 / 审计时必跑。
+
+**标注规则：**
+
+1. 探查 Agent 抽取内容时**默认全部 `[据推断]`**
+2. 凡能贴出 `文件路径:行号` 或 `bootstrap.yml` 行号 → 升级 `[已确认]`
+3. 凡"未读到 / 配置缺失 / 端口冲突" → 不得写进主体，必须写入 `{projectKey}.pending-questions.md`
+4. 在主体每个章节标题后缀标注：`## [已确认] 4. DDD 内部分层落点`（整章都是确认的）
+5. 在表格单元后缀标注：`| 11101 | 用户不存在 [已确认] | BossUserErrorCode |`
+6. 主体 §13 表格记录可信度分布 + 占比
+
+**门禁：**
+- 🔴 `[据推断]` 占比 > 30% → 触发额外探查 SOP
+- 🔴 主体每章标题必须含三态之一标注（schema §13.2）
 
 ---
 
@@ -312,6 +504,35 @@ For each 待确认问题 Q in pending-questions.md：
 - 🔴 如果涉及 §6，§6 引用与 constraints/ **双源一致**
 - 🔴 不在更新时删除缺口项（缺口项要打"✅ 已补 {date}"或保留在原位）
 
+### 4.4 🆕 工程级子文件更新 SOP（2026-06-26）
+
+> **适用：** 主体已拆分工程级子文件（schema §15 触发）后，每次项目变更时同步更新子文件。
+
+**4.4.1 触发条件**
+
+| 变更类型 | 主体动作 | 子文件动作 |
+|---------|---------|----------|
+| 新增工程 | §2 加一行 + §15 表格加一行 | 新建 `{projectKey}.{module}.assets.md` |
+| 删除工程 | §2 删一行 + §15 标记"已废弃" | 子文件标"⚠️ 已废弃" 或删除 |
+| 工程内部变更（DDD / 类 / 部署）| §2 不变 | 对应子文件 §1-§7 更新 |
+| 横切专题新增（function/config/domain）| §12 表格加一行 + §F 反向补关键词 | 创建对应专题文件 |
+
+**4.4.2 同步规则**
+
+- 🔴 主体 §15 表格与子文件实际存在一一对应（不允许"主体有但文件没有"或反之）
+- 🔴 主体 §F 反向索引含 `function/` `config/` `domain/` 三个关键词
+- 🟠 子文件更新时同步更新主体 §15 表格的 `最后更新` 列
+
+**4.4.3 主体与子文件引用关系**
+
+```markdown
+主体 §2 微服务清单某行：
+| `icec-cloud-boss-user` | ... | [详见](icec-cloud-boss-user.assets.md) |
+
+子文件文首：
+> **本文是 `<projectKey>.assets.md` 的工程级子文件**，仅含本工程细节。
+```
+
 ---
 
 ## 5. 动作 3：审计（每月例行）
@@ -405,6 +626,46 @@ ls constraints/*.md | xargs -n1 basename
 - 🆕 **索引有效性 ≥ 95%**（< 95% 触发"补索引"动作）
 - 🔴 **审计报告必须写**到 log 末尾
 
+### 5.4 🆕 横切专题审计 SOP（2026-06-26）
+
+> **适用：** 每月审计时同步审计三类横切专题 + 工程级子文件。
+
+**5.4.1 审计对象与命令**
+
+| 对象 | 审计命令 | 通过条件 |
+|------|---------|---------|
+| `function/` 目录 | `ls skills/ae-sdd/project-assets/{projectKey}/function/ \| wc -l` | ≥ 已完成 Story 数 × 0.7（允许 30% 漏）|
+| `function/{Story}.md` 内容 | 检查是否含 §1 接口清单 + §2 调用链 + §4 跨工程 Feign 表 | 每篇必备 4 节 |
+| `config/test/api-test-env.md` | `grep "工程信息" config/test/*.md` | 必含 5+ 工程 |
+| `config/` 内容 | 检查 §5 已知踩坑 + §4 测试 Base URL 完整性 | 每篇必备 4 节 |
+| `domain/` 目录 | `ls skills/ae-sdd/project-assets/{projectKey}/domain/` | 与业务域数匹配 |
+| `domain/{域}.md` 内容 | 检查 §4 域间依赖 + §5 域事件流 | 每篇必备 5 节 |
+| 工程级子文件 | `ls {projectKey}.*.assets.md` | 与主体 §15 表格一一对应 |
+| 主体 §15 表格 | 检查每行文件是否存在 + 大小是否 > 0 | 100% 一致 |
+| §6.8 完整技术栈版本号表 | 检查 7 张表是否齐全 | 100% 齐全 |
+| §1.X 部署信息 | 检查 10 个字段是否齐全 | ≥ 8/10 字段填 |
+| §14 安全隐患登记表 | 检查是否有"🟠 高级风险待修"项 | 高级风险必须 24h 内修 |
+| §13 可信度三态标注 | `[据推断]` 占比 ≤ 30% | 占比 < 30% |
+
+**5.4.2 审计输出**
+
+写入审计报告末尾：
+
+```markdown
+## 横切专题审计（YYYY-MM-DD）
+
+| 对象 | 通过/失败 | 备注 |
+|------|---------|------|
+| function/ 文件数 | ✅ N 篇 | 漏 X 个 Story 待补 |
+| config/ 内容 | ✅ | — |
+| domain/ 内容 | ✅ | — |
+| 工程级子文件 | ✅ | — |
+| §6.8 完整技术栈 | ✅ | — |
+| §1.X 部署信息 | ⚠️ | 缺 2 个工程的 nexusRepo |
+| §14 安全隐患 | 🟠 | 1 项 🟠 高级风险待修 |
+| §13 可信度 | ✅ | 推断占比 18% |
+```
+
 ---
 
 ## 6. 动作 4：读取（被其他 SKILL 调用）— 原 ④bis SOP 步骤 1
@@ -494,6 +755,55 @@ ae-sdd assets stats --project <projectKey>
 - 🔴 **§1 lastAuditedAt > 90 天 = 资产过期，禁止使用**（强制）
 - 🟠 **§1 lastAuditedAt > 30 天 = 建议先跑 §4 更新**（推荐）
 - 🆕 **未通过 §G 索引 API 按需加载 = 视为"粗暴使用资产"**（推荐改用 API）
+
+### 6.4 🆕 按功能专题加载 SOP（2026-06-26）
+
+> **适用：** Story 编写者需要"按业务场景"而非"按章节"加载资产。例如：写 STORY-003-BE（坐席登录鉴权）时，需要知道所有相关接口、调用链、影响面、错误码。
+
+**6.4.1 加载优先级**
+
+1. **第一优先：** `function/{Story编号}.md`（如 `function/STORY-003-BE-登录鉴权.md`）
+   - 该文件已含完整调用链 + 影响面 + 错误码 + Redis Key + 跨工程 Feign 表
+   - 读完此文件即可开始 Story 编写
+2. **第二优先：** 主体 §E.1 function/ 业务场景索引 → 跳到对应专题文件
+3. **第三优先：** 主体 §E API 索引 → 找相关 SPI 契约
+4. **第四优先：** 工程级子文件 §5 核心类方法级实现 → 找具体类/方法
+
+**6.4.2 按场景加载的命令清单（🆕 函数模板）**
+
+```bash
+# 按 Story 编号加载（最常用）
+ae-sdd assets function STORY-003-BE --project icec-cloud-boss
+# 返回：function/STORY-003-BE-登录鉴权.md 全文
+
+# 按场景关键词加载（不记得 Story 编号时）
+ae-sdd assets function --keyword "loginScene=cs" --project icec-cloud-boss
+# 返回：所有含"loginScene=cs"的 function/ 文档
+
+# 按工程加载（"我要看 boss-user 工程所有上下游契约"）
+ae-sdd assets module icec-cloud-boss-user --project icec-cloud-boss
+# 返回：主体 §B + 工程级子文件 icec-cloud-boss-user.assets.md 全文
+
+# 按环境配置加载（"本地起 boss-user 前要做什么"）
+ae-sdd assets config local boss-user --project icec-cloud-boss
+# 返回：config/test/api-test-env.md 中 boss-user 章节
+
+# 按业务域加载（"了解 IM 域全景"）
+ae-sdd assets domain im --project icec-cloud-life
+# 返回：domain/im.md 全文 + 主体 §2 IM 相关行
+```
+
+**6.4.3 与 §G 索引 API 的关系**
+
+- §G 索引 API（关键词 BM25 反查）保留 → 作为"模糊查找"备选
+- §6.4 函数模板（按场景/Story/工程/环境/域）→ 新增"精确加载"主路径
+- 两者并存，精确优先
+
+**6.4.4 门禁**
+
+- 🔴 **Story 编写必先查 `function/` 目录**（避免重复造调用链图）
+- 🔴 **新工程接入必先查 `config/test/`**（避免重复造本地端口表）
+- 🟠 **新业务域接入必先查 `domain/`**（避免重复造域全景图）
 
 ---
 

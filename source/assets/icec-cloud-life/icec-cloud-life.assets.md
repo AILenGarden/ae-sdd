@@ -48,8 +48,8 @@ description: icec-cloud-life 项目资产实例 — 基于 2026-06-17 Explore Ag
 
 | name | responsibility | port | contextPath | type | callChain | dependsOnSpi |
 |------|---------------|------|-------------|------|-----------|--------------|
-| `icec-cloud-life-cs` | 客服域 Service（工单/会话/坐席/状态机/语音外呼）；DDD 四层 | 20092 | — | service | Service（DDD）；暴露 cs-spi | — |
-| `icec-cloud-life-im` | IM 域 Service（会话/消息/融云/参与者）；DDD 四层 | 20093 | — | service | Service（DDD）；暴露 im-spi | — |
+| `icec-cloud-life-cs` | 客服域 Service（工单/会话/坐席/状态机/语音外呼）；DDD 四层 | 20092 | — | service | Service（DDD）；暴露 cs-spi | — | [详见](icec-cloud-life.icec-cloud-life-cs.assets.md) |
+| `icec-cloud-life-im` | IM 域 Service（会话/消息/融云/参与者）；DDD 四层 | 20093 | — | service | Service（DDD）；暴露 im-spi | — | [详见](icec-cloud-life.icec-cloud-life-im.assets.md) |
 | `icec-cloud-life-im-bff` | IM BFF（面向 APP/工作台的 IM 接口聚合）；单模块 | 10096 | `/life-im-bff` | bff | BFF → im-spi/cs-spi → Service | `icec-cloud-life-im-spi`, `icec-cloud-life-cs-spi` |
 | `icec-cloud-life-user` | 2C 用户域（双启动模块：service 6602 + web 6001） | 6602 (service) / 6001 (web) | `/user-api` (web) | service | Service（DDD）+ Web 暴露层 | — |
 | `icec-cloud-life-vehicle` | 车辆域 Service；DDD 四层 | 20087 | — | service | Service（DDD）；暴露 vehicle-spi | — |
@@ -442,6 +442,74 @@ find D:\Item\life\2c\ -name "bootstrap*.yml" -not -path "*/target/*" -exec grep 
 | 9 | icec-cloud-life-configuration 的配置中心集成方式（Nacos/Panda）未探查 | 🟢 P3 | 待补 | 2026-Q4 |
 | 10 | 各 BFF 工程的 Feign Client 注册方式（是否所有 BFF 都有 Facade 层）未全量验证 | 🟡 P2 | 待补 | 2026-07 |
 | 11 | **✅ 已补 2026-06-24**：§F 反向索引此前仅 9 词（门禁要求 ≥20）且位置为粗粒度章节号，本次扩到 28 词并精确到 §X.Y + 行号；§G 读取 API 从"自然语言协议"升级为 `ae-sdd assets` 脚本化实现 | 🟢 P3 | ✅ 已补 | - |
+| **12** | **🆕 2026-06-26**：按 schema v3 §15 拆分首个工程级子文件 `icec-cloud-life.icec-cloud-life-cs.assets.md`（客服域，110KB）；其余 20 工程按此范式分批迁移 | 🟢 P3 | ✅ 已补（life-cs）| 持续 |
+
+---
+
+## 12. 横切专题文件索引（🆕 2026-06-26）
+
+> 🆕 schema v3 §12 新增节。单 Story 跨 ≥3 工程时，业务场景应入 `function/`，环境配置入 `config/`，业务域概览入 `domain/`——而非塞进主体。
+>
+> **当前状态**：三类专题目录尚未建立。下次 STORY-002/003/007/009/010/011/020 完成时同步产出。
+
+### 12.1 function/ 业务场景专题索引
+
+| 文件 | 涉及工程 | 摘要 | 最后更新 |
+|------|---------|------|---------|
+| _（暂无）_ | — | — | — |
+
+### 12.2 config/ 环境配置专题索引
+
+| 文件 | 适用范围 | 摘要 | 最后更新 |
+|------|---------|------|---------|
+| _（暂无）_ | — | — | — |
+
+### 12.3 domain/ 业务域概览专题索引
+
+| 文件 | 业务域 | 摘要 | 最后更新 |
+|------|--------|------|---------|
+| _（暂无）_ | — | — | — |
+
+---
+
+## 15. 工程级粒度拆分记录（🆕 2026-06-26）
+
+> 🆕 schema v3 §15 新增节。主体文件 > 30KB 时按规则拆工程级子文件，本节列出本项目所有子文件。
+
+| 工程名 | 子文件路径 | 大小 | 最后更新 | 状态 |
+|--------|----------|------|---------|------|
+| `icec-cloud-life-cs` | [`icec-cloud-life.icec-cloud-life-cs.assets.md`](icec-cloud-life.icec-cloud-life-cs.assets.md) | ~50KB | 2026-06-26 | ✅ 已生成（首个工程级子文件范本）|
+| `icec-cloud-life-im` | [`icec-cloud-life.icec-cloud-life-im.assets.md`](icec-cloud-life.icec-cloud-life-im.assets.md) | ~50KB | 2026-06-26 | ✅ 已生成（首个 IM 域 + 融云防腐 + 4 子域范本）|
+| `icec-cloud-life-im-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-im-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-user` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-vehicle` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-vehicle-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-notification` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-ops-notification` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-workticket` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-content-feed` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-content-feed-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-touchpoint` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-captcha` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-configuration` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-obs` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-event-integration` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-user-journey-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-auth-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-workticket-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-spi`（聚合 SPI）| — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-api`（聚合 API）| — | — | — | ⏳ 待拆 |
+
+**拆分规则：** 主体 ≤ 30KB；每个工程一份子文件；主体 §2 微服务清单每行加 `[详见]({子文件路径})` 链接（已部分完成）。
+
+**life-cs 子文件亮点：**
+- 🔴 §1.1 部署信息 25 个字段全填（含 xxl-job executor 配置 + feign 配置 + 完整 Hikari/Redis 配置）
+- 🔴 §1.2 安全提示 5 项（其中 **S-101 Redis 密码明文为高危**）
+- §3 完整技术栈 16 项（含 redisson 3.5.7 + spring-statemachine + spring-retry + xxl-job + guava + assertj 3.11.1）
+- §5 核心类方法级实现 ~70+ 方法（Converter + 4 个 AppService + Orchestrator + 状态机驱动 + Handler + 2 个 Facade Impl + Feign + Repository Impl + Notification Gateway + xxl-job Handlers）
+- §6.2 客服域特有约束 9 条（状态机驱动 / 超时字段语义 / claimed_at 防御 null / ACTIVE_STATUSES 收窄 / 结单 5 步 / 三端通知异步 / 融云 ONLINE 时间刷新条件 / C25 失败传播 / 坐席乐观锁）
+- §8 数据库表 6 张（含 cs_ticket 字段变更详情 + cs_user_status_rongyun_sync 新表）
 
 ---
 
@@ -469,8 +537,8 @@ find D:\Item\life\2c\ -name "bootstrap*.yml" -not -path "*/target/*" -exec grep 
 
 | module | 概述 | 基础包 | 类型 | 入口 Controller | 关键 AppService | 文档 |
 |--------|------|--------|------|----------------|----------------|------|
-| `icec-cloud-life-cs` | 客服域（工单/会话/坐席/状态机/语音）| `com.casstime.cloud.life.cs` | service | `CsTicketServiceImpl` / `CsConversationServiceImpl` | `CsTicketAppService` / `CsConversationAppService` | §4 |
-| `icec-cloud-life-im` | IM 域（会话/消息/融云/参与者）| `com.casstime.cloud.life.im` | service | `ImSessionServiceImpl` / `ImMessageServiceImpl` | `ImSessionAppService` / `ImMessageAppService` | §4 |
+| `icec-cloud-life-cs` | 客服域（工单/会话/坐席/状态机/语音）| `com.casstime.cloud.life.cs` | service | `CsTicketServiceImpl` / `CsConversationServiceImpl` | `CsTicketAppService` / `CsConversationAppService` | [工程级子文件](icec-cloud-life.icec-cloud-life-cs.assets.md) |
+| `icec-cloud-life-im` | IM 域（会话/消息/融云/参与者）| `com.casstime.cloud.life.im` | service | `ImSessionServiceImpl` / `ImMessageServiceImpl` | `ImSessionAppService` / `ImMessageAppService` | [工程级子文件](icec-cloud-life.icec-cloud-life-im.assets.md) |
 | `icec-cloud-life-im-bff` | IM BFF（APP/工作台聚合层）| `com.casstime.cloud.life.bff.im` | bff | `ImTokenRestImpl` / `CsConversationRestImpl` | `ImTokenAppService` / `CsConversationAppService` | §4 BFF 节 |
 | `icec-cloud-life-user` | 2C 用户域（service+web 双模块）| `com.casstime.cloud.life.user` | service | `PersonalController` / `UserBindingVehicleController` | `UserAppService` / `PersonalAppService` | §2 |
 | `icec-cloud-life-vehicle` | 车辆域 | `com.casstime.cloud.life.vehicle` | service | — | — | §2 |

@@ -35,6 +35,49 @@ description: 项目资产目录标准 — Coding-SKILL ④bis CodePlan 必引用
 | lastAuditedAt | ✅ | 最后审计时间（YYYY-MM-DD） |
 | owner | ✅ | 维护负责人 |
 
+### 1.2 Meta.部署信息（🆕 2026-06-26）
+
+> **🆕 升级背景**：原 §1 只列 portRange，每个工程的部署细节（profile / 数据源 / Redis / 网关 / 镜像仓库 / 私服 / JaCoCo）散落在各工程 bootstrap.yml，靠 grep 拼凑。**从 coder "接手第一个本地服务" 到 "跑通" 平均浪费 1-2 小时**——所以升级为强制结构化记录。
+
+| 字段 | 必填 | 说明 | 抽取命令 |
+|------|------|------|---------|
+| `profile.active` | ✅ | 当前激活的 Spring Profile（如 `beta-kunlun`）| `grep "spring.profiles.active" */bootstrap.yml` |
+| `db.urlTemplate` | ✅ | 数据源 URL 模板（含占位符 `${icec.database.servers}` 等）| `grep "jdbc:mysql" */bootstrap.yml` |
+| `db.pool` | ⚠️ | 连接池配置（HikariCP max-active / min-idle / timeout）| `grep -A 3 "hikari" */bootstrap.yml` |
+| `redis.address` | ✅ | Redis 地址（生产/测试分开）| `grep "spring.redis" */bootstrap.yml` |
+| `redis.password.inConfig` | 🔴 | 是否在配置文件中明文写密码 | `grep -E "redis.*password" */bootstrap.yml` |
+| `gateway` | ✅ | 网关/代理 URL（如 `icec.api.agent`）| `grep "icec.api" */bootstrap.yml` |
+| `imageRepo` | ✅ | 容器镜像仓库（如 `registry.cn-shenzhen.aliyuncs.com/cassmall/`）| `grep "docker.image` */pom.xml` |
+| `nexusRepo` | ⚠️ | 私服仓库地址 | `grep "cass-public" pom.xml` |
+| `management.port` | ⚠️ | Actuator 端口（防止本地多服务启动冲突）| `grep "management.port" */bootstrap.yml` |
+| `coverageTool` | ⚠️ | 覆盖率插件（JaCoCo 等）| `grep "jacoco" pom.xml` |
+
+**字段判例（boss-user-service）：**
+
+```yaml
+deployment:
+  profile.active: beta-kunlun
+  db.urlTemplate: "jdbc:mysql://${icec.database.servers}/${icec.database.dbname}?useUnicode=true&characterEncoding=utf-8&allowMultiQueries=true&autoReconnect=true"
+  db.pool:
+    type: HikariCP
+    max-active: 20
+    min-idle: 1
+    timeout: 30s
+  redis.address: "redis-...dcs.huaweicloud.com:6379"
+  redis.password.inConfig: false  # 🔴 若 true → 安全提示
+  gateway: "http://life-hwbeta-api-penglai.intra.casstime.com"
+  imageRepo: "registry.cn-shenzhen.aliyuncs.com/cassmall/boss-user-service:1.0-SNAPSHOT"
+  nexusRepo: "http://dev.casstime.com/nexus/content/groups/public/"
+  management.port: 30000  # 默认值；显式配置时填实际值
+  coverageTool: jacoco
+```
+
+**🔴 安全提示触发条件**（自动写入 §14）：
+- `redis.password.inConfig: true` → "bootstrap.yml 中 Redis 明文密码直接写入配置文件，建议改为占位符外部注入"
+- `management.port` 缺省 30000 且无 auth → "Actuator 端点可能外露，需配置 `management.endpoints.web.exposure.include` 白名单"
+
+---
+
 ### 1.1 Meta.gitPath 字段强化约束（🆕 2026-06-10）
 
 **下游消费：** `document-storage-skill` §0.5/§0.6 强依赖此字段作为"项目根"事实基线。
@@ -245,16 +288,87 @@ description: 项目资产目录标准 — Coding-SKILL ④bis CodePlan 必引用
 - 核心落库路径必须真实 DB 验证
 - 静态分析 Checkstyle + SpotBugs（P0 阻断）
 
-### 6.8 技术栈范围（constraints/technology-stack.md 的本项目落点）
+### 6.8 完整技术栈版本号表（constraints/technology-stack.md 的本项目落点）
 
-- Java 8 + Spring Boot 1.5.7 + Spring Cloud Dalston.SR4
-- MyBatis-Plus 3.3.2 + PageHelper 5.2.1 + JUnit 4.12 + Mockito
-- MySQL 8.0.17 / ES 7.10.2
-- 本地缓存 Caffeine + Redis
-- Kafka 必须经 courier 组件
-- 定时任务用 job-spring-boot-starter（禁 `@Scheduled`）
-- 禁直配 logback/log4j（用 casslog）
-- 基础组件：panda/casslog/cassmetrics/job-spring-boot-starter
+> **🆕 2026-06-26 升级**：原 §6.8 "技术栈范围"只列主框架，缺内部 starter / 工具库 / 测试框架版本号 → 升级为"完整技术栈版本号表"。**任何新增/升级依赖必须先更新本表**。
+
+#### 6.8.1 主框架与运行时
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| Java | 8 | 主版本（禁止 Java 11+ 新特性）|
+| Spring Boot | 1.5.7.RELEASE | 应用基础框架 |
+| Spring Cloud | Dalston.SR4 | 服务治理 / 配置 / Feign |
+| MyBatis-Plus | 3.3.2 | ORM；Mapper XML 路径 `classpath*:com/.../*.xml` |
+| PageHelper | 5.2.1 | 物理分页 |
+| MySQL Connector/J | 8.0.17 | 驱动（`com.mysql.cj.jdbc.Driver`）|
+| HikariCP | 2.7.9 | 连接池（max-active=20 / min-idle=1 / timeout=30s）|
+| Redis | spring-boot-starter-data-redis | database 0，pool max-active 50 |
+| Elasticsearch | 7.10.2 | 搜索（仅 life 域用）|
+
+#### 6.8.2 工具库与映射
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| MapStruct | 1.5.3.Final | DTO/PO 映射（仅引用，实际用显式 Converter）|
+| Lombok | 1.18.16 | `@Data @RequiredArgsConstructor @Slf4j` |
+| Swagger2 | 2.8.0 | 接口文档（必加）|
+| commons-lang3 | 3.9 | 字符串/通用工具（domain 层）|
+| commons-collections4 | 4.0 | 集合工具（domain 层）|
+| Caffeine | （跟随）| 本地缓存（与 Redis 配合）|
+| JSON | `com.casstime.commons.utils.JsonUtils` | 统一 JSON 序列化 |
+| 日期类型 | `java.util.Date` | 禁 LocalDateTime（防序列化踩坑）|
+
+#### 6.8.3 安全与加解密
+
+| 组件 | 版本 | 备注 |
+|------|------|------|
+| spring-security-crypto | 跟随 Spring Boot | 密码 BCrypt（`BCryptUtil.matches`）|
+| DesensitizeUtils | `com.casstime.commons.utils` | 手机号脱敏 |
+| JWT 鉴权 | Cookie `security_context` | 默认需鉴权，`@SkipAuth` 显式跳过 |
+
+#### 6.8.4 内部基础组件（公司 starter，🔴 必须用，禁止直配）
+
+| 组件 | 版本 | 用途 | 替代 |
+|------|------|------|------|
+| panda-spring-boot-starter | 1.0.9 | 配置中心（`panda.casstime.com`）| 禁直连 Nacos |
+| casslog-spring-boot-starter | 1.5.0 | 日志组件 | 禁直配 logback/log4j |
+| cassmetrics-spring-boot-v1-starter | 1.0.4 | 监控指标 | 禁自造 metrics |
+| cass-config-spring-boot-starter | 1.1.2 | 内部配置组件 | — |
+| job-spring-boot-starter | （跟随）| 定时任务 | 禁 `@Scheduled` |
+| courier-spring-boot-starter | 3.3-SNAPSHOT | 领域事件 / MQ 投递 | Kafka 必须经 courier |
+
+#### 6.8.5 测试框架与覆盖率要求
+
+| 组件 | 版本 | 用途 |
+|------|------|------|
+| JUnit | 4.12 | 单元测试 |
+| Mockito | 1.10.19 | Mock 框架（domain 层）|
+| surefire | 2.22.2 | Maven 测试插件 |
+| JaCoCo | （跟随）| 覆盖率插件（target/jacoco.exec）|
+
+**覆盖率硬指标（🔴 阻断）：**
+- 整体 ≥ 60%
+- Service 核心 ≥ 70%
+- Mapper XML 自定义 SQL ≥ 60%
+- Controller 接口 ≥ 50%
+
+#### 6.8.6 构建与镜像
+
+| 组件 | 版本 | 用途 |
+|------|------|------|
+| spring-boot-maven-plugin | 2.7.5 | Fat JAR 打包（repackage）|
+| dockerfile-maven-plugin | 1.4.0 | Docker 镜像构建 |
+| 私服仓库 | `http://dev.casstime.com/nexus/content/groups/public/` | cass-public |
+| 镜像仓库 | `registry.cn-shenzhen.aliyuncs.com/cassmall/` | 阿里云 |
+
+#### 6.8.7 静态分析与门禁工具
+
+| 组件 | 用途 | 门禁等级 |
+|------|------|---------|
+| Checkstyle | 代码风格 | 🔴 P0 阻断 |
+| SpotBugs | Bug 模式 | 🔴 P0 阻断 |
+| 工程特定扫描 | 见 §6.11 | 🔴 P0 阻断 |
 
 ### 6.9 隐性约定（constraints/implicit-constraints.md 的本项目补缺）
 
@@ -430,8 +544,10 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 
 ---
 
-## 10. 团队惯用实现方式（经验文档）
+## 10. 团队惯用实现方式（经验文档） 🆕 与 §11 缺口表不可混用
 
+> **🆕 2026-06-26 命名说明**：本节是"团队惯用模式沉淀"，**不要**把项目缺口写到这里；项目缺口一律写 §11。
+>
 > **本质：** 从项目现有代码中提炼团队**已验证的惯用实现模式**，经约束过滤后沉淀为可复用经验。CodingSkill 在实现新功能时优先参考本节，避免重复设计已有成熟方案。
 
 ### 10.1 经验文档结构
@@ -502,6 +618,203 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 
 ---
 
+## 12. 横切专题文件索引（🆕 2026-06-26）
+
+> **🆕 升级背景**：原 schema 只有"项目主体 + 工程级"两层，缺"跨工程的横切专题"维度。一个 Story 通常跨 5+ 工程（参见同事 `function/登录鉴权-BE-接口逻辑排查.md` 跨 5 工程），强行塞进主体文件会导致主体膨胀到 100KB+ 无法维护。
+>
+> **新增三类横切专题**：业务场景专题（function/）+ 环境/部署/测试配置专题（config/）+ 业务域概览专题（domain/）。
+
+### 12.1 三类横切专题边界
+
+| 类型 | 目录 | 用途 | 典型场景 | 触发时机 |
+|------|------|------|---------|---------|
+| **function/** | `skills/ae-sdd/project-assets/{projectKey}/function/` | **跨工程业务场景专题** | 单 Story 跨 ≥3 工程的完整调用链 + 影响面 + 错误码 + Redis Key + DTO 字段 | 每个 Story 完成后必产 1 篇（STORY-002-BE / STORY-003-BE / ...）|
+| **config/** | `skills/ae-sdd/project-assets/{projectKey}/config/` | **环境/部署/测试/运维配置** | 本地端口表 + 测试环境 URL + Feign URL 注入 + management port 分配 + Docker 镜像标签 + 数据迁移 | 部署相关 PR / 新环境接入 / 配置变更时更新 |
+| **domain/** | `skills/ae-sdd/project-assets/{projectKey}/domain/` | **业务域概览（业务全景图）** | 业务域边界 + 域间依赖 + 域事件流 + 关键术语表 | 项目启动时建首版；域变更时更新 |
+
+### 12.2 命名规范
+
+| 类型 | 文件名模板 | 反例 |
+|------|-----------|------|
+| function/ | `{Story编号或场景标识}-{端标识}.md` 或 `{场景中文名}-BE-接口逻辑排查.md` | ❌ `function.md` / `function-boss.md`（太泛）|
+| config/ | `{环境或场景}.md`，如 `test/api-test-env.md` / `prod/部署清单.md` / `local/本地调试指南.md` | ❌ `config.md` / `config-all.md` |
+| domain/ | `{业务域Key}.md`，如 `cs/客服域.md` / `im/IM域.md` / `user/用户域.md` | ❌ `domain.md` |
+
+### 12.3 与主体文件的关系
+
+```
+skills/ae-sdd/project-assets/{projectKey}/
+├── {projectKey}.assets.md            # 主体（核心映射+索引，≤30KB）
+├── {projectKey}.update-log.md        # 主体变更日志
+├── {projectKey}.pending-questions.md # 主体待确认问题
+├── function/                          # 跨工程业务场景专题（按 Story 分）
+├── config/                            # 环境/部署/测试/运维配置
+├── domain/                            # 业务域概览
+└── {module-name}.assets.md            # 工程级子文件（每个工程一个）
+```
+
+**主体文件 §A-§G 索引需含三类专题引用：**
+- §D.1 config/ 索引（环境/部署组件）
+- §E.1 function/ 业务场景索引（Story ID + 一句话摘要）
+- §F 反向索引补 `function/` / `config/` / `domain/` 三个关键词
+
+### 12.4 门禁
+
+- 🔴 **每个 Story 完成后必产 1 篇 `function/`**（否则下次同类需求无人参考）
+- 🔴 **新工程接入必产 1 篇 `config/test/api-test-env.md`**（否则下一个接手的 coder 浪费 1-2 小时）
+- 🟠 **业务域变更（新增域/域拆分）必产 1 篇 `domain/`**
+
+---
+
+## 13. 信息可信度三态标注规范（🆕 2026-06-26）
+
+> **🆕 升级背景**：原 schema 所有内容一视同仁，**不知道哪些是 explore agent 真实读到的、哪些是推断的、哪些是没确认的**——下游消费方（Code Plan / Coding）无法判断可信度。同事知识库用 `[据命名/结构推断]` `[待确认]` 区分清楚了，值得吸收。
+
+### 13.1 三态定义
+
+| 标记 | 含义 | 下游消费规则 | 示例 |
+|------|------|------------|------|
+| `[已确认]` | 有源码 / 配置文件 / pom 等明确证据 | 直接采纳 | `[已确认] BossUserAppService 在 boss-user-application/.../appservice/BossUserAppService.java:42` |
+| `[据推断]` | 由命名约定 / 包结构 / 类似代码模式推断（≥2 处一致）| 谨慎采纳，Code Plan 阶段需进一步验证 | `[据推断] 状态机 if-else 应放 AppService 而非 Controller` |
+| `[待确认]` | 探索过程发现但无法验证的事项 | **写入 §10 pending-questions，不进 §0-§9 正文** | `[待确认] boss-abnormal 的 server.port` |
+
+### 13.2 在资产中的标注位置
+
+- **章节标题前缀**：`## [已确认] 4. DDD 内部分层落点`（整章都是确认的）
+- **表格单元后缀**：`| 11101 | 用户不存在 [已确认] | BossUserErrorCode |`
+- **行内标注**：`redisTemplate [据推断：与 BossUserExtensionPO 同包推断字段名]`
+
+### 13.3 自动分流规则（🔴 探查 SOP 必须遵守）
+
+1. 探查 Agent 抽取内容时**默认全部 `[据推断]`**
+2. 凡能贴出 `文件路径:行号` 或 `bootstrap.yml` 行号 → 升级 `[已确认]`
+3. 凡"未读到 / 配置缺失 / 端口冲突" → **不得写进主体**，必须写入 `{projectKey}.pending-questions.md`
+4. 探查完成后跑一次 `pending-questions.md → §10 缺口表` 同步脚本（待实现）
+
+### 13.4 探查输出物可信度审计（每月审计时跑）
+
+```bash
+# 主体中所有"推断"内容占比应 ≤ 30%
+grep -c "\[据推断\]" {projectKey}.assets.md
+grep -c "\[已确认\]" {projectKey}.assets.md
+
+# pending-questions 中问题数（应逐步减少）
+grep -c "^| Q-" {projectKey}.pending-questions.md
+```
+
+---
+
+## 14. 安全隐患记录 SOP（🆕 2026-06-26）
+
+> **🆕 升级背景**：同事 user.md §1.4 末尾主动写了"bootstrap.yml 中 Redis 明文密码直接写入配置文件，建议改为占位符外部注入 [待确认]"——这种**探查过程发现的安全隐患**值得结构化记录。
+
+### 14.1 强制扫描清单（探查 SOP §9.11 必跑）
+
+```bash
+# 1. 配置文件明文密码扫描（🔴 P0）
+grep -rEn "password\s*[:=]\s*[\"']?[A-Za-z0-9_-]{6,}" \
+  --include="*.yml" --include="*.yaml" --include="*.properties" \
+  {module-path}/src/main/resources/
+
+# 2. 硬编码 API Key / Secret 扫描（🔴 P0）
+grep -rEn "(api[_-]?key|secret|token)\s*[:=]\s*[\"']?[A-Za-z0-9_-]{16,}" \
+  --include="*.java" --include="*.yml" \
+  {module-path}/src/
+
+# 3. Actuator 端点外露扫描（🔴 P0）
+grep -rEn "management\.endpoints\.web\.exposure" \
+  --include="*.yml" {module-path}/src/main/resources/
+# 若 exposure.include=* 且无 spring.security 配置 → 警告
+
+# 4. 数据库连接串明文账号扫描（🔴 P0）
+grep -rEn "jdbc:mysql://[^?]*:[^@]*@" \
+  --include="*.yml" {module-path}/src/main/resources/
+```
+
+### 14.2 写入位置与格式
+
+发现安全隐患后，**写入主体 §14.3 "安全隐患登记表"**，格式：
+
+```markdown
+| ID | 类型 | 位置 | 风险等级 | 描述 | 建议修复 | 状态 |
+|----|------|------|---------|------|---------|------|
+| S-001 | 明文密码 | bootstrap.yml:42 | 🟠 高 | Redis password 直接写在配置文件 | 改为占位符外部注入 | 待修 |
+| S-002 | Actuator 外露 | bootstrap.yml:15 | 🟡 中 | exposure.include=* 未配置鉴权 | 加 spring.security 配置或 include 收紧 | 待修 |
+```
+
+**禁止**把安全隐患直接写进 §1-§9 正文（污染主体内容）。
+
+### 14.3 门禁
+
+- 🔴 **每次探查/审计必跑 14.1 扫描**，未跑视为探查未完成
+- 🔴 任何 🟠 高级风险**必须 24h 内**通知架构组 + 工程 owner
+- 🟡 🟡 中级风险随下次 PR 修复
+- 🟢 🟢 低级风险累积到月底审计统一处理
+
+---
+
+## 15. 工程级粒度拆分 SOP（🆕 2026-06-26）
+
+> **🆕 升级背景**：原 schema/template 强制"项目级单一文件"，导致 boss.assets.md 单文件 54KB 装 22 工程（冰山与浅滩混在一起）。同事知识库按工程拆 30+ 文件（每个 50-110KB），改一处只 review 一个文件，**变更影响面可控**。值得吸收。
+
+### 15.1 拆分粒度判定（🔴 硬规则）
+
+| 主体规模 | 处理 |
+|---------|------|
+| ≤ 10 个工程 | **不拆**，单一 `{projectKey}.assets.md` 即可 |
+| 11-30 个工程 | **主体 + 工程级子文件**，主体 ≤ 30KB（只装核心映射+索引），每个工程一个 `{module-name}.assets.md` |
+| > 30 个工程 | **主体 + 多工程聚合**（按 productLine/team 聚合）+ 每个工程一个文件 |
+
+### 15.2 工程级子文件命名规范
+
+| 类型 | 文件名模板 | 包含内容 |
+|------|-----------|---------|
+| 工程级子文件 | `{projectKey}.{module-name}.assets.md` | §1 模块元信息 + §2 子模块结构 + §4 DDD 落点 + §5 核心类（方法级）+ §6.1 工程特定约束 + §7 上下游契约 + §10 缺口 |
+| 工程级 BFF 子文件 | `{projectKey}.{module-name}.assets.md` | 同上 + BFF 专用节（BFF Controller 列表 / Feign Client 列表 / 操作日志 capability 列表）|
+
+**反例：** ❌ `{module-name}-notes.md` / `{module-name}.md` / `{module-name}-info.md`（后缀必须 `.assets.md` 保持一致）
+
+### 15.3 工程级子文件 starter 模板
+
+详见 [附录 B：工程级子文件 Starter 模板](#附录-b工程级子文件-starter-模板)
+
+### 15.4 主体 vs 子文件分工
+
+| 内容 | 主体 | 子文件 |
+|------|------|--------|
+| 项目元信息（gitPath / productLine / portRange）| ✅ | ❌ |
+| 微服务清单（22 个工程一行）| ✅ | ❌ |
+| §B 模块索引 | ✅ | — |
+| §C 字段索引（主表 + 通用组件）| ✅ | — |
+| §D 组件索引（项目级公共组件）| ✅ | — |
+| §E API 索引（项目级跨服务契约）| ✅ | — |
+| §F 反向索引 | ✅ | — |
+| §G 读取 API | ✅ | — |
+| **某工程 DDD 完整落点** | ❌ | ✅ |
+| **某工程核心类方法级实现** | ❌ | ✅ |
+| **某工程部署信息（数据源/Redis/镜像）** | 概要 | ✅ 详细 |
+| **某工程上下游契约** | 概要 | ✅ 详细 |
+
+### 15.5 主体与子文件引用规则
+
+主体文件中，提到某工程时：
+```markdown
+- `icec-cloud-boss-user`：[详见](icec-cloud-boss-user.assets.md)
+```
+
+子文件文首：
+```markdown
+> **本文是 `<projectKey>.assets.md` 的工程级子文件**，仅含本工程细节。跨工程信息见主体。
+```
+
+### 15.6 门禁
+
+- 🔴 **主体文件 > 30KB 时必须拆**（探查/审计脚本检查文件大小）
+- 🔴 **任何工程新增必须同步新增对应 `{module-name}.assets.md`**（不是塞进主体）
+- 🟠 **每个工程级子文件 ≥ 1 个核心类方法级实现**（防"骨架工程级文件"）
+
+---
+
 ## 附录 A：JSON Schema（机器可读，供 Code Plan 自动生成器消费）
 
 ```json
@@ -565,3 +878,563 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 - **更新频率：** 每月审计一次；新增微服务/分层调整时立即更新
 - **同步对象：** ① 本项目所有 Story 编写者（强制引用本文件）② 跨项目模板需对齐 `ae-sdd-update-skill.md` 边界判定
 - **双源一致性审计：** 每月跑对照脚本检查 `§6 工程约束` 是否引用了 `constraints/` 所有 8 个文件名
+
+---
+
+## 附录 B：工程级子文件 Starter 模板（🆕 2026-06-26）
+
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/module-assets-template.md skills/ae-sdd/project-assets/{projectKey}/{projectKey}.{module-name}.assets.md`
+
+```markdown
+---
+name: {projectKey}-{module-name}-project-assets
+description: {module-name} 工程级项目资产 — 探查时间 {YYYY-MM-DD}，含 {N} 个子模块 + {M} 个核心类 + 上下游契约。供本工程所有 Code Plan 引用。
+parent: {projectKey}.assets.md
+---
+
+# {module-name} 工程级项目资产
+
+> **本文是 `<parent>` 的工程级子文件**，仅含本工程细节。跨工程信息见主体。
+
+---
+
+## 0. 摘要与使用场景 [已确认/据推断/待确认]
+
+| 维度 | 内容 |
+|------|------|
+| 工程名 | `{module-name}` |
+| 父工程 | `<parent>` |
+| 探查时间 | `{YYYY-MM-DD}` |
+| 工程定位 | {一句话} |
+| 关键不变量 | {本工程不重复定义 rules；只把 rules 映射到本工程代码} |
+
+---
+
+## 1. 模块元信息 [已确认/据推断]
+
+| 字段 | 值 |
+|------|---|
+| moduleName | `{module-name}` |
+| groupId | `com.casstime.cloud` |
+| artifactId | `{module-name}` |
+| version | `{1.0-SNAPSHOT}` |
+| packaging | `pom（聚合父工程）` / `jar` |
+| 子模块数 | `{N 个}` |
+| 主启动类 | `{Bootstrap.java / WebApplication.java}` |
+| profile | `{dev, test, prod, beta-kunlun}` |
+| port | `{port 号}` |
+| contextPath | `/{context-path}` |
+| dependsOnSpi | [`spi 模块列表`] |
+| lastAuditedAt | `{YYYY-MM-DD}` |
+
+### 1.1 部署信息 [已确认/据推断]
+
+| 字段 | 值 |
+|------|---|
+| profile.active | `{beta-kunlun}` |
+| db.urlTemplate | `{jdbc:mysql://${...}/${...}?...}` |
+| db.pool | `{HikariCP max-active=20 / min-idle=1 / timeout=30s}` |
+| redis.address | `{redis-...dcs.huaweicloud.com:6379}` |
+| redis.password.inConfig | `{true / false}` |
+| gateway | `{http://...}` |
+| imageRepo | `{registry..../cassmall/{module-name}:1.0-SNAPSHOT}` |
+| nexusRepo | `{http://dev.casstime.com/nexus/...}` |
+| management.port | `{30000 / 显式值}` |
+| coverageTool | `{jacoco}` |
+
+### 1.2 安全提示（如有）[待确认]
+
+| ID | 类型 | 位置 | 风险等级 | 描述 | 建议修复 |
+|----|------|------|---------|------|---------|
+| S-{NNN} | {明文密码/外露} | {file:line} | {🟠/🟡} | {描述} | {修复建议} |
+
+---
+
+## 2. 子模块结构 [已确认/据推断]
+
+| 模块 | ArtifactId | 打包 | 职责 | 主要依赖 |
+|------|-----------|------|------|---------|
+| 领域层 | {xxx-domain} | jar | {职责} | {依赖} |
+| 应用层 | {xxx-application} | jar | {职责} | {依赖} |
+| 接口层 | {xxx-interfaces} | jar | {职责} | {依赖} |
+| 基础设施层 | {xxx-infrastructure} | jar | {职责} | {依赖} |
+| 启动/服务层 | {xxx-service} | jar | {职责} | {依赖} |
+| {其他} | ... | ... | ... | ... |
+
+### 2.1 依赖层次关系 [已确认]
+
+```
+service → interfaces → application → domain
+            ↓             ↓
+        infrastructure ←─┘
+```
+
+---
+
+## 3. 完整技术栈版本号 [已确认]
+
+> **完整表见主体 §6.8**；本节只列本工程特有的依赖（pom 中显式声明但不在公共 dependencyManagement 的）。
+
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| {xxx} | {x.x.x} | {用途} |
+
+---
+
+## 4. DDD 内部分层落点 [已确认/据推断]
+
+> **详细类角色映射见主体 §4**；本节只列本工程内实际类。
+
+| 类角色 | 精确包路径 | 典型类名（已确认） |
+|--------|-----------|------------------|
+| Rest 实现类 | `{interfaces/restful/}` | `{XxxServiceImpl implements SpiInterface}` |
+| AppService | `{application/appservice/}` | `{XxxAppService}` |
+| Domain Object | `{domain/{业务域}/model/entity/}` | `{XxxDO}` |
+| ... | ... | ... |
+
+---
+
+## 5. 核心类方法级实现（🆕 2026-06-26）
+
+> **🆕 升级**：原 schema §4 只列类名，缺方法级实现。**Code Plan 编写者拿到资产时需要知道 "这个类有哪些方法 / 每个方法干什么"**——单看类名不够。本节按 DDD 分层逐类写方法签名+参数+返回+业务含义。
+
+### 5.1 Converter 层 [已确认/据推断]
+
+#### {XxxConverter}
+
+| 项 | 内容 |
+|---|---|
+| 文件路径 | `.../application/converter/{XxxConverter}.java` |
+| 职责 | {一句话} |
+
+| 方法名 | 入参 | 返回 | 业务含义 |
+|--------|------|------|---------|
+| {methodName} | {params} | {return} | {含义} |
+| ... | ... | ... | ... |
+
+### 5.2 AppService 层 [已确认/据推断]
+
+#### {XxxAppService}
+
+| 项 | 内容 |
+|---|---|
+| 文件路径 | `.../application/appservice/{XxxAppService}.java` |
+| 职责 | {一句话} |
+| 事务 | `@Transactional` 在哪些方法 |
+
+| 方法名 | 入参 | 返回 | 业务含义 |
+|--------|------|------|---------|
+| {methodName} | {params} | {return} | {含义} |
+
+### 5.3 Domain 层 [已确认/据推断]
+
+#### {XxxDO}
+
+| 项 | 内容 |
+|---|---|
+| 文件路径 | `.../domain/{业务域}/model/entity/{XxxDO}.java` |
+| 职责 | {一句话} |
+| 类型 | 充血模型（业务方法不以 get/set 开头）|
+
+| 字段名 | 类型 | 说明 [已确认/据推断] |
+|--------|------|-------------------|
+| {field} | {type} | {说明} |
+
+| 方法名 | 入参 | 返回 | 业务含义 |
+|--------|------|------|---------|
+| {method} | {params} | {return} | {含义} |
+
+#### {XxxDomainService}
+
+| 项 | 内容 |
+|---|---|
+| 文件路径 | `.../domain/{业务域}/service/{XxxDomainService}.java` |
+| 职责 | {跨聚合业务规则} |
+
+| 方法名 | 入参 | 返回 | 业务含义 |
+|--------|------|------|---------|
+| {method} | {params} | {return} | {含义} |
+
+### 5.4 Infrastructure 层 [已确认/据推断]
+
+#### {XxxRepositoryImpl}
+
+| 项 | 内容 |
+|---|---|
+| 文件路径 | `.../infrastructure/persistence/repository/mysql/{XxxRepositoryImpl}.java` |
+| 职责 | {仓储实现} |
+
+| 方法名 | 入参 | 返回 | 业务含义 |
+|--------|------|------|---------|
+| {method} | {params} | {return} | {含义} |
+
+#### {XxxClient} (Feign)
+
+| 项 | 内容 |
+|---|---|
+| 文件路径 | `.../infrastructure/feign/{XxxClient}.java` |
+| 目标 SPI | `{xxx-spi}` |
+| 调用服务名 | `{xxx-service}` |
+
+| 方法名 | 入参 | 返回 | 业务含义 |
+|--------|------|------|---------|
+| {method} | {params} | {return} | {含义} |
+
+### 5.5 Interfaces 层 [已确认/据推断]
+
+#### {XxxServiceImpl}
+
+| 项 | 内容 |
+|---|---|
+| 文件路径 | `.../interfaces/restful/{XxxServiceImpl}.java` |
+| 实现 SPI | `{XxxService extends ...}` |
+
+| 方法名 | 入参 | 返回 | 业务含义 |
+|--------|------|------|---------|
+| {method} | {params} | {return} | {含义} |
+
+---
+
+## 6. 工程特定约束 [已确认/据推断]
+
+> 主体 §6 是项目级约束；本节只列本工程**特有**的约束。
+
+### 6.1 工程特定静态扫描（🔴 编码完成必跑）
+
+```bash
+# 本工程特定扫描
+grep -rn "com\.casstime\.cloud\.{product}\.{domain}\.\(domain\|infrastructure\)\.\w\+\." \
+  --include="*.java" {module-path}/src/main/java/ \
+  | grep -v ":import " | grep -v ":package "
+# 期望输出为空
+```
+
+---
+
+## 7. 上下游契约 [已确认/据推断]
+
+### 7.1 对外暴露（SPI / Controller）
+
+| 类型 | 接口名 | URL / 服务名 | 文档 |
+|------|--------|------------|------|
+| SPI | `{XxxService}` | 服务名 `{xxx-service}` | {指向 spi 文档} |
+| Controller | `{XxxServiceImpl}` | `/{context-path}/...` | {方法列表} |
+
+### 7.2 对内消费（Feign Client）
+
+| SPI | 服务 | 方法 | 本工程 Feign Client |
+|-----|------|------|------------------|
+| {XxxService} | {xxx-service} | {method} | {XxxClient} |
+
+---
+
+## 8. 本工程缺口与待补充
+
+| # | 缺口 | 优先级 | 状态 |
+|---|------|-------|------|
+| 1 | {本工程 X 类的方法未读完} | 🟡 P2 | 待补 |
+| 2 | ... | ... | ... |
+
+---
+
+## §A 关键词反向索引（🆕 2026-06-26）
+
+| 关键词 | 出现位置 |
+|--------|---------|
+| {className} | §4 / §5.X |
+| {methodName} | §5.X |
+| {redisKey} | §5.X |
+| ... | ... |
+
+---
+
+## §B 本工程更新日志（合并到主体 update-log）
+
+> 详见主体 `{projectKey}.update-log.md`；本节列本工程特有的变更摘要。
+
+| 日期 | 变更摘要 |
+|------|---------|
+| {YYYY-MM-DD} | {一句话} |
+```
+
+---
+
+## 附录 C：function/ 业务场景专题 Starter 模板（🆕 2026-06-26）
+
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/function-topic-template.md skills/ae-sdd/project-assets/{projectKey}/function/{Story编号或场景标识}.md`
+
+```markdown
+# {场景名}-BE 接口逻辑排查（{Story 编号}）
+
+> **来源 Story：** {story-id}
+> **涉及工程：** {A} / {B} / {C} / {D} / {E}
+> **整体描述：** {一句话讲清这个 Story 在做什么业务场景}
+> **探查时间：** {YYYY-MM-DD}
+> **最后更新：** {YYYY-MM-DD}
+> **可信度：** {已确认 / 据推断 / 待确认}
+
+---
+
+## 1. 接口清单 [已确认]
+
+| # | 接口 | 用途 | 接口归属工程 | 备注 |
+|---|------|------|------------|------|
+| 1 | `POST {URL}` | {用途} | {归属工程} | {变更/扩展} |
+| 2 | ... | ... | ... | ... |
+
+---
+
+## 2. 接口 1：{接口名} [已确认/据推断]
+
+**入口：** `{XxxRestImpl#{method}}` / `{XxxAppService#{method}}`
+
+**调用链：**
+
+```
+{前端} 
+  → [{归属工程 A} / {bff-api}] {XxxRestImpl#{method}
+    → [{归属工程 B} / {bff}] {XxxAppService#{method}
+      → [Feign 调用] {XxxClient#{method}
+        → [{归属工程 C} / {spi}] {XxxService#{method}
+          → [{归属工程 C} / {interfaces}] {XxxServiceImpl#{method}
+            → [{归属工程 C} / {application}] {XxxAppService#{method}
+              → [{归属工程 C} / {domain}] {XxxDomainService#{method}
+                → [{归属工程 C} / {infrastructure}] {RepositoryImpl}
+                → [{归属工程 C} / {infrastructure}] {FacadeImpl} (Redis)
+```
+
+**关键逻辑：**
+
+1. {逻辑点 1}
+2. {逻辑点 2}
+3. {逻辑点 3}
+
+**影响面：**
+
+- **请求对象：** `{XxxRequest}` 新增 `{字段}`
+- **响应对象：** `{XxxResponse}` 新增 `{字段}`
+- **SPI 接口：** `{XxxService}` 新增 `{方法签名}`
+- **Service 方法：** `{XxxAppService}` 新增 `{方法}`
+- **Redis Key：** 新增 `{key 格式}` (TTL {n}s)
+
+**错误码：**
+
+| 错误码 | 含义 |
+|--------|------|
+| {11101} | {含义} |
+| ... | ... |
+
+**约束：**
+
+- {约束 1}
+- {约束 2}
+
+---
+
+## 3. 接口 2：{接口名} [已确认/据推断]
+
+（结构同上）
+
+---
+
+## 4. 跨工程 Feign 依赖表 [已确认]
+
+| 调用方 | SPI 接口定义 | 服务提供方 | Feign Client | 方法 |
+|--------|-------------|----------|--------------|------|
+| {工程} | {spi 接口} | {被调工程} | {Client} | {method} |
+| ... | ... | ... | ... | ... |
+
+---
+
+## 5. 关键约束（🔴 编码必读）
+
+1. **{约束标题}** — {描述}
+2. **{约束标题}** — {描述}
+
+---
+
+## 6. 关键词反向索引
+
+| 关键词 | 出现位置 |
+|--------|---------|
+| {类名} | §2 / §4 |
+| {方法名} | §2 |
+| {Redis Key} | §2 |
+| ... | ... |
+
+---
+
+## 7. 待确认事项
+
+| ID | 问题 | 影响范围 | 优先级 | 待查 |
+|----|------|---------|--------|------|
+| F-{NNN} | {问题} | {范围} | {🟠/🟡} | {方法} |
+```
+
+---
+
+## 附录 D：config/ 环境配置专题 Starter 模板（🆕 2026-06-26）
+
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/config-topic-template.md skills/ae-sdd/project-assets/{projectKey}/config/{环境或场景}.md`
+
+```markdown
+# {环境或场景} 配置（如 接口集成测试环境配置）
+
+> **适用范围：** {哪些工程 / 哪些环境}
+> **最后更新：** {YYYY-MM-DD}
+> **可信度：** {已确认 / 据推断}
+
+---
+
+## 1. 工程信息
+
+| 工程 | 路径 | 用途 |
+| --- | --- | --- |
+| {工程 A} | `{绝对路径}` | {用途} |
+| {工程 B} | `{绝对路径}` | {用途} |
+
+---
+
+## 2. {场景 1（如 登录获取 Token）}
+
+**接口：** `{METHOD} {URL}`
+
+**说明：** {描述}
+
+**请求体：**
+
+```json
+{...}
+```
+
+**响应字段：** `{accessToken}` 在 `{Cookie}` 里怎么传
+
+**使用方式：** `{Cookie: security_context=<accessToken>}`
+
+---
+
+## 3. 本地测试前置检查
+
+### 3.1 FeignClient 指定本地 URL
+
+测试时需要给 FeignClient 加 `url` 指向本地服务地址，**测试完成后必须还原**。
+
+示例：
+
+```java
+@FeignClient(name = "boss-user-service", url = "http://localhost:12004")
+public interface BossUserInfoClient extends BossUserInfoService
+```
+
+### 3.2 management port 不能重复
+
+| 工程 | management.port |
+| --- | --- |
+| {工程 A} | {port} |
+| {工程 B} | {port} |
+
+---
+
+## 4. 测试接口 Base URL
+
+### 4.1 本地服务
+
+| 工程 | Base URL | 端口 |
+| --- | --- | --- |
+| {工程 A} | `http://localhost:{port}/{context-path}` | {port} |
+| ... | ... | ... |
+
+### 4.2 测试环境
+
+| 工程 | Base URL | 备注 |
+| --- | --- | --- |
+| {工程 A} | `https://{host}/{prefix}` | {备注} |
+| ... | ... | ... |
+
+---
+
+## 5. 已知踩坑（🔴 必读）
+
+1. **{坑标题}** — {描述 + 解决方案}
+2. ...
+
+---
+
+## 6. 关键词反向索引
+
+| 关键词 | 出现位置 |
+|--------|---------|
+| {URL 前缀} | §2 / §4 |
+| {端口} | §3.2 / §4 |
+| ... | ... |
+```
+
+---
+
+## 附录 E：domain/ 业务域概览专题 Starter 模板（🆕 2026-06-26）
+
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/domain-topic-template.md skills/ae-sdd/project-assets/{projectKey}/domain/{业务域 Key}.md`
+
+```markdown
+# {业务域名}（{英文 Key}）
+
+> **业务定位：** {一句话讲清这域做什么业务}
+> **核心实体：** {聚合根列表}
+> **核心流程：** {主流程列表}
+> **最后更新：** {YYYY-MM-DD}
+
+---
+
+## 1. 业务范围
+
+{讲清这域的边界，include 什么 exclude 什么}
+
+## 2. 域内微服务
+
+| 工程 | 端口 | 职责 |
+|------|------|------|
+| {xxx-service} | {port} | {职责} |
+| {xxx-bff} | {port} | {职责} |
+
+## 3. 核心实体与聚合根
+
+| 实体 | 聚合根 | 关键字段 |
+|------|--------|---------|
+| {XxxDO} | ✅ / ❌ | {关键字段} |
+
+## 4. 域间依赖
+
+| 上游域 | 下游域 | 依赖方式 | 用途 |
+|--------|--------|---------|------|
+| {本域} | {下游域} | {Feign / 事件} | {用途} |
+
+## 5. 域事件流
+
+```
+{事件源} --{事件名}--> {事件消费者}
+```
+
+## 6. 关键术语表
+
+| 术语 | 含义 |
+|------|------|
+| {术语} | {含义} |
+
+## 7. 业务规则
+
+- {规则 1}
+- {规则 2}
+```
+
+---
+
+## 附录 F：横切专题 ↔ 主体章节映射表（🆕 2026-06-26）
+
+| 横切专题 | 触发时机 | 主体章节引用 | 必产条件 |
+|---------|---------|------------|---------|
+| `function/{Story}.md` | 每个 Story 完成后 | 主体 §E.1 + §F 反向 | Story 涉及 ≥3 个工程 |
+| `config/test/api-test-env.md` | 新工程接入测试 | 主体 §D.1 + §1.2 | 任意 BFF 工程 |
+| `config/{env}/部署清单.md` | 生产环境部署变更 | 主体 §1.2 + §14 | 部署 PR |
+| `domain/{域}.md` | 新建业务域 / 域拆分 | 主体 §0 + §2 | 业务域变更 |
+| `{module}.assets.md` | 新工程接入 | 主体 §2 + §B | 主体文件 > 30KB 或工程数 > 10 |
+```

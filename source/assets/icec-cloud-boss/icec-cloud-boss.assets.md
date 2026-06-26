@@ -48,7 +48,7 @@ description: icec-cloud-boss 项目资产实例 — 基于 Explore Agent 2026-06
 | name | responsibility | port | contextPath | hasBff | callChain | dependsOnSpi |
 |------|---------------|------|-------------|--------|-----------|--------------|
 | icec-cloud-boss-user | Boss 用户域（用户/角色/菜单/菜单图标/权限/扩展信息）；Feign 调用 icec-cloud-life-cs | 12004 | /boss-user | true | service（DDD 四层）+ Feign cs-spi | icec-cloud-life-cs-spi |
-| icec-cloud-boss-user-bff | 面向管理后台前端聚合 Boss 用户/角色/菜单/图标接口，统一 SPI Feign | 12003 | /boss-user-bff | true | api（*-bff-api）→ BFF → SPI → Service | icec-cloud-boss-user-spi, icec-cloud-boss-log-spi |
+| icec-cloud-boss-user-bff | 面向管理后台前端聚合 Boss 用户/角色/菜单/图标接口，统一 SPI Feign | 12003 | /boss-user-bff | true | api（*-bff-api）→ BFF → SPI → Service | icec-cloud-boss-user-spi, icec-cloud-boss-log-spi | [详见](icec-cloud-boss.icec-cloud-boss-user-bff.assets.md) |
 | icec-cloud-boss-auth-bff | 登录鉴权 BFF（密码登录/Token 颁发/刷新/登出，Cookie security_context JWT） | 12002 | /boss-auth-bff | true | BFF（唯一公开 /public/auth/login/password） | - |
 | icec-cloud-boss-notification-bff | Boss 端通知 BFF（通知查询/操作日志） | 10091 | /boss-notification-bff | true | api → BFF → SPI → Service | icec-cloud-life-notification-spi, icec-cloud-life-ops-notification-spi |
 | icec-cloud-boss-agent-workbench-bff | Agent 工作台 BFF（坐席/工单工作台） | 10097 | /boss-agent-workbench-bff | true | BFF（聚合 life-cs / life-im） | - |
@@ -512,6 +512,88 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
 | **9** | **🔴 新增**：icec-cloud-boss-webagent 的 server.port 仍未读到（仅有 application.yml 无 bootstrap.yml）| 🟡 P2 | 待补 | 2026-07 |
 | **10** | **🔴 新增**：life-cs / life-im / life-vehicle / life-workticket / life-notification 等域的 5 位错误码段位仅占位，具体使用码值未探查 | 🟡 P2 | 待补 | 2026-07 |
 | **11** | **✅ 已补 2026-06-24**：§A-§G 索引层此前完全缺失（G-00 靠子串匹配侥幸通过），本次补齐（§B 9 行 / §C 11+7 行 / §D 12 行 / §E 11 行 / §F 25 词 / §G 脚本化），并由 `ae-sdd assets query` 脚本提供倒排索引+BM25 查询 | 🟢 P3 | ✅ 已补 | - |
+| **12** | **🆕 2026-06-26**：按 schema v3 §15 拆分首批工程级子文件 — boss-user（多模块 DDD Service）/ boss-user-bff（BFF 单模块）/ life-cs（客服域状态机）；其余 39 个工程按范式分批迁移 | 🟢 P3 | ✅ 已补（3 个）| 持续 |
+
+---
+
+## 12. 横切专题文件索引（🆕 2026-06-26）
+
+> 🆕 schema v3 §12 新增节。单 Story 跨 ≥3 工程时，业务场景应入 `function/`，环境配置入 `config/`，业务域概览入 `domain/`——而非塞进主体。
+>
+> **当前状态**：三类专题目录尚未建立。下次 STORY-002/003/007/009/010/011/020 完成时同步产出。
+
+### 12.1 function/ 业务场景专题索引
+
+| 文件 | 涉及工程 | 摘要 | 最后更新 |
+|------|---------|------|---------|
+| _（暂无）_ | — | — | — |
+
+### 12.2 config/ 环境配置专题索引
+
+| 文件 | 适用范围 | 摘要 | 最后更新 |
+|------|---------|------|---------|
+| _（暂无）_ | — | — | — |
+
+### 12.3 domain/ 业务域概览专题索引
+
+| 文件 | 业务域 | 摘要 | 最后更新 |
+|------|--------|------|---------|
+| _（暂无）_ | — | — | — |
+
+---
+
+## 15. 工程级粒度拆分记录（🆕 2026-06-26）
+
+> 🆕 schema v3 §15 新增节。主体文件 > 30KB 时按规则拆工程级子文件，本节列出本项目所有子文件。
+
+| 工程名 | 子文件路径 | 大小 | 最后更新 | 状态 |
+|--------|----------|------|---------|------|
+| `icec-cloud-boss-user` | [`icec-cloud-boss.icec-cloud-boss-user.assets.md`](icec-cloud-boss.icec-cloud-boss-user.assets.md) | ~50KB | 2026-06-26 | ✅ 已生成（首个多模块 DDD Service 范本）|
+| `icec-cloud-boss-user-bff` | [`icec-cloud-boss.icec-cloud-boss-user-bff.assets.md`](icec-cloud-boss.icec-cloud-boss-user-bff.assets.md) | ~50KB | 2026-06-26 | ✅ 已生成（首个 BFF 单模块范本）|
+| `icec-cloud-boss-auth-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-notification-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-agent-workbench-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-configuration-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-log-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-log` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-vehicle-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-workticket-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-security` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-abnormal` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-webagent` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-boss-operation-log-starter` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-cs` | [`icec-cloud-life.icec-cloud-life-cs.assets.md`](../icec-cloud-life/icec-cloud-life.icec-cloud-life-cs.assets.md) | ~50KB | 2026-06-26 | ✅ 已生成（首个客服域状态机范本）|
+| `icec-cloud-life-im` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-im-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-user` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-vehicle` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-vehicle-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-notification` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-ops-notification` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-workticket` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-content-feed` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-content-feed-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-touchpoint` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-captcha` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-configuration` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-obs` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-event-integration` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-user-journey-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-auth-bff` | — | — | — | ⏳ 待拆 |
+| `icec-cloud-life-workticket-bff` | — | — | — | ⏳ 待拆 |
+| `boss-common` | — | — | — | ⏳ 待拆 |
+| `boss-passport` | — | — | — | ⏳ 待拆 |
+| `life-passport` | — | — | — | ⏳ 待拆 |
+
+**拆分规则：** 主体 ≤ 30KB；每个工程一份子文件；主体 §2 微服务清单每行加 `[详见]({子文件路径})` 链接。
+
+**已生成 3 个范本对比：**
+
+| 工程 | 类型 | 工程数 | 重点展示 |
+|------|------|--------|---------|
+| `boss-user` | 多模块 DDD Service（5 模块 pom）| 1 | DDD 4 层精确包路径 + 充血模型 + Converter 方法级 11 个 |
+| `boss-user-bff` | 🆕 单模块 BFF（jar）| 1 | Facade 模式 + OperationLog capability + GlobalExceptionHandler 8 handler + 34 AppService 方法 |
+| `life-cs` | 多模块 DDD Service（5 模块 pom）| 1 | 🔴 Spring StateMachine + Redisson 分布式锁 + @Async + @Retryable + xxl-job |
 
 ---
 
@@ -564,7 +646,7 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
 | module | 概述 | 基础包 | 类型 | 入口 Controller | 关键 AppService | 文档 |
 |--------|------|--------|------|----------------|----------------|------|
 | `icec-cloud-boss-user` | Boss 用户域（用户/角色/菜单/权限） | `com.casstime.cloud.boss.user` | service | `BossUserServiceImpl` / `BossMenuServiceImpl` / `BossRoleServiceImpl` | `BossUserAppService` / `BossMenuAppService` / `BossRoleAppService` | §4 |
-| `icec-cloud-boss-user-bff` | Boss 用户 BFF 聚合层 | `com.casstime.cloud.boss.bff.user` | bff | `BossUserManagementRestImpl` / `BossMenuRestImpl` | `BossUserManagementAppService` / `BossMenuAppService` | §4 BFF 节 |
+| `icec-cloud-boss-user-bff` | Boss 用户 BFF 聚合层 | `com.casstime.cloud.boss.bff.user` | bff | `BossUserManagementRestImpl` / `BossMenuRestImpl` | `BossUserManagementAppService` / `BossMenuAppService` | [工程级子文件](icec-cloud-boss.icec-cloud-boss-user-bff.assets.md) |
 | `icec-cloud-boss-auth-bff` | 登录鉴权 BFF（Token/Cookie） | `com.casstime.cloud.boss.bff.auth` | bff | `BossAuthRestImpl` | `BossAuthAppService` | §2 |
 | `icec-cloud-boss-security` | 安全公共组件（TokenService/@SkipAuth） | `com.casstime.cloud.boss.security` | lib | — | — | §6.6 |
 | `icec-cloud-boss-abnormal` | Boss 异常处理域（双启动模块） | `com.casstime.cloud.boss.abnormal` | service | `BossAbnormalServiceImpl` | `BossAbnormalAppService` | §2 |
