@@ -15,7 +15,9 @@ description: |
 >
 > **双重身份：**
 > 1. **对 Agent** —— 加载协议 SOP（按协议执行加载）
-> 2. **对用户** —— 注册流程引导（"你想注册一个 CodingSKILL？看这里"）
+> 2. **对母版维护者 / 项目 owner / 个人开发者** —— 注册 CodingSKILL 的流程引导（"你想挂载自己的 CodingSKILL？看这里"）
+>
+> 注：ae-sdd 母版**不接受**外部 CodingSKILL 贡献 PR——所有 CodingSKILL 定制都在本地或项目层完成。
 
 ---
 
@@ -105,23 +107,23 @@ description: |
 
 ---
 
-## §3 用户注册流程引导（用户 + Agent 协作用）
+## §3 注册流程引导（母版维护者 / 项目 owner / 个人开发者 用）
 
-> **触发场景：** 用户说"注册插件"、"注册 SKILL"、"外挂 CodingStyle"、"项目 CodingSKILL 怎么定制"、"覆盖内置 SKILL"。
+> **触发场景：** **母版维护者** / **项目 owner** / **个人开发者** 说"注册插件"、"注册 SKILL"、"外挂 CodingStyle"、"项目 CodingSKILL 怎么定制"、"覆盖内置 SKILL"。
 >
 > **Agent 加载本 SKILL 后按以下流程引导用户：**
 
-### 3.1 Step 1 — 确认注册层
+### 3.1 Step 1 — 确认注册层 + 使用方身份
 
-**先问用户：** 你想在哪一层注册？
+**Agent 主动询问使用方身份**（不是社区贡献者——ae-sdd 母版不接收外部 SKILL 贡献）：
 
-| 场景 | 推荐层 | 路径 |
-|------|-------|------|
-| 项目团队约定（所有项目成员共享）| **L1 项目层** | `<project>/.ae-sdd/plugins/registry.yaml` |
-| 跨项目的个人偏好（如"我所有项目都用 TDD"）| **L2 全局层** | `~/.ae-sdd/plugins/registry.yaml` |
-| ae-sdd 官方扩展发布 | **L3 仓库根层** | （仅 ae-sdd 维护者用） |
+| 使用方 | 推荐层 | 路径 |
+|-------|-------|------|
+| **项目 owner / Tech Lead** 团队约定（项目成员共享）| **L1 项目层** | `<project>/.ae-sdd/plugins/registry.yaml` |
+| **个人开发者** 跨项目偏好（如"我所有项目都用 TDD"）| **L2 全局层** | `~/.ae-sdd/plugins/registry.yaml` |
+| **ae-sdd 母版维护者** 发布官方扩展 | **L3 仓库根层** | `<ae-sdd-master>/plugins/registry.yaml` |
 
-**默认推荐 L1**（项目 owner 是核心用户，跟 ae-sdd 强项目级绑定一致）。
+**默认推荐 L1**（项目 owner 是核心使用方，跟 ae-sdd 强项目级绑定一致）。
 
 ### 3.2 Step 2 — 生成注册表
 

@@ -132,10 +132,14 @@ bash scripts/dev-sync.sh --watch
 
 ---
 
-## 🔌 SKILL 注册与外挂指南（🆕 v3.5.0）
+## 🔌 CodingSKILL 外挂机制（🆕 v3.5.0 — 母版内置能力）
 
-> **本节专门讲"如何给你的项目或个人定制 CodingSKILL / 模板"，不污染 ae-sdd 母版。**
-> 与"贡献给 ae-sdd 母版"（Q5）是两条独立路径。
+> **本节讲的是 ae-sdd 母版内置的 CodingSKILL 外挂机制——**
+> - **母版维护者**可在 `ae-sdd/plugins/` 挂官方扩展（仓库根层 L3）
+> - **项目 owner**可在自己的 `<project>/.ae-sdd/plugins/` 挂项目层定制（L1）
+> - **个人开发者**可在 `~/.ae-sdd/plugins/` 挂跨项目偏好（L2）
+>
+> **本机制不接收社区贡献 PR**——ae-sdd 母版不接受外部 SKILL 提交，所有定制都在本地/项目层完成（零 PR、零污染、零等待）。
 
 ### 1. 三层注册表是什么
 
@@ -145,7 +149,7 @@ ae-sdd v3.5.0 起，**任何内置 SKILL / 模板都可以被外挂覆盖**。�
 |---|------|---------|-----|
 | **L1 项目层** | `<project>/.ae-sdd/plugins/registry.yaml` | 项目团队约定（项目 owner 用） | ❌ |
 | **L2 用户全局层** | `~/.ae-sdd/plugins/registry.yaml` | 跨项目的个人偏好 | ❌ |
-| **L3 仓库根层** | `<ae-sdd-master>/plugins/registry.yaml` | ae-sdd 官方扩展（仅维护者） | ✅ |
+| **L3 仓库根层** | `<ae-sdd-master>/plugins/registry.yaml` | ae-sdd 母版维护者发布官方扩展 | ✅ |
 
 **优先级：** L1 > L2 > L3 > 内置 fallback。三层都未声明 → 行为与 v3.4.x 完全一致（零破坏）。
 
@@ -155,7 +159,7 @@ ae-sdd v3.5.0 起，**任何内置 SKILL / 模板都可以被外挂覆盖**。�
 
 - 项目 owner 定制 → **L1**（项目层，推荐）
 - 个人跨项目偏好 → **L2**（全局层）
-- 你是 ae-sdd 维护者 → L3（仓库根层）
+- 你是 ae-sdd **母版维护者** → L3（仓库根层，发布官方扩展）
 
 #### Step 2：生成注册表
 
@@ -275,26 +279,17 @@ bash scripts/dev-sync.sh --uninstall
 ### Q4: 我是项目 owner，想给项目加 ae-sdd 怎么用？
 安装 ae-sdd 后，在你的项目目录下跑 `ae-sdd init <project-dir> <project-key>`（v3.0 实施中，详见 source/SKILL.md §6 实例化机制）。
 
-### Q5: 想贡献 SKILL 怎么 PR？
-1. Fork 仓库
-2. 在 `source/skills/<phase>/` 下加你的 SKILL.md
-3. 在 `source/SKILL.md` 路由表里注册触发词
-4. 跑 `bash scripts/dev-sync.sh` 验证
-5. 提 PR 到 `master` 分支（ae-sdd 默认分支）
-
-> **Q5 是"贡献给 ae-sdd 母版"。** 如果你是想**给你的项目**定制 CodingSKILL，**不要**走这条路径——请看上面的 [🔌 SKILL 注册与外挂指南](#-skill-注册与外挂指南v350) 节。
-
-### Q6（🆕 v3.1）：触发 `/ae-sdd` 后被强制走 G-00 / 路由判定 / 派 sub-agent 怎么办？
+### Q5（🆕 v3.1）：触发 `/ae-sdd` 后被强制走 G-00 / 路由判定 / 派 sub-agent 怎么办？
 v3.1 起 SKILL 入口段加「🔴 第一动作（硬前置）」声明：收到 `/ae-sdd` 触发后必须先跑 G-00、跑路由判定、必要时派 sub-agent，禁止直接动手改代码。如确认是小修小补（单文件单改），用户**显式说** `/ae-sdd-quick` 或 `走快速通道` 可豁免完整 7 步路由，但仍需落档。详见 [v3.1 纪律加固 CHANGELOG](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)。
 
-### Q7（🆕 v3.5.0）：项目团队 Coding 风格不同，能不能给项目定制自己的 CodingSKILL？
-**可以。** v3.5.0 起支持三层 SKILL 注册表插件化。详见上面的 [🔌 SKILL 注册与外挂指南](#-skill-注册与外挂指南v350) 节。简单三步：
+### Q6（🆕 v3.5.0）：项目团队 Coding 风格不同，能不能给项目定制自己的 CodingSKILL？
+**可以。** v3.5.0 起支持三层 SKILL 注册表机制。详见上面的 [🔌 CodingSKILL 外挂机制](#-codingskill-外挂机制v350--母版内置能力) 节。简单三步：
 
 1. 拷贝模板到 `<project>/.ae-sdd/plugins/registry.yaml`
 2. 写你的 CodingSKILL 文档
 3. 跑 `ae-sdd plugin validate` 验证
 
-零 PR、零污染、零等待。
+**零 PR、零污染、零等待。** ae-sdd 母版不接受外部 SKILL 贡献，所有 CodingSKILL 定制都在本地（项目层 L1 或全局层 L2）或母版自身（仓库根层 L3）完成。
 
 ---
 
