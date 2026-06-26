@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# ae-sdd post-commit hook
+# ae-sdd post-commit hook（v3.4.4 单入口版）
 #
 # 触发条件：ae-sdd 母版仓的任意 commit 提交完成
-# 动作链（v3.4.0）：
-#   1. source/ → dist/ae-sdd/    (build_dist.py)
-#   2. dist/ae-sdd/ → ~/.claude/skills/ae-sdd + ~/.zcode/skills/ae-sdd  (install.py)
-#   3. source/HARNESS+SKILL → harness/.harness/agent.md  (convert-ae-sdd-to-harness.ps1)
-#   4. mavis harness remount ae-sdd
+# 动作：调 scripts/distribute.py 单入口 orchestrator，由它内部串联：
+#   build_dist → 遍历分发器（claude/codex/zcode copytree + mavis harness_mount）
+#   每个分发器各自 compile/install/verify/cleanup
 #
 # 跳过策略：
 #   - 非母版仓库（无 source/SKILL.md）：静默退出 0
@@ -19,18 +17,18 @@ set -u  # 不开 -e：单步失败不阻断后续
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 AE_SDD="$REPO_ROOT"
 
-# ── 0. 旁路开关 ───────────────────────────────────────────────
+# ── 0. 旁路开关 ───────────────────────────────────────────────────────
 if [ "${SKIP_AE_SDD_HOOK:-0}" = "1" ]; then
     echo "⏭️  ae-sdd post-commit: SKIP_AE_SDD_HOOK=1，跳过"
     exit 0
 fi
 
-# ── 1. 仅母版仓触发 ──────────────────────────────────────────
+# ── 1. 仅母版仓触发 ──────────────────────────────────────────────────
 if [ ! -f "$AE_SDD/source/SKILL.md" ]; then
     exit 0
 fi
 
-# ── 2. 跳过 CHANGELOG-only / README-only 提交 ─────────────────
+# ── 2. 跳过 CHANGELOG-only / README-only 提交 ─────────────────────────
 CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || echo "")
 HAS_MEANINGFUL=$(echo "$CHANGED" | grep -vE '^(source/CHANGELOG/|README\.md$|\.githooks/)' || true)
 if [ -z "$HAS_MEANINGFUL" ]; then
@@ -39,7 +37,7 @@ fi
 
 echo "🔄 ae-sdd post-commit: 检测到功能性变更，启动分发闭环..."
 
-# ── 3. 探测 Python ───────────────────────────────────────────
+# ── 3. 探测 Python ───────────────────────────────────────────────────
 PYTHON=""
 for cand in python python3 py; do
     if command -v "$cand" >/dev/null 2>&1; then
@@ -48,85 +46,23 @@ for cand in python python3 py; do
     fi
 done
 if [ -z "$PYTHON" ]; then
-    echo "⚠️  ae-sdd post-commit: 找不到 python，跳过 build/install"
+    echo "⚠️  ae-sdd post-commit: 找不到 python，跳过分发"
     exit 0
 fi
 
-# ── 4. build_dist ────────────────────────────────────────────
-# 注：build_dist.py 不支持 --quiet 参数（只有 --source/--dist），直接跑即可
-if [ -f "$AE_SDD/scripts/build_dist.py" ]; then
-    BUILD_OUT=$("$PYTHON" "$AE_SDD/scripts/build_dist.py" 2>&1)
-    BUILD_RC=$?
-    echo "$BUILD_OUT" | tail -20
-    if [ $BUILD_RC -eq 0 ]; then
-        echo "✅ build_dist: OK"
+# ── 4. 单入口：distribute.py ─────────────────────────────────────────
+# distribute.py 内部：build_dist → 遍历 active 分发器 → 各自编译+安装+校验+清理
+# --quiet：post-commit 场景只输出关键状态
+# --from-commit：标记由 hook 触发（影响日志详尽度）
+# 各分发器独立 try/except，单步失败不阻断其他分发器（保持"失败不阻断 git"语义）
+if [ -f "$AE_SDD/scripts/distribute.py" ]; then
+    if "$PYTHON" "$AE_SDD/scripts/distribute.py" --quiet --from-commit 2>&1 | tail -30; then
+        echo "✅ ae-sdd post-commit: 分发闭环结束"
     else
-        echo "⚠️  build_dist: 失败 (rc=$BUILD_RC)（commit 已落库，未回滚）"
+        echo "⚠️  ae-sdd post-commit: distribute.py 返回非零（commit 已落库，未回滚）"
     fi
 else
-    echo "⏭️  build_dist.py 不存在，跳过"
+    echo "⚠️  ae-sdd post-commit: scripts/distribute.py 不存在，跳过"
 fi
 
-# ── 5. install ───────────────────────────────────────────────
-if [ -f "$AE_SDD/scripts/install.py" ]; then
-    for target in "$HOME/.claude/skills/ae-sdd" "$HOME/.zcode/skills/ae-sdd"; do
-        # 用 --target-path= 形式避免 argparse 把路径当成 --target positional
-        if "$PYTHON" "$AE_SDD/scripts/install.py" --quiet "--target-path=$target" 2>&1 | tail -10; then
-            echo "✅ install → $target: OK"
-        else
-            echo "⚠️  install → $target: 失败"
-        fi
-    done
-else
-    echo "⏭️  install.py 不存在，跳过"
-fi
-
-# ── 6. harness adapter ───────────────────────────────────────
-ADAPTER="$HOME/.zcode/skills/ae-sdd-harness-adapter/scripts/convert-ae-sdd-to-harness.ps1"
-if [ -f "$ADAPTER" ]; then
-    if command -v powershell >/dev/null 2>&1; then
-        # bash 不能直接转义 PowerShell 的 $false，需要写到 .ps1 里设默认 $false 即可
-        if powershell -NoProfile -ExecutionPolicy Bypass -File "$ADAPTER" -Source "$AE_SDD" 2>&1 | tail -15; then
-            echo "✅ harness adapter: OK"
-        else
-            echo "⚠️  harness adapter: 失败（agent.md 可能停留在旧版本）"
-        fi
-    elif command -v pwsh >/dev/null 2>&1; then
-        if pwsh -NoProfile -File "$ADAPTER" -Source "$AE_SDD" 2>&1 | tail -15; then
-            echo "✅ harness adapter: OK"
-        else
-            echo "⚠️  harness adapter: 失败"
-        fi
-    else
-        echo "⏭️  powershell 未安装，跳过 harness adapter"
-    fi
-else
-    echo "⏭️  ae-sdd-harness-adapter 未安装，跳过"
-fi
-
-# ── 7. mavis remount ─────────────────────────────────────────
-# 探测 mavis 命令路径（Windows 下 mavis 通常是 .cmd/.bat，需经 cmd.exe 调用）
-MAVIS_RUN=()
-if command -v mavis >/dev/null 2>&1; then
-    MAVIS_RUN=(mavis)
-elif [ -f "$HOME/.mavis/bin/mavis.cmd" ]; then
-    MAVIS_RUN=(cmd.exe //c "$HOME/.mavis/bin/mavis.cmd")
-elif [ -f "$HOME/.mavis/bin/mavis.bat" ]; then
-    MAVIS_RUN=(cmd.exe //c "$HOME/.mavis/bin/mavis.bat")
-fi
-
-if [ -d "$AE_SDD/harness" ] && [ ${#MAVIS_RUN[@]} -gt 0 ]; then
-    "${MAVIS_RUN[@]}" harness unmount d-item-ae-sdd-harness >/dev/null 2>&1 || true
-    if "${MAVIS_RUN[@]}" harness mount "$AE_SDD/harness" 2>&1 | tail -5; then
-        echo "✅ mavis harness remount: OK"
-    else
-        echo "⚠️  mavis harness remount: 失败（产物已写入，需手动 mount）"
-    fi
-elif [ -d "$AE_SDD/harness" ]; then
-    echo "⏭️  mavis 未安装，跳过 remount（产物已写入 harness/.harness/agent.md）"
-else
-    echo "⏭️  harness/ 目录不存在，跳过 remount"
-fi
-
-echo "✅ ae-sdd post-commit: 分发闭环结束"
 exit 0

@@ -1,7 +1,7 @@
 {
-    "commit":  "ca304e744ba45424e1b90049b4c60a6972e68bc5",
-    "ae_sdd_version":  "3.4.2",
-    "adapter_version":  "0.2.0",
-    "converted_at":  "2026-06-26T12:01:12Z",
-    "templateHash":  "7634121FBB669790808E75CC6CFEFF23492C5172"
+  "adapter_version": "0.2.0",
+  "ae_sdd_version": "3.5.1",
+  "commit": "ec1bfdffc3b12160abd4e3def3f4142b36f188b3",
+  "templateHash": "939214A9B3C7FE22565B038C94463008FE80C35A",
+  "converted_at": "2026-06-26T08:38:25Z"
 }
