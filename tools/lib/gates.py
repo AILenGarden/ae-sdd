@@ -128,8 +128,8 @@ def check_g00(master_source: Optional[Path], ade_sdd: Optional[Path], project_ke
     if not (ade_sdd / "state.json").is_file():
         missing.append("state.json")
 
-    asset_file = ade_sdd / "assets" / f"{project_key}.assets.md"
-    if not asset_file.is_file():
+    asset_file = paths.find_asset_file(ade_sdd, project_key)
+    if asset_file is None or not asset_file.is_file():
         return GateResult("G-00", name, "blocker", False,
                           f"项目资产不存在: assets/{project_key}.assets.md",
                           f"运行: ae-sdd init <project-dir> {project_key} --asset-path <已有资产>")
@@ -163,7 +163,23 @@ def check_g00(master_source: Optional[Path], ade_sdd: Optional[Path], project_ke
 
     return GateResult("G-00", name, "blocker", True,
                       warn_msg or "项目资产完整 + 7 层索引齐全",
-                      details={"asset_file": str(asset_file), "last_audited_warn": warn_msg})
+                      details={"asset_file": str(asset_file),
+                               "last_audited_warn": warn_msg,
+                               "module_asset_files": _discover_module_assets(ade_sdd, project_key)})
+
+
+def _discover_module_assets(ade_sdd: Path, project_key: str) -> list:
+    """🆕 v4.0：发现工程级子文件（总览之外），用于 G-00 details 信息展示。
+
+    不阻断门卫（子文件可选）。返回子文件路径列表（不含总览）。
+    """
+    try:
+        all_files = paths.find_module_asset_files(ade_sdd, project_key)
+        # 排除总览本体
+        overview = paths.find_asset_file(ade_sdd, project_key)
+        return [str(f) for f in all_files if overview is None or f != overview]
+    except Exception:
+        return []
 
 
 # ─── G-01 ───────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ description: 项目资产目录空模板（Starter）— 供新项目 cp 后填�
 # Project Assets Template — 项目资产目录 Starter 模板
 
 > **使用方法：**
-> 1. `cp skills/ae-sdd/standards/project-assets/project-assets-template.md skills/ae-sdd/project-assets/{your-project-key}/{your-project-key}.assets.md`
+> 1. `cp skills/ae-sdd/standards/project-assets/project-assets-template.md skills/ae-sdd/assets/{your-project-key}/{your-project-key}.assets.md`
 > 2. 把所有 `{占位符}` 替换为你的项目事实
 > 3. 走 `project-assets-schema.md §9 + §3.5-3.7` 探查 SOP 填值
 > 4. 完成后在 §1 写 `lastAuditedAt` + `owner` + **§1.X 部署信息**

@@ -227,5 +227,79 @@ class TestPathHelpers(unittest.TestCase):
         self.assertEqual(paths.reports_dir(self.ade_sdd), self.ade_sdd / "reports")
 
 
+class TestAssetFieldAndModuleFiles(unittest.TestCase):
+    """🆕 v4.0：read_asset_field / resolve_doc_workspace / find_module_asset_files 测试。"""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="paths-v4-"))
+        self.ade_sdd = self.tmp / ".ae-sdd"
+        self.ade_sdd.mkdir()
+        self.assets = self.ade_sdd / "assets"
+        self.assets.mkdir()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_overview(self, project_key, git_path=None, doc_ws=None):
+        """写一个含 §1 字段的总览资产。"""
+        fields = [f"| projectKey | `{project_key}` |"]
+        if git_path:
+            fields.append(f"| gitPath | `{git_path}` |")
+        if doc_ws:
+            fields.append(f"| docWorkspacePath | `{doc_ws}` |")
+        content = "# §A\n## §1\n" + "\n".join(fields) + "\n## §B\n## §C\n## §D\n## §E\n## §F\n## §G\n"
+        (self.assets / f"{project_key}.assets.md").write_text(content, encoding="utf-8")
+
+    def test_read_asset_field_markdown_table(self):
+        self._write_overview("proj1", git_path=r"d:\proj1")
+        val = paths.read_asset_field(self.ade_sdd, "proj1", "gitPath")
+        self.assertEqual(val, r"d:\proj1")
+
+    def test_read_asset_field_missing_returns_none(self):
+        self._write_overview("proj1")
+        # 无 docWorkspacePath
+        val = paths.read_asset_field(self.ade_sdd, "proj1", "docWorkspacePath")
+        self.assertIsNone(val)
+
+    def test_read_asset_field_no_asset_file(self):
+        val = paths.read_asset_field(self.ade_sdd, "nonexistent", "gitPath")
+        self.assertIsNone(val)
+
+    def test_resolve_doc_workspace_fallback_to_gitpath(self):
+        self._write_overview("proj1", git_path=r"d:\proj1")
+        ws = paths.resolve_doc_workspace(self.ade_sdd, "proj1")
+        self.assertEqual(ws, Path(r"d:\proj1"))
+
+    def test_resolve_doc_workspace_prefers_docws(self):
+        self._write_overview("proj1", git_path=r"d:\proj1", doc_ws=r"d:\docs")
+        ws = paths.resolve_doc_workspace(self.ade_sdd, "proj1")
+        self.assertEqual(ws, Path(r"d:\docs"))
+
+    def test_find_module_asset_files_flat_compat(self):
+        """旧扁平位置（.ae-sdd/assets/{key}.{module}.assets.md）能被发现。"""
+        self._write_overview("proj1")
+        (self.assets / "proj1.module-a.assets.md").write_text("# module a\n", encoding="utf-8")
+        (self.assets / "proj1.module-b.assets.md").write_text("# module b\n", encoding="utf-8")
+        result = paths.find_module_asset_files(self.ade_sdd, "proj1")
+        names = [p.name for p in result]
+        self.assertIn("proj1.assets.md", names)  # 总览
+        self.assertIn("proj1.module-a.assets.md", names)
+        self.assertIn("proj1.module-b.assets.md", names)
+
+    def test_find_module_asset_files_empty_when_no_overview(self):
+        """无总览时返回空列表。"""
+        result = paths.find_module_asset_files(self.ade_sdd, "nonexistent")
+        self.assertEqual(result, [])
+
+    def test_find_module_asset_files_only_overview(self):
+        """只有总览无子文件时，返回 [总览]。"""
+        self._write_overview("proj1")
+        result = paths.find_module_asset_files(self.ade_sdd, "proj1")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].name, "proj1.assets.md")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

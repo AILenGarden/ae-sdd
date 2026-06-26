@@ -1097,7 +1097,7 @@ Coding SKILL（发现 Story 缺陷）
 | 14 | 审计字段自动填充 | 需要 MetaObjectHandler 配置，否则 FieldFill 不生效 |
 | 15 | 事务外执行 | 使用 TransactionSynchronizationManager.afterCommit() |
 
-> **🔴 工程特定经验检查清单**（针对具体项目）见各项目资产 `project-assets/{project-key}/{project-key}.assets.md` §6.10。
+> **🔴 工程特定经验检查清单**（针对具体项目）见各项目资产 `assets/{project-key}/{project-key}.assets.md` §6.10。
 > Skill 只列通用经验（任何 Java/Spring 项目适用）；**项目特定**的工程经验（如分层职责硬约束、跨层误引用扫描、特定包路径违规）按"约束也是工程的一部分"原则下沉到项目资产，不在本 Skill 圈定。
 
 ---

@@ -158,6 +158,84 @@ def find_asset_file(ade_sdd: Path, project_key: str) -> Optional[Path]:
     return cand if cand.is_file() else None
 
 
+def read_asset_field(ade_sdd: Path, project_key: str, field: str) -> Optional[str]:
+    """🆕 v4.0：从资产 md §1 读取字段（gitPath / docWorkspacePath / productLine 等）。
+
+    支持 markdown 表格格式（| field | `value` |）和 JSON 块格式（"field": "value"）。
+    找不到返回 None（调用方按缺省处理）。
+    """
+    asset_file = find_asset_file(ade_sdd, project_key)
+    if asset_file is None or not asset_file.is_file():
+        return None
+    try:
+        text = asset_file.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    # markdown 表格格式：| field | `value` | 或 | field | value |
+    import re
+    m = re.search(rf"\|\s*{re.escape(field)}\s*\|\s*`?([^|`]+)`?\s*\|", text)
+    if m:
+        val = m.group(1).strip().strip("`").strip()
+        return val if val else None
+    # JSON 块格式："field": "value"
+    m = re.search(rf'"{re.escape(field)}"\s*:\s*"([^"]+)"', text)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def resolve_doc_workspace(ade_sdd: Path, project_key: str) -> Optional[Path]:
+    """🆕 v4.0：解析文档工作区根路径（document-storage §0.5.1 第四维）。
+
+    优先级：资产 md §1 docWorkspacePath > 缺省回退 gitPath > None。
+    用于工程级子文件的就近存放基线：docWorkspacePath/assets/{key}/{module}/。
+    """
+    doc_ws = read_asset_field(ade_sdd, project_key, "docWorkspacePath")
+    if doc_ws:
+        return Path(doc_ws)
+    git_path = read_asset_field(ade_sdd, project_key, "gitPath")
+    if git_path:
+        return Path(git_path)
+    return None
+
+
+def find_module_asset_files(ade_sdd: Path, project_key: str) -> list:
+    """🆕 v4.0：发现工程级子文件（总览 + 各工程细节）。
+
+    返回 [Path, ...]，按"总览在前、子文件在后"排序。
+    - 总览：.ae-sdd/assets/{projectKey}.assets.md（find_asset_file）
+    - 子文件：docWorkspacePath/assets/{projectKey}/{module}/{module}.assets.md
+      （就近存放，A6 规则；兼容旧扁平 .ae-sdd/assets/{projectKey}.*.assets.md）
+
+    总览不存在时返回空列表（调用方按缺失处理）。
+    """
+    result = []
+    overview = find_asset_file(ade_sdd, project_key)
+    if overview:
+        result.append(overview)
+
+    # 子文件发现：新位置（docWorkspace 下按 module 分目录）
+    doc_ws = resolve_doc_workspace(ade_sdd, project_key)
+    if doc_ws:
+        new_loc = doc_ws / "assets" / project_key
+        if new_loc.is_dir():
+            for module_dir in sorted(new_loc.iterdir()):
+                if module_dir.is_dir():
+                    cand = module_dir / f"{module_dir.name}.assets.md"
+                    if cand.is_file():
+                        result.append(cand)
+
+    # 兼容旧扁平位置：.ae-sdd/assets/{projectKey}.*.assets.md（排除总览本体）
+    assets = assets_dir(ade_sdd)
+    if assets.is_dir():
+        for f in sorted(assets.iterdir()):
+            if (f.name.startswith(f"{project_key}.") and f.name.endswith(".assets.md")
+                    and f.name != f"{project_key}.assets.md"):
+                result.append(f)
+
+    return result
+
+
 def project_root(ade_sdd: Path) -> Path:
     """Project root is the parent directory of .ae-sdd/."""
     return ade_sdd.parent

@@ -1470,8 +1470,51 @@ def _resolve_asset_file(args) -> tuple[Path | None, str, Path | None]:
     return asset_path, project_key, cache_path
 
 
+def _resolve_all_asset_files(args) -> tuple[list, str, Path | None]:
+    """🆕 v4.0：解析全部资产文件（总览 + 工程级子文件）+ 缓存路径。
+
+    返回 (asset_paths, project_key, cache_path)。
+    - asset_paths: [Path, ...]，总览在前、子文件在后（空列表 = 无资产）
+    - --asset-file 指定时仅返回该单文件（用户显式指定优先）
+    - 否则用 paths.find_module_asset_files 自动发现总览+子文件
+    """
+    ade_sdd = paths.locate_project_ae_sdd()
+    project_key = ""
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey") or ""
+    if getattr(args, "project", "") and args.project:
+        project_key = args.project
+    if not project_key:
+        project_key = "unknown"
+
+    # --asset-file 直接指定（单文件模式，向后兼容）
+    asset_file = getattr(args, "asset_file", None)
+    if asset_file:
+        return [Path(asset_file)], project_key, None
+
+    # 自动发现总览 + 工程级子文件
+    if ade_sdd:
+        all_paths = paths.find_module_asset_files(ade_sdd, project_key)
+        cache_path = paths.assets_dir(ade_sdd) / f"{project_key}.index.json"
+        return all_paths, project_key, cache_path
+    return [], project_key, None
+
+
 def _build_index(args):
-    """解析资产文件并构建索引（带缓存）。资产不存在时返回 (None, key, cache)。"""
+    """解析资产文件并构建索引（带缓存）。
+
+    🆕 v4.0：优先用多文件模式（总览+工程级子文件合并索引），
+    退化为单文件当只有总览时。资产不存在时返回 (None, key, cache)。
+    """
+    # 优先尝试多文件模式
+    all_paths, project_key, cache_path = _resolve_all_asset_files(args)
+    if all_paths:
+        existing = [p for p in all_paths if p.is_file()]
+        if existing:
+            idx = assets_index.AssetsIndex.build_from_files(existing, cache_path=cache_path)
+            return idx, project_key, cache_path
+    # 退化：单文件（--asset-file 或无子文件的旧路径）
     asset_path, project_key, cache_path = _resolve_asset_file(args)
     if asset_path is None or not asset_path.is_file():
         return None, project_key, cache_path

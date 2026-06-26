@@ -30,17 +30,17 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 
 > **🔴 强制：** 本 SKILL 生成/更新/读取的项目资产在写入或访问磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
 > 1. **路径**（§2.5 路径模板）：
->    - 主体：`skills/ae-sdd/project-assets/{projectKey}/{projectKey}.assets.md`
->    - 日志：`skills/ae-sdd/project-assets/{projectKey}/{projectKey}.update-log.md`
+>    - 主体：`skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md`
+>    - 日志：`skills/ae-sdd/assets/{projectKey}/{projectKey}.update-log.md`
 > 2. **命名**（§3.1/3.2 命名规则）：**基础设施类文档不带版本号**（资产是单一权威源，更新通过日志追踪）
 > 3. **重入判定**（§4 重入 SOP）：项目资产**永不修改文件名**（只通过更新日志记录变更）
 > 4. **🆕 索引层归属**：索引项**写入资产主体文件**（与 §0-§10 同文件），便于一次性 grep 定位；不另开索引文件（避免双源漂移）
 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| 项目资产主体（含索引层） | `skills/ae-sdd/project-assets/{projectKey}/{projectKey}.assets.md` | 不带版本号 | 原地修改（变更加日志）|
-| 项目资产更新日志 | `skills/ae-sdd/project-assets/{projectKey}/{projectKey}.update-log.md` | 不带版本号 | 原地累加（每变更 1 条）|
-| **🆕 待确认问题清单** | `skills/ae-sdd/project-assets/{projectKey}/{projectKey}.pending-questions.md` | 不带版本号 | 原地维护（新增追加 / 解决则消掉）|
+| 项目资产主体（含索引层） | `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md` | 不带版本号 | 原地修改（变更加日志）|
+| 项目资产更新日志 | `skills/ae-sdd/assets/{projectKey}/{projectKey}.update-log.md` | 不带版本号 | 原地累加（每变更 1 条）|
+| **🆕 待确认问题清单** | `skills/ae-sdd/assets/{projectKey}/{projectKey}.pending-questions.md` | 不带版本号 | 原地维护（新增追加 / 解决则消掉）|
 
 > 🔴 **关键：** 项目资产是"单一权威源"，**永不通过文件名识别版本**，所有变更通过 `{projectKey}.update-log.md` 追踪。
 > 🆕 **索引层与内容层同文件**：§A-G 索引项与 §0-§10 内容同处一文件，确保"一处改、索引与内容同步"。
@@ -155,9 +155,9 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 
 ### 3.3 输出物
 
-- `skills/ae-sdd/project-assets/{project-key}/{project-key}.assets.md`（按 schema 12 节 + §A-§F 索引层填写，含 §10 经验文档）
-- `skills/ae-sdd/project-assets/{project-key}/{project-key}.update-log.md`（更新日志，首次条目 = initial）
-- **🆕 `skills/ae-sdd/project-assets/{project-key}/{project-key}.pending-questions.md`**（待确认问题清单，探查中无法自行确认的事项）
+- `skills/ae-sdd/assets/{project-key}/{project-key}.assets.md`（按 schema 12 节 + §A-§F 索引层填写，含 §10 经验文档）
+- `skills/ae-sdd/assets/{project-key}/{project-key}.update-log.md`（更新日志，首次条目 = initial）
+- **🆕 `skills/ae-sdd/assets/{project-key}/{project-key}.pending-questions.md`**（待确认问题清单，探查中无法自行确认的事项）
 
 #### 3.3.1 🆕 pending-questions.md 格式
 
@@ -634,11 +634,11 @@ ls constraints/*.md | xargs -n1 basename
 
 | 对象 | 审计命令 | 通过条件 |
 |------|---------|---------|
-| `function/` 目录 | `ls skills/ae-sdd/project-assets/{projectKey}/function/ \| wc -l` | ≥ 已完成 Story 数 × 0.7（允许 30% 漏）|
+| `function/` 目录 | `ls skills/ae-sdd/assets/{projectKey}/function/ \| wc -l` | ≥ 已完成 Story 数 × 0.7（允许 30% 漏）|
 | `function/{Story}.md` 内容 | 检查是否含 §1 接口清单 + §2 调用链 + §4 跨工程 Feign 表 | 每篇必备 4 节 |
 | `config/test/api-test-env.md` | `grep "工程信息" config/test/*.md` | 必含 5+ 工程 |
 | `config/` 内容 | 检查 §5 已知踩坑 + §4 测试 Base URL 完整性 | 每篇必备 4 节 |
-| `domain/` 目录 | `ls skills/ae-sdd/project-assets/{projectKey}/domain/` | 与业务域数匹配 |
+| `domain/` 目录 | `ls skills/ae-sdd/assets/{projectKey}/domain/` | 与业务域数匹配 |
 | `domain/{域}.md` 内容 | 检查 §4 域间依赖 + §5 域事件流 | 每篇必备 5 节 |
 | 工程级子文件 | `ls {projectKey}.*.assets.md` | 与主体 §15 表格一一对应 |
 | 主体 §15 表格 | 检查每行文件是否存在 + 大小是否 > 0 | 100% 一致 |
@@ -743,7 +743,7 @@ ae-sdd assets stats --project <projectKey>
 #### 步骤 4：在 CodePlan 头部写"项目资产已就绪"声明
 
 ```markdown
-项目资产路径: skills/ae-sdd/project-assets/{projectKey}/{projectKey}.assets.md
+项目资产路径: skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md
 项目资产版本: v{N} (lastAuditedAt: {YYYY-MM-DD})
 本次读取: ae-sdd assets read coding --keys "CsTicketAppService" --project {projectKey}
 索引状态: cache=hit（复用）/ miss（本次新建）
@@ -830,7 +830,7 @@ ae-sdd assets domain im --project icec-cloud-life
 ### A4：用户手动撤销项目资产
 
 - **触发：** 用户说"删除项目资产"
-- **动作：** 备份当前 → 移动到 `project-assets/{projectKey}/.archive/{date}/` → 更新 log
+- **动作：** 备份当前 → 移动到 `assets/{projectKey}/.archive/{date}/` → 更新 log
 - **禁止：** 直接 `rm`（防误删）
 
 ### A5：🆕 索引项与实际代码严重不一致

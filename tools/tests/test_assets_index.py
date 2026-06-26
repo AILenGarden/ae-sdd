@@ -455,5 +455,102 @@ class TestReadAssets(unittest.TestCase):
             self.assertIsInstance(sections, list)
 
 
+# ─── 🆕 v4.0 多文件索引测试 ──────────────────────────────────────────────
+class TestMultiFileIndex(unittest.TestCase):
+    """build_from_files 多文件合并索引测试。"""
+
+    def _write_tmp(self, content):
+        # Windows 友好：用 mkdtemp 目录，避免单文件 unlink 的 PermissionError
+        d = Path(tempfile.mkdtemp(prefix="multi-"))
+        p = d / "asset.md"
+        p.write_text(content, encoding="utf-8")
+        return p, d  # 返回文件 + 目录（cleanup 删目录）
+
+    def _cleanup(self, *paths_and_dirs):
+        import gc, shutil
+        gc.collect()  # 释放文件句柄
+        for item in paths_and_dirs:
+            try:
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                elif item.is_file():
+                    item.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def test_empty_list_returns_empty_index(self):
+        idx = AssetsIndex.build_from_files([])
+        self.assertEqual(len(idx.docs), 0)
+
+    def test_single_file_equivalent_to_build(self):
+        """单文件 build_from_files 应等价于 build_from_file（file_id 全 0）。"""
+        p, d = self._write_tmp("# t\n## §A\nfoo bar\n")
+        try:
+            idx = AssetsIndex.build_from_files([p])
+            self.assertGreater(len(idx.docs), 0)
+            # 所有 doc 的 file_id 都应是 0（单文件）
+            self.assertTrue(all(doc.file_id == 0 for doc in idx.docs))
+            hits = idx.search("foo")
+            self.assertTrue(len(hits) >= 1)
+            self.assertTrue(all(h.file_id == 0 for h in hits))
+        finally:
+            self._cleanup(d)
+
+    def test_multi_file_merge_doc_ids_continuous(self):
+        """多文件合并后 doc_id 全局连续，file_id 区分来源。"""
+        p1, d1 = self._write_tmp("# t\n## §A\nalpha\n")
+        p2, d2 = self._write_tmp("# t\n## §B\nbeta\n")
+        try:
+            idx = AssetsIndex.build_from_files([p1, p2])
+            self.assertGreater(len(idx.docs), 1)
+            # doc_id 连续 0,1,2,...
+            doc_ids = [doc.doc_id for doc in idx.docs]
+            self.assertEqual(doc_ids, list(range(len(doc_ids))))
+            # file_id 区分：file 0 的 doc 和 file 1 的 doc 都存在
+            file_ids = {doc.file_id for doc in idx.docs}
+            self.assertEqual(file_ids, {0, 1})
+        finally:
+            self._cleanup(d1, d2)
+
+    def test_multi_file_search_cross_file(self):
+        """跨文件搜索：query 命中不同文件的 doc。"""
+        p1, d1 = self._write_tmp("# t\n## §A\nTokenService alpha\n")
+        p2, d2 = self._write_tmp("# t\n## §B\nTokenService beta\n")
+        try:
+            idx = AssetsIndex.build_from_files([p1, p2])
+            hits = idx.search("TokenService")
+            self.assertEqual(len(hits), 2)
+            file_ids = {h.file_id for h in hits}
+            self.assertEqual(file_ids, {0, 1})
+        finally:
+            self._cleanup(d1, d2)
+
+    def test_multi_file_section_extract(self):
+        """多文件模式下 section() 能从对应文件提取章节原文。"""
+        p1, d1 = self._write_tmp("# t\n## §A\noverview content\n")
+        p2, d2 = self._write_tmp("# t\n## §B\nmodule detail\n")
+        try:
+            idx = AssetsIndex.build_from_files([p1, p2])
+            sec_a = idx.section("§A")
+            self.assertIsNotNone(sec_a)
+            self.assertIn("overview content", sec_a)
+        finally:
+            self._cleanup(d1, d2)
+
+    def test_multi_file_cache_roundtrip(self):
+        """多文件缓存命中：第二次构建应走缓存（mtime 不变）。"""
+        p1, d1 = self._write_tmp("# t\n## §A\ncached content\n")
+        cache = Path(tempfile.mkdtemp(prefix="cache-")) / "cache.json"
+        try:
+            idx1 = AssetsIndex.build_from_files([p1], cache_path=cache)
+            self.assertTrue(cache.is_file())
+            idx2 = AssetsIndex.build_from_files([p1], cache_path=cache)
+            self.assertEqual(len(idx2.docs), len(idx1.docs))
+            hits = idx2.search("cached")
+            self.assertTrue(any("cached content" in h.snippet for h in hits))
+        finally:
+            self._cleanup(d1, cache.parent)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

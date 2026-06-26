@@ -45,7 +45,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 | 字段 | 值 |
 |------|---|
-| 项目资产路径 | `skills/ae-sdd/project-assets/{project-key}/{project-key}.assets.md` |
+| 项目资产路径 | `skills/ae-sdd/assets/{project-key}/{project-key}.assets.md` |
 | 本次引用的项目资产章节 | `{§3 抽象分层映射, §4 DDD 内部分层落点, §5 命名约定, §6 工程约束, §7 契约入口}` |
 | 项目资产已就绪 | ✅ / ❌（❌ 时**必须先**走项目资产 §9 探查 SOP 构建，禁止跳过） |
 | 项目资产版本/审计时间 | `{lastAuditedAt}` |

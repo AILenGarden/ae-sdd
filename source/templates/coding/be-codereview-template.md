@@ -423,7 +423,7 @@ git commit -m "[ST-{id}] {story_title}"
 | 测试报告 | `design/testcase/be/{STORY-ID}/{STORY-ID}-Report-v{N}-r{M}.md` | □ | □ |
 | 源代码 | 工作目录对应工程 | □ | □ |
 | **CodeReview 报告** | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md` | □ | □ |
-| 项目资产（如有更新）| `skills/ae-sdd/project-assets/{projectKey}/` | □ | □ |
+| 项目资产（如有更新）| `skills/ae-sdd/assets/{projectKey}/` | □ | □ |
 
 > 🔴 任何产出物不存在或不一致 → 必须修正报告或补充产出物，不得跳过。
 

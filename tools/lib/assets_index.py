@@ -91,10 +91,11 @@ class Doc:
     """单个被索引的文档单元（markdown 的一行或一个表格行）。"""
     doc_id: int
     section: str          # 所属章节锚，如 "§4" / "§6.4" / "§B"
-    line: int             # 在原 markdown 中的行号（1-based）
+    line: int             # 在原 markdown 中的行号（1-based，单文件局部）
     text: str             # 原始文本（已 strip）
     tokens: list[str] = field(default_factory=list)
     tf: Counter = field(default_factory=Counter)   # token → 该文档内频次
+    file_id: int = 0      # 🆕 v4.0：来源文件 id（0=单文件模式/总览；多文件合并时递增）
 
 
 @dataclass
@@ -105,6 +106,7 @@ class Hit:
     snippet: str
     score: float
     matched_tokens: list[str]
+    file_id: int = 0      # 🆕 v4.0：命中所在文件 id（多文件溯源）
 
 
 # ─── markdown 解析 ───────────────────────────────────────────────────────
@@ -218,10 +220,16 @@ class AssetsIndex:
     """
 
     def __init__(self, docs: list[Doc], sections: list[tuple[int, str]],
-                 raw_lines: list[str]):
+                 raw_lines, file_paths: Optional[list] = None):
+        """构建索引。
+
+        raw_lines：单文件模式 = list[str]；多文件模式 = {file_id: list[str]}。
+        file_paths：🆕 v4.0 多文件模式的 [Path, ...]（file_id 为索引），单文件为 None。
+        """
         self.docs = docs
         self.sections = sections
         self.raw_lines = raw_lines
+        self.file_paths = file_paths  # 🆕 v4.0：[Path] 或 None（单文件）
         # 倒排索引：token → {doc_id: tf}
         self._postings: dict[str, dict[int, int]] = defaultdict(dict)
         # 文档长度（token 数）用于 BM25 的长度归一
@@ -288,7 +296,93 @@ class AssetsIndex:
 
         return idx
 
-    _CACHE_VERSION = "1"
+    @classmethod
+    def build_from_files(cls, asset_paths: list,
+                         cache_path: Optional[Path] = None) -> "AssetsIndex":
+        """🆕 v4.0：从多个资产文件建合并索引（总览 + 工程级子文件）。
+
+        每个文件分配 file_id（0=总览，1+=子文件），doc_id 全局连续编号。
+        行号保持单文件局部（多文件下用 (file_id, line) 溯源）。
+        缓存：任一文件 mtime 变动即重建（多 mtime 比对）。
+
+        单文件时退化为 build_from_file 行为（file_id 全 0）。
+        空列表 → 空索引。
+        """
+        if not asset_paths:
+            # 空索引：无 docs
+            return cls([], [], {}, file_paths=[])
+
+        # 收集每个文件的 mtime（缓存判断用）
+        file_mtimes = []
+        all_texts = []
+        for ap in asset_paths:
+            if not Path(ap).is_file():
+                continue
+            all_texts.append(Path(ap).read_text(encoding="utf-8"))
+            file_mtimes.append(Path(ap).stat().st_mtime)
+
+        if not all_texts:
+            return cls([], [], {}, file_paths=[])
+
+        # 尝试命中缓存（多 mtime + 版本）
+        if cache_path is not None and cache_path.is_file():
+            try:
+                cache = json.loads(cache_path.read_text(encoding="utf-8"))
+                cached_mtimes = cache.get("file_mtimes", [])
+                if (cache.get("version") == cls._CACHE_VERSION
+                        and len(cached_mtimes) == len(file_mtimes)
+                        and all(c >= a for c, a in zip(cached_mtimes, file_mtimes))):
+                    return cls._from_cache_multi(cache, all_texts)
+            except (json.JSONDecodeError, KeyError, ValueError, IndexError):
+                pass  # 缓存损坏 → 重建
+
+        # 合并多文件：每个文件独立 parse_markdown，file_id 递增
+        merged_docs: list[Doc] = []
+        merged_sections: list[tuple[int, str]] = []
+        raw_lines_by_fid: dict = {}
+        doc_id_counter = 0
+        # sections 需要带 file_id 区分（行号会重叠），用复合 key
+        sections_by_fid: dict = {}
+
+        for fid, md_text in enumerate(all_texts):
+            lines = md_text.splitlines()
+            raw_lines_by_fid[fid] = lines
+            file_docs = parse_markdown(md_text)
+            file_sections = _parse_sections(lines)
+            sections_by_fid[fid] = file_sections
+            # 重新编号 doc_id 全局连续，打 file_id
+            for d in file_docs:
+                d.doc_id = doc_id_counter
+                d.file_id = fid
+                merged_docs.append(d)
+                doc_id_counter += 1
+
+        idx = cls(merged_docs, sections_by_fid, raw_lines_by_fid,
+                  file_paths=[Path(ap) for ap in asset_paths])
+
+        # 原子写缓存
+        if cache_path is not None:
+            cache = idx._to_cache_multi(file_mtimes)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                fd, tmp = tempfile.mkstemp(
+                    suffix=".tmp", dir=str(cache_path.parent), prefix=".idx_")
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(cache, f, ensure_ascii=False)
+                    os.replace(tmp, str(cache_path))
+                except Exception:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                    raise
+            except OSError:
+                pass  # 缓存写失败不阻断
+
+        return idx
+
+    _CACHE_VERSION = "2"  # 🆕 v4.0：1→2（多文件缓存结构变更）
 
     def _to_cache(self, source_mtime: float) -> dict:
         return {
@@ -299,7 +393,8 @@ class AssetsIndex:
             "doc_len": self._doc_len,
             "postings": {tok: dict(postings) for tok, postings in self._postings.items()},
             "docs": [
-                {"doc_id": d.doc_id, "section": d.section, "line": d.line, "text": d.text}
+                {"doc_id": d.doc_id, "section": d.section, "line": d.line,
+                 "text": d.text, "file_id": d.file_id}
                 for d in self.docs
             ],
         }
@@ -312,11 +407,62 @@ class AssetsIndex:
             docs.append(Doc(
                 doc_id=d["doc_id"], section=d["section"], line=d["line"],
                 text=d["text"], tokens=toks, tf=Counter(toks),
+                file_id=d.get("file_id", 0),
             ))
         obj = cls.__new__(cls)
         obj.docs = docs
         obj.sections = _parse_sections(md_text.splitlines())
         obj.raw_lines = md_text.splitlines()
+        obj.file_paths = None
+        obj._postings = defaultdict(dict)
+        for tok, postings in cache["postings"].items():
+            obj._postings[tok] = {int(k): v for k, v in postings.items()}
+        obj._doc_len = cache["doc_len"]
+        obj._avg_doc_len = cache["avg_doc_len"]
+        obj._n_docs = cache["n_docs"]
+        return obj
+
+    # ── 多文件缓存（🆕 v4.0）─────────────────────────────────────────────
+    def _to_cache_multi(self, file_mtimes: list) -> dict:
+        """多文件缓存序列化。"""
+        return {
+            "version": self._CACHE_VERSION,
+            "multi_file": True,
+            "file_mtimes": file_mtimes,
+            "n_docs": self._n_docs,
+            "avg_doc_len": self._avg_doc_len,
+            "doc_len": self._doc_len,
+            "postings": {tok: dict(postings) for tok, postings in self._postings.items()},
+            "docs": [
+                {"doc_id": d.doc_id, "section": d.section, "line": d.line,
+                 "text": d.text, "file_id": d.file_id}
+                for d in self.docs
+            ],
+        }
+
+    @classmethod
+    def _from_cache_multi(cls, cache: dict, all_texts: list) -> "AssetsIndex":
+        """多文件缓存反序列化。all_texts = 各文件的文本列表（用于重建 sections/raw_lines）。"""
+        docs: list[Doc] = []
+        for d in cache["docs"]:
+            toks = tokenize(d["text"])
+            docs.append(Doc(
+                doc_id=d["doc_id"], section=d["section"], line=d["line"],
+                text=d["text"], tokens=toks, tf=Counter(toks),
+                file_id=d.get("file_id", 0),
+            ))
+        # 重建多文件 sections / raw_lines
+        sections_by_fid: dict = {}
+        raw_lines_by_fid: dict = {}
+        for fid, md_text in enumerate(all_texts):
+            lines = md_text.splitlines()
+            sections_by_fid[fid] = _parse_sections(lines)
+            raw_lines_by_fid[fid] = lines
+        obj = cls.__new__(cls)
+        obj.docs = docs
+        obj.sections = sections_by_fid
+        obj.raw_lines = raw_lines_by_fid
+        obj.file_paths = None  # 缓存恢复时不持久化 Path（重 build 时才有）
         obj._postings = defaultdict(dict)
         for tok, postings in cache["postings"].items():
             obj._postings[tok] = {int(k): v for k, v in postings.items()}
@@ -363,36 +509,70 @@ class AssetsIndex:
             hits.append(Hit(
                 section=d.section, line=d.line, snippet=d.text,
                 score=round(score, 4), matched_tokens=sorted(matched[doc_id]),
+                file_id=d.file_id,
             ))
         return hits
 
     # ── 章节提取 ────────────────────────────────────────────────────────
+    def _iter_all_sections(self):
+        """统一遍历所有 sections（单文件 list / 多文件 dict 均兼容）。
+
+        yield (file_id, line_no, anchor)。单文件模式 file_id 恒 0。
+        """
+        if isinstance(self.sections, dict):
+            # 多文件模式
+            for fid, sec_list in self.sections.items():
+                for line_no, anchor in sec_list:
+                    yield (fid, line_no, anchor)
+        else:
+            # 单文件模式（list[tuple[int, str]]）
+            for line_no, anchor in self.sections:
+                yield (0, line_no, anchor)
+
     def section(self, name: str) -> Optional[str]:
         """取整章原文（替代 assets.sections 协议）。
 
         name 可为 "§4" / "4" / "§6.4" / "6.4" / "§B" / "B"。
         返回从该章节标题行到下一章节标题行之间的全部原文。
+        多文件模式下：在总览（file_id=0）里查找，找不到再遍历子文件。
         """
         target = name if name.startswith("§") else f"§{name}"
+        all_secs = list(self._iter_all_sections())
+
+        # 找目标章节
         start_idx = None
-        for i, (line_no, anchor) in enumerate(self.sections):
+        for i, (fid, line_no, anchor) in enumerate(all_secs):
             if anchor == target:
                 start_idx = i
                 break
         if start_idx is None:
-            # 宽松匹配：anchor 以 target 开头
-            for i, (line_no, anchor) in enumerate(self.sections):
+            # 宽松匹配
+            for i, (fid, line_no, anchor) in enumerate(all_secs):
                 if anchor.startswith(target):
                     start_idx = i
                     break
         if start_idx is None:
             return None
 
-        start_line = self.sections[start_idx][0]
-        end_line = (self.sections[start_idx + 1][0]
-                    if start_idx + 1 < len(self.sections)
-                    else len(self.raw_lines) + 1)
-        return "\n".join(self.raw_lines[start_line - 1: end_line - 1])
+        start_fid, start_line, _ = all_secs[start_idx]
+        # 同 file_id 内找下一章节作为结束
+        end_line = None
+        for j in range(start_idx + 1, len(all_secs)):
+            fid, line_no, anchor = all_secs[j]
+            if fid == start_fid:
+                end_line = line_no
+                break
+        if end_line is None:
+            end_line = len(self._raw_lines_of(start_fid)) + 1
+
+        return "\n".join(self._raw_lines_of(start_fid)[start_line - 1: end_line - 1])
+
+    def _raw_lines_of(self, file_id: int) -> list:
+        """取某 file_id 的 raw_lines（单文件/多文件兼容）。"""
+        if isinstance(self.raw_lines, dict):
+            return self.raw_lines.get(file_id, [])
+        # 单文件模式：raw_lines 是 list[str]，只有 file_id=0
+        return self.raw_lines if file_id == 0 else []
 
     # ── 结构化查询：§B 模块索引 ─────────────────────────────────────────
     def modules(self) -> list[dict]:

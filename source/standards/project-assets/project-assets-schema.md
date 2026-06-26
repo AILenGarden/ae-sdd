@@ -628,9 +628,9 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 
 | 类型 | 目录 | 用途 | 典型场景 | 触发时机 |
 |------|------|------|---------|---------|
-| **function/** | `skills/ae-sdd/project-assets/{projectKey}/function/` | **跨工程业务场景专题** | 单 Story 跨 ≥3 工程的完整调用链 + 影响面 + 错误码 + Redis Key + DTO 字段 | 每个 Story 完成后必产 1 篇（STORY-002-BE / STORY-003-BE / ...）|
-| **config/** | `skills/ae-sdd/project-assets/{projectKey}/config/` | **环境/部署/测试/运维配置** | 本地端口表 + 测试环境 URL + Feign URL 注入 + management port 分配 + Docker 镜像标签 + 数据迁移 | 部署相关 PR / 新环境接入 / 配置变更时更新 |
-| **domain/** | `skills/ae-sdd/project-assets/{projectKey}/domain/` | **业务域概览（业务全景图）** | 业务域边界 + 域间依赖 + 域事件流 + 关键术语表 | 项目启动时建首版；域变更时更新 |
+| **function/** | `skills/ae-sdd/assets/{projectKey}/function/` | **跨工程业务场景专题** | 单 Story 跨 ≥3 工程的完整调用链 + 影响面 + 错误码 + Redis Key + DTO 字段 | 每个 Story 完成后必产 1 篇（STORY-002-BE / STORY-003-BE / ...）|
+| **config/** | `skills/ae-sdd/assets/{projectKey}/config/` | **环境/部署/测试/运维配置** | 本地端口表 + 测试环境 URL + Feign URL 注入 + management port 分配 + Docker 镜像标签 + 数据迁移 | 部署相关 PR / 新环境接入 / 配置变更时更新 |
+| **domain/** | `skills/ae-sdd/assets/{projectKey}/domain/` | **业务域概览（业务全景图）** | 业务域边界 + 域间依赖 + 域事件流 + 关键术语表 | 项目启动时建首版；域变更时更新 |
 
 ### 12.2 命名规范
 
@@ -643,7 +643,7 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 ### 12.3 与主体文件的关系
 
 ```
-skills/ae-sdd/project-assets/{projectKey}/
+skills/ae-sdd/assets/{projectKey}/
 ├── {projectKey}.assets.md            # 主体（核心映射+索引，≤30KB）
 ├── {projectKey}.update-log.md        # 主体变更日志
 ├── {projectKey}.pending-questions.md # 主体待确认问题
@@ -652,6 +652,19 @@ skills/ae-sdd/project-assets/{projectKey}/
 ├── domain/                            # 业务域概览
 └── {module-name}.assets.md            # 工程级子文件（每个工程一个）
 ```
+
+**🆕 v4.0 工程级子文件就近存放（推荐，可选）：**
+
+当项目有 `docWorkspacePath`（document-storage §0.5.1 第四维）时，工程级子文件**推荐就近存放**到文档工作区，按工程分目录：
+
+```
+{docWorkspacePath}/assets/{projectKey}/{module-name}/{module-name}.assets.md
+```
+
+- 总览仍在 `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md`
+- 子文件分散到 `docWorkspacePath/assets/{projectKey}/{module-name}/`（跟代码分离，不污染业务仓库）
+- ae-sdd 不预设 module-name 上面的目录层级（有无 2c/admin、叫什么，项目自定）
+- 向后兼容：旧扁平位置 `skills/ae-sdd/assets/{projectKey}/{projectKey}.{module}.assets.md` 仍被 `paths.find_module_asset_files` 自动发现
 
 **主体文件 §A-§G 索引需含三类专题引用：**
 - §D.1 config/ 索引（环境/部署组件）
@@ -883,7 +896,7 @@ grep -rEn "jdbc:mysql://[^?]*:[^@]*@" \
 
 ## 附录 B：工程级子文件 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/module-assets-template.md skills/ae-sdd/project-assets/{projectKey}/{projectKey}.{module-name}.assets.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/module-assets-template.md skills/ae-sdd/assets/{projectKey}/{projectKey}.{module-name}.assets.md`
 
 ```markdown
 ---
@@ -1161,7 +1174,7 @@ grep -rn "com\.casstime\.cloud\.{product}\.{domain}\.\(domain\|infrastructure\)\
 
 ## 附录 C：function/ 业务场景专题 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/function-topic-template.md skills/ae-sdd/project-assets/{projectKey}/function/{Story编号或场景标识}.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/function-topic-template.md skills/ae-sdd/assets/{projectKey}/function/{Story编号或场景标识}.md`
 
 ```markdown
 # {场景名}-BE 接口逻辑排查（{Story 编号}）
@@ -1275,7 +1288,7 @@ grep -rn "com\.casstime\.cloud\.{product}\.{domain}\.\(domain\|infrastructure\)\
 
 ## 附录 D：config/ 环境配置专题 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/config-topic-template.md skills/ae-sdd/project-assets/{projectKey}/config/{环境或场景}.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/config-topic-template.md skills/ae-sdd/assets/{projectKey}/config/{环境或场景}.md`
 
 ```markdown
 # {环境或场景} 配置（如 接口集成测试环境配置）
@@ -1373,7 +1386,7 @@ public interface BossUserInfoClient extends BossUserInfoService
 
 ## 附录 E：domain/ 业务域概览专题 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/domain-topic-template.md skills/ae-sdd/project-assets/{projectKey}/domain/{业务域 Key}.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/domain-topic-template.md skills/ae-sdd/assets/{projectKey}/domain/{业务域 Key}.md`
 
 ```markdown
 # {业务域名}（{英文 Key}）
