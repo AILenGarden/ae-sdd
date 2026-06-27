@@ -4,8 +4,8 @@
 plugin_loader，命中外挂时注入 "plugin: ..." 行，引导 Agent 加载外挂路径。
 
 覆盖场景（补 v3.5.0 的测试盲区 B3）：
-1. 命中 L1 项目层外挂 → systemMessage 含 "plugin:" + 外挂路径
-2. 无任何注册表 → systemMessage 不含 "plugin:"（保持原 skill 行）
+1. 命中 L1 项目层外挂 → additionalContext 含 "plugin:" + 外挂路径
+2. 无任何注册表 → additionalContext 不含 "plugin:"（保持原 skill 行）
 3. plugin_loader 异常 → 降级，不抛错（失败优先原则）
 
 接入点：tools/lib/prompt_inject.py 的 _resolve_skill_path() + inject()。
@@ -126,10 +126,10 @@ class TestResolveSkillPath(unittest.TestCase):
 
 
 class TestInjectPluginLine(unittest.TestCase):
-    """inject() 端到端：systemMessage 是否含 plugin 行。"""
+    """inject() 端到端：additionalContext 是否含 plugin 行。"""
 
     def test_inject_contains_plugin_line_when_hit(self):
-        """命中外挂 → systemMessage 含 'plugin:' 行 + 外挂路径。"""
+        """命中外挂 → additionalContext 含 'plugin:' 行 + 外挂路径。"""
         tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
         _make_project_with_plugin(tmp)
         payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
@@ -141,7 +141,7 @@ class TestInjectPluginLine(unittest.TestCase):
         self.assertIn("<!-- /ae-sdd harness -->", msg)
 
     def test_inject_no_plugin_line_when_no_registry(self):
-        """无注册表 → systemMessage 不含 'plugin:'，仅含原 skill 行。"""
+        """无注册表 → additionalContext 不含 'plugin:'，仅含原 skill 行。"""
         tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
         ade_sdd = tmp / ".ae-sdd"
         ade_sdd.mkdir(parents=True)
