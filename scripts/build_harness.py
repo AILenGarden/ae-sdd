@@ -122,6 +122,26 @@ def get_commit_hash(src: Path) -> str:
     return "unknown"
 
 
+def get_tree_hash(commit_hash: str, src: Path) -> Optional[str]:
+    """🆕 v3.5.6：取指定 commit 的 tree hash（用于 amend 检测）。
+
+    amend 后 commit hash 会变（新 hash），但 tree hash 不变（同内容），
+    借此区分"amend 重转"和"真实内容变更"。
+    """
+    if commit_hash in ("unknown", ""):
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(src), "rev-parse", f"{commit_hash}^{{tree}}"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
 # ─── SKILL frontmatter 解析（对齐 PS1 Parse-SkillFrontmatter） ──────────────
 def parse_skill_frontmatter(path: Path) -> dict:
     """解析 SKILL.md frontmatter 的 name/version/description。
@@ -312,20 +332,32 @@ def main() -> int:
     reason = ""
 
     if lock and not args.force:
-        drift = []
-        if lock.get("commit") != commit:
-            drift.append(f"commit {str(lock.get('commit',''))[:7]}→{commit[:7]}")
-        if lock.get("ae_sdd_version") != version:
-            drift.append(f"ae_sdd_version {lock.get('ae_sdd_version')}→{version}")
-        if lock.get("adapter_version") != ADAPTER_VERSION:
-            drift.append(f"adapter {lock.get('adapter_version')}→{ADAPTER_VERSION}")
-        if lock.get("templateHash") != tpl_hash:
-            drift.append("template 内容变化")
-        if not drift:
-            should_convert = False
-            reason = f"全部一致 (commit={commit[:7]}, version={version}, adapter={ADAPTER_VERSION})"
-        else:
-            reason = "检测到漂移: " + "; ".join(drift)
+        # 🆕 v3.5.6：tree-hash 一致性提前返回（修 amend 循环）
+        # amend 后 commit hash 会变（新 hash），但 tree hash 不变（同内容），
+        # 借此区分"amend 重转"和"真实内容变更"。
+        lock_commit = lock.get("commit", "")
+        if lock_commit and lock_commit != commit:
+            head_tree = get_tree_hash(commit, src)
+            lock_tree = get_tree_hash(lock_commit, src)
+            if head_tree and lock_tree and head_tree == lock_tree:
+                should_convert = False
+                reason = (f"tree-hash 一致 (lock→HEAD 是 amend/amend-like 操作，"
+                          f"无内容变更; commit {lock_commit[:7]}→{commit[:7]}, tree={head_tree[:7]})")
+        if should_convert:
+            drift = []
+            if lock.get("commit") != commit:
+                drift.append(f"commit {str(lock.get('commit',''))[:7]}→{commit[:7]}")
+            if lock.get("ae_sdd_version") != version:
+                drift.append(f"ae_sdd_version {lock.get('ae_sdd_version')}→{version}")
+            if lock.get("adapter_version") != ADAPTER_VERSION:
+                drift.append(f"adapter {lock.get('adapter_version')}→{ADAPTER_VERSION}")
+            if lock.get("templateHash") != tpl_hash:
+                drift.append("template 内容变化")
+            if not drift:
+                should_convert = False
+                reason = f"全部一致 (commit={commit[:7]}, version={version}, adapter={ADAPTER_VERSION})"
+            else:
+                reason = "检测到漂移: " + "; ".join(drift)
     elif args.force:
         reason = "--force forced re-convert"
     else:

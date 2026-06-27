@@ -1,12 +1,13 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.5）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.6）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
-  支持流程状态跟踪与中断后恢复。v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。
+  支持流程状态跟踪与中断后恢复。v3.5.6 修补 amend 循环 commit noise
+  （post-commit hook tree-hash 一致性提前返回）；v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。
   版本变更日志见 source/CHANGELOG/。
-version: 3.5.5
+version: 3.5.6
 main_entry: true
 triggers:
   - "启动自动化工程"

@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.5（🆕 2026-06-27：主会话职责收口 + 节点级上下文压力软提示 — 新建 `ae-sdd context-pressure` 子命令（`tools/lib/context_pressure.py` + `tools/bin/ae-sdd:cmd_context_pressure`，15 单元测试覆盖），5 信号采集（session.userConfirmedPhases / state.events / state.history / state.activeAgents / 落盘文档总字节）+ 与可配置阈值比对输出 low/medium/high/critical 评级；6 个审核点边界（1/1.5/2/2.5/4/5）必调一次，report-only 不阻断流程；与 v3.3.0 PRD 级 compact（事后收尾）互补不替代。SKILL.md §🤖 章节新增"主会话职责边界"小节（主会话 = 路由 + 编排 + 汇总 + 讲解 + 用户对话，其他全部派 sub-agent，替代 v3.5.4 默认单 Agent 直做）；`agent-orchestration-skill.md` 新增 §8.5 默认单 sub-agent 模式 + §8.6 节点级派活清单（6 审核点 → sub-agent 角色映射表）。缺省阈值硬编码首版，可被 `.ae-sdd/config.yaml` 的 `contextPressure.thresholds.<level>.<signal>` override（字段缺失/非法保留缺省不抛异常）。落地强度按"SKILL 文字 + CLI + 测试"三件套：lib/dataclass + bin/subparser + tests/15 用例，全部真实物理实现，不重蹈 v3.5.4 修补的"声明但零实现"覆辙。🆕 2026-06-27：迭代检查硬化为 CLI + P0 撒谎项修复
+> **版本：** v3.5.6（🆕 2026-06-27：修补 amend 循环 commit noise — `scripts/build_harness.py` 新增 `get_tree_hash()` + 幂等检查 4 维前增加 tree-hash 一致性提前返回；amend 后再触发 post-commit hook 不再写盘，工作区保持干净，开发者无需 `--amend` 规避。13 个单元测试覆盖 4 类场景（真实 amend 跳过 / lock==HEAD 全一致 / 不同 tree 正常重转 / 边界兜底）。保持 v3.5.4 引入的自动分发闭环设计目标（commit 后立刻同步），不动 hook 主流程、不挪到 CI、不加 `[skip-harness]` 逃生口。🆕 2026-06-27：主会话职责收口 + 节点级上下文压力软提示
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
