@@ -261,8 +261,9 @@
 
 - `ae-sdd health` 9 项自检：子 SKILL 章节完整性 / 项目资产双源一致 / 规则-工具同步 / 门禁覆盖度 / TR-1~7 / 扫描器就绪 / CHANGELOG 版本一致
 - `ae-sdd update-check` 6 项检查（UC-01~06）：版本号三处一致 / 门禁注册一致 / 命令契约闭环 / 扫描器分发 / 健康度清单覆盖 / 🆕 v3.4.0 文档-实现一致性（SKILL/子SKILL 命令 + HARNESS HS 规则）；dev-sync 前必须全绿
+- 🆕 v3.5.3 设计-实现一致性迭代检查（人工/Agent 深度核对，补 UC 盲区）：每月/重大变更后跑，4 步 SOP —— ① 跑 UC+health+gates 作基线 ② HS 规则 vs 物理实现交叉核对（查"声明物理拦截实为零"的撒谎）③ CLI 命令契约深挖（查幽灵命令整段描述 + F-1 交叉验证覆盖面）④ 已实现未接入扫描（查 untracked + 未 import 模块）。补 UC 查不到的 4 类盲区：HS 物理拦截实现齐全度 / 幽灵命令整段描述 / 交叉验证覆盖面 / 已实现未接入。定位为 UC 的"深挖层"，不替代 UC（UC 是改完即跑的快速防线，本节是周期性深度体检）。
 
-**颗粒度与边界**：db/git 工具为只读；🆕 v3.4.0 G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json（UC-03/UC-06 兜底）。
+**颗粒度与边界**：db/git 工具为只读；🆕 v3.4.0 G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json（UC-03/UC-06 兜底）；🆕 v3.5.3 迭代检查不阻断 dev-sync（报告 + 修复建议，由用户决定是否本次迭代修）。
 
 ---
 

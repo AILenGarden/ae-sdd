@@ -1,11 +1,11 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.2）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.3）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
   支持流程状态跟踪与中断后恢复。版本变更日志见 source/CHANGELOG/。
-version: 3.5.2
+version: 3.5.3
 main_entry: true
 triggers:
   - "启动自动化工程"
