@@ -673,6 +673,7 @@ ae-sdd update-check --only UC-02
 - [ ] 🆕 v3.4.0 `source/SKILL.md` 无虚假命令引用（无 `gate ra-required --fix` / `assets check/generate/audit/update` / G-RA "CLI 自动调用"），UC-03/UC-06 兜底
 - [ ] 🆕 v3.4.0 `source/skills/cross-cutting/document-storage-skill.md` §0.5.1 四维定位模型（含 docWorkspacePath）+ §0.6.5 E003 落地前强制
 - [ ] 🆕 v3.4.0 `source/templates/coding/be-coding-plan-template.md` §5 骨架含来源标记 + §15 门禁 15 条（含 G-CODEPLAN-SRC）+ front-matter 计数修正
+- [ ] 🆕 v3.5.2 `source/SKILL.md` 含 `### ⑦ter 流程收尾合规自检` 章节（5 维度自检 + 自愈 SOP + 自检表模板）+ `#### 1.7 PRD 收尾合规自检 SOP`（堵 prd-complete 跳校验漏洞）+ 整体流程图含 ⑦ter 节点 + 执行清单含 10a 行；`source/docs/ae-sdd-design.md` 端到端流程编排模块含 v3.5.2 自检说明
 
 ### 跨 SKILL 一致性
 

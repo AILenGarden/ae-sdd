@@ -1,11 +1,11 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.1）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.2）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
   支持流程状态跟踪与中断后恢复。版本变更日志见 source/CHANGELOG/。
-version: 3.5.1
+version: 3.5.2
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -82,7 +82,8 @@ ae-sdd gates check --only G-00
   # exists=false → 由 AI Agent 路由到 project-assets-update-skill §3 生成
 
 # 资产生成（无独立 CLI 子命令，由 project-assets-update-skill §3 引导 AI 生成）：
-#   加载 project-assets-update-skill.md §3 → 9 步探查 SOP → 产出 assets/{projectKey}/{projectKey}.assets.md
+#   加载 project-assets-update-skill.md §3 → 9 步探查 SOP → 产出 .ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md
+#   （路径模板见 document-storage §2.3，多业务线按 line 分组）
 
 # 资产读取（ES 倒排索引 + BM25，Agent 按需读资产用）：
 ae-sdd assets read <stage>          # 按阶段读取资产（基线 KEY × BM25）
@@ -476,7 +477,7 @@ ae-sdd gates check --only G-14
        ↓
        调用 project-assets-update-skill.md §3（生成动作）
        → 9 步探查 SOP（读 CLAUDE.md + AGENTS.md + 扫描工程 + 抽典型类）
-       → 输出：{gitPath}/.ae-project/assets.md（或 assets/ 目录）
+       → 输出：.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md（路径模板见 document-storage §2.3）
        ↓
        生成完成后 AI 告知用户：
        "✅ 项目资产已生成：{assetsPath}
@@ -1339,6 +1340,43 @@ G-PRD-4 (PRD 级人工审核通过):
 - `ae-sdd state prd-check-complete --prd {PRD-ID}` — 只校验 4 层 AND，输出未达成项，**不改状态**
 - `ae-sdd state prd-complete --prd {PRD-ID} --runtime {mavis|claude-code|codex}` — 校验通过后执行 compact，更新 prdStatus
 
+#### 1.7 PRD 收尾合规自检 SOP（🔴 v3.5.2 — 堵 prd-complete 跳校验漏洞）
+
+> **🆕 v3.5.2 新增（2026-06-27，用户需求"每次流程结束时先自检合规，不合规就修复"）：** 与 Story 级 ⑦ter 自检配套的 PRD 级收尾自检。
+>
+> **背景（已探查的实现 gap）：** `cmd_state_prd_complete`（`tools/bin/ae-sdd:268-271`）把 4 层 AND 校验注释为"简化：提示用户先跑"，实际**不复跑校验**直接把 `prdStatus` 写为 `awaiting_compact` → 存在"跳过 `prd-check-complete` 直接 compact"的漏洞路径。本 SOP 在编排层强制补齐，与 Story 级 ⑦ter 同源（防止 AI 跳自检直接收尾）。
+
+**强制 3 步（不可跳过）：**
+
+```
+PRD 收尾触发（用户说"PRD 收尾" / 所有 Story 完成）
+    │
+    ├── 1. 先跑 `ae-sdd state prd-check-complete --prd {PRD-ID}` → 读 JSON `all_pass`
+    │
+    ├── 2. 判定：
+    │     ├─ all_pass == false → 【禁止】跑 prd-complete，进自愈
+    │     │     自愈映射：
+    │     │     ├─ G-PRD-1 missing（Story 未完成）→ 回该 Story 级流程，跑 Story 级 ⑦ter
+    │     │     ├─ G-PRD-2 missing（⑦bis 未过）→ 回该 Story ⑦bis 闸
+    │     │     ├─ G-PRD-3 missing（跨 Story 风险未闭环）→ 补 mitigationPlan / 降级风险
+    │     │     └─ G-PRD-4 missing（人工审核点 5 未做）→ 触发审核点 5，等用户确认
+    │     │     自愈后【重跑 prd-check-complete】确认 all_pass == true
+    │     │
+    │     └─ all_pass == true + 用户已确认审核点 5 → 进步骤 3
+    │
+    └── 3. 收尾执行（顺序不可颠倒）：
+          a. `ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}` → prdStatus = awaiting_compact
+          b. `ae-sdd runtime compact` → compact + 写 summary.md
+          c. 写 next-prd 指针
+```
+
+**AE 编排层门禁（本 SKILL 只关注 3 条）：**
+- ✅ `prd-complete` 前必须保留 `prd-check-complete` 的 `all_pass == true` 证据（写入对话 / 报告）
+- ✅ 跳过 `prd-check-complete` 直接 `prd-complete` = 违规，后续 compact 视为**事后回溯**
+- ✅ PRD 收尾自检表须对话内呈现（同 Story 级 ⑦ter，列 G-PRD-1~4 各层 pass/missing）
+
+> **为何不动 tools/ 代码补强 `prd-complete`？** 按用户选定路线（SKILL 文字 + 复用现有 CLI），`prd-check-complete` 已是现成只读校验命令，编排层 SOP 强制"先跑 check-complete 再跑 complete"即可堵漏洞，无需改 `cmd_state_prd_complete` 实现（避免 UC-02/UC-03 连带 + 测试编写，符合 KISS）。后续若要硬阻断，可独立提需求加 `prd-complete --require-check` 参数。
+
 ---
 
 ## 整体流程
@@ -1393,8 +1431,10 @@ Phase 3 ────────┤ 验证阶段（必须完成）
                 │
                 ├── ⑦bis 全链路对称性核查闸（🔴 流程收尾强制：DR-Story-Task-实现-测试用例 五层一一对应）
                 │
-                └── 🔍 人工审核 4：CodeReview 阶段完成确认（🆕 2026-06-10 改名，原"验证阶段"）
-
+                ├── 🔍 人工审核 4：CodeReview 阶段完成确认（🆕 2026-06-10 改名，原"验证阶段"）
+                │
+                ├── ⑦ter 流程收尾合规自检（🔴 v3.5.2 — 用户确认后自跑 5 维度自检，不合规就修复，禁止裸 ✅ 收尾）
+                │
                 └── ⑧ 完成 ✅
 ```
 
@@ -2127,6 +2167,74 @@ BFF: {RestImpl}:{行号} → AppService: {方法}:{行号} → Domain: {方法}:
 
 ---
 
+### ⑦ter 流程收尾合规自检（🔴 v3.5.2 — 不合规就修复，禁止裸 ✅ 收尾）
+
+> **🆕 v3.5.2 新增（2026-06-27，用户需求"每次流程结束时先自检合规，不合规就修复"）：** 人工审核点 4 用户确认后、⑧完成输出前，AI 必须**自跑一遍流程收尾自检**，确保用户确认的内容与实际落地一致。**禁止"用户已确认就裸 ✅ 收尾"** —— 用户确认的是 CodeReview 内容，但产出物是否齐全、文档是否合规落位、state 是否推进、门禁是否全过，需要独立核对。
+
+**触发时机：** 人工审核点 4 用户明确 ✅ 确认后、⑧完成输出之前。
+
+**设计哲学（与⑥.10 测试真实性同源）：** 防止 AI "给自己打钩" —— 主 agent 声称"流程已完成"无效，必须以现有 CLI 的客观输出为证据。
+
+#### 5 项自检维度（复用现有 CLI，不新建硬门禁）
+
+| # | 维度 | 校验命令 | 通过标准 | 自愈策略 |
+|---|------|---------|---------|---------|
+| **7t-1** | 全门禁通过 | `ae-sdd gates check`（全量 23 门禁） | `all_pass == true`（JSON `failed==0`） | 🔴 逻辑性失败（如 G-08 内容校验）→ 阻断 + 升级用户；🟢 能补生成的（如 G-01 文档缺失）→ 补跑对应 SKILL 生成后重跑 |
+| **7t-2** | 文档合规位置 | `ae-sdd gates check --only G-DOC-STORAGE` | `stray_files == []`（无游离产物） | 🟢 游离产物 → AI 调 `document-storage.resolve_path()` 重定位并移动到合规根目录，重跑本维度 |
+| **7t-3** | state.json 完整 | `ae-sdd state read --json` | `phase` 在 PHASE_FLOW 合法值内 + `currentStory` 非空 + `events` 非空数组 | 🟢 phase 未推进到 `completed` → `ae-sdd state write --phase completed`；events 缺失 → 补 `append_event` 后 `state write` 落盘 |
+| **7t-4** | 产出物齐全 | 逐项核 §⑧产出物表 8 类路径（Story/Supplement/Task/CodingReport/CodeReview/testcase/TestReport/源码） | 全部文件真实存在（`os.path.exists`，非仅路径字符串） | 🟢 缺失 → 补跑对应 SKILL 生成（如 CodingReport 缺→coding-report-skill）；🔴 同一产物多轮补不出 → 阻断 + 升级用户 |
+| **7t-5** | 无遗留 🔴 问题 | 读本轮 CodeReview 报告扫 🔴 阻断型 | 本轮 CodeReview 报告无 Open 态 🔴 问题 | 🔴 有未整改 🔴 → 阻断，回 ⑤ Coding 返工（不得带病收尾） |
+
+#### 自检 SOP（强制 4 步，不可跳过）
+
+```
+进入 ⑦ter 自检
+    │
+    ├── 1. AI 跑 7t-1 ~ 7t-5 全部命令，汇总成《流程收尾自检表》
+    │     （必须在对话内直接呈现，表格形式，不省略任何维度）
+    │
+    ├── 2. 判定：
+    │     ├─ 全部 ✅ → 进 ⑧完成输出
+    │     ├─ 有 🟢 可自愈项 → 进步骤 3
+    │     └─ 有 🔴 阻断项 → 进步骤 4
+    │
+    ├── 3. 自愈循环：
+    │     a. 按"自愈策略"列逐项修复
+    │     b. 修复后【重跑该维度自检】（不是重跑全部，只重跑修复项）
+    │     c. 重跑通过 → 该维度转 ✅；重跑仍失败 → 升级为 🔴 阻断
+    │     d. 全部 🟢 转 ✅ → 进 ⑧；任一升 🔴 → 进步骤 4
+    │
+    └── 4. 🔴 阻断兜底：
+          a. 暂停流程，列出全部 🔴 阻断项清单（维度 + 失败原因 + 证据）
+          b. 升级用户决策（返工 / 豁免标注"事后回溯" / 暂停）
+          c. 【禁止裸 ✅ 收尾】不得跳过自检直接进 ⑧
+```
+
+#### 《流程收尾自检表》对话内呈现模板（🔴 必须输出）
+
+```
+📋 【{STORY-ID} 流程收尾自检表 — v3.5.2】
+
+| 维度 | 命令 | 结果 | 状态 | 自愈动作 |
+|------|------|------|------|---------|
+| 7t-1 全门禁 | gates check | failed={N} | ✅/🔴 | {无 / 已补 G-XX} |
+| 7t-2 文档位置 | gates check --only G-DOC-STORAGE | stray={N} | ✅/🟢/🔴 | {无 / 已移位 X 文件} |
+| 7t-3 state 完整 | state read --json | phase={X} | ✅/🟢/🔴 | {无 / 已推进 phase} |
+| 7t-4 产出物齐全 | 逐项核 §⑧表 | 缺失={N} | ✅/🟢/🔴 | {无 / 已补生成 X} |
+| 7t-5 无遗留🔴 | 读 CodeReview | open🔴={N} | ✅/🔴 | {无 / 回⑤返工} |
+
+自检结论：{全部 ✅ 可收尾 / N 项自愈中 / N 项 🔴 阻断已升级用户}
+```
+
+#### AE 编排层门禁（本 SKILL 只关注 2 条）
+
+- ✅ ⑧完成输出前必须完成 ⑦ter 自检，自检表已对话呈现
+- ✅ 任一 🔴 阻断项未自愈 → 禁止进 ⑧完成输出（违规收尾视为事后回溯）
+
+> **为何不做成独立 CLI 硬门禁？** 按用户选定路线（SKILL 文字 + 复用现有 CLI）+ ae-sdd "规则描述 + 工具执行"双轨设计：7t-1/2/3 直接复用 `gates check` / `state read`（已有硬阻断 exit code），7t-4/5 是编排层"清单齐全性"逻辑（无现成单命令），由 AI 按本编排文字执行。符合 [`ae-sdd-update-skill.md` §SKILL 边界判定表](../orchestration/ae-sdd-update-skill.md)："流程节点定义 / 整体执行清单 → ae-sdd-skill"。
+
+---
+
 ### ⑧ 完成输出
 
 工程完成后输出（最终版，即最后一轮的产出物路径）：
@@ -2448,7 +2556,7 @@ ae-sdd init <project-dir> <project-key>
 | **0** | **🆕 工作区与项目资产检查**（SKILL 启动时最先执行）| — | **projectKey 已知 + 项目资产已存在（或已完成生成并用户确认）**；任一未满足禁止进入后续步骤 |
 | 0a | 确认工作区（projectKey / gitPath）| — | 用户明确告知或当前 session 已知 |
 | 0b | 调用 `get_assets(projectKey)` 检查项目资产 | — | 资产存在 → 静默通过；资产不存在 → 进入 0c |
-| 0c | **（资产缺失时）** 明确告知用户，调用 `project-assets-update-skill.md §3 生成动作` | `{gitPath}/.ae-project/assets.md` | 生成完成后 AI 报告摘要（微服务数/分层/技术栈）；用户确认资产内容准确 |
+| 0c | **（资产缺失时）** 明确告知用户，调用 `project-assets-update-skill.md §3 生成动作` | `.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md`（见 document-storage §2.3） | 生成完成后 AI 报告摘要（微服务数/分层/技术栈）；用户确认资产内容准确 |
 | 1 | 收集输入（DR 路径 + Story ID + 工作目录） | — | 三项信息已确认 |
 | 1a | **🤖 多 Agent 模式决策**（在 Step 2 之前，可选） | `state.json` 中 `multiAgentMode: true/false` | 检测到"何时启用"表任一条件时主动提议；用户明确同意后启用；启用后从角色库选 sub-agent；⑥.10 测试真实性强制派 `test-verifier` 独立验证 |
 | **1.5** | **🆕 自更新识别**（AE SKILL 自身维护，命中即短路） | — | 命中 `ae-sdd-update-skill.md`；未命中进入 1.6 |
@@ -2476,6 +2584,7 @@ ae-sdd init <project-dir> <project-key>
 | 9 | 完成判定 | — | 全部条件 ✅ |
 | 9-📖 | **🔴 AI 主动讲解 Code 故事**（在 10 之前） | Code 故事讲解输出 | 已讲清"调用链 walkthrough/分层实现/状态机/事务/异常/测试覆盖/CodeReview 发现"7 个维度；含具体文件:行号和代码片段；未讲解禁止进入 10 |
 | 10 | 人工审核确认 | — | 用户确认工程完成 |
+| 10a | **🔴 ⑦ter 流程收尾合规自检**（v3.5.2，在 10 之后、⑧之前） | 《流程收尾自检表》 | 5 维度全 ✅（7t-1 全门禁 / 7t-2 文档位置 / 7t-3 state 完整 / 7t-4 产出物齐全 / 7t-5 无遗留 🔴）；🟢 可自愈项已修复并重跑通过；🔴 阻断项已自愈或已升级用户；未自检 / 裸 ✅ 收尾禁止进 ⑧ |
 
 
 
