@@ -1,13 +1,14 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.6）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.8）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
-  支持流程状态跟踪与中断后恢复。v3.5.6 修补 amend 循环 commit noise
-  （post-commit hook tree-hash 一致性提前返回）；v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。
+  支持流程状态跟踪与中断后恢复。v3.5.8 RA 第七步纳入 review-loop 公共协议
+  （反复挖掘 + 连续 3 轮无新增才退出 + 漏报升级），补齐"RA 是事实源头却无 review 闭环"体系性缺口；
+  v3.5.6 修补 amend 循环 commit noise；v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。
   版本变更日志见 source/CHANGELOG/。
-version: 3.5.6
+version: 3.5.8
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -239,6 +240,47 @@ ae-sdd gate doc-storage --path <实际写入路径> --intent <intent> --project 
 ```
 
 > **🔴 不允许跳过 G-DOC-STORAGE**：流程产物乱放游离位置（`d:\tmp\` 等）即阻断；必须经 resolve_path 推导路径。
+
+---
+
+## 🛡️ G-DOC-CONSISTENCY 项目侧记忆-配置路径一致性门卫（🔴 v3.5.7 加固 — 解决"旧记忆劫持 config 路径"问题）
+
+> **🆕 v3.5.7 新增（2026-06-27）：** G-DOC-STORAGE 管"产物落在哪"，G-PATH 管"母版写了什么"，但两者都不管"**项目侧记忆（AGENTS.md/.harness/memory/MEMORY.md）里的文档根表述是否与 config 一致**"。本门禁补这个盲区。
+>
+> **背景（实测案例）：** life 项目 `.ae-sdd/config.yaml` 写 `docWorkspacePath=D:\Item\life`，但项目自己的 `AGENTS.md` 和 `MEMORY.md` 残留 2026-06-16 旧约定写 `D:\Item\doc`，主会话信了旧记忆，把 RA 文档写到 `D:\Item\doc\iterations\...` 而非 `D:\Item\life\ae-sdd-doc\iterations\...`。"config 是 SSOT"的声明没有强制力，本门禁把它变成可执行门禁。
+
+### 强制规则（不可跳过）
+
+| # | 规则 | 工具强制 | 行为 |
+|---|------|---------|------|
+| 1 | **项目侧记忆的"文档工作区/文档根"表述须与 `.ae-sdd/config.yaml` 的 `docWorkspacePath` 一致** | `ae-sdd gates check --only G-DOC-CONSISTENCY` | 不一致 → 🔴 阻断 |
+| 2 | **config 的 docWorkspacePath 是唯一权威源（SSOT）** | resolve_doc_workspace() | 项目侧记忆表述冲突时以 config 为准 |
+| 3 | **降级：无 config.yaml / 无 projectKey / 无 assets.md → warn 不阻断** | — | 同 G-00 缺失策略 |
+
+### 扫描范围与判定
+
+- **记忆文件**（项目根下，存在才扫）：`AGENTS.md` / `.harness/memory/MEMORY.md` / `.harness/agent.md` / `CLAUDE.md`
+- **声明式线索词**：行内含"文档工作区/文档根/文档目录/项目文档工作区/Story 文档位于"等之一才视为候选
+- **路径比对**：提取行内 Windows 绝对路径，与 config 权威值比对——相等或互为前缀（容忍 `ae-sdd-doc/` 子目录表述）= 一致；否则 🔴 冲突
+- **从严判定**：只拦截"=`/`位于"等**声明式**表述；泛泛提及（如"历史路径 X 已作废"）不拦截，避免误伤
+
+### 执行时机
+
+- **任何 SKILL 落地文档前 + G-00 通过后 → 跑 G-DOC-CONSISTENCY**（与 G-DOC-STORAGE 同阶段，两者正交）
+- **AI Agent 手动调用**：`ae-sdd gates check --only G-DOC-CONSISTENCY`；不通过时修正项目侧记忆文件使其与 config 一致
+- **降级场景**：项目未 init（无 `.ae-sdd/config.yaml`）→ 自动降级 warn，不阻断
+
+### 工具命令
+
+```bash
+ae-sdd gates check --only G-DOC-CONSISTENCY
+  # 扫项目根下 AGENTS.md / .harness/memory/MEMORY.md / .harness/agent.md / CLAUDE.md
+  # 校验"文档工作区/文档根"表述路径是否与 config.yaml docWorkspacePath 一致
+  # 返回: { canonical, scanned, conflicts: [{file, line, path, canonical, snippet}] }
+  # conflicts 非空 → 🔴 阻断（提示以 config 为 SSOT 修正项目侧记忆）
+```
+
+> **🔴 不允许跳过 G-DOC-CONSISTENCY**：项目侧记忆劫持 config 路径（旧表述覆盖新配置）即阻断；config.yaml 的 docWorkspacePath 是唯一权威源。
 
 ---
 

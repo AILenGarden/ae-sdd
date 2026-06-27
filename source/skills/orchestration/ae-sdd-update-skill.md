@@ -763,6 +763,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
 - [ ] 🆕 v3.4.0 `tools/lib/gates.py` GATE_REGISTRY 含 G-14 / G-CODEPLAN-SRC / G-DOC-STORAGE（22 门禁）+ CHECK_FUNCS 注册 + check_g14/check_g_codeplan_src/check_g_doc_storage 实现
+- [ ] 🆕 v3.5.7 `tools/lib/gates.py` GATE_REGISTRY 含 G-DOC-CONSISTENCY（25 门禁）+ CHECK_FUNCS 注册 + check_g_doc_consistency 实现（项目侧记忆-配置路径一致性，防旧记忆劫持 config docWorkspacePath）；`source/SKILL.md` 含 §🛡️ G-DOC-CONSISTENCY 门禁章节；`tools/tests/test_gates.py` 含 TestGDocConsistency 4 用例
 - [ ] 🆕 v3.4.0 `tools/lib/session.py` 存在，entry token 管理（enter/read_session/has_valid_entry_token/confirm_phase/is_phase_confirmed）
 - [ ] 🆕 v3.4.0 `tools/bin/ae-sdd` 含 `enter` / `state confirm` / `gate doc-storage` 3 个新子命令
 - [ ] 🆕 v3.4.0 `tools/lib/gate_intercept.py` 含关卡2（_PRODUCT_PATTERNS + _PRODUCT_PHASE_MAP + _check_product_landing）+ 关卡3（coding phase 写 src/ 须 task-reviewed 确认）

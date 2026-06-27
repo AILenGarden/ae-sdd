@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.6（🆕 2026-06-27：修补 amend 循环 commit noise — `scripts/build_harness.py` 新增 `get_tree_hash()` + 幂等检查 4 维前增加 tree-hash 一致性提前返回；amend 后再触发 post-commit hook 不再写盘，工作区保持干净，开发者无需 `--amend` 规避。13 个单元测试覆盖 4 类场景（真实 amend 跳过 / lock==HEAD 全一致 / 不同 tree 正常重转 / 边界兜底）。保持 v3.5.4 引入的自动分发闭环设计目标（commit 后立刻同步），不动 hook 主流程、不挪到 CI、不加 `[skip-harness]` 逃生口。🆕 2026-06-27：主会话职责收口 + 节点级上下文压力软提示
+> **版本：** v3.5.8（🆕 2026-06-27：RA 第七步纳入 review-loop 公共协议 — `requirement-analysis-skill.md` §第七步从"16 道闸一次性终检"重构为引用 `review-loop-skill.md`（反复挖掘 + 连续 3 轮无新增确认缺口/缺陷才退出 + 3 轮仍有 🔴 升级用户 + 漏报升级）；§第二步循环对象从"仅缺口"扩展为"缺口 + 8 维度挖掘穷尽"；`review-loop-skill.md` 节点配置表新增 RA 行；`update-graph.json` 新增 UG-13 连带规则。补齐"RA 是全链路事实源头却无 review 闭环"的体系性缺口（与 v3.5.6 工具层强制进入 RA 正交：v3.5.6 保证 AI 进 RA，v3.5.8 保证 AI 在 RA 里挖到穷尽）。v3.5.6 修补 amend 循环 commit noise；v3.5.5 主会话职责收口 + 节点级上下文压力软提示
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

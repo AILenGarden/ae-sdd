@@ -37,6 +37,10 @@ G-CODE Coding 真实性门禁（v3.2.1 — 对标 CodingModel §6 AI Coding 反�
   G-14           CodingPlan-Story 一致性      ✅ 完整（AC 对齐 + Story 引用 + 偏离 Proposal）
   G-CODEPLAN-SRC CodingPlan 源码核对          ✅ 完整（类骨架须附已读/待核实源码标记）
   G-DOC-STORAGE  文档落地存放合规              ✅ 完整（产物路径/命名须合规，禁游离位置）
+
+项目侧记忆-配置一致性门禁（🆕 v3.5.7 — 堵"旧记忆劫持 config 路径"盲区）：
+  G-DOC-CONSISTENCY 项目侧记忆-配置路径一致性 ✅ 完整（AGENTS/MEMORY 文档路径表述须与
+                                                       .ae-sdd/config.yaml docWorkspacePath 一致）
 """
 from __future__ import annotations
 
@@ -63,7 +67,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-CODE = 23）
+# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-CODE + 1 G-DOC-CONSISTENCY = 24）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -99,6 +103,10 @@ GATE_REGISTRY: list[dict] = [
     # 8 维度 + 5 问自检 + 缺口管理 + 规模裁定 + RA-G01~16 闸判定，堵"AI 跳过 RA 完整流程直接出 RA 文档"
     {"id": "G-RA-FLOW-VIOLATION", "name": "RA 流程违规审计", "severity": "blocker"},
     {"id": "G-CODE-1", "name": "Coding 真实性扫描通过", "severity": "blocker"},
+    # 🆕 v3.5.7 项目侧记忆-配置路径一致性：项目 AGENTS.md/.harness/memory/MEMORY.md 等
+    # "文档工作区"表述须与 .ae-sdd/config.yaml 的 docWorkspacePath 一致，防旧记忆劫持新配置
+    # （实测案例：life 项目 MEMORY 写 D:\Item\doc 与 config 写 D:\Item\life 冲突，RA 落错位置）
+    {"id": "G-DOC-CONSISTENCY", "name": "项目侧记忆-配置路径一致性", "severity": "blocker"},
 ]
 
 # Story Review 之后允许的 phase
@@ -1457,6 +1465,125 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
                       details={"scanned": scanned, "violations": []})
 
 
+# ─── G-DOC-CONSISTENCY：项目侧记忆-配置路径一致性（🆕 v3.5.7）─────────────────
+# 堵"旧记忆劫持 config 路径"盲区：G-DOC-STORAGE 管"产物落在哪"，G-PATH 管"母版写了什么"，
+# 本门禁管"项目侧 AGENTS.md/.harness/memory/MEMORY.md 的文档根表述是否与 config 一致"。
+# 实测案例（2026-06-27 life 项目）：config 写 docWorkspacePath=D:\Item\life，但 MEMORY 写
+# D:\Item\doc，主会话信旧记忆把 RA 写到错位置。本门禁把"config 是 SSOT"从声明变强制门禁。
+#
+# 扫描范围：项目根下 4 个活跃记忆文件（存在才扫）：
+#   AGENTS.md / .harness/memory/MEMORY.md / .harness/agent.md / CLAUDE.md
+# 判定：提取"文档工作区/文档根/文档位于"等声明式语境下的 Windows 绝对路径，
+#       与 config 的 docWorkspacePath（缺省回退 gitPath）比对，互为前缀/相等=一致，否则冲突。
+# 严重度：blocker，但从严判定——只拦截"= / 位于"等声明式表述，泛泛提及不拦截。
+# 降级：无 config.yaml / 无 projectKey / 无记忆文件 → warn 不阻断。
+# 记忆文件中"声明式文档根表述"线索词（行内含其一即候选）
+_DOC_ROOT_CLUE_RE = re.compile(
+    r"文档工作区|文档根|文档目录|文档放哪|Story\s*文档位于|Story 文档位于"
+    r"|项目文档工作区|文档工作区根",
+    re.IGNORECASE,
+)
+# Windows 绝对路径提取（D:\xxx / D:/xxx，含反斜杠或正斜杠，到下一个空白或反引号）
+_WIN_ABS_PATH_RE = re.compile(
+    r"`?([A-Za-z]:[\\/](?:[^\s`|，。、；:（）()\[\]]*[\\/])+[^\s`|，。、；:（）()\[\]]*)"
+)
+# 扫描的记忆文件相对路径（项目根下）
+_MEMORY_FILES = (
+    "AGENTS.md",
+    ".harness/memory/MEMORY.md",
+    ".harness/agent.md",
+    "CLAUDE.md",
+)
+
+
+def _normalize_path(p: str) -> str:
+    """归一化路径用于前缀比对：统一正斜杠 + 去尾分隔符 + 小写盘符。"""
+    return p.replace("\\", "/").rstrip("/").lower()
+
+
+def _paths_consistent(a: str, b: str) -> bool:
+    """两路径是否一致：相等或互为前缀（容忍子目录表述如 ae-sdd-doc/ 在 life/ 下）。"""
+    na, nb = _normalize_path(a), _normalize_path(b)
+    return na == nb or na.startswith(nb + "/") or nb.startswith(na + "/")
+
+
+def check_g_doc_consistency(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-DOC-CONSISTENCY 项目侧记忆-配置路径一致性。
+
+    校验项目侧记忆文件（AGENTS.md/.harness/memory/MEMORY.md 等）里"文档工作区/文档根"
+    等声明式表述的路径，是否与 .ae-sdd/config.yaml 的 docWorkspacePath（缺省回退 gitPath）一致。
+    不一致 → 🔴 阻断（config 为 SSOT）。
+
+    签名兼容 CHECK_FUNCS 通用路径 (project_dir, st, current_story)；
+    内部从 project_dir/.ae-sdd 反推 ade_sdd + project_key。
+    """
+    name = "项目侧记忆-配置路径一致性"
+
+    ade_sdd = project_dir / ".ae-sdd"
+    if not ade_sdd.is_dir() or not paths.config_path(ade_sdd).is_file():
+        # 无 .ae-sdd/（项目未 init）→ 降级 warn，不阻断（同 G-00 缺失策略）
+        return GateResult("G-DOC-CONSISTENCY", name, "blocker", True,
+                          "未找到 .ae-sdd/config.yaml（项目未 init），跳过一致性校验",
+                          details={"skipped": "no_config", "scanned": 0, "conflicts": []})
+
+    cfg = paths.read_config(ade_sdd)
+    project_key = cfg.get("workspaceKey") or cfg.get("projectKey") or ""
+    if not project_key:
+        # 无 projectKey 无法读 assets.md 取 docWorkspacePath，降级
+        return GateResult("G-DOC-CONSISTENCY", name, "blocker", True,
+                          "config.yaml 无 workspaceKey/projectKey，跳过一致性校验",
+                          details={"skipped": "no_project_key", "scanned": 0, "conflicts": []})
+
+    # 取 config 权威值：docWorkspacePath > 缺省回退 gitPath
+    doc_ws = paths.resolve_doc_workspace(ade_sdd, project_key)
+    if doc_ws is None:
+        # assets.md 无 gitPath/docWorkspacePath → 无权威值可比，降级
+        return GateResult("G-DOC-CONSISTENCY", name, "blocker", True,
+                          f"assets.md 无 docWorkspacePath/gitPath（projectKey={project_key}），跳过",
+                          details={"skipped": "no_canonical", "scanned": 0, "conflicts": []})
+    canonical = str(doc_ws.resolve())
+
+    # 扫记忆文件，提取声明式文档根路径表述
+    conflicts: list[dict] = []
+    scanned = 0
+    for rel in _MEMORY_FILES:
+        mem_file = project_dir / rel
+        if not mem_file.is_file():
+            continue
+        scanned += 1
+        try:
+            text = mem_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            # 行内须同时命中"声明式线索词"才视为候选（泛泛提及不拦，避免误伤历史引用）
+            if not _DOC_ROOT_CLUE_RE.search(line):
+                continue
+            for m in _WIN_ABS_PATH_RE.finditer(line):
+                candidate = m.group(1)
+                if not _paths_consistent(candidate, canonical):
+                    conflicts.append({
+                        "file": rel,
+                        "line": lineno,
+                        "path": candidate,
+                        "canonical": canonical,
+                        "snippet": line.strip()[:120],
+                    })
+
+    if conflicts:
+        locs = [f"{c['file']}:{c['line']}({c['path']})" for c in conflicts[:5]]
+        return GateResult(
+            "G-DOC-CONSISTENCY", name, "blocker", False,
+            f"项目侧记忆的文档路径表述与 config.yaml 不一致（{len(conflicts)} 处冲突，"
+            f"config docWorkspacePath={canonical}）：{locs}",
+            "config.yaml 的 docWorkspacePath 是唯一权威源；修正项目侧记忆文件中的文档路径表述使其一致",
+            details={"canonical": canonical, "scanned": scanned, "conflicts": conflicts})
+
+    return GateResult("G-DOC-CONSISTENCY", name, "blocker", True,
+                      f"项目侧记忆-配置路径一致（扫描 {scanned} 个记忆文件，docWorkspacePath={canonical}）",
+                      details={"canonical": canonical, "scanned": scanned, "conflicts": []})
+
+
 # ─── 路由表 ─────────────────────────────────────────────────────────────────
 CHECK_FUNCS: dict[str, Callable] = {
     "G-01": check_g01, "G-02": check_g02, "G-03": check_g03,
@@ -1472,6 +1599,7 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-RA-3": check_ra_derivatives, "G-RA-4": check_ra_authenticity,
     "G-RA-FLOW-VIOLATION": check_ra_flow_violation,  # 🆕 2026-06-27 RA 流程违规审计
     "G-CODE-1": check_gcode1,
+    "G-DOC-CONSISTENCY": check_g_doc_consistency,  # 🆕 v3.5.7 项目侧记忆-配置路径一致性
 }
 
 

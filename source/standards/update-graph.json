@@ -180,6 +180,24 @@
         {"path": "source/docs/plans/2026-06-26-plugin-registry-design.md", "action": "设计文档存在（仅参考，不强制同步实现细节）", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-05", "UC-06"]
+    },
+    {
+      "id": "UG-13",
+      "name": "🆕 v3.5.8 RA 挖掘循环 review-loop 化",
+      "trigger": [
+        "source/skills/phase1-design/requirement-analysis-skill.md",
+        "source/skills/cross-cutting/review-loop-skill.md",
+        "source/standards/update-graph.json"
+      ],
+      "trigger_condition": "修改 RA 第七步 review-loop 闭环（反复挖掘 + 收敛判据 + 漏报升级）或 review-loop 节点配置表 RA 行任一",
+      "affected": [
+        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "第七步引用 review-loop 公共协议（协议 1/2/3）+ 7.0 骨架表 + 7.1 RA-G01~16 + 7.2 loop SOP + 7.3 漏报升级 + 7.4 循环记录；第二步循环对象含'8 维度穷尽度回扫'；整体流程图/执行清单/禁止事项/维护章节与重构一致", "auto_checkable": true},
+        {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "核心洞察含 RA；节点配置表含 RA 行（RAModel 12 维 + 8 维度 + 5 问 / RAGeneratePlan / RA-G01~16）；实施历史含 v3.5.8 条目", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "frontmatter version 含 v3.5.8；G-RA 门卫章节描述与 RA 第七步 loop 化一致（RA-G01~16 仍为 RA 专属检查项，loop 骨架引用 review-loop）", "auto_checkable": true},
+        {"path": "README.md", "action": "第 5 行版本行含 v3.5.8 + RA review-loop 化描述", "auto_checkable": true},
+        {"path": "source/CHANGELOG/", "action": "新增 2026-06-27-RA挖掘循环review-loop化.md changelog 文件", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-05", "UC-06"]
     }
   ]
 }

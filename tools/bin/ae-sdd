@@ -63,6 +63,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import assets_index, classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, session, state, stop_check, update_graph  # noqa: E402
 
 
+def _read_stdin_json() -> dict:
+    """Read hook JSON from stdin as UTF-8 bytes.
+
+    Claude Code sends hook input as UTF-8 JSON. On Windows, json.load(sys.stdin)
+    may decode through the active console code page and corrupt markers such as
+    "◆ STATE". Reading bytes avoids that runtime mismatch.
+    """
+    if sys.stdin.isatty():
+        return {}
+    try:
+        raw = sys.stdin.buffer.read()
+    except Exception:
+        return {}
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def cmd_version(args, parser):
     output.emit({
         "name": "ae-sdd",
@@ -1356,19 +1378,16 @@ def cmd_gate_intercept(args, parser):
     bash_command = args.bash_command or None
     file_path = args.file_path or None
 
-    if not sys.stdin.isatty():
-        try:
-            input_data = _json.load(sys.stdin)
-            tool_name = tool_name or input_data.get("tool_name", "")
-            tool_input = input_data.get("tool_input", {})
-            # Bash 命令
-            if not bash_command and tool_name == "Bash":
-                bash_command = tool_input.get("command") or None
-            # Write / Edit / MultiEdit 的文件路径
-            if not file_path and tool_name in ("Write", "Edit", "MultiEdit"):
-                file_path = tool_input.get("file_path") or None
-        except (_json.JSONDecodeError, Exception):
-            pass
+    input_data = _read_stdin_json()
+    if input_data:
+        tool_name = tool_name or input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input", {})
+        # Bash 命令
+        if not bash_command and tool_name == "Bash":
+            bash_command = tool_input.get("command") or None
+        # Write / Edit / MultiEdit 的文件路径
+        if not file_path and tool_name in ("Write", "Edit", "MultiEdit"):
+            file_path = tool_input.get("file_path") or None
 
     if not tool_name:
         print(_json.dumps({}))
@@ -1566,19 +1585,15 @@ def cmd_prompt_inject(args, parser):
       {"hook_event_name": "UserPromptSubmit", "user_prompt": "..."}
 
     stdout 格式:
-      {"systemMessage": "◆ HARNESS STATE ..."}  注入到 AI context
+      {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "◆ HARNESS STATE ..."}}
+      注入到 AI context
       {}  无注入（非 ae-sdd 项目）
 
     exit: 始终 0
     """
     import json as _json
 
-    input_data: dict = {}
-    if not sys.stdin.isatty():
-        try:
-            input_data = _json.load(sys.stdin)
-        except (_json.JSONDecodeError, Exception):
-            pass
+    input_data: dict = _read_stdin_json()
 
     user_prompt = input_data.get("user_prompt", "")
     project_dir = Path(args.project) if args.project else None
@@ -1596,29 +1611,25 @@ def cmd_stop_check(args, parser):
     Stop hook 入口（v1.3）。
 
     stdin 格式:
-      {"hook_event_name": "Stop", "reason": "...", "transcript_path": "/tmp/..."}
+      {"hook_event_name": "Stop", "reason": "...", "last_assistant_message": "...", "transcript_path": "/tmp/..."}
 
     stdout 格式（允许停止）:  {}
     stdout 格式（阻止停止）:
-      {"decision": "block", "reason": "...", "systemMessage": "..."}
+      {"decision": "block", "reason": "..."}
 
     exit: 始终 0
     """
     import json as _json
     from lib import paths as paths_mod
 
-    input_data: dict = {}
-    if not sys.stdin.isatty():
-        try:
-            input_data = _json.load(sys.stdin)
-        except (_json.JSONDecodeError, Exception):
-            pass
+    input_data: dict = _read_stdin_json()
 
-    # 读对话记录（从 transcript_path 文件）
-    transcript_content = ""
+    # Claude Code v2.1+ Stop 输入直接携带 last_assistant_message。
+    # 旧版没有该字段时，再回退到 transcript_path 文件解析。
+    transcript_content = str(input_data.get("last_assistant_message") or "")
     transcript_read_failed = False
     transcript_path = input_data.get("transcript_path", "")
-    if transcript_path:
+    if not transcript_content and transcript_path:
         try:
             transcript_content = Path(transcript_path).read_text(
                 encoding="utf-8", errors="replace"
@@ -1650,7 +1661,6 @@ def cmd_stop_check(args, parser):
         result = {
             "decision": "block",
             "reason": inject_msg,
-            "systemMessage": inject_msg,
         }
         print(_json.dumps(result, ensure_ascii=False))
     return 0  # 始终 exit 0

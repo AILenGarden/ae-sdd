@@ -339,6 +339,7 @@ HEALTH_CHECKLIST_REQUIRED = [
     ("update_graph", "更新图谱检查器"),
     ("G-CODEPLAN-SRC", "🆕 v3.4.0 源码核对门禁"),
     ("G-DOC-STORAGE", "🆕 v3.4.0 文档存放门禁"),
+    ("G-DOC-CONSISTENCY", "🆕 v3.5.7 项目侧记忆-配置路径一致性门禁"),
     ("UC-06", "🆕 v3.4.0 文档-实现一致性检查"),
 ]
 

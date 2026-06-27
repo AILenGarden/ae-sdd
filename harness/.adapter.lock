@@ -1,7 +1,7 @@
 {
   "adapter_version": "0.2.0",
-  "ae_sdd_version": "3.5.6",
-  "commit": "1e549b9a7f9a661cca5f27bc17ecc279aa469b7c",
+  "ae_sdd_version": "3.5.8",
+  "commit": "bf72569ad80c12226bc778c5504c853fb12813e1",
   "templateHash": "D6E5FB37158DB7788231CF91FD709435D500A612",
-  "converted_at": "2026-06-27T08:08:50Z"
+  "converted_at": "2026-06-27T09:15:52Z"
 }

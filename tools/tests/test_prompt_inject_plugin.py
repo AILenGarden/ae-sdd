@@ -12,6 +12,8 @@ plugin_loader，命中外挂时注入 "plugin: ..." 行，引导 Agent 加载外
 """
 import sys
 import tempfile
+import json
+import subprocess
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,6 +21,28 @@ from unittest import mock
 # Make 'lib' importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import prompt_inject  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CLI_PATH = REPO_ROOT / "tools" / "bin" / "ae-sdd"
+
+
+def _additional_context(payload: dict) -> str:
+    hook_output = payload["hookSpecificOutput"]
+    assert hook_output["hookEventName"] == "UserPromptSubmit"
+    return hook_output["additionalContext"]
+
+
+def _run_prompt_inject_cli(project_dir: Path, payload: dict) -> dict:
+    proc = subprocess.run(
+        [sys.executable, str(CLI_PATH), "prompt-inject", "--project", str(project_dir)],
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    return json.loads(raw or "{}")
 
 
 def _make_project_with_plugin(tmp: Path, skill_target: str = "coding-skill.md") -> Path:
@@ -109,7 +133,7 @@ class TestInjectPluginLine(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
         _make_project_with_plugin(tmp)
         payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
-        msg = payload["systemMessage"]
+        msg = _additional_context(payload)
         self.assertIn("plugin:", msg)
         self.assertIn("my-plugin", msg)
         self.assertIn("⚠️ 本次必须加载此 外挂路径", msg)
@@ -130,7 +154,7 @@ class TestInjectPluginLine(unittest.TestCase):
         (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
 
         payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
-        msg = payload["systemMessage"]
+        msg = _additional_context(payload)
         self.assertNotIn("plugin:", msg)
         # 原 skill 行仍在
         self.assertIn("skill:", msg)
@@ -141,9 +165,29 @@ class TestInjectPluginLine(unittest.TestCase):
         _make_project_with_plugin(tmp)
         with mock.patch("lib.plugin_loader.resolve_skill", side_effect=RuntimeError("boom")):
             payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
-        msg = payload["systemMessage"]
+        msg = _additional_context(payload)
         self.assertNotIn("plugin:", msg)
         self.assertIn("skill:", msg)  # 降级为原 skill 裸文件名
+
+
+class TestPromptInjectCli(unittest.TestCase):
+    def test_returns_additional_context_with_utf8_stdin(self):
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-cli-"))
+        ade_sdd = tmp / ".ae-sdd"
+        ade_sdd.mkdir(parents=True)
+        (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
+        (ade_sdd / "state.json").write_text(json.dumps({
+            "phase": "ra-generated",
+            "currentStory": "REQ-001",
+        }), encoding="utf-8")
+
+        payload = _run_prompt_inject_cli(tmp, {
+            "hook_event_name": "UserPromptSubmit",
+            "user_prompt": "continue DR",
+        })
+        msg = _additional_context(payload)
+        self.assertIn("REQ-001", msg)
+        self.assertNotIn("systemMessage", payload)
 
 
 if __name__ == "__main__":

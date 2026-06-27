@@ -9,6 +9,10 @@ v1.2 修正（2026-06-22）：
   - stdin 读取 JSON，从 transcript_path 文件读对话记录
   - 输出 JSON 格式，exit 始终 0
   - 防无限循环：用 .ae-sdd/.stop_retry_count 文件持久化计数
+
+v1.4 修正（2026-06-27）：
+  - CLI 入口优先使用 Claude Code Stop hook 的 last_assistant_message 字段
+  - last_assistant_message 不存在时，保留 transcript_path 解析作为旧版回退
 """
 from __future__ import annotations
 
@@ -84,18 +88,32 @@ def extract_last_assistant_text(transcript_content: str) -> str:
 
     if jsonl_turns:
         # 找最后一条 role=assistant 的记录
+        # 兼容两种格式：
+        #   格式A（标准 Anthropic API）：{"role": "assistant", "content": [...]}
+        #   格式B（Claude Code JSONL）：{"type": "assistant", "message": {"role": "assistant", "content": [...]}}
         for turn in reversed(jsonl_turns):
-            role = turn.get("role", "")
-            if role in ("assistant", "ai"):
+            # 格式B：Claude Code JSONL — 顶层 type="assistant"，content 嵌套在 message 内
+            if turn.get("type") in ("assistant", "ai"):
+                inner = turn.get("message", {})
+                content = inner.get("content", "")
+            else:
+                # 格式A：顶层直接有 role
+                role = turn.get("role", "")
+                if role not in ("assistant", "ai"):
+                    continue
                 content = turn.get("content", "")
-                if isinstance(content, list):
-                    # Anthropic API 格式：content 是 block 列表
-                    texts = [
-                        block.get("text", "")
-                        for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ]
-                    return "\n".join(texts)
+
+            if isinstance(content, list):
+                # Anthropic API 格式：content 是 block 列表
+                texts = [
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
+                result = "\n".join(texts)
+                if result:
+                    return result
+            elif content:
                 return str(content)
         return ""
 
@@ -131,7 +149,7 @@ def check_output(
     检查 transcript 最后一段 AI 响应是否包含状态头。
 
     Args:
-        transcript_content: 完整对话记录文本（从 transcript_path 读取）
+        transcript_content: last_assistant_message 文本；旧版回退时为 transcript_path 读取的完整对话记录
         ade_sdd:            .ae-sdd/ 路径。None = 非 ae-sdd 项目，直接放行
 
     Returns:

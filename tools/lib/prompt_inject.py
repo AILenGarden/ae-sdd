@@ -11,7 +11,7 @@ v1.3 变更（2026-06-22）：
   - 快速通道文件有效期：单次对话（下次 UserPromptSubmit 时清除非快速通道消息）
 
 v1.2 修正（2026-06-22）：
-  - stdin 读取 JSON，stdout 输出 JSON {"systemMessage": "..."}
+  - stdin 读取 JSON，stdout 输出 JSON {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "..."}}
   - 每次对话开始时重置 Stop hook 的重试计数
 """
 from __future__ import annotations
@@ -106,7 +106,7 @@ def inject(
     生成注入到 AI context 的 JSON payload。
 
     Returns:
-        dict → {"systemMessage": "..."} 或 {}
+        dict → {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "..."}} 或 {}
     """
     from lib import gates as gates_mod, paths, state as state_mod
     from lib.stop_check import reset_retry
@@ -205,7 +205,12 @@ def inject(
     except Exception:
         pass  # 探测失败不影响主流程
 
-    return {"systemMessage": "\n".join(lines)}
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "\n".join(lines),
+        }
+    }
 
 
 def _read_project_master_version(ade_sdd: Optional[Path]) -> Optional[str]:

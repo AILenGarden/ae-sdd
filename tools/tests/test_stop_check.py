@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import sys
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import stop_check
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CLI_PATH = REPO_ROOT / "tools" / "bin" / "ae-sdd"
 
 
 # ─── 辅助：构造 .ae-sdd/ 项目目录 ──────────────────────────────────────────────
@@ -23,7 +27,22 @@ def _make_ae_sdd_project(tmp_path: Path) -> Path:
     """在 tmp_path 下建 .ae-sdd/ 并返回 ade_sdd 路径。"""
     ade_sdd = tmp_path / ".ae-sdd"
     ade_sdd.mkdir(parents=True, exist_ok=True)
+    (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
     return ade_sdd
+
+
+def _run_stop_check_cli(project_dir: Path, payload: dict) -> dict:
+    proc = subprocess.run(
+        [sys.executable, str(CLI_PATH), "stop-check"],
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(project_dir),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    return json.loads(raw or "{}")
 
 
 def _make_prd_state(tmp_path: Path, prd_id: str, prd_status: str,
@@ -57,6 +76,38 @@ class TestNonAeSddProject:
 
 
 # ─── 🆕 v3.5.4 HS-8：compact 失败检测 ─────────────────────────────────────────
+
+class TestStopCheckCli:
+    def test_uses_last_assistant_message_utf8(self, tmp_path):
+        _make_ae_sdd_project(tmp_path)
+        response = (
+            f"{chr(0x25C6)} STATE:  ra-generated/REQ-001\n"
+            f"{chr(0x25C6)} GATE:   {chr(0x2705)} CLEAR\n"
+            f"{chr(0x25C6)} LAST:   generated RA\n"
+            f"{chr(0x25C6)} NEXT:   wait user confirmation\n"
+        )
+        result = _run_stop_check_cli(
+            tmp_path,
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": response,
+            },
+        )
+        assert result == {}
+
+    def test_blocks_missing_state_header(self, tmp_path):
+        _make_ae_sdd_project(tmp_path)
+        result = _run_stop_check_cli(
+            tmp_path,
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done without ae-sdd status header",
+            },
+        )
+        assert result["decision"] == "block"
+        assert "reason" in result
+        assert "systemMessage" not in result
+
 
 class TestHS8CompactFailure:
     """HS-8：PRD compact 卡在 awaiting_compact 无 summary.md → 阻断 + 报警"""

@@ -1,5 +1,5 @@
 """
-test_gates.py — gates.py 单元测试（23 门禁：14 主 G-00~G-13 + 3 中段 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-CODE）
+test_gates.py — gates.py 单元测试（25 门禁：14 主 G-00~G-13 + 3 中段 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-RA-FLOW-VIOLATION + 1 G-CODE + 1 G-DOC-CONSISTENCY）
 
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
@@ -539,6 +539,59 @@ class TestGDocStorage(unittest.TestCase):
         self.assertTrue(r.pass_)
 
 
+# ─── G-DOC-CONSISTENCY 项目侧记忆-配置路径一致性（🆕 v3.5.7）─────────────────
+class TestGDocConsistency(unittest.TestCase):
+
+    def test_consistent_memory_passes(self):
+        """记忆文件文档根表述与 config 一致 → pass"""
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: life\nworkspaceKey: life\ngitPath: D:\\Item\\life\ndocWorkspacePath: D:\\Item\\life\n",
+            ".ae-sdd/state.json": '{"phase": "initialized"}\n',
+            ".ae-sdd/assets/life/life.assets.md": "# §A §B §C §D §E §F §G\n\n| docWorkspacePath | `D:\\Item\\life` |\n| gitPath | `D:\\Item\\life` |\n",
+            "AGENTS.md": "- **项目文档工作区** = `D:\\Item\\life\\ae-sdd-doc\\`\n",
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g_doc_consistency(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+    def test_conflict_memory_blocks(self):
+        """记忆文件文档根表述与 config 冲突 → blocker + 冲突详情"""
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: life\nworkspaceKey: life\ngitPath: D:\\Item\\life\ndocWorkspacePath: D:\\Item\\life\n",
+            ".ae-sdd/state.json": '{"phase": "initialized"}\n',
+            ".ae-sdd/assets/life/life.assets.md": "# §A §B §C §D §E §F §G\n\n| docWorkspacePath | `D:\\Item\\life` |\n| gitPath | `D:\\Item\\life` |\n",
+            "AGENTS.md": "- **项目文档工作区** = `D:\\Item\\doc\\icec-cloud-boss\\...`\n",
+        })
+        r = gates.check_g_doc_consistency(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_)
+        conflicts = r.details.get("conflicts", [])
+        self.assertGreater(len(conflicts), 0)
+        self.assertEqual(conflicts[0]["file"], "AGENTS.md")
+        self.assertIn("D:\\Item\\doc", conflicts[0]["path"])
+
+    def test_no_config_skips_warn(self):
+        """无 config.yaml → 降级 warn（pass=True，不阻断）"""
+        tmp = _setup_project({
+            "AGENTS.md": "- **项目文档工作区** = `D:\\Item\\doc\\`\n",
+        })
+        r = gates.check_g_doc_consistency(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+        self.assertEqual(r.details.get("skipped"), "no_config")
+
+    def test_generic_mention_not_blocked(self):
+        """泛泛提及（无声明式线索词）不拦截，避免误伤历史引用"""
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: life\nworkspaceKey: life\ngitPath: D:\\Item\\life\ndocWorkspacePath: D:\\Item\\life\n",
+            ".ae-sdd/state.json": '{"phase": "initialized"}\n',
+            ".ae-sdd/assets/life/life.assets.md": "# §A §B §C §D §E §F §G\n\n| docWorkspacePath | `D:\\Item\\life` |\n| gitPath | `D:\\Item\\life` |\n",
+            # 行内无"文档工作区/文档根"等声明式线索词，仅泛泛提及路径
+            "AGENTS.md": "历史路径 `D:\\Item\\doc\\` 已作废，仅作参考\n",
+        })
+        r = gates.check_g_doc_consistency(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+        self.assertEqual(len(r.details.get("conflicts", [])), 0)
+
+
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
@@ -547,7 +600,8 @@ class TestCheckAll(unittest.TestCase):
         results = gates.check_all(None, ade_sdd, "test")
         # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
         # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
-        self.assertEqual(len(results), 24)
+        # 🆕 v3.5.7：+1 G-DOC-CONSISTENCY（项目侧记忆-配置路径一致性）= 25
+        self.assertEqual(len(results), 25)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -572,8 +626,9 @@ class TestCheckAll(unittest.TestCase):
         summary = gates.summarize(results)
         # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
         # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
-        self.assertEqual(summary["total"], 24)
-        self.assertEqual(summary["passed"] + summary["failed"], 24)
+        # 🆕 v3.5.7：+1 G-DOC-CONSISTENCY（项目侧记忆-配置路径一致性）= 25
+        self.assertEqual(summary["total"], 25)
+        self.assertEqual(summary["passed"] + summary["failed"], 25)
         self.assertIn("results", summary)
 
 
