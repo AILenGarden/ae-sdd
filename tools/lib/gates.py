@@ -95,6 +95,9 @@ GATE_REGISTRY: list[dict] = [
     {"id": "G-RA-2", "name": "RA 8 维度完整",        "severity": "blocker"},
     {"id": "G-RA-3", "name": "RA 衍生章节完整",      "severity": "blocker"},
     {"id": "G-RA-4", "name": "RA 真实性扫描通过",    "severity": "blocker"},
+    # 🆕 2026-06-27 RA 流程违规审计（建议书 §3.4）— 扫 RA 文档是否走完 RAModel 12 维 +
+    # 8 维度 + 5 问自检 + 缺口管理 + 规模裁定 + RA-G01~16 闸判定，堵"AI 跳过 RA 完整流程直接出 RA 文档"
+    {"id": "G-RA-FLOW-VIOLATION", "name": "RA 流程违规审计", "severity": "blocker"},
     {"id": "G-CODE-1", "name": "Coding 真实性扫描通过", "severity": "blocker"},
 ]
 
@@ -1049,6 +1052,84 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
                                "blockers": 0, "total": n_total})
 
 
+def _locate_flow_violation_scanner(master_source: Optional[Path]) -> Optional[Path]:
+    """在母版找 flow_violation_scan.py（G-RA-FLOW-VIOLATION 运行时依赖，🆕 2026-06-27）。"""
+    return _locate_runtime_script(master_source, "flow_violation_scan.py")
+
+
+def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
+                             master_source: Optional[Path] = None) -> GateResult:
+    """G-RA-FLOW-VIOLATION RA 流程违规审计通过（🆕 2026-06-27，建议书 §3.4）。
+
+    调 flow_violation_scan.py 跑 8 条规则检查（R1 12 维 / R2 8 维度 / R3 缺口
+    / R4 规模 / R5 RAGeneratePlan / R6 RA-G 闸 / R7 5 问自检 / R8 缺口闭环）。
+    BLOCKER=0 → pass；BLOCKER>0 → blocker。
+
+    与 G-RA-4 区别：G-RA-4 看真实性（无 fabricate/vague），本门禁看流程完整性
+    （是否走完 RAModel 12 维 + 8 维度 + 5 问 + 缺口 + 规模 + 16 道闸）。
+    """
+    name = "RA 流程违规审计"
+    phase = st.get("phase", "initialized")
+    # 仅在 ra-generated 之后才检查（之前无 RA 文档）
+    pre_ra_phases = {"initialized", "ra-generated"}
+    if phase in pre_ra_phases and not current_story:
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", True,
+                          f"阶段 {phase} 暂无 RA 文档（跳过，依赖 G-RA-1）",
+                          details={"skipped": True, "reason": "pre-ra-phase"})
+
+    scanner = _locate_flow_violation_scanner(master_source)
+    if scanner is None:
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", True,
+                          "未找到母版 flow_violation_scan.py（跳过）",
+                          details={"skipped": True, "reason": "scanner-not-found"})
+
+    try:
+        result = _subprocess.run(
+            [_sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except _subprocess.TimeoutExpired:
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
+                          "flow_violation_scan.py 跑超过 60 秒",
+                          "缩小扫描范围或增加超时")
+    except Exception as e:
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
+                          f"扫描器异常: {e}",
+                          "检查 flow_violation_scan.py 是否可执行")
+
+    try:
+        report = _json.loads(result.stdout) if result.stdout else {}
+    except _json.JSONDecodeError as e:
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
+                          f"扫描器 JSON 输出无法解析: {e}",
+                          f"stdout 前 200 字符: {result.stdout[:200]}")
+
+    status = report.get("status", "UNKNOWN")
+    ra_files_scanned = report.get("raFiles", 0)
+    blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
+    n_total = len(report.get("findings", []))
+
+    if ra_files_scanned == 0:
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", True,
+                          "无 RA 文档可扫描（依赖 G-RA-1 判定）",
+                          details={"scanned": True, "ra_files": 0, "stub": True})
+
+    if status != "PASS" or blockers > 0:
+        blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
+                                if f.get("severity") == "BLOCKER"})
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
+                          f"RA 流程违规审计发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}",
+                          "修复 RA 文档中标 BLOCKER 的项（补 12 维 / 8 维度 / 5 问 / 缺口 / 规模 / RA-G 闸判定）",
+                          details={"scanned": True, "ra_files": ra_files_scanned,
+                                   "blockers": blockers, "total": n_total,
+                                   "blocker_rules": blocker_rules})
+
+    return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", True,
+                      f"RA 流程违规审计通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
+                      details={"scanned": True, "ra_files": ra_files_scanned,
+                               "blockers": 0, "total": n_total})
+
+
 # ─── G-14：CodingPlan-Story 一致性（建议书4 G-08-15）─────────────────────────
 # CodingPlan 涉及的接口/DO/AC 必须与 Story 可对应；偏离项须有 Proposal 引用。
 # 设计在 ④bis（CodingPlan 生成）→ ⑤ Coding 之间硬拦截。
@@ -1389,6 +1470,7 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-DOC-STORAGE": check_g_doc_storage,
     "G-RA-1": check_ra_required, "G-RA-2": check_ra_dimensions,
     "G-RA-3": check_ra_derivatives, "G-RA-4": check_ra_authenticity,
+    "G-RA-FLOW-VIOLATION": check_ra_flow_violation,  # 🆕 2026-06-27 RA 流程违规审计
     "G-CODE-1": check_gcode1,
 }
 

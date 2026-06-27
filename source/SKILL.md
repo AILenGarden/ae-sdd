@@ -360,6 +360,10 @@ ae-sdd gates check --only G-14
 | **2. 中大任务（重）** | "做个用户管理功能" / "实现融云回调" / "做一个新功能" | **套 Story 7 区模板能套满 4+ 区** | `story-generate-skill.md` → `story-review-skill.md` → ... | `{STORY-ID}` |
 | **3. 小任务（轻）** | "加个缓存预热" / "加个重试机制" / "加个 XX" | 套 Story 7 区只能套 2-3 区 | `task-generate-skill.md`（**跳 Story**）| `Task-{服务缩写}-{任务简述}` |
 | **4. 微任务** | "改个枚举值" / "改个常量" / "重命名个字段" / "做个微调" | 套 Story 7 区套不出（0-1 区）| `coding-skill.md` 直接调 `CodingSkill.Plan` 出 CodingPlan（**跳 Story + 跳 Task**）| `Plan-{服务缩写}-{任务简述}` |
+| 🆕 **5. 文档类任务（2026-06-27）** | "出 proposal / 出建议书" / "出分析报告" / "出调研文档" / "修订建议" / "改造方案" | **触发 RA skill §反模式 8/9** | `requirement-analysis-skill.md` 完整 7 步（必跑最小流程）| `RA-{主题}` |
+
+> **🆕 2026-06-27 文档类任务补充（来自 RA skill §反模式 8/9）：** "出 proposal / 出建议书 / 出分析报告 / 出调研文档" 类任务**必须先走 requirement-analysis-skill.md 完整 7 步**——不允许直接动笔出文档。这是堵"AI Agent 撞到'出文档类任务'就跳过 RA"的系统性漏洞（实测案例：2026-06-27 历史 6+ 份 ae-sdd 修订建议书均直接出文档未走 RA，详见 `D:\al-agent-workspace\ae-sdd-update-doc\history\2026-06-27-RA多轮挖掘流程未执行-自我修订建议书.md`）。
+
 
 **事务简称命名规则（2026-06-10 用户确认）：**
 - 格式：`{服务名缩写}-{任务简述}`
@@ -500,11 +504,14 @@ ae-sdd gates check --only G-14
    │         跳过步骤 2-5，直接按 update-skill 的 5 步流程执行
    └─ 未命中 → 进入步骤 1.6
    ↓
-1.6 【🆕 来源识别】（2026-06-17 新增 — 4 维判定维度 1）
+1.6 【🆕 来源识别】（2026-06-17 新增 — 4 维判定维度 1；2026-06-27 扩展为 9 类输入）
    ├─ 识别输入类型：PRD / Issue / 对话需求 / BUG / 配置类 / 无输入
    │   ├─ PRD / Issue / 对话需求 → 路由到 `requirement-analysis-skill.md`
    │   │     （由 RA SKILL 内部完成规模裁定 → 进一步路由到 dr-generate / story-generate / task-generate / coding）
-   │   ├─ BUG / 配置类 → 路由到 `coding-skill.md`（直接走代码）
+   │   ├─ 🆕 2026-06-27 修订建议书 / proposal / 分析报告 / 调研文档 → 路由到 `requirement-analysis-skill.md`
+   │   │     （文档类任务同样必走 RA skill 完整 7 步，详见 RA skill §反模式 8/9）
+   │   │     触发词：出 proposal / 出建议书 / 出分析报告 / 出调研文档 / 修订建议 / 改造方案 / 重构方案 / 优化方案
+   │   ├─ BUG / 配置类 → 路由到 `coding-skill.md`（直接走代码，intent=BUG/CONFIG 双重豁免 RA）
    │   └─ 无输入 → 引导用户提供需求
    └─ 完成来源识别后进入步骤 1.7
    ↓

@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程 SKILL 体系的主入口（v3.5.5）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。 版本变更日志见 source/CHANGELOG/。
-version: 3.5.5
+description: 端到端自动化工程 SKILL 体系的主入口（v3.5.6）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。v3.5.6 修补 amend 循环 commit noise （post-commit hook tree-hash 一致性提前返回）；v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。 版本变更日志见 source/CHANGELOG/。
+version: 3.5.6
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@ca4624f4d56c3ea8d3db8f371613ff05663de2a1 @ 2026-06-27T06:45:46Z -->
+<!-- # AUTO-GEN @ ae-sdd@87ae03d2fb712091ee65e76acdda17de064b66f8 @ 2026-06-27T07:34:26Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-27T06:45:46Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-27T07:34:26Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `ca4624f` (3.5.5)
+> 源版本：ae-sdd @ `87ae03d` (3.5.6)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-06-27T06:45:46Z
-- 源 ae-sdd 版本：3.5.5
-- 源 ae-sdd commit：ca4624f
+- 生成时间：2026-06-27T07:34:26Z
+- 源 ae-sdd 版本：3.5.6
+- 源 ae-sdd commit：87ae03d
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

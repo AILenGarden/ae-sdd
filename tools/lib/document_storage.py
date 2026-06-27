@@ -257,6 +257,79 @@ def get_changelog(changelog_path: Path) -> list[str]:
     return changelog_path.read_text(encoding="utf-8", errors="replace").splitlines()
 
 
+# ─── 🆕 2026-06-27 RA 前置检查（requirement-analysis-skill §第 0.5/一/一 bis/二/七/三 bis 衔接）──
+# 触发：save_doc(intent="RA", ...) 或 ra-gate CLI 调用前
+# 豁免：intent ∈ {BUG, CONFIG}（RA skill §第 -1 步双重豁免，不在 save_doc 走 RA 检查路径）
+# 行为：检查通过 = 静默；不通过 = raise DocStorageError("G-RA-*", ...)
+_RA_REQUIRED_SECTIONS = [
+    "§0.5 RequirementAnalysisModel",  # 12 维决策
+    "§0.6 需求风险预判",
+    "§2 角色",     # 8 维度之一：角色分析
+    "§3 场景",     # 场景分析
+    "§4 流程",     # 业务流程（含状态机）
+    "§5 数据",     # 数据要素
+    "§6 规则",     # 业务规则与约束
+    "§7 设计方向", # 设计方向论证
+    "§8 AC",       # 验收标准雏形
+    "§9 假设",     # 隐性假设与验证
+    "§10 缺口",    # 缺口管理
+    "§11 规模",    # 规模裁定
+]
+
+_RA_REQUIRED_GATES = ["RA-G01", "RA-G02", "RA-G03", "RA-G04",
+                       "RA-G05", "RA-G06", "RA-G07", "RA-G08"]
+
+_RA_RAGENERATEPLAN_PATTERN = re.compile(r"RAGeneratePlan", re.IGNORECASE)
+_RA_5QUESTION_PATTERN = re.compile(r"5\s*问自检|5-question|5question", re.IGNORECASE)
+_RA_GATE_RESULT_PATTERN = re.compile(r"RA-G\d+\s*[:：]\s*(?:PASS|✅|通过)", re.IGNORECASE)
+
+
+def check_ra_prerequisites(content: str) -> None:
+    """🆕 2026-06-27 RA 文档落地前置检查（G-RA-PLAN / G-RA-COMPLETE / G-RA-GATES 三道子门禁）。
+
+    来自 `2026-06-27-RA多轮挖掘流程未执行-自我修订建议书.md` §3.3，
+    对齐 `requirement-analysis-skill.md` §Plan-first / §第 0.5 步 / §第七步。
+
+    校验项（任一不通过即 raise DocStorageError）：
+      G-RA-PLAN     — content 必须包含 RAGeneratePlan 字样（Plan-first 硬前置）
+      G-RA-COMPLETE — content 必须含 12 个核心章节锚（§0.5/§0.6/§2~§11）
+      G-RA-5CHECK   — content 必须含 5 问自检字样
+      G-RA-GATES    — content 必须含 RA-G01~RA-G08 至少 4 个 PASS 标记
+
+    豁免：本函数不读 intent；调用方（save_doc）应只在 intent=="RA" 时调用本函数。
+    BUG / CONFIG intent 不会进入本检查路径（save_doc 双重豁免）。
+    """
+    if not content:
+        raise DocStorageError("G-RA-PLAN",
+            "RA 文档 content 为空（必须先有 RAGeneratePlan，见 requirement-analysis-skill §Plan-first）")
+
+    # G-RA-PLAN：必须含 RAGeneratePlan 字样
+    if not _RA_RAGENERATEPLAN_PATTERN.search(content):
+        raise DocStorageError("G-RA-PLAN",
+            "RA 文档必须先有 RAGeneratePlan 附件（见 requirement-analysis-skill §Plan-first 原则）")
+
+    # G-RA-COMPLETE：必须含 12 个核心章节锚
+    missing = [s for s in _RA_REQUIRED_SECTIONS if s not in content]
+    if missing:
+        raise DocStorageError("G-RA-COMPLETE",
+            f"RA 文档缺失以下必填章节：{missing}（见 requirement-analysis-skill §整体流程）")
+
+    # G-RA-5CHECK：必须含 5 问自检字样
+    if not _RA_5QUESTION_PATTERN.search(content):
+        raise DocStorageError("G-RA-5CHECK",
+            "RA 文档必须含 5 问自检记录（见 requirement-analysis-skill §第一步 bis，通过率 100%）")
+
+    # G-RA-GATES：必须含至少 4 个 RA-G01~RA-G08 的 PASS 标记
+    gate_passes = _RA_GATE_RESULT_PATTERN.findall(content)
+    if len(gate_passes) < 4:
+        raise DocStorageError("G-RA-GATES",
+            f"RA 文档必须显式列出 RA-G01~RA-G08 闸判定结果（至少 4 个 PASS），当前仅 {len(gate_passes)} 个"
+            f"（见 requirement-analysis-skill §第七步）")
+
+    # 全部通过：静默返回
+    return
+
+
 def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
              story_id: Optional[str] = None, doc_id: Optional[str] = None,
              version: Optional[dict] = None,
@@ -265,16 +338,25 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
 
     步骤（对齐 §0.6.7）：
       1. resolve_path 推导路径
-      2. 若带版本号且未显式传 version → get_latest_version 自增（E007：重入必须递增）
-      3. 写文件（旧版本保留）
-      4. 追加 ChangeLog
-      5. 返回 SaveResult
+      2. 🆕 2026-06-27 RA 类型强检查（intent=RA 时调用 check_ra_prerequisites）
+         — BUG / CONFIG intent 双重豁免（RA skill §第 -1 步豁免规则）
+      3. 若带版本号且未显式传 version → get_latest_version 自增（E007：重入必须递增）
+      4. 写文件（旧版本保留）
+      5. 追加 ChangeLog
+      6. 返回 SaveResult
     """
     try:
         resolved = resolve_path(ade_sdd, project_key, intent,
                                 story_id=story_id, doc_id=doc_id, version=version)
     except DocStorageError as e:
         return SaveResult(False, None, None, "", error=str(e))
+
+    # 🆕 2026-06-27 RA 类型强检查前置（双重豁免 BUG/CONFIG，详见 RA skill §第 -1 步）
+    if intent == "RA":
+        try:
+            check_ra_prerequisites(content)
+        except DocStorageError as e:
+            return SaveResult(False, None, None, "", error=str(e))
 
     full_path = Path(resolved.full_path)
     full_path.parent.mkdir(parents=True, exist_ok=True)

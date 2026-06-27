@@ -182,6 +182,7 @@ def _copy_runtime_scripts_to_dist(repo_root: Path, dst: Path) -> None:
         "ra_authenticity_scan.py",
         "coding_authenticity_scan.py",
         "plugin_content_scan.py",  # 🆕 B4 增强：外挂内容安全扫描器
+        "flow_violation_scan.py",  # 🆕 2026-06-27 RA 流程违规审计扫描器（G-RA-FLOW-VIOLATION 运行时依赖）
     ]
 
     copied = []

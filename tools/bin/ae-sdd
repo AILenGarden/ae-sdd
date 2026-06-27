@@ -600,6 +600,151 @@ def cmd_iteration_check(args, parser):
     return 0
 
 
+def cmd_ra_gate(args, parser):
+    """ra-gate — RA 任务入口硬触发（🆕 2026-06-27，建议书 §3.5）
+
+    判定用户输入触发"出文档类任务"时，RA skill 是否强制触发。
+    输出：trigger_skill / min_flow / block_direct_output / reasoning。
+    与 SKILL.md §4 维判定智能路由表 + RA skill §反模式 8/9 配套。
+
+    凭证前置（v3.4.0 加固）：调用本 CLI 前应已 `ae-sdd enter <projectKey> --story <STORY>`
+    领凭证。本 CLI 不强制阻断（向后兼容），但未领凭证时输出 warn。
+    """
+    input_type = args.input_type
+
+    # 6 类输入类型判定（对齐 SKILL.md §4 维判定智能路由）
+    type_map = {
+        "pdf-analysis": {
+            "trigger_skill": "requirement-analysis-skill",
+            "min_flow": "7-step",
+            "block_direct_output": True,
+            "reasoning": "PDF 分析类任务属于'修订建议书/proposal/分析报告'输入类型，必须走 RA skill 完整 7 步",
+        },
+        "doc-analysis": {
+            "trigger_skill": "requirement-analysis-skill",
+            "min_flow": "7-step",
+            "block_direct_output": True,
+            "reasoning": "文档分析类任务属于'分析报告'输入类型，必须走 RA skill 完整 7 步",
+        },
+        "proposal": {
+            "trigger_skill": "requirement-analysis-skill",
+            "min_flow": "7-step",
+            "block_direct_output": True,
+            "reasoning": "proposal 类任务属于'修订建议书'输入类型，必须走 RA skill 完整 7 步",
+        },
+        "research": {
+            "trigger_skill": "requirement-analysis-skill",
+            "min_flow": "7-step",
+            "block_direct_output": True,
+            "reasoning": "调研类任务属于'调研文档'输入类型，必须走 RA skill 完整 7 步",
+        },
+        "bug-fix": {
+            "trigger_skill": "coding-skill (BUG path)",
+            "min_flow": "ra-simplified (5-dim scale)",
+            "block_direct_output": False,
+            "reasoning": "BUG 类任务走 coding-skill，RA 简化版（仅 5 维规模裁定），intent=BUG 双重豁免",
+        },
+        "config": {
+            "trigger_skill": "coding-skill (CONFIG path)",
+            "min_flow": "ra-simplified (5-dim scale)",
+            "block_direct_output": False,
+            "reasoning": "配置类任务走 coding-skill 特殊-非代码路径，intent=CONFIG 双重豁免",
+        },
+    }
+    result = type_map.get(input_type)
+    if result is None:
+        output.error(f"未知 input-type: {input_type}（允许: {list(type_map.keys())}）")
+        return 2
+
+    # 凭证前置检查（v3.4.0 加固 — 仅 warn 不阻断，向后兼容）
+    ade_sdd = paths.locate_project_ae_sdd() if not args.project else paths.locate_project_ae_sdd(Path(args.project))
+    entry_warn = None
+    if ade_sdd:
+        try:
+            from lib import session as session_mod
+            if not session_mod.has_valid_entry_token(ade_sdd, getattr(args, "story", "") or ""):
+                entry_warn = "未领 entry token（建议先跑 `ae-sdd enter <projectKey> --story <STORY-ID>`）"
+        except Exception:
+            pass  # 母版仓库无 .ae-sdd/，跳过
+
+    payload = dict(result)
+    payload["input_type"] = input_type
+    if entry_warn:
+        payload["entry_warn"] = entry_warn
+
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.info(f"🆕 v3.5.6 RA 任务入口判定（建议书 §3.5）")
+        output.info(f"输入类型：{input_type}")
+        output.info(f"触发 SKILL：{result['trigger_skill']}")
+        output.info(f"最小流程：{result['min_flow']}")
+        output.info(f"阻断直接出文档：{'是' if result['block_direct_output'] else '否'}")
+        output.info(f"理由：{result['reasoning']}")
+        if entry_warn:
+            output.warn(f"⚠️ {entry_warn}")
+    return 0
+
+
+def cmd_flow_violation_scan(args, parser):
+    """flow-violation-scan — RA 流程违规审计（🆕 2026-06-27，建议书 §3.4）
+
+    调 scripts/flow_violation_scan.py 跑 8 条规则扫描 RA 文档合规性。
+    与 gates check --only G-RA-FLOW-VIOLATION 内部调同一脚本，本 CLI 提供独立入口。
+    """
+    import subprocess
+    master = paths.locate_master_source()
+    # 兼容开发仓库（master=source/，脚本在 source/../scripts/）+ 分发包（master=dist/，脚本在 dist/scripts/）
+    candidates = []
+    if master:
+        candidates = [master.parent / "scripts" / "flow_violation_scan.py",
+                      master / "scripts" / "flow_violation_scan.py"]
+    candidates.append(Path("scripts/flow_violation_scan.py"))
+    scanner = next((c for c in candidates if c.is_file()), None)
+    if scanner is None:
+        output.error(f"未找到 flow_violation_scan.py（候选：{candidates}）")
+        return 2
+
+    root = args.root or str(Path.cwd())
+    cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    except subprocess.TimeoutExpired:
+        output.error("flow_violation_scan.py 跑超过 120 秒")
+        return 3
+
+    report = {}
+    if args.json:
+        sys.stdout.write(result.stdout)
+        try:
+            report = json.loads(result.stdout) if result.stdout else {}
+        except json.JSONDecodeError:
+            pass
+    else:
+        try:
+            report = json.loads(result.stdout) if result.stdout else {}
+        except json.JSONDecodeError:
+            output.error(f"扫描器 JSON 输出无法解析：{result.stdout[:200]}")
+            return 4
+        stats = report.get("reportStats", {})
+        output.info(f"🆕 v3.5.6 RA 流程违规审计（8 条规则）")
+        output.info(f"扫描根：{report.get('root', root)}")
+        output.info(f"RA 文件数：{stats.get('raFiles', 0)}")
+        output.info(f"状态：{report.get('status', 'UNKNOWN')}")
+        output.info(f"阻断违规：{stats.get('blockerViolations', 0)} / 警告违规：{stats.get('warnViolations', 0)}")
+        output.info(f"规则通过：{stats.get('rulesPassed', 0)} / 8 / 规则失败：{stats.get('rulesFailed', 0)} / 8")
+        findings = report.get("findings", [])
+        if findings:
+            output.info("")
+            output.info("违规清单：")
+            for f in findings:
+                icon = "🔴" if f.get("severity") == "BLOCKER" else "🟡"
+                output.info(f"  {icon} [{f.get('rule')}] {f.get('path')}:{f.get('line')}")
+                output.info(f"      {f.get('message')}")
+
+    return 1 if report.get("status") == "FAIL" and args.strict else 0
+
+
 def cmd_context_pressure(args, parser):
     """context-pressure — 节点级上下文压力软提示（🆕 v3.5.5）
 
@@ -2080,6 +2225,25 @@ def main() -> int:
                           parents=[common])
     p_ic.add_argument("--project", default="", help="项目根（默认 master source 或 cwd）")
     p_ic.set_defaults(func=cmd_iteration_check)
+
+    # ra-gate（🆕 v3.5.6 — RA 任务入口硬触发，建议书 §3.5）
+    p_rag = sub.add_parser("ra-gate",
+                           help="[v3.5.6] RA 任务入口判定（出文档类任务必走 RA skill 7 步）",
+                           parents=[common])
+    p_rag.add_argument("--input-type", required=True,
+                       choices=["pdf-analysis", "doc-analysis", "proposal", "research", "bug-fix", "config"],
+                       help="输入类型（6 类，对齐 SKILL.md §4 维判定智能路由）")
+    p_rag.add_argument("--project", default="", help="项目根（用于 entry token 凭证检查）")
+    p_rag.add_argument("--story", default="", help="Story ID（用于 entry token 凭证检查）")
+    p_rag.set_defaults(func=cmd_ra_gate)
+
+    # flow-violation-scan（🆕 v3.5.6 — RA 流程违规审计，建议书 §3.4）
+    p_fvs = sub.add_parser("flow-violation-scan",
+                           help="[v3.5.6] RA 流程违规审计（8 条规则扫描 RA 文档合规性）",
+                           parents=[common])
+    p_fvs.add_argument("--root", default="", help="扫描根目录（默认 cwd）")
+    p_fvs.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
+    p_fvs.set_defaults(func=cmd_flow_violation_scan)
 
     # context-pressure（🆕 v3.5.5 — 节点级上下文压力软提示，report-only）
     p_cp = sub.add_parser("context-pressure",

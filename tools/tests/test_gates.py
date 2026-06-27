@@ -546,7 +546,8 @@ class TestCheckAll(unittest.TestCase):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
         # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
-        self.assertEqual(len(results), 23)
+        # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
+        self.assertEqual(len(results), 24)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -570,8 +571,9 @@ class TestCheckAll(unittest.TestCase):
         results = gates.check_all(None, ade_sdd, "test")
         summary = gates.summarize(results)
         # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
-        self.assertEqual(summary["total"], 23)
-        self.assertEqual(summary["passed"] + summary["failed"], 23)
+        # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
+        self.assertEqual(summary["total"], 24)
+        self.assertEqual(summary["passed"] + summary["failed"], 24)
         self.assertIn("results", summary)
 
 
