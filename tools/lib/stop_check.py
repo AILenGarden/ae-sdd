@@ -155,6 +155,14 @@ def check_output(
                 return True, ""
             increment_retry(ade_sdd)
             return False, gate_issue
+        # 🆕 v3.5.4 HS-8：状态头通过后，检测 PRD compact 失败（卡在 awaiting_compact 无 summary.md）
+        compact_issue = _check_compact_failure(ade_sdd)
+        if compact_issue:
+            count = get_retry_count(ade_sdd)
+            if count >= MAX_RETRY:
+                return True, ""  # 达重试上限，放行避免无限循环
+            increment_retry(ade_sdd)
+            return False, compact_issue
         return True, ""
 
     # 防无限循环
@@ -224,3 +232,57 @@ def _verify_gate_claims(last_response: str, ade_sdd: Optional[Path]) -> str:
             return ""  # 校验异常不阻断（兜底放行）
 
     return ""
+
+
+# ─── 🆕 v3.5.4 HS-8：compact 失败检测（Stop hook 阻断 + 报警）──────────────────
+def _check_compact_failure(ade_sdd: Optional[Path]) -> str:
+    """HS-8：检测 PRD 级 compact 卡在 awaiting_compact 中途态。
+
+    compact 成功的完整痕迹：prdStatus=compacted + summary.md 存在 + compactHistory 有记录。
+    compact 失败/中途异常：prdStatus=awaiting_compact 但无 summary.md（卡在中间态）。
+
+    检测到卡住 → 返回报警文本（阻止 session 结束，强制人工收尾，旧 state.json 保留）。
+    无异常 → 返回空串。
+    """
+    if ade_sdd is None:
+        return ""
+
+    try:
+        from lib import paths
+        project_dir = paths.project_root(ade_sdd)
+        auto_eng = project_dir / ".auto-engineering"
+        if not auto_eng.is_dir():
+            return ""
+
+        stuck: list[str] = []
+        for prd_dir in auto_eng.iterdir():
+            if not prd_dir.is_dir():
+                continue
+            state_file = prd_dir / "state.json"
+            if not state_file.is_file():
+                continue
+            try:
+                import json
+                ps = json.loads(state_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if ps.get("prdStatus") == "awaiting_compact":
+                summary_file = prd_dir / "summary.md"
+                if not summary_file.is_file():
+                    stuck.append(prd_dir.name)
+
+        if not stuck:
+            return ""
+
+        stuck_list = ", ".join(stuck)
+        return (
+            "[ae-sdd harness] HS-8 告警：检测到 PRD compact 卡在 awaiting_compact 中途态，"
+            f"未生成 summary.md（受影响 PRD: {stuck_list}）。\n"
+            "compact 可能失败，旧 PRD state.json 已保留（未覆盖）。\n"
+            "请人工核查 compact 失败原因，修复后重跑：\n"
+            f"  ae-sdd runtime compact --runtime <runtime> --prd <PRD-ID>\n"
+            "确认 compact 成功（prdStatus=compacted + summary.md 生成）后再结束 session。\n"
+            "（HS-8 物理拦截，🆕 v3.5.4）"
+        )
+    except Exception:
+        return ""  # 检测异常不阻断（兜底放行）

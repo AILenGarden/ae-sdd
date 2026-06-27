@@ -289,6 +289,12 @@ def _check_path_permission(
 _STATE_WRITE_CMD_RE = re.compile(r"^python\s+\S*ae-sdd\b", re.IGNORECASE)
 
 
+def _is_ae_sdd_cmd(bash_command: str) -> bool:
+    """命令是否以 ae-sdd 或 python .../ae-sdd 开头（真实执行形式，排除注释/echo）。"""
+    stripped = (bash_command or "").strip()
+    return stripped.startswith("ae-sdd") or bool(_STATE_WRITE_CMD_RE.match(stripped))
+
+
 def _extract_option_value(bash_command: str, option: str) -> Optional[str]:
     stripped = bash_command.strip()
     if not (stripped.startswith("ae-sdd") or _STATE_WRITE_CMD_RE.match(stripped)):
@@ -309,6 +315,70 @@ def _extract_target_phase(bash_command: str) -> Optional[str]:
     if not (stripped.startswith("ae-sdd") or _STATE_WRITE_CMD_RE.match(stripped)):
         return None
     return _extract_option_value(bash_command, "--phase")
+
+
+# ─── 🆕 v3.5.4 HS-7 物理拦截：ae-sdd state prd-complete 前置校验 4 层 AND ──────
+def _check_prd_complete_gate(
+    bash_command: str, project_dir: Optional[Path]
+) -> tuple[bool, str]:
+    """HS-7：拦截 ae-sdd state prd-complete，实时校验 4 层 AND。
+
+    堵住 cmd_state_prd_complete（ae-sdd:268-271）跳过校验直接写 awaiting_compact 的漏洞。
+    拦截时实时跑 state.check_prd_4_layers（不依赖"上次证据"，防过时）。
+
+    Returns:
+        (allowed, deny_reason)
+    """
+    if not _is_ae_sdd_cmd(bash_command):
+        return True, ""
+    # 仅匹配 state prd-complete（非 prd-check-complete / prd-archive）
+    if not re.search(r"\bstate\s+prd-complete\b", bash_command):
+        return True, ""
+
+    prd_id = _extract_option_value(bash_command, "--prd")
+    if not prd_id:
+        return True, ""  # 缺 --prd 参数，交由 CLI 自身报错
+
+    if project_dir is None:
+        return True, ""  # 无法定位项目根，兜底放行
+
+    prd_state_path = project_dir / ".auto-engineering" / prd_id / "state.json"
+    if not prd_state_path.exists():
+        return False, (
+            f"HS-7 阻断：PRD 级 state.json 不存在（{prd_state_path}）。\n"
+            f"无法校验 4 层 AND，禁止执行 prd-complete。\n"
+            f"请先跑: ae-sdd state prd-check-complete --prd {prd_id}\n"
+            f"（HS-7 物理拦截，🆕 v3.5.4）"
+        )
+
+    try:
+        import json
+        ps = json.loads(prd_state_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return False, (
+            f"HS-7 阻断：PRD state.json 解析失败（{e}）。\n"
+            f"禁止执行 prd-complete。\n"
+            f"（HS-7 物理拦截，🆕 v3.5.4）"
+        )
+
+    result = state_mod.check_prd_4_layers(ps)
+    if result["all_pass"]:
+        return True, ""  # 4 层全过，放行
+
+    # 未全过：列 missing 项阻断
+    missing_lines = []
+    for k in ("G-PRD-1", "G-PRD-2", "G-PRD-3", "G-PRD-4"):
+        r = result[k]
+        if not r["pass"]:
+            missing_lines.append(f"  ❌ {k} {r['label']}: {', '.join(r['missing'])}")
+    missing_text = "\n".join(missing_lines) if missing_lines else "  (无明细)"
+    return False, (
+        f"HS-7 阻断：PRD {prd_id} 4 层 AND 未全过，禁止执行 prd-complete。\n"
+        f"{missing_text}\n"
+        f"请先跑: ae-sdd state prd-check-complete --prd {prd_id}\n"
+        f"修复未达成项后重试。\n"
+        f"（HS-7 物理拦截，🆕 v3.5.4 — 堵 cmd_state_prd_complete 跳校验漏洞）"
+    )
 
 
 def _check_state_write(
@@ -476,6 +546,17 @@ def check_intercept(
             if not allowed:
                 return False, reason
             return True, ""
+
+    # 3b. 🆕 v3.5.4 HS-7：ae-sdd state prd-complete 前置校验 4 层 AND
+    if tool_name == "Bash" and bash_command and "prd-complete" in bash_command:
+        # project_dir 优先用入参，否则从 ade_sdd（.ae-sdd/）反推项目根
+        hs7_project_dir = project_dir if project_dir is not None else (
+            ade_sdd.parent if ade_sdd is not None else None
+        )
+        allowed, reason = _check_prd_complete_gate(bash_command, hs7_project_dir)
+        if not allowed:
+            return False, reason
+        # prd-complete 通过 4 层 AND 后，仍走后续路径/phase 校验，不提前 return
 
     # 4. 只读 Bash 放行
     if tool_name == "Bash" and _is_readonly_bash(bash_command):

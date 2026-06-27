@@ -1,11 +1,11 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.3）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.4）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
   支持流程状态跟踪与中断后恢复。版本变更日志见 source/CHANGELOG/。
-version: 3.5.3
+version: 3.5.4
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -2328,100 +2328,33 @@ DR（需求文档）→ Story → Task → Coding
 
 ---
 
-## 🛠️ 工具 API 速查（🆕 v3.0 — ae-sdd CLI 8 个子命令）
+## 🛠️ 工具 API 速查（ae-sdd CLI 子命令）
 
-> **🆕 v3.0 新增：** ae-sdd 不再只是"一堆 SKILL 文档"，而是配套了可执行 CLI 工具。规则散在 SKILL.md，工具在 `tools/bin/ae-sdd`，**SSOT（单一事实源）通过 sync-tools 保证一致**。
+> **🔧 维护说明（🆕 v3.5.4 修订）：** ae-sdd 配套可执行 CLI 工具（Python，源码 `tools/bin/ae-sdd` + `tools/lib/*.py`）。**规则散在 SKILL.md，工具在 `tools/bin/ae-sdd`，一致性由 `ae-sdd update-check`（UC-01~07）+ 周期性 `ae-sdd iteration-check` 保证**（v3.5.4 新增，见 [`ae-sdd-update-skill.md` §设计-实现一致性迭代检查](../orchestration/ae-sdd-update-skill.md)）。
 
-### 8 个核心子命令
+### 命令清单（按功能分组）
 
-| 命令 | 用途 | 优先级 | 何时用 |
-|------|------|--------|--------|
-| `ae-sdd assets check` | 跑 G-00 项目资产门卫 | 🔴 P0 | 每个 phase 入口 |
-| `ae-sdd assets generate` | 生成项目资产（含 7 层索引）| 🔴 P0 | 项目首次接入 |
-| `ae-sdd assets update` | 增量更新（新增微服务等）| 🟡 P1 | 架构变更后 |
-| `ae-sdd assets audit` | 双源一致性审计 | 🟡 P1 | 每月一次 |
-| `ae-sdd state next-step` | 状态机下一步判定 | 🔴 P0 | 重入判定 |
-| `ae-sdd classify` | 4 类需求识别 | 🟡 P1 | 入口路由 |
-| `ae-sdd gates check` | 22 门禁扫描 | 🔴 P0 | 阶段门禁 |
-| `ae-sdd sync-tools` | 规则→工具同步 | 🟢 P2 | 改了 rules.yaml 后 |
+| 分组 | 命令 | 用途 |
+|------|------|------|
+| **资产**（G-00） | `ae-sdd gates check --only G-00` | 项目资产门卫（资产不存在时由 AI Agent 路由到 `project-assets-update-skill §3` 生成）|
+| | `ae-sdd assets read/outline/section/query/stats` | 资产索引按需读取（ES 倒排索引 + BM25）|
+| **状态机** | `ae-sdd state read / write / next-step / confirm` | 状态读取 / phase 切换 / 下一步判定 / 审核点 token |
+| | `ae-sdd state prd-check-complete / prd-complete / prd-archive` | PRD 级 4 层 AND 校验 / compact 触发 / 归档（🆕 v3.3.0）|
+| **路由** | `ae-sdd classify` | 4 维判定（来源/规模/产物/项目类型）|
+| **门禁** | `ae-sdd gates check [--only <G-XX>]` | 23 门禁扫描（全量或单门禁）|
+| | `ae-sdd gate ra-required / coding-required / doc-storage` | RA 准入 / Coding 真实性 / 文档存放单点校验 |
+| | `ae-sdd enter` | 入口凭证（entry token，关卡1）|
+| **Toolset Layer**（v3.2.3） | `ae-sdd memory enter/write/exit/read/search/promote/summarize` | Phase-aware 强制 memory gate |
+| | `ae-sdd db profiles/query/explain/audit` | 本地 profile DB 证据（read-first）|
+| | `ae-sdd git status/diff/log/blame/impact` | 只读 Git 证据 + 影响分析 |
+| **维护** | `ae-sdd health` | 9 项健康度自检 |
+| | `ae-sdd update-check` | UC-01~07 更新依赖图谱检查（dev-sync 前必跑）|
+| | `ae-sdd iteration-check` | 🆕 v3.5.4 设计-实现一致性迭代检查（周期性深度体检）|
+| | `ae-sdd version / bump / init` | 版本号 / 三处同步 / 项目实例化 |
+| | `ae-sdd plugin list/validate/trace/init` | 🆕 v3.5.1 三层 SKILL 注册表管理 |
+| | `ae-sdd runtime compact` | runtime-specific compact 适配层（v3.3.0）|
 
-### PRD 级子命令（🆕 v3.3.0）
-
-| 命令 | 用途 | 优先级 | 何时用 |
-|------|------|--------|--------|
-| `ae-sdd state prd-check-complete` | 校验 4 层 AND，输出未达成项，**不改状态** | 🔴 P0 | PRD 收尾前 |
-| `ae-sdd state prd-complete` | 校验通过后执行 compact，更新 prdStatus | 🔴 P0 | 用户确认收尾后 |
-| `ae-sdd state prd-archive` | 归档 compactHistory 到 state.archive.json | 🟡 P1 | 5+ 次 compact 后清理 |
-| `ae-sdd runtime compact` | runtime-specific compact 适配层 | 🔴 P0 | `prd-complete` 调用后 |
-
-**完整命令签名：**
-
-```bash
-ae-sdd state prd-check-complete --prd {PRD-ID}
-ae-sdd state prd-complete --prd {PRD-ID} --runtime {mavis|claude-code|codex}
-ae-sdd state prd-archive --prd {PRD-ID} --keep-last 5
-ae-sdd runtime compact --runtime {mavis|claude-code|codex} --prd {PRD-ID}
-```
-
-> **🔴 CLI 命名一致性（v3.3.0 起）：** PRD 级命令固定为 `state prd-*` 单层结构（区别于 `state next-step` Story 级单层命令），避免多层子命令导致 `add_parser` 嵌套过深。
-
-### 完整命令清单
-
-### Toolset Layer (v3.2.3)
-
-| Command | Purpose | Priority | When |
-|---|---|---|---|
-| `ae-sdd memory enter/write/exit` | Phase-aware mandatory memory gate | P0 | RA/design/coding-plan/coding/review associated nodes |
-| `ae-sdd memory read/search/promote/summarize` | Layered memory read and lifecycle management | P0 | Before phase work, reuse/project learning |
-| `ae-sdd db profiles/query/explain/audit` | Local-profile DB evidence, read-first policy | P0 | RA schema checks, CodingPlan SQL/EXPLAIN, Coding DB evidence |
-| `ae-sdd git status/diff/log/blame/impact` | Read-only Git evidence and impact analysis | P0 | CodingPlan, CodingReport, CodeReview |
-
-Memory is mandatory for associated nodes: run `memory enter` before the node,
-`memory write` after the Agent output, and `memory exit` before leaving the node.
-`memory exit` fails when no write happened after the latest enter.
-As of v3.2.3, `ae-sdd state write --phase ...` also checks this lifecycle
-automatically before leaving associated phases. The transition is blocked when
-the current phase has no matching `memory enter` and later `memory write`.
-
-```bash
-ae-sdd <command> [options]
-
-资产类（🆕 v3.0 — G-00 门卫核心）:
-  assets check       # 验证项目资产完整性
-  assets generate    # 生成项目资产（7 层索引）
-  assets update      # 增量更新
-  assets audit       # 双源一致性审计
-  assets read <m>    # 索引按需读取
-
-状态机类（🆕 v3.0 — 重入判定核心）:
-  state next-step    # 下一步判定
-  state validate     # state.json 合法性
-  state show         # 可视化当前状态
-  state diff         # 对比两个 state
-  state lock         # 锁定版本（user_decision_at 锚定）
-
-路由类:
-  classify <desc>    # 4 类需求识别
-  route <type>       # 返回下一步 phase/skill
-
-门禁类:
-  gates check <target>  # 22 门禁扫描
-  review <story-id>     # TR-1~TR-7 全局 Task Review
-
-维护类:
-  health             # 健康度 9 项检查
-  sync-tools         # 规则→工具同步（核心 SSOT 保证）
-  diff <v1> <v2>     # 版本对比
-  init <project>     # 项目实例化（创建 .ae-sdd/）
-  quick <task>       # ⚡ Quick Mode 入口
-  run <story-id>     # 🔵 Standard Mode 入口
-  proposal <scope>   # 🟣 Cross-Cutting Mode 入口
-  version            # 输出 ae-sdd 版本
-```
-
-### 详细工具实现
-
-工具实现位于 `tools/bin/ae-sdd`（Node.js ESM），源码在 `tools/lib/*.mjs`，schema 在 `tools/schemas/*.json`，测试在 `tools/tests/*.test.mjs`。详见 v3.0 重组 Plan（`docs/plans/2026-06-18-ae-sdd-v3-restructure-plan.md`）。
+> **🔴 命令契约权威源：** 完整命令签名见 `tools/bin/ae-sdd`（argparse 注册表）；`source/standards/update-graph.json` 是 UC-03/UC-06 命令契约一致性检查的权威源。新增/修改 CLI 命令须同步 update-graph.json，否则 `update-check` 报 warn。
 
 ### AI 调用约定
 
@@ -2431,67 +2364,36 @@ ae-sdd <command> [options]
 
 ---
 
-## 🔧 维护规则与同步机制（🆕 v3.0 — 改了规则必须同步工具）
+## 🔧 维护规则与同步机制
 
-> **🆕 v3.0 新增：** ae-sdd v3.0 引入 **声明式规则 (rules.yaml) + 代码生成 (sync-tools)** 模式。任何对规则层的修改必须配套同步工具层。
+> **🔧 v3.5.4 修订：** ae-sdd 采用**"规则描述（SKILL.md 文字）+ 工具执行（Python CLI）"双轨**设计。规则层（SSOT）是 `source/SKILL.md` + 子 SKILL + `source/standards/`；工具层（派生）是 `tools/bin/ae-sdd` + `tools/lib/*.py`。
 
-### 1. 规则层 vs 工具层边界
-
-| 层 | 路径 | 形态 | 谁来改 |
-|----|------|------|--------|
-| **规则层（SSOT）** | `rules/{phase}/SKILL.md` + `rules/{phase}/rules.yaml` | 散文 + 声明式 YAML | 人 + AI 协作 |
-| **工具层（派生）** | `tools/lib/*.mjs` + `tools/bin/ae-sdd` | 可执行 Node.js | sync-tools 生成 + 人工补 |
-| **配置层（不变量）** | `standards/` + `templates/` | 约束 + 模板 | 人工 |
-
-### 2. 修改工作流
+### 修改工作流
 
 ```
-[修改 rules/{phase}/rules.yaml]
+[修改 source/SKILL.md 或子 SKILL 规则]
          │
          ▼
-[运行 ae-sdd sync-tools]
+[运行 ae-sdd update-check]  ← UC-01~07，dev-sync 前必跑全绿
          │
-         ├─→ 解析新规则
+         ├─→ 版本号三处一致？/ 门禁注册一致？/ 命令契约闭环？
+         │   扫描器分发？/ 健康度清单覆盖？/ 文档-实现一致性？
          │
-         ├─→ 对比 tools/lib/* 现有实现
-         │     ├─ 新增 gate/role/transition → 生成 stub
-         │     ├─ 删除/修改 → 标记 stale（不自动覆盖）
-         │     └─ 无变化 → 跳过
+         ├─ 不绿 → 按 UC 提示修复
          │
-         ├─→ 跑 tools/tests/* 全套测试
-         │     └─ 失败 → 回滚 + 报错
-         │
-         └─→ 输出 sync 报告
-               { added, modified, stale, todo_人工补全, tests_passed }
+         └─ 绿 → 跑 scripts/dev-sync.sh 分发到 ~/.claude/skills/
+                  + post-commit hook 自动触发（v3.4.0 分发闭环）
 ```
 
-### 3. 健康度自检
+### 周期性深度体检（🆕 v3.5.4）
 
-```bash
-ae-sdd health
-  # 9 项检查：
-  # 1. SKILL.md ≤ 300 行阈值检查（v3.0 软化，因本文件就是主入口）
-  # 2. 子 SKILL 关键章节齐全
-  # 3. 项目资产双源一致性
-  # 4. 规则-工具同步状态
-  # 5. 文档存放路径合规
-  # 6. 22 门禁覆盖度
-  # 7. TR-1~TR-7 覆盖度
-  # 8. 测试真实性扫描器就绪
-  # 9. CHANGELOG 最新条目版本号一致
-```
+`ae-sdd update-check` 是"改完即跑"的快速防线；**`ae-sdd iteration-check`** 是周期性深度体检，补 UC 查不到的 4 类盲区（HS 物理实现齐全度 / 幽灵命令整段描述 / F-1 覆盖面 / 已实现未接入）。每月或重大变更后跑，详见 [`ae-sdd-update-skill.md` §设计-实现一致性迭代检查](../orchestration/ae-sdd-update-skill.md)。
 
-### 4. ae-sdd 自身维护（改 SKILL 本身）
+### ae-sdd 自身维护（改 SKILL 本身）
 
 > **触发词：** "修改 SKILL" / "更新 SKILL" / "新增 SKILL" / "重构 SKILL" / "SKILL 边界" / "SKILL 维护" / "优化 ae-sdd" / "改 ae-sdd"
 
-进入本 SKILL 后会**短路**路由到 [`ae-sdd-update-skill.md`](ae-sdd-update-skill.md)（保留在 `skills/orchestration/` 下作为 self-maintenance 入口），按 5 步流程执行：
-
-1. 评估变更范围（影响哪些 SKILL / 哪些阶段）
-2. 备份当前版本（`git tag ae-sdd-v{N-1}-backup`）
-3. 实施变更
-4. 跑 `ae-sdd sync-tools` + `ae-sdd health` 验证
-5. 更新 CHANGELOG + git tag
+进入本 SKILL 后会**短路**路由到 [`ae-sdd-update-skill.md`](../orchestration/ae-sdd-update-skill.md)，按其 5 步流程执行（评估范围 → 备份 → 实施 → 验证 → CHANGELOG）。
 
 ### 5. 版本管理
 

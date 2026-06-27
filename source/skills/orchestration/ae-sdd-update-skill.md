@@ -641,38 +641,27 @@ ae-sdd gates check      # 23 门禁，确认未被破坏
 
 **判定：** update-check 全绿 = 自动检查层无阻断；但 UC-06 的 warn 项必须进步骤 2 深挖（warn = "声明但无物理实现"线索）。
 
-#### 步骤 2：HS 规则 vs 物理实现交叉核对（核心盲区 1）
-
-读 `source/HARNESS.md` HARD STOPS 段全部 HS-N 规则，逐条对照 `tools/lib/gate_intercept.py`（PreToolUse）+ `tools/lib/stop_check.py`（Stop）+ `tools/lib/prompt_inject.py`（UserPromptSubmit）实际实现：
-
-| 核对维度 | 判定标准 | 三种结果 |
-|---------|---------|---------|
-| 声明的拦截方式 | 文档写"物理阻断/Stop hook/CLI 阻断"还是"靠自律" | — |
-| 实际实现 | grep 代码有无对应逻辑 | ✅ 一致 / 🟡 部分一致（覆盖缩水）/ 🔴 撒谎（声明物理拦截实为零）|
-| 降级声明 | 文档是否诚实自认"靠自律 + 兜底" | 自认降级 = 🟢 不算撒谎；声明物理拦截但零实现 = 🔴 撒谎 |
-
-**输出：** HS 一致性表（HS-N × 声明方式 × 实际实现 × 一致性）。
-
-#### 步骤 3：CLI 命令契约深挖（核心盲区 2 + 3）
-
-UC-03 只查单命令注册，本步查"整段描述是否与实现脱节"：
-
-1. **grep SKILL.md 全部 `ae-sdd <cmd>` 引用** → 对照 `tools/bin/ae-sdd` 子命令注册表
-2. **重点核查"机制性描述"**：SKILL.md 若描述"rules.yaml + 代码生成 + .mjs"等架构机制，核对 tools/ 实际技术栈是否匹配（Python CLI vs .mjs 即脱节）
-3. **F-1 交叉验证覆盖面**：读 stop_check.py `_verify_gate_claims`，确认它覆盖哪些 gate（硬编码单 gate 正则 = 覆盖窄）
-
-**输出：** 幽灵命令清单 + 过时机制描述清单 + F-1 覆盖面结论。
-
-#### 步骤 4：已实现未接入扫描（核心盲区 4）
+#### 步骤 2 + 3 + 4：跑 `ae-sdd iteration-check`（🆕 v3.5.4 接管步骤 2/3/4 机器粗筛）
 
 ```bash
-git status --short                    # 找 untracked 的 tools/lib/*.py
-grep -rL "import\|from lib\." tools/  # 找实现了但无人 import 的模块
+ae-sdd iteration-check [--project <仓库根>] [--json]
 ```
 
-对每个"已写但未接入"的模块：读其实现 → 核对 design/skill 文档是否声明该能力 → 判断是"声明无实现"（撒谎）还是"已实现未接入"（WIP 未闭环）。
+**机器自动接管**（report-only，不阻断 dev-sync）：
+- **IC-1**：扫 SKILL.md 的幽灵命令引用 + 过时技术栈关键词（rules.yaml/.mjs/sync-tools）
+- **IC-2**：统计 stop_check.py 的 `_G\d+_CLEAR_RE` 覆盖数 vs GATE_REGISTRY 总数，判定 F-1 覆盖面
+- **IC-3**：扫 `tools/lib/*.py` 实现了但全树零 import 的模块 + git untracked 的 `tools/lib/*.py`
+- **IC-4**：HARNESS.md 声明的 HS-N vs 三 hook 文件关键词粗筛（HS-3/5 自认降级→info；HS-4/6 未自认→warn；HS-7/8/9/10/11/12 关键词存在→info 通过粗筛）
 
-**输出：** 未接入模块清单 + 每个的"声明状态 vs 接入状态"。
+**人工复核（仍需人工，不可 100% 自动化）**：
+
+| 步骤 | 机器可筛 | 需人工 |
+|------|---------|--------|
+| **2 HS 物理实现** | 关键词粗筛（IC-4） | "声明物理拦截 vs 实际逻辑真接"语义判定（如 HS-7 关键词 `prd-complete` 在 gate_intercept.py，但 CLI cmd_state_prd_complete 是否真调 check_prd_4_layers 需读代码确认）|
+| **3 CLI 命令契约** | 幽灵命令+过时关键词（IC-1）+ F-1 覆盖面计数（IC-2） | "机制描述与实际技术栈脱节"整体观感 |
+| **4 已实现未接入** | import 解析 + untracked（IC-3） | 每个"已实现未接入"模块的"声明状态 vs 接入状态"判定（WIP / 死代码）|
+
+**机器 100% 自动化的上限**：步骤 2 语义判定（HS-7 案例：关键词在但逻辑没接，机器只能粗筛）+ 步骤 4 "WIP/死代码"判定（需读实现）。iteration-check 的价值是**消除粗筛工作量**，人工仍需复核语义层。
 
 ### 输出物：《设计-实现一致性迭代检查报告》
 
@@ -785,6 +774,7 @@ grep -rL "import\|from lib\." tools/  # 找实现了但无人 import 的模块
 - [ ] 🆕 v3.4.0 `source/templates/coding/be-coding-plan-template.md` §5 骨架含来源标记 + §15 门禁 15 条（含 G-CODEPLAN-SRC）+ front-matter 计数修正
 - [ ] 🆕 v3.5.2 `source/SKILL.md` 含 `### ⑦ter 流程收尾合规自检` 章节（5 维度自检 + 自愈 SOP + 自检表模板）+ `#### 1.7 PRD 收尾合规自检 SOP`（堵 prd-complete 跳校验漏洞）+ 整体流程图含 ⑦ter 节点 + 执行清单含 10a 行；`source/docs/ae-sdd-design.md` 端到端流程编排模块含 v3.5.2 自检说明
 - [ ] 🆕 v3.5.3 本文件含 `## 设计-实现一致性迭代检查` 章节（4 步 SOP：UC 基线 + HS 物理实现核对 + CLI 命令契约深挖 + 已实现未接入扫描 + 报告模板 + 与 UC 关系定位）；`source/docs/ae-sdd-design.md` 工具链 CLI 模块含 v3.5.3 迭代检查说明
+- [ ] 🆕 v3.5.4 本文件 `## 设计-实现一致性迭代检查` SOP 步骤 2/3/4 改为调 `ae-sdd iteration-check`（IC-1~4 机器粗筛 + 人工复核语义层）；`source/SKILL.md` 含 `## 🛠️ 工具 API 速查` 重写 + 删除幽灵命令段（v3.0 残留 rules.yaml/.mjs/sync-tools）；`source/HARNESS.md` HS-7/8 升级"已补物理实现"+ HS-4/6 降级自认；`tools/lib/iteration_check.py` + `tools/bin/ae-sdd:cmd_iteration_check` 注册；HS-7 物理拦截复用 `tools/lib/state.py:check_prd_4_layers`
 
 ### 跨 SKILL 一致性
 

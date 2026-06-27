@@ -215,3 +215,66 @@ def get_events(
     if node is not None:
         events = [e for e in events if e.get("node") == node]
     return sorted(events, key=lambda e: e.get("seq", 0))
+
+
+# ─── 🆕 v3.5.4 PRD 4 层 AND 校验（抽自 ae-sdd CLI cmd_state_prd_check_complete）─────
+# HS-7 物理拦截复用：gate_intercept 拦 prd-complete 时实时跑此函数，不依赖"上次证据"
+def check_prd_4_layers(prd_state: dict) -> dict:
+    """校验 PRD 完成判定的 4 层 AND（G-PRD-1~4），不改状态。
+
+    抽自 ae-sdd CLI 的 cmd_state_prd_check_complete，供 gate_intercept（HS-7 物理拦截）
+    与 CLI 命令共用，确保"prd-complete 前必须 4 层 AND 全过"在 CLI 与 hook 双轨一致。
+
+    Args:
+        prd_state: PRD 级 state.json 的 dict（read_state 或 _read_prd_state 结果）
+
+    Returns:
+        { prdId, G-PRD-1..4: {label, pass, missing}, all_pass }
+        all_pass=True 表示 4 层全过（可执行 prd-complete）
+    """
+    story_ids = prd_state.get("storyIds", [])
+
+    # G-PRD-1: Story 全部完成
+    g1_missing = []
+    for s in story_ids:
+        if not s.get("codeReviewReport"):
+            g1_missing.append(f"{s.get('storyId')}: 缺 codeReviewReport")
+        if not s.get("sevenBisPassed"):
+            g1_missing.append(f"{s.get('storyId')}: ⑦bis 未通过")
+        if not s.get("userConfirmedAt"):
+            g1_missing.append(f"{s.get('storyId')}: 用户未确认")
+
+    # G-PRD-2: ⑦bis 全通过
+    g2_missing = [f"{s.get('storyId')}: ⑦bis matrix 有 🔴 断链" for s in story_ids
+                  if not s.get("sevenBisPassed")]
+
+    # G-PRD-3: 跨 Story 残留风险已闭环
+    cross_deps = prd_state.get("crossStoryDeps", [])
+    risks = prd_state.get("crossStoryResidualRisks", [])
+    g3_missing = []
+    for d in cross_deps:
+        if not d.get("verifiedAt"):
+            g3_missing.append(f"跨 Story 依赖 {d.get('fromStory')}→{d.get('toStory')} 未验证")
+    for r in risks:
+        if not r.get("mitigationPlan"):
+            g3_missing.append(f"风险 {r.get('riskId')}: 缺 mitigationPlan")
+        if r.get("severity") == "🔴" and not r.get("dueDate"):
+            g3_missing.append(f"风险 {r.get('riskId')}: 🔴 风险必须设 dueDate")
+
+    # G-PRD-4: PRD 级人工审核通过
+    prd_review = prd_state.get("prdReview", {})
+    g4_missing = []
+    if not prd_review.get("confirmedAt"):
+        g4_missing.append("PRD 级人工审核未确认（🔍 审核点 5）")
+    if not prd_review.get("confirmedBy"):
+        g4_missing.append("PRD 级人工审核缺确认人")
+
+    result = {
+        "prdId": prd_state.get("prdId", "unknown"),
+        "G-PRD-1": {"label": "Story 全部完成", "pass": not g1_missing, "missing": g1_missing},
+        "G-PRD-2": {"label": "Story ⑦bis 全通过", "pass": not g2_missing, "missing": g2_missing},
+        "G-PRD-3": {"label": "跨 Story 残留风险已闭环", "pass": not g3_missing, "missing": g3_missing},
+        "G-PRD-4": {"label": "PRD 级人工审核通过", "pass": not g4_missing, "missing": g4_missing},
+    }
+    result["all_pass"] = all(result[k]["pass"] for k in ("G-PRD-1", "G-PRD-2", "G-PRD-3", "G-PRD-4"))
+    return result

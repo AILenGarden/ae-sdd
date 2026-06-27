@@ -79,11 +79,11 @@ Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
 - **HS-1** 没有 CodingPlan 写源码（PreToolUse hook 物理拦截）
 - **HS-2** `ae-sdd state write` 跨步跳跃（PreToolUse hook 物理拦截）
 - **HS-3** 用模糊回复（"好"/"行"/"OK"）当用户确认 → 必须追问（🆕 v3.4.0：声明但无物理实现，靠 agent 自律 + 审核点 token 机制 `ae-sdd state confirm` 兜底防 AI 自填）
-- **HS-4** 跳过 ⑥bis / ⑦bis 一致性核查
+- **HS-4** 跳过 ⑥bis / ⑦bis 一致性核查（🆕 v3.5.4：声明但无物理实现，靠 CodeReview 流程纪律 + ⑥/⑦ 闸文约束兜底；待 events 接入业务调用方后补物理拦截）
 - **HS-5** 猜测业务信息 → 必须标 `{待确认}` 并停下来（声明但无物理实现，靠 G-CODEPLAN-SRC 源码核对门禁兜底）
-- **HS-6** 未经确认修改已审核通过的测试代码
-- **HS-7**（🆕 v3.3.0）未通过 4 层 AND 闸就触发 `ae-sdd state prd-complete`（PreToolUse hook 物理阻断）
-- **HS-8**（🆕 v3.3.0）PRD 级 compact 失败时未保留旧 PRD state.json（Stop hook 阻断 + 报警）
+- **HS-6** 未经确认修改已审核通过的测试代码（🆕 v3.5.4：声明但无物理实现——"已审核测试代码"判定边界模糊且无现成标记机制，靠 CodeReview ⑦ 闸兜底；待 state.testCodeAuditedAt 标记机制落地后补物理拦截）
+- **HS-7**（🆕 v3.3.0，🆕 v3.5.4 补物理实现）未通过 4 层 AND 闸就触发 `ae-sdd state prd-complete`（PreToolUse hook 物理阻断：`tools/lib/gate_intercept.py:check_intercept` + `tools/lib/state.py:check_prd_4_layers` 实时校验）
+- **HS-8**（🆕 v3.3.0，🆕 v3.5.4 补物理实现）PRD 级 compact 失败时未保留旧 PRD state.json（Stop hook 阻断 + 报警：`tools/lib/stop_check.py:_check_compact_failure` 检测 `prdStatus=awaiting_compact` 但无 `summary.md` 的卡住态）
 - **HS-9**（🆕 v3.4.0，建议书4 关卡1）收到 `/ae-sdd` 触发后未跑 `ae-sdd enter` 领 entry token 就落地流程产物（UserPromptSubmit 注入强提醒 + 关卡2/3 物理拦截兜底）
 - **HS-10**（🆕 v3.4.0，建议书4 关卡2）流程产物（Story/Task/CodingPlan/报告）落地未经 `resolve_path` 推导、落在 `d:\tmp\` 等游离位置（PreToolUse hook 物理拦截 + G-DOC-STORAGE 门禁）
 - **HS-11**（🆕 v3.4.0，建议书4 关卡3）非 coding/test-running phase 或无审核点 2.5 确认 token 写 src/ 源码（PreToolUse hook 物理拦截）

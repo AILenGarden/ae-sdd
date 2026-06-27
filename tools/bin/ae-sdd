@@ -72,6 +72,17 @@ def cmd_version(args, parser):
     return 0
 
 
+def cmd_scripts_dir(args, parser):
+    """🆕 v4.1：输出母版 scripts/ 目录绝对路径（跨项目解析脚本位置，取代硬编码）。"""
+    master = paths.locate_master_source()
+    if master is None:
+        output.emit({"error": "未定位到母版 master_source"}, as_json=args.json)
+        return 1
+    sdir = paths.scripts_dir(master)
+    output.emit({"scripts_dir": str(sdir)}, as_json=args.json)
+    return 0
+
+
 def cmd_state_read(args, parser):
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
@@ -174,52 +185,10 @@ def cmd_state_prd_check_complete(args, parser):
         output.info("提示：先跑 ae-sdd state prd-init（或等 Story 完成 hook 自动写入）")
         return 1
 
-    # G-PRD-1: Story 全部完成
-    story_ids = ps.get("storyIds", [])
-    g1_missing = []
-    for s in story_ids:
-        if not s.get("codeReviewReport"):
-            g1_missing.append(f"{s.get('storyId')}: 缺 codeReviewReport")
-        if not s.get("sevenBisPassed"):
-            g1_missing.append(f"{s.get('storyId')}: ⑦bis 未通过")
-        if not s.get("userConfirmedAt"):
-            g1_missing.append(f"{s.get('storyId')}: 用户未确认")
-
-    # G-PRD-2: ⑦bis 全通过（依赖 G-PRD-1 已通过）
-    g2_missing = [f"{s.get('storyId')}: ⑦bis matrix 有 🔴 断链" for s in story_ids
-                  if not s.get("sevenBisPassed")]
-
-    # G-PRD-3: 跨 Story 残留风险已闭环
-    cross_deps = ps.get("crossStoryDeps", [])
-    risks = ps.get("crossStoryResidualRisks", [])
-    g3_missing = []
-    for d in cross_deps:
-        if not d.get("verifiedAt"):
-            g3_missing.append(f"跨 Story 依赖 {d.get('fromStory')}→{d.get('toStory')} 未验证")
-    for r in risks:
-        if not r.get("mitigationPlan"):
-            g3_missing.append(f"风险 {r.get('riskId')}: 缺 mitigationPlan")
-        if r.get("severity") == "🔴" and not r.get("dueDate"):
-            g3_missing.append(f"风险 {r.get('riskId')}: 🔴 风险必须设 dueDate")
-
-    # G-PRD-4: PRD 级人工审核通过
-    prd_review = ps.get("prdReview", {})
-    g4_missing = []
-    if not prd_review.get("confirmedAt"):
-        g4_missing.append("PRD 级人工审核未确认（🔍 审核点 5）")
-    if not prd_review.get("confirmedBy"):
-        g4_missing.append("PRD 级人工审核缺确认人")
-
-    result = {
-        "prdId": prd_id,
-        "prdStatus": ps.get("prdStatus", "unknown"),
-        "G-PRD-1": {"label": "Story 全部完成", "pass": not g1_missing, "missing": g1_missing},
-        "G-PRD-2": {"label": "Story ⑦bis 全通过", "pass": not g2_missing, "missing": g2_missing},
-        "G-PRD-3": {"label": "跨 Story 残留风险已闭环", "pass": not g3_missing, "missing": g3_missing},
-        "G-PRD-4": {"label": "PRD 级人工审核通过", "pass": not g4_missing, "missing": g4_missing},
-    }
-    all_pass = all(result[k]["pass"] for k in ("G-PRD-1", "G-PRD-2", "G-PRD-3", "G-PRD-4"))
-    result["all_pass"] = all_pass
+    # 复用 state.check_prd_4_layers（🆕 v3.5.4 抽出，供 HS-7 物理拦截与 CLI 共用）
+    result = state.check_prd_4_layers(ps)
+    result["prdStatus"] = ps.get("prdStatus", "unknown")
+    all_pass = result["all_pass"]
 
     if args.json:
         output.emit(result, as_json=True)
@@ -569,6 +538,66 @@ def cmd_update_check(args, parser):
             output.info("✅ 更新闭环完整，无漏更新。")
 
     return 0 if summary["failed"] == 0 else 1
+
+
+def cmd_iteration_check(args, parser):
+    """iteration-check — 设计-实现一致性迭代检查（🆕 v3.5.4）
+
+    补 UC-01~07 自动检查的 4 类盲区：HS 物理实现齐全度 / 幽灵命令整段描述 /
+    F-1 交叉验证覆盖面 / 已实现未接入。不阻断 dev-sync（report-only），
+    与 update-check 互补不替代。
+
+    对应 SOP：ae-sdd-update-skill.md §设计-实现一致性迭代检查
+    """
+    repo_root = paths.locate_master_source() or Path.cwd()
+    if repo_root and repo_root.name == "source":
+        repo_root = repo_root.parent  # locate_master_source 返回 source/，取 parent 为仓库根
+    if args.project:
+        repo_root = Path(args.project)
+
+    from lib import iteration_check as ic
+    report = ic.run_all(repo_root)
+
+    if args.json:
+        output.emit(report.to_dict(), as_json=True)
+    else:
+        output.info(f"🆕 v3.5.4 设计-实现一致性迭代检查（补 UC 盲区，report-only 不阻断）")
+        output.info(f"跑了 {len(report.checks_run)} 项检查：{', '.join(report.checks_run)}")
+        output.info(f"发现 {len(report.findings)} 项（{report.n_warn} warn / {report.n_info} info）")
+        output.info("")
+        # 按 check_id 分组输出
+        from collections import defaultdict
+        by_check: dict = defaultdict(list)
+        for f in report.findings:
+            by_check[f.check_id].append(f)
+        check_names = {
+            "IC-1": "过时技术栈/幽灵命令扫描",
+            "IC-2": "F-1 交叉验证覆盖面",
+            "IC-3": "已实现未接入扫描",
+            "IC-4": "HS 物理实现粗筛",
+        }
+        for cid in ("IC-1", "IC-2", "IC-3", "IC-4"):
+            findings = by_check.get(cid, [])
+            output.info(f"── {cid} {check_names.get(cid, '')}（{len(findings)} 项）──")
+            if not findings:
+                output.info("  ✅ 无发现")
+            for f in findings:
+                icon = "🟡" if f.severity == "warn" else "ℹ️"
+                output.info(f"  {icon} [{f.severity}] {f.item}")
+                output.info(f"      定位: {f.location}")
+                output.info(f"      详情: {f.detail}")
+            output.info("")
+
+        if report.n_warn > 0:
+            output.warn(
+                f"发现 {report.n_warn} 项 warn：建议按 ae-sdd-update-skill.md "
+                f"§设计-实现一致性迭代检查 SOP 步骤2-4 人工确认并修复"
+            )
+        else:
+            output.ok("无 warn，机器粗筛通过（语义级核对仍需人工 SOP 步骤2）")
+
+    # report-only，始终返回 0（不阻断 dev-sync）
+    return 0
 
 
 def cmd_bump(args, parser):
@@ -1904,6 +1933,10 @@ def main() -> int:
     p = sub.add_parser("version", help="输出版本", parents=[common])
     p.set_defaults(func=cmd_version)
 
+    # 🆕 v4.1 scripts-dir：输出母版 scripts/ 目录（取代硬编码脚本路径）
+    p_sdir = sub.add_parser("scripts-dir", help="[v4.1] 输出母版 scripts/ 目录路径", parents=[common])
+    p_sdir.set_defaults(func=cmd_scripts_dir)
+
     # state
     p_state = sub.add_parser("state", help="项目状态管理", parents=[common])
     state_sub = p_state.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
@@ -1996,6 +2029,12 @@ def main() -> int:
     p_uc.add_argument("--only", help="只查指定检查（如 UC-01）")
     p_uc.add_argument("--affected", help="查询模式：改了这些文件，连带项是什么（逗号分隔，如 gates.py,SKILL.md）")
     p_uc.set_defaults(func=cmd_update_check)
+
+    # iteration-check（🆕 v3.5.4 — 设计-实现一致性迭代检查，补 UC 盲区，report-only）
+    p_ic = sub.add_parser("iteration-check", help="设计-实现一致性迭代检查（补UC盲区，report-only）",
+                          parents=[common])
+    p_ic.add_argument("--project", default="", help="项目根（默认 master source 或 cwd）")
+    p_ic.set_defaults(func=cmd_iteration_check)
 
     # memory toolset (P0): mandatory phase-aware memory hooks
     p_mem = sub.add_parser("memory", help="phase-aware memory toolset", parents=[common])

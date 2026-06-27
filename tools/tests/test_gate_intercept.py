@@ -211,3 +211,89 @@ class TestPhasePermitCompleteness:
             assert isinstance(tools, frozenset), (
                 f"PHASE_PERMIT['{phase}'] 应为 frozenset，实际是 {type(tools)}"
             )
+
+
+# ─── 🆕 v3.5.4 HS-7：prd-complete 物理拦截测试 ────────────────────────────────
+
+class TestHS7PrdCompleteGate:
+    """HS-7：ae-sdd state prd-complete 前置校验 4 层 AND 物理拦截"""
+
+    def _make_prd_state(self, tmp_path, prd_id="PRD-CS-001", all_pass=True):
+        """构造 PRD 级 state.json。all_pass=True 时 4 层全过，False 时 G-PRD-1 失败。"""
+        prd_dir = tmp_path / ".auto-engineering" / prd_id
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        story = {
+            "storyId": "STORY-001-BE",
+            "codeReviewReport": "ae-sdd-doc/CR/STORY-001-BE.md" if all_pass else "",
+            "sevenBisPassed": all_pass,
+            "userConfirmedAt": "2026-06-27T10:00:00Z" if all_pass else "",
+        }
+        ps = {
+            "prdId": prd_id,
+            "storyIds": [story],
+            "crossStoryDeps": [],
+            "crossStoryResidualRisks": [],
+            "prdReview": {
+                "confirmedAt": "2026-06-27T10:00:00Z" if all_pass else "",
+                "confirmedBy": "tester" if all_pass else "",
+            } if all_pass else {},
+            "prdStatus": "in_progress",
+        }
+        (prd_dir / "state.json").write_text(
+            json.dumps(ps, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return tmp_path
+
+    def test_prd_complete_blocked_when_4layers_fail(self, tmp_path):
+        """4 层 AND 未全过 → prd-complete 被拦"""
+        project_dir = self._make_prd_state(tmp_path, all_pass=False)
+        cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime mavis"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+        )
+        assert not allowed, "4 层未过应被 HS-7 拦截"
+        assert "HS-7" in reason
+        assert "4 层 AND 未全过" in reason
+        assert "prd-check-complete" in reason
+
+    def test_prd_complete_allowed_when_4layers_pass(self, tmp_path):
+        """4 层 AND 全过 → prd-complete 放行（不因 HS-7 拦）"""
+        project_dir = self._make_prd_state(tmp_path, all_pass=True)
+        cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime mavis"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+        )
+        # 4 层全过 → HS-7 放行（可能因 phase=code-reviewed 不允许 Bash 被拦，但不是 HS-7）
+        if not allowed:
+            assert "HS-7" not in reason, "4 层全过不应被 HS-7 拦截"
+
+    def test_prd_complete_blocked_when_no_prd_state(self, tmp_path):
+        """PRD state.json 不存在 → 拦截"""
+        cmd = "ae-sdd state prd-complete --prd PRD-NONEXIST --runtime mavis"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=tmp_path, forced_phase="code-reviewed"
+        )
+        assert not allowed
+        assert "HS-7" in reason
+        assert "不存在" in reason
+
+    def test_prd_check_complete_not_intercepted(self, tmp_path):
+        """prd-check-complete（只读校验）不被 HS-7 拦截"""
+        project_dir = self._make_prd_state(tmp_path, all_pass=False)
+        cmd = "ae-sdd state prd-check-complete --prd PRD-CS-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+        )
+        # prd-check-complete 命中只读白名单或 phase 校验，但不应因 HS-7 拦截
+        if not allowed:
+            assert "HS-7" not in reason, "prd-check-complete 不应被 HS-7 拦截"
+
+    def test_echo_prd_complete_not_intercepted(self, tmp_path):
+        """echo/注释形式的 prd-complete 不触发 HS-7（防误判）"""
+        project_dir = self._make_prd_state(tmp_path, all_pass=False)
+        cmd = "echo 'ae-sdd state prd-complete --prd PRD-CS-001'"
+        allowed, _ = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+        )
+        # echo 命令不应触发 HS-7（_is_ae_sdd_cmd 排除非执行形式）
+        # 即使被其他规则拦，reason 也不应含 HS-7
