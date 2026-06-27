@@ -4,15 +4,15 @@ description: 端到端自动化工程 SKILL 体系的主入口（v3.5.8）。从
 version: 3.5.8
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@bf72569ad80c12226bc778c5504c853fb12813e1 @ 2026-06-27T09:15:52Z -->
+<!-- # AUTO-GEN @ ae-sdd@491bfe232da3205cffbe9b3cd309450092c9cf67 @ 2026-06-27T09:16:24Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-27T09:15:52Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-27T09:16:24Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `bf72569` (3.5.8)
+> 源版本：ae-sdd @ `491bfe2` (3.5.8)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-06-27T09:15:52Z
+- 生成时间：2026-06-27T09:16:24Z
 - 源 ae-sdd 版本：3.5.8
-- 源 ae-sdd commit：bf72569
+- 源 ae-sdd commit：491bfe2
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 
