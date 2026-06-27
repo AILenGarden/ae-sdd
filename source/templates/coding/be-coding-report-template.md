@@ -1,16 +1,14 @@
 # STORY-{number}-BE：{标题} - Coding 报告
 
-> **存放路径：** `life-team-project-docs/{项目目录}/design/story/be/coding/{story}/`
+> **存放路径：** 由 `document-storage.resolve_path(intent="CODING_REPORT", storyId={STORY-ID}, version={major,minor})` 推导（见 document-storage §2.2）
 > 
 > 目录结构示例：
 > ```
-> design/story/be/coding/
-> └── STORY-010-BE/
->     ├── STORY-010-BE-CodingReport.md      ← Coding 报告
->     └── STORY-010-BE-开发问题记录.md       ← 开发问题记录
+> ae-sdd-doc/Coding/{STORY-ID}/
+> └── {STORY-ID}-CodingReport-v{N}-r{M}.md      ← Coding 报告
 > ```
 > 
-> 完整路径示例：`life-team-project-docs/20260513-2c的im客服系统/design/story/be/coding/STORY-010-BE/STORY-010-BE-CodingReport.md`
+> 完整路径示例：`{docWorkspacePath}/ae-sdd-doc/Coding/STORY-010-BE/STORY-010-BE-CodingReport-v1-r1.md`
 
 ## 元信息 `必填`
 
@@ -150,11 +148,11 @@
 | --- | --- | --- | --- |
 | YAML/Nacos | `{module}/src/main/resources/{file}.yml` | 新增/修改/无改动 | {配置项变化} |
 | DDL/SQL | `{module}/src/main/resources/db/{file}.sql` | 新增/修改/无改动 | {表/字段/索引变化} |
-| 项目文档 | `design/story/be/.../{file}.md` | 仅文档/修改/无改动 | {Story/Task/TestCase/CodingReport 变化} |
+| 项目文档 | `ae-sdd-doc/.../{file}.md` | 仅文档/修改/无改动 | {Story/Task/TestCase/CodingReport 变化} |
 
 > 示例：
 > | 类型 | 文件路径 | 变更类型 | 说明 |
-> | Coding 报告 | `design/story/be/coding/STORY-020-BE/STORY-020-BE-CodingReport-v2-r2.md` | 仅文档 | 记录本轮修复范围、测试结果和残余风险 |
+> | Coding 报告 | `ae-sdd-doc/Coding/STORY-020-BE/STORY-020-BE-CodingReport-v2-r2.md` | 仅文档 | 记录本轮修复范围、测试结果和残余风险 |
 > | 配置 | `icec-cloud-life-cs/icec-cloud-life-cs-interfaces/src/main/resources/bootstrap.yml` | 无改动 | 本 Story 未新增运行时配置 |
 
 ---

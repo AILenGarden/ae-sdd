@@ -5,6 +5,14 @@ description: icec-cloud-boss 项目资产实例 — 基于 Explore Agent 2026-06
 
 # icec-cloud-boss Project Assets — 项目资产实例
 
+> ⚠️ **DEPRECATED（2026-06-27，资产路径治理 v4.1）：** 本文件是旧「项目级单文档」产物。
+>
+> - 本文件 gitPath 指向 `d:\Item\icec-cloud-boss`（该路径已不存在，仓库 2026-06-16 重命名为 `life`）。
+> - life 项目的资产已按新规则（document-storage §2.3）搬到工作区：`D:\Item\life\.ae-sdd\assets\life\`。
+> - 若 boss（admin 端）需独立资产，应在对应工作区 `.ae-sdd/assets/{workspaceKey}/admin/{工程名}/` 下新建。
+>
+> **本文件保留作母版示例（项目资产首份填法范本），不再更新。**
+
 > **本文件是 `project-assets-schema.md` 的首份实例**，按 schema 12 节结构 + 附录 JSON 填写。
 >
 > **相对路径基准：** 本文件位于 `assets/icec-cloud-boss/`，引用 schema 用 `../../standards/project-assets/project-assets-schema.md`，引用 template 用 `../../standards/project-assets/project-assets-template.md`。
@@ -756,6 +764,47 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
 **出处：** `icec-cloud-boss-user-application/src/test/java/.../BossUserAppServiceTest.java:32`
 **约束对齐：** 符合 `constraints/testing.md` §7.2
 
+#### 11.8.3 集成测试 H2 + DRIFT 落库门禁 [已确认]
+
+**场景：** 涉及回调 / 状态机 / 多 Service 协作的集成测试（如融云 IM 回调、IM 工单状态机）
+**惯用写法：**
+
+```java
+@RunWith(SpringRunner.class)
+@SpringBootTest
+@TestPropertySource(properties = {
+    "spring.datasource.url=jdbc:h2:mem:test;MODE=MySQL;DATABASE_TO_LOWER=TRUE",
+    "spring.datasource.driver-class-name=org.h2.Driver"
+})
+@Transactional  // 自动回滚
+public class ImMessageCallbackIntegrationTest {
+    @Autowired CsTicketRepositoryImpl repo;        // 真实注入 4 个 RepositoryImpl
+    @MockBean RongCloudSignatureDomainService;      // 仅 Mock 非落库协作者
+    @MockBean MessageHookRegistry;                 // 仅 Mock Hook
+    @MockBean RongCloudFacade;                     // 仅 Mock 外部 SDK 防腐层
+
+    @Test
+    public void testHandleCallback_DRIFT_01() {
+        service.handleCallback(req);
+        assertEquals(1, repo.findById(...).getReadCount());
+    }
+}
+```
+
+**出处：** `icec-cloud-life-im-infrastructure/src/test/java/.../integration/ImMessageCallbackIntegrationTest.java:18` + 同事知识库 `D:\Item\life\document\life-team-project-docs\knowledge\project\.md:2516, 2520`
+**约束对齐：** 符合 `constraints/testing.md` §7.3（集成测试规范）
+**反模式：** ❌ 集成测试用真实 MySQL + 多个微服务启动 → 启动慢 + 难回滚；❌ 用 `@MockBean` 全部 Mock RepositoryImpl → 失去"落库真实"的集成测试意义
+**实战案例：** `function/STORY-003-BE-登录认证.md §1.9 集成测试范式`（暂无，待 STORY-003 完成后回填）
+
+#### 11.8.4 Mock 策略：仅 Mock 非落库协作者 [已确认]
+
+**场景：** 集成测试中决定 Mock 哪些依赖
+**惯用写法：** Mock 三类：① 外部 SDK 防腐层（如 `RongCloudFacade`）② 签名校验（如 `RongCloudSignatureDomainService`）③ 事件 Hook（如 `MessageHookRegistry`）；不 Mock 4 个 RepositoryImpl（保证落库真实）
+**出处：** `D:\Item\life\document\life-team-project-docs\knowledge\project\.md:2516, 2520` + `D:\Item\life\document\life-team-project-docs\knowledge\project\icec-cloud-life-im.md:536, 539, 554`
+**约束对齐：** 符合 `constraints/testing.md` §7.3
+**反模式：** ❌ 全 Mock RepositoryImpl → 失去"落库真实"的集成测试意义；❌ Mock 数据库连接本身 → 退化为单元测试
+**实战案例：** `function/STORY-003-BE-登录认证.md §1.9 集成测试范式`（暂无，待 STORY-003 完成后回填）
+
 ### 11.9 配置与集成模式
 
 #### 11.9.1 定时任务用 job-spring-boot-starter（禁 @Scheduled）[据推断]
@@ -779,25 +828,27 @@ find . -name "bootstrap*.yml" -not -path "*/target/*" -exec grep -H "server.port
 
 > 🆕 schema v3 §12 新增节。单 Story 跨 ≥3 工程时，业务场景应入 `function/`，环境配置入 `config/`，业务域概览入 `domain/`——而非塞进主体。
 >
-> **当前状态**：三类专题目录尚未建立。下次 STORY-002/003/007/009/010/011/020 完成时同步产出。
+> **🆕 v3.5.1.1 补做状态（2026-06-27）**：首批 3 篇专题已落地（功能：STORY-003-BE-登录认证 / 环境：api-test-env / 域概览：cs-域概览）。
+>
+> ⚠️ **v3.5.1 自我豁免说明**：v3.5.1 行 24 曾声明"本次不再向废弃实例追加专题内容"。本节为 v3.5.1.1 补做，按修订方案原文 + 用户决策（`D:\al-agent-workspace\ae-sdd-update-doc\2026-06-27-assets-content-refine-proposal.md` §3.4）+ 修订方案 v3.5.1.1 章节执行。boss 主体虽标 deprecated，本节作为参考用保留。
 
 ### 12.1 function/ 业务场景专题索引
 
 | 文件 | 涉及工程 | 摘要 | 最后更新 |
 |------|---------|------|---------|
-| _（暂无）_ | — | — | — |
+| `function/STORY-003-BE-登录认证.md` | boss-api / boss-auth-bff / boss-user / life-cs | 坐席登录与认证 4 个接口的调用链 + 8 个 DTO 字段变更 + 2 个 Redis Key + 4 条关键约束 | 2026-06-27 |
 
 ### 12.2 config/ 环境配置专题索引
 
 | 文件 | 适用范围 | 摘要 | 最后更新 |
 |------|---------|------|---------|
-| _（暂无）_ | — | — | — |
+| `config/test/api-test-env.md` | 5 个 BFF/Service 工程（boss-auth-bff / boss-user / boss-agent-workbench-bff / life-cs / life-user） | 本地 + 测试环境的登录/Token/Base URL/management port | 2026-06-27 |
 
 ### 12.3 domain/ 业务域概览专题索引
 
 | 文件 | 业务域 | 摘要 | 最后更新 |
 |------|--------|------|---------|
-| _（暂无）_ | — | — | — |
+| `domain/cs-域概览.md` | 客服域 (life-cs) | 工单状态机 + 错误码分段 + 5-7 条红线 + 跨域依赖 + 术语表 | 2026-06-27 |
 
 ---
 ## 13. 信息可信度三态分布 [已确认]

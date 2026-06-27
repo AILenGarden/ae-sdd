@@ -5,6 +5,15 @@ description: icec-cloud-life 项目资产实例 — 基于 2026-06-17 Explore Ag
 
 # icec-cloud-life Project Assets — 项目资产实例
 
+> ⚠️ **DEPRECATED（2026-06-27，资产路径治理 v4.1）：** 本文件是旧「项目级单文档」产物。
+>
+> 资产已按新规则（document-storage §2.3）**物理搬移**到 life 工作区，按业务线分组就近存放：
+> - **工作区级索引**：`D:\Item\life\.ae-sdd\assets\life\life.assets.md`
+> - **工程级子文件**：`D:\Item\life\.ae-sdd\assets\life\{2c|admin|common}\{工程名}\{工程名}.assets.md`
+>
+> **本文件保留作母版示例 / 历史内容迁移源（§2 微服务清单、§10 经验文档），不再更新。**
+> 实际使用请以 life 工作区新位置为准。
+
 > **本文件是 icec-cloud-life 项目的首份资产实例**，按 project-assets-schema 结构填写。
 >
 > **gitPath：** `D:\Item\life`（源码在 `D:\Item\life\2c\`）

@@ -300,6 +300,126 @@ class TestAssetFieldAndModuleFiles(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].name, "proj1.assets.md")
 
+    # ─── 🆕 v4.1：line 分组发现 + 三阶段共存 ──────────────────────────────────
+
+    def test_resolve_assets_base_prefers_docws(self):
+        """resolve_assets_base 优先用 docWorkspacePath/assets/{key}。"""
+        self._write_overview("proj1", doc_ws=str(self.tmp / "docs"))
+        base = paths.resolve_assets_base(self.ade_sdd, "proj1")
+        self.assertEqual(base, self.tmp / "docs" / ".ae-sdd" / "assets" / "proj1")
+
+    def test_resolve_assets_base_fallback_gitpath(self):
+        """无 docWorkspacePath 时回退 gitPath/assets/{key}。"""
+        self._write_overview("proj1", git_path=str(self.tmp / "repo"))
+        base = paths.resolve_assets_base(self.ade_sdd, "proj1")
+        self.assertEqual(base, self.tmp / "repo" / ".ae-sdd" / "assets" / "proj1")
+
+    def test_resolve_assets_base_none_when_no_overview(self):
+        """无总览时 resolve_assets_base 返回 None。"""
+        self.assertIsNone(paths.resolve_assets_base(self.ade_sdd, "ghost"))
+
+    def test_find_module_asset_files_line_group_discovery(self):
+        """阶段①：line 分组 {key}/{line}/{module}/{module}.assets.md 能被发现。"""
+        doc_ws = self.tmp / "docs"
+        base = doc_ws / ".ae-sdd" / "assets" / "proj1"
+        # 构造 2c/admin 两条 line，各含 1 个 module
+        cs_mod = base / "2c" / "icec-cloud-life-cs"
+        user_mod = base / "admin" / "icec-cloud-boss-user"
+        cs_mod.mkdir(parents=True)
+        user_mod.mkdir(parents=True)
+        (cs_mod / "icec-cloud-life-cs.assets.md").write_text("# cs\n", encoding="utf-8")
+        (user_mod / "icec-cloud-boss-user.assets.md").write_text("# user\n", encoding="utf-8")
+        self._write_overview("proj1", doc_ws=str(doc_ws))
+
+        result = paths.find_module_asset_files(self.ade_sdd, "proj1")
+        names = [p.name for p in result]
+        self.assertIn("proj1.assets.md", names)  # 总览在前
+        self.assertIn("icec-cloud-life-cs.assets.md", names)
+        self.assertIn("icec-cloud-boss-user.assets.md", names)
+        # line 按名字典序排序：'2c' < 'admin'（'2' ASCII 50 < 'a' 97），故 2c 的 module 在前
+        self.assertLess(names.index("icec-cloud-life-cs.assets.md"),
+                        names.index("icec-cloud-boss-user.assets.md"))
+
+    def test_find_module_asset_files_flat_module_still_works(self):
+        """阶段②：单层 module {key}/{module}/{module}.assets.md 仍被发现（v4.0 兼容）。"""
+        doc_ws = self.tmp / "docs"
+        base = doc_ws / ".ae-sdd" / "assets" / "proj1"
+        mod = base / "svc-a"
+        mod.mkdir(parents=True)
+        (mod / "svc-a.assets.md").write_text("# svc a\n", encoding="utf-8")
+        self._write_overview("proj1", doc_ws=str(doc_ws))
+
+        result = paths.find_module_asset_files(self.ade_sdd, "proj1")
+        names = [p.name for p in result]
+        self.assertIn("proj1.assets.md", names)
+        self.assertIn("svc-a.assets.md", names)
+
+    def test_find_module_asset_files_mixed_line_and_flat(self):
+        """混合：同一 base 下既有 line 分组又有单层 module（两者都发现）。"""
+        doc_ws = self.tmp / "docs"
+        base = doc_ws / ".ae-sdd" / "assets" / "proj1"
+        # 单层 module
+        flat_mod = base / "standalone-svc"
+        flat_mod.mkdir(parents=True)
+        (flat_mod / "standalone-svc.assets.md").write_text("# flat\n", encoding="utf-8")
+        # line 分组 module
+        line_mod = base / "2c" / "life-cs"
+        line_mod.mkdir(parents=True)
+        (line_mod / "life-cs.assets.md").write_text("# line\n", encoding="utf-8")
+        self._write_overview("proj1", doc_ws=str(doc_ws))
+
+        result = paths.find_module_asset_files(self.ade_sdd, "proj1")
+        names = [p.name for p in result]
+        self.assertIn("proj1.assets.md", names)
+        self.assertIn("standalone-svc.assets.md", names)
+        self.assertIn("life-cs.assets.md", names)
+        # 单层 module 在阶段②，line 在阶段①之后；二者都应被发现（顺序不重叠即可）
+
+    def test_find_module_asset_files_three_stages_coexist(self):
+        """阶段①②③ 三者共存：line 分组 + 单层 module + 旧扁平，全部被发现且不重复。"""
+        doc_ws = self.tmp / "docs"
+        base = doc_ws / ".ae-sdd" / "assets" / "proj1"
+        # 阶段① line 分组
+        line_mod = base / "2c" / "life-cs"
+        line_mod.mkdir(parents=True)
+        (line_mod / "life-cs.assets.md").write_text("# line\n", encoding="utf-8")
+        # 阶段② 单层 module
+        flat_mod = base / "standalone"
+        flat_mod.mkdir(parents=True)
+        (flat_mod / "standalone.assets.md").write_text("# flat\n", encoding="utf-8")
+        # 阶段③ 旧扁平
+        self._write_overview("proj1", doc_ws=str(doc_ws))
+        (self.assets / "proj1.legacy-mod.assets.md").write_text("# legacy\n", encoding="utf-8")
+
+        result = paths.find_module_asset_files(self.ade_sdd, "proj1")
+        names = [p.name for p in result]
+        self.assertEqual(names[0], "proj1.assets.md")  # 总览恒首位
+        self.assertIn("life-cs.assets.md", names)
+        self.assertIn("standalone.assets.md", names)
+        self.assertIn("proj1.legacy-mod.assets.md", names)
+        # 无重复
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_discover_line_groups_classifies_correctly(self):
+        """discover_line_groups 正确区分 module 目录与 line 目录。"""
+        base = self.tmp / "docs" / ".ae-sdd" / "assets" / "proj1"
+        # module 目录（含同名 .md）
+        m1 = base / "svc-a"
+        m1.mkdir(parents=True)
+        (m1 / "svc-a.assets.md").write_text("x", encoding="utf-8")
+        # line 目录（孙级含 module）
+        m2 = base / "2c" / "life-cs"
+        m2.mkdir(parents=True)
+        (m2 / "life-cs.assets.md").write_text("y", encoding="utf-8")
+        # 无关空目录（不应被识别为任何一类）
+        (base / "empty-dir").mkdir()
+
+        discovered = paths.discover_line_groups(base)
+        flat_names = [p.parent.name for p in discovered["flat_modules"]]
+        self.assertEqual(flat_names, ["svc-a"])
+        self.assertIn("2c", discovered["line_groups"])
+        self.assertEqual([p.parent.name for p in discovered["line_groups"]["2c"]], ["life-cs"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

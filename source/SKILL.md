@@ -1,11 +1,12 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.4）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.5）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
-  支持流程状态跟踪与中断后恢复。版本变更日志见 source/CHANGELOG/。
-version: 3.5.4
+  支持流程状态跟踪与中断后恢复。v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。
+  版本变更日志见 source/CHANGELOG/。
+version: 3.5.5
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -688,6 +689,36 @@ ae-sdd gates check --only G-14
 > - root agent 负责**拆活、派活、汇总、决策**；sub-agent 负责**按交付标准完成专项任务**
 > - 拆分原则：**3+ 独立轨道 / 需独立验证 / 跨多源多工具 / 高错误代价** → 拆；否则单 Agent 串行做
 
+### 🆕 v3.5.5 主会话职责边界（默认派活，不再单 Agent 直做）
+
+> **🔴 背景：** v3.5.4 及之前的默认是"单 Agent 串行做所有事"，主会话被迫读 23 个子 SKILL、读源码、写文档、做 walkthrough、跑测试 → 上下文爆炸。**v3.5.5 起主会话职责收口**：默认派 1 个 sub-agent 执行具体节点，主会话只承担编排层职责。
+
+| 类别 | 主会话负责 | 派给 sub-agent |
+|---|---|---|
+| **SKILL 文档** | 仅读 SKILL.md 编排层内容（哪些节点、哪些门禁）| 读子 SKILL 模板（story-review / task-generate / coding-skill 等）按模板执行 |
+| **源码** | 不读源码 | 读源码做分层 walkthrough |
+| **文档产出** | 不写流程文档 | 写 Story / Task / CodingPlan / TestCase / CodeReview 报告 |
+| **讲解** | ✅ 主笔（审核点 1/1.5/2/2.5/4/5 的 5-7 维度故事由主会话在对话中产出）| 准备讲解素材（汇总 sub-agent 报告，喂给主会话）|
+| **CLI 调用** | ✅ `ae-sdd state/gates/iteration-check/update-check/context-pressure` | 跑 `mvn test` / 解析 Surefire XML / `scripts/test_authenticity_scan.py` |
+| **状态落盘** | ✅ 写 `state.json` / `session.json`（编排层动作）| 不直接写 |
+| **用户对话** | ✅ 输入分析、✅/⚠️/⏸️ 收口、模糊回复追问 | 不直接对话用户 |
+
+**例外（保留不派活的场景）：**
+- 🔹 **微任务（类型 4）**：单文件/单枚举值改动，主会话直做（4 类需求 fallback 保留）
+- 🔹 **BUG/配置类**：coding-skill BUG 路径直做
+- 🔹 **用户明确豁免**：用户说"主会话直做 / 不要派活" → 尊重用户
+- 🔹 **⑥.10 test-verifier**：v3.4.0 已强制派 sub-agent 独立验证（即使其他节点主会话直做）
+
+**节点级派活清单（详见 `agent-orchestration-skill.md §8.6`）：**
+- 审核点 1 → `story-writer` + `testcase-writer`
+- 审核点 1.5 → `task-writer`（起草实现方案）
+- 审核点 2 → `task-writer`（写 Task 文档）
+- 审核点 2.5 → `task-writer`（汇总统一版 CodingPlan）
+- 审核点 4 → `coder` + `code-reviewer`
+- 审核点 5 → `summary-writer`（写 PRD summary.md）
+
+> **为什么这是好事：** 把"读源码 / 写文档 / 跑测试"这些**可被独立执行的机械劳动**从主上下文剥离，主会话专注于"用户对话 + 编排 + 汇总 + 讲解"，上下文压力大幅下降。每个审核点边界通过 `ae-sdd context-pressure`（§⏱️ 节点级上下文压力软提示）软提示剩余容量。
+
 ### 何时启用多 Agent
 
 | 触发条件 | 典型场景 | 建议拆分粒度 |
@@ -1118,6 +1149,102 @@ sub-agent 完成后，必须输出**结构化报告**：
 
 ---
 
+## ⏱️ 节点级上下文压力软提示（🆕 v3.5.5 — 6 个审核点边界必调）
+
+> **🔴 背景：** v3.3.0 引入 PRD 级 compact（`mavis session rotate --handoff-file`，事后收尾）+ v3.5.2 加 ⑦ter 自检 + v3.5.4 加 HS-8 compact 失败检测 — 但这些都是**事后机制**，没有**事前预警**。主会话跑到第 4 个审核点时已被吃满，AI 自己感知不到继续硬扛。v3.5.5 引入"节点级软提示"，在 6 个审核点边界自检压力等级。
+>
+> **🔴 核心立场（与 v3.3.0 PRD 级 compact 的关系）：**
+> - 本机制 = **节点级预警**（提前提示，让用户决定是否进入收尾）
+> - v3.3.0 PRD 级 compact = **事后收尾**（实际交接）
+> - 两者**不替代**：critical 提示中的"建议 PRD 收尾"由用户决定是否触发，不是强制 compact
+
+### 触发时机（6 个审核点边界必调）
+
+| 审核点 | 章节锚点 | 调用命令 | 软提示后行为 |
+|---|---|---|---|
+| 1（设计阶段完成） | §Phase 1 末 | `ae-sdd context-pressure --story {STORY-ID}` | 继续进 Phase 2 |
+| 1.5（实现方案预确认） | §Phase 2 头部 | 同上 | 继续进 Task 生成 |
+| 2（Task 文档完成） | §Phase 2 中段 | 同上 | 继续进 CodingPlan |
+| 2.5（CodingPlan 评审） | §Phase 2 中段 | 同上 | 继续进 ⑤ Coding |
+| 4（CodeReview 完成） | §Phase 3 末 | 同上 | 继续进 ⑦ter 自检 |
+| 5（PRD 完成确认） | §PRD 完成判定 | 同上 | critical 时强烈建议进入 PRD 收尾 + runtime compact |
+
+### 行为约束（🔴 红线）
+
+- 🔴 **仅软提示（report-only），不阻断流程**
+- 🔴 **不自动 compact**，不自动派 sub-agent
+- 🔴 **不写入 state.json / session.json**（无持久化副作用）
+- 🟢 medium / high：对话中输出 ⚠/🟠 提示 + signals 数据
+- 🔴 critical：额外输出**推荐动作清单**（运行 `prd-check-complete` / 考虑 PRD 收尾 + compact / 考虑拆分 Story），仍不阻断
+
+### 5 信号采集（全为已有字段，无新 schema 必填）
+
+| 信号 | 来源 | 含义 |
+|---|---|---|
+| `confirmedPhases` | `session.userConfirmedPhases.length` | 已确认审核点数 |
+| `events` | `state.events.length` | 流程操作次数 |
+| `historyLen` | `state.history.length` | phase 跳转次数 |
+| `docBytes` | 扫 `.ae-sdd/{STORY}/` + `.auto-engineering/{STORY}/` + `design/` + `task/` | 落盘文档总字节 |
+| `activeAgents` | `state.activeAgents.length` | 当前并发 sub-agent 数 |
+
+### 缺省阈值表（可被 config.yaml override）
+
+```python
+DEFAULT_THRESHOLDS = {
+    "medium":   {"docBytes": 500_000,   "events": 100, "historyLen": 5,  "confirmedPhases": 3, "activeAgents": 2},
+    "high":     {"docBytes": 2_000_000, "events": 200, "historyLen": 8,  "confirmedPhases": 4, "activeAgents": 3},
+    "critical": {"docBytes": 5_000_000, "events": 400, "historyLen": 10, "confirmedPhases": 5, "activeAgents": 4},
+}
+```
+
+**评级算法**：任一信号达到对应档位 → 该档位；OR 触发取最高档（critical 优先）。
+
+### config.yaml 覆盖配置（可选）
+
+在项目根 `.ae-sdd/config.yaml` 中追加：
+
+```yaml
+contextPressure:
+  thresholds:
+    medium:   {docBytes: 600000,  events: 120, historyLen: 6, confirmedPhases: 3, activeAgents: 2}
+    high:     {docBytes: 2500000, events: 250, historyLen: 9, confirmedPhases: 4, activeAgents: 3}
+    critical: {docBytes: 6000000, events: 500, historyLen: 11, confirmedPhases: 5, activeAgents: 4}
+```
+
+> 字段缺失或非法 → 保留缺省值，不抛异常（`tools/lib/context_pressure.py` 的 `_parse_nested_config` 内置兜底）。
+
+### AE 编排层 SOP（6 个审核点统一）
+
+```
+1. 用户 ✅ 确认本审核点
+2. AI 调 `ae-sdd context-pressure --story {STORY-ID}`
+3. AI 解析返回 JSON 的 `pressure` 字段
+4. AI 按评级采取不同行为（仅对话展示，不改 state）
+5. AI 继续下一步流程（不阻断）
+```
+
+### 对话内呈现模板
+
+```
+⏱️  上下文压力：medium（⚠）
+   signals: confirmedPhases=3 | events=142 | history=8 | docBytes=3.0MB | activeAgents=2
+   触发信号：docBytes=3MB ≥ high(2MB)
+   （critical 时额外输出推荐动作清单）
+   nextAction: context-pressure is informational only; no action required
+```
+
+### CLI 速查
+
+```bash
+ae-sdd context-pressure                  # 项目级（无 story）
+ae-sdd context-pressure --story STORY-001-BE   # Story 级
+ae-sdd context-pressure --json           # JSON 输出（机器消费）
+```
+
+> **🟢 与现有机制的关系：** 与 `ae-sdd iteration-check`（v3.5.4 设计-实现一致性检查，report-only）同级 — 都是 report-only 不阻断的"健康度体检"。`iteration-check` 看 SKILL 文档与实现的一致性；`context-pressure` 看主会话剩余容量。
+
+---
+
 ## 流程状态跟踪与再启动
 
 ### 状态跟踪（强制）
@@ -1399,11 +1526,13 @@ Phase 1 ────────┤ 设计阶段（必须完成）
                 ├── ③bis 用例合规性校验（必须通过）
                 │
                 └── 🔍 人工审核：确认设计阶段完成（必须通过）
+                    ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 1 软提示，不阻断）
 
 Phase 2 ────────┤ 实现阶段（必须完成）
                 │
                 ├── 🔍 人工审核：实现方案预确认（必须通过）
                 │     在生成 Task 文档之前，对核心业务/接口/分层/并发/异常达成共识
+                │     ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 1.5 软提示，不阻断）
                 │
                 ├── ④ 执行 Task Generate SKILL → 生成 Task 文档 → 全局 Task Review（结合约束+Story+测试用例）→ Task 实现方案
                 │
@@ -1412,8 +1541,10 @@ Phase 2 ────────┤ 实现阶段（必须完成）
                 ├── 🔍 人工审核 2.5【🆕 2026-06-10】：CodingPlan 评审
                 │     复核 16 章节 + 14 条门禁 + CodingModel 决策 + 风险 Task
                 │     用户明确确认后 → ⑤ Coding
+                │     ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 2 软提示，不阻断）
                 │
                 └── 🔍 人工审核：确认 Task 文档 + 实现方案 + CodingPlan 完成（必须通过）
+                    ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 2.5 软提示，不阻断）
 
                 ├── ⑤ 执行 Coding SKILL
                 │     每个 Task 开始前必须呈现实现方案并获用户确认
@@ -1432,10 +1563,16 @@ Phase 3 ────────┤ 验证阶段（必须完成）
                 ├── ⑦bis 全链路对称性核查闸（🔴 流程收尾强制：DR-Story-Task-实现-测试用例 五层一一对应）
                 │
                 ├── 🔍 人工审核 4：CodeReview 阶段完成确认（🆕 2026-06-10 改名，原"验证阶段"）
+                │     ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 4 软提示，不阻断）
                 │
                 ├── ⑦ter 流程收尾合规自检（🔴 v3.5.2 — 用户确认后自跑 5 维度自检，不合规就修复，禁止裸 ✅ 收尾）
                 │
                 └── ⑧ 完成 ✅
+
+PRD 收尾（v3.3.0，可选入口）：
+                │
+                └── 🔍 人工审核点 5：PRD 完成确认（4 层 AND 全过后）
+                    ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 5 软提示；critical 时强烈建议进入 PRD 收尾 + runtime compact）
 ```
 
 ---
@@ -2350,6 +2487,7 @@ DR（需求文档）→ Story → Task → Coding
 | **维护** | `ae-sdd health` | 9 项健康度自检 |
 | | `ae-sdd update-check` | UC-01~07 更新依赖图谱检查（dev-sync 前必跑）|
 | | `ae-sdd iteration-check` | 🆕 v3.5.4 设计-实现一致性迭代检查（周期性深度体检）|
+| | `ae-sdd context-pressure [--story <ID>]` | 🆕 v3.5.5 节点级上下文压力软提示（6 个审核点边界必调，report-only 不阻断）|
 | | `ae-sdd version / bump / init` | 版本号 / 三处同步 / 项目实例化 |
 | | `ae-sdd plugin list/validate/trace/init` | 🆕 v3.5.1 三层 SKILL 注册表管理 |
 | | `ae-sdd runtime compact` | runtime-specific compact 适配层（v3.3.0）|

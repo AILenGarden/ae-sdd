@@ -374,6 +374,17 @@ deployment:
 
 > 当前 constraints/implicit-constraints.md 为空（仅占位）。Code Plan 编写时若发现"项目内大家知道但没人写下来"的约定，应主动提议补充到该文件，并在本节列出补充项。
 
+| 约定名 | 描述 | 出处 / 踩坑 Story | 反向链接 |
+|--------|------|------------------|---------|
+| 互踢与融云无关 | 坐席 session 互踢基于 Redis session 失效，不依赖融云 SDK | `function/STORY-003-BE-登录认证.md §1.8 关键约束 #2` + `function/登录与认证-BE-接口逻辑速查.md:220-224` | §10.7 并发与幂等模式（分布式锁）|
+| 事务中禁止远程调用 | `BossUserAppService#authenticateUser` 含 Feign 调用，不开启 `@Transactional` | `icec-cloud-boss-user-application/.../appservice/BossUserAppService.java:42` | §10.3 Application 层模式（无大事务）|
+| Feign 失败处理差异化 | 登录时 Feign 失败直接抛异常返回错误码；用户详情时 Feign 失败不阻断 | `function/STORY-003-BE-登录认证.md §1.8 关键约束 #3` + `function/登录与认证-BE-接口逻辑速查.md:222` | §10.4 Infrastructure 层模式（Feign 封装）|
+| 错误码区分账号存在性 | 接受轻微安全代价，"账号不存在"（11101）与"用户名或密码错误"（11105）错误码分离 | `icec-cloud-boss-user-domain/.../enums/error/BossUserErrorCode.java` + `function/STORY-003-BE-登录认证.md §1.8 关键约束 #4` | §10.6 异常处理模式（错误码定义）|
+
+> **强制规则**：每条隐性约定必须有 1 个 Story 踩坑出处或代码出处，并至少反向链接到 §10 团队惯用实现方式、§5 核心类方法或 constraints/ 中的具体条款。不得把无出处的经验写成"已确认"。
+>
+> **🆕 v3.5.1.1 初始沉淀**：上表 4 条为基于 STORY-003-BE 登录认证与同事知识库 `function/登录与认证-BE-接口逻辑速查.md:220-224` 归纳的初始数据；后续探查发现新约定时按相同格式追加。
+
 ---
 
 ## 7. 跨服务契约入口
@@ -574,6 +585,7 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 **出处：** {文件路径}:{行号}（至少 2 个真实出处证明"惯用"）
 **约束对齐：** 符合 {constraints/xxx.md} 中的 {具体条款}
 **反模式：** 项目中存在的错误写法（如有，标注文件路径，供 CodeReview 参考）
+**实战案例：** [{function 专题路径}](../../function/{Story-id}.md#接口-{N})（可选；无案例时写"暂无"）
 ```
 
 ### 10.3 准入门禁（什么样的实现才能进经验文档）
@@ -626,11 +638,13 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 
 ### 12.1 三类横切专题边界
 
+> 🆕 v4.1：下表"目录"列用相对基准 `{资产根}/` 表示，完整路径见 [document-storage §2.3](../../skills/cross-cutting/document-storage-skill.md)（`{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`）。
+
 | 类型 | 目录 | 用途 | 典型场景 | 触发时机 |
 |------|------|------|---------|---------|
-| **function/** | `skills/ae-sdd/assets/{projectKey}/function/` | **跨工程业务场景专题** | 单 Story 跨 ≥3 工程的完整调用链 + 影响面 + 错误码 + Redis Key + DTO 字段 | 每个 Story 完成后必产 1 篇（STORY-002-BE / STORY-003-BE / ...）|
-| **config/** | `skills/ae-sdd/assets/{projectKey}/config/` | **环境/部署/测试/运维配置** | 本地端口表 + 测试环境 URL + Feign URL 注入 + management port 分配 + Docker 镜像标签 + 数据迁移 | 部署相关 PR / 新环境接入 / 配置变更时更新 |
-| **domain/** | `skills/ae-sdd/assets/{projectKey}/domain/` | **业务域概览（业务全景图）** | 业务域边界 + 域间依赖 + 域事件流 + 关键术语表 | 项目启动时建首版；域变更时更新 |
+| **function/** | `{资产根}/function/` | **跨工程业务场景专题** | 单 Story 跨 ≥3 工程的完整调用链 + 影响面 + 错误码 + Redis Key + DTO 字段 | 每个 Story 完成后必产 1 篇（STORY-002-BE / STORY-003-BE / ...）|
+| **config/** | `{资产根}/config/` | **环境/部署/测试/运维配置** | 本地端口表 + 测试环境 URL + Feign URL 注入 + management port 分配 + Docker 镜像标签 + 数据迁移 | 部署相关 PR / 新环境接入 / 配置变更时更新 |
+| **domain/** | `{资产根}/domain/` | **业务域概览（业务全景图）** | 业务域边界 + 域间依赖 + 域事件流 + 关键术语表 | 项目启动时建首版；域变更时更新 |
 
 ### 12.2 命名规范
 
@@ -640,31 +654,33 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 | config/ | `{环境或场景}.md`，如 `test/api-test-env.md` / `prod/部署清单.md` / `local/本地调试指南.md` | ❌ `config.md` / `config-all.md` |
 | domain/ | `{业务域Key}.md`，如 `cs/客服域.md` / `im/IM域.md` / `user/用户域.md` | ❌ `domain.md` |
 
-### 12.3 与主体文件的关系
+### 12.3 与主体文件的关系（内容结构 — 🆕 v4.1 路径改为引用）
+
+> **🆕 v4.1（2026-06-27，SKILL 边界修复）：** 本节只定义资产的**内容结构**（装什么子目录、各装什么），**存放路径不再在本文件定义**——路径单一权威源是 [`document-storage-skill.md §2.3 资产类路径模板`](../../skills/cross-cutting/document-storage-skill.md)。此前本节曾硬编码 `skills/ae-sdd/assets/{projectKey}/` 路径，与 document-storage/代码三处漂移，是"路径偏移"的制度性根因。
+
+**资产内容结构（schema 该管的"装什么"）：**
 
 ```
-skills/ae-sdd/assets/{projectKey}/
-├── {projectKey}.assets.md            # 主体（核心映射+索引，≤30KB）
-├── {projectKey}.update-log.md        # 主体变更日志
-├── {projectKey}.pending-questions.md # 主体待确认问题
-├── function/                          # 跨工程业务场景专题（按 Story 分）
-├── config/                            # 环境/部署/测试/运维配置
-├── domain/                            # 业务域概览
-└── {module-name}.assets.md            # 工程级子文件（每个工程一个）
+{workspaceKey}/                                 # 路径根见 document-storage §2.3，此处只看内容组织
+├── {workspaceKey}.assets.md                    # 主体/工作区级索引（核心映射+索引，≤30KB）
+├── {workspaceKey}.update-log.md                # 主体变更日志
+├── {workspaceKey}.pending-questions.md         # 主体待确认问题
+├── function/                                   # 跨工程业务场景专题（按 Story 分）—— 内容结构
+├── config/                                     # 环境/部署/测试/运维配置 —— 内容结构
+├── domain/                                     # 业务域概览 —— 内容结构
+├── {line}/                                     # 🆕 v4.1 业务线分组（多业务线项目；单业务线项目无此层）
+│   └── {工程名}/{工程名}.assets.md             # 工程级子文件（一个工程一个）
+└── {工程名}/{工程名}.assets.md                 # 工程级子文件（单业务线扁平）
 ```
 
-**🆕 v4.0 工程级子文件就近存放（推荐，可选）：**
+**存放路径（引用，不在本文件重定义）：**
+- 工作区级索引 / 工程级子文件 / 日志的**完整路径模板** → 见 [`document-storage-skill.md §2.3`](../../skills/cross-cutting/document-storage-skill.md)
+- 工程级子文件**业务线分组**（line）规则 → 见 [`document-storage-skill.md §0.5.3`](../../skills/cross-cutting/document-storage-skill.md)
+- 代码层自动发现（line 分组 + 单层 + 扁平三路共存）→ `paths.find_module_asset_files()`
 
-当项目有 `docWorkspacePath`（document-storage §0.5.1 第四维）时，工程级子文件**推荐就近存放**到文档工作区，按工程分目录：
+**工程级子文件命名（schema 该管的"怎么叫"）：** `{工程名}.assets.md`（详见 §15.2 命名规范）
 
-```
-{docWorkspacePath}/assets/{projectKey}/{module-name}/{module-name}.assets.md
-```
-
-- 总览仍在 `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md`
-- 子文件分散到 `docWorkspacePath/assets/{projectKey}/{module-name}/`（跟代码分离，不污染业务仓库）
-- ae-sdd 不预设 module-name 上面的目录层级（有无 2c/admin、叫什么，项目自定）
-- 向后兼容：旧扁平位置 `skills/ae-sdd/assets/{projectKey}/{projectKey}.{module}.assets.md` 仍被 `paths.find_module_asset_files` 自动发现
+> ⚠️ **向后兼容：** 历史 v4.0 的 `{docWorkspacePath}/assets/{key}/{module}/` 单层、`.ae-sdd/assets/{key}.*.assets.md` 扁平仍被代码自动发现，不强制迁移。
 
 **主体文件 §A-§G 索引需含三类专题引用：**
 - §D.1 config/ 索引（环境/部署组件）
@@ -896,7 +912,7 @@ grep -rEn "jdbc:mysql://[^?]*:[^@]*@" \
 
 ## 附录 B：工程级子文件 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/module-assets-template.md skills/ae-sdd/assets/{projectKey}/{projectKey}.{module-name}.assets.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/module-assets-template.md {资产根}/[{line}/]{module-name}/{module-name}.assets.md`（多业务线项目加 `{line}/` 层；`{资产根}` 见 document-storage §2.3）
 
 ```markdown
 ---
@@ -1020,10 +1036,12 @@ service → interfaces → application → domain
 | 文件路径 | `.../application/converter/{XxxConverter}.java` |
 | 职责 | {一句话} |
 
-| 方法名 | 入参 | 返回 | 业务含义 |
-|--------|------|------|---------|
-| {methodName} | {params} | {return} | {含义} |
-| ... | ... | ... | ... |
+| 方法名 | 入参 | 返回 | 业务含义 | 变更点 |
+|--------|------|------|---------|---------|
+| {methodName} | {params} | {return} | {含义} | {STORY-id 或 "无"} |
+| ... | ... | ... | ... | ... |
+
+> **强制规则（🆕 v3.5.1.1）**：「变更点」列用于追溯方法的演进来源，便于 CodingPlan 阶段定位"这个方法在 STORY-XXX 加了什么字段、为什么加"。新增方法时填入对应 Story ID；无对应 Story 的存量方法填"无"。
 
 ### 5.2 AppService 层 [已确认/据推断]
 
@@ -1035,9 +1053,9 @@ service → interfaces → application → domain
 | 职责 | {一句话} |
 | 事务 | `@Transactional` 在哪些方法 |
 
-| 方法名 | 入参 | 返回 | 业务含义 |
-|--------|------|------|---------|
-| {methodName} | {params} | {return} | {含义} |
+| 方法名 | 入参 | 返回 | 业务含义 | 变更点 |
+|--------|------|------|---------|---------|
+| {methodName} | {params} | {return} | {含义} | {STORY-id 或 "无"} |
 
 ### 5.3 Domain 层 [已确认/据推断]
 
@@ -1053,9 +1071,9 @@ service → interfaces → application → domain
 |--------|------|-------------------|
 | {field} | {type} | {说明} |
 
-| 方法名 | 入参 | 返回 | 业务含义 |
-|--------|------|------|---------|
-| {method} | {params} | {return} | {含义} |
+| 方法名 | 入参 | 返回 | 业务含义 | 变更点 |
+|--------|------|------|---------|---------|
+| {method} | {params} | {return} | {含义} | {STORY-id 或 "无"} |
 
 #### {XxxDomainService}
 
@@ -1064,9 +1082,9 @@ service → interfaces → application → domain
 | 文件路径 | `.../domain/{业务域}/service/{XxxDomainService}.java` |
 | 职责 | {跨聚合业务规则} |
 
-| 方法名 | 入参 | 返回 | 业务含义 |
-|--------|------|------|---------|
-| {method} | {params} | {return} | {含义} |
+| 方法名 | 入参 | 返回 | 业务含义 | 变更点 |
+|--------|------|------|---------|---------|
+| {method} | {params} | {return} | {含义} | {STORY-id 或 "无"} |
 
 ### 5.4 Infrastructure 层 [已确认/据推断]
 
@@ -1077,9 +1095,9 @@ service → interfaces → application → domain
 | 文件路径 | `.../infrastructure/persistence/repository/mysql/{XxxRepositoryImpl}.java` |
 | 职责 | {仓储实现} |
 
-| 方法名 | 入参 | 返回 | 业务含义 |
-|--------|------|------|---------|
-| {method} | {params} | {return} | {含义} |
+| 方法名 | 入参 | 返回 | 业务含义 | 变更点 |
+|--------|------|------|---------|---------|
+| {method} | {params} | {return} | {含义} | {STORY-id 或 "无"} |
 
 #### {XxxClient} (Feign)
 
@@ -1089,9 +1107,9 @@ service → interfaces → application → domain
 | 目标 SPI | `{xxx-spi}` |
 | 调用服务名 | `{xxx-service}` |
 
-| 方法名 | 入参 | 返回 | 业务含义 |
-|--------|------|------|---------|
-| {method} | {params} | {return} | {含义} |
+| 方法名 | 入参 | 返回 | 业务含义 | 变更点 |
+|--------|------|------|---------|---------|
+| {method} | {params} | {return} | {含义} | {STORY-id 或 "无"} |
 
 ### 5.5 Interfaces 层 [已确认/据推断]
 
@@ -1102,9 +1120,9 @@ service → interfaces → application → domain
 | 文件路径 | `.../interfaces/restful/{XxxServiceImpl}.java` |
 | 实现 SPI | `{XxxService extends ...}` |
 
-| 方法名 | 入参 | 返回 | 业务含义 |
-|--------|------|------|---------|
-| {method} | {params} | {return} | {含义} |
+| 方法名 | 入参 | 返回 | 业务含义 | 变更点 |
+|--------|------|------|---------|---------|
+| {method} | {params} | {return} | {含义} | {STORY-id 或 "无"} |
 
 ---
 
@@ -1174,7 +1192,7 @@ grep -rn "com\.casstime\.cloud\.{product}\.{domain}\.\(domain\|infrastructure\)\
 
 ## 附录 C：function/ 业务场景专题 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/function-topic-template.md skills/ae-sdd/assets/{projectKey}/function/{Story编号或场景标识}.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/function-topic-template.md {资产根}/function/{Story编号或场景标识}.md`（`{资产根}` 见 document-storage §2.3）
 
 ```markdown
 # {场景名}-BE 接口逻辑排查（{Story 编号}）
@@ -1194,6 +1212,65 @@ grep -rn "com\.casstime\.cloud\.{product}\.{domain}\.\(domain\|infrastructure\)\
 |---|------|------|------------|------|
 | 1 | `POST {URL}` | {用途} | {归属工程} | {变更/扩展} |
 | 2 | ... | ... | ... | ... |
+
+---
+
+## 1.5 公共数据模型变更一览 [已确认/据推断]
+
+| 类 | 所属工程 | 新增/变更字段 | 变更类型 |
+|----|----------|--------------|---------|
+| `{XxxReq}` | {api/bff-api 路径} | {field1}, {field2} | 新增/扩展/删除 |
+| `{XxxDTO}` | {spi 路径} | {field1}, {field2} | 新增/扩展/删除 |
+| `{XxxVO}` | {bff-api 路径} | {field1}, {field2} | 新增/扩展/删除 |
+
+> **强制规则**：本节横向列出本 Story 涉及的所有 DTO/VO/Req/Resp 字段变更，防止 CodingPlan 阶段漏 DTO。字段来源必须来自 Story、代码、接口文档或已确认专题；据推断时逐项标注。
+
+---
+
+## 1.6 Redis Key 设计规范 [已确认/据推断]
+
+| Key 格式 | 用途 | TTL | 所属工程 |
+|----------|------|-----|---------|
+| `{prefix}:{biz}:{id}` | {用途} | {N s / 跟随 Token 过期 / 永久} | {工程} |
+
+> **强制规则**：所有新增/修改 Redis Key 必须在本节登记；Key 命名优先遵循 `{业务域}:{功能}:{参数}` 三段式。TTL 来源不明时不得写"永久"，必须标 `{待确认}`。
+
+---
+
+## 1.7 跨服务 Feign 调用表 [已确认]
+
+| 调用方 | SPI 接口定义 | 被调用方 | Feign Client | 方法 |
+|--------|-------------|----------|--------------|------|
+| {工程} | {spi 子模块 / 接口} | {被调工程} | {Client} | {method} |
+
+> **强制规则**：调用方列具体工程名（不是"BFF"）；SPI 接口路径精确到子模块，便于跨工程追踪。
+
+---
+
+## 1.8 关键约束清单（🔴 编码必读）
+
+> **每条约束 1 行**：`约束名 — 描述 — 出处/反例`
+
+1. **{约束名 1}** — {描述} — 出处/反例：`{file:line 或 function §}`
+2. **{约束名 2}** — {描述} — 出处/反例：`{file:line 或 function §}`
+
+> **强制规则**：每条约束必须给出出处或反例。无出处只能标 `{待确认}`，不得进入 CodingPlan 的"已确认约束"。
+
+---
+
+## 1.9 集成测试范式 [已确认/据推断]
+
+> **适用场景**：本 Story 涉及回调、状态机、多 Service 协作、落库一致性或外部 SDK 回调时填写。
+
+| 维度 | 实现 | 出处 |
+|------|------|------|
+| 测试框架 | `{JUnit/SpringRunner/...}` | {file:line} |
+| 数据库 | `{H2 MySQL 模式 / Testcontainers / 开发库}` | {file:line} |
+| 落库门禁 | `{DRIFT-XX / AC-XX / 无}` | {file:line} |
+| 回滚 | `{Transactional 自动回滚 / 清理脚本}` | {file:line} |
+| Mock 策略 | `{仅 Mock 外部 SDK / 签名校验 / Hook 等}` | {file:line} |
+
+> **强制规则**：本节仅在有集成测试需求时填；Mock 策略必须说明哪些依赖真实注入、哪些依赖被 Mock。若引用 DRIFT-XX，必须能在本工程 §6 安全门禁或 Story AC 中找到定义。
 
 ---
 
@@ -1250,34 +1327,18 @@ grep -rn "com\.casstime\.cloud\.{product}\.{domain}\.\(domain\|infrastructure\)\
 
 ---
 
-## 4. 跨工程 Feign 依赖表 [已确认]
-
-| 调用方 | SPI 接口定义 | 服务提供方 | Feign Client | 方法 |
-|--------|-------------|----------|--------------|------|
-| {工程} | {spi 接口} | {被调工程} | {Client} | {method} |
-| ... | ... | ... | ... | ... |
-
----
-
-## 5. 关键约束（🔴 编码必读）
-
-1. **{约束标题}** — {描述}
-2. **{约束标题}** — {描述}
-
----
-
-## 6. 关键词反向索引
+## 4. 关键词反向索引
 
 | 关键词 | 出现位置 |
 |--------|---------|
-| {类名} | §2 / §4 |
+| {类名} | §1.5 / §2 |
 | {方法名} | §2 |
-| {Redis Key} | §2 |
+| {Redis Key} | §1.6 / §2 |
 | ... | ... |
 
 ---
 
-## 7. 待确认事项
+## 5. 待确认事项
 
 | ID | 问题 | 影响范围 | 优先级 | 待查 |
 |----|------|---------|--------|------|
@@ -1288,7 +1349,7 @@ grep -rn "com\.casstime\.cloud\.{product}\.{domain}\.\(domain\|infrastructure\)\
 
 ## 附录 D：config/ 环境配置专题 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/config-topic-template.md skills/ae-sdd/assets/{projectKey}/config/{环境或场景}.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/config-topic-template.md {资产根}/config/{环境或场景}.md`（`{资产根}` 见 document-storage §2.3）
 
 ```markdown
 # {环境或场景} 配置（如 接口集成测试环境配置）
@@ -1386,7 +1447,7 @@ public interface BossUserInfoClient extends BossUserInfoService
 
 ## 附录 E：domain/ 业务域概览专题 Starter 模板（🆕 2026-06-26）
 
-> **使用方式：** `cp skills/ae-sdd/templates/project-assets/domain-topic-template.md skills/ae-sdd/assets/{projectKey}/domain/{业务域 Key}.md`
+> **使用方式：** `cp skills/ae-sdd/templates/project-assets/domain-topic-template.md {资产根}/domain/{业务域 Key}.md`（`{资产根}` 见 document-storage §2.3）
 
 ```markdown
 # {业务域名}（{英文 Key}）

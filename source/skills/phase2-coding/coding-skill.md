@@ -777,8 +777,9 @@ ae-sdd-doc/iterations/{YYYY-MM-DD}/Test/
 **🔴 真实执行命令规范：**
 
 ```bash
-python document/life-team-ai-standards/skills/ae-sdd/scripts/test_authenticity_scan.py --root {service-root} --require-reports --output .auto-engineering/{STORY-ID}/evidence/test-authenticity-scan-v{N}-r{M}.md
+python "$(ae-sdd scripts-dir)/test_authenticity_scan.py" --root {service-root} --require-reports --output .auto-engineering/{STORY-ID}/evidence/test-authenticity-scan-v{N}-r{M}.md
 ```
+> 🆕 v4.1：脚本路径不钉死项目，通过 `ae-sdd scripts-dir` 解析母版 scripts/ 目录（跨项目可用）。
 
 - 跑测试命令时禁止出现 `-DskipTests`、`-Dmaven.test.skip=true`、`testFailureIgnore=true`。
 - 模块级验证必须写清楚 `mvn -pl {module} -am test/verify` 的实际模块名；全量完成优先 `mvn clean verify`。

@@ -600,6 +600,51 @@ def cmd_iteration_check(args, parser):
     return 0
 
 
+def cmd_context_pressure(args, parser):
+    """context-pressure — 节点级上下文压力软提示（🆕 v3.5.5）
+
+    5 信号采集（session.userConfirmedPhases / state.events / state.history /
+    state.activeAgents / 落盘文档总字节），与可配置阈值比对，
+    输出 low / medium / high / critical 评级。**仅软提示，不阻断流程**。
+
+    对应 SOP：source/SKILL.md §⏱️ 节点级上下文压力软提示
+    """
+    from lib import context_pressure as cp_mod
+    ade_sdd = paths.locate_project_ae_sdd()
+    story_id = args.story or ""
+    report = cp_mod.run_all(ade_sdd, story_id)
+
+    if args.json:
+        output.emit(report.to_dict(), as_json=True)
+    else:
+        # 评级 emoji
+        icon = {"low": "🟢", "medium": "⚠ ", "high": "🟠", "critical": "🔴"}.get(
+            report.pressure, "ℹ️"
+        )
+        output.info(f"⏱️  节点级上下文压力（🆕 v3.5.5，report-only 不阻断）")
+        output.info(f"   评级：{icon} {report.pressure.upper()}")
+        sig = report.signals
+        output.info(
+            f"   signals: confirmedPhases={sig.get('confirmedPhases', 0)} | "
+            f"events={sig.get('events', 0)} | history={sig.get('historyLen', 0)} | "
+            f"docBytes={sig.get('docBytes', 0)} | activeAgents={sig.get('activeAgents', 0)}"
+        )
+        if report.triggered:
+            triggers = ", ".join(
+                f"{t.signal}={t.value} ≥ {t.threshold}({t.limit})"
+                for t in report.triggered
+            )
+            output.info(f"   触发信号：{triggers}")
+        if report.pressure == "critical" and report.suggestions:
+            output.warn("critical 级推荐动作（不阻断）：")
+            for s in report.suggestions:
+                output.info(f"   - {s}")
+        output.info(f"   {report.to_dict()['nextAction']}")
+
+    # report-only，始终返回 0（不阻断流程）
+    return 0
+
+
 def cmd_bump(args, parser):
     """bump — 同步三处版本号（SKILL.md / paths.py / README.md:5）
 
@@ -2035,6 +2080,13 @@ def main() -> int:
                           parents=[common])
     p_ic.add_argument("--project", default="", help="项目根（默认 master source 或 cwd）")
     p_ic.set_defaults(func=cmd_iteration_check)
+
+    # context-pressure（🆕 v3.5.5 — 节点级上下文压力软提示，report-only）
+    p_cp = sub.add_parser("context-pressure",
+                          help="[v3.5.5] 节点级上下文压力软提示（low/medium/high/critical，不阻断）",
+                          parents=[common])
+    p_cp.add_argument("--story", default="", help="Story ID（空 = 项目级）")
+    p_cp.set_defaults(func=cmd_context_pressure)
 
     # memory toolset (P0): mandatory phase-aware memory hooks
     p_mem = sub.add_parser("memory", help="phase-aware memory toolset", parents=[common])

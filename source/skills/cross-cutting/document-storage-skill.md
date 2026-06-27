@@ -127,18 +127,27 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 
 > **原则：** ae-sdd SKILL 家族与工程代码**解耦**——SKILL 家族不知道工程在哪、工程不知道 SKILL 家族在哪。**document-storage-skill 是中间的"目录路由器"**，接收调用方的"意图"（哪个项目、哪个 STORY-ID、哪个微服务、什么任务），输出"文档/代码/产出物"的完整路径。
 
-### 0.5.1 四维定位模型（🆕 v3.4.0 升级三维→四维，新增"文档工作区根"）
+### 0.5.1 五维定位模型（🆕 v4.1 四维→五维，新增"业务线根"；原 v3.4.0 为四维）
 
-> **🆕 v3.4.0（2026-06-25，建议书2）：** 原三维模型假设"工程目录=文档目录"（`design/` 相对路径基于 gitPath）。但 life 项目等"工程目录≠文档目录分离"项目（工程在 `d:\Item\life`，文档在 `D:\Item\doc\icec-cloud-boss\`）原模型推导不出正确路径。本次新增第四维"文档工作区根"（`docWorkspacePath`，可选，缺省回退 gitPath，向后兼容）。
+> **🆕 v4.1（2026-06-27，路径治理修订）：** v3.4.0 四维模型（项目根/微服务根/Story根/文档工作区根）解决了"工程目录≠文档目录"，但**资产**侧仍把"工程级子文件"定位甩给了 schema/代码，导致路径规则三处各写一套、改一处漂移两处（"路径偏移"的制度性根因）。本次新增第五维「业务线根」，并把**资产路径的单一权威源**收回本 SKILL。
+>
+> **历史：** v3.4.0（2026-06-25，建议书2）从三维升级为四维，新增"文档工作区根"。
 
-AE 流程涉及 4 类不同维度的位置，必须分别定位：
+AE 流程涉及 5 类不同维度的位置，必须分别定位：
 
 | 维度 | 定位依据 | 谁消费 |
 |------|---------|--------|
 | **项目根** | `assets.md` §1 `gitPath` 字段 | 所有"项目级"操作（代码、构建、跑测试）|
 | **微服务根** | `{gitPath} + "/" + {serviceName}`（拼接约定）| 微服务级文档 |
 | **Story 根** | `{文档工作区根}/ae-sdd-doc/Story/{STORY-ID}`（新统一路径）| 重任务 Story/Task/Coding 文档 |
-| 🆕 **文档工作区根** | `assets.md` §1 新增 `docWorkspacePath` 字段（可选，缺省=gitPath）| 工程目录与文档目录分离的项目（如 life）—— 设计类文档（DR/Story/Task/CodingPlan/测试用例/报告）路径基于此维度 |
+| **文档工作区根** | `assets.md` §1 `docWorkspacePath` 字段（可选，缺省=gitPath）| 工程目录与文档目录分离的项目（如 life）—— 设计类文档（DR/Story/Task/CodingPlan/测试用例/报告）路径基于此维度 |
+| 🆕 **业务线根** | `{docWorkspacePath}/assets/{workspaceKey}/{line}/` | 多业务线项目（如 life=2c/admin/common）—— 工程级资产子文件按业务线分组就近存放 |
+
+**🆕 v4.1 业务线根（line）说明：**
+- 仅"多业务线项目"启用（单业务线项目资产仍用扁平结构，无此维）
+- line 取值由项目实际工程结构决定（ae-sdd **不预设**取值；life 实例 = `2c` / `admin` / `common`）
+- 代码层 `paths.discover_line_groups()` 自动区分"module 目录"与"line 分组目录"，无需手填
+- 详见 §0.5.3 资产依赖 + §2.3 资产类路径模板
 
 **向后兼容：** `docWorkspacePath` 缺省时（assets.md §1 未填）回退到 `gitPath`，旧项目行为不变。仅当 assets.md §1 显式声明 `docWorkspacePath` 时，设计类文档路径基于该值。
 
@@ -161,7 +170,9 @@ document-storage-skill.定位(projectKey, intent)
 5. 返回：{完整路径, 文件名, 版本号, ChangeLog 路径, STORING 索引待更新项}
 ```
 
-### 0.5.3 项目资产依赖
+### 0.5.3 项目资产依赖（🔴 资产路径单一权威源 — 🆕 v4.1）
+
+> **🆕 v4.1（2026-06-27，SKILL 边界修复）：** 本节是**资产路径的唯一权威源（SSOT）**。`project-assets-schema.md` 只定义资产"装什么"（内容结构），`project-assets-update-skill.md` 只定义"怎么生成"（流程），**两者均不重复定义存放路径**——路径模板见本节 + §2.3。
 
 **document-storage-skill 强依赖** `assets.md`（作为"工程根"事实基线）：
 - 项目级定位读 §1 `gitPath`（工程目录，代码/构建根）
@@ -169,7 +180,23 @@ document-storage-skill.定位(projectKey, intent)
 - 微服务级定位读 §2 `microservices[].name`（拼接命名约定）
 - 路径规范读 §3-§5（分层映射 / 命名约定 / 包路径）
 
-**调用方传入 `{projectKey}` 时，document-storage-skill 自动定位** `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md`
+**资产三要素定位（🆕 v4.1）：**
+
+| 资产要素 | 路径 | 说明 |
+|---------|------|------|
+| **工作区级索引**（总览）| `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md` | 一份，聚合工程清单 + 跨工程依赖 + 指向下层 |
+| **工程级子文件**（多业务线，🆕 v4.1）| `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{line}/{工程名}/{工程名}.assets.md` | 一个工程一个文档，按业务线分组 |
+| **工程级子文件**（单业务线）| `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{工程名}/{工程名}.assets.md` | 无业务线分组时的扁平结构 |
+| **工作区级日志** | `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.update-log.md` | 累加 |
+| **工程级日志** | 同目录下 `{工程名}.update-log.md` | 各工程独立 |
+
+**业务线（line）自动发现规则（🆕 v4.1）：**
+- 代码层 `paths.find_module_asset_files()` 经 `discover_line_groups()` 自动区分三种结构并共存发现：
+  ① `{workspaceKey}/{line}/{工程}/`（多业务线，优先）② `{workspaceKey}/{工程}/`（单层）③ 旧扁平 `{workspaceKey}.{工程}.assets.md`
+- ae-sdd **不预设** line 取值，由项目工程结构决定（life = `2c`/`admin`/`common`，见 §2.3 示范）
+- 单业务线项目资产无 line 层，仍可正常工作（向后兼容）
+
+> ⚠️ **本节取代旧表述：** 历史版本曾写"调用方传 projectKey 自动定位 `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md`"——该表述把资产钉在技能包目录且无 line 维度，已废弃。资产应落在**项目工作区**（`{docWorkspacePath}/.ae-sdd/assets/`），不是技能包目录。详见 §2.3。
 
 ### 0.5.4 硬约束
 
@@ -220,7 +247,7 @@ interface ResolvedPath {
 ```
 
 **行为：**
-1. 读 `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md` §1 获取 `gitPath`
+1. 读工作区级索引资产 §1 获取 `gitPath`（+ `docWorkspacePath`，缺省=gitPath）—— 资产路径见 §2.3（`{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md`）
 2. 校验 `gitPath` 存在性（文件系统可达）
 3. 根据 `intent` 选路径模板（§2 路径模板）
 4. 替换所有占位符
@@ -413,7 +440,60 @@ interface ResolvedPath {
 | **跨轮 Review 对比** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-ReviewCompare-v1-to-v2.md` | `...ReviewCompare-v1-to-v2.md` | 带 v1-to-v2 |
 | **Story Supplement** | `{工程根}/ae-sdd-doc/Story/{STORY-ID}/{STORY-ID}-Supplement.md` | 原地累加 | 不带版本号 |
 
-### 2.3 迭代目录结构（🆕 2026-06-17 强制）
+### 2.3 资产类路径模板（🔴 资产路径 SSOT — 🆕 v4.1）
+
+> **🆕 v4.1（2026-06-27，路径治理修订）：** 本节是**资产路径的单一权威源**。此前资产路径散落在 `project-assets-schema.md §12.3` + `project-assets-update-skill.md §0` + 代码 `paths.py` 三处，改一处漂移两处（"路径偏移"的制度性根因）。本次把路径定义统一收回本节，schema/update-skill 改为引用此处。
+>
+> **核心设计：** 资产是"项目事实"（代码结构、命名、约束），应落在**项目工作区**（`{docWorkspacePath}/.ae-sdd/assets/`），不是技能包目录。一个工程一个文档，多业务线按 line 分组，再加一份工作区级索引。
+
+**根目录定位：**
+- `{docWorkspacePath}` 由 `assets.md §1 docWorkspacePath` 字段决定（缺省=gitPath）
+- 资产根：`{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`
+
+| 资产要素 | 路径模板 | 命名 |
+|---------|---------|------|
+| **工作区级索引**（总览，1 份）| `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md` | 不带版本号 |
+| **工程级子文件**（多业务线）| `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{line}/{工程名}/{工程名}.assets.md` | 不带版本号 |
+| **工程级子文件**（单业务线，扁平）| `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{工程名}/{工程名}.assets.md` | 不带版本号 |
+| **工作区级日志** | `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.update-log.md` | 原地累加 |
+| **工程级日志** | `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/[{line}/]{工程名}/{工程名}.update-log.md` | 原地累加 |
+| **待确认问题清单** | `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.pending-questions.md` | 原地维护 |
+
+**life 项目实例化（多业务线示范，🔴 life 强制用此结构）：**
+
+```
+D:\Item\life\.ae-sdd\assets\life\                          ← workspaceKey = life
+├── life.assets.md                                          ← 工作区级索引
+├── life.update-log.md
+├── 2c\                                                     ← line = 2c（21 工程）
+│   ├── icec-cloud-life-cs\icec-cloud-life-cs.assets.md
+│   ├── icec-cloud-life-im\icec-cloud-life-im.assets.md
+│   └── ...
+├── admin\                                                  ← line = admin（15 工程）
+│   ├── icec-cloud-boss-user\icec-cloud-boss-user.assets.md
+│   └── ...
+└── common\                                                 ← line = common（公共线）
+    ├── boss-common\boss-common.assets.md
+    └── ...
+```
+
+**单业务线项目（扁平结构，向后兼容）：**
+
+```
+{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/
+├── {workspaceKey}.assets.md            ← 索引
+├── {工程名}\{工程名}.assets.md          ← 工程级子文件（无 line 层）
+└── ...
+```
+
+**分组建目录的判定规则：**
+- 项目含 2+ 业务线（如 life 的 2c+admin+common）→ **推荐**按 line 分组（life 实例**强制**）
+- 单业务线项目 → 扁平结构，无需 line 层
+- ae-sdd **不预设** line 取值，由项目工程结构决定；代码 `paths.discover_line_groups()` 自动适配
+
+> ⚠️ **兼容旧位置：** 历史 v4.0 曾支持 `{docWorkspacePath}/assets/{key}/{module}/` 单层 + `.ae-sdd/assets/{key}.*.assets.md` 扁平，这两种 `paths.find_module_asset_files()` 仍自动发现（三路共存），不强制迁移。
+
+### 2.4 迭代目录结构（🆕 2026-06-17 强制）
 
 > **🔴 强制：** 任何文档落地前必须先调用 `choose_iteration()` 判定属于哪个迭代。
 
@@ -455,7 +535,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 - 由 `choose_iteration()` API 自动判定（业务+逻辑关联性分析）
 - 可由调用方显式传入 `iterationDate` 覆盖
 
-### 2.4 旧路径兼容层（⚠️ deprecated）
+### 2.5 旧路径兼容层（⚠️ deprecated）
 
 > **⚠️ 状态：** 旧路径**保留**（存量可读）但**新文档严禁写入**。新文档必须用 `ae-sdd-doc/`。
 

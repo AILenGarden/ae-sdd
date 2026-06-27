@@ -29,21 +29,23 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成/更新/读取的项目资产在写入或访问磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.5 路径模板）：
->    - 主体：`skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md`
->    - 日志：`skills/ae-sdd/assets/{projectKey}/{projectKey}.update-log.md`
+> 1. **路径（🔴 路径 SSOT 在 document-storage §2.3，本 SKILL 不重复定义）**：工作区级索引 / 工程级子文件 / 日志的完整路径模板见 [`document-storage-skill.md §2.3 资产类路径模板`](../cross-cutting/document-storage-skill.md)。多业务线项目按 `{line}` 分组，单业务线项目扁平，详见该节。
 > 2. **命名**（§3.1/3.2 命名规则）：**基础设施类文档不带版本号**（资产是单一权威源，更新通过日志追踪）
 > 3. **重入判定**（§4 重入 SOP）：项目资产**永不修改文件名**（只通过更新日志记录变更）
 > 4. **🆕 索引层归属**：索引项**写入资产主体文件**（与 §0-§10 同文件），便于一次性 grep 定位；不另开索引文件（避免双源漂移）
+>
+> **🆕 v4.1 SKILL 边界修复：** 历史版本本节曾硬编码资产路径（`skills/ae-sdd/assets/{projectKey}/`），与 document-storage、schema、代码四处各写一套导致"路径偏移"。本次把路径定义统一收回 document-storage §2.3，本 SKILL 只管"怎么生成内容"。
 
-| 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
-|---------|---------|---------|----------|
-| 项目资产主体（含索引层） | `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md` | 不带版本号 | 原地修改（变更加日志）|
-| 项目资产更新日志 | `skills/ae-sdd/assets/{projectKey}/{projectKey}.update-log.md` | 不带版本号 | 原地累加（每变更 1 条）|
-| **🆕 待确认问题清单** | `skills/ae-sdd/assets/{projectKey}/{projectKey}.pending-questions.md` | 不带版本号 | 原地维护（新增追加 / 解决则消掉）|
+| 输出文档 | 路径定义处 | 命名规则 | 重入时动作 |
+|---------|-----------|---------|----------|
+| 项目资产主体（含索引层） | **document-storage §2.3**（工作区级索引）| 不带版本号 | 原地修改（变更加日志）|
+| 项目资产更新日志 | **document-storage §2.3** | 不带版本号 | 原地累加（每变更 1 条）|
+| **🆕 待确认问题清单** | **document-storage §2.3** | 不带版本号 | 原地维护（新增追加 / 解决则消掉）|
+| **工程级子文件**（多业务线）| **document-storage §2.3**（`{line}/{工程名}/`）| 不带版本号 | 原地修改 |
 
-> 🔴 **关键：** 项目资产是"单一权威源"，**永不通过文件名识别版本**，所有变更通过 `{projectKey}.update-log.md` 追踪。
+> 🔴 **关键：** 项目资产是"单一权威源"，**永不通过文件名识别版本**，所有变更通过更新日志追踪。
 > 🆕 **索引层与内容层同文件**：§A-G 索引项与 §0-§10 内容同处一文件，确保"一处改、索引与内容同步"。
+> 🆕 v4.1 **路径不再在本文件查找**：需要资产落盘路径时，一律调 `document-storage-skill §2.3`。
 
 ---
 
@@ -155,9 +157,12 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 
 ### 3.3 输出物
 
-- `skills/ae-sdd/assets/{project-key}/{project-key}.assets.md`（按 schema 12 节 + §A-§F 索引层填写，含 §10 经验文档）
-- `skills/ae-sdd/assets/{project-key}/{project-key}.update-log.md`（更新日志，首次条目 = initial）
-- **🆕 `skills/ae-sdd/assets/{project-key}/{project-key}.pending-questions.md`**（待确认问题清单，探查中无法自行确认的事项）
+> 🆕 v4.1：路径以 `document-storage §2.3` 为准，此处用 `{资产根}` 代指 `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`。
+
+- `{资产根}/{workspaceKey}.assets.md`（按 schema 12 节 + §A-§F 索引层填写，含 §10 经验文档）
+- `{资产根}/{workspaceKey}.update-log.md`（更新日志，首次条目 = initial）
+- **🆕 `{资产根}/{workspaceKey}.pending-questions.md`**（待确认问题清单，探查中无法自行确认的事项）
+- **🆕 v4.1 工程级子文件**：`{资产根}/[{line}/]{工程名}/{工程名}.assets.md`（多业务线项目按 line 分组，详见 document-storage §2.3）
 
 #### 3.3.1 🆕 pending-questions.md 格式
 
@@ -632,15 +637,17 @@ ls constraints/*.md | xargs -n1 basename
 
 **5.4.1 审计对象与命令**
 
+> 🆕 v4.1：命令中 `{资产根}` = `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`（见 document-storage §2.3）。
+
 | 对象 | 审计命令 | 通过条件 |
 |------|---------|---------|
-| `function/` 目录 | `ls skills/ae-sdd/assets/{projectKey}/function/ \| wc -l` | ≥ 已完成 Story 数 × 0.7（允许 30% 漏）|
+| `function/` 目录 | `ls {资产根}/function/ \| wc -l` | ≥ 已完成 Story 数 × 0.7（允许 30% 漏）|
 | `function/{Story}.md` 内容 | 检查是否含 §1 接口清单 + §2 调用链 + §4 跨工程 Feign 表 | 每篇必备 4 节 |
-| `config/test/api-test-env.md` | `grep "工程信息" config/test/*.md` | 必含 5+ 工程 |
+| `config/test/api-test-env.md` | `grep "工程信息" {资产根}/config/test/*.md` | 必含 5+ 工程 |
 | `config/` 内容 | 检查 §5 已知踩坑 + §4 测试 Base URL 完整性 | 每篇必备 4 节 |
-| `domain/` 目录 | `ls skills/ae-sdd/assets/{projectKey}/domain/` | 与业务域数匹配 |
+| `domain/` 目录 | `ls {资产根}/domain/` | 与业务域数匹配 |
 | `domain/{域}.md` 内容 | 检查 §4 域间依赖 + §5 域事件流 | 每篇必备 5 节 |
-| 工程级子文件 | `ls {projectKey}.*.assets.md` | 与主体 §15 表格一一对应 |
+| 工程级子文件 | `ls {资产根}/{line}/*/{工程}.assets.md`（多业务线）/ `ls {资产根}/*/{工程}.assets.md`（单层）| 与主体 §15 表格一一对应 |
 | 主体 §15 表格 | 检查每行文件是否存在 + 大小是否 > 0 | 100% 一致 |
 | §6.8 完整技术栈版本号表 | 检查 7 张表是否齐全 | 100% 齐全 |
 | §1.X 部署信息 | 检查 10 个字段是否齐全 | ≥ 8/10 字段填 |
@@ -743,11 +750,13 @@ ae-sdd assets stats --project <projectKey>
 #### 步骤 4：在 CodePlan 头部写"项目资产已就绪"声明
 
 ```markdown
-项目资产路径: skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md
+项目资产路径: {docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md（+ 工程级子文件见 §2.3）
 项目资产版本: v{N} (lastAuditedAt: {YYYY-MM-DD})
 本次读取: ae-sdd assets read coding --keys "CsTicketAppService" --project {projectKey}
 索引状态: cache=hit（复用）/ miss（本次新建）
 ```
+
+> 🆕 v4.1：资产路径模板以 `document-storage-skill §2.3` 为准（多业务线按 line 分组 / 单业务线扁平）。CodePlan 头部声明路径时用 §2.3 的完整路径，不硬编码 `skills/ae-sdd/assets/`。
 
 ### 6.3 门禁
 

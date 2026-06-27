@@ -569,6 +569,115 @@ reviewer-数据模型视角 ──┘
 
 ---
 
+## 8.5 🆕 v3.5.5 默认单 sub-agent 模式（单 Story 也派活）
+
+> **🔴 背景：** v3.5.4 及之前的默认是"单 Agent 串行做所有事"，主会话被迫读 23 个子 SKILL、读源码、写文档、做 walkthrough、跑测试 → 上下文爆炸。v3.5.5 起主会话职责收口（详见 SKILL.md §🤖 主会话职责边界），**默认单 Story 也派 1 个 sub-agent**，主会话只承担编排层职责。
+>
+> **🟢 与 §8.4 多 reviewer 的关系：** §8.4 是 Review 节点的多 reviewer 编排（已稳定）；本节 §8.5 是**单 Story 单 sub-agent** 的派活默认行为（v3.5.5 新增）。两者正交，不替代。
+
+### 8.5.1 主会话 vs sub-agent 职责划分
+
+| 类别 | 主会话负责 | 派给 sub-agent |
+|---|---|---|
+| **SKILL 文档** | 仅读 SKILL.md 编排层内容 | 读子 SKILL 模板按节点执行 |
+| **源码** | 不读源码 | 读源码做分层 walkthrough |
+| **文档产出** | 不写流程文档 | 写 Story / Task / CodingPlan / TestCase / CodeReview |
+| **讲解** | ✅ 主笔（5-7 维度故事由主会话在对话中产出）| 准备讲解素材 |
+| **CLI 调用** | ✅ `ae-sdd state/gates/iteration-check/context-pressure` | 跑 `mvn test` / Surefire XML / `scripts/test_authenticity_scan.py` |
+| **状态落盘** | ✅ 写 `state.json` / `session.json` | 不直接写 |
+| **用户对话** | ✅ 输入分析、✅/⚠️/⏸️ 收口 | 不直接对话用户 |
+
+### 8.5.2 不派活的例外（保留路径）
+
+| 例外 | 原因 | 处理 |
+|---|---|---|
+| 微任务（类型 4）| 单文件/单枚举值，机械改动 | 主会话直做，跳过 sub-agent 派活 |
+| BUG/配置类 | coding-skill BUG 路径 | 主会话直做 |
+| 用户明确豁免 | "主会话直做 / 不要派活" | 尊重用户，记录到 `state.json.contextNote`（可选）|
+| ⑥.10 test-verifier | v3.4.0 强制独立验证 | 即使其他节点主会话直做，本节点也强制派 |
+
+### 8.5.3 单 sub-agent 派活协议
+
+参照 §4 任务分配卡，v3.5.5 默认参数：
+
+```yaml
+agent_role: <单节点角色，如 coder / task-writer>
+story_id: STORY-XXX-BE
+priority: P0 / P1 / P2
+
+input:
+  - Story 文档 / Task 文档 / CodingPlan（按节点）
+  - 项目资产 / 约束 / 模板路径
+
+output:
+  deliverable: <节点产出物文件路径>
+  report: <节点报告文件路径>
+
+standards:
+  - 必须按对应子 SKILL 模板执行
+  - 必须输出结构化报告（参照 §4.1）
+
+context:
+  - 必要的 Story 背景信息
+  - 与其他 Story 的关联（如有）
+  - 上一步的产出物引用
+
+deadline: <最长执行时间>
+
+report_back:
+  channel: mavis communication
+  target: <root session id>
+  format: <节点报告模板>
+```
+
+### 8.5.4 与 §8.4 多 reviewer 的衔接
+
+- 单 Story 默认派 1 个 sub-agent（§8.5）
+- Review 节点默认派 1/2/3 个 reviewer（§8.4，按 Tier 判定）
+- 两者独立，**总 sub-agent 数 = 单 Story 数 + Review reviewer 数**，需 ≤ §2.2 上限 5
+
+---
+
+## 8.6 🆕 v3.5.5 节点级派活清单（审核点 → sub-agent 映射）
+
+> **🔴 与 §8.5 的关系：** §8.5 是"派活协议通用规则"；本节是"具体节点的派谁"——SKILL.md §整体流程图的每个审核点对应的 sub-agent 角色映射。
+
+### 8.6.1 审核点 → 派活映射表
+
+| 审核点 | 主会话职责 | 派活角色 | 产出物 | 必须输出报告 |
+|---|---|---|---|---|
+| 1（设计阶段完成）| 讲解 + 收口 | `story-writer` + `testcase-writer` | Story 文档 + TestCase 文档 | `*-Story-WriterReport.md` + `*-TestCase-WriterReport.md` |
+| 1.5（实现方案预确认）| 讲解 5 维度 + 收口 | `task-writer`（草稿实现方案）| `{STORY-ID}-Task实现方案.md` | `*-Task-WriterReport.md` |
+| 2（Task 文档完成）| 讲解 + 逐文件收口 | `task-writer`（写 Task 文档）| Task 文档集 | `*-Task-WriterReport.md` |
+| 2.5（CodingPlan 评审）| 讲解 + 收口 | `task-writer`（汇总统一版 CodingPlan）| `{STORY-ID}-CodingPlan.md` | 含 16 章节 + 14 门禁自检表 |
+| 4（CodeReview 完成）| 讲解 + walkthrough + 收口 | `coder` + `code-reviewer` | 代码 + CodeReview 报告 | `*-Coding-CoderReport-r{M}.md` + `*-CodeReview-v{N}-r{M}.md` |
+| 5（PRD 完成确认）| 讲解 5 维度（PRD 级视角）+ 收口 | `summary-writer` | `.auto-engineering/{PRD-ID}/summary.md` | `*-PRD-SummaryReport.md` |
+| ⑥.10（测试真实性）| 独立派 `test-verifier` 跑 | `test-verifier`（v3.4.0 强制）| `{STORY-ID}-TestVerification-Report.md` | 含 8 类禁止手段扫描 + AC 覆盖率 |
+
+### 8.6.2 单节点派活粒度建议
+
+| 节点 | 推荐 sub-agent 数 | 理由 |
+|---|---|---|
+| 审核点 1 | 1-2（story-writer + testcase-writer）| Story 与 TestCase 可并行；但小 Story 可合并 1 个 sub-agent |
+| 审核点 1.5 / 2 / 2.5 | 1（task-writer）| 顺序依赖强，并行收益小 |
+| 审核点 4 | 1-2（coder + code-reviewer）| 强依赖（CodeReview 依赖代码完成）|
+| 审核点 5 | 1（summary-writer）| 单 PRD 收尾，无并行需求 |
+| ⑥.10 | 1（test-verifier）| v3.4.0 已固定，强制独立 |
+
+### 8.6.3 节点边界上下文压力软提示（🆕 v3.5.5）
+
+每个审核点用户 ✅ 确认后，主会话**必须**调一次：
+
+```bash
+ae-sdd context-pressure --story {STORY-ID}
+```
+
+软提示 SOP 详见 SKILL.md §⏱️ 节点级上下文压力软提示。本节只强调：**sub-agent 完成后 → root agent 汇总 → 调用 context-pressure → 用户确认 → 派下一节点 sub-agent**。
+
+> **🔴 红线：** context-pressure 不阻断流程（report-only），critical 时输出推荐动作清单，由用户决定是否进入 PRD 收尾。
+
+---
+
 ## 9. 状态跟踪
 
 ### 9.1 状态字段（追加到 state.json）

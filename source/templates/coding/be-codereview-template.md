@@ -414,16 +414,16 @@ git commit -m "[ST-{id}] {story_title}"
 
 > AI 必须验证以下每个产出物真实存在，并与报告描述一致。
 
-| 产出物 | 实际路径 | 是否存在 | 与报告一致 |
+| 产出物 | 实际路径（由 document-storage §2.2 推导，不硬编码） | 是否存在 | 与报告一致 |
 |--------|---------|---------|----------|
-| Story 文档 | `design/story/be/{STORY-ID}.md` | □ | □ |
-| 统一版 CodePlan | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodingPlan.md` | □ | □ |
-| Coding 报告 | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodingReport-v{N}-r{M}.md` | □ | □ |
-| 测试用例 | `design/testcase/be/{STORY-ID}/{STORY-ID}-testcase.md` | □ | □ |
-| 测试报告 | `design/testcase/be/{STORY-ID}/{STORY-ID}-Report-v{N}-r{M}.md` | □ | □ |
+| Story 文档 | `resolve_path(intent="STORY", storyId={STORY-ID})` → `ae-sdd-doc/Story/{STORY-ID}.md` | □ | □ |
+| 统一版 CodePlan | `resolve_path(intent="CODING_PLAN", storyId={STORY-ID})` → `ae-sdd-doc/Coding/{STORY-ID}/{STORY-ID}-CodingPlan.md` | □ | □ |
+| Coding 报告 | `resolve_path(intent="CODING_REPORT", storyId={STORY-ID}, version=...)` → `ae-sdd-doc/Coding/{STORY-ID}/{STORY-ID}-CodingReport-v{N}-r{M}.md` | □ | □ |
+| 测试用例 | `resolve_path(intent="TESTCASE", storyId={STORY-ID})` → `ae-sdd-doc/Test/{STORY-ID}/{STORY-ID}-testcase.md` | □ | □ |
+| 测试报告 | `resolve_path(intent="TEST_REPORT", storyId={STORY-ID}, version=...)` → `ae-sdd-doc/Test/{STORY-ID}/{STORY-ID}-Report-v{N}-r{M}.md` | □ | □ |
 | 源代码 | 工作目录对应工程 | □ | □ |
-| **CodeReview 报告** | `design/story/be/coding/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md` | □ | □ |
-| 项目资产（如有更新）| `skills/ae-sdd/assets/{projectKey}/` | □ | □ |
+| **CodeReview 报告** | `resolve_path(intent="CODE_REVIEW", storyId={STORY-ID}, version=...)` → `ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md` | □ | □ |
+| 项目资产（如有更新）| `{资产根}/`（见 document-storage §2.3；多业务线含 `{line}/` 分组）| □ | □ |
 
 > 🔴 任何产出物不存在或不一致 → 必须修正报告或补充产出物，不得跳过。
 

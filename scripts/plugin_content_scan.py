@@ -6,7 +6,7 @@
 
 对标 coding_authenticity_scan.py / ra_authenticity_scan.py 的架构与 severity 分级。
 
-检测规则（PC-001 ~ PC-008）：
+检测规则（PC-001 ~ PC-010）：
 - PC-001 BLOCKER：无差别删除（rm -rf /、rm -rf ~）
 - PC-002 BLOCKER：任意命令执行（os.system、subprocess shell=True）
 - PC-003 BLOCKER：远程脚本执行（curl|sh、wget|sh）
@@ -15,6 +15,9 @@
 - PC-006 INFO   ：内网 IP（10.x、172.x、192.168.x）
 - PC-007 BLOCKER：过度权限（chmod 777、chmod +x /）
 - PC-008 WARN   ：绕过检查（git --no-verify、--force）
+- PC-009 WARN   ：硬编码产出路径（design/story/be/、.ae-project/assets.md 等越界路径，
+                  应由 document_storage.resolve_path 推导）— 🆕 v4.1 路径治理
+- PC-010 WARN   ：写产出路径但未声明调用 document-storage（文档级聚合判定）— 🆕 v4.1
 
 分层阻断策略（在 plugin_loader.load_registry 接入，非本文件职责）：
 - L2 全局层：BLOCKER 命中 → 阻断加载
@@ -134,6 +137,17 @@ LINE_RULES: list[tuple[str, str, "re.Pattern[str]", str]] = [
         re.compile(r"git\s+\w+\s+--no-verify\b|git\s+push\s+--force(?:-with-lease)?\b"),
         "绕过检查：git --no-verify / --force 跳过 hook 或覆盖远端。",
     ),
+    # 🆕 v4.1 路径治理：硬编码产出路径（应经 document_storage.resolve_path 推导）
+    (
+        "WARN",
+        "PC-009-hardcoded-output-path",
+        re.compile(
+            r"(?:design/story/be/|design/testcase/be/|\.ae-project/assets\.md"
+            r"|life-team-project-docs/|\.ae-task/|\.ae-plan/|\.spec/iterations/)"
+        ),
+        "硬编码产出路径：检测到 deprecated/越界路径（design/、.ae-project/ 等），"
+        "应由 document_storage.resolve_path 推导，不得硬编码（见 document-storage §0.6.1）。",
+    ),
 ]
 
 
@@ -183,7 +197,52 @@ def scan_plugin_file(path: Path, plugin_name: str = "") -> ScanResult:
                     snippet=snippet,
                 ))
 
+    # 🆕 v4.1 PC-010 文档级聚合判定：写产出路径但未声明调用 document-storage
+    _check_pc010_missing_doc_storage_call(text, path, plugin_name, result)
+
     return result
+
+
+# ─── PC-010 文档级检测（非逐行，聚合判定）──────────────────────────────────
+# 产出路径线索：ae-sdd-doc/ 下子目录、或 SKILL 里出现落地路径模板
+_PC010_PATH_HINT_RE = re.compile(
+    r"ae-sdd-doc/(?:PRD|RA|DR|Story|Task|Coding|Test|CR)/"
+    r"|复制本文到\s+\S+/|存放路径[：:]\s*`?\S+/"
+)
+# document-storage 声明线索：API 名、或引用 document-storage-skill
+_PC010_DECLARATION_RE = re.compile(
+    r"document[_-]?storage|resolve_path|save_doc|choose_iteration"
+    r"|document-storage-skill",
+    re.IGNORECASE,
+)
+
+
+def _check_pc010_missing_doc_storage_call(text: str, path: Path,
+                                          plugin_name: str, result: ScanResult) -> None:
+    """PC-010：文档含产出路径线索但无 document-storage 声明 → WARN。
+
+    判定：全文有 _PC010_PATH_HINT_RE 命中（≥1 处产出路径）且
+          无 _PC010_DECLARATION_RE 命中（无 document-storage 调用/引用）。
+    线索 0 处（非产出文档）或已声明 → 不报。
+    """
+    if not _PC010_PATH_HINT_RE.search(text):
+        return  # 无产出路径线索，不是产出文档，跳过
+    if _PC010_DECLARATION_RE.search(text):
+        return  # 已声明 document-storage，合规
+    # 未声明 → 告警（定位到首个产出路径行）
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if _PC010_PATH_HINT_RE.search(line):
+            result.findings.append(PluginFinding(
+                severity="WARN",
+                rule="PC-010-missing-doc-storage-call",
+                plugin=plugin_name,
+                path=str(path),
+                line=lineno,
+                message="未声明调用 document-storage：文档定义了产出路径但无 "
+                        "resolve_path/save_doc 声明，应委派 document-storage-skill 推导路径。",
+                snippet=line.strip()[:120],
+            ))
+            break
 
 
 def has_blocker(result: ScanResult) -> bool:

@@ -63,7 +63,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 4 G-RA + 1 G-CODE = 22）
+# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-CODE = 23）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -86,6 +86,9 @@ GATE_REGISTRY: list[dict] = [
     {"id": "G-CODEPLAN-SRC", "name": "CodingPlan 源码核对", "severity": "blocker"},
     # G-DOC-STORAGE 文档落地存放合规：产物路径/命名须经 resolve_path 推导（建议书2）
     {"id": "G-DOC-STORAGE", "name": "文档落地存放合规", "severity": "blocker"},
+    # 🆕 v4.1 G-PATH 路径越界检测：母版 source/ 下 SKILL/template 文档不得硬编码产出路径，
+    # 须声明调用 document-storage（防自身路径规则漂移，与 plugin_content_scan PC-009/010 分层防护）
+    {"id": "G-PATH", "name": "路径越界检测", "severity": "blocker"},
     # 🆕 v3.2 G-RA 需求分析准入门卫（对标 SKILL.md §🛡️ G-RA）— 把 RA 16 道闸
     # 的核心条款从"纸面规则"变成"可执行门禁"，与 Coding G-08/G-09 对等。
     {"id": "G-RA-1", "name": "RA 文档存在",          "severity": "blocker"},
@@ -123,16 +126,16 @@ def check_g00(master_source: Optional[Path], ade_sdd: Optional[Path], project_ke
                           f"运行: ae-sdd init <project-dir> {project_key}")
 
     missing: list[str] = []
-    if not (ade_sdd / "config.yaml").is_file():
+    if not paths.config_path(ade_sdd).is_file():
         missing.append("config.yaml")
-    if not (ade_sdd / "state.json").is_file():
+    if not paths.state_path(ade_sdd).is_file():
         missing.append("state.json")
 
     asset_file = paths.find_asset_file(ade_sdd, project_key)
     if asset_file is None or not asset_file.is_file():
         return GateResult("G-00", name, "blocker", False,
-                          f"项目资产不存在: assets/{project_key}.assets.md",
-                          f"运行: ae-sdd init <project-dir> {project_key} --asset-path <已有资产>")
+                          f"项目资产不存在: .ae-sdd/assets/{project_key}/{project_key}.assets.md（或旧位置 assets/{project_key}.assets.md）",
+                          f"运行: ae-sdd init <project-dir> {project_key} --asset-path <已有资产>（资产路径模型见 document-storage §2.3）")
 
     if missing:
         return GateResult("G-00", name, "blocker", False,
@@ -1280,6 +1283,99 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
                       details={"stray_files": [], "checked": checked})
 
 
+# ─── G-PATH：路径越界检测（🆕 v4.1，扫母版 source/ 防自身漂移）─────────────────
+# document-storage-skill 是路径 SSOT（§0.5）；母版 source/ 下其他 SKILL/template
+# 文档不得硬编码产出路径，须声明调用 document-storage。与 plugin_content_scan
+# PC-009/010 分层防护：PC-x 扫外挂/插件（防外部污染），G-PATH 扫母版（防自身漂移）。
+# 越界路径模式（硬编码这些 = 越界，应改 resolve_path/引用 document-storage）
+# 含 4 类：①deprecated 产出路径 design/ ②错版资产路径 .ae-project/ ③项目内技能包路径
+# ④技能包内资产路径 skills/ae-sdd/assets/{projectKey}/{projectKey}（项目实例不该用）
+_PATH_VIOLATION_RE = re.compile(
+    r"(?:design/story/be/|design/testcase/be/|\.ae-project/assets\.md"
+    r"|life-team-project-docs/[^\s`]*/design/"
+    r"|document/[^\s`]*/skills/ae-sdd/(?:scripts|tools)/"
+    r"|skills/ae-sdd/assets/\{projectKey\}/\{projectKey\})"
+)
+# document-storage 声明线索（文档引用了 SSOT 视为合规线索，但硬编码路径仍报）
+_PATH_DECLARATION_RE = re.compile(
+    r"document-storage|resolve_path|save_doc|§2\.3|§0\.6", re.IGNORECASE
+)
+# 扫描范围白名单：母版 source/ 下的 .md
+# docs/ 整体跳过（迁移指南/约定文档会引用旧路径作"迁移说明"，非 SKILL 路径定义）
+_PATH_SCAN_SKIP_DIRS = ("node_modules/", ".git/", "dist/", "CHANGELOG/", "docs/")
+
+
+def check_g_path(master_source: Optional[Path], project_dir: Path,
+                 st: dict, current_story: str) -> GateResult:
+    """G-PATH 路径越界检测 — 母版 source/ 文档不得硬编码产出路径。
+
+    扫描范围：master_source/source/**/*.md（母版自身文档）。
+    检测：_PATH_VIOLATION_RE 命中（design/、.ae-project/ 等越界路径）。
+    与 G-DOC-STORAGE（扫项目实例产物落点）正交：G-DOC-STORAGE 管"产物落在哪"，
+    G-PATH 管"母版文档里写了什么路径定义"。
+
+    master_source 缺失时降级为 warn（不阻断，因母版未安装场景无法扫描）。
+    """
+    name = "路径越界检测"
+
+    if master_source is None:
+        return GateResult("G-PATH", name, "blocker", False,
+                          "未定位到母版 master_source，无法扫描 source/ 路径越界",
+                          "确认 ae-sdd 母版已安装或在仓库根运行",
+                          details={"scanned": 0, "violations": [], "skipped": "no_master"})
+
+    source_dir = master_source / "source" if (master_source / "source").is_dir() else master_source
+    if not source_dir.is_dir():
+        return GateResult("G-PATH", name, "blocker", False,
+                          f"母版 source/ 不存在: {source_dir}",
+                          "确认 master_source 定位正确",
+                          details={"scanned": 0, "violations": [], "skipped": "no_source"})
+
+    # document-storage-skill.md 是路径 SSOT 持有者，其所有路径引用（定义/deprecation 说明）均合法，
+    # 整体豁免（否则 §0.5.3/§2.5 兼容层的迁移说明会被误报为越界）
+    DOC_STORAGE_SKILL = "document-storage-skill.md"
+
+    violations: list[dict] = []
+    scanned = 0
+    for md_path in source_dir.rglob("*.md"):
+        try:
+            rel = md_path.relative_to(master_source)
+        except ValueError:
+            continue
+        rel_str = str(rel).replace("\\", "/")
+        if any(seg in rel_str for seg in _PATH_SCAN_SKIP_DIRS):
+            continue
+        if md_path.name == DOC_STORAGE_SKILL:
+            continue  # SSOT 持有者豁免
+        scanned += 1
+        if scanned > 500:  # 性能护栏
+            break
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if _PATH_VIOLATION_RE.search(line):
+                violations.append({
+                    "file": rel_str,
+                    "line": lineno,
+                    "snippet": line.strip()[:100],
+                })
+
+    if violations:
+        files = sorted({v["file"] for v in violations})
+        return GateResult("G-PATH", name, "blocker", False,
+                          f"母版文档存在路径越界（{len(violations)} 处，"
+                          f"涉及 {len(files)} 文件）：{[v['file']+':'+str(v['line']) for v in violations[:5]]}",
+                          "改为声明调用 document-storage resolve_path，或引用 §2.3 路径模板；"
+                          "禁止硬编码 design/、.ae-project/、skills/ae-sdd/assets/ 等路径",
+                          details={"scanned": scanned, "violations": violations})
+
+    return GateResult("G-PATH", name, "blocker", True,
+                      f"路径越界检测通过（扫描 {scanned} 个母版 .md，无硬编码产出路径）",
+                      details={"scanned": scanned, "violations": []})
+
+
 # ─── 路由表 ─────────────────────────────────────────────────────────────────
 CHECK_FUNCS: dict[str, Callable] = {
     "G-01": check_g01, "G-02": check_g02, "G-03": check_g03,
@@ -1333,6 +1429,9 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
         elif g["id"] == "G-CODE-1":
             # G-CODE-1 需要 master_source 调 coding_authenticity_scan.py
             results.append(check_gcode1(project_dir, st, current_story, master_source=master_source))
+        elif g["id"] == "G-PATH":
+            # 🆕 v4.1 G-PATH 需要 master_source 扫母版 source/ 路径越界
+            results.append(check_g_path(master_source, project_dir, st, current_story))
         elif g["id"] in CHECK_FUNCS:
             results.append(CHECK_FUNCS[g["id"]](project_dir, st, current_story))
         else:

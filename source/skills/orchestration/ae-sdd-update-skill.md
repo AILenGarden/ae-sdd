@@ -775,6 +775,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.5.2 `source/SKILL.md` 含 `### ⑦ter 流程收尾合规自检` 章节（5 维度自检 + 自愈 SOP + 自检表模板）+ `#### 1.7 PRD 收尾合规自检 SOP`（堵 prd-complete 跳校验漏洞）+ 整体流程图含 ⑦ter 节点 + 执行清单含 10a 行；`source/docs/ae-sdd-design.md` 端到端流程编排模块含 v3.5.2 自检说明
 - [ ] 🆕 v3.5.3 本文件含 `## 设计-实现一致性迭代检查` 章节（4 步 SOP：UC 基线 + HS 物理实现核对 + CLI 命令契约深挖 + 已实现未接入扫描 + 报告模板 + 与 UC 关系定位）；`source/docs/ae-sdd-design.md` 工具链 CLI 模块含 v3.5.3 迭代检查说明
 - [ ] 🆕 v3.5.4 本文件 `## 设计-实现一致性迭代检查` SOP 步骤 2/3/4 改为调 `ae-sdd iteration-check`（IC-1~4 机器粗筛 + 人工复核语义层）；`source/SKILL.md` 含 `## 🛠️ 工具 API 速查` 重写 + 删除幽灵命令段（v3.0 残留 rules.yaml/.mjs/sync-tools）；`source/HARNESS.md` HS-7/8 升级"已补物理实现"+ HS-4/6 降级自认；`tools/lib/iteration_check.py` + `tools/bin/ae-sdd:cmd_iteration_check` 注册；HS-7 物理拦截复用 `tools/lib/state.py:check_prd_4_layers`
+- [ ] 🆕 v3.5.5 `source/SKILL.md` 含 `## ⏱️ 节点级上下文压力软提示` 章节（6 审核点触发表 + 行为约束 + 5 信号表 + 缺省阈值 + config override + SOP + 对话呈现模板 + CLI 速查）+ 整体流程图 6 个审核点后加 ⏱️ 标记 + §🤖 章节含"主会话职责边界"小节；`source/skills/cross-cutting/agent-orchestration-skill.md` 含 §8.5 默认单 sub-agent 模式 + §8.6 节点级派活清单；`tools/lib/context_pressure.py` + `tools/bin/ae-sdd:cmd_context_pressure` + `tools/tests/test_context_pressure.py` 注册并通过；CLI 速查表含 `ae-sdd context-pressure [--story <ID>]`
 
 ### 跨 SKILL 一致性
 

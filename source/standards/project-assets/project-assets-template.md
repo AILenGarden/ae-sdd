@@ -6,7 +6,7 @@ description: 项目资产目录空模板（Starter）— 供新项目 cp 后填�
 # Project Assets Template — 项目资产目录 Starter 模板
 
 > **使用方法：**
-> 1. `cp skills/ae-sdd/standards/project-assets/project-assets-template.md skills/ae-sdd/assets/{your-project-key}/{your-project-key}.assets.md`
+> 1. `cp skills/ae-sdd/standards/project-assets/project-assets-template.md {资产根}/{workspaceKey}.assets.md`（`{资产根}` = `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`，见 document-storage §2.3）
 > 2. 把所有 `{占位符}` 替换为你的项目事实
 > 3. 走 `project-assets-schema.md §9 + §3.5-3.7` 探查 SOP 填值
 > 4. 完成后在 §1 写 `lastAuditedAt` + `owner` + **§1.X 部署信息**
@@ -248,7 +248,11 @@ deployment:
 
 ### 6.9 隐性约定
 
-> {本项目隐性约定 — 探查中发现的"大家都知道但没人写下来"的坑}
+| 约定名 | 描述 | 出处 / 踩坑 Story | 反向链接 |
+|--------|------|------------------|---------|
+| {约定名} | {项目内隐性规则，必须可执行} | {Story / function 专题 / file:line} | {§11 经验 / §5 核心类 / constraints 条款} |
+
+> **填写规则**：每条隐性约定必须有 1 个 Story 踩坑出处或代码出处，并至少反向链接到 §11 团队惯用实现方式、§5 核心类方法或 constraints/ 中的具体条款。无出处时标 `{待确认}`。
 
 ---
 
@@ -285,14 +289,15 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 
 | Code Plan 章节 | 引用本项目资产章节 | 说明 |
 |---------------|------------------|------|
-| §1 项目资产引用块 | §1-§10 全部 | 文首必引 |
+| §1 项目资产引用块 | §1-§12 全部 | 文首必引 |
 | §2 抽象分层 → 项目分层映射 | §3 / §4 | 包路径/类名 |
-| §5 关键类骨架 | §4 / §5 | 类角色 + 命名 |
+| §5 关键类骨架 | §4 / §5 / §11 / function 专题 | 类角色 + 命名 + 团队惯用模式 + 实战案例 |
 | §6 DO 字段对齐 | §6.5 | 审计四字段 |
 | §7 Mapper / SQL | §6.5 | EXPLAIN 验证 |
-| §8 测试对应 | §6.7 | 真实 DB/HTTP |
+| §8 测试对应 | §6.7 / §11.8 / function 专题 §1.9 | 真实 DB/HTTP + 集成测试范式 |
 | §11 约束合规自审 | §6 全章 | 9 类约束 |
 | §12 接口契约一致性 | §6.4 | URL/方法/分页 |
+| §13 惯用模式对齐 | §11 全章 | 新代码是否复用团队惯用方式 |
 
 ---
 
@@ -337,6 +342,7 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 **出处：** `{file:line}` × 2
 **约束对齐：** 符合 `constraints/layered-arch.md` §{X}
 **反模式：** {如有}
+**实战案例：** `function/{Story}.md#接口-{N}`（没有则写"暂无"）
 
 ### 11.2 Domain 层模式（≥1 条）
 ### 11.3 Application 层模式（≥1 条）
@@ -345,6 +351,16 @@ grep -rn "@FeignClient" --include="*.java" | head -30
 ### 11.6 异常处理模式（≥1 条）
 ### 11.7 并发与幂等模式（≥1 条）
 ### 11.8 测试模式（≥1 条）
+
+#### 11.8.1 {测试模式名}
+
+**场景：** {什么时候用}
+**惯用写法：** {单测 / HTTP 集成测试 / H2 + 落库门禁 / Testcontainers 等}
+**出处：** `{file:line}` × 2
+**约束对齐：** 符合 `constraints/testing.md` §{X}
+**反模式：** {如有，例如全 Mock Repository 导致落库不真实}
+**实战案例：** `function/{Story}.md#19-集成测试范式`（没有则写"暂无"）
+
 ### 11.9 配置与集成模式（≥1 条）
 
 ---

@@ -1,5 +1,5 @@
 """
-test_gates.py — gates.py 单元测试（22 门禁：14 主 G-00~G-13 + 3 中段 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 4 G-RA + 1 G-CODE）
+test_gates.py — gates.py 单元测试（23 门禁：14 主 G-00~G-13 + 3 中段 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-CODE）
 
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
@@ -545,8 +545,8 @@ class TestCheckAll(unittest.TestCase):
     def test_check_all_returns_all(self):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
-        # v3.4.0：14 主门禁 + 3 中段门禁 + 4 G-RA + 1 G-CODE = 22
-        self.assertEqual(len(results), 22)
+        # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
+        self.assertEqual(len(results), 23)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -569,9 +569,9 @@ class TestCheckAll(unittest.TestCase):
         ade_sdd = _full_ade_sdd()
         results = gates.check_all(None, ade_sdd, "test")
         summary = gates.summarize(results)
-        # v3.4.0：14 主门禁 + 3 中段门禁 + 4 G-RA + 1 G-CODE = 22
-        self.assertEqual(summary["total"], 22)
-        self.assertEqual(summary["passed"] + summary["failed"], 22)
+        # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
+        self.assertEqual(summary["total"], 23)
+        self.assertEqual(summary["passed"] + summary["failed"], 23)
         self.assertIn("results", summary)
 
 

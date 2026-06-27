@@ -1,6 +1,6 @@
 ---
 name: project-assets-update-log-template
-description: 项目资产更新日志模板 — 记录每次生成/更新/审计的条目。位于 assets/{projectKey}/{projectKey}.update-log.md，配套 project-assets-update-skill.md 使用。
+description: 项目资产更新日志模板 — 记录每次生成/更新/审计的条目。位于 {资产根}/{workspaceKey}.update-log.md（见 document-storage §2.3），配套 project-assets-update-skill.md 使用。
 ---
 
 # Project Assets Update Log — 项目资产更新日志
@@ -23,7 +23,7 @@ description: 项目资产更新日志模板 — 记录每次生成/更新/审计
 
 | 字段 | 值 |
 |------|---|
-| 项目资产路径 | `skills/ae-sdd/assets/{projectKey}/{projectKey}.assets.md` |
+| 项目资产路径 | `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md`（见 document-storage §2.3）|
 | 维护人 | `{owner}` |
 | 创建日期 | `{YYYY-MM-DD}` |
 | 当前 lastAuditedAt | `{YYYY-MM-DD}` |
