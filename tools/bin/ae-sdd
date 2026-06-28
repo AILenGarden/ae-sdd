@@ -767,6 +767,66 @@ def cmd_flow_violation_scan(args, parser):
     return 1 if report.get("status") == "FAIL" and args.strict else 0
 
 
+def cmd_ra_depth_scan(args, parser):
+    """ra-depth-scan — RA 机械派生深度扫描（🆕 v3.5.9）
+
+    调 scripts/ra_depth_scan.py 跑 5 条机械派生规则（D1-D5）扫描 RA 文档：
+    防「形式通过、内容空转」——验证 E.5/G.5/H.6/H.5 规定的「每行 R→R'→AC 机械追问」
+    是否真做了。与 gates check --only G-RA-5 内部调同一脚本。
+    """
+    import subprocess
+    master = paths.locate_master_source()
+    candidates = []
+    if master:
+        candidates = [master.parent / "scripts" / "ra_depth_scan.py",
+                      master / "scripts" / "ra_depth_scan.py"]
+    candidates.append(Path("scripts/ra_depth_scan.py"))
+    scanner = next((c for c in candidates if c.is_file()), None)
+    if scanner is None:
+        output.error(f"未找到 ra_depth_scan.py（候选：{candidates}）")
+        return 2
+
+    root = args.root or str(Path.cwd())
+    cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    except subprocess.TimeoutExpired:
+        output.error("ra_depth_scan.py 跑超过 120 秒")
+        return 3
+
+    report = {}
+    if args.json:
+        sys.stdout.write(result.stdout)
+        try:
+            report = json.loads(result.stdout) if result.stdout else {}
+        except json.JSONDecodeError:
+            pass
+    else:
+        try:
+            report = json.loads(result.stdout) if result.stdout else {}
+        except json.JSONDecodeError:
+            output.error(f"扫描器 JSON 输出无法解析：{result.stdout[:200]}")
+            return 4
+        rule_stats = report.get("ruleStats", {})
+        output.info(f"🆕 v3.5.9 RA 机械派生深度扫描（D1-D5，5 条规则）")
+        output.info(f"扫描根：{report.get('root', root)}")
+        output.info(f"RA 文件数：{report.get('raFiles', 0)}")
+        output.info(f"状态：{report.get('status', 'UNKNOWN')}")
+        output.info(f"阻断违规：{report.get('blockers', 0)} / 警告违规：{report.get('warnings', 0)}")
+        output.info(f"各规则命中：D1={rule_stats.get('D1', 0)} D2={rule_stats.get('D2', 0)} "
+                    f"D3={rule_stats.get('D3', 0)} D4={rule_stats.get('D4', 0)} D5={rule_stats.get('D5', 0)}")
+        findings = report.get("findings", [])
+        if findings:
+            output.info("")
+            output.info("违规清单：")
+            for f in findings:
+                icon = "🔴" if f.get("severity") == "BLOCKER" else "🟡"
+                output.info(f"  {icon} [{f.get('rule')}] {f.get('path')}:{f.get('line')}")
+                output.info(f"      {f.get('message')}")
+
+    return 1 if report.get("status") == "FAIL" and args.strict else (1 if report.get("blockers", 0) > 0 else 0)
+
+
 def cmd_context_pressure(args, parser):
     """context-pressure — 节点级上下文压力软提示（🆕 v3.5.5）
 
@@ -1319,7 +1379,14 @@ def cmd_classify(args, parser):
     if not text:
         output.err("必须提供 --text 或 --file")
         return 1
-    c = classify.classify(text, filename=filename)
+    # 🆕 v3.5.10 Gap-014：--project 传入项目根路径，让规模判定优先读已有产物
+    project_context = None
+    if getattr(args, "project", None):
+        project_context = Path(args.project).resolve()
+        if not project_context.is_dir():
+            output.warn(f"--project 路径不存在或非目录：{project_context}，忽略项目上下文")
+            project_context = None
+    c = classify.classify(text, filename=filename, project_context=project_context)
     if args.json:
         output.emit({
             "source": c.source,
@@ -2255,6 +2322,14 @@ def main() -> int:
     p_fvs.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
     p_fvs.set_defaults(func=cmd_flow_violation_scan)
 
+    # ra-depth-scan（🆕 v3.5.9 — RA 机械派生深度扫描，防「形式通过、内容空转」）
+    p_rds = sub.add_parser("ra-depth-scan",
+                           help="[v3.5.9] RA 机械派生深度扫描（D1-D5，验证 E.5/G.5/H.6/H.5 是否真做了）",
+                           parents=[common])
+    p_rds.add_argument("--root", default="", help="扫描根目录（默认 cwd）")
+    p_rds.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
+    p_rds.set_defaults(func=cmd_ra_depth_scan)
+
     # context-pressure（🆕 v3.5.5 — 节点级上下文压力软提示，report-only）
     p_cp = sub.add_parser("context-pressure",
                           help="[v3.5.5] 节点级上下文压力软提示（low/medium/high/critical，不阻断）",
@@ -2381,6 +2456,7 @@ def main() -> int:
     p_classify = sub.add_parser("classify", help="4 维判定", parents=[common])
     p_classify.add_argument("--text", help="待判定的文本")
     p_classify.add_argument("--file", help="待判定的文件路径")
+    p_classify.add_argument("--project", help="🆕 v3.5.10 项目根路径——传入后规模判定优先读已有 RA/Story/Task 产物（修复短文本需求被误判为微规模，Gap-014）")
     p_classify.set_defaults(func=cmd_classify)
 
     # gate-intercept（PreToolUse hook 入口）

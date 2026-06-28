@@ -170,5 +170,53 @@ class TestConfidenceScores(unittest.TestCase):
             self.assertLessEqual(conf, 1.0)
 
 
+class TestProjectContextScale(unittest.TestCase):
+    """🆕 v3.5.10 Gap-014：project_context 参数覆盖行数推断的 scale 误判"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.project = Path(self.tmp) / "proj"
+        self.project.mkdir()
+
+    def test_short_text_without_context_is_micro(self):
+        """无 project_context 时，短文本仍判微（向后兼容）"""
+        c = classify.classify("实现 IM 知识库匹配")
+        self.assertEqual(c.scale, "微")
+
+    def test_short_text_with_ra_context_is_large(self):
+        """有 RA 产物时，短文本应被覆盖为'大'"""
+        # 造一个 ≥100 行的 RA 文档
+        ra_dir = self.project / "ae-sdd-doc" / "iterations" / "2026-06-28" / "RA"
+        ra_dir.mkdir(parents=True)
+        (ra_dir / "RA-TEST-v1.0.md").write_text("# RA\n" + "\n".join(f"line {i}" for i in range(120)))
+        c = classify.classify("实现 IM 知识库匹配", project_context=self.project)
+        self.assertEqual(c.scale, "大")
+
+    def test_short_text_with_blocking_gaps_is_large(self):
+        """有 blockingGaps ≥5 + RA 阶段完成时，判'大'"""
+        ae_sdd = self.project / ".ae-sdd"
+        ae_sdd.mkdir()
+        (ae_sdd / "state.json").write_text('{"currentStory": "STORY-001"}')
+        story_dir = self.project / ".auto-engineering" / "STORY-001"
+        story_dir.mkdir(parents=True)
+        (story_dir / "state.json").write_text(
+            '{"blockingGaps": ["g1","g2","g3","g4","g5","g6"], '
+            '"completedSteps": ["requirement-analysis-r1", "ra-generated"]}'
+        )
+        c = classify.classify("实现预约功能", project_context=self.project)
+        self.assertEqual(c.scale, "大")
+
+    def test_no_context_fallback_to_lines(self):
+        """project_context 无任何产物时 fallback 到行数推断"""
+        c = classify.classify("实现预约功能", project_context=self.project)
+        # 无产物 → 行数推断 → 微
+        self.assertEqual(c.scale, "微")
+
+    def test_invalid_project_context_ignored(self):
+        """无效 project_context 路径被忽略，不报错"""
+        c = classify.classify("实现预约功能", project_context=Path("/nonexistent/path/xyz"))
+        self.assertEqual(c.scale, "微")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

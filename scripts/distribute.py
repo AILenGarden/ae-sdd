@@ -231,7 +231,48 @@ def main() -> int:
             log_error(f"{d.name}: 未预期异常: {e}")
             results.append((d.name, InstallResult(d.name, "fail", str(e)), False))
 
+    # 🆕 v3.5.10 Gap-010：分发链末尾生成 L2 全局注册表空骨架
+    _ensure_l2_global_registry_skeleton(args.quiet)
+
     return _print_summary(results)
+
+
+def _ensure_l2_global_registry_skeleton(quiet: bool) -> None:
+    """🆕 v3.5.10 Gap-010：安装完成后在 ~/.ae-sdd/plugins/registry.yaml 生成 L2 全局空骨架。
+
+    背景：plugin_loader.py 的三层注册表设计中，L2 全局层从未被任何 install/install.py
+    生成过——导致 `ae-sdd plugin list` 在干净机器上恒报 "⊘ L2-global: 注册表不存在（跳过）"，
+    让人误以为 plugin 机制不可用。本函数在分发链末尾补一个空骨架（plugins: []），
+    让用户清楚地看到"机制可用，只是没有插件"，而不是"机制本身缺失"。
+
+    幂等：已存在则不动；目录不存在则建。
+    """
+    import os
+    from pathlib import Path
+    custom = os.environ.get("AE_SDD_GLOBAL_HOME")
+    base = Path(custom) if custom else Path.home()
+    registry = base / ".ae-sdd" / "plugins" / "registry.yaml"
+    if registry.is_file():
+        return  # 已存在，不动用户自定义内容
+    try:
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(
+            "# ae-sdd L2 全局插件注册表（自动生成骨架）\n"
+            "# 🆕 v3.5.10 Gap-010：本文件由 distribute.py 自动生成（首次安装时）。\n"
+            "# 已存在则不覆盖。请在此追加你个人的全局插件清单。\n"
+            "#\n"
+            "# Schema 权威文档：source/standards/constraints/plugin-registry-spec.md\n"
+            "schema_version: 1\n"
+            "description: 用户全局插件注册表（空骨架，按需追加）\n"
+            "plugins: []\n",
+            encoding="utf-8",
+        )
+        if not quiet:
+            from distributors._base import log_info
+            log_info(None, f"已生成 L2 全局注册表骨架：{registry}")
+    except OSError:
+        # 失败不阻断分发链
+        pass
 
 
 if __name__ == "__main__":

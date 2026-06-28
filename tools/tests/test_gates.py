@@ -89,6 +89,19 @@ class TestG01(unittest.TestCase):
         r = gates.check_g01(tmp, {}, "")
         self.assertTrue(r.pass_)
 
+    def test_dr_in_subdir_passes_v3510(self):
+        """🆕 v3.5.10 Gap-004：DR 文档在 design/ 子目录也应被识别（rglob 替代 glob）"""
+        tmp = _setup_project({"design/story/be/DR-001.md": "# DR in subdir"})
+        r = gates.check_g01(tmp, {}, "")
+        self.assertTrue(r.pass_, msg=f"应识别子目录 DR：{r.message}")
+
+    def test_excludes_report_docs_v3510(self):
+        """🆕 v3.5.10 Gap-004：CodeReview/CodingReport 等报告类不应算 DR"""
+        tmp = _setup_project({"design/STORY-001-CodeReview.md": "# CR",
+                              "design/STORY-001-CodingReport.md": "# CR"})
+        r = gates.check_g01(tmp, {}, "")
+        self.assertFalse(r.pass_, msg="报告类文档不应被当作 DR")
+
 
 # ─── G-02 ───────────────────────────────────────────────────────────────────
 class TestG02(unittest.TestCase):
@@ -601,7 +614,8 @@ class TestCheckAll(unittest.TestCase):
         # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
         # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
         # 🆕 v3.5.7：+1 G-DOC-CONSISTENCY（项目侧记忆-配置路径一致性）= 25
-        self.assertEqual(len(results), 25)
+        # 🆕 v3.5.9：+1 G-RA-5（RA 机械派生深度，防「形式通过、内容空转」）= 26
+        self.assertEqual(len(results), 26)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -627,8 +641,9 @@ class TestCheckAll(unittest.TestCase):
         # v3.4.0：14 主门禁 + 3 中段门禁 + 1 G-PATH + 4 G-RA + 1 G-CODE = 23
         # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
         # 🆕 v3.5.7：+1 G-DOC-CONSISTENCY（项目侧记忆-配置路径一致性）= 25
-        self.assertEqual(summary["total"], 25)
-        self.assertEqual(summary["passed"] + summary["failed"], 25)
+        # 🆕 v3.5.9：+1 G-RA-5（RA 机械派生深度，防「形式通过、内容空转」）= 26
+        self.assertEqual(summary["total"], 26)
+        self.assertEqual(summary["passed"] + summary["failed"], 26)
         self.assertIn("results", summary)
 
 
@@ -806,6 +821,50 @@ class TestGRA4(unittest.TestCase):
         r = gates.check_ra_authenticity(tmp, {"phase": "ra-generated"}, "STORY-001",
                                         master_source=repo_source)
         self.assertFalse(r.pass_)
+        self.assertGreater(r.details.get("blockers", 0), 0)
+
+
+class TestGRA5(unittest.TestCase):
+    """G-RA-5 RA 机械派生深度通过（v3.5.9 — 防「形式通过、内容空转」）"""
+
+    def test_no_master_source_skips(self):
+        tmp = _setup_project({})
+        r = gates.check_ra_depth(tmp, {}, "STORY-001", master_source=None)
+        self.assertTrue(r.details.get("skipped", False))
+
+    def test_pre_ra_no_doc_stub_passes(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({})
+        r = gates.check_ra_depth(tmp, {"phase": "initialized"}, "STORY-001",
+                                 master_source=repo_source)
+        self.assertTrue(r.details.get("stub"))
+
+    def test_form_pass_empty_ra_blocks(self):
+        """空转 RA（§6.5 仅表头无 R→R' 行 + §9-ter 时效含「尽快」+ §9-bis 缺模式）→ BLOCKER。"""
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        empty_ra = (
+            "# RA\n\n"
+            "## §6.5 衍生规则登记表\n\n"
+            "| 规则 # | 主规则 R | 衍生规则 R' | 衍生模式命中 | R' 优先级 |\n"
+            "|--------|----------|-------------|--------------|-----------|\n"
+            "| R1 | 锁定 |  |  | P0 |\n\n"
+            "## §8.5 衍生 AC 登记表\n\n"
+            "| AC # | 主场景 | 衍生动作 | 时效要求 | 对应规则 R' |\n"
+            "|------|--------|----------|----------|-------------|\n\n"
+            "## §9-bis 业务模式匹配表\n\n"
+            "| 套用的模式 | 模式 # | 命中的衍生影响编号 | 备注 |\n"
+            "|------------|--------|--------------------|------|\n"
+            "| 账号状态变更 | 1 |  |  |\n\n"
+            "## §9-ter 跨域级联效应表\n\n"
+            "本需求涉及微服务聚合根与 MQ topic、WebSocket、Redis、CQRS。\n\n"
+            "| 触发动作 | 受影响域 | 受影响状态机/事件/缓存/MQ | 触发方式 | 时效要求 | 反向影响 |\n"
+            "|----------|----------|---------------------------|----------|----------|----------|\n"
+            "| 账号锁定 | User | 状态变更 | 本域事务内 | 尽快 | — |\n"
+        )
+        tmp = _setup_project({"design/RA-empty-v1.0.md": empty_ra})
+        r = gates.check_ra_depth(tmp, {"phase": "ra-generated"}, "STORY-001",
+                                 master_source=repo_source)
+        self.assertFalse(r.pass_, f"空转 RA 应被 G-RA-5 拦截，但 pass_={r.pass_}")
         self.assertGreater(r.details.get("blockers", 0), 0)
 
 

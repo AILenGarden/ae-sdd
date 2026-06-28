@@ -1,14 +1,20 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.8）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.10）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
-  支持流程状态跟踪与中断后恢复。v3.5.8 RA 第七步纳入 review-loop 公共协议
-  （反复挖掘 + 连续 3 轮无新增才退出 + 漏报升级），补齐"RA 是事实源头却无 review 闭环"体系性缺口；
-  v3.5.6 修补 amend 循环 commit noise；v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。
-  版本变更日志见 source/CHANGELOG/。
-version: 3.5.8
+  支持流程状态跟踪与中断后恢复。v3.5.9 新增 G-RA-5 RA 机械派生深度门禁
+  （D1-D5 5 条规则：§6.5 主规则机械派生 / §8.5 R'→AC 链接 / §8.6 覆盖率真实重算 /
+  §9-ter 五问覆盖 / §9-bis 业务模式六选一），堵「形式通过、内容空转」（AI 把已知事实摘来归个类就停）
+  ——实测案例：13 个问题 → 被逼出 34 个衍生问题的根因。v3.5.8 RA 第七步纳入 review-loop 公共协议
+  （反复挖掘 + 连续 3 轮无新增才退出 + 漏报升级）；v3.5.6 修补 amend 循环 commit noise；
+  v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。版本变更日志见 source/CHANGELOG/。
+  v3.5.10 修复 10 项实战适配 Gap（详见 source/CHANGELOG/2026-06-28-v3.5.10-fix-10-gaps.md）：
+  classify scale 误判 / plugin 注册表缺失 / HS-12 谎报只覆盖 G-08 / G-RA 选错文档版本 /
+  G-01 rglob / G-PATH 扫项目侧记忆 / G-RA-4 输出加定位 / G-DOC-STORAGE git-aware /
+  IC-3 agent API 白名单 / SKILL.md 过时关键词残留清理。
+version: 3.5.10
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -46,7 +52,7 @@ allowed_tools:
 > - 本文件（`SKILL.md`）= **ae-sdd 唯一主入口**。原 `skills/orchestration/ae-sdd-skill.md` 已并入本文件并删除。
 > - 强化 **G-00 项目资产门卫**：每个调用必过项目资产完整性检查，缺失时自动触发生成。
 > - 新增 **🛠️ 工具 API 速查** 章节：列出 `ae-sdd` CLI 全部 8 个子命令。
-> - 新增 **🔧 维护规则与同步机制** 章节：明确"修改 rules → 跑 sync-tools"的工作流。
+> - 新增 **🔧 维护规则与同步机制** 章节：明确"修改 rules → 跑 dev-sync"的工作流（v3.0 起 sync-tools 已废弃，改用 Python CLI）。
 > - 角色库/智能路由/Phase 1-3 全流程等核心内容**完整保留**，行数从 1843 → ~2050。
 >
 > **🟢 兼容性：** v3.0 之前的触发词、状态机、多 Agent 模式、14 条门禁、TR-1~TR-7 全部保留。**没有任何破坏性变更**——只是把规则描述升级为"规则+工具"双轨。
@@ -135,6 +141,7 @@ ae-sdd assets stats                 # 索引统计
 | 7 | **RA 距今 ≤ 30 天**（防止用过时 RA）| `ae-sdd gate ra-required` | 超 30 天 → 🟡 警告（不阻断，但提示重审）|
 | 8 | **微任务（类型 4）豁免** —— 单文件/单枚举值级改动无需 RA | — | 走 coding-skill 直接编码 |
 | 9 | **BUG/配置类豁免** —— BUG 修复/配置调整无需 RA（RA 反向通道 §见 requirement-analysis-skill §反向通道）| — | 走 coding-skill BUG 路径 |
+| 10 | 🆕 **v3.5.9 RA 机械派生深度通过** —— 验证 E.5/G.5/H.6/H.5 规定的「每行 R→R'→AC 机械追问」是否真做了，防「形式通过、内容空转」 | `ae-sdd gate ra-required` 内调 `scripts/ra_depth_scan.py`（D1-D5 规则） | 5 条规则任一 BLOCKER → 🔴 阻断 |
 
 ### 执行时机
 
@@ -2528,8 +2535,10 @@ DR（需求文档）→ Story → Task → Coding
 | **状态机** | `ae-sdd state read / write / next-step / confirm` | 状态读取 / phase 切换 / 下一步判定 / 审核点 token |
 | | `ae-sdd state prd-check-complete / prd-complete / prd-archive` | PRD 级 4 层 AND 校验 / compact 触发 / 归档（🆕 v3.3.0）|
 | **路由** | `ae-sdd classify` | 4 维判定（来源/规模/产物/项目类型）|
-| **门禁** | `ae-sdd gates check [--only <G-XX>]` | 23 门禁扫描（全量或单门禁）|
+| **门禁** | `ae-sdd gates check [--only <G-XX>]` | 26 门禁扫描（全量或单门禁）|
 | | `ae-sdd gate ra-required / coding-required / doc-storage` | RA 准入 / Coding 真实性 / 文档存放单点校验 |
+| | `ae-sdd flow-violation-scan [--root <dir>]` | 🆕 v3.5.6 RA 流程违规审计（8 条规则扫描 RA 文档合规性）|
+| | `ae-sdd ra-depth-scan [--root <dir>]` | 🆕 v3.5.9 RA 机械派生深度扫描（D1-D5，验证 E.5/G.5/H.6/H.5 是否真做了）|
 | | `ae-sdd enter` | 入口凭证（entry token，关卡1）|
 | **Toolset Layer**（v3.2.3） | `ae-sdd memory enter/write/exit/read/search/promote/summarize` | Phase-aware 强制 memory gate |
 | | `ae-sdd db profiles/query/explain/audit` | 本地 profile DB 证据（read-first）|

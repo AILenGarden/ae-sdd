@@ -14,6 +14,13 @@ v1.1 修复（2026-06-18, v3.0.1 patch）：
   - 不再硬兜底为 "对话"：低置信度时 source="未知"
 
 v3.1+ 可升级为 LLM 辅助判定。
+
+v3.5.10 修复（2026-06-28, Gap-014）：
+  - 新增 project_context 参数：当传入项目根路径时，先读 state.json/currentStory +
+    .auto-engineering/{storyId}/state.json + RA/Story 文档产物，用"已有产物规模"覆盖
+    "行数推断" 的 scale 判定。修复"短文本需求被误判为微规模"导致跳过 DR/Story/Task 的根因。
+  - 新增 _infer_scale_from_project_context()：按 RA/Story/Task/DR 文档存在性 + blockingGaps
+    数 + AC 数推断规模，置信度高（0.9）。
 """
 from __future__ import annotations
 
@@ -132,12 +139,108 @@ def _infer_scale_from_lines(text: str) -> Optional[str]:
     return "大"
 
 
-def classify(text: str, *, filename: Optional[str] = None) -> Classification:
+def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[tuple[str, float, str]]:
+    """🆕 v3.5.10 Gap-014：从项目已有产物推断规模，覆盖行数推断的误判。
+
+    优先级（任一命中即覆盖）：
+      1. .auto-engineering/{storyId}/state.json 有 blockingGaps ≥ 5 → 大（0.9）
+      2. 已有 RA 文档且 ≥ 100 行 → 大（0.85）
+      3. 已有 Story 文档 → 中（0.8）
+      4. 已有 Task 文档但无 Story → 小（0.7）
+      5. 无任何产物 → 返回 None（交回行数推断）
+
+    Returns:
+        (scale, confidence, reason) 或 None（无项目上下文或无产物）
+    """
+    if project_root is None:
+        return None
+    try:
+        project_root = Path(project_root).resolve()
+        if not project_root.is_dir():
+            return None
+    except (OSError, ValueError):
+        return None
+
+    import json
+
+    # 1) 读项目根 .ae-sdd/state.json 拿 currentStory
+    ae_sdd_dir = project_root / ".ae-sdd"
+    story_id: Optional[str] = None
+    if (ae_sdd_dir / "state.json").is_file():
+        try:
+            s = json.loads((ae_sdd_dir / "state.json").read_text(encoding="utf-8"))
+            story_id = s.get("currentStory") or s.get("storyId")
+        except (json.JSONDecodeError, OSError):
+            story_id = None
+
+    # 2) 读 .auto-engineering/{storyId}/state.json 的 blockingGaps
+    blocking_gaps = 0
+    ra_outputs: list = []
+    completed_steps: list = []
+    if story_id:
+        story_state_path = project_root / ".auto-engineering" / story_id / "state.json"
+        if story_state_path.is_file():
+            try:
+                ss = json.loads(story_state_path.read_text(encoding="utf-8"))
+                blocking_gaps = len(ss.get("blockingGaps") or [])
+                ra_outputs = ss.get("outputs", {}).values() if isinstance(ss.get("outputs"), dict) else []
+                completed_steps = ss.get("completedSteps") or []
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # 3) 规模推断优先级
+    # 3a) 已完成 ≥ ra-generated 阶段 + blockingGaps ≥ 5 → 大
+    if blocking_gaps >= 5 and any("ra" in (step or "") for step in completed_steps):
+        return ("大", 0.9, f"已有 RA 产物 + {blocking_gaps} 个 blockingGaps → 大")
+
+    # 3b) 已有 RA 文档 + 行数 ≥ 100 → 大
+    ra_dir = project_root / "ae-sdd-doc" / "iterations"
+    if ra_dir.is_dir():
+        try:
+            ra_files = list(ra_dir.rglob("*RA*v*.md")) + list(ra_dir.rglob("*RA*v*.md"))
+            if ra_files:
+                max_lines = 0
+                for rf in ra_files[:10]:  # 只看前 10 个文件，避免慢
+                    try:
+                        max_lines = max(max_lines, len(rf.read_text(encoding="utf-8").splitlines()))
+                    except (OSError, UnicodeDecodeError):
+                        pass
+                if max_lines >= 100:
+                    return ("大", 0.85, f"已有 RA 文档（最大 {max_lines} 行）→ 大")
+        except OSError:
+            pass
+
+    # 3c) 已有 Story 文档 → 中
+    if (project_root / "design").is_dir():
+        try:
+            story_files = list((project_root / "design").rglob("*.md"))
+            if story_files and any("story" in f.name.lower() for f in story_files):
+                return ("中", 0.8, "已有 Story 文档 → 中")
+        except OSError:
+            pass
+
+    # 3d) 已有 Task 文档但无 Story → 小
+    if (project_root / "task").is_dir():
+        try:
+            task_files = list((project_root / "task").rglob("*.md"))
+            if task_files:
+                return ("小", 0.7, "已有 Task 文档 → 小")
+        except OSError:
+            pass
+
+    return None
+
+
+def classify(text: str, *, filename: Optional[str] = None,
+             project_context: Optional[Path] = None) -> Classification:
     """主入口：4 维判定。
 
     Args:
         text: 待判定文本
         filename: 🆕 可选文件名（用于文件名强信号）
+        project_context: 🆕 v3.5.10 可选项目根路径——当传入时，规模判定优先读项目已有
+            产物（state.json/RA/Story/Task），修复"短文本需求被误判微规模跳过 DR/Story/Task"
+            的根因（Gap-014）。无产物或读取失败时 fallback 到行数推断。
     """
     review_reasons: list[str] = []
 
@@ -172,9 +275,16 @@ def classify(text: str, *, filename: Optional[str] = None) -> Classification:
             review_reasons.append("source 维度无任何信号，默认兜底为 对话")
 
     # 维度 2：规模
+    # 🆕 v3.5.10 Gap-014：优先用项目已有产物判定规模，覆盖"短文本 → 微"误判
     scale, scale_conf = _match_keywords(text, SCALE_KEYWORDS)
     scale_reason = ""
-    if not scale or scale_conf < 0.3:
+    project_scale = _infer_scale_from_project_context(project_context)
+    if project_scale is not None:
+        # 项目产物信号优先级最高，覆盖关键词 + 行数推断
+        scale, proj_conf, proj_reason = project_scale
+        scale_conf = proj_conf
+        scale_reason = f"项目产物覆盖 → {scale}（{proj_reason}）"
+    elif not scale or scale_conf < 0.3:
         inferred = _infer_scale_from_lines(text)
         scale = inferred or "中"
         scale_conf = 0.4 if inferred else 0.5

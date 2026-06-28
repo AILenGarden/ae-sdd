@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.8（🆕 2026-06-27：RA 第七步纳入 review-loop 公共协议 — `requirement-analysis-skill.md` §第七步从"16 道闸一次性终检"重构为引用 `review-loop-skill.md`（反复挖掘 + 连续 3 轮无新增确认缺口/缺陷才退出 + 3 轮仍有 🔴 升级用户 + 漏报升级）；§第二步循环对象从"仅缺口"扩展为"缺口 + 8 维度挖掘穷尽"；`review-loop-skill.md` 节点配置表新增 RA 行；`update-graph.json` 新增 UG-13 连带规则。补齐"RA 是全链路事实源头却无 review 闭环"的体系性缺口（与 v3.5.6 工具层强制进入 RA 正交：v3.5.6 保证 AI 进 RA，v3.5.8 保证 AI 在 RA 里挖到穷尽）。v3.5.6 修补 amend 循环 commit noise；v3.5.5 主会话职责收口 + 节点级上下文压力软提示
+> **版本：** v3.5.10（🆕 2026-06-28：实战适配能力测试暴露 10 项 Gap 集中修复——① Gap-014 classify 4 维判定 scale 误判（短文本需求被误判微规模跳过 DR/Story/Task，新增 `--project` 参数优先读已有 RA/Story/Task 产物）；② Gap-010 三层 plugin 注册表全部缺失（v3.5.0 声明的 plugin 机制生产环境不可用，install 时自动生成 L2 空骨架 + 母版带 L3 默认注册表）；③ Gap-012 HS-12 谎报只覆盖 G-08（stop_check.py CLEAR_RE 从 1 gate 扩展到 19 gate）；④ Gap-005 G-RA-1/2/3 选错文档版本（cp -r 刷平 mtime 导致 max(mtime) 选不确定，改用文件名版本号优先）；⑤ Gap-004 G-01 glob 误报（glob 只扫 design/ 根一层漏判子目录，改 rglob + 排除报告类）；⑥ Gap-008 G-PATH 扫描范围过窄（原只扫母版，新增扫项目侧 .ae-sdd/AGENTS.md/CLAUDE.md/MEMORY.md 记忆文档）；⑦ Gap-006 G-RA-4 输出不友好（31 BLOCKER 无定位，输出加前 5 条 file:line:snippet）；⑧ Gap-007 G-DOC-STORAGE 不区分历史/新增（cp -r 复制来的历史文件被误报游离，用 git ls-files 过滤已跟踪文件）；⑨ Gap-013 document_storage 误判死代码（IC-3 识别"AI Agent 调用面 API"白名单，零 import 属设计预期）；⑩ Gap-011 SKILL.md 残留 v3.0 sync-tools 关键词。前序 v3.5.9 新增 G-RA-5 RA 机械派生深度门禁（D1-D5 5 条规则），堵「形式通过、内容空转」——实测案例"13 个问题 → 被逼出 34 个衍生问题"的根因；门禁数 25→26。
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

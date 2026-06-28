@@ -541,6 +541,10 @@ def load_registry(registry_path: Path, layer: int, layer_label: str) -> Registry
     registry_dir = registry_path.parent
 
     for idx, p_raw in enumerate(plugins_raw):
+        # 🆕 v3.5.10：enabled: false 的 plugin 跳过（不加载、不计入 count、不校验）
+        # 用途：L3 默认注册表的 example 插件默认禁用，避免污染 plugin count / 测试隔离
+        if isinstance(p_raw, dict) and p_raw.get("enabled") is False:
+            continue
         try:
             p = _parse_plugin(p_raw, idx, registry_path, registry_dir)
         except ValueError as e:

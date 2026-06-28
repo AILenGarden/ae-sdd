@@ -198,6 +198,32 @@
         {"path": "source/CHANGELOG/", "action": "新增 2026-06-27-RA挖掘循环review-loop化.md changelog 文件", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-05", "UC-06"]
+    },
+    {
+      "id": "UG-14",
+      "name": "🆕 v3.5.9 RA 机械派生深度门禁（G-RA-5）",
+      "trigger": [
+        "scripts/ra_depth_scan.py",
+        "tools/lib/gates.py",
+        "tools/bin/ae-sdd",
+        "source/SKILL.md",
+        "source/skills/phase1-design/requirement-analysis-skill.md",
+        "source/standards/update-graph.json"
+      ],
+      "trigger_condition": "修改 RA 机械派生深度扫描器 ra_depth_scan.py / G-RA-5 门禁注册 / ra-depth-scan 子命令 / SKILL.md G-RA 章节任一",
+      "affected": [
+        {"path": "scripts/ra_depth_scan.py", "action": "5 条机械派生规则 D1-D5 实现完整（§6.5/§8.5/§8.6/§9-bis/§9-ter 表格逐行核验 + JSON 输出契约）", "auto_checkable": false},
+        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-RA-5 + check_ra_depth + check_all G-RA-5 特判分支 + 头注释门禁计数 26", "auto_checkable": true},
+        {"path": "tools/tests/test_gates.py", "action": "TestCheckAll 门禁总数断言 26 + TestGRA5 含 3 用例（no_master_source/pre_ra_stub/form_pass_empty_ra_blocks）", "auto_checkable": true},
+        {"path": "tools/tests/test_ra_depth_scan.py", "action": "8 用例覆盖 D1-D5（state_machine_clean_passes / empty_table_blocks / missing_pattern_ref / unlinked_rprime / coverage_mismatch / h6_missing_dimension / non_state_machine_skips_d1 / cli_help）", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "cmd_ra_depth_scan + argparse ra-depth-scan 子命令注册", "auto_checkable": true},
+        {"path": "scripts/build_dist.py", "action": "runtime_scripts 白名单含 ra_depth_scan.py", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "frontmatter version v3.5.9 + G-RA 规则表新增 G-RA-5 + §🛠️ 工具速查 ra-depth-scan + 门禁计数 26", "auto_checkable": true},
+        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "§阶段 E.5/G.5/H.5/H.6 顶部加 G-RA-5 机器校验红框 + 7.1 RA-G08/09/12 判定 SOP 升级 + 禁止事项第 22 条 + 执行清单 8.5/10.5/11.6 补 G-RA-5", "auto_checkable": false},
+        {"path": "README.md", "action": "第 5 行版本行含 v3.5.9 + RA 机械派生深度门禁描述", "auto_checkable": true},
+        {"path": "source/CHANGELOG/", "action": "新增 2026-06-27-v3.5.9-ra-derivation-depth-gate.md changelog 文件", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
     }
   ]
 }

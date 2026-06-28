@@ -202,14 +202,47 @@ def check_output(
 # ─── 🆕 v3.4.0 F-1 修复：GATE 声明交叉验证（建议书3 §5 F-1）─────────────────
 _GATE_LINE_RE = re.compile(r"◆\s*GATE\s*:([^\n]*)", re.MULTILINE)
 _G08_CLEAR_RE = re.compile(r"G[-_]?08[^✅❌]*✅|✅[^✅❌]*G[-_]?08", re.IGNORECASE)
+# 🆕 v3.5.10 Gap-012：原 _G08_CLEAR_RE 只覆盖 G-08 一个 gate，其余 25 个 gate 的 ✅ 声明
+# AI 可任意谎报不被发现。扩展为通用模式，命中任一 G-XX ✅ 声明都跑对应真实 check。
+# 支持格式：G-08 ✅ / G08 ✅ / G-RA-3 ✅ / G-CODEPLAN-SRC ✅ / ✅ G-08 等
+_GATE_CLEAR_RE = re.compile(
+    r"(G[-_](?:00|0[1-9]|1[0-4]|RA[-_]?\d|RA[-_]?FLOW[-_]?VIOLATION|"
+    r"CODEPLAN[-_]?SRC|DOC[-_]?STORAGE|DOC[-_]?CONSISTENCY|PATH|CODE[-_]?1))"
+    r"[^✅❌]*✅|✅[^✅❌]*"
+    r"(G[-_](?:00|0[1-9]|1[0-4]|RA[-_]?[1-5]|RA[-_]?FLOW[-_]?VIOLATION|"
+    r"CODEPLAN[-_]?SRC|DOC[-_]?STORAGE|DOC[-_]?CONSISTENCY|PATH|CODE[-_]?1))",
+    re.IGNORECASE,
+)
+# 🆕 v3.5.10 Gap-012：可谎报校验的 gate 白名单（这些 gate 有"产物存在/Review 通过"语义，
+# AI 容易谎报；G-00/G-PATH 等无产物校验语义的不在此列，避免无意义校验）
+_VERIFIABLE_GATE_IDS = {
+    "G-01", "G-02", "G-03", "G-04", "G-05", "G-06", "G-07", "G-08",
+    "G-09", "G-10", "G-11", "G-12", "G-13", "G-14",
+    "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5",
+}
+# gate id → 规范化（去分隔符）映射，用于从 CLEAR_RE 命中串里反查 gate id
+def _normalize_gate_id(raw: str) -> str:
+    """G-08 / G08 / g-08 → G-08；G-RA-3 / GRA3 → G-RA-3。"""
+    s = re.sub(r"[\s_]", "", raw).upper()
+    s = s.replace("G-", "G").replace("G", "G-", 1) if s.startswith("G") and not s.startswith("G-") else s
+    # 重新规范化：G00→G-00, G08→G-08, GRA1→G-RA-1, GCODEPLANSCR→G-CODEPLAN-SRC
+    s2 = re.sub(r"[\s_-]", "", raw).upper()
+    mapping = {
+        "G00": "G-00", "G01": "G-01", "G02": "G-02", "G03": "G-03", "G04": "G-04",
+        "G05": "G-05", "G06": "G-06", "G07": "G-07", "G08": "G-08", "G09": "G-09",
+        "G10": "G-10", "G11": "G-11", "G12": "G-12", "G13": "G-13", "G14": "G-14",
+        "GRA1": "G-RA-1", "GRA2": "G-RA-2", "GRA3": "G-RA-3", "GRA4": "G-RA-4", "GRA5": "G-RA-5",
+    }
+    return mapping.get(s2, raw)
 
 
 def _verify_gate_claims(last_response: str, ade_sdd: Optional[Path]) -> str:
     """交叉验证 AI 自报的 ◆ GATE: 声明与实际文档/状态一致（防谎报，建议书3 F-1）。
 
-    当前覆盖：
-    - G-08 ✅ CLEAR 声明 → 校验实际 {STORY}-CodingPlan.md 含 14 关键词 + 无 ❌ 标记
-      （AI 谎报 G-08 通过但 CodingPlan 缺关键词/有 ❌ → 阻断）
+    覆盖范围（🆕 v3.5.10 Gap-012 扩展）：
+    - 原 v3.4.0：仅 G-08 ✅ CLEAR 声明 → 校验 CodingPlan 14 关键词
+    - v3.5.10：扩展到全部 _VERIFIABLE_GATE_IDS（19 个 gate），任一 ✅ 声明都跑真实 check
+      AI 谎报任一 gate 通过但实际未过 → 阻断
 
     返回非空字符串 = 阻断原因；空字符串 = 通过。
     """
@@ -222,30 +255,59 @@ def _verify_gate_claims(last_response: str, ade_sdd: Optional[Path]) -> str:
 
     gate_line = gate_line_match.group(1)
 
-    # G-08 ✅ CLEAR 声明校验
-    if _G08_CLEAR_RE.search(gate_line):
+    # 🆕 v3.5.10 Gap-012：通用 gate ✅ 声明校验（覆盖 19 个可谎报 gate）
+    # 先用通用正则找出所有命中的 gate，逐个跑真实 check
+    claimed_gates: list[str] = []
+    for m in _GATE_CLEAR_RE.finditer(gate_line):
+        # 取两个分组中非空的那个
+        raw = m.group(1) or m.group(2) or ""
+        gid = _normalize_gate_id(raw)
+        if gid in _VERIFIABLE_GATE_IDS and gid not in claimed_gates:
+            claimed_gates.append(gid)
+
+    if claimed_gates:
         try:
             from lib import paths, state as state_mod, gates as gates_mod
             st = state_mod.read_state(paths.state_path(ade_sdd))
             current_story = st.get("currentStory", "") or ""
-            if not current_story:
-                return ""  # 无 Story，跳过
             project_dir = paths.project_root(ade_sdd)
-            cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
-            if cp is None:
-                return (
-                    "[ae-sdd harness] GATE 声明与实际不符：AI 声称 G-08 ✅ CLEAR，"
-                    f"但 {current_story}-CodingPlan.md 不存在（F-1 假门禁修复）。\n"
-                    "请勿谎报 GATE 状态；先生成 CodingPlan 或修正 GATE 声明。"
-                )
-            # 跑真实 G-08 检查
-            r = gates_mod.check_g08(project_dir, st, current_story)
-            if not r.pass_:
-                return (
-                    f"[ae-sdd harness] GATE 声明与实际不符：AI 声称 G-08 ✅ CLEAR，"
-                    f"但实际 G-08 未通过（{r.message}）（F-1 假门禁修复）。\n"
-                    "请勿谎报 GATE 状态；修复 CodingPlan 14 门禁后再声明 ✅。"
-                )
+            master = paths.locate_master_source()
+
+            # gate id → check 函数名映射（与 GATE_REGISTRY 对齐）
+            check_fn_map = {
+                "G-01": "check_g01", "G-02": "check_g02", "G-03": "check_g03",
+                "G-04": "check_g04", "G-05": "check_g05", "G-06": "check_g06",
+                "G-07": "check_g07", "G-08": "check_g08", "G-09": "check_g09",
+                "G-10": "check_g10", "G-11": "check_g11", "G-12": "check_g12",
+                "G-13": "check_g13", "G-14": "check_g14",
+                "G-RA-1": "check_ra_required", "G-RA-2": "check_ra_dimensions",
+                "G-RA-3": "check_ra_derivatives",
+                "G-RA-4": "check_ra_authenticity", "G-RA-5": "check_ra_depth",
+            }
+            for gid in claimed_gates:
+                fn_name = check_fn_map.get(gid)
+                if not fn_name:
+                    continue
+                fn = getattr(gates_mod, fn_name, None)
+                if fn is None:
+                    continue
+                try:
+                    # 不同 check 函数签名不同，统一尝试 4 种调用形式
+                    try:
+                        r = fn(project_dir, st, current_story)
+                    except TypeError:
+                        try:
+                            r = fn(project_dir, st, current_story, master)
+                        except TypeError:
+                            r = fn(project_dir, st, current_story, master, None)
+                except Exception:
+                    continue  # 校验异常不阻断（兜底放行）
+                if not r.pass_:
+                    return (
+                        f"[ae-sdd harness] GATE 声明与实际不符：AI 声称 {gid} ✅ CLEAR，"
+                        f"但实际 {gid} 未通过（{r.message}）（F-1 假门禁修复 v3.5.10）。\n"
+                        "请勿谎报 GATE 状态；修复对应门禁后再声明 ✅。"
+                    )
         except Exception:
             return ""  # 校验异常不阻断（兜底放行）
 

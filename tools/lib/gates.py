@@ -1,5 +1,5 @@
 """
-gates.py — ae-sdd 门禁检查（14 主门禁 + 4 G-RA + G-CODE Coding 真实性门禁）
+gates.py — ae-sdd 门禁检查（14 主门禁 + 5 G-RA + G-CODE Coding 真实性门禁 + G-DOC-CONSISTENCY）
 
 v3.0.1 完整实现 G-01~G-07 + G-10~G-12（11 个"检查文档/状态存在"类门禁）。
 v3.1 实施 G-08（解析 CodingPlan 14 门禁）+ G-09（调 test_authenticity_scan.py）+ G-13（全链路对称性核查）。
@@ -67,7 +67,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-CODE + 1 G-DOC-CONSISTENCY = 24）
+# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 5 G-RA + 1 G-CODE + 1 G-DOC-CONSISTENCY = 25 → v3.5.9 +G-RA-5 = 26）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -102,6 +102,12 @@ GATE_REGISTRY: list[dict] = [
     # 🆕 2026-06-27 RA 流程违规审计（建议书 §3.4）— 扫 RA 文档是否走完 RAModel 12 维 +
     # 8 维度 + 5 问自检 + 缺口管理 + 规模裁定 + RA-G01~16 闸判定，堵"AI 跳过 RA 完整流程直接出 RA 文档"
     {"id": "G-RA-FLOW-VIOLATION", "name": "RA 流程违规审计", "severity": "blocker"},
+    # 🆕 v3.5.9 RA 机械派生深度通过（防「形式通过、内容空转」）
+    # 与 G-RA-3（章节锚点存在）/G-RA-4（无 fabricate/vague）/G-RA-FLOW-VIOLATION（流程完整性）
+    # 正交：本门禁验证 E.5/G.5/H.6/H.5 规定的「每行 R→R′→AC 机械追问」是否真做了。
+    # 5 条规则：D1 §6.5 主规则机械派生 + D2 R′→AC 链接 + D3 §8.6 覆盖率真实重算
+    #        + D4 §9-ter 五问机械覆盖 + D5 §9-bis 业务模式六选一
+    {"id": "G-RA-5", "name": "RA 机械派生深度通过",  "severity": "blocker"},
     {"id": "G-CODE-1", "name": "Coding 真实性扫描通过", "severity": "blocker"},
     # 🆕 v3.5.7 项目侧记忆-配置路径一致性：项目 AGENTS.md/.harness/memory/MEMORY.md 等
     # "文档工作区"表述须与 .ae-sdd/config.yaml 的 docWorkspacePath 一致，防旧记忆劫持新配置
@@ -205,16 +211,21 @@ def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
                           f"design/ 目录不存在: {design}",
                           "跑 dr-generate-skill 生成 DR 文档")
 
-    drs = sorted(design.glob("*DR*.md")) + sorted(design.glob("*dr*.md"))
-    # 去重
-    drs = sorted(set(drs))
+    # 🆕 v3.5.10 Gap-004：原用 design.glob("*DR*.md") 只看根一层，不递归子目录，
+    # 漏判 design/story/be/STORY-001-BE-CodingReport.md 等子目录产物。
+    # 改为 rglob + 排除 -CodeReview / -Report 等非 DR 文档，避免误判。
+    drs = sorted(set(design.rglob("*DR*.md")) | set(design.rglob("*dr*.md")))
+    # 排除明显不是 DR 的报告类文档（CodeReview/CodingReport 等是产物而非 DR）
+    drs = [d for d in drs if not any(
+        kw in d.name for kw in ("CodeReview", "CodingReport", "TestReport", "-Report")
+    )]
     if not drs:
         return GateResult("G-01", "DR 文档存在", "blocker", False,
-                          f"design/ 目录无 DR 文档（*DR*.md / *dr*.md）",
+                          f"design/ 目录无 DR 文档（rglob *DR*.md / *dr*.md，已排除报告类）",
                           "跑 dr-generate-skill 生成 DR 文档")
     return GateResult("G-01", "DR 文档存在", "blocker", True,
                       f"找到 {len(drs)} 个 DR 文档",
-                      details={"files": [d.name for d in drs]})
+                      details={"files": [str(d.relative_to(project_dir)) for d in drs]})
 
 
 # ─── G-02 ───────────────────────────────────────────────────────────────────
@@ -853,6 +864,30 @@ def _iter_ra_files(project_dir: Path) -> list[Path]:
     return out
 
 
+# 🆕 v3.5.10 Gap-005：从 RA 文件名提取版本号（如 RA-xxx-v1.2.md → (1, 2)）
+_RA_VERSION_RE = re.compile(r"-v(\d+)\.(\d+)(?:\.(\d+))?", re.IGNORECASE)
+
+
+def _select_latest_ra(ra_files: list[Path]) -> Path:
+    """🆕 v3.5.10 Gap-005：选最新版 RA 文档。
+
+    优先按文件名中的版本号（-v1.2 > -v1.1 > -v1.0）；版本号缺失或相同时
+    fallback 到 mtime（保留原行为）。
+
+    背景：cp -r 复制 / 打包分发会刷平所有文件 mtime，导致 max(mtime) 选出
+    不确定的 RA 文档，G-RA-3 漏判 v1.2 已补的衍生章节。
+    """
+    def _version_key(p: Path) -> tuple:
+        m = _RA_VERSION_RE.search(p.name)
+        if m:
+            major, minor = int(m.group(1)), int(m.group(2))
+            patch = int(m.group(3)) if m.group(3) else 0
+            return (1, major, minor, patch, 0)  # 第 1 位 = 1 表示有版本号
+        return (0, 0, 0, 0, p.stat().st_mtime)  # 无版本号 → fallback mtime
+
+    return max(ra_files, key=_version_key)
+
+
 def check_ra_required(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-RA-1 RA 文档存在（SKILL.md G-RA 规则 1/5/6/7）。
 
@@ -879,7 +914,7 @@ def check_ra_required(project_dir: Path, st: dict, current_story: str) -> GateRe
                           details={"phase": phase, "ra_files": 0})
 
     # 规则 5：RA 距今 ≤ 30 天（取最新一份的修改时间）
-    latest = max(ra_files, key=lambda p: p.stat().st_mtime)
+    latest = _select_latest_ra(ra_files)
     mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
     now = datetime.now(tz=timezone.utc)
     age_days = (now - mtime).days
@@ -909,7 +944,7 @@ def check_ra_dimensions(project_dir: Path, st: dict, current_story: str) -> Gate
                           "无 RA 文档（依赖 G-RA-1 判定）",
                           details={"stub": True})
 
-    latest = max(ra_files, key=lambda p: p.stat().st_mtime)
+    latest = _select_latest_ra(ra_files)
     content = latest.read_text(encoding="utf-8")
 
     # 8 维度检查
@@ -950,7 +985,7 @@ def check_ra_derivatives(project_dir: Path, st: dict, current_story: str) -> Gat
                           "无 RA 文档（依赖 G-RA-1 判定）",
                           details={"stub": True})
 
-    latest = max(ra_files, key=lambda p: p.stat().st_mtime)
+    latest = _select_latest_ra(ra_files)
     content = latest.read_text(encoding="utf-8")
 
     is_state_machine = any(kw in content for kw in STATE_MACHINE_KEYWORDS)
@@ -1047,12 +1082,27 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
     if status != "PASS" or blockers > 0:
         blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
                                 if f.get("severity") == "BLOCKER"})
+        # 🆕 v3.5.10 Gap-006：从 findings 抽前 5 条具体定位（file:line:snippet），
+        # 让 AI 拿到结果知道改哪里——原版只列 rule 名，AI 不知道改哪个文件哪一行
+        blocker_findings = [f for f in report.get("findings", [])
+                            if f.get("severity") == "BLOCKER"][:5]
+        location_hints = []
+        for f in blocker_findings:
+            loc = f.get("file") or f.get("path") or "?"
+            line = f.get("line") or f.get("lineno") or ""
+            snippet = (f.get("snippet") or f.get("message") or "")[:60]
+            loc_str = f"{loc}" + (f":{line}" if line else "") + f" — {snippet}" if snippet else f"{loc}"
+            location_hints.append(loc_str)
+        msg = f"RA 真实性扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}"
+        if location_hints:
+            msg += f" | 示例定位：{location_hints}"
         return GateResult("G-RA-4", name, "blocker", False,
-                          f"RA 真实性扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}",
-                          "修复 RA 文档中标 BLOCKER 的项，或显式评审通过",
+                          msg,
+                          "修复 RA 文档中标 BLOCKER 的项（看示例定位），或显式评审通过",
                           details={"scanned": True, "ra_files": ra_files_scanned,
                                    "blockers": blockers, "total": n_total,
-                                   "blocker_rules": blocker_rules})
+                                   "blocker_rules": blocker_rules,
+                                   "sample_locations": location_hints})
 
     return GateResult("G-RA-4", name, "blocker", True,
                       f"RA 真实性扫描通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
@@ -1134,6 +1184,94 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
 
     return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", True,
                       f"RA 流程违规审计通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
+                      details={"scanned": True, "ra_files": ra_files_scanned,
+                               "blockers": 0, "total": n_total})
+
+
+# ─── G-RA-5：RA 机械派生深度通过（v3.5.9 — 防「形式通过、内容空转」）────────
+# G-RA-3（章节锚点存在）/G-RA-4（无 fabricate/vague）/G-RA-FLOW-VIOLATION（流程完整性）
+# 都是「存在性」检查。本门禁补「内容深度」正交维度：验证 E.5/G.5/H.6/H.5 规定的
+# 「每条规则 R 必须机械追问 6 问 → 衍生 R'」「每条 R' 必须映射到 H.5 模式编号」
+# 「§9-ter 每个触发动作必须回答 5 问」「§8.6 覆盖率是真实重算而非断言」。
+# 杜绝「表填了但每行没机械派生」（用户实测：13 个问题 → 被逼出 34 个，根因即此）。
+def _locate_ra_depth_scanner(master_source: Optional[Path]) -> Optional[Path]:
+    """在母版找 ra_depth_scan.py（G-RA-5 运行时依赖，🆕 v3.5.9）。"""
+    return _locate_runtime_script(master_source, "ra_depth_scan.py")
+
+
+def check_ra_depth(project_dir: Path, st: dict, current_story: str,
+                   master_source: Optional[Path] = None) -> GateResult:
+    """G-RA-5 RA 机械派生深度通过（🆕 v3.5.9）。
+
+    调 ra_depth_scan.py 跑 5 条机械派生规则检查：
+      D1 §6.5 主规则机械派生（每条 R≥1 R'，每 R' 有模式编号）
+      D2 R'→AC 链接完整性（每条 R' 在 §8.5 至少 1 AC）
+      D3 §8.6 覆盖率真实重算（声明 K/M 须与实际一致）
+      D4 §9-ter 五问机械覆盖（事件/缓存/MQ 必覆盖；时效禁模糊）
+      D5 §9-bis 业务模式六选一（6 模式每个明确适用/不适用）
+    BLOCKER=0 → pass；BLOCKER>0 → blocker。
+    """
+    name = "RA 机械派生深度通过"
+    phase = st.get("phase", "initialized")
+    pre_ra_phases = {"initialized", "ra-generated"}
+
+    scanner = _locate_ra_depth_scanner(master_source)
+    if scanner is None:
+        return GateResult("G-RA-5", name, "blocker", True,
+                          "未找到母版 ra_depth_scan.py（跳过）",
+                          action="确认母版路径",
+                          details={"scanned": False, "skipped": True, "stub": True})
+
+    # pre-RA phase 无 RA 文档 → stub
+    ra_files = _iter_ra_files(project_dir)
+    if not ra_files and phase in pre_ra_phases:
+        return GateResult("G-RA-5", name, "blocker", True,
+                          "pre-RA 阶段无 RA 文档（stub 通过）",
+                          details={"scanned": False, "stub": True, "phase": phase})
+
+    try:
+        result = _subprocess.run(
+            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except _subprocess.TimeoutExpired:
+        return GateResult("G-RA-5", name, "blocker", False,
+                          "ra_depth_scan.py 跑超过 60 秒",
+                          "缩小扫描范围或增加超时")
+    except Exception as e:
+        return GateResult("G-RA-5", name, "blocker", False,
+                          f"扫描器异常: {e}",
+                          "检查 ra_depth_scan.py 是否可执行")
+
+    try:
+        report = _json.loads(result.stdout) if result.stdout else {}
+    except _json.JSONDecodeError as e:
+        return GateResult("G-RA-5", name, "blocker", False,
+                          f"扫描器 JSON 输出无法解析: {e}",
+                          f"stdout 前 200 字符: {result.stdout[:200]}")
+
+    status = report.get("status", "UNKNOWN")
+    ra_files_scanned = report.get("raFiles", 0)
+    blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
+    n_total = len(report.get("findings", []))
+
+    if ra_files_scanned == 0:
+        return GateResult("G-RA-5", name, "blocker", True,
+                          "无 RA 文档可扫描（依赖 G-RA-1 判定）",
+                          details={"scanned": True, "ra_files": 0, "stub": True})
+
+    if status != "PASS" or blockers > 0:
+        blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
+                                if f.get("severity") == "BLOCKER"})
+        return GateResult("G-RA-5", name, "blocker", False,
+                          f"RA 机械派生深度扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}",
+                          "修复 RA 文档中标 BLOCKER 的项（E.5/G.5/H.6/H.5 机械追问逐行可见 + 链接齐全 + 覆盖率真实 + 五问覆盖 + 业务模式六选一）",
+                          details={"scanned": True, "ra_files": ra_files_scanned,
+                                   "blockers": blockers, "total": n_total,
+                                   "blocker_rules": blocker_rules})
+
+    return GateResult("G-RA-5", name, "blocker", True,
+                      f"RA 机械派生深度扫描通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
                       details={"scanned": True, "ra_files": ra_files_scanned,
                                "blockers": 0, "total": n_total})
 
@@ -1318,6 +1456,20 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
     name = "文档落地存放合规"
     issues: list[str] = []
 
+    # 🆕 v3.5.10 Gap-007：用 git ls-files 拿"已被 git 跟踪的 .md"清单，
+    # 已跟踪的文件视为历史产物（如 cp -r 复制来的 / 历史提交的），不报游离。
+    # 仅对"未跟踪 + 新产出"的游离文件报。修复 fixture / 项目迁移场景误报。
+    git_tracked: set[str] = set()
+    try:
+        ls_result = _subprocess.run(
+            ["git", "ls-files", "*.md"],
+            cwd=project_dir, capture_output=True, text=True, timeout=10,
+        )
+        for line in ls_result.stdout.splitlines():
+            git_tracked.add(line.strip().replace("\\", "/"))
+    except Exception:
+        pass  # git 不可用则空集合，回退到原行为（全部扫）
+
     # 扫描 project_dir 下疑似流程产物（{STORY}-* 或 {DocType} 命名的 .md）
     # 限定 2 层深度，避免 rglob 全盘扫描耗时
     stray_files: list[str] = []
@@ -1330,6 +1482,9 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
             continue
         rel_str = str(rel).replace("\\", "/")
         if any(seg in rel_str for seg in ("node_modules/", ".git/", "dist/", "CHANGELOG/", "docs/plans/")):
+            continue
+        # 🆕 v3.5.10 Gap-007：git 已跟踪 = 历史产物，跳过
+        if rel_str in git_tracked:
             continue
         checked += 1
         if checked > 500:  # 性能护栏
@@ -1458,11 +1613,67 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
                           f"涉及 {len(files)} 文件）：{[v['file']+':'+str(v['line']) for v in violations[:5]]}",
                           "改为声明调用 document-storage resolve_path，或引用 §2.3 路径模板；"
                           "禁止硬编码 design/、.ae-project/、skills/ae-sdd/assets/ 等路径",
-                          details={"scanned": scanned, "violations": violations})
+                          details={"scanned": scanned, "violations": violations,
+                                   "scope": "master"})
+
+    # 🆕 v3.5.10 Gap-008：扩展扫描项目侧记忆文档（.ae-sdd/ + AGENTS.md + CLAUDE.md）
+    # 母版扫描管"SKILL 文档自身漂移"；但项目侧 AGENTS.md/CLAUDE.md/.ae-sdd/memory 等记忆文档
+    # 如果硬编码了 d:\tmp\ 或 design/story/be/ 等越界路径，会劫持 AI 写产物到错位置
+    # （实测：life 项目 MEMORY.md 残留旧路径表述）。补这个盲区。
+    project_violations: list[dict] = []
+    project_scanned = 0
+    project_scan_targets: list[Path] = []
+    ae_sdd_dir = project_dir / ".ae-sdd"
+    if ae_sdd_dir.is_dir():
+        project_scan_targets.extend(ae_sdd_dir.rglob("*.md"))
+    for mem_name in ("AGENTS.md", "CLAUDE.md", "MEMORY.md"):
+        mem = project_dir / mem_name
+        if mem.is_file():
+            project_scan_targets.append(mem)
+    harness_mem = project_dir / ".harness" / "memory"
+    if harness_mem.is_dir():
+        project_scan_targets.extend(harness_mem.rglob("*.md"))
+
+    for md_path in project_scan_targets:
+        try:
+            rel = md_path.relative_to(project_dir)
+        except ValueError:
+            continue
+        rel_str = str(rel).replace("\\", "/")
+        if md_path.name == DOC_STORAGE_SKILL:
+            continue
+        project_scanned += 1
+        if project_scanned > 200:
+            break
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if _PATH_VIOLATION_RE.search(line):
+                project_violations.append({
+                    "file": rel_str,
+                    "line": lineno,
+                    "snippet": line.strip()[:100],
+                })
+
+    if project_violations:
+        files = sorted({v["file"] for v in project_violations})
+        return GateResult("G-PATH", name, "blocker", False,
+                          f"项目侧记忆文档存在路径越界（{len(project_violations)} 处，"
+                          f"涉及 {len(files)} 文件）："
+                          f"{[v['file']+':'+str(v['line']) for v in project_violations[:5]]}",
+                          "修正项目侧记忆文档（AGENTS.md/CLAUDE.md/.ae-sdd/memory）的路径表述，"
+                          "以 .ae-sdd/config.yaml docWorkspacePath 为 SSOT",
+                          details={"scanned": scanned, "project_scanned": project_scanned,
+                                   "violations": project_violations,
+                                   "scope": "master+project_memory"})
 
     return GateResult("G-PATH", name, "blocker", True,
-                      f"路径越界检测通过（扫描 {scanned} 个母版 .md，无硬编码产出路径）",
-                      details={"scanned": scanned, "violations": []})
+                      f"路径越界检测通过（扫描 {scanned} 个母版 .md + "
+                      f"{project_scanned} 个项目侧记忆 .md，无硬编码产出路径）",
+                      details={"scanned": scanned, "project_scanned": project_scanned,
+                               "violations": [], "scope": "master+project_memory"})
 
 
 # ─── G-DOC-CONSISTENCY：项目侧记忆-配置路径一致性（🆕 v3.5.7）─────────────────
@@ -1636,6 +1847,9 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
         elif g["id"] == "G-RA-4":
             # G-RA-4 同样需要 master_source 调 ra_authenticity_scan.py
             results.append(check_ra_authenticity(project_dir, st, current_story, master_source=master_source))
+        elif g["id"] == "G-RA-5":
+            # 🆕 v3.5.9 G-RA-5 需要 master_source 调 ra_depth_scan.py
+            results.append(check_ra_depth(project_dir, st, current_story, master_source=master_source))
         elif g["id"] == "G-CODE-1":
             # G-CODE-1 需要 master_source 调 coding_authenticity_scan.py
             results.append(check_gcode1(project_dir, st, current_story, master_source=master_source))

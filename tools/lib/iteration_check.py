@@ -132,9 +132,23 @@ def check_ic2_gate_claim_coverage(stop_check_py: Path, gates_py: Path) -> list[I
         return findings
     text = stop_check_py.read_text(encoding="utf-8", errors="replace")
 
-    # 统计 _G\d+_CLEAR_RE 模式（每个对应一个被交叉验证的 gate）
-    covered_gates = set(re.findall(r"_G(\d+)_CLEAR_RE", text))
-    covered = {f"G-{g}" for g in covered_gates}
+    # 🆕 v3.5.10 Gap-012：识别两种覆盖模式
+    #   模式 A（旧）：_G08_CLEAR_RE / _G\d+_CLEAR_RE 单 gate 正则
+    #   模式 B（新）：_GATE_CLEAR_RE 通用正则 + _VERIFIABLE_GATE_IDS 集合
+    covered: set[str] = set()
+    # 模式 A
+    covered.update(f"G-{g}" for g in re.findall(r"_G(\d+)_CLEAR_RE", text))
+    # 模式 B：通用 _GATE_CLEAR_RE 命中 → 解析 _VERIFIABLE_GATE_IDS 集合
+    has_generic_re = "_GATE_CLEAR_RE" in text
+    if has_generic_re:
+        ids_match = re.findall(r'"(G-\d+)"', text)
+        # _VERIFIABLE_GATE_IDS 集合内的字面量
+        verifiable_match = re.search(r"_VERIFIABLE_GATE_IDS\s*=\s*\{([^}]*)\}", text, re.DOTALL)
+        if verifiable_match:
+            ids_in_set = re.findall(r'"(G-\d+)"', verifiable_match.group(1))
+            covered.update(ids_in_set)
+        elif ids_match:
+            covered.update(ids_match)
 
     # 统计 GATE_REGISTRY 总数
     total_gates = 0
@@ -142,6 +156,7 @@ def check_ic2_gate_claim_coverage(stop_check_py: Path, gates_py: Path) -> list[I
         gates_text = gates_py.read_text(encoding="utf-8", errors="replace")
         total_gates = len(re.findall(r'"G-\d+"', gates_text))
 
+    # 🆕 v3.5.10：覆盖 ≥ 5 个 gate 即视为"已扩展"，不再 warn
     if len(covered) <= 1 and total_gates > 1:
         findings.append(IterationFinding(
             check_id="IC-2", severity="warn",
@@ -152,6 +167,13 @@ def check_ic2_gate_claim_coverage(stop_check_py: Path, gates_py: Path) -> list[I
                 f"{sorted(covered)} 的 CLEAR_RE 正则，其余 {total_gates - len(covered)} 个 gate 谎报不校验。"
                 f"建议扩展 _G08_CLEAR_RE 为多 gate 循环，或在 HS-12 措辞中明确'当前覆盖 G-08'"
             ),
+        ))
+    elif len(covered) >= 5:
+        findings.append(IterationFinding(
+            check_id="IC-2", severity="info",
+            item=f"F-1 交叉验证已扩展覆盖 {len(covered)} 个 gate（{sorted(covered)[:6]}...）",
+            location=f"{stop_check_py.name}",
+            detail=f"v3.5.10 Gap-012 修复：stop_check.py 已用 _GATE_CLEAR_RE 通用正则 + _VERIFIABLE_GATE_IDS 覆盖多 gate，覆盖面达标。",
         ))
     return findings
 
@@ -193,8 +215,33 @@ def check_ic3_unimported_modules(tools_dir: Path) -> list[IterationFinding]:
             imported.add(m)
 
     # 模块定义但未被任何文件 import → 候选
+    # 🆕 v3.5.10 Gap-013：排除"AI Agent 调用面 API"模块——这些模块设计上就是
+    # 给 LLM Agent 通过 SKILL 文档调用（resolve_path / save_doc 等），不期望被
+    # CLI/gates 内部 import。零 import 不算死代码，避免 IC-3 误报。
+    # 判定：模块 docstring 含 "AI Agent 调用" / "LLM 调用" / "Agent 调用面" 标记。
+    _AGENT_API_MARKERS = ("AI Agent 调用", "LLM 调用", "Agent 调用面",
+                          "给 LLM", "给 AI Agent", "Python SSOT",
+                          "代码层实现", "代码兜底")
     for mod in modules:
         if mod not in imported:
+            # 检查模块是否声明为"AI Agent 调用面 API"
+            mod_file = lib_dir / f"{mod}.py"
+            try:
+                mod_text = mod_file.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                mod_text = ""
+            is_agent_api = any(marker in mod_text[:2000] for marker in _AGENT_API_MARKERS)
+            if is_agent_api:
+                findings.append(IterationFinding(
+                    check_id="IC-3", severity="info",
+                    item=f"模块 '{mod}' 为 AI Agent 调用面 API（零 import 属设计预期，非死代码）",
+                    location=f"tools/lib/{mod}.py",
+                    detail=(
+                        "本模块设计上由 LLM Agent 通过 SKILL 文档调用（如 resolve_path/save_doc），"
+                        "不期望被 CLI/gates 内部 import。零 import 属预期，已从 warn 降级 info（v3.5.10 Gap-013）。"
+                    ),
+                ))
+                continue
             findings.append(IterationFinding(
                 check_id="IC-3", severity="warn",
                 item=f"模块 '{mod}' 已实现但全树零 import（未接入运行时）",
