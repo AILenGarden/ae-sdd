@@ -196,6 +196,32 @@ def _read_prd_state(project_root: Path, prd_id: str) -> dict:
         return {}
 
 
+def cmd_state_prd_init(args, parser):
+    """🆕 v3.5.12 — 初始化 PRD 级 state（写入 8 字段 + prdStatus=in_progress）。
+
+    治 P0-9/10：v3.5.12 前无此命令，PRD schema 8 字段全是死字段，
+    check_prd_4_layers 永远 fail。本命令补真写入入口。
+    """
+    from lib import state as state_mod
+    project_root = Path.cwd()
+    prd_state_path = project_root / ".auto-engineering" / args.prd / "state.json"
+    st = state_mod.read_state(prd_state_path)
+    state_mod.prd_init(st, args.prd, args.title or "",
+                       story_ids=[], size_budget={})
+    state_mod.write_state(prd_state_path, st)
+
+    if args.json:
+        output.emit({"prdId": args.prd, "status": "in_progress",
+                     "written": ["prdId", "storyIds", "crossStoryDeps",
+                                 "crossStoryResidualRisks", "sizeBudget",
+                                 "prdReview", "gateRegistry", "compactHistory", "prdStatus"]},
+                    as_json=True)
+    else:
+        output.info(f"✅ PRD {args.prd} 初始化完成（prdStatus=in_progress）")
+        output.info(f"   写入 8 字段 + prdStatus（治 P0-9/10 死字段）")
+    return 0
+
+
 def cmd_state_prd_check_complete(args, parser):
     """🆕 v3.3.0 — 校验 4 层 AND（G-PRD-1~4），输出未达成项，**不改状态**."""
     project_root = Path.cwd()
@@ -334,6 +360,20 @@ def cmd_runtime_compact(args, parser):
     output.info("⚠️  本子命令当前为**协议级骨架**，不直接执行 shell 命令；")
     output.info("    实际触发由各 runtime 的 hook / session protocol 完成。")
     output.info("    实施完会标记 prdStatus → compacted 并写 summary.md")
+
+    # 🆕 v3.5.12：补真实 prdStatus 写入（闭环 5 态，治 P1-4 状态机残缺）
+    # 协议骨架不变（实际 compact 由 runtime hook 执行），但状态写入要真实，
+    # 否则 prdStatus 永远卡 awaiting_compact，stop_check HS-8 误报。
+    from lib import state as state_mod
+    project_root = Path.cwd()
+    prd_state_path = project_root / ".auto-engineering" / prd_id / "state.json"
+    if prd_state_path.is_file():
+        ps = state_mod.read_state(prd_state_path)
+        state_mod.set_prd_status(ps, "compacted")
+        state_mod.write_state(prd_state_path, ps)
+        output.ok(f"prdStatus → compacted（v3.5.12 闭环写入）")
+    else:
+        output.warn(f"PRD state.json 不存在（{prd_state_path}），跳过 prdStatus 写入")
     return 0
 
 
@@ -541,7 +581,9 @@ def cmd_update_check(args, parser):
             output.info(f"   跑 `ae-sdd update-check --only {qr.checks_to_run[0]}` 逐项验证（或直接 `ae-sdd update-check` 全量）")
         return 0
 
-    # ── 检查模式：跑 UC-01~UC-05 ──
+    # ── 检查模式：跑 UC-01~UC-12（含 AA 全维对齐 UC-08~12，v3.5.11）──
+    # AA（alignment_audit）注册到 update_graph.CHECK_FUNCS，统一调度
+    from lib import alignment_audit  # noqa: F401 — 触发 register_to_update_graph()
     results = update_graph.check_all(repo_root, only=args.only)
     summary = update_graph.summarize(results)
 
@@ -555,9 +597,9 @@ def cmd_update_check(args, parser):
             if c.get("fix") and not c["pass"]:
                 output.info(f"      → {c['fix']}")
         if summary["failed"] > 0:
-            output.info("⚠️ 存在漏更新：按上述 fix 修复后重跑 `ae-sdd update-check`。")
+            output.info("⚠️ 存在漏更新或 AA 对齐缺口：按上述 fix 修复后重跑 `ae-sdd update-check`。")
         else:
-            output.info("✅ 更新闭环完整，无漏更新。")
+            output.info("✅ 更新闭环完整，无漏更新，AA 全维对齐通过。")
 
     return 0 if summary["failed"] == 0 else 1
 
@@ -870,6 +912,143 @@ def cmd_context_pressure(args, parser):
 
     # report-only，始终返回 0（不阻断流程）
     return 0
+
+
+# ─── 🆕 v3.5.12 review-loop CLI（编排层状态机，治 P0-1/2/4）─────────────────
+
+def _resolve_state_path(args):
+    """解析 state.json 路径（优先 --story，否则项目级）。"""
+    ade_sdd = paths.locate_project_ae_sdd()
+    story_id = getattr(args, "story", "") or ""
+    if story_id:
+        return ade_sdd, story_id, paths.project_root(ade_sdd) / ".auto-engineering" / story_id / "state.json"
+    return ade_sdd, story_id, paths.state_path(ade_sdd)
+
+
+def cmd_review_loop_start(args, parser):
+    """review-loop start — 初始化/读 reviewState，机械派生 Tier，输出派活指令。
+
+    半自动模式（对齐 ⑥.10 test-verifier）：CLI 算 Tier + 状态机，root agent
+    按 dispatchHint 用 Agent 工具派 reviewer（智能层 CLI 不耦合 runtime）。
+    """
+    from lib import review_loop as rl_mod
+    from lib import state as state_mod
+    ade_sdd, story_id, sp = _resolve_state_path(args)
+    st = state_mod.read_state(sp)
+    result = rl_mod.start(st, args.node, args.ra_size, args.decision_hints or "")
+    state_mod.write_state(sp, st)
+
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        output.info(f"🔄 review-loop start（🆕 v3.5.12，节点={args.node}）")
+        output.info(f"   Tier: {result['tier']}（需 {result['reviewersNeeded']} 个 reviewer）")
+        output.info(f"   视角: {', '.join(result['lens'])}")
+        output.info(f"   当前进度: round={result['round']} dryCounter={result['dryCounter']}")
+        output.info(f"   → {result['dispatchHint']}")
+    return 0
+
+
+def cmd_review_loop_collect(args, parser):
+    """review-loop collect — 收 reviewer 报告：验 session + 算新增 + 推进轮次。"""
+    from lib import review_loop as rl_mod
+    from lib import state as state_mod
+    from lib import session as session_mod
+    ade_sdd, story_id, sp = _resolve_state_path(args)
+    st = state_mod.read_state(sp)
+
+    # 读 root sessionId
+    root_sess = session_mod.read_session(ade_sdd, story_id) or {}
+    root_sid = root_sess.get("sessionId", "")
+
+    # 解析 reports（JSON 字符串或文件路径列表）
+    import json as _json
+    reports = []
+    for r in args.reports.split(","):
+        r = r.strip()
+        if not r:
+            continue
+        # 支持 path|sessionId 或 JSON
+        if "|" in r:
+            path, sid = r.split("|", 1)
+            reports.append({"report": path.strip(), "sessionId": sid.strip(), "findings": []})
+        else:
+            reports.append({"report": r, "sessionId": "", "findings": []})
+
+    # session-ids 参数（与 reports 对齐）
+    sids = [s.strip() for s in (args.session_ids or "").split(",") if s.strip()]
+    for i, sid in enumerate(sids):
+        if i < len(reports):
+            reports[i]["sessionId"] = sid
+
+    # findings JSON（可选，从 --findings-json 读）
+    if args.findings_json:
+        try:
+            findings_data = _json.loads(args.findings_json)
+            if isinstance(findings_data, list) and findings_data:
+                # 平均分配给各 reviewer（简化）或全部给第一个
+                reports[0]["findings"] = findings_data if len(reports) == 1 else findings_data
+        except _json.JSONDecodeError:
+            pass
+
+    result = rl_mod.collect(st, args.node, reports, root_sid,
+                             has_red_blocker=args.has_red_blocker)
+    state_mod.write_state(sp, st)
+
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        output.info(f"🔄 review-loop collect（节点={args.node}）")
+        sc = result.get("sessionCheck", {})
+        if not sc.get("passed"):
+            output.warn(f"   ❌ session 不独立：{sc.get('reason')}")
+            output.info(f"   → root 必须真派 sub-agent（自扮会被 G-09B 阻断）")
+            return 1
+        output.info(f"   ✅ session: {sc.get('reason')}")
+        output.info(f"   round={result['round']} dryCounter={result['dryCounter']} "
+                    f"newFindings={len(result.get('newFindings', []))}")
+        if result.get("rejected"):
+            output.warn(f"   拒收 {len(result['rejected'])} 条（锚点格式非法）")
+        action = result.get("nextAction")
+        if action == "exit-normal":
+            output.info(f"   → ✅ 正常退出（连续 {result['dryCounter']} 轮无新增），可切相")
+        elif action == "escalate-user":
+            output.warn(f"   → ⚠️ 超过循环上限仍有 🔴，升级用户决策")
+        else:
+            output.info(f"   → 继续派 reviewer（下一轮）")
+    return 0 if result.get("sessionCheck", {}).get("passed", True) else 1
+
+
+def cmd_review_loop_status(args, parser):
+    """review-loop status — 读进度（report-only，重入用）。"""
+    from lib import review_loop as rl_mod
+    from lib import state as state_mod
+    ade_sdd, story_id, sp = _resolve_state_path(args)
+    st = state_mod.read_state(sp)
+    result = rl_mod.status(st)
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        output.info(f"🔄 review-loop status（节点={result.get('node')}）")
+        output.info(f"   Tier={result.get('tier')} round={result.get('round')} "
+                    f"dryCounter={result.get('dryCounter')} exitReason={result.get('exitReason')}")
+        output.info(f"   累计 findings: {result.get('findingsCount')}")
+    return 0
+
+
+def cmd_review_loop_verify_exit(args, parser):
+    """review-loop verify-exit — 退出条件校验（gates G-REVIEW-LOOP 兜底用）。"""
+    from lib import review_loop as rl_mod
+    from lib import state as state_mod
+    ade_sdd, story_id, sp = _resolve_state_path(args)
+    st = state_mod.read_state(sp)
+    passed, reason = rl_mod.verify_exit(st.get("reviewLoop") or {})
+    if args.json:
+        output.emit({"passed": passed, "reason": reason}, as_json=True)
+    else:
+        mark = "✅" if passed else "❌"
+        output.info(f"{mark} review-loop verify-exit: {reason}")
+    return 0 if passed else 1
 
 
 def cmd_bump(args, parser):
@@ -2228,6 +2407,13 @@ def main() -> int:
     p_state_confirm.set_defaults(func=cmd_state_confirm)
 
     # state prd-*（🆕 v3.3.0 PRD 级状态机 CLI）
+    p_state_prd_init = state_sub.add_parser("prd-init",
+                                             help="[v3.5.12] 初始化 PRD 级 state（写入 8 字段 + prdStatus=in_progress）",
+                                             parents=[common])
+    p_state_prd_init.add_argument("--prd", required=True, help="PRD ID（如 PRD-CS-001）")
+    p_state_prd_init.add_argument("--title", default="", help="PRD 标题")
+    p_state_prd_init.set_defaults(func=cmd_state_prd_init)
+
     p_state_prd_check = state_sub.add_parser("prd-check-complete",
                                               help="[v3.3.0] 校验 4 层 AND（G-PRD-1~4），不改状态",
                                               parents=[common])
@@ -2336,6 +2522,39 @@ def main() -> int:
                           parents=[common])
     p_cp.add_argument("--story", default="", help="Story ID（空 = 项目级）")
     p_cp.set_defaults(func=cmd_context_pressure)
+
+    # review-loop（🆕 v3.5.12 — review-loop 编排层状态机，治 P0-1/2/4）
+    p_rl = sub.add_parser("review-loop",
+                          help="[v3.5.12] review-loop 编排层状态机（Tier派生/轮次/退出判定）",
+                          parents=[common])
+    rl_sub = p_rl.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    p_rl_start = rl_sub.add_parser("start", help="初始化/读 reviewState + 派生 Tier + 输出派活指令",
+                                    parents=[common])
+    p_rl_start.add_argument("--story", default="", help="Story ID（空 = 项目级）")
+    p_rl_start.add_argument("--node", required=True,
+                             help="review 节点（story-review/dr-review/code-review/ra-review）")
+    p_rl_start.add_argument("--ra-size", default="中", help="RA 规模（微/小/中/大）")
+    p_rl_start.add_argument("--decision-hints", default="", help="决策线索文本（机械匹配关键决策点）")
+    p_rl_start.set_defaults(func=cmd_review_loop_start)
+
+    p_rl_collect = rl_sub.add_parser("collect", help="收报告：验session+算新增+推进轮次",
+                                      parents=[common])
+    p_rl_collect.add_argument("--story", default="", help="Story ID")
+    p_rl_collect.add_argument("--node", required=True, help="review 节点")
+    p_rl_collect.add_argument("--reports", default="", help="报告列表（path|sessionId 或 path，逗号分隔）")
+    p_rl_collect.add_argument("--session-ids", default="", help="sessionId 列表（逗号分隔，与 reports 对齐）")
+    p_rl_collect.add_argument("--findings-json", default="", help="findings JSON 字符串（含 anchor+severity）")
+    p_rl_collect.add_argument("--has-red-blocker", action="store_true", help="本轮是否仍有 🔴 阻断型")
+    p_rl_collect.set_defaults(func=cmd_review_loop_collect)
+
+    p_rl_status = rl_sub.add_parser("status", help="读进度（重入用）", parents=[common])
+    p_rl_status.add_argument("--story", default="", help="Story ID")
+    p_rl_status.set_defaults(func=cmd_review_loop_status)
+
+    p_rl_verify = rl_sub.add_parser("verify-exit", help="退出条件校验（gates 兜底用）", parents=[common])
+    p_rl_verify.add_argument("--story", default="", help="Story ID")
+    p_rl_verify.set_defaults(func=cmd_review_loop_verify_exit)
 
     # memory toolset (P0): mandatory phase-aware memory hooks
     p_mem = sub.add_parser("memory", help="phase-aware memory toolset", parents=[common])

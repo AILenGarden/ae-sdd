@@ -9,7 +9,18 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 
 根据 Story 文档中对 Task 的描述，结合约束文档和 Task 模板，生成具体的 Task 实现文档。确保实现者拿到文档后能直接写出一致的代码。
 
-***
+---
+
+## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
+
+> 本文件「TC-1~TC-9（生成后一致性校验，标题标「强制门禁」）」「TR-1~TR-7（全局 Task Review）」等标注，
+> **当前为软门禁（report-only）**，由 task-writer 在 Task 文档内逐项自评判定，**TC/TR 无逐条 GATE_REGISTRY 注册**。
+>
+> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py`：G-06（Task Review 通过，看 phase）/ G-08（CodingPlan 14 门禁关键词）/ G-14（CodingPlan-Story 一致性）。
+> G-06 只校验 phase 标志位（task-reviewed），**不校验 TR-1~7 逐项内容**——TR 逐项内容是 task-writer 的自评清单。
+> **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），TC/TR 承诺会被 UC-08 持续追踪为「软门禁/待硬化」。
+
+---
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 

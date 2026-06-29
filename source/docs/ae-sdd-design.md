@@ -104,7 +104,7 @@
 - G-CODE-1 Coding 真实性门卫（v3.2.1）：Coding 完成/CodeReview 前扫描 AI Coding 反模式 AP-1~AP-6
 - 🆕 v3.4.0 中段门禁（建议书1/2/4，补齐"两头强中间空"）：G-14 CodingPlan-Story 一致性（AC 对齐 + 偏离 Proposal）/ G-CODEPLAN-SRC 源码核对（类骨架附已读/待核实标记）/ G-DOC-STORAGE 文档落地存放合规（禁游离位置）
 - 🆕 v3.4.0 入口关卡三道闸（建议书4）：关卡1 entry token（`ae-sdd enter`，UserPromptSubmit 检测 `/ae-sdd` 注入强提醒）/ 关卡2 产物落地凭证校验（PreToolUse 拦产物路径 + entry token + 产物-Phase 映射）/ 关卡3 代码改动准入（非 coding phase 或无审核点 2.5 确认 → 禁写 src/）
-- 共 22 个门禁（G-00~G-14 + G-CODEPLAN-SRC + G-DOC-STORAGE + G-RA-1~4 + G-CODE-1），`ae-sdd gates check` 统一扫描
+- 共 26 个门禁（G-00~G-14 + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~5 + G-RA-FLOW-VIOLATION + G-CODE-1），`ae-sdd gates check` 统一扫描；🆕 v3.5.11 AA 全维对齐验证器（UC-08~12）反向对账「doc 承诺门禁 ↔ gates 注册 ↔ 实现真实性」，根治「协议详尽但工具链零落地」体系性病根
 - ⑥.10 测试真实性：8 类禁止手段 + Surefire XML 解析 + AC 覆盖率 100%。🆕 v3.4.0：test-verifier 报告须带独立 session_id（≠ 主 agent），G-09 校验
 - ⑥bis 全切面一致性：以代码为锚反向核查 DR/Story/Task/测试用例/代码五方一致
 - ⑦bis 全链路对称性：DR-Story-Task-实现-测试用例五层双向追溯，无断链
@@ -161,7 +161,7 @@
 **设计实现**：
 
 - 产物路径：`harness/.harness/agent.md`，由 `ae-sdd-harness-adapter` SKILL 自动生成
-- 转译内容：SKILL.md + HARNESS.md → harness 格式，包含 14 门禁(G-00~G-13) + 10 阶段状态机 + HS-1~HS-6 硬停止规则 + per-domain routing rules
+- 转译内容：SKILL.md + HARNESS.md → harness 格式，包含 26 门禁(G-00~G-14 + 中段 + G-RA 系列 + G-CODE-1) + 11 阶段状态机 + HS-1~HS-12 硬停止规则 + per-domain routing rules
 - `.adapter.lock` 记录来源 commit hash，母版升级后 hash 变化即需重新生成
 - 转译脚本：`convert-ae-sdd-to-harness.ps1`
 
@@ -277,7 +277,7 @@ v3.4.0 引入 PRD 级 state.json + 11 phase 状态机（`initialized → ra-gene
 
 - 现有 `phase` 字段只记"当前阶段"，**没有"如何到达此处"的轨迹**
 - 现有 `history` 字段只记阶段切换（`{phase, timestamp, by}`），**粒度过粗**（如 router 把请求路由到 story-generate-skill、随后该 SKILL 完成、随后用户确认 → 这三步之间发生了什么无法回溯）
-- 22 门禁拦截（`G-09` 测试真实性、`G-CODEPLAN-SRC` 源码核对等）只在被触发时记录结果，**没有"何时由谁触发拦截"的 audit trail**
+- 26 门禁拦截（`G-09` 测试真实性、`G-CODEPLAN-SRC` 源码核对等）只在被触发时记录结果，**没有"何时由谁触发拦截"的 audit trail**
 
 → 运维场景痛点：用户问"STORY-020-BE 昨天为什么 Phase 2 没走完？"时，AI 只能查 `phase` + `history`，无法还原"哪一步门禁拦截了、是哪个 gate_id、谁确认的"。
 

@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.10（🆕 2026-06-28：实战适配能力测试暴露 10 项 Gap 集中修复——① Gap-014 classify 4 维判定 scale 误判（短文本需求被误判微规模跳过 DR/Story/Task，新增 `--project` 参数优先读已有 RA/Story/Task 产物）；② Gap-010 三层 plugin 注册表全部缺失（v3.5.0 声明的 plugin 机制生产环境不可用，install 时自动生成 L2 空骨架 + 母版带 L3 默认注册表）；③ Gap-012 HS-12 谎报只覆盖 G-08（stop_check.py CLEAR_RE 从 1 gate 扩展到 19 gate）；④ Gap-005 G-RA-1/2/3 选错文档版本（cp -r 刷平 mtime 导致 max(mtime) 选不确定，改用文件名版本号优先）；⑤ Gap-004 G-01 glob 误报（glob 只扫 design/ 根一层漏判子目录，改 rglob + 排除报告类）；⑥ Gap-008 G-PATH 扫描范围过窄（原只扫母版，新增扫项目侧 .ae-sdd/AGENTS.md/CLAUDE.md/MEMORY.md 记忆文档）；⑦ Gap-006 G-RA-4 输出不友好（31 BLOCKER 无定位，输出加前 5 条 file:line:snippet）；⑧ Gap-007 G-DOC-STORAGE 不区分历史/新增（cp -r 复制来的历史文件被误报游离，用 git ls-files 过滤已跟踪文件）；⑨ Gap-013 document_storage 误判死代码（IC-3 识别"AI Agent 调用面 API"白名单，零 import 属设计预期）；⑩ Gap-011 SKILL.md 残留 v3.0 sync-tools 关键词。前序 v3.5.9 新增 G-RA-5 RA 机械派生深度门禁（D1-D5 5 条规则），堵「形式通过、内容空转」——实测案例"13 个问题 → 被逼出 34 个衍生问题"的根因；门禁数 25→26。
+> **版本：** v3.5.13（🆕 2026-06-29：修复 G-09B 设计缺陷——原 v3.5.12 的 reviewer session 独立性只在 review-loop collect 内部校验（root 不调 collect 即绕过），现升级为**独立硬门禁 G-09B**：review phase 切相时 check_all 自动跑，机械派生 Tier，Tier 2/3 强制要求 activeAgents 有 ≥Tier 个 sessionId≠root 的 reviewer + reviewLoop 字段存在，**彻底堵死"root 总派给自己单审"**——5 场景 E2E 验证（不派/自扮/没跑review-loop 全阻断，完整合规才放行，Tier 1 微任务豁免）。门禁数 27→28（+G-09B）。前序 v3.5.12 review-loop CLI + PRD 子系统补全；v3.5.11 AA 全维对齐验证器（UC-08~12）根治「协议详尽但工具链零落地」体系性病根。AA 接入 `ae-sdd update-check`，任何未来迭代 doc 改了不对齐 CLI 即报。
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

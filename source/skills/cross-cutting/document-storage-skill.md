@@ -675,11 +675,10 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
     "openQuestions": []
   },
 
-  "memoryLifecycle": {
-    "enterHistory": [{ "at": "2026-06-01T...", "phase": "ra" }],
-    "writeHistory": [{ "at": "2026-06-15T...", "phase": "design", "kind": "decision" }],
-    "exitHistory": [{ "at": "2026-06-25T...", "phase": "review" }]
-  },
+  <!-- 🟠 v3.5.12 删除 memoryLifecycle 字段：死设计重复
+       实际 memory 门禁（memory_gate.py）读 memory_store.py 的独立 JSONL，
+       完整记录 enter/write/exit 生命周期，不读 state.json 的 memoryLifecycle。
+       保留此注释说明删除原因，避免后续误加回。 -->
 
   "runtimeHooks": {
     "mavis": { "compactCmd": "mavis session rotate", "args": ["--handoff-file", "{summary.md}"] },
@@ -720,8 +719,8 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | **跨 Story 依赖** | `crossStoryDeps[]` | Story 完成 hook | G-PRD-3 闸 |
 | **残留风险** | `crossStoryResidualRisks[]` | AI + 用户协作 | G-PRD-3 闸 |
 | **规模预算** | `sizeBudget` | 聚合自 Story | 🔍 人工审核点 5 |
-| **PRD 审核** | `prdReview` | 用户确认后 | G-PRD-4 闸 |
-| **memory lifecycle** | `memoryLifecycle`（v3.2.3+ 强制门禁）| `ae-sdd memory enter/write/exit` | `ae-sdd state write` 前置校验 |
+| **PRD 审核** | `prdReview` | 用户确认后（`state.prdReview`）| G-PRD-4 闸 |
+| **memory lifecycle** | ~~`memoryLifecycle`~~（🟠 v3.5.12 删除：死设计重复，实际门禁读 `memory_store.py` JSONL）| `ae-sdd memory enter/write/exit` | `ae-sdd state write` 前置校验（读 memory_store 不读此字段）|
 | **runtime 适配** | `runtimeHooks` | 项目实例化时一次 | `ae-sdd runtime compact` |
 | **闸注册表** | `gateRegistry` | G-PRD-* 闸 hook | PRD 完成判定 CLI |
 

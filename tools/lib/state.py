@@ -278,3 +278,191 @@ def check_prd_4_layers(prd_state: dict) -> dict:
     }
     result["all_pass"] = all(result[k]["pass"] for k in ("G-PRD-1", "G-PRD-2", "G-PRD-3", "G-PRD-4"))
     return result
+
+
+# ─── 🆕 v3.5.12 多 Agent state 写入 helper（治 P0-11 死字段）──────────────────
+# SKILL.md §🤖 多 Agent 状态共享承诺：启动 sub-agent 写 activeAgents、完成移 agentReports。
+# v3.5.12 前这些字段零写入（死字段），AI 靠记忆维护。本节补真写入路径。
+
+def register_agent(state: dict, agent_id: str, role: str, session_id: str,
+                    sub_task: str = "") -> None:
+    """启动 sub-agent 时写 activeAgents（原地修改 state，调用方负责 write_state）。"""
+    agents = state.setdefault("activeAgents", [])
+    # 幂等：同 agentId 不重复追加
+    if any(a.get("agentId") == agent_id for a in agents):
+        return
+    agents.append({
+        "agentId": agent_id,
+        "role": role,
+        "sessionId": session_id,
+        "status": "running",
+        "startedAt": _now_ts(),
+        "currentSubTask": sub_task,
+    })
+
+
+def complete_agent(state: dict, agent_id: str, report_path: str = "",
+                    summary: str = "") -> None:
+    """sub-agent 完成时：从 activeAgents 移除 + 移入 agentReports。"""
+    agents = state.setdefault("activeAgents", [])
+    reports = state.setdefault("agentReports", [])
+    # 从 activeAgents 移除
+    state["activeAgents"] = [a for a in agents if a.get("agentId") != agent_id]
+    # 移入 agentReports
+    if any(r.get("agentId") == agent_id for r in reports):
+        return
+    reports.append({
+        "agentId": agent_id,
+        "reportPath": report_path,
+        "summary": summary,
+        "completedAt": _now_ts(),
+    })
+
+
+# ─── 🆕 v3.5.12 重入字段写入 helper（治 P1-5 死字段）──────────────────────────
+# SKILL.md §流程状态跟踪承诺：currentStep/completedSteps/codingRound 真实读写。
+# v3.5.12 前零写入（重入只能靠 phase 粗粒度恢复）。
+
+def set_current_step(state: dict, step: str) -> None:
+    """进入新步骤时写 currentStep + 追加 completedSteps。"""
+    prev = state.get("currentStep")
+    if prev and prev != step:
+        completed = state.setdefault("completedSteps", [])
+        if prev not in completed:
+            completed.append(prev)
+    state["currentStep"] = step
+
+
+def bump_coding_round(state: dict) -> str:
+    """开始新一轮 Coding 前累加 codingRound，返回新轮次标识（如 r1/r2/r3）。"""
+    cur = state.get("codingRound", 0)
+    new_round = cur + 1
+    state["codingRound"] = new_round
+    return f"r{new_round}"
+
+
+# ─── 🆕 v3.5.12 PRD 子系统写入 helper（治 P0-9/10 PRD 死字段）────────────────
+# document-storage §3.5 PRD schema 承诺 8 字段，v3.5.12 前零写入方（prd-init 命令
+# 都不存在）。本节补真写入路径 + prdStatus 5 态闭环。
+
+# PRD 状态机 5 态（对齐 document-storage §3.5）
+PRD_STATUS_FLOW = [
+    "in_progress",                  # PRD 进行中（prd-init 写入）
+    "prd_complete_pending_user",    # 4层AND全过，等用户审核点5
+    "awaiting_compact",             # prd-complete 写入，等 compact
+    "compacted",                    # compact 成功（v3.5.12 补写入）
+    "prd_aborted",                  # PRD 中止（v3.5.12 补写入）
+]
+
+
+def prd_init(state: dict, prd_id: str, prd_title: str = "",
+              story_ids: list = None, size_budget: dict = None) -> None:
+    """初始化 PRD 级 state（对应 CLI `ae-sdd state prd-init`）。
+
+    写入 PRD schema 8 字段的初始值，让 check_prd_4_layers 有真实输入。
+    """
+    state["prdId"] = prd_id
+    state["prdTitle"] = prd_title
+    state["storyIds"] = story_ids or []
+    state["crossStoryDeps"] = []
+    state["crossStoryResidualRisks"] = []
+    state["sizeBudget"] = size_budget or {}
+    state["prdReview"] = {}
+    state["gateRegistry"] = {f"G-PRD-{i}": "pending" for i in range(1, 5)}
+    state["compactHistory"] = []
+    state["prdStatus"] = "in_progress"
+
+
+def add_story_to_prd(state: dict, story_id: str, dr_id: str = "",
+                      doc_path: str = "") -> None:
+    """Story 完成时把 Story 信息加入 PRD state（对应 Story 完成 hook）。"""
+    story_ids = state.setdefault("storyIds", [])
+    if not any(s.get("storyId") == story_id for s in story_ids):
+        story_ids.append({
+            "storyId": story_id,
+            "drId": dr_id,
+            "docPath": doc_path,
+            "codeReviewReport": None,
+            "sevenBisPassed": False,
+            "userConfirmedAt": None,
+        })
+
+
+def record_story_completion(state: dict, story_id: str,
+                             code_review_report: str,
+                             seven_bis_passed: bool,
+                             user_confirmed_at: str) -> None:
+    """记录 Story 完成（codeReviewReport + sevenBisPassed + userConfirmedAt）。
+
+    这三个字段是 check_prd_4_layers 的 G-PRD-1 依赖，v3.5.12 前无写入方。
+    """
+    for s in state.get("storyIds", []):
+        if s.get("storyId") == story_id:
+            s["codeReviewReport"] = code_review_report
+            s["sevenBisPassed"] = seven_bis_passed
+            s["userConfirmedAt"] = user_confirmed_at
+            return
+
+
+def add_cross_story_dep(state: dict, from_story: str, to_story: str,
+                         dep_type: str = "") -> None:
+    """记录跨 Story 依赖（check_prd_4_layers 的 G-PRD-3 依赖）。"""
+    deps = state.setdefault("crossStoryDeps", [])
+    if not any(d.get("fromStory") == from_story and d.get("toStory") == to_story
+               for d in deps):
+        deps.append({"fromStory": from_story, "toStory": to_story,
+                     "type": dep_type, "verifiedAt": None})
+
+
+def verify_cross_story_dep(state: dict, from_story: str, to_story: str,
+                            verified_at: str) -> None:
+    """标记跨 Story 依赖已验证（G-PRD-3 闭环）。"""
+    for d in state.get("crossStoryDeps", []):
+        if d.get("fromStory") == from_story and d.get("toStory") == to_story:
+            d["verifiedAt"] = verified_at
+
+
+def add_residual_risk(state: dict, risk_id: str, severity: str,
+                       mitigation_plan: str = "", due_date: str = "") -> None:
+    """记录跨 Story 残留风险（G-PRD-3 依赖）。"""
+    risks = state.setdefault("crossStoryResidualRisks", [])
+    if not any(r.get("riskId") == risk_id for r in risks):
+        risks.append({"riskId": risk_id, "severity": severity,
+                      "mitigationPlan": mitigation_plan, "dueDate": due_date})
+
+
+def confirm_prd_review(state: dict, confirmed_by: str = "user",
+                        open_questions: list = None) -> None:
+    """记录 PRD 级审核点 5 确认（G-PRD-4 依赖）。"""
+    state["prdReview"] = {
+        "confirmedAt": _now_ts(),
+        "confirmedBy": confirmed_by,
+        "storytoldAt": _now_ts(),
+        "openQuestions": open_questions or [],
+    }
+
+
+def update_gate_registry(state: dict, gate_results: dict) -> None:
+    """更新 G-PRD-1~4 闸状态（check_prd_4_layers 实时算后写回）。"""
+    gr = state.setdefault("gateRegistry", {})
+    for gid in ("G-PRD-1", "G-PRD-2", "G-PRD-3", "G-PRD-4"):
+        if gid in gate_results:
+            gr[gid] = "pass" if gate_results[gid].get("pass") else "fail"
+
+
+def set_prd_status(state: dict, status: str) -> bool:
+    """设置 prdStatus（5 态闭环，对齐 PRD_STATUS_FLOW）。
+
+    v3.5.12 修复：补全 compacted/prd_aborted/prd_complete_pending_user 写入，
+    原本只有 awaiting_compact 能写（状态机残缺）。
+    """
+    if status not in PRD_STATUS_FLOW:
+        raise ValueError(f"未知 prdStatus: {status}（允许: {PRD_STATUS_FLOW}）")
+    state["prdStatus"] = status
+    # compacted 时追加 compactHistory
+    if status == "compacted":
+        state.setdefault("compactHistory", []).append({
+            "compactedAt": _now_ts(),
+            "status": "compacted",
+        })
+    return True

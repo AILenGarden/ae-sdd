@@ -113,6 +113,16 @@ GATE_REGISTRY: list[dict] = [
     # "文档工作区"表述须与 .ae-sdd/config.yaml 的 docWorkspacePath 一致，防旧记忆劫持新配置
     # （实测案例：life 项目 MEMORY 写 D:\Item\doc 与 config 写 D:\Item\life 冲突，RA 落错位置）
     {"id": "G-DOC-CONSISTENCY", "name": "项目侧记忆-配置路径一致性", "severity": "blocker"},
+    # 🆕 v3.5.12 review-loop 退出条件门禁：review 节点（story/dr/task/code review）切相前，
+    # 校验 reviewLoop.exitReason 满足协议（normal 需 dryCounter≥3 / escalate 已升级用户）。
+    # 治 P0-1/4：堵 root agent 单轮就自称"连续3轮无新增"退出，无机械反驳。
+    # 注：本门禁依赖 root agent 跑过 `ae-sdd review-loop collect`（无 reviewLoop 字段时降级 skip）
+    {"id": "G-REVIEW-LOOP", "name": "review-loop 退出条件通过", "severity": "blocker"},
+    # 🆕 v3.5.13 G-09B reviewer 独立性硬门禁：review 节点切相时机械派生 Tier，
+    # 校验 state.activeAgents 有 ≥Tier 个 sessionId≠root 的 reviewer。
+    # 独立于 review-loop CLI——root 不调 collect 也会跑（堵"root 总派给自己"）。
+    # Tier 1（微/小任务 + 无关键决策）豁免；Tier 2/3 无豁免。
+    {"id": "G-09B", "name": "reviewer 独立性通过（多 reviewer 机械强制）", "severity": "blocker"},
 ]
 
 # Story Review 之后允许的 phase
@@ -1143,7 +1153,7 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
 
     try:
         result = _subprocess.run(
-            [_sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60, check=False,
         )
     except _subprocess.TimeoutExpired:
@@ -1795,6 +1805,167 @@ def check_g_doc_consistency(project_dir: Path, st: dict, current_story: str) -> 
                       details={"canonical": canonical, "scanned": scanned, "conflicts": []})
 
 
+# ─── 🆕 v3.5.12 G-REVIEW-LOOP review-loop 退出条件门禁 ──────────────────────────
+def check_g_review_loop(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-REVIEW-LOOP review-loop 退出条件通过（🆕 v3.5.12，治 P0-1/4）。
+
+    校验 review 节点（story-reviewed/dr-reviewed/task-reviewed/code-reviewed）切相前，
+    reviewLoop 状态满足退出条件（协议1 normal 需 dryCounter≥3 / 协议2 escalate 已升级用户）。
+
+    降级策略：若 state 无 reviewLoop 字段（root 未跑过 review-loop CLI）→ skip（warn 不阻断）。
+    这是兼容旧 state.json 的策略——本门禁只在 root 主动启用 review-loop CLI 后生效，
+    不强制所有 review 节点必须用（微任务/Tier1 单审可不用）。
+    """
+    name = "review-loop 退出条件通过"
+    phase = st.get("phase", "initialized")
+
+    # 只在 review 后的 phase 校验（story-reviewed/dr-reviewed/task-reviewed/code-reviewed）
+    review_phases = {"story-reviewed", "task-reviewed", "code-reviewed"}
+    if phase not in review_phases:
+        return GateResult("G-REVIEW-LOOP", name, "blocker", True,
+                          f"阶段 {phase} 非 review 节点（skip）",
+                          details={"skipped": True, "reason": "non-review-phase"})
+
+    rl = st.get("reviewLoop")
+    if not rl:
+        # 降级：root 未启用 review-loop CLI → skip（兼容旧 state）
+        return GateResult("G-REVIEW-LOOP", name, "blocker", True,
+                          f"阶段 {phase} 无 reviewLoop 状态（root 未启用 review-loop CLI，skip）",
+                          details={"skipped": True, "reason": "no-review-loop-state"})
+
+    from lib import review_loop as rl_mod
+    passed, reason = rl_mod.verify_exit(rl)
+    if passed:
+        return GateResult("G-REVIEW-LOOP", name, "blocker", True,
+                          f"review-loop 退出条件满足：{reason}",
+                          details={"exitReason": rl.get("exitReason"),
+                                   "dryCounter": rl.get("dryCounter"),
+                                   "round": rl.get("round")})
+    return GateResult("G-REVIEW-LOOP", name, "blocker", False,
+                      f"review-loop 未达退出条件：{reason}",
+                      "跑 `ae-sdd review-loop collect` 推进轮次直到连续3轮无新增（normal）或升级用户（escalate）",
+                      details={"exitReason": rl.get("exitReason"),
+                               "dryCounter": rl.get("dryCounter"),
+                               "round": rl.get("round")})
+
+
+# ─── 🆕 v3.5.13 G-09B reviewer 独立性硬门禁（堵"root 总派给自己"）─────────────
+def _derive_tier_from_context(project_dir: Path, st: dict) -> tuple:
+    """从 RA/Story 文档机械派生 Tier + 返回 (tier, ra_size, decision_hints, rule)。
+
+    复用 review_loop.derive_tier。决策线索 = RA 文档 + Story 文档关键词拼接。
+    """
+    from lib import review_loop as rl_mod
+    # 读 RA 文档规模 + 决策线索
+    decision_hints = ""
+    ra_size = "中"  # 默认中规模（保守 → Tier 2）
+    try:
+        ra_files = _iter_ra_files(project_dir)
+        if ra_files:
+            latest_ra = _select_latest_ra(ra_files)
+            ra_text = latest_ra.read_text(encoding="utf-8", errors="replace")
+            # 提取规模（RA 文档常见标记）
+            import re as _re
+            size_m = _re.search(r"规模[：:]\s*[大小中微]", ra_text)
+            if size_m:
+                ra_size = size_m.group(0).split("：")[-1].split(":")[-1].strip()
+            decision_hints = ra_text[:3000]  # 取前 3000 字作决策线索
+        # 追加 Story 文档作线索
+        story_files = list((project_dir / "design").rglob("*Story*.md")) if (project_dir / "design").exists() else []
+        for sf in story_files[:2]:
+            try:
+                decision_hints += sf.read_text(encoding="utf-8", errors="replace")[:2000]
+            except OSError:
+                pass
+    except Exception:
+        pass  # 读不到降级默认 Tier 2
+
+    tier_result = rl_mod.derive_tier(ra_size, decision_hints)
+    return tier_result.tier, ra_size, decision_hints[:200], tier_result.rule
+
+
+def check_g09b(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-09B reviewer 独立性通过（🆕 v3.5.13，堵"root 总派给自己"）。
+
+    独立硬门禁——review 节点切相时由 check_all 跑，**不依赖 root 调 review-loop collect**：
+      1. 机械派生 Tier（读 RA 规模 + 决策线索）
+      2. Tier 1（微/小 + 无关键决策）→ skip（单审合规）
+      3. Tier 2/3 → 校验 state.activeAgents 有 ≥Tier 个 sessionId≠root 的 reviewer
+
+    堵死的偷懒路径：
+      - root 不派（activeAgents 空）→ 阻断
+      - root 自扮（sessionId==root）→ 阻断
+      - root 派不够（< Tier 要求）→ 阻断
+
+    root 要过此门禁，必须真实用 Agent 工具派 sub-agent 并调 state.register_agent 登记。
+    """
+    name = "reviewer 独立性通过"
+    phase = st.get("phase", "initialized")
+
+    # 只在 review 节点切相后校验（与 G-REVIEW-LOOP 同 phase 集）
+    review_phases = {"story-reviewed", "task-reviewed", "code-reviewed"}
+    if phase not in review_phases:
+        return GateResult("G-09B", name, "blocker", True,
+                          f"阶段 {phase} 非 review 节点（skip）",
+                          details={"skipped": True, "reason": "non-review-phase"})
+
+    # 读 root sessionId
+    from lib import session as session_mod
+    ade_sdd = None
+    try:
+        from lib import paths as paths_mod
+        ade_sdd = paths_mod.locate_project_ae_sdd()
+    except Exception:
+        pass
+    root_sess = session_mod.read_session(ade_sdd, current_story) or {}
+    root_sid = root_sess.get("sessionId", "")
+
+    # 机械派生 Tier
+    tier, ra_size, hints_preview, tier_rule = _derive_tier_from_context(project_dir, st)
+
+    # Tier 1 豁免（微/小规模 + 无关键决策 → 单审合规）
+    if tier == 1:
+        return GateResult("G-09B", name, "blocker", True,
+                          f"Tier 1（{tier_rule}）→ 单审豁免",
+                          details={"tier": 1, "raSize": ra_size, "exempt": True})
+
+    # Tier 2/3：校验 activeAgents + reviewLoop 字段存在性
+    from lib import review_loop as rl_mod
+    active_agents = st.get("activeAgents", [])
+    # 只数 reviewer 类角色（story-reviewer/code-reviewer 等）
+    reviewer_roles = {"story-reviewer", "code-reviewer", "dr-reviewer", "ra-reviewer", "task-reviewer"}
+    reviewer_sids = [a.get("sessionId", "") for a in active_agents
+                     if a.get("role") in reviewer_roles and a.get("status") != "completed"]
+
+    session_chk = rl_mod.check_session_independence(reviewer_sids, root_sid, tier)
+    if not session_chk.passed:
+        return GateResult("G-09B", name, "blocker", False,
+                          f"Tier {tier}（{tier_rule}）但 reviewer 不独立：{session_chk.reason}",
+                          f"用 Agent 工具派 {tier} 个 sub-agent（视角见 review-loop start 输出），"
+                          f"每个用独立 session，派后调 state.register_agent 登记 activeAgents",
+                          details={"tier": tier, "raSize": ra_size,
+                                   "reviewerCount": len(reviewer_sids),
+                                   "violations": session_chk.violations,
+                                   "hintsPreview": hints_preview})
+
+    # Tier 2/3 还要求 root 跑过 review-loop（堵"派了多 reviewer 但单轮就退"）
+    # G-REVIEW-LOOP 负责"跑满3轮"，G-09B 负责"启动了 review-loop"
+    if not st.get("reviewLoop"):
+        return GateResult("G-09B", name, "blocker", False,
+                          f"Tier {tier} 但未启动 review-loop（无 reviewLoop 字段）",
+                          f"跑 `ae-sdd review-loop start --node <节点> --ra-size {ra_size}` 启动状态机，"
+                          f"再 collect 推进轮次（G-REVIEW-LOOP 校验退出条件）",
+                          details={"tier": tier, "raSize": ra_size,
+                                   "reviewerCount": len(reviewer_sids),
+                                   "missingReviewLoop": True})
+
+    return GateResult("G-09B", name, "blocker", True,
+                      f"Tier {tier}（{tier_rule}）：{session_chk.reason} + review-loop 已启动",
+                      details={"tier": tier, "raSize": ra_size,
+                               "reviewerCount": len(reviewer_sids),
+                               "rootSid": root_sid[:8] + "..." if root_sid else None})
+
+
 # ─── 路由表 ─────────────────────────────────────────────────────────────────
 CHECK_FUNCS: dict[str, Callable] = {
     "G-01": check_g01, "G-02": check_g02, "G-03": check_g03,
@@ -1811,6 +1982,8 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-RA-FLOW-VIOLATION": check_ra_flow_violation,  # 🆕 2026-06-27 RA 流程违规审计
     "G-CODE-1": check_gcode1,
     "G-DOC-CONSISTENCY": check_g_doc_consistency,  # 🆕 v3.5.7 项目侧记忆-配置路径一致性
+    "G-REVIEW-LOOP": check_g_review_loop,  # 🆕 v3.5.12 review-loop 退出条件
+    "G-09B": check_g09b,  # 🆕 v3.5.13 reviewer 独立性硬门禁（堵 root 自扮）
 }
 
 
@@ -1853,6 +2026,10 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
         elif g["id"] == "G-CODE-1":
             # G-CODE-1 需要 master_source 调 coding_authenticity_scan.py
             results.append(check_gcode1(project_dir, st, current_story, master_source=master_source))
+        elif g["id"] == "G-RA-FLOW-VIOLATION":
+            # 🆕 v3.5.11 修复假门禁：G-RA-FLOW-VIOLATION 需要 master_source 调 flow_violation_scan.py
+            # 历史漏洞：走 CHECK_FUNCS 漏传 master_source → scanner 恒定位失败 → stub-pass
+            results.append(check_ra_flow_violation(project_dir, st, current_story, master_source=master_source))
         elif g["id"] == "G-PATH":
             # 🆕 v4.1 G-PATH 需要 master_source 扫母版 source/ 路径越界
             results.append(check_g_path(master_source, project_dir, st, current_story))

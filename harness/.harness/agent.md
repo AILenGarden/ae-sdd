@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程 SKILL 体系的主入口（v3.5.10）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。v3.5.9 新增 G-RA-5 RA 机械派生深度门禁 （D1-D5 5 条规则：§6.5 主规则机械派生 / §8.5 R'→AC 链接 / §8.6 覆盖率真实重算 / §9-ter 五问覆盖 / §9-bis 业务模式六选一），堵「形式通过、内容空转」（AI 把已知事实摘来归个类就停） ——实测案例：13 个问题 → 被逼出 34 个衍生问题的根因。v3.5.8 RA 第七步纳入 review-loop 公共协议 （反复挖掘 + 连续 3 轮无新增才退出 + 漏报升级）；v3.5.6 修补 amend 循环 commit noise； v3.5.5 新增主会话职责收口 + 节点级上下文压力软提示。版本变更日志见 source/CHANGELOG/。 v3.5.10 修复 10 项实战适配 Gap（详见 source/CHANGELOG/2026-06-28-v3.5.10-fix-10-gaps.md）： classify scale 误判 / plugin 注册表缺失 / HS-12 谎报只覆盖 G-08 / G-RA 选错文档版本 / G-01 rglob / G-PATH 扫项目侧记忆 / G-RA-4 输出加定位 / G-DOC-STORAGE git-aware / IC-3 agent API 白名单 / SKILL.md sync-tools 残留。
-version: 3.5.10
+description: 端到端自动化工程 SKILL 体系的主入口（v3.5.13）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。v3.5.13 修复 G-09B 设计缺陷：原 v3.5.12 的 session 独立性只在 review-loop collect 内部校验（root 不调 collect 即绕过），现升级为独立 硬门禁 G-09B——review phase 切相时 check_all 自动跑，机械派生 Tier，Tier 2/3 强制 要求 activeAgents 有 ≥Tier 个 sessionId≠root 的 reviewer + reviewLoop 字段存在， 彻底堵死"root 总派给自己单审"。v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。 v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
+version: 3.5.13
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@711da992e01a26c5c4d8ebe0fe99ade52548cba9 @ 2026-06-27T18:07:02Z -->
+<!-- # AUTO-GEN @ ae-sdd@4921cb15cb7f8c0ffd26c8ac114a1e3a39cff1c7 @ 2026-06-29T07:54:14Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-27T18:07:02Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-29T07:54:14Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `711da99` (3.5.10)
+> 源版本：ae-sdd @ `4921cb1` (3.5.13)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-06-27T18:07:02Z
-- 源 ae-sdd 版本：3.5.10
-- 源 ae-sdd commit：711da99
+- 生成时间：2026-06-29T07:54:14Z
+- 源 ae-sdd 版本：3.5.13
+- 源 ae-sdd commit：4921cb1
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

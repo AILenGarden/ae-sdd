@@ -11,6 +11,17 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 
 ---
 
+## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
+
+> 本文件内出现的 `[HARD]` / 「🔴 硬门禁」/ 「道闸」等标注，**当前为软门禁（report-only）**，
+> 由 reviewer 在 DR Review 报告内自评判定，**无 GATE_REGISTRY 级机械校验**。
+> 这不意味着这些检查项不重要——它们是 DR Review 的实质内容；只是当前没有 CLI 硬阻断兜底。
+>
+> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py` GATE_REGISTRY：G-13（全链路对称性，含 DR 层）/ G-RA 系列（RA→DR 衍生）/ G-DOC-STORAGE（DR 文档落地合规）。
+> **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），本文件未绑定 G-XX 的承诺会被 UC-08 标记为「软门禁/待硬化」并持续追踪。
+
+---
+
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 DR Review 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：

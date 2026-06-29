@@ -15,6 +15,17 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 ---
 
+## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
+
+> 本文件第七步「7 道闸」（⑥bis 一致性 / ⑦bis 对称性 / 全文档回扫 / 禁裸✅ / 报告-代码对账 / 产出物对账 / 真实 DB-HTTP 覆盖）、
+> 第零步准入、§15 的 10 条门禁，**当前为软门禁（report-only）**，由 reviewer 在 CodeReview 报告内逐项自评判定，
+> **无 GATE_REGISTRY 级逐闸机械校验**。这些检查项是 Code Review 的实质内容；只是当前没有 CLI 硬阻断兜底。
+>
+> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py`：G-12（CodeReview 报告存在）/ G-09（测试真实性 + test-verifier 独立性 warn）/ G-CODE-1（Coding 真实性扫描）/ G-13（全链路对称性）。
+> **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），本文件未绑定 G-XX 的承诺会被 UC-08 持续追踪为「软门禁/待硬化」。
+
+---
+
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 CodeReview 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：

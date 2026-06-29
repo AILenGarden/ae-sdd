@@ -615,7 +615,9 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
         # 🆕 v3.5.7：+1 G-DOC-CONSISTENCY（项目侧记忆-配置路径一致性）= 25
         # 🆕 v3.5.9：+1 G-RA-5（RA 机械派生深度，防「形式通过、内容空转」）= 26
-        self.assertEqual(len(results), 26)
+        # 🆕 v3.5.12：+1 G-REVIEW-LOOP（review-loop 退出条件）= 27
+        # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
+        self.assertEqual(len(results), 28)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -642,8 +644,10 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 2026-06-27：+1 G-RA-FLOW-VIOLATION（建议书 §3.4）= 24
         # 🆕 v3.5.7：+1 G-DOC-CONSISTENCY（项目侧记忆-配置路径一致性）= 25
         # 🆕 v3.5.9：+1 G-RA-5（RA 机械派生深度，防「形式通过、内容空转」）= 26
-        self.assertEqual(summary["total"], 26)
-        self.assertEqual(summary["passed"] + summary["failed"], 26)
+        # 🆕 v3.5.12：+1 G-REVIEW-LOOP（review-loop 退出条件）= 27
+        # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
+        self.assertEqual(summary["total"], 28)
+        self.assertEqual(summary["passed"] + summary["failed"], 28)
         self.assertIn("results", summary)
 
 
@@ -866,6 +870,140 @@ class TestGRA5(unittest.TestCase):
                                  master_source=repo_source)
         self.assertFalse(r.pass_, f"空转 RA 应被 G-RA-5 拦截，但 pass_={r.pass_}")
         self.assertGreater(r.details.get("blockers", 0), 0)
+
+
+class TestGRAFlowViolation(unittest.TestCase):
+    """G-RA-FLOW-VIOLATION RA 流程违规审计（v3.5.11 — 修复恒 stub-pass 假门禁）
+
+    历史 bug（2026-06-29 AA 首跑检出）：
+      1. check_all 走 CHECK_FUNCS 漏传 master_source → scanner 恒定位失败 → stub-pass
+      2. check 函数体内 _sys.executable 但模块未 import sys as _sys → NameError
+    v3.5.11 修复：check_all 加特判传 master_source + _sys→sys。本测试防回退。
+    """
+
+    def test_no_master_source_skips_not_silent_pass(self):
+        """无 master_source → 应明确 skipped，不是静默 pass。"""
+        tmp = _setup_project({})
+        r = gates.check_ra_flow_violation(tmp, {}, "STORY-001", master_source=None)
+        # 无 master_source 应该 skipped（scanner 找不到），且 details 标记 skipped
+        self.assertTrue(r.details.get("skipped", False),
+                        f"无 master_source 应 skipped，但 details={r.details}")
+
+    def test_pre_ra_phase_skips(self):
+        """initialized/ra-generated 阶段无 RA → skipped。"""
+        tmp = _setup_project({})
+        r = gates.check_ra_flow_violation(tmp, {"phase": "initialized"}, "",
+                                          master_source=None)
+        self.assertTrue(r.details.get("skipped", False))
+
+    def test_real_execution_no_namesmoke(self):
+        """v3.5.11 修复验证：补传 master_source + 真实仓库，不再 NameError。
+
+        用真实仓库 source/ 作 master_source，确认 check 函数能跑到
+        scanner 执行（不抛 _sys NameError）。即便无 RA 文档也应返回结果而非异常。
+        """
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({})
+        # phase=ra-generated + 无 RA 文档 → 应跑 scanner 后返回 ra_files=0 stub-pass
+        # 关键：不能抛 NameError（_sys 未定义）
+        try:
+            r = gates.check_ra_flow_violation(
+                tmp, {"phase": "ra-generated"}, "STORY-001",
+                master_source=repo_source)
+            # 不抛异常即通过；ra_files=0 时 stub-pass 合理
+            self.assertIsNotNone(r)
+        except NameError as e:
+            self.fail(f"G-RA-FLOW-VIOLATION 抛 NameError（_sys 未修复）：{e}")
+
+
+# ─── G-09B reviewer 独立性硬门禁（v3.5.13，堵"root 总派给自己"）──────────────
+class TestG09B(unittest.TestCase):
+    """G-09B 独立于 review-loop CLI——root 不调 collect 也会跑。"""
+
+    def test_non_review_phase_skips(self):
+        """非 review phase → skip。"""
+        tmp = _setup_project({})
+        r = gates.check_g09b(tmp, {"phase": "coding"}, "STORY-1")
+        self.assertTrue(r.details.get("skipped"))
+
+    def test_tier1_exempt_passes(self):
+        """Tier 1（微/小 + 无关键决策）→ 单审豁免通过。"""
+        tmp = _setup_project({
+            "design/RA-X-v1.md": "规模：微\n（无关键决策）",
+        })
+        r = gates.check_g09b(tmp, {"phase": "story-reviewed"}, "STORY-1")
+        self.assertTrue(r.pass_, f"Tier 1 应豁免，实 {r.message}")
+        self.assertTrue(r.details.get("exempt"))
+
+    def test_tier2_no_reviewer_blocks(self):
+        """Tier 2 但 root 没派 reviewer（activeAgents 空）→ 阻断。"""
+        tmp = _setup_project({
+            "design/RA-X-v1.md": "规模：中\n涉及状态机流转",
+        })
+        st = {"phase": "story-reviewed", "activeAgents": []}
+        r = gates.check_g09b(tmp, st, "STORY-1")
+        self.assertFalse(r.pass_, f"应阻断，实 {r.message}")
+        self.assertGreaterEqual(r.details.get("tier", 0), 2)
+
+    def test_tier2_self_impersonation_blocks(self):
+        """Tier 2 但 root 自扮（reviewer sessionId==root）→ 阻断。"""
+        tmp = _setup_project({
+            "design/RA-X-v1.md": "规模：中\n涉及事务一致性",
+        })
+        # 模拟 root 自己当 reviewer（sessionId=root-sid）
+        st = {"phase": "story-reviewed",
+              "activeAgents": [
+                  {"role": "story-reviewer", "sessionId": "root-sid", "status": "running"},
+              ]}
+        # 需要让 root_sid 读出来是 root-sid——用 monkey patch session.read_session
+        import lib.session as sess_mod
+        orig = sess_mod.read_session
+        sess_mod.read_session = lambda *a, **k: {"sessionId": "root-sid"}
+        try:
+            r = gates.check_g09b(tmp, st, "STORY-1")
+            self.assertFalse(r.pass_)
+        finally:
+            sess_mod.read_session = orig
+
+    def test_tier2_independent_reviewers_with_reviewloop_passes(self):
+        """Tier 2 + 2 个独立 reviewer + 有 reviewLoop → 通过。"""
+        tmp = _setup_project({
+            "design/RA-X-v1.md": "规模：中\n涉及事务",
+        })
+        st = {"phase": "story-reviewed",
+              "activeAgents": [
+                  {"role": "story-reviewer", "sessionId": "sid-A", "status": "running"},
+                  {"role": "story-reviewer", "sessionId": "sid-B", "status": "running"},
+              ],
+              "reviewLoop": {"node": "story-review", "tier": 2, "round": 1}}
+        import lib.session as sess_mod
+        orig = sess_mod.read_session
+        sess_mod.read_session = lambda *a, **k: {"sessionId": "root-sid"}
+        try:
+            r = gates.check_g09b(tmp, st, "STORY-1")
+            self.assertTrue(r.pass_, f"应通过，实 {r.message}")
+        finally:
+            sess_mod.read_session = orig
+
+    def test_tier2_no_reviewloop_blocks(self):
+        """Tier 2 + 独立 reviewer 但没跑 review-loop（无 reviewLoop 字段）→ 阻断。"""
+        tmp = _setup_project({
+            "design/RA-X-v1.md": "规模：中\n涉及事务",
+        })
+        st = {"phase": "story-reviewed",
+              "activeAgents": [
+                  {"role": "story-reviewer", "sessionId": "sid-A", "status": "running"},
+                  {"role": "story-reviewer", "sessionId": "sid-B", "status": "running"},
+              ]}
+        import lib.session as sess_mod
+        orig = sess_mod.read_session
+        sess_mod.read_session = lambda *a, **k: {"sessionId": "root-sid"}
+        try:
+            r = gates.check_g09b(tmp, st, "STORY-1")
+            self.assertFalse(r.pass_, "无 reviewLoop 字段应阻断")
+            self.assertTrue(r.details.get("missingReviewLoop"))
+        finally:
+            sess_mod.read_session = orig
 
 
 # ─── G-13 RA 层追溯（v3.2 升级）──────────────────────────────────────────────

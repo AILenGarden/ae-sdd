@@ -11,6 +11,17 @@ description: 根据 DR + PRD + 产品原型 + Story 模板，执行固定五阶�
 
 ---
 
+## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
+
+> 本文件标尺 2 列出的 A-E 阶段 `[HARD]` 硬门禁清单（A1~A13 / B0~B5 / C1~C9 / D1~D7 / E1~E6，含 C8 数据视角总览），
+> **当前为软门禁（report-only）**，由 reviewer 在 Story Review 报告内逐项自评判定，**无 GATE_REGISTRY 级机械校验**。
+> 这些检查项是 Story Review 的实质内容，reviewer 必须 100% 触发判定；只是当前没有 CLI 硬阻断兜底。
+>
+> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py`：G-03（Story Review 通过，看 phase）/ G-14（CodingPlan-Story 一致性）/ G-13（全链路对称性，含 Story 层）。
+> **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），本文件未绑定 G-XX 的承诺会被 UC-08 持续追踪为「软门禁/待硬化」。
+
+---
+
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 Story Review 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：

@@ -23,6 +23,19 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 ---
 
+## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
+
+> 本文件「16 道 RA 质量闸 RA-G01~RA-G16」「第零步/第 0.5 步🔴硬门禁」「第七步 RA 挖掘循环」等标注，
+> **逐条为软门禁（report-only）**，由 analyst 在 RA 文档内逐项自评判定，**RA-G01~16 无逐条 GATE_REGISTRY 注册**。
+>
+> **注意区分**：RA 层的**真硬门禁**已存在且机械执行——`tools/lib/gates.py` 的 **G-RA-1~G-RA-5 + G-RA-FLOW-VIOLATION**（v3.5.11 修复后真执行），
+> 覆盖 RA 文档存在 / 8 维度完整 / 衍生章节 / 真实性扫描 / 机械派生深度（D1-D5）/ 流程违规审计（R1-R8）。
+> RA-G01~16 是**更细颗粒度的 analyst 自评清单**，被 G-RA 系列从外部兜底但非逐条机械。
+>
+> **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），RA-G 逐条承诺会被 UC-08 持续追踪为「软门禁/待硬化」。
+
+---
+
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 RA 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
@@ -1622,14 +1635,14 @@ RA 修订前（每次必跑）
 
 ### 5. 下游重审触发动作
 
-```bash
-# 强影响文档：自动触发
-ae-sdd run dr-review-skill --dr {DR-ID} --reason "RA-{ID} v{N+1} 修订触发"
-ae-sdd run story-update-skill --story {STORY-ID} --reason "RA-{ID} v{N+1} 修订触发"
+> **🟠 强度声明（v3.5.11 AA 诚实降级）：** 以下「下游重审」由 **agent 手动驱动**，
+> 无 CLI 自动触发命令（历史上 `ae-sdd run dr-review-skill` 为幽灵命令，已删除）。
+> agent 识别到强影响文档后，加载对应子 SKILL 手动执行重审。
 
-# 中影响文档：输出重审建议
-echo "建议人工触发 task-generate-skill §5bis"
-```
+| 影响等级 | 动作 | 执行方式 |
+|---------|------|---------|
+| 强影响 | DR 重审 / Story 重审 | agent 加载 `dr-review-skill.md` / `story-update-skill.md` 手动执行 |
+| 中影响 | Task 重审建议 | 输出"建议人工触发 task-generate-skill §5bis" |
 
 ### 6. 闭环审计
 
