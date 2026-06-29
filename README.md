@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.13（🆕 2026-06-29：修复 G-09B 设计缺陷——原 v3.5.12 的 reviewer session 独立性只在 review-loop collect 内部校验（root 不调 collect 即绕过），现升级为**独立硬门禁 G-09B**：review phase 切相时 check_all 自动跑，机械派生 Tier，Tier 2/3 强制要求 activeAgents 有 ≥Tier 个 sessionId≠root 的 reviewer + reviewLoop 字段存在，**彻底堵死"root 总派给自己单审"**——5 场景 E2E 验证（不派/自扮/没跑review-loop 全阻断，完整合规才放行，Tier 1 微任务豁免）。门禁数 27→28（+G-09B）。前序 v3.5.12 review-loop CLI + PRD 子系统补全；v3.5.11 AA 全维对齐验证器（UC-08~12）根治「协议详尽但工具链零落地」体系性病根。AA 接入 `ae-sdd update-check`，任何未来迭代 doc 改了不对齐 CLI 即报。
+> **版本：** v3.5.14（🆕 2026-06-29：新增 UC-13 门禁注册完整性——AA 第 6 维，扫 gates.py 里返回 GateResult 的 check 函数是否都注册 GATE_REGISTRY，治 v3.5.12 G-09B 类 bug（建了 check 函数但没注册 → root 不调即绕过）。已验证：模拟漏注册 check_g09b 场景 UC-13 立即报。前序 v3.5.13 G-09B 升级独立硬门禁（review phase 切相自动跑，堵"root 总派给自己"）；v3.5.12 review-loop CLI + PRD 子系统；v3.5.11 AA 全维对齐验证器（UC-08~12）根治「协议详尽但工具链零落地」体系性病根。AA 接入 `ae-sdd update-check`，任何未来迭代 doc 改了不对齐 CLI 即报。
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

@@ -1,17 +1,16 @@
 ---
 name: ae-sdd
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.13）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.14）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
-  支持流程状态跟踪与中断后恢复。v3.5.13 修复 G-09B 设计缺陷：原 v3.5.12 的 session
-  独立性只在 review-loop collect 内部校验（root 不调 collect 即绕过），现升级为独立
-  硬门禁 G-09B——review phase 切相时 check_all 自动跑，机械派生 Tier，Tier 2/3 强制
-  要求 activeAgents 有 ≥Tier 个 sessionId≠root 的 reviewer + reviewLoop 字段存在，
-  彻底堵死"root 总派给自己单审"。v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。
+  支持流程状态跟踪与中断后恢复。v3.5.14 新增 UC-13 门禁注册完整性（AA 第 6 维）——
+  扫 gates.py 里返回 GateResult 的 check 函数是否都注册 GATE_REGISTRY，治 v3.5.12
+  G-09B 类 bug（建了 check 函数但没注册，root 不调即绕过）。v3.5.13 G-09B 升级独立硬门禁。
+  v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。
   v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
 ---
-version: 3.5.13
+version: 3.5.14
 main_entry: true
 triggers:
   - "启动自动化工程"

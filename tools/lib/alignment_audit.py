@@ -555,6 +555,87 @@ def check_uc12_ghost_command_capture(repo_root: Path) -> UpdateCheckResult:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# UC-13 门禁注册完整性（治 G-09B v3.5.12 类 bug：返回 GateResult 但没注册）
+# ════════════════════════════════════════════════════════════════════════════
+
+def check_uc13_gate_registration_completeness(repo_root: Path) -> UpdateCheckResult:
+    """UC-13 门禁注册完整性：tools/lib/ 里返回 GateResult 的 check 函数都注册到 GATE_REGISTRY。
+
+    背景（v3.5.13 G-09B bug）：UC-02 单向查"GATE_REGISTRY 的 id 在 CHECK_FUNCS"，
+    但不反向查"工具链里有返回 GateResult 的 check 函数但没注册"。v3.5.12 的
+    check_session_independence 就是这种情况——语义是门禁 check 但没进 GATE_REGISTRY，
+    只在 review_loop.collect 内部调用，root 不调 collect 即绕过。
+
+    检测规则：
+      扫 gates.py 里所有 `def check_*` 函数 + 体内 return GateResult(...)
+      这些函数若不在 CHECK_FUNCS 也不在 check_all 特判 → 疑似漏注册门禁（warn）
+
+    诚实边界：只扫 gates.py（门禁主战场）。review_loop.py 的 check_session_independence
+    返回 SessionCheckResult（非 GateResult），属辅助函数，不误报。
+    """
+    name = "门禁注册完整性"
+    gates_py = repo_root / "tools" / "lib" / "gates.py"
+    if not gates_py.is_file():
+        return UpdateCheckResult("UC-13", name, "error", False, "gates.py 不存在")
+
+    text = gates_py.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+
+    # 1. 找所有 def check_* 函数 + 判断体内是否 return GateResult
+    check_fns: dict[str, int] = {}  # {func_name: line}
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^def (check_\w+)\s*\(", lines[i])
+        if m:
+            fn_name = m.group(1)
+            # 扫函数体（到下一个 def 或文件尾）看是否 return GateResult
+            body = []
+            j = i + 1
+            while j < len(lines) and not re.match(r"^(def |class |CHECK_FUNCS|# ─── 路由)", lines[j]):
+                body.append(lines[j])
+                j += 1
+            body_text = "\n".join(body)
+            if "GateResult(" in body_text or "return GateResult" in body_text:
+                check_fns[fn_name] = i + 1
+            i = j
+        else:
+            i += 1
+
+    # 2. 找已注册的函数集（CHECK_FUNCS 字典 + check_all 特判调用）
+    # CHECK_FUNCS 字典里 "G-XX": check_xxx
+    registered = set(re.findall(r':\s*(check_\w+)[\s,}]', text))
+    # check_all 特判分支调用的 check_xxx(...)
+    for m in re.finditer(r'results\.append\((check_\w+)\(', text):
+        registered.add(m.group(1))
+
+    # 3. 返回 GateResult 但未注册的 check 函数
+    orphan_fns = [(fn, ln) for fn, ln in check_fns.items() if fn not in registered]
+
+    # 过滤掉已知合法的辅助函数：
+    # - check_all：调度器本身（非单个门禁，体内 GateResult 是未知 id 兜底）
+    # - 下划线前缀（_check_xxx）：私有辅助，被其他 gate 调用
+    orphan_fns = [(fn, ln) for fn, ln in orphan_fns
+                  if not fn.startswith("_") and fn != "check_all"]
+
+    if orphan_fns:
+        return UpdateCheckResult(
+            "UC-13", name, "warn", True,
+            f"发现 {len(orphan_fns)} 个返回 GateResult 的 check 函数未注册到 CHECK_FUNCS/check_all："
+            f"{[fn for fn, _ in orphan_fns[:5]]}",
+            "复核每个孤儿 check 函数：若是门禁则注册 GATE_REGISTRY + CHECK_FUNCS（参考 G-09B v3.5.13）；"
+            "若是内部辅助则确认有外部调用方",
+            details={
+                "orphan_count": len(orphan_fns),
+                "orphans": [{"fn": fn, "line": ln} for fn, ln in orphan_fns],
+                "registered_count": len(registered),
+            },
+        )
+
+    return UpdateCheckResult("UC-13", name, "ok", True,
+                             f"门禁注册完整：{len(check_fns)} 个 check 函数全部注册")
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # 注册到 update_graph.CHECK_FUNCS（运行时注入，保持单一 check_all 入口）
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -564,6 +645,7 @@ AA_CHECK_FUNCS = {
     "UC-10": check_uc10_state_field_liveness,
     "UC-11": check_uc11_state_machine_closure,
     "UC-12": check_uc12_ghost_command_capture,
+    "UC-13": check_uc13_gate_registration_completeness,
 }
 
 

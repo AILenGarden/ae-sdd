@@ -256,13 +256,75 @@ def test_uc12_implemented_pass():
         td.cleanup()
 
 
+# ─── UC-13 门禁注册完整性（v3.5.13 新增，治 G-09B 类 bug）───────────────────
+
+def test_uc13_orphan_check_fn_warn():
+    """返回 GateResult 的 check 函数未注册 → warn。"""
+    td = _make_repo()
+    try:
+        root = Path(td.name)
+        # gates.py 有 check_xxx 返回 GateResult 但不在 CHECK_FUNCS
+        (root / "tools" / "lib" / "gates.py").write_text(
+            "class GateResult: pass\n"
+            "def check_orphan_fn(project_dir, st, current_story):\n"
+            "    return GateResult()\n"
+            "CHECK_FUNCS = {'G-01': check_other}\n"
+            "def check_other(*a): pass\n",
+            encoding="utf-8")
+        from lib.alignment_audit import check_uc13_gate_registration_completeness
+        r = check_uc13_gate_registration_completeness(root)
+        assert r.pass_ is True and r.severity == "warn", \
+            f"应 warn，实 severity={r.severity}：{r.message}"
+        assert r.details["orphan_count"] >= 1
+        orphans = {o["fn"] for o in r.details["orphans"]}
+        assert "check_orphan_fn" in orphans
+    finally:
+        td.cleanup()
+
+
+def test_uc13_registered_pass():
+    """所有 check 函数都注册 → 通过。"""
+    td = _make_repo()
+    try:
+        root = Path(td.name)
+        (root / "tools" / "lib" / "gates.py").write_text(
+            "class GateResult: pass\n"
+            "def check_g01(*a):\n"
+            "    return GateResult()\n"
+            "CHECK_FUNCS = {'G-01': check_g01}\n",
+            encoding="utf-8")
+        from lib.alignment_audit import check_uc13_gate_registration_completeness
+        r = check_uc13_gate_registration_completeness(root)
+        assert r.pass_ is True, f"应通过：{r.message}"
+    finally:
+        td.cleanup()
+
+
+def test_uc13_private_fn_not_flagged():
+    """下划线前缀私有函数（_check_xxx）不报。"""
+    td = _make_repo()
+    try:
+        root = Path(td.name)
+        (root / "tools" / "lib" / "gates.py").write_text(
+            "class GateResult: pass\n"
+            "def _check_helper(*a):\n"
+            "    return GateResult()\n"
+            "CHECK_FUNCS = {}\n",
+            encoding="utf-8")
+        from lib.alignment_audit import check_uc13_gate_registration_completeness
+        r = check_uc13_gate_registration_completeness(root)
+        assert r.pass_ is True, "私有函数不应报"
+    finally:
+        td.cleanup()
+
+
 # ─── 注册集成测试 ─────────────────────────────────────────────────────────
 
 def test_register_to_update_graph():
-    """AA 5 维度注册到 update_graph.CHECK_FUNCS。"""
+    """AA 6 维度注册到 update_graph.CHECK_FUNCS。"""
     aa.register_to_update_graph()
     from lib import update_graph as ug
-    for cid in ("UC-08", "UC-09", "UC-10", "UC-11", "UC-12"):
+    for cid in ("UC-08", "UC-09", "UC-10", "UC-11", "UC-12", "UC-13"):
         assert cid in ug.CHECK_FUNCS, f"{cid} 应注册到 CHECK_FUNCS"
 
 
