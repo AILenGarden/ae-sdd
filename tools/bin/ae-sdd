@@ -4,8 +4,20 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 22 门禁检查（pre-flight；v3.2 含 G-RA；v3.2.1 含 G-CODE；v3.4.0 含 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE）
+  - gates    : 门禁检查（pre-flight；v3.5.14 共 28 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
+               G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~5 + G-RA-FLOW-VIOLATION +
+               G-CODE-1 + G-REVIEW-LOOP）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
+
+🆕 v3.3.0+ PRD 级状态机与自检（2026-06-25）：
+  - enter / state confirm / gate doc-storage : entry token 领取 + 审核点确认 + 文档路径校验（v3.4.0）
+  - state prd-check-complete / state prd-complete : PRD 4 层 AND 闸校验 + compact 收尾（v3.3.0）
+  - runtime compact : PRD 收尾 compact（v3.3.0）
+  - iteration-check : 设计-实现一致性深度体检（v3.5.4，IC-1~4 机器粗筛）
+  - context-pressure : 节点级上下文压力软提示（v3.5.5，6 审核点边界）
+  - ra-depth-scan : RA 机械派生深度扫描（v3.5.9，G-RA-5 D1-D5）
+  - flow-violation-scan : RA 流程违规扫描（v3.5.6，G-RA-FLOW-VIOLATION）
+  - review-loop : review-loop CLI + verify-exit（v3.5.12，G-REVIEW-LOOP 兜底）
 
 🆕 v3.2 G-RA（2026-06-24）：
   - gate ra-required : 需求分析准入门卫（进 dr/story/task-generate 前必过 G-RA-1~4）
@@ -2451,7 +2463,7 @@ def main() -> int:
     p_runtime_compact.set_defaults(func=cmd_runtime_compact)
 
     # gates
-    p_gates = sub.add_parser("gates", help="22 门禁检查（14 主 + 3 中段 + 4 G-RA + 1 G-CODE）", parents=[common])
+    p_gates = sub.add_parser("gates", help="门禁检查（28 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~5 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP）", parents=[common])
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
     p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")

@@ -16,10 +16,10 @@ ae-sdd v3.0 引入**母版 vs 分发**双目录分层，**用户拿分发包，�
 ae-sdd/                                # 仓库根（GitHub 直发）
 ├── source/                            # 🟢 母版 SSOT（开发者编辑这里）
 │   ├── SKILL.md                       #    ae-sdd 唯一主入口
-│   ├── skills/                        #    22 个子 SKILL（phase1/phase2/phase3/cross-cutting/orchestration）
+│   ├── skills/                        #    25 个子 SKILL（phase1/phase2/phase3/cross-cutting/orchestration）
 │   ├── assets/                        #    项目资产（icec-cloud-boss / icec-cloud-life）
-│   ├── standards/                     #    约束 + 思维引擎 + 测试策略 + 资产标准 + toolset 标准（18 份）
-│   ├── templates/                     #    模板（17 份：Story/Task/DR/Report/...）
+│   ├── standards/                     #    约束 + 思维引擎 + 测试策略 + 资产标准 + toolset 标准（20 份）
+│   ├── templates/                     #    模板（21 份：Story/Task/DR/Report/...）
 │   ├── .claude-plugin/                #    marketplace 注册表
 │   ├── CHANGELOG/                     #    发版历史
 │   └── docs/                          #    规划/迁移文档
@@ -121,10 +121,10 @@ bash scripts/dev-sync.sh --watch
 
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
-- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 22 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
-- **[`source/skills/`](source/skills/)** — 23 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
-- **[`source/templates/`](source/templates/)** — 18 份模板（Story/Task/DR/Report/...）
-- **[`source/standards/`](source/standards/)** — 19 份标准（constraints 10 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
+- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 28 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
+- **[`source/skills/`](source/skills/)** — 25 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
+- **[`source/templates/`](source/templates/)** — 21 份模板（Story/Task/DR/Report/...）
+- **[`source/standards/`](source/standards/)** — 20 份标准（constraints 11 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
 - **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md)）
 - **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1.2 install-skill + 智能引导](source/CHANGELOG/2026-06-24-ae-sdd-install-skill.md) + [v3.1.1 阶段 H 深度强化](source/CHANGELOG/2026-06-23-requirement-analysis-阶段H深度强化.md) + [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）

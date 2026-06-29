@@ -744,7 +744,7 @@ ae-sdd gates check --only G-14
 
 ### 🆕 v3.5.5 主会话职责边界（默认派活，不再单 Agent 直做）
 
-> **🔴 背景：** v3.5.4 及之前的默认是"单 Agent 串行做所有事"，主会话被迫读 23 个子 SKILL、读源码、写文档、做 walkthrough、跑测试 → 上下文爆炸。**v3.5.5 起主会话职责收口**：默认派 1 个 sub-agent 执行具体节点，主会话只承担编排层职责。
+> **🔴 背景：** v3.5.4 及之前的默认是"单 Agent 串行做所有事"，主会话被迫读 25 个子 SKILL、读源码、写文档、做 walkthrough、跑测试 → 上下文爆炸。**v3.5.5 起主会话职责收口**：默认派 1 个 sub-agent 执行具体节点，主会话只承担编排层职责。
 
 | 类别 | 主会话负责 | 派给 sub-agent |
 |---|---|---|
@@ -2368,7 +2368,7 @@ BFF: {RestImpl}:{行号} → AppService: {方法}:{行号} → Domain: {方法}:
 
 | # | 维度 | 校验命令 | 通过标准 | 自愈策略 |
 |---|------|---------|---------|---------|
-| **7t-1** | 全门禁通过 | `ae-sdd gates check`（全量 23 门禁） | `all_pass == true`（JSON `failed==0`） | 🔴 逻辑性失败（如 G-08 内容校验）→ 阻断 + 升级用户；🟢 能补生成的（如 G-01 文档缺失）→ 补跑对应 SKILL 生成后重跑 |
+| **7t-1** | 全门禁通过 | `ae-sdd gates check`（全量 28 门禁） | `all_pass == true`（JSON `failed==0`） | 🔴 逻辑性失败（如 G-08 内容校验）→ 阻断 + 升级用户；🟢 能补生成的（如 G-01 文档缺失）→ 补跑对应 SKILL 生成后重跑 |
 | **7t-2** | 文档合规位置 | `ae-sdd gates check --only G-DOC-STORAGE` | `stray_files == []`（无游离产物） | 🟢 游离产物 → AI 调 `document-storage.resolve_path()` 重定位并移动到合规根目录，重跑本维度 |
 | **7t-3** | state.json 完整 | `ae-sdd state read --json` | `phase` 在 PHASE_FLOW 合法值内 + `currentStory` 非空 + `events` 非空数组 | 🟢 phase 未推进到 `completed` → `ae-sdd state write --phase completed`；events 缺失 → 补 `append_event` 后 `state write` 落盘 |
 | **7t-4** | 产出物齐全 | 逐项核 §⑧产出物表 8 类路径（Story/Supplement/Task/CodingReport/CodeReview/testcase/TestReport/源码） | 全部文件真实存在（`os.path.exists`，非仅路径字符串） | 🟢 缺失 → 补跑对应 SKILL 生成（如 CodingReport 缺→coding-report-skill）；🔴 同一产物多轮补不出 → 阻断 + 升级用户 |
@@ -2500,7 +2500,7 @@ DR（需求文档）→ Story → Task → Coding
 | **🆕 Requirement Analysis** | [requirement-analysis-skill.md](../phase1-design/requirement-analysis-skill.md) | **需求分析 SKILL — Phase 1 起点。从 PRD/Issue/对话需求生成 RA 文档 + 规模裁定 + 路由决策** |
 | **🆕 DR Generate** | [dr-generate-skill.md](../phase1-design/dr-generate-skill.md) | **DR 生成 SKILL — 从 RA 文档生成 DR 草稿（规模=大 时触发）** |
 | **🆕 DR Review** | [dr-review-skill.md](../phase1-design/dr-review-skill.md) | **DR Review SKILL — 对 DR 草稿进行 5 阶段评审** |
-| DRtoStory | （已有，非本目录） | DR → Story 生成 |
+| Story Generate | [story-generate-skill.md](../phase1-design/story-generate-skill.md) | DR → Story 生成（7 阶段挖掘 SOP） |
 | Story Review | [story-review-skill.md](../phase1-design/story-review-skill.md) | Story 缺陷挖掘循环 |
 | TestCase Generate | [testcase-generate-skill.md](../phase1-design/testcase-generate-skill.md) | 测试用例生成（全场景覆盖 + 合规性校验） |
 | Story Update | [story-update-skill.md](../phase1-design/story-update-skill.md) | Story 文档更新 |
@@ -2513,7 +2513,7 @@ DR（需求文档）→ Story → Task → Coding
 | **🆕 Proposal** | [proposal-skill.md](../cross-cutting/proposal-skill.md) | **跨域改动 / 缺陷修复的 4 段 Proposal SOP** |
 | **🆕 Review Loop** | [review-loop-skill.md](../cross-cutting/review-loop-skill.md) | **🆕 v3.4.3 Review Loop 公共协议 — 所有 review 节点的 loop 骨架（退出条件 3 轮 + 循环上限 3 轮 + Plan-first）** |
 | **🆕 Agent Orchestration** | [agent-orchestration-skill.md](../cross-cutting/agent-orchestration-skill.md) | **多 Agent 编排、SubAgent 派活协议、报告回传** |
-| **🆕 ae-sdd Update** | [ae-sdd-update-skill.md](ae-sdd-update-skill.md) | **ae-sdd 自身维护 SKILL（修改 SKILL/SOP 时的入口）** |
+| **🆕 ae-sdd Update** | [ae-sdd-update-skill.md](../orchestration/ae-sdd-update-skill.md) | **ae-sdd 自身维护 SKILL（修改 SKILL/SOP 时的入口）** |
 
 ---
 
@@ -2530,7 +2530,7 @@ DR（需求文档）→ Story → Task → Coding
 | **状态机** | `ae-sdd state read / write / next-step / confirm` | 状态读取 / phase 切换 / 下一步判定 / 审核点 token |
 | | `ae-sdd state prd-check-complete / prd-complete / prd-archive` | PRD 级 4 层 AND 校验 / compact 触发 / 归档（🆕 v3.3.0）|
 | **路由** | `ae-sdd classify` | 4 维判定（来源/规模/产物/项目类型）|
-| **门禁** | `ae-sdd gates check [--only <G-XX>]` | 26 门禁扫描（全量或单门禁）|
+| **门禁** | `ae-sdd gates check [--only <G-XX>]` | 28 门禁扫描（全量或单门禁）|
 | | `ae-sdd gate ra-required / coding-required / doc-storage` | RA 准入 / Coding 真实性 / 文档存放单点校验 |
 | | `ae-sdd flow-violation-scan [--root <dir>]` | 🆕 v3.5.6 RA 流程违规审计（8 条规则扫描 RA 文档合规性）|
 | | `ae-sdd ra-depth-scan [--root <dir>]` | 🆕 v3.5.9 RA 机械派生深度扫描（D1-D5，验证 E.5/G.5/H.6/H.5 是否真做了）|

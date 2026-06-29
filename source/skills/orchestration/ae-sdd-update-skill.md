@@ -57,7 +57,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 | # | 子系统 | 物理位置 | 职责一句话 | 维护方式 |
 |---|--------|---------|-----------|---------|
-| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(23 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
+| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(25 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
 | ② | **实例化体系（4 层架构）** | `dist/ae-sdd/`(Layer2) + `~/.claude/skills/ae-sdd/`(Layer3) + `<project>/.ae-sdd/`(Layer4) | 母版→分发包→用户安装→项目实例，引用+override 模式 | 不手工改 Layer2/3/4；由 build/install/init 生成 |
 | ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
 | ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |
@@ -636,7 +636,7 @@ ae-sdd update-check --only UC-02
 ```bash
 ae-sdd update-check     # UC-01~07，记录所有 warn（warn 是深挖线索，非直接结论）
 ae-sdd health           # 9 项自检，记录 ❌（注意：母版仓库无 .ae-sdd/ 是设计如此，非缺陷）
-ae-sdd gates check      # 23 门禁，确认未被破坏
+ae-sdd gates check      # 28 门禁，确认未被破坏
 ```
 
 **判定：** update-check 全绿 = 自动检查层无阻断；但 UC-06 的 warn 项必须进步骤 2 深挖（warn = "声明但无物理实现"线索）。

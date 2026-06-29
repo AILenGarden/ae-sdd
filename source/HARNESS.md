@@ -32,6 +32,7 @@
 | Phase             | Write/Edit    | Bash | 说明                      |
 | ----------------- | ------------- | ---- | ------------------------- |
 | `initialized`     | ✅ 仅文档目录 | ❌   | 只写设计文档，禁止写 src/ |
+| `ra-generated`    | ✅ 仅文档目录 | ❌   | 🆕 v3.4.0 RA 需求分析（dr-generate 前置）|
 | `dr-generated`    | ✅ 仅文档目录 | ❌   | 写 DR                     |
 | `story-generated` | ✅ 仅文档目录 | ❌   | 写 Story                  |
 | `story-reviewed`  | ✅ 仅文档目录 | ❌   | 写 TestCase               |
@@ -96,11 +97,15 @@ Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
 ```text
 G-00 项目资产  G-01 DR文档    G-02 Story文档  G-03 Story Review通过
 G-04 TestCase  G-05 Task文档  G-06 Task Review G-07 CodingPlan
-G-08 Plan14禁  G-09 测试真实性 G-10 测试报告   G-11 Coding报告
-G-12 CR报告    G-13 全链路对称性
-G-14 CP-Story一致性  G-CODEPLAN-SRC 源码核对  G-DOC-STORAGE 文档存放
-G-RA-1~4 需求分析门卫  G-CODE-1 Coding真实性
+G-08 Plan14禁  G-09 测试真实性 G-09B reviewer独立性 G-10 测试报告
+G-11 Coding报告 G-12 CR报告   G-13 全链路对称性 G-14 CP-Story一致性
+G-CODEPLAN-SRC 源码核对  G-DOC-STORAGE 文档存放  G-DOC-CONSISTENCY 记忆-配置一致
+G-PATH 路径越界  G-CODE-1 Coding真实性
+G-RA-1 RA文档存在  G-RA-2 RA维度完整  G-RA-3 RA衍生章节  G-RA-4 RA真实性  G-RA-5 RA派生深度
+G-RA-FLOW-VIOLATION RA流程违规  G-REVIEW-LOOP review-loop退出条件
 ```
+
+> 共 28 门禁（GATE_REGISTRY 权威，`tools/lib/gates.py` 实测）。
 
 一键检查：`ae-sdd gates check --json`
 
@@ -130,7 +135,7 @@ G-RA-1~4 需求分析门卫  G-CODE-1 Coding真实性
 | Hook               | stdin 关键字段               | 允许响应 | 拒绝/注入响应关键字段                               |
 | ------------------ | ---------------------------- | -------- | --------------------------------------------------- |
 | `PreToolUse`       | `tool_name`, `tool_input`    | `{}`     | `hookSpecificOutput.permissionDecision = "deny"`    |
-| `UserPromptSubmit` | `user_prompt`                | `{}`     | `systemMessage`                                     |
+| `UserPromptSubmit` | `user_prompt`                | `{}`     | `hookSpecificOutput.additionalContext`（v3.5.8 起字段从 `systemMessage` 改为 `additionalContext`）|
 | `Stop`             | `transcript_path`            | `{}`     | `decision = "block"`, `reason`, `systemMessage`     |
 
 **exit 始终为 0。** Claude Code 通过 JSON 字段判断是否允许，不通过 exit code。

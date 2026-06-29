@@ -24,7 +24,9 @@
 - 最后更新：
 - 状态：Draft / Review / Approved / Superseded
 
+> <!-- EXAMPLE：以下为填写示例，母版不含项目实例路径 -->
 > 示例：DR ID: DR-2C-IM-001，PRD: [2C IM 客服系统](../../prd/prd-2c-im客服系统.md)，创建日期: 2026-05-14，状态: Draft
+> <!-- /EXAMPLE：实际填写时替换为本项目 PRD 链接；prd/prd-2c-im客服系统.md 是 icec-cloud-boss 项目历史文件，非母版自带 -->
 
 ---
 

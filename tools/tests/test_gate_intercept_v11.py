@@ -232,6 +232,19 @@ class TestPathAwareness:
 
 # ─── prompt_inject ────────────────────────────────────────────────────────────
 
+
+def _additional_context(result: dict) -> str:
+    """从 prompt_inject 返回结构中提取 additionalContext（Mavis harness 新格式）。
+
+    prompt_inject 自 v3.5.8 ra-review-loop-unification 起输出
+    ``{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                              "additionalContext": "..."}}``，
+    旧 ``systemMessage`` key 已废弃。统一用本 helper 提取，避免断言再次漂移
+    （与 tools/tests/test_prompt_inject_plugin.py:_additional_context 同构）。
+    """
+    return result.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+
 class TestPromptInject:
     """prompt_inject v1.2：返回 dict，无 as_json 参数"""
 
@@ -253,8 +266,8 @@ class TestPromptInject:
         (ae_sdd / "assets").mkdir()
 
         result = inject(project_dir=tmp_path)
-        assert "systemMessage" in result
-        msg = result["systemMessage"]
+        msg = _additional_context(result)
+        assert msg, "inject 应返回非空 additionalContext"
         assert "◆ HARNESS STATE" in msg
         assert "coding" in msg
         assert "STORY-001" in msg
@@ -271,7 +284,7 @@ class TestPromptInject:
         }))
 
         result = inject(project_dir=tmp_path)
-        msg = result.get("systemMessage", "")
+        msg = _additional_context(result)
         assert "G-00" in msg or "⛔" in msg
 
     def test_resets_stop_retry_count(self, tmp_path):
