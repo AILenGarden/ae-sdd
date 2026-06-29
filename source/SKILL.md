@@ -1,5 +1,6 @@
 ---
 name: ae-sdd
+version: 3.5.14
 description: |
   端到端自动化工程 SKILL 体系的主入口（v3.5.14）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
@@ -10,7 +11,8 @@ description: |
   v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。
   v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
 ---
-version: 3.5.14
+
+<!-- SKILL 元数据（version 权威值已在上 frontmatter，此处 main_entry/triggers 供文档检索） -->
 main_entry: true
 triggers:
   - "启动自动化工程"
@@ -676,8 +678,8 @@ ae-sdd gates check --only G-14
 
 | 层级 | SKILL | 职责 |
 |------|-------|------|
-| **第 1 层：统一入口 + 智能路由** | `ae-sdd-skill.md`（本 SKILL）| 分析用户输入，路由到对应节点 SKILL |
-| **第 2 层：流程编排** | `ae-sdd-skill.md §整体流程` | 9 步流程怎么走、门禁是什么 |
+| **第 1 层：统一入口 + 智能路由** | `SKILL.md`（本 SKILL）| 分析用户输入，路由到对应节点 SKILL |
+| **第 2 层：流程编排** | `SKILL.md §整体流程` | 9 步流程怎么走、门禁是什么 |
 | **第 3 层：节点 SKILL** | `story-generate / story-review / coding / code-review` 等 | 每个节点怎么执行 |
 | **第 4 层：横切依赖** | `proposal-skill / document-storage-skill / agent-orchestration-skill` | 跨节点的统一标准 |
 
@@ -1417,7 +1419,7 @@ AI 在本 SKILL 运行期间，**必须持续维护以下状态**，每个 Story
 
 ### § 流程状态跟踪与再启动（PRD 级）— 🆕 v3.3.0
 
-> **状态机归属（🔴 单点持有）：** 本节由 `ae-sdd-skill.md` 单点持有 PRD 级状态机定义；子 SKILL（`phase1-design` / `phase2-coding` / `phase3-review`）通过指针引用本节，**不**独立发明 PRD 级状态字段。如发现子 SKILL 写了自己的 PRD 级状态字段 → 视为违规。
+> **状态机归属（🔴 单点持有）：** 本节由 `SKILL.md` 单点持有 PRD 级状态机定义；子 SKILL（`phase1-design` / `phase2-coding` / `phase3-review`）通过指针引用本节，**不**独立发明 PRD 级状态字段。如发现子 SKILL 写了自己的 PRD 级状态字段 → 视为违规。
 
 #### 1.1 PRD 级状态文件路径
 

@@ -309,7 +309,7 @@ Coding 完成后生成**完整、客观、可评审**的 Coding 报告，目标�
 - **同步对象：**
   - 与 `coding-skill.md` 协调（Coding 怎么写 → Coding 完成后出报告）
   - 与 `code-review-skill.md` 协调（报告是 Code Review 的输入）
-  - 与 `ae-sdd-skill.md` 协调（AE 编排层角色 6 指针）
+  - 与 `SKILL.md` 协调（AE 编排层角色 6 指针）
   - 与 `document-storage-skill.md` 协调（文档存放路径）
 - **关键变化（2026-06-06 重大重构）：**
   - 🆕 新建独立 SKILL（之前只有 AE-skill 角色 6 的 5 行描述 + 空白模板）

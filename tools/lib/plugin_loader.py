@@ -195,10 +195,10 @@ def _parse_yaml_subset(text: str) -> dict:
     - list of scalar（- value）
     - int / bool / str 类型自动识别
     - "..." 或 "---" 文档分隔符忽略
+    - 🆕 flow style（[] / {} inline，治 E3）— 在 _coerce_scalar 内识别
 
     不支持（registry.yaml 不会用）：
     - & 锚点 / * 引用
-    - flow style ({}, [] inline)
     - !!type 标签
     - 多层嵌套 dict（compatibility 只有一层）
     """
@@ -474,7 +474,13 @@ def _build_list(nodes: list, i: int, parent_indent: int) -> tuple:
 
 
 def _coerce_scalar(val: str):
-    """自动识别 scalar 类型。"""
+    """自动识别 scalar 类型。
+
+    🆕 flow style 支持（治 E3：`plugins: []` 被解析成 str '[]'）：
+    - `[]` → 空 list；`[a, b]` → list（元素递归 coerce，去引号）
+    - `{}` → 空 dict；`{k: v}` → dict（值递归 coerce）
+    registry.yaml 实际只用 `plugins: []`，但完整 flow 支持避免再踩同类坑。
+    """
     if not val:
         return ""
     if val.lower() in ("true", "yes"):
@@ -484,12 +490,53 @@ def _coerce_scalar(val: str):
     # 去掉引号
     if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
         return val[1:-1]
+    # flow style: list [...] / dict {...}
+    if val.startswith("[") and val.endswith("]"):
+        inner = val[1:-1].strip()
+        if not inner:
+            return []
+        return [_coerce_scalar(p.strip()) for p in _split_flow(inner)]
+    if val.startswith("{") and val.endswith("}"):
+        inner = val[1:-1].strip()
+        if not inner:
+            return {}
+        result = {}
+        for pair in _split_flow(inner):
+            k, _, v = pair.partition(":")
+            result[k.strip()] = _coerce_scalar(v.strip())
+        return result
     # int
     try:
         return int(val)
     except ValueError:
         pass
     return val
+
+
+def _split_flow(s: str) -> list:
+    """按逗号切分 flow-style 内容，忽略嵌套 []/{} 内的逗号。
+
+    例：'a, [b, c], {x: 1}' → ['a', '[b, c]', '{x: 1}']
+    registry.yaml 实际不会嵌套，但写稳健点防回归。
+    """
+    parts = []
+    depth = 0
+    cur = []
+    for ch in s:
+        if ch in "[{":
+            depth += 1
+            cur.append(ch)
+        elif ch in "]}":
+            depth -= 1
+            cur.append(ch)
+        elif ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return [p.strip() for p in parts if p.strip()]
 
 
 # === 注册表加载与校验 ===

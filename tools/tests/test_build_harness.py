@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 from build_harness import (  # noqa: E402
     ADAPTER_VERSION,
+    cleanup_old_bak,
     get_commit_hash,
     get_tree_hash,
     read_adapter_lock,
@@ -224,3 +225,60 @@ class TestHelpers:
         lock = read_adapter_lock(repo / "harness" / ".adapter.lock")
         if lock:
             assert lock.get("adapter_version") == ADAPTER_VERSION
+
+
+# ─── cleanup_old_bak 备份轮转（🆕 治 K2：agent.md.bak.* 无限累积）────────────
+
+class TestCleanupOldBak:
+    """备份轮转：保留最近 keep 个 .bak.<ts>，删其余。"""
+
+    def _make_baks(self, target: Path, count: int) -> list:
+        """造 count 个 .bak.<ts> 文件（用不同时间戳，从旧到新）。"""
+        baks = []
+        for i in range(count):
+            bak = target.with_name(f"{target.name}.bak.2026010{i}T000000")
+            bak.write_text(f"old {i}", encoding="utf-8")
+            # 用 os.utime 设 mtime 让排序确定（i 越大越新）
+            import os
+            os.utime(bak, (i, i))
+            baks.append(bak)
+        return baks
+
+    def test_keeps_most_recent_n(self, tmp_path):
+        """5 个 bak + keep=3 → 删 2 个最旧，留 3 个最新"""
+        target = tmp_path / "agent.md"
+        target.write_text("current", encoding="utf-8")
+        self._make_baks(target, 5)
+        removed = cleanup_old_bak(target, keep=3)
+        assert removed == 2
+        remaining = sorted(target.parent.glob("agent.md.bak.*"))
+        assert len(remaining) == 3
+
+    def test_no_bak_returns_zero(self, tmp_path):
+        """无 bak 文件 → 删 0，不报错"""
+        target = tmp_path / "agent.md"
+        target.write_text("current", encoding="utf-8")
+        assert cleanup_old_bak(target, keep=3) == 0
+
+    def test_keep_zero_deletes_all(self, tmp_path):
+        """keep=0 → 删全部 bak"""
+        target = tmp_path / "agent.md"
+        target.write_text("current", encoding="utf-8")
+        self._make_baks(target, 3)
+        assert cleanup_old_bak(target, keep=0) == 3
+        assert list(target.parent.glob("agent.md.bak.*")) == []
+
+    def test_fewer_than_keep_deletes_none(self, tmp_path):
+        """bak 数 < keep → 不删"""
+        target = tmp_path / "agent.md"
+        target.write_text("current", encoding="utf-8")
+        self._make_baks(target, 2)
+        assert cleanup_old_bak(target, keep=5) == 0
+
+    def test_negative_keep_no_op(self, tmp_path):
+        """keep<0 → 安全无操作（防误删）"""
+        target = tmp_path / "agent.md"
+        target.write_text("current", encoding="utf-8")
+        self._make_baks(target, 3)
+        assert cleanup_old_bak(target, keep=-1) == 0
+        assert len(list(target.parent.glob("agent.md.bak.*"))) == 3

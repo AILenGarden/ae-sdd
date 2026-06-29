@@ -12,7 +12,7 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 > - **建议书（Proposal）** = 单一权威载体，对应"原状/目标/方案/影响"4 段式
 >
 > **与现有 SKILL 的关系：**
-> - `ae-sdd-skill.md` = 流程编排（**Proposal 是新流程的"统一入口"**）
+> - `SKILL.md` = 流程编排（**Proposal 是新流程的"统一入口"**）
 > - **`proposal-skill.md`（本文件）** = 建议书的环节内具体规则（怎么写、怎么走流程）
 > - [`templates/proposal/proposal-template.md`](../../templates/proposal/proposal-template.md) = 建议书空白模板
 > - 替代（不重复）各 SKILL 内置的 UpdatePlan：

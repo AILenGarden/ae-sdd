@@ -8,7 +8,7 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 > **核心定位：** 与 `story-review-skill.md` 同等地位 — Story Review 是设计阶段的评审，**Code Review 是实现阶段的评审**。两者结构对齐（目标/总则/整体流程/触发条件/Plan-first/第零步准入/第一步输入/第二步挖掘/结论/判定/补充说明/UpdatePlan/触发/循环/禁止/执行清单/讲解）。
 >
 > **与现有 SKILL 的分工：**
-> - `ae-sdd-skill.md` = 流程编排（Phase 3 ⑦ 在哪）
+> - `SKILL.md` = 流程编排（Phase 3 ⑦ 在哪）
 > - **`code-review-skill.md`（本文件）** = Code Review 的环节内具体规则（怎么审）
 > - [`templates/coding/be-codereview-template.md`](../../templates/coding/be-codereview-template.md) = 评审报告空白模板
 > - `coding-skill.md` = Coding 阶段规则，**6 大评审闸门从 coding-skill 迁出到本 SKILL §7**
@@ -1065,7 +1065,7 @@ Code Review 发现问题
 | `coding-skill.md` | 评审 Coding 实现（§实时追溯链） |
 | `project-assets-update-skill.md` | 评审项目资产漂移 |
 | `testcase-generate-skill.md` | 评审测试用例与 AC 映射 |
-| `ae-sdd-skill.md` | AE 编排层"由谁做"（角色 7 指针） |
+| `SKILL.md` | AE 编排层"由谁做"（角色 7 指针） |
 | `ae-sdd-update-skill.md` | SKILL 边界维护规范 |
 
 ---

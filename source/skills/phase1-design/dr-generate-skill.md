@@ -8,7 +8,7 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 > **核心定位：** 与 `dr-update-skill.md` / `dr-review-skill.md` / `requirement-analysis-skill.md` / `story-generate-skill.md` 同等地位 — **DR Generate 是设计阶段的"生成"环节**（从 RA → DR），DR Review 是"评审"环节，DR Update 是"修订"环节。
 >
 > **与现有 SKILL 的分工：**
-> - `ae-sdd-skill.md` = 流程编排（Phase 1 ② 在哪）
+> - `SKILL.md` = 流程编排（Phase 1 ② 在哪）
 > - `requirement-analysis-skill.md` = 需求分析（Phase 1 起点，输出 RA）
 > - **`dr-generate-skill.md`（本文件）** = DR 生成的环节内具体规则（怎么生成）
 > - `dr-review-skill.md` = DR 评审的环节内具体规则（怎么审）
@@ -968,7 +968,7 @@ story-review-skill (Story 评审)
 | Story 拆分策略 | 后端 {N} 个 Story / 前端 {M} 个 Story。拆分依据：{按 DDD 分层 / 按业务流程 / 按业务实体}。依赖关系：{DAG 描述}。 |
 | 已识别风险 | 风险 1：{场景}，设计中的应对是{方案}。风险 2：... |
 
-**输出模板：** `📖 【DR 讲解 - {DR-ID}】`（详见 `ae-sdd-skill.md §📖 人工审核主动讲解规范`）
+**输出模板：** `📖 【DR 讲解 - {DR-ID}】`（详见 `SKILL.md §📖 人工审核主动讲解规范`）
 
 ---
 
@@ -1043,7 +1043,7 @@ report_back:
   - 与 `dr-review-skill.md` 对齐（DR Review 评审 DR Generate 产出）
   - 与 `dr-update-skill.md` 协调（生成 → 评审 → 修改三件套）
   - 与 `story-generate-skill.md` 协调（DR §12 Story 矩阵是下游 Story 生成的输入）
-  - 与 `ae-sdd-skill.md` 协调（AE 编排层角色 dr-writer 指针）
+  - 与 `SKILL.md` 协调（AE 编排层角色 dr-writer 指针）
   - 与 `document-storage-skill.md` 协调（文档存放路径 + 版本号 + ChangeLog）
 - **关键变化（2026-06-17 新建）：**
   - 🆕 新建独立 SKILL（之前只有 AE-skill 角色 dr-writer 的几行描述）

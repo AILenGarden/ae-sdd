@@ -163,6 +163,30 @@ class TestParseYamlSubset(unittest.TestCase):
         d = plugin_loader._parse_yaml_subset(text)
         self.assertEqual(d, {"schema_version": 1, "name": "foo"})
 
+    # ─── flow style（🆕 治 E3：plugins: [] 被解析成 str '[]'）─────────────────
+
+    def test_flow_empty_list(self):
+        """plugins: [] 应解析为空 list，不是 str '[]'（E3 回归）"""
+        d = plugin_loader._parse_yaml_subset("plugins: []\n")
+        self.assertEqual(d["plugins"], [])
+        self.assertIsInstance(d["plugins"], list)
+
+    def test_flow_list_of_scalars(self):
+        """[a, b, c] → list（元素递归 coerce）"""
+        d = plugin_loader._parse_yaml_subset("items: [a, b, 3]\n")
+        self.assertEqual(d["items"], ["a", "b", 3])
+
+    def test_flow_empty_dict(self):
+        """meta: {} → 空 dict，不是 str '{}'"""
+        d = plugin_loader._parse_yaml_subset("meta: {}\n")
+        self.assertEqual(d["meta"], {})
+        self.assertIsInstance(d["meta"], dict)
+
+    def test_flow_dict_inline(self):
+        """{k: v} → dict（值递归 coerce）"""
+        d = plugin_loader._parse_yaml_subset('compat: {ae_sdd_version: ">=3.5.0"}\n')
+        self.assertEqual(d["compat"], {"ae_sdd_version": ">=3.5.0"})
+
 
 # ====================================================
 # Single-layer registry load tests

@@ -8,7 +8,7 @@ description: Story 生成 SKILL — Phase 1 ① 节点的环节内具体规则�
 > **核心定位：** 与 `story-review-skill.md` 同等地位 — Story Generate 是**设计阶段**的执行（从 DR → Story），Story Review 是设计阶段的**评审**（校验 Story）。两者结构对齐。
 >
 > **与现有 SKILL 的分工：**
-> - `ae-sdd-skill.md` = 流程编排（Phase 1 ① 在哪）
+> - `SKILL.md` = 流程编排（Phase 1 ① 在哪）
 > - **`story-generate-skill.md`（本文件）** = Story 生成的环节内具体规则（怎么生成）
 > - `story-review-skill.md` = Story Review 的环节内具体规则（怎么审）
 > - `story-update-skill.md` = Story 修改的环节内具体规则（怎么改）
@@ -901,7 +901,7 @@ Story 文档写入
 | AC 故事 | - AC-001：{用户场景} → 系统应{行为} → 体现{业务价值}。- AC-002：... |
 | 已识别风险 | 风险 1：{场景}，设计中的应对是{方案}。风险 2：... |
 
-**输出模板：** `📖 【Story 讲解 - {STORY-ID}】`（详见 `ae-sdd-skill.md §📖 人工审核主动讲解规范`）
+**输出模板：** `📖 【Story 讲解 - {STORY-ID}】`（详见 `SKILL.md §📖 人工审核主动讲解规范`）
 
 ---
 
@@ -971,7 +971,7 @@ report_back:
 - **同步对象：**
   - 与 `story-review-skill.md` 对齐质量（同等地位，章节结构对齐）
   - 与 `story-update-skill.md` 协调（生成 → 评审 → 修改三件套）
-  - 与 `ae-sdd-skill.md` 协调（AE 编排层角色 1 指针）
+  - 与 `SKILL.md` 协调（AE 编排层角色 1 指针）
   - 与 `document-storage-skill.md` 协调（文档存放路径）
 - **关键变化（2026-06-06 重大重构）：**
   - 🆕 新建独立 SKILL（之前只有 AE-skill 角色 1 的 5 行描述）

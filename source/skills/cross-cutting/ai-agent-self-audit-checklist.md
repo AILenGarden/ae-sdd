@@ -100,7 +100,7 @@ description: AI Agent 任务开始前自审清单 SOP（🔴 强制，每任务�
 | SKILL | 关系 |
 |------|------|
 | `requirement-analysis-skill.md` | 本 SOP 步骤 3 的 8 个硬卡片对应 RA skill 完整 7 步 |
-| `ae-sdd-skill.md`（§🎯 智能路由）| 本 SOP 步骤 1/2 的判定规则与 SKILL.md §4 维判定智能路由表对齐 |
+| `SKILL.md`（§🎯 智能路由）| 本 SOP 步骤 1/2 的判定规则与 SKILL.md §4 维判定智能路由表对齐 |
 | `proposal-skill.md` | "出建议书"任务走 RA skill 完成后再走 proposal-skill（proposal 是 RA 输出后的执行载体）|
 | `document-storage-skill.md` | 本 SOP 步骤 3 的落盘硬卡片调用 save_doc，触发 G-RA-PLAN/COMPLETE/5CHECK/GATES 前置检查 |
 
@@ -123,7 +123,7 @@ description: AI Agent 任务开始前自审清单 SOP（🔴 强制，每任务�
 - **更新频率：** 触发"self-flagged defect"或新增反模式时
 - **同步对象：**
   - `requirement-analysis-skill.md` §反模式 7/8/9（本 SOP 的规则源头）
-  - `ae-sdd-skill.md` §🎯 智能路由（本 SOP 步骤 1/2 的判定依据）
+  - `SKILL.md` §🎯 智能路由（本 SOP 步骤 1/2 的判定依据）
   - `tools/lib/document_storage.py:check_ra_prerequisites`（本 SOP 步骤 3 落盘硬卡片的代码实现）
   - `scripts/flow_violation_scan.py`（本 SOP 步骤 3 的工具层兜底审计）
 - **关键变化（2026-06-27 新建）：**

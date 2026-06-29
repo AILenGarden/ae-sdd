@@ -10,7 +10,7 @@ description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 
 > - **是**按**同一节点内**的子任务拆（如 Coding 一个 Task 时，可拆成"写 Domain 类"/"写 Application 类"/"写 Infrastructure 类"/"写 Tests"等多个子任务并行跑）
 >
 > **与现有 SKILL 的关系：**
-> - `ae-sdd-skill.md` = 流程编排 + 智能路由（决定走哪个节点 SKILL）
+> - `SKILL.md` = 流程编排 + 智能路由（决定走哪个节点 SKILL）
 > - **`agent-orchestration-skill.md`（本文件）** = 任务节点**内**的子任务编排（决定同节点内如何拆/分 Agent/补救）**+ 多 reviewer 默认编排（§8.4，所有 Review 节点的多 reviewer 决策 SSOT）**
 > - 节点 SKILL（`story-generate / coding / code-review` 等）= 各自节点的执行
 >
@@ -736,7 +736,7 @@ ae-sdd context-pressure --story {STORY-ID}
 
 | 上下游 SKILL | 衔接点 |
 |------------|-------|
-| `ae-sdd-skill.md §统一入口` | 用户输入先经 AE-skill 路由到节点 SKILL |
+| `SKILL.md §统一入口` | 用户输入先经 AE-skill 路由到节点 SKILL |
 | 节点 SKILL（`coding / code-review / story-generate` 等）| 复杂任务时调用本 SKILL 决定"是否拆子任务" |
 | `proposal-skill.md` | sub-agent 故障时升级用户 → 触发 Proposal 走流程 |
 | `document-storage-skill.md` | sub-agent 产出物路径按本 SKILL §2 路径模板确定 |
@@ -799,7 +799,7 @@ ae-sdd context-pressure --story {STORY-ID}
 - **维护人：** 架构组
 - **更新频率：** 每次新增"多 Agent 场景"或故障模式时
 - **同步对象：**
-  - `ae-sdd-skill.md §统一入口` 引用本 SKILL 作为"任务节点内子任务编排"
+  - `SKILL.md §统一入口` 引用本 SKILL 作为"任务节点内子任务编排"
   - 各节点 SKILL（`coding / code-review` 等）复杂任务时调用本 SKILL
   - `proposal-skill.md` 在 sub-agent 故障升级时引用
 - **关键变化（2026-06-06 新建）：**

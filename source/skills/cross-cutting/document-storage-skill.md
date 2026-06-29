@@ -585,7 +585,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | **流程状态文件（PRD 级，handoff）**| **不带版本号** | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` 时生成 |
 | **流程状态文件（PRD 级，人类读）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.md` | `ae-sdd state prd-complete` 时一次性生成 |
 
-> **🔴 PRD ID 命名规范（与 `ae-sdd-skill.md §1.2` SSOT）：** 格式 `PRD-<业务域>-<序号>`（CS / IM / USER / LIFE + 3 位数字）。示例：`PRD-CS-001`。
+> **🔴 PRD ID 命名规范（与 `SKILL.md §1.2` SSOT）：** 格式 `PRD-<业务域>-<序号>`（CS / IM / USER / LIFE + 3 位数字）。示例：`PRD-CS-001`。
 
 ### 3.3 版本号含义
 
@@ -617,7 +617,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 
 ### 3.5 PRD 级 `state.json` 完整 schema（🆕 v3.3.0）— SSOT
 
-> **🔴 单点持有：** PRD 级 `state.json` schema 定义在本节，ae-sdd-skill.md §1.3 仅放指针。如发生字段冲突以本节为准。
+> **🔴 单点持有：** PRD 级 `state.json` schema 定义在本节，SKILL.md §1.3 仅放指针。如发生字段冲突以本节为准。
 
 ```json
 {
@@ -1198,7 +1198,7 @@ v ≥ 4 时可归档（🗑️ archived）
 | `code-review-skill.md` | §📦 文档存放前置调用 → save_doc(intent="CODE_REVIEW") |
 | `testcase-generate-skill.md` | §📦 文档存放前置调用 → save_doc(intent="TESTCASE") |
 | `project-assets-update-skill.md` | §1 文档路径（按本 SKILL §2 路径模板）|
-| `ae-sdd-skill.md` | 状态文件 `state.json` 按本 SKILL §2.4 路径 |
+| `SKILL.md` | 状态文件 `state.json` 按本 SKILL §2.4 路径 |
 | `ae-sdd-update-skill.md` | 边界判定表增补 1 行：文档存放标准 = 本 SKILL |
 
 ---

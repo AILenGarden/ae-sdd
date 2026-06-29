@@ -8,7 +8,7 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 > **🔴 核心定位（2026-06-17 重大重构）：** 本 SKILL 是 ae-sdd 体系的 **Phase 1 起点**（"入口"），与 `story-generate-skill` / `dr-generate-skill` / `dr-review-skill` 平级但**位置更靠前**——它产出"RA 文档 + 规模裁定 + 路由决策"，再触发下游对应 SKILL。
 >
 > **与现有 SKILL 的分工：**
-> - `ae-sdd-skill.md` = 流程编排（Phase 1 起点在哪）
+> - `SKILL.md` = 流程编排（Phase 1 起点在哪）
 > - **`requirement-analysis-skill.md`（本文件）** = 需求分析的环节内具体规则（怎么分析）
 > - `dr-generate-skill.md` = 设计需求生成（Phase 1 ② 节点，规模 = 大 时触发）
 > - `story-generate-skill.md` = Story 生成（规模 = 中 时触发）
@@ -1875,7 +1875,7 @@ RA 修订前（每次必跑）
   - 与 `dr-generate-skill.md` / `story-generate-skill.md` / `task-generate-skill.md` / `coding-skill.md` 协调（边界判定表 + 路由决策表）
   - 与 `document-storage-skill.md §15.1` 协调（调用矩阵新增 1 行：requirement-analysis-skill）
   - 与 `project-assets-update-skill.md §G` 协调（项目资产读取 API）
-  - 与 `ae-sdd-skill.md` 协调（Phase 1 起点位置）
+  - 与 `SKILL.md` 协调（Phase 1 起点位置）
 - **关键变化（2026-06-17 新建）：**
   - 🆕 **prd-story-skill 拆分为 3 个独立 SKILL**：requirement-analysis（需求分析）+ dr-generate（设计需求生成）+ dr-review（设计需求评审）
   - 🆕 **入口多样**：PRD / Issue / 对话需求 / BUG/配置

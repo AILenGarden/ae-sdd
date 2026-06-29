@@ -92,8 +92,8 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 **调用方：**
 - `task-generate-skill.md`（每个 Task 撰写时，生成任务级 CodePlan）
 - `task-generate-skill.md` 第六步（汇总统一版 CodingPlan）
-- `ae-sdd-skill.md` Task 汇总阶段
-- **🆕 2026-06-10**：`ae-sdd-skill.md` 微任务场景（直接调用，不经 task-generate-skill）
+- `SKILL.md` Task 汇总阶段
+- **🆕 2026-06-10**：`SKILL.md` 微任务场景（直接调用，不经 task-generate-skill）
 
 **用途：** 生成任务级 CodePlan 或统一版 CodingPlan。只产出设计，不写生产代码。
 
@@ -138,9 +138,9 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 ### `CodingSkill.Execute`
 
 **调用方：**
-- `ae-sdd-skill.md`（TaskSkill 全部完成 + 用户确认统一版 CodingPlan 后）—— **重/小任务场景**
+- `SKILL.md`（TaskSkill 全部完成 + 用户确认统一版 CodingPlan 后）—— **重/小任务场景**
 - 用户直接触发"开始 Coding / 写代码 / 实现 Story"
-- **🆕 2026-06-10**：`ae-sdd-skill.md` 微任务场景（直接调用，不经 task-generate-skill）
+- **🆕 2026-06-10**：`SKILL.md` 微任务场景（直接调用，不经 task-generate-skill）
 
 **用途：** 按确认后的统一版 CodingPlan 生成代码、测试代码，并完成完整验证。
 

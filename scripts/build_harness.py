@@ -62,6 +62,28 @@ def warn(msg: str) -> None: print(f"  {C_YELLOW}[WARN]{C_RESET} {msg}")
 def err(msg: str) -> None:  print(f"  {C_RED}[ERR]{C_RESET} {msg}", file=sys.stderr)
 
 
+# ─── 备份轮转（治 K2：agent.md.bak.* 无限累积） ──────────────────────────────
+# 每次构建都 shutil.copy2 一个 .bak.<timestamp>，旧版无清理逻辑 → 30+ 个 bak 永久
+# 堆积。本函数在备份后调用，按 mtime 降序保留最近 keep 个，删其余。
+def cleanup_old_bak(target: Path, keep: int = 3) -> int:
+    """删除 target 同目录下旧 .bak.<ts> 文件，保留最近 keep 个。返回删除数。"""
+    if keep < 0:
+        return 0
+    baks = sorted(
+        target.parent.glob(f"{target.name}.bak.*"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    removed = 0
+    for old in baks[keep:]:
+        try:
+            old.unlink()
+            removed += 1
+        except OSError:
+            pass  # 并发构建竞态：文件已被删则跳过
+    return removed
+
+
 # ─── 元数据提取（对齐 PS1 Get-AeSddVersion / Get-AeSddCommitHash） ──────────
 def get_ae_sdd_version(src: Path) -> str:
     """三级 fallback（迁自 PS1 Get-AeSddVersion）。
@@ -417,6 +439,10 @@ def main() -> int:
             bak = target_agent.with_name(f"{target_agent.name}.bak.{backup_ts}")
             shutil.copy2(target_agent, bak)
             ok(f"backup -> {bak}")
+            # 备份轮转：保留最近 3 个，删旧 bak（治 K2 无限累积）
+            removed = cleanup_old_bak(target_agent, keep=3)
+            if removed:
+                ok(f"rotated {removed} old .bak file(s) (kept 3)")
     else:
         target_root.mkdir(parents=True, exist_ok=True)
         ok(f"created dir: {target_root}")
