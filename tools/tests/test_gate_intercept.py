@@ -331,15 +331,26 @@ class TestScaleRoutedStateWrite:
         # G-00 等 PHASE_ENTRY_GATES 放行（返回空结果列表 = 无失败）
         monkeypatch.setattr("lib.gates.check_all", lambda *a, **kw: [])
 
-    def test_micro_initialized_to_coding_allowed(self, tmp_path, monkeypatch):
-        """🆕 v3.5.15 修复：微链 initialized→coding 合法单步，不拦"""
+    def test_micro_initialized_to_coding_process_allowed(self, tmp_path, monkeypatch):
+        """🆕 v3.5.16 微链 initialized→coding-process 合法单步，不拦（CodingProcess 前置）"""
+        self._bypass_gates_and_memory(monkeypatch)
+        project_dir = self._make_state(tmp_path, scale="微", phase="initialized")
+        cmd = "ae-sdd state write --phase coding-process --story STORY-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert allowed, f"微链 initialized→coding-process 应放行，但被拒: {reason}"
+
+    def test_micro_initialized_to_coding_blocked_v3516(self, tmp_path, monkeypatch):
+        """🆕 v3.5.16 微链 initialized→coding 现在跨步（中间有 coding-process），应拦"""
         self._bypass_gates_and_memory(monkeypatch)
         project_dir = self._make_state(tmp_path, scale="微", phase="initialized")
         cmd = "ae-sdd state write --phase coding --story STORY-001"
         allowed, reason = check_intercept(
             "Bash", bash_command=cmd, project_dir=project_dir
         )
-        assert allowed, f"微链 initialized→coding 应放行，但被拒: {reason}"
+        assert not allowed, "微链 initialized→coding 应被拦（v3.5.16 中间有 coding-process）"
+        assert "跨步跳跃" in reason
 
     def test_large_initialized_to_coding_blocked(self, tmp_path, monkeypatch):
         """大链 initialized→coding 跨步跳跃（跳了 7 步），应拦"""
@@ -384,3 +395,59 @@ class TestScaleRoutedStateWrite:
             "Bash", bash_command=cmd, project_dir=project_dir
         )
         assert allowed, f"微链 initialized→dr 由 set_phase 拦，gate_intercept 跨步判定不应拦: {reason}"
+
+
+class TestCodingProcessHardGuard:
+    """🆕 v3.5.16 C1 硬层产物校验：coding phase 写 src/ 须先走过 CodingProcess。
+
+    防止 AI 凭记忆写代码绕过 CodingProcess。校验 coding-process phase 已 confirm。
+    """
+
+    def _make_state_with_session(self, tmp_path, phase, confirmed_phases=None):
+        """构造 state.json + session.json（含 userConfirmedPhases）。"""
+        ae_sdd = tmp_path / ".ae-sdd"
+        ae_sdd.mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (ae_sdd / "state.json").write_text(json.dumps({
+            "version": "1", "projectKey": "test",
+            "phase": phase, "scale": "大",
+            "currentStory": "STORY-001", "currentTask": None,
+            "history": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        # session.json（关卡3 confirm 校验依赖）
+        auto_eng = tmp_path / ".auto-engineering" / "STORY-001"
+        auto_eng.mkdir(parents=True, exist_ok=True)
+        (auto_eng / "session.json").write_text(json.dumps({
+            "storyId": "STORY-001",
+            "userConfirmedPhases": confirmed_phases or [],
+        }, ensure_ascii=False), encoding="utf-8")
+        return tmp_path
+
+    def test_coding_src_blocked_without_coding_process_confirm(self, tmp_path):
+        """🆕 v3.5.16 coding phase 写 src/ 但缺 coding-process confirm → 拦截"""
+        # task-reviewed 已 confirm，但 coding-process 未 confirm
+        project_dir = self._make_state_with_session(
+            tmp_path, phase="coding",
+            confirmed_phases=[{"phase": "task-reviewed"}]  # 缺 coding-process
+        )
+        allowed, reason = check_intercept(
+            "Write",
+            file_path=str(tmp_path / "src/main/java/Foo.java"),
+            project_dir=project_dir,
+        )
+        assert not allowed, "缺 coding-process confirm 时应拦截写 src/"
+        assert "CodingProcess" in reason, f"拦截原因应提及 CodingProcess: {reason}"
+
+    def test_coding_src_allowed_with_coding_process_confirm(self, tmp_path):
+        """🆕 v3.5.16 coding phase 写 src/ 且 coding-process 已 confirm → 放行"""
+        project_dir = self._make_state_with_session(
+            tmp_path, phase="coding",
+            confirmed_phases=[{"phase": "task-reviewed"}, {"phase": "coding-process"}]  # 齐全
+        )
+        allowed, reason = check_intercept(
+            "Write",
+            file_path=str(tmp_path / "src/main/java/Foo.java"),
+            project_dir=project_dir,
+        )
+        assert allowed, f"coding-process 已 confirm 应放行写 src/: {reason}"
+

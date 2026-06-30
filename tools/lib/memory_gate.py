@@ -19,6 +19,7 @@ STATE_PHASE_TO_MEMORY_PHASE: dict[str, str] = {
     "story-reviewed": "design",
     "task-generated": "coding-plan",
     "task-reviewed": "coding-plan",
+    "coding-process": "coding-plan",   # 🆕 v3.5.16 CodingProcess 产出 CodePlan，同属 coding-plan 记忆
     "coding": "coding",
     "test-running": "coding",
     "code-reviewed": "review",

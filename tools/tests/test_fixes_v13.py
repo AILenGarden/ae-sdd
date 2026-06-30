@@ -81,6 +81,8 @@ class TestMultiEditInterception:
         from lib import session as session_mod
         session_mod.enter("test", story_id="STORY-001", ade_sdd=ae_sdd)
         session_mod.confirm_phase(ae_sdd, "task-reviewed", story_id="STORY-001")
+        # 🆕 v3.5.16 C1 硬层：coding phase 写 src/ 还须 coding-process confirm
+        session_mod.confirm_phase(ae_sdd, "coding-process", story_id="STORY-001")
         allowed, _ = check_intercept(
             "MultiEdit",
             file_path="src/main/java/Service.java",

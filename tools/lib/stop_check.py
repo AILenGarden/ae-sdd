@@ -24,6 +24,15 @@ from typing import Optional
 # 状态头必须包含的标记
 _STATE_HEADER_RE = re.compile(r"◆\s*STATE\s*:", re.MULTILINE)
 
+# 🆕 v3.5.16 C2 软层自报标记：coding/coding-process phase 须声明加载了对应 SKILL
+# （防君子不防小人——可谎报，但提高绕过成本，与 ◆ GATE: 校验同性质）
+_LOADED_RE = re.compile(r"◆\s*LOADED\s*:\s*(coding-skill\.md|coding-process-skill\.md)", re.MULTILINE)
+# coding/coding-process phase 要求的 LOADED 标记
+_PHASE_REQUIRED_LOADED = {
+    "coding-process": "coding-process-skill.md",
+    "coding": "coding-skill.md",
+}
+
 # 防无限循环：最大重试次数
 MAX_RETRY = 2
 
@@ -181,6 +190,15 @@ def check_output(
                 return True, ""  # 达重试上限，放行避免无限循环
             increment_retry(ade_sdd)
             return False, compact_issue
+        # 🆕 v3.5.16 C2 软层：coding/coding-process phase 须含 ◆ LOADED 自报标记
+        # （防 AI 凭记忆写代码绕过 SKILL；可谎报但提高成本，compact 后可能失效属已知限制）
+        loaded_issue = _check_loaded_marker(last_response, ade_sdd)
+        if loaded_issue:
+            count = get_retry_count(ade_sdd)
+            if count >= MAX_RETRY:
+                return True, ""
+            increment_retry(ade_sdd)
+            return False, loaded_issue
         return True, ""
 
     # 防无限循环
@@ -363,6 +381,40 @@ def _check_compact_failure(ade_sdd: Optional[Path]) -> str:
             f"  ae-sdd runtime compact --runtime <runtime> --prd <PRD-ID>\n"
             "确认 compact 成功（prdStatus=compacted + summary.md 生成）后再结束 session。\n"
             "（HS-8 物理拦截，🆕 v3.5.4）"
+        )
+    except Exception:
+        return ""  # 检测异常不阻断（兜底放行）
+
+
+# ─── 🆕 v3.5.16 C2 软层自报标记校验 ─────────────────────────────────────────
+def _check_loaded_marker(last_response: str, ade_sdd: Optional[Path]) -> str:
+    """C2：coding/coding-process phase 的 AI 响应须含 ◆ LOADED: <skill>.md 自报标记。
+
+    防君子不防小人——AI 可谎报（与 ◆ GATE: 校验同性质），但提高绕过成本。
+    compact 后历史可能丢失此标记属已知限制（硬层关卡3 产物校验不依赖 transcript，兜底保护）。
+
+    命中标记或非 coding/coding-process phase → 返回空串（放行）。
+    缺失标记 → 返回补头要求（阻止 session 结束）。
+    """
+    if ade_sdd is None:
+        return ""
+    try:
+        from lib import paths, state as state_mod
+        st = state_mod.read_state(paths.state_path(ade_sdd))
+        phase = st.get("phase", "")
+        required_skill = _PHASE_REQUIRED_LOADED.get(phase)
+        if not required_skill:
+            return ""  # 非 coding/coding-process phase，不校验
+        # 校验响应含对应 skill 的 LOADED 标记
+        match = _LOADED_RE.search(last_response)
+        if match and match.group(1) == required_skill:
+            return ""  # 标记匹配，放行
+        return (
+            "[ae-sdd harness] 🆕 v3.5.16 C2 软层校验：当前处于 "
+            f"{phase} phase，响应须含自报标记：\n"
+            f"◆ LOADED: {required_skill}\n"
+            f"（证明已加载 {required_skill}，防凭记忆绕过 CodingProcess/CodingSkill；"
+            "可谎报但提高成本，与 ◆ GATE: 校验同性质）"
         )
     except Exception:
         return ""  # 检测异常不阻断（兜底放行）

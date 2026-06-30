@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.15（🆕 2026-06-30：① coding-skill 外科手术式治理——文档瘦身 2263→1917 行（-15%），5 处"已迁出但保留"幽灵章节兑现迁出声明后降级为指针；缺失执行细则（5 条保障/12项门禁checkbox/漂移分级表/断链分级表）补齐到 code-review-skill；项目特定经验（STORY 复盘 + icec 类名/版本）抽离到独立 lessons-learned.md；修复悬空双轨编号 7.X(6.X)。核心规则（调用契约/骨架展开/编译验证/grep门禁）原样保留，update-check 13/13 全绿。② 多入口状态机——单条 PHASE_FLOW 重构为 4 子链 PHASE_FLOWS（大/中/小/微）+ scale 路由，修复微任务 next_step 误建议跑 RA 的可观测 bug，BUG/配置类复用微链，旧 state 无 scale 自动反推。前序 v3.5.14 UC-13 门禁注册完整性；v3.5.13 G-09B 升级硬门禁；v3.5.11 AA 全维对齐验证器。
+> **版本：** v3.5.16（🆕 2026-06-30：Task→Coding 解耦——插入独立流程节点 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan），流程与能力分离；coding-skill.Plan 契约剥离为指针，CodingSkill 仅保留 Execute；state 4子链插 coding-process phase（大/中/小在 task-reviewed 后、微在 initialized 后）；关卡3 新增硬层产物校验（coding 写 src/ 须 coding-process confirm）+ stop_check 软层自报标记（◆ LOADED）两层监督，防 AI 凭记忆绕过 CodingProcess；756 测试全过。前序 v3.5.15 coding-skill 治理+多入口状态机；v3.5.14 UC-13 门禁注册完整性；v3.5.11 AA 全维对齐验证器。
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

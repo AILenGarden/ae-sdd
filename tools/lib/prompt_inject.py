@@ -178,6 +178,11 @@ def inject(
     ]
     if plugin_line:
         lines.append(f"  plugin:   {plugin_line}  ⚠️ 本次必须加载此 外挂路径，禁用内置")
+    # 🆕 v3.5.16 C3：coding/coding-process phase 提示 AI 须带 ◆ LOADED 自报标记
+    # （配合 stop_check C2 软层校验，防 AI 凭记忆绕过 SKILL）
+    if phase in ("coding", "coding-process"):
+        required_skill = "coding-process-skill.md" if phase == "coding-process" else "coding-skill.md"
+        lines.append(f"  ⚠️ v3.5.16: 本次响应末尾须含 `◆ LOADED: {required_skill}`（C2 软层校验）")
     lines.append(f"<!-- /ae-sdd harness -->")
 
     if not g00.pass_:

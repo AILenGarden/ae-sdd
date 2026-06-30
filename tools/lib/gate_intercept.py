@@ -69,6 +69,7 @@ PHASE_PERMIT: dict[str, frozenset[str]] = {
     "story-reviewed":  frozenset({"Write", "Edit", "MultiEdit"}),
     "task-generated":  frozenset({"Write", "Edit", "MultiEdit"}),
     "task-reviewed":   frozenset({"Write", "Edit", "MultiEdit", "Bash"}),
+    "coding-process":  frozenset({"Write", "Edit", "MultiEdit", "Bash"}),  # 🆕 v3.5.16 CodingProcess：写 CodePlan + 跑门禁 CLI
     "coding":          frozenset({"Write", "Edit", "MultiEdit", "Bash"}),
     "test-running":    frozenset({"Write", "Edit", "MultiEdit", "Bash"}),
     "code-reviewed":   frozenset({"Write", "Edit", "MultiEdit"}),
@@ -116,6 +117,7 @@ _DESIGN_PHASES = frozenset({
     "initialized", "ra-generated",  # 🆕 v3.4.0 RA 阶段也禁写 src/
     "dr-generated", "story-generated",
     "story-reviewed", "task-generated",
+    "coding-process",  # 🆕 v3.5.16 CodingProcess 只产 CodePlan，禁写生产代码（task-reviewed 仍允许写 src/，保持原行为）
     "code-reviewed",  # CR 阶段：只写报告，不改源码
 })
 
@@ -164,7 +166,7 @@ _PRODUCT_PHASE_MAP: dict[str, frozenset[str]] = {
     "Story": frozenset({"story-generated", "story-reviewed"}),
     "TestCase": frozenset({"story-reviewed", "task-generated"}),
     "Task": frozenset({"task-generated", "task-reviewed"}),
-    "CodingPlan": frozenset({"task-reviewed", "coding"}),
+    "CodingPlan": frozenset({"task-reviewed", "coding-process", "coding"}),  # 🆕 v3.5.16 coding-process 产出 CodePlan
     "CodingReport": frozenset({"coding", "test-running", "code-reviewed"}),
     "CodeReview": frozenset({"code-reviewed"}),
     "业务逻辑汇总": frozenset({"story-reviewed", "task-generated"}),
@@ -286,6 +288,16 @@ def _check_path_permission(
                         f"目标文件: {file_path}\n"
                         f"用户确认后运行: ae-sdd state confirm --phase {required_confirm} --story {current_story or '<STORY-ID>'}\n"
                         f"（关卡3 代码改动准入，建议书4 / 🆕 v3.5.15 scale 路由）"
+                    )
+                # 🆕 v3.5.16 硬层产物校验：coding phase 写 src/ 须先走过 CodingProcess
+                # （证明 CodePlan 经 CodingProcess 加载5上下文+调CodingSkill产出，而非凭记忆写代码）
+                if not session_mod.is_phase_confirmed(ade_sdd, "coding-process", current_story):
+                    return False, (
+                        f"代码改动准入未通过：coding phase 写源码须先完成 CodingProcess（加载5上下文+CodeAnalysis+产CodePlan）。\n"
+                        f"目标文件: {file_path}\n"
+                        f"先执行 CodingProcess 产出 CodePlan，用户确认后运行: "
+                        f"ae-sdd state confirm --phase coding-process --story {current_story or '<STORY-ID>'}\n"
+                        f"（🆕 v3.5.16 Task→Coding 解耦，硬层产物校验，防 AI 凭记忆绕过 CodingProcess）"
                     )
         except Exception:
             pass  # session 模块异常不阻断（兜底放行）

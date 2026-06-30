@@ -140,12 +140,12 @@ class TestNextStepSuggestion(unittest.TestCase):
         sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "ra-generated")
 
-    def test_micro_initialized_to_coding(self):
-        """🆕 v3.5.15 修复可观测 bug：微链 initialized → coding（不再误建议跑 RA）"""
+    def test_micro_initialized_to_coding_process(self):
+        """🆕 v3.5.16 微链 initialized → coding-process（不再直接 coding，先走 CodingProcess 出 CodePlan）"""
         s = {"phase": "initialized", "scale": "微"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "coding")
-        self.assertIn("coding-skill.md", sug["skill"])
+        self.assertEqual(sug["next"], "coding-process")
+        self.assertIn("coding-process-skill.md", sug["skill"])
 
     def test_small_ra_to_task(self):
         """小链 ra-generated → task-generated（跳过 DR/Story）"""
@@ -188,17 +188,17 @@ class TestPhaseFlowCoverage(unittest.TestCase):
         self.assertEqual(set(state_mod.PHASE_FLOWS.keys()),
                          {"大", "中", "小", "微"})
 
-    def test_large_chain_has_11_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 11)
+    def test_large_chain_has_12_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 12)
 
-    def test_medium_chain_has_10_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 10)
+    def test_medium_chain_has_11_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 11)
 
-    def test_small_chain_has_8_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 8)
+    def test_small_chain_has_9_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 9)
 
-    def test_micro_chain_has_4_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 4)
+    def test_micro_chain_has_5_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 5)
 
     def test_all_chains_start_with_initialized(self):
         for scale, chain in state_mod.PHASE_FLOWS.items():

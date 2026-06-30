@@ -1,15 +1,14 @@
 ---
 name: ae-sdd
-version: 3.5.15
+version: 3.5.16
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.15）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.16）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
-  支持流程状态跟踪与中断后恢复。v3.5.15 coding-skill 外科手术式治理——文档瘦身
-  2263→1917 行，5 处"已迁出但保留"幽灵章节兑现迁出声明后降级为指针，缺失执行细则
-  补齐到 code-review-skill，项目特定经验抽离到独立 lessons-learned.md，修复悬空双轨编号。
-  v3.5.15 多入口状态机——单条 PHASE_FLOW 重构为 4 子链 PHASE_FLOWS（大/中/小/微）+ scale 路由，
-  修复微任务 next_step 误建议跑 RA 的可观测 bug，BUG/配置类复用微链。
+  支持流程状态跟踪与中断后恢复。v3.5.16 Task→Coding 解耦——插入独立流程节点 CodingProcess
+  （加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan），coding-skill.Plan 契约剥离，
+  state 4子链插 coding-process phase，关卡3 硬层产物校验 + stop_check 软层自报标记两层监督。
+  v3.5.15 coding-skill 外科手术治理 + 多入口状态机 4 子链。
   v3.5.14 UC-13 门禁注册完整性（AA 第 6 维）。v3.5.13 G-09B 升级独立硬门禁。
   v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。
   v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
@@ -1607,8 +1606,10 @@ Phase 2 ────────┤ 实现阶段（必须完成）
                 │     ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 1.5 软提示，不阻断）
                 │
                 ├── ④ 执行 Task Generate SKILL → 生成 Task 文档 → 全局 Task Review（结合约束+Story+测试用例）→ Task 实现方案
+                │     🔴 v3.5.16：CodePlan 产出编排动作（第四步ter+第六步）已移交 CodingProcess，task-generate 不再产出 CodePlan
                 │
-                ├── ④bis 🔴 CodingPlan 输出（可执行层）→ 文件级实现顺序 + 关键代码骨架 + 验证点
+                ├── ④bis 🔴 CodingProcess（🆕 v3.5.16 独立流程节点）→ 加载5上下文 + 调 CodingSkill 做 CodeAnalysis + 出统一版 CodePlan
+                │     state.phase = coding-process；CodingProcess 不写生产代码，调 CodingSkill §④bis 能力产出 CodePlan
                 │
                 ├── 🔍 人工审核 2.5【🆕 2026-06-10】：CodingPlan 评审
                 │     复核 16 章节 + 14 条门禁 + CodingModel 决策 + 风险 Task
@@ -1618,7 +1619,8 @@ Phase 2 ────────┤ 实现阶段（必须完成）
                 └── 🔍 人工审核：确认 Task 文档 + 实现方案 + CodingPlan 完成（必须通过）
                     ⏱️ v3.5.5：用户 ✅ 后调 `ae-sdd context-pressure`（审核点 2.5 软提示，不阻断）
 
-                ├── ⑤ 执行 Coding SKILL
+                ├── ⑤ 执行 Coding SKILL（CodingSkill.Execute，按确认后的 CodePlan 编码）
+                │     🔴 v3.5.16 两层监督：关卡3 硬层（coding 写 src/ 须 coding-process confirm）+ stop_check 软层（◆ LOADED 自报标记）
                 │     每个 Task 开始前必须呈现实现方案并获用户确认
                 │     用户确认后才能开始写代码
                 │

@@ -77,12 +77,13 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
   │       └── 已有 Task 被修改 → 更新已有文档
   │
   ├── 第四步：生成/更新 Task 文档
-  │   │   根据 Story + 测试用例 + 项目资产 + 约束，生成每个 Task
+  │   │   根据 Story + 测试用例 + 项目资产 + 约束，生成每个 Task 文档骨架
+  │   │   （需求级拆分 + 方法签名骨架 + AC 映射；不含 CodeAnalysis 产出）
   │   │   │
-  │   │   └── 🆕 第四步 ter：每个 Task 撰写过程中调用 [Coding SKILL §④bis](../phase2-coding/coding-skill.md) 5 步 SOP
-  │   │       → 生成"任务级 CodePlan 内容"（类骨架 / 方法级逻辑 / 目录对应）
-  │   │       → 嵌入到 Task 文档的"实现方案"章节
-  │   │       → 任务级 CodePlan 不出独立文件，仅作为 Task 文档的组成部分
+  │   │   └── 🔴 v3.5.16 编排动作移交：CodeAnalysis（调 CodingSkill §④bis 5 步 SOP 产任务级 CodePlan）
+  │   │       已移交 [CodingProcess SKILL](../phase2-coding/coding-process-skill.md)。
+  │   │       task-generate 不再直接调 CodingSkill.Plan；CodingProcess 加载5上下文后调 CodingSkill 做 CodeAnalysis，
+  │   │       产出嵌入 Task 文档的"实现方案"章节（Task 文档结构不变，TC-5/8/9/TR-7 仍校验）。
   │   │
   │       └── 第四步 bis：单 Task 生成后一致性校验（TC-1~TC-7）
   │
@@ -93,18 +94,13 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
   │       ├── 发现问题 → 启动 Task 修复 → 修复完重新 Review
   │       └── 无问题 → 退出 Review
   │
-  ├── 第六步：汇总所有 Task 的"任务级 CodePlan"为一份统一版 CodePlan
-  │   │   提取所有 Task 的"实现方案"章节
-  │   │   + 套用 [Coding SKILL §④bis 16 节 CodePlan 模板](../phase2-coding/coding-skill.md)
-  │   │   + 走 [Coding SKILL §④bis 5 步 SOP](../phase2-coding/coding-skill.md) 重组为统一版 CodePlan
-  │   │   │
-  │   │   └── 🔴 第六步：输出统一版 `{STORY-ID}-CodingPlan.md` 给用户审核
-  │   │       （用户必须明确"确认"/"同意"/"可以开始"才能进入 ⑤ Coding）
-  │   │
-  │   └── 第六步 bis：基于统一版 CodePlan 输出完整实现方案
-  │       （兼容旧版输出格式，供下游 SKILL 调用）
+  ├── 🔴 v3.5.16 第六步汇总移交 CodingProcess：Task Review 通过后，由
+  │   [CodingProcess SKILL](../phase2-coding/coding-process-skill.md) 加载5上下文 + 调 CodingSkill
+  │   做 CodeAnalysis + 汇总统一版 CodePlan + 套模板 + 跑门禁 + 等用户审核。
+  │   task-generate 不再执行汇总动作（旧第六步/第六步 bis 的编排已移交）。
   │
-  ├── 第七步：触发 Coding SKILL（⑤ Coding 阶段）
+  ├── 第七步：触发 Coding SKILL（⑤ Coding 阶段，由 CodingProcess 移交）
+  │   │   CodingProcess 用户审核点 2.5 通过后 → state 切 coding → CodingSkill.Execute
   │   │   Coding SKILL 严格按统一版 CodePlan 实施
   │   │   │
   │   │   └── 🆕 异常时走 Coding SKILL 实时追溯链（参见 coding-skill.md 异常路径）
@@ -517,11 +513,15 @@ documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
 
 ***
 
-## 第四步 ter（🆕 调用 `CodingSkill.Plan(task-level)`）
+## 第四步 ter（🔴 v3.5.16 编排动作已移交 CodingProcess）
+
+> **🔴 v3.5.16 流程与能力分离：** 本步的**编排动作**（调 CodingSkill 做 CodeAnalysis、产出嵌入 Task 文档）已移交 [`CodingProcess SKILL`](../phase2-coding/coding-process-skill.md)。task-generate 不再直接执行本步。
+>
+> **保留下方原文作 CodingProcess 实现参考**（调用参数、产出块映射、职责边界）。CodingProcess 加载 5 上下文后，按本节的调用参数调 CodingSkill §④bis 5 步 SOP，产出仍嵌入 Task 文档的对应章节（Task 文档结构不变，TC-5/8/9/TR-7 仍校验）。
 
 > **TaskSkill 不自行生成编码方案，不复制 CodingModel 决策逻辑。**  
 > 每个 Task 的 `## CodingModel 决策记录` 和 `## 任务级 CodePlan` 章节  
-> **必须来自 `CodingSkill.Plan(task-level)`，禁止 TaskSkill 自行填写。**
+> **由 CodingProcess 调用 CodingSkill 能力产出，禁止 TaskSkill 自行填写。**
 
 ### 调用参数
 
@@ -586,7 +586,11 @@ documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
 
 ---
 
-## 第六步：汇总所有 Task 的"任务级 CodePlan"为统一版 CodePlan
+## 第六步：汇总统一版 CodePlan（🔴 v3.5.16 编排动作已移交 CodingProcess）
+
+> **🔴 v3.5.16 流程与能力分离：** 本步的**编排动作**（汇总任务级 CodePlan 为统一版、套模板、跑门禁、用户审核）已移交 [`CodingProcess SKILL` §3](../phase2-coding/coding-process-skill.md)。task-generate 不再执行本步。
+>
+> **保留下方原文作 CodingProcess 实现参考。** CodingProcess 在 Task Review 通过后接管：调 CodingSkill 做 CodeAnalysis → 汇总统一版 → 跑 G-CODEPLAN-SRC/G-14/G-08 → 用户审核点 2.5。
 
 > **核心流程变更（2026-06-05）：**
 > - 旧流程：Task 文档生成后直接触发 Coding SKILL

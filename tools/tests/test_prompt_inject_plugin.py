@@ -77,11 +77,12 @@ def _make_project_with_plugin(tmp: Path, skill_target: str = "coding-skill.md") 
     (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
 
     # 让 phase 停在会触发 skill=coding-skill.md 的阶段
-    # next_step_suggestion: task-reviewed → coding-skill.md
+    # 🆕 v3.5.16: coding-process → coding（skill=coding-skill.md）
+    # （旧 task-reviewed → coding-skill.md 已变更：task-reviewed 现指向 coding-process-skill.md）
     # 注意：state.json 直接在 .ae-sdd/ 根下（见 paths.state_path），不是 .auto-engineering/<story>/
     import json
     (ade_sdd / "state.json").write_text(json.dumps({
-        "phase": "task-reviewed",
+        "phase": "coding-process",
         "currentStory": "STORY-001",
     }), encoding="utf-8")
 

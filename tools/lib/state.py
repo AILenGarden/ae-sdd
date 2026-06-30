@@ -62,20 +62,20 @@ from lib.flow_enums import FlowEvent, FlowEventType, FlowNode, FlowSkill  # noqa
 #   scale 由 classify() 判定，首次 state write --scale 携带写入；旧 state 无 scale → _infer_scale 反推。
 #   BUG/配置类 → scale="微" + entryNode=BUG/CONFIG（复用微链，不单独开链）。
 PHASE_FLOWS: dict[str, list[str]] = {
-    "大": [   # 重任务：PRD/中大需求 → RA → DR → Story → Task → Coding 全主干
+    "大": [   # 重任务：PRD/中大需求 → RA → DR → Story → Task → CodingProcess → Coding 全主干
         "initialized", "ra-generated", "dr-generated", "story-generated", "story-reviewed",
-        "task-generated", "task-reviewed", "coding", "test-running", "code-reviewed", "completed",
+        "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "中": [   # 中任务：跳过 DR，RA → Story → Task → Coding
+    "中": [   # 中任务：跳过 DR，RA → Story → Task → CodingProcess → Coding
         "initialized", "ra-generated", "story-generated", "story-reviewed",
-        "task-generated", "task-reviewed", "coding", "test-running", "code-reviewed", "completed",
+        "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "小": [   # 小任务：跳过 DR/Story，RA → Task → Coding
+    "小": [   # 小任务：跳过 DR/Story，RA → Task → CodingProcess → Coding
         "initialized", "ra-generated", "task-generated", "task-reviewed",
-        "coding", "test-running", "code-reviewed", "completed",
+        "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "微": [   # 微任务/BUG/配置类：跳过 RA/DR/Story/Task，直接 Coding
-        "initialized", "coding", "test-running", "completed",
+    "微": [   # 微任务/BUG/配置类：跳过 RA/DR/Story/Task，CodingProcess（轻量）→ Coding
+        "initialized", "coding-process", "coding", "test-running", "completed",
     ],
 }
 
@@ -226,7 +226,8 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
         "story-reviewed":  ("task-generated",   "生成 Task",                              "testcase-generate-skill.md"),
         "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
-        "task-reviewed":   ("coding",           "生成 CodingPlan + 编码（⑦ 前置）",        "coding-skill.md"),
+        "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
         "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
         "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
@@ -238,7 +239,8 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
         "story-reviewed":  ("task-generated",   "生成 Task",                              "testcase-generate-skill.md"),
         "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
-        "task-reviewed":   ("coding",           "生成 CodingPlan + 编码（⑦ 前置）",        "coding-skill.md"),
+        "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
         "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
         "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
@@ -248,14 +250,16 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "initialized":     ("ra-generated",     "跑需求分析（RA）+ G-RA 门卫（小任务轻量 RA）", "requirement-analysis-skill.md"),
         "ra-generated":    ("task-generated",   "生成 Task（跳过 DR/Story）",              "task-generate-skill.md"),
         "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
-        "task-reviewed":   ("coding",           "生成 CodingPlan + 编码（⑦ 前置）",        "coding-skill.md"),
+        "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
         "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
         "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
     },
     "微": {
-        "initialized":     ("coding",           "直接编码（微任务/BUG 跳过 RA/DR/Story/Task）", "coding-skill.md"),
+        "initialized":     ("coding-process",   "执行 CodingProcess（微任务轻量：加载上下文+出CodePlan）", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
         "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
         "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),

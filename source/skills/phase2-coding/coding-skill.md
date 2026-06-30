@@ -34,7 +34,9 @@ description: 根据 Story + Task 文档 + 测试用例 + 项目约束，按 Task
 
 > **🔴 强制：** CodingPlan 与 Coding 执行都必须使用 ae-sdd 阶段记忆。禁止只凭 Agent 对话上下文继续实现。
 
-### CodingSkill.Plan
+### CodingProcess（产出 CodePlan，v3.5.16 剥离自原 CodingSkill.Plan）
+
+> **📍 Plan 阶段已剥离为独立流程节点 [`coding-process-skill.md`](coding-process-skill.md)。** `coding-plan` phase 的记忆调用由 CodingProcess 负责，命令如下（CodingProcess 执行时调用）：
 
 ```bash
 ae-sdd memory enter --phase coding-plan --story <STORY-ID>
@@ -85,53 +87,14 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 ## CodingSkill 对外调用契约
 
-> CodingSkill 暴露两个子能力供外部调用。**调用方不得绕过本契约直接引用内部章节号。**
+> **🔴 v3.5.16 流程与能力分离：** CodingSkill 原 `Plan` 契约（加载上下文 + 产出 CodePlan）已**剥离为独立流程节点 CodingProcess**（[`coding-process-skill.md`](coding-process-skill.md)）。
+>
+> - **CodingProcess（流程节点）** = 加载 5 上下文 + CodeAnalysis + 产出 CodePlan + 跑门禁 + 移交。state.phase 走到 `coding-process` 时触发。
+> - **CodingSkill（能力提供方 + Execute）** = 持有 ④bis 实战 SOP（CodeAnalysis 能力本体）+ CodePlan 模板/门禁定义 + `CodingSkill.Execute`（按确认后的 CodePlan 写代码）。
+>
+> 调用方（task-generate / SKILL.md 编排层）不再调 `CodingSkill.Plan`，改走 CodingProcess.Run。**CodingSkill 现仅暴露 `CodingSkill.Execute` 一个对外契约。**
 
-### `CodingSkill.Plan`
-
-**调用方：**
-- `task-generate-skill.md`（每个 Task 撰写时，生成任务级 CodePlan）
-- `task-generate-skill.md` 第六步（汇总统一版 CodingPlan）
-- `SKILL.md` Task 汇总阶段
-- **🆕 2026-06-10**：`SKILL.md` 微任务场景（直接调用，不经 task-generate-skill）
-
-**用途：** 生成任务级 CodePlan 或统一版 CodingPlan。只产出设计，不写生产代码。
-
-**输入参数：**
-
-| 参数 | 来源 | 任务规模适用性 |
-|------|------|---------------|
-| Story 文档路径 | 当前 Story | 重/小任务必填；**🆕 微任务不传**（无 Story 上下文）|
-| TestCase 文档路径 | 已生成 TestCase | 重任务必填；小任务按需；**🆕 微任务按需** |
-| 当前 Task 基础信息 / Task 列表 | Story 实现任务映射（重/小任务）<br>**🆕 微任务**：任务简述 + 涉及工程 + 涉及文件范围 | 必填 |
-| 项目资产 | `ae-sdd assets read coding --project <projectKey>` — 返回 §4 + §5 + §6 | ✅ 必填 |
-| 约束文档 | `document-storage-skill.get_constraints(projectKey)` | ✅ 必填 |
-| CodingModel | `document-storage-skill.get_thinking_engine()` | ✅ 必填 |
-
-**🆕 2026-06-10 微任务场景扩展（无 Story 上下文）：**
-
-- **输入**不含 Story 文档路径、不含 TestCase 文档路径
-- **任务级 CodePlan 中所有章节独立产出**（基于 CodingModel + 约束 + 用户任务简述）
-- **不引用**任何 Story 章节
-- **禁止伪造** "参考 Story §X.Y" 之类的引用
-- **验证点**直接从用户口述的验收点/约束推导（不从 Story AC 推导）
-
-**强制执行（每次调用均须）：**
-1. 第零步：加载 CodingModel，产出本轮 **11 维 CodingModel 决策记录**
-2. 完成 5 项需求理解（量级 / 边界 / 依赖 / 约束 / AC 映射）——**🆕 微任务无 AC 时用"用户验收点"替代**
-3. 按 §④bis 5 步 SOP 生成骨架
-4. 对任意 🔴 维度结论为"需要"的，必须在骨架/伪代码中体现处理方案
-5. 输出通过 §④bis 14 条门禁的 CodePlan 块
-6. **🆕 任务级 CodePlan 的"参考"章节**：有 Story → 填"参考 Story §X.Y"；**无 Story → 填"无 Story 上下文，独立决策"**
-
-**输出：**
-- 任务级 CodePlan 块（含 CodingModel 决策记录），嵌入 Task 文档的 `## CodingModel 决策记录` + `## 任务级 CodePlan` 章节
-- 或统一版 `{STORY-ID}-CodingPlan.md`
-
-**禁止：**
-- 禁止写生产代码
-- 禁止跳过 CodingModel 11 维决策（任一维度结论为空 → 停止，要求补充上游信息）
-- 禁止只输出类名/方法名而不输出决策依据
+### `CodingSkill.Execute`
 
 ---
 
@@ -177,9 +140,9 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 ---
 
-## 第零步：加载 CodingModel（🔴 强制，Plan 和 Execute 均须执行）
+## 第零步：加载 CodingModel（🔴 强制，CodingProcess 产出 + Execute 复核）
 
-> `CodingSkill.Plan` 和 `CodingSkill.Execute` 的入口门禁。未完成本步，禁止进入后续步骤。
+> **v3.5.16 调整：** 11 维 CodingModel 决策由 **CodingProcess 产出**（[`coding-process-skill.md` §1.2](coding-process-skill.md)），**CodingSkill.Execute 复核**（不重新产出，只验证与 CodePlan 一致）。本步是 Execute 的入口门禁——未完成复核，禁止进入后续步骤。
 
 **加载路径：** `standards/thinking/be-coding-thinking-engine.md`
 
