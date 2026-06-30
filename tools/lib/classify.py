@@ -211,21 +211,21 @@ def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[
         except OSError:
             pass
 
-    # 3c) 已有 Story 文档 → 中
+    # 3c) 已有 Story 文档 → 小（新路由：已有Story = 从Story系列入 = 小任务）
     if (project_root / "design").is_dir():
         try:
             story_files = list((project_root / "design").rglob("*.md"))
             if story_files and any("story" in f.name.lower() for f in story_files):
-                return ("中", 0.8, "已有 Story 文档 → 中")
+                return ("小", 0.8, "已有 Story 文档 → 小（从 Story 系列入）")
         except OSError:
             pass
 
-    # 3d) 已有 Task 文档但无 Story → 小
+    # 3d) 已有 Task 文档但无 Story → 微（新路由：已有Task/BUG = 从Task系列入 = 微任务）
     if (project_root / "task").is_dir():
         try:
             task_files = list((project_root / "task").rglob("*.md"))
             if task_files:
-                return ("小", 0.7, "已有 Task 文档 → 小")
+                return ("微", 0.7, "已有 Task 文档 → 微（从 Task 系列入，BUG/调整类）")
         except OSError:
             pass
 

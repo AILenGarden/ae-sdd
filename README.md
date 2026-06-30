@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.6.1（🆕 2026-06-30：CodingSKILL 拆分——共有 coding-skill 新增 §13 语言/项目适配器注册加载协议，按项目技术栈叠加适配器；首例 Java3D 适配器承载 Java 语言 + icec/life 项目编码决策知识层（技术栈锁/DDD 4 层落点/骨架特化/验证姿态特化/命名错误码/静态扫描/踩坑库），走现有 skill-new 注册（母版 L3 plugins/registry.yaml），AI 运行时叠加共有能力，零 loader 代码改动。前序 v3.6.0 RA 实现视角七要素 + G-RA-6；v3.5.17 CodingSKILL 能力库化；v3.5.16 Task→Coding 解耦+两层监督；v3.5.15 coding-skill 治理+多入口状态机；v3.5.14 UC-13 门禁注册完整性；v3.5.11 AA 全维对齐验证器。）
+> **版本：** v3.6.2（🆕 2026-06-30：CodingSkill 能力测试反馈优化——基于全新 AI 按真实 6 题测试暴露的 4 个缺口补强：①Java3D 适配器 §1.1bis 固化 life 三条产品线 base package（消除包路径"前缀待确认"）；②§2.4 DO/PO 类型差异判定线（区分"合法差异 Converter 桥接"vs"建模错误"，配合 §10 异常根因判定）；③共有 §1 补 11 维 CodingModel 证据缺失降级规则；④共有 §13.1bis 叠加视图速查表（降低 AI 脑内合并共有+适配器负担）。零破坏增量。前序 v3.6.1 CodingSKILL 拆分+适配器注册加载协议；v3.6.0 RA 实现视角七要素；v3.5.17 CodingSKILL 能力库化；v3.5.16 Task→Coding 解耦；v3.5.15 coding-skill 治理+多入口状态机；v3.5.14 UC-13 门禁注册完整性；v3.5.11 AA 全维对齐验证器。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

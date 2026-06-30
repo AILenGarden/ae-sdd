@@ -140,24 +140,24 @@ class TestNextStepSuggestion(unittest.TestCase):
         sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "ra-generated")
 
-    def test_micro_initialized_to_coding_process(self):
-        """🆕 v3.5.16 微链 initialized → coding-process（不再直接 coding，先走 CodingProcess 出 CodePlan）"""
+    def test_micro_initialized_to_task_generated(self):
+        """微链 initialized → task-generated（BUG/调整从 Task 系列入）"""
         s = {"phase": "initialized", "scale": "微"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "coding-process")
-        self.assertIn("coding-process-skill.md", sug["skill"])
-
-    def test_small_ra_to_task(self):
-        """小链 ra-generated → task-generated（跳过 DR/Story）"""
-        s = {"phase": "ra-generated", "scale": "小"}
-        sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "task-generated")
+        self.assertIn("task-generate-skill.md", sug["skill"])
 
-    def test_medium_ra_to_story(self):
-        """中链 ra-generated → story-generated（跳过 DR）"""
-        s = {"phase": "ra-generated", "scale": "中"}
+    def test_small_initialized_to_story_generated(self):
+        """小链 initialized → story-generated（已有Story，从Story系列入）"""
+        s = {"phase": "initialized", "scale": "小"}
         sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "story-generated")
+
+    def test_medium_initialized_to_dr_generated(self):
+        """中链 initialized → dr-generated（已有DR，从DR系列入，跳RA）"""
+        s = {"phase": "initialized", "scale": "中"}
+        sug = state_mod.next_step_suggestion(s)
+        self.assertEqual(sug["next"], "dr-generated")
 
     def test_large_ra_to_dr(self):
         """大链 ra-generated → dr-generated"""
@@ -194,11 +194,11 @@ class TestPhaseFlowCoverage(unittest.TestCase):
     def test_medium_chain_has_11_phases(self):
         self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 11)
 
-    def test_small_chain_has_9_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 9)
+    def test_small_chain_has_10_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 10)
 
-    def test_micro_chain_has_5_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 5)
+    def test_micro_chain_has_7_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 7)
 
     def test_all_chains_start_with_initialized(self):
         for scale, chain in state_mod.PHASE_FLOWS.items():

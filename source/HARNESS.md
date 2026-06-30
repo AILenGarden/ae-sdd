@@ -38,6 +38,7 @@
 | `story-reviewed`  | ✅ 仅文档目录 | ❌   | 写 TestCase               |
 | `task-generated`  | ✅ 仅文档目录 | ❌   | 写 Task / CodingPlan      |
 | `task-reviewed`   | ✅            | ✅   | 进入编码，允许写 src/     |
+| `coding-process`  | ✅ 仅文档目录 | ❌   | CodingPlan 分析，禁止写 src/ |
 | `coding`          | ✅            | ✅   | 写代码 + 跑测试           |
 | `test-running`    | ✅            | ✅   | 测试 + 报告               |
 | `code-reviewed`   | ✅ 仅文档目录 | ❌   | 写 CR 报告                |

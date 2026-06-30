@@ -134,11 +134,11 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 - Task 间的依赖关系
 - Task 文档链接（判断是否已存在）
 
-### 1.B 无 Story 上级文档（🆕 2026-06-10 微任务场景扩展）
+### 1.B 无 Story 上级文档（微任务 / 小任务入口）
 
-> **触发条件：** 用户说"加个 XX" / "出个 Task" 且任务规模判定 = 小任务。但**注意：本 SKILL 不处理"微任务"**——微任务直接路由到 `coding-skill.md §CodingSkill.Plan` 出 CodingPlan，跳过本 SKILL。
->
-> 小任务虽然**没有 Story 上级文档**，但需要走 TaskGenerateSkill 生成 Task 文档。输入信息由用户提供：
+> **触发条件：** 用户说"加个 XX" / "出个 Task" / BUG修复 / 逻辑调整，任务规模判定 = 微任务或小任务。
+> **微任务**（BUG/改逻辑/调整代码）从 Task 系列入，直接到本 SKILL 生成轻量 Task 文档，不需要 Story 上级文档。
+> **小任务**（已有 Story）虽有 Story 上级但也走 TaskGenerateSkill。
 > - 任务简述（一句话）
 > - 涉及工程 / 服务名缩写
 > - 涉及文件范围（已知改哪些文件 / 函数 / 模块）

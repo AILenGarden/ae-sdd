@@ -1,12 +1,13 @@
 ---
 name: ae-sdd
-version: 3.6.1
+version: 3.6.2
 description: |
-  端到端自动化工程主入口（v3.6.1）。从 DR/PRD 出发，经 Story→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.6.2）。从 DR/PRD 出发，经 Story→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测），
   并要求 RA 通过实现视角七要素/G-RA-6（数据源、数据流、定义、复用证据、成本反驳、开发疑问、DR交接）。
   v3.6.1 CodingSKILL 拆分——共有能力库新增 §13 语言/项目适配器注册加载协议（按项目技术栈叠加适配器，
   如 Java3D 适配器承载 Java+icec/life 编码决策知识层；适配器走现有 skill-new 注册，AI 运行时叠加，零 loader 改动）。
+  v3.6.2 能力测试反馈优化——共有§1 补证据缺失降级规则 + §13.1bis 叠加视图速查表；Java3D 适配器补 §1.1bis base package 固化 + §2.4 DO/PO 类型差异判定线（消除包路径前缀待确认 + 合法差异 vs 建模错误判定缺口）。
 ---
 
 main_entry: true
@@ -23,17 +24,21 @@ triggers:
 > ## 🔴 第一动作 — 5 步启动序列（禁止跳过任意步）
 >
 > **Step 1  工作区确认**
-> - 检查 `.ae-sdd/` 是否存在；不存在 → `ae-sdd init <dir> <projectKey>`
-> - 已存在 → `ae-sdd state read`；`paused` → 输出暂停播报，三选一；in-progress → 续接播报；initialized/completed → Step 2
+> - 检查当前目录下 `.ae-sdd/` 是否存在
+> - 不存在 → `ae-sdd init <dir> <projectKey>`（创建 state.json，启动主流程监管器）→ 完成后进 Step 2
+> - 已存在 → `ae-sdd state read`：`paused` → 输出暂停播报，三选一；in-progress → 续接播报；initialized/completed → Step 2
 >
-> **Step 2  G-00 项目资产检查**
-> - `ae-sdd gates check --only G-00`；不通过 → 加载 `project-assets-update-skill.md §3` 生成资产
+> **Step 2  项目资产检查**
+> - `ae-sdd gates check --only G-00`；不通过 → 加载 `project-assets-update-skill.md §3` 生成资产；完成后进 Step 3
 >
-> **Step 3  智能路由（任务类型 × 规格双层裁定）**
-> - ae-sdd 自更新 → `ae-sdd-update-skill.md`（监管器休眠，全权交接）
-> - 编码 → 按现有产物裁定：有PRD→RA系列；有DR→DR系列；有Story→Story系列；BUG/调整→微链；新需求无PRD → 🔴 阻断
->
-> 新需求无PRD阻断提示：`【主流程监管器 ❌ 阻断】新功能开发必须以 PRD 为起点。`
+> **Step 3  智能路由（任务类型 → 规格 → 入口节点）**
+> - **任务类型一：ae-sdd 自更新** → `ae-sdd-update-skill.md`（监管器全权交接，state 标记 `ae-sdd-update`；收尾由 update-skill 负责）
+> - **任务类型二：编码** → 按现有产物裁定规格：
+>   - 已有 PRD → **大任务** → 从 RA 系列入
+>   - 已有 DR → **中任务** → 从 DR 系列入
+>   - 已有 Story → **小任务** → 从 Story 系列入
+>   - BUG / 改逻辑 / 调整代码 → **微任务** → 从 Task 系列入
+>   - 新需求无任何产物且非BUG → 🔴 阻断：`【主流程监管器 ❌ 阻断】新功能开发必须以 PRD 为起点。`
 >
 > **Step 4  执行编码流程**（详见 §🎛️ 主流程监管器执行协议）
 >
@@ -57,16 +62,14 @@ triggers:
 
 ## 🎛️ 主流程监管器执行协议
 
-每系列标准 sub-step 0~5。**监管器只编排+校验，不执行具体业务。**
+每系列标准 4 步。**监管器只编排+校验，不执行具体业务。**
 
-| sub-step | 动作 |
-|---------|------|
-| 0 | `/compact`（每系列入口，防跨系列污染）|
-| 1 | 输出 SKILL 调用声明；写 events 日志 `ae-sdd state write --event skill-launched` |
-| 2 | 加载 `{series}-generate-skill.md` → 调 agent-orchestration → 产物核查 |
-| 3 | 加载 `{series}-review-skill.md` → 汇总错误报告 → 产物核查 |
-| 4 | Loop 控制：有错+矫正<3 → 回 sub-step 2；矫正=3 → Level 3 暂停等用户；连续3轮无新错 → sub-step 5 |
-| 5 | 播报产物摘要 → 等用户 ✅/⚠️/❌：✅→推进phase→compact→下一系列；⚠️→重回sub-step 2+重置计数；❌→paused |
+| 步骤 | 动作 |
+|------|------|
+| 1 | `/compact`（系列入口，防跨系列上下文污染）；输出 SKILL 调用声明；写 events 日志 `ae-sdd state write --event skill-launched` |
+| 2 | 加载 `{series}-generate-skill.md` → 调 `agent-orchestration-skill`（按任务量分配子 Agent workflow）→ 产物核查 |
+| 3 | 加载 `{series}-review-skill.md` → 调 `agent-orchestration-skill`（分配子 Agent）→ 汇总错误报告给监管器；**Loop**：有错+矫正<3 → 回步骤2；矫正=3 → Level 3 暂停等用户；连续3轮无新错 → 步骤4 |
+| 4 | 人工审核：播报产物摘要；等用户 ✅/⚠️/❌ → ✅推进phase→下一系列；⚠️→重回步骤2+重置计数；❌→paused |
 
 **流程偏移与矫正**（自动执行，AI 无法绕过）：
 
@@ -104,7 +107,7 @@ ae-sdd gates check --only G-00
 | 实现视角七要素完整（数据源/数据流/定义/复用证据/成本反驳/开发疑问/DR交接）| 否 → 🔴 阻断（G-RA-6）|
 | 5问自检阻断项=0 + 所有🔴缺口已解决 | 否 → 🔴 阻断 |
 | RA距今 ≤30天 | 否 → 🟡 警告 |
-| **微任务/BUG/配置类豁免** | 走 coding-skill 直接编码 |
+| **微任务/BUG/配置类豁免** | 走 task-generate-skill 从 Task 系列入（含轻量 CodingPlan）|
 
 ```bash
 ae-sdd gate ra-required --project <project-root>
@@ -182,47 +185,45 @@ ae-sdd gates check --only G-14
 
 ## 🎯 智能路由
 
-**调用顺序：** Step 1.5 自更新识别 → Step 1.6 来源识别 → Step 1.7 规模识别 → Step 1.8 G-RA 门禁
+**调用顺序：** ① 自更新识别 → ② 任务类型（编码） → ③ 规格裁定 → ④ G-RA 门禁（大任务时）
 
-### 路由表
+### 路由表（编码类）
 
-| 输入/场景 | 路由 | G-RA |
-|----------|------|------|
-| 分析需求 / 从PRD开始 | `requirement-analysis-skill.md` | 不需要（入口本身）|
-| 生成DR / 写DR | `dr-generate-skill.md` | **必过** |
-| DR Review | `dr-review-skill.md` | **必过** |
-| 从DR开始 / 生成Story | `story-generate-skill.md` | **必过** |
-| Story Review | `story-review-skill.md` | **必过** |
-| 生成测试用例 | `testcase-generate-skill.md` | **必过** |
-| 生成Task | `task-generate-skill.md` | **必过**（规模≥小）|
-| 开始Coding / 写代码 | `coding-skill.md` | 规模≥中时需要 |
-| 从X继续 / 重入 | 读 state.json 判重入点再路由 | 看完成步骤 |
-| 修改/BUG/生产故障 | `proposal-skill.md` | 不需要 |
-| 出proposal / 建议书 / 分析报告 | `requirement-analysis-skill.md`（完整7步）| 不需要 |
-| 修改SKILL / 优化ae-sdd | `ae-sdd-update-skill.md`（短路）| 不需要 |
-| 安装/升级ae-sdd | `ae-sdd-install-skill.md` | 不需要 |
-| 放文档哪里 / 命名 | `document-storage-skill.md` + G-DOC-STORAGE | **必过** |
+| 规格 | 已有产物 / 场景 | 入口系列 | G-RA |
+|------|----------------|---------|------|
+| **大** | 已有 PRD | `requirement-analysis-skill.md`（RA 系列）| 不需要（入口本身）|
+| **中** | 已有 DR | `dr-generate-skill.md`（DR 系列）| **必过** |
+| **小** | 已有 Story | `story-generate-skill.md`（Story 系列）| **必过** |
+| **微** | BUG / 改逻辑 / 调整代码 | `task-generate-skill.md`（Task 系列）| 豁免 |
+| — | 新需求无任何产物且非BUG | 🔴 阻断 | — |
 
-### 4类需求规格判定
+**非编码类路由：**
 
-| 规格 | 判定 | 路由 |
-|------|------|------|
-| 已有 PRD | — | RA系列 |
-| 已有 DR | — | DR系列 |
-| 已有 Story | — | Story系列 |
-| BUG/配置/无新功能 | — | 微链（Task系列）|
-| 新需求无PRD | — | 🔴 阻断 |
+| 输入/场景 | 路由 |
+|----------|------|
+| 修改SKILL / 优化ae-sdd | `ae-sdd-update-skill.md`（监管器全权交接）|
+| 安装/升级ae-sdd | `ae-sdd-install-skill.md` |
+| 修改/BUG/生产故障 proposal | `proposal-skill.md` |
+| 放文档哪里 / 命名 | `document-storage-skill.md` + G-DOC-STORAGE |
+| 从X继续 / 重入 | 读 state.json 判重入点再路由 |
 
-**套 Story 7区模板判定**：能套满4+区→中大任务→story-generate；2-3区→小任务→task-generate；0-1区→微任务→coding-skill
+### 4类规格判定
 
-### 状态机子链
+| 规格 | 判定依据 | 入口节点 |
+|------|---------|---------|
+| **大** | 已有 PRD | RA 系列 |
+| **中** | 已有 DR（无PRD或PRD已完成）| DR 系列 |
+| **小** | 已有 Story（无DR）| Story 系列 |
+| **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| Task 系列 |
+
+### 状态机子链（实际 state.json phase 值）
 
 | scale | phase 序列 | 适用 |
 |-------|-----------|------|
-| 大(11) | initialized→ra→dr→story→story-rev→task→task-rev→coding→test→cr→completed | PRD/中大需求 |
-| 中(10) | initialized→ra→story→story-rev→task→task-rev→coding→test→cr→completed | 中任务 |
-| 小(8) | initialized→ra→task→task-rev→coding→test→cr→completed | 小任务 |
-| 微(4) | initialized→coding→test-running→completed | 微任务/BUG/配置 |
+| 大(12) | initialized→ra-generated→dr-generated→story-generated→story-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有PRD，走全流程 |
+| 中(11) | initialized→dr-generated→story-generated→story-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有DR，跳RA |
+| 小(10) | initialized→story-generated→story-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有Story，跳RA+DR |
+| 微(7) | initialized→task-generated→task-reviewed→coding-process→coding→test-running→completed | BUG/调整，跳RA+DR+Story |
 
 ---
 

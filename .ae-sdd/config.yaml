@@ -1,0 +1,30 @@
+# ae-sdd 项目实例配置
+# 🆕 v3.0 生成时间: 2026-06-30T11:31:27Z
+# 不要手工修改此文件（master/source 字段除外）
+
+version: 1
+projectKey: ae-sdd-self-test
+gitPath: D:/Item/ae-sdd
+
+# 母版引用（指向 ae-sdd 母版仓库）
+master:
+  # 相对路径：项目内的 ae-sdd 子仓库（推荐，便于开发期同步）
+  source: ../ae-sdd
+  # 或远程 URL：
+  # source: https://github.com/AILenGarden/ae-sdd
+  # 🆕 v3.4.0：不再硬编码 3.0.0，由 init 时读母版 source/SKILL.md frontmatter 填充
+  version: "3.6.1"
+  # 母版根目录：master 的 source/ 子目录（v3.0 双目录分层）
+  masterDir: source
+  # 🆕 v3.4.0：记录 init 时的母版检查时间 + 分发闭环版本号（PostToolUse hook 检测漂移用）
+  lastCheckedAt: "2026-06-30T11:31:27Z"
+  expectedDispChain: build_dist -> install -> harness_adapter -> mavis_remount
+
+# 项目资产（必填）
+assetPath: assets/ae-sdd-self-test.assets.md
+
+# Override 目录（项目特化规则覆盖母版）
+overrideDir: overrides
+
+# 上次更新
+lastUpdated: 2026-06-30T11:31:27Z

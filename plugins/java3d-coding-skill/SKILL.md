@@ -1,9 +1,10 @@
 ---
 name: java3d-coding
 description: |
-  Java3D 适配器（🆕 v3.6.1）。承载 Java 语言 + icec/life 项目族的「编码决策知识层」，
+  Java3D 适配器（🆕 v3.6.2）。承载 Java 语言 + icec/life 项目族的「编码决策知识层」，
   叠加于共有 coding-skill §3/§4/§8/§11/§12 之上。技术栈锁、DDD 4 层落点决策、骨架展开特化、
   验证姿态特化、命名/错误码决策、静态扫描特化、icec/life 踩坑决策库。
+  v3.6.2 增强：§1.1bis 固化 life 三条产品线 base package；§2.4 DO/PO 类型差异判定线。
   本文件不复述项目 constraints/ + assets 的纯规则（指针引用，DRY）；只提供"遇到 X 决策时怎么选"。
   注册 key: coding-adapter-java（type=skill-new，母版 L3）。
   触发：共有 coding-skill §13.1 加载协议按项目技术栈解析本适配器后叠加应用。
@@ -47,6 +48,25 @@ description: |
 | 定时任务 | job-spring-boot-starter 4.0.5（`@JobHandler`） | 🔴 禁 `@Scheduled`（见 §8 踩坑）|
 | 工具 | Lombok 1.18.16（scope=provided 每模块显式声明）| MapStruct 已在 pom 声明但 🔴 **禁用其生成**（见 §8 踩坑#3）|
 | 公共 | icec-cloud-commons（b2c.1.0，强制每项目） | Result/异常/utils 统一来源 |
+
+### §1.1bis base package 固化（🆕 v3.6.2 — 消除包路径"前缀待确认"缺口）
+
+> **🔴 决策定位：** 测试反馈——§2.2 落点表用 `{domain}.{subdomain}` 模板，但 **life 项目 base package 未固化**，导致 AI 拼包路径时前缀只能标 `{待确认}` 查 assets。本节把 life 三条产品线的 base package **直接固化**在适配器内，使 §2.2 的包路径能**机械拼全**，无需再查 assets 前缀。
+>
+> **使用方式：** 拼包路径 = `base package` + `.{domain}` + `.{层}.{subdomain}.{子目录}`（§2.2 表）。本节只固化前缀，**字段/类名仍归 assets §5/§4 权威**（DRY，不复述）。
+
+| 产品线 | 代码根 | base package（Java 包根）| 典型域 |
+|--------|-------|------------------------|-------|
+| **2c（消费端，life 主线）** | `D:\Item\life\2c\` | `com.casstime.cloud.life` | life（=cs）、life-im 等 → `com.casstime.cloud.life.cs.*` / `com.casstime.cloud.life.im.*` |
+| **admin（2B 管理）** | `D:\Item\life\admin\` | `com.casstime.cloud.boss` | boss-user、boss-vehicle 等 → `com.casstime.cloud.boss.user.*` |
+| **common（公共）** | `D:\Item\life\common\` | `com.casstime.ec.cloud.common` | 跨产品线公共能力 |
+
+**套用示例（cs 工单域，base=`com.casstime.cloud.life` + 域=`cs`）：**
+- `CsTicketAppService` → `com.casstime.cloud.life.cs.application.appservice`
+- `CsTicketDO` → `com.casstime.cloud.life.cs.domain.ticket.model.entity`
+- `CsTicketRepositoryImpl` → `com.casstime.cloud.life.cs.infrastructure.ticket.persistence.repository.mysql`
+
+> **其他 icec 子项目（非 life）：** base package 按各自 assets §4 固化值（如 boss 独立仓走 `com.casstime.cloud.boss`）。本表只覆盖 life 三条主线；项目级前缀差异由 L1 项目层覆盖或查对应 assets §4。
 
 ### §1.2 禁用项决策（遇以下选型时一律否决）
 
@@ -111,6 +131,28 @@ description: |
 | Infrastructure | DO, PO, DTO（做转换）| 业务规则 / 状态流转判断 |
 
 > 🔴 **双命名并存事实：** cs 线 Interfaces 命名 `{Resource}ServiceImpl implements SPI {Resource}Service`；im-bff 命名 `{Resource}RestImpl implements api `{Resource}Rest`。两种形态合法，按所在模块类型选。
+
+### §2.4 DO/PO 类型差异判定线（🆕 v3.6.2 — 消除"合法差异 vs 建模错误"判定缺口）
+
+> **🔴 决策定位：** 测试反馈——icec 里 DO（领域充血对象）与 PO（持久化贫血对象）类型经常**不一致**（DO 用枚举/领域类型、PO 用 String/Long），这是**合法模式**（由 PersistenceConverter 桥接）。但 DO/PO 类型不一致也可能是**建模错误**（如同一业务字段在两边本应一致却写错）。文档此前没给判定线，导致 §10 异常根因分类时"层4 AI犯蠢"vs"合法差异"边界模糊。本节给明确判定线。
+
+**判定原则：DO 持领域语义类型、PO 持存储原类型，差异由 PersistenceConverter 桥接 = 合法；同语义字段在 DO/PO 间类型不可互转（无桥接语义）= 建模错误。**
+
+| 场景 | DO 类型 | PO 类型 | 判定 | 依据 |
+|------|---------|---------|------|------|
+| 状态字段 | `TicketStatus`（枚举）| `String`（VARCHAR(32)）| ✅ **合法** | 枚举↔字符串，PersistenceConverter 用 `status.name()`/`TicketStatus.valueOf()` 桥接 |
+| 金额字段 | `BigDecimal`（Money 值对象）| `decimal` | ✅ **合法** | 值对象↔数值，Converter 解包/打包 |
+| 时间字段 | `java.util.Date` | `datetime` | ✅ **合法**（且必须一致用 Date）| 同类型映射，🔴 严禁 DO 用 LocalDateTime |
+| 主键/外键 | `Long` | `bigint` | ✅ **合法** | 同语义；🔴 但若 DO=Long / PO=String(varchar) 则 **🔴 建模错误**（无桥接语义，主键类型应一致） |
+| 软删标记 | `Boolean deleted` | `Integer deleted_flag`（tinyint）| ✅ **合法** | 布尔↔0/1，Converter 桥接 |
+| 嵌套对象/聚合引用 | `SubEntity sub`（DO 内充血子对象）| 扁平字段 `sub_xxx` / 关联表 | ✅ **合法** | 防腐层做聚合根↔扁平 PO 的组装/拆解（见 §8 踩坑复盘：life STORY-020 扁平 PO 范式）|
+| **任意业务字段：DO=Long / PO=String（非主键，无枚举语义）** | Long | String | 🔴 **建模错误** | 无桥接语义，类型本应一致；属层1/2/3 文档错或层4 笔误 |
+| **DO 含 PO/SQL/DTO 引用** | — | — | 🔴 **分层违规**（非类型问题）| 共有§3 + §2.3 object-per-layer，Domain 禁持 PO |
+
+**遇到类型不匹配时的判定 SOP（配合共有 §10 异常根因 4 层）：**
+1. 先查差异是否属上表"✅ 合法"行 → 合法则 PersistenceConverter 正确桥接即可，**不算根因**。
+2. 不属合法行 → 进共有 §10 逐层判定：层1 Task 数据结构表类型矛盾？层2 Story 字段语义？层3 DR 业务规则？层4 AI 笔误/分层违规。
+3. **主键/业务关键字段类型在 DO/PO 间不可互转 → 直接判层4**（除非 Task 明确要求异构存储，需 DR 举证）。
 
 ---
 
@@ -280,15 +322,16 @@ grep -rn "Executors\.\(newFixed\|newCached\|newSingle\|newScheduled\)" --include
 
 | 共有 coding-skill 章节 | 本适配器叠加章节 | 叠加内容 | 优先级 |
 |----------------------|---------------|---------|--------|
-| §3 分层职责红线 | §2（落点表）+ §3（特化红线）| icec/life 精确包路径 + BFF禁触DB/事务只在AppService 等特化红线 | adapter > 共有 |
+| §3 分层职责红线 | §2（落点表）+ §2.4（DO/PO 判定线）+ §3（特化红线）| icec/life 精确包路径（含 §1.1bis 固化 base package）+ DO/PO 合法差异 vs 建模错误判定 + BFF禁触DB/事务只在AppService 等特化红线 | adapter > 共有 |
 | §4 骨架展开规则 | §4（骨架特化）| 注解选型/Converter形态/Feign+Hystrix/事务/对象契约 | adapter > 共有 |
 | §8 验证判定标准 | §5（验证特化）| JUnit4+Mockito / dev-DB+@Transactional / no-root-pom 构建 | adapter > 共有（§8.5 H2 被 dev-DB 覆盖）|
 | §11 经验检查清单 | §6（命名/错误码）+ §8（踩坑库）| icec/life 命名表 + 错误码段 + 14 项踩坑决策 | adapter > 共有（§11.1 第3/4/7/10/11项被 §8 踩坑库取代）|
 | §12 静态扫描规则 | §7（静态扫描特化）| 8 条 icec 工程特化 grep（防分层/防框架误用）| adapter > 共有（叠加在通用 §12 之上）|
-| §1 CodingModel 决策 | §1（技术栈锁）| 11 维决策时锁定 Java8/SB1.5.7/messagebus 等技术前提 | adapter 补充（不取消共有）|
+| §1 CodingModel 决策 | §1（技术栈锁）+ §1.1bis（base package）| 11 维决策时锁定 Java8/SB1.5.7/messagebus 等技术前提 + 固化包路径前缀 | adapter 补充（不取消共有）|
 | §2 约束文件引用 | §1（技术栈事实）| 给出 9 项约束的具体 Java+icec 事实 | adapter 补充 |
+| §10 异常根因 4 层 | §2.4（DO/PO 判定线，🆕 v3.6.2）| 层1/层4 判定时区分"DO/PO 合法差异"与"建模错误" | adapter 辅助（不覆盖共有§10 方法论）|
 
-> **未被覆盖的共有章节（仍按共有生效）：** §5 CodeAnalysis ④bis 全套、§6 ④bis 实战 SOP、§7 G-CODEPLAN-SRC、§9 漂移核查、§10 异常根因分类、§13 适配器注册加载协议本身——这些是语言/项目无关的方法论，本适配器不覆盖。
+> **未被覆盖的共有章节（仍按共有生效）：** §5 CodeAnalysis ④bis 全套、§6 ④bis 实战 SOP、§7 G-CODEPLAN-SRC、§9 漂移核查、§13 适配器注册加载协议本身（含 §13.1bis 叠加视图速查表，🆕 v3.6.2）——这些是语言/项目无关的方法论，本适配器不覆盖。
 
 ---
 
@@ -301,7 +344,7 @@ name: java3d-coding-skill
 type: skill-new
 provides: coding-adapter-java
 path: ./java3d-coding-skill/SKILL.md
-version: 1.0.0
+version: 1.1.0
 description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill）
 ```
 

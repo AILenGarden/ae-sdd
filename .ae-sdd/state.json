@@ -1,0 +1,14 @@
+{
+  "version": "1",
+  "projectKey": "ae-sdd-self-test",
+  "phase": "initialized",
+  "currentStory": null,
+  "currentTask": null,
+  "history": [
+    {
+      "phase": "initialized",
+      "timestamp": "2026-06-30T11:31:27Z",
+      "by": "ae-sdd init"
+    }
+  ]
+}

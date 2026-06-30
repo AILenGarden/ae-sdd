@@ -27,11 +27,11 @@ plugins:
   # ─────────────────────────────────────────────────────────────
   - name: java3d-coding-skill
     type: skill-new                             # 新增 SKILL（非覆盖内置）
-    version: 1.0.0
+    version: 1.1.0
     author: "ae-sdd"
     description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill）
     provides: coding-adapter-java               # coding-skill §13 查找的路由 key
     path: ./java3d-coding-skill/SKILL.md
     compatibility:
-      ae_sdd_version: ">=3.6.1"
+      ae_sdd_version: ">=3.6.2"
     tags: [java, icec, life, adapter]
