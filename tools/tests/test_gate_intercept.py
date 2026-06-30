@@ -297,3 +297,90 @@ class TestHS7PrdCompleteGate:
         )
         # echo 命令不应触发 HS-7（_is_ae_sdd_cmd 排除非执行形式）
         # 即使被其他规则拦，reason 也不应含 HS-7
+
+
+# ─── 🆕 v3.5.15 多入口状态机：scale 路由跨步跳跃测试 ─────────────────────────
+
+class TestScaleRoutedStateWrite:
+    """🆕 v3.5.15：state write 跨步跳跃按 scale 子链判定。
+
+    微链 initialized→coding 是合法单步（不再被误拦）；
+    大/中/小链 initialized→coding 仍被拦（跨步跳跃）。
+    """
+
+    def _make_state(self, tmp_path, scale, phase="initialized"):
+        """构造带 scale 的 .ae-sdd/state.json + config.yaml。"""
+        ae_sdd = tmp_path / ".ae-sdd"
+        ae_sdd.mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (ae_sdd / "state.json").write_text(json.dumps({
+            "version": "1", "projectKey": "test",
+            "phase": phase, "scale": scale,
+            "currentStory": "STORY-001", "currentTask": None,
+            "history": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        return tmp_path
+
+    def _bypass_gates_and_memory(self, monkeypatch):
+        """聚焦跨步跳跃逻辑：mock 掉 G-00 资产检查 + memory gate，避免夹具噪声。"""
+        # memory gate 放行
+        monkeypatch.setattr(
+            "lib.memory_gate.check_state_transition",
+            lambda **kw: {"pass": True, "blocked": False, "skipped": True, "reason": "mocked"}
+        )
+        # G-00 等 PHASE_ENTRY_GATES 放行（返回空结果列表 = 无失败）
+        monkeypatch.setattr("lib.gates.check_all", lambda *a, **kw: [])
+
+    def test_micro_initialized_to_coding_allowed(self, tmp_path, monkeypatch):
+        """🆕 v3.5.15 修复：微链 initialized→coding 合法单步，不拦"""
+        self._bypass_gates_and_memory(monkeypatch)
+        project_dir = self._make_state(tmp_path, scale="微", phase="initialized")
+        cmd = "ae-sdd state write --phase coding --story STORY-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert allowed, f"微链 initialized→coding 应放行，但被拒: {reason}"
+
+    def test_large_initialized_to_coding_blocked(self, tmp_path, monkeypatch):
+        """大链 initialized→coding 跨步跳跃（跳了 7 步），应拦"""
+        self._bypass_gates_and_memory(monkeypatch)
+        project_dir = self._make_state(tmp_path, scale="大", phase="initialized")
+        cmd = "ae-sdd state write --phase coding --story STORY-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert not allowed, "大链 initialized→coding 应被拦（跨步跳跃）"
+        assert "跨步跳跃" in reason
+        assert "大" in reason  # 错误信息含 scale
+
+    def test_small_initialized_to_coding_blocked(self, tmp_path, monkeypatch):
+        """小链 initialized→coding 跨步跳跃（跳了 4 步），应拦"""
+        self._bypass_gates_and_memory(monkeypatch)
+        project_dir = self._make_state(tmp_path, scale="小", phase="initialized")
+        cmd = "ae-sdd state write --phase coding --story STORY-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert not allowed, "小链 initialized→coding 应被拦（跨步跳跃）"
+        assert "跨步跳跃" in reason
+
+    def test_small_ra_to_task_allowed(self, tmp_path, monkeypatch):
+        """小链 ra-generated→task-generated 合法单步（跳过 DR/Story）"""
+        self._bypass_gates_and_memory(monkeypatch)
+        project_dir = self._make_state(tmp_path, scale="小", phase="ra-generated")
+        cmd = "ae-sdd state write --phase task-generated --story STORY-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert allowed, f"小链 ra→task 应放行，但被拒: {reason}"
+
+    def test_micro_initialized_to_dr_not_blocked_by_jump(self, tmp_path, monkeypatch):
+        """微链不含 dr-generated，initialized→dr：跨步判定放行（dr 不在微链，index 抛 ValueError→return True）。
+        set_phase 层会拦 phase 不在子链，但 gate_intercept 的跨步判定不拦。"""
+        self._bypass_gates_and_memory(monkeypatch)
+        project_dir = self._make_state(tmp_path, scale="微", phase="initialized")
+        cmd = "ae-sdd state write --phase dr-generated --story STORY-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert allowed, f"微链 initialized→dr 由 set_phase 拦，gate_intercept 跨步判定不应拦: {reason}"

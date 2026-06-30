@@ -57,11 +57,13 @@
 
 - 存储路径：`.auto-engineering/{STORY-ID}/state.json`，多个 Story 各自独立互不干扰
 - 核心字段：`storyId / currentPhase / currentStep / completedSteps / storyVersion / codingRound / pendingOutputs / lastUpdated`
+- 🆕 v3.5.15 多入口状态机字段：`scale`（大/中/小/微，决定走哪条子链）/ `entryNode`（入口节点语义，FlowNode.value，如 BUG/CONFIG/PRD）
 - 多 Agent 扩展字段：`activeAgents[] / agentReports[]` 追踪并行 agent 状态
 - storyVersion：Story 文档内容变更时累加；codingRound：每开启新一轮 Coding 前累加
 - 重入机制：读 state.json → 解析 currentStep → 路由到对应 SKILL → 跳过 completedSteps 中已完成的步骤
 - v3.2.3 起：`ae-sdd state write --phase <next>` 切相前自动校验 memory 生命周期（enter→write 是否完成），未完成则阻断切相
 - 🆕 v3.4.0：PHASE_FLOW 新增 `ra-generated`（initialized → ra-generated → dr-generated），RA 阶段 memory 强制（修复 B3-6）；审核点 token 机制（`ae-sdd state confirm --phase <审核点>` 写 session.json 的 userConfirmedPhases，防 AI 自填，关卡3 校验）
+- 🆕 v3.5.15：单条 PHASE_FLOW → 4 子链 PHASE_FLOWS（大11/中10/小8/微4 phase），按 scale 路由。微链 initialized→coding 合法单步（修复微任务 next_step 误建议跑 RA 的可观测 bug）；BUG/配置类复用微链（entryNode 标 BUG/CONFIG）。旧 state 无 scale → `_infer_scale` 按 completedSteps 反推，默认"大"（最保守）。`PHASE_FLOW` 保留为大链别名（向后兼容）
 - CLI：`ae-sdd state read / write / next-step / confirm / validate / show / diff / lock`
 
 **颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；多个 Story 的 state 文件互不干扰；state 仅记录进度，不存储业务产物内容。
@@ -161,7 +163,7 @@
 **设计实现**：
 
 - 产物路径：`harness/.harness/agent.md`，由 `ae-sdd-harness-adapter` SKILL 自动生成
-- 转译内容：SKILL.md + HARNESS.md → harness 格式，包含 26 门禁(G-00~G-14 + 中段 + G-RA 系列 + G-CODE-1) + 11 阶段状态机 + HS-1~HS-12 硬停止规则 + per-domain routing rules
+- 转译内容：SKILL.md + HARNESS.md → harness 格式，包含 26 门禁(G-00~G-14 + 中段 + G-RA 系列 + G-CODE-1) + 4 子链状态机(大11/中10/小8/微4 phase，🆕 v3.5.15) + HS-1~HS-12 硬停止规则 + per-domain routing rules
 - `.adapter.lock` 记录来源 commit hash，母版升级后 hash 变化即需重新生成
 - 转译脚本：`convert-ae-sdd-to-harness.ps1`
 
@@ -273,7 +275,7 @@
 
 ### 背景与动机
 
-v3.4.0 引入 PRD 级 state.json + 11 phase 状态机（`initialized → ra-generated → dr-generated → ... → completed`），但**子任务级操作的可追溯性弱**：
+v3.4.0 引入 PRD 级 state.json + 11 phase 状态机（`initialized → ra-generated → dr-generated → ... → completed`，🆕 v3.5.15 起按 scale 拆 4 子链：大链沿用此 11 phase，中/小/微链依次缩减），但**子任务级操作的可追溯性弱**：
 
 - 现有 `phase` 字段只记"当前阶段"，**没有"如何到达此处"的轨迹**
 - 现有 `history` 字段只记阶段切换（`{phase, timestamp, by}`），**粒度过粗**（如 router 把请求路由到 story-generate-skill、随后该 SKILL 完成、随后用户确认 → 这三步之间发生了什么无法回溯）

@@ -256,6 +256,25 @@
         {"path": "source/CHANGELOG/", "action": "新增 2026-06-29-v3.5.11-alignment-audit.md changelog 文件", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-05", "UC-06", "UC-08", "UC-09", "UC-10", "UC-11", "UC-12"]
+    },
+    {
+      "id": "UG-16",
+      "name": "state.py 状态机变更（多入口 4 子链）",
+      "trigger": ["tools/lib/state.py"],
+      "trigger_condition": "修改 PHASE_FLOWS / set_phase / next_step_suggestion / set_scale / _infer_scale 任一（🆕 v3.5.15 多入口状态机）",
+      "affected": [
+        {"path": "tools/lib/gate_intercept.py", "action": "_check_state_write 跨步跳跃按 scale 子链 + PHASE_ENTRY_GATES 按 scale 路由 + 关卡3 微链豁免 task-reviewed", "auto_checkable": false},
+        {"path": "tools/lib/memory_gate.py", "action": "is_forward_transition 按 scale 选子链（加 scale 参数）", "auto_checkable": false},
+        {"path": "tools/lib/classify.py", "action": "Classification 加 entry_node 字段；BUG/配置类→scale=微+entryNode=BUG/CONFIG", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "cmd_state_write 加 --scale/--entry-node 参数 + set_scale 调用", "auto_checkable": true},
+        {"path": "tools/tests/test_state.py", "action": "PHASE_FLOWS 4 子链断言 + set_scale/infer_scale/微链回归测试（替换旧 11 phase 断言）", "auto_checkable": false},
+        {"path": "tools/tests/test_gate_intercept.py", "action": "TestScaleRoutedStateWrite（微链不拦/大链拦跨步）", "auto_checkable": false},
+        {"path": "source/SKILL.md", "action": "§流程状态跟踪 state.json schema 加 scale/entryNode + 4 子链表", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-design.md", "action": "§流程状态持久化 PHASE_FLOW→PHASE_FLOWS + 11 阶段→4 子链", "auto_checkable": false},
+        {"path": "README.md", "action": "第 5 行版本行含 v3.5.15 + 多入口状态机描述", "auto_checkable": true},
+        {"path": "source/CHANGELOG/", "action": "新增 2026-06-30-v3.5.15-state-machine-multi-entry.md", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-06"]
     }
   ]
 }

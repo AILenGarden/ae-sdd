@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Users\\EDY\\AppData\\Local\\Programs\\Python\\Python315\\python.exe\" \"D:\\Item\\ae-sdd\\tools\\bin\\ae-sdd\" gate-intercept"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Users\\EDY\\AppData\\Local\\Programs\\Python\\Python315\\python.exe\" \"D:\\Item\\ae-sdd\\tools\\bin\\ae-sdd\" prompt-inject"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Users\\EDY\\AppData\\Local\\Programs\\Python\\Python315\\python.exe\" \"D:\\Item\\ae-sdd\\tools\\bin\\ae-sdd\" stop-check"
+          }
+        ]
+      }
+    ]
+  }
+}

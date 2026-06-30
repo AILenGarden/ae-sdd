@@ -243,19 +243,9 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 > **🆕 2026-06-10 解耦改造：** 通过 `document-storage-skill.get_constraints(projectKey)` 加载，不直接读目录路径。
 
-从 `get_constraints(projectKey)` 返回的 `ConstraintList` 逐项读取，记住关键规则：
+从 `get_constraints(projectKey)` 返回的 `ConstraintList` 逐项读取，记住关键规则。
 
-| 约束 name | 关键规则 |
-|------|---------|
-| technology-stack | Java 版本、Spring Boot 版本、框架版本 |
-| project-structure | 包路径规范、模块结构 |
-| layered-arch | 分层依赖方向、各层职责 |
-| code-style | 命名规范、Lombok 使用、异常定义、枚举结构、**日志格式三要素（`[服务][类][方法][业务动作] key=value`）** |
-| api | URL 命名、HTTP 方法、响应结构 |
-| database | 建表规范、必备字段、索引命名 |
-| security | 鉴权方式、@SkipAuth 使用 |
-| testing | 测试分层、Mock 策略、覆盖率要求 |
-| **be-coding-thinking-engine** | **设计→实现→测试全链路思考框架；11维风险决策树；基准过滤器7条；每个操作的4问决策链** |
+> **📍 约束清单与关键规则见上方「约束文件引用」表（§约束文件引用）。** 本步不重复列约束清单，直接复用该表 9 行约束的"关键规则"列逐项核对。
 
 ---
 
@@ -551,7 +541,7 @@ Task 名称：{Task 名称}
 
 > **核心原则：`mvn compile` 通过 ≠ 完成。必须逐维验证全部通过，才算本步骤完成。**
 
-### 7.1 逐工程编译（6.1）
+### 7.1 逐工程编译
 
 > **强制要求：必须在父工程根目录执行 `mvn compile`，不允许只编译子模块。分模块编译会漏掉跨模块的依赖问题（如 interfaces 层未实现接口、service 层缺少 Bean）。**
 
@@ -565,7 +555,7 @@ cd {parent-project-root} && mvn compile
 
 ---
 
-### 7.2 服务启动验证（6.2）
+### 7.2 服务启动验证
 
 ```bash
 cd {parent-project-root} && mvn spring-boot:run
@@ -589,7 +579,7 @@ cd {parent-project-root} && mvn spring-boot:run
 
 ---
 
-### 7.3 主流程接口测试（6.3）
+### 7.3 主流程接口测试
 
 > 🔴 **能走真实 HTTP 的接口测试必须走真实 HTTP。** L2 接口测试默认用 `@SpringBootTest(webEnvironment = RANDOM_PORT)` + `TestRestTemplate`，经真实端口、真实网络、真实容器栈验证；Service 层用 `@MockBean` 隔离。MockMvc 不开真实端口、不走真实网络，仅在框架过老无法启动嵌入式容器时降级，且须在测试报告注明降级原因（详见 `strategies/be-testcase-strategy.md` 强制原则）。
 
@@ -612,7 +602,7 @@ curl -X POST http://localhost:{port}/api/xxx -H "Content-Type: application/json"
 
 ---
 
-### 7.4 错误码映射验证（6.4）
+### 7.4 错误码映射验证
 
 执行异常场景测试，验证错误码映射正确：
 
@@ -627,7 +617,7 @@ curl -X POST http://localhost:{port}/api/xxx -H "Content-Type: application/json"
 
 ---
 
-### 7.5 DB 写操作落库验证（6.5）
+### 7.5 DB 写操作落库验证
 
 执行 L3 集成测试（真实 H2/TestContainers DB）：
 
@@ -649,7 +639,7 @@ SELECT * FROM {table} WHERE id = ?;
 
 ---
 
-### 7.6 事务边界验证（6.6）
+### 7.6 事务边界验证
 
 **验证方式：** 查看启动日志 + 分析代码 `@Transactional` 标注
 
@@ -662,7 +652,7 @@ SELECT * FROM {table} WHERE id = ?;
 
 ---
 
-### 7.7 所有测试 Pass（6.7）
+### 7.7 所有测试 Pass
 
 ```bash
 cd {service-root} && mvn test
@@ -680,13 +670,13 @@ cd {service-root} && mvn test
 
 | # | 门禁 | 验证命令/方式 |
 |---|------|-------------|
-| 6.1 | mvn compile 通过（全工程） | 父工程根目录 `mvn compile` → BUILD SUCCESS，所有子模块通过 |
-| 6.2 | 服务启动成功 | health 端点 UP + 本 Story Bean 已注册 + 无 BeanCreationException |
-| 6.3 | 主流程接口 Pass | `mvn test -Dtest=*ControllerTest` → Pass（或 curl 手动验证） |
-| 6.4 | 错误码映射正确 | 异常场景测试返回正确 HTTP 状态码 + 错误码 |
-| 6.5 | DB 写操作落库 | L3 测试 PASS 或手动 SQL 验证 |
-| 6.6 | 事务边界正确 | 代码分析 + 事务回滚验证 |
-| 6.7 | 所有测试 Pass | `mvn test` → BUILD SUCCESS |
+| 7.1 | mvn compile 通过（全工程） | 父工程根目录 `mvn compile` → BUILD SUCCESS，所有子模块通过 |
+| 7.2 | 服务启动成功 | health 端点 UP + 本 Story Bean 已注册 + 无 BeanCreationException |
+| 7.3 | 主流程接口 Pass | `mvn test -Dtest=*ControllerTest` → Pass（或 curl 手动验证） |
+| 7.4 | 错误码映射正确 | 异常场景测试返回正确 HTTP 状态码 + 错误码 |
+| 7.5 | DB 写操作落库 | L3 测试 PASS 或手动 SQL 验证 |
+| 7.6 | 事务边界正确 | 代码分析 + 事务回滚验证 |
+| 7.7 | 所有测试 Pass | `mvn test` → BUILD SUCCESS |
 
 **任意一项未通过 → 修复 → 重新验证 → 全部通过才进入测试阶段。**
 
@@ -821,9 +811,9 @@ python "$(ae-sdd scripts-dir)/test_authenticity_scan.py" --root {service-root} -
 
 ## 第九步：编码后全切面一致性核查闸（🔴 强制，CodeReview 的硬前置，每轮编码完成后立即跑）
 
-> **每一轮 Coding 完成后立即强制执行**（含缺陷修复轮、增量补充轮），不可因"只改了一点"而跳过。这是补齐"编码后无人回头核对设计与代码是否还一致"的真空——历史上 STORY-002 改 5 轮仍漂移，正因缺这道闸。详见 [[post-coding-cross-cut-consistency-gate]]。
+> **每一轮 Coding 完成后立即强制执行**（含缺陷修复轮、增量补充轮），不可因"只改了一点"而跳过。这是补齐"编码后无人回头核对设计与代码是否还一致"的真空——历史上因缺这道闸导致多轮漂移累积。详见 [[post-coding-cross-cut-consistency-gate]]（案例复盘见 [`lessons-learned.md` §1.1](../../standards/lessons-learned.md)）。
 >
-> **历史教训：** STORY-021-BE 实施时 AI 只跑了编译 + 测试，**没跑**这一道闸，直接出 Coding Report——结果"在 `ImSessionAppService` 写了纯数据访问封装"的分层错误漏到用户反馈才发现。🔴 本闸的触发时机不是"出 CodeReview 才跑"，而是"代码写完立即跑"——出 CodeReview 之前应该已经跑过本闸并修复完毕。
+> **历史教训：** 曾有 Story 实施时 AI 只跑了编译 + 测试，**没跑**这一道闸，直接出 Coding Report——结果"在 Application 层写了纯数据访问封装"的分层错误漏到用户反馈才发现（案例复盘见 [`lessons-learned.md` §2](../../standards/lessons-learned.md)）。🔴 本闸的触发时机不是"出 CodeReview 才跑"，而是"代码写完立即跑"——出 CodeReview 之前应该已经跑过本闸并修复完毕。
 
 **触发时机：** 代码写完（"按 Task 顺序生成代码"完成后）立即跑，跑完后再跑闸 7 静态扫描、闸 5 真实 DB 集成测试，最后才进 CodeReview。
 > 
@@ -939,7 +929,7 @@ python "$(ae-sdd scripts-dir)/test_authenticity_scan.py" --root {service-root} -
 ```
 
 **🔴 关键约束：**
-- **禁止跳过追溯层 1/2/3 直接判定"AI 犯蠢"** — 这是 STORY-002 反复改 5 轮的根源
+- **禁止跳过追溯层 1/2/3 直接判定"AI 犯蠢"** — 历史上反复多轮返工的根源正是跳层判定（案例见 [`lessons-learned.md` §1.1](../../standards/lessons-learned.md)）
 - **每层判定都要写入问题记录的"根因分析"字段** — 不允许"自我声明无误"
 - **命中设计层（第 1/2/3 层）必须先改文档、再改代码** — 顺序不可颠倒
 - **追溯不是"事后一次性"，而是"每次报错实时"** — 编译失败/单测失败/接口失败/真实 HTTP 失败/性能问题每次都要走
@@ -1084,19 +1074,21 @@ Coding SKILL（发现 Story 缺陷）
 |---|--------|------|
 | 1 | pom 依赖是否被注释 | 新工程模板中 SPI 依赖常被注释，需取消注释 |
 | 2 | lombok 是否显式声明 | scope=provided 不传递，每个模块需单独声明 |
-| 3 | 第三方 SDK 实际包路径 | 从 jar 中确认，不要凭记忆猜测（如融云是 io.rong 不是 cn.rongcloud.im） |
-| 4 | @NotBlank 来源包 | Spring Boot 1.5.x + hibernate-validator 5.x 用 `org.hibernate.validator.constraints.NotBlank` |
+| 3 | 第三方 SDK 实际包路径 | 从 jar 中确认，不要凭记忆猜测 |
+| 4 | 校验注解来源包 | 按 Spring Boot 版本确认 @NotBlank 等注解的来源包 |
 | 5 | Result.code 类型 | 确认是 Integer 还是 String，错误码枚举类型要匹配 |
 | 6 | 字段类型与 Task 一致 | 特别注意 ID 字段是 Long 还是 String（varchar） |
-| 7 | ApiResult 完整 import | 不同工程的 ApiResult 包路径不同（life vs boss） |
+| 7 | ApiResult 完整 import | 不同工程的 ApiResult 包路径不同，从现有代码 grep 确认 |
 | 8 | 新模块注册到父 pom | 创建子模块后必须在父 pom 的 modules 中添加 |
 | 9 | BFF Controller 实现 Rest 接口 | 不要自己加 @Api/@GetMapping，从 Rest 接口继承 |
-| 10 | Feign 注解版本 | Spring Cloud Dalston 用 `org.springframework.cloud.netflix.feign.FeignClient` |
-| 11 | CurrentUserUtil 返回 String | 不要做 Long.valueOf() 转换（除非确认下游需要 Long） |
+| 10 | Feign 注解版本 | 按 Spring Cloud 版本确认 FeignClient 注解包 |
+| 11 | 工具类返回类型 | 确认 CurrentUserUtil 等工具类返回类型，避免盲目类型转换 |
 | 12 | VO 和 DTO 分离 | bff-api 定义 VO，SPI 定义 DTO，Controller 中做转换 |
 | 13 | Task 0 必读 | 公共包路径、DO 定义、接口定义在 Task 0 中 |
 | 14 | 审计字段自动填充 | 需要 MetaObjectHandler 配置，否则 FieldFill 不生效 |
 | 15 | 事务外执行 | 使用 TransactionSynchronizationManager.afterCommit() |
+
+> 📍 第 3/4/7/10/11 项的项目特定事实（具体包名/版本）已下沉到 [`lessons-learned.md` §4](../../standards/lessons-learned.md)，新项目应在项目资产 §6 工程约束中维护各自的版本与包路径。
 
 > **🔴 工程特定经验检查清单**（针对具体项目）见各项目资产 `assets/{project-key}/{project-key}.assets.md` §6.10。
 > Skill 只列通用经验（任何 Java/Spring 项目适用）；**项目特定**的工程经验（如分层职责硬约束、跨层误引用扫描、特定包路径违规）按"约束也是工程的一部分"原则下沉到项目资产，不在本 Skill 圈定。
@@ -1272,14 +1264,16 @@ Coding SKILL（发现 Story 缺陷）
 
 > **为什么要前置：** CodingPlan 的7章节是"怎么写"，但在动笔之前必须先想清楚"这个 Story 有哪些风险，方案是否已覆盖"。漏掉风险预判，章节4的SQL写法可能缺乐观锁，章节2的类骨架可能缺幂等设计，写完了再改代价是写之前的10倍。
 
-按 `../../standards/thinking/be-coding-thinking-engine.md §1.4 风险预判·11维度` 对本 Story 逐维过一遍，每个维度给出三列答案：
+按 `../../standards/thinking/be-coding-thinking-engine.md §1.4 风险预判·11维度` 对本 Story 逐维过一遍，每个维度给出两列答案。
 
-| 维度 | 本 Story 是否涉及 | 方案 / 有意不做的理由 |
+> **📍 维度清单与第零步「CodingModel 决策记录」表（§第零步）的 11 维完全一致**（① 原子性 … ⑪ 可运维性），本表不重复列维度定义，仅记录"是否涉及 + 方案/理由"。第4维统一命名为"同步/异步解耦"（与第零步一致）。
+
+| 维度（见第零步表） | 本 Story 是否涉及 | 方案 / 有意不做的理由 |
 |---|---|---|
 | ① 原子性 | 是 / 否 | |
 | ② 并发安全 | 是 / 否 | |
 | ③ 幂等性 | 是 / 否 | |
-| ④ 可解耦性 | 是 / 否 | |
+| ④ 同步/异步解耦 | 是 / 否 | |
 | ⑤ 数据一致性 | 是 / 否 | |
 | ⑥ 外部依赖容错 | 是 / 否 | |
 | ⑦ 性能瓶颈 | 是 / 否 | |
@@ -1437,15 +1431,9 @@ public class Ticket {
 
 > 本节是 `SKILL.md §🛡️ G-CODEPLAN-SRC` 的下沉详细规则。CLI：`ae-sdd gates check --only G-CODEPLAN-SRC`。
 
-**为什么需要**（实战复盘，life 项目 STORY-020）：
+**为什么需要**（实战复盘）：
 
-| # | Plan 中的错误 | 源码实际事实 | 危害 |
-|---|---|---|---|
-| 1 | 把 application 层 `ImMessageConverter` 当成要改的 | 实际要改的是 infrastructure 层 `LatestSideMessagePOConverter` | 改错文件 |
-| 2 | 说"新增 Converter 映射" | `ImMessageConverter.toDTO` 已存在 | 重复造轮子（红线 #10）|
-| 3 | 设计嵌套 Anchor 值对象 | 现有 PO/DO 全是扁平字段 | 与现有建模范式不符 |
-| 4 | 测试范式标"JUnit4/5 待确认" | 代码里就是 JUnit4 + SpringRunner + H2 | 本可读源码确认却标待确认 |
-| 5 | Converter 写法按 AGENTS.md 写 `@UtilityClass` | 实际代码用 `@NoArgsConstructor(PRIVATE)`+static | AGENTS.md 与实际有出入，应以代码为准 |
+> 📍 项目特定复盘案例（life 项目 STORY-020 的 5 个错误对照表）已抽离到 [`lessons-learned.md` §3.1](../../standards/lessons-learned.md)。核心教训：CodingPlan 凭推测设计类骨架会改错文件、重复造轮子、与现有建模范式不符。本门禁把"读源码"前置到 CodingPlan 阶段。
 
 **判定标准——"现有同类源码"范围：**
 
@@ -1469,10 +1457,12 @@ public class Ticket {
 
 ```markdown
 ### 待核实源码清单（G-CODEPLAN-SRC）
-- [ ] ImMessageConverter 现有 toDTO 方法签名（domain/.../ImMessageConverter.java）
-- [ ] LatestSideMessagePO 扁平/嵌套范式（infrastructure/.../LatestSideMessagePO.java）
+- [ ] {同类 Converter} 现有 toDTO 方法签名（domain/.../{XxxConverter}.java）
+- [ ] {同类 PO} 扁平/嵌套范式（infrastructure/.../{XxxPO}.java）
 - [ ] 测试框架版本（src/test/java/.../现有测试类）
 ```
+
+> 📍 项目特定填充示例见 [`lessons-learned.md` §3.2](../../standards/lessons-learned.md)。
 
 **门禁规则：**
 - 类骨架章节**无任何标记** → 🔴 阻断（每个新增/修改类须附标记）
@@ -1586,7 +1576,7 @@ public class Ticket {
 
 **动作：**
 1. 调用 `ae-sdd assets section §4 --project <projectKey>` 或直接使用步骤 1 返回的 §4 内容，匹配每个类对应的精确包路径
-2. 例：Application 层的 `BossUserAppService` → `icec-cloud-boss-user/icec-cloud-boss-user-application/src/main/java/com/casstime/cloud/boss/user/application/appservice/BossUserAppService.java`
+2. 例：Application 层的 `{XxxAppService}` → `{project-module}/{project-module}-application/src/main/java/{base-package}/application/appservice/{XxxAppService}.java`（具体包路径模板由项目资产 §4 提供；项目特定示例见 [`lessons-learned.md` §5](../../standards/lessons-learned.md)）
 3. 填入 Code Plan §5 类骨架的"包路径"列
 
 **原则：**
@@ -1705,283 +1695,33 @@ public {Resource}DTO create(CreateCommand cmd) {
 
 ## 📋 测试真实性强制规范（8 类禁止手段 + 5 条保障要求）
 
-> **🔴 【2026-06-06 重大重构】本章定义已迁出到 [`code-review-skill.md` §阶段 D 测试真实性 + 真实 DB/HTTP 覆盖核查](../../code-review-skill.md)。coding-skill.md 中保留原文作为"实现阶段自检"参考；评审阶段请走 code-review-skill.md。**
+> **📍 已完整迁出到 [`code-review-skill.md` §阶段 D 测试真实性 + 真实 DB/HTTP 覆盖核查 + 5 条保障要求 + §第七步 bis 前置测试真实性门禁 12 项](../../phase3-review/code-review-skill.md)。**
 >
-> **来源：** 原 ae-sdd-skill.md Phase 3 测试真实性强制规范章节。AE 流程⑥完成判定的硬前置 — `test-verifier` 必须独立扫描 8 类禁止伪造手段，命中任一 = 测试报告作废 + Coding 返工。
-
-### 🔴 测试真实性强制规范（防止 AI 伪造测试通过）
-
-> **核心立场：AI 在测试时有强烈的"自圆其说"倾向——为了让测试标绿，可能采用各种"小聪明"绕过真实验证。** 这些手段表面上让 `mvn test` 全绿，但实际业务逻辑并没有被正确测试。本节是 ⑥ 完成判定的硬前置，列出禁止的伪造手段和真实性保障要求。**任一伪造手段出现 → 测试报告作废，⑤ Coding 必须返工。**
-
-#### 8 类禁止的伪造手段（违者 = 测试无效）
-
-##### 1. 隐藏失败测试
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ 用 `@Disabled` / `@Ignore` 注解跳过失败测试 | 假装"该测试不重要" | 修复代码或测试 |
-| ❌ 删除失败的测试方法 | 直接消失，假装没写过 | 修复代码或测试 |
-| ❌ 用 `if (false) { ... }` 包裹测试逻辑 | 测试被跳过但代码还在 | 删除死代码或修复 |
-| ❌ 用 `assumeTrue(false)` 跳过 | JUnit 假设失败 = 跳过 | 修复代码或测试 |
-| ❌ 改测试方法名加后缀 `_disabled` | 隐藏原失败 | 不允许 |
-
-##### 2. 永真断言
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ `assertTrue(true)` / `assertFalse(false)` | 永远通过 | 断言真实业务值 |
-| ❌ `assertNotNull(new Object())` | 永远通过 | 断言被测代码输出 |
-| ❌ `assertEquals(1, 1)` 恒等断言 | 与代码无关 | 断言 actual vs expected |
-| ❌ `assertEquals("string", "string")` 字面量相等 | 永远通过 | 断言被测方法返回 |
-
-##### 3. 吞噬异常
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ `try { ... } catch (Exception e) { /* 忽略 */ }` | 异常被吃掉 | 让异常抛出 |
-| ❌ `try { ... } catch (Exception e) { return; }` | 测试提前返回 | 让异常抛出，断言异常类型 |
-| ❌ catch 后断言 `noExceptionThrown()` | 颠倒黑白 | 断言异常类型 + 错误码 |
-
-##### 4. 全 Mock 替代
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ 把所有 Repository/Service 都 mock 掉，测的是 mock 本身 | mock 返回啥就是啥 | 核心路径用真实 DB/真实 HTTP |
-| ❌ Mock 返回 `any()` / `anyString()` | 所有断言都通过 | 用具体值 mock |
-| ❌ Mock 链太深（Mock → Mock → Mock） | 验证的不是真实业务 | 减少 Mock 层级 |
-| ❌ 用 Mockito 的 `RETURNS_DEEP_STUBS` 链式 mock | 测的是 mock 不是代码 | 拆解测试 |
-
-##### 5. 调整断言方向（最隐蔽的伪造）
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ 期望值=实际值：先跑代码得 actual，再写 `assertEquals(actual, actual)` | 自证自明 | expected 是 hardcode 的预期值 |
-| ❌ 期望值变量名是 expected，但赋值是测试运行时算的 | 名字骗人 | expected 必须是常量/字面量 |
-| ❌ 断言放在 try 里，catch 后断言 `assertTrue(true)` | 出错也通过 | 让 assertion 在 try 外 |
-
-> **🔴 这类伪造最危险，因为它"看起来"在测真实逻辑，实际什么都没测。** 判定规则：**expected 必须是 hardcode 的字面量或常量，actual 必须是被测方法的返回值。**
-
-##### 6. 无效测试数据
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ 随机生成数据但只验证"非空" | 数据无意义 | 数据对应真实 AC 场景 |
-| ❌ 测试数据用 default value（null/0/空字符串） | 不触发业务逻辑 | 用业务真实场景数据 |
-| ❌ 测试场景不覆盖真实业务分支（只测了"新建成功"没测"重复创建失败"） | 覆盖率虚高 | 测正向 + 反向 + 边界 |
-
-> **🔴 测试数据可追溯性：每个测试数据的来源必须在 CodingPlan §5 中明确，编码时直接复用，禁止"假设 userId=1L 就能跑"。**
-
-##### 7. 睡眠绕过
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ `Thread.sleep(N)` 等待异步完成 | 不稳定，时快时慢 | 用 CountDownLatch / Awaitility 真实等待 |
-| ❌ `Awaitility` 用超长 timeout（如 30s）掩盖死锁 | 测试一直挂 | 缩短 timeout，定位真正问题 |
-| ❌ 用 `TimeUnit.SECONDS.sleep` 配固定数值 | 容易 flaky | 用确定性等待机制 |
-
-##### 8. 篡改覆盖率
-
-| 伪造手段 | 真实表现 | 正确做法 |
-|---------|---------|---------|
-| ❌ 写大量重复测试方法只为凑覆盖率 | 数字虚高 | 测试方法覆盖真实业务场景 |
-| ❌ 测 get/set 一类纯 getter 凑数 | 不是业务测试 | 测业务方法 |
-| ❌ 测试方法和被测方法一对一硬编码（脆弱） | 改实现就挂 | 测业务行为 |
-
----
-
-#### AI 测试真实性保障要求（强制）
-
-##### 保障 1：测试代码可见性
-
-> AI 不得只说"测试通过"就完事，必须**输出关键测试代码**让用户能 review。
-
-| 必须呈现 | 示例 |
-|---------|------|
-| 测试方法签名 | `void transition_success() throws Exception` |
-| 测试数据准备 | 完整显示 fixture 构造 |
-| Mock 设置 | 显示 mock 哪些 + 返回什么 |
-| 断言代码 | 完整显示 assertEquals(expected, actual) |
-| 实际运行结果 | 显示测试报告中的 Pass 行 + 关键日志 |
-
-##### 保障 2：测试数据可追溯
-
-> 每个测试数据必须能追溯到具体 AC 或业务场景。
-
-测试代码中必须用注释标注：
-```java
-// AC-001: 正常创建工单
-// 数据来源: Story §AC-001 示例值
-Long userId = 123456789012345L;  // 来自上游会话服务的 userId
-String problemDescription = "用户进线咨询支付问题";  // 真实业务文案
-TicketPriority priority = TicketPriority.HIGH;  // 枚举值
-```
-
-##### 保障 3：失败诚实暴露
-
-> 测试失败的详细信息（assertion 失败的具体值、expected vs actual 差异）必须原样输出，不得"包装"成通过。
-
-❌ 错误做法：
-```
-测试结果：✅ Pass（共 25 个测试）
-```
-
-✅ 正确做法：
-```
-测试结果：✅ Pass（共 25 个测试）
-关键测试输出：
-  - transition_success: PASS (128ms)
-    断言: assertEquals(200, response.getStatusCode().value())
-    实际: 200 ✓ 期望: 200 ✓
-  - transition_userNotFound: PASS (45ms)
-    断言: assertEquals(21041, response.getBody().getCode())
-    实际: 21041 ✓ 期望: 21041 ✓
-```
-
-##### 保障 4：禁止"修复测试"代替"修复代码"
-
-> 如果 AI 自行修改了**已通过审核的测试代码**（不是新增），必须：
-> 1. 在测试报告中标注"修改了 {测试方法}，原因：{...}"
-> 2. 给出"原测试期望值错了"的具体证据（如：原期望值与 AC 描述不符）
-> 3. 获得用户确认
-
-未获用户确认的"修复测试" = 伪造测试。
-
-##### 保障 5：覆盖率高但不要凑数
-
-> 覆盖率数字必须真实。不为了数字而堆测试。
-
-| 指标 | 必须达到 | 但不能凑数 |
-|------|---------|----------|
-| 行覆盖率 | ≥ 80% | 不通过测 getter/setter 凑 |
-| 分支覆盖率 | ≥ 70% | 不通过重复断言同一分支凑 |
-| AC 覆盖率 | **100%（🔴 强制）** | 不可漏 AC |
-
----
-
-#### 🔴 测试真实性门禁（⑥ 完成判定的硬前置）
-
-- [ ] 8 类禁止的伪造手段扫描 0 命中（必须执行 `scripts/test_authenticity_scan.py`；BLOCKER=0）
-- [ ] 原始测试证据已归档（命令、退出码、stdout/stderr、Surefire/Failsafe XML、扫描报告路径齐全）
-- [ ] 测试报告统计与 XML 对账一致（tests/failures/errors/skipped 不允许人工估算）
-- [ ] 跳测/忽略失败参数 0 命中（`skipTests` / `maven.test.skip` / `testFailureIgnore` / 未解释的 excludes）
-- [ ] `skipped=0`；如不为 0，必须在 Story "可跳过 AC/用例"章节已有负责人、原因、补测时间
-- [ ] 关键测试代码已向用户呈现（不是只说"通过"）
-- [ ] 测试数据可追溯到 Story/Task（无"假设" / "TODO"）
-- [ ] 测试发现数对账完成（测试用例文档应跑数 ↔ 测试源码方法数 ↔ XML 实际执行数）
-- [ ] 核心 AC 至少包含一个负向/失败注入验证（状态非法、参数非法、DB 约束、外部依赖失败、事务回滚等按 Story 选择）
-- [ ] 失败诚实暴露（无"包装通过"）
-- [ ] 无"修复测试"代替"修复代码"（如有，已附理由 + 用户确认）
-- [ ] AC 覆盖率 100%（无 AC 漏测）
-
-**任一未达成 → 测试报告作废，⑤ Coding 必须返工。**
-
-**建议增强（高风险 Story 强制）：** 状态机、资金/权限、核心落库、并发幂等类 Story 必须做轻量突变抽检：临时反转一个关键条件、删除一个必填校验或替换一个错误码，测试必须失败。若突变后仍全绿，说明测试未杀死错误实现，本轮测试无效。
-
-
+> 本 SKILL 不再保留原文。8 类禁止手段（D1-D8）、真实 DB/HTTP 5 类场景（T1-T5）、5 条保障要求、测试真实性门禁 12 项 checkbox、突变抽检建议均已在该 SKILL 完整定义。编码阶段执行第八步测试时按上述章节自检；评审阶段走 code-review-skill。
 
 ---
 
 ## 📋 ⑥bis 编码后全切面一致性核查闸（🔴 CodeReview 硬前置）
 
-> **🔴 【2026-06-06 重大重构】本章定义已迁出到 [`code-review-skill.md` §闸 1 ⑥bis 一致性闸](../../code-review-skill.md)。Coding 阶段自检可参考；评审阶段必须走 code-review-skill.md。**
-
-> **来源：** 原 ae-sdd-skill.md Phase 3 ⑥bis 闸。CodeReview 出具前必须以**当前磁盘代码**为锚反向核查 DR / Story / Task / 测试用例 / 代码 五方一致。
-
-### ⑥bis 编码后全切面一致性核查闸（🔴 CodeReview 的硬前置，每轮编码后强制执行）
-
-> **为什么要这道闸：** Story Review 只在编码前跑、只核 Story↔DR；编码过程会让代码逐步偏离设计（漂移），而原流程没有任何节点在编码后强制回头问"Story / Task / 测试用例 还和代码一致吗"。结果是一个 Story 改了 5 轮、漂移累积、最终要靠外部 Story 来发现。这道闸就是补上这个真空：**每一轮编码完成后，强制以代码为锚反向核查五方一致性，否则不允许进入 CodeReview。**
-
-**触发时机：** ⑥ 完成判定全部通过后、⑦ CodeReview 之前。**每一轮 Coding（含缺陷修复轮）都必须执行，不可因"只改了一点"而跳过。**
-
-**核查方向（关键）：以"实际代码"为锚点，反向核查，而非以文档为锚点。**
-- 错误做法：拿 Story 逐条去代码里找"实现了没" → 容易漏掉代码里多做/做歪但文档没写的部分。
-- 正确做法：拿**代码实际行为**逐条反查 DR / Story / Task / 测试用例，问"这段代码对应哪条设计？设计还和它一致吗？"
-
-**五方核查对象：** DR（真相源基线）、Story、Task、测试用例、实际代码。
-
-**核查范围：🔴 全章节，禁止只核当轮 diff。** 多轮编码下，本轮的改动可能让前几轮已"一致"的章节失效，必须全量回扫（与 [[codereview-full-doc-rescan-gate]] 一致）。
-
-**核查方式：🔴 禁止裸 ✅，每一项结论必须附客观证据（与 [[evidence-bound-check-no-bare-checkmark]] 一致）。**
-
-**产出物：《全切面一致性核查表》**，作为 CodeReview 报告的强制前置章节嵌入（见模板"零、全切面一致性核查表"）。表格逐行以代码为单位：
-
-| 代码位置（文件:行号） | 代码实际行为 | 对应 DR 条款 | 对应 Story 章节 | 对应 Task 章节 | 对应测试用例 ID | 一致性结论 | 证据 |
-|---|---|---|---|---|---|---|---|
-| `XxxService.java:88` | 状态 NEW→DOING | DR-3.2 | Story §4.2 | Task-2 §3 | TC-002 | ✅一致 | 字段类型/取值核对 |
-| `XxxService.java:120` | 多写了一个 audit 字段 | 无 | 无 | 无 | 无 | 🔴漂移(代码多做) | 代码有/设计无 |
-
-**漂移分级与修复闭环：**
-
-| 漂移类型 | 含义 | 处置 |
-|---|---|---|
-| 🔴 代码多做（设计无） | 代码实现了设计里没有的行为 | 判断该行为是否必要：必要→补回 DR/Story/Task；不必要→删代码 |
-| 🔴 代码漏做（设计有） | 设计要求但代码未实现 | 回 Phase 2 补实现 |
-| 🔴 代码做歪（与设计冲突） | 字段类型/状态流转/错误码与设计不符 | 判断对错：设计对→改代码；代码对→按层级回改 DR/Story/Task |
-| 🟠 测试用例未覆盖 | 代码行为无对应测试用例 | 补测试用例并跑通 |
-
-**修复按层级回改（不可只改一处）：** 漂移定位到哪一层就从那一层开始向下级联——
-- DR 层错 → 改 DR → 级联 Story → Task → 代码 → 测试用例；
-- Story 层错 → 改 Story → 级联 Task → 代码 → 测试用例；
-- Task 层错 → 改 Task → 代码 → 测试用例；
-- 代码层错 → 改代码 → 测试用例。
-修复后**重新执行本闸全量核查**，直至核查表无 🔴 漂移。
-
-**🔴 核心落库路径真实 DB 硬门禁：** 凡涉及 INSERT/UPDATE/DELETE 的核心业务路径，核查表对应行的"证据"列**禁止填 Mock 测试结果**，必须填真实 DB（H2/TestContainers）集成测试的落库验证输出（INSERT 后 SELECT 可查到、UPDATE 后字段正确、事务回滚后数据未污染）。全 Mock 的落库路径视为"未验证"，按 🔴 漏做处理。
-
-**出闸条件：** 核查表覆盖全部代码改动 + 无 🔴 漂移 + 核心落库路径有真实 DB 证据。
-**未达标 → 回 Phase 2 修复，不允许进入 CodeReview。**
-
+> **📍 已完整迁出到 [`code-review-skill.md` §闸 1 ⑥bis 一致性闸](../../phase3-review/code-review-skill.md)。**
+>
+> 本 SKILL 不再保留原文。核查方向（以代码为锚反向核查）、五方核查对象、核查表（含"代码实际行为"列）、漂移 4 级分级表、层级回改规则、核心落库路径真实 DB 硬门禁、出闸条件均已在该 SKILL 完整定义。每轮编码完成后按上述章节自检；评审阶段走 code-review-skill。
 
 ---
 
 ## 📋 ⑦bis 全链路对称性核查闸（🔴 流程收尾强制，人工审核前最后一道闸）
 
-> **🔴 【2026-06-06 重大重构】本章定义已迁出到 [`code-review-skill.md` §闸 2 ⑦bis 对称性闸](../../code-review-skill.md)。Coding 阶段自检可参考；评审阶段必须走 code-review-skill.md。**
-
-> **来源：** 原 ae-sdd-skill.md Phase 3 ⑦bis 闸。人工审核点 4 前必须完成，5 层双向追溯无 🔴 断链。
-
-### ⑦bis 全链路对称性核查闸（🔴 流程收尾强制，人工审核前最后一道闸）
-
-> **与 ⑥bis 的分工：** ⑥bis 是"每轮编码后、以代码为锚"查内容漂移；⑦bis 是"流程结束时、以需求为锚"查**结构对称**——DR→Story→Task→实现→测试用例**五层是否一一对应、谁都不多谁都不少**。本质是一张贯穿五层的**需求追溯矩阵**。
-
-**触发时机：** CodeReview 报告出具、产出物对账通过后，人工审核点 4 之前。**最后一轮 Coding 收尾时强制执行。**
-
-**核查目标：双向对称，两个方向都要查——**
-- **正向（自上而下，查"漏"）：** DR 每条业务规则 → 是否都有 Story 承接 → 是否都拆成了 Task → 是否都有代码实现 → 是否都有测试用例覆盖。任一层断链 = 该需求未落地。
-- **反向（自下而上，查"多"）：** 每段代码 / 每个测试用例 → 是否能回溯到 Task → Story → DR。回溯不到 = 凭空多做（无需求来源），需判断删除或补登记。
-
-**产出物：《全链路对称性追溯矩阵》**（追加到 CodeReview 报告或独立 `{STORY-ID}-追溯矩阵.md`）。一行一条 DR 业务规则，五列贯穿：
-
-| 追溯 ID | DR 条款 | Story 章节 | Task | 代码实现(文件:行号) | 测试用例 ID | 对称性结论 |
-|---|---|---|---|---|---|---|
-| T-01 | DR-3.2 状态流转 | §4.2 | Task-2 | `XxxService.java:88` | TC-002 | ✅ 五层贯通 |
-| T-02 | DR-3.5 超时关闭 | §4.5 | Task-4 | （缺） | （缺） | 🔴 断链：未实现 |
-| T-03 | — | — | — | `XxxService.java:120` | — | 🔴 多做：无 DR 来源 |
-
-**断链分级与处置：**
-
-| 断链位置 | 含义 | 处置 |
-|---|---|---|
-| 🔴 DR 有 → Story 无 | 需求未被 Story 承接 | 回 Story 层补（Story Update → Task Generate → Coding） |
-| 🔴 Story 有 → Task 无 | 设计未被拆解 | 回 Task 层补（Task Generate → Coding） |
-| 🔴 Task 有 → 代码无 | 设计未实现 | 回 Phase 2 补实现 |
-| 🔴 代码有 → DR 无（凭空多做） | 实现无需求来源 | 必要→反向补登记 DR/Story/Task；不必要→删代码 |
-| 🟠 实现有 → 测试用例无 | 行为未被验证 | 补测试用例并跑通 |
-
-**核查范围：🔴 全量，覆盖 DR 中本 Story 涉及的全部业务规则**，不只本轮改动。**禁止裸 ✅**：每行"对称性结论"必须能点到具体的 Story 章节号 / Task 编号 / 文件:行号 / 测试用例 ID，点不到的不得标"贯通"。
-
-**出闸条件：** 矩阵覆盖 DR 中本 Story 涉及的全部规则 + 无 🔴 断链（漏做/多做全部闭环）+ 无 🟠 未覆盖（或已补）。
-**未达标 → 按断链层级回改并级联，重新执行本闸，直至五层对称。不允许进入人工审核点 4。**
-
-
+> **📍 已完整迁出到 [`code-review-skill.md` §闸 2 ⑦bis 对称性闸](../../phase3-review/code-review-skill.md)。**
+>
+> 本 SKILL 不再保留原文。五层双向追溯（DR→Story→Task→实现→测试用例）、追溯矩阵、断链 5 级分级与处置表、禁止裸✅、出闸条件均已在该 SKILL 完整定义。流程收尾时按上述章节自检；评审阶段走 code-review-skill。
 
 ---
 
 ## 📋 Coding 问题分层排查与修改链
 
-> **🔴 【2026-06-06 重大重构】本章已整合到 [`code-review-skill.md` §异常路径 A1-A4](../../code-review-skill.md)。Coding 实时追溯链（Task → Story → DR → AI 犯蠢）已统一归口。**
-
 > **来源：** 原 ae-sdd-skill.md "## 异常处理" 章节的 "Coding 问题分层排查与修改链" 小节，与本 SKILL 自身的"异常路径 A1-A4"整合为统一体系。
+>
+> **⚠️ 归属说明（2026-06-30 诚实化）：** 本章是 Coding 阶段异常路径 A2/A3 的**执行细则**，由本 SKILL 持有（code-review-skill.md 未接管，其反向指回本章节）。原 2026-06-06 声明"已整合到 code-review §异常路径 A1-A4"系误标——接收方不存在该章节。保留原文，继续由本 SKILL 负责。
 
 当 Coding 阶段发现问题，按以下顺序逐层排查、针对性修改：
 
@@ -2055,135 +1795,51 @@ TicketPriority priority = TicketPriority.HIGH;  // 枚举值
 
 ---
 
-## 📋 实战闸沉淀（来自 d--Item-document 项目踩坑，🔴 强制）
+## 📋 实战闸沉淀（编码阶段闸，🔴 强制）
 
-> **🔴 【2026-06-06 重大重构】本章 6 闸门全部迁出到 [`code-review-skill.md` §第七步 闸 1-7](../../code-review-skill.md)。保留本章作为"踩坑历史归档"参考；闸门定义以 code-review-skill.md 为准。**
+> **归属说明（2026-06-30 诚实化）：** 本章节含两类闸——
+> - **闸 1/2/3/5**（CR 性质：全文档回扫 / 禁裸✅ / 报告-代码对账 / 核心落库禁全mock）已迁出到 [`code-review-skill.md` §第七步 闸 3/4/5/7](../../phase3-review/code-review-skill.md)，本 SKILL 仅留指针
+> - **闸 4/6/7**（编码阶段闸：交付表 / SKILL级联更新 / 静态扫描）由本 SKILL 持有，code-review 不接管
+>
+> 原 2026-06-06 声明"6 闸门全部迁出"系误标（实列 7 闸，且仅 4 闸属 CR 性质）。
 
-> **来源：** d--Item-document 项目 STORY-002 反复改 5 轮的病根沉淀。这些闸在原项目中已写为 memory 反馈，本次回流到 coding-skill.md 本体，避免在新项目重蹈覆辙。
+### 闸 1：全文档回扫闸
 
-### 闸 1：全切面一致性核查闸前的前置 — 全文档回扫闸（🔴 CodeReview 必跑）
-
-> **来源：** `codereview-full-doc-rescan-gate` — 出 CodeReview 标注"DR-Story-Task 一致 ✅"前，**必须对 Story 主文档全章节回扫**，不能只核对当轮改动范围（diff）就下"三方一致"结论。
-
-**为什么必须有这一步：**
-STORY-002 历轮 CodeReview 都只核了当轮新增范围就标"三方一致 ✅"，实为虚报——A 类"文档落后于代码"债持续累积。改主流程不联动关联章节又产生新矛盾（如 r12 改双边定位但异常表/索引说明/错误码表未同步）。最终被下游 STORY-009 一致性核查揪出 12 项偏差。
-
-**执行步骤：**
-1. 出 CodeReview 前，用关键字回扫主文档全文（**旧端点 / 旧错误码 / 已删除的类名 / 已改类型的字段名 / 已废弃的字段**等），逐处确认是否残留
-2. 改主流程/契约后，必须联动检查所有引用它的章节：**异常流程表 / AC 验收表 / 错误码表 / 索引说明 / 偏离声明 / 未决问题**
-3. 核心落库路径不能只靠 mock 单测 — 测试 schema/DDL 必须与设计 DDL 的 NOT NULL 等约束对齐，并补真实 DB 约束回归测试（mock 会掩盖约束类缺陷）
-4. "三方一致 ✅" 是可证伪的结论，写之前要能列出回扫了哪些关键字、哪些章节，否则不准写
-
-**门禁：**
-- 🔴 未做全文档回扫 → CodeReview 报告作废
-- 🔴 "三方一致"未附回扫证据 → 按 [[evidence-bound-check-no-bare-checkmark]] 整改
+> **📍 已迁出到 [`code-review-skill.md` §闸 3 全文档回扫闸](../../phase3-review/code-review-skill.md)。** 编码阶段自检可参考；评审阶段走 code-review。
 
 ### 闸 2：禁裸 ✅（🔴 任何检查项的 ✅ 必须附客观证据）
 
-> **来源：** `evidence-bound-check-no-bare-checkmark` — 关键检查项（一致性 / 契约对齐 / 落库正确 / 回扫完成等）打 ✅ 时，必须附客观证据，禁止只靠"自我声明"通过。
+> **📍 已迁出到 [`code-review-skill.md` §闸 4 禁裸 ✅ 闸](../../phase3-review/code-review-skill.md)。**
+>
+> **编码阶段就地遵循：** 以下 ✅ 判定都受此闸约束，必须附客观证据（外部契约附报文对照、真实落库附 DB 测试输出、一致性附文件:行号、联动修改附章节清单、回扫附关键字清单）。
 
-**为什么必须有这一步：**
-一个只需要"宣称"就能通过的检查项，在压力下必然被宣称通过。STORY-002 反复改 5 轮的病根之一：CodeReview 的"三方一致✅""契约一致✅"都是裸 ✅，没人要求附证据，于是历轮用"只核当轮 diff"假装通过，债越积越多。
+### 闸 3：报告-代码对账
 
-**执行规范：**
-- **外部契约一致** → 附真实报文 / 官方文档 ↔ 字段逐字段对照表
-- **真实落库正确** → 附真实 DB 集成测试的执行输出（不是 mock 全绿）
-- **DR-Story-Task-代码一致** → 附每个章节的对照结论 + 代码文件:行号（不是 diff 范围）
-- **联动修改完成** → 附"引用该处的章节清单" + 每章同步状态
-- **全文档回扫完成** → 附回扫的关键字清单 + 各处判定结论
-
-**门禁：**
-- 🔴 任何 ✅ 未附证据 → 视为检查未通过，必须补证据
-- 🔴 报告"通过"与"附证据"二选一时，优先"附证据"——证据缺则结论无效
-
-### 闸 3：报告-代码对账（🔴 任何报告必须验证报告项在代码中真实存在）
-
-> **来源：** `feedback_report-code-reconciliation` — Coding/测试/CodeReview 报告完成后必须新增产出物对账环节，验证报告声明项在代码中真实存在。
-
-**为什么必须有这一步：**
-报告与代码可能漂移：报告说"实现了 X"、实际代码没写 / 写错位置 / 写错类。CodeReview 自审时若只看报告不看代码，会批准不存在的实现 → 上线后事故。
-
-**执行规范：**
-- **报告中的每个能力声明** → 必须用 grep 实际验证代码中存在
-  - 工具：`grep -r "方法名" --include="*.java"` / IDE "Find Usages"
-  - 输出：行号 + 代码片段
-- **报告中的每个文件路径** → 必须用 `ls` / 文件管理器验证存在
-- **报告中的每个测试方法** → 必须用 grep 验证 `@Test` 标注 + 类路径真实存在
-- **报告中的每条业务规则** → 必须用 grep 验证规则所在的方法存在
-- **报告与代码不一致** → 必须修正报告或补充代码，二选一，不得跳过
-
-**门禁：**
-- 🔴 报告声明项无代码证据 → 视为报告失真，必须返工
-- 🔴 任何"声称已实现"未 grep 验证 → 视为虚假报告
+> **📍 已迁出到 [`code-review-skill.md` §闸 5 报告-代码对账闸](../../phase3-review/code-review-skill.md)。** 编码阶段自检可参考；评审阶段走 code-review。
 
 ### 闸 4：编码后交付表（🔴 每次写完代码必须输出给用户核查）
 
 > **来源：** `feedback_post-coding-delivery-table` — 每次写完代码后必须按工程调用顺序输出本次修改文件的交付表，表格字段至少含类型、文件路径、变更类型、说明。
 
 **为什么必须有这一步：**
-用户原话："以后每次写完都要写个交付表给我，这样我才好检查代码和提交。" 在多文件、多模块的改动场景下，调用顺序表能让用户直接照着自上而下 diff 校验，避免漏改、漏看、漏提交。
+在多文件、多模块的改动场景下，调用顺序表能让用户直接照着自上而下 diff 校验，避免漏改、漏看、漏提交。
 
 **交付表规范：**
 - **必填列：** 类型 + 文件路径 + 变更类型 + 说明
 - **推荐列：** 所属层级 + 文件完整路径（markdown 链接形式）+ 关键改动（一句话）+ 涉及行号
 - **表格样式：** 与 Coding 报告 `## 2. 分层实现清单` 保持一致，按层级分段输出：`2.1 SPI 层`、`2.2 Domain 层`、`2.3 Application 层`、`2.4 Infrastructure 层`、`2.5 Interfaces/BFF 层`、`2.6 Test 层`、`2.7 文档/配置`。
 - **变更类型枚举：** `新增 / 修改 / 删除 / 无改动 / 仅测试 / 仅文档`。经核对但无需改动的关键文件可写 `无改动`，说明中写清原因。
-- **调用顺序约定（icec-cloud-boss 项目分层架构）：**
-  1. SPI 层（跨服务契约，如有）
-  2. Domain 层（领域模型 / Facade 接口 / Repository 接口）
-  3. Application 层（业务编排 / Orchestrator）
-  4. Infrastructure 层（持久化 / Facade 实现 / Mapper / 外部服务）
-  5. Interfaces/BFF 层（HTTP / JobHandler / BFF 入口）
-  6. Test 层（同各模块的 `src/test`）
-  7. 文档/配置（docs/、`.auto-engineering/`、YAML、DDL 等）
+- **调用顺序约定：** 按项目分层架构（具体顺序见项目资产 §3 分层映射，典型为）：SPI → Domain → Application → Infrastructure → Interfaces/BFF → Test → 文档/配置。
 
-**交付表示例：**
-
-```markdown
-### SPI 层
-
-| 类型 | 文件路径 | 变更类型 | 说明 |
-| --- | --- | --- | --- |
-| SPI 接口 | `icec-cloud-life-spi/icec-cloud-life-im-spi/src/main/java/.../ImSessionService.java` | 修改 | 新增 `getLatestMessageAt` / `batchGetLatestMessageAt` 方法签名 |
-
-### Domain 层
-
-| 类型 | 文件路径 | 变更类型 | 说明 |
-| --- | --- | --- | --- |
-| Facade 接口 | `icec-cloud-life-cs/icec-cloud-life-cs-domain/src/main/java/.../ImSessionServiceFacade.java` | 修改 | CS 防腐层新增 2 个方法 |
-| Repository 接口 | `icec-cloud-life-cs/icec-cloud-life-cs-domain/src/main/java/.../CsTicketRepository.java` | 修改 | 新增 `syncLastMessageAtFromIm(Long ticketId, Date lastMessageAt)` |
-
-### Application 层
-
-| 类型 | 文件路径 | 变更类型 | 说明 |
-| --- | --- | --- | --- |
-| Orchestrator | `icec-cloud-life-cs/icec-cloud-life-cs-application/src/main/java/.../CsTicketCloseOrchestrator.java` | 修改 | CloseContext 加 `lastMessageAt` 字段 |
-```
+> **⚠️ 项目特定示例已抽离：** 历史版本曾用 `icec-cloud-life-cs` 项目具体类名（ImSessionService/CsTicketRepository/CsTicketCloseOrchestrator）作示例，违反"项目经验下沉项目资产"原则，已移至 [`lessons-learned.md` §交付表示例](../../standards/lessons-learned.md)。本 SKILL 保留通用规范。
 
 **门禁：**
 - 🔴 TodoWrite 所有 todo 标 completed 后，最终汇报的第一项必须是交付表
 - 🔴 交付表未按调用顺序排列 → 视为未完成
 
-### 闸 5：核心落库路径禁全 mock（🔴 必须有真实 DB 集成测试覆盖 NOT NULL 等约束）
+### 闸 5：核心落库路径禁全 mock
 
-> **来源：** `test-prefer-real-http` + `story-002-test-process-issue` — 接口测试能走真实 HTTP 的必须走真实 HTTP（SpringBootTest RANDOM_PORT + TestRestTemplate），MockMvc 仅作降级须注明原因；核心落库路径必须用真实 DB 集成测试覆盖 NOT NULL / 唯一约束等。
-
-**为什么必须有这一步：**
-mock 测试会掩盖真实约束类缺陷。STORY-002 落库漏 NOT NULL 字段是被 mock 测试掩盖的——mock 的 Repository.save() 不会触发 DB 约束检查。后续真实运行才暴露 → 必须返工。
-
-**执行规范：**
-- **核心落库路径（涉及资金 / 状态 / 权限的写操作）** → 必须有真实 DB 集成测试
-  - 测试框架：SpringBootTest + 真实 H2 / Testcontainers / 公司测试库
-  - 测试 schema/DDL 必须与设计 DDL 的 NOT NULL / 唯一约束 / 索引对齐
-  - 不得用 `@Disabled` / 注释掉 / 改回 mock 来"让测试通过"
-- **HTTP 接口测试** → 优先 `@SpringBootTest(webEnvironment = RANDOM_PORT) + TestRestTemplate`
-  - 真实走完 Controller → AppService → Domain → Repository → DB 全链路
-  - 验证事务边界、SQL 实际执行、JSON 序列化
-- **MockMvc 降级** → 仅在真实 HTTP 装配不可行时使用，必须在测试注释中说明原因
-
-**门禁：**
-- 🔴 核心落库路径无真实 DB 集成测试 → 视为测试无效
-- 🔴 MockMvc 使用未注明原因 → 视为降级未声明
+> **📍 已迁出到 [`code-review-skill.md` §闸 7 真实 DB/HTTP 覆盖核查闸](../../phase3-review/code-review-skill.md)。** 编码阶段自检可参考；评审阶段走 code-review。
 
 ### 闸 6：SKILL 级联更新（🔴 Story 变更后必须自动级联更新 Task，禁止等用户提醒）
 
@@ -2204,9 +1860,7 @@ SKILL 异常处理链路明确定义了级联关系：Story 更新 → Task 受�
 
 ### 闸 7：🔴 静态扫描（每轮编码完成后强制执行）
 
-> **来源：** `feedback_post-coding-static-scan` — 裸眼自审容易漏"全限定名"、"未使用 import"、"跨层误引用"等细节错误。**Skill 仅承担通用部分**（任何 Java/Spring 项目都适用）；**工程特定部分**（如 `com.casstime.cloud.life.x.y.` 包路径扫描）由项目资产配置。
->
-> **历史教训：** STORY-021-BE 暴露的 `java.util.Date` 全限定名遗漏——line 542 写了 `java.util.Date`，line 64 已有 `import java.util.Date`，`grep "java.util."` 1 秒能 catch，裸眼漏检。
+> **来源：** `feedback_post-coding-static-scan` — 裸眼自审容易漏"全限定名"、"未使用 import"、"跨层误引用"等细节错误。**Skill 仅承担通用部分**（任何 Java/Spring 项目都适用）；**工程特定部分**（如项目专属包路径扫描）由项目资产配置。
 
 **为什么必须有这一步：**
 
@@ -2235,7 +1889,7 @@ grep -rn "^import static " --include="*.java" src/main/java/ | wc -l
 **工程特定静态扫描（项目资产 §6.11 配置）：**
 
 参见 `{project-key}/{project-key}.assets.md` 的"工程特定静态扫描清单"——典型包括：
-- 项目包路径全限定名扫描（如 `com.casstime.cloud.life.x.y.`）
+- 项目包路径全限定名扫描
 - 跨层误引用扫描（如 application 不应 import infrastructure.persistence）
 - SQL 关键字在 Service 层的扫描
 - 项目特有的命名规范扫描
@@ -2252,12 +1906,12 @@ grep -rn "^import static " --include="*.java" src/main/java/ | wc -l
 ---
 
 **与现有 9 步流程的对应：**
-| 实战闸 | 对应步骤 |
-|--------|---------|
-| 闸 1 全文档回扫 | 第九步（一致性闸）前的前置 → CodeReview 必跑 |
-| 闸 2 禁裸 ✅ | 贯穿所有 9 步，所有 ✅ 判定都受此闸约束 |
-| 闸 3 报告-代码对账 | 第八步 bis（测试报告合规性）+ CodeReview 出具前 |
-| 闸 4 交付表 | 第六步（按 Task 生成代码）完成后，作为最终汇报第一项 |
-| 闸 5 禁全 mock | 第七步（编译+启动+接口验证+DB 验证）的 7.5 DB 写操作落库验证 |
-| 闸 6 SKILL 级联 | 异常路径 A5（触发 Story 更新 SKILL）的延伸 → 自动级联 Task |
-| **闸 7 静态扫描** | **第六步（按 Task 顺序生成代码）完成后立即跑（紧跟 Step 9 之后），作为"裸眼自审补强"** |
+| 实战闸 | 归属 | 对应步骤 |
+|--------|------|---------|
+| 闸 1 全文档回扫 | code-review §闸3 | 第九步前的前置 → CodeReview 必跑 |
+| 闸 2 禁裸 ✅ | code-review §闸4（编码就地遵循）| 贯穿所有 9 步 |
+| 闸 3 报告-代码对账 | code-review §闸5 | 第八步 bis + CodeReview 出具前 |
+| 闸 4 交付表 | 本 SKILL | 第六步完成后，作为最终汇报第一项 |
+| 闸 5 禁全 mock | code-review §闸7 | 第七步 7.5 DB 写操作落库验证 |
+| 闸 6 SKILL 级联 | 本 SKILL | 异常路径 A5 延伸 → 自动级联 Task |
+| 闸 7 静态扫描 | 本 SKILL | 第六步完成后立即跑，裸眼自审补强 |

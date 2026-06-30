@@ -29,10 +29,19 @@ def memory_phase_for_state_phase(phase: str) -> Optional[str]:
     return STATE_PHASE_TO_MEMORY_PHASE.get(phase)
 
 
-def is_forward_transition(current_phase: str, target_phase: str) -> bool:
+def is_forward_transition(current_phase: str, target_phase: str,
+                          scale: Optional[str] = None) -> bool:
+    """🆕 v3.5.15：按 state.scale 选子链判定 forward transition。
+
+    旧版用单条 PHASE_FLOW（大链），微链 initialized→coding 在大链是 forward 但语义上
+    也是 forward（微任务正常推进），故行为一致。改为按 scale 选链是为语义清晰 + 与
+    gate_intercept 保持一致。scale 未知时 fallback 大链（最保守）。
+    """
+    from lib.state import PHASE_FLOWS, VALID_SCALES
+    chain = PHASE_FLOWS[scale] if scale in VALID_SCALES else state_mod.PHASE_FLOW
     try:
-        current_idx = state_mod.PHASE_FLOW.index(current_phase)
-        target_idx = state_mod.PHASE_FLOW.index(target_phase)
+        current_idx = chain.index(current_phase)
+        target_idx = chain.index(target_phase)
     except ValueError:
         return False
     return target_idx > current_idx
@@ -54,7 +63,9 @@ def check_state_transition(
             "skipped": True,
             "reason": "no .ae-sdd project context",
         }
-    if not is_forward_transition(current_phase, target_phase):
+    # 🆕 v3.5.15：传 scale 给 is_forward_transition（从 state_data 读）
+    scale = state_data.get("scale")
+    if not is_forward_transition(current_phase, target_phase, scale=scale):
         return {
             "pass": True,
             "blocked": False,

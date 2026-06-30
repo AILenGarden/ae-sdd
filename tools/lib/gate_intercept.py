@@ -263,20 +263,29 @@ def _check_path_permission(
             f"请先完成设计文档，通过 Task Review 后切换到 task-reviewed phase。\n"
             f"切换命令: ae-sdd state write --phase task-reviewed\n"
         )
-    # 🆕 v3.4.0 关卡3：代码改动准入（建议书4）— coding/test-running phase 写 src/ 须有审核点 2.5 确认 token
+    # 🆕 v3.4.0 关卡3：代码改动准入（建议书4）— coding/test-running phase 写 src/ 须有审核点确认 token
+    # 🆕 v3.5.15：按 scale 路由——微链（微任务/BUG/配置类）免 task-reviewed 确认（微任务无 Task/无审核点 2.5），
+    #   改为要求 coding phase 自身确认（审核点 2.5 微任务版 = coding 确认）。
     if phase in ("coding", "test-running") and _is_source_code_path(file_path):
         try:
             from lib import session as session_mod
             if ade_sdd is not None:
                 st = state_mod.read_state(paths.state_path(ade_sdd))
                 current_story = st.get("currentStory", "")
-                # 进 coding phase 前须有 task-reviewed 审核点确认（CodingPlan 评审通过）
-                if not session_mod.is_phase_confirmed(ade_sdd, "task-reviewed", current_story):
+                scale = st.get("scale") or state_mod._resolve_scale(st)
+                # 微链：免 task-reviewed，改要求 coding phase 确认
+                if scale == "微":
+                    required_confirm = "coding"
+                    gate_label = "微任务 coding 准入"
+                else:
+                    required_confirm = "task-reviewed"
+                    gate_label = "审核点 2.5（CodingPlan 评审）"
+                if not session_mod.is_phase_confirmed(ade_sdd, required_confirm, current_story):
                     return False, (
-                        f"代码改动准入未通过：coding phase 写源码须先完成审核点 2.5（CodingPlan 评审）。\n"
+                        f"代码改动准入未通过：{scale}任务 coding phase 写源码须先完成 {gate_label}。\n"
                         f"目标文件: {file_path}\n"
-                        f"用户确认后运行: ae-sdd state confirm --phase task-reviewed --story {current_story or '<STORY-ID>'}\n"
-                        f"（关卡3 代码改动准入，建议书4）"
+                        f"用户确认后运行: ae-sdd state confirm --phase {required_confirm} --story {current_story or '<STORY-ID>'}\n"
+                        f"（关卡3 代码改动准入，建议书4 / 🆕 v3.5.15 scale 路由）"
                     )
         except Exception:
             pass  # session 模块异常不阻断（兜底放行）
@@ -392,10 +401,16 @@ def _check_state_write(
     if not target_phase:
         return True, ""
 
-    from lib.state import PHASE_FLOW
+    from lib.state import PHASE_FLOWS, _resolve_scale
+    # 🆕 v3.5.15：按 state.scale 选子链判定跨步跳跃。
+    #   微链 initialized→coding 是合法单步（idx 0→1），不再被「跨步跳跃」误拦。
+    #   旧 state 无 scale → _resolve_scale 反推（默认大链，最保守）。
+    scale_state = dict(state_data or {"phase": current_phase})
+    scale = _resolve_scale(scale_state)
+    chain = PHASE_FLOWS[scale]
     try:
-        current_idx = PHASE_FLOW.index(current_phase)
-        target_idx = PHASE_FLOW.index(target_phase)
+        current_idx = chain.index(current_phase)
+        target_idx = chain.index(target_phase)
     except ValueError:
         return True, ""
 
@@ -405,8 +420,8 @@ def _check_state_write(
     if target_idx > current_idx + 1:
         steps = target_idx - current_idx
         return False, (
-            f"禁止跨步跳跃（当前 {current_phase} → 目标 {target_phase}，跳了 {steps} 步）。\n"
-            f"必须按顺序切换: {' → '.join(PHASE_FLOW[current_idx:target_idx + 1])}\n"
+            f"禁止跨步跳跃（scale={scale}，当前 {current_phase} → 目标 {target_phase}，跳了 {steps} 步）。\n"
+            f"必须按顺序切换: {' → '.join(chain[current_idx:target_idx + 1])}\n"
         )
 
     # 向前跳 1 步：验证进入条件
@@ -424,19 +439,54 @@ def _check_state_write(
     if memory_result.get("blocked"):
         return False, memory_gate.format_transition_block(memory_result)
 
-    PHASE_ENTRY_GATES: dict[str, list[str]] = {
-        "ra-generated":    ["G-00"],  # 🆕 v3.4.0 RA 阶段入口（G-RA 由 agent 在路由步骤 1.8 手动校验）
-        "dr-generated":    ["G-00", "G-01"],
-        "story-generated": ["G-00", "G-01", "G-02"],
-        "story-reviewed":  ["G-00", "G-02", "G-03"],
-        "task-generated":  ["G-00", "G-03", "G-04"],
-        "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
-        "coding":          ["G-00", "G-07", "G-08"],
-        "test-running":    ["G-00"],
-        "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
-        "completed":       ["G-00", "G-12", "G-13"],
+    # 🆕 v3.5.15：PHASE_ENTRY_GATES 按 scale 路由。
+    #   微链 coding 入口免 G-07/08（微任务无 Task，无 task-reviewed 前置）；
+    #   小链 task-generated 入口含 G-03/G-04（小任务有 Task）；
+    #   中链 story-generated 入口含 G-02（中任务有 Story）。
+    #   旧 state 无 scale → _resolve_scale 已在上方跨步判定时回写，此处读同一 scale。
+    scale_for_gates = scale_state.get("scale") or _resolve_scale(scale_state)
+    PHASE_ENTRY_GATES: dict[str, dict[str, list[str]]] = {
+        "大": {
+            "ra-generated":    ["G-00"],
+            "dr-generated":    ["G-00", "G-01"],
+            "story-generated": ["G-00", "G-01", "G-02"],
+            "story-reviewed":  ["G-00", "G-02", "G-03"],
+            "task-generated":  ["G-00", "G-03", "G-04"],
+            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
+            "coding":          ["G-00", "G-07", "G-08"],
+            "test-running":    ["G-00"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "completed":       ["G-00", "G-12", "G-13"],
+        },
+        "中": {  # 跳过 DR：ra→story，无 dr-generated
+            "ra-generated":    ["G-00"],
+            "story-generated": ["G-00", "G-01", "G-02"],
+            "story-reviewed":  ["G-00", "G-02", "G-03"],
+            "task-generated":  ["G-00", "G-03", "G-04"],
+            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
+            "coding":          ["G-00", "G-07", "G-08"],
+            "test-running":    ["G-00"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "completed":       ["G-00", "G-12", "G-13"],
+        },
+        "小": {  # 跳过 DR/Story：ra→task，无 dr/story
+            "ra-generated":    ["G-00"],
+            "task-generated":  ["G-00", "G-03", "G-04"],
+            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
+            "coding":          ["G-00", "G-07", "G-08"],
+            "test-running":    ["G-00"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "completed":       ["G-00", "G-12", "G-13"],
+        },
+        "微": {  # 跳过 RA/DR/Story/Task：initialized→coding，coding 入口仅 G-00
+            "coding":          ["G-00"],
+            "test-running":    ["G-00"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "completed":       ["G-00", "G-12", "G-13"],
+        },
     }
-    required_gates = PHASE_ENTRY_GATES.get(target_phase, [])
+    scale_gates = PHASE_ENTRY_GATES.get(scale_for_gates, {})
+    required_gates = scale_gates.get(target_phase, [])
     if not required_gates:
         return True, ""
 

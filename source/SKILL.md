@@ -1,13 +1,16 @@
 ---
 name: ae-sdd
-version: 3.5.14
+version: 3.5.15
 description: |
-  端到端自动化工程 SKILL 体系的主入口（v3.5.14）。从 DR 出发，经过 Story 生成、
+  端到端自动化工程 SKILL 体系的主入口（v3.5.15）。从 DR 出发，经过 Story 生成、
   Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、
   "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。
-  支持流程状态跟踪与中断后恢复。v3.5.14 新增 UC-13 门禁注册完整性（AA 第 6 维）——
-  扫 gates.py 里返回 GateResult 的 check 函数是否都注册 GATE_REGISTRY，治 v3.5.12
-  G-09B 类 bug（建了 check 函数但没注册，root 不调即绕过）。v3.5.13 G-09B 升级独立硬门禁。
+  支持流程状态跟踪与中断后恢复。v3.5.15 coding-skill 外科手术式治理——文档瘦身
+  2263→1917 行，5 处"已迁出但保留"幽灵章节兑现迁出声明后降级为指针，缺失执行细则
+  补齐到 code-review-skill，项目特定经验抽离到独立 lessons-learned.md，修复悬空双轨编号。
+  v3.5.15 多入口状态机——单条 PHASE_FLOW 重构为 4 子链 PHASE_FLOWS（大/中/小/微）+ scale 路由，
+  修复微任务 next_step 误建议跑 RA 的可观测 bug，BUG/配置类复用微链。
+  v3.5.14 UC-13 门禁注册完整性（AA 第 6 维）。v3.5.13 G-09B 升级独立硬门禁。
   v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。
   v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
 ---
@@ -145,7 +148,7 @@ ae-sdd assets stats                 # 索引统计
 
 - **任何 `dr-generate-skill` / `story-generate-skill` / `task-generate-skill` 启动前 → 先跑 G-RA**
 - **AI Agent 手动调用**：G-RA 不在 PHASE_ENTRY_GATES（不由 CLI 自动触发）；Agent 在路由步骤 1.8 手动跑 `ae-sdd gate ra-required` 验证，不通过时路由到 `requirement-analysis-skill`
-- 🆕 v3.4.0：RA 需求分析在 `ra-generated` phase 进行（PHASE_FLOW 中 initialized → **ra-generated** → dr-generated）；离开 ra-generated 前自动校验 memory（`STATE_PHASE_TO_MEMORY_PHASE` 含 ra-generated→ra，修复 B3-6）
+- 🆕 v3.4.0：RA 需求分析在 `ra-generated` phase 进行（大/中/小链中 initialized → **ra-generated** → dr-generated/story-generated/task-generated）；离开 ra-generated 前自动校验 memory（`STATE_PHASE_TO_MEMORY_PHASE` 含 ra-generated→ra，修复 B3-6）。🆕 v3.5.15：微链（微任务/BUG/配置类）跳过 ra-generated，initialized → coding 直接编码
 
 ### 详细 SOP
 
@@ -1322,6 +1325,8 @@ AI 在本 SKILL 运行期间，**必须持续维护以下状态**，每个 Story
   "codingRound": "r1",
   "currentPhase": "Phase 1",
   "currentStep": "step-3-testcase",
+  "scale": "大",
+  "entryNode": "PRD",
   "completedSteps": ["step-1-dr2story", "step-2-story-review"],
   "pendingOutputs": {
     "storyDoc": "ae-sdd-doc/iterations/{date}/Story/STORY-010-BE.md",
@@ -1330,6 +1335,19 @@ AI 在本 SKILL 运行期间，**必须持续维护以下状态**，每个 Story
   "lastUpdated": "2026-05-26T10:00:00"
 }
 ```
+
+> **🆕 v3.5.15 多入口状态机（4 子链 + scale 路由）：** `scale` 字段决定走哪条子链，`entryNode` 记入口语义。
+>
+> | scale | 子链（phase 序列） | 适用场景 |
+> |-------|------------------|---------|
+> | 大（11 phase） | initialized→ra→dr→story→story-rev→task→task-rev→coding→test→cr→completed | PRD/中大需求，完整主干 |
+> | 中（10 phase） | initialized→ra→story→story-rev→task→task-rev→coding→test→cr→completed | 中任务，跳过 DR |
+> | 小（8 phase） | initialized→ra→task→task-rev→coding→test→cr→completed | 小任务，跳过 DR/Story |
+> | 微（4 phase） | initialized→coding→test-running→completed | 微任务/BUG/配置类，跳过 RA/DR/Story/Task |
+>
+> - **scale 写入时机**：首次 `ae-sdd state write --phase X --scale <大\|中\|小\|微>` 携带；旧 state 无 scale → 按 completedSteps/phase 反推，默认"大"（最保守）
+> - **entryNode**：FlowNode.value（BUG/CONFIG/PRD/RA/DR/STORY/TASK/PLAN），仅记入口语义，BUG/配置类复用微链
+> - **修复可观测 bug**：微任务停在 initialized 时，`next_step` 建议"进 coding"而非"跑 RA"
 
 > **storyVersion 变更时机：** Story 主文档发生变更（内容修改、补充说明合入）后累加。用于报告文件命名和 DR-Story 一致性追踪。
 > **codingRound 变更时机：** 每次开始新一轮 Coding 实现（不论是因为缺陷修复、增量补充还是重构）前累加。每一轮 Coding 独立出具该轮的 CodeReview 报告。

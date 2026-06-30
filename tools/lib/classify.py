@@ -46,6 +46,7 @@ class Classification:
     next_action: str       # 建议的下一步
     needs_review: bool = False  # 🆕 是否需要人工复核（低置信度）
     review_reasons: list = field(default_factory=list)  # 🆕 复核原因
+    entry_node: Optional[str] = None  # 🆕 v3.5.15 入口节点语义（FlowNode.value，如 BUG/CONFIG/PRD）
 
 
 # ─── 关键词字典（v1.1） ──────────────────────────────────────────────────────
@@ -330,6 +331,26 @@ def classify(text: str, *, filename: Optional[str] = None,
                for r in review_reasons)
     )
 
+    # 🆕 v3.5.15 入口节点语义推断（entry_node，FlowNode.value）
+    # BUG/配置类 → scale="微" + entry_node=BUG/CONFIG（复用微链，不单独开链）
+    # PRD/DR/Issue/对话 → 按 source 映射 FlowNode
+    entry_node: Optional[str] = None
+    text_lower = text.lower()
+    if any(kw in text_lower for kw in ("bug", "缺陷", "故障", "修复", "fix")):
+        entry_node = "BUG"
+        if scale != "微":
+            scale = "微"  # BUG 修复强制微链
+    elif any(kw in text_lower for kw in ("配置", "config", "改个常量", "改个枚举")):
+        entry_node = "CONFIG"
+        if scale != "微":
+            scale = "微"
+    elif source == "PRD":
+        entry_node = "PRD"
+    elif source == "Issue":
+        entry_node = "RA"  # Issue 需求走 RA
+    elif source in ("对话", "未知"):
+        entry_node = "RA"
+
     return Classification(
         source=source,
         scale=scale,
@@ -349,6 +370,7 @@ def classify(text: str, *, filename: Optional[str] = None,
         next_action=next_action,
         needs_review=needs_review,
         review_reasons=review_reasons,
+        entry_node=entry_node,
     )
 
 

@@ -152,6 +152,14 @@ def cmd_state_write(args, parser):
             output.err(msg)
         return 1
     try:
+        # 🆕 v3.5.15：首次 state write 携带 --scale 时写入（幂等：已存在则 warn 不覆盖）
+        if args.scale:
+            existing_scale = s.get("scale")
+            if existing_scale and existing_scale != args.scale:
+                output.warn(f"state 已有 scale={existing_scale}，与本次 --scale={args.scale} 冲突，"
+                            f"保留现有 scale（如需切换请先 set_scale 重置）")
+            else:
+                state.set_scale(s, args.scale, entry_node=args.entry_node)
         changed = state.set_phase(s, args.phase, by="ae-sdd state write")
     except ValueError as e:
         output.err(str(e))
@@ -2406,6 +2414,10 @@ def main() -> int:
     p_state_write.add_argument("--phase", required=True, help="新 phase")
     p_state_write.add_argument("--story", help="当前 Story ID")
     p_state_write.add_argument("--task", help="当前 Task ID")
+    p_state_write.add_argument("--scale", choices=["大", "中", "小", "微"], default=None,
+                               help="🆕 v3.5.15 任务规模（首次 state write 携带，决定走哪条子链）")
+    p_state_write.add_argument("--entry-node", default=None,
+                               help="🆕 v3.5.15 入口节点语义（BUG/CONFIG/PRD/RA/DR/STORY/TASK/PLAN）")
     p_state_write.add_argument("--allow-empty-memory", action="store_true",
                                help="maintenance override: allow phase transition without mandatory memory")
     p_state_write.set_defaults(func=cmd_state_write)

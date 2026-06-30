@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.14（🆕 2026-06-29：新增 UC-13 门禁注册完整性——AA 第 6 维，扫 gates.py 里返回 GateResult 的 check 函数是否都注册 GATE_REGISTRY，治 v3.5.12 G-09B 类 bug（建了 check 函数但没注册 → root 不调即绕过）。已验证：模拟漏注册 check_g09b 场景 UC-13 立即报。前序 v3.5.13 G-09B 升级独立硬门禁（review phase 切相自动跑，堵"root 总派给自己"）；v3.5.12 review-loop CLI + PRD 子系统；v3.5.11 AA 全维对齐验证器（UC-08~12）根治「协议详尽但工具链零落地」体系性病根。AA 接入 `ae-sdd update-check`，任何未来迭代 doc 改了不对齐 CLI 即报。
+> **版本：** v3.5.15（🆕 2026-06-30：① coding-skill 外科手术式治理——文档瘦身 2263→1917 行（-15%），5 处"已迁出但保留"幽灵章节兑现迁出声明后降级为指针；缺失执行细则（5 条保障/12项门禁checkbox/漂移分级表/断链分级表）补齐到 code-review-skill；项目特定经验（STORY 复盘 + icec 类名/版本）抽离到独立 lessons-learned.md；修复悬空双轨编号 7.X(6.X)。核心规则（调用契约/骨架展开/编译验证/grep门禁）原样保留，update-check 13/13 全绿。② 多入口状态机——单条 PHASE_FLOW 重构为 4 子链 PHASE_FLOWS（大/中/小/微）+ scale 路由，修复微任务 next_step 误建议跑 RA 的可观测 bug，BUG/配置类复用微链，旧 state 无 scale 自动反推。前序 v3.5.14 UC-13 门禁注册完整性；v3.5.13 G-09B 升级硬门禁；v3.5.11 AA 全维对齐验证器。
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

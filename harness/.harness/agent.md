@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程 SKILL 体系的主入口（v3.5.14）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。v3.5.14 新增 UC-13 门禁注册完整性（AA 第 6 维）—— 扫 gates.py 里返回 GateResult 的 check 函数是否都注册 GATE_REGISTRY，治 v3.5.12 G-09B 类 bug（建了 check 函数但没注册，root 不调即绕过）。v3.5.13 G-09B 升级独立硬门禁。 v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。 v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
-version: 3.5.14
+description: 端到端自动化工程 SKILL 体系的主入口（v3.5.15）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。v3.5.15 coding-skill 外科手术式治理——文档瘦身 2263→1917 行，5 处"已迁出但保留"幽灵章节兑现迁出声明后降级为指针，缺失执行细则 补齐到 code-review-skill，项目特定经验抽离到独立 lessons-learned.md，修复悬空双轨编号。 v3.5.14 UC-13 门禁注册完整性（AA 第 6 维）。v3.5.13 G-09B 升级独立硬门禁。 v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。 v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
+version: 3.5.15
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@597abf3c8ce1e10164ae0a3a9ddedc7a3bca01ed @ 2026-06-29T17:48:54Z -->
+<!-- # AUTO-GEN @ ae-sdd@ba1d8ce369053064e58c207252b993b7c1f07642 @ 2026-06-30T04:32:03Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-29T17:48:54Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-30T04:32:03Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `597abf3` (3.5.14)
+> 源版本：ae-sdd @ `ba1d8ce` (3.5.15)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-06-29T17:48:54Z
-- 源 ae-sdd 版本：3.5.14
-- 源 ae-sdd commit：597abf3
+- 生成时间：2026-06-30T04:32:03Z
+- 源 ae-sdd 版本：3.5.15
+- 源 ae-sdd commit：ba1d8ce
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

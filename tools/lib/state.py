@@ -8,6 +8,8 @@ Story/Task/Plan 级（txn 级）：
   "version": "1",
   "projectKey": "...",
   "phase": "initialized" | "dr-generated" | ...,
+  "scale": "大"|"中"|"小"|"微",   # 🆕 v3.5.15 任务规模，决定走哪条子链；旧 state 缺失则 _infer_scale 反推
+  "entryNode": "BUG"|"CONFIG"|"PRD"|"RA"|... | null,  # 🆕 v3.5.15 入口节点语义（FlowNode.value）
   "currentStory": "STORY-001" | null,
   "currentTask": "TASK-001" | null,
   "history": [
@@ -28,6 +30,13 @@ Story/Task/Plan 级（txn 级）：
   ]
 }
 
+🆕 v3.5.15 多入口状态机：4 子链 + scale 路由（详见 PHASE_FLOWS 注释）
+  - 大链（11 phase）：initialized→ra→dr→story→...→completed
+  - 中链（10 phase）：跳过 DR
+  - 小链（8 phase）：跳过 DR/Story
+  - 微链（4 phase）：initialized→coding→test-running→completed（BUG/配置类复用）
+  - 旧 state 无 scale → _infer_scale 按 completedSteps/phase 反推，默认"大"（最保守）
+
 PRD 级（.auto-engineering/{PRD-ID}/state.json）：
 同上结构，events 中用 txnName 字段区分不同子任务的事件，
 PRD 自身事件 txnName=null。
@@ -45,22 +54,37 @@ from typing import Optional
 
 from lib.flow_enums import FlowEvent, FlowEventType, FlowNode, FlowSkill  # noqa: F401
 
-# 允许的 phase 流转（v1 简单版）
-# 🆕 v3.4.0：新增 ra-generated（RA 需求分析阶段，在 initialized → dr-generated 之间）
-#   修复 B3-6：ra 阶段 memory 覆盖（STATE_PHASE_TO_MEMORY_PHASE 加 ra-generated→ra）
-PHASE_FLOW = [
-    "initialized",       # ae-sdd init 完成
-    "ra-generated",      # 🆕 v3.4.0 RA 需求分析完成（进 dr-generate 前置）
-    "dr-generated",      # DR 文档生成
-    "story-generated",   # Story 文档生成
-    "story-reviewed",    # Story Review 通过
-    "task-generated",    # Task 文档生成
-    "task-reviewed",     # Task Review 通过
-    "coding",            # 编码中
-    "test-running",      # 测试中
-    "code-reviewed",     # CodeReview 通过
-    "completed",         # 工程完成
-]
+# ─── 🆕 v3.5.15 多入口状态机：4 子链 + scale 路由 ─────────────────────────────
+# 旧版（v3.4.x 及之前）：单条线性 PHASE_FLOW，起点硬编码 initialized、首步强制 ra-generated，
+#   所有规模共用，导致微任务/小任务/BUG 在状态机里"看不见"——next_step 对微任务给"跑 RA"错误建议；
+#   gate_intercept「禁止跨步跳跃」对微任务正经跑 state write --phase coding 会撞墙。
+# v3.5.15：按业务层 4 类需求（大/中/小/微）拆 4 条子链，每条只含该规模真实经过的节点。
+#   scale 由 classify() 判定，首次 state write --scale 携带写入；旧 state 无 scale → _infer_scale 反推。
+#   BUG/配置类 → scale="微" + entryNode=BUG/CONFIG（复用微链，不单独开链）。
+PHASE_FLOWS: dict[str, list[str]] = {
+    "大": [   # 重任务：PRD/中大需求 → RA → DR → Story → Task → Coding 全主干
+        "initialized", "ra-generated", "dr-generated", "story-generated", "story-reviewed",
+        "task-generated", "task-reviewed", "coding", "test-running", "code-reviewed", "completed",
+    ],
+    "中": [   # 中任务：跳过 DR，RA → Story → Task → Coding
+        "initialized", "ra-generated", "story-generated", "story-reviewed",
+        "task-generated", "task-reviewed", "coding", "test-running", "code-reviewed", "completed",
+    ],
+    "小": [   # 小任务：跳过 DR/Story，RA → Task → Coding
+        "initialized", "ra-generated", "task-generated", "task-reviewed",
+        "coding", "test-running", "code-reviewed", "completed",
+    ],
+    "微": [   # 微任务/BUG/配置类：跳过 RA/DR/Story/Task，直接 Coding
+        "initialized", "coding", "test-running", "completed",
+    ],
+}
+
+# 合法 scale 集合（与 classify.py SCALE 值一致）
+VALID_SCALES = ("大", "中", "小", "微")
+
+# 向后兼容别名：旧代码/测试引用 PHASE_FLOW 时仍可用，等价于大链（最保守主干）。
+# 🟡 deprecated：新代码应改用 PHASE_FLOWS[scale]。未来版本删除。
+PHASE_FLOW = PHASE_FLOWS["大"]
 
 
 def read_state(state_path: Path) -> dict:
@@ -70,6 +94,8 @@ def read_state(state_path: Path) -> dict:
             "version": "1",
             "projectKey": None,
             "phase": "initialized",
+            "scale": None,        # 🆕 v3.5.15 任务规模（大/中/小/微），首次 state write 写入
+            "entryNode": None,    # 🆕 v3.5.15 入口节点语义（FlowNode.value，如 BUG/CONFIG/PRD）
             "currentStory": None,
             "currentTask": None,
             "history": [],
@@ -97,19 +123,91 @@ def record_history(state: dict, phase: str, by: str = "ae-sdd") -> None:
     })
 
 
+def _infer_scale(state: dict) -> tuple[str, float, str]:
+    """🆕 v3.5.15 旧 state 兼容：无 scale 字段时按 completedSteps/phase 反推规模。
+
+    推断优先级（任一命中即定）：
+      1. completedSteps 含 dr/story → 大（走完整主干）
+      2. completedSteps 含 story 但无 dr → 中
+      3. completedSteps 含 task 但无 story → 小
+      4. phase ∈ {coding,test-running,code-reviewed,completed} 且 completedSteps 无 ra → 微
+      5. 无法判定 → 默认"大"（最保守，含全主干，避免误放行跳 RA）
+
+    Returns:
+        (scale, confidence, reason)；confidence<0.5 时调用方应 warn 提示用户显式 --scale
+    """
+    completed = state.get("completedSteps") or []
+    completed_text = " ".join(completed)
+    phase = state.get("phase", "initialized")
+
+    has_dr = any("dr" in (s or "").lower() for s in completed)
+    has_story = any("story" in (s or "").lower() for s in completed)
+    has_task = any("task" in (s or "").lower() for s in completed)
+    has_ra = any("ra" in (s or "").lower() for s in completed) or "ra-generated" == phase
+
+    if has_dr:
+        return ("大", 0.9, "completedSteps 含 dr → 大（完整主干）")
+    if has_story:
+        return ("中", 0.85, "completedSteps 含 story 但无 dr → 中")
+    if has_task:
+        return ("小", 0.8, "completedSteps 含 task 但无 story → 小")
+    # 🟡 v3.5.15 安全策略：phase=coding/test-running/code-reviewed 时无法可靠区分
+    #   微链（直跳 coding）vs 大链（走完 task-reviewed 进 coding）——仅凭 phase 会误判。
+    #   故 coding 阶段不推微，默认大（最保守，要求用户显式 --scale 才走微链）。
+    #   微任务应在首次 state write 时显式带 --scale=微，不靠反推。
+    # 默认最保守
+    return ("大", 0.3, "无法判定规模，默认大（最保守，需用户显式 --scale）")
+
+
+def _resolve_scale(state: dict) -> str:
+    """🆕 v3.5.15 解析 state 的 scale：有则用，无则 _infer_scale 推断。
+
+    推断时把推断结果回写 state["scale"]（避免每次重复推断）。
+    """
+    scale = state.get("scale")
+    if scale in VALID_SCALES:
+        return scale
+    scale, _conf, _reason = _infer_scale(state)
+    state["scale"] = scale  # 回写，后续调用直接命中
+    return scale
+
+
+def set_scale(state: dict, scale: str, entry_node: Optional[str] = None) -> None:
+    """🆕 v3.5.15 写入 scale + entryNode（首次 state write --scale 时调用）。
+
+    Args:
+        state: state dict（原地修改）
+        scale: 大/中/小/微
+        entry_node: 入口节点语义（FlowNode.value，如 BUG/CONFIG/PRD/RA/DR/STORY/TASK/PLAN），可选
+
+    Raises:
+        ValueError: scale 不在 VALID_SCALES 中
+    """
+    if scale not in VALID_SCALES:
+        raise ValueError(f"未知 scale: {scale}（允许: {VALID_SCALES}）")
+    state["scale"] = scale
+    if entry_node is not None:
+        state["entryNode"] = entry_node
+
+
 def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
     """
-    设置当前 phase + 记录历史。
+    设置当前 phase + 记录历史（🆕 v3.5.15 按 state.scale 选子链校验）。
 
     Returns:
         True: phase 实际被更新
         False: phase 等于当前值，不重复记录
 
     Raises:
-        ValueError: phase 不在 PHASE_FLOW 中
+        ValueError: phase 不在该 state 所在子链中
     """
-    if phase not in PHASE_FLOW:
-        raise ValueError(f"未知 phase: {phase}（允许: {PHASE_FLOW}）")
+    scale = _resolve_scale(state)
+    chain = PHASE_FLOWS[scale]
+    if phase not in chain:
+        raise ValueError(
+            f"未知 phase: {phase}（scale={scale} 子链允许: {chain}）。"
+            f"若切换规模请先 set_scale；全主干参考: {PHASE_FLOWS['大']}"
+        )
     if state.get("phase") == phase:
         # 重复写：跳过 history 累积
         return False
@@ -118,31 +216,67 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
     return True
 
 
+# ─── 🆕 v3.5.15 各子链 next_step mapping ─────────────────────────────────────
+# key = scale；每条子链独立 mapping，next 与 PHASE_FLOWS[scale] 一致。
+_NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
+    "大": {
+        "initialized":     ("ra-generated",     "跑需求分析（RA）+ G-RA 门卫",            "requirement-analysis-skill.md"),
+        "ra-generated":    ("dr-generated",     "生成 DR（Design Requirement）",          "dr-generate-skill.md"),
+        "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
+        "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
+        "story-reviewed":  ("task-generated",   "生成 Task",                              "testcase-generate-skill.md"),
+        "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
+        "task-reviewed":   ("coding",           "生成 CodingPlan + 编码（⑦ 前置）",        "coding-skill.md"),
+        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+    },
+    "中": {
+        "initialized":     ("ra-generated",     "跑需求分析（RA）+ G-RA 门卫",            "requirement-analysis-skill.md"),
+        "ra-generated":    ("story-generated",  "生成 Story（从 RA，跳过 DR）",            "story-generate-skill.md"),
+        "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
+        "story-reviewed":  ("task-generated",   "生成 Task",                              "testcase-generate-skill.md"),
+        "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
+        "task-reviewed":   ("coding",           "生成 CodingPlan + 编码（⑦ 前置）",        "coding-skill.md"),
+        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+    },
+    "小": {
+        "initialized":     ("ra-generated",     "跑需求分析（RA）+ G-RA 门卫（小任务轻量 RA）", "requirement-analysis-skill.md"),
+        "ra-generated":    ("task-generated",   "生成 Task（跳过 DR/Story）",              "task-generate-skill.md"),
+        "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
+        "task-reviewed":   ("coding",           "生成 CodingPlan + 编码（⑦ 前置）",        "coding-skill.md"),
+        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+    },
+    "微": {
+        "initialized":     ("coding",           "直接编码（微任务/BUG 跳过 RA/DR/Story/Task）", "coding-skill.md"),
+        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+    },
+}
+
+
 def next_step_suggestion(state: dict) -> dict:
     """
-    根据当前 phase 给出下一步建议（v1 简单版）。
+    根据当前 phase 给出下一步建议（🆕 v3.5.15 按 state.scale 选子链 mapping）。
 
     返回 {"current": phase, "next": ..., "action": ..., "skill": "..."}
     - "current": 当前 phase
-    - "next": 下一步要写入的 phase（与 PHASE_FLOW 一致，可直接传给 state write --phase）
+    - "next": 下一步要写入的 phase（与 PHASE_FLOWS[scale] 一致，可直接传给 state write --phase）
     - "action": 建议执行的动作（动词）
     - "skill": 对应的 SKILL 文件
     """
     cur = state.get("phase", "initialized")
-    # next 必须与 PHASE_FLOW 中的 phase 名一致，避免 next-step 建议与 state write 不匹配
-    mapping = {
-        "initialized":     ("ra-generated",     "🆕 v3.4.0 跑需求分析（RA）+ G-RA 门卫",  "requirement-analysis-skill.md"),
-        "ra-generated":    ("dr-generated",     "生成 DR（Design Requirement）",        "dr-generate-skill.md"),
-        "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                  "story-generate-skill.md"),
-        "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
-        "story-reviewed":  ("task-generated",   "生成 Task",                            "testcase-generate-skill.md"),
-        "task-generated":  ("task-reviewed",    "执行 Task Review",                     "task-generate-skill.md"),
-        "task-reviewed":   ("coding",           "生成 CodingPlan + 编码（⑦ 前置）",      "coding-skill.md"),
-        "coding":          ("test-running",     "跑测试 + 出具测试报告",                "coding-skill.md"),
-        "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",         "coding-report-skill.md"),
-        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",          "（人工审核）"),
-        "completed":       ("（已结束）",        "项目工程已完成",                        "—"),
-    }
+    scale = _resolve_scale(state)
+    mapping = _NEXT_STEP_MAPPINGS[scale]
     next_phase, action, skill = mapping.get(cur, ("?", "未知 phase", "?"))
     return {
         "current": cur,
