@@ -184,6 +184,7 @@ def _copy_runtime_scripts_to_dist(repo_root: Path, dst: Path) -> None:
         "plugin_content_scan.py",  # 🆕 B4 增强：外挂内容安全扫描器
         "flow_violation_scan.py",  # 🆕 2026-06-27 RA 流程违规审计扫描器（G-RA-FLOW-VIOLATION 运行时依赖）
         "ra_depth_scan.py",  # 🆕 v3.5.9 RA 机械派生深度扫描器（G-RA-5 运行时依赖，防「形式通过、内容空转」）
+        "ra_implementation_scan.py",  # 🆕 v3.5.18 RA 实现视角完整性扫描器（G-RA-6 运行时依赖）
     ]
 
     copied = []

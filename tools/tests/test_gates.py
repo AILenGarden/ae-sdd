@@ -1,5 +1,5 @@
 """
-test_gates.py — gates.py 单元测试（25 门禁：14 主 G-00~G-13 + 3 中段 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 4 G-RA + 1 G-RA-FLOW-VIOLATION + 1 G-CODE + 1 G-DOC-CONSISTENCY）
+test_gates.py — gates.py 单元测试（29 门禁：14 主 G-00~G-13 + 3 中段 + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B）
 
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
@@ -617,7 +617,8 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.9：+1 G-RA-5（RA 机械派生深度，防「形式通过、内容空转」）= 26
         # 🆕 v3.5.12：+1 G-REVIEW-LOOP（review-loop 退出条件）= 27
         # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
-        self.assertEqual(len(results), 28)
+        # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
+        self.assertEqual(len(results), 29)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -646,8 +647,9 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.9：+1 G-RA-5（RA 机械派生深度，防「形式通过、内容空转」）= 26
         # 🆕 v3.5.12：+1 G-REVIEW-LOOP（review-loop 退出条件）= 27
         # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
-        self.assertEqual(summary["total"], 28)
-        self.assertEqual(summary["passed"] + summary["failed"], 28)
+        # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
+        self.assertEqual(summary["total"], 29)
+        self.assertEqual(summary["passed"] + summary["failed"], 29)
         self.assertIn("results", summary)
 
 
@@ -869,6 +871,91 @@ class TestGRA5(unittest.TestCase):
         r = gates.check_ra_depth(tmp, {"phase": "ra-generated"}, "STORY-001",
                                  master_source=repo_source)
         self.assertFalse(r.pass_, f"空转 RA 应被 G-RA-5 拦截，但 pass_={r.pass_}")
+        self.assertGreater(r.details.get("blockers", 0), 0)
+
+
+def _ra_impl_doc() -> str:
+    """构造一份满足 G-RA-6 实现视角七要素的 RA 片段。"""
+    return """# RA-IMPL-v1
+
+## §9-quater 实现视角七要素
+
+### §9-quater.1 数据源清单
+| 类型 | 名称 | 读/写 | owner | 权威源 | 证据 |
+|------|------|-------|-------|--------|------|
+| DB 表 | im_session | 读写 | IM 服务 | DB | assets/db/schema.md |
+| API 接口 | GET /api/session | 读 | IM 服务 | API | controller path |
+| MQ 事件 | SessionUpdated | 写 | IM 服务 | MQ | topic definition |
+| Redis 缓存 | session:{id} | 读写 | IM 服务 | DB | cache config |
+
+### §9-quater.2 数据流链路
+| 来源 | 入口 | 处理 | 落点 | 输出 | 事务/一致性 | 观测 |
+|------|------|------|------|------|-------------|------|
+| 前端客户端 -> API | GET /api/session | SessionService 领域处理 | DB im_session / Redis 缓存 / MQ | JSON 响应 | DB 事务内写，缓存失效后重建 | 日志/指标/审计 |
+
+### §9-quater.3 术语/定义/不变量
+| 术语 | 定义 | 字段/枚举/状态 | 不变量 | 单位/空值/ID | 权威源 |
+|------|------|----------------|--------|--------------|--------|
+| 会话 | 客服和用户的一次沟通 | status=open/closed | 同一 sessionId 唯一 | ID 为雪花；closedAt 可 null | im_session |
+
+### §9-quater.4 现有实现/复用证据
+| 对象 | 代码/路径/class/method/表/API/assets/git 证据 | 结论 |
+|------|-----------------------------------------------|------|
+| SessionService | src/main/java/SessionService.java, im_session 表, git grep session | 复用并改造 |
+| RoutingAPI | controller path /api/session | 新建适配层 |
+
+### §9-quater.5 高成本/难实现设计反驳
+| 方案 | 成本/风险 | 不采用理由 | 替代/更低成本方案 |
+|------|-----------|------------|-------------------|
+| 重建实时数仓 | 高成本且难实现，影响 MQ 和缓存一致性 | 当前需求只需会话级查询 | 分阶段复用现有 DB + Redis，后续再异步扩展 |
+
+### §9-quater.6 开发者疑问答复矩阵
+| 开发者问题 | 答案/答复 | 证据 | 状态 | 是否阻断 DR |
+|------------|-----------|------|------|------------|
+| sessionId 从哪里来？ | 由现有 im_session 主键生成 | DB 表和代码路径 | 已解决 | 否 |
+| 缓存何时失效？ | 更新事务提交后删除 Redis key | cache config | 已解决 | 否 |
+
+### §9-quater.7 DR 生成交接包
+| DR 输入 | 内容 |
+|---------|------|
+| 接口/API | GET /api/session |
+| 数据模型/表 | im_session + Redis session:{id} |
+| 状态/事务/一致性 | open/closed 状态，DB 事务后发 MQ |
+| 非功能/性能/权限 | P95 200ms，客服权限校验 |
+| 测试/验收 | API 测试、缓存失效测试、状态流转验收 |
+| 迁移/回滚/灰度 | 无历史迁移，灰度按租户开关，异常回滚配置 |
+"""
+
+
+class TestGRA6(unittest.TestCase):
+    """G-RA-6 RA 实现视角完整性通过（v3.5.18 — 支撑 DR/Coding 落地）"""
+
+    def test_no_master_source_skips(self):
+        tmp = _setup_project({})
+        r = gates.check_ra_implementation(tmp, {}, "STORY-001", master_source=None)
+        self.assertTrue(r.details.get("skipped", False))
+
+    def test_pre_ra_no_doc_stub_passes(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({})
+        r = gates.check_ra_implementation(tmp, {"phase": "initialized"}, "STORY-001",
+                                          master_source=repo_source)
+        self.assertTrue(r.details.get("stub"))
+
+    def test_complete_implementation_view_passes(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({"design/RA-impl-v1.0.md": _ra_impl_doc()})
+        r = gates.check_ra_implementation(tmp, {"phase": "ra-generated"}, "STORY-001",
+                                          master_source=repo_source)
+        self.assertTrue(r.pass_, r.message)
+        self.assertEqual(r.details.get("blockers"), 0)
+
+    def test_missing_implementation_view_blocks(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        tmp = _setup_project({"design/RA-impl-v1.0.md": "# RA\n\n## 数据源清单\n只有 DB 表。\n"})
+        r = gates.check_ra_implementation(tmp, {"phase": "ra-generated"}, "STORY-001",
+                                          master_source=repo_source)
+        self.assertFalse(r.pass_, "缺实现视角七要素的 RA 应被 G-RA-6 拦截")
         self.assertGreater(r.details.get("blockers", 0), 0)
 
 

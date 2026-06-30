@@ -67,7 +67,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + 5 G-RA + 1 G-CODE + 1 G-DOC-CONSISTENCY = 25 → v3.5.9 +G-RA-5 = 26）
+# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + G-RA-1~6 + G-RA-FLOW + 1 G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B = 29）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -108,6 +108,9 @@ GATE_REGISTRY: list[dict] = [
     # 5 条规则：D1 §6.5 主规则机械派生 + D2 R′→AC 链接 + D3 §8.6 覆盖率真实重算
     #        + D4 §9-ter 五问机械覆盖 + D5 §9-bis 业务模式六选一
     {"id": "G-RA-5", "name": "RA 机械派生深度通过",  "severity": "blocker"},
+    # 🆕 v3.5.18 RA 实现视角完整性：挖出数据源、数据流、定义/不变量、复用证据、
+    # 高成本/难实现设计反驳、开发者疑问答复、DR 交接包，防 RA 只能写产品话术而无法支撑实现。
+    {"id": "G-RA-6", "name": "RA 实现视角完整性通过",  "severity": "blocker"},
     {"id": "G-CODE-1", "name": "Coding 真实性扫描通过", "severity": "blocker"},
     # 🆕 v3.5.7 项目侧记忆-配置路径一致性：项目 AGENTS.md/.harness/memory/MEMORY.md 等
     # "文档工作区"表述须与 .ae-sdd/config.yaml 的 docWorkspacePath 一致，防旧记忆劫持新配置
@@ -136,7 +139,7 @@ PHASE_PAST_TASK_REVIEW = {
     "task-reviewed", "coding", "test-running", "code-reviewed", "completed",
 }
 
-# CodingPlan 必含章节（按 coding-skill §6.7 ④bis CodingPlan 7 章节）
+# CodingPlan 必含章节（按 coding-skill §5 CodePlan 7 章节，被 coding-process §A 调用）
 CODINGPLAN_REQUIRED_SECTIONS = [
     "文件顺序", "类骨架", "数据", "Mapper SQL", "测试对应", "验证点", "调试回滚",
 ]
@@ -328,14 +331,14 @@ def check_g07(project_dir: Path, st: dict, current_story: str) -> GateResult:
     if cp is None:
         return GateResult("G-07", "CodingPlan 存在", "blocker", False,
                           f"CodingPlan 文档不存在: design/{current_story}-CodingPlan.md",
-                          f"跑 CodingPlan 生成（CodingSkill §6.7）")
+                          f"跑 CodingPlan 生成（CodingProcess §A 调 coding-skill §5）")
 
     content = cp.read_text(encoding="utf-8")
     missing = [s for s in CODINGPLAN_REQUIRED_SECTIONS if s not in content]
     if missing:
         return GateResult("G-07", "CodingPlan 存在", "blocker", False,
                           f"CodingPlan 缺章节: {missing}",
-                          "补全 7 章节（coding-skill §6.7）",
+                          "补全 7 章节（coding-skill §5 CodePlan 7 章节）",
                           details={"missing_sections": missing})
     return GateResult("G-07", "CodingPlan 存在", "blocker", True,
                       f"{cp.name} 7 章节齐全",
@@ -383,7 +386,7 @@ def check_g12(project_dir: Path, st: dict, current_story: str) -> GateResult:
 
 
 # ─── G-08：解析 CodingPlan 14 门禁表 ─────────────────────────────────────────
-# 按 coding-skill §6.7 ④bis CodingPlan 14 门禁必含关键词
+# 按 coding-skill §5 CodePlan 14 门禁必含关键词
 CODINGPLAN_14GATES_KEYWORDS = [
     "DR-Story-Task",     # 1. 三层链路追溯
     "AC 100%",            # 2. AC 100% 覆盖
@@ -412,7 +415,7 @@ def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
     if cp is None:
         return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
                           f"CodingPlan 文档不存在",
-                          f"先生成 {current_story}-CodingPlan.md（coding-skill §6.7）")
+                          f"先生成 {current_story}-CodingPlan.md（coding-process §A 调 coding-skill §5）")
 
     content = cp.read_text(encoding="utf-8")
 
@@ -421,7 +424,7 @@ def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
     if missing_kw:
         return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
                           f"CodingPlan 缺 14 门禁关键词: {missing_kw}",
-                          f"补全 14 门禁表（coding-skill §6.7）",
+                          f"补全 14 门禁表（coding-skill §5.2 CodePlan 门禁）",
                           details={"missing_keywords": missing_kw})
 
     # 2. 统计 ✅ / ❌ / 🟡 标记 — 必须有 ≥ 14 条状态记录
@@ -1286,6 +1289,103 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
                                "blockers": 0, "total": n_total})
 
 
+# ─── G-RA-6：RA 实现视角完整性通过（v3.5.18 — 支撑 DR/Coding 落地）───────
+# G-RA-5 证明"衍生有深度"，本门禁证明"实现能落地"：RA 必须给出数据源清单、
+# 数据流链路、术语/定义/不变量、现有实现/复用证据、高成本/难实现设计反驳、
+# 开发者疑问答复矩阵、DR 生成交接包。否则下游 DR 只能补猜。
+def _locate_ra_implementation_scanner(master_source: Optional[Path]) -> Optional[Path]:
+    """在母版找 ra_implementation_scan.py（G-RA-6 运行时依赖，🆕 v3.5.18）。"""
+    return _locate_runtime_script(master_source, "ra_implementation_scan.py")
+
+
+def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
+                            master_source: Optional[Path] = None) -> GateResult:
+    """G-RA-6 RA 实现视角完整性通过（🆕 v3.5.18）。
+
+    调 ra_implementation_scan.py 跑 I1~I7：
+      I1 数据源清单
+      I2 数据流链路
+      I3 术语/定义/不变量
+      I4 现有实现/复用证据
+      I5 高成本/难实现设计反驳
+      I6 开发者疑问答复矩阵
+      I7 DR 生成交接包
+    BLOCKER=0 → pass；BLOCKER>0 → blocker。
+    """
+    name = "RA 实现视角完整性通过"
+    phase = st.get("phase", "initialized")
+    pre_ra_phases = {"initialized", "ra-generated"}
+
+    scanner = _locate_ra_implementation_scanner(master_source)
+    if scanner is None:
+        return GateResult("G-RA-6", name, "blocker", True,
+                          "未找到母版 ra_implementation_scan.py（跳过）",
+                          action="确认母版路径",
+                          details={"scanned": False, "skipped": True, "stub": True})
+
+    ra_files = _iter_ra_files(project_dir)
+    if not ra_files and phase in pre_ra_phases:
+        return GateResult("G-RA-6", name, "blocker", True,
+                          "pre-RA 阶段无 RA 文档（stub 通过）",
+                          details={"scanned": False, "stub": True, "phase": phase})
+
+    try:
+        result = _subprocess.run(
+            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except _subprocess.TimeoutExpired:
+        return GateResult("G-RA-6", name, "blocker", False,
+                          "ra_implementation_scan.py 跑超过 60 秒",
+                          "缩小扫描范围或增加超时")
+    except Exception as e:
+        return GateResult("G-RA-6", name, "blocker", False,
+                          f"扫描器异常: {e}",
+                          "检查 ra_implementation_scan.py 是否可执行")
+
+    try:
+        report = _json.loads(result.stdout) if result.stdout else {}
+    except _json.JSONDecodeError as e:
+        return GateResult("G-RA-6", name, "blocker", False,
+                          f"扫描器 JSON 输出无法解析: {e}",
+                          f"stdout 前 200 字符: {result.stdout[:200]}")
+
+    status = report.get("status", "UNKNOWN")
+    ra_files_scanned = report.get("raFiles", 0)
+    blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
+    n_total = len(report.get("findings", []))
+
+    if ra_files_scanned == 0:
+        return GateResult("G-RA-6", name, "blocker", True,
+                          "无 RA 文档可扫描（依赖 G-RA-1 判定）",
+                          details={"scanned": True, "ra_files": 0, "stub": True})
+
+    if status != "PASS" or blockers > 0:
+        blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
+                                if f.get("severity") == "BLOCKER"})
+        sample_locations = []
+        for f in [x for x in report.get("findings", []) if x.get("severity") == "BLOCKER"][:5]:
+            loc = f.get("path") or f.get("file") or "?"
+            line = f.get("line") or ""
+            msg = (f.get("message") or "")[:90]
+            sample_locations.append(f"{loc}" + (f":{line}" if line else "") + (f" — {msg}" if msg else ""))
+        msg = f"RA 实现视角扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}"
+        if sample_locations:
+            msg += f" | 示例定位：{sample_locations}"
+        return GateResult("G-RA-6", name, "blocker", False,
+                          msg,
+                          "补全数据源/数据流/定义/复用证据/成本反驳/开发者疑问/DR 交接包后重跑",
+                          details={"scanned": True, "ra_files": ra_files_scanned,
+                                   "blockers": blockers, "total": n_total,
+                                   "blocker_rules": blocker_rules,
+                                   "sample_locations": sample_locations})
+
+    return GateResult("G-RA-6", name, "blocker", True,
+                      f"RA 实现视角扫描通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
+                      details={"scanned": True, "ra_files": ra_files_scanned,
+                               "blockers": 0, "total": n_total})
+
+
 # ─── G-14：CodingPlan-Story 一致性（建议书4 G-08-15）─────────────────────────
 # CodingPlan 涉及的接口/DO/AC 必须与 Story 可对应；偏离项须有 Proposal 引用。
 # 设计在 ④bis（CodingPlan 生成）→ ⑤ Coding 之间硬拦截。
@@ -1990,7 +2090,7 @@ CHECK_FUNCS: dict[str, Callable] = {
 # ─── 主入口 ─────────────────────────────────────────────────────────────────
 def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
               project_key: str, only: Optional[str] = None) -> list[GateResult]:
-    """跑全部门禁（14 主门禁 + 4 G-RA + G-CODE）；only 指定时只跑那一个"""
+    """跑全部门禁（14 主门禁 + G-RA + G-CODE 等）；only 指定时只跑那一个"""
     results: list[GateResult] = []
 
     # 读 state（如果 .ae-sdd 存在）
@@ -2023,6 +2123,9 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
         elif g["id"] == "G-RA-5":
             # 🆕 v3.5.9 G-RA-5 需要 master_source 调 ra_depth_scan.py
             results.append(check_ra_depth(project_dir, st, current_story, master_source=master_source))
+        elif g["id"] == "G-RA-6":
+            # 🆕 v3.5.18 G-RA-6 需要 master_source 调 ra_implementation_scan.py
+            results.append(check_ra_implementation(project_dir, st, current_story, master_source=master_source))
         elif g["id"] == "G-CODE-1":
             # G-CODE-1 需要 master_source 调 coding_authenticity_scan.py
             results.append(check_gcode1(project_dir, st, current_story, master_source=master_source))

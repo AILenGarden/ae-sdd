@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程 SKILL 体系的主入口（v3.5.16）。从 DR 出发，经过 Story 生成、 Review、Task 生成、Coding、测试，直到全部通过。当开发者说"启动自动化工程"、 "从 DR 开始实现"、"端到端实现"、"继续流程"、"继续上次"、"/ae-sdd" 时触发。 支持流程状态跟踪与中断后恢复。v3.5.16 Task→Coding 解耦——插入独立流程节点 CodingProcess （加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan），coding-skill.Plan 契约剥离， state 4子链插 coding-process phase，关卡3 硬层产物校验 + stop_check 软层自报标记两层监督。 v3.5.15 coding-skill 外科手术治理 + 多入口状态机 4 子链。 v3.5.14 UC-13 门禁注册完整性（AA 第 6 维）。v3.5.13 G-09B 升级独立硬门禁。 v3.5.12 review-loop 编排层 CLI + PRD 子系统补全。 v3.5.11 AA 全维对齐验证器（UC-08~12）。版本变更日志见 source/CHANGELOG/。
-version: 3.5.16
+description: 端到端自动化工程主入口（v3.6.1）。从 DR/PRD 出发，经 Story→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测）， 并要求 RA 通过实现视角七要素/G-RA-6（数据源、数据流、定义、复用证据、成本反驳、开发疑问、DR交接）。 v3.6.1 CodingSKILL 拆分——共有能力库新增 §13 语言/项目适配器注册加载协议（按项目技术栈叠加适配器， 如 Java3D 适配器承载 Java+icec/life 编码决策知识层；适配器走现有 skill-new 注册，AI 运行时叠加，零 loader 改动）。
+version: 3.6.1
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@5714a6ef3f3dba7d45e44bb623596b543d676322 @ 2026-06-30T07:37:55Z -->
+<!-- # AUTO-GEN @ ae-sdd@33bf74e7015e68b0d3909a97e03a2d496a29a2a2 @ 2026-06-30T11:21:35Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-30T07:37:55Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-30T11:21:35Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `5714a6e` (3.5.16)
+> 源版本：ae-sdd @ `33bf74e` (3.6.1)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-06-30T07:37:55Z
-- 源 ae-sdd 版本：3.5.16
-- 源 ae-sdd commit：5714a6e
+- 生成时间：2026-06-30T11:21:35Z
+- 源 ae-sdd 版本：3.6.1
+- 源 ae-sdd commit：33bf74e
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

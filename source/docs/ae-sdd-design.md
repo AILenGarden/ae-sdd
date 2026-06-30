@@ -42,6 +42,7 @@
 - 两套并存，4 维判定优先；来源/规模不明时 fallback 到 4 类需求
 - 路由表 20+ 关键词触发词，微任务和 BUG/配置类豁免 G-RA 前置
 - CLI：`ae-sdd classify --text "..."` 输出判定结果
+- 🆕 v3.6（规划中）：路由决策算法重写为**双层裁定**——第一层任务类型（ae-sdd 自更新→交接 update-skill 监管器休眠 / 编码→第二层）；第二层任务规格（已有 PRD=大→入口 RA / 已有 DR=中→入口 DR / 已有 Story=小→入口 Story / BUG 修复=微→入口 Task）；**新需求无 PRD 强制阻断**（不允许新功能无 PRD 直接进 RA 系列，PRD 是所有新需求的唯一起点）；路由决策整合进主流程监管器 5 步启动序列 Step 3（见 §主流程监管器）
 
 **颗粒度与边界**：路由到节点级（requirement-analysis / dr-generate / story-generate / task-generate / coding），不进行节点内子步骤路由；路由决策权归 ae-sdd 流程与用户，不归 AI 临时直觉。
 
@@ -65,6 +66,7 @@
 - 🆕 v3.4.0：PHASE_FLOW 新增 `ra-generated`（initialized → ra-generated → dr-generated），RA 阶段 memory 强制（修复 B3-6）；审核点 token 机制（`ae-sdd state confirm --phase <审核点>` 写 session.json 的 userConfirmedPhases，防 AI 自填，关卡3 校验）
 - 🆕 v3.5.15：单条 PHASE_FLOW → 4 子链 PHASE_FLOWS（大11/中10/小8/微4 phase），按 scale 路由。微链 initialized→coding 合法单步（修复微任务 next_step 误建议跑 RA 的可观测 bug）；BUG/配置类复用微链（entryNode 标 BUG/CONFIG）。旧 state 无 scale → `_infer_scale` 按 completedSteps 反推，默认"大"（最保守）。`PHASE_FLOW` 保留为大链别名（向后兼容）
 - CLI：`ae-sdd state read / write / next-step / confirm / validate / show / diff / lock`
+- 🆕 v3.6（规划中）：`paused` 新增为一级 phase，任何 phase 可跳入，不在 PHASE_FLOWS 子链中；新增字段：`pausedFromPhase`（暂停前 phase，续接恢复目标）/ `pauseReason`（`level3-escalation` | `user-rejected` | `user-manual`）/ `correctionCounts`（各 phase 矫正次数，主流程监管器 Level 2 矫正每次 +1，超 3 次触发 Level 3 暂停）；新增 CLI API：`state write --paused` / `state write --resume`；PHASE_PERMIT 补 `paused: frozenset()`（禁所有写操作）
 
 **颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；多个 Story 的 state 文件互不干扰；state 仅记录进度，不存储业务产物内容。
 
@@ -331,3 +333,113 @@ v3.4.0 引入 PRD 级 state.json + 11 phase 状态机（`initialized → ra-gene
 | 用户确认审核点时记录 `user-confirmed` | ae-sdd-update-skill §审核点双支柱 | ❌ 后续 PR |
 
 **当前 schema 已就绪，lib 测试已通过（32/32 PASS）**——一旦后续 PR 接入调用方，events 立即生效，无需 schema 升级。
+
+---
+
+## Hook 层（三层拦截体系）
+
+> 三个 Claude Code hook 实现物理级流程纪律，覆盖工具调用拦截、上下文注入、响应后校验三个时机。
+
+**是什么**：hook 层是 ae-sdd 流程纪律的"物理防线"，不依赖 LLM 自律。三个 hook 分别在工具调用前 / 用户消息提交前 / AI 回复结束后触发，实现工具权限管控、状态上下文注入、响应合规校验。
+
+**设计实现**：
+
+- **PreToolUse hook**（`tools/lib/gate_intercept.py`）：AI 每次调用工具前触发。按 `PHASE_PERMIT` 字典按 phase 限定允许工具集（如 design 阶段禁止 Bash；`code-reviewed` 阶段禁止改源码）；只读工具（Read/Grep/Glob 等）任何 phase 放行；`paused` phase 禁止全部写操作（v3.6 新增）。链式 Bash 命令绕过防护（v1.4：含 `&&`/`||`/`;`/`|` 的命令不认为只读）；快速通道状态经 `.ae-sdd/.quick_channel` 文件跨 hook 共享；输入 stdin JSON（`hook_event_name / tool_name / tool_input`），拒绝时输出 `permissionDecision: "deny"` + `systemMessage`，exit 始终 0
+- **UserPromptSubmit hook**（`tools/lib/prompt_inject.py`）：用户每次提交消息前触发。功能：① 读 state.json 注入当前阶段 + 下一步 + SKILL 路径上下文；② 检测 `/ae-sdd` 触发词注入入口凭证强提醒（关卡 1）；③ 快速通道标记写入 `.quick_channel`；④ 重置 Stop hook 重试计数；⑤ plugin_loader 解析 SKILL 文件路径（B1 修复）。输出 `additionalContext` 追加到对话上下文，AI 可见用户不可见
+  - 🆕 v3.6（规划中）：新增主流程监管器主逻辑——每轮执行 gates check + 偏移检测 + 矫正注入（见 §流程偏移检测与矫正）；废弃 `◆ STATE:` 自报依赖（决策 1B），改为纯产物核查
+- **Stop hook**（`tools/lib/stop_check.py`）：AI 每次回复结束后触发。防无限循环：`.stop_retry_count` 持久化计数，MAX_RETRY=2，用户每轮发消息时重置；v1.3：只检查最后一段 AI 响应（不全文搜索）；v1.4：优先读 `last_assistant_message` 字段，降级为 transcript_path 解析
+  - 当前检测 `◆ STATE:` / `◆ LOADED:` 自报标记（stop_check.py 自注"防君子不防小人，可谎报"）
+  - 🆕 v3.6（规划中）：废弃自报标记（决策 1B）；Stop hook 职责简化为检测 AI 结构性错误（空响应 / 截断）；流程合规性检测整体转移到 UserPromptSubmit hook
+- **安装**：`ae-sdd init-hooks` 写 PreToolUse / UserPromptSubmit / Stop 三段配置到 `.claude/settings.json`
+- **快速通道**：用户显式说 `/ae-sdd-quick` → `.quick_channel` 写入 → PreToolUse 跳过 phase 工具拦截（产物落地关卡仍生效）
+
+**颗粒度与边界**：hook 层只做物理拦截（工具权限 / 上下文注入 / 结构校验），不做业务逻辑判断（业务规则在 SKILL.md + CLI gates）；hook 任何异常降级不阻断主流程（全流程 try/except，exit 始终 0）；改 hook 须同步 HARNESS.md HS 规则；禁止手工编辑已安装的 hook 脚本，改完须重跑 `ae-sdd init-hooks` 重新写入。
+
+---
+
+## 主流程监管器（🆕 v3.6 规划中）
+
+> /ae-sdd 触发后全生命周期的编排角色，负责工作区初始化、资产检查、智能路由、各系列循环执行、收尾交付，不执行任何具体业务工作。
+
+**是什么**：主流程监管器是 ae-sdd 的"项目经理"——只管"下一步该做什么、由谁做、做完了没有"，不参与 RA 分析、Story 编写、代码实现等具体工作。定义在 SKILL.md，执行实体在 UserPromptSubmit hook Python 逻辑（决策 2B）。
+
+**设计实现**：
+
+5 步标准启动序列（替换现有 §🔴 第一动作）：
+- **Step 1 工作区确认与初始化**：检查 `.ae-sdd/` 是否存在；不存在→调 `ae-sdd init <dir> <key>` 创建 state.json + session.json 空模板；已存在→读 state，`phase=paused` 时播报暂停原因并等用户选择（恢复/新任务/查看状态），`phase=in-progress` 时自动续接（输出续接播报）
+- **Step 2 项目资产检查（G-00）**：`ae-sdd gates check --only G-00`；不通过→路由到 `project-assets-update-skill §3` 生成；生成完成 + 用户确认→继续
+- **Step 3 智能路由（双层裁定）**：第一层任务类型（ae-sdd 自更新→交接 update-skill 监管器休眠 / 编码→第二层）；第二层任务规格（已有 PRD=大→RA / 已有 DR=中→DR / 已有 Story=小→Story / BUG 修复=微→Task / 新需求无 PRD→阻断）；写 `state.json: scale + entryNode + phase`；领取 entry token：`ae-sdd enter <key> [--story <ID>]`
+- **Step 4 主流程监管器执行编码流程**：按 scale 子链逐系列执行（见每系列执行协议）
+- **Step 5 收尾交付**：⑦ter 合规自检→⑧完成输出→`state.phase=completed`→监管器退出，输出交付报告
+
+每系列执行协议（sub-step 0~5）：
+- sub-step 0：`/compact` 上下文清理（**每系列必做**，防跨系列上下文污染）
+- sub-step 1：SKILL 调用声明（格式：调用 / 理由 / 期望产出 / 完成后 state 推进方向）
+- sub-step 2：调用 generate-skill + agent-orchestration-skill，等待 sub-agent 报告，→ 产物核查（gates check）
+- sub-step 3：调用 review-skill + agent-orchestration-skill，汇总错误报告，→ 产物核查
+- sub-step 4：Loop 控制（有错误且矫正次数 < 3 → 重回 sub-step 2；矫正次数 = 3 → Level 3 暂停；连续 3 轮无新错误 → 退出）
+- sub-step 5：人工审核（播报本系列产物摘要 → 等待用户 ✅/⚠️/❌ → 推进/带意见重跑/paused）
+
+标准化续接播报格式：
+```
+【流程已恢复 — 主流程监管器续接】
+项目 Key：{projectKey}  |  Story ID：{STORY-ID}  |  规模：{大/中/小/微}
+当前阶段：{phase 中文名}  |  已完成系列：{列表}
+下一步：将调用 {SKILL 名}，原因：{reason}
+```
+
+SKILL 调用声明格式（每次加载子 SKILL 前输出）：
+```
+【主流程监管器 → 调用 SKILL】
+调用：{skill-name}  |  理由：{路由决策或错误报告原因}
+期望产出：{产出物列表}
+完成后：state.phase 推进至 {X}，下一步 {Y}
+```
+
+**颗粒度与边界**：监管器角色定义在 SKILL.md，执行实体在 UserPromptSubmit hook（Python，决策 2B）；监管器不执行业务工作，只做编排 + 校验；ae-sdd 自更新触发时监管器休眠（流程控制权全部交接给 update-skill，含收尾）；监管器退出条件：`phase=completed` 或用户手动中止；每系列入口必做 compact（不可跳过，防上下文污染）。
+
+---
+
+## 流程偏移检测与矫正（🆕 v3.6 规划中）
+
+> 识别 AI 在执行过程中的语义漂移行为（跳步 / 停滞 / 伪完成 / 旁路），按 3 级矫正机制自动纠正，超出阈值升级人工干预并暂停流程。
+
+**是什么**：流程偏移分两类：物理越权（已由 PreToolUse hook 拦截）和语义漂移（本模块处理）。语义漂移指 AI 工具调用合规但行为偏离监管器期望路径，包括跳步、停滞、伪完成、旁路 4 种。
+
+**设计实现**：
+
+漂移类型：
+- **B1 跳步漂移**：AI 跳过 Review 直接宣布进入下一系列
+- **B2 停滞漂移**：同一 phase 经过 N 轮，产物始终未通过 gates check（N=5）
+- **B3 伪完成漂移**：AI 声称完成某阶段但对应产物门禁未通过（原依赖 `◆ STATE:` 自报检测，v3.6 废弃，改为纯产物核查，决策 1B）
+- **B4 旁路漂移**：用户问题外话，AI 回答后未主动回到流程
+
+检测机制（UserPromptSubmit hook 每轮执行，决策 2B）：
+- **Layer 1 产物核查**（解决 B1/B3）：依据 `phase_gate_map`（phase→gate_id 映射表）跑 `ae-sdd gates check --only {gate_id}`，timeout=10s 超时降级跳过；不通过即判定漂移；不信任 AI 自报（决策 1B）
+- **Layer 2 轮次停滞检测**（解决 B2/B4）：`correctionCounts[current_phase] ≥ 5` 触发 stagnation 告警；`correctionCounts[current_phase] ≥ 3` 且同一门禁持续不通过 → Level 3 升级
+
+矫正机制：
+- **Level 1 静默注入**（severity=1）：下一轮 UserPromptSubmit `additionalContext` 注入当前 phase + 待完成步骤提醒，用户不可见，AI 可感知
+- **Level 2 矫正提示词**（severity=2）：监管器在对话中直接输出"【主流程监管器 🔴 矫正】检测到 {drift_type}，当前有效 phase={X}，请继续执行 {SKILL}，完成 {missing_product}"；同一步骤最多触发 3 次
+- **Level 3 人工升级暂停**（severity=3）：Level 2 矫正 3 次未收敛 → 写 `state.phase=paused`（含 `pausedFromPhase` + `pauseReason=level3-escalation`）→ 输出暂停报告请用户决策（继续 / 跳过 / 回退 / 修改产物）
+
+实现结构：
+- `tools/lib/flow_monitor.py`（**新建**）：`DriftResult` 数据类（`drift_type / severity / gate_result / message`）/ `detect_drift(state, gate_results) → DriftResult` / `build_correction_message(drift, state) → str` / `get_phase_gate_map() → dict` / `should_escalate(state) → bool`
+- `tools/lib/prompt_inject.py`（扩展）：新增 `_run_flow_monitor(ade_sdd, master) → Optional[str]`，每轮 UserPromptSubmit 执行；全流程 try/except，任何异常降级为 None 不阻断主流程；severity≥2 的矫正文本追加到 `additionalContext`；severity=3 同时调 `state.pause_state()` 写 state.json
+- `tools/lib/stop_check.py`（精简）：删除 `◆ STATE:` / `◆ LOADED:` 检测；职责简化为防空响应 + 防无限循环；流程合规检测整体交 UserPromptSubmit hook
+
+phase → gate 映射（`get_phase_gate_map()` 返回值）：
+
+| phase | 对应 gate_id |
+|---|---|
+| ra-generated | G-RA-1, G-RA-2, G-RA-3, G-RA-4 |
+| dr-generated | G-01 |
+| story-generated | G-02 |
+| story-reviewed | G-03 |
+| task-generated | G-04 |
+| coding-process | G-08 |
+| coding | G-CODEPLAN-SRC |
+| code-reviewed | G-05 |
+| test-running | G-09 |
+
+**颗粒度与边界**：只检测语义漂移（物理越权由 PreToolUse 拦截）；gates check 结果为唯一权威判定，不信任 AI 自报（决策 1B）；`correctionCounts` 写入 state.json 跨 session 持久化；flow_monitor.py 是纯计算模块（只返回结论，不直接写 state），写 state 由 prompt_inject.py 调用 state API 执行；Level 3 暂停后 Step 1 续接检测自动识别 `phase=paused` 并播报。

@@ -74,6 +74,7 @@ PHASE_PERMIT: dict[str, frozenset[str]] = {
     "test-running":    frozenset({"Write", "Edit", "MultiEdit", "Bash"}),
     "code-reviewed":   frozenset({"Write", "Edit", "MultiEdit"}),
     "completed":       frozenset(),
+    "paused":          frozenset(),  # 🆕 v3.6 paused 阶段禁止所有写操作，仅允许只读工具
 }
 
 # 只读工具（任何 phase 都允许）

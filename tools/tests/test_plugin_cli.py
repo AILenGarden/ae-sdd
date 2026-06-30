@@ -71,14 +71,20 @@ class TestPluginList(unittest.TestCase):
     """ae-sdd plugin list tests."""
 
     def test_list_no_layers(self):
+        # L1/L2 无注册表；母版 L3 自 v3.6.1 起注册了 java3d-coding-skill（首例 skill-new 适配器）。
+        # 本测试校验"L1/L2 干净 + L3 仅母版官方插件"的基线。
         proc = run_ae_sdd("plugin", "list", "--json", expect_returncode=0)
         data = json.loads(proc.stdout)
-        self.assertEqual(data["totalPlugins"], 0)
+        self.assertEqual(data["totalPlugins"], 1)
         self.assertEqual(data["totalConflicts"], 0)
         self.assertEqual(len(data["layers"]), 3)
-        # All 3 layers should be "exists: false"
-        for layer in data["layers"]:
-            self.assertFalse(layer["exists"])
+        # L1-project / L2-global 应不存在；L3-master 应存在且有母版官方插件
+        l1 = next(l for l in data["layers"] if l["layer"] == 1)
+        l2 = next(l for l in data["layers"] if l["layer"] == 2)
+        l3 = next(l for l in data["layers"] if l["layer"] == 3)
+        self.assertFalse(l1["exists"])
+        self.assertFalse(l2["exists"])
+        self.assertTrue(l3["exists"])
 
     def test_list_human_readable(self):
         proc = run_ae_sdd("plugin", "list", expect_returncode=0)
@@ -95,10 +101,11 @@ class TestPluginValidate(unittest.TestCase):
     """ae-sdd plugin validate tests."""
 
     def test_validate_no_layers_passes(self):
+        # 母版 L3 自 v3.6.1 注册 java3d-coding-skill（valid 应通过，totalPlugins=1）
         proc = run_ae_sdd("plugin", "validate", "--json", expect_returncode=0)
         data = json.loads(proc.stdout)
         self.assertTrue(data["valid"])
-        self.assertEqual(data["totalPlugins"], 0)
+        self.assertEqual(data["totalPlugins"], 1)
 
     def test_validate_human_readable_passes(self):
         proc = run_ae_sdd("plugin", "validate", expect_returncode=0)

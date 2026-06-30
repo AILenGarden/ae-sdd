@@ -1,18 +1,22 @@
 """
-stop_check.py — Stop hook v1.3
+stop_check.py — Stop hook v2.0（🆕 v3.6 精简）
 
-v1.3 修正（2026-06-22）：
-  - 修复历史状态头误判：只检查 transcript 最后一段 AI 响应，不全文搜索
-  - 支持多种 transcript 格式（JSONL / 纯文本带角色标记 / 回退全文）
+v2.0 变更（2026-06-30，决策 1B）：
+  - 废弃 ◆ STATE: / ◆ LOADED: 自报标记检测（"防君子不防小人，可谎报"，已由 flow_monitor 产物核查替代）
+  - 废弃 _verify_gate_claims()（gate 自报交叉验证）、_check_loaded_marker()（LOADED 标记）
+  - check_output() 职责简化为：
+      1. 检测空响应 / 结构性错误（AI 截断）→ 重试
+      2. 检测 PRD compact 失败（HS-8，保留）
+      3. 其余情况放行（流程合规性已由 UserPromptSubmit hook + flow_monitor 接管）
+  - 保留：MAX_RETRY 防无限循环 / extract_last_assistant_text() 工具函数
 
-v1.2 修正（2026-06-22）：
-  - stdin 读取 JSON，从 transcript_path 文件读对话记录
-  - 输出 JSON 格式，exit 始终 0
-  - 防无限循环：用 .ae-sdd/.stop_retry_count 文件持久化计数
-
-v1.4 修正（2026-06-27）：
+v1.4 变更（2026-06-27）：
   - CLI 入口优先使用 Claude Code Stop hook 的 last_assistant_message 字段
   - last_assistant_message 不存在时，保留 transcript_path 解析作为旧版回退
+
+v1.3 变更（2026-06-22）：
+  - 修复历史状态头误判：只检查 transcript 最后一段 AI 响应，不全文搜索
+  - 支持多种 transcript 格式（JSONL / 纯文本带角色标记 / 回退全文）
 """
 from __future__ import annotations
 
@@ -20,18 +24,6 @@ import json
 import re
 from pathlib import Path
 from typing import Optional
-
-# 状态头必须包含的标记
-_STATE_HEADER_RE = re.compile(r"◆\s*STATE\s*:", re.MULTILINE)
-
-# 🆕 v3.5.16 C2 软层自报标记：coding/coding-process phase 须声明加载了对应 SKILL
-# （防君子不防小人——可谎报，但提高绕过成本，与 ◆ GATE: 校验同性质）
-_LOADED_RE = re.compile(r"◆\s*LOADED\s*:\s*(coding-skill\.md|coding-process-skill\.md)", re.MULTILINE)
-# coding/coding-process phase 要求的 LOADED 标记
-_PHASE_REQUIRED_LOADED = {
-    "coding-process": "coding-process-skill.md",
-    "coding": "coding-skill.md",
-}
 
 # 防无限循环：最大重试次数
 MAX_RETRY = 2
@@ -155,10 +147,17 @@ def check_output(
     ade_sdd: Optional[Path] = None,
 ) -> tuple[bool, str]:
     """
-    检查 transcript 最后一段 AI 响应是否包含状态头。
+    检查 AI 响应是否存在结构性错误（v2.0 精简版）。
+
+    🆕 v3.6（决策 1B）：废弃自报标记检测（◆ STATE: / ◆ GATE: / ◆ LOADED:）。
+    流程合规性检测已全部转移到 UserPromptSubmit hook（flow_monitor + prompt_inject）。
+    本函数只负责：
+      1. 空响应 / 结构性截断检测 → 重试（防 AI 输出残缺）
+      2. PRD compact 失败检测（HS-8，保留）→ 重试
+      3. 其余情况放行（allow stop）
 
     Args:
-        transcript_content: last_assistant_message 文本；旧版回退时为 transcript_path 读取的完整对话记录
+        transcript_content: last_assistant_message 文本；旧版回退时为 transcript_path 完整对话
         ade_sdd:            .ae-sdd/ 路径。None = 非 ae-sdd 项目，直接放行
 
     Returns:
@@ -170,169 +169,33 @@ def check_output(
     if ade_sdd is None:
         return True, ""
 
-    # 只检查最后一段 AI 响应
-    last_response = extract_last_assistant_text(transcript_content)
-    if _STATE_HEADER_RE.search(last_response):
-        # 🆕 v3.4.0 F-1 修复：状态头存在时，交叉验证 ◆ GATE: 声明与实际文档一致
-        gate_issue = _verify_gate_claims(last_response, ade_sdd)
-        if gate_issue:
-            # GATE 声明与实际不符 → 阻止停止（防 AI 谎报 GATE 状态，建议书3 F-1）
-            count = get_retry_count(ade_sdd)
-            if count >= MAX_RETRY:
-                return True, ""
-            increment_retry(ade_sdd)
-            return False, gate_issue
-        # 🆕 v3.5.4 HS-8：状态头通过后，检测 PRD compact 失败（卡在 awaiting_compact 无 summary.md）
-        compact_issue = _check_compact_failure(ade_sdd)
-        if compact_issue:
-            count = get_retry_count(ade_sdd)
-            if count >= MAX_RETRY:
-                return True, ""  # 达重试上限，放行避免无限循环
-            increment_retry(ade_sdd)
-            return False, compact_issue
-        # 🆕 v3.5.16 C2 软层：coding/coding-process phase 须含 ◆ LOADED 自报标记
-        # （防 AI 凭记忆写代码绕过 SKILL；可谎报但提高成本，compact 后可能失效属已知限制）
-        loaded_issue = _check_loaded_marker(last_response, ade_sdd)
-        if loaded_issue:
-            count = get_retry_count(ade_sdd)
-            if count >= MAX_RETRY:
-                return True, ""
-            increment_retry(ade_sdd)
-            return False, loaded_issue
-        return True, ""
-
-    # 防无限循环
+    # 防无限循环：先读计数，达上限直接放行
     count = get_retry_count(ade_sdd)
     if count >= MAX_RETRY:
         return True, ""
-    increment_retry(ade_sdd)
 
-    msg = (
-        "[ae-sdd harness] 响应缺少状态头，请在本次响应末尾补充：\n"
-        "◆ STATE:  <phase>/<story>\n"
-        "◆ GATE:   ✅ CLEAR | 🔴 BLOCKED(<gate-id>)\n"
-        "◆ LAST:   <刚完成的操作>\n"
-        "◆ NEXT:   <下一个必须做的操作>\n"
-    )
-    return False, msg
+    # 检查 1：空响应 / 结构性截断
+    last_response = extract_last_assistant_text(transcript_content)
+    if not last_response.strip():
+        increment_retry(ade_sdd)
+        return False, (
+            "[ae-sdd harness] Stop hook：检测到空响应，可能 AI 输出被截断。\n"
+            "请重新生成完整响应。"
+        )
 
+    # 检查 2：PRD compact 失败（HS-8，保留）
+    compact_issue = _check_compact_failure(ade_sdd)
+    if compact_issue:
+        increment_retry(ade_sdd)
+        return False, compact_issue
 
-# ─── 🆕 v3.4.0 F-1 修复：GATE 声明交叉验证（建议书3 §5 F-1）─────────────────
-_GATE_LINE_RE = re.compile(r"◆\s*GATE\s*:([^\n]*)", re.MULTILINE)
-_G08_CLEAR_RE = re.compile(r"G[-_]?08[^✅❌]*✅|✅[^✅❌]*G[-_]?08", re.IGNORECASE)
-# 🆕 v3.5.10 Gap-012：原 _G08_CLEAR_RE 只覆盖 G-08 一个 gate，其余 25 个 gate 的 ✅ 声明
-# AI 可任意谎报不被发现。扩展为通用模式，命中任一 G-XX ✅ 声明都跑对应真实 check。
-# 支持格式：G-08 ✅ / G08 ✅ / G-RA-3 ✅ / G-CODEPLAN-SRC ✅ / ✅ G-08 等
-_GATE_CLEAR_RE = re.compile(
-    r"(G[-_](?:00|0[1-9]|1[0-4]|RA[-_]?\d|RA[-_]?FLOW[-_]?VIOLATION|"
-    r"CODEPLAN[-_]?SRC|DOC[-_]?STORAGE|DOC[-_]?CONSISTENCY|PATH|CODE[-_]?1))"
-    r"[^✅❌]*✅|✅[^✅❌]*"
-    r"(G[-_](?:00|0[1-9]|1[0-4]|RA[-_]?[1-5]|RA[-_]?FLOW[-_]?VIOLATION|"
-    r"CODEPLAN[-_]?SRC|DOC[-_]?STORAGE|DOC[-_]?CONSISTENCY|PATH|CODE[-_]?1))",
-    re.IGNORECASE,
-)
-# 🆕 v3.5.10 Gap-012：可谎报校验的 gate 白名单（这些 gate 有"产物存在/Review 通过"语义，
-# AI 容易谎报；G-00/G-PATH 等无产物校验语义的不在此列，避免无意义校验）
-_VERIFIABLE_GATE_IDS = {
-    "G-01", "G-02", "G-03", "G-04", "G-05", "G-06", "G-07", "G-08",
-    "G-09", "G-10", "G-11", "G-12", "G-13", "G-14",
-    "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5",
-}
-# gate id → 规范化（去分隔符）映射，用于从 CLEAR_RE 命中串里反查 gate id
-def _normalize_gate_id(raw: str) -> str:
-    """G-08 / G08 / g-08 → G-08；G-RA-3 / GRA3 → G-RA-3。"""
-    s = re.sub(r"[\s_]", "", raw).upper()
-    s = s.replace("G-", "G").replace("G", "G-", 1) if s.startswith("G") and not s.startswith("G-") else s
-    # 重新规范化：G00→G-00, G08→G-08, GRA1→G-RA-1, GCODEPLANSCR→G-CODEPLAN-SRC
-    s2 = re.sub(r"[\s_-]", "", raw).upper()
-    mapping = {
-        "G00": "G-00", "G01": "G-01", "G02": "G-02", "G03": "G-03", "G04": "G-04",
-        "G05": "G-05", "G06": "G-06", "G07": "G-07", "G08": "G-08", "G09": "G-09",
-        "G10": "G-10", "G11": "G-11", "G12": "G-12", "G13": "G-13", "G14": "G-14",
-        "GRA1": "G-RA-1", "GRA2": "G-RA-2", "GRA3": "G-RA-3", "GRA4": "G-RA-4", "GRA5": "G-RA-5",
-    }
-    return mapping.get(s2, raw)
+    # 其余情况放行（流程合规性由 UserPromptSubmit hook + flow_monitor 负责）
+    return True, ""
 
 
-def _verify_gate_claims(last_response: str, ade_sdd: Optional[Path]) -> str:
-    """交叉验证 AI 自报的 ◆ GATE: 声明与实际文档/状态一致（防谎报，建议书3 F-1）。
-
-    覆盖范围（🆕 v3.5.10 Gap-012 扩展）：
-    - 原 v3.4.0：仅 G-08 ✅ CLEAR 声明 → 校验 CodingPlan 14 关键词
-    - v3.5.10：扩展到全部 _VERIFIABLE_GATE_IDS（19 个 gate），任一 ✅ 声明都跑真实 check
-      AI 谎报任一 gate 通过但实际未过 → 阻断
-
-    返回非空字符串 = 阻断原因；空字符串 = 通过。
-    """
-    if ade_sdd is None:
-        return ""
-
-    gate_line_match = _GATE_LINE_RE.search(last_response)
-    if gate_line_match is None:
-        return ""  # 无 GATE 声明，不校验（向后兼容）
-
-    gate_line = gate_line_match.group(1)
-
-    # 🆕 v3.5.10 Gap-012：通用 gate ✅ 声明校验（覆盖 19 个可谎报 gate）
-    # 先用通用正则找出所有命中的 gate，逐个跑真实 check
-    claimed_gates: list[str] = []
-    for m in _GATE_CLEAR_RE.finditer(gate_line):
-        # 取两个分组中非空的那个
-        raw = m.group(1) or m.group(2) or ""
-        gid = _normalize_gate_id(raw)
-        if gid in _VERIFIABLE_GATE_IDS and gid not in claimed_gates:
-            claimed_gates.append(gid)
-
-    if claimed_gates:
-        try:
-            from lib import paths, state as state_mod, gates as gates_mod
-            st = state_mod.read_state(paths.state_path(ade_sdd))
-            current_story = st.get("currentStory", "") or ""
-            project_dir = paths.project_root(ade_sdd)
-            master = paths.locate_master_source()
-
-            # gate id → check 函数名映射（与 GATE_REGISTRY 对齐）
-            check_fn_map = {
-                "G-01": "check_g01", "G-02": "check_g02", "G-03": "check_g03",
-                "G-04": "check_g04", "G-05": "check_g05", "G-06": "check_g06",
-                "G-07": "check_g07", "G-08": "check_g08", "G-09": "check_g09",
-                "G-10": "check_g10", "G-11": "check_g11", "G-12": "check_g12",
-                "G-13": "check_g13", "G-14": "check_g14",
-                "G-RA-1": "check_ra_required", "G-RA-2": "check_ra_dimensions",
-                "G-RA-3": "check_ra_derivatives",
-                "G-RA-4": "check_ra_authenticity", "G-RA-5": "check_ra_depth",
-            }
-            for gid in claimed_gates:
-                fn_name = check_fn_map.get(gid)
-                if not fn_name:
-                    continue
-                fn = getattr(gates_mod, fn_name, None)
-                if fn is None:
-                    continue
-                try:
-                    # 不同 check 函数签名不同，统一尝试 4 种调用形式
-                    try:
-                        r = fn(project_dir, st, current_story)
-                    except TypeError:
-                        try:
-                            r = fn(project_dir, st, current_story, master)
-                        except TypeError:
-                            r = fn(project_dir, st, current_story, master, None)
-                except Exception:
-                    continue  # 校验异常不阻断（兜底放行）
-                if not r.pass_:
-                    return (
-                        f"[ae-sdd harness] GATE 声明与实际不符：AI 声称 {gid} ✅ CLEAR，"
-                        f"但实际 {gid} 未通过（{r.message}）（F-1 假门禁修复 v3.5.10）。\n"
-                        "请勿谎报 GATE 状态；修复对应门禁后再声明 ✅。"
-                    )
-        except Exception:
-            return ""  # 校验异常不阻断（兜底放行）
-
-    return ""
-
-
-# ─── 🆕 v3.5.4 HS-8：compact 失败检测（Stop hook 阻断 + 报警）──────────────────
+# ─── 🆕 v3.5.4 HS-8：compact 失败检测（Stop hook 保留）────────────────────────
+# 本函数保留：PRD compact 卡在 awaiting_compact 属于"session 结束前必须处理"的场景，
+# 与流程合规性无关，由 Stop hook 兜底仍有价值。
 def _check_compact_failure(ade_sdd: Optional[Path]) -> str:
     """HS-8：检测 PRD 级 compact 卡在 awaiting_compact 中途态。
 
@@ -385,36 +248,3 @@ def _check_compact_failure(ade_sdd: Optional[Path]) -> str:
     except Exception:
         return ""  # 检测异常不阻断（兜底放行）
 
-
-# ─── 🆕 v3.5.16 C2 软层自报标记校验 ─────────────────────────────────────────
-def _check_loaded_marker(last_response: str, ade_sdd: Optional[Path]) -> str:
-    """C2：coding/coding-process phase 的 AI 响应须含 ◆ LOADED: <skill>.md 自报标记。
-
-    防君子不防小人——AI 可谎报（与 ◆ GATE: 校验同性质），但提高绕过成本。
-    compact 后历史可能丢失此标记属已知限制（硬层关卡3 产物校验不依赖 transcript，兜底保护）。
-
-    命中标记或非 coding/coding-process phase → 返回空串（放行）。
-    缺失标记 → 返回补头要求（阻止 session 结束）。
-    """
-    if ade_sdd is None:
-        return ""
-    try:
-        from lib import paths, state as state_mod
-        st = state_mod.read_state(paths.state_path(ade_sdd))
-        phase = st.get("phase", "")
-        required_skill = _PHASE_REQUIRED_LOADED.get(phase)
-        if not required_skill:
-            return ""  # 非 coding/coding-process phase，不校验
-        # 校验响应含对应 skill 的 LOADED 标记
-        match = _LOADED_RE.search(last_response)
-        if match and match.group(1) == required_skill:
-            return ""  # 标记匹配，放行
-        return (
-            "[ae-sdd harness] 🆕 v3.5.16 C2 软层校验：当前处于 "
-            f"{phase} phase，响应须含自报标记：\n"
-            f"◆ LOADED: {required_skill}\n"
-            f"（证明已加载 {required_skill}，防凭记忆绕过 CodingProcess/CodingSkill；"
-            "可谎报但提高成本，与 ◆ GATE: 校验同性质）"
-        )
-    except Exception:
-        return ""  # 检测异常不阻断（兜底放行）

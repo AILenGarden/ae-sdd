@@ -330,25 +330,35 @@ class TestStopCheck:
         should_stop, _ = check_output(transcript, ade_sdd=ae_sdd)
         assert should_stop
 
-    def test_without_state_header_blocks_stop(self, tmp_path):
+    def test_without_state_header_allows_stop(self, tmp_path):
+        """v3.6（决策 1B）：废弃 ◆ STATE 自报标记检测——最新响应无状态头 → 放行。
+
+        流程合规性已由 UserPromptSubmit hook（flow_monitor 产物核查）接管，
+        Stop hook 不再校验自报标记。
+        """
         from lib.stop_check import check_output
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
 
         transcript = "我已经帮你完成了任务，代码写好了。"
         should_stop, msg = check_output(transcript, ade_sdd=ae_sdd)
-        assert not should_stop
-        assert "◆ STATE" in msg
+        assert should_stop, "v3.6 废弃自报标记：无状态头应放行"
+        assert msg == ""
 
-    def test_retry_count_increments_on_each_block(self, tmp_path):
+    def test_retry_count_increments_on_truncation_block(self, tmp_path):
+        """v3.6：重试计数仅在结构性阻断（空响应/截断/HS-8 compact 失败）时递增。
+
+        废弃自报标记后，普通无状态头响应不再阻断、不再递增计数；
+        只有真正被截断的空响应才阻断并递增。
+        """
         from lib.stop_check import check_output, get_retry_count
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
 
-        transcript = "没有状态头"
-        check_output(transcript, ade_sdd=ae_sdd)
+        # 空响应（结构性截断）→ 阻断 + 递增计数
+        check_output("", ade_sdd=ae_sdd)
         assert get_retry_count(ae_sdd) == 1
-        check_output(transcript, ade_sdd=ae_sdd)
+        check_output("   \n  ", ade_sdd=ae_sdd)
         assert get_retry_count(ae_sdd) == 2
 
     def test_max_retry_prevents_infinite_loop(self, tmp_path):

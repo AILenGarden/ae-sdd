@@ -4,8 +4,8 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 门禁检查（pre-flight；v3.5.14 共 28 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
-               G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~5 + G-RA-FLOW-VIOLATION +
+  - gates    : 门禁检查（pre-flight；v3.5.18 共 29 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
+               G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION +
                G-CODE-1 + G-REVIEW-LOOP）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
 
@@ -16,11 +16,12 @@ ae-sdd — ae-sdd CLI 入口
   - iteration-check : 设计-实现一致性深度体检（v3.5.4，IC-1~4 机器粗筛）
   - context-pressure : 节点级上下文压力软提示（v3.5.5，6 审核点边界）
   - ra-depth-scan : RA 机械派生深度扫描（v3.5.9，G-RA-5 D1-D5）
+  - ra-implementation-scan : RA 实现视角完整性扫描（v3.5.18，G-RA-6 I1-I7）
   - flow-violation-scan : RA 流程违规扫描（v3.5.6，G-RA-FLOW-VIOLATION）
   - review-loop : review-loop CLI + verify-exit（v3.5.12，G-REVIEW-LOOP 兜底）
 
 🆕 v3.2 G-RA（2026-06-24）：
-  - gate ra-required : 需求分析准入门卫（进 dr/story/task-generate 前必过 G-RA-1~4）
+  - gate ra-required : 需求分析准入门卫（进 dr/story/task-generate 前必过 G-RA-1~6 + FLOW）
 🆕 v3.2.1 G-CODE（2026-06-24）：
   - gate coding-required : Coding 真实性门卫（Coding 完成/CodeReview 前必过 G-CODE-1）
 🆕 v3.2 更新图谱（2026-06-24）：
@@ -43,7 +44,7 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd state read
     ae-sdd state next-step
     ae-sdd gates check [--only G-00]
-    ae-sdd gate ra-required [--project <key>]   # 跑 G-RA-1~4（SKILL.md §🛡️ G-RA 契约）
+    ae-sdd gate ra-required [--project <key>]   # 跑 G-RA-1~6 + FLOW（SKILL.md §🛡️ G-RA 契约）
     ae-sdd gate coding-required [--project <dir>] # 跑 G-CODE-1（Coding 反模式扫描）
     ae-sdd update-check [--only UC-01]          # 更新闭环检查（v3.2）
     ae-sdd bump 3.5.1                            # 同步三处版本号（v3.2.5）
@@ -427,7 +428,8 @@ def cmd_gates_check(args, parser):
 def cmd_gate_ra_required(args, parser):
     """gate ra-required — 需求分析准入门卫（SKILL.md §🛡️ G-RA 契约）
 
-    跑 G-RA-1~4 四个 RA 门禁：RA 文档存在 / 8 维度完整 / 衍生章节完整 / 真实性扫描。
+    跑 G-RA-1~6 + FLOW：RA 文档存在 / 8 维度完整 / 衍生章节完整 /
+    真实性扫描 / 机械派生深度 / 实现视角完整性 / 流程违规审计。
     进 dr-generate / story-generate / task-generate 前必过（微任务/BUG 豁免）。
     """
     master = paths.locate_master_source()
@@ -443,10 +445,18 @@ def cmd_gate_ra_required(args, parser):
     if not project_key:
         project_key = "unknown"
 
-    ra_gate_ids = ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"]
+    ra_gate_ids = [
+        "G-RA-1",
+        "G-RA-2",
+        "G-RA-3",
+        "G-RA-4",
+        "G-RA-FLOW-VIOLATION",
+        "G-RA-5",
+        "G-RA-6",
+    ]
     results = []
     for gid in ra_gate_ids:
-        # G-RA-4 需要 master_source 调扫描器（与 check_all 的 G-09/G-RA-4 特判一致）
+        # 多个 G-RA 门禁需要 master_source 调扫描器；统一走 check_all 特判。
         r = gates.check_all(master, ade_sdd, project_key, only=gid)
         results.extend(r)
 
@@ -877,6 +887,65 @@ def cmd_ra_depth_scan(args, parser):
         output.info(f"阻断违规：{report.get('blockers', 0)} / 警告违规：{report.get('warnings', 0)}")
         output.info(f"各规则命中：D1={rule_stats.get('D1', 0)} D2={rule_stats.get('D2', 0)} "
                     f"D3={rule_stats.get('D3', 0)} D4={rule_stats.get('D4', 0)} D5={rule_stats.get('D5', 0)}")
+        findings = report.get("findings", [])
+        if findings:
+            output.info("")
+            output.info("违规清单：")
+            for f in findings:
+                icon = "🔴" if f.get("severity") == "BLOCKER" else "🟡"
+                output.info(f"  {icon} [{f.get('rule')}] {f.get('path')}:{f.get('line')}")
+                output.info(f"      {f.get('message')}")
+
+    return 1 if report.get("status") == "FAIL" and args.strict else (1 if report.get("blockers", 0) > 0 else 0)
+
+
+def cmd_ra_implementation_scan(args, parser):
+    """ra-implementation-scan — RA 实现视角完整性扫描（🆕 v3.5.18）
+
+    调 scripts/ra_implementation_scan.py 跑 7 条实现视角规则（I1-I7）扫描 RA 文档：
+    数据源清单、数据流链路、术语/定义/不变量、现有实现/复用证据、高成本设计反驳、
+    开发者疑问答复矩阵、DR 生成交接包。与 gates check --only G-RA-6 内部调同一脚本。
+    """
+    import subprocess
+    master = paths.locate_master_source()
+    candidates = []
+    if master:
+        candidates = [master.parent / "scripts" / "ra_implementation_scan.py",
+                      master / "scripts" / "ra_implementation_scan.py"]
+    candidates.append(Path("scripts/ra_implementation_scan.py"))
+    scanner = next((c for c in candidates if c.is_file()), None)
+    if scanner is None:
+        output.error(f"未找到 ra_implementation_scan.py（候选：{candidates}）")
+        return 2
+
+    root = args.root or str(Path.cwd())
+    cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    except subprocess.TimeoutExpired:
+        output.error("ra_implementation_scan.py 跑超过 120 秒")
+        return 3
+
+    report = {}
+    if args.json:
+        sys.stdout.write(result.stdout)
+        try:
+            report = json.loads(result.stdout) if result.stdout else {}
+        except json.JSONDecodeError:
+            pass
+    else:
+        try:
+            report = json.loads(result.stdout) if result.stdout else {}
+        except json.JSONDecodeError:
+            output.error(f"扫描器 JSON 输出无法解析：{result.stdout[:200]}")
+            return 4
+        rule_stats = report.get("ruleStats", {})
+        output.info("🆕 v3.5.18 RA 实现视角完整性扫描（I1-I7，7 条规则）")
+        output.info(f"扫描根：{report.get('root', root)}")
+        output.info(f"RA 文件数：{report.get('raFiles', 0)}")
+        output.info(f"状态：{report.get('status', 'UNKNOWN')}")
+        output.info(f"阻断违规：{report.get('blockers', 0)} / 警告违规：{report.get('warnings', 0)}")
+        output.info(f"规则失败：{rule_stats.get('rulesFailed', 0)} / 7 / 警告规则：{rule_stats.get('rulesWarned', 0)} / 7")
         findings = report.get("findings", [])
         if findings:
             output.info("")
@@ -2475,7 +2544,7 @@ def main() -> int:
     p_runtime_compact.set_defaults(func=cmd_runtime_compact)
 
     # gates
-    p_gates = sub.add_parser("gates", help="门禁检查（28 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~5 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP）", parents=[common])
+    p_gates = sub.add_parser("gates", help="门禁检查（29 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP）", parents=[common])
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
     p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")
@@ -2484,7 +2553,7 @@ def main() -> int:
     # gate ra-required（v3.2 — SKILL.md §🛡️ G-RA 准入门卫契约）
     p_gate = sub.add_parser("gate", help="单门卫检查（如 ra-required）", parents=[common])
     gate_sub = p_gate.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
-    p_gate_ra = gate_sub.add_parser("ra-required", help="需求分析准入门卫（G-RA-1~4）",
+    p_gate_ra = gate_sub.add_parser("ra-required", help="需求分析准入门卫（G-RA-1~6 + FLOW）",
                                      parents=[common])
     p_gate_ra.add_argument("--project", default="", help="项目根目录（默认 cwd）")
     p_gate_ra.set_defaults(func=cmd_gate_ra_required)
@@ -2539,6 +2608,14 @@ def main() -> int:
     p_rds.add_argument("--root", default="", help="扫描根目录（默认 cwd）")
     p_rds.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
     p_rds.set_defaults(func=cmd_ra_depth_scan)
+
+    # ra-implementation-scan（🆕 v3.5.18 — RA 实现视角完整性扫描，支撑 DR/Coding 落地）
+    p_ris = sub.add_parser("ra-implementation-scan",
+                           help="[v3.5.18] RA 实现视角完整性扫描（I1-I7，验证数据源/数据流/定义/复用/成本反驳/开发疑问/DR交接）",
+                           parents=[common])
+    p_ris.add_argument("--root", default="", help="扫描根目录（默认 cwd）")
+    p_ris.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
+    p_ris.set_defaults(func=cmd_ra_implementation_scan)
 
     # context-pressure（🆕 v3.5.5 — 节点级上下文压力软提示，report-only）
     p_cp = sub.add_parser("context-pressure",

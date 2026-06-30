@@ -178,11 +178,6 @@ def inject(
     ]
     if plugin_line:
         lines.append(f"  plugin:   {plugin_line}  ⚠️ 本次必须加载此 外挂路径，禁用内置")
-    # 🆕 v3.5.16 C3：coding/coding-process phase 提示 AI 须带 ◆ LOADED 自报标记
-    # （配合 stop_check C2 软层校验，防 AI 凭记忆绕过 SKILL）
-    if phase in ("coding", "coding-process"):
-        required_skill = "coding-process-skill.md" if phase == "coding-process" else "coding-skill.md"
-        lines.append(f"  ⚠️ v3.5.16: 本次响应末尾须含 `◆ LOADED: {required_skill}`（C2 软层校验）")
     lines.append(f"<!-- /ae-sdd harness -->")
 
     if not g00.pass_:
@@ -199,9 +194,7 @@ def inject(
     # 检测已安装的 ae-sdd SKILL 是否落后于母版，若落后则在注入块末尾追加提醒
     try:
         from lib.paths import compare_versions, MASTER_VERSION  # type: ignore
-        # 已装版本：本仓库 tools/lib/paths.py 的 MASTER_VERSION
         installed_v = MASTER_VERSION
-        # 母版版本：从本脚本所在仓库（业务仓）的 .ae-sdd/config.yaml master.version 读
         master_v = _read_project_master_version(ade_sdd)
         drift = compare_versions(installed_v, master_v or MASTER_VERSION)
         if drift and master_v and master_v != installed_v:
@@ -209,6 +202,11 @@ def inject(
             lines.append("   建议: bash scripts/dev-sync.sh  或  ae-sdd install --target-path ~/.zcode/skills/ae-sdd")
     except Exception:
         pass  # 探测失败不影响主流程
+
+    # 🆕 v3.6 主流程监管器：偏移检测 + 矫正注入（决策 1B/2B）
+    flow_msg = _run_flow_monitor(ade_sdd, st)
+    if flow_msg:
+        lines.append(flow_msg)
 
     return {
         "hookSpecificOutput": {
@@ -228,11 +226,68 @@ def _read_project_master_version(ade_sdd: Optional[Path]) -> Optional[str]:
     try:
         import re
         text = cfg.read_text(encoding="utf-8")
-        # 匹配 "  version: \"3.4.0\"" 或 "  version: 3.4.0"
         m = re.search(r"master:\s*\n(?:\s+\S+:\s*\S+\s*\n)*\s+version:\s*\"?([\d.]+)\"?", text)
         if m:
             return m.group(1)
     except OSError:
         pass
     return None
+
+
+def _run_flow_monitor(ade_sdd: Path, state: dict) -> Optional[str]:
+    """🆕 v3.6 主流程监管器：每轮 UserPromptSubmit 时执行偏移检测 + 矫正注入。
+
+    决策 1B：废弃 ◆ STATE: 自报标记，完全依赖产物核查（gates check）
+    决策 2B：监管器实体 = 本 hook Python 逻辑
+
+    流程：
+      1. 接收调用方传入的 state dict（已由 inject() 读取）
+      2. 调 flow_monitor.detect_drift() 运行产物核查
+      3. severity == 0 → 无偏移，返回 None
+      4. severity >= 1 → 递增 correctionCounts[phase] + 写 state.json
+      5. severity == 3 → 同时写 state.phase=paused（Level 3 暂停）
+      6. 生成矫正注入文本并返回（追加到 additionalContext）
+
+    全流程 try/except：任何异常降级返回 None，不阻断主流程。
+
+    Args:
+        ade_sdd: .ae-sdd/ 目录路径
+        state:   inject() 已读取的 state dict（只读参考，不直接修改）
+
+    Returns:
+        矫正注入文本（str）或 None（无偏移/异常降级）
+    """
+    try:
+        from lib import flow_monitor as fm, state as state_mod, paths as paths_mod
+
+        # 偏移检测（Layer 1 产物核查 + Layer 3 矫正次数）
+        drift = fm.detect_drift(state, ade_sdd)
+
+        if drift.severity == 0:
+            return None  # 无偏移
+
+        # 递增矫正计数并持久化
+        state_path = paths_mod.state_path(ade_sdd)
+        fresh_state = state_mod.read_state(state_path)  # 重新读取确保原子性
+        state_mod.increment_correction(fresh_state, drift.phase)
+
+        # severity == 3：同时写 state.phase=paused（Level 3 暂停）
+        if drift.severity >= 3:
+            state_mod.pause_state(
+                fresh_state,
+                pause_reason="level3-escalation",
+                by="flow-monitor",
+            )
+
+        state_mod.write_state(state_path, fresh_state)
+
+        # 更新 drift 中的矫正计数（写入后的真实值）
+        drift.correction_count = state_mod.get_correction_count(fresh_state, drift.phase)
+
+        # 生成矫正文本
+        msg = fm.build_correction_message(drift)
+        return msg if msg else None
+
+    except Exception:
+        return None  # 任何异常降级放行，不阻断主流程
 

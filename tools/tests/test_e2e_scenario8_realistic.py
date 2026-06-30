@@ -194,22 +194,24 @@ class TestE2EScenario8(unittest.TestCase):
         self.assertIn("对账", content)
 
     def test_list_plugins_shows_all_three_layers(self):
-        """list_plugins 应该合并三层：L1 (2 plugins) + L2 (1 plugin) + L0 (no registry)"""
+        """list_plugins 应该合并三层：L1 (2 plugins) + L2 (1 plugin) + L3 (母版官方 1 plugin, v3.6.1 起)"""
         result = plugin_loader.list_plugins(self.ade_sdd, self.master)
-        self.assertEqual(result["totalPlugins"], 3)  # 2 L1 + 1 L2
+        self.assertEqual(result["totalPlugins"], 4)  # 2 L1 + 1 L2 + 1 L3(母版 java3d-coding-skill)
         # 1 conflict (boss-coding vs personal-ddd-coding)
         self.assertEqual(result["totalConflicts"], 1)
         # Layer breakdown
         layers_by_name = {l["layerLabel"]: l for l in result["layers"]}
         self.assertEqual(len(layers_by_name["L1-project"]["plugins"]), 2)
         self.assertEqual(len(layers_by_name["L2-global"]["plugins"]), 1)
-        self.assertFalse(layers_by_name["L3-master"]["exists"])
+        # L3-master 自 v3.6.1 起存在母版官方注册表（java3d-coding-skill）
+        self.assertTrue(layers_by_name["L3-master"]["exists"])
+        self.assertEqual(len(layers_by_name["L3-master"]["plugins"]), 1)
 
     def test_validate_passes_for_realistic_setup(self):
-        """validate 应该通过：3 个合法 plugin + 1 个 conflict（warn 不阻断）"""
+        """validate 应该通过：4 个合法 plugin + 1 个 conflict（warn 不阻断）"""
         result = plugin_loader.validate(self.ade_sdd, self.master)
         self.assertTrue(result["valid"], msg=f"errors: {result['errors']}")
-        self.assertEqual(result["totalPlugins"], 3)
+        self.assertEqual(result["totalPlugins"], 4)
         self.assertEqual(result["totalConflicts"], 1)
         # Should have warnings (the conflict)
         self.assertGreater(len(result["warnings"]), 0)

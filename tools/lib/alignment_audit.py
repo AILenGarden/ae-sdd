@@ -85,6 +85,7 @@ _ALIGNED_GATE_MAP = {
     "G-RA-3": "RA 衍生章节",
     "G-RA-4": "RA 真实性",
     "G-RA-5": "RA 机械派生深度",
+    "G-RA-6": "RA 实现视角完整性",
     "G-RA-FLOW-VIOLATION": "RA 流程违规",
     "G-CODE-1": "Coding 真实性",
     "G-PATH": "路径越界",

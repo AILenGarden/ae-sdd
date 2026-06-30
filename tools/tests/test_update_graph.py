@@ -80,11 +80,11 @@ class TestUC02(unittest.TestCase):
 class TestUC03(unittest.TestCase):
 
     def test_real_repo_passes(self):
-        # 真实仓库：本次命令全闭环，历史遗留 warn
+        # 真实仓库：命令全闭环，无历史遗留 warn
         r = ug.check_uc03_command_contract(REPO_ROOT)
         self.assertTrue(r.pass_)  # warn 也算 pass
-        # 历史遗留应被识别
-        self.assertTrue(r.details.get("historical"))
+        self.assertFalse(r.details.get("missing"))
+        self.assertFalse(r.details.get("historical"))
 
     def test_init_no_longer_historical(self):
         # v3.2.5：init 已挂 CLI，不应再出现在历史遗留集合

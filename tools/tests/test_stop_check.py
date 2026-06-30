@@ -95,7 +95,8 @@ class TestStopCheckCli:
         )
         assert result == {}
 
-    def test_blocks_missing_state_header(self, tmp_path):
+    def test_allows_missing_state_header(self, tmp_path):
+        """v3.6（决策 1B）：废弃 ◆ STATE 自报标记检测——无状态头 → 放行（空 dict）。"""
         _make_ae_sdd_project(tmp_path)
         result = _run_stop_check_cli(
             tmp_path,
@@ -104,9 +105,8 @@ class TestStopCheckCli:
                 "last_assistant_message": "done without ae-sdd status header",
             },
         )
-        assert result["decision"] == "block"
-        assert "reason" in result
-        assert "systemMessage" not in result
+        # 放行 = 空 dict（无 decision 字段）
+        assert result == {}
 
 
 class TestHS8CompactFailure:

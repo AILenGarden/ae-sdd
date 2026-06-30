@@ -226,6 +226,34 @@
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
     },
     {
+      "id": "UG-18",
+      "name": "🆕 v3.6.0 RA 实现视角完整性门禁（G-RA-6）",
+      "trigger": [
+        "scripts/ra_implementation_scan.py",
+        "tools/lib/gates.py",
+        "tools/bin/ae-sdd",
+        "source/SKILL.md",
+        "source/templates/design/ra-template.md",
+        "source/skills/phase1-design/requirement-analysis-skill.md",
+        "source/standards/update-graph.json"
+      ],
+      "trigger_condition": "修改 RA 实现视角七要素扫描器 ra_implementation_scan.py / G-RA-6 门禁注册 / ra-implementation-scan 子命令 / RA §9-quater 模板或 skill 规范任一",
+      "affected": [
+        {"path": "scripts/ra_implementation_scan.py", "action": "I1-I7 七要素实现完整（数据源/数据流/定义不变量/复用证据/成本反驳/开发疑问/DR交接包 + JSON 输出契约）", "auto_checkable": false},
+        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-RA-6 + check_ra_implementation + check_all G-RA-6 特判分支 + 门禁计数 29", "auto_checkable": true},
+        {"path": "tools/tests/test_gates.py", "action": "TestCheckAll 门禁总数断言 29 + TestGRA6 含 no_master_source/pre_ra_stub/complete_pass/missing_blocks", "auto_checkable": true},
+        {"path": "tools/tests/test_ra_implementation_scan.py", "action": "覆盖完整 RA 通过、缺章节阻断、占位阻断、CLI help", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "cmd_ra_implementation_scan + argparse ra-implementation-scan 子命令注册 + gates help 29 + gate ra-required 覆盖 G-RA-1~6 + FLOW", "auto_checkable": true},
+        {"path": "scripts/build_dist.py", "action": "runtime_scripts 白名单含 ra_implementation_scan.py", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "G-RA 章节声明实现视角七要素 + 工具速查 ra-implementation-scan + 门禁计数 29", "auto_checkable": true},
+        {"path": "source/templates/design/ra-template.md", "action": "新增 §9-quater 实现视角七要素（7 张表）+ §12/§13/§14 同步", "auto_checkable": false},
+        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "新增第一步 ter + RAGeneratePlan §2.5 + G-RA-6 强度声明 + 执行清单 11.7 + 禁止事项 23 + 维护条目", "auto_checkable": false},
+        {"path": "README.md", "action": "第 5 行版本行含 v3.6.0 + G-RA-6 描述；仓库结构列出 ra_implementation_scan.py；门禁数 29", "auto_checkable": true},
+        {"path": "source/CHANGELOG/", "action": "新增 v3.6.0 RA 实现视角完整性门禁 changelog 文件", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
+    },
+    {
       "id": "UG-15",
       "name": "🆕 v3.5.11 AA 全维对齐验证器（UC-08~12，根治「协议详尽 vs 工具链缺失」体系性病根）",
       "trigger": [

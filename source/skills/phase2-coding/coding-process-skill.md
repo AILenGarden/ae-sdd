@@ -1,167 +1,468 @@
 ---
 name: coding-process
 description: |
-  Task→Coding 之间的独立流程节点（v3.5.16 流程与能力分离）。严格加载 5 个上下文
-  （项目约束/技术约束 CodingModel/Story/Task/项目资产）→ CodeAnalysis → 产出统一版
-  CodePlan → 移交 CodingSkill.Execute。本 SKILL 只管"流程编排 + 上下文加载 + 移交"，
-  不持有 CodeAnalysis 能力本体（能力由 coding-skill §④bis 提供，本 SKILL 指针引用），
-  不写生产代码。当 state.phase 走到 coding-process 时触发。
+  Task→Coding 全流程编排节点（v3.5.17 全流程化）。持有 Task→CodePlan→Coding→验证→异常追溯
+  全流程编排：加载5上下文 → 调用 coding-skill 能力库做 CodeAnalysis → 出具 CodePlan →
+  按 CodePlan 写代码(Execute) → 编译/测试/异常追溯。本 SKILL 是流程节点，调 coding-skill
+  能力库（如何写对代码的知识），不持有能力本体。当 state.phase 走到 coding-process 或
+  coding 时触发；用户说"开始 Coding/写代码/实现 Story/生成 CodePlan"时触发。
 ---
 
-# CodingProcess SKILL — Task→Coding 之间的流程节点（流程与能力分离）
+# CodingProcess — Task→Coding 全流程编排节点（流程与能力分离）
 
-> **🔴 核心定位（v3.5.16）：** 本 SKILL 是**流程节点**，不是**能力提供方**。
+> **🔴 v3.5.17 定位（全流程化）：** 本 SKILL 持有 **Task→CodePlan→Coding 全流程编排**。
+> - **流程职责（本 SKILL 持有）**：加载上下文 → 调能力做 CodeAnalysis → 出 CodePlan → Execute 写代码 → 验证 → 异常追溯
+> - **能力职责（[`coding-skill.md`](coding-skill.md) 持有，本 SKILL 调用）**：如何写对代码的知识（决策方法/骨架展开/分层红线/CodeAnalysis 方法论/检查清单/验证判定标准）
 >
-> - **流程职责（本 SKILL 持有）**：严格加载 5 上下文 → 调度 CodeAnalysis → 产出 CodePlan → 跑门禁 → 移交 CodingSkill.Execute
-> - **能力职责（coding-skill 持有，指针引用）**：CodeAnalysis 的 5 步 SOP、CodePlan 模板/门禁定义
->
-> **为什么分离：** 旧架构把"加载上下文 + 产出 CodePlan + 写代码"全塞进 coding-skill，导致流程与能力耦合——流程管理器无法独立监督"是否走完了 CodingProcess"。分离后，流程管理器通过 state.phase 校验 coding-process 已完成（产物校验），CodingSkill.Execute 只负责按 CodePlan 写代码。
+> **与 v3.5.16 的差异：** v3.5.16 把 Execute 流程塞在 coding-skill（错误），CodingProcess 只管 CodeAnalysis。v3.5.17 修正——Execute 流程也归 CodingProcess，coding-skill 退为纯能力库。
 
 ---
 
-## 📦 文档存放前置调用（横切依赖，落地前必读）
+## 📦 文档存放前置调用（🔴 横切依赖）
 
-> 同 coding-skill.md §0：流程产出文档（CodePlan 等）落地前必须先调 `document-storage-skill.resolve_path()` 推导路径，禁止硬编码绝对路径。详见 [`document-storage-skill.md` §0](../cross-cutting/document-storage-skill.md)。
+> **🔴 强制：** 本 SKILL 涉及的所有输入/输出文档（Story / Task / TestCase / CodingPlan / CodingReport / 开发问题记录）在读写前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过各 `intent` 自动定位
+> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：CodingReport 带 `v{N}-r{M}`（事件类）
+> 3. **重入判定**（§0.6.11 `get_latest_version()`）：CodingReport 重入时 r 递增
+> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
+> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+
+**本 SKILL 涉及文档类型与 API 调用对应：**
+
+| 文档类型 | API 调用 | 命名规则 | 重入时动作 |
+|---------|---------|---------|----------|
+| Story 文档 | `resolve_path(intent="STORY", storyId)` | v{major}.{minor} | 新增版本（v 递增）|
+| Task 文档目录 | `resolve_path(intent="TASK", storyId, taskId)` | v{major}.{minor} | 新增版本（v 递增）|
+| 测试用例 | `resolve_path(intent="TESTCASE", storyId)` | v{major}.{minor} | 新增版本（v 递增）|
+| 统一版 CodingPlan | `save_doc(intent="CODING_PLAN", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
+| CodingReport | `save_doc(intent="CODING_REPORT", storyId, version={v:N,r:M})` | 带 v{N}-r{M} | 新增（r 递增）|
+| Test 报告 | `save_doc(intent="TEST_REPORT", storyId, version={v:N,r:M})` | 带 v{N}-r{M} | 新增（r 递增）|
+| 开发问题记录 | `save_doc(intent="CODING_ISSUE_LOG", storyId)` | 不带版本号 | 原地累加 |
 
 ---
 
-## 对外调用契约：CodingProcess.Run
+## 🧠 阶段记忆强制调用（🔴 横切依赖）
+
+> **🔴 强制：** CodingPlan 与 Coding 执行都必须使用 ae-sdd 阶段记忆。禁止只凭 Agent 对话上下文继续实现。
+
+**CodeAnalysis 阶段（产出 CodePlan）：**
+```bash
+ae-sdd memory enter --phase coding-plan --story <STORY-ID>
+ae-sdd memory write --phase coding-plan --story <STORY-ID> --kind decision --summary "<架构决策/风险预判/复用决策/资源边界>"
+ae-sdd memory exit --phase coding-plan --story <STORY-ID>
+```
+
+**Execute 阶段（写代码）：**
+```bash
+ae-sdd memory enter --phase coding --story <STORY-ID>
+ae-sdd memory write --phase coding --story <STORY-ID> --kind finding --summary "<实现结果/失败修复/测试证据/残余风险>"
+ae-sdd memory exit --phase coding --story <STORY-ID>
+```
+
+`memory exit` 未通过 = 当前节点未完成，禁止进入 CodingReport / CodeReview。
+
+---
+
+## CodingProcess.Run 对外契约
 
 **调用方：** ae-sdd 流程管理器（SKILL.md 编排层）。state.phase 从 `task-reviewed`（大/中/小链）或 `initialized`（微链）切到 `coding-process` 时触发。
 
-**用途：** 加载 5 上下文 → CodeAnalysis → 产出统一版 CodePlan → 跑门禁 → 等用户审核点 2.5 确认 → 移交 CodingSkill.Execute。
+**用途：** 加载5上下文 → CodeAnalysis → 出 CodePlan → Execute 写代码 → 验证 → 异常追溯。
 
 **输入参数（5 上下文，🔴 全部必填，缺一停止）：**
 
-| 参数 | 来源 | 加载方式 |
-|------|------|---------|
-| ① 项目约束文档 | `document-storage-skill.get_constraints(projectKey)` | §1.1 |
-| ② 技术约束 / CodingModel | `document-storage-skill.get_thinking_engine(projectKey)` | §1.2 |
-| ③ Story 文档 | 当前 Story（微任务无） | §1.3 |
-| ④ Task 文档 | `resolve_path(intent="TASK", ...)`（微任务无） | §1.4 |
-| ⑤ 项目资产 | `ae-sdd assets read coding --project <projectKey>` | §1.5 |
+| 参数 | 来源 |
+|------|------|
+| ① 项目约束文档 | `document-storage-skill.get_constraints(projectKey)` |
+| ② 技术约束 / CodingModel | `document-storage-skill.get_thinking_engine(projectKey)` |
+| ③ Story 文档 | 当前 Story（微任务无） |
+| ④ Task 文档 | `resolve_path(intent="TASK", ...)`（微任务无） |
+| ⑤ 项目资产 | `ae-sdd assets read coding --project <projectKey>` |
 
-**强制执行步骤（🔴 严格按顺序，每次调用均须）：**
+**全流程（Phase A → B → C）：**
+- **Phase A：CodeAnalysis**（§A）→ 产出 CodePlan + 用户审核点 2.5
+- **Phase B：Execute**（§B）→ 按 CodePlan 写代码 + 编译/测试验证
+- **Phase C：异常追溯**（§C）→ 报错时实时追溯链 A1-A6
 
-1. §1 加载 5 上下文（缺一 → 停止，要求补充上游信息）
-2. §2 CodeAnalysis（复用 `coding-skill §④bis 实战 SOP` 5 步，指针引用）
-3. §3 产出统一版 CodePlan（套 `be-coding-plan-template.md` 16 节）
-4. §3 跑 G-CODEPLAN-SRC + G-14 + G-08 门禁（缺项 → 停止，回到步骤 2 补充）
-5. §4 等用户审核点 2.5 确认（用户明确"确认/同意/可以开始编码"才能进 coding phase）
-6. §5 移交：state.phase 切 `coding` → CodingSkill.Execute 接管
-
-**输出物：**
-- 统一版 `{STORY-ID}-CodingPlan.md`（过 G-CODEPLAN-SRC/G-14/G-08 门禁，落地路径由 `resolve_path(intent="CODING_PLAN", ...)` 推导）
+**输出物：** 生产代码 + 测试代码 + CodingPlan + Coding 报告（coding-report-skill 产出）
 
 **禁止项：**
-- 🔴 禁止写生产代码（写代码是 CodingSkill.Execute 的职责）
 - 🔴 禁止跳过任一上下文加载（5 个全必填）
-- 🔴 禁止跳过门禁（G-CODEPLAN-SRC/G-14/G-08 任一未过禁止移交）
-- 🔴 禁止不经用户审核点 2.5 确认就切 coding phase
+- 🔴 禁止绕过 CodePlan 自行设计方案（Execute 必须按确认后的 CodePlan）
+- 🔴 禁止跳过门禁（G-CODEPLAN-SRC/G-14/G-08 任一未过禁止 Execute）
 
 ---
 
-## §1 五上下文加载（🔴 强制，缺一停止）
+## Phase A：CodeAnalysis（产出 CodePlan）
 
-> **本节是 CodingProcess 的核心价值**：把"加载 5 上下文"从散落在 coding-skill 各步骤集中为一个**显式、可监督的前置门禁**。流程管理器通过 state.phase=coding-process 校验"这步已走过"。
+### §A1 加载 5 上下文（🔴 强制，缺一停止）
 
-### §1.1 项目约束文档（constraints）
+> **本节是 CodingProcess 的核心价值**：把"加载 5 上下文"集中为显式、可监督的前置门禁。流程管理器通过 state.phase=coding-process 校验"这步已走过"。
 
-调用 `document-storage-skill.get_constraints(projectKey)` 加载 9 项约束，逐项记住关键规则：
+| 上下文 | 加载方式 | 缺失处置 |
+|--------|---------|---------|
+| ① 项目约束 | `get_constraints(projectKey)` 返回 9 项约束（清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
+| ② 技术约束 CodingModel | `get_thinking_engine(projectKey)`，产出 11 维决策（决策表见 [`coding-skill.md` §1](coding-skill.md)） | 任一维度结论空 → 停止，向上游追溯 |
+| ③ Story 文档 | 读取当前 Story，提取涉及工程/主流程伪代码/实现任务映射/接口契约/数据模型/偏离声明（微任务跳过，须标"无 Story 上下文，独立决策"） | — |
+| ④ Task 文档 | 先读 Task 0（公共依赖），再按执行顺序逐个读 Task（微任务跳过） | — |
+| ⑤ 项目资产 | `ae-sdd assets read coding --project <projectKey>`，返回 §4+§5+§6 | 资产不存在 → 停止，走 project-assets-update-skill §3 生成 |
 
-> **📍 9 项约束清单与关键规则见 [`coding-skill.md` §约束文件引用](coding-skill.md)（technology-stack / project-structure / layered-arch / code-style / api / database / security / testing / be-coding-thinking-engine）。** 本 SKILL 不重复列约束内容，复用 coding-skill 的约束引用表。
+### §A2 调用 coding-skill 能力做 CodeAnalysis
 
-**缺失处置：** `get_constraints` 返回空或缺关键约束 → 停止，提示"项目约束未初始化，走 project-assets-update-skill 生成"。
+> **🔴 能力本体在 [`coding-skill.md` §5 §6 §7](coding-skill.md)**（④bis CodePlan 输出 + 实战 SOP 方法论 + G-CODEPLAN-SRC 判定）。本 SKILL 调用这些能力，不重写。
 
-### §1.2 技术约束 / CodingModel（thinking engine）
+**CodeAnalysis 调用流程：**
+1. 调用 [`coding-skill.md` §6 ④bis 实战 SOP](coding-skill.md)：读取项目资产 → Task 执行顺序编排 → 按 4 层分层归类 → 映射包路径 → 输出类骨架
+2. 按 [`coding-skill.md` §5 CodePlan 7 章节](coding-skill.md) 填充：文件级顺序/类骨架/DO字段/SQL/测试映射/验证点/调试回滚
+3. 遵循 [`coding-skill.md` §3 分层职责红线](coding-skill.md) + [§6 的 7 条禁令](coding-skill.md)
 
-加载 `standards/thinking/be-coding-thinking-engine.md`（通过 `get_thinking_engine(projectKey)` 封装入口），产出本轮 **11 维 CodingModel 决策记录**。
+### §A3 产出统一版 CodePlan + 跑门禁
 
-> **📍 11 维决策表与门禁见 [`coding-skill.md` §第零步 加载 CodingModel](coding-skill.md)。** CodingProcess 产出 11 维决策（CodingSkill.Execute 阶段只复核不复产）。
+套用 [`be-coding-plan-template.md` §0-§15](../../templates/coding/be-coding-plan-template.md) 16 节模板，落地 `{STORY-ID}-CodingPlan.md`（`resolve_path(intent="CODING_PLAN", ...)`）。
 
-**门禁：** 任一维度结论为空或"不知道" → 停止，向上游追溯补充。
+**跑门禁（🔴 全过才进 Execute）：**
 
-### §1.3 Story 文档
+| 门禁 | CLI |
+|------|-----|
+| G-CODEPLAN-SRC | `ae-sdd gates check --only G-CODEPLAN-SRC`（判定标准见 [`coding-skill.md` §7](coding-skill.md)）|
+| G-14 | `ae-sdd gates check --only G-14` |
+| G-08 | `ae-sdd gates check --only G-08` |
 
-读取当前 Story（微任务无 Story，跳过本步但须在 CodePlan 标注"无 Story 上下文，独立决策"）。
+任一未过 → 回 §A2 补充 CodeAnalysis，重跑门禁，直至全过。
 
-提取：涉及工程 / 主流程伪代码 / 实现任务映射 / 接口契约 / 数据模型 / 偏离声明。
+### §A4 用户审核点 2.5（CodingPlan 评审，🔴 强制）
 
-> **📍 提取清单见 [`coding-skill.md` §第三步 阅读 Story 文档](coding-skill.md)。**
+CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以开始编码"）才能进 Execute。
 
-### §1.4 Task 文档（含 Task 0）
-
-读取 Task 文档目录（微任务无 Task，跳过）。先读 Task 0（公共依赖说明），再按执行顺序逐个读 Task。
-
-> **📍 读取流程见 [`coding-skill.md` §第四步 阅读 Task 文档](coding-skill.md)（4.1 先读 Task 0 + 4.2 按序读 Task）。**
-
-### §1.5 项目资产
-
-调用 `ae-sdd assets read coding --project <projectKey>`，返回 §4 DDD 内部分层落点 + §5 命名约定 + §6 工程约束。
-
-> **📍 详细动作见 [`coding-skill.md` §④bis 实战 SOP 步骤1 读取项目资产](coding-skill.md)。**
-
-**缺失处置：** 项目资产不存在 → 停止，走 project-assets-update-skill §3 生成。
-
----
-
-## §2 CodeAnalysis（调用 CodingSkill 能力，🔴 不持有能力本体）
-
-> **🔴 v3.5.16 定位：** CodingProcess **不持有 CodeAnalysis 能力**——它**调用 CodingSkill 的能力**（§④bis 实战 SOP）对代码做分析。CodeAnalysis 的 5 步 SOP（读资产 → Task 执行顺序编排 → 抽象 4 层分层归类 → 项目分层映射包路径 → 输出类骨架）完整定义在：
->
-> **[`coding-skill.md` §④bis 实战 SOP：分层拆分 + 项目资产映射 5 步流程](coding-skill.md)**
->
-> **调用关系：** CodingProcess §1 五上下文加载完成后 → **调用 CodingSkill §④bis 5 步 SOP** 执行 CodeAnalysis → 收集产出（类骨架/方法级逻辑/DB操作/外部依赖/测试映射）→ 进入 §3 出具 CodePlan。
-
-**本 SKILL 的职责**：确保 §1 五上下文已加载后，才调用 CodingSkill 做 CodeAnalysis（这是旧架构缺失的监督点——旧架构里 CodeAnalysis 在 coding-skill 内部，上下文加载散落，无前置门禁）。
-
----
-
-## §3 产出统一版 CodePlan + 跑门禁
-
-### §3.1 产出 CodePlan
-
-套用 `be-coding-plan-template.md` 16 节模板，把 §2 CodeAnalysis 的产出（类骨架 / 方法级逻辑 / DB 操作 / 外部依赖 / 测试映射）填入模板。
-
-> **📍 模板见 [`templates/coding/be-coding-plan-template.md` §0-§15](../../templates/coding/be-coding-plan-template.md)（16 节模板正文 + §15 门禁自检表）。**
-
-落地：`document-storage-skill.resolve_path(intent="CODING_PLAN", ...)` 推导路径 → 写 `{STORY-ID}-CodingPlan.md`。
-
-### §3.2 跑门禁（🔴 全过才移交）
-
-| 门禁 | 校验内容 | CLI |
-|------|---------|-----|
-| G-CODEPLAN-SRC | 关键类骨架每个新增/修改类附【已读源码：】标记，待核实清单非空则阻断 | `ae-sdd gates check --only G-CODEPLAN-SRC` |
-| G-14 | CodingPlan 引用 Story + AC 对齐 + 偏离项有 Proposal | `ae-sdd gates check --only G-14` |
-| G-08 | CodingPlan 14 门禁关键词全在 | `ae-sdd gates check --only G-08` |
-
-> **📍 门禁详细判定标准见 [`coding-skill.md` §④bis G-CODEPLAN-SRC 源码核对详细判定标准](coding-skill.md) + [`SKILL.md` §🛡️ G-14 / G-CODEPLAN-SRC](../../SKILL.md)。**
-
-**任一门禁未过 → 回 §2 补充 CodeAnalysis，重跑门禁，直至全过。**
-
----
-
-## §4 用户审核点 2.5（CodingPlan 评审，🔴 强制）
-
-CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以开始编码"）才能进 coding phase。
-
-> **📍 审核点 2.5 的讲解规范见 [`SKILL.md` §📖 人工审核主动讲解规范](../../SKILL.md) + [`coding-skill.md` §📖 Code 讲解模板](coding-skill.md)。**
-
-审核要点：复核 16 章节 + 14 条门禁 + CodingModel 决策 + 风险 Task。
+> **📍 讲解规范见 [`SKILL.md` §📖 人工审核主动讲解规范](../../SKILL.md)。** 复核 16 章节 + 14 条门禁 + CodingModel 决策 + 风险 Task。
 
 **模糊回复处置：** 用户回复"好/行/可以"等模糊词 → 按 ⚠️ 处理，逐项追问确认，不得当 ✅ 通过。
 
+用户审核通过后：
+1. `ae-sdd state confirm --phase coding-process`（领 coding-process confirm token，供关卡3 硬层校验）
+2. `ae-sdd state write --phase coding`（切 coding phase）
+3. 进入 Phase B Execute
+
 ---
 
-## §5 移交 CodingSkill.Execute
+## Phase B：Execute（按 CodePlan 写代码）
 
-用户审核点 2.5 通过后：
+### §B0 第零步：复核 CodingModel（Execute 入口门禁）
 
-1. `ae-sdd state confirm --phase coding-process`（领 coding-process confirm token，供关卡3 产物校验）
-2. `ae-sdd state write --phase coding`（切 coding phase）
-3. 流程管理器加载 `coding-skill.md`，执行 `CodingSkill.Execute`
+> **复核（不重新产出）：** 11 维 CodingModel 决策由 Phase A 产出（[`coding-skill.md` §1](coding-skill.md)），Execute 阶段只验证与 CodePlan 一致。任一冲突立即停止追溯。
 
-> **📍 CodingSkill.Execute 契约见 [`coding-skill.md` §CodingSkill.Execute](coding-skill.md)。** Execute 阶段按确认后的 CodePlan 写代码，两层监督生效（关卡3 产物校验 + stop_check 自报标记）。
+### §B1 工程预检（第一~五步合并）
+
+**收集输入：** 向开发者请求 Story 路径 / Task 目录 / 测试用例路径 / 工作目录（已提供则跳过，按 `resolve_path()` 自动定位）。
+
+**读取文档：**
+- 约束文档：`get_constraints(projectKey)` 返回的 9 项（关键规则见 [`coding-skill.md` §2](coding-skill.md)）
+- Story 文档：提取涉及工程/主流程伪代码分层骨架/实现任务映射/接口契约/数据模型/偏离声明
+- 测试用例文档：提取场景清单/测试分层/Mock点/预期输入输出/错误码断言
+- Task 文档：先读 Task 0（公共包路径/技术栈/DO 定义），再按执行顺序逐个读 Task
+
+**工程预检 4 项：**
+1. **确认工程存在**：每个涉及工程查磁盘路径，不存在则创建子模块注册父 pom
+2. **检查依赖完整性**：每个工程 pom.xml 检查必要依赖（Domain/Application/Infrastructure/Interfaces 各自必须依赖）
+3. **验证第三方 SDK 包路径**：从本地 Maven 仓库 jar 解压确认实际类路径
+4. **确认已有代码模式**：扫描已有 Java 文件，确认 Result/@NotBlank/@SkipAuth 包路径 + Converter/Repository/Controller 风格
+
+### §B2 按 Task 顺序生成代码（调 coding-skill 骨架展开能力）
+
+> **🔴 严格按 Task 执行顺序生成。每完成一个 Task 对照检查项自检。Task 间依赖不清晰或循环依赖 → 先问用户确认执行顺序。**
+
+**任务规模 × 文档组合：**
+
+| 任务规模 | 生成依据 | 流程深度 |
+|---------|---------|---------|
+| **重任务** | Story + Task 文档 + CodingPlan | 全流程 |
+| **小任务** | Task 文档 + CodingPlan | 全流程（跳 Story）|
+| **微任务** | CodingPlan | 全流程（跳 Story + Task）|
+
+**生成规则：**
+- **骨架填肉，按序展开**：Task 文档给骨架（方法签名+伪代码），按 [`coding-skill.md` §4 骨架展开规则](coding-skill.md) "填肉"，不自行发挥结构
+- 包路径固定（用 Task 0 定义，不可自行命名）
+- 字段类型严格（以 Task 文档为准，特别注意 String vs Long）
+- 约束优先（约束文档规则优先于 Task 示例代码）
+- 🔴 分层职责归位：写每个方法前先问"这段属于哪层"，严禁串味（判定标准见 [`coding-skill.md` §3](coding-skill.md)）
+
+**每个 Task 生成流程：**
+```
+0. 🔍 Task 实现方案确认（必须通过，见 §B3）
+1. 按类骨架创建文件（类签名 + 注解 + 字段）
+2. 确认前置 Task 已完成（依赖类存在可导入）
+3. 按骨架展开规则（coding-skill §4）逐方法填肉
+4. 对照约束检查章节逐项自查
+5. 对照验收映射验证 AC 覆盖
+6. 标记 Task 完成
+```
+
+### §B3 Task 实现方案确认（强制交互节点）
+
+> **每个 Task 开始前必须向用户呈现并确认实现方案，用户确认后才可开始写代码。未确认禁止写代码。**
+> **本节内容来自 Task 文档的已有章节，不重新分析。CodingModel 决策已在 Phase A 完成。**
+
+**向用户呈现的内容：**
+
+```
+【Task {N} 实现方案确认】
+
+Task 名称：{Task 名称}
+涉及工程/层：{Domain / Application / Infrastructure / Interfaces}
+
+零、CodingModel 决策复核（来源：Task 文档 ## CodingModel 决策记录，只读不改）
+┌─────────────────────────────────────────────────────────────┐
+│ ① 原子性：{结论}   方案：{处理方案}                           │
+│ ② 并发安全：{结论}   方案：{方案}                             │
+│ ...（11 维，见 coding-skill §1）                              │
+│ 复核结论：与统一版 CodingPlan 一致 ✅ / 发现冲突 ❌→停止追溯  │
+└─────────────────────────────────────────────────────────────┘
+
+一、类与包路径（来源：## 任务级 CodePlan → 类骨架）
+二、依赖工具包（来源：## 任务级 CodePlan → 依赖工具包）
+三、方法实现计划（按 coding-skill §4 骨架展开规则展开）
+四、DB 操作（表/操作/WHERE/幂等键/事务边界/并发控制）
+五、外部依赖（接口/超时/重试/降级/是否阻塞）
+六、测试用例覆盖（TestCase ID/场景/真实DB/HTTP）
+七、基准过滤器自检（coding-skill §11.3，7 项）
+```
+
+**用户选项：**
+- ✅ 确认实现方案，无误
+- ⚠️ 需要调整（说明修改内容，AI 记录后等待再次确认）
+- ❌ 暂停本 Task
+
+> **强制：必须等待用户确认后才能开始写本 Task 的代码。同一 Task 最多等待 3 次修改意见，3 次后强制暂停。确认语义：用户必须说"确认"/"同意"/"可以开始"，模糊回复需追问。**
+
+### §B4 编译 + 服务启动 + 接口验证 + DB 验证 + 异常验证
+
+> **核心原则：`mvn compile` 通过 ≠ 完成。必须逐维验证全部通过（判定标准见 [`coding-skill.md` §8](coding-skill.md)）。**
+
+**逐工程编译：**
+```bash
+cd {parent-project-root} && mvn compile
+```
+> 🔴 必须在父工程根目录执行，不允许只编译子模块（会漏跨模块依赖问题）。
+
+**服务启动验证：** `mvn spring-boot:run` → health 端点 UP + Bean 已注册 + 无 BeanCreationException（失败处理见 [`coding-skill.md` §8.2](coding-skill.md)，必须定位根因禁止绕过）。
+
+**主流程接口测试：** `mvn test -Dtest=*ApiIT,*ControllerIT`（🔴 能走真实 HTTP 必须走真实 HTTP，MockMvc 仅降级）。
+
+**错误码映射验证：** 异常场景测试返回正确 HTTP 状态码 + 错误码（参数空/状态非法/未登录/内部异常）。
+
+**DB 写操作落库验证：** `mvn test -Dtest=*IntegrationTest`（INSERT 后可查/UPDATE 字段正确/逻辑删除生效/事务可见）。
+
+**事务边界验证：** 事务内失败无污染/事务外操作不阻塞/调用链与 Story 一致。
+
+**所有测试 Pass：** `mvn test` → BUILD SUCCESS。
+
+### §B5 运行测试 + 测试报告
+
+**执行测试：** `cd {service-root} && mvn test`
+
+**出具测试报告：** 通过 `resolve_path(intent="TEST_REPORT", storyId, version={v:N,r:M})` 定位，按 Story 分子目录存放。
+
+**报告内容：** 执行信息表（时间/轮次/触发方式）+ 执行结果表（总用例/通过/失败/跳过/通过率）+ 用例明细表 + 失败用例分析表。
+
+**测试报告合规性校验（第八步 bis）：**
+- 🔴 原始证据归档：实际执行命令 + 原始 stdout/stderr + Surefire/Failsafe XML + test_authenticity_scan.py 扫描报告 + AC 对账表（缺任一项 = 报告无效）
+- 跑测试禁止 `-DskipTests`/`-Dmaven.test.skip`/`testFailureIgnore`
+- XML 对账：报告统计必须来自 XML 解析，不得人工估算
+- 假修复识别：按 [`coding-skill.md` §9.2](coding-skill.md) 9 条规则识别"测试通过但代码有问题"
+- 判定：✅ 无假修复 → 进入 §B6；🔴 证据链缺失/XML 不一致/扫描 BLOCKER → 报告作废，回 §B5 重跑
+
+### §B6 编码后全切面一致性核查闸（CodeReview 硬前置）
+
+> **每轮 Coding 完成后立即强制执行**（含缺陷修复轮），不可因"只改了一点"跳过。触发时机：代码写完立即跑，跑完后再跑闸7静态扫描、编译测试，最后才进 CodeReview。
+
+**核查方向：以实际代码为锚点反向核查**（不是拿文档找代码）。**范围：🔴 全章节全文件，禁止只核当轮 diff。**
+
+**漂移 4 级判定 + 核心落库真实 DB 硬门禁：** 见 [`coding-skill.md` §9.1](coding-skill.md)。
+
+**出闸条件：** 核查表覆盖全部代码改动 + 无 🔴 漂移 + 核心落库路径有真实 DB 证据。未达标 → 回 §B2 修复，不允许进入 CodeReview。
+
+### §B7 静态扫描 + 交付表（编码收尾）
+
+**闸 7 静态扫描：** 通用 grep 命令见 [`coding-skill.md` §12](coding-skill.md)（标准库全限定名/未使用 import/静态导入滥用）。工程特定扫描由项目资产 §6.11 配置。
+
+**闸 4 编码后交付表（🔴 每次写完代码必须输出）：**
+- 必填列：类型 + 文件路径 + 变更类型 + 说明
+- 变更类型枚举：`新增/修改/删除/无改动/仅测试/仅文档`
+- 调用顺序：按项目分层架构（SPI → Domain → Application → Infrastructure → Interfaces/BFF → Test → 文档/配置，具体见项目资产 §3）
+- 🔴 TodoWrite 所有 todo 标 completed 后，最终汇报第一项必须是交付表
+
+**闸 6 SKILL 级联更新：** Story 文档变更（新增 AC/改主流程/改接口契约/改数据模型）→ 立即检查受影响 Task 并同步更新，不中断流程询问用户；级联后重启 Task 0 + 全局 Task Review。
+
+---
+
+## Phase C：异常追溯（报错时实时追溯链 A1-A6）
+
+> **核心立场：** Coding 出现错误时，**先排除文档缺陷，再判定 AI 自己犯蠢**。文档缺陷（Task/Story/DR）必须先改文档、再改代码；只有文档都没问题时才允许直接改代码。
+
+**4 层根因分类判定标准：** 见 [`coding-skill.md` §10](coding-skill.md)。
+
+**🔴 强制顺序（5 步，命中即处理，不可跳层）：**
+
+```
+发现 Coding 报错（编译失败/单测失败/接口失败/真实HTTP失败/SQL错误/事务回滚/性能问题）
+    │
+    ▼
+追溯层 1️⃣：先读 Task 文档 → 判定 Task 是否写错/写漏/与 Story/AC 矛盾？
+    ├── 🔴 Task 有错 → 修 Task 文档（=修 CodePlan）→ 重新 CodeAnalysis → 重新 Coding
+    └── ✅ Task 无误 → 进入追溯层 2
+    │
+    ▼
+追溯层 2️⃣：再读 Story 文档 → 判定 Story 是否写错/写漏/AC 与 DR 矛盾？
+    ├── 🔴 Story 有错 → 写 Supplement → Story Update → Task Generate 重新生成 → 重新 Coding
+    └── ✅ Story 无误 → 进入追溯层 3
+    │
+    ▼
+追溯层 3️⃣：照例检查 DR → 判定 DR 业务规则是否有漏洞/边界遗漏/与 PRD 矛盾？
+    ├── 🔴 DR 有错 → 写 DR 补充 → DR Update → 通知受影响 Story → 重新 Review/Generate/Coding
+    └── ✅ DR 无误 → 进入追溯层 4
+    │
+    ▼
+追溯层 4️⃣：判定"AI 自己犯蠢"（兜底，前提：层 1/2/3 全部无误）
+    ├── ✅ 纯实现问题（typo/漏 import/笔误/API 误用）→ 写问题记录 → 直接修代码 → 继续 Coding
+    └── ❌ 不是纯实现问题 → 升级用户决策
+```
+
+**🔴 关键约束：**
+- **禁止跳过追溯层 1/2/3 直接判定"AI 犯蠢"**——历史上反复多轮返工的根源正是跳层判定
+- **每层判定都要写入问题记录的"根因分析"字段**——不允许"自我声明无误"
+- **命中设计层（1/2/3）必须先改文档、再改代码**——顺序不可颠倒
+- **追溯是"每次报错实时"，不是"事后一次性"**
+
+### §C1 问题记录载体
+
+> 实时追溯的结果必须落到问题记录，供后续审计/复盘。位置：`resolve_path(intent="CODING_ISSUE_LOG", storyId)`。
+
+**每条问题格式：**
+```markdown
+### 问题 {序号}：{问题标题}
+- **发现时间：** {YYYY-MM-DD HH:mm}
+- **所属 Task：** Task {ID}
+- **报错类型：** 编译失败/单测失败/接口失败/真实HTTP失败/SQL错误/事务回滚/性能问题
+- **追溯层 1（Task）：** □ Task 设计有错 / ✅ Task 设计无误
+- **追溯层 2（Story）：** □ Story 设计有错 / ✅ Story 设计无误
+- **追溯层 3（DR）：** □ DR 设计有错 / ✅ DR 设计无误
+- **追溯层 4（AI 犯蠢）：** ✅ 纯实现问题（前 3 层均已排除）/ ❌ 异常场景（升级用户）
+- **根因分析：** {为什么会出现这个问题}
+- **影响范围：** 约束文档/Task/Story/DR/仅代码
+- **修复方案：** {计划如何修复}
+- **状态：** Open / Fixed
+```
+
+### §C2 与流程衔接
+
+| 触发时机 | 进入追溯链 |
+|---------|-----------|
+| §B4 编译/启动/接口/DB 验证任意失败 | 立即进入 |
+| §B5 单测/集成测试失败 | 立即进入 |
+| §B5 测试报告合规校验发现测试无效 | 立即进入 |
+| §B2 实现过程中发现 Story/Task 与实际不符 | 主动进入（不等编译/测试失败） |
+
+---
+
+## 📖 人工审核主动讲解规范 — Code 节点（审核点 4）
+
+> **Code Review 阶段（🔍 人工审核点 4）的主动讲解规范。**
+
+**AI 必须主动讲解的内容：**
+
+| 维度 | 必须讲清楚 |
+|------|-----------|
+| 代码实现故事 | 实际代码怎么把 Story 落到位？用 walkthrough 带用户走主流程调用链 |
+| 分层 walkthrough | Domain/Application/Infrastructure/Interfaces 各层核心类做什么、关键方法签名、关键代码在第几行 |
+| 状态机实现 | canTransition() 实际怎么写？状态流转代码长什么样？条件校验在哪一行？ |
+| 事务实现 | `@Transactional` 边界在哪个方法？事务传播行为？回滚规则？ |
+| 异常处理 | 核心异常怎么抛？怎么捕获？错误码怎么映射？HTTP 状态码？ |
+| 测试覆盖 | 哪些 AC 已被测试覆盖？测试方法名？覆盖率？ |
+| CodeReview 发现 | 阻塞型/严重型问题有哪些？整改方案？ |
+
+**输出模板：**
+```
+📖 【Code 讲解 - {STORY-ID} v{N}-r{M}】
+
+【代码实现故事】
+本轮 Coding 实现了 {Task-1, Task-2, ...} 共 {N} 个 Task。
+调用链路：用户{操作} → {Controller} → {AppService} → {DomainService} → {Repository} → DB
+
+【Domain 层 walkthrough】
+- {XxxAggregate}：{职责}，核心方法 {method1, method2}
+- 关键代码：{文件}:{行号} → {代码片段或逻辑描述}
+
+【Application 层 walkthrough】
+- {XxxAppService}：{职责}，编排逻辑：{调用链}
+
+【事务边界】
+- {XxxAppService.transition()}：@Transactional 边界 = {包含哪些操作}
+- 回滚规则：{触发条件}
+
+【异常处理】
+- {XxxException}：{抛出条件} → 错误码 {code} → HTTP {status}
+
+【测试覆盖】
+- AC-001：测试方法 {TestClass.testXxx} ✓
+- 覆盖率：{数字}%
+
+【CodeReview 关键发现】
+- 🔴 阻断：{数量} 个 → 整改方案
+- 🟠 严重：{数量} 个 → 整改方案
+```
+
+**门禁：**
+- 🔴 未输出 `📖 【Code 讲解 - ...】` → 视为跳过人工审核点 4 → 禁止进入完成判定
+- 🔴 关键代码未附文件:行号 → 视为讲解无证据
+- 🔴 CodeReview 问题未给整改方案 → 视为报告不完整
+
+---
+
+## 执行清单（TodoWrite 1:1 映射，禁止跳过）
+
+> **强制：AI 启动本 SKILL 时，必须用 TodoWrite 1:1 映射此表。每完成一行，验证"产出物已生成 + 门禁已满足"后才进下一步。**
+
+| # | 动作 | 产出物 | 门禁 |
+|---|------|--------|------|
+| **Phase A：CodeAnalysis** | | | |
+| A1 | 加载5上下文（约束/CodingModel/Story/Task/项目资产） | — | 5 上下文齐备 |
+| A2 | 调 coding-skill 能力做 CodeAnalysis | 类骨架/分层映射 | 分层归类无错（coding-skill §3） |
+| A3 | 产出统一版 CodePlan + 跑门禁 | {STORY-ID}-CodingPlan.md | G-CODEPLAN-SRC/G-14/G-08 全过 |
+| A4 | 用户审核点 2.5 确认 | 用户确认记录 | 用户明确"确认/同意/可以开始" |
+| **Phase B：Execute** | | | |
+| B0 | 复核 CodingModel（不重新产出） | — | 与 CodePlan 一致 |
+| B1 | 工程预检（4 项） | — | 工程/依赖/SDK/代码模式确认 |
+| B2 | 按 Task 顺序生成代码 | 源代码文件 | 每个 Task 检查项通过 |
+| B3 | 每个 Task 实现方案确认（强制节点） | 用户确认记录 | 用户已确认本 Task 方案 |
+| B4 | 编译+启动+接口+DB+异常验证 | — | mvn compile + 启动 + 接口 Pass（coding-skill §8）|
+| B5 | 运行测试 + 测试报告合规校验 | 测试报告 + 证据链 | 扫描 BLOCKER=0；XML 一致；无假修复 |
+| B6 | 编码后全切面一致性核查闸 | 《一致性核查表》 | 无 🔴 漂移；核心落库真实 DB 证据 |
+| B7 | 静态扫描 + 交付表 | 扫描结果 + 交付表 | 通用扫描 0 命中；交付表按调用顺序 |
+| **Phase C：异常追溯（任意步骤可触发）** | | | |
+| C | 报错走追溯链 A1-A6 | {story}-开发问题记录.md | 4 层逐层判定，不跳层 |
+
+**异常路径（任意步骤可触发）：**
+
+| 触发条件 | 动作 | 产出物 |
+|---------|------|--------|
+| 发现问题（编译错误/设计矛盾/约束遗漏/启动失败） | 立即记录问题 + 走追溯链 | 开发问题记录更新 |
+| Story 缺陷 | 更新 Supplement → 触发 Story Update | Supplement 更新 |
+
+---
+
+## 完成标准
+
+**CodingProcess 的完成需同时满足：**
+
+| 条件 | 说明 |
+|------|------|
+| ✅ 编译通过 | `mvn compile` 无错误 |
+| ✅ 测试全部通过 | `mvn test` 所有用例 Pass |
+| ✅ 问题反馈闭环 | 异常路径中无 Open 状态的问题 |
+| ✅ 测试报告已出具 | 最终一轮测试报告已生成 |
+| ✅ 全切面一致性核查闸通过 | 无 🔴 漂移，核心落库路径有真实 DB 证据 |
+
+**不满足时：** 循环执行"修复 → 编译 → 测试 → 出报告"，直到全部通过。
 
 ---
 
@@ -169,32 +470,9 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 
 | SKILL | 关系 |
 |-------|------|
-| `coding-skill.md` | **能力提供方**：④bis 实战 SOP（CodeAnalysis）+ CodePlan 模板/门禁定义 + CodingSkill.Execute 契约。本 SKILL 指针引用其能力，不复制 |
-| `task-generate-skill.md` | **上游**：产出 Task 文档 + Task Review 通过 → 移交本 SKILL。task-generate 不再产出 CodePlan（v3.5.16 释放职责） |
-| `document-storage-skill.md` | **横切依赖**：5 上下文加载的 API（get_constraints/get_thinking_engine/assets read/resolve_path） |
-| `SKILL.md` | **编排层**：流程图含 CodingProcess 节点 + 审核点 2.5 |
-
----
-
-## 📖 CodeAnalysis 讲解规范（审核点 2.5 前）
-
-> **📍 详细讲解模板复用 [`coding-skill.md` §📖 Code 讲解模板](coding-skill.md)。** 本 SKILL 在审核点 2.5 前主动讲解：5 上下文加载情况 + CodeAnalysis 关键决策（分层映射/类骨架/风险预判）+ 门禁结果。
-
----
-
-## 执行清单（TodoWrite 映射）
-
-CodingProcess.Run 执行时，必须用 TodoWrite 1:1 映射以下清单：
-
-1. [ ] §1.1 加载项目约束（get_constraints）
-2. [ ] §1.2 加载技术约束 + 产出 11 维 CodingModel 决策
-3. [ ] §1.3 加载 Story 文档（微任务跳过）
-4. [ ] §1.4 加载 Task 文档（微任务跳过）
-5. [ ] §1.5 加载项目资产（assets read coding）
-6. [ ] §2 CodeAnalysis（④bis 5 步 SOP）
-7. [ ] §3.1 产出统一版 CodePlan（套模板 16 节）
-8. [ ] §3.2 跑 G-CODEPLAN-SRC + G-14 + G-08 门禁
-9. [ ] §4 用户审核点 2.5 确认
-10. [ ] §5 移交：confirm coding-process + 切 coding phase
-
-**🔴 禁止裸 ✅：** 每项完成必须附客观证据（命令输出/文件路径/门禁报告），遵循 [`code-review-skill.md` §闸4 禁裸✅](../phase3-review/code-review-skill.md)。
+| `coding-skill.md` | **能力库（被调用）**：CodeAnalysis 方法论(§5/§6/§7) + 骨架展开(§4) + 分层红线(§3) + 验证判定(§8) + 漂移核查(§9) + 根因分类(§10) + 检查清单(§11) + 静态扫描(§12)。本 SKILL 在 Phase A 和 Phase B 都调用 |
+| `task-generate-skill.md` | **上游**：产出 Task 文档 + Task Review 通过 → 移交本 SKILL |
+| `document-storage-skill.md` | **横切依赖**：5 上下文加载 API + 文档落地 |
+| `coding-report-skill.md` | **下游**：出 Coding 报告 |
+| `code-review-skill.md` | **下游**：测试真实性/⑥bis/⑦bis 等评审规则 |
+| `SKILL.md` | **编排层**：流程图含 CodingProcess 全流程 + 审核点 2.5/4 |

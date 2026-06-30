@@ -7,9 +7,12 @@ Story/Task/Plan 级（txn 级）：
 {
   "version": "1",
   "projectKey": "...",
-  "phase": "initialized" | "dr-generated" | ...,
+  "phase": "initialized" | "dr-generated" | ... | "paused",
   "scale": "大"|"中"|"小"|"微",   # 🆕 v3.5.15 任务规模，决定走哪条子链；旧 state 缺失则 _infer_scale 反推
   "entryNode": "BUG"|"CONFIG"|"PRD"|"RA"|... | null,  # 🆕 v3.5.15 入口节点语义（FlowNode.value）
+  "pausedFromPhase": "coding" | null,   # 🆕 v3.6 paused 前的 phase（resume 时恢复目标）
+  "pauseReason": "level3-escalation" | "user-rejected" | "user-manual" | null,  # 🆕 v3.6
+  "correctionCounts": { "coding": 2 },  # 🆕 v3.6 各 phase 矫正次数（flow_monitor Level 判定）
   "currentStory": "STORY-001" | null,
   "currentTask": "TASK-001" | null,
   "history": [
@@ -94,8 +97,11 @@ def read_state(state_path: Path) -> dict:
             "version": "1",
             "projectKey": None,
             "phase": "initialized",
-            "scale": None,        # 🆕 v3.5.15 任务规模（大/中/小/微），首次 state write 写入
-            "entryNode": None,    # 🆕 v3.5.15 入口节点语义（FlowNode.value，如 BUG/CONFIG/PRD）
+            "scale": None,            # 🆕 v3.5.15 任务规模（大/中/小/微），首次 state write 写入
+            "entryNode": None,        # 🆕 v3.5.15 入口节点语义（FlowNode.value，如 BUG/CONFIG/PRD）
+            "pausedFromPhase": None,  # 🆕 v3.6 paused 前的 phase（resume 时恢复目标）
+            "pauseReason": None,      # 🆕 v3.6 暂停原因（level3-escalation|user-rejected|user-manual）
+            "correctionCounts": {},   # 🆕 v3.6 各 phase 矫正次数，键=phase 值=int
             "currentStory": None,
             "currentTask": None,
             "history": [],
@@ -194,13 +200,26 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
     """
     设置当前 phase + 记录历史（🆕 v3.5.15 按 state.scale 选子链校验）。
 
+    🆕 v3.6：`paused` 是元状态，不在 PHASE_FLOWS 子链中，任何 phase 均可跳入。
+      - 设置 paused 时自动保存 pausedFromPhase（当前 phase）
+      - 从 paused 恢复请用 resume_state()，不要直接 set_phase
+
     Returns:
         True: phase 实际被更新
         False: phase 等于当前值，不重复记录
 
     Raises:
-        ValueError: phase 不在该 state 所在子链中
+        ValueError: phase 不在该 state 所在子链中（paused 除外）
     """
+    # 🆕 v3.6 paused 元状态：绕过子链校验，直接写入
+    if phase == "paused":
+        if state.get("phase") == "paused":
+            return False  # 已经是 paused，幂等
+        state["pausedFromPhase"] = state.get("phase", "initialized")
+        state["phase"] = "paused"
+        record_history(state, "paused", by)
+        return True
+
     scale = _resolve_scale(state)
     chain = PHASE_FLOWS[scale]
     if phase not in chain:
@@ -271,6 +290,7 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
 def next_step_suggestion(state: dict) -> dict:
     """
     根据当前 phase 给出下一步建议（🆕 v3.5.15 按 state.scale 选子链 mapping）。
+    🆕 v3.6：paused 元状态特殊处理——返回恢复目标 phase。
 
     返回 {"current": phase, "next": ..., "action": ..., "skill": "..."}
     - "current": 当前 phase
@@ -279,6 +299,23 @@ def next_step_suggestion(state: dict) -> dict:
     - "skill": 对应的 SKILL 文件
     """
     cur = state.get("phase", "initialized")
+
+    # 🆕 v3.6 paused 元状态：建议恢复到暂停前的 phase
+    if cur == "paused":
+        paused_from = state.get("pausedFromPhase", "initialized")
+        pause_reason = state.get("pauseReason", "unknown")
+        phase_cn = {
+            "level3-escalation": "Level 3 矫正次数超限",
+            "user-rejected":     "用户拒绝本系列产物",
+            "user-manual":       "用户手动暂停",
+        }.get(pause_reason, pause_reason)
+        return {
+            "current": "paused",
+            "next": paused_from,
+            "action": f"流程已暂停（{phase_cn}），恢复后继续 {paused_from} 阶段",
+            "skill": "（说「继续流程」或 ae-sdd state write --resume 恢复）",
+        }
+
     scale = _resolve_scale(state)
     mapping = _NEXT_STEP_MAPPINGS[scale]
     next_phase, action, skill = mapping.get(cur, ("?", "未知 phase", "?"))
@@ -604,3 +641,85 @@ def set_prd_status(state: dict, status: str) -> bool:
             "status": "compacted",
         })
     return True
+
+
+# ─── 🆕 v3.6 主流程监管器：paused 状态 + 矫正计数 API ─────────────────────────
+# 配合 flow_monitor.py（偏移检测）和 prompt_inject.py（监管器主逻辑）使用。
+# 设计：本节只提供状态读写 API，偏移判定逻辑在 flow_monitor.py（职责分离）。
+
+def pause_state(state: dict, pause_reason: str, by: str = "ae-sdd") -> None:
+    """暂停流程：记录当前 phase → pausedFromPhase，phase 置为 paused。
+
+    幂等：已是 paused 时直接返回（不重复记录 history）。
+
+    Args:
+        state:        read_state() 返回的 dict（原地修改）
+        pause_reason: 暂停原因，建议用以下常量：
+                      "level3-escalation" — Level 3 矫正次数超限
+                      "user-rejected"     — 用户拒绝本系列产物（审核点 ❌）
+                      "user-manual"       — 用户手动暂停
+        by:           操作者标识（写入 history.by）
+    """
+    if state.get("phase") == "paused":
+        return  # 幂等：已暂停
+    state["pausedFromPhase"] = state.get("phase", "initialized")
+    state["pauseReason"] = pause_reason
+    state["phase"] = "paused"
+    record_history(state, f"paused({pause_reason})", by)
+
+
+def resume_state(state: dict, by: str = "user") -> str:
+    """从 paused 恢复：还原到 pausedFromPhase，清除 pause 相关字段。
+
+    幂等：若当前不是 paused，直接返回当前 phase，不修改 state。
+
+    Args:
+        state: read_state() 返回的 dict（原地修改）
+        by:    操作者标识（写入 history.by）
+
+    Returns:
+        恢复到的 phase 名称（即 pausedFromPhase；若未在 paused 则返回当前 phase）
+    """
+    if state.get("phase") != "paused":
+        return state.get("phase", "initialized")
+    resume_to = state.get("pausedFromPhase", "initialized")
+    state["phase"] = resume_to
+    state.pop("pausedFromPhase", None)
+    state.pop("pauseReason", None)
+    record_history(state, f"resumed-to-{resume_to}", by)
+    return resume_to
+
+
+def increment_correction(state: dict, phase: str) -> int:
+    """矫正计数 +1，返回新计数。
+
+    供 prompt_inject.py 在检测到偏移且决定注入矫正时调用。
+    新计数由 flow_monitor.should_escalate() / DriftResult.correction_count 读取，
+    决定是否升级到 Level 3。
+
+    Args:
+        state: read_state() 返回的 dict（原地修改）
+        phase: 当前 phase 名称（用作 correctionCounts 的 key）
+
+    Returns:
+        递增后的新计数（int）
+    """
+    counts = state.setdefault("correctionCounts", {})
+    counts[phase] = counts.get(phase, 0) + 1
+    return counts[phase]
+
+
+def get_correction_count(state: dict, phase: str) -> int:
+    """读取指定 phase 的矫正次数（不存在返回 0）。
+
+    供 flow_monitor.detect_drift() 读取历史次数，判断偏移 severity。
+    """
+    return state.get("correctionCounts", {}).get(phase, 0)
+
+
+def reset_correction_count(state: dict, phase: str) -> None:
+    """重置指定 phase 的矫正次数为 0。
+
+    用于用户 ⚠️ 反馈后（带意见重跑 sub-step 2）：重置计数，重新开始矫正轮次。
+    """
+    state.setdefault("correctionCounts", {})[phase] = 0

@@ -612,7 +612,7 @@ documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
     │   - §5 关键类骨架（汇总所有 Task 的类骨架）
     │   - §6-§15 其他章节
     ↓
-3. 走 [Coding-SKILL §④bis 5 步 SOP](../phase2-coding/coding-skill.md) 重组为统一版
+3. 🆕 v3.5.17 本步已移交 CodingProcess：走 [CodingProcess §A2 调 coding-skill 能力做 CodeAnalysis](../phase2-coding/coding-process-skill.md)（5步SOP 能力本体在 [coding-skill §6](../phase2-coding/coding-skill.md)）重组为统一版
     - 步骤 1：调用 `ae-sdd assets read task-generate --project <projectKey>`
       返回：§3 分层映射 + §4 DDD 落点 + §5 命名约定 + §8 Code Plan 输入索引
       → 精准查询：`ae-sdd assets query "<name>"`

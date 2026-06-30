@@ -259,6 +259,7 @@ L1 项目层 (.ae-sdd/plugins/registry.yaml): 1 plugin
 ## §6 已知缺口 / 留待下个 PR
 
 1. **`extends` 类型章节级合并未实现** —— v3.5.0 loader 把 `type=skill-extends` 当 `skill-override` 处理（整体替换）。完整实现留待 v3.6.0。
+   > **🆕 v3.6.1 替代方案已落地**：语言/项目编码适配器的"叠加"不走未实现的 skill-extends，改由**共有 [`coding-skill.md` §13 注册加载协议](../phase2-coding/coding-skill.md)** 用现有 `skill-new` 机制实现——适配器以 `provides: coding-adapter-{lang}` 注册，AI 运行时读共有 + 适配器两份文件叠加。母版 L3 已注册首例 [`java3d-coding-skill`](../../plugins/registry.yaml)（`plugins/registry.yaml`）。
 2. **CLI `plugin` 子命令未挂载** —— v3.5.0 只完成 Python 模块；CLI 注册（`tools/bin/ae-sdd` add_parser）留待 v3.5.1。
 3. **依赖解析** —— dependencies 字段声明但 loader 不强制校验；v3.5.0 仅做提示。
 4. **缓存** —— 每次加载 SKILL 重新读注册表；高频场景需要缓存。留待性能 profiling 后优化。

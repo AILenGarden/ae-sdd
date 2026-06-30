@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.5.16（🆕 2026-06-30：Task→Coding 解耦——插入独立流程节点 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan），流程与能力分离；coding-skill.Plan 契约剥离为指针，CodingSkill 仅保留 Execute；state 4子链插 coding-process phase（大/中/小在 task-reviewed 后、微在 initialized 后）；关卡3 新增硬层产物校验（coding 写 src/ 须 coding-process confirm）+ stop_check 软层自报标记（◆ LOADED）两层监督，防 AI 凭记忆绕过 CodingProcess；756 测试全过。前序 v3.5.15 coding-skill 治理+多入口状态机；v3.5.14 UC-13 门禁注册完整性；v3.5.11 AA 全维对齐验证器。
+> **版本：** v3.6.1（🆕 2026-06-30：CodingSKILL 拆分——共有 coding-skill 新增 §13 语言/项目适配器注册加载协议，按项目技术栈叠加适配器；首例 Java3D 适配器承载 Java 语言 + icec/life 项目编码决策知识层（技术栈锁/DDD 4 层落点/骨架特化/验证姿态特化/命名错误码/静态扫描/踩坑库），走现有 skill-new 注册（母版 L3 plugins/registry.yaml），AI 运行时叠加共有能力，零 loader 代码改动。前序 v3.6.0 RA 实现视角七要素 + G-RA-6；v3.5.17 CodingSKILL 能力库化；v3.5.16 Task→Coding 解耦+两层监督；v3.5.15 coding-skill 治理+多入口状态机；v3.5.14 UC-13 门禁注册完整性；v3.5.11 AA 全维对齐验证器。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -38,6 +38,8 @@ ae-sdd/                                # 仓库根（GitHub 直发）
 │   ├── dev-sync.sh                    #    开发者工具：build + install + watch
 │   ├── test_authenticity_scan.py      #    测试真实性扫描器（G-09 运行时依赖）
 │   ├── ra_authenticity_scan.py        #    RA 真实性扫描器（G-RA-4 运行时依赖）
+│   ├── ra_depth_scan.py               #    RA 机械派生深度扫描器（G-RA-5 运行时依赖）
+│   ├── ra_implementation_scan.py      #    RA 实现视角七要素扫描器（G-RA-6 运行时依赖）
 │   └── coding_authenticity_scan.py    #    Coding 真实性扫描器（G-CODE-1 运行时依赖）
 │
 ├── .gitignore                         # 忽略 dist/、IDE 数据、临时文件
@@ -121,7 +123,7 @@ bash scripts/dev-sync.sh --watch
 
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
-- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 28 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
+- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 29 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
 - **[`source/skills/`](source/skills/)** — 25 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
 - **[`source/templates/`](source/templates/)** — 21 份模板（Story/Task/DR/Report/...）
 - **[`source/standards/`](source/standards/)** — 20 份标准（constraints 11 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）

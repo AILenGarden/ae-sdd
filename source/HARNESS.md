@@ -101,11 +101,11 @@ G-08 Plan14禁  G-09 测试真实性 G-09B reviewer独立性 G-10 测试报告
 G-11 Coding报告 G-12 CR报告   G-13 全链路对称性 G-14 CP-Story一致性
 G-CODEPLAN-SRC 源码核对  G-DOC-STORAGE 文档存放  G-DOC-CONSISTENCY 记忆-配置一致
 G-PATH 路径越界  G-CODE-1 Coding真实性
-G-RA-1 RA文档存在  G-RA-2 RA维度完整  G-RA-3 RA衍生章节  G-RA-4 RA真实性  G-RA-5 RA派生深度
+G-RA-1 RA文档存在  G-RA-2 RA维度完整  G-RA-3 RA衍生章节  G-RA-4 RA真实性  G-RA-5 RA派生深度  G-RA-6 RA实现视角
 G-RA-FLOW-VIOLATION RA流程违规  G-REVIEW-LOOP review-loop退出条件
 ```
 
-> 共 28 门禁（GATE_REGISTRY 权威，`tools/lib/gates.py` 实测）。
+> 共 29 门禁（GATE_REGISTRY 权威，`tools/lib/gates.py` 实测）。
 
 一键检查：`ae-sdd gates check --json`
 

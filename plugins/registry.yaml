@@ -1,0 +1,37 @@
+# ae-sdd 母版 L3 插件注册表（🆕 v3.6.1）
+#
+# 层级与用途：
+#   - 本文件 = 仓库根层（L3），由 ae-sdd 团队发布官方扩展插件。
+#   - 优先级链：L1 项目层（<project>/.ae-sdd/plugins/registry.yaml）
+#               > L2 全局层（~/.ae-sdd/plugins/registry.yaml）
+#               > L3 仓库根层（本文件）
+#               > L0 内置 fallback（source/skills/ + source/templates/）
+#   - 项目/个人可在 L1/L2 注册同名 provides 覆盖本层（高优先级胜出）。
+#
+# 完整 schema 见 source/standards/constraints/plugin-registry-spec.md
+# 优先级合成算法见 source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md §2.2
+
+schema_version: 1
+description: |
+  ae-sdd 母版官方扩展插件注册表（L3 仓库根层）。
+  v3.6.1 首例：Java3D 编码适配器——Java 语言 + icec/life 项目编码决策知识层，
+  叠加于共有 coding-skill §3/§4/§8/§11/§12 之上（由 coding-skill §13 注册加载协议解析）。
+  适配器文件存于 plugins/java3d-coding-skill/SKILL.md（L3 插件工件，path 相对本注册表目录）。
+
+plugins:
+  # ─────────────────────────────────────────────────────────────
+  # Java3D 编码适配器（🆕 v3.6.1 首例 skill-new 适配器）
+  # 叠加机制：共有 coding-skill §13 按 project assets tech-stack 解析
+  #         provides key（coding-adapter-java），命中则 AI 读本文件叠加应用
+  # 内容边界：编码决策知识层（不复述项目 constraints/+assets 纯规则）
+  # ─────────────────────────────────────────────────────────────
+  - name: java3d-coding-skill
+    type: skill-new                             # 新增 SKILL（非覆盖内置）
+    version: 1.0.0
+    author: "ae-sdd"
+    description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill）
+    provides: coding-adapter-java               # coding-skill §13 查找的路由 key
+    path: ./java3d-coding-skill/SKILL.md
+    compatibility:
+      ae_sdd_version: ">=3.6.1"
+    tags: [java, icec, life, adapter]

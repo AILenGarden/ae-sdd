@@ -159,7 +159,12 @@ Task-3 做完了，代码已提交。
         assert "最新响应" in last
 
     def test_history_header_no_longer_fools_stop_hook(self, tmp_path):
-        """核心修复验证：历史轮次有状态头，最新响应无状态头 → 应 block"""
+        """v3.6（决策 1B）：废弃 ◆ STATE 自报标记检测，最新响应无状态头 → 放行（allow stop）。
+
+        历史背景：v1.3 修复"历史轮次状态头被误判为最新"，v3.6 进一步废弃自报标记检测
+        （改由 flow_monitor 产物核查判定流程合规），故无论最新响应有无状态头都放行。
+        本测试保留：验证历史轮次有状态头、最新无状态头时不会误判为"被截断"。
+        """
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
 
@@ -172,8 +177,8 @@ Task-3 做完了，代码已提交。
         ])
 
         should_stop, msg = check_output(transcript, ade_sdd=ae_sdd)
-        assert not should_stop, "最新响应无状态头，应该被 block"
-        assert "◆ STATE" in msg
+        assert should_stop, "v3.6 废弃自报标记：最新响应无状态头应放行（非 ae-sdd 截断）"
+        assert msg == ""
 
     def test_latest_header_allows_stop(self, tmp_path):
         """最新响应有状态头 → 允许停止"""
