@@ -12,7 +12,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.7.0"
+MASTER_VERSION = "3.7.1"
 
 
 def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:

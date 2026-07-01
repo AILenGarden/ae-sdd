@@ -72,7 +72,7 @@ description: BE CodeReview 报告空白模板 — 配合 code-review-skill.md �
 
 ### 2.2 AC × 实现 × 测试 对照表（🔴 必填，每个 AC 一行）
 
-| AC_ID | AC 描述 | 实现位置（类:方法）| 测试方法 | 真实 DB/HTTP | 状态 |
+| AC_ID | AC 描述 | 实现位置（类:方法）| 测试方法 | Test Review 证据 | 状态 |
 |-------|---------|------------------|---------|------------|------|
 | AC-001 | {描述} | `ClassName.methodName` | `TestClass.testXxx` | ✅/❌ | ✅/❌ |
 | AC-002 | | | | | |
@@ -264,36 +264,21 @@ WHERE id = #{id}
 | 4 | 禁裸 ✅ 闸 | 🔴 阻断 | ✅/❌ | 每个 ✅ 必附证据 |
 | 5 | 报告-代码对账闸 | 🔴 阻断 | ✅/❌ | 见 §9 产出物对账 |
 | 6 | 产出物对账闸 | 🔴 阻断 | ✅/❌ | 见 §9 |
-| 7 | 真实 DB/HTTP 覆盖核查闸 | 🔴 阻断 | ✅/❌ | 5 类必真实场景清单 |
+| 7 | Test Review 通过引用核查闸 | 🔴 阻断 | ✅/❌ | TEST_REPORT + test-verifier 证据 |
 
 **🔴 任一闸 ❌ = 整报告不通过。**
 
-### 7.3 阶段 D 评审：测试真实性 + 真实覆盖
+### 7.3 阶段 D 评审：Test Review 结果引用核查
 
-> **🔴 来源：** `code-review-skill.md §阶段 D 8 类禁止扫描 + 5 类必真实场景`。
+> **🔴 来源：** `code-review-skill.md §阶段 D Test Review 结果引用核查`。
 
-**8 类禁止扫描结果：**
-
-| # | 禁止手段 | 扫描方法 | 命中数 | 命中位置 |
-|---|---------|---------|-------|---------|
-| D1 | `@Disabled` / `@Ignore` | grep | | |
-| D2 | `assertTrue(true)` 永真 | grep | | |
-| D3 | `catch (Exception e) {}` 吞噬 | grep | | |
-| D4 | 全 Mock 替代 | spot check | | |
-| D5 | 期望值=实际值 | spot check | | |
-| D6 | 无效测试数据 | grep | | |
-| D7 | `Thread.sleep` 绕过 | grep | | |
-| D8 | 凑覆盖率 | 同 D2/D3 | | |
-
-**5 类必真实场景核查：**
-
-| # | 场景 | 必真实 | 实际 | 证据 |
-|---|------|--------|------|------|
-| 1 | 核心落库 | DB | ✅/❌ | |
-| 2 | 事务回滚 | DB | ✅/❌ | |
-| 3 | 分布式锁 | Redis | ✅/❌ | |
-| 4 | Feign 调用 | HTTP | ✅/❌ | |
-| 5 | Redis 缓存失效 | Redis | ✅/❌ | |
+| 检查项 | 通过标准 | 结果 | 证据 |
+|------|---------|------|------|
+| 独立性 | `TEST_REPORT` 含 test-verifier session_id，且非 coder 自审 | ✅/❌ | |
+| G-09/G-10 | 复核章节通过，BLOCKER=0 | ✅/❌ | |
+| 证据链 | 命令、退出码、stdout/stderr、XML、扫描报告路径齐全 | ✅/❌ | |
+| AC 覆盖 | TestCase/Story AC 映射闭环 | ✅/❌ | |
+| 真实覆盖 | DB/HTTP/Redis 等真实场景已由 Test Review 判定 | ✅/❌ | |
 
 ### 7.4 阶段 F 评审：跨文档引用核查
 
@@ -517,7 +502,7 @@ Story ID / 标题：STORY-001-BE / Boss 用户列表查询接口
 
 ### A.3 §二 2.2 AC×实现×测试 对照表示例
 
-| AC_ID | AC 描述 | 实现位置 | 测试方法 | 真实 DB/HTTP | 状态 |
+| AC_ID | AC 描述 | 实现位置 | 测试方法 | Test Review 证据 | 状态 |
 |-------|---------|---------|---------|------------|------|
 | AC-001 | 管理员能分页查询所有用户 | `BossUserAppService.list(BossUserQuery): PagedModels<BossUserDTO>` | `BossUserAppServiceIT.testList_Success` | ✅（@SpringBootTest + TestRestTemplate）| ✅ |
 | AC-002 | 按角色 ID 过滤 | `BossUserAppService.list` 内 `query.roleId` 分支 | `BossUserAppServiceIT.testList_FilterByRoleId` | ✅ | ✅ |
@@ -582,20 +567,17 @@ Story ID / 标题：STORY-001-BE / Boss 用户列表查询接口
 | 4 | 禁裸 ✅ 闸 | 🔴 阻断 | ✅ | 32 个 ✅ 全附 grep/file:line 证据（详见各小节）|
 | 5 | 报告-代码对账闸 | 🔴 阻断 | ✅ | 报告能力声明 vs 代码：5/5 一致（grep 验证）|
 | 6 | 产出物对账闸 | 🔴 阻断 | ✅ | 7 个产出物全存在 + 与报告一致 |
-| 7 | 真实 DB/HTTP 覆盖核查闸 | 🔴 阻断 | ✅ | 5 类必真实：核心落库/事务回滚/分布式锁（不适用）/Feign HTTP/Redis（不适用）全 ✅ |
+| 7 | Test Review 通过引用核查闸 | 🔴 阻断 | ✅ | TEST_REPORT v1-r1 含 test-verifier session_id；G-09/G-10 BLOCKER=0 |
 
-### A.6 §七 7.3 8 类禁止扫描结果示例
+### A.6 §七 7.3 Test Review 引用核查示例
 
-| # | 禁止手段 | 扫描方法 | 命中数 | 命中位置 |
-|---|---------|---------|-------|---------|
-| D1 | `@Disabled` / `@Ignore` | `grep -rn "@Disabled\|@Ignore" src/test` | 0 | — |
-| D2 | `assertTrue(true)` 永真 | `grep -rn "assertTrue(true)" src/test` | 0 | — |
-| D3 | `catch (Exception e) {}` 吞噬 | `grep -rn "catch.*Exception.*{}" src/test` | 0 | — |
-| D4 | 全 Mock 替代 | 人工 spot check | 0 | — |
-| D5 | 期望值=实际值 | 人工 spot check | 0 | — |
-| D6 | 无效测试数据 | `grep "userId=1L" src/test` | 0 | — |
-| D7 | `Thread.sleep` | `grep "Thread.sleep" src/test` | 0 | — |
-| D8 | 凑覆盖率 | 同 D2/D3 | 0 | — |
+| 检查项 | 结果 | 证据 |
+|------|------|------|
+| 独立性 | ✅ | TEST_REPORT v1-r1 / test-verifier session_id: tv-20260701-001 |
+| G-09/G-10 | ✅ | BLOCKER=0，扫描报告：`ae-sdd-doc/.../test-authenticity.json` |
+| 证据链 | ✅ | 原始日志、Surefire XML、扫描报告路径均可打开 |
+| AC 覆盖 | ✅ | AC-001/002/003 均映射到测试方法与 XML 用例 |
+| 真实覆盖 | ✅ | 核心落库与 Feign HTTP 已由 Test Review 判定通过 |
 
 ### A.7 §八 Git 文件清单示例（按项目 §3 层级自上而下）
 

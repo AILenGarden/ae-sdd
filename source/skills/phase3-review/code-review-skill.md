@@ -17,7 +17,7 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 ## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
 
-> 本文件第七步「7 道闸」（⑥bis 一致性 / ⑦bis 对称性 / 全文档回扫 / 禁裸✅ / 报告-代码对账 / 产出物对账 / 真实 DB-HTTP 覆盖）、
+> 本文件第七步「7 道闸」（⑥bis 一致性 / ⑦bis 对称性 / 全文档回扫 / 禁裸✅ / 报告-代码对账 / 产出物对账 / Test Review 引用）、
 > 第零步准入、§15 的 10 条门禁，**当前为软门禁（report-only）**，由 reviewer 在 CodeReview 报告内逐项自评判定，
 > **无 GATE_REGISTRY 级逐闸机械校验**。这些检查项是 Code Review 的实质内容；只是当前没有 CLI 硬阻断兜底。
 >
@@ -53,7 +53,7 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 - 业务逻辑正确性 100% 匹配 Story AC
 - 分层职责零串味（Domain/Application/Repository 不串）
 - 数据库逻辑安全（事务边界 / SQL 性能 / 索引 / 约束）
-- 测试真实性（8 类禁止 0 命中）
+- Test Review 独立通过（G-09/G-10 + 证据链已复核）
 - 项目资产合规（命名 / 包路径 / 调用层级）
 - 6 大闸门全过（一致性 / 对称性 / 全文档回扫 / 禁裸 ✅ / 报告-代码对账 / 产出物对账）
 - 评审发现问题**进入异常路径**（走 Coding 实时追溯链 / Story Update / Task Update / Project Assets Update）
@@ -71,7 +71,7 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 | 业务实现正确 | AC_ID + 测试方法名 + Story 章节号 |
 | 分层职责归位 | 类:方法 + 文件:行号 + 引用项目资产 §4 |
 | SQL 安全 | Mapper 方法名 + WHERE 条件 + 索引名 |
-| 测试真实 | 测试类:方法 + 真实 DB 输出 / 真实 HTTP 状态码 |
+| Test Review | TEST_REPORT 版本 + test-verifier session_id + 证据路径 |
 | 命名合规 | grep 类名 + 项目资产 §5 命名模板匹配 |
 | 调用层级合规 | 文件路径 + 项目资产 §3 层级映射 |
 
@@ -120,7 +120,7 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
     ├─ 阶段 A：业务逻辑评审
     ├─ 阶段 B：分层职责红线核查
     ├─ 阶段 C：数据库逻辑链评审
-    ├─ 阶段 D：测试真实性 + 真实 DB/HTTP 覆盖核查
+    ├─ 阶段 D：Test Review 结果引用核查
     ├─ 阶段 E：项目资产合规性核查
     └─ 阶段 F：跨文档引用核查（与 §3 调用层级一致性）
     ↓
@@ -147,7 +147,7 @@ Code Review 结论：{STORY-ID}
     ├─ 7.4 禁裸 ✅ 闸
     ├─ 7.5 报告-代码对账闸
     ├─ 7.6 产出物对账闸
-    └─ 7.7 真实 DB/HTTP 覆盖核查闸
+    └─ 7.7 Test Review 通过引用核查闸
     ↓
 第七步 bis：CodeReview 报告合规性校验
     ↓
@@ -265,7 +265,7 @@ Code Review 结论：{STORY-ID}
 | 通过率 | 各层通过率 |
 | 失败用例 | 失败 ID + 原因 + 严重性 |
 | 覆盖率 | 整体 / Service 核心 / Mapper XML / Controller 接口 |
-| 测试真实性 | 是否含 8 类禁止（@Disabled / assertTrue(true) / catch 吞噬 / 全 Mock / 期望值=实际值 / Thread.sleep / 凑覆盖率） |
+| Test Review | 是否有 test-verifier 独立复核通过、G-09/G-10 通过、证据路径齐全 |
 
 ### 1.5 调用项目资产服务
 
@@ -415,111 +415,23 @@ Story ID：{STORY-ID}
 - ❌ IN 集合 > 1000
 - ❌ 禁 `${}` 拼接 SQL（必须 `#{}` 参数化）
 
-### 阶段 D：测试真实性 + 真实 DB/HTTP 覆盖核查
+### 阶段 D：Test Review 结果引用核查
 
-**目的：** 扫描 8 类禁止伪造手段 + 真实 DB/HTTP 覆盖核查。
+**目的：** CodeReview 不重复执行测试真实性细则，只核验 Test 系列已独立通过。
 
-**输入：** 测试代码 + 测试报告 + 项目资产 §6.7 测试规范
+**输入：** 最新 `TEST_REPORT` + `test-review-skill.md` 独立复核章节 + 原始证据路径。
 
-**输出：** 测试真实性核查表
+**输出：** Test Review 引用核查表。
 
-**🔴 8 类禁止手段扫描（任一命中 = 测试无效）：**
+| 必查项 | 通过标准 |
+|------|---------|
+| 独立性 | `TEST_REPORT` 含 test-verifier session_id，且非 coder 自审 |
+| G-09/G-10 | 复核章节标记通过，BLOCKER=0 |
+| 证据链 | 命令、退出码、stdout/stderr、Surefire/Failsafe XML、扫描报告路径齐全 |
+| AC 覆盖 | TestCase/Story AC 映射在 TEST_REPORT 中闭环 |
+| 真实覆盖 | 涉及 DB/HTTP/Redis 等真实场景时，证据由 Test Review 判定通过 |
 
-| # | 禁止手段 | 扫描方法 | 命中示例 |
-|---|---------|---------|---------|
-| D1 | `@Disabled` / `@Ignore` 跳过失败 | `grep -rn "@Disabled\|@Ignore" src/test` | `class FooTest { @Disabled void testX() {...} }` |
-| D2 | `assertTrue(true)` 永真 | grep | `assertTrue(true);` |
-| D3 | `catch (Exception e) {}` 吞噬 | grep | `try { ... } catch (Exception e) { /* ignore */ }` |
-| D4 | 全 Mock 替代（mock 掉所有 Repository/Service） | 人工 spot check | 5 个 @MockBean + 0 个真实 DB |
-| D5 | 期望值=实际值（先跑代码得 actual 再写 expected） | 人工 spot check | `assertEquals(actual, actual);` |
-| D6 | 无效测试数据（userId=1L 等假设值） | grep | 期望值写死为 null/空集合 |
-| D7 | `Thread.sleep` 绕过 | grep | `Thread.sleep(1000);` |
-| D8 | 凑覆盖率（assertTrue(true) / catch 吞噬） | 同 D2 / D3 | — |
-
-**🔴 真实 DB/HTTP 覆盖核查（5 类强制真实）：**
-
-| # | 场景 | 必真实 | 判定 |
-|---|------|--------|------|
-| T1 | 核心落库（涉及资金/状态/权限的 INSERT/UPDATE/DELETE） | DB | grep `@SpringBootTest + @Transactional` + 看 @MockBean 数量 |
-| T2 | 事务回滚 | DB | 同 T1 + `@Rollback` |
-| T3 | 分布式锁（如 Redisson） | Redis | grep `RedissonClient` + 真实 Redis 连接 |
-| T4 | Feign 调用链路 | HTTP | `@SpringBootTest(RANDOM_PORT) + TestRestTemplate` |
-| T5 | Redis 缓存失效 | Redis | 同 T3 |
-
-**🔴 MockMvc 降级（仅限框架过老时）：**
-- 必须在测试方法 Javadoc 注明"框架过老，降级使用 MockMvc，原因 X"
-- 否则视为违反"能走真实 HTTP 的接口测试必须走真实 HTTP"原则
-
-**覆盖率核查：**
-- 整体 ≥ 60%
-- Service 核心 ≥ 70%
-- Mapper XML 自定义 SQL ≥ 60%
-- Controller 接口 ≥ 50%
-
-**🔴 AI 测试真实性保障要求（5 条强制，源自 coding-skill 迁出，与 8 类禁止配套）：**
-
-> 8 类禁止手段（D1-D8）回答"测了什么假的"，以下 5 条保障要求回答"怎么证明测的是真的"。两者配套，缺一不可。
-
-##### 保障 1：测试代码可见性
-
-> AI 不得只说"测试通过"就完事，必须**输出关键测试代码**让用户能 review。
-
-| 必须呈现 | 示例 |
-|---------|------|
-| 测试方法签名 | `void transition_success() throws Exception` |
-| 测试数据准备 | 完整显示 fixture 构造 |
-| Mock 设置 | 显示 mock 哪些 + 返回什么 |
-| 断言代码 | 完整显示 assertEquals(expected, actual) |
-| 实际运行结果 | 显示测试报告中的 Pass 行 + 关键日志 |
-
-##### 保障 2：测试数据可追溯
-
-> 每个测试数据必须能追溯到具体 AC 或业务场景。
-
-测试代码中必须用注释标注：
-```java
-// AC-001: 正常创建工单
-// 数据来源: Story §AC-001 示例值
-Long userId = 123456789012345L;  // 来自上游会话服务的 userId
-String problemDescription = "用户进线咨询支付问题";  // 真实业务文案
-```
-
-##### 保障 3：失败诚实暴露
-
-> 测试失败的详细信息（assertion 失败的具体值、expected vs actual 差异）必须原样输出，不得"包装"成通过。
-
-❌ 错误做法：
-```
-测试结果：✅ Pass（共 25 个测试）
-```
-
-✅ 正确做法：
-```
-测试结果：✅ Pass（共 25 个测试）
-关键测试输出：
-  - transition_success: PASS (128ms)
-    断言: assertEquals(200, response.getStatusCode().value())
-    实际: 200 ✓ 期望: 200 ✓
-```
-
-##### 保障 4：禁止"修复测试"代替"修复代码"
-
-> 如果 AI 自行修改了**已通过审核的测试代码**（不是新增），必须：
-> 1. 在测试报告中标注"修改了 {测试方法}，原因：{...}"
-> 2. 给出"原测试期望值错了"的具体证据（如：原期望值与 AC 描述不符）
-> 3. 获得用户确认
-
-未获用户确认的"修复测试" = 伪造测试。
-
-##### 保障 5：覆盖率高但不要凑数
-
-> 覆盖率数字必须真实。不为了数字而堆测试。
-
-| 指标 | 必须达到 | 但不能凑数 |
-|------|---------|----------|
-| 行覆盖率 | ≥ 80% | 不通过测 getter/setter 凑 |
-| 分支覆盖率 | ≥ 70% | 不通过重复断言同一分支凑 |
-| AC 覆盖率 | **100%（🔴 强制）** | 不可漏 AC |
+**任一不满足：** CodeReview 记录为 🔴 阻断，回到 Test 系列（`test-generate-skill.md` → `test-review-skill.md`）。
 
 ### 阶段 E：项目资产合规性核查
 
@@ -615,7 +527,7 @@ String problemDescription = "用户进线咨询支付问题";  // 真实业务�
 | Story 设计缺陷 | 触发 Story Update SKILL |
 | Task 设计缺陷 | 触发 Task Generate SKILL |
 | 项目资产漂移 | 触发 Project Assets Update SKILL |
-| 测试真实性问题 | 修测试（不得"修复测试代替修复代码"） |
+| 测试报告 / 测试真实性问题 | 回 Test 系列（不得"修复测试代替修复代码"） |
 | 命名/分层问题 | 改代码 + 更新项目资产（如果项目资产过时） |
 
 ---
@@ -650,7 +562,7 @@ String problemDescription = "用户进线咨询支付问题";  // 真实业务�
 | 7.4 禁裸 ✅ | ✅/❌ | |
 | 7.5 报告-代码对账 | ✅/❌ | |
 | 7.6 产出物对账 | ✅/❌ | |
-| 7.7 真实 DB/HTTP 覆盖 | ✅/❌ | |
+| 7.7 Test Review 引用 | ✅/❌ | |
 ```
 
 ---
@@ -708,7 +620,7 @@ Code Review 发现问题
 | 改项目资产 | `project-assets-update-skill.md` | §4 动作 2 更新 5 步 SOP |
 | 改 Story | `story-update-skill.md` | Plan-first 执行 |
 | 改 Task | `task-generate-skill.md` | §5bis 全局 Task Review 闭环 |
-| 修测试 | `coding-skill.md` | §"测试真实性强制规范"（已下沉到本 SKILL §7） |
+| 修测试 | `test-generate-skill.md` / `test-review-skill.md` | Test 系列缺陷处理与证据链复核 |
 
 ---
 
@@ -736,8 +648,8 @@ Code Review 发现问题
 
 ## 第七步：CodeReview 闸门全集（7 道闸，从 coding-skill 迁出）
 
-> **🔴 来源（2026-06-05 重大重构）：** 原 `coding-skill.md` §实战闸沉淀 + §📋 ⑥bis/⑦bis + §📋 Coding 问题分层排查 + §📋 测试真实性强制规范 全部迁出到本 SKILL §7。
-> coding-skill.md 改为指针 → "闸门定义见 code-review-skill.md §7"。
+> **🔴 来源（2026-06-05 重大重构）：** 原 `coding-skill.md` §实战闸沉淀 + §📋 ⑥bis/⑦bis + §📋 Coding 问题分层排查迁出到本 SKILL §7。
+> 2026-07-01 起，测试真实性细则移交 Test 系列，本文件仅保留 Test Review 引用门禁。
 
 ### 闸 1：⑥bis 编码后全切面一致性核查闸（🔴 CodeReview 硬前置）
 
@@ -896,25 +808,17 @@ Code Review 发现问题
 
 > **🔴 任何产出物不存在或不一致 → 必须修正报告或补充产出物，不得跳过。**
 
-### 闸 7：真实 DB/HTTP 覆盖核查闸（🔴 5 类场景必须真实）
+### 闸 7：Test Review 通过引用核查闸
 
-> **🔴 来源（d--Item-document 项目踩坑）：** mock 测试会掩盖真实约束类缺陷。STORY-002 落库漏 NOT NULL 字段是被 mock 测试掩盖的。
+CodeReview 只核验 `TEST_REPORT` 已经由 `test-review-skill.md` 独立复核通过。真实 DB/HTTP/Redis 场景、MockMvc 降级、8 类禁止手段和证据链对账均以 Test Review 结论为准。
 
-**🔴 强制：** 核心落库路径必须有真实 DB 集成测试覆盖 NOT NULL / 唯一约束等。
+| 检查项 | 通过标准 |
+|------|---------|
+| 复核结论 | 最新 `TEST_REPORT` 的 Test Review 章节为通过 |
+| 复核身份 | 有 test-verifier session_id，且非 coder 自审 |
+| 证据路径 | 原始日志、XML、扫描报告路径可追溯 |
 
-**5 类必真实场景清单：**
-
-| # | 场景 | 必真实 | 验证方法 |
-|---|------|--------|---------|
-| 1 | 核心落库（涉及资金/状态/权限的 INSERT/UPDATE/DELETE） | DB | grep `@SpringBootTest + @Transactional` |
-| 2 | 事务回滚（验证 @Transactional 边界） | DB | grep `@Rollback` + 同 1 |
-| 3 | 分布式锁（如 Redisson） | Redis | grep `RedissonClient` + 真实 Redis 连接 |
-| 4 | Feign 调用链路 | HTTP | `@SpringBootTest(RANDOM_PORT) + TestRestTemplate` |
-| 5 | Redis 缓存失效 | Redis | 同 3 |
-
-**🔴 MockMvc 降级（仅限框架过老时）：**
-- 必须在测试方法 Javadoc 注明"框架过老，降级使用 MockMvc，原因 X"
-- 否则视为违反"能走真实 HTTP 的接口测试必须走真实 HTTP"原则
+**任一缺失 = 🔴 阻断，回 Test 系列补测或复核。**
 
 ### 闸门汇总
 
@@ -926,32 +830,21 @@ Code Review 发现问题
 | 4 | 禁裸 ✅ 闸 | 🔴 阻断 | 每个 ✅ 判定时 |
 | 5 | 报告-代码对账闸 | 🔴 阻断 | §2 阶段 D / 报告完成时 |
 | 6 | 产出物对账闸 | 🔴 阻断 | 报告完成时 |
-| 7 | 真实 DB/HTTP 覆盖核查闸 | 🔴 阻断 | §2 阶段 D 时 |
+| 7 | Test Review 通过引用核查闸 | 🔴 阻断 | §2 阶段 D 时 |
 
 **任一闸门 🔴 未过 = 整 Code Review 不通过。**
 
 ---
 
-## 第七步 bis 前置：测试真实性门禁 12 项（⑥ 完成判定硬前置）
+## 第七步 bis 前置：Test Review 引用门禁
 
-> **🔴 来源（2026-06-30 从 coding-skill 迁出）：** 本清单是 ⑥ 完成判定的机械自检项，必须在 ⑦ CodeReview 闸门汇总通过后、第七步 bis 报告合规校验前确认。与 §阶段 D 的 8 类禁止（D1-D8）+ 5 条保障要求配套，构成测试真实性的完整校验链。
+测试真实性门禁由 `test-review-skill.md` 统一维护。CodeReview 只做 3 项引用校验：
 
-- [ ] 8 类禁止的伪造手段扫描 0 命中（必须执行 `scripts/test_authenticity_scan.py`；BLOCKER=0）
-- [ ] 原始测试证据已归档（命令、退出码、stdout/stderr、Surefire/Failsafe XML、扫描报告路径齐全）
-- [ ] 测试报告统计与 XML 对账一致（tests/failures/errors/skipped 不允许人工估算）
-- [ ] 跳测/忽略失败参数 0 命中（`skipTests` / `maven.test.skip` / `testFailureIgnore` / 未解释的 excludes）
-- [ ] `skipped=0`；如不为 0，必须在 Story "可跳过 AC/用例"章节已有负责人、原因、补测时间
-- [ ] 关键测试代码已向用户呈现（不是只说"通过"）
-- [ ] 测试数据可追溯到 Story/Task（无"假设" / "TODO"）
-- [ ] 测试发现数对账完成（测试用例文档应跑数 ↔ 测试源码方法数 ↔ XML 实际执行数）
-- [ ] 核心 AC 至少包含一个负向/失败注入验证（状态非法、参数非法、DB 约束、外部依赖失败、事务回滚等按 Story 选择）
-- [ ] 失败诚实暴露（无"包装通过"）
-- [ ] 无"修复测试"代替"修复代码"（如有，已附理由 + 用户确认）
-- [ ] AC 覆盖率 100%（无 AC 漏测）
+- [ ] 最新 `TEST_REPORT` 含 test-verifier 独立复核章节
+- [ ] 复核结论为通过，且 G-09/G-10 BLOCKER=0
+- [ ] 原始证据路径可打开，且与本轮变更对应
 
-**任一未达成 → 测试报告作废，⑤ Coding 必须返工。**
-
-**建议增强（高风险 Story 强制）：** 状态机、资金/权限、核心落库、并发幂等类 Story 必须做轻量突变抽检：临时反转一个关键条件、删除一个必填校验或替换一个错误码，测试必须失败。若突变后仍全绿，说明测试未杀死错误实现，本轮测试无效。
+**任一未达成 → CodeReview 不通过，回 Test 系列。**
 
 ---
 
@@ -984,7 +877,7 @@ Code Review 发现问题
 |---|------|------|---------|
 | 1 | 禁止自我声明 ✅ 通过 | 虚报 → 漏问题 | 每个 ✅ 附证据 |
 | 2 | 禁止只核当轮 diff 就标"一致" | 文档债积累 | 全文档回扫闸（§闸 3） |
-| 3 | 禁止"修复测试"代替"修复代码" | 测试造假 | 走 Coding 实时追溯链 |
+| 3 | 禁止"修复测试"代替"修复代码" | 测试造假 | 回 Test Review 判根因，再决定补测或回 Coding |
 | 4 | 禁止评审员没读过代码就给报告 | 评审失真 | §1.6 强制读代码 |
 | 5 | 禁止未过 7 道闸就出报告 | 报告失真 | §第七步 闸门全过 |
 | 6 | 禁止 6 阶段只做其中 1-2 个 | 评审不完整 | 6 阶段全跑 |
@@ -1006,7 +899,7 @@ Code Review 发现问题
 | 3 | §2 阶段 A：业务逻辑评审（AC × 实现对照表） | 业务评审表 | AC × 实现 100% 对照 |
 | 4 | §2 阶段 B：分层职责红线核查（4 大红线） | 分层核查表 | 4 大红线 0 🔴 |
 | 5 | §2 阶段 C：数据库逻辑链评审 | DB 评审表 | DDL/SQL/事务/索引 0 🔴 |
-| 6 | §2 阶段 D：测试真实性 + 真实 DB/HTTP 覆盖 | 测试核查表 | 8 类禁止 0 命中 + 5 类真实 ✅ |
+| 6 | §2 阶段 D：Test Review 结果引用核查 | Test Review 引用表 | 独立复核通过 + 证据路径齐 |
 | 7 | §2 阶段 E：项目资产合规性核查 | 合规核查表 | §3/§4/§5/§6 0 🔴 |
 | 8 | §2 阶段 F：跨文档引用核查 | 5 方对照表 | 5 方一致 0 🔴 |
 | 9 | §闸 1：⑥bis 一致性闸 | 一致性核查表 | 0 🔴 漂移 |
@@ -1015,7 +908,7 @@ Code Review 发现问题
 | 12 | §闸 4：禁裸 ✅ 闸 | 证据清单 | 每个 ✅ 附证据 |
 | 13 | §闸 5：报告-代码对账闸 | 对账清单 | 0 不一致 |
 | 14 | §闸 6：产出物对账闸 | 产出物清单 | 7 个产出物全 ✅ |
-| 15 | §闸 7：真实 DB/HTTP 覆盖核查闸 | 真实场景清单 | 5 类强制真实 ✅ |
+| 15 | §闸 7：Test Review 通过引用核查闸 | TEST_REPORT 引用清单 | test-verifier 通过 |
 | 16 | §第三步 合理性判定 | 缺陷分级表 | 🔴 阻断型必须 0 |
 | 17 | §第四步 记入补充说明 | Supplement.md | 写入成功 |
 | 18 | §第四步 bis 生成 CodeReviewUpdatePlan | UpdatePlan | 用户确认 |

@@ -132,6 +132,7 @@ description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 
 | `task-writer` | Phase 2 ④ | Task 生成（含任务级 CodePlan）|
 | `plan-writer` | Phase 2 ④ter | 🆕 2026-06-06 合并入 task-writer |
 | `coder` | Phase 2 ⑤ | Coding |
+| `test-runner` | Phase 3 ⑥ | Test Generate：运行编译/启动/L1-L4 测试并生成测试报告 |
 | `code-reviewer` | Phase 3 ⑦ | Code Review（按 §8.4 Tier 判定选 1/2/3 个：BE / AR / QA 视角，即 A/B/C 模式）|
 | `test-verifier` | Phase 3 ⑥.10 | 测试真实性验证 🔴 强制 |
 
@@ -572,7 +573,7 @@ reviewer-数据模型视角 ──┘
 
 ## 8.5 🆕 v3.5.5 默认单 sub-agent 模式（单 Story 也派活）
 
-> **🔴 背景：** v3.5.4 及之前的默认是"单 Agent 串行做所有事"，主会话被迫读 25 个子 SKILL、读源码、写文档、做 walkthrough、跑测试 → 上下文爆炸。v3.5.5 起主会话职责收口（详见 SKILL.md §🤖 主会话职责边界），**默认单 Story 也派 1 个 sub-agent**，主会话只承担编排层职责。
+> **🔴 背景：** v3.5.4 及之前的默认是"单 Agent 串行做所有事"，主会话被迫读全部子 SKILL、读源码、写文档、做 walkthrough、跑测试 → 上下文爆炸。v3.5.5 起主会话职责收口（详见 SKILL.md §🤖 主会话职责边界），**默认单 Story 也派 1 个 sub-agent**，主会话只承担编排层职责。
 >
 > **🟢 与 §8.4 多 reviewer 的关系：** §8.4 是 Review 节点的多 reviewer 编排（已稳定）；本节 §8.5 是**单 Story 单 sub-agent** 的派活默认行为（v3.5.5 新增）。两者正交，不替代。
 
@@ -653,7 +654,8 @@ report_back:
 | 2.5（CodingPlan 评审）| 讲解 + 收口 | `task-writer`（汇总统一版 CodingPlan）| `{STORY-ID}-CodingPlan.md` | 含 16 章节 + 14 门禁自检表 |
 | 4（CodeReview 完成）| 讲解 + walkthrough + 收口 | `coder` + `code-reviewer` | 代码 + CodeReview 报告 | `*-Coding-CoderReport-r{M}.md` + `*-CodeReview-v{N}-r{M}.md` |
 | 5（PRD 完成确认）| 讲解 5 维度（PRD 级视角）+ 收口 | `summary-writer` | `.auto-engineering/{PRD-ID}/summary.md` | `*-PRD-SummaryReport.md` |
-| ⑥.10（测试真实性）| 独立派 `test-verifier` 跑 | `test-verifier`（v3.4.0 强制）| `{STORY-ID}-TestVerification-Report.md` | 含 8 类禁止手段扫描 + AC 覆盖率 |
+| ⑥（Test Generate）| 调用声明 + 汇总测试摘要 | `test-runner` | `{STORY-ID}-Report-v{N}-r{M}.md` | 含原始日志 + XML + G-09 扫描 |
+| ⑥.10（Test Review）| 独立派 `test-verifier` 跑 | `test-verifier`（v3.4.0 强制）| 新版 TEST_REPORT 复核章节 | 含 session_id + TV-1~TV-10 |
 
 ### 8.6.2 单节点派活粒度建议
 
@@ -663,6 +665,7 @@ report_back:
 | 审核点 1.5 / 2 / 2.5 | 1（task-writer）| 顺序依赖强，并行收益小 |
 | 审核点 4 | 1-2（coder + code-reviewer）| 强依赖（CodeReview 依赖代码完成）|
 | 审核点 5 | 1（summary-writer）| 单 PRD 收尾，无并行需求 |
+| ⑥ | 1（test-runner）| 运行测试与出报告，强依赖代码完成 |
 | ⑥.10 | 1（test-verifier）| v3.4.0 已固定，强制独立 |
 
 ### 8.6.3 节点边界上下文压力软提示（🆕 v3.5.5）

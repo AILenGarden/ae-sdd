@@ -256,20 +256,16 @@ cd {parent-project-root} && mvn compile
 
 **所有测试 Pass：** `mvn test` → BUILD SUCCESS。
 
-### §B5 运行测试 + 测试报告
+### §B5 Test 系列交接
 
-**执行测试：** `cd {service-root} && mvn test`
+CodingProcess 不再内嵌测试运行细则。代码落地后交给 Test 系列：
 
-**出具测试报告：** 通过 `resolve_path(intent="TEST_REPORT", storyId, version={v:N,r:M})` 定位，按 Story 分子目录存放。
+| 子步骤 | SKILL | 职责 |
+|---|---|---|
+| Generate | `../phase3-review/test-generate-skill.md` | 编译、启动、运行 L1/L2/L3/L4 测试，生成 `TEST_REPORT` |
+| Review | `../phase3-review/test-review-skill.md` | `test-verifier` 独立复核证据链、XML 对账、G-09/G-10 |
 
-**报告内容：** 执行信息表（时间/轮次/触发方式）+ 执行结果表（总用例/通过/失败/跳过/通过率）+ 用例明细表 + 失败用例分析表。
-
-**测试报告合规性校验（第八步 bis）：**
-- 🔴 原始证据归档：实际执行命令 + 原始 stdout/stderr + Surefire/Failsafe XML + test_authenticity_scan.py 扫描报告 + AC 对账表（缺任一项 = 报告无效）
-- 跑测试禁止 `-DskipTests`/`-Dmaven.test.skip`/`testFailureIgnore`
-- XML 对账：报告统计必须来自 XML 解析，不得人工估算
-- 假修复识别：按 [`coding-skill.md` §9.2](coding-skill.md) 9 条规则识别"测试通过但代码有问题"
-- 判定：✅ 无假修复 → 进入 §B6；🔴 证据链缺失/XML 不一致/扫描 BLOCKER → 报告作废，回 §B5 重跑
+Test 系列未通过时，按 `test-review-skill.md` 的缺陷分类回到 Test Generate / Coding / Story-Task 节点；CodingProcess 不得用“测试通过”口头替代测试报告。
 
 ### §B6 编码后全切面一致性核查闸（CodeReview 硬前置）
 

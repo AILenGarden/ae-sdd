@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程主入口（v3.7.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 历史变更见 source/CHANGELOG/。
-version: 3.7.0
+description: 端到端自动化工程主入口（v3.7.1）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.7.1：TestCase 系列假设驱动强化；TestSkill 系列化与瘦身，新增 test-generate/test-review 并严格复用监管器 4 步子流程。 历史变更见 source/CHANGELOG/。
+version: 3.7.1
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@b0b40513dfd877714af67563d4dcd2d89eab8f54 @ 2026-07-01T02:59:55Z -->
+<!-- # AUTO-GEN @ ae-sdd@a01b998fd11c4591dd2fc63f2e1cd9541d3c2846 @ 2026-07-01T03:14:42Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-07-01T02:59:55Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-07-01T03:14:42Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `b0b4051` (3.7.0)
+> 源版本：ae-sdd @ `a01b998` (3.7.1)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-07-01T02:59:55Z
-- 源 ae-sdd 版本：3.7.0
-- 源 ae-sdd commit：b0b4051
+- 生成时间：2026-07-01T03:14:42Z
+- 源 ae-sdd 版本：3.7.1
+- 源 ae-sdd commit：a01b998
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

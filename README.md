@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.7.0（🆕 2026-07-01：TestCase 独立系列 + 流程暂离与回归协议 + 极简描述原则。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.7.1（🆕 2026-07-01：TestCase 系列假设驱动强化；TestSkill 系列化与瘦身，新增 `test-generate-skill` / `test-review-skill` 并严格复用监管器 4 步子流程。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -16,7 +16,7 @@ ae-sdd v3.0 引入**母版 vs 分发**双目录分层，**用户拿分发包，�
 ae-sdd/                                # 仓库根（GitHub 直发）
 ├── source/                            # 🟢 母版 SSOT（开发者编辑这里）
 │   ├── SKILL.md                       #    ae-sdd 唯一主入口
-│   ├── skills/                        #    25 个子 SKILL（phase1/phase2/phase3/cross-cutting/orchestration）
+│   ├── skills/                        #    28 个子 SKILL（phase1/phase2/phase3/cross-cutting/orchestration）
 │   ├── assets/                        #    项目资产（icec-cloud-boss / icec-cloud-life）
 │   ├── standards/                     #    约束 + 思维引擎 + 测试策略 + 资产标准 + toolset 标准（20 份）
 │   ├── templates/                     #    模板（21 份：Story/Task/DR/Report/...）
@@ -124,7 +124,7 @@ bash scripts/dev-sync.sh --watch
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
 - **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 29 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
-- **[`source/skills/`](source/skills/)** — 25 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
+- **[`source/skills/`](source/skills/)** — 28 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
 - **[`source/templates/`](source/templates/)** — 21 份模板（Story/Task/DR/Report/...）
 - **[`source/standards/`](source/standards/)** — 20 份标准（constraints 11 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）

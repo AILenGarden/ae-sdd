@@ -1193,8 +1193,10 @@ v ≥ 4 时可归档（🗑️ archived）
 | `story-generate-skill.md` | §📦 文档存放前置调用 → save_doc(intent="STORY") |
 | `story-review-skill.md` | §📦 文档存放前置调用 → save_doc(intent="STORY_REVIEW") |
 | `task-generate-skill.md` | §📦 文档存放前置调用 → save_doc(intent="TASK") |
-| `coding-skill.md` | §📦 文档存放前置调用 → save_doc(intent="CODING_REPORT") |
+| `coding-skill.md` | 编码执行，不直接产出事件报告；报告交 `coding-report-skill.md` |
 | `coding-report-skill.md` | §1 文档路径（按本 SKILL §2 路径模板）|
+| `test-generate-skill.md` | §输出 → save_doc(intent="TEST_REPORT") |
+| `test-review-skill.md` | §输出 → save_doc(intent="TEST_REPORT") 追加独立复核章节 |
 | `code-review-skill.md` | §📦 文档存放前置调用 → save_doc(intent="CODE_REVIEW") |
 | `testcase-generate-skill.md` | §📦 文档存放前置调用 → save_doc(intent="TESTCASE") |
 | `project-assets-update-skill.md` | §1 文档路径（按本 SKILL §2 路径模板）|
@@ -1286,7 +1288,7 @@ v ≥ 4 时可归档（🗑️ archived）
 | `TASK_IMPL_PLAN` | Task 实现方案 | task-generate-skill | 不带版本号（原地覆盖）|
 | `CODING_PLAN` | 统一版 CodingPlan | task-generate-skill | v{major}.{minor} |
 | `CODING_REPORT` | Coding 报告 | coding-report-skill | 带 v{N}-r{M} |
-| `TEST_REPORT` | 测试报告 | coding-report-skill | 带 v{N}-r{M} |
+| `TEST_REPORT` | 测试报告 | test-generate-skill / test-review-skill | 带 v{N}-r{M} |
 | `TRACE_MATRIX` | ⑦bis 全链路追溯矩阵 | coding-report-skill / code-review-skill | 带 v{N}-r{M} |
 | `CODE_REVIEW` | CodeReview 报告 | code-review-skill | 带 v{N}-r{M} |
 | `PROPOSAL` | Proposal 文档 | proposal-skill | 不带版本号（按 N 编号）|
@@ -1405,7 +1407,8 @@ result = save_doc(doc={
 |------------|------------|------------|
 | `story-generate-skill.md` | §2.2 + §3.1/3.2 + §5 + §6 | `save_doc(intent="STORY", version={major, minor})` |
 | `task-generate-skill.md` | §2.2 + §3.1/3.2 + §5 + §6 | `save_doc(intent="TASK", storyId, taskId, version={major, minor})` |
-| `coding-skill.md`（重任务）| §2.2 + §3.2 + §5 | `save_doc(intent="CODING_REPORT", storyId, version={v, r})` |
+| `coding-report-skill.md` | §2.2 + §3.2 + §5 | `save_doc(intent="CODING_REPORT", storyId, version={v, r})` |
+| `test-generate-skill.md` / `test-review-skill.md` | §2.2 + §3.2 + §5 | `save_doc(intent="TEST_REPORT", storyId, version={v, r})` |
 | `code-review-skill.md` | §2.2 + §3.2 + §5 | `save_doc(intent="CODE_REVIEW", storyId, version={v, r})` |
 | `story-review-skill.md` | §2.2 + §3.2 + §5 | `save_doc(intent="STORY_REVIEW", storyId, version={r})` |
 | `testcase-generate-skill.md` | §2.2 + §3.1/3.2 + §5 | `save_doc(intent="TESTCASE", storyId, version={major, minor})` |

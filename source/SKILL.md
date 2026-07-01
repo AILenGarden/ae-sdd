@@ -1,9 +1,10 @@
 ---
 name: ae-sdd
-version: 3.7.0
+version: 3.7.1
 description: |
-  端到端自动化工程主入口（v3.7.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.7.1）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.7.1：TestCase 系列假设驱动强化；TestSkill 系列化与瘦身，新增 test-generate/test-review 并严格复用监管器 4 步子流程。
   历史变更见 source/CHANGELOG/。
 ---
 

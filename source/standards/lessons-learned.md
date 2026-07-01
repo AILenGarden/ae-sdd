@@ -28,7 +28,7 @@ CodeReview 的"三方一致✅""契约一致✅"都是裸 ✅，没人要求附�
 
 STORY-002 落库漏 NOT NULL 字段是被 mock 测试掩盖的——mock 的 Repository.save() 不会触发 DB 约束检查。后续真实运行才暴露 → 必须返工。
 
-**沉淀的规则：** code-review-skill §闸7 真实 DB/HTTP 覆盖核查闸。
+**沉淀的规则：** test-review-skill 的真实 DB/HTTP/Redis 证据链复核；code-review-skill §闸7 仅做 Test Review 引用核查。
 
 ---
 

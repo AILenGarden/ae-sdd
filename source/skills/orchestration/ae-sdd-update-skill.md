@@ -23,7 +23,7 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 - ❌ AE-skill 中塞了 CodeReview 报告 9 章节模板（应归 `templates/coding/be-codereview-template.md`）
 - ❌ AE-skill 中塞了 6 维度前端契约审查清单（应归 `story-review-skill.md`）
 - ❌ AE-skill 中塞了 CodingPlan 7 章节 + 10 条门禁（应归 `coding-skill.md`）
-- ❌ AE-skill 中塞了测试真实性 8 类禁止（应归 `coding-skill.md`）
+- ❌ AE-skill 中塞了测试真实性 8 类禁止（应归 `test-review-skill.md`）
 - ❌ AE-skill 中塞了 Coding 4 层排查流程（应归 `coding-skill.md`）
 
 **为什么会腐化？** 因为"流程编排"与"具体规则"看似紧密耦合（流程的每一步都有规则），容易把规则顺手写在流程 SKILL 里。**这是"路径依赖"陷阱** —— 一开始写 AE-skill 时为了完整，会把所有相关内容都堆进去；时间一长，AE-skill 变成 2540 行的"百科全书"，没人能维护。
@@ -56,8 +56,11 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 |---------|------|----------|
 | `story-review-skill.md` | Story 缺陷挖掘 / 合理性判定 / 通过标准 / ①bis 前端契约 6 维度 | 流程编排（AE-skill）、CodeReview 规则 |
 | `task-generate-skill.md` | Task 文档生成 / Task 0 公共依赖 / 全局 Task Review / Task 修复流程 | 流程编排、Story 规则、Code 规则 |
-| `coding-skill.md` | ⑥ 按 Task 生成代码 / 测试真实性 8 类禁止 / ④bis CodingPlan / ⑥bis 一致性闸 / ⑦bis 对称性闸 / 异常路径 A1-A6 | CodeReview 报告模板（应在 templates/）、流程编排 |
-| `testcase-generate-skill.md` | 测试用例生成 / AC 映射 / 合规性校验 | 流程编排、Coding 规则 |
+| `coding-skill.md` | CodingSkill.Plan / Execute 能力库 / 编码异常路径 | 测试运行、测试真实性复核、CodeReview 报告模板、流程编排 |
+| `testcase-generate-skill.md` | 测试用例生成 / AC 映射 / 合规性校验 | 流程编排、Coding 规则、测试执行 |
+| `testcase-review-skill.md` | TestCase 缺陷挖掘 / TC-1~TC-9 复核 | 流程编排、测试执行 |
+| `test-generate-skill.md` | 编译、启动、L1-L4 测试运行 / TEST_REPORT 生成 | Coding 执行、CodeReview 规则 |
+| `test-review-skill.md` | test-verifier 独立复核 / G-09/G-10 / 测试证据链判定 | 测试执行、Coding 修复 |
 | `dr-update-skill.md` | DR 文档更新 / DR 缺陷修复 | 流程编排、其他文档规则 |
 | `story-update-skill.md` | Story 文档更新 / Story 缺陷修复 | 流程编排、Task 规则 |
 | `templates/coding/be-codereview-template.md` | CodeReview 报告 9 章节空白模板 | 具体 Story 的填充内容 |
@@ -79,7 +82,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 | # | 子系统 | 物理位置 | 职责一句话 | 维护方式 |
 |---|--------|---------|-----------|---------|
-| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(25 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
+| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(28 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
 | ② | **实例化体系（4 层架构）** | `dist/ae-sdd/`(Layer2) + `~/.claude/skills/ae-sdd/`(Layer3) + `<project>/.ae-sdd/`(Layer4) | 母版→分发包→用户安装→项目实例，引用+override 模式 | 不手工改 Layer2/3/4；由 build/install/init 生成 |
 | ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
 | ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |
@@ -219,10 +222,11 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | **某阶段的报告模板**（CodeReview 9 章节） | 阶段内的产出物空白 | `templates/coding/be-codereview-template.md` | `SKILL.md` |
 | **Code Review 评审流程**（准入/多维评审/闸门/异常路径/多 Agent） | 阶段内的具体规则 | **`code-review-skill.md`（🆕 2026-06-06 新建）** | `SKILL.md`（仅保留角色 7 指针） |
 | **Code Review CodeReviewUpdatePlan 模板** | 阶段内产出物空白 | `code-review-skill.md §第四步 bis` 模板（内嵌，不独立成文件） | `templates/coding/` |
-| **某阶段的闸门规则**（⑥bis 一致性闸 / ⑦bis 对称性闸 / 8 类测试真实性禁止 / 全文档回扫 / 禁裸 ✅ / 报告-代码对账 / 产出物对账 / 真实 DB-HTTP 覆盖） | 阶段内的硬约束 | **`code-review-skill.md`（🆕 2026-06-06 新建独立 SKILL）** | `SKILL.md` / `coding-skill.md`（已迁出，coding-skill 改指针） |
+| **测试运行与真实性复核**（TEST_REPORT / XML 对账 / G-09 / test-verifier） | Test 阶段内规则 | `test-generate-skill.md` + `test-review-skill.md` | `SKILL.md` / `coding-skill.md` / `code-review-skill.md` |
+| **某阶段的闸门规则**（⑥bis 一致性闸 / ⑦bis 对称性闸 / 全文档回扫 / 禁裸 ✅ / 报告-代码对账 / 产出物对账 / Test Review 引用） | 阶段内的硬约束 | **`code-review-skill.md`（🆕 2026-06-06 新建独立 SKILL）** | `SKILL.md` / `coding-skill.md`（已迁出，coding-skill 改指针） |
 | **某阶段的错误排查**（4 层问题排查） | 阶段内的出错处理 | `coding-skill.md` | `SKILL.md` |
 | **某阶段的术语定义**（如"DR 是什么"） | 阶段内的概念 | **不放任何文件，靠上下文理解**；如必须定义，写在阶段文件顶部"概念说明" | `SKILL.md` |
-| **某阶段的禁止事项**（如"测试真实性 8 类禁止"） | 阶段内的强约束 | `coding-skill.md` | `SKILL.md`（仅保留高层禁止如"跳过 CodeReview"） |
+| **某阶段的禁止事项**（如"测试真实性 8 类禁止"） | 阶段内的强约束 | `test-review-skill.md`（测试类）或对应阶段 SKILL | `SKILL.md`（仅保留高层禁止如"跳过 CodeReview"） |
 | **跨阶段的回写规则**（如"Story 变更触发 Task 重生成"） | 跨子 SKILL 的联动 | 写入 `SKILL.md` 的"跨阶段联动"章节 + 各子 SKILL 用指针引用 | 单个子 SKILL 写完整联动逻辑 |
 | **Proposal-first 编排门禁**（如"有确认缺陷时先生成 Proposal，再修改 Story"） | 这是"节点之间如何流转" | `SKILL.md` 只写门禁与指针 | `story-review-skill.md` / `story-update-skill.md` 写成全局流程编排 |
 | **Story Review 的缺陷修复载体**（问题事实/存疑项/修复建议/影响分析） | 阶段产出物模板 | `proposal-skill.md` + `story-review-checklist.md` | `SKILL.md` |
@@ -275,12 +279,14 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 |------|------------|
 | Story 生成 / Review / ①bis 前端契约 / Story 缺陷修复 | `../phase1-design/story-review-skill.md` 或 `../phase1-design/story-update-skill.md` |
 | Task 生成 / Review / Task 0 / Task 修复 | `../phase2-task/task-generate-skill.md` |
-| ④bis CodingPlan / ⑤ Coding / 测试真实性 / 异常路径 / 一致性闸 / 对称性闸 | `../phase2-coding/coding-skill.md` |
+| ④bis CodingPlan / ⑤ Coding / 编码异常路径 | `../phase2-coding/coding-skill.md` |
 | CodeReview 报告（产出物空白） | `../../templates/coding/be-codereview-template.md` |
 | Coding 报告（产出物空白） | `../../templates/coding/be-coding-report-template.md` |
 | 测试用例 / 测试报告（产出物空白） | `../../templates/testcase/*.md` |
 | Story / Task / DR / 逻辑汇总（产出物空白） | `../../templates/design/*.md` |
 | TestCase 生成 | `../phase1-design/testcase-generate-skill.md` |
+| TestCase Review | `../phase1-design/testcase-review-skill.md` |
+| Test 执行 / 测试报告 / 测试真实性复核 | `../phase3-review/test-generate-skill.md` + `../phase3-review/test-review-skill.md` |
 | DR Update | `../phase1-design/dr-update-skill.md` |
 | 文档存放标准 / 横切依赖 | `../cross-cutting/document-storage-skill.md` |
 | 统一问题载体 | `../cross-cutting/proposal-skill.md` |
@@ -752,7 +758,8 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] `story-update-skill.md` 明确按 Proposal 执行，禁止计划外业务语义修改
 - [ ] `task-generate-skill.md` 包含 `## 📖 Task 讲解模板`
 - [ ] `task-generate-skill.md` 🆕 2026-06-10 包含 `### 1.A 有 Story 上级文档` + `### 1.B 无 Story 上级文档`（小任务场景独立决策分支）
-- [ ] `coding-skill.md` 包含 `## 📖 Code 讲解模板` + `## 📋 ④bis CodingPlan` + `## 📋 测试真实性强制规范` + `## 📋 ⑥bis 编码后全切面一致性核查闸` + `## 📋 ⑦bis 全链路对称性核查闸` + `## 📋 Coding 问题分层排查与修改链`
+- [ ] `coding-skill.md` 只保留 CodingSkill.Plan/Execute 与编码异常处理；测试运行/真实性复核不得回写到 CodingSkill
+- [ ] `test-generate-skill.md` + `test-review-skill.md` 存在，并分别承担 TEST_REPORT 生成与 test-verifier 独立复核
 - [ ] `coding-skill.md` 🆕 2026-06-10 包含 `### 6.0 任务规模 × 文档组合` + `§4.2 按任务规模分支读取` + CodingSkill.Plan/Execute 输入参数条件必填 Story 路径
 - [ ] `SKILL.md` 🆕 2026-06-10 智能路由表包含 4 类需求（已有 Story / 中大任务 / 小任务 / 微任务）+ 路由决策算法 2.2 套 Story 7 区模板判定
 - [ ] `document-storage-skill.md` 🆕 2026-06-10 包含 `§2.6 三类任务规模 × 文档路径`（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）
@@ -843,7 +850,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 |----------------------|------|--------|
 | ①bis 6 维度前端契约（L825-1043） | 5.7KB | `story-review-skill.md` |
 | ④bis CodingPlan 7 章节（L1327-1502） | 6.3KB | `coding-skill.md` |
-| 🔴 测试真实性 8 类禁止（L1604-1766） | 4.4KB | `coding-skill.md` |
+| 🔴 测试真实性 8 类禁止（L1604-1766） | 4.4KB | `test-review-skill.md` |
 | ⑥bis 一致性闸（L1791-1837） | 1.9KB | `coding-skill.md` |
 | 七、CodeReview 报告模板（L1859-2383） | 12.5KB | `templates/coding/be-codereview-template.md`（已存在，本次确认无副本） |
 | ⑦bis 对称性闸（L2268-2303） | 1.5KB | `coding-skill.md` |
