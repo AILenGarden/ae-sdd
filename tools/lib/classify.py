@@ -146,8 +146,8 @@ def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[
     优先级（任一命中即覆盖）：
       1. .auto-engineering/{storyId}/state.json 有 blockingGaps ≥ 5 → 大（0.9）
       2. 已有 RA 文档且 ≥ 100 行 → 大（0.85）
-      3. 已有 Story 文档 → 中（0.8）
-      4. 已有 Task 文档但无 Story → 小（0.7）
+      3. 已有 Story 文档 → 小（0.8）（新路由：有Story = 小任务入口）
+      4. 已有 Task 文档但无 Story → 微（0.7）（新路由：有Task/BUG = 微任务入口）
       5. 无任何产物 → 返回 None（交回行数推断）
 
     Returns:

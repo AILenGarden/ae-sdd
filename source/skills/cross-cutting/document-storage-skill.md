@@ -436,7 +436,7 @@ interface ResolvedPath {
 | **CR 报告** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md` | `...CodeReview-v1-r1.md` | 带 v{N}-r{M} |
 | **追溯矩阵** | `{工程根}/ae-sdd-doc/Coding/{STORY-ID}/{STORY-ID}-追溯矩阵-v{N}-r{M}.md` | （独立成文件）| 带 v{N}-r{M} |
 | **Story Review** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-StoryReviewReport-r{N}.md` | `...StoryReviewReport-r1.md` | 带 r{N} |
-| **Review UpdatePlan** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-StoryReviewUpdatePlan-r{N}.md` | `...UpdatePlan-r1.md` | 带 r{N} |
+| **Review Proposal** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-Proposal-{N}.md` | `...Proposal-1.md` | 带 N |
 | **跨轮 Review 对比** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-ReviewCompare-v1-to-v2.md` | `...ReviewCompare-v1-to-v2.md` | 带 v1-to-v2 |
 | **Story Supplement** | `{工程根}/ae-sdd-doc/Story/{STORY-ID}/{STORY-ID}-Supplement.md` | 原地累加 | 不带版本号 |
 
@@ -568,7 +568,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | `{doc-id}` | ✅ | 文档唯一标识（如 `STORY-001-BE`、`DR-2026-06-04-Boss用户列表查询接口`）|
 | `{v{major}.{minor}}` | 视情况 | 设计类文档每次升级（major 或 minor 递增）|
 | `{v{N}-r{M}}` | 视情况 | 事件类报告（Coding 报告 / 测试报告 / CR 报告）|
-| `{r{N}}` | 视情况 | Review 报告 / UpdatePlan |
+| `{r{N}}` | 视情况 | Review 报告 |
 
 ### 3.2 版本号使用规则（🔴 关键：什么时候带/不带）
 
@@ -577,7 +577,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | **设计文档**（PRD / RA / DR / Story / Task / CodingPlan / TestCase）| **带 v{major}.{minor}** | `STORY-001-BE-v1.0.md` → 升级到 `STORY-001-BE-v1.1.md` | 设计文档升级要保留历史，旧版本 v1.0 不删 |
 | **事件类报告**（Coding 报告 / 测试报告 / CR 报告）| **带 v{N}-r{M}** | `STORY-001-BE-CodingReport-v1-r1.md` | 报告是"事件"，每轮 Coding 一份 |
 | **Writer/Reviewer Report** | **带 r{N}** | `STORY-001-BE-Story-WriterReport-r1.md` | 1 个 Story 1 份，1 份 r1 |
-| **Review UpdatePlan** | **带 r{N}** | `STORY-001-BE-StoryReviewUpdatePlan-r1.md` | 1 份/轮 Review |
+| **Review Proposal** | **带 N** | `STORY-001-BE-Proposal-1.md` | 1 份/轮 Review |
 | **跨轮 Review 对比表** | **带 v1-to-v2** | `STORY-001-BE-ReviewCompare-v1-to-v2.md` | 表示对比的 2 个版本 |
 | **项目资产 + 更新日志** | **不带版本号** | `icec-cloud-boss.assets.md` + `icec-cloud-boss.update-log.md` | 资产是"单一权威源" |
 | **流程状态文件** | **不带版本号** | `.auto-engineering/{STORY-ID}/state.json` | 状态实时变化 |
@@ -774,7 +774,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | 测试报告 | **新增**（r 递增）| `STORY-001-BE-Report-v1-r2.md` |
 | CR 报告 | **新增**（r 递增）| `STORY-001-BE-CodeReview-v1-r2.md` |
 | Story Review 报告 | **新增**（r 递增）| `STORY-001-BE-StoryReviewReport-r2.md` |
-| Review UpdatePlan | **新增**（r 递增）| `STORY-001-BE-StoryReviewUpdatePlan-r2.md` |
+| Review Proposal | **新增**（N 递增）| `STORY-001-BE-Proposal-2.md` |
 | 跨轮 Review 对比表 | **新增**（按 v1-to-v2 命名）| `STORY-001-BE-ReviewCompare-v1-to-v2.md` |
 | 项目资产 | 原地修改 + 写更新日志 | `icec-cloud-boss.assets.md` + `icec-cloud-boss.update-log.md` |
 | 流程状态文件 | 原地修改 | `.auto-engineering/{STORY-ID}/state.json` |
@@ -811,7 +811,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
     ↓
 该文档类型是"原地更新"还是"新增"？
     ├─ 设计类（PRD/RA/DR/Story/Task/CodePlan/测试用例/Supplement）→ 新增版本号（v{major}.{minor} 递增）
-    ├─ 事件类（Coding报告/测试报告/CR报告/Review报告/UpdatePlan）→ 新增（r 递增）
+    ├─ 事件类（Coding报告/测试报告/CR报告/Review报告/Proposal）→ 新增（r 或 N 递增）
     └─ 基础设施类（项目资产/状态文件）→ 原地更新 + 日志记录
     ↓
 旧版本保留（不删）
@@ -1173,7 +1173,7 @@ v ≥ 4 时可归档（🗑️ archived）
 | CodePlan | Story / Task / 项目资产 / 统一版 CodePlan | 相对路径 |
 | Coding 报告 | Story / CodePlan / 测试报告 | 相对路径 |
 | CR 报告 | Coding 报告 / 测试报告 / Story / 项目资产 | 相对路径 |
-| Story Review UpdatePlan | Story / 历轮 Story Review 报告 | 相对路径 |
+| Story Review Proposal | Story / 历轮 Story Review 报告 | 相对路径 |
 | 项目资产 | Story / CodePlan / CR 报告 | 相对路径 |
 | ChangeLog | 文档 | 相对路径 |
 
@@ -1278,6 +1278,7 @@ v ≥ 4 时可归档（🗑️ archived）
 | `STORY_REVIEW` | Story Review 报告 | story-review-skill | 带 r{N} |
 | `TESTCASE` | 测试用例文档 | testcase-generate-skill | v{major}.{minor} |
 | `TESTCASE_COMPLIANCE_REPORT` | 测试用例合规性校验报告 | testcase-generate-skill | 带 r{N} |
+| `TESTCASE_REVIEW` | TestCase Review 报告 | testcase-review-skill 🆕 v3.7.0 | 带 r{N} |
 | `TASK` | Task 文档（含 Task-0） | task-generate-skill | v{major}.{minor} |
 | `TASK_SUPPLEMENT` | Task 补充说明 | task-generate-skill | 不带版本号（原地累加）|
 | `TASK_WRITER_REPORT` | Task 撰写报告 | task-generate-skill | 带 r{N} |

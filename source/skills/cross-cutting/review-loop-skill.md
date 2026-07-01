@@ -55,10 +55,10 @@ description: |
 
 | 规则 | 说明 |
 |---|---|
-| Plan 载体 | 统一用 [`proposal-skill.md`](proposal-skill.md)（v3.4.3 起，替代各 SKILL 内置 UpdatePlan）；个别节点有专属 UpdatePlan 的可保留，但必须 Plan-first |
+| Plan 载体 | 统一用 [`proposal-skill.md`](proposal-skill.md)；Story Review / Story Update 已收敛到 Proposal-first，其他历史 UpdatePlan 仅作兼容说明，不作为运行时载体 |
 | Plan-first 流程 | 挖掘缺陷 → 判定确认 → **生成 Plan** → 按 Plan 修复 → 重新挖掘（不是直接改）|
 | Plan 外修改无效 | 修复时若超出 Plan 范围 → 视为无效更新，必须补 Plan 或回滚 |
-| 节点专属 Plan | story-review 的 StoryReviewUpdatePlan / dr-review 的 DR Review UpdatePlan / code-review 的 CodeReviewUpdatePlan —— 这些是历史载体，本协议不强求统一，但要求 Plan-first 行为一致 |
+| 节点专属 Plan | story-review / story-update 已统一为 Proposal；dr-review 的 DR Review UpdatePlan / code-review 的 CodeReviewUpdatePlan 为历史兼容载体，本协议要求最终都收敛到 Proposal-first |
 
 ---
 
@@ -86,7 +86,7 @@ description: |
 | 节点 | 检查项/阶段定义 | Plan 载体 | 专属硬门禁 | SKILL 位置 |
 |---|---|---|---|---|
 | 🆕 **RA 挖掘循环**（v3.5.8）| RAModel 12 维 + 8 维度并行挖掘（A-H 阶段）+ 5 问自检；循环对象 = "缺口 + 8 维度挖掘是否穷尽"（不仅缺口维度）| RAGeneratePlan（已有，复用）| RA-G01~RA-G16（已有，复用） | [`requirement-analysis-skill.md` §第七步](../phase1-design/requirement-analysis-skill.md) |
-| Story Review | A-E 5 阶段（DR-Story一致性 / AC完整性 / 业务逻辑覆盖 / 数据模型与接口契约 / 模板与约束）+ F-Stage 前端契约 | StoryReviewUpdatePlan（历史）/ Proposal（v3.4.3+）| C8 数据视角总览 | [`story-review-skill.md`](../phase1-design/story-review-skill.md) |
+| Story Review | A-E 5 阶段（DR-Story一致性 / AC完整性 / 业务逻辑覆盖 / 数据模型与接口契约 / 模板与约束）+ F-Stage 前端契约 | Proposal | C8 数据视角总览 | [`story-review-skill.md`](../phase1-design/story-review-skill.md) |
 | DR Review | A-E 5 阶段（业务价值 / 架构合理性 / 接口契约 / 数据模型与不变量 / Story 拆分）| DR Review UpdatePlan | DR Approved 状态 | [`dr-review-skill.md`](../phase1-design/dr-review-skill.md) |
 | Code Review | A-F 6 阶段（业务逻辑 / 分层职责 / DB 逻辑链 / 测试真实性 / 项目资产合规 / 跨文档引用）| CodeReviewUpdatePlan / Proposal | 7 道闸 | [`code-review-skill.md`](../phase3-review/code-review-skill.md) |
 | Task Review (TR) | TR-1~TR-7（全局 Task Review 7 项）| 边界规则（Story/DR 层问题先走 Update SKILL）| 无 | [`task-generate-skill.md §5bis`](../phase2-task/task-generate-skill.md) |

@@ -41,9 +41,14 @@ _SKILL_FILE_TO_BUILTIN_TARGET: dict[str, str] = {
     "story-generate-skill.md":       "source/skills/phase1-design/story-generate-skill.md",
     "story-review-skill.md":         "source/skills/phase1-design/story-review-skill.md",
     "testcase-generate-skill.md":    "source/skills/phase1-design/testcase-generate-skill.md",
+    "testcase-review-skill.md":      "source/skills/phase1-design/testcase-review-skill.md",
     "task-generate-skill.md":        "source/skills/phase2-task/task-generate-skill.md",
+    "coding-process-skill.md":       "source/skills/phase2-coding/coding-process-skill.md",
     "coding-skill.md":               "source/skills/phase2-coding/coding-skill.md",
     "coding-report-skill.md":        "source/skills/phase2-coding/coding-report-skill.md",
+    "test-generate-skill.md":        "source/skills/phase3-review/test-generate-skill.md",
+    "test-review-skill.md":          "source/skills/phase3-review/test-review-skill.md",
+    "code-review-skill.md":          "source/skills/phase3-review/code-review-skill.md",
 }
 
 

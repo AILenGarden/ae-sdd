@@ -28,6 +28,28 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 
 **为什么会腐化？** 因为"流程编排"与"具体规则"看似紧密耦合（流程的每一步都有规则），容易把规则顺手写在流程 SKILL 里。**这是"路径依赖"陷阱** —— 一开始写 AE-skill 时为了完整，会把所有相关内容都堆进去；时间一长，AE-skill 变成 2540 行的"百科全书"，没人能维护。
 
+## 🔴 极简描述原则（🆕 2026-07-01 — 瘦身是持续动作，不是一次性重构）
+
+> **更新任何 SKILL.md（含 `source/SKILL.md` 主入口）、子 SKILL、`source/docs/*.md` 时，必须同时执行"瘦身"**：只保留 AI 执行任务所需的核心含义，删除不影响执行判断的内容。这条独立于"内容边界判定"（放哪个文件）——本节管"同一段内容该写多长"。
+
+**写入前 5 问自检（任一答"是"→ 删除或改写）：**
+
+| # | 问题 | 判定为"是"时的动作 |
+| --- | --- | --- |
+| 1 | 这段是"为什么这样设计"的背景叙事？ | 删除，或压缩为 1 行脚注 |
+| 2 | 这段是历史版本变更堆积（🆕 vX.Y.Z 逐条罗列）？ | 移入 `CHANGELOG/`，正文只留"当前状态" |
+| 3 | 这段能用表格代替长段落？ | 改表格 |
+| 4 | 这段重复了另一个文件已有的内容？ | 改成指针引用 |
+| 5 | 删掉这句话，AI 还能正确执行任务？ | 删除 |
+
+**已验证案例：** `source/SKILL.md` 2839 行 → 546 行（-81%），核心路由/门禁/执行清单逻辑零损失。
+
+**禁止：**
+
+- ❌ 新增内容时旧内容"顺手"保留不删（导致文件只增不减）
+- ❌ 用"完整性/防遗漏"当借口堆砌背景说明
+- ❌ 版本变更历史写在正文（应写 CHANGELOG，正文只体现最终状态）
+
 ### 各子 SKILL = 环节内具体规则
 
 | 子 SKILL | 职责 | 不应承担 |
@@ -130,6 +152,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 **改 ① SKILL 本体（最常见）：**
 ```
 1. 直接编辑 source/*.md
+1.5 过一遍 §🔴 极简描述原则 5 问自检（只增不删是禁止项）
 2. （涉及门禁/子 SKILL 数变化）同步 README.md 正文计数 + §3 清单
 3. 跑 ae-sdd update-check → 全绿
 4. 跑 dev-sync.sh 分发
@@ -201,16 +224,16 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | **某阶段的术语定义**（如"DR 是什么"） | 阶段内的概念 | **不放任何文件，靠上下文理解**；如必须定义，写在阶段文件顶部"概念说明" | `SKILL.md` |
 | **某阶段的禁止事项**（如"测试真实性 8 类禁止"） | 阶段内的强约束 | `coding-skill.md` | `SKILL.md`（仅保留高层禁止如"跳过 CodeReview"） |
 | **跨阶段的回写规则**（如"Story 变更触发 Task 重生成"） | 跨子 SKILL 的联动 | 写入 `SKILL.md` 的"跨阶段联动"章节 + 各子 SKILL 用指针引用 | 单个子 SKILL 写完整联动逻辑 |
-| **Plan-first 编排门禁**（如"有确认缺陷时先生成 StoryReviewUpdatePlan，再修改 Story"） | 这是"节点之间如何流转" | `SKILL.md` 只写门禁与指针 | `story-review-skill.md` 写成全局流程编排 |
-| **StoryReviewUpdatePlan 的内容结构**（问题清单/存疑项/更新计划/影响分析） | 阶段产出物模板 | `templates/design/be-story-review-update-plan-template.md` | `SKILL.md` |
-| **Story Review 如何生成 UpdatePlan**（缺陷如何转计划、待讨论如何处理） | Story Review 阶段内规则 | `story-review-skill.md` | `SKILL.md` |
-| **Story Update 如何按 Plan 执行**（只改 Plan 覆盖章节、禁止计划外修改） | Story Update 阶段内规则 | `story-update-skill.md` | `SKILL.md` |
-| **Story 生成 7 阶段挖掘 SOP**（业务/主流程/AC/接口/数据/Task/①bis） | 阶段内具体规则 | **`story-generate-skill.md`（🆕 2026-06-06 新建）** | `SKILL.md`（仅角色 1 指针） |
+| **Proposal-first 编排门禁**（如"有确认缺陷时先生成 Proposal，再修改 Story"） | 这是"节点之间如何流转" | `SKILL.md` 只写门禁与指针 | `story-review-skill.md` / `story-update-skill.md` 写成全局流程编排 |
+| **Story Review 的缺陷修复载体**（问题事实/存疑项/修复建议/影响分析） | 阶段产出物模板 | `proposal-skill.md` + `story-review-checklist.md` | `SKILL.md` |
+| **Story Review 如何生成 Proposal**（缺陷如何转建议、待讨论如何处理） | Story Review 阶段内规则 | `story-review-skill.md` | `SKILL.md` |
+| **Story Update 如何按 Proposal 执行**（只改 Proposal 覆盖章节、禁止计划外修改） | Story Update 阶段内规则 | `story-update-skill.md` | `SKILL.md` |
+| **Story 生成 7 阶段挖掘 SOP**（业务/主流程/AC/接口/数据/Task/①bis） | 阶段内流程骨架 + 外提标准/模板 | **`story-generate-skill.md`（引用 `story-generation-standard.md` + `story-generate-plan-template.md` + `story-writer-prompt-template.md`）** | `SKILL.md`（仅角色 1 指针） |
 | **Coding 报告产出 9 章节结构 + 7 道闸** | 阶段内具体规则 | **`coding-report-skill.md`（🆕 2026-06-06 新建）** | `SKILL.md`（仅角色 6 指针） |
 | **文档存放标准**（路径模板/命名规则/重入处理/版本号/状态码） | AE 体系横向基础设施 | **`document-storage-skill.md`（🆕 2026-06-06 新建）** | 各子 SKILL（每 SKILL 必引用本文件） |
 | **建议书（Proposal）的内容结构**（4 段必填 / 7 道闸 / 5 步走流程） | 阶段内产出物模板 | **`proposal-skill.md`（🆕 2026-06-06 新建，重量级）** | `SKILL.md`（仅流程编排指针） |
 | **建议书模板** | 阶段内产出物空白 | `templates/proposal/proposal-template.md` | `SKILL.md`（仅指针） |
-| **各 SKILL 的"问题处理"路径**（Code Review/Story Review/Coding 异常/Project Assets 漂移） | 触发 Proposal（不直接生成 UpdatePlan） | **`proposal-skill.md` §多渠道接入设计** | 各 SKILL 内置的 UpdatePlan（已废弃） |
+| **各 SKILL 的"问题处理"路径**（Code Review/Story Review/Coding 异常/Project Assets 漂移） | 触发 Proposal（不直接生成旧版计划载体） | **`proposal-skill.md` §多渠道接入设计** | 各 SKILL 内置的旧版计划载体（已废弃） |
 | **AE 体系统一入口 + 智能路由**（分析用户输入属于哪个节点 + 路由到对应 SKILL） | AE 编排层调度 | **`SKILL.md` §🎯 统一入口与智能路由**（🆕 2026-06-06 增强） | 各子 SKILL 各自判断路由 |
 | **任务节点内子任务拆分 + 多 Agent 并行 + 故障补救** | 阶段内并行执行规则 | **`agent-orchestration-skill.md`（🆕 2026-06-06 新建）** | `SKILL.md`（仅含角色 1-8 角色库） |
 | **Agent 编排的角色库**（8 角色 story-writer / code-reviewer / test-verifier 等） | 阶段内并行执行 | `agent-orchestration-skill.md` §3 角色库（统一） | `SKILL.md` §🤖（已迁出） |
@@ -257,7 +280,6 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | Coding 报告（产出物空白） | `../../templates/coding/be-coding-report-template.md` |
 | 测试用例 / 测试报告（产出物空白） | `../../templates/testcase/*.md` |
 | Story / Task / DR / 逻辑汇总（产出物空白） | `../../templates/design/*.md` |
-| StoryReviewUpdatePlan（产出物空白） | `../../templates/design/be-story-review-update-plan-template.md` |
 | TestCase 生成 | `../phase1-design/testcase-generate-skill.md` |
 | DR Update | `../phase1-design/dr-update-skill.md` |
 | 文档存放标准 / 横切依赖 | `../cross-cutting/document-storage-skill.md` |
@@ -725,9 +747,9 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 
 ### 子 SKILL 健康度
 
-- [ ] `story-review-skill.md` 包含 `## 📖 Story 讲解模板` + `## 📋 ①bis 前端视角接口审视 — 6 维度审查清单`
-- [ ] `story-review-skill.md` 包含 `## Plan-first 更新原则`，并引用 `templates/design/be-story-review-update-plan-template.md`
-- [ ] `story-update-skill.md` 明确按 `StoryReviewUpdatePlan` 执行，禁止计划外业务语义修改
+- [ ] `story-generate-skill.md` 引用 `story-generation-standard.md` + `story-generate-plan-template.md` + `story-writer-prompt-template.md`，并不再内嵌大段示例/讲解/Agent 模板
+- [ ] `story-review-skill.md` 引用 `story-review-checklist.md` + `story-frontend-contract-standard.md`，并声明不生成旧版计划载体
+- [ ] `story-update-skill.md` 明确按 Proposal 执行，禁止计划外业务语义修改
 - [ ] `task-generate-skill.md` 包含 `## 📖 Task 讲解模板`
 - [ ] `task-generate-skill.md` 🆕 2026-06-10 包含 `### 1.A 有 Story 上级文档` + `### 1.B 无 Story 上级文档`（小任务场景独立决策分支）
 - [ ] `coding-skill.md` 包含 `## 📖 Code 讲解模板` + `## 📋 ④bis CodingPlan` + `## 📋 测试真实性强制规范` + `## 📋 ⑥bis 编码后全切面一致性核查闸` + `## 📋 ⑦bis 全链路对称性核查闸` + `## 📋 Coding 问题分层排查与修改链`
@@ -735,7 +757,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] `SKILL.md` 🆕 2026-06-10 智能路由表包含 4 类需求（已有 Story / 中大任务 / 小任务 / 微任务）+ 路由决策算法 2.2 套 Story 7 区模板判定
 - [ ] `document-storage-skill.md` 🆕 2026-06-10 包含 `§2.6 三类任务规模 × 文档路径`（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）
 - [ ] `templates/coding/be-codereview-template.md` 9 章节齐全
-- [ ] `templates/design/be-story-review-update-plan-template.md` 存在，且包含问题清单、更新计划、字段链路明细表、横向流转对照图、影响分析、执行后验收
+- [ ] Story Review 旧版计划模板若保留，则仅作为历史兼容壳，不再作为运行时输入
 - [ ] 🆕 v3.2 `requirement-analysis-skill.md` 包含 `## 🔴 RequirementAnalysisModel（12 维需求分析决策模型）` + `## 第七步：16 道 RA 质量闸`
 - [ ] 🆕 v3.2 `templates/design/ra-template.md` 包含 §6.5 衍生规则登记表 + §8.5 衍生 AC 登记表 + §8.6 衍生覆盖率 + §9-bis 业务模式匹配表 + §9-ter 跨域级联效应表 + §13 RA-G01~16 质量闸自检
 - [ ] 🆕 v3.2 `tools/lib/gates.py` GATE_REGISTRY 包含 G-RA-1~G-RA-4（RA 文档存在 / 8 维度完整 / 衍生章节完整 / 真实性扫描通过）+ CHECK_FUNCS 注册 + check_all G-RA-4 特判
@@ -796,6 +818,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 
 | 反模式 | 危害 | 正确做法 |
 |--------|------|---------|
+| 更新 SKILL/Doc 时只增不删（背景叙事/历史版本堆积） | 文件只增不减 → 重现"2839 行读不动"问题 | 每次更新都过一遍 §🔴 极简描述原则 5 问自检 |
 | 在 AE-skill 中塞"具体怎么做" | AE-skill 膨胀 → 维护困难 → 与子 SKILL 内容漂移 | 内容下沉到子 SKILL，AE-skill 只保留指针 |
 | 同一规则在 AE-skill 和子 SKILL 各写一份 | 两份内容漂移 → 改一处忘改另一处 | 单点维护：要么在 AE-skill 要么在子 SKILL，用指针互引 |
 | 子 SKILL 中写"流程编排" | 子 SKILL 承担不该承担的事 → 跨阶段改动要改多个文件 | 流程编排一律在 AE-skill，子 SKILL 只接收"我这一阶段的指针" |

@@ -36,6 +36,8 @@
 | `dr-generated`    | ✅ 仅文档目录 | ❌   | 写 DR                     |
 | `story-generated` | ✅ 仅文档目录 | ❌   | 写 Story                  |
 | `story-reviewed`  | ✅ 仅文档目录 | ❌   | 写 TestCase               |
+| `testcase-generated` | ✅ 仅文档目录 | ❌ | 🆕 v3.7.0 TestCase 生成完毕，待 Review |
+| `testcase-reviewed`  | ✅ 仅文档目录 | ❌ | 🆕 v3.7.0 TestCase Review 通过，写 Task |
 | `task-generated`  | ✅ 仅文档目录 | ❌   | 写 Task / CodingPlan      |
 | `task-reviewed`   | ✅            | ✅   | 进入编码，允许写 src/     |
 | `coding-process`  | ✅ 仅文档目录 | ❌   | CodingPlan 分析，禁止写 src/ |
@@ -90,6 +92,8 @@ Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
 - **HS-10**（🆕 v3.4.0，建议书4 关卡2）流程产物（Story/Task/CodingPlan/报告）落地未经 `resolve_path` 推导、落在 `d:\tmp\` 等游离位置（PreToolUse hook 物理拦截 + G-DOC-STORAGE 门禁）
 - **HS-11**（🆕 v3.4.0，建议书4 关卡3）非 coding/test-running phase 或无审核点 2.5 确认 token 写 src/ 源码（PreToolUse hook 物理拦截）
 - **HS-12**（🆕 v3.4.0，建议书3 F-1）AI 谎报 `◆ GATE: ✅ CLEAR` 但实际门禁未通过（Stop hook 交叉验证 G-08 与 CodingPlan 文档一致）
+- **HS-13** 暂离期间写源码/运行编译测试命令（声明但无物理实现——hook 无法感知"讨论模式"；靠 SKILL.md §🔀 暂离声明约束 AI 自律；未来可通过 `.ae-sdd/.detour_mode` 标记文件补物理拦截）
+- **HS-14** 检测到编码意图词但未执行回归门直接写代码（声明但无物理实现；靠 SKILL.md §🔀 编码意图检测 + 回归门协议约束；AI 必须先输出`【主流程监管器 ❌ 阻断】`并执行 `ae-sdd state read`）
 
 ---
 

@@ -17,7 +17,7 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 > - [`templates/proposal/proposal-template.md`](../../templates/proposal/proposal-template.md) = 建议书空白模板
 > - 替代（不重复）各 SKILL 内置的 UpdatePlan：
 >   - `code-review-skill.md` 的 §第四步 bis **CodeReviewUpdatePlan** → 改用 Proposal
->   - `story-review-skill.md` 的 §第四步 bis **StoryReviewUpdatePlan** → 改用 Proposal
+>   - `story-review-skill.md` 的 Story Review 缺陷修复流 → 改用 Proposal
 >   - `coding-skill.md` 的 **实时追溯链** → 改用 Proposal
 >   - `project-assets-update-skill.md` 的 **Update 动作** → 改用 Proposal
 
@@ -69,8 +69,8 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 ### 标尺 2：单一权威源（🔴 一次写完，多处引用）
 
 - Proposal 是问题的"单一权威源"
-- 下游 SKILL（Story Update / TestCase Update / Task Generate / Coding）**引用** Proposal 而非重新生成 UpdatePlan
-- 避免"上游 Story Review 出一份 UpdatePlan → 下游 Story Update 又重新分析"的双重成本
+- 下游 SKILL（Story Update / TestCase Update / Task Generate / Coding）**引用** Proposal 而非重新分析问题
+- 避免"上游 Story Review 出一份 Proposal → 下游 Story Update 又重新分析"的双重成本
 
 ### 标尺 3：可执行性（🔴 §3 必须有具体步骤）
 
@@ -128,7 +128,7 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 | 触发场景 | 触发方式 | 渠道 |
 |---------|---------|------|
 | Code Review 评审发现 🔴 问题 | `code-review-skill.md §第四步 bis` 自动生成 | 1 |
-| Story Review 评审发现 🔴 问题 | `story-review-skill.md §第四步 bis` 自动生成 | 2 |
+| Story Review 评审发现 🔴 问题 | `story-review-skill.md` 的 Story Review 缺陷修复流自动生成 | 2 |
 | Coding 异常追溯链命中 | `coding-skill.md §异常路径` 触发 | 3 |
 | Project Assets 漂移 | `project-assets-update-skill.md` 触发 | 4 |
 | 用户说"修一下 XX" / "发现 XX 问题" | 手动写 Proposal | 5 |
@@ -352,7 +352,7 @@ Proposal 文档已生成
 | 旧（被替代） | 新（统一） |
 |-------------|----------|
 | `code-review-skill.md §第四步 bis` CodeReviewUpdatePlan | **Proposal 替代**（Code Review 评审发现 → 生成 Proposal）|
-| `story-review-skill.md §第四步 bis` StoryReviewUpdatePlan | **Proposal 替代**（Story Review 评审发现 → 生成 Proposal）|
+| `story-review-skill.md` Story Review 缺陷修复流 | **Proposal 替代**（Story Review 评审发现 → 生成 Proposal）|
 | `coding-skill.md §异常路径` A1-A6 实时追溯链 | **Proposal 替代**（异常触发 → 生成 Proposal）|
 | `project-assets-update-skill.md §4 动作 2` Update | **Proposal 替代**（漂移触发 → 生成 Proposal）|
 
@@ -475,14 +475,14 @@ input:
 
 ### 渠道 2：Story Review 评审发现 → 自动生成 Proposal
 
-**触发点：** `story-review-skill.md §第四步 bis`（原 StoryReviewUpdatePlan 章节）
+**触发点：** `story-review-skill.md` 的 Story Review 缺陷修复流
 
 **改写规则：** 同渠道 1，触发 `proposal-skill.md §第二步`
 
 **Story Review 报告改造点：**
 ```
 原：
-§第四步 bis：生成 StoryReviewUpdatePlan
+§第四步 bis：触发的 Proposal
   - 问题清单
   - 更新计划
   - 字段链路影响分析

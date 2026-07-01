@@ -128,6 +128,7 @@ description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 
 | `story-writer` | Phase 1 ① | Story 起草 |
 | `story-reviewer` | Phase 1 ② | Story 评审（按 §8.4 Tier 判定选 1/2/3 个：设计实现 / 前端契约 / 数据模型 视角）|
 | `testcase-writer` | Phase 1 ③ | 测试用例生成 |
+| `testcase-reviewer` | Phase 1 ③bis 🆕 v3.7.0 | TestCase Review（TC-1~TC-9，按 §8.4 Tier 判定选 1/2/3 个） |
 | `task-writer` | Phase 2 ④ | Task 生成（含任务级 CodePlan）|
 | `plan-writer` | Phase 2 ④ter | 🆕 2026-06-06 合并入 task-writer |
 | `coder` | Phase 2 ⑤ | Coding |
@@ -646,7 +647,7 @@ report_back:
 
 | 审核点 | 主会话职责 | 派活角色 | 产出物 | 必须输出报告 |
 |---|---|---|---|---|
-| 1（设计阶段完成）| 讲解 + 收口 | `story-writer` + `testcase-writer` | Story 文档 + TestCase 文档 | `*-Story-WriterReport.md` + `*-TestCase-WriterReport.md` |
+| 1（设计阶段完成）| 讲解 + 收口 | `story-writer` + `testcase-writer` + `testcase-reviewer` | Story 文档 + TestCase 文档 + TestCase Review 报告 | `*-Story-WriterReport.md` + `*-TestCase-WriterReport.md` + `*-TestCase-Review-r{N}.md` |
 | 1.5（实现方案预确认）| 讲解 5 维度 + 收口 | `task-writer`（草稿实现方案）| `{STORY-ID}-Task实现方案.md` | `*-Task-WriterReport.md` |
 | 2（Task 文档完成）| 讲解 + 逐文件收口 | `task-writer`（写 Task 文档）| Task 文档集 | `*-Task-WriterReport.md` |
 | 2.5（CodingPlan 评审）| 讲解 + 收口 | `task-writer`（汇总统一版 CodingPlan）| `{STORY-ID}-CodingPlan.md` | 含 16 章节 + 14 门禁自检表 |
@@ -658,7 +659,7 @@ report_back:
 
 | 节点 | 推荐 sub-agent 数 | 理由 |
 |---|---|---|
-| 审核点 1 | 1-2（story-writer + testcase-writer）| Story 与 TestCase 可并行；但小 Story 可合并 1 个 sub-agent |
+| 审核点 1 | 1-3（story-writer + testcase-writer + testcase-reviewer） | Story 与 TestCase 生成可并行；TestCase Review 依赖 TestCase 生成完成；小 Story 可合并 sub-agent |
 | 审核点 1.5 / 2 / 2.5 | 1（task-writer）| 顺序依赖强，并行收益小 |
 | 审核点 4 | 1-2（coder + code-reviewer）| 强依赖（CodeReview 依赖代码完成）|
 | 审核点 5 | 1（summary-writer）| 单 PRD 收尾，无并行需求 |

@@ -1,13 +1,10 @@
 ---
 name: ae-sdd
-version: 3.6.2
+version: 3.7.0
 description: |
-  端到端自动化工程主入口（v3.6.2）。从 DR/PRD 出发，经 Story→Task→Coding→Test，直到全部通过。
-  支持大/中/小/微四条子链、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测），
-  并要求 RA 通过实现视角七要素/G-RA-6（数据源、数据流、定义、复用证据、成本反驳、开发疑问、DR交接）。
-  v3.6.1 CodingSKILL 拆分——共有能力库新增 §13 语言/项目适配器注册加载协议（按项目技术栈叠加适配器，
-  如 Java3D 适配器承载 Java+icec/life 编码决策知识层；适配器走现有 skill-new 注册，AI 运行时叠加，零 loader 改动）。
-  v3.6.2 能力测试反馈优化——共有§1 补证据缺失降级规则 + §13.1bis 叠加视图速查表；Java3D 适配器补 §1.1bis base package 固化 + §2.4 DO/PO 类型差异判定线（消除包路径前缀待确认 + 合法差异 vs 建模错误判定缺口）。
+  端到端自动化工程主入口（v3.7.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  历史变更见 source/CHANGELOG/。
 ---
 
 main_entry: true
@@ -82,6 +79,54 @@ triggers:
 
 - **L1** 静默注入；**L2** 输出 `【主流程监管器 🔴 矫正】`；**L3** `state.phase=paused`
 - 恢复：`ae-sdd state write --resume`
+
+---
+
+## 🔀 暂离与回归协议（流程偏离防护）
+
+**核心原则：流程可以暂离讨论，但不能偏离——任何编码动作必须先回到流程。**
+
+### 暂离声明（AI 主动输出）
+
+当 AI 步出流程参与讨论/分析时，**必须**先输出：
+
+```
+【流程暂离 — 仅讨论模式】
+当前 phase: {X}  |  暂离原因: {reason}
+⚠️ 本模式下不执行任何代码改动，讨论结束后说「回归流程」继续。
+```
+
+暂离期间约束：
+- 禁止写入 src/ 源码（Write/Edit/MultiEdit 到源码路径）
+- 禁止运行编译/测试命令（Bash 非只读操作）
+- 可以读代码、解释逻辑、回答问题
+
+### 编码意图检测（暂离期间触发）
+
+以下意图词出现时，暂离期间**必须先回归流程**，不得直接执行：
+
+`改一下` / `加个` / `写代码` / `编码` / `修复` / `实现` / `提交` / `跑一下` / `试试` / `调整一下`
+
+触发输出：
+```
+【主流程监管器 ❌ 阻断】当前处于讨论模式，编码前须先回归流程。
+说「回归流程」执行回归检查，或 ae-sdd state read 确认当前节点。
+```
+
+### 回归门（回归时强制执行）
+
+触发词：`回归流程` / `继续` / `开始做` / `接着做` / `继续上次`
+
+回归动作（强制，不可跳过）：
+1. `ae-sdd state read` — 确认当前 phase
+2. 输出回归播报：
+
+```
+【流程回归 — 主流程监管器接管】
+当前 phase: {X}  |  下一步: {next-step}  |  续接 SKILL: {skill}
+```
+
+3. 从当前节点续接，不跳步，不重置
 
 ---
 
@@ -220,10 +265,10 @@ ae-sdd gates check --only G-14
 
 | scale | phase 序列 | 适用 |
 |-------|-----------|------|
-| 大(12) | initialized→ra-generated→dr-generated→story-generated→story-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有PRD，走全流程 |
-| 中(11) | initialized→dr-generated→story-generated→story-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有DR，跳RA |
-| 小(10) | initialized→story-generated→story-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有Story，跳RA+DR |
-| 微(7) | initialized→task-generated→task-reviewed→coding-process→coding→test-running→completed | BUG/调整，跳RA+DR+Story |
+| 大(14) | initialized→ra-generated→dr-generated→story-generated→story-reviewed→testcase-generated→testcase-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有PRD，走全流程 |
+| 中(13) | initialized→dr-generated→story-generated→story-reviewed→testcase-generated→testcase-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有DR，跳RA |
+| 小(12) | initialized→story-generated→story-reviewed→testcase-generated→testcase-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有Story，跳RA+DR |
+| 微(7) | initialized→task-generated→task-reviewed→coding-process→coding→test-running→completed | BUG/调整，跳RA+DR+Story+TestCase |
 
 ---
 
@@ -247,7 +292,7 @@ ae-sdd gates check --only G-14
 
 **何时启用**：3+独立Story / 需独立验证 / Review节点Tier2+（默认双/多reviewer）/ 跨多源多工具
 
-**角色库**：`story-writer` / `story-reviewer`（Tier判定1-3个）/ `testcase-writer` / `task-writer` / `coder` / `code-reviewer`（Tier判定1-3个）/ `test-verifier`（⑥.10 强制）
+**角色库**：`story-writer` / `story-reviewer`（Tier判定1-3个）/ `testcase-writer` / `task-writer` / `coder` / `test-runner` / `code-reviewer`（Tier判定1-3个）/ `test-verifier`（Test Review / ⑥.10 强制）
 
 ⑥.10 `test-verifier` 是硬门禁：主 agent 自称"测试通过"无效，必须 test-verifier 独立验证。
 
@@ -280,7 +325,8 @@ Phase 1 设计阶段
   ①bis 前端视角接口审视（6维度→story-review-skill §①bis）
   ② Story Review（story-review-skill，含F-Stage前端契约）
   ③ 生成测试用例（testcase-generate-skill）
-  ③bis 业务逻辑汇总
+  ③bis TestCase Review（testcase-review-skill，TC-1~TC-9循环，3轮无新增退出）
+  ③ter 业务逻辑汇总
   🔍 审核点1：设计完成确认 + context-pressure
 
 Phase 2 实现阶段
@@ -293,7 +339,7 @@ Phase 2 实现阶段
   ⑤ Execute（按确认后的CodingPlan编码）
 
 Phase 3 验证阶段
-  ⑥ 完成判定（6.1~6.10，⑥.10由test-verifier sub-agent独立验证）
+  ⑥ Test 系列（test-generate-skill→test-review-skill，按监管器4步子流程；⑥.10由test-verifier独立验证）
   ⑥bis 编码后全切面一致性核查闸（→ coding-skill §⑥bis）
   ⑦ CodeReview报告（→ coding-skill §⑦，templates/coding/be-codereview-template.md）
   ⑦bis 全链路对称性核查闸（→ coding-skill §⑦bis）
@@ -337,7 +383,7 @@ PRD收尾（可选）：
 AE编排层门禁：① 完成后必做 ①bis；② Story含"前端接口契约"章节；③ Story Review含F-Stage
 
 ### ② Story Review
-循环：挖掘→判定→StoryReviewUpdatePlan→按Plan修复→再挖掘→退出（连续3轮无新增）
+循环：挖掘→判定→Proposal→按Proposal修复→再挖掘→退出（连续3轮无新增）
 
 退出协议 → `review-loop-skill.md`；F-Stage未通过 → Story Review不完整
 
@@ -392,7 +438,7 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 | 6.7 | 所有测试 | L1/L2/L3/L4全Pass |
 | 6.8 | 无Open问题 | 开发记录无Open |
 | 6.9 | 测试报告已出 | {story}-Report.md存在 |
-| 6.10🔴 | 测试真实性 | test-verifier独立验证，BLOCKER=0；详见 `coding-skill.md §🔴测试真实性` |
+| 6.10🔴 | 测试真实性 | test-verifier独立验证，BLOCKER=0；详见 `test-review-skill.md` |
 
 ### ⑦ter 流程收尾合规自检（5维度，禁止裸✅收尾）
 
@@ -449,9 +495,15 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | Story Generate | `story-generate-skill.md` | DR→Story（7阶段挖掘）|
 | Story Review | `story-review-skill.md` | Story缺陷挖掘循环 |
 | TestCase Generate | `testcase-generate-skill.md` | 测试用例生成 |
+| TestCase Review | `testcase-review-skill.md` | 测试用例缺陷挖掘循环（TC-1~TC-9）|
 | Story Update | `story-update-skill.md` | Story文档更新 |
 | Task Generate | `task-generate-skill.md` | Task生成+全局Review |
-| Coding | `coding-skill.md` | CodingProcess/Execute/Review/报告（**能力库**）|
+| Coding Process | `coding-process-skill.md` | Task→Coding 编排：CodeAnalysis→CodingPlan→Execute |
+| Coding | `coding-skill.md` | CodingSkill.Plan/Execute 能力库 |
+| Coding Report | `coding-report-skill.md` | Coding 报告生成 |
+| Test Generate | `test-generate-skill.md` | 运行编译/启动/L1-L4 测试并生成测试报告 |
+| Test Review | `test-review-skill.md` | test-verifier 独立复核测试真实性与证据链 |
+| Code Review | `code-review-skill.md` | Phase 3 代码评审与一致性/对称性核查 |
 | DR Update | `dr-update-skill.md` | DR文档更新 |
 | Project Assets Update | `project-assets-update-skill.md` | G-00门卫SOP |
 | Document Storage | `document-storage-skill.md` | 路径解析/命名/重入判定 |
@@ -511,7 +563,7 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 |------|---------|
 | 跳过Phase 1直接写代码 | 必须先完成设计阶段 |
 | 跳过CodingPlan | ⑤前必须有CodingPlan+14条门禁+用户确认 |
-| 测试伪造通过（8类手段）| 见 `coding-skill.md §🔴测试真实性` |
+| 测试伪造通过（8类手段）| 见 `test-review-skill.md` + G-09 |
 | "修复测试"代替"修复代码" | 修改测试代码必须标注原因+获用户确认 |
 | 人工审核节点自动决策 | 待讨论项必须询问用户 |
 | Task审核一锅端 | 逐文件自上而下核对，每文件单独✅ |
@@ -530,7 +582,8 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 2 | 生成Story（story-generate-skill）| 文件存在 |
 | 2b | ①bis 前端视角接口审视 | 6维度通过；Story含"前端接口契约" |
 | 3 | Story Review（含F-Stage）| 循环退出（3轮无新增）|
-| 4 | 生成测试用例 | 文件已生成+合规校验通过 |
+| 4 | 生成测试用例（testcase-generate-skill）| 文件已生成+合规校验通过 |
+| 4a | TestCase Review（testcase-review-skill，TC-1~TC-9）| 循环退出（3轮无新增）|
 | 4-📖 | AI主动讲解Story故事 | 5维度讲清才进审核点1 |
 | 4b | 审核点1（设计阶段完成确认）| 用户✅；context-pressure |
 | 4c | 审核点1.5（实现方案预确认）| 用户✅；context-pressure |
@@ -540,8 +593,9 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 5b | 审核点2（Task逐文件核对）| 每文件单独✅；context-pressure |
 | 5c | ④bis CodingProcess（CodeAnalysis→CodingPlan）| G-CODEPLAN-SRC+G-14通过 |
 | 5b.5 | 审核点2.5（CodingPlan评审）| 14条门禁全过+用户✅；context-pressure |
-| 6 | Execute（coding-skill）| 编译+启动+接口Pass+测试Pass |
-| 7 | 出具测试报告 | 文件已生成 |
+| 6 | Execute（coding-skill）| 代码按 CodingPlan 落地，编译预检无阻断 |
+| 7 | Test Generate（test-generate-skill）| TEST_REPORT 已生成，证据链齐 |
+| 7a | Test Review（test-review-skill）| test-verifier 独立复核通过；G-09/G-10 通过 |
 | 8 | 出具Coding报告 | 文件已生成 |
 | 8a | ⑥bis 全切面一致性核查 | 无🔴漂移 |
 | 8b | 出具CodeReview报告 | 含"零、"章节；无阻断型问题 |

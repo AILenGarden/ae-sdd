@@ -153,6 +153,29 @@ class TestNextStepSuggestion(unittest.TestCase):
         sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "story-generated")
 
+    def test_story_reviewed_to_testcase_generated(self):
+        """🆕 v3.7.0 大/中/小链 story-reviewed → testcase-generated（TestCase 独立系列）"""
+        for scale in ("大", "中", "小"):
+            s = {"phase": "story-reviewed", "scale": scale}
+            sug = state_mod.next_step_suggestion(s)
+            self.assertEqual(sug["next"], "testcase-generated", f"scale={scale}")
+            self.assertIn("testcase-generate-skill.md", sug["skill"])
+
+    def test_testcase_generated_to_testcase_reviewed(self):
+        """🆕 v3.7.0 testcase-generated → testcase-reviewed"""
+        for scale in ("大", "中", "小"):
+            s = {"phase": "testcase-generated", "scale": scale}
+            sug = state_mod.next_step_suggestion(s)
+            self.assertEqual(sug["next"], "testcase-reviewed", f"scale={scale}")
+            self.assertIn("testcase-review-skill.md", sug["skill"])
+
+    def test_testcase_reviewed_to_task_generated(self):
+        """🆕 v3.7.0 testcase-reviewed → task-generated"""
+        for scale in ("大", "中", "小"):
+            s = {"phase": "testcase-reviewed", "scale": scale}
+            sug = state_mod.next_step_suggestion(s)
+            self.assertEqual(sug["next"], "task-generated", f"scale={scale}")
+
     def test_medium_initialized_to_dr_generated(self):
         """中链 initialized → dr-generated（已有DR，从DR系列入，跳RA）"""
         s = {"phase": "initialized", "scale": "中"}
@@ -169,6 +192,14 @@ class TestNextStepSuggestion(unittest.TestCase):
         s = {"phase": "completed", "scale": "大"}
         sug = state_mod.next_step_suggestion(s)
         self.assertIn("已结束", sug["next"])
+
+    def test_coding_to_test_series(self):
+        """coding → test-running 必须进入 Test 系列，而非由 CodingSkill 代跑测试。"""
+        for scale in ("大", "中", "小", "微"):
+            s = {"phase": "coding", "scale": scale}
+            sug = state_mod.next_step_suggestion(s)
+            self.assertEqual(sug["next"], "test-running", f"scale={scale}")
+            self.assertIn("test-generate-skill.md", sug["skill"])
 
     def test_all_phases_have_suggestion_per_chain(self):
         """🆕 v3.5.15 每条子链每个 phase 都该有建议"""
@@ -188,14 +219,14 @@ class TestPhaseFlowCoverage(unittest.TestCase):
         self.assertEqual(set(state_mod.PHASE_FLOWS.keys()),
                          {"大", "中", "小", "微"})
 
-    def test_large_chain_has_12_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 12)
+    def test_large_chain_has_14_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 14)
 
-    def test_medium_chain_has_11_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 11)
+    def test_medium_chain_has_13_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 13)
 
-    def test_small_chain_has_10_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 10)
+    def test_small_chain_has_12_phases(self):
+        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 12)
 
     def test_micro_chain_has_7_phases(self):
         self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 7)

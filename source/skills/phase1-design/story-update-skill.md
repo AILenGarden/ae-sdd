@@ -1,286 +1,71 @@
 ---
 name: story-update
-description: 根据 StoryReviewUpdatePlan、Story 补充说明文档和模板更新 Story 主文档，分析模板优化空间和 DR 设计缺陷。当 Story Review / Coding SKILL 发现 Story 缺陷时自动触发，或开发者说"更新 Story"、"同步补充说明到 Story"时触发。
+description: 根据 Proposal、Story 补充说明文档和 Story 模板更新 Story 主文档。当 Story Review、Coding 或其他渠道发现 Story 缺陷时触发，或开发者说"更新 Story"、"同步补充说明到 Story"时触发。
 ---
 
 # Story Update — Story 文档更新 Skill
 
-## 📦 文档存放前置调用（🔴 横切依赖）
-
-> **🔴 强制：** 本 SKILL 涉及的所有文档（Story 主文档、Supplement、Plan 报告）在读写前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **读取**（§0.6.7 `save_doc()` + §0.6.11 `get_latest_version()`）：通过 `intent=STORY` 定位 Story 主文档；通过 `intent=STORY_SUPPLEMENT` 定位 Supplement；通过 `intent=STORY_REVIEW_UPDATE_PLAN` 定位 Plan
-> 2. **写入**（§0.6.7 `save_doc()`）：Story 主文档重入时**新增版本**（v{major}.{minor} 递增，旧版本保留）
-> 3. **命名 + 版本号**（§3.1/3.2）：Story 主文档带 v{major}.{minor}；Supplement 不带版本号；Plan 带 r{N}
-> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
-> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
-
-**本 SKILL 涉及文档类型与 API 调用对应：**
-
-| 文档类型 | API 调用 | 命名规则 | 重入时动作 |
-|---------|---------|---------|----------|
-| Story 主文档 | `save_doc(intent="STORY", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
-| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
-| StoryReviewUpdatePlan | `save_doc(intent="STORY_REVIEW_UPDATE_PLAN", storyId, version={r:N})` | 带 r{N} | 新增（r 递增）|
-
-> **调用示例：** 详见 `document-storage-skill.md §15.5` API 化调用。
-
-> 🆕 **🔴 2026-06-17 修复 P1-1 显式调用示例：**
->
-> ```javascript
-> // 写出 Story 更新报告（重入时新增版本，旧版本保留）
-> await documentStorage.resolve_path({
->   intent: 'STORY_UPDATE',
->   storyId: 'STORY-001-BE',
->   version: 'v1.1',
->   title: '需求补充'
-> });
-> // → 解析为：ae-sdd-doc/iterations/{date}/Update/STORY-001-BE-v1.1.md
->
-> // 写出 StoryReviewUpdatePlan（按 r{N} 编号）
-> await documentStorage.resolve_path({
->   intent: 'STORY_REVIEW_UPDATE_PLAN',
->   storyId: 'STORY-001-BE',
->   version: 'r1',
->   title: 'StoryReview-r1'
-> });
-> // → 解析为：ae-sdd-doc/iterations/{date}/Review/STORY-001-BE-StoryReviewUpdatePlan-r1.md
-> ```
-
----
-
 ## 目标
 
-根据 `StoryReviewUpdatePlan` 中记录的目标章节、修改方式和验证方式，更新 Story 主文档。同时参考 Story 补充说明文档确认问题来源，并分析问题根因是否来自模板缺陷或 DR 设计缺陷，形成向上反馈。
+根据 Proposal 中记录的修复建议更新 Story 主文档，并同步回写 Supplement、模板优化建议或 DR 反馈。
 
----
+## 依赖标准
 
-## 整体流程
+- [Story Review 检查标准](../../standards/story/story-review-checklist.md)
+- [Story 前端接口契约标准（①bis）](../../standards/story/story-frontend-contract-standard.md)
+- [`proposal-skill.md`](../cross-cutting/proposal-skill.md)
+- [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)
 
-```
-触发
-  │
-  ├── 第一步：读取 StoryReviewUpdatePlan + 补充说明文档
-  │
-  ├── 第二步：校验 Plan 可执行性 + 读取 Story 模板
-  │
-  ├── 第三步：按 Plan 更新 Story 主文档
-  │
-  ├── 第三步半：判断 Task 是否受影响
-  │         │
-  │         └── 有 → 触发 Task Generate SKILL
-  │
-  ├── 第四步：分析 Story 模板是否需要优化
-  │         │
-  │         └── 有 → 更新模板
-  │
-  ├── 第五步：分析问题是否由 DR 设计缺陷导致
-  │         │
-  │         └── 有 → 更新 DR 补充说明 → 触发 DR 更新 SKILL
-  │
-  └── 完成
-```
+## 文档存放前置调用
 
----
+写入前必须先调用 `document-storage-skill.md`，不手写路径。
 
-## 第一步：读取 StoryReviewUpdatePlan + 补充说明文档
-
-Story Review 触发本 SKILL 时，必须先读取 `{STORY-ID}-StoryReviewUpdatePlan-r{轮次}.md`，再读取 `{story-prefix}-Supplement.md` 作为事实记录。Coding / TestCase 阶段直接发现 Story 缺陷但尚无 Plan 时，必须先按 `templates/design/be-story-review-update-plan-template.md` 生成最小 Plan，再执行本 SKILL。
-
-**提取内容：**
-- Plan 中状态为 `Ready` 或待执行的更新项
-- Plan 的目标章节、修改方式、修改摘要、验证方式
-- Plan 的字段链路与数据模型修订计划
-- Plan 的影响分析与不修改边界
-- 缺陷清单中状态非 ✅ 的项
-- Coding 反馈章节中状态为 Open 的 Story 文档缺陷
-- Supplement 中与 Plan 问题 ID 对应的证据和判定结果
-
-**拒绝执行条件：**
-- 无 `StoryReviewUpdatePlan`，且当前触发来源不是“先生成最小 Plan”的异常路径。
-- Plan 中存在 `⚠️ 待讨论` 项，但没有人工确认结果，却被列入执行。
-- Plan 未写目标章节或修改方式。
-- Plan 的字段链路表应填未填。
-
----
-
-## 第二步：校验 Plan 可执行性 + 读取 Story 模板
-
-读取 Story 模板文件，确认：
-- 各章节的格式要求
-- 必填/选填标注
-- 示例格式
-
-**模板路径：** `templates/design/be-story-template.md`
-
-### 2.1 Plan 可执行性校验
-
-| 检查项 | 通过标准 |
-|--------|---------|
-| 计划项完整 | 每个确认缺陷都有执行项或不修改理由 |
-| 目标章节存在 | 每个执行项的目标章节能在 Story 主文档定位；不存在时计划写明“新增章节” |
-| 修改方式明确 | 每项为新增 / 修改 / 删除 / 替换之一 |
-| 字段链路闭环 | 涉及字段时，来源 → 入参/上下文 → 分层对象 → DB/外部依赖 → 出参完整，且字段链路明细表与横向流转对照图一致 |
-| 级联判断明确 | TestCase / Task / DR / 依赖 Story 是否受影响已有结论 |
-
----
-
-## 第三步：按 Plan 更新 Story 主文档
-
-按 `StoryReviewUpdatePlan` 的执行顺序逐项更新 Story 主文档：
-
-### 3.1 更新规则
-
-| 规则 | 说明 |
-|------|------|
-| 只改 Plan 覆盖的章节 | 不动 Plan 未覆盖的章节；发现必须改的新问题时，暂停并补充新 Plan |
-| 格式遵循模板 | 表格结构、标题层级与模板一致 |
-| 保留已有内容 | 补充而非覆盖，除非明确标注"替换" |
-| 更新状态 | Story 元信息中的状态按实际情况更新 |
-| 字段链路同步 | 接口、数据模型、DB 操作、出入参四维、字段链路明细表、横向流转对照图必须同步修改，禁止只改一处 |
-
-### 3.2 更新后标记
-
-更新完成后：
-
-1. 在补充说明文档中将对应缺陷标记为 ✅ 已修复 / Deferred / Superseded。
-2. 在 `StoryReviewUpdatePlan` 的“执行后验收”中标记结果。
-3. 记录任何未执行项及原因；未执行项不得静默消失。
-
----
-
-## 第三步 bis：Story 校验
-
-**触发时机：** Story 主文档更新完成后，进入第三步半之前
-
-**输入：** 更新后的 Story 主文档 + `be-story-template.md` 模板
-
-**校验清单：**
-
-| 检查项 | 说明 |
-|--------|------|
-| 必填章节完整 | 模板中标注 `必填` 的章节是否都有内容？ |
-| 格式规范 | 表格结构、标题层级是否与模板一致？ |
-| AC 覆盖完整性 | 每个主流程/异常流程是否都有对应 AC？ |
-| 接口契约一致性 | REST/SPI 接口的字段、类型、校验规则是否完整？ |
-| 数据模型一致性 | 表结构变更与接口契约是否匹配？ |
-| 字段链路一致性 | 来源 → 入参/上下文 → 分层对象 → DB/外部依赖 → 出参是否闭环？字段链路明细表与横向流转对照图是否一致？ |
-| Task 映射完整性 | 每个功能点是否都有对应 Task？ |
-| 偏离声明完整性 | 与约束的不同是否有偏离说明？ |
-| Plan 一致性 | Story diff 是否只包含 Plan 列出的业务语义变更？ |
-
-**判定结果：**
-- ✅ 全部通过 → 进入第三步半
-- ⚠️ 未通过 → 修正 Story 主文档 → 再次校验
-
----
-
-## 第三步半：判断 Task 是否受影响
-
-Story 更新后，检查是否影响了 Task 内容：
-
-| 变更类型 | 是否触发 Task Generate | 说明 |
-|---------|----------------------|------|
-| Task 列表新增/删除 | ✅ 触发 | 需要生成新 Task 或标记废弃 |
-| Task 说明/描述修改 | ✅ 触发 | 需要更新 Task 核心代码 |
-| 接口契约字段变更 | ✅ 触发 | 影响 DTO/Controller 的 Task |
-| 数据模型字段变更 | ✅ 触发 | 影响 PO/DO/Converter 的 Task |
-| 字段链路映射变更 | ✅ 触发 | 影响 DTO/DO/PO/Converter/Mapper 或外部接口字段 |
-| 错误码变更 | ✅ 触发 | 影响异常定义的 Task |
-| 仅修改 AC/用例映射 | ❌ 不触发 | 不影响实现代码（"用例映射"指 AC ID 与测试用例 ID 的对应关系，修改此映射不影响业务逻辑和接口契约） |
-| 仅修改验收记录 | ❌ 不触发 | 不影响实现代码 |
-
-**触发时：** 调用 [Task Generate SKILL](../phase2-task/task-generate-skill.md)，传入受影响的 Task 范围。
-
----
-
-## 第四步：分析 Story 模板优化空间
-
-对比当前 Story 遇到的问题，分析模板是否存在结构性缺陷：
-
-| 分析维度 | 检查内容 |
-|---------|---------|
-| 章节完整性 | 是否缺少必要章节导致信息遗漏？ |
-| 格式清晰度 | 表格结构是否容易产生歧义？ |
-| 示例充分性 | 是否缺少关键场景的示例？ |
-| 约束关联性 | 是否需要增加与约束文档的交叉引用？ |
-
-**如果模板需要优化：**
-
-1. 在补充说明文档中记录模板优化建议
-2. 更新模板文件（`be-story-template.md`）
-3. 记录变更原因
-
----
-
-## 第五步：分析 DR 设计缺陷
-
-**核心问题：** Story 出现的错误，是否因为 DR 设计阶段就存在缺陷？
-
-### 5.1 判断标准
-
-| 场景 | 是否 DR 缺陷 | 说明 |
-|------|-------------|------|
-| Story 接口契约与 DR 技术方案矛盾 | ✅ 是 | DR 方案设计不完整 |
-| Story 数据模型与 DR 表设计不一致 | ✅ 是 | DR 数据模型设计遗漏 |
-| Story 异常流程在 DR 中未考虑 | ✅ 是 | DR 异常设计不充分 |
-| Story 实现时发现技术方案不可行 | ✅ 是 | DR 技术选型有误 |
-| Story 内部逻辑错误（如字段类型写错、状态机规则错误） | ❌ 否 | Story 编写问题（字段类型写错 = 编写问题；状态机流转规则写错 = 内部逻辑错误，两者判定标准不同，前者改文本，后者改业务规则） |
-| Task 核心代码 bug | ❌ 否 | Task 编写问题 |
-
-### 5.2 如果存在 DR 缺陷
-
-1. **更新 DR 补充说明文档**（`{dr-prefix}-Supplement.md`）：
-
-```markdown
-## {N}、Story 反馈 - {日期}
-
-### 反馈来源
-
-| Story ID | 问题描述 | 影响的 DR 章节 |
-|----------|---------|--------------|
-
-### DR 缺陷分析
-
-| DR 章节 | 缺陷描述 | 修复建议 | 状态 |
+| 文档类型 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
+| Story 主文档 | `save_doc(intent="STORY", storyId, version={major,minor})` | v{major}.{minor} | 新增版本 |
+| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
+| Proposal | `save_doc(intent="PROPOSAL", storyId, version={N})` | 按 N 编号 | 新增 |
 
-### 关联影响
+## 流程
 
-| 受影响的 Story | 影响描述 | 是否需要同步修改 |
-|--------------|---------|--------------|
+```text
+触发
+  → 读取 Proposal + Supplement
+  → 读取 Story 模板
+  → 校验 Proposal 可执行性
+  → 按 Proposal 更新 Story
+  → 判断是否影响 Task / DR / 模板
+  → 回写 Supplement / Proposal 状态
+  → 必要时触发 Task Generate 或 DR Update
 ```
 
-2. **触发 DR 更新 SKILL**
+## 核心原则
 
----
+- Story Update 只执行 Proposal 覆盖的修复。
+- Story Update 不重新分析问题根因。
+- Story Update 不生成 Proposal。
+- 如果发现新的业务语义变更，必须暂停并让上游补新 Proposal。
+
+## 执行规则
+
+1. 先读 Proposal，再读 Supplement。
+2. 只修改 Proposal 覆盖的章节。
+3. 字段链路、接口、数据模型、错误码一旦涉及，必须同步闭环。
+4. 任何计划外修改都视为无效。
+5. 修改后必须标记缺陷状态，并回写更新结果。
+
+## 触发下游
+
+| 变更类型 | 是否触发下游 |
+|---------|-------------|
+| Task 列表、任务说明、接口字段、数据模型、字段链路、错误码变化 | 触发 Task Generate |
+| DR 规则或设计缺陷被确认 | 触发 DR Update |
+| 仅 AC / 验收记录变化 | 不触发 |
+| 仅补充说明变化 | 不触发 |
 
 ## 禁止事项
 
-| 禁止 | 应该 |
-|------|------|
-| 直接修改 Story 而不参考 Plan | 先读 `StoryReviewUpdatePlan`，按计划项更新 |
-| 只根据 Supplement 边读边改 | Supplement 只是事实记录，必须先转成可执行 Plan |
-| 修改 Story 时破坏已有正确内容 | 只改有缺陷的部分 |
-| Plan 外业务语义修改 | 暂停修改，补充新 Plan 后再执行 |
-| 待讨论项自动修改 | 先获得人工确认，再写入 Plan 执行 |
-| 忽略模板格式要求 | 严格遵循模板结构 |
-| 将 Task 层面的问题归因于 DR | 区分 Story/Task 编写问题和 DR 设计缺陷 |
-| 直接修改 DR 主文档 | 先写 DR 补充说明，再触发 DR 更新 SKILL |
-
----
-
-## 执行清单（逐项执行，不可跳过）
-
-> AI 启动本 SKILL 时，必须用 TodoWrite 1:1 映射此表，每完成一行验证"产出物已生成 + 门禁已满足"后才进入下一步。
-
-| # | 动作 | 产出物 | 门禁 |
-|---|------|--------|------|
-| 1 | 读取 StoryReviewUpdatePlan + Supplement | — | Plan 已读取；问题证据能与 Supplement 对应 |
-| 2 | 校验 Plan 可执行性 + 读取 Story 模板 | — | Plan 目标章节、修改方式、字段链路、影响分析均通过 |
-| 3 | 按 Plan 修复 Story 主文档 | `{story}.md` 更新 | 所有 Plan 执行项已落地；无计划外业务语义修改 |
-| 4 | Story 校验 | — | 全部检查项通过，含字段链路一致性和 Plan 一致性 |
-| 5 | 更新 Supplement 和 Plan 状态 | `{story}-Supplement.md` + `StoryReviewUpdatePlan` 更新 | 缺陷状态标记为 ✅ 已修复 / Deferred / Superseded；Plan 验收已记录 |
-| 6 | 判定 Task 是否受影响 | — | 影响判定完成 |
-| 7 | 触发 Task Generate（如受影响） | `task/*.md` 更新 | Task 已同步或无需同步 |
-| 8 | 判定是否 DR 缺陷 | — | 判定完成 |
-| 9 | 触发 DR Update（如是 DR 缺陷） | DR Supplement 更新 | 已触发或无需触发 |
+- 禁止读取或依赖旧版 Story Review 计划载体
+- 禁止按计划外内容改 Story
+- 禁止跳过 Proposal 直接修改 Story
+- 禁止把 Supplement 当作修复计划

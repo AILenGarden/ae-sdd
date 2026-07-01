@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程主入口（v3.6.2）。从 DR/PRD 出发，经 Story→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测）， 并要求 RA 通过实现视角七要素/G-RA-6（数据源、数据流、定义、复用证据、成本反驳、开发疑问、DR交接）。 v3.6.1 CodingSKILL 拆分——共有能力库新增 §13 语言/项目适配器注册加载协议（按项目技术栈叠加适配器， 如 Java3D 适配器承载 Java+icec/life 编码决策知识层；适配器走现有 skill-new 注册，AI 运行时叠加，零 loader 改动）。 v3.6.2 能力测试反馈优化——共有§1 补证据缺失降级规则 + §13.1bis 叠加视图速查表；Java3D 适配器补 §1.1bis base package 固化 + §2.4 DO/PO 类型差异判定线（消除包路径前缀待确认 + 合法差异 vs 建模错误判定缺口）。
-version: 3.6.2
+description: 端到端自动化工程主入口（v3.7.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 历史变更见 source/CHANGELOG/。
+version: 3.7.0
 ---
 
-<!-- # AUTO-GEN @ ae-sdd@777eed3c7838b73ad4d800b58209778f477bd63e @ 2026-06-30T15:23:05Z -->
+<!-- # AUTO-GEN @ ae-sdd@b0b40513dfd877714af67563d4dcd2d89eab8f54 @ 2026-07-01T02:59:55Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-06-30T15:23:05Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.2.0 | generated-at: 2026-07-01T02:59:55Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `777eed3` (3.6.2)
+> 源版本：ae-sdd @ `b0b4051` (3.7.0)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-06-30T15:23:05Z
-- 源 ae-sdd 版本：3.6.2
-- 源 ae-sdd commit：777eed3
+- 生成时间：2026-07-01T02:59:55Z
+- 源 ae-sdd 版本：3.7.0
+- 源 ae-sdd commit：b0b4051
 - 适配器版本：v0.2.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

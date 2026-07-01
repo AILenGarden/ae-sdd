@@ -67,6 +67,8 @@ PHASE_PERMIT: dict[str, frozenset[str]] = {
     "dr-generated":    frozenset({"Write", "Edit", "MultiEdit"}),
     "story-generated": frozenset({"Write", "Edit", "MultiEdit"}),
     "story-reviewed":  frozenset({"Write", "Edit", "MultiEdit"}),
+    "testcase-generated": frozenset({"Write", "Edit", "MultiEdit"}),  # 🆕 v3.7.0 TestCase 独立系列
+    "testcase-reviewed":  frozenset({"Write", "Edit", "MultiEdit"}),  # 🆕 v3.7.0
     "task-generated":  frozenset({"Write", "Edit", "MultiEdit"}),
     "task-reviewed":   frozenset({"Write", "Edit", "MultiEdit", "Bash"}),
     "coding-process":  frozenset({"Write", "Edit", "MultiEdit", "Bash"}),  # 🆕 v3.5.16 CodingProcess：写 CodePlan + 跑门禁 CLI
@@ -117,7 +119,9 @@ BASH_READONLY_PREFIXES: tuple[str, ...] = (
 _DESIGN_PHASES = frozenset({
     "initialized", "ra-generated",  # 🆕 v3.4.0 RA 阶段也禁写 src/
     "dr-generated", "story-generated",
-    "story-reviewed", "task-generated",
+    "story-reviewed",
+    "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0 TestCase 独立系列，仍在设计阶段
+    "task-generated",
     "coding-process",  # 🆕 v3.5.16 CodingProcess 只产 CodePlan，禁写生产代码（task-reviewed 仍允许写 src/，保持原行为）
     "code-reviewed",  # CR 阶段：只写报告，不改源码
 })
@@ -165,7 +169,7 @@ _PRODUCT_PHASE_MAP: dict[str, frozenset[str]] = {
     "DR": frozenset({"dr-generated"}),
     "RA": frozenset({"ra-generated", "dr-generated"}),
     "Story": frozenset({"story-generated", "story-reviewed"}),
-    "TestCase": frozenset({"story-reviewed", "task-generated"}),
+    "TestCase": frozenset({"testcase-generated", "testcase-reviewed"}),  # 🆕 v3.7.0 独立系列
     "Task": frozenset({"task-generated", "task-reviewed"}),
     "CodingPlan": frozenset({"task-reviewed", "coding-process", "coding"}),  # 🆕 v3.5.16 coding-process 产出 CodePlan
     "CodingReport": frozenset({"coding", "test-running", "code-reviewed"}),

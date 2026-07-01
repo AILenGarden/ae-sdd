@@ -130,7 +130,9 @@ GATE_REGISTRY: list[dict] = [
 
 # Story Review 之后允许的 phase
 PHASE_PAST_STORY_REVIEW = {
-    "story-reviewed", "task-generated", "task-reviewed",
+    "story-reviewed",
+    "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0 TestCase 独立系列
+    "task-generated", "task-reviewed",
     "coding", "test-running", "code-reviewed", "completed",
 }
 
@@ -515,7 +517,8 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
     """
     phase = st.get("phase", "initialized")
     PRE_CODING_PHASES = {"initialized", "ra-generated", "dr-generated", "story-generated",
-                         "story-reviewed", "task-generated", "task-reviewed"}
+                         "story-reviewed", "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0
+                         "task-generated", "task-reviewed"}
 
     scanner = _locate_authenticity_scanner(master_source)
     if scanner is None:
@@ -632,7 +635,8 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
     """
     phase = st.get("phase", "initialized")
     PRE_CODING_PHASES = {"initialized", "ra-generated", "dr-generated", "story-generated",
-                         "story-reviewed", "task-generated", "task-reviewed"}
+                         "story-reviewed", "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0
+                         "task-generated", "task-reviewed"}
 
     scanner = _locate_coding_scanner(master_source)
     if scanner is None:
@@ -1909,7 +1913,7 @@ def check_g_doc_consistency(project_dir: Path, st: dict, current_story: str) -> 
 def check_g_review_loop(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-REVIEW-LOOP review-loop 退出条件通过（🆕 v3.5.12，治 P0-1/4）。
 
-    校验 review 节点（story-reviewed/dr-reviewed/task-reviewed/code-reviewed）切相前，
+    校验 review 节点（story-reviewed/testcase-reviewed/dr-reviewed/task-reviewed/code-reviewed）切相前，
     reviewLoop 状态满足退出条件（协议1 normal 需 dryCounter≥3 / 协议2 escalate 已升级用户）。
 
     降级策略：若 state 无 reviewLoop 字段（root 未跑过 review-loop CLI）→ skip（warn 不阻断）。
@@ -1919,8 +1923,8 @@ def check_g_review_loop(project_dir: Path, st: dict, current_story: str) -> Gate
     name = "review-loop 退出条件通过"
     phase = st.get("phase", "initialized")
 
-    # 只在 review 后的 phase 校验（story-reviewed/dr-reviewed/task-reviewed/code-reviewed）
-    review_phases = {"story-reviewed", "task-reviewed", "code-reviewed"}
+    # 只在 review 后的 phase 校验（story-reviewed/testcase-reviewed/dr-reviewed/task-reviewed/code-reviewed）
+    review_phases = {"story-reviewed", "testcase-reviewed", "task-reviewed", "code-reviewed"}  # 🆕 v3.7.0 补 testcase-reviewed
     if phase not in review_phases:
         return GateResult("G-REVIEW-LOOP", name, "blocker", True,
                           f"阶段 {phase} 非 review 节点（skip）",
@@ -2003,7 +2007,7 @@ def check_g09b(project_dir: Path, st: dict, current_story: str) -> GateResult:
     phase = st.get("phase", "initialized")
 
     # 只在 review 节点切相后校验（与 G-REVIEW-LOOP 同 phase 集）
-    review_phases = {"story-reviewed", "task-reviewed", "code-reviewed"}
+    review_phases = {"story-reviewed", "testcase-reviewed", "task-reviewed", "code-reviewed"}  # 🆕 v3.7.0 补 testcase-reviewed
     if phase not in review_phases:
         return GateResult("G-09B", name, "blocker", True,
                           f"阶段 {phase} 非 review 节点（skip）",

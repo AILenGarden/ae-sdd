@@ -71,9 +71,10 @@ class TestBashReadonlyCommands:
 class TestPhasePermissions:
     """各 phase 的写权限边界"""
 
-    # ── initialized / dr-generated / story-generated / story-reviewed：无 Bash ──
+    # ── initialized / dr-generated / story-generated / story-reviewed / testcase-*：无 Bash ──
     @pytest.mark.parametrize("phase", [
         "initialized", "dr-generated", "story-generated", "story-reviewed",
+        "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0
     ])
     def test_no_bash_in_design_phases(self, phase):
         allowed, reason = check_intercept("Bash",
@@ -84,6 +85,7 @@ class TestPhasePermissions:
 
     @pytest.mark.parametrize("phase", [
         "initialized", "dr-generated", "story-generated", "story-reviewed",
+        "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0
         "task-generated",
     ])
     def test_write_allowed_in_doc_phases(self, phase):
@@ -375,15 +377,39 @@ class TestScaleRoutedStateWrite:
         assert not allowed, "小链 initialized→coding 应被拦（跨步跳跃）"
         assert "跨步跳跃" in reason
 
-    def test_small_ra_to_task_allowed(self, tmp_path, monkeypatch):
-        """小链 ra-generated→task-generated 合法单步（跳过 DR/Story）"""
+    def test_small_testcase_reviewed_to_task_allowed(self, tmp_path, monkeypatch):
+        """小链 testcase-reviewed→task-generated 合法单步（🆕 v3.7.0 修正：小链无 ra-generated 节点，
+        旧断言 ra-generated→task-generated 属于过期用例，改测实际存在的合法单步）"""
         self._bypass_gates_and_memory(monkeypatch)
-        project_dir = self._make_state(tmp_path, scale="小", phase="ra-generated")
+        project_dir = self._make_state(tmp_path, scale="小", phase="testcase-reviewed")
         cmd = "ae-sdd state write --phase task-generated --story STORY-001"
         allowed, reason = check_intercept(
             "Bash", bash_command=cmd, project_dir=project_dir
         )
-        assert allowed, f"小链 ra→task 应放行，但被拒: {reason}"
+        assert allowed, f"小链 testcase-reviewed→task 应放行，但被拒: {reason}"
+
+    def test_story_reviewed_to_testcase_generated_allowed(self, tmp_path, monkeypatch):
+        """🆕 v3.7.0 大/中/小链 story-reviewed→testcase-generated 合法单步（TestCase 独立系列入口）"""
+        self._bypass_gates_and_memory(monkeypatch)
+        for scale in ("大", "中", "小"):
+            project_dir = self._make_state(tmp_path, scale=scale, phase="story-reviewed")
+            cmd = "ae-sdd state write --phase testcase-generated --story STORY-001"
+            allowed, reason = check_intercept(
+                "Bash", bash_command=cmd, project_dir=project_dir
+            )
+            assert allowed, f"scale={scale} story-reviewed→testcase-generated 应放行，但被拒: {reason}"
+
+    def test_story_reviewed_to_task_generated_blocked(self, tmp_path, monkeypatch):
+        """🆕 v3.7.0 大/中/小链 story-reviewed→task-generated 应被拦（跳过整个 TestCase 系列）"""
+        self._bypass_gates_and_memory(monkeypatch)
+        for scale in ("大", "中", "小"):
+            project_dir = self._make_state(tmp_path, scale=scale, phase="story-reviewed")
+            cmd = "ae-sdd state write --phase task-generated --story STORY-001"
+            allowed, reason = check_intercept(
+                "Bash", bash_command=cmd, project_dir=project_dir
+            )
+            assert not allowed, f"scale={scale} story-reviewed→task-generated 应被拦（跳过 TestCase）"
+            assert "跨步跳跃" in reason
 
     def test_micro_initialized_to_dr_not_blocked_by_jump(self, tmp_path, monkeypatch):
         """微链不含 dr-generated，initialized→dr：跨步判定放行（dr 不在微链，index 抛 ValueError→return True）。

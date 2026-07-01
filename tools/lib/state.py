@@ -34,10 +34,12 @@ Story/Task/Plan 级（txn 级）：
 }
 
 🆕 v3.5.15 多入口状态机：4 子链 + scale 路由（详见 PHASE_FLOWS 注释）
-  - 大链（12 phase）：已有PRD，走全流程 initialized→ra-generated→dr-generated→...→completed
-  - 中链（11 phase）：已有DR，跳RA，从DR系列入
-  - 小链（9 phase）：已有Story，跳RA+DR，从Story系列入
-  - 微链（7 phase）：BUG/调整，从Task系列入（含轻量CodingPlan），跳RA+DR+Story
+  - 大链（14 phase）：已有PRD，走全流程 initialized→ra-generated→dr-generated→...→completed
+  - 中链（13 phase）：已有DR，跳RA，从DR系列入
+  - 小链（12 phase）：已有Story，跳RA+DR，从Story系列入
+  - 微链（7 phase）：BUG/调整，从Task系列入（含轻量CodingPlan），跳RA+DR+Story+TestCase
+  - 🆕 v3.7.0：大/中/小链新增 testcase-generated→testcase-reviewed（TestCase 独立系列，
+    story-reviewed 之后、task-generated 之前；微链不受影响，仍跳过整个 TestCase 系列）
   - 旧 state 无 scale → _infer_scale 按 completedSteps/phase 反推，默认"大"（最保守）
 
 PRD 级（.auto-engineering/{PRD-ID}/state.json）：
@@ -65,19 +67,22 @@ from lib.flow_enums import FlowEvent, FlowEventType, FlowNode, FlowSkill  # noqa
 #   scale 由 classify() 判定，首次 state write --scale 携带写入；旧 state 无 scale → _infer_scale 反推。
 #   BUG/配置类 → scale="微" + entryNode=BUG/CONFIG（复用微链，不单独开链）。
 PHASE_FLOWS: dict[str, list[str]] = {
-    "大": [   # 大任务：已有 PRD，走全流程 RA→DR→Story→Task→CodingProcess→Coding
+    "大": [   # 大任务：已有 PRD，走全流程 RA→DR→Story→TestCase→Task→CodingProcess→Coding
         "initialized", "ra-generated", "dr-generated", "story-generated", "story-reviewed",
+        "testcase-generated", "testcase-reviewed",
         "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
     "中": [   # 中任务：已有 DR，跳 RA，从 DR 系列入
         "initialized", "dr-generated", "story-generated", "story-reviewed",
+        "testcase-generated", "testcase-reviewed",
         "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
     "小": [   # 小任务：已有 Story，跳 RA+DR，从 Story 系列入
         "initialized", "story-generated", "story-reviewed",
+        "testcase-generated", "testcase-reviewed",
         "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "微": [   # 微任务/BUG/配置类：从 Task 系列入（含轻量 CodingPlan），跳 RA+DR+Story
+    "微": [   # 微任务/BUG/配置类：从 Task 系列入（含轻量 CodingPlan），跳 RA+DR+Story+TestCase
         "initialized", "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "completed",
     ],
 }
@@ -243,11 +248,13 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "ra-generated":    ("dr-generated",     "生成 DR（Design Requirement）",          "dr-generate-skill.md"),
         "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
         "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
-        "story-reviewed":  ("task-generated",   "生成 Task",                              "testcase-generate-skill.md"),
+        "story-reviewed":  ("testcase-generated", "生成测试用例",                         "testcase-generate-skill.md"),
+        "testcase-generated": ("testcase-reviewed", "执行 TestCase Review（TC-1~TC-9）",  "testcase-review-skill.md"),
+        "testcase-reviewed": ("task-generated", "生成 Task",                              "task-generate-skill.md"),
         "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
         "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
@@ -256,11 +263,13 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "initialized":     ("dr-generated",     "生成 DR（已有 DR，从 DR 系列入，跳 RA）",  "dr-generate-skill.md"),
         "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
         "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
-        "story-reviewed":  ("task-generated",   "生成 Task",                              "testcase-generate-skill.md"),
+        "story-reviewed":  ("testcase-generated", "生成测试用例",                         "testcase-generate-skill.md"),
+        "testcase-generated": ("testcase-reviewed", "执行 TestCase Review（TC-1~TC-9）",  "testcase-review-skill.md"),
+        "testcase-reviewed": ("task-generated", "生成 Task",                              "task-generate-skill.md"),
         "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
         "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
@@ -268,11 +277,13 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
     "小": {
         "initialized":     ("story-generated",  "生成 Story（已有 Story，从 Story 系列入，跳 RA+DR）", "story-generate-skill.md"),
         "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
-        "story-reviewed":  ("task-generated",   "生成 Task",                              "testcase-generate-skill.md"),
+        "story-reviewed":  ("testcase-generated", "生成测试用例",                         "testcase-generate-skill.md"),
+        "testcase-generated": ("testcase-reviewed", "执行 TestCase Review（TC-1~TC-9）",  "testcase-review-skill.md"),
+        "testcase-reviewed": ("task-generated", "生成 Task",                              "task-generate-skill.md"),
         "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
         "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "出具 Coding 报告 + CodeReview",           "coding-report-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
@@ -282,7 +293,7 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
         "task-reviewed":   ("coding-process",   "执行 CodingProcess（微任务轻量：加载上下文+出CodePlan）", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "跑测试 + 出具测试报告",                  "coding-skill.md"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
         "test-running":    ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
     },
