@@ -69,15 +69,17 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 **用途：** 加载5上下文 → CodeAnalysis → 出 CodePlan → Execute 写代码 → 验证 → 异常追溯。
 
-**输入参数（5 上下文，🔴 全部必填，缺一停止）：**
+**输入参数（5 上下文，🔴 全部必填，缺一停止；均通过 `document-storage-skill` 统一定位）：**
 
 | 参数 | 来源 |
 |------|------|
 | ① 项目约束文档 | `document-storage-skill.get_constraints(projectKey)` |
 | ② 技术约束 / CodingModel | `document-storage-skill.get_thinking_engine(projectKey)` |
-| ③ Story 文档 | 当前 Story（微任务无） |
-| ④ Task 文档 | `resolve_path(intent="TASK", ...)`（微任务无） |
-| ⑤ 项目资产 | `ae-sdd assets read coding --project <projectKey>` |
+| ③ Story 文档 | `document-storage-skill.resolve_path(intent="STORY", storyId)`（微任务无）|
+| ④ Task 文档 | `document-storage-skill.resolve_path(intent="TASK", storyId, taskId)` |
+| ⑤ TestCase 文档 | `document-storage-skill.resolve_path(intent="TESTCASE", storyId)`（微任务无）|
+
+> 项目资产不再是独立上下文——已并入 §A2 调用 `coding-skill` 能力时的内部步骤（要素1：读取项目资产），避免与 CodeAnalysis 方法论重复声明。
 
 **全流程（Phase A → B → C）：**
 - **Phase A：CodeAnalysis**（§A）→ 产出 CodePlan + 用户审核点 2.5
@@ -101,11 +103,13 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 | 上下文 | 加载方式 | 缺失处置 |
 |--------|---------|---------|
-| ① 项目约束 | `get_constraints(projectKey)` 返回 9 项约束（清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
-| ② 技术约束 CodingModel | `get_thinking_engine(projectKey)`，产出 11 维决策（决策表见 [`coding-skill.md` §1](coding-skill.md)） | 任一维度结论空 → 停止，向上游追溯 |
-| ③ Story 文档 | 读取当前 Story，提取涉及工程/主流程伪代码/实现任务映射/接口契约/数据模型/偏离声明（微任务跳过，须标"无 Story 上下文，独立决策"） | — |
-| ④ Task 文档 | 先读 Task 0（公共依赖），再按执行顺序逐个读 Task（微任务跳过） | — |
-| ⑤ 项目资产 | `ae-sdd assets read coding --project <projectKey>`，返回 §4+§5+§6 | 资产不存在 → 停止，走 project-assets-update-skill §3 生成 |
+| ① 项目约束 | `document-storage-skill.get_constraints(projectKey)` 返回 9 项约束（清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
+| ② 技术约束 CodingModel | `document-storage-skill.get_thinking_engine(projectKey)`，产出 11 维决策（决策表见 [`coding-skill.md` §1](coding-skill.md)） | 任一维度结论空 → 停止，向上游追溯 |
+| ③ Story 文档 | `document-storage-skill.resolve_path(intent="STORY", storyId)` 定位后读取，提取涉及工程/主流程伪代码/实现任务映射/接口契约/数据模型/偏离声明（微任务跳过，须标"无 Story 上下文，独立决策"） | — |
+| ④ Task 文档 | `document-storage-skill.resolve_path(intent="TASK", storyId, taskId)` 先定位 Task 0（公共依赖），再按执行顺序逐个定位 Task | — |
+| ⑤ TestCase 文档 | `document-storage-skill.resolve_path(intent="TESTCASE", storyId)` 定位后读取，提取场景清单/测试分层/预期输入输出（微任务跳过） | — |
+
+> 项目资产读取已下沉到 §A2 调用 coding-skill 能力的内部步骤（要素1），不在本表重复列为独立上下文。
 
 ### §A2 调用 coding-skill 能力做 CodeAnalysis
 
@@ -153,13 +157,12 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 
 ### §B1 工程预检（第一~五步合并）
 
-**收集输入：** 向开发者请求 Story 路径 / Task 目录 / 测试用例路径 / 工作目录（已提供则跳过，按 `resolve_path()` 自动定位）。
+**收集输入：** 复核 §A1 已加载的 5 上下文（不重新加载，已在 CodeAnalysis 阶段通过 `document-storage-skill` 定位）：
 
-**读取文档：**
 - 约束文档：`get_constraints(projectKey)` 返回的 9 项（关键规则见 [`coding-skill.md` §2](coding-skill.md)）
-- Story 文档：提取涉及工程/主流程伪代码分层骨架/实现任务映射/接口契约/数据模型/偏离声明
-- 测试用例文档：提取场景清单/测试分层/Mock点/预期输入输出/错误码断言
-- Task 文档：先读 Task 0（公共包路径/技术栈/DO 定义），再按执行顺序逐个读 Task
+- Story 文档：`resolve_path(intent="STORY", storyId)`，提取涉及工程/主流程伪代码分层骨架/实现任务映射/接口契约/数据模型/偏离声明
+- Task 文档：`resolve_path(intent="TASK", storyId, taskId)`，先读 Task 0（公共包路径/技术栈/DO 定义），再按执行顺序逐个读 Task
+- 测试用例文档：`resolve_path(intent="TESTCASE", storyId)`，提取场景清单/测试分层/Mock点/预期输入输出/错误码断言
 
 **工程预检 4 项：**
 1. **确认工程存在**：每个涉及工程查磁盘路径，不存在则创建子模块注册父 pom
@@ -421,7 +424,7 @@ Test 系列未通过时，按 `test-review-skill.md` 的缺陷分类回到 Test 
 | # | 动作 | 产出物 | 门禁 |
 |---|------|--------|------|
 | **Phase A：CodeAnalysis** | | | |
-| A1 | 加载5上下文（约束/CodingModel/Story/Task/项目资产） | — | 5 上下文齐备 |
+| A1 | 加载5上下文（项目约束/技术约束/Story/Task/TestCase，均经 document-storage-skill 定位） | — | 5 上下文齐备 |
 | A2 | 调 coding-skill 能力做 CodeAnalysis | 类骨架/分层映射 | 分层归类无错（coding-skill §3） |
 | A3 | 产出统一版 CodePlan + 跑门禁 | {STORY-ID}-CodingPlan.md | G-CODEPLAN-SRC/G-14/G-08 全过 |
 | A4 | 用户审核点 2.5 确认 | 用户确认记录 | 用户明确"确认/同意/可以开始" |

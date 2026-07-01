@@ -1,10 +1,10 @@
 ---
 name: ae-sdd
-version: 3.7.2
+version: 3.7.3
 description: |
-  端到端自动化工程主入口（v3.7.2）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.7.3）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
-  🆕 v3.7.2：文档读写散点统一收敛到 document-storage 函数式调用（resolve_path/save_doc），消除子 SKILL 中的 ae-sdd-doc/ 字面路径硬编码。
+  🆕 v3.7.3：CodingProcess 5 上下文改为项目约束/技术约束/Story/Task/TestCase（原第⑤项目资产并入 CodeAnalysis 内部步骤），5 上下文读取统一走 document-storage-skill。
   历史变更见 source/CHANGELOG/。
 ---
 
