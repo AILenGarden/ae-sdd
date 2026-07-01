@@ -45,5 +45,148 @@ class TestResolvePathVersion(unittest.TestCase):
         self.assertTrue(r.full_path.endswith("STORY-001-CodingReport-v3-r5.md"))
 
 
+class TestSaveDoc(unittest.TestCase):
+    """save_doc 端到端：写文件 + ChangeLog + STORING + .gitignore + 版本号自增。"""
+
+    def test_save_doc_writes_design_doc_in_place(self):
+        """设计类文档（STORY）原地写入，不带版本号。"""
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "STORY", "# Story 内容",
+            story_id="STORY-001-BE", changelog_note="首次创建",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        # 文件落在 ae-sdd-doc/Story/，不带版本号
+        self.assertTrue(result.full_path.replace("\\", "/").endswith("ae-sdd-doc/Story/STORY-001-BE.md"))
+        self.assertTrue(Path(result.full_path).is_file())
+        # 设计类无版本号
+        self.assertIsNone(result.new_version)
+
+    def test_save_doc_appends_changelog(self):
+        """save_doc 追加 ChangeLog 到文档同级目录。"""
+        tmp = _setup_project()
+        document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "STORY", "# Story",
+            story_id="STORY-001-BE", changelog_note="首次创建",
+        )
+        cl = tmp / "ae-sdd-doc" / "Story" / "STORY-001-BE-changelog.md"
+        self.assertTrue(cl.is_file())
+        self.assertIn("首次创建", cl.read_text(encoding="utf-8"))
+
+    def test_save_doc_updates_storing_index(self):
+        """save_doc 更新单一 ae-sdd-doc/STORING.md 索引。"""
+        tmp = _setup_project()
+        document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "STORY", "# Story",
+            story_id="STORY-001-BE",
+        )
+        storing = tmp / "ae-sdd-doc" / "STORING.md"
+        self.assertTrue(storing.is_file())
+        content = storing.read_text(encoding="utf-8")
+        self.assertIn("STORY-001-BE.md", content)
+        self.assertIn("Story", content)
+
+    def test_save_doc_maintains_gitignore(self):
+        """save_doc 首次写入时维护 .gitignore（幂等追加 ae-sdd-doc/）。"""
+        tmp = _setup_project()
+        document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "STORY", "# Story",
+            story_id="STORY-001-BE",
+        )
+        gi = tmp / ".gitignore"
+        self.assertTrue(gi.is_file())
+        self.assertIn("ae-sdd-doc/", gi.read_text(encoding="utf-8"))
+
+    def test_save_doc_version_increment_for_report(self):
+        """事件类报告（CODING_REPORT）未显式传 version 时 r 自增。"""
+        tmp = _setup_project()
+        # 第一份：应为 v1-r1
+        r1 = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "CODING_REPORT", "# Coding 报告 r1",
+            story_id="STORY-001", changelog_note="首轮",
+        )
+        self.assertTrue(r1.success, msg=r1.error)
+        # 第二份：未传 version，应自增到 r2
+        r2 = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "CODING_REPORT", "# Coding 报告 r2",
+            story_id="STORY-001", changelog_note="次轮",
+        )
+        self.assertTrue(r2.success, msg=r2.error)
+        # 两份报告都保留（旧版本不删）
+        self.assertTrue(Path(r1.full_path).is_file())
+        self.assertTrue(Path(r2.full_path).is_file())
+        self.assertNotEqual(r1.full_path, r2.full_path)
+
+    def test_save_doc_unknown_intent_e000(self):
+        """未知 intent 返回失败，错误码含 E000。"""
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "BOGUS_INTENT", "# 内容",
+            story_id="X",
+        )
+        self.assertFalse(result.success)
+        self.assertIn("E000", result.error)
+
+
+class TestFinalizeDoc(unittest.TestCase):
+    """finalize_doc：对已手写文件补 ChangeLog/STORING，不覆盖内容。"""
+
+    def test_finalize_does_not_overwrite_content(self):
+        """finalize 不覆盖已写文件的内容。"""
+        tmp = _setup_project()
+        # 先手写一个文件到最终路径
+        target = tmp / "ae-sdd-doc" / "Story" / "STORY-002-BE.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        original = "# 这是手写的原始内容，finalize 不能覆盖"
+        target.write_text(original, encoding="utf-8")
+
+        result = document_storage.finalize_doc(
+            tmp / ".ae-sdd", "test", "STORY", str(target),
+            story_id="STORY-002-BE", changelog_note="finalize 登记",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        # 内容未被覆盖
+        self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_finalize_appends_changelog(self):
+        """finalize 追加 ChangeLog 到文件同级目录。"""
+        tmp = _setup_project()
+        target = tmp / "ae-sdd-doc" / "Story" / "STORY-003-BE.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# 内容", encoding="utf-8")
+
+        document_storage.finalize_doc(
+            tmp / ".ae-sdd", "test", "STORY", str(target),
+            story_id="STORY-003-BE", changelog_note="补登记",
+        )
+        cl = target.parent / "STORY-003-BE-changelog.md"
+        self.assertTrue(cl.is_file())
+        self.assertIn("补登记", cl.read_text(encoding="utf-8"))
+
+    def test_finalize_updates_storing(self):
+        """finalize 更新 STORING.md 索引（用已写文件路径）。"""
+        tmp = _setup_project()
+        target = tmp / "ae-sdd-doc" / "Story" / "STORY-004-BE.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# 内容", encoding="utf-8")
+
+        document_storage.finalize_doc(
+            tmp / ".ae-sdd", "test", "STORY", str(target),
+            story_id="STORY-004-BE",
+        )
+        storing = tmp / "ae-sdd-doc" / "STORING.md"
+        self.assertIn("STORY-004-BE.md", storing.read_text(encoding="utf-8"))
+
+    def test_finalize_nonexistent_file_e009(self):
+        """finalize 不存在的文件抛 E009。"""
+        tmp = _setup_project()
+        with self.assertRaises(document_storage.DocStorageError) as ctx:
+            document_storage.finalize_doc(
+                tmp / ".ae-sdd", "test", "STORY", str(tmp / "nope.md"),
+                story_id="X",
+            )
+        self.assertIn("E009", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

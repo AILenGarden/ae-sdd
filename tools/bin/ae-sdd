@@ -73,7 +73,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, classify, db_tool, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, session, state, stop_check, update_graph  # noqa: E402
+from lib import assets_index, classify, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, session, state, stop_check, update_graph  # noqa: E402
 
 
 def _read_stdin_json() -> dict:
@@ -574,6 +574,147 @@ def cmd_gate_doc_storage(args, parser):
         else:
             output.ok(f"✅ G-DOC-STORAGE 校验通过：{target_path}")
     return 0 if not issues else 1
+
+
+def _resolve_ade_sdd_and_project_key(args):
+    """统一解析 ade_sdd + project_key（多数命令共用）。
+
+    优先级：--project > cwd 向上找 .ae-sdd/ > unknown。
+    """
+    project_arg = getattr(args, "project", "") or ""
+    ade_sdd = paths.locate_project_ae_sdd(Path(project_arg)) if project_arg else paths.locate_project_ae_sdd()
+    project_key = None
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey")
+    if not project_key:
+        project_key = "unknown"
+    return ade_sdd, project_key
+
+
+def cmd_doc_save(args, parser):
+    """doc save — 一步到位存文档（封装 document_storage.save_doc，🆕 v3.7.2）
+
+    流程：读草稿 → save_doc（resolve+写+版本+ChangeLog+STORING+gitignore）→ 删草稿。
+    对齐 document-storage-skill.md §4.3 + §9 写入 SOP。
+    """
+    ade_sdd, project_key = _resolve_ade_sdd_and_project_key(args)
+    if not ade_sdd:
+        output.err("找不到 .ae-sdd/ 项目根（可用 --project 指定）")
+        return 1
+
+    content_file = Path(args.content_file)
+    if not content_file.is_file():
+        output.err(f"草稿文件不存在：{args.content_file}")
+        return 1
+    content = content_file.read_text(encoding="utf-8")
+
+    # version 字符串 → dict（复用 document_storage._normalize_version 的容错逻辑）
+    version = None
+    if args.version:
+        major, minor = document_storage._normalize_version(args.version, True)
+        version = {"major": major, "minor": minor}
+
+    result = document_storage.save_doc(
+        ade_sdd, project_key, args.intent, content,
+        story_id=args.story_id, doc_id=args.doc_id,
+        version=version, changelog_note=args.changelog_note,
+    )
+
+    if not result.success:
+        # E000（未实现 intent）给降级提示
+        if "E000" in (result.error or ""):
+            output.err(f"❌ {result.error}")
+            output.info("   该 intent 暂未实现路径模板。降级：LLM 手写到目标路径后用 `ae-sdd doc finalize --path <已写文件>` 补登记。")
+        else:
+            output.err(f"❌ {result.error}")
+        return 1
+
+    # 删草稿（除非 --keep-draft；且草稿不能等于最终路径，避免误删）
+    final_path = Path(result.full_path).resolve()
+    if not args.keep_draft and content_file.resolve() != final_path:
+        content_file.unlink(missing_ok=True)
+
+    output.ok(f"✅ 已存：{result.full_path}")
+    if result.new_version:
+        output.info(f"   版本：{result.new_version}")
+    if args.json:
+        output.emit({"success": result.success, "fullPath": result.full_path,
+                     "newVersion": result.new_version, "changelogEntry": result.changelog_entry},
+                    as_json=True)
+    return 0
+
+
+def cmd_doc_resolve(args, parser):
+    """doc resolve — 只推路径不写（封装 document_storage.resolve_path，🆕 v3.7.2）
+
+    用途：LLM 查"会写到哪"、或落地前单点校验路径合规。不写文件、无副作用。
+    """
+    ade_sdd, project_key = _resolve_ade_sdd_and_project_key(args)
+    if not ade_sdd:
+        output.err("找不到 .ae-sdd/ 项目根（可用 --project 指定）")
+        return 1
+
+    try:
+        resolved = document_storage.resolve_path(
+            ade_sdd, project_key, args.intent,
+            story_id=args.story_id, doc_id=args.doc_id,
+        )
+    except document_storage.DocStorageError as e:
+        output.err(f"❌ {e}")
+        return 1
+
+    payload = {
+        "fullPath": resolved.full_path,
+        "dirPath": resolved.dir_path,
+        "fileName": resolved.file_name,
+        "versionSuffix": resolved.version_suffix,
+        "changelogPath": resolved.changelog_path,
+        "scope": resolved.scope,
+    }
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.ok(f"📍 路径：{resolved.full_path}")
+        if resolved.version_suffix:
+            output.info(f"   版本后缀：{resolved.version_suffix}")
+        output.info(f"   ChangeLog：{resolved.changelog_path}")
+    return 0
+
+
+def cmd_doc_finalize(args, parser):
+    """doc finalize — 对已手写文件补版本号/ChangeLog/STORING（封装 document_storage.finalize_doc，🆕 v3.7.2）
+
+    适用：未实现 intent 的文档 LLM 手写后补登记，或漏跑 save_doc 后处理。
+    不覆盖文件内容，只补 ChangeLog + STORING + .gitignore。
+    """
+    ade_sdd, project_key = _resolve_ade_sdd_and_project_key(args)
+    if not ade_sdd:
+        output.err("找不到 .ae-sdd/ 项目根（可用 --project 指定）")
+        return 1
+
+    if not Path(args.path).is_file():
+        output.err(f"目标文件不存在：{args.path}")
+        return 1
+
+    try:
+        result = document_storage.finalize_doc(
+            ade_sdd, project_key, args.intent, args.path,
+            story_id=args.story_id, doc_id=args.doc_id,
+            changelog_note=args.changelog_note,
+        )
+    except document_storage.DocStorageError as e:
+        output.err(f"❌ {e}")
+        return 1
+
+    output.ok(f"✅ 已登记：{result.full_path}")
+    if result.changelog_entry:
+        output.info(f"   ChangeLog：已追加")
+    if args.json:
+        output.emit({"success": result.success, "fullPath": result.full_path,
+                     "newVersion": result.new_version, "changelogEntry": result.changelog_entry},
+                    as_json=True)
+    return 0
 
 
 def cmd_update_check(args, parser):
@@ -2575,6 +2716,49 @@ def main() -> int:
     p_uc.add_argument("--only", help="只查指定检查（如 UC-01）")
     p_uc.add_argument("--affected", help="查询模式：改了这些文件，连带项是什么（逗号分隔，如 gates.py,SKILL.md）")
     p_uc.set_defaults(func=cmd_update_check)
+
+    # doc（🆕 v3.7.2 — 文档存放命令组，封装 document-storage API，激活代码调用）
+    # 让 LLM 通过 CLI 真正调用 document_storage，而非读伪代码手模拟。
+    p_doc = sub.add_parser("doc",
+                           help="[v3.7.2] 文档存放（resolve/save/finalize，封装 document-storage API）",
+                           parents=[common])
+    doc_sub = p_doc.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    # doc save — 一步到位存文档
+    p_doc_save = doc_sub.add_parser("save", help="一步到位存文档（resolve+写+版本+ChangeLog+STORING+gitignore+删草稿）",
+                                    parents=[common])
+    p_doc_save.add_argument("--intent", required=True,
+                            help="文档意图（见 document-storage §4.10 intent 枚举）")
+    p_doc_save.add_argument("--story-id", default=None, help="Story ID（intent=STORY/TASK/CODING 等时填）")
+    p_doc_save.add_argument("--doc-id", default=None, help="文档 ID（raId/prdId/issueId/taskId 等归一到此）")
+    p_doc_save.add_argument("--content-file", required=True,
+                            help="内容文件路径（存完自动删除，可用 --keep-draft 保留）")
+    p_doc_save.add_argument("--changelog-note", default=None, help="ChangeLog 记录（一句话修改说明）")
+    p_doc_save.add_argument("--version", default=None, help="版本号，格式 \"v1-r1\" 或 \"1.0\"（事件类报告）")
+    p_doc_save.add_argument("--keep-draft", action="store_true", help="保留草稿文件（默认删除）")
+    p_doc_save.add_argument("--project", default="", help="项目根目录（默认 cwd）")
+    p_doc_save.set_defaults(func=cmd_doc_save)
+
+    # doc resolve — 只推路径不写
+    p_doc_resolve = doc_sub.add_parser("resolve", help="只推路径不写（查会写到哪/落地前校验）",
+                                       parents=[common])
+    p_doc_resolve.add_argument("--intent", required=True, help="文档意图")
+    p_doc_resolve.add_argument("--story-id", default=None)
+    p_doc_resolve.add_argument("--doc-id", default=None)
+    p_doc_resolve.add_argument("--project", default="", help="项目根目录（默认 cwd）")
+    p_doc_resolve.set_defaults(func=cmd_doc_resolve)
+
+    # doc finalize — 已手写文件补后处理
+    p_doc_finalize = doc_sub.add_parser("finalize",
+                                        help="对已手写文件补版本号/ChangeLog/STORING（不覆盖内容）",
+                                        parents=[common])
+    p_doc_finalize.add_argument("--path", required=True, help="已写好的文件路径")
+    p_doc_finalize.add_argument("--intent", required=True, help="文档意图（用于 STORING 登记 category）")
+    p_doc_finalize.add_argument("--story-id", default=None)
+    p_doc_finalize.add_argument("--doc-id", default=None)
+    p_doc_finalize.add_argument("--changelog-note", default=None, help="ChangeLog 记录")
+    p_doc_finalize.add_argument("--project", default="", help="项目根目录（默认 cwd）")
+    p_doc_finalize.set_defaults(func=cmd_doc_finalize)
 
     # iteration-check（🆕 v3.5.4 — 设计-实现一致性迭代检查，补 UC 盲区，report-only）
     p_ic = sub.add_parser("iteration-check", help="设计-实现一致性迭代检查（补UC盲区，report-only）",

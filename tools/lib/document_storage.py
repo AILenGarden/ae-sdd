@@ -1,7 +1,7 @@
 """
-document_storage.py - 文档存放 API 代码层实现（document-storage-skill §0.6 的 Python SSOT）。
+document_storage.py - 文档存放 API 代码层实现（document-storage-skill §4 的 Python SSOT）。
 
-🆕 v4.1（2026-06-27，路径治理修订）：本模块把 document-storage-skill.md §0.6 声明的
+🆕 v4.1（2026-06-27，路径治理修订）：本模块把 document-storage-skill.md §4 声明的
 14 个动态定位 API 从"纯文档契约"落地为可调用 Python 函数。此前这些 API 零实现，
 所有 SKILL 文档里的 `resolve_path(intent=...)` / `save_doc(...)` 调用 100% 靠 LLM
 读文档手动模拟，无代码兜底。
@@ -43,7 +43,7 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
     "TESTCASE":          ("{docWorkspace}/ae-sdd-doc/Test/{storyId}/{storyId}-testcase.md",  False, "Test"),
     "TEST_REPORT":       ("{docWorkspace}/ae-sdd-doc/Test/{storyId}/{storyId}-Report-v{major}-r{minor}.md", True, "Test"),
     "CODE_REVIEW":       ("{docWorkspace}/ae-sdd-doc/CR/{storyId}/{storyId}-CodeReview-v{major}-r{minor}.md", True, "CR"),
-    "TRACEABILITY":      ("{docWorkspace}/ae-sdd-doc/Coding/{storyId}/{storyId}-追溯矩阵-v{major}-r{minor}.md", True, "Coding"),
+    "TRACE_MATRIX":      ("{docWorkspace}/ae-sdd-doc/Coding/{storyId}/{storyId}-追溯矩阵-v{major}-r{minor}.md", True, "Coding"),
     "STORY_REVIEW":      ("{docWorkspace}/ae-sdd-doc/CR/{storyId}/{storyId}-StoryReviewReport-r{minor}.md", True, "CR"),
     "REVIEW_UPDATEPLAN": ("{docWorkspace}/ae-sdd-doc/CR/{storyId}/{storyId}-StoryReviewUpdatePlan-r{minor}.md", True, "CR"),
     "TASK_SMALL":        ("{docWorkspace}/ae-sdd-doc/iterations/{iterDate}/Task/{docId}/",  False, "Task"),
@@ -52,7 +52,7 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
 }
 
 
-# ─── 错误码（对齐 §0.6.15）────────────────────────────────────────────────────
+# ─── 错误码（对齐 §4.11）────────────────────────────────────────────────────
 class DocStorageError(Exception):
     """document_storage 统一异常，带错误码。"""
     def __init__(self, code: str, message: str):
@@ -63,7 +63,7 @@ class DocStorageError(Exception):
 # ─── 返回数据类 ────────────────────────────────────────────────────────────────
 @dataclass
 class ResolvedPath:
-    """resolve_path() 返回值（对齐 §0.6.1 ResolvedPath 接口）。"""
+    """resolve_path() 返回值（对齐 §4.1 ResolvedPath 接口）。"""
     full_path: str
     dir_path: str
     file_name: str
@@ -76,7 +76,7 @@ class ResolvedPath:
 
 @dataclass
 class SaveResult:
-    """save_doc() 返回值（对齐 §0.6.7 SaveResult）。"""
+    """save_doc() 返回值（对齐 §4.3 SaveResult）。"""
     success: bool
     new_version: Optional[str]
     changelog_entry: Optional[str]
@@ -86,7 +86,7 @@ class SaveResult:
 
 @dataclass
 class IterationChoice:
-    """choose_iteration() 返回值（对齐 §0.6.8 IterationChoice）。"""
+    """choose_iteration() 返回值（对齐 §4.5 IterationChoice）。"""
     date: str
     strength: str  # 'strong' | 'weak' | 'none'
     reasoning: str
@@ -97,7 +97,7 @@ class IterationChoice:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_git_path(ade_sdd: Path, project_key: str) -> Optional[str]:
-    """§0.6.2：返回项目根绝对路径（从 assets.md §1 gitPath 读取）。
+    """§4.2：返回项目根绝对路径（从 assets.md §1 gitPath 读取）。
 
     E001（无资产）/ E002（字段空）→ 返回 None（调用方按缺失处理）。
     """
@@ -106,7 +106,7 @@ def get_git_path(ade_sdd: Path, project_key: str) -> Optional[str]:
 
 
 def get_service_root(ade_sdd: Path, project_key: str, service_name: str) -> Optional[str]:
-    """§0.6.3：返回微服务根 = {gitPath}/{service_name}。
+    """§4.2：返回微服务根 = {gitPath}/{service_name}。
 
     E004（微服务名不在 §2 列表）由调用方按需校验；本函数仅拼接。
     """
@@ -117,7 +117,7 @@ def get_service_root(ade_sdd: Path, project_key: str, service_name: str) -> Opti
 
 
 def get_constraints(ade_sdd: Path, project_key: str) -> dict:
-    """§0.6.4：返回约束文档名 → 完整路径映射。
+    """§4.2：返回约束文档名 → 完整路径映射。
 
     约束目录定位：{gitPath}/constraints/ 或 docWorkspace/constraints/（二者其一）。
     取代 SKILL 内直接写死的 constraints/ 路径引用。
@@ -138,7 +138,7 @@ def get_constraints(ade_sdd: Path, project_key: str) -> dict:
 
 
 def get_assets(ade_sdd: Path, project_key: str) -> list:
-    """§0.6.5：返回项目资产文件路径列表（总览 + 工程级子文件）。
+    """§4.2：返回项目资产文件路径列表（总览 + 工程级子文件）。
 
     取代 SKILL 内直接写死的 assets/{projectKey}/ 路径。
     复用 paths.find_module_asset_files（v4.1 支持 line 分组发现）。
@@ -151,9 +151,9 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
                  service_name: Optional[str] = None, task_name: Optional[str] = None,
                  version: Optional[dict] = None,
                  iteration_date: Optional[str] = None) -> ResolvedPath:
-    """§0.6.1：核心 API，推导文档完整落地路径。
+    """§4.1：核心 API，推导文档完整落地路径。
 
-    步骤（对齐 §0.6.1 行为）：
+    步骤（对齐 §4.1 行为）：
       1. 读 assets §1 gitPath + docWorkspacePath
       2. 校验 gitPath 存在性（E003：不存在则抛错）
       3. 按 intent 选路径模板（_PATH_TEMPLATES）
@@ -196,10 +196,13 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
     version_suffix = f"{major}.{minor}" if has_version else ""
 
     # 4. 替换占位符
+    # docId 回退链：显式 doc_id > task_name > story_id（Story/PRD/RA/DR 等单标识文档，
+    # 其 doc-id 语义上 = story-id/prd-id 等，调用方常只传 story_id）
+    effective_doc_id = doc_id or task_name or story_id or ""
     full = template.format(
         docWorkspace=str(doc_ws).replace("\\", "/"),
         storyId=story_id or "",
-        docId=doc_id or task_name or "",
+        docId=effective_doc_id,
         major=major,
         minor=minor,
         iterDate=iter_date or datetime.now().strftime("%Y-%m-%d"),
@@ -227,7 +230,10 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
 # P2 中级 API（版本号自增 + 文件 IO，确定性）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_VERSION_RE = re.compile(r"-v(\d+)\.(\d+)(?:-r(\d+))?\.md$")
+# 匹配两种版本号格式（2026-07-01 修复：v4.1 原正则只匹配点格式，漏事件类报告 dash 格式）：
+#   点格式：-v1.0.md 或 -v1.0-r2.md（设计类历史格式）
+#   dash 格式：-v1-r2.md（事件类报告格式，major=r 部分）
+_VERSION_RE = re.compile(r"-v(\d+)(?:\.(\d+)(?:-r(\d+))?|-r(\d+))\.md$")
 
 
 def _normalize_version(version: Optional[dict | str], has_version: bool) -> tuple[int, int]:
@@ -251,25 +257,34 @@ def _normalize_version(version: Optional[dict | str], has_version: bool) -> tupl
 
 
 def get_latest_version(doc_dir: Path, stem_prefix: str) -> Optional[tuple[int, int]]:
-    """§0.6.11：返回 {doc_dir} 下 {stem_prefix}-v{N}.{m}.md 的最新版本号。
+    """§4.6：返回 {doc_dir} 下 {stem_prefix} 最新版本号。
+
+    支持两种版本号格式（2026-07-01 修复：原仅匹配点格式，漏匹配事件类报告 dash 格式）：
+      - 点格式：-v1.0.md（设计类历史格式）→ group(1)=major, group(2)=minor
+      - dash 格式：-v1-r2.md（事件类报告格式）→ group(1)=v, group(4)=r
 
     Returns:
-        (major, minor) 最大者；无版本文件返回 None。
+        (major, minor/r) 最大者；无版本文件返回 None。
     """
     if not doc_dir.is_dir():
         return None
     best: Optional[tuple[int, int]] = None
-    for f in doc_dir.glob(f"{stem_prefix}-v*.*.md"):
+    for f in doc_dir.glob(f"{stem_prefix}-v*.md"):
         m = _VERSION_RE.search(f.name)
         if m:
-            cur = (int(m.group(1)), int(m.group(2)))
+            if m.group(2) is not None:
+                # 点格式：-v{major}.{minor}(-r{r})?
+                cur = (int(m.group(1)), int(m.group(2)))
+            else:
+                # dash 格式：-v{v}-r{r}
+                cur = (int(m.group(1)), int(m.group(4)))
             if best is None or cur > best:
                 best = cur
     return best
 
 
 def get_changelog(changelog_path: Path) -> list[str]:
-    """§0.6.12：返回 ChangeLog 文件内容（行列表），不存在返回空。"""
+    """§4.7：返回 ChangeLog 文件内容（行列表），不存在返回空。"""
     if not changelog_path.is_file():
         return []
     return changelog_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -352,16 +367,17 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
              story_id: Optional[str] = None, doc_id: Optional[str] = None,
              version: Optional[dict] = None,
              changelog_note: Optional[str] = None) -> SaveResult:
-    """§0.6.7：统一文档保存入口（版本号自增 + ChangeLog + 目录创建 + .gitignore）。
+    """§4.3：统一文档保存入口（版本号自增 + ChangeLog + 目录创建 + .gitignore）。
 
-    步骤（对齐 §0.6.7）：
+    步骤（对齐 §4.3）：
       1. resolve_path 推导路径
       2. 🆕 2026-06-27 RA 类型强检查（intent=RA 时调用 check_ra_prerequisites）
          — BUG / CONFIG intent 双重豁免（RA skill §第 -1 步豁免规则）
       3. 若带版本号且未显式传 version → get_latest_version 自增（E007：重入必须递增）
       4. 写文件（旧版本保留）
       5. 追加 ChangeLog
-      6. 返回 SaveResult
+      6. 首次写入 ae-sdd-doc/ 时维护 .gitignore（§7.3 承诺，2026-07-01 补齐）
+      7. 返回 SaveResult
     """
     try:
         resolved = resolve_path(ade_sdd, project_key, intent,
@@ -381,7 +397,7 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
 
     new_version = None
     if resolved.version_suffix:
-        # 带版本号：未显式指定时自增
+        # 带版本号：未显式指定时自增（E007：重入必须递增）
         if version is None:
             stem = full_path.stem.rsplit("-v", 1)[0] if "-v" in full_path.stem else full_path.stem
             latest = get_latest_version(full_path.parent, stem)
@@ -391,6 +407,17 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
                 new_version = "1.1"
         else:
             new_version = resolved.version_suffix
+
+    # 🆕 2026-07-01 修复：自增版本号后必须重新拼接路径，否则都写到初始版本路径（互相覆盖）
+    # 仅在 version is None（自动自增）且新版本号 ≠ 初始版本号时重 resolve
+    if resolved.version_suffix and version is None and new_version and new_version != resolved.version_suffix:
+        _vparts = new_version.split(".")
+        re_resolved = resolve_path(ade_sdd, project_key, intent,
+                                   story_id=story_id, doc_id=doc_id,
+                                   version={"major": int(_vparts[0]), "minor": int(_vparts[1])})
+        full_path = Path(re_resolved.full_path)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved.changelog_path = re_resolved.changelog_path
 
     full_path.write_text(content, encoding="utf-8")
 
@@ -402,6 +429,11 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
             f.write(entry + "\n")
         changelog_entry = entry
 
+    # 🆕 2026-07-01 §7.3：首次写入 ae-sdd-doc/ 时维护 .gitignore（幂等）
+    git_path = get_git_path(ade_sdd, project_key)
+    if git_path:
+        check_and_update_gitignore(Path(git_path), "# ae-sdd generated docs\nae-sdd-doc/")
+
     update_storing_index(ade_sdd, project_key, resolved.scope,
                          {"category": resolved.storing_index_update["category"],
                           "docType": intent, "fullPath": str(full_path)})
@@ -409,11 +441,69 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
     return SaveResult(True, new_version, changelog_entry, str(full_path))
 
 
-def update_storing_index(ade_sdd: Path, project_key: str, scope: str, entry: dict) -> None:
-    """§0.6.6：更新 STORING.md 索引（项目级 ae-sdd-doc/STORING.md）。
+def finalize_doc(ade_sdd: Path, project_key: str, intent: str, file_path: str,
+                 story_id: Optional[str] = None, doc_id: Optional[str] = None,
+                 changelog_note: Optional[str] = None) -> SaveResult:
+    """§4.3 补充：对已手写文件补版本号/ChangeLog/STORING（不改文件位置，不覆盖内容）。
 
-    小任务兼容旧路径 {gitPath}/{serviceName}/.ae-task/Task-xxx/STORING.md。
-    追加一行（幂等：同 fullPath 不重复追加）。
+    适用场景：未实现 intent（📝 标记）的文档，LLM 手写后用本函数补登记；
+    或 LLM 已 Write 到最终路径但漏跑 save_doc 的后处理步骤。
+
+    与 save_doc 的区别：
+      - save_doc：resolve 推路径 + 写文件 + 后处理（全流程）
+      - finalize_doc：**不写文件、不 resolve**（文件已由调用方写好），只跑后处理
+        （ChangeLog + STORING + .gitignore），用已写文件的 resolve 结果登记。
+
+    步骤：
+      1. 校验 file_path 存在
+      2. resolve_path 推路径（用于 STORING 登记的 category/docType）
+      3. 追加 ChangeLog（同级目录，仅当传 changelog_note）
+      4. 维护 .gitignore（首次写入）
+      5. 更新 STORING.md 索引
+      6. 返回 SaveResult（不覆盖文件内容）
+
+    Raises:
+        DocStorageError: file_path 不存在 / resolve_path 失败（E001/E003/E008/E000）
+    """
+    target = Path(file_path)
+    if not target.is_file():
+        raise DocStorageError("E009", f"finalize 目标文件不存在: {file_path}")
+
+    # resolve 用于拿 STORING 登记所需的 category（不强制路径与已写文件一致，
+    # 因为未实现 intent 的模板可能缺；已写文件路径以 file_path 为准）
+    resolved = resolve_path(ade_sdd, project_key, intent,
+                            story_id=story_id, doc_id=doc_id)
+
+    # 版本号（从文件名解析，若已带 -v{N}-r{M}）
+    new_version = resolved.version_suffix
+
+    changelog_entry = None
+    if changelog_note:
+        # ChangeLog 落在已写文件的同级目录（与 save_doc 一致）
+        cl_path = target.parent / f"{target.stem}-changelog.md"
+        entry = f"- {datetime.now().strftime('%Y-%m-%d %H:%M')} v{new_version or 'N/A'}: {changelog_note}"
+        with cl_path.open("a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+        changelog_entry = entry
+
+    # 维护 .gitignore（幂等）
+    git_path = get_git_path(ade_sdd, project_key)
+    if git_path:
+        check_and_update_gitignore(Path(git_path), "# ae-sdd generated docs\nae-sdd-doc/")
+
+    # STORING 登记用已写文件的实际路径（file_path），而非 resolved.full_path
+    update_storing_index(ade_sdd, project_key, resolved.scope,
+                         {"category": resolved.storing_index_update["category"],
+                          "docType": intent, "fullPath": str(target)})
+
+    return SaveResult(True, new_version, changelog_entry, str(target))
+
+
+def update_storing_index(ade_sdd: Path, project_key: str, scope: str, entry: dict) -> None:
+    """§4.4：更新 STORING.md 索引（单一项目级 ae-sdd-doc/STORING.md）。
+
+    幂等：同 fullPath 不重复追加。
+    注：scope 参数当前保留以备小任务旧路径分支（后续兼容增强），项目级统一写单一索引。
     """
     doc_ws = paths.resolve_doc_workspace(ade_sdd, project_key)
     if doc_ws is None:
@@ -430,7 +520,7 @@ def update_storing_index(ade_sdd: Path, project_key: str, scope: str, entry: dic
 
 
 def check_and_update_gitignore(project_dir: Path, pattern: str) -> bool:
-    """§0.6.13：检查 .gitignore 是否含 pattern，无则追加。返回是否新增。
+    """§4.8：检查 .gitignore 是否含 pattern，无则追加。返回是否新增。
 
     避免 ae-sdd-doc/iterations/ 等大目录污染 git。
     """
@@ -450,7 +540,7 @@ def check_and_update_gitignore(project_dir: Path, pattern: str) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def check_business_coherence(doc_tags: list[str], iteration_dir: Path) -> str:
-    """§0.6.9：业务关联性判定（启发式：关键词匹配）。
+    """§4.5：业务关联性判定（启发式：关键词匹配）。
 
     扫 iteration_dir 下 .md，统计与 doc_tags 命中次数。
     Returns: 'strong'（≥3 命中）/ 'weak'（1-2）/ 'none'（0）。
@@ -472,7 +562,7 @@ def check_business_coherence(doc_tags: list[str], iteration_dir: Path) -> str:
 
 
 def check_logical_coherence(doc_tags: list[str], iteration_dir: Path) -> str:
-    """§0.6.10：逻辑关联性判定（启发式：与 business 同算法，语义上关注技术标签）。
+    """§4.5：逻辑关联性判定（启发式：与 business 同算法，语义上关注技术标签）。
 
     本实现与 check_business_coherence 同算法（均基于关键词命中），
     调用方可对两类标签做不同标注后分别传入。
@@ -483,7 +573,7 @@ def check_logical_coherence(doc_tags: list[str], iteration_dir: Path) -> str:
 def choose_iteration(ade_sdd: Path, project_key: str, doc_signature: str,
                      doc_tags: Optional[list[str]] = None,
                      today: Optional[str] = None) -> IterationChoice:
-    """§0.6.8：迭代归属判定（启发式：关联性 + 时间衰减）。
+    """§4.5：迭代归属判定（启发式：关联性 + 时间衰减）。
 
     规则：
       1. 扫 docWorkspace/ae-sdd-doc/iterations/*/ 现有迭代
@@ -523,7 +613,7 @@ def choose_iteration(ade_sdd: Path, project_key: str, doc_signature: str,
 
 
 def migrate_old_docs(project_dir: Path, mode: str = "dry-run") -> dict:
-    """§0.6.14：旧路径迁移（design/ .ae-task/ .ae-plan/ .spec/ → ae-sdd-doc/）。
+    """§4.9：旧路径迁移（design/ .ae-task/ .ae-plan/ .spec/ → ae-sdd-doc/）。
 
     Args:
         mode: 'dry-run'（默认，只报告）| 'execute'（实际移动）
