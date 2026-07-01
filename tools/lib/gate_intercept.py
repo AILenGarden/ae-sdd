@@ -195,6 +195,7 @@ def _check_product_landing(
     命中产物模式时：
     1. 校验当前 session 有有效 entry token（关卡1领凭证）
     2. 校验当前 phase 允许写该类产物（产物-Phase 映射）
+    3. 🆕 v3.7.2：被拦截时在修复提示里追加 `ae-sdd doc save` 命令建议
     不合规 → 物理拦截。
     返回 (allowed, deny_reason)。
     """
@@ -206,6 +207,12 @@ def _check_product_landing(
     st = state_mod.read_state(paths.state_path(ade_sdd)) if ade_sdd else {}
     current_story = st.get("currentStory", "") if ade_sdd else ""
 
+    # 🆕 v3.7.2 统一修复建议：被拦截时引导用 ae-sdd doc save（避免手拼路径）
+    doc_save_hint = (
+        f"\n💡 建议：用 `ae-sdd doc save` 命令落地流程产物，代码自动处理路径/版本/ChangeLog/索引/"
+        f"gitignore，无需手拼路径（document-storage-skill §4.0 CLI 入口）。"
+    )
+
     # 关卡1：entry token 校验
     try:
         from lib import session as session_mod
@@ -215,6 +222,7 @@ def _check_product_landing(
                 f"目标文件: {file_path}\n"
                 f"请先运行: ae-sdd enter <projectKey> --story {current_story or '<STORY-ID>'}\n"
                 f"（关卡1 入口凭证缺失，建议书4）"
+                f"{doc_save_hint}"
             )
     except Exception:
         # session 模块异常不阻断（兜底放行，避免误伤）
@@ -228,6 +236,7 @@ def _check_product_landing(
             f"目标文件: {file_path}\n"
             f"请先切换到允许的 phase：ae-sdd state write --phase {sorted(allowed_phases)[0]}\n"
             f"（关卡2 产物-Phase 映射，建议书4）"
+            f"{doc_save_hint}"
         )
 
     return True, ""

@@ -1644,9 +1644,40 @@ _DOC_STRAY_MARKERS = ("tmp", "temp", "$temp", "/tmp", "\\tmp", "d:\\tmp", "c:\\t
 
 
 def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    """G-DOC-STORAGE 文档落地存放合规 — 产物路径/命名须合规"""
+    """G-DOC-STORAGE 文档落地存放合规 — 产物路径/命名须合规
+
+    🆕 v3.7.2（2026-07-01）：渐进增强——若能从 project_dir 定位 .ae-sdd/ 并读
+    docWorkspacePath，则用它做真值校验（产物是否在真实 workspace 下）；拿不到
+    时回退到硬编码 _DOC_COMPLIANT_ROOTS 列表（零回归）。
+    """
     name = "文档落地存放合规"
     issues: list[str] = []
+
+    # 🆕 v3.7.2：尝试从 project_dir 定位 ade_sdd + 读 docWorkspacePath（真值校验）
+    # 拿不到不报错，回退到硬编码 _DOC_COMPLIANT_ROOTS（向后兼容）
+    real_workspace: Optional[Path] = None
+    try:
+        candidate_ae_sdd = project_dir / ".ae-sdd"
+        if candidate_ae_sdd.is_dir():
+            # 从 config.yaml 读 projectKey
+            cfg_path = candidate_ae_sdd / "config.yaml"
+            if cfg_path.is_file():
+                import re as _re
+                cfg = cfg_path.read_text(encoding="utf-8", errors="replace")
+                m_pk = _re.search(r"projectKey:\s*(\S+)", cfg)
+                if m_pk:
+                    pk = m_pk.group(1)
+                    # 读 assets.md §1 docWorkspacePath（缺省=gitPath=project_dir）
+                    asset_md = candidate_ae_sdd / "assets" / f"{pk}.assets.md"
+                    if asset_md.is_file():
+                        am = asset_md.read_text(encoding="utf-8", errors="replace")
+                        m_dws = _re.search(r"docWorkspacePath\s*\|\s*`([^`]+)`", am)
+                        m_gp = _re.search(r"gitPath\s*\|\s*`([^`]+)`", am)
+                        ws_str = (m_dws.group(1) if m_dws else None) or (m_gp.group(1) if m_gp else None)
+                        if ws_str:
+                            real_workspace = Path(ws_str)
+    except Exception:
+        pass  # 任何异常都回退硬编码（零误伤）
 
     # 🆕 v3.5.10 Gap-007：用 git ls-files 拿"已被 git 跟踪的 .md"清单，
     # 已跟踪的文件视为历史产物（如 cp -r 复制来的 / 历史提交的），不报游离。
@@ -1699,6 +1730,15 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
         # 2. 不在合规根目录下
         in_compliant = any(rel_str.lower().startswith(r) or f"/{r}/" in f"/{rel_str.lower()}/"
                            for r in _DOC_COMPLIANT_ROOTS)
+        # 🆕 v3.7.2 真值校验：若拿到 real_workspace，产物在其下也算合规
+        if not in_compliant and real_workspace:
+            try:
+                real_workspace_resolved = real_workspace.resolve()
+                md_resolved = md_path.resolve()
+                if str(md_resolved).startswith(str(real_workspace_resolved)):
+                    in_compliant = True
+            except Exception:
+                pass  # resolve 异常回退硬编码判定
         # 允许直接在 project_dir 根的产物（向后兼容旧项目 design/ 在根的写法）
         if "/" not in rel_str:
             in_compliant = True
@@ -1711,12 +1751,14 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
     if issues:
         return GateResult("G-DOC-STORAGE", name, "blocker", False,
                           f"文档存放不合规：{'; '.join(issues)}",
-                          "调用 document-storage resolve_path 推导路径；禁止硬编码 d:\\tmp\\ 等游离位置",
-                          details={"stray_files": stray_files, "checked": checked})
+                          "用 `ae-sdd doc save` 命令落地（代码自动推导路径）；禁止硬编码 d:\\tmp\\ 等游离位置",
+                          details={"stray_files": stray_files, "checked": checked,
+                                   "real_workspace": str(real_workspace) if real_workspace else None})
 
     return GateResult("G-DOC-STORAGE", name, "blocker", True,
                       f"文档存放合规（扫描 {checked} 个 .md，无游离产物）",
-                      details={"stray_files": [], "checked": checked})
+                      details={"stray_files": [], "checked": checked,
+                               "real_workspace": str(real_workspace) if real_workspace else None})
 
 
 # ─── G-PATH：路径越界检测（🆕 v4.1，扫母版 source/ 防自身漂移）─────────────────
