@@ -18,7 +18,7 @@ description: Coding 报告产出 SKILL — Phase 2 ⑤ Coding 完成后的报告
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 Coding 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=CODING_REPORT` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/Coding/{STORY-ID}/`
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=CODING_REPORT` 调用 document-storage 动态定位（路径模板只引用 document-storage §2.2，不在本 SKILL 复写）
 > 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**事件类文档带 `v{N}-r{M}`**（v=Story 版本，r=Coding 轮次）
 > 3. **重入判定**（§0.6.11 `get_latest_version()`）：Coding 重入时**新增报告**（r 递增），**不修改历史**
 > 4. **ChangeLog**（§5）：`save_doc()` 自动追加
@@ -117,7 +117,7 @@ Coding 完成后生成**完整、客观、可评审**的 Coding 报告，目标�
 | 1 | Coding 报告模板 | `templates/coding/be-coding-report-template.md` | 9 章节结构 |
 | 2 | Story 文档 | `documentStorage.resolve_path(intent="STORY", storyId)` | AC/接口契约/数据模型 |
 | 3 | 统一版 CodePlan | `{STORY-ID}-CodingPlan.md` | 类骨架/SQL/测试对应 |
-| 4 | 项目资产 | `{projectKey}.assets.md §3 §4 §5 §6` | 分层/命名/约束 |
+| 4 | 项目资产 | `ae-sdd assets read coding --project <projectKey>`（返回 §3/§4/§5/§6）| 分层/命名/约束 |
 | 5 | 实际代码 | `git diff {base}..{head}` | 变更文件清单 |
 | 6 | 测试报告 | `{STORY-ID}-Report-v{N}-r{M}.md` | 测试结果（4 层）|
 

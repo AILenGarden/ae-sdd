@@ -23,7 +23,7 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 DR 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.1 路径模板）：`{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/DR/DR-{ID}-v{major}.{minor}.md`
+> 1. **路径**（§2.2 路径模板）：`resolve_path(intent="DR", drId, version={major,minor})` 动态定位（路径模板见 document-storage §2.2，禁止手写）
 > 2. **命名**（§3.1/3.2 命名规则）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
 > 3. **重入判定**（§4 重入 SOP）：DR 重入时**新增版本**（v{major}.{minor} 递增，旧版保留）
 > 4. **关联性分析**（§6 关联性分析）：通过 `choose_iteration()` 判定属于哪个迭代（业务+逻辑双轨）
@@ -33,9 +33,9 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| DR 主文档 | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/DR/DR-{ID}-v{major}.{minor}.m.md` | v{major}.{minor} | 新增版本（v 递增）|
-| DR ChangeLog | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/DR/ChangeLog/DR-{ID}-changelog.md` | 不带版本号 | 追加新行（每次 DR 修订追加 1 行）|
-| DRGeneratePlan | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/DR/ChangeLog/DR-{ID}-DRGeneratePlan-r{N}.md` | 带 r{N} | 新增（每轮生成 1 份）|
+| DR 主文档 | `save_doc(intent="DR", drId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增；路径模板见 document-storage §2.2）|
+| DR ChangeLog | `save_doc()` 自动追加（无需手写路径）| 不带版本号 | 追加新行（每次 DR 修订追加 1 行）|
+| DRGeneratePlan | `save_doc(intent="RA_GENERATE_PLAN", raId, version={r:N})` | 带 r{N} | 新增（每轮生成 1 份）|
 
 **项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
 - `ae-sdd assets read dr-generate --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/Converter/Facade/FeignClient/ServiceProviderConstants + §3/§5/§7 整章）
@@ -44,7 +44,7 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 
 **🔴 关键约束：**
 - ❌ 不允许直接读 `design/`、`.ae-task/`、`.ae-plan/`、`.spec/iterations/` 等旧路径
-- ✅ 强制使用 `ae-sdd-doc/` 新路径（document-storage-skill §2.1 强制）
+- ✅ 强制使用 document-storage 统一路径（`resolve_path()` 返回；模板见 document-storage-skill §2.2）
 - ✅ 强制调用 `choose_iteration()` 判定迭代
 
 ---
@@ -276,7 +276,7 @@ RA ID：{RA-ID}
 - [x] PRD 文档（{N} 段 / {M} 业务规则）
 - [x] RA 文档（{N} 章 / {M} 业务规则 / {K} AC）
 - [x] 产品原型（{N} 页面 / {M} 关键交互）（如适用）
-- [x] 项目资产 {projectKey}.assets.md
+- [x] 项目资产（`ae-sdd assets read dr-generate --project <projectKey>` 返回 §3/§5/§7）
 - [x] DR 模板（18 章节）
 - [x] 约束文件（9 个 constraints）
 
@@ -633,7 +633,7 @@ result = save_doc(doc={
     "change_description": "首次创建（继承 RA-{ID}）",
     "change_source": "dr-generate-skill Phase 1 ②"
 })
-# → 自动写入 ae-sdd-doc/iterations/2026-06-17/DR/DR-001-v1.0.md
+# → 自动写入 resolve_path(intent="DR", drId, version={major,minor}) 返回的路径
 # → 自动追加 ChangeLog 行
 ```
 
@@ -1001,12 +1001,12 @@ input:
   - RA 路径: {RA 文件路径}
   - PRD 文档: {PRD 文件路径}
   - 产品原型: {原型文件/链接}（可选）
-  - {projectKey}.assets.md
+  - 项目资产: ae-sdd assets read dr-generate --project <projectKey>
   - templates/design/dr-template.md
   - standards/constraints/ 全部 9 个 .md
 
 output:
-  deliverable: ae-sdd-doc/iterations/{date}/DR/DR-{ID}-v{major}.{minor}.m.md
+  deliverable: resolve_path(intent="DR", drId, version={major,minor})
   report: {DR-ID}-DR-WriterReport.md
 
 standards:
@@ -1020,8 +1020,8 @@ standards:
 
 context:
   - 写 DR 焦点: 业务背景 / 架构 / 关键决策 / 数据模型 / 接口契约 / Story 拆分
-  - 项目分层来源: {projectKey}.assets.md §3
-  - 契约入口来源: {projectKey}.assets.md §7（context-path 必从此读取）
+  - 项目分层来源: ae-sdd assets section §3 --project <projectKey>
+  - 契约入口来源: ae-sdd assets section §7 --project <projectKey>（context-path 必从此读取）
   - 与下游衔接: 写完触发 DR Review SKILL
 
 deadline: {最长执行时间}

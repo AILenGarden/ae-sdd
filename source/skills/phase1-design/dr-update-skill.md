@@ -34,7 +34,7 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 >   version: 'v1.1',
 >   title: '架构优化'
 > });
-> // → 解析为：ae-sdd-doc/iterations/{date}/DR/DR-001-v1.1.md
+> // → 解析为：resolve_path(intent="DR_UPDATE", drId, version) 返回的路径
 >
 > // 写出 DR 补充说明（原地累加，不带版本号）
 > await documentStorage.resolve_path({
@@ -42,7 +42,7 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 >   drId: 'DR-001',
 >   title: 'Story反馈归档'
 > });
-> // → 解析为：ae-sdd-doc/iterations/{date}/DR/DR-001-Supplement.md
+> // → 解析为：resolve_path(intent="DR_SUPPLEMENT", drId) 返回的路径
 > ```
 
 ---

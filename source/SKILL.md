@@ -1,10 +1,10 @@
 ---
 name: ae-sdd
-version: 3.7.1
+version: 3.7.2
 description: |
-  端到端自动化工程主入口（v3.7.1）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.7.2）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
-  🆕 v3.7.1：TestCase 系列假设驱动强化；TestSkill 系列化与瘦身，新增 test-generate/test-review 并严格复用监管器 4 步子流程。
+  🆕 v3.7.2：文档读写散点统一收敛到 document-storage 函数式调用（resolve_path/save_doc），消除子 SKILL 中的 ae-sdd-doc/ 字面路径硬编码。
   历史变更见 source/CHANGELOG/。
 ---
 
@@ -178,7 +178,7 @@ ae-sdd gates check --only G-CODEPLAN-SRC
 
 | 规则 | 行为 |
 |------|------|
-| 产出文档落在合规根目录（ae-sdd-doc/design/.ae-task/.ae-plan等）| 否 → 🔴 阻断 |
+| 产出文档落在合规根目录（由 document-storage `resolve_path()` 定位）| 否 → 🔴 阻断 |
 | 落地前必须调 resolve_path() | 硬编码绝对路径 → 🔴 阻断 |
 
 ```bash
@@ -281,7 +281,7 @@ ae-sdd gates check --only G-14
 |---------|---------|---------|
 | Story Review | 业务设计故事 | `story-review-skill.md §📖` |
 | Task Generate | 实现拆解故事 | `task-generate-skill.md §📖` |
-| Code Review | 代码实现故事 | `coding-skill.md §📖` |
+| Code Review | 代码实现故事 | `code-review-skill.md §📖` |
 
 反模式：`❌ "文档已生成请审核"` / `❌ 只讲故事不展示内容` / `❌ 一次抛大坨等整体确认`
 
@@ -341,9 +341,9 @@ Phase 2 实现阶段
 
 Phase 3 验证阶段
   ⑥ Test 系列（test-generate-skill→test-review-skill，按监管器4步子流程；⑥.10由test-verifier独立验证）
-  ⑥bis 编码后全切面一致性核查闸（→ coding-skill §⑥bis）
-  ⑦ CodeReview报告（→ coding-skill §⑦，templates/coding/be-codereview-template.md）
-  ⑦bis 全链路对称性核查闸（→ coding-skill §⑦bis）
+  ⑥bis 编码后全切面一致性核查闸（→ code-review-skill §闸1）
+  ⑦ CodeReview报告（→ code-review-skill，templates/coding/be-codereview-template.md）
+  ⑦bis 全链路对称性核查闸（→ code-review-skill §闸2）
   🔍 审核点4：CodeReview完成确认 + context-pressure
   ⑦ter 流程收尾合规自检（5维度：7t-1~7t-5，禁止裸✅收尾）
   ⑧ 完成输出
@@ -438,7 +438,7 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 | 6.6 | 事务边界 | 失败全回滚；事务外操作异步 |
 | 6.7 | 所有测试 | L1/L2/L3/L4全Pass |
 | 6.8 | 无Open问题 | 开发记录无Open |
-| 6.9 | 测试报告已出 | {story}-Report.md存在 |
+| 6.9 | 测试报告已出 | `TEST_REPORT`（`{story}-Report-v{N}-r{M}.md`）存在 |
 | 6.10🔴 | 测试真实性 | test-verifier独立验证，BLOCKER=0；详见 `test-review-skill.md` |
 
 ### ⑦ter 流程收尾合规自检（5维度，禁止裸✅收尾）
@@ -455,17 +455,17 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 
 ### ⑧ 完成产出物
 
-| 产出物 | 路径 |
-|--------|------|
-| Story文档 | `ae-sdd-doc/iterations/{date}/Story/{story}.md` |
-| Task文档 | `ae-sdd-doc/iterations/{date}/Task/{story}/` |
-| Coding报告 | `ae-sdd-doc/iterations/{date}/Coding/{story}/{story}-CodingReport-v{N}-r{M}.md` |
-| CodeReview报告 | `ae-sdd-doc/iterations/{date}/CR/{story}/{story}-CodeReview-v{N}-r{M}.md` |
-| 测试用例 | `ae-sdd-doc/iterations/{date}/Test/{story}/{story}-testcase.md` |
-| 测试报告 | `ae-sdd-doc/iterations/{date}/Test/{story}/{story}-Report-v{N}-r{M}.md` |
+| 产出物 | 路径定位 |
+|--------|---------|
+| Story文档 | `resolve_path(intent="STORY", storyId)` |
+| Task文档 | `resolve_path(intent="TASK", storyId, taskId)` |
+| Coding报告 | `resolve_path(intent="CODING_REPORT", storyId, version={v,r})` |
+| CodeReview报告 | `resolve_path(intent="CODE_REVIEW", storyId, version={v,r})` |
+| 测试用例 | `resolve_path(intent="TESTCASE", storyId)` |
+| 测试报告 | `resolve_path(intent="TEST_REPORT", storyId, version={v,r})` |
 | 源代码 | 工程目录 |
 
-路径均通过 `documentStorage.resolve_path()` 定位，禁止硬编码。
+路径均通过 `documentStorage.resolve_path()` 定位，禁止硬编码（路径模板见 `document-storage-skill.md` §2.2）。
 
 ---
 

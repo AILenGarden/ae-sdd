@@ -522,7 +522,7 @@ cd {service-root} && mvn test -Dtest=*IntegrationTest
 | 14 | 审计字段自动填充 | 需要 MetaObjectHandler 配置，否则 FieldFill 不生效 |
 | 15 | 事务外执行 | 使用 TransactionSynchronizationManager.afterCommit() |
 
-> 📍 第 3/4/7/10/11 项的项目特定事实已下沉到 [`lessons-learned.md` §4](../../standards/lessons-learned.md)。项目特定经验检查清单见各项目资产 `assets/{project-key}/{project-key}.assets.md` §6.10。
+> 📍 第 3/4/7/10/11 项的项目特定事实已下沉到 [`lessons-learned.md` §4](../../standards/lessons-learned.md)。项目特定经验检查清单通过 `ae-sdd assets read coding --project <projectKey>` 加载（§6.10）。
 
 ### §11.2 禁止事项红线
 

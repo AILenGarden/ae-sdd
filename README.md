@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.7.1（🆕 2026-07-01：TestCase 系列假设驱动强化；TestSkill 系列化与瘦身，新增 `test-generate-skill` / `test-review-skill` 并严格复用监管器 4 步子流程。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.7.2（🆕 2026-07-01：文档读写散点统一收敛到 document-storage 函数式调用（`resolve_path`/`save_doc`），消除子 SKILL 中 `ae-sdd-doc/` 字面路径硬编码；补注册 PRD/ISSUE intent。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

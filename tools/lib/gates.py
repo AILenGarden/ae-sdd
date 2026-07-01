@@ -348,19 +348,76 @@ def check_g07(project_dir: Path, st: dict, current_story: str) -> GateResult:
 
 
 # ─── G-10 / G-11 / G-12：报告存在性 ──────────────────────────────────────────
+def _dedupe_paths(candidates: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    result: list[Path] = []
+    for p in candidates:
+        key = str(p.resolve()) if p.exists() else str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(p)
+    return result
+
+
+def _doc_search_roots(project_dir: Path) -> list[Path]:
+    """Search both project root and configured docWorkspacePath."""
+    roots = [project_dir]
+    ade_sdd = project_dir / ".ae-sdd"
+    if ade_sdd.is_dir():
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey") or cfg.get("project_key")
+        if project_key:
+            doc_ws = paths.resolve_doc_workspace(ade_sdd, project_key)
+            if doc_ws is not None:
+                roots.append(doc_ws)
+    return _dedupe_paths(roots)
+
+
+def _find_report_doc(project_dir: Path, current_story: str, *,
+                     category: str, patterns: list[str],
+                     legacy_suffixes: list[str]) -> Optional[Path]:
+    candidates: list[Path] = []
+    for root in _doc_search_roots(project_dir):
+        for suffix in legacy_suffixes:
+            candidates.extend([
+                paths.project_design_dir(root) / f"{current_story}{suffix}",
+                root / f"{current_story}{suffix}",
+            ])
+
+        doc_root = root / "ae-sdd-doc"
+        direct_dir = doc_root / category / current_story
+        for pattern in patterns:
+            candidates.extend(sorted(direct_dir.glob(pattern)))
+            candidates.extend(sorted(doc_root.glob(f"iterations/*/{category}/{current_story}/{pattern}")))
+            candidates.extend(sorted(doc_root.glob(f"iterations/*/*/{category}/{current_story}/{pattern}")))
+            if doc_root.is_dir():
+                candidates.extend(sorted(doc_root.rglob(pattern)))
+
+    for cand in _dedupe_paths(candidates):
+        if cand.is_file():
+            return cand
+    return None
+
+
 def _check_report(project_dir: Path, st: dict, current_story: str, *,
-                 gate_id: str, name: str, suffix: str, action: str) -> GateResult:
+                 gate_id: str, name: str, category: str,
+                 patterns: list[str], legacy_suffixes: list[str],
+                 expected_hint: str, action: str) -> GateResult:
     """报告类门禁的通用检查逻辑"""
     if not current_story:
         return GateResult(gate_id, name, "blocker", False,
                           "state.currentStory 为空")
 
-    doc = paths.find_doc(project_dir, current_story, suffix)
+    doc = _find_report_doc(project_dir, current_story,
+                           category=category,
+                           patterns=patterns,
+                           legacy_suffixes=legacy_suffixes)
     if doc is None:
         return GateResult(gate_id, name, "blocker", False,
-                          f"报告文档不存在: design/{current_story}{suffix}",
+                          f"报告文档不存在: {expected_hint}",
                           action,
-                          details={"expected": str(paths.project_design_dir(project_dir) / f"{current_story}{suffix}")})
+                          details={"expected": expected_hint})
     return GateResult(gate_id, name, "blocker", True,
                       f"找到 {doc.name}",
                       details={"file": str(doc)})
@@ -369,22 +426,32 @@ def _check_report(project_dir: Path, st: dict, current_story: str, *,
 def check_g10(project_dir: Path, st: dict, current_story: str) -> GateResult:
     return _check_report(project_dir, st, current_story,
                          gate_id="G-10", name="测试报告存在",
-                         suffix="-Report.md",
-                         action=f"跑完测试后生成 {current_story}-Report.md")
+                         category="Test",
+                         patterns=[f"{current_story}-Report-v*-r*.md"],
+                         legacy_suffixes=["-Report.md"],
+                         expected_hint=f"ae-sdd-doc/Test/{current_story}/{current_story}-Report-vN-rM.md",
+                         action=f"跑完 Test 系列后生成 {current_story}-Report-vN-rM.md")
 
 
 def check_g11(project_dir: Path, st: dict, current_story: str) -> GateResult:
     return _check_report(project_dir, st, current_story,
                          gate_id="G-11", name="Coding 报告存在",
-                         suffix="-Coding-Report.md",
-                         action=f"编码完成后生成 {current_story}-Coding-Report.md")
+                         category="Coding",
+                         patterns=[f"{current_story}-CodingReport-v*-r*.md",
+                                   f"{current_story}-Coding-Report-v*-r*.md"],
+                         legacy_suffixes=["-Coding-Report.md", "-CodingReport.md"],
+                         expected_hint=f"ae-sdd-doc/Coding/{current_story}/{current_story}-CodingReport-vN-rM.md",
+                         action=f"编码完成后生成 {current_story}-CodingReport-vN-rM.md")
 
 
 def check_g12(project_dir: Path, st: dict, current_story: str) -> GateResult:
     return _check_report(project_dir, st, current_story,
                          gate_id="G-12", name="CodeReview 报告存在",
-                         suffix="-CodeReview.md",
-                         action=f"CodeReview 后生成 {current_story}-CodeReview.md")
+                         category="CR",
+                         patterns=[f"{current_story}-CodeReview-v*-r*.md"],
+                         legacy_suffixes=["-CodeReview.md"],
+                         expected_hint=f"ae-sdd-doc/CR/{current_story}/{current_story}-CodeReview-vN-rM.md",
+                         action=f"CodeReview 后生成 {current_story}-CodeReview-vN-rM.md")
 
 
 # ─── G-08：解析 CodingPlan 14 门禁表 ─────────────────────────────────────────
@@ -794,7 +861,13 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
             issues.append(f"Task 文档未引用 Story ID {current_story}：{t.name}")
 
     # 3. Coding Report → Task 引用追溯（如果存在）
-    coding_report = paths.find_doc(project_dir, current_story, "-Coding-Report.md")
+    coding_report = _find_report_doc(
+        project_dir, current_story,
+        category="Coding",
+        patterns=[f"{current_story}-CodingReport-v*-r*.md",
+                  f"{current_story}-Coding-Report-v*-r*.md"],
+        legacy_suffixes=["-Coding-Report.md", "-CodingReport.md"],
+    )
     if coding_report is not None:
         cr_content = coding_report.read_text(encoding="utf-8")
         for t in tasks:
@@ -803,7 +876,12 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
                 issues.append(f"Coding Report 未引用 Task：{t.stem}")
 
     # 4. CodeReview → Story 引用追溯（如果存在）
-    code_review = paths.find_doc(project_dir, current_story, "-CodeReview.md")
+    code_review = _find_report_doc(
+        project_dir, current_story,
+        category="CR",
+        patterns=[f"{current_story}-CodeReview-v*-r*.md"],
+        legacy_suffixes=["-CodeReview.md"],
+    )
     if code_review is not None:
         cv_content = code_review.read_text(encoding="utf-8")
         if current_story not in cv_content:

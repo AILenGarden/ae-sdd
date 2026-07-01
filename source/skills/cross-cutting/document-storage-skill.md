@@ -1273,6 +1273,8 @@ v ≥ 4 时可归档（🗑️ archived）
 
 | intent 值 | 文档类型 | 产出 SKILL | 命名规则 |
 |-----------|---------|-----------|---------|
+| `PRD` | 产品需求文档 | requirement-analysis-skill | 不带版本号（原地更新） |
+| `ISSUE` | Issue 文档 | requirement-analysis-skill | 不带版本号（原地更新） |
 | `STORY` | Story 主文档 | story-generate-skill | v{major}.{minor} |
 | `STORY_SUPPLEMENT` | Story 补充说明 | story-generate-skill | 不带版本号（原地累加） |
 | `DR` | DR 主文档 | dr-generate-skill | v{major}.{minor} |

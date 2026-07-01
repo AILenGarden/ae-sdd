@@ -380,6 +380,13 @@ class TestG10(unittest.TestCase):
         r = gates.check_g10(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
+    def test_with_document_storage_test_report_passes(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Test/STORY-001/STORY-001-Report-v1-r1.md": "# TEST_REPORT",
+        })
+        r = gates.check_g10(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
     def test_no_story_blocks(self):
         r = gates.check_g10(Path("."), {}, "")
         self.assertFalse(r.pass_)
@@ -392,11 +399,25 @@ class TestG11(unittest.TestCase):
         r = gates.check_g11(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
+    def test_with_document_storage_coding_report_passes(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport-v1-r1.md": "# Coding",
+        })
+        r = gates.check_g11(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
 
 class TestG12(unittest.TestCase):
 
     def test_with_codereview_passes(self):
         tmp = _setup_project({"design/STORY-001-CodeReview.md": "# CV"})
+        r = gates.check_g12(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+    def test_with_document_storage_codereview_passes(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview-v1-r1.md": "# CR",
+        })
         r = gates.check_g12(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
@@ -411,6 +432,17 @@ class TestG13(unittest.TestCase):
             "task/STORY-001-task-001.md": "# Task 1 (实现 STORY-001)",
             "design/STORY-001-Coding-Report.md": "# Coding Report (完成 STORY-001-task-001)",
             "design/STORY-001-CodeReview.md": "# CodeReview (审核 STORY-001)",
+        })
+        r = gates.check_g13(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
+    def test_full_chain_with_document_storage_reports_passes(self):
+        tmp = _setup_project({
+            "design/DR-001.md": "# DR-001",
+            "design/STORY-001.md": "# STORY-001 (引用 DR-001)",
+            "task/STORY-001-task-001.md": "# Task 1 (实现 STORY-001)",
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport-v1-r1.md": "# Coding Report (完成 STORY-001-task-001)",
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview-v1-r1.md": "# CodeReview (审核 STORY-001)",
         })
         r = gates.check_g13(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)

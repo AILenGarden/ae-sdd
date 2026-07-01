@@ -25,7 +25,7 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 Task 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=TASK` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/{STORY-ID}/`
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=TASK` 调用 document-storage 动态定位（路径模板只引用 document-storage §2.2，不在本 SKILL 复写）
 > 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
 > 3. **重入判定**（§0.6.11 `get_latest_version()`）：Task 重入时**新增版本**（v 递增）
 > 4. **ChangeLog**（§5）：`save_doc()` 自动追加
@@ -233,18 +233,18 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 Task 文档按 Story 分子目录存放，由 `documentStorage.resolve_path(intent="TASK", storyId, taskId, docType="Task")` 自动定位：
 
 ```
-ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/
-├── STORY-010-BE/
+{resolve_path 返回的迭代目录}/Task/
+├── {STORY-ID-1}/
 │   ├── task-0-公共依赖说明-v1.0.md
 │   ├── task-1-BossUserQuery-v1.0.md
 │   └── task-2-BossUserCreate-v1.0.md
-├── STORY-011-BE/
+├── {STORY-ID-2}/
 │   ├── task-0-公共依赖说明-v1.0.md
 │   └── task-1-OrderQuery-v1.0.md
 └── ...
 ```
 
-**完整路径示例：** `d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\2026-06-17\Task\STORY-010-BE\task-1-BossUserQuery-v1.0.md`（具体路径通过 `documentStorage.resolve_path()` 获取）
+**完整路径示例：** `documentStorage.resolve_path(intent="TASK", storyId="STORY-010-BE", taskId="task-1-BossUserQuery", version={major:1,minor:0})` 返回值（实际路径由 resolve_path 动态定位，禁止手写）
 
 ### 4.1 生成规则
 

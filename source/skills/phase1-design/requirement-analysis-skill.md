@@ -39,7 +39,7 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 RA 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.2 路径模板）：`{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/RA/{RA-ID}.md`
+> 1. **路径**（§2.2 路径模板）：`resolve_path(intent="RA", raId, version={major,minor})` 动态定位（路径模板见 document-storage §2.2，禁止手写）
 > 2. **命名**（§3.1/3.2 命名规则）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
 > 3. **重入判定**（§4 重入 SOP）：RA 重入时**新增版本**（v{major}.{minor} 递增）
 > 4. **关联性分析**（§6 关联性分析）：通过 `choose_iteration()` 判定属于哪个迭代（业务+逻辑双轨）
@@ -50,11 +50,11 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| RA 主文档 | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/RA/{RA-ID}-v{major}.{minor}.md` | v{major}.{minor} | 新增版本（v 递增）|
-| RA ChangeLog | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/RA/ChangeLog/{RA-ID}-changelog.md` | 不带版本号 | 追加新行（每次 RA 修订追加 1 行）|
-| PRD（无输入时生成）| `{工程根}/ae-sdd-doc/PRD/{PRD-ID}.md` | 不带版本号 | 原地修改（按 prd-template）|
-| Issue（无输入时生成）| `{工程根}/ae-sdd-doc/PRD/Issue-{编号}.md` | 不带版本号 | 原地修改（按 issue-template）|
-| RAGeneratePlan | `{工程根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/RA/ChangeLog/{RA-ID}-RAGeneratePlan-r{N}.md` | 带 r{N} | 新增（每轮生成 1 份）|
+| RA 主文档 | `save_doc(intent="RA", raId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增；路径模板见 document-storage §2.2）|
+| RA ChangeLog | `save_doc()` 自动追加（无需手写路径）| 不带版本号 | 追加新行（每次 RA 修订追加 1 行）|
+| PRD（无输入时生成）| `save_doc(intent="PRD", prdId)` | 不带版本号 | 原地修改（按 prd-template）|
+| Issue（无输入时生成）| `save_doc(intent="ISSUE", issueId)` | 不带版本号 | 原地修改（按 issue-template）|
+| RAGeneratePlan | `save_doc(intent="RA_GENERATE_PLAN", raId, version={r:N})` | 带 r{N} | 新增（每轮生成 1 份）|
 | RA 修订影响分析报告 | `save_doc(intent="RA_IMPACT", raId, version={N})` | 带 r{N} | 新增（每次修订生成） |
 | RA 反向问题登记 | `save_doc(intent="RA_REVERSE_ISSUES", raId)` | 不带版本号 | 原地累加 |
 
@@ -66,7 +66,7 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 **🔴 关键约束：**
 - ❌ 不允许直接读 `design/`、`.ae-task/`、`.ae-plan/`、`.spec/iterations/` 等旧路径
-- ✅ 强制使用 `ae-sdd-doc/` 新路径（document-storage-skill §2.1 强制）
+- ✅ 强制使用 document-storage 统一路径（`resolve_path()` 返回；模板见 document-storage-skill §2.2）
 - ✅ 强制调用 `choose_iteration()` 判定迭代（业务=0 ∧ 逻辑=0 → 强制问用户）
 
 ---
@@ -373,11 +373,11 @@ For each 输入类型：
 
 **PRD 模板**（复杂需求）：参见 [`templates/design/prd-template.md`](../../templates/design/prd-template.md)
 - 必填：概述（背景/目标/范围）/ 角色 / 业务场景 / 功能清单 / 业务流程 / 非功能需求 / 已有业务依赖
-- 路径：`{工程根}/ae-sdd-doc/PRD/{PRD-ID}.md`
+- 路径：`resolve_path(intent="PRD", prdId)`（路径模板见 document-storage §2.2）
 
 **Issue 模板**（简单需求/BUG）：参见 [`templates/design/issue-template.md`](../../templates/design/issue-template.md)
 - 必填：问题描述（现象/复现步骤/期望/实际）/ 影响范围 / 解决方向
-- 路径：`{工程根}/ae-sdd-doc/PRD/Issue-{编号}.md`
+- 路径：`resolve_path(intent="ISSUE", issueId)`（路径模板见 document-storage §2.2）
 
 ### -1.4 第 -1 步产出
 
@@ -411,7 +411,7 @@ For each 输入类型：
 | 4 | 自动加载 | 相关模块详情 | 按需 | `ae-sdd assets query "<name>" --project <projectKey>` |
 | 5 | 自动加载 | 相关表字段 | 按需 | `ae-sdd assets query "<tableName>" --project <projectKey>` |
 | 6 | 自动加载 | 相关公共组件 | 按需 | `ae-sdd assets query "<componentName>" --project <projectKey>` |
-| 7 | 自动加载 | 历史 RA 摘要（如有重入）| 同模块或同业务域 | 文件系统扫描 `ae-sdd-doc/iterations/*/RA/*.md` |
+| 7 | 自动加载 | 历史 RA 摘要（如有重入）| 同模块或同业务域 | `get_latest_version(raId)` 或 `resolve_path(intent="RA")` 动态发现 |
 | 8 | 模板 | RA 模板 | 必读 | Read `templates/design/ra-template.md` |
 
 **门禁判定：**
@@ -1180,7 +1180,7 @@ result = save_doc(doc={
     "change_description": "首次创建",
     "change_source": "requirement-analysis-skill Phase 1 ①"
 })
-# → 自动写入 ae-sdd-doc/iterations/2026-06-17/RA/RA-001-v1.0.md
+# → 自动写入 resolve_path(intent="RA", raId, version={major,minor}) 返回的路径
 # → 自动追加 ChangeLog 行
 # → 首次写入时维护 .gitignore
 ```
@@ -1378,9 +1378,9 @@ stateDiagram-v2
 
 #### 表 5：路由决策
 
-| 规模结果 | 下游 SKILL | 路径 | 触发时机 |
-|---------|-----------|------|---------|
-| {大/中/小/微/特殊-BUG/特殊-非代码} | {SKILL 名} | `{工程根}/ae-sdd-doc/iterations/{date}/{DocType}/` | 立即 |
+| 规模结果 | 下游 SKILL | 路径定位 | 触发时机 |
+|---------|-----------|---------|---------|
+| {大/中/小/微/特殊-BUG/特殊-非代码} | {SKILL 名} | `resolve_path(intent={对应intent})` 定位 | 立即 |
 
 #### 表 6：缺口清单
 
@@ -1432,14 +1432,14 @@ else → 规模=小（默认）
 
 ### 5.3 路由决策表
 
-| 规模结果 | 下游 SKILL | 路径模板 | 触发命令 |
+| 规模结果 | 下游 SKILL | 路径定位 | 触发命令 |
 |---------|-----------|---------|---------|
-| **大** | `dr-generate-skill` | `{工程根}/ae-sdd-doc/iterations/{date}/DR/` | `触发 dr-generate-skill` |
-| **中** | `story-generate-skill` | `{工程根}/ae-sdd-doc/iterations/{date}/Story/` | `触发 story-generate-skill` |
-| **小** | `task-generate-skill` | `{工程根}/ae-sdd-doc/iterations/{date}/Task/{STORY-ID}/` | `触发 task-generate-skill` |
-| **微** | `coding-skill` | `{工程根}/ae-sdd-doc/iterations/{date}/Coding/` | `触发 coding-skill` |
-| **特殊-BUG** | `coding-skill` | `{工程根}/ae-sdd-doc/iterations/{date}/Coding/` | `触发 coding-skill`（BUG 路径）|
-| **特殊-非代码** | `coding-skill` | `{工程根}/ae-sdd-doc/iterations/{date}/Coding/` | `触发 coding-skill`（配置/文档路径）|
+| **大** | `dr-generate-skill` | `resolve_path(intent="DR")` | `触发 dr-generate-skill` |
+| **中** | `story-generate-skill` | `resolve_path(intent="STORY")` | `触发 story-generate-skill` |
+| **小** | `task-generate-skill` | `resolve_path(intent="TASK")` | `触发 task-generate-skill` |
+| **微** | `coding-skill` | `resolve_path(intent="CODING_PLAN")` | `触发 coding-skill` |
+| **特殊-BUG** | `coding-skill` | `resolve_path(intent="CODING_PLAN")` | `触发 coding-skill`（BUG 路径）|
+| **特殊-非代码** | `coding-skill` | `resolve_path(intent="CODING_PLAN")` | `触发 coding-skill`（配置/文档路径）|
 
 ### 5.4 路由决策产出
 
@@ -1458,7 +1458,7 @@ else → 规模=小（默认）
 
 **路由决策：**
 - 下游 SKILL：{name}
-- 路径：`{工程根}/ae-sdd-doc/iterations/{date}/{DocType}/`
+- 路径：`resolve_path(intent={对应intent})` 定位（由下游 SKILL 接收 resolve_path 返回值）
 - 传入文件：RA + PRD/Issue + 项目资产
 ```
 
@@ -1472,8 +1472,8 @@ else → 规模=小（默认）
 
 | 传入项 | 来源 | 说明 |
 |--------|------|------|
-| RA 文档路径 | `ae-sdd-doc/iterations/{date}/RA/{RA-ID}-v{major}.{minor}.md` | 完整 RA |
-| PRD/Issue 路径 | `ae-sdd-doc/PRD/{PRD-ID}.md` 或 `Issue-{ID}.md` | 原始需求 |
+| RA 文档路径 | `resolve_path(intent="RA", raId, version={major,minor})` | 完整 RA |
+| PRD/Issue 路径 | `resolve_path(intent="PRD"/"ISSUE", id)` | 原始需求 |
 | 项目资产引用 | `ae-sdd assets outline` + `ae-sdd assets query "<{X}>"` 调用记录 | 用于下游 SKILL 精准加载 |
 | 规模结果 | §11 规模 | 决定下游 SKILL 类型 |
 | 业务/逻辑标签 | `business + logic` | 用于下游 SKILL 关联性分析 |
@@ -1482,9 +1482,9 @@ else → 规模=小（默认）
 **触发命令示例：**
 ```
 触发 dr-generate-skill，传入：
-- RA: ae-sdd-doc/iterations/2026-06-17/RA/RA-001-v1.0.md
-- PRD: ae-sdd-doc/PRD/PRD-001.md
-- 项目资产: {projectKey}.assets.md（lastAuditedAt: 2026-06-10）
+- RA: resolve_path(intent="RA", raId, version={major,minor})
+- PRD: resolve_path(intent="PRD", prdId)
+- 项目资产: ae-sdd assets read requirement-analysis --project <projectKey>（lastAuditedAt 见 assets 返回）
 - 业务标签: domain=用户管理, scenario=用户列表查询
 - 逻辑标签: calls=BossUserService.list
 - 规模结果: 大
@@ -1596,7 +1596,7 @@ else → 规模=小（默认）
 | # | 步骤 | 动作 | 产出 | 对应章节 |
 |---|------|------|------|---------|
 | 1 | 第 -1 步 | 需求来源识别 | 输入类型判定 + 多轮对话（如需）| §第 -1 步 |
-| 2 | 第 -1 步 | 沉淀为 PRD/Issue | `ae-sdd-doc/PRD/PRD-{ID}.md` 或 `Issue-{ID}.md` | §第 -1 步 |
+| 2 | 第 -1 步 | 沉淀为 PRD/Issue | `save_doc(intent="PRD"/"ISSUE", id)` | §第 -1 步 |
 | 3 | 第零步 | RA 准入检查 | 准入检查记录（8 项）| §第零步 |
 | 3.5 | 第 0.5 步 | RequirementAnalysisModel 12 维决策 + 需求风险预判 | §0.5 决策记录 + §0.6 风险预判 | §第 0.5 步 |
 | 4 | 第一步-A | 角色分析 | §2 角色矩阵 + 冲突清单 | §阶段 A |
@@ -1698,7 +1698,7 @@ RA 修订前（每次必跑）
         → 仅 RA 自己修订即可
     ↓
 第 4 步：生成"RA 修订影响分析报告"（产物）
-    ├─ 路径：ae-sdd-doc/iterations/{date}/RA/ChangeLog/{RA-ID}-RAImpact-{N}.md
+    ├─ 路径：resolve_path(intent="RA_IMPACT", raId, version={N})
     ├─ 必填：受影响维度 + 下游文档清单 + 影响等级 + 重审建议
     ↓
 第 5 步：🔴 按影响等级触发下游动作
@@ -1809,12 +1809,12 @@ RA 修订前（每次必跑）
 
 ### RA 反向通道产物清单
 
-| # | 产物 | 路径 | 命名 |
-|---|------|------|------|
-| 1 | RA 反向问题登记 | `ae-sdd-doc/iterations/{date}/RA/ChangeLog/{RA-ID}-ReverseIssues.md` | 不带版本号，追加 |
-| 2 | RA 修订版本 | `ae-sdd-doc/iterations/{date}/RA/{RA-ID}-v{N+1}.0.md` | v 递增 |
-| 3 | RAImpact 报告 | `ae-sdd-doc/iterations/{date}/RA/ChangeLog/{RA-ID}-RAImpact-{N}.md` | 带 N |
-| 4 | 闭环审计行 | `ae-sdd-doc/iterations/{date}/CR/ChangeLog/RA-DEFECT-闭环-{RA-ID}.md` | 独立审计 |
+| # | 产物 | 路径定位 | 命名 |
+|---|------|---------|------|
+| 1 | RA 反向问题登记 | `save_doc(intent="RA_REVERSE_ISSUES", raId)` | 不带版本号，追加 |
+| 2 | RA 修订版本 | `save_doc(intent="RA", raId, version={N+1,0})` | v 递增 |
+| 3 | RAImpact 报告 | `save_doc(intent="RA_IMPACT", raId, version={N})` | 带 N |
+| 4 | 闭环审计行 | `save_doc()` 独立审计文件 | 独立审计 |
 
 ### 反向通道与正向流程的差异
 

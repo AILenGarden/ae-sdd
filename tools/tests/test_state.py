@@ -201,6 +201,14 @@ class TestNextStepSuggestion(unittest.TestCase):
             self.assertEqual(sug["next"], "test-running", f"scale={scale}")
             self.assertIn("test-generate-skill.md", sug["skill"])
 
+    def test_test_running_to_code_review_requires_test_review_first(self):
+        """test-running → code-reviewed 文案必须保留 Test Review 前置语义。"""
+        for scale in ("大", "中", "小"):
+            s = {"phase": "test-running", "scale": scale}
+            sug = state_mod.next_step_suggestion(s)
+            self.assertEqual(sug["next"], "code-reviewed", f"scale={scale}")
+            self.assertIn("Test Review", sug["action"])
+
     def test_all_phases_have_suggestion_per_chain(self):
         """🆕 v3.5.15 每条子链每个 phase 都该有建议"""
         for scale, chain in state_mod.PHASE_FLOWS.items():

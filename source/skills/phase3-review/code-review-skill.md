@@ -29,7 +29,7 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 CodeReview 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=CODE_REVIEW` 自动定位到 `ae-sdd-doc/iterations/{YYYY-MM-DD}/CR/{STORY-ID}/`
+> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=CODE_REVIEW` 调用 document-storage 动态定位（路径模板只引用 document-storage §2.2，不在本 SKILL 复写）
 > 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**事件类文档带 `v{N}-r{M}`**
 > 3. **重入判定**（§0.6.11 `get_latest_version()`）：CodeReview 重入时**新增报告**（r 递增），不修改历史
 > 4. **ChangeLog**（§5）：`save_doc()` 自动追加
@@ -314,7 +314,7 @@ Story ID：{STORY-ID}
 - [x] 统一版 CodePlan（{N} 节 / Tier {T}）
 - [x] Coding 报告（变更文件 {N} 个 / 编译 {状态} / 测试 {状态}）
 - [x] 测试报告（用例 {N} 个 / 通过率 {M}%）
-- [x] 项目资产 {projectKey}.assets.md（5 节核心）
+- [x] 项目资产（`ae-sdd assets read code-review` 返回 §6/§C/§D/§3/§4/§5）
 - [x] 实际代码（{N} 个文件）
 
 【请确认：以上输入是否完整？】

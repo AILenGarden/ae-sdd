@@ -192,18 +192,16 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
         iter_date = choose_iteration(ade_sdd, project_key, story_id or doc_id or "").date
 
     # 6. 版本号
-    version_suffix = ""
-    if has_version:
-        v = version or {"major": 1, "minor": 1}
-        version_suffix = f"{v['major']}.{v['minor']}"
+    major, minor = _normalize_version(version, has_version)
+    version_suffix = f"{major}.{minor}" if has_version else ""
 
     # 4. 替换占位符
     full = template.format(
         docWorkspace=str(doc_ws).replace("\\", "/"),
         storyId=story_id or "",
         docId=doc_id or task_name or "",
-        major=version.split(".")[0] if version and has_version else (version or {}).get("major", 1),
-        minor=(version or {}).get("minor", 1) if has_version else 1,
+        major=major,
+        minor=minor,
         iterDate=iter_date or datetime.now().strftime("%Y-%m-%d"),
     )
     p = Path(full.replace("/", "\\" if "\\" in str(doc_ws) else "/") if False else full)
@@ -230,6 +228,26 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _VERSION_RE = re.compile(r"-v(\d+)\.(\d+)(?:-r(\d+))?\.md$")
+
+
+def _normalize_version(version: Optional[dict | str], has_version: bool) -> tuple[int, int]:
+    """Return (major, minor/r) for versioned document paths.
+
+    Skill docs use both {major, minor} and {v, r}; tests and adapters may pass a
+    compact string. Keep all forms compatible so save_doc callers do not need to
+    know the internal field names.
+    """
+    if not has_version or version is None:
+        return (1, 1)
+    if isinstance(version, dict):
+        major = version.get("major", version.get("v", 1))
+        minor = version.get("minor", version.get("r", 1))
+        return (int(major), int(minor))
+    text = str(version).strip()
+    m = re.search(r"v?(\d+)(?:[.\-]r?(\d+))?", text, re.IGNORECASE)
+    if not m:
+        return (1, 1)
+    return (int(m.group(1)), int(m.group(2) or 1))
 
 
 def get_latest_version(doc_dir: Path, stem_prefix: str) -> Optional[tuple[int, int]]:
