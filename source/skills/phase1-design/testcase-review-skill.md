@@ -25,7 +25,7 @@ description: 审查 testcase-generate-skill 产出的测试用例，按 TC-1~TC-
 
 | 输出文档 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
-| TestCase Review 报告 | `save_doc(intent="TESTCASE_REVIEW", storyId, version={r:N})` | 带 r{N} | 新增 |
+| TestCase Review 报告 | `ae-sdd doc finalize --intent TESTCASE_REVIEW --story-id {S}` | 📝 手写+finalize |
 
 ## 流程
 

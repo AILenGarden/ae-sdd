@@ -24,7 +24,7 @@ description: TestCase 系列 Step 2 generateSkill。采用「假设驱动·覆�
 
 | 输入 | 路径 / 来源 | 用途 |
 |---|---|---|
-| Story 主文档 | 用户提供或 `resolve_path(intent="STORY")` | AC、接口、数据、异常路径 |
+| Story 主文档 | 用户提供或 `ae-sdd doc resolve --intent STORY --story-id {S}` | AC、接口、数据、异常路径 |
 | 测试策略 | `source/standards/testing/be-testcase-strategy.md` | 假设驱动范式 + 三层覆盖策略 |
 | 测试约束 | `source/standards/constraints/testing.md` | HTTP/DB/Mock/断言红线 |
 | 测试模板 | `source/templates/testcase/be-testcase-template.md` | 输出格式（含缺陷假设字段） |
@@ -148,9 +148,9 @@ L2/L4 接口测试默认真实 HTTP：`SpringBootTest(RANDOM_PORT) + TestRestTem
 
 | 输出 | API | 通过标准 |
 |---|---|---|
-| 测试用例文档 | `save_doc(intent="TESTCASE", storyId, version={major,minor})` | 符合 `be-testcase-template.md` |
-| TestCase WriterReport | `save_doc(intent="TESTCASE_WRITER_REPORT", storyId, version={r:N})` | 说明输入、覆盖策略、缺口 |
-| 合规性校验报告 | `save_doc(intent="TESTCASE_COMPLIANCE_REPORT", storyId, version={r:N})` | 下方 10 项全通过 |
+| 测试用例文档 | `ae-sdd doc save --intent TESTCASE --story-id {S} --content-file 草稿.md` | 符合 `be-testcase-template.md` |
+| TestCase WriterReport | `ae-sdd doc finalize --intent TESTCASE_WRITER_REPORT --story-id {S}` | 📝 手写+finalize |
+| 合规性校验报告 | `ae-sdd doc finalize --intent TESTCASE_COMPLIANCE_REPORT --story-id {S}` | 📝 手写+finalize |
 
 ## 合规性校验
 

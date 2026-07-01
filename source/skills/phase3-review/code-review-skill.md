@@ -28,18 +28,29 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的 CodeReview 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=CODE_REVIEW` 调用 document-storage 动态定位（路径模板只引用 document-storage §2.2，不在本 SKILL 复写）
-> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**事件类文档带 `v{N}-r{M}`**
-> 3. **重入判定**（§0.6.11 `get_latest_version()`）：CodeReview 重入时**新增报告**（r 递增），不修改历史
-> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
-> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+> **🔴 强制：** 本 SKILL 产出的 CodeReview 报告**必须通过 `ae-sdd doc save` 命令落地**，禁止手拼路径。路径定位、版本号、ChangeLog、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
 
-| 输出文档 | API 调用 | 命名规则 | 重入时动作 |
-|---------|---------|---------|----------|
-| CodeReview 报告 | `save_doc(intent="CODE_REVIEW", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增**（r 递增）|
-| ⑦bis 追溯矩阵 | `save_doc(intent="TRACE_MATRIX", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增** |
-| CodeReviewer 报告（如多 reviewer 模式）| `save_doc(intent="CODE_REVIEW", storyId, docType="CodeReview-{BE/AR/QA}", version={r:M})` | 带 reviewer 类型 + r{M} | **新增** |
+### 写入 SOP（3 步）
+
+1. **Write 草稿**：用 Write 工具把报告内容写到 `.ae-sdd/tmp/{doc-id}-draft.md`
+2. **存文档**：
+   ```bash
+   ae-sdd doc save \
+     --intent CODE_REVIEW \
+     --story-id {STORY-ID} \
+     --version "v1-r1" \
+     --content-file .ae-sdd/tmp/{doc-id}-draft.md \
+     --changelog-note "{一句话修改说明}"
+   ```
+   事件类报告 r 自动自增，旧版本保留不删。
+3. **确认输出**：命令输出最终路径，记录到产出清单
+
+### 本 SKILL 产出文档 × intent 对照
+
+| 输出文档 | intent | 命令示例 | 版本策略 |
+|---------|--------|---------|---------|
+| CodeReview 报告 | `CODE_REVIEW` | `ae-sdd doc save --intent CODE_REVIEW --story-id {S} --version "v1-r1" ...` | 带 v{N}-r{M}（r 自增）|
+| ⑦bis 追溯矩阵 | `TRACE_MATRIX` | `ae-sdd doc save --intent TRACE_MATRIX --story-id {S} --version "v1-r1" ...` | 带 v{N}-r{M} |
 | CodeReviewUpdatePlan | 嵌入 CodeReview 报告 §十（**2026-06-06 改造：改为 Proposal 指针 → `proposal-skill.md`）** | 走 Proposal | Proposal 替代 |
 
 > 🔴 **关键：** 评审通过后**触发下游 Proposal 流程**（proposal-skill.md），评审发现的问题统一用 Proposal 描述。
@@ -575,7 +586,7 @@ Story ID：{STORY-ID}
 > **当前规则：**
 > - Code Review 评审发现 🔴 缺陷 → **触发 `proposal-skill.md §第二步`** 生成 Proposal
 > - Proposal 渠道标识 = 1（Code Review）
-> - Proposal 文档路径：`documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})`（按 `document-storage-skill.md §2.6 路径模板` 🆕 2026-06-17 修复 P1-3）
+> - Proposal 文档路径：`ae-sdd doc save --intent PROPOSAL --story-id {STORY-ID} --content-file 草稿.md`（按 `document-storage-skill.md §1.3 路径模板` 🆕 2026-06-17 修复 P1-3）
 > - 走 5 步流程（proposal-skill.md §第五步）：改 Story → 改 TestCase → 改 Task → 改 Coding → 改 Test
 > - 不直接生成 CodeReviewUpdatePlan
 >
@@ -796,15 +807,15 @@ Code Review 发现问题
 
 **🔴 强制：** AI 必须验证以下每个产出物真实存在，并与报告描述一致。
 
-| 产出物 | 实际路径（由 `documentStorage.resolve_path()` 自动定位） | 是否存在 | 与报告一致 |
+| 产出物 | 实际路径（由 `ae-sdd doc resolve` 定位） | 是否存在 | 与报告一致 |
 |--------|---------|---------|----------|
-| Story 文档 | `documentStorage.resolve_path(intent="STORY", storyId)` | □ | □ |
-| 统一版 CodePlan | `documentStorage.resolve_path(intent="CODING_PLAN", storyId)` | □ | □ |
-| Coding 报告 | `documentStorage.resolve_path(intent="CODING_REPORT", storyId, version={v:N,r:M})` | □ | □ |
-| 测试用例 | `documentStorage.resolve_path(intent="TESTCASE", storyId)` | □ | □ |
-| 测试报告 | `documentStorage.resolve_path(intent="TEST_REPORT", storyId, version={v:N,r:M})` | □ | □ |
+| Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}` | □ | □ |
+| 统一版 CodePlan | `ae-sdd doc resolve --intent CODING_PLAN --story-id {S}` | □ | □ |
+| Coding 报告 | `ae-sdd doc resolve --intent CODING_REPORT --story-id {S}` | □ | □ |
+| 测试用例 | `ae-sdd doc resolve --intent TESTCASE --story-id {S}` | □ | □ |
+| 测试报告 | `ae-sdd doc resolve --intent TEST_REPORT --story-id {S}` | □ | □ |
 | 源代码 | 工作目录对应工程 | □ | □ |
-| CodeReview 报告 | `documentStorage.resolve_path(intent="CODE_REVIEW", storyId, version={v:N,r:M})` | □ | □ |
+| CodeReview 报告 | `ae-sdd doc resolve --intent CODE_REVIEW --story-id {S}` | □ | □ |
 
 > **🔴 任何产出物不存在或不一致 → 必须修正报告或补充产出物，不得跳过。**
 

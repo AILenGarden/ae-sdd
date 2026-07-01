@@ -20,24 +20,21 @@ description: |
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 涉及的所有输入/输出文档（Story / Task / TestCase / CodingPlan / CodingReport / 开发问题记录）在读写前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **路径**（§0.6.1 `resolve_path()`）：通过各 `intent` 自动定位
-> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：CodingReport 带 `v{N}-r{M}`（事件类）
-> 3. **重入判定**（§0.6.11 `get_latest_version()`）：CodingReport 重入时 r 递增
-> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
-> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+> **🔴 强制：** 本 SKILL 涉及的所有输入/输出文档（Story / Task / TestCase / CodingPlan / CodingReport / 开发问题记录）在读写前**必须通过 `ae-sdd doc save/resolve` 命令定位/落地**，禁止手拼路径。路径定位、版本号、ChangeLog、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
 
-**本 SKILL 涉及文档类型与 API 调用对应：**
+**本 SKILL 涉及文档类型与命令对应：**
 
-| 文档类型 | API 调用 | 命名规则 | 重入时动作 |
-|---------|---------|---------|----------|
-| Story 文档 | `resolve_path(intent="STORY", storyId)` | v{major}.{minor} | 新增版本（v 递增）|
-| Task 文档目录 | `resolve_path(intent="TASK", storyId, taskId)` | v{major}.{minor} | 新增版本（v 递增）|
-| 测试用例 | `resolve_path(intent="TESTCASE", storyId)` | v{major}.{minor} | 新增版本（v 递增）|
-| 统一版 CodingPlan | `save_doc(intent="CODING_PLAN", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
-| CodingReport | `save_doc(intent="CODING_REPORT", storyId, version={v:N,r:M})` | 带 v{N}-r{M} | 新增（r 递增）|
-| Test 报告 | `save_doc(intent="TEST_REPORT", storyId, version={v:N,r:M})` | 带 v{N}-r{M} | 新增（r 递增）|
-| 开发问题记录 | `save_doc(intent="CODING_ISSUE_LOG", storyId)` | 不带版本号 | 原地累加 |
+| 文档类型 | 用途 | 命令 | 版本策略 |
+|---------|------|------|---------|
+| Story 文档 | 读取 | `ae-sdd doc resolve --intent STORY --story-id {S}` | 不带版本号（读取上游产出）|
+| Task 文档目录 | 读取 | `ae-sdd doc resolve --intent TASK --story-id {S} --doc-id {taskId}` | 不带版本号 |
+| 测试用例 | 读取 | `ae-sdd doc resolve --intent TESTCASE --story-id {S}` | 不带版本号 |
+| 统一版 CodingPlan | 写入 | `ae-sdd doc save --intent CODING_PLAN --story-id {S} --content-file 草稿.md` | 不带版本号（原地更新）|
+| CodingReport | 写入 | `ae-sdd doc save --intent CODING_REPORT --story-id {S} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M}（r 自增）|
+| Test 报告 | 写入 | `ae-sdd doc save --intent TEST_REPORT --story-id {S} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M}（r 自增）|
+| 开发问题记录 | 写入 | `ae-sdd doc save --intent CODING_ISSUE_LOG --story-id {S} --content-file 草稿.md` | 📝 未实现，手写+finalize |
+
+> **注：** 读取用途用 `ae-sdd doc resolve`（只推路径不写）；写入用途用 `ae-sdd doc save`（一步到位）。CODING_ISSUE_LOG 属 📝 未实现 intent，手写后 `ae-sdd doc finalize` 补登记。
 
 ---
 
@@ -75,9 +72,9 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 |------|------|
 | ① 项目约束文档 | `document-storage-skill.get_constraints(projectKey)` |
 | ② 技术约束 / CodingModel | `document-storage-skill.get_thinking_engine(projectKey)` |
-| ③ Story 文档 | `document-storage-skill.resolve_path(intent="STORY", storyId)`（微任务无）|
-| ④ Task 文档 | `document-storage-skill.resolve_path(intent="TASK", storyId, taskId)` |
-| ⑤ TestCase 文档 | `document-storage-skill.resolve_path(intent="TESTCASE", storyId)`（微任务无）|
+| ③ Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}`（微任务无）|
+| ④ Task 文档 | `ae-sdd doc resolve --intent TASK --story-id {S} --doc-id {taskId}` |
+| ⑤ TestCase 文档 | `ae-sdd doc resolve --intent TESTCASE --story-id {S}`（微任务无）|
 
 > 项目资产不再是独立上下文——已并入 §A2 调用 `coding-skill` 能力时的内部步骤（要素1：读取项目资产），避免与 CodeAnalysis 方法论重复声明。
 
@@ -105,9 +102,9 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 |--------|---------|---------|
 | ① 项目约束 | `document-storage-skill.get_constraints(projectKey)` 返回 9 项约束（清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
 | ② 技术约束 CodingModel | `document-storage-skill.get_thinking_engine(projectKey)`，产出 11 维决策（决策表见 [`coding-skill.md` §1](coding-skill.md)） | 任一维度结论空 → 停止，向上游追溯 |
-| ③ Story 文档 | `document-storage-skill.resolve_path(intent="STORY", storyId)` 定位后读取，提取涉及工程/主流程伪代码/实现任务映射/接口契约/数据模型/偏离声明（微任务跳过，须标"无 Story 上下文，独立决策"） | — |
-| ④ Task 文档 | `document-storage-skill.resolve_path(intent="TASK", storyId, taskId)` 先定位 Task 0（公共依赖），再按执行顺序逐个定位 Task | — |
-| ⑤ TestCase 文档 | `document-storage-skill.resolve_path(intent="TESTCASE", storyId)` 定位后读取，提取场景清单/测试分层/预期输入输出（微任务跳过） | — |
+| ③ Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}` 定位后读取，提取涉及工程/主流程伪代码/实现任务映射/接口契约/数据模型/偏离声明（微任务跳过，须标"无 Story 上下文，独立决策"） | — |
+| ④ Task 文档 | `ae-sdd doc resolve --intent TASK --story-id {S} --doc-id {taskId}` 先定位 Task 0（公共依赖），再按执行顺序逐个定位 Task | — |
+| ⑤ TestCase 文档 | `ae-sdd doc resolve --intent TESTCASE --story-id {S}` 定位后读取，提取场景清单/测试分层/预期输入输出（微任务跳过） | — |
 
 > 项目资产读取已下沉到 §A2 调用 coding-skill 能力的内部步骤（要素1），不在本表重复列为独立上下文。
 
@@ -122,7 +119,7 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 ### §A3 产出统一版 CodePlan + 跑门禁
 
-套用 [`be-coding-plan-template.md` §0-§15](../../templates/coding/be-coding-plan-template.md) 16 节模板，落地 `{STORY-ID}-CodingPlan.md`（`resolve_path(intent="CODING_PLAN", ...)`）。
+套用 [`be-coding-plan-template.md` §0-§15](../../templates/coding/be-coding-plan-template.md) 16 节模板，Write 草稿后用 `ae-sdd doc save --intent CODING_PLAN --story-id {S} --content-file 草稿.md` 落地。
 
 **跑门禁（🔴 全过才进 Execute）：**
 
@@ -160,9 +157,9 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 **收集输入：** 复核 §A1 已加载的 5 上下文（不重新加载，已在 CodeAnalysis 阶段通过 `document-storage-skill` 定位）：
 
 - 约束文档：`get_constraints(projectKey)` 返回的 9 项（关键规则见 [`coding-skill.md` §2](coding-skill.md)）
-- Story 文档：`resolve_path(intent="STORY", storyId)`，提取涉及工程/主流程伪代码分层骨架/实现任务映射/接口契约/数据模型/偏离声明
-- Task 文档：`resolve_path(intent="TASK", storyId, taskId)`，先读 Task 0（公共包路径/技术栈/DO 定义），再按执行顺序逐个读 Task
-- 测试用例文档：`resolve_path(intent="TESTCASE", storyId)`，提取场景清单/测试分层/Mock点/预期输入输出/错误码断言
+- Story 文档：`ae-sdd doc resolve --intent STORY --story-id {S}`，提取涉及工程/主流程伪代码分层骨架/实现任务映射/接口契约/数据模型/偏离声明
+- Task 文档：`ae-sdd doc resolve --intent TASK --story-id {S} --doc-id {taskId}`，先读 Task 0（公共包路径/技术栈/DO 定义），再按执行顺序逐个读 Task
+- 测试用例文档：`ae-sdd doc resolve --intent TESTCASE --story-id {S}`，提取场景清单/测试分层/Mock点/预期输入输出/错误码断言
 
 **工程预检 4 项：**
 1. **确认工程存在**：每个涉及工程查磁盘路径，不存在则创建子模块注册父 pom
@@ -334,7 +331,7 @@ Test 系列未通过时，按 `test-review-skill.md` 的缺陷分类回到 Test 
 
 ### §C1 问题记录载体
 
-> 实时追溯的结果必须落到问题记录，供后续审计/复盘。位置：`resolve_path(intent="CODING_ISSUE_LOG", storyId)`。
+> 实时追溯的结果必须落到问题记录，供后续审计/复盘。位置：手写到 `ae-sdd-doc/Coding/{S}/` 下后用 `ae-sdd doc finalize --path <文件> --intent CODING_ISSUE_LOG --story-id {S}` 补登记（📝 未实现 intent）。
 
 **每条问题格式：**
 ```markdown

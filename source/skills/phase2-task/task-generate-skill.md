@@ -24,24 +24,35 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的 Task 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=TASK` 调用 document-storage 动态定位（路径模板只引用 document-storage §2.2，不在本 SKILL 复写）
-> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
-> 3. **重入判定**（§0.6.11 `get_latest_version()`）：Task 重入时**新增版本**（v 递增）
-> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
-> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+> **🔴 强制：** 本 SKILL 产出的文档**必须通过 `ae-sdd doc save` 命令落地**，禁止手拼路径直接 Write。路径定位、版本号、ChangeLog、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
 
-| 输出文档 | API 调用 | 命名规则 | 重入时动作 |
-|---------|---------|---------|----------|
-| Task 0（公共依赖）| `save_doc(intent="TASK", storyId, taskId="task-0-公共依赖说明", version={major:1,minor:0})` | v{major}.{minor} | 新增版本（v 递增）|
-| 各 Task 文档 | `save_doc(intent="TASK", storyId, taskId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
-| Task 补充说明 | `save_doc(intent="TASK_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
-| Task-WriterReport | `save_doc(intent="TASK_WRITER_REPORT", storyId)` | 带 r{N} | 新增（r 递增）|
-| Task Review 报告 | `save_doc(intent="TASK_REVIEW", storyId, version={r:N})` | 带 r{N} | **新增**（r 递增）|
-| **统一版 CodingPlan** | `save_doc(intent="CODING_PLAN", storyId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
-| **Task 实现方案** | `save_doc(intent="TASK_IMPL_PLAN", storyId)` | 不带版本号 | 原地覆盖 |
+### 写入 SOP（3 步）
 
-> **调用示例：** 详见 `document-storage-skill.md §15.5.2` 调用矩阵。
+1. **Write 草稿**：用 Write 工具把内容写到 `.ae-sdd/tmp/{doc-id}-draft.md`
+2. **存文档**：
+   ```bash
+   ae-sdd doc save \
+     --intent {INTENT} \
+     --story-id {STORY-ID} \
+     --doc-id {TASK-ID} \
+     --content-file .ae-sdd/tmp/{doc-id}-draft.md \
+     --changelog-note "{一句话修改说明}"
+   ```
+3. **确认输出**：命令输出最终路径，记录到产出清单
+
+### 本 SKILL 产出文档 × intent 对照
+
+| 输出文档 | intent | 命令示例 | 版本策略 |
+|---------|--------|---------|---------|
+| Task 0（公共依赖）| `TASK` | `ae-sdd doc save --intent TASK --story-id {S} --doc-id task-0-公共依赖说明 ...` | 不带版本号（原地更新）|
+| 各 Task 文档 | `TASK` | `ae-sdd doc save --intent TASK --story-id {S} --doc-id {taskId} ...` | 不带版本号 |
+| Task 补充说明 | `TASK_SUPPLEMENT` | `ae-sdd doc save --intent TASK_SUPPLEMENT --story-id {S} ...` | 📝 未实现，手写+finalize |
+| Task-WriterReport | `TASK_WRITER_REPORT` | `ae-sdd doc save --intent TASK_WRITER_REPORT --story-id {S} ...` | 📝 未实现，手写+finalize |
+| Task Review 报告 | `TASK_REVIEW` | `ae-sdd doc save --intent TASK_REVIEW --story-id {S} ...` | 📝 未实现，手写+finalize |
+| **统一版 CodingPlan** | `CODING_PLAN` | `ae-sdd doc save --intent CODING_PLAN --story-id {S} ...` | 不带版本号 |
+| **Task 实现方案** | `TASK_IMPL_PLAN` | `ae-sdd doc save --intent TASK_IMPL_PLAN --story-id {S} ...` | 📝 未实现，手写+finalize |
+
+> **注：** 📝 标记的 intent 当前未实现路径模板（见 document-storage §4.10），CLI 返回 E000 时降级：LLM 手写到目标路径后用 `ae-sdd doc finalize --path <已写文件> --intent {INTENT} --story-id {S}` 补登记。
 
 ---
 
@@ -230,7 +241,7 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 
 ### 4.0 存放路径
 
-Task 文档按 Story 分子目录存放，由 `documentStorage.resolve_path(intent="TASK", storyId, taskId, docType="Task")` 自动定位：
+Task 文档按 Story 分子目录存放，由 `ae-sdd doc resolve --intent TASK --story-id {S} --doc-id {taskId}` 定位：
 
 ```
 {resolve_path 返回的迭代目录}/Task/
@@ -244,7 +255,7 @@ Task 文档按 Story 分子目录存放，由 `documentStorage.resolve_path(inte
 └── ...
 ```
 
-**完整路径示例：** `documentStorage.resolve_path(intent="TASK", storyId="STORY-010-BE", taskId="task-1-BossUserQuery", version={major:1,minor:0})` 返回值（实际路径由 resolve_path 动态定位，禁止手写）
+**完整路径示例：** `ae-sdd doc resolve --intent TASK --story-id STORY-010-BE --doc-id task-1-BossUserQuery` 返回值（实际路径由 resolve_path 动态定位，禁止手写）
 
 ### 4.1 生成规则
 
@@ -505,8 +516,8 @@ Task 文档按 Story 分子目录存放，由 `documentStorage.resolve_path(inte
 **落地存储（🔴 强制）：** 完成填写后必须调用：
 
 ```text
-documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
-→ save_doc(intent="TASK_IMPL_PLAN", storyId)
+ae-sdd doc save --intent TASK_IMPL_PLAN --story-id {S} --content-file 草稿.md
+  （TASK_IMPL_PLAN 属 📝 未实现 intent，CLI 返回 E000 时手写到目标路径 + `ae-sdd doc finalize --path <文件> --intent TASK_IMPL_PLAN`）
 ```
 
 落地成功后才能进入第六步 CodingPlan 汇总。
@@ -624,7 +635,7 @@ documentStorage.resolve_path(intent="TASK_IMPL_PLAN", storyId)
     - 类骨架不全 = 补
     - DO 字段不一致 / SQL WHERE 不明确 / 测试数据不可追溯 / 核心场景未标真实 DB 或 HTTP / 验证点未覆盖 / 调试回滚 < 5 类 = 修补对应章节
     ↓
-5. 🔴 调用 `documentStorage.resolve_path(intent="CODING_PLAN", storyId)` 推导路径，再调用 `save_doc(intent="CODING_PLAN", storyId, version={major,minor})` 落地存储，确认 G-DOC-STORAGE 通过
+5. 🔴 落地：Write 草稿后调 `ae-sdd doc save --intent CODING_PLAN --story-id {S} --content-file 草稿.md --changelog-note "..."`（路径/版本/ChangeLog 全由代码负责})` 落地存储，确认 G-DOC-STORAGE 通过
 6. 🔴 输出统一版 `{STORY-ID}-CodingPlan.md` 给用户审核
     - 用户必须明确说"确认"/"同意"/"可以开始"才能进入 ⑦ Coding
     - 模糊回复（如"好"/"行"/"看看"）需 AI 追问确认

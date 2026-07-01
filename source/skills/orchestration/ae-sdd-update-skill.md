@@ -245,7 +245,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | **Task 骨架**（类骨架 + 方法签名 + 伪代码 ≤10 行 + 依赖工具包） | Task 设计产出物 | `templates/design/be-task-template.md §实现方案` | `coding-skill.md`（不在 Coding 里定义骨架格式） |
 | **🆕 4 类需求智能路由**（已有 Story / 中大任务 / 小任务 / 微任务）| 智能路由层调度 | `SKILL.md §智能路由表 + §路由决策算法 2.2` | 各子 SKILL 各自判定 |
 | **🆕 任务规模判定规则**（套 Story 7 区模板能否填满） | 智能路由层判定 | `SKILL.md §路由决策算法 2.2 套模板判定步骤` | `task-generate-skill.md`（不重复判定）|
-| **🆕 工程根目录路径模板**（重任务 `design/` vs 小任务 `Task/` vs 微任务 `Plan/`）| 文档归属 | `document-storage-skill.md §2.6` | 各子 SKILL 自行决定路径 |
+| **🆕 工程根目录路径模板**（重任务 `design/` vs 小任务 `Task/` vs 微任务 `Plan/`）| 文档归属 | `document-storage-skill.md §1.3 路径模板` | 各子 SKILL 自行决定路径 |
 | **🆕 无 Story 上下文独立决策**（TaskSkill / CodingSkill 在无 Story 时如何处理）| 阶段内规则 | `task-generate-skill.md §1.B` + `coding-skill.md §4.2 / §6.0` | `SKILL.md`（不重写）|
 | **Story 数据模型字段链路标准**（字段链路明细表 + 横向流转对照图；来源→入参/上下文→分层对象→DB/外部依赖→出参） | Story 模板与 Review 检查项 | `templates/design/*story-template.md` + `story-review-skill.md` | `SKILL.md` |
 
@@ -330,7 +330,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 > **触发条件：** 修改以下任一文件 → 必须按本表逐项检查/同步：
 > - `source/SKILL.md` §1.1~1.6 PRD 级章节
-> - `source/skills/cross-cutting/document-storage-skill.md` §3.5 schema
+> - `source/skills/cross-cutting/document-storage-skill.md` 附录 A schema
 > - `source/templates/design/prd-summary-template.md`
 > - `source/HARNESS.md` HS-7 / HS-8 / UserPromptSubmit PRD payload
 
@@ -338,15 +338,15 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 | # | 检查项 | 检查命令 / 位置 | 自动 / 人工 |
 |---|--------|---------------|-----------|
-| 1 | `document-storage-skill.md §3.5` schema 与 `SKILL.md §1.3` 指针字段名 1:1 一致 | grep 比对 | 自动 |
+| 1 | `document-storage-skill.md 附录 A` schema 与 `SKILL.md §1.3` 指针字段名 1:1 一致 | grep 比对 | 自动 |
 | 2 | `HARNESS.md` HS-7/HS-8 物理阻断实现存在（`tools/lib/gates.py` HS_REGISTRY） | `grep -n "HS-7\|HS-8" tools/lib/gates.py` | 自动 |
 | 3 | 4 个新 CLI 子命令存在（`state prd-check-complete` / `state prd-complete` / `state prd-archive` / `runtime compact`） | `ae-sdd --help \| grep prd-` | 自动 |
 | 4 | `standards/update-graph.json` UG-09 规则存在 | `grep -n "UG-09" source/standards/update-graph.json` | 自动 |
-| 5 | `prd-summary-template.md` 与 `document-storage-skill.md §3.5` 字段职责分离原则一致（state.md 不重复 state.json 字段）| 人工核对 | 人工 |
+| 5 | `prd-summary-template.md` 与 `document-storage-skill.md 附录 A` 字段职责分离原则一致（state.md 不重复 state.json 字段）| 人工核对 | 人工 |
 
 **操作：** 改完 PRD 级任一文件 → 跑 `python tools/bin/ae-sdd update-check` → UC-01/UC-03/UC-05 全绿 + UG-09 连带项提示全勾。
 
-**禁止：** ❌ 改 `SKILL.md §1.1~1.6` 但不同步 `document-storage-skill.md §3.5` schema（视为违规）。 ❌ 改 `state.json` schema 但不同步 `ae-sdd-conventions.md §2.3` PRD ID 命名行。
+**禁止：** ❌ 改 `SKILL.md §1.1~1.6` 但不同步 `document-storage-skill.md 附录 A` schema（视为违规）。 ❌ 改 `state.json` schema 但不同步 `ae-sdd-conventions.md §2.3` PRD ID 命名行。
 
 ---
 
@@ -762,7 +762,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] `test-generate-skill.md` + `test-review-skill.md` 存在，并分别承担 TEST_REPORT 生成与 test-verifier 独立复核
 - [ ] `coding-skill.md` 🆕 2026-06-10 包含 `### 6.0 任务规模 × 文档组合` + `§4.2 按任务规模分支读取` + CodingSkill.Plan/Execute 输入参数条件必填 Story 路径
 - [ ] `SKILL.md` 🆕 2026-06-10 智能路由表包含 4 类需求（已有 Story / 中大任务 / 小任务 / 微任务）+ 路由决策算法 2.2 套 Story 7 区模板判定
-- [ ] `document-storage-skill.md` 🆕 2026-06-10 包含 `§2.6 三类任务规模 × 文档路径`（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）
+- [ ] `document-storage-skill.md` 🆕 2026-06-10 包含 `§1.3 路径模板`（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）
 - [ ] `templates/coding/be-codereview-template.md` 9 章节齐全
 - [ ] Story Review 旧版计划模板若保留，则仅作为历史兼容壳，不再作为运行时输入
 - [ ] 🆕 v3.2 `requirement-analysis-skill.md` 包含 `## 🔴 RequirementAnalysisModel（12 维需求分析决策模型）` + `## 第七步：16 道 RA 质量闸`
@@ -802,7 +802,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.4.0 `tools/lib/state.py` PHASE_FLOW 含 ra-generated（11 phase）；`tools/lib/memory_gate.py` STATE_PHASE_TO_MEMORY_PHASE 含 ra-generated→ra（修复 B3-6）
 - [ ] 🆕 v3.4.0 `tools/lib/update_graph.py` 含 UC-06 文档-实现一致性检查 + CHECK_FUNCS 注册；`source/standards/update-graph.json` 含 UG-10 规则
 - [ ] 🆕 v3.4.0 `source/SKILL.md` 无虚假命令引用（无 `gate ra-required --fix` / `assets check/generate/audit/update` / G-RA "CLI 自动调用"），UC-03/UC-06 兜底
-- [ ] 🆕 v3.4.0 `source/skills/cross-cutting/document-storage-skill.md` §0.5.1 四维定位模型（含 docWorkspacePath）+ §0.6.5 E003 落地前强制
+- [ ] 🆕 v3.4.0 `source/skills/cross-cutting/document-storage-skill.md` §3.1 五维定位模型（含 docWorkspacePath）+ §4.11 E003 落地前强制
 - [ ] 🆕 v3.4.0 `source/templates/coding/be-coding-plan-template.md` §5 骨架含来源标记 + §15 门禁 15 条（含 G-CODEPLAN-SRC）+ front-matter 计数修正
 - [ ] 🆕 v3.5.2 `source/SKILL.md` 含 `### ⑦ter 流程收尾合规自检` 章节（5 维度自检 + 自愈 SOP + 自检表模板）+ `#### 1.7 PRD 收尾合规自检 SOP`（堵 prd-complete 跳校验漏洞）+ 整体流程图含 ⑦ter 节点 + 执行清单含 10a 行；`source/docs/ae-sdd-design.md` 端到端流程编排模块含 v3.5.2 自检说明
 - [ ] 🆕 v3.5.3 本文件含 `## 设计-实现一致性迭代检查` 章节（4 步 SOP：UC 基线 + HS 物理实现核对 + CLI 命令契约深挖 + 已实现未接入扫描 + 报告模板 + 与 UC 关系定位）；`source/docs/ae-sdd-design.md` 工具链 CLI 模块含 v3.5.3 迭代检查说明
@@ -866,8 +866,8 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 | 新增项 | 位置 | 备注 |
 |------|------|------|
 | 4 类需求智能路由（已有 Story / 中大任务 / 小任务 / 微任务）| `SKILL.md §智能路由表 + §路由决策算法 2.2` | 套 Story 7 区模板自动判定 |
-| 事务简称命名规则（`{服务缩写}-{任务简述}`）| `SKILL.md §4 类需求智能路由` + `document-storage-skill.md §2.6` | 服务名缩写：去前缀 `icec-cloud-` 去后缀 `-service`/`-bff` |
-| 三类任务路径模板（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）| `document-storage-skill.md §2.6` | 工程根目录相对路径 |
+| 事务简称命名规则（`{服务缩写}-{任务简述}`）| `SKILL.md §4 类需求智能路由` + `document-storage-skill.md §1.3 路径模板` | 服务名缩写：去前缀 `icec-cloud-` 去后缀 `-service`/`-bff` |
+| 三类任务路径模板（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）| `document-storage-skill.md §1.3 路径模板` | 工程根目录相对路径 |
 | TaskSkill 加"无 Story 上级文档"分支 | `task-generate-skill.md §1.A / §1.B` | 小任务场景独立决策 |
 | CodingSkill Plan/Execute 输入参数条件必填 Story 路径 | `coding-skill.md §CodingSkill 对外调用契约` | 微任务不传 Story 路径 |
 | CodingSkill §4.2 按任务规模分支读取 | `coding-skill.md §4.2` | 微任务跳过 Task 文档读取 |
@@ -888,7 +888,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 | **13 SKILL 拆 7 子目录** | `skills/orchestration/` + `skills/phase1-design/` + `skills/phase2-task/` + `skills/phase2-coding/` + `skills/phase3-review/` + `skills/cross-cutting/` | 按"流程节点 + 横切依赖"分类 |
 | `constraints/` + `strategies/` 合并为 `standards/` | `standards/constraints/` + `standards/thinking/` + `standards/testing/` + `standards/project-assets/` | 原 9 约束 + 3 策略 + 2 schema/template 都进 standards/ |
 | `project-assets/` 改名 `assets/` | `assets/{projectKey}/` | 实际项目资产 |
-| 小任务/微任务 `.ae-task/` `.ae-plan/` 隐藏目录 | `document-storage-skill.md §2.6` | 避免污染 IDE 视图 |
+| 小任务/微任务 `.ae-task/` `.ae-plan/` 隐藏目录 | `document-storage-skill.md §1.6 旧路径兼容层` | 避免污染 IDE 视图 |
 | 人工审核点 4 → 5（加 CodingPlan 评审，删 Coding 完成评审）| `SKILL.md` 整体流程 + 整体执行清单 + 人工节点表 | 节点编号 1 → 1.5 → 2 → 2.5 → 4 |
 | 同步 `sync-to-plugin.sh` 后的新目录 | 母版 → `~/.claude/skills/ae-sdd/skills/ae-sdd/` | ❌ v3.0 已废弃此机制，改为 `source/` → `dist/ae-sdd/` → `~/.claude/skills/ae-sdd/` 三层构建 + 安装 |
 

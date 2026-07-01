@@ -24,11 +24,11 @@ description: Story 生成 SKILL - Phase 1 ① 节点的环节内具体规则。�
 
 | 输出文档 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
-| Story 主文档 | `save_doc(intent="STORY", storyId, version={major,minor})` | v{major}.{minor} | 新增版本 |
-| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
-| Story-WriterReport | `save_doc(intent="STORY_WRITER_REPORT", storyId)` | 带 r{N} | 新增 |
-| Review 对比表 | `save_doc(intent="REVIEW_COMPARE", storyId, version="v1-to-v2")` | 带 v1-to-v2 | 新增 |
-| StoryGeneratePlan | `save_doc(intent="STORY_GENERATE_PLAN", storyId, version={r:N})` | 带 r{N} | 新增 |
+| Story 主文档 | `ae-sdd doc save --intent STORY --story-id {S} --content-file 草稿.md` | 不带版本号（原地更新）|
+| Story Supplement | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
+| Story-WriterReport | `ae-sdd doc finalize --intent STORY_WRITER_REPORT --story-id {S}` | 📝 手写+finalize |
+| Review 对比表 | `ae-sdd doc finalize --intent REVIEW_COMPARE --story-id {S}` | 📝 手写+finalize |
+| StoryGeneratePlan | `ae-sdd doc finalize --intent STORY_GENERATE_PLAN --story-id {S}` | 📝 手写+finalize |
 
 ## 整体流程
 

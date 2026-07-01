@@ -18,17 +18,15 @@ description: Coding 报告产出 SKILL — Phase 2 ⑤ Coding 完成后的报告
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 Coding 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **路径**（§0.6.1 `resolve_path()`）：通过 `intent=CODING_REPORT` 调用 document-storage 动态定位（路径模板只引用 document-storage §2.2，不在本 SKILL 复写）
-> 2. **命名 + 版本号**（§0.6.7 `save_doc()`）：**事件类文档带 `v{N}-r{M}`**（v=Story 版本，r=Coding 轮次）
-> 3. **重入判定**（§0.6.11 `get_latest_version()`）：Coding 重入时**新增报告**（r 递增），**不修改历史**
-> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
-> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+> 1. **存文档**：`ae-sdd doc save --intent CODING_REPORT --story-id {S} --version "v1-r1" --content-file 草稿.md`（路径/版本/ChangeLog 全由代码负责）
+> 2. 事件类文档带 `v{N}-r{M}`（v=Story 版本，r=Coding 轮次）；重入时 r 自增、不修改历史
+> 3. ChangeLog / STORING / .gitignore 由 `ae-sdd doc save` 自动处理
 
 | 输出文档 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| Coding 报告 | `save_doc(intent="CODING_REPORT", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增**（r 递增）|
-| Test 报告（由测试 SKILL 产出）| `save_doc(intent="TEST_REPORT", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增**（r 递增）|
-| ⑦bis 追溯矩阵 | `save_doc(intent="TRACE_MATRIX", storyId, version={v:N,r:M})` | 带 `v{N}-r{M}` | **新增**（r 递增）|
+| Coding 报告 | `ae-sdd doc save --intent CODING_REPORT --story-id {S} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M} | **新增**（r 自增）|
+| Test 报告（由测试 SKILL 产出）| `ae-sdd doc save --intent TEST_REPORT --story-id {S} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M} | **新增**（r 自增）|
+| ⑦bis 追溯矩阵 | `ae-sdd doc save --intent TRACE_MATRIX --story-id {S} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M} | **新增**（r 自增）|
 
 > 🔴 **关键：** Coding 报告**不修改历史**，每次重入都新增一份（r 递增），保留完整审计轨迹。≥ r4 的旧版本可归档到 `archive/{date}/`。
 
@@ -91,9 +89,9 @@ Coding 完成后生成**完整、客观、可评审**的 Coding 报告，目标�
 第四步：生成 Coding 报告
     ↓
 第四步 bis：落地存储（🔴 强制）
-    ├─ resolve_path(intent="CODING_REPORT", storyId) + save_doc(...)
-    ├─ resolve_path(intent="TEST_REPORT", storyId) + save_doc(...)（如有测试报告）
-    └─ resolve_path(intent="TRACE_MATRIX", storyId) + save_doc(...)（如有追溯矩阵）
+    ├─ `ae-sdd doc save --intent CODING_REPORT --story-id {S} --content-file 草稿.md`
+    ├─ `ae-sdd doc save --intent TEST_REPORT --story-id {S} --content-file 草稿.md`（如有测试报告）
+    └─ `ae-sdd doc save --intent TRACE_MATRIX --story-id {S} --content-file 草稿.md`（如有追溯矩阵）
     确认 G-DOC-STORAGE ✅ 后才能触发下游
     ↓
 触发下游 Code Review SKILL
@@ -115,7 +113,7 @@ Coding 完成后生成**完整、客观、可评审**的 Coding 报告，目标�
 | # | 文件 | 必读 | 用途 |
 |---|------|------|------|
 | 1 | Coding 报告模板 | `templates/coding/be-coding-report-template.md` | 9 章节结构 |
-| 2 | Story 文档 | `documentStorage.resolve_path(intent="STORY", storyId)` | AC/接口契约/数据模型 |
+| 2 | Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}` | AC/接口契约/数据模型 |
 | 3 | 统一版 CodePlan | `{STORY-ID}-CodingPlan.md` | 类骨架/SQL/测试对应 |
 | 4 | 项目资产 | `ae-sdd assets read coding --project <projectKey>`（返回 §3/§4/§5/§6）| 分层/命名/约束 |
 | 5 | 实际代码 | `git diff {base}..{head}` | 变更文件清单 |

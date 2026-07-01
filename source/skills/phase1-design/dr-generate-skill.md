@@ -23,19 +23,19 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 DR 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.2 路径模板）：`resolve_path(intent="DR", drId, version={major,minor})` 动态定位（路径模板见 document-storage §2.2，禁止手写）
+> 1. **存文档**：`ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md`（路径/ChangeLog 全由代码负责，原地更新）
 > 2. **命名**（§3.1/3.2 命名规则）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
 > 3. **重入判定**（§4 重入 SOP）：DR 重入时**新增版本**（v{major}.{minor} 递增，旧版保留）
-> 4. **关联性分析**（§6 关联性分析）：通过 `choose_iteration()` 判定属于哪个迭代（业务+逻辑双轨）
+> 4. **关联性分析**：由 `ae-sdd doc save` 内部 `choose_iteration` 自动判定（业务+逻辑双轨）
 > 5. **ChangeLog**（§5 ChangeLog 机制）：每次修改必须追加 ChangeLog 行
 
 **本 SKILL 输出文档与 document-storage-skill §X 的对应：**
 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| DR 主文档 | `save_doc(intent="DR", drId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增；路径模板见 document-storage §2.2）|
-| DR ChangeLog | `save_doc()` 自动追加（无需手写路径）| 不带版本号 | 追加新行（每次 DR 修订追加 1 行）|
-| DRGeneratePlan | `save_doc(intent="RA_GENERATE_PLAN", raId, version={r:N})` | 带 r{N} | 新增（每轮生成 1 份）|
+| DR 主文档 | `ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md` | 不带版本号（原地更新）|
+| DR ChangeLog | `ae-sdd doc save` 自动追加 | — | 追加新行 |
+| DRGeneratePlan | `ae-sdd doc save --intent RA_GENERATE_PLAN --doc-id {raId} --content-file 草稿.md` | 📝 未实现，手写+finalize |
 
 **项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
 - `ae-sdd assets read dr-generate --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/Converter/Facade/FeignClient/ServiceProviderConstants + §3/§5/§7 整章）
@@ -44,8 +44,8 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 
 **🔴 关键约束：**
 - ❌ 不允许直接读 `design/`、`.ae-task/`、`.ae-plan/`、`.spec/iterations/` 等旧路径
-- ✅ 强制使用 document-storage 统一路径（`resolve_path()` 返回；模板见 document-storage-skill §2.2）
-- ✅ 强制调用 `choose_iteration()` 判定迭代
+- ✅ 强制使用 document-storage 统一路径（由 `ae-sdd doc save` 内部 resolve 推导；模板见 document-storage-skill §1.3）
+- ✅ 强制由 `ae-sdd doc save` 内部 `choose_iteration` 判定迭代
 
 ---
 
@@ -604,14 +604,14 @@ flowchart TD
 ## 第四步：写入 DR 文档
 
 > **🔴 强制：** 写入磁盘前**必须先调用** `document-storage-skill.md` 的 API：
-> 1. `choose_iteration(doc)` — 判定属于哪个迭代（业务+逻辑双轨）
-> 2. `get_latest_version(dr_id)` — 获取当前最新版本
-> 3. `save_doc(doc)` — 写入新版本（自动处理版本号 + ChangeLog）
+> **🔴 强制：** 写入磁盘必须通过 `ae-sdd doc save`，代码自动完成迭代判定 + ChangeLog + 目录创建。
 
 ### 4.1 调用 save_doc 的参数
 
 ```python
-result = save_doc(doc={
+# 旧式伪代码已废弃，改用 CLI：
+# ae-sdd doc save --intent DR --doc-id DR-001 --content-file 草稿.md --changelog-note "首次创建"
+result_skip = save_doc(doc={  # noqa: 保留结构示例，实际用上面 CLI
     "doc_id": "DR-001",
     "doc_type": "DR",
     "iteration_date": "2026-06-17",  # 由 choose_iteration 决定
@@ -633,7 +633,7 @@ result = save_doc(doc={
     "change_description": "首次创建（继承 RA-{ID}）",
     "change_source": "dr-generate-skill Phase 1 ②"
 })
-# → 自动写入 resolve_path(intent="DR", drId, version={major,minor}) 返回的路径
+# → 实际由 ae-sdd doc save 完成，自动写入 ae-sdd-doc/DR/DR-001.md
 # → 自动追加 ChangeLog 行
 ```
 
@@ -846,7 +846,7 @@ flowchart TD
 
 ## 第六步：触发下游 SKILL
 
-> **🔴 前置条件：** DR 文档已通过 `save_doc(intent="DR", ...)` 落地（G-DOC-STORAGE ✅）后，才能触发下游。
+> **🔴 前置条件：** DR 文档已通过 `ae-sdd doc save --intent DR ...` 落地（G-DOC-STORAGE ✅）后，才能触发下游。
 
 | 下游 | 触发 SKILL | 引用章节 |
 |------|-----------|---------|
@@ -865,7 +865,7 @@ flowchart TD
 | 5 | Story 矩阵可执行闸 | 🔴 阻断 | 每个 Story 边界清晰 + 依赖 DAG + 前后端分离 |
 | 6 | 风险评估完整闸 | 🔴 阻断 | DR §16 无遗漏；每个风险有缓解方式 |
 | 7 | 用户已确认闸 | 🔴 阻断 | 在审核点说"确认" |
-| 8 | DR 已落盘闸 | 🔴 阻断 | documentStorage.save_doc() 成功；ChangeLog 已记录 |
+| 8 | DR 已落盘闸 | 🔴 阻断 | `ae-sdd doc save --intent DR` 成功（exit 0）；ChangeLog 已记录 |
 
 **任一闸门 🔴 未过 = DR 文档不通过 → 回到对应步骤重新生成。**
 
@@ -1006,7 +1006,7 @@ input:
   - standards/constraints/ 全部 9 个 .md
 
 output:
-  deliverable: resolve_path(intent="DR", drId, version={major,minor})
+  deliverable: `ae-sdd doc resolve --intent DR --doc-id {drId}`
   report: {DR-ID}-DR-WriterReport.md
 
 standards:

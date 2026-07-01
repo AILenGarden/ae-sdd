@@ -166,7 +166,7 @@ input:
   - {约束/模板路径}
 
 output:
-  deliverable: {产出物文件路径}  # 如 documentStorage.resolve_path(intent="STORY", storyId={STORY-ID})（路径由 document-storage-skill 动态定位，禁止硬编码）
+  deliverable: {产出物文件路径}  # 如 `ae-sdd doc resolve --intent STORY --story-id {STORY-ID}`（路径由 document-storage-skill 动态定位，禁止硬编码）
   report: {报告文件路径}  # 如 {STORY-ID}-Story-WriterReport.md
 
 standards:
@@ -191,8 +191,8 @@ report_back:
 
 | 原则 | 说明 |
 |------|------|
-| **input 必填具体文件路径** | 不写"看 Story"，写 `documentStorage.resolve_path(intent="STORY", storyId="STORY-001-BE")`（路径由 document-storage-skill 动态定位，禁止硬编码） |
-| **output 必填具体产出路径** | 不写"出报告"，写"`documentStorage.resolve_path(intent="PROPOSAL", storyId="STORY-001-BE", version=1, title="示例")`" 🆕 2026-06-17 修复 P1-3 |
+| **input 必填具体文件路径** | 不写"看 Story"，写 `ae-sdd doc resolve --intent STORY --story-id STORY-001-BE`（路径由 document-storage-skill 动态定位，禁止硬编码） |
+| **output 必填具体产出路径** | 不写"出报告"，写 `ae-sdd doc save --intent PROPOSAL --story-id STORY-001-BE --content-file 草稿.md`（路径由代码tle="示例")`" 🆕 2026-06-17 修复 P1-3 |
 | **standards 必填可验证标准** | 不写"做对"，写"7 道闸全 ✅" |
 | **context 必填足够上下文** | sub-agent 没有 root 的全上下文，必须给够 |
 | **deadline 必填** | 不写"尽快"，写"30 分钟" |

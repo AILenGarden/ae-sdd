@@ -27,21 +27,21 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 
 > **🔴 强制：** 本 SKILL 生成的 Proposal 在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
 > 1. **路径**（§2.6 路径模板）：
->    - 单 Story：`documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})`
->    - 跨 Story：`documentStorage.resolve_path(intent="PROPOSAL", storyId="cross-story", version={N}, title={标题})`
+>    - 单 Story：``ae-sdd doc save --intent PROPOSAL --story-id {STORY-ID} --content-file 草稿.md``
+>    - 跨 Story：``ae-sdd doc save --intent PROPOSAL --story-id cross-story --content-file 草稿.md``
 > 2. **命名**（§3.1/3.2 命名规则）：**事件类文档按 N 编号，不带版本号**
 > 3. **重入判定**（§4 重入 SOP）：Proposal **永不修改**（一次性写完，多处引用）；多源合并 = 新 Proposal
 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| Proposal（单 Story）| `documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})` | 不带版本号（按 N 编号）| **永不修改** |
-| Proposal（跨 Story）| `documentStorage.resolve_path(intent="PROPOSAL", storyId="cross-story", version={N}, title={标题})` | 不带版本号 | **永不修改** |
-| Proposal（项目级）| `documentStorage.resolve_path(intent="PROPOSAL", storyId="project", version={N}, title={标题})` | 不带版本号 | **永不修改** |
-| Proposal 归档 | `documentStorage.resolve_path(intent="PROPOSAL_ARCHIVE", storyId={STORY-ID or 类别}, version={date})` | — | 归档而非删除 |
+| Proposal（单 Story）| ``ae-sdd doc save --intent PROPOSAL --story-id {STORY-ID} --content-file 草稿.md`` | 不带版本号（按 N 编号）| **永不修改** |
+| Proposal（跨 Story）| ``ae-sdd doc save --intent PROPOSAL --story-id cross-story --content-file 草稿.md`` | 不带版本号 | **永不修改** |
+| Proposal（项目级）| ``ae-sdd doc save --intent PROPOSAL --story-id project --content-file 草稿.md`` | 不带版本号 | **永不修改** |
+| Proposal 归档 | ``ae-sdd doc save --intent PROPOSAL_ARCHIVE --story-id {STORY-ID or 类别} --content-file 草稿.md`` | — | 归档而非删除 |
 
 > 🔴 **关键：** Proposal 是"事件" + "单一权威源"，**永不修改历史**。多源合并 = 新 Proposal（同 N 编号 + 合并 §1/§2/§3 块）。
 >
-> 🆕 **2026-06-17 修复 P1-3：** 本 SKILL 内全部 16 处 `design/proposal/` 硬编码已统一替换为 `documentStorage.resolve_path(intent="PROPOSAL", ...)` API 调用形式。集中示例见上表，单 Story / 跨 Story / 项目级 / 归档 4 种场景的调用模板见上。
+> 🆕 **2026-06-17 修复 P1-3：** 本 SKILL 内全部 `design/proposal/` 硬编码已统一替换为 `ae-sdd doc save --intent PROPOSAL ...` 命令调用形式。集中示例见上表，单 Story / 跨 Story / 项目级 / 归档 4 种场景的调用模板见上。
 
 ---
 
@@ -283,19 +283,19 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 
 **🔴 强制：** 写入前先打印初稿（用 Read 显示），用户确认后再写入。
 
-**文件路径（按 `document-storage-skill.md §2 路径模板`）：**
+**文件路径（按 `document-storage-skill.md §1.3 路径模板`）：**
 
 | Proposal 类型 | 路径 |
 |------------|------|
-| 单 Story 范围 | `documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={一句话标题})` |
-| 跨 Story 范围 | `documentStorage.resolve_path(intent="PROPOSAL", storyId="cross-story", version={N}, title={一句话标题})` |
-| 项目级范围 | `documentStorage.resolve_path(intent="PROPOSAL", storyId="project", version={N}, title={一句话标题})` |
+| 单 Story 范围 | `ae-sdd doc save --intent PROPOSAL --story-id {STORY-ID} --content-file 草稿.md` |
+| 跨 Story 范围 | `ae-sdd doc save --intent PROPOSAL --story-id cross-story --content-file 草稿.md` |
+| 项目级范围 | `ae-sdd doc save --intent PROPOSAL --story-id project --content-file 草稿.md` |
 
 **落地存储（🔴 强制，用户确认初稿后执行）：**
 
 ```text
-documentStorage.resolve_path(intent="PROPOSAL", storyId, version={N}, title={标题})
-→ save_doc(intent="PROPOSAL", storyId, version={N})
+`ae-sdd doc save --intent PROPOSAL --story-id {S} --content-file 草稿.md`
+（路径/版本/ChangeLog 全由代码负责）
 ```
 
 落地成功（G-DOC-STORAGE ✅）后才能进入第五步走流程。未落地禁止触发任何下游 SKILL。
@@ -306,8 +306,8 @@ documentStorage.resolve_path(intent="PROPOSAL", storyId, version={N}, title={标
 - **不带版本号**（Proposal 是"事件"，但每份独立编号；不修改历史）
 
 **示例：**
-- `documentStorage.resolve_path(intent="PROPOSAL", storyId="STORY-001-BE", version=1, title="roleId=0特殊语义")`
-- `documentStorage.resolve_path(intent="PROPOSAL", storyId="STORY-001-BE", version=2, title="用户列表分页越界")`
+- `ae-sdd doc save --intent PROPOSAL --story-id STORY-001-BE --content-file 草稿.md`
+- `ae-sdd doc save --intent PROPOSAL --story-id STORY-001-BE --content-file 草稿.md`
 
 ---
 
@@ -442,9 +442,9 @@ input:
 ```
 
 **归档路径：**
-- 单 Story：`documentStorage.resolve_path(intent="PROPOSAL_ARCHIVE", storyId={STORY-ID}, version={date})`
-- 跨 Story：`documentStorage.resolve_path(intent="PROPOSAL_ARCHIVE", storyId="cross-story", version={date})`
-- 项目级：`documentStorage.resolve_path(intent="PROPOSAL_ARCHIVE", storyId="project", version={date})`
+- 单 Story：``ae-sdd doc save --intent PROPOSAL_ARCHIVE --story-id {STORY-ID} --content-file 草稿.md``
+- 跨 Story：``ae-sdd doc save --intent PROPOSAL_ARCHIVE --story-id cross-story --content-file 草稿.md``
+- 项目级：``ae-sdd doc save --intent PROPOSAL_ARCHIVE --story-id project --content-file 草稿.md``
 
 ---
 
@@ -469,7 +469,7 @@ input:
 新：
 §十 CodeReview 触发的 Proposal（🔴 改代码前硬前置）
   - 渠道：1（Code Review）
-  - Proposal 文档路径：`documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})`
+  - Proposal 文档路径：``ae-sdd doc save --intent PROPOSAL --story-id {STORY-ID} --content-file 草稿.md``
   - 详见 proposal-skill.md §第五步
 ```
 
@@ -491,7 +491,7 @@ input:
 新：
 §第四步 bis：触发的 Proposal（🔴 修改 Story 前硬前置）
   - 渠道：2（Story Review）
-  - Proposal 文档路径：`documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})`
+  - Proposal 文档路径：``ae-sdd doc save --intent PROPOSAL --story-id {STORY-ID} --content-file 草稿.md``
   - 详见 proposal-skill.md §第五步
 ```
 
@@ -597,7 +597,7 @@ input:
 §四 bis：触发的 Proposal（🔴 失败用例转 Proposal）
   - 渠道：7（Test 发现）
   - 失败用例 ID + 失败原因 → 写入 Proposal §1
-  - Proposal 文档路径：`documentStorage.resolve_path(intent="PROPOSAL", storyId={STORY-ID}, version={N}, title={标题})`
+  - Proposal 文档路径：``ae-sdd doc save --intent PROPOSAL --story-id {STORY-ID} --content-file 草稿.md``
   - 详见 proposal-skill.md §第五步
 ```
 

@@ -38,25 +38,38 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 生成的 RA 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.2 路径模板）：`resolve_path(intent="RA", raId, version={major,minor})` 动态定位（路径模板见 document-storage §2.2，禁止手写）
-> 2. **命名**（§3.1/3.2 命名规则）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
-> 3. **重入判定**（§4 重入 SOP）：RA 重入时**新增版本**（v{major}.{minor} 递增）
-> 4. **关联性分析**（§6 关联性分析）：通过 `choose_iteration()` 判定属于哪个迭代（业务+逻辑双轨）
-> 5. **ChangeLog**（§5 ChangeLog 机制）：每次修改必须追加 ChangeLog 行
-> 6. **.gitignore**（§7 .gitignore 自动生成）：首次写入时自动维护
+> **🔴 强制：** 本 SKILL 产出的文档**必须通过 `ae-sdd doc save` 命令落地**，禁止手拼路径直接 Write。路径定位、版本号、ChangeLog、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
 
-**本 SKILL 输出文档与 document-storage-skill §X 的对应：**
+### 写入 SOP（3 步）
 
-| 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
-|---------|---------|---------|----------|
-| RA 主文档 | `save_doc(intent="RA", raId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增；路径模板见 document-storage §2.2）|
-| RA ChangeLog | `save_doc()` 自动追加（无需手写路径）| 不带版本号 | 追加新行（每次 RA 修订追加 1 行）|
-| PRD（无输入时生成）| `save_doc(intent="PRD", prdId)` | 不带版本号 | 原地修改（按 prd-template）|
-| Issue（无输入时生成）| `save_doc(intent="ISSUE", issueId)` | 不带版本号 | 原地修改（按 issue-template）|
-| RAGeneratePlan | `save_doc(intent="RA_GENERATE_PLAN", raId, version={r:N})` | 带 r{N} | 新增（每轮生成 1 份）|
-| RA 修订影响分析报告 | `save_doc(intent="RA_IMPACT", raId, version={N})` | 带 r{N} | 新增（每次修订生成） |
-| RA 反向问题登记 | `save_doc(intent="RA_REVERSE_ISSUES", raId)` | 不带版本号 | 原地累加 |
+1. **Write 草稿**：用 Write 工具把内容写到 `.ae-sdd/tmp/{doc-id}-draft.md`
+2. **存文档**：
+   ```bash
+   ae-sdd doc save \
+     --intent {INTENT} \
+     --doc-id {DOC-ID} \
+     --content-file .ae-sdd/tmp/{doc-id}-draft.md \
+     --changelog-note "{一句话修改说明}"
+   ```
+   代码自动完成：resolve 推路径 → 写文件 → 版本号（事件类 r 自增）→ ChangeLog → STORING → .gitignore → 删草稿
+3. **确认输出**：命令输出最终路径，记录到本 SKILL 的产出清单
+
+> **设计类文档（RA/PRD/ISSUE/RA_REVERSE_ISSUES）**不带版本号，原地更新，`--version` 不传。
+> **事件类报告（RA_GENERATE_PLAN/RA_IMPACT）**带 r{N}，`--version "v1-r1"`（重入 r 递增）。
+
+### 本 SKILL 产出文档 × intent 对照
+
+| 输出文档 | intent | 命令示例 | 版本策略 |
+|---------|--------|---------|---------|
+| RA 主文档 | `RA` | `ae-sdd doc save --intent RA --doc-id {raId} ...` | 不带版本号（原地更新）|
+| RA ChangeLog | — | `ae-sdd doc save` 自动追加（无需手写路径）| — |
+| PRD（无输入时生成）| `PRD` | `ae-sdd doc save --intent PRD --doc-id {prdId} ...` | 不带版本号 |
+| Issue（无输入时生成）| `ISSUE` | `ae-sdd doc save --intent ISSUE --doc-id {issueId} ...` | 不带版本号 |
+| RAGeneratePlan | `RA_GENERATE_PLAN` | `ae-sdd doc save --intent RA_GENERATE_PLAN --doc-id {raId} --version "v1-r1" ...` | 带 r{N}（r 递增）|
+| RA 修订影响分析报告 | `RA_IMPACT` | `ae-sdd doc save --intent RA_IMPACT --doc-id {raId} --version "v1-r1" ...` | 带 r{N} |
+| RA 反向问题登记 | `RA_REVERSE_ISSUES` | `ae-sdd doc save --intent RA_REVERSE_ISSUES --doc-id {raId} ...` | 不带版本号（原地累加）|
+
+> **注：** RA_GENERATE_PLAN/RA_IMPACT/ISSUE 当前属 📝 未实现 intent（见 document-storage §4.10），CLI 会返回 E000 降级提示——此时 LLM 手写到目标路径后用 `ae-sdd doc finalize --path <已写文件> --intent {INTENT}` 补登记。
 
 **项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
 - `ae-sdd assets read requirement-analysis --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/DomainService/Service + §A/§B 整章）
@@ -66,8 +79,8 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 **🔴 关键约束：**
 - ❌ 不允许直接读 `design/`、`.ae-task/`、`.ae-plan/`、`.spec/iterations/` 等旧路径
-- ✅ 强制使用 document-storage 统一路径（`resolve_path()` 返回；模板见 document-storage-skill §2.2）
-- ✅ 强制调用 `choose_iteration()` 判定迭代（业务=0 ∧ 逻辑=0 → 强制问用户）
+- ✅ 强制使用 document-storage 统一路径（由 `ae-sdd doc save` 内部 `resolve_path` 推导；路径模板见 document-storage-skill §1.3）
+- ✅ 强制由 `ae-sdd doc save` 内部 `choose_iteration` 判定迭代（业务=0 ∧ 逻辑=0 → 强制问用户）
 
 ---
 
@@ -373,11 +386,11 @@ For each 输入类型：
 
 **PRD 模板**（复杂需求）：参见 [`templates/design/prd-template.md`](../../templates/design/prd-template.md)
 - 必填：概述（背景/目标/范围）/ 角色 / 业务场景 / 功能清单 / 业务流程 / 非功能需求 / 已有业务依赖
-- 路径：`resolve_path(intent="PRD", prdId)`（路径模板见 document-storage §2.2）
+- 路径：`ae-sdd doc resolve --intent PRD --doc-id {prdId}`（路径模板见 document-storage §1.3）
 
 **Issue 模板**（简单需求/BUG）：参见 [`templates/design/issue-template.md`](../../templates/design/issue-template.md)
 - 必填：问题描述（现象/复现步骤/期望/实际）/ 影响范围 / 解决方向
-- 路径：`resolve_path(intent="ISSUE", issueId)`（路径模板见 document-storage §2.2）
+- 路径：`ae-sdd doc resolve --intent ISSUE --doc-id {issueId}`（路径模板见 document-storage §1.3）
 
 ### -1.4 第 -1 步产出
 
@@ -411,7 +424,7 @@ For each 输入类型：
 | 4 | 自动加载 | 相关模块详情 | 按需 | `ae-sdd assets query "<name>" --project <projectKey>` |
 | 5 | 自动加载 | 相关表字段 | 按需 | `ae-sdd assets query "<tableName>" --project <projectKey>` |
 | 6 | 自动加载 | 相关公共组件 | 按需 | `ae-sdd assets query "<componentName>" --project <projectKey>` |
-| 7 | 自动加载 | 历史 RA 摘要（如有重入）| 同模块或同业务域 | `get_latest_version(raId)` 或 `resolve_path(intent="RA")` 动态发现 |
+| 7 | 自动加载 | 历史 RA 摘要（如有重入）| 同模块或同业务域 | `ae-sdd doc resolve --intent RA --doc-id {raId}` 查路径后读 |
 | 8 | 模板 | RA 模板 | 必读 | Read `templates/design/ra-template.md` |
 
 **门禁判定：**
@@ -1149,41 +1162,23 @@ RA §9-quater.7 必须给 DR 可直接引用的输入：
 
 ## 第三步：写入 RA 文档
 
-> **🔴 强制：** 写入磁盘前**必须先调用** `document-storage-skill.md` 的 API：
-> 1. `choose_iteration(doc)` — 判定属于哪个迭代（业务+逻辑双轨关联性分析）
-> 2. `get_latest_version(ra_id)` — 获取当前最新版本
-> 3. `save_doc(doc)` — 写入新版本（自动处理版本号 + ChangeLog + 目录创建 + .gitignore）
-> 4. 首次写入时 `check_and_update_gitignore()` — 自动维护
+> **🔴 强制：** 写入磁盘**必须通过 `ae-sdd doc save` 命令**，代码自动完成：迭代判定（choose_iteration）→ 版本号 → ChangeLog → 目录创建 → .gitignore。
 
-### 3.1 调用 save_doc 的参数
+### 3.1 写入 SOP
 
-```python
-result = save_doc(doc={
-    "doc_id": "RA-001",
-    "doc_type": "RA",
-    "iteration_date": "2026-06-17",  # 由 choose_iteration 决定
-    "version": {"major": 1, "minor": 0},
-    "content": "# 需求分析报告：{名称}\n\n## §0 文档信息\n...\n## §0.5 RequirementAnalysisModel 决策记录\n...\n## §0.6 需求风险预判\n...\n## §1 业务全景\n...\n## §2 角色分析\n...\n## §3 场景分析\n...\n## §4 业务流程\n...\n## §5 数据要素\n...\n## §6 业务规则与约束\n...\n## §6.5 衍生规则登记表\n...\n## §7 设计方向论证\n...\n## §8 验收标准雏形\n...\n## §8.5 衍生 AC 登记表\n...\n## §8.6 衍生覆盖率\n...\n## §9 隐性假设与验证\n...\n## §9-bis 业务模式匹配表\n...\n## §9-ter 跨域级联效应表\n...\n## §10 缺口与未决问题\n...\n## §11 规模裁定\n...\n## §12 自检清单\n",
-    "business": {
-        "domain": "用户管理",
-        "scenario": "用户列表查询",
-        "entities": ["User", "Role"],
-        "rules": ["权限校验", "分页约束"]
-    },
-    "logic": {
-        "calls": ["BossUserService.list", "BossUserRepository.findByQuery"],
-        "dataFlow": ["boss_user.id", "boss_user.status"],
-        "stateMachine": None,
-        "components": ["PagedModels", "ApiResult"]
-    },
-    "change_type": "new",
-    "change_description": "首次创建",
-    "change_source": "requirement-analysis-skill Phase 1 ①"
-})
-# → 自动写入 resolve_path(intent="RA", raId, version={major,minor}) 返回的路径
-# → 自动追加 ChangeLog 行
-# → 首次写入时维护 .gitignore
-```
+1. **Write 草稿**：把 RA 全文（§0~§12 完整内容）写到 `.ae-sdd/tmp/RA-001-draft.md`
+2. **存文档**：
+   ```bash
+   ae-sdd doc save \
+     --intent RA \
+     --doc-id RA-001 \
+     --content-file .ae-sdd/tmp/RA-001-draft.md \
+     --changelog-note "首次创建"
+   ```
+   代码自动完成：resolve 推路径 → 写文件（设计类原地更新）→ 追加 ChangeLog → 更新 STORING → 维护 .gitignore → 删草稿
+3. **确认输出**：命令输出最终路径（如 `ae-sdd-doc/RA/RA-001.md`），记录到产出清单
+
+> **关联性分析已内置**：`ae-sdd doc save` 内部 `choose_iteration` 自动判定迭代归属（业务+逻辑双轨），无需单独调用。业务=0 ∧ 逻辑=0 时命令会阻塞并强制问用户。
 
 ### 3.2 关联性分析调用
 
@@ -1380,7 +1375,7 @@ stateDiagram-v2
 
 | 规模结果 | 下游 SKILL | 路径定位 | 触发时机 |
 |---------|-----------|---------|---------|
-| {大/中/小/微/特殊-BUG/特殊-非代码} | {SKILL 名} | `resolve_path(intent={对应intent})` 定位 | 立即 |
+| {大/中/小/微/特殊-BUG/特殊-非代码} | {SKILL 名} | `ae-sdd doc resolve --intent {对应intent}` 定位 | 立即 |
 
 #### 表 6：缺口清单
 
@@ -1434,12 +1429,12 @@ else → 规模=小（默认）
 
 | 规模结果 | 下游 SKILL | 路径定位 | 触发命令 |
 |---------|-----------|---------|---------|
-| **大** | `dr-generate-skill` | `resolve_path(intent="DR")` | `触发 dr-generate-skill` |
-| **中** | `story-generate-skill` | `resolve_path(intent="STORY")` | `触发 story-generate-skill` |
-| **小** | `task-generate-skill` | `resolve_path(intent="TASK")` | `触发 task-generate-skill` |
-| **微** | `coding-skill` | `resolve_path(intent="CODING_PLAN")` | `触发 coding-skill` |
-| **特殊-BUG** | `coding-skill` | `resolve_path(intent="CODING_PLAN")` | `触发 coding-skill`（BUG 路径）|
-| **特殊-非代码** | `coding-skill` | `resolve_path(intent="CODING_PLAN")` | `触发 coding-skill`（配置/文档路径）|
+| **大** | `dr-generate-skill` | `ae-sdd doc resolve --intent DR` | `触发 dr-generate-skill` |
+| **中** | `story-generate-skill` | `ae-sdd doc resolve --intent STORY` | `触发 story-generate-skill` |
+| **小** | `task-generate-skill` | `ae-sdd doc resolve --intent TASK` | `触发 task-generate-skill` |
+| **微** | `coding-skill` | `ae-sdd doc resolve --intent CODING_PLAN` | `触发 coding-skill` |
+| **特殊-BUG** | `coding-skill` | `ae-sdd doc resolve --intent CODING_PLAN` | `触发 coding-skill`（BUG 路径）|
+| **特殊-非代码** | `coding-skill` | `ae-sdd doc resolve --intent CODING_PLAN` | `触发 coding-skill`（配置/文档路径）|
 
 ### 5.4 路由决策产出
 
@@ -1458,7 +1453,7 @@ else → 规模=小（默认）
 
 **路由决策：**
 - 下游 SKILL：{name}
-- 路径：`resolve_path(intent={对应intent})` 定位（由下游 SKILL 接收 resolve_path 返回值）
+- 路径：`ae-sdd doc resolve --intent {对应intent}` 定位（由下游 SKILL 接收命令输出路径）
 - 传入文件：RA + PRD/Issue + 项目资产
 ```
 
@@ -1466,14 +1461,14 @@ else → 规模=小（默认）
 
 ## 第六步：触发下游 SKILL
 
-> **🔴 前置条件：** RA 文档已通过 `save_doc(intent="RA", ...)` 落地（G-DOC-STORAGE ✅）后，才能触发下游 SKILL。
+> **🔴 前置条件：** RA 文档已通过 `ae-sdd doc save --intent RA ...` 落地（G-DOC-STORAGE ✅）后，才能触发下游 SKILL。
 
 按 §5.3 决策触发对应 SKILL，并传入：
 
 | 传入项 | 来源 | 说明 |
 |--------|------|------|
-| RA 文档路径 | `resolve_path(intent="RA", raId, version={major,minor})` | 完整 RA |
-| PRD/Issue 路径 | `resolve_path(intent="PRD"/"ISSUE", id)` | 原始需求 |
+| RA 文档路径 | `ae-sdd doc resolve --intent RA --doc-id {raId}` | 完整 RA |
+| PRD/Issue 路径 | `ae-sdd doc resolve --intent PRD/ISSUE --doc-id {id}` | 原始需求 |
 | 项目资产引用 | `ae-sdd assets outline` + `ae-sdd assets query "<{X}>"` 调用记录 | 用于下游 SKILL 精准加载 |
 | 规模结果 | §11 规模 | 决定下游 SKILL 类型 |
 | 业务/逻辑标签 | `business + logic` | 用于下游 SKILL 关联性分析 |
@@ -1482,8 +1477,8 @@ else → 规模=小（默认）
 **触发命令示例：**
 ```
 触发 dr-generate-skill，传入：
-- RA: resolve_path(intent="RA", raId, version={major,minor})
-- PRD: resolve_path(intent="PRD", prdId)
+- RA: `ae-sdd doc resolve --intent RA --doc-id {raId}`
+- PRD: `ae-sdd doc resolve --intent PRD --doc-id {prdId}`
 - 项目资产: ae-sdd assets read requirement-analysis --project <projectKey>（lastAuditedAt 见 assets 返回）
 - 业务标签: domain=用户管理, scenario=用户列表查询
 - 逻辑标签: calls=BossUserService.list
@@ -1596,7 +1591,7 @@ else → 规模=小（默认）
 | # | 步骤 | 动作 | 产出 | 对应章节 |
 |---|------|------|------|---------|
 | 1 | 第 -1 步 | 需求来源识别 | 输入类型判定 + 多轮对话（如需）| §第 -1 步 |
-| 2 | 第 -1 步 | 沉淀为 PRD/Issue | `save_doc(intent="PRD"/"ISSUE", id)` | §第 -1 步 |
+| 2 | 第 -1 步 | 沉淀为 PRD/Issue | `ae-sdd doc save --intent PRD/ISSUE --doc-id {id}` | §第 -1 步 |
 | 3 | 第零步 | RA 准入检查 | 准入检查记录（8 项）| §第零步 |
 | 3.5 | 第 0.5 步 | RequirementAnalysisModel 12 维决策 + 需求风险预判 | §0.5 决策记录 + §0.6 风险预判 | §第 0.5 步 |
 | 4 | 第一步-A | 角色分析 | §2 角色矩阵 + 冲突清单 | §阶段 A |
@@ -1639,10 +1634,10 @@ else → 规模=小（默认）
 | 5 | 禁止掩盖缺口 | 不可控风险 | §标尺 4（未确认问题必入缺口清单）|
 | 6 | 禁止未做 5 问自检 | 结论无验证 | §第一步 bis（每条结论 5 问）|
 | 7 | 禁止 🔴/🟠 缺口未解决或未获用户明确接受 | 阻断下游 | §第二步（🔴/🟠 必须闭环，🟡/🟢 至少有负责人和计划）|
-| 8 | 禁止未调用 `choose_iteration()` | 文档漂移 | §第三步.2（强/中/无关联判定）|
+| 8 | 禁止未由 `ae-sdd doc save` 内部 `choose_iteration` 判定迭代 | 文档漂移 | §第三步.2（强/中/无关联判定）|
 | 9 | 禁止业务=0 ∧ 逻辑=0 时不问用户 | 归错迭代 | §第三步.2（E005 错误码）|
 | 10 | 禁止不写 ChangeLog | 失变更追踪 | §第三步 + document-storage-skill §5 |
-| 11 | 禁止不调用 `check_and_update_gitignore()` | 污染 git | §第三步 + document-storage-skill §7 |
+| 11 | 禁止不维护 `.gitignore`（由 `ae-sdd doc save` 自动维护）| 污染 git | §第三步 + document-storage-skill §7 |
 | 12 | 禁止规模裁定无依据 | 路由错乱 | §第五步（5 维评分 + 一票否决）|
 | 13 | 禁止用户未确认就触发下游 | 流程失控 | §第四步（双支柱 + 等待用户回复）|
 | 14 | 禁止 16 道 RA 质量闸一次性终检就结束（🆕 v3.5.8）| 8 维度挖掘无收敛判据、无反复挖掘 | §第七步（引用 review-loop：反复挖掘 + 连续 3 轮无新增才退出 + 漏报升级）|
@@ -1698,7 +1693,7 @@ RA 修订前（每次必跑）
         → 仅 RA 自己修订即可
     ↓
 第 4 步：生成"RA 修订影响分析报告"（产物）
-    ├─ 路径：resolve_path(intent="RA_IMPACT", raId, version={N})
+    ├─ 路径：`ae-sdd doc save --intent RA_IMPACT --doc-id {raId}`
     ├─ 必填：受影响维度 + 下游文档清单 + 影响等级 + 重审建议
     ↓
 第 5 步：🔴 按影响等级触发下游动作
@@ -1811,10 +1806,10 @@ RA 修订前（每次必跑）
 
 | # | 产物 | 路径定位 | 命名 |
 |---|------|---------|------|
-| 1 | RA 反向问题登记 | `save_doc(intent="RA_REVERSE_ISSUES", raId)` | 不带版本号，追加 |
-| 2 | RA 修订版本 | `save_doc(intent="RA", raId, version={N+1,0})` | v 递增 |
-| 3 | RAImpact 报告 | `save_doc(intent="RA_IMPACT", raId, version={N})` | 带 N |
-| 4 | 闭环审计行 | `save_doc()` 独立审计文件 | 独立审计 |
+| 1 | RA 反向问题登记 | `ae-sdd doc save --intent RA_REVERSE_ISSUES --doc-id {raId}` | 不带版本号，追加 |
+| 2 | RA 修订版本 | `ae-sdd doc save --intent RA --doc-id {raId}` | 原地更新 |
+| 3 | RAImpact 报告 | `ae-sdd doc save --intent RA_IMPACT --doc-id {raId}` | 带 r{N} |
+| 4 | 闭环审计行 | `ae-sdd doc save` 独立审计文件 | 独立审计 |
 
 ### 反向通道与正向流程的差异
 
@@ -1982,7 +1977,7 @@ RA 修订前（每次必跑）
 - **同步对象：**
   - 所有 SKILL 引用本文件作为"需求分析标准"
   - 与 `dr-generate-skill.md` / `story-generate-skill.md` / `task-generate-skill.md` / `coding-skill.md` 协调（边界判定表 + 路由决策表）
-  - 与 `document-storage-skill.md §15.1` 协调（调用矩阵新增 1 行：requirement-analysis-skill）
+  - 与 `document-storage-skill.md §9.1` 协调（调用矩阵新增 1 行：requirement-analysis-skill）
   - 与 `project-assets-update-skill.md §G` 协调（项目资产读取 API）
   - 与 `SKILL.md` 协调（Phase 1 起点位置）
 - **关键变化（2026-06-17 新建）：**
@@ -1995,7 +1990,7 @@ RA 修订前（每次必跑）
   - 🆕 **5 问自检**：每条结论必须通过 5 个角度检验
   - 🆕 **5 维规模裁定**：服务范围/接口变更/架构决策/数据变更/测试层级
   - 🆕 **6 类规模路由**：大/中/小/微/特殊-BUG/特殊-非代码 → 6 个下游 SKILL
-  - 🆕 **业务+逻辑双轨关联性分析**：调用 `choose_iteration()` 判定迭代
+  - 🆕 **业务+逻辑双轨关联性分析**：由 `ae-sdd doc save` 内部 `choose_iteration` 判定迭代
   - 🆕 **项目资产按需加载**：通过 `assets.*()` 索引化 API，不全文加载
   - 🆕 **缺口管理分级**：🔴 阻断 / 🟠 严重 / 🟡 一般 / 🟢 建议
   - 🆕 **RAGeneratePlan**：每轮生成 1 份计划（带 r{N}）

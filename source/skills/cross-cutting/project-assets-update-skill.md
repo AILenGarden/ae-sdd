@@ -29,19 +29,19 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成/更新/读取的项目资产在写入或访问磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径（🔴 路径 SSOT 在 document-storage §2.3，本 SKILL 不重复定义）**：工作区级索引 / 工程级子文件 / 日志的完整路径模板见 [`document-storage-skill.md §2.3 资产类路径模板`](../cross-cutting/document-storage-skill.md)。多业务线项目按 `{line}` 分组，单业务线项目扁平，详见该节。
+> 1. **路径（🔴 路径 SSOT 在 document-storage §1.4，本 SKILL 不重复定义）**：工作区级索引 / 工程级子文件 / 日志的完整路径模板见 [`document-storage-skill.md §1.4 资产类路径模板`](../cross-cutting/document-storage-skill.md)。多业务线项目按 `{line}` 分组，单业务线项目扁平，详见该节。
 > 2. **命名**（§3.1/3.2 命名规则）：**基础设施类文档不带版本号**（资产是单一权威源，更新通过日志追踪）
 > 3. **重入判定**（§4 重入 SOP）：项目资产**永不修改文件名**（只通过更新日志记录变更）
 > 4. **🆕 索引层归属**：索引项**写入资产主体文件**（与 §0-§10 同文件），便于一次性 grep 定位；不另开索引文件（避免双源漂移）
 >
-> **🆕 v4.1 SKILL 边界修复：** 历史版本本节曾硬编码资产路径（`skills/ae-sdd/assets/{projectKey}/`），与 document-storage、schema、代码四处各写一套导致"路径偏移"。本次把路径定义统一收回 document-storage §2.3，本 SKILL 只管"怎么生成内容"。
+> **🆕 v4.1 SKILL 边界修复：** 历史版本本节曾硬编码资产路径（`skills/ae-sdd/assets/{projectKey}/`），与 document-storage、schema、代码四处各写一套导致"路径偏移"。本次把路径定义统一收回 document-storage §1.4，本 SKILL 只管"怎么生成内容"。
 
 | 输出文档 | 路径定义处 | 命名规则 | 重入时动作 |
 |---------|-----------|---------|----------|
-| 项目资产主体（含索引层） | **document-storage §2.3**（工作区级索引）| 不带版本号 | 原地修改（变更加日志）|
-| 项目资产更新日志 | **document-storage §2.3** | 不带版本号 | 原地累加（每变更 1 条）|
-| **🆕 待确认问题清单** | **document-storage §2.3** | 不带版本号 | 原地维护（新增追加 / 解决则消掉）|
-| **工程级子文件**（多业务线）| **document-storage §2.3**（`{line}/{工程名}/`）| 不带版本号 | 原地修改 |
+| 项目资产主体（含索引层） | **document-storage §1.4**（工作区级索引）| 不带版本号 | 原地修改（变更加日志）|
+| 项目资产更新日志 | **document-storage §1.4** | 不带版本号 | 原地累加（每变更 1 条）|
+| **🆕 待确认问题清单** | **document-storage §1.4** | 不带版本号 | 原地维护（新增追加 / 解决则消掉）|
+| **工程级子文件**（多业务线）| **document-storage §1.4**（`{line}/{工程名}/`）| 不带版本号 | 原地修改 |
 
 > 🔴 **关键：** 项目资产是"单一权威源"，**永不通过文件名识别版本**，所有变更通过更新日志追踪。
 > 🆕 **索引层与内容层同文件**：§A-G 索引项与 §0-§10 内容同处一文件，确保"一处改、索引与内容同步"。
@@ -157,12 +157,12 @@ description: 项目资产更新 SKILL — 维护 {projectKey}.assets.md，生成
 
 ### 3.3 输出物
 
-> 🆕 v4.1：路径以 `document-storage §2.3` 为准，此处用 `{资产根}` 代指 `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`。
+> 🆕 v4.1：路径以 `document-storage §1.4` 为准，此处用 `{资产根}` 代指 `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`。
 
 - `{资产根}/{workspaceKey}.assets.md`（按 schema 12 节 + §A-§F 索引层填写，含 §10 经验文档）
 - `{资产根}/{workspaceKey}.update-log.md`（更新日志，首次条目 = initial）
 - **🆕 `{资产根}/{workspaceKey}.pending-questions.md`**（待确认问题清单，探查中无法自行确认的事项）
-- **🆕 v4.1 工程级子文件**：`{资产根}/[{line}/]{工程名}/{工程名}.assets.md`（多业务线项目按 line 分组，详见 document-storage §2.3）
+- **🆕 v4.1 工程级子文件**：`{资产根}/[{line}/]{工程名}/{工程名}.assets.md`（多业务线项目按 line 分组，详见 document-storage §1.4）
 
 #### 3.3.1 🆕 pending-questions.md 格式
 
@@ -462,7 +462,7 @@ find {new-spi-path}/ -name "*Service.java" -not -path "*/target/*"
 > 之前"直接增量更新项目资产"的做法已废弃，统一走 Proposal 流程。
 
 - **触发** [`proposal-skill.md` §第二步](../cross-cutting/proposal-skill.md)，渠道标识 = 4（Project Assets 漂移）
-- **Proposal 文档路径**：`documentStorage.resolve_path(intent="PROPOSAL", storyId={projectKey}, version={N}, title={标题})`（按 `document-storage-skill.md §2.6` 🆕 2026-06-17 修复 P1-3）
+- **Proposal 文档路径**：`ae-sdd doc save --intent PROPOSAL --story-id {projectKey} --content-file 草稿.md`（按 `document-storage-skill.md §1.3 路径模板` 🆕 2026-06-17 修复 P1-3）
 - **走 5 步流程**（proposal-skill.md §第五步）：改 Story → 改 TestCase → 改 Task → 改 Coding → 改 Test
 - **不在本 SKILL 直接改项目资产**（避免"上游漂移 → 下游 SKILL 各自改"的重复维护）
 
@@ -637,7 +637,7 @@ ls constraints/*.md | xargs -n1 basename
 
 **5.4.1 审计对象与命令**
 
-> 🆕 v4.1：命令中 `{资产根}` = `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`（见 document-storage §2.3）。
+> 🆕 v4.1：命令中 `{资产根}` = `{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/`（见 document-storage §1.4）。
 
 | 对象 | 审计命令 | 通过条件 |
 |------|---------|---------|

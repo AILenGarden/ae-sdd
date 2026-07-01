@@ -8,41 +8,29 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 涉及的 DR 主文档、DR Supplement 在读写前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **读取**（§0.6.1 `resolve_path()`）：通过 `intent=DR` 定位 DR 主文档；通过 `intent=DR_SUPPLEMENT` 定位 Supplement
-> 2. **写入**（§0.6.7 `save_doc()`）：DR 主文档重入时**新增版本**（v{major}.{minor} 递增，旧版本保留）
+> 1. **读取**：`ae-sdd doc resolve --intent DR --doc-id {drId}` 定位 DR 主文档；`--intent DR_SUPPLEMENT` 定位 Supplement
+> 2. **写入**：`ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md`（DR 原地更新）
 > 3. **命名 + 版本号**（§3.1/3.2）：DR 主文档带 v{major}.{minor}；Supplement 不带版本号
-> 4. **ChangeLog**（§5）：`save_doc()` 自动追加
-> 5. **.gitignore**（§0.6.13 `check_and_update_gitignore()`）：首次写入时自动维护
+> 3. ChangeLog / .gitignore 由 `ae-sdd doc save` 自动处理
 
 **本 SKILL 涉及文档类型与 API 调用对应：**
 
 | 文档类型 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| DR 主文档 | `save_doc(intent="DR", drId, version={major,minor})` | v{major}.{minor} | 新增版本（v 递增）|
-| DR Supplement | `save_doc(intent="DR_SUPPLEMENT", drId)` | 不带版本号 | 原地累加 |
-| 受影响 Story 变更通知 | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加（写入各受影响 Story 的 Supplement） |
+| DR 主文档 | `ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md` | 不带版本号（原地更新）|
+| DR Supplement | `ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id {drId}` | 📝 手写+finalize |
+| 受影响 Story 变更通知 | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
 
-> **调用示例：** 详见 `document-storage-skill.md §15.5` API 化调用。
+> **调用示例：** 详见 `document-storage-skill.md §9` 横切调用规范。
 
 > 🆕 **🔴 2026-06-17 修复 P1-2 显式调用示例：**
 >
-> ```javascript
-> // 写出 DR 修订版（重入时新增版本，旧版本保留）
-> await documentStorage.resolve_path({
->   intent: 'DR_UPDATE',
->   drId: 'DR-001',
->   version: 'v1.1',
->   title: '架构优化'
-> });
-> // → 解析为：resolve_path(intent="DR_UPDATE", drId, version) 返回的路径
+> ```bash
+> # DR 主文档修订：原地更新
+> ae-sdd doc save --intent DR --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-draft.md --changelog-note "架构优化"
 >
-> // 写出 DR 补充说明（原地累加，不带版本号）
-> await documentStorage.resolve_path({
->   intent: 'DR_SUPPLEMENT',
->   drId: 'DR-001',
->   title: 'Story反馈归档'
-> });
-> // → 解析为：resolve_path(intent="DR_SUPPLEMENT", drId) 返回的路径
+> # DR 补充说明：手写后补登记（DR_SUPPLEMENT 属 📝 未实现 intent）
+> ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id DR-001 --path <手写文件> --changelog-note "Story反馈归档"
 > ```
 
 ---
@@ -161,7 +149,7 @@ DR 修改可能影响多个 Story，需要评估：
 
 ## 第五步：通知受影响的 Story
 
-> **🔴 前置条件：** DR 主文档已通过 `save_doc(intent="DR", ...)` 落地（G-DOC-STORAGE ✅）后，才能通知下游 Story。
+> **🔴 前置条件：** DR 主文档已通过 `ae-sdd doc save --intent DR ...` 落地（G-DOC-STORAGE ✅）后，才能通知下游 Story。
 
 对每个受影响的 Story，在其补充说明文档中追加通知：
 

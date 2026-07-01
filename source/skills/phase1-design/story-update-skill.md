@@ -22,9 +22,9 @@ description: 根据 Proposal、Story 补充说明文档和 Story 模板更新 St
 
 | 文档类型 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
-| Story 主文档 | `save_doc(intent="STORY", storyId, version={major,minor})` | v{major}.{minor} | 新增版本 |
-| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
-| Proposal | `save_doc(intent="PROPOSAL", storyId, version={N})` | 按 N 编号 | 新增 |
+| Story 主文档 | `ae-sdd doc save --intent STORY --story-id {S} --content-file 草稿.md` | 不带版本号（原地更新）|
+| Story Supplement | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
+| Proposal | `ae-sdd doc save --intent PROPOSAL --story-id {S} --content-file 草稿.md` | 不带版本号 | 新增 |
 
 ## 流程
 

@@ -25,16 +25,16 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 DR Review 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **路径**（§2.2 路径模板）：`resolve_path(intent="DR_SUPPLEMENT", drId)` 动态定位（Review 报告与 UpdatePlan 同目录，`vN.m` 表版本.轮次；路径模板见 document-storage §2.2，禁止手写）
+> 1. **存文档**：`ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md`（📝 未实现 intent，手写后 `ae-sdd doc finalize` 补登记）
 > 2. **命名**（§3 命名规则）：Review 类文档带 `vN.m`（版本.轮次，m 随 Review 轮次递增）
 > 3. **重入判定**（§4 重入 SOP）：DR Review 重入时**新增报告**（m 递增，N 表 DR 主版本号）
 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| DR Review 报告 | `save_doc(intent="DR_SUPPLEMENT", drId, version={N,m})` | 带 vN.m | **新增**（m 递增）|
-| DR Review UpdatePlan | `save_doc(intent="DR_SUPPLEMENT", drId, version={N,m})`（附 UpdatePlan 后缀）| 带 vN.m | **新增**（m 递增）|
-| DR Review ChangeLog | `save_doc()` 自动追加（无需手写路径）| 不带版本号 | 原地累加（追加本次 Review 轮次记录）|
-| DR Review Supplement | `save_doc(intent="DR_SUPPLEMENT", drId)` | 带 vN.m | 原地累加 |
+| DR Review 报告 | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 📝 手写+finalize |
+| DR Review UpdatePlan | 同上（附 UpdatePlan 后缀）| 📝 手写+finalize |
+| DR Review ChangeLog | `ae-sdd doc finalize --changelog-note` 追加 | — | 原地累加 |
+| DR Review Supplement | `ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id {drId}` | 📝 手写+finalize |
 
 > **存放目录语义：** `CR/`（Code Review / 文档 Review）目录统管所有 Review 类产出；`ChangeLog/` 子目录集中维护 DR Review 累积变更记录。
 
@@ -858,7 +858,7 @@ DR Review 发现 RA-DEFECT
     ↓
 第 3 步：RA 修订完成（新版本 RA 落盘）
     ├─ RA §13 关联矩阵显式标注"本次修订影响了 N 个 DR/Story/Task"
-    └─ 通过 document-storage-skill.save_doc() 写新版本
+    └─ 通过 `ae-sdd doc save`/`ae-sdd doc finalize` 写新版本
     ↓
 第 4 步：🔴 触发下游重审（按影响清单）
     ├─ DR 在草稿/Review 阶段 → 触发 dr-update-skill（按 RA 修订内容回改 DR）
@@ -876,12 +876,12 @@ DR Review 发现 RA-DEFECT
 
 | # | 产物 | 路径 | 命名规则 |
 |---|------|------|----------|
-| 1 | RA 新版本 | `save_doc(intent="RA", raId, version={N+1,0})` | v 递增 |
-| 2 | RA ChangeLog 行 | `save_doc()` 自动追加 | 追加 1 行 |
+| 1 | RA 新版本 | `ae-sdd doc save --intent RA --doc-id {raId}` | 原地更新 |
+| 2 | RA ChangeLog 行 | `ae-sdd doc save` 自动追加 | 追加 1 行 |
 | 3 | RA §13 关联矩阵修订记录 | RA 文档内 §13 | 标注"本次修订影响 N 个下游文档" |
-| 4 | DR 重审报告 | `save_doc(intent="DR_SUPPLEMENT", drId, version={N,m+1})` | m 递增 |
-| 5 | Story 重审报告 | `save_doc(intent="STORY_REVIEW", storyId, version={m+1})` | m 递增 |
-| 6 | 闭环审计行 | `save_doc()` 独立审计文件（intent 由 RA-DEFECT 闭环专用）| 独立审计文件 |
+| 4 | DR 重审报告 | `ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id {drId}` | 📝 手写+finalize |
+| 5 | Story 重审报告 | `ae-sdd doc save --intent STORY_REVIEW --story-id {S}` | 带 r{N} |
+| 6 | 闭环审计行 | `ae-sdd doc finalize` 独立审计文件 | 独立审计文件 |
 
 #### 3.4.4 闭环审计行模板
 
@@ -948,7 +948,7 @@ requirement-analysis-skill §RA 修订影响分析                │
 | DR ID | {DR-ID} |
 | DR 当前版本 | v{N} |
 | Review 轮次 | m |
-| Review 报告路径 | `resolve_path(intent="DR_SUPPLEMENT", drId, version={N,m})` |
+| Review 报告路径 | `ae-sdd doc resolve --intent DR_SUPPLEMENT --doc-id {drId}` |
 | Plan 生成时间 | {YYYY-MM-DD} |
 | Reviewer | {AI Agent / 人工} |
 
@@ -1129,7 +1129,7 @@ dr-update-skill 执行完成后，重新触发本 SKILL 进入下一轮评审（
 | 闸 4 | UpdatePlan 完整 | 修复建议可执行（含目标章节/修改方式/验证方式） |
 | 闸 5 | 影响面已评估 | Story 拆分影响已识别（直接/间接/无影响） |
 | 闸 6 | 用户已确认 | 在审核点说"确认" |
-| 闸 7 | 报告已落盘 | `documentStorage.save_doc(intent="DR_SUPPLEMENT", ...)` 返回 success（G-DOC-STORAGE ✅）|
+| 闸 7 | 报告已落盘 | `ae-sdd doc save --intent DR_SUPPLEMENT` exit 0（G-DOC-STORAGE ✅）|
 | 闸 8 | dr-update 已触发 | UpdatePlan 传递成功，dr-update-skill 启动 |
 
 ---

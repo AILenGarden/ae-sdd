@@ -23,10 +23,10 @@ description: 根据 DR + PRD + 产品原型 + Story 模板审查 Story，记录�
 
 | 输出文档 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
-| Story Review 报告 | `save_doc(intent="STORY_REVIEW", storyId, version={r:N})` | 带 r{N} | 新增 |
-| Story Supplement | `save_doc(intent="STORY_SUPPLEMENT", storyId)` | 不带版本号 | 原地累加 |
-| Proposal | `save_doc(intent="PROPOSAL", storyId, version={N})` | 按 N 编号 | 新增 |
-| 跨轮 Review 对比表 | `save_doc(intent="REVIEW_COMPARE", storyId, version="v1-to-v2")` | 带 v1-to-v2 | 新增 |
+| Story Review 报告 | `ae-sdd doc save --intent STORY_REVIEW --story-id {S} --version "r1" --content-file 草稿.md` | 带 r{N} | 新增 |
+| Story Supplement | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
+| Proposal | `ae-sdd doc save --intent PROPOSAL --story-id {S} --content-file 草稿.md` | 不带版本号 | 新增 |
+| 跨轮 Review 对比表 | `ae-sdd doc finalize --intent REVIEW_COMPARE --story-id {S}` | 📝 手写+finalize |
 
 ## 流程
 

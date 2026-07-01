@@ -56,7 +56,7 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 
 ### 3. 生成测试报告
 
-使用 `save_doc(intent="TEST_REPORT", storyId, version={v:N,r:M})` 写报告。报告必须包含：
+使用 `ae-sdd doc save --intent TEST_REPORT --story-id {S} --version "v1-r1" --content-file 草稿.md` 写报告。报告必须包含：
 
 - 实际命令、工作目录、退出码、Profile。
 - 原始日志、XML、扫描报告路径。
