@@ -1,9 +1,10 @@
-# {Story ID} - 测试报告
+# {WorkItem ID} - 测试报告
 
 ## 执行信息
 
 | 项 | 值 |
 |----|-----|
+| WorkItem | `{WORKITEM-ID}` |
 | Story | [{Story ID}]({Story 相对路径}) |
 | 执行时间 | {YYYY-MM-DD HH:mm} |
 | 执行轮次 | 第 {N} 轮 |
@@ -20,10 +21,10 @@
 | 实际命令 | `mvn -pl {module} -am test/verify ...` |
 | Maven Profile | `{profile 或 无}` |
 | 退出码 | `{0/非0}` |
-| 原始日志 | `.auto-engineering/{STORY-ID}/evidence/test-run-v{N}-r{M}.log` |
+| 原始日志 | `.auto-engineering/{WORKITEM-ID}/evidence/test-run-v{N}-r{M}.log` |
 | Surefire XML | `{module}/target/surefire-reports/TEST-*.xml` |
 | Failsafe XML | `{module}/target/failsafe-reports/TEST-*.xml / 本 Story 无 IT` |
-| 真实性扫描报告 | `.auto-engineering/{STORY-ID}/evidence/test-authenticity-scan-v{N}-r{M}.md` |
+| 真实性扫描报告 | `.auto-engineering/{WORKITEM-ID}/evidence/test-authenticity-scan-v{N}-r{M}.md` |
 
 > 🔴 禁止只填写"测试通过"。以上路径必须真实存在；统计数据必须来自 XML 或原始日志，不得人工估算。
 

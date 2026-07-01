@@ -23,10 +23,10 @@ description: 根据 DR + PRD + 产品原型 + Story 模板审查 Story，记录�
 
 | 输出文档 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
-| Story Review 报告 | `ae-sdd doc save --intent STORY_REVIEW --story-id {S} --version "r1" --content-file 草稿.md` | 带 r{N} | 新增 |
-| Story Supplement | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
-| Proposal | `ae-sdd doc save --intent PROPOSAL --story-id {S} --content-file 草稿.md` | 不带版本号 | 新增 |
-| 跨轮 Review 对比表 | `ae-sdd doc finalize --intent REVIEW_COMPARE --story-id {S}` | 📝 手写+finalize |
+| Story Review 报告 | `ae-sdd doc save --intent STORY_REVIEW --work-item {W} --story-id {S} --version "r1" --content-file 草稿.md` | 带 r{N} | 新增 |
+| Story Supplement | `ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 | 原地更新 |
+| Proposal | `ae-sdd doc save --intent PROPOSAL --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 | 原地更新 |
+| 跨轮 Review 对比表 | `ae-sdd doc save --intent REVIEW_COMPARE --work-item {W} --story-id {S} --version "v1-to-v2" --content-file 草稿.md` | 带 v{N}-to-v{M} | 新增 |
 
 ## 流程
 

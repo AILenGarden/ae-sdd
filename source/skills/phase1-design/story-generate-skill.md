@@ -25,10 +25,10 @@ description: Story 生成 SKILL - Phase 1 ① 节点的环节内具体规则。�
 | 输出文档 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
 | Story 主文档 | `ae-sdd doc save --intent STORY --story-id {S} --content-file 草稿.md` | 不带版本号（原地更新）|
-| Story Supplement | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
-| Story-WriterReport | `ae-sdd doc finalize --intent STORY_WRITER_REPORT --story-id {S}` | 📝 手写+finalize |
-| Review 对比表 | `ae-sdd doc finalize --intent REVIEW_COMPARE --story-id {S}` | 📝 手写+finalize |
-| StoryGeneratePlan | `ae-sdd doc finalize --intent STORY_GENERATE_PLAN --story-id {S}` | 📝 手写+finalize |
+| Story Supplement | `ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 |
+| Story-WriterReport | `ae-sdd doc save --intent STORY_WRITER_REPORT --work-item {W} --story-id {S} --content-file 草稿.md` | 带 r{N} |
+| Review 对比表 | `ae-sdd doc save --intent REVIEW_COMPARE --work-item {W} --story-id {S} --version "v1-to-v2" --content-file 草稿.md` | 带 v{N}-to-v{M} |
+| StoryGeneratePlan | `ae-sdd doc save --intent STORY_GENERATE_PLAN --work-item {W} --story-id {S} --content-file 草稿.md` | 带 r{N} |
 
 ## 整体流程
 

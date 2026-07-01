@@ -18,8 +18,8 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 | 文档类型 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
 | DR 主文档 | `ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md` | 不带版本号（原地更新）|
-| DR Supplement | `ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id {drId}` | 📝 手写+finalize |
-| 受影响 Story 变更通知 | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
+| DR Supplement | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
+| 受影响 Story 变更通知 | `ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 |
 
 > **调用示例：** 详见 `document-storage-skill.md §9` 横切调用规范。
 
@@ -29,8 +29,8 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 > # DR 主文档修订：原地更新
 > ae-sdd doc save --intent DR --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-draft.md --changelog-note "架构优化"
 >
-> # DR 补充说明：手写后补登记（DR_SUPPLEMENT 属 📝 未实现 intent）
-> ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id DR-001 --path <手写文件> --changelog-note "Story反馈归档"
+> # DR 补充说明
+> ae-sdd doc save --intent DR_SUPPLEMENT --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-supplement.md --changelog-note "Story反馈归档"
 > ```
 
 ---

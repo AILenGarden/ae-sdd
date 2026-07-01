@@ -51,7 +51,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 
 ## 输出
 
-复核不新增独立流程产物，默认在新版 `TEST_REPORT` 中追加“独立复核”章节并 `ae-sdd doc save --intent TEST_REPORT --story-id {S} --version "v1-r2" --content-file 草稿.md`。
+复核不新增独立流程产物，默认在新版 `TEST_REPORT` 中追加“独立复核”章节并 `ae-sdd doc save --intent TEST_REPORT --work-item {W} --story-id {S?} --version "v1-r2" --content-file 草稿.md`。
 
 章节必须包含：
 

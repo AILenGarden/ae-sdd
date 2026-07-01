@@ -148,9 +148,9 @@ L2/L4 接口测试默认真实 HTTP：`SpringBootTest(RANDOM_PORT) + TestRestTem
 
 | 输出 | API | 通过标准 |
 |---|---|---|
-| 测试用例文档 | `ae-sdd doc save --intent TESTCASE --story-id {S} --content-file 草稿.md` | 符合 `be-testcase-template.md` |
-| TestCase WriterReport | `ae-sdd doc finalize --intent TESTCASE_WRITER_REPORT --story-id {S}` | 📝 手写+finalize |
-| 合规性校验报告 | `ae-sdd doc finalize --intent TESTCASE_COMPLIANCE_REPORT --story-id {S}` | 📝 手写+finalize |
+| 测试用例文档 | `ae-sdd doc save --intent TESTCASE --work-item {W} --story-id {S?} --content-file 草稿.md` | 符合 `be-testcase-template.md` |
+| TestCase Review 报告 | `ae-sdd doc save --intent TESTCASE_REVIEW --work-item {W} --story-id {S?} --content-file 草稿.md` | 带 r{N} |
+| 合规性校验报告 | `ae-sdd doc save --intent TESTCASE_COMPLIANCE_REPORT --work-item {W} --story-id {S?} --content-file 草稿.md` | 带 r{N} |
 
 ## 合规性校验
 

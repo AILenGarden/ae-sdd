@@ -35,7 +35,7 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 |---------|---------|---------|----------|
 | DR 主文档 | `ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md` | 不带版本号（原地更新）|
 | DR ChangeLog | `ae-sdd doc save` 自动追加 | — | 追加新行 |
-| DRGeneratePlan | `ae-sdd doc save --intent RA_GENERATE_PLAN --doc-id {raId} --content-file 草稿.md` | 📝 未实现，手写+finalize |
+| DRGeneratePlan | `ae-sdd doc save --intent RA_GENERATE_PLAN --doc-id {raId} --content-file 草稿.md` | 带 r{N} |
 
 **项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
 - `ae-sdd assets read dr-generate --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/Converter/Facade/FeignClient/ServiceProviderConstants + §3/§5/§7 整章）

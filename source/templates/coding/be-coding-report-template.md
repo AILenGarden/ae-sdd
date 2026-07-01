@@ -1,19 +1,20 @@
-# STORY-{number}-BE：{标题} - Coding 报告
+# {WORKITEM-ID}：{标题} - Coding 报告
 
-> **存放路径：** 由 `document-storage.resolve_path(intent="CODING_REPORT", storyId={STORY-ID}, version={major,minor})` 推导（见 document-storage §2.2）
+> **存放路径：** 由 `document-storage.resolve_path(intent="CODING_REPORT", workItemId={WORKITEM-ID}, storyId={STORY-ID?}, version={major,minor})` 推导（见 document-storage §1.3）
 > 
 > 目录结构示例：
 > ```
-> ae-sdd-doc/Coding/{STORY-ID}/
-> └── {STORY-ID}-CodingReport-v{N}-r{M}.md      ← Coding 报告
+> ae-sdd-doc/Coding/{WORKITEM-ID}/
+> └── {WORKITEM-ID}-CodingReport-v{N}-r{M}.md      ← Coding 报告
 > ```
 > 
-> 完整路径示例：`{docWorkspacePath}/ae-sdd-doc/Coding/STORY-010-BE/STORY-010-BE-CodingReport-v1-r1.md`
+> 完整路径示例：`{docWorkspacePath}/ae-sdd-doc/Coding/BUG-LIFE-001/BUG-LIFE-001-CodingReport-v1-r1.md`
 
 ## 元信息 `必填`
 
 - 文档类型：Coding 报告
-- Story ID：STORY-{number}-BE
+- WorkItem ID：{WORKITEM-ID}
+- Story ID：{STORY-ID?}
 - 来源 Story：[{story文件名}]({story相对路径})
 - 编码完成时间：{YYYY-MM-DD}
 - 编码人员：{姓名}

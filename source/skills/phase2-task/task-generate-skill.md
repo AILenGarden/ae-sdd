@@ -33,7 +33,8 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
    ```bash
    ae-sdd doc save \
      --intent {INTENT} \
-     --story-id {STORY-ID} \
+     --work-item {WORKITEM-ID} \
+     --story-id {STORY-ID?} \
      --doc-id {TASK-ID} \
      --content-file .ae-sdd/tmp/{doc-id}-draft.md \
      --changelog-note "{一句话修改说明}"
@@ -44,15 +45,15 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 
 | 输出文档 | intent | 命令示例 | 版本策略 |
 |---------|--------|---------|---------|
-| Task 0（公共依赖）| `TASK` | `ae-sdd doc save --intent TASK --story-id {S} --doc-id task-0-公共依赖说明 ...` | 不带版本号（原地更新）|
-| 各 Task 文档 | `TASK` | `ae-sdd doc save --intent TASK --story-id {S} --doc-id {taskId} ...` | 不带版本号 |
-| Task 补充说明 | `TASK_SUPPLEMENT` | `ae-sdd doc save --intent TASK_SUPPLEMENT --story-id {S} ...` | 📝 未实现，手写+finalize |
-| Task-WriterReport | `TASK_WRITER_REPORT` | `ae-sdd doc save --intent TASK_WRITER_REPORT --story-id {S} ...` | 📝 未实现，手写+finalize |
-| Task Review 报告 | `TASK_REVIEW` | `ae-sdd doc save --intent TASK_REVIEW --story-id {S} ...` | 📝 未实现，手写+finalize |
-| **统一版 CodingPlan** | `CODING_PLAN` | `ae-sdd doc save --intent CODING_PLAN --story-id {S} ...` | 不带版本号 |
-| **Task 实现方案** | `TASK_IMPL_PLAN` | `ae-sdd doc save --intent TASK_IMPL_PLAN --story-id {S} ...` | 📝 未实现，手写+finalize |
+| Task 0（公共依赖）| `TASK` | `ae-sdd doc save --intent TASK --work-item {W} --story-id {S?} --doc-id task-0-公共依赖说明 ...` | 不带版本号（原地更新）|
+| 各 Task 文档 | `TASK` | `ae-sdd doc save --intent TASK --work-item {W} --story-id {S?} --doc-id {taskId} ...` | 不带版本号 |
+| Task 补充说明 | `TASK_SUPPLEMENT` | `ae-sdd doc save --intent TASK_SUPPLEMENT --work-item {W} --story-id {S?} ...` | 不带版本号 |
+| Task-WriterReport | `TASK_WRITER_REPORT` | `ae-sdd doc save --intent TASK_WRITER_REPORT --work-item {W} --story-id {S?} ...` | 带 r{N} |
+| Task Review 报告 | `TASK_REVIEW` | `ae-sdd doc save --intent TASK_REVIEW --work-item {W} --story-id {S?} ...` | 带 r{N} |
+| **统一版 CodingPlan** | `CODING_PLAN` | `ae-sdd doc save --intent CODING_PLAN --work-item {W} --story-id {S?} ...` | 不带版本号 |
+| **Task 实现方案** | `TASK_IMPL_PLAN` | `ae-sdd doc save --intent TASK_IMPL_PLAN --work-item {W} --story-id {S?} ...` | 不带版本号 |
 
-> **注：** 📝 标记的 intent 当前未实现路径模板（见 document-storage §4.10），CLI 返回 E000 时降级：LLM 手写到目标路径后用 `ae-sdd doc finalize --path <已写文件> --intent {INTENT} --story-id {S}` 补登记。
+> **注：** `{W}` 为 WorkItem ID（PRD/BUG/OPT/Story 独立编码任务均可），`{S}` 为可选 Story ID；旧调用只传 `--story-id` 时会回退为 workItem，但新流程必须优先传 `--work-item`。
 
 ---
 
@@ -241,21 +242,21 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 
 ### 4.0 存放路径
 
-Task 文档按 Story 分子目录存放，由 `ae-sdd doc resolve --intent TASK --story-id {S} --doc-id {taskId}` 定位：
+Task 文档按 WorkItem 分子目录存放，由 `ae-sdd doc resolve --intent TASK --work-item {W} --story-id {S?} --doc-id {taskId}` 定位：
 
 ```
-{resolve_path 返回的迭代目录}/Task/
-├── {STORY-ID-1}/
-│   ├── task-0-公共依赖说明-v1.0.md
-│   ├── task-1-BossUserQuery-v1.0.md
-│   └── task-2-BossUserCreate-v1.0.md
-├── {STORY-ID-2}/
-│   ├── task-0-公共依赖说明-v1.0.md
-│   └── task-1-OrderQuery-v1.0.md
+{docWorkspacePath}/ae-sdd-doc/Task/
+├── {WORKITEM-ID-1}/
+│   ├── task-0-公共依赖说明.md
+│   ├── task-1-BossUserQuery.md
+│   └── task-2-BossUserCreate.md
+├── {WORKITEM-ID-2}/
+│   ├── task-0-公共依赖说明.md
+│   └── task-1-OrderQuery.md
 └── ...
 ```
 
-**完整路径示例：** `ae-sdd doc resolve --intent TASK --story-id STORY-010-BE --doc-id task-1-BossUserQuery` 返回值（实际路径由 resolve_path 动态定位，禁止手写）
+**完整路径示例：** `ae-sdd doc resolve --intent TASK --work-item BUG-LIFE-001 --doc-id task-1-BossUserQuery` 返回值（实际路径由 resolve_path 动态定位，禁止手写）
 
 ### 4.1 生成规则
 
@@ -516,8 +517,7 @@ Task 文档按 Story 分子目录存放，由 `ae-sdd doc resolve --intent TASK 
 **落地存储（🔴 强制）：** 完成填写后必须调用：
 
 ```text
-ae-sdd doc save --intent TASK_IMPL_PLAN --story-id {S} --content-file 草稿.md
-  （TASK_IMPL_PLAN 属 📝 未实现 intent，CLI 返回 E000 时手写到目标路径 + `ae-sdd doc finalize --path <文件> --intent TASK_IMPL_PLAN`）
+ae-sdd doc save --intent TASK_IMPL_PLAN --work-item {W} --story-id {S?} --doc-id {taskId} --content-file 草稿.md
 ```
 
 落地成功后才能进入第六步 CodingPlan 汇总。
@@ -635,8 +635,8 @@ ae-sdd doc save --intent TASK_IMPL_PLAN --story-id {S} --content-file 草稿.md
     - 类骨架不全 = 补
     - DO 字段不一致 / SQL WHERE 不明确 / 测试数据不可追溯 / 核心场景未标真实 DB 或 HTTP / 验证点未覆盖 / 调试回滚 < 5 类 = 修补对应章节
     ↓
-5. 🔴 落地：Write 草稿后调 `ae-sdd doc save --intent CODING_PLAN --story-id {S} --content-file 草稿.md --changelog-note "..."`（路径/版本/ChangeLog 全由代码负责})` 落地存储，确认 G-DOC-STORAGE 通过
-6. 🔴 输出统一版 `{STORY-ID}-CodingPlan.md` 给用户审核
+5. 🔴 落地：Write 草稿后调 `ae-sdd doc save --intent CODING_PLAN --work-item {W} --story-id {S?} --content-file 草稿.md --changelog-note "..."`（路径/版本/ChangeLog 全由代码负责）落地存储，确认 G-DOC-STORAGE 通过
+6. 🔴 输出统一版 `{WORKITEM-ID}-CodingPlan.md` 给用户审核
     - 用户必须明确说"确认"/"同意"/"可以开始"才能进入 ⑦ Coding
     - 模糊回复（如"好"/"行"/"看看"）需 AI 追问确认
     - 跳过/整体确认视为违规

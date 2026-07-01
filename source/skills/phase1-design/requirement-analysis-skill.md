@@ -69,7 +69,7 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 | RA 修订影响分析报告 | `RA_IMPACT` | `ae-sdd doc save --intent RA_IMPACT --doc-id {raId} --version "v1-r1" ...` | 带 r{N} |
 | RA 反向问题登记 | `RA_REVERSE_ISSUES` | `ae-sdd doc save --intent RA_REVERSE_ISSUES --doc-id {raId} ...` | 不带版本号（原地累加）|
 
-> **注：** RA_GENERATE_PLAN/RA_IMPACT/ISSUE 当前属 📝 未实现 intent（见 document-storage §4.10），CLI 会返回 E000 降级提示——此时 LLM 手写到目标路径后用 `ae-sdd doc finalize --path <已写文件> --intent {INTENT}` 补登记。
+> **注：** 上表 intent 均已在 document-storage §4.10 与 `_PATH_TEMPLATES` 实现，必须优先走 `ae-sdd doc save`。
 
 **项目资产读取：** 通过 [`project-assets-update-skill.md`](../cross-cutting/project-assets-update-skill.md) §6.2 脚本化读取（`ae-sdd assets read`，倒排索引+BM25）：
 - `ae-sdd assets read requirement-analysis --project <projectKey>` — 阶段入口（基线 KEY：AppService/Repository/DomainService/Service + §A/§B 整章）

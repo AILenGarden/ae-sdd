@@ -1,445 +1,481 @@
 # ae-sdd 系统能力说明书
 
-> v3.2.5 · 面向开发者、LLM Agent 与项目接入方
+> v3.7.4 · 面向开发者、LLM Agent 与项目接入方
+>
+> 本文档每个能力模块统一拆为**设计**（是什么、为什么、原则/决策）与**实现**（表格：设计点 → 具体实现方式，精确到文件:行号/函数名/CLI 命令/gate ID）两部分。表格内容随代码变化，若发现表格与代码不一致，以代码为准并提 issue 修文档。
 
-## 端到端流程编排（Phase 1/2/3）
+---
 
-> 将整个研发流程切分为三个强制有序的 Phase，每个 Phase 有明确入口门禁、执行节点、人工审核点和出口产物。
+## 1. 端到端流程编排（Phase 1/2/3）
 
-**是什么**：ae-sdd 把研发生命周期分为设计、实现、验证三个 Phase，AI 负责驱动节点推进，不能跳过任何节点。每个人工审核节点 AI 必须主动"讲故事"（在对话内直接呈现），不能只丢文档链接。
+### 设计
 
-**设计实现**：
+将整个研发流程切分为三个强制有序的 Phase，每个 Phase 有明确入口门禁、执行节点、人工审核点和出口产物。AI 负责驱动节点推进，不能跳过任何节点；每个人工审核节点 AI 必须主动"讲故事"（在对话内直接呈现），不能只丢文档链接。
 
 - Phase 1 设计阶段：需求分析(RA) → DR 生成 → Story 生成(①) → 前端视角审视(①bis) → Story Review(②) → 测试用例生成(③) → 业务逻辑汇总(③bis) → 人工审核点 1
 - Phase 2 实现阶段：实现方案预确认(人工审核 1.5) → Task 生成 + 全局 Task Review(④) → CodingPlan 生成(④bis) → CodingPlan 评审(人工审核 2.5) → Coding(⑤)
 - Phase 3 验证阶段：完成判定⑥（10 项条件）→ 全切面一致性核查(⑥bis) → CodeReview 报告(⑦) → 全链路对称性核查(⑦bis) → 人工审核点 4
-- 共 5 个人工审核节点，每个节点内容必须输出在对话中，不能要求用户自行打开文件查看
-- state.json 记录 step 级进度，不可倒退的关键门禁步骤标记为 locked
+- 共 5 个人工审核节点，内容必须输出在对话中，不能要求用户自行打开文件查看
 
-**颗粒度与边界**：流程节点粒度；Phase 1 完成确认、CodingPlan 审核等关键节点锁定后不允许重跑；不可跳过任何节点，微任务走 §0.5 快速通道也须经路由判定后才豁免。
+**v3.5.2 流程收尾合规自检**：在两处流程结束点增加"自检合规 → 不合规就修复"环节，防止 AI 裸 ✅ 收尾。Story 级 ⑦ter（人工审核点 4 后）5 维度自检；PRD 级 §1.7（`prd-complete` 前）强制先跑 `prd-check-complete`。
 
-**🆕 v3.5.2 流程收尾合规自检**：在两处流程结束点增加"自检合规 → 不合规就修复"环节，防止 AI 裸 ✅ 收尾：
+### 实现
 
-- **Story 级 ⑦ter**（人工审核点 4 后、⑧完成输出前）：5 维度自检 —— ① `gates check` 全量门禁通过 ② `gates check --only G-DOC-STORAGE` 无游离产物 ③ `state read` phase/currentStory/events 完整 ④ §⑧ 产出物表 8 类文件真实存在 ⑤ 本轮 CodeReview 无 Open 态 🔴。自愈策略：🟢 可自愈项（游离文档移位 / state 补推进 / 缺失产物补生成）AI 直接修后重跑；🔴 阻断项（逻辑性门禁失败 / 未整改 🔴）阻断升级用户。
-- **PRD 级 §1.7**（`prd-complete` 前）：强制 `prd-check-complete` 先于 `prd-complete`，堵住 `cmd_state_prd_complete` 跳过 4 层 AND 校验直接 compact 的漏洞。自愈映射：G-PRD-1 缺→回 Story 级 ⑦ter；G-PRD-3 缺→补 mitigationPlan；G-PRD-4 缺→触发审核点 5。
-- **落地强度**：SKILL 编排层文字 + 复用现有 CLI（不新建硬门禁），符合"规则描述 + 工具执行"双轨设计；7t-1/2/3 复用已有硬阻断命令，7t-4/5 由 AI 按编排文字执行清单齐全性核对。
+| 设计点 | 实现方式 |
+| --- | --- |
+| Phase/节点定义 | `source/skills/orchestration/ae-sdd-update-skill.md` 及各 phase SKILL 文件描述节点顺序 |
+| 节点进度持久化 | `state.json.phase` 字段，见 §3 流程状态持久化 |
+| Story 级 ⑦ter 自检 | AI 编排执行：`gates check` 全量 + `gates check --only G-DOC-STORAGE` + `state read` + 产出物核对，SKILL 文字描述，非独立 CLI |
+| PRD 级 §1.7 强制顺序 | `ae-sdd state prd-check-complete --prd <ID>`（`tools/bin/ae-sdd` state 子命令）必须先于 `ae-sdd state prd-complete --prd <ID>` |
+| 4 层 AND 校验 | `tools/lib/state.py:check_prd_4_layers()`（G-PRD-1~4） |
+| 审核点用户确认 token | `ae-sdd state confirm --phase <审核点>`（防 AI 自填，`tools/bin/ae-sdd` state confirm 子命令） |
 
-**颗粒度与边界（v3.5.2）**：自检维度级；自检不替代人工审核（在审核点之后做最终核对，确保用户确认内容与实际落地一致）；不得跳过自检直接收尾，跳过即视为事后回溯。
+**颗粒度与边界**：流程节点粒度；Phase 1 完成确认、CodingPlan 审核等关键节点锁定后不允许重跑；不可跳过任何节点，微任务走快速通道也须经路由判定后才豁免；自检不替代人工审核，不得跳过自检直接收尾。
 
 ---
 
-## 智能路由（4 类需求 + 4 维判定）
+## 2. 智能路由（4 类需求 + 4 维判定）
 
-> 统一入口层，对所有用户输入做需求分类后路由到对应 SKILL，两套路由机制并存互补。
+### 设计
 
-**是什么**：所有用户输入经过 7 步路由决策算法分类，优先走 4 维增强路径，分类不明时 fallback 到 4 类需求传统路径，最终路由到对应节点。
+统一入口层，对所有用户输入做需求分类后路由到对应 SKILL，两套路由机制并存互补：4 维判定（来源 × 规模 × 现有产物 × 项目类型）优先，分类不明时 fallback 到 4 类需求传统路径（套 Story 7 区模板判定规模）。
 
-**设计实现**：
+路由决策算法 7 步：工作区检查(0) → 自更新识别(1.5，短路到 update-skill) → 来源识别(1.6) → 规模识别(1.7) → G-RA 准入门禁(1.8) → 关键词匹配(2) → 加载执行(3-5)。
 
-- 路由决策算法 7 步：工作区检查(0) → 自更新识别(1.5，短路到 update-skill) → 来源识别(1.6) → 规模识别(1.7) → G-RA 准入门禁(1.8) → 关键词匹配(2) → 加载执行(3-5)
-- 4 类需求（传统路径，fallback）：套 Story 7 区模板——填满 4+ 区=中大任务(类型2)，2-3 区=小任务(类型3)，0-1 区=微任务(类型4)
-- 4 维判定（增强路径，优先）：来源(PRD/Issue/对话/BUG) × 规模(大/中/小/微) × 现有产物 × 项目类型
-- 两套并存，4 维判定优先；来源/规模不明时 fallback 到 4 类需求
-- 路由表 20+ 关键词触发词，微任务和 BUG/配置类豁免 G-RA 前置
-- CLI：`ae-sdd classify --text "..."` 输出判定结果
-- 🆕 v3.6（规划中）：路由决策算法重写为**双层裁定**——第一层任务类型（ae-sdd 自更新→交接 update-skill 监管器休眠 / 编码→第二层）；第二层任务规格（已有 PRD=大→入口 RA / 已有 DR=中→入口 DR / 已有 Story=小→入口 Story / BUG 修复=微→入口 Task）；**新需求无 PRD 强制阻断**（不允许新功能无 PRD 直接进 RA 系列，PRD 是所有新需求的唯一起点）；路由决策整合进主流程监管器 5 步启动序列 Step 3（见 §主流程监管器）
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 分类算法核心 | `tools/lib/classify.py:classify()`（行235），综合标题信号/文件名信号/关键词匹配/规模推断 |
+| 规模推断（4 维判定） | `classify.py:_infer_scale_from_lines()`（行131）/ `_infer_scale_from_project_context()`（行143） |
+| CLI 入口 | `ae-sdd classify --text "..."`（`tools/bin/ae-sdd` classify 子命令，行2960） |
+| 合法规模枚举 | `tools/lib/state.py:VALID_SCALES = ("大", "中", "小", "微")`（行88） |
+| 路由到子链 | `tools/lib/state.py:PHASE_FLOWS` 字典按 scale 选链（见 §3 表格） |
 
 **颗粒度与边界**：路由到节点级（requirement-analysis / dr-generate / story-generate / task-generate / coding），不进行节点内子步骤路由；路由决策权归 ae-sdd 流程与用户，不归 AI 临时直觉。
 
 ---
 
-## 流程状态持久化（state.json）
+## 3. 流程状态持久化（state.json）
 
-> 每个 Story 的执行进度持久化到 state.json，支持跨 session 中断恢复与多 Story 并行执行。
+### 设计
 
-**是什么**：每个 Story 对应一个独立 state.json，记录当前阶段、已完成步骤、Coding 轮次等，AI 重入时读 state 跳过已完成步骤，避免重复执行。
+每个独立编码任务（WorkItem：PRD / BUG / OPT / Story 均可）的执行进度持久化到 state.json，支持跨 session 中断恢复与多任务并行执行。AI 重入时读对应 WorkItem state 跳过已完成步骤，避免重复执行。
 
-**设计实现**：
+**v3.5.15 多子链状态机**：单条 PHASE_FLOW 拆为 4 条 PHASE_FLOWS（大/中/小/微），按 scale 路由，微链最短单步合法，修复微任务 next-step 误建议跑 RA 的问题。旧 state 无 scale 字段时按 completedSteps 反推，默认"大"（最保守）。
 
-- 存储路径：`.auto-engineering/{STORY-ID}/state.json`，多个 Story 各自独立互不干扰
-- 核心字段：`storyId / currentPhase / currentStep / completedSteps / storyVersion / codingRound / pendingOutputs / lastUpdated`
-- 🆕 v3.5.15 多入口状态机字段：`scale`（大/中/小/微，决定走哪条子链）/ `entryNode`（入口节点语义，FlowNode.value，如 BUG/CONFIG/PRD）
-- 多 Agent 扩展字段：`activeAgents[] / agentReports[]` 追踪并行 agent 状态
-- storyVersion：Story 文档内容变更时累加；codingRound：每开启新一轮 Coding 前累加
-- 重入机制：读 state.json → 解析 currentStep → 路由到对应 SKILL → 跳过 completedSteps 中已完成的步骤
-- v3.2.3 起：`ae-sdd state write --phase <next>` 切相前自动校验 memory 生命周期（enter→write 是否完成），未完成则阻断切相
-- 🆕 v3.4.0：PHASE_FLOW 新增 `ra-generated`（initialized → ra-generated → dr-generated），RA 阶段 memory 强制（修复 B3-6）；审核点 token 机制（`ae-sdd state confirm --phase <审核点>` 写 session.json 的 userConfirmedPhases，防 AI 自填，关卡3 校验）
-- 🆕 v3.5.15：单条 PHASE_FLOW → 4 子链 PHASE_FLOWS（大11/中10/小8/微4 phase），按 scale 路由。微链 initialized→coding 合法单步（修复微任务 next_step 误建议跑 RA 的可观测 bug）；BUG/配置类复用微链（entryNode 标 BUG/CONFIG）。旧 state 无 scale → `_infer_scale` 按 completedSteps 反推，默认"大"（最保守）。`PHASE_FLOW` 保留为大链别名（向后兼容）
-- CLI：`ae-sdd state read / write / next-step / confirm / validate / show / diff / lock`
-- 🆕 v3.6（规划中）：`paused` 新增为一级 phase，任何 phase 可跳入，不在 PHASE_FLOWS 子链中；新增字段：`pausedFromPhase`（暂停前 phase，续接恢复目标）/ `pauseReason`（`level3-escalation` | `user-rejected` | `user-manual`）/ `correctionCounts`（各 phase 矫正次数，主流程监管器 Level 2 矫正每次 +1，超 3 次触发 Level 3 暂停）；新增 CLI API：`state write --paused` / `state write --resume`；PHASE_PERMIT 补 `paused: frozenset()`（禁所有写操作）
+**v3.6 暂停态**：`paused` 作为一级 phase，任何 phase 可跳入，用于 Level 3 人工升级（见 §15 流程偏移检测与矫正）。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 存储路径 | `.auto-engineering/{WORKITEM-ID}/state.json`；`.ae-sdd/state.json` 仅保留 activeWorkItem 镜像，兼容旧 gate/hook |
+| 4 条子链定义 | `tools/lib/state.py:PHASE_FLOWS`（行69-88），大链 14 phase / 中链 13 / 小链 12 / 微链 7（含 TestCase 系列后已扩容，🆕 v3.7.x） |
+| 向后兼容别名 | `PHASE_FLOW = PHASE_FLOWS["大"]`（行95，🟡 deprecated） |
+| 合法 scale 枚举 | `VALID_SCALES = ("大", "中", "小", "微")`（行88） |
+| phase 允许工具集 | `tools/lib/gate_intercept.py:PHASE_PERMIT`（行64） |
+| 暂停/恢复 API | `state.py:pause_state()`（行663）/ `resume_state()`（行684） |
+| 矫正计数 API | `state.py:increment_correction()`（行706）/ `get_correction_count()`（行725） |
+| 多 Agent 状态字段 API | `state.py` 行472注释起：`activeAgents` 写入 + `agentReports` 归档（见 §4） |
+| memory 生命周期强制校验 | `tools/lib/memory_gate.py:check_state_transition()`（行51），`state write --phase` 切相前调用 |
+| PRD 4 层 AND 校验 | `state.py:check_prd_4_layers()` |
+| CLI 入口 | `ae-sdd state read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive`（`tools/bin/ae-sdd` state 子命令组） |
 
 **颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；多个 Story 的 state 文件互不干扰；state 仅记录进度，不存储业务产物内容。
 
 ---
 
-## 多 Agent 编排（角色库 + 派活协议）
+## 4. 多 Agent 编排（角色库 + 派活协议）
 
-> 在同一流程节点内把子任务拆给多个 sub-agent 并行执行，root agent 负责调度、汇总、冲突决策。
+### 设计
 
-**是什么**：当单节点内存在无强依赖的子任务时，root agent 按角色库拆分派活；Review 节点支持多 reviewer 交叉审，避免自圆其说。
+当单节点内存在无强依赖的子任务时，root agent 按角色库拆分派活；Review 节点支持多 reviewer 交叉审，避免自圆其说。8 个预定义角色：`story-writer / story-reviewer / testcase-writer / task-writer / coder / code-reviewer / test-verifier（强制）`。
 
-**设计实现**：
+派活协议要求结构化 YAML 任务分配卡（必填 `agent_role / story_id / input / output / standards / context / deadline / report_back`）；故障补救 4 级 SOP（重试→重新分配→降级→升级用户）；多 reviewer 框架按 Tier 判定单/双/三审。
 
-- 拆分原则：只拆同一节点内无强依赖的子任务，硬上限 5 个并行 sub-agent，禁止多 agent 并发写同一文件
-- 8 个预定义角色：`story-writer / story-reviewer / testcase-writer / task-writer / coder / code-reviewer / test-verifier（强制）`
-- 派活协议：结构化 YAML 任务分配卡，必填字段：`agent_role / story_id / input / output / standards / context / deadline / report_back`；缺字段视为派活不完整
-- sub-agent 回传：结构化 Markdown 报告，必含：结果 / 完成情况 / 关键决策 / 风险点 / 待 root 决策
-- 故障补救 4 级 SOP：重试(最多3次) → 重新分配 → 降级(合并/拆更细) → 升级用户
-- 多 reviewer 框架：Tier 判定(1/2/3 对应单审/双审/三审) → 视角正交切分 → 交叉对比(缺陷ID × reviewer × 评级三维表) → 冲突决策树
-- `test-verifier` sub-agent 是 ⑥.10 硬门禁，主 agent 不得自我验证，必须独立运行
+**⚠️ 设计-实现落差**：这一整套角色库、派活协议卡格式、故障补救 SOP、多 reviewer 框架，目前**只存在于 SKILL 文本描述**（`source/skills/cross-cutting/agent-orchestration-skill.md`），是对 AI 行为的软约束，代码层没有强制执行或校验派活卡格式是否合规。
 
-**颗粒度与边界**：节点内子任务级并行；降级为逻辑多视角时必须在报告头部标注 `reviewerMode: "logical-multi-perspective"`；root agent 保留最终冲突裁决权。
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 角色库/派活协议/故障 SOP/多 reviewer 框架 | `source/skills/cross-cutting/agent-orchestration-skill.md`（纯文字描述，AI 自律执行，**无代码校验**） |
+| 多 Agent 状态可见性（唯一落地的代码支撑） | `tools/lib/state.py`：`activeAgents` 字段（启动 sub-agent 时写入，行477起）/ `agentReports` 字段（完成后移入，行494起） |
+| test-verifier 独立性约束 | ⑥.10 测试真实性硬门禁 G-09 要求报告带独立 `session_id`（`tools/lib/gates.py` G-09 check 函数），是唯一有 CLI 侧校验的角色约束 |
+
+**颗粒度与边界**：节点内子任务级并行；降级为逻辑多视角时必须在报告头部标注 `reviewerMode: "logical-multi-perspective"`；root agent 保留最终冲突裁决权；除 activeAgents/agentReports 状态记录和 test-verifier session_id 校验外，其余编排规则完全依赖 AI 自律，无物理拦截。
 
 ---
 
-## 门禁体系（G-XX 三种强度）
+## 5. 门禁体系（G-XX 三种强度）
 
-> 贯穿流程的强制检查点，阻止不满足条件的节点推进，三种强度覆盖从文字约束到 CLI 硬阻断再到静态扫描的完整防线。
+### 设计
 
-**是什么**：三种强度形成纵深防御：软约束依赖 LLM 自律，硬门禁通过 CLI 阻断，扫描器兜底覆盖硬门禁无法检测的场景。
-
-**设计实现**：
+三种强度形成纵深防御：软约束依赖 LLM 自律，硬门禁通过 CLI 阻断，扫描器兜底覆盖硬门禁无法检测的场景。
 
 - **软约束**：SKILL 文本说明，LLM 自律执行
-- **硬门禁**：`tools/lib/gates.py` GATE_REGISTRY 注册，CLI `ae-sdd gates check` 阻断，不通过无法继续
+- **硬门禁**：`GATE_REGISTRY` 注册，CLI `ae-sdd gates check` 阻断，不通过无法继续
 - **检查器**：`*_scan.py` 静态扫描报告，兜底补硬门禁覆盖不到的场景
-- G-00 项目资产门卫：每次 SKILL 启动前验证资产存在 + 7 层索引齐备 + 距 lastAuditedAt ≤ 30 天；缺失由 AI Agent 路由到 `project-assets-update-skill §3` 生成（🆕 v3.4.0：原"CLI 自动调用 assets check/generate"为文档撒谎，已改为 agent 手动 `gates check --only G-00`）
-- G-RA 需求分析准入门卫（v3.2）：进 dr-generate/story-generate/task-generate 前，验证 RA 文档存在 + 8 维度齐全 + 12 维 RAModel 完整 + RA-G01~G16 全过 + 5 问自检阻断项=0。🆕 v3.4.0：RA 在 `ra-generated` phase 进行（PHASE_FLOW 新增，修复 B3-6 memory 覆盖）；G-RA 由 agent 手动调用（不在 PHASE_ENTRY_GATES）
-- G-CODE-1 Coding 真实性门卫（v3.2.1）：Coding 完成/CodeReview 前扫描 AI Coding 反模式 AP-1~AP-6
-- 🆕 v3.4.0 中段门禁（建议书1/2/4，补齐"两头强中间空"）：G-14 CodingPlan-Story 一致性（AC 对齐 + 偏离 Proposal）/ G-CODEPLAN-SRC 源码核对（类骨架附已读/待核实标记）/ G-DOC-STORAGE 文档落地存放合规（禁游离位置）
-- 🆕 v3.4.0 入口关卡三道闸（建议书4）：关卡1 entry token（`ae-sdd enter`，UserPromptSubmit 检测 `/ae-sdd` 注入强提醒）/ 关卡2 产物落地凭证校验（PreToolUse 拦产物路径 + entry token + 产物-Phase 映射）/ 关卡3 代码改动准入（非 coding phase 或无审核点 2.5 确认 → 禁写 src/）
-- 共 26 个门禁（G-00~G-14 + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~5 + G-RA-FLOW-VIOLATION + G-CODE-1），`ae-sdd gates check` 统一扫描；🆕 v3.5.11 AA 全维对齐验证器（UC-08~12）反向对账「doc 承诺门禁 ↔ gates 注册 ↔ 实现真实性」，根治「协议详尽但工具链零落地」体系性病根
-- ⑥.10 测试真实性：8 类禁止手段 + Surefire XML 解析 + AC 覆盖率 100%。🆕 v3.4.0：test-verifier 报告须带独立 session_id（≠ 主 agent），G-09 校验
-- ⑥bis 全切面一致性：以代码为锚反向核查 DR/Story/Task/测试用例/代码五方一致
-- ⑦bis 全链路对称性：DR-Story-Task-实现-测试用例五层双向追溯，无断链
-- 🆕 v3.4.0 F-1 假门禁修复：Stop hook 交叉验证 `◆ GATE: ✅ CLEAR` 与实际文档一致（AI 谎报 G-08 通过但 CodingPlan 缺关键词 → block）
 
-**颗粒度与边界**：G-00 每次 SKILL 调用前必跑；G-RA 豁免场景（微任务、BUG/配置类、重入已完成步骤）；改门禁强度必须改 `gates.py`，不能只改 SKILL.md 文字；🆕 v3.4.0 UC-06 自动检测文档-实现一致性（SKILL/子SKILL 命令 + HARNESS HS 规则），防文档撒谎复发。
+G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在需求分析阶段把关；G-CODE-1 在 Coding 完成/CodeReview 前扫描反模式；中段门禁（G-14/G-CODEPLAN-SRC/G-DOC-STORAGE）补"两头强中间空"；入口关卡三道闸（entry token / 产物落地凭证 / 代码改动准入）管住流程入口。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，**实际 29 个**：G-00~G-14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP） |
+| CLI 统一扫描入口 | `ae-sdd gates check`（`tools/bin/ae-sdd` 行2688，帮助文本自带门禁清单） |
+| 单个门禁定向检查 | `ae-sdd gates check --only <gate_id>` |
+| G-00 资产门卫 | `gates.py` G-00 check 函数；不通过时 AI 手动路由到 `project-assets-update-skill §3`（无 CLI 自动生成） |
+| G-RA-1~4 需求分析门卫 | `gates.py`，调 `scripts/ra_authenticity_scan.py`（G-RA-4，`_locate_ra_authenticity_scanner` 行1116） |
+| G-RA-5 机械派生深度 | `gates.py` 行1292起，调 `scripts/ra_depth_scan.py` |
+| G-RA-6 实现视角完整性 | `gates.py` 行1378起，调 `scripts/ra_implementation_scan.py`（I1~I7） |
+| G-RA-FLOW-VIOLATION | `gates.py` 行1208起，调 `scripts/flow_violation_scan.py`（R1~R3规则） |
+| G-CODE-1 Coding 真实性 | `gates.py` 行697起，调 `scripts/coding_authenticity_scan.py`（AP-1~AP-6反模式） |
+| G-09 测试真实性 | `gates.py` 行578起，调 `scripts/test_authenticity_scan.py`（8类禁止手段） |
+| G-CODEPLAN-SRC / G-DOC-STORAGE / G-DOC-CONSISTENCY / G-PATH | `gates.py` 对应 check 函数，中段门禁补齐 |
+| G-REVIEW-LOOP | `gates.py` + `tools/lib/review_loop.py`，`ae-sdd review-loop` 子命令 |
+| 入口关卡1（entry token） | `ae-sdd enter <projectKey> [--story <ID>]`（`tools/bin/ae-sdd`），UserPromptSubmit hook 检测 `/ae-sdd` 触发词强提醒 |
+| 入口关卡2（产物落地凭证） | `tools/lib/gate_intercept.py` PreToolUse 拦截，产物路径 + entry token + 产物-Phase 映射校验 |
+| 入口关卡3（代码改动准入） | `gate_intercept.py:PHASE_PERMIT`，非 coding phase 或无审核点 2.5 确认 → 禁写 src/ |
+| 设计-实现对齐反查 | `tools/lib/alignment_audit.py`（UC-08~UC-13，6个 check_* 函数），CLI `ae-sdd update-check`；见 §9 真实性扫描后段 |
+
+**颗粒度与边界**：G-00 每次 SKILL 调用前必跑；G-RA 豁免场景（微任务、BUG/配置类、重入已完成步骤）；改门禁强度必须改 `gates.py`，不能只改 SKILL.md 文字；`ae-sdd update-check` 自动检测文档-实现一致性，防文档撒谎复发。
 
 ---
 
-## 项目资产体系（7 层索引）
+## 6. 项目资产体系（7 层索引）
 
-> 每个接入项目维护一份标准化资产文件，是所有 SKILL 的上下文基础，通过 ES 倒排索引支持按需读取。
+### 设计
 
-**是什么**：资产文件记录微服务清单、分层规则、命名约定、技术约束等结构化信息，AI 读资产而非扫描全仓库，保证上下文质量与读取效率。
+每个接入项目维护一份标准化资产文件，是所有 SKILL 的上下文基础，通过 ES 倒排索引支持按需读取。AI 读资产而非扫描全仓库，保证上下文质量与读取效率。
 
-**设计实现**：
+资产生成由 `project-assets-update-skill` 引导 AI 跑 9 步探查 SOP（读 CLAUDE.md/AGENTS.md → 扫描工程结构 → 抽典型类 → 识别分层/命名/约束），**没有独立的 CLI 生成/更新/审计子命令**——历史上文档曾声称有 `assets check/generate/update/audit`，已确认是文档撒谎并删除。
 
-- 资产文件路径：`source/assets/{projectKey}/{projectKey}.assets.md`（7 层索引 §A-§G）
-- 生成：由 `project-assets-update-skill §3` 引导 AI 跑 9 步探查 SOP（读 CLAUDE.md/AGENTS.md → 扫描工程结构 → 抽典型类 → 识别分层/命名/约束）。🆕 v3.4.0 修正：无独立 `ae-sdd assets generate` CLI 子命令（原描述为文档撒谎）
-- 增量更新/审计：由 `project-assets-update-skill §4/§5` 引导（无独立 CLI 子命令）
-- 按需读取（ES 倒排索引 + BM25 评分）：`assets read <method>`（基线读取）/ `assets outline`（5秒总览）/ `assets query "<词>"`（精准查）/ `assets section <§X.Y>`（按需拉章节）/ `assets stats`（索引统计）
-- G-00 门卫自动检查：7 层索引缺任一层即 G-00 阻断；距 lastAuditedAt > 30 天触发警告
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 资产文件路径 | `source/assets/{projectKey}/{projectKey}.assets.md`（7 层索引 §A-§G） |
+| 生成/增量更新/审计引导 | `source/skills/cross-cutting/project-assets-update-skill.md` §3/§4/§5（纯 SKILL 文字引导 AI，无独立 CLI） |
+| ES 倒排索引 + BM25 评分 | `tools/lib/assets_index.py`（`AssetsIndex` 类：outline/query/section/stats 核心逻辑） |
+| CLI 读取入口 | `ae-sdd assets read / outline / section / query / stats`（`tools/bin/ae-sdd` 行3015起 assets 子命令组） |
+| G-00 门卫自动检查 | `tools/lib/gates.py` G-00 check 函数，7 层索引缺任一层即阻断；距 lastAuditedAt > 30 天触发警告 |
 
 **颗粒度与边界**：项目级隔离（按 projectKey）；7 层索引 §A-§G 必须齐备；RA SKILL 强制通过 `ae-sdd assets read` 接口读取，禁止直接读文件路径。
 
 ---
 
-## 实例化体系（4 层架构）
+## 7. 文档存取层（document-storage）
 
-> 母版到项目落地的 4 层分发体系，保证 SSOT 的同时支持项目级 override，脚本自动完成从母版到用户安装的全链路构建。
+### 设计
 
-**是什么**：Layer 1 母版是唯一编辑点，经脚本构建为分发包，再由安装脚本装入用户环境；接入项目通过 Layer 4 实例做 override，不修改母版。
+统一文档落地/读取/归档的横切能力，五维定位模型 + WorkItem 隔离键（projectKey × workItemId × intent × storyId? × 版本号 × ChangeLog）取代散点式手写路径拼接。所有 SKILL 读写 ae-sdd 生成的文档（DR/Story/TestCase/Task/CodingPlan 等）必须通过本层 API，禁止裸拼路径或裸调 `ae-sdd assets read`。
 
-**设计实现**：
+核心原则：intent 驱动定位（同一 API 按 intent 参数分流到不同文档类型的路径规则），Task/Coding/Test/CR 以 workItemId 作为分桶键，版本号与 ChangeLog 策略集中管理，避免每个 SKILL 各自实现一套路径逻辑导致漂移。
 
-- Layer 1 母版（SSOT）：`source/`，开发者唯一编辑点，git 跟踪
-- Layer 2 实例化分发包：`dist/ae-sdd/`，由 `scripts/build_dist.py` 构建（注入 VERSION + plugin.json，剥离 CHANGELOG/docs），git ignored
-- Layer 3 用户安装：`~/.claude/skills/ae-sdd/`，由 `scripts/install.py` 从 dist 装入，Claude Code 实际加载
-- Layer 4 项目实例：`<project>/.ae-sdd/`，由 `ae-sdd init <dir> <key>` 创建，包含 `config.yaml（指向母版）/ state.json（空模板）/ assets/（引用）/ overrides/（项目特定规则）`
-- Override 解析：项目有效规则 = 母版 defaults + overrides/（同名文件覆盖）
-- 版本同步：`ae-sdd bump <ver>` 同步三处版本号（SKILL.md / paths.py / README.md:5）
-- 开发者工作流：改 source/ → `bash scripts/dev-sync.sh`（build + install 一步到位）→ dev-sync 前必须 `ae-sdd update-check` 全绿
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 动态定位 API 契约 | `source/skills/cross-cutting/document-storage-skill.md` §4（14个API 契约，§4.10 intent 枚举表 34个intent） |
+| 路径解析 | `tools/lib/document_storage.py:resolve_path()`（行149） |
+| 文档保存（带版本号+ChangeLog） | `document_storage.py:save_doc()`（行366） |
+| 文档定稿 | `document_storage.py:finalize_doc()`（行444） |
+| 项目约束读取 | `document_storage.py:get_constraints()`（行119） |
+| 项目资产列表读取 | `document_storage.py:get_assets()`（行140） |
+| Git 路径/服务根路径 | `document_storage.py:get_git_path()`（行99）/ `get_service_root()`（行108） |
+| 版本号推断 | `document_storage.py:get_latest_version()`（行259）/ `_normalize_version()`（行239） |
+| ChangeLog 读取 | `document_storage.py:get_changelog()`（行286） |
+| RA 前置条件校验 | `document_storage.py:check_ra_prerequisites()`（行320） |
+| 存量文档迁移 | `document_storage.py:migrate_old_docs()`（行615） |
+| CLI 入口 | `ae-sdd doc save / resolve / finalize`（`tools/bin/ae-sdd` 行2722起 doc 子命令组） |
+
+**⚠️ 已知缺口**：`get_thinking_engine(projectKey)` 被 `coding-process-skill.md`（行74/104）和 `coding-skill.md`（行84）多处引用为已有 API，但 `document_storage.py` 全文无此函数实现，document-storage-skill.md §4.10 API 契约表也未收录——这是**文档声明但代码未实现**的缺口，尚待补齐或改引用。
+
+**颗粒度与边界**：所有 ae-sdd 生成文档的读写必须走本层 API，不允许 SKILL 各自维护路径拼接逻辑；version/ChangeLog 策略变更须同步 §4.10 intent 枚举表的"实现状态"列（✅已实现/📝待实现）。
+
+---
+
+## 8. 实例化体系（4 层架构）
+
+### 设计
+
+母版到项目落地的 4 层分发体系，保证 SSOT 的同时支持项目级 override。Layer 1 母版是唯一编辑点，经脚本构建为分发包，再由安装脚本装入用户环境；接入项目通过 Layer 4 实例做 override，不修改母版。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| Layer 1 母版（SSOT） | `source/`，开发者唯一编辑点，git 跟踪 |
+| Layer 2 分发包构建 | `scripts/build_dist.py` → `dist/ae-sdd/`（注入 VERSION + plugin.json，剥离 CHANGELOG/docs），git ignored |
+| Layer 3 用户安装 | `scripts/install.py` → `~/.claude/skills/ae-sdd/`，Claude Code 实际加载 |
+| Layer 4 项目实例创建 | `ae-sdd init <dir> <key>`（`tools/bin/ae-sdd` init 子命令），生成 `config.yaml/state.json/assets//overrides/` |
+| Override 解析 | 项目 `overrides/` 优先于母版 defaults，由各 SKILL 读取时的路径解析规则实现 |
+| 版本号同步 | `ae-sdd bump <ver>`（`tools/bin/ae-sdd` 行3056），同步 SKILL.md / paths.py / README.md 三处 |
+| 一步到位开发流 | `scripts/dev-sync.sh` → `scripts/dev_sync.py`（build + install），跑前必须 `ae-sdd update-check` 全绿 |
 
 **颗粒度与边界**：Layer 2/3/4 不手工改；fork（完整复制）是显式 opt-in；override 优先级：项目 overrides/ > 母版 defaults。
 
 ---
 
-## Harness 适配层
+## 9. Harness 适配层
 
-> 将 ae-sdd SKILL.md 自动转译为 Mavis harness 格式的 agent.md，使 ae-sdd 能作为 Mavis 团队级 agent 被编排。
+### 设计
 
-**是什么**：不需要手工维护两套定义，转译脚本从 SKILL.md + HARNESS.md 生成 agent.md，母版升级后重跑即可同步。
+将 ae-sdd SKILL.md 自动转译为 Mavis harness 格式的 agent.md，使 ae-sdd 能作为 Mavis 团队级 agent 被编排。不需要手工维护两套定义，转译脚本从 SKILL.md + HARNESS.md 生成 agent.md，母版升级后重跑即可同步。
 
-**设计实现**：
+**⚠️ 文档滞后修正**：原文档写转译脚本是 `convert-ae-sdd-to-harness.ps1`——该文件已不存在。实际实现是 `scripts/build_harness.py`（Python 重写版，脚本头部注释明确写"由 convert-ae-sdd-to-harness.ps1 迁移而来"），逐功能对齐原 PS1 版本（版本号 fallback / frontmatter 解析 / 多维幂等锁 / 模板渲染 / mount 失败回滚等）。
 
-- 产物路径：`harness/.harness/agent.md`，由 `ae-sdd-harness-adapter` SKILL 自动生成
-- 转译内容：SKILL.md + HARNESS.md → harness 格式，包含 26 门禁(G-00~G-14 + 中段 + G-RA 系列 + G-CODE-1) + 4 子链状态机(大11/中10/小8/微4 phase，🆕 v3.5.15) + HS-1~HS-12 硬停止规则 + per-domain routing rules
-- `.adapter.lock` 记录来源 commit hash，母版升级后 hash 变化即需重新生成
-- 转译脚本：`convert-ae-sdd-to-harness.ps1`
+### 实现
 
-**颗粒度与边界**：禁止手工编辑 agent.md；母版（source/SKILL.md）升级后必须重跑 adapter SKILL 重新生成；harness 格式由 Mavis 规范决定，转译脚本负责映射。
+| 设计点 | 实现方式 |
+| --- | --- |
+| 转译脚本 | `scripts/build_harness.py`（非 `.ps1`，PS1→Python 迁移已完成） |
+| 产物路径 | `harness/.harness/agent.md` + `harness/.harness/README.md` |
+| 幂等锁 | `harness/.adapter.lock`（JSON：`adapter_version/ae_sdd_version/commit/templateHash/converted_at`），`build_harness.py:read_adapter_lock()` |
+| 版本号三级 fallback | `build_harness.py:get_ae_sdd_version()`（行88，SKILL.md frontmatter → commit msg vX.Y.Z → git short hash） |
+| tree-hash amend 检测 | `build_harness.py:get_tree_hash()`（行147，🆕 v3.5.6，区分 amend 和真实内容变更） |
+| SKILL frontmatter 解析 | `build_harness.py:parse_skill_frontmatter()`（行168） |
+| 模板渲染 | `build_harness.py:render_template()`（行207，`{{VAR}}` 占位符替换） |
+| mavis CLI 探测与 mount | `build_harness.py:find_mavis_cmd()`（行233）/ `run_mavis()`（行252），mount 失败自动回滚产物（行488起） |
+| 备份轮转 | `build_harness.py:cleanup_old_bak()`（行68，保留最近3个 `.bak.<ts>`） |
+| CLI 用法 | `python scripts/build_harness.py [--dry-run/--force/--unmount/--clean/--no-mount]` |
+
+**颗粒度与边界**：禁止手工编辑 agent.md；母版（source/SKILL.md）升级后必须重跑 `build_harness.py` 重新生成；harness 格式由 Mavis 规范决定，转译脚本负责映射；`.adapter.lock` 多维比对（commit + ae_sdd_version + adapter_version + templateHash）任一漂移触发重转。
 
 ---
 
-## 记忆层（5 层分级 + 阶段强制门禁）
+## 10. 记忆层（5 层分级 + 阶段强制门禁）
 
-> phase-aware 的 5 层持久化记忆，在关联节点强制执行 enter→write→exit 生命周期，提供跨 session 上下文连续性。
+### 设计
 
-**是什么**：记忆分 5 层，关联节点（RA/design/coding-plan/coding/review）强制走完整生命周期，写入质量门禁防止 LLM 把猜测写成记忆。
+phase-aware 的 5 层持久化记忆，在关联节点（RA/design/coding-plan/coding/review）强制执行 enter→write→exit 生命周期，提供跨 session 上下文连续性。写入质量门禁防止 LLM 把猜测写成记忆——L1+ 每条记忆必须有证据（文件路径:行号/报告路径/用户确认/工具结果），无证据只能留 L0。
 
-**设计实现**：
+5 层架构：L0 会话草稿（session 后可删）/ L1 Story 级记忆 / L2 项目级记忆 / L3 跨项目 pattern / L4 冷归档（postmortem/ADR）。冲突处理：新证据与记忆冲突时写 `kind=conflict`，禁止静默覆盖。
 
-- 5 层架构：L0 会话草稿（session 后可删）/ L1 Story 级记忆 / L2 项目级记忆 / L3 跨项目 pattern / L4 冷归档（postmortem/ADR）
-- 强制生命周期（关联节点）：`memory enter` → 节点工作 → `memory write` → `memory exit`；exit 无 write 则失败
-- v3.2.3 自动强制：`ae-sdd state write --phase <next>` 切相前自动校验 `check_state_transition()`，未完成 enter→write 则阻断
-- 写入质量要求：L1+ 每条记忆必须有证据（文件路径:行号 / 报告路径 / 用户确认 / 工具结果），无证据只能留 L0
-- 冲突处理：新证据与记忆冲突时写 `kind=conflict`，引用新旧两份证据，禁止静默覆盖
-- 晋升规则：L0→L1 需具体证据；L2→L3 需跨项目多次发生或用户批准
-- CLI：`ae-sdd memory enter / write / exit / read / search / promote / summarize`
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 生命周期 API | `tools/lib/memory_store.py:enter()`（行164）/ `write()`（行193）/ `exit_phase()`（行286） |
+| exit 前置校验 | `memory_store.py:check_exit_ready()`（行236），exit 无 write 则失败 |
+| phase→memory 映射 | `tools/lib/memory_gate.py:memory_phase_for_state_phase()`（行29） |
+| state 切相前自动校验 | `memory_gate.py:check_state_transition()`（行51），`ae-sdd state write --phase` 调用，未完成 enter→write 则阻断 |
+| 校验结果格式化 | `memory_gate.py:format_transition_block()`（行107） |
+| 存储格式 | JSONL，`memory_store.py:_jsonl_path()`（行109）/ `_append_jsonl()`（行131） |
+| CLI 入口 | `ae-sdd memory enter / write / exit / read / search / promote / summarize`（`tools/bin/ae-sdd` 行2845起 memory 子命令组） |
 
 **颗粒度与边界**：仅 5 个关联节点强制触发；kind 字段：decision/finding/issue/risk/fix/conflict/observation；L4 只读为主，禁止整体注入上下文。
 
 ---
 
-## Plan-First 编排（CodingPlan 16 章节 + 14 门禁）
+## 11. Plan-First 编排（CodingPlan 16 章节 + 14 门禁）
 
-> 编码前必须先生成并经用户确认 CodingPlan，将架构决策、实现顺序、类骨架、验证点全部锁定。
+### 设计
 
-**是什么**：CodingPlan 是 Coding 阶段的唯一依据，AI 不得自行调整 Plan 内容；14 条门禁全部通过才允许进入 Coding。
+编码前必须先生成并经用户确认 CodingPlan，将架构决策、实现顺序、类骨架、验证点全部锁定。CodingPlan 是 Coding 阶段的唯一依据，AI 不得自行调整 Plan 内容；14 条门禁全部通过才允许进入 Coding。
 
-**设计实现**：
+CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策略/事务边界/缓存策略/错误码/异常处理/状态机实现/外部依赖/数据模型/可观测性/复用能力。实现方案决策基线（最高优先级 4 步强制）：① 现有能力复用扫描 → ② 业内成熟方案参考 → ③ 五维代码质量评估 → ④ 核心能力归属唯一。
 
-- CodingPlan 生成时机：Phase 2 ④bis，由 task-writer 汇总所有 Task 的任务级 CodePlan 为统一版 `{STORY-ID}-CodingPlan.md`
-- CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制 / 幂等策略 / 事务边界 / 缓存策略 / 错误码 / 异常处理 / 状态机实现 / 外部依赖 / 数据模型 / 可观测性 / 复用能力
-- 14 条 CodingPlan 门禁：Task 0~N 全部生成、CodingModel 11 维均有明确结论、核心链路保护、资源隔离等，全部通过才允许进入 Coding
-- Phase ④→⑤ 调用协议 7 项前置条件：Task 文档齐 + 每 Task 含 CodingModel 决策记录 + 每 Task 含任务级 CodePlan + TR-1~7 全通过 + 14 门禁全过 + 用户明确确认 + 决策无冲突
-- 实现方案决策基线（最高优先级 4 步强制）：① 现有能力复用扫描 → ② 业内成熟方案参考 → ③ 五维代码质量评估（可用/高效/可维护/健壮/可读）→ ④ 核心能力归属唯一
-- 人工审核点 2.5：AI 主动 walkthrough CodingPlan 内容 + 14 门禁状态 + CodingModel 摘要 + 风险 Task + 类骨架预览，逐条等用户确认
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| CodingPlan 生成时机 | Phase 2 ④bis，由 task-writer 汇总，见 `source/skills/phase2-coding/coding-process-skill.md` |
+| 14 条门禁关键词校验 | `tools/lib/gates.py:CODINGPLAN_14GATES_KEYWORDS`（行459-474） |
+| 关键词缺失检测 | `gates.py` 行492：`missing_kw = [k for k in CODINGPLAN_14GATES_KEYWORDS if k not in content]` |
+| G-08 门禁 | `gates.py`，CodingPlan 文档存在且 14 门禁全过才放行 coding-process phase |
+| 5 上下文加载（🆕 v3.7.3） | `coding-process-skill.md`：项目约束/技术约束/Story/Task/TestCase，统一走 `document-storage-skill` API 读取（见 §7） |
+| 人工审核点 2.5 | AI 主动 walkthrough（SKILL 文字流程，非 CLI），逐条等用户确认 |
 
 **颗粒度与边界**：CodingPlan 在编码前必须生成并经用户确认，不可跳过；编码过程中偏离 Plan 需用户实时确认；CodingPlan 变更触发 storyVersion 累加。
 
 ---
 
-## 真实性扫描（3 个静态扫描器）
+## 12. 真实性扫描（静态扫描器 + 设计-实现对齐验证器）
 
-> 防止 LLM 伪造测试通过或伪造需求分析内容的静态扫描器，作为不可绕过的硬门禁运行时依赖。
+### 设计
 
-**是什么**：三个扫描器分别覆盖测试真实性、Coding 真实性、RA 真实性，输出统一 JSON 契约，BLOCKER=0 才算通过。
+防止 LLM 伪造测试通过、伪造需求分析内容、伪造设计-实现对齐的静态扫描器，作为不可绕过的硬门禁运行时依赖。输出统一 JSON 契约，BLOCKER=0 才算通过。
 
-**设计实现**：
+**⚠️ 文档滞后修正**：原文档标题写"3 个静态扫描器"，实际共 6 个扫描器（测试/Coding/RA真实性 3个 + RA流程违规/RA机械派生深度/RA实现视角完整性 3个），外加 2 个对齐验证工具（AA全维对齐验证器 + IC迭代检查器）。
 
-- **测试真实性扫描**（`scripts/test_authenticity_scan.py`，⑥.10 硬门禁）：
-  - 扫描 8 类禁止手段：`@Disabled` / `assertTrue(true)` / catch 吞异常 / 全 Mock 替代 / 期望值=实际值 / 无效测试数据 / `Thread.sleep` 绕过 / 凑覆盖率
-  - 解析 Maven Surefire/Failsafe XML，与报告统计对账
-  - AC × 测试方法覆盖率验证，要求 100% 覆盖；检测跳测参数（`-DskipTests` 等）
-  - 由 `test-verifier` sub-agent 独立执行，主 agent 不得自我验证
+### 实现
 
-- **Coding 真实性扫描**（`scripts/coding_authenticity_scan.py`，G-CODE-1）：
-  - 扫描 AI Coding 反模式库 AP-1~AP-6：桩代码伪装完整实现、TODO 留空关键路径、测试数据硬编码来源不明等
-  - 由 `ae-sdd gate coding-required` 在 Coding 完成/CodeReview 前自动触发
+| 设计点 | 实现方式 |
+| --- | --- |
+| 测试真实性扫描（⑥.10/G-09硬门禁） | `scripts/test_authenticity_scan.py`：8类禁止手段 + Surefire XML 解析 + AC覆盖率100%验证；由 test-verifier sub-agent 独立执行 |
+| Coding 真实性扫描（G-CODE-1） | `scripts/coding_authenticity_scan.py`：AP-1~AP-6反模式库；`ae-sdd gate coding-required` 自动触发 |
+| RA 真实性扫描（G-RA-4） | `scripts/ra_authenticity_scan.py`：8类禁止规则（vague-ellipsis/no-evidence/fabricated-field等） |
+| RA 流程违规审计（G-RA-FLOW-VIOLATION） | `scripts/flow_violation_scan.py`：R1~R3规则（12维决策记录/8维度挖掘/缺口管理） |
+| RA 机械派生深度（G-RA-5） | `scripts/ra_depth_scan.py`：验证每条规则 R 机械追问 6 问 → 衍生 R′ |
+| RA 实现视角完整性（G-RA-6） | `scripts/ra_implementation_scan.py`：I1~I7 检查 |
+| 外挂内容安全扫描（插件加载防护） | `scripts/plugin_content_scan.py`：PC-001~PC-010（危险删除/任意命令执行/远程脚本执行等），由 `tools/lib/plugin_loader.py:_scan_plugin_content()`（行725起）调用 |
+| 设计-实现对齐验证器（AA） | `tools/lib/alignment_audit.py`：UC-08~UC-13（6个 check_uc0x 函数），反向对账"doc 承诺门禁↔gates 注册↔实现真实性"，CLI `ae-sdd update-check` |
+| 设计-实现一致性迭代检查（IC） | `tools/lib/iteration_check.py`：IC-1~IC-4 机器粗筛（report-only 不阻断），CLI `ae-sdd iteration-check` |
 
-- **RA 真实性扫描**（`scripts/ra_authenticity_scan.py`，G-RA-4）：
-  - 8 类禁止规则：vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness
-  - 输出 JSON 契约，与 test_authenticity_scan.py 格式一致
-
-**颗粒度与边界**：测试真实性扫描是 ⑥.10 硬门禁；三个扫描器均不可被 SKILL 文字描述替代；扫描器路径变更须同步更新 UC-04 分发检查。
+**颗粒度与边界**：测试真实性扫描是 ⑥.10 硬门禁；扫描器均不可被 SKILL 文字描述替代；AA（UC-08~13）阻断式，IC（IC-1~4）report-only 不阻断；扫描器路径变更须同步更新 update-graph.json。
 
 ---
 
-## 工具链 CLI（14 大类子命令）
+## 13. 工具链 CLI
 
-> ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执行"双轨 SSOT。
+### 设计
 
-**是什么**：规则在 SKILL.md 描述，执行在 CLI 实现，两者通过 `ae-sdd update-check` 自动验证一致性；CLI 是门禁、状态、资产、记忆等能力的统一执行入口。
+ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执行"双轨 SSOT。规则在 SKILL.md 描述，执行在 CLI 实现，两者通过 `ae-sdd update-check` 自动验证一致性；CLI 是门禁、状态、资产、记忆等能力的统一执行入口。
 
-**设计实现**：
+**⚠️ 文档滞后修正**：原文档标题写"14 大类子命令"，实际顶层子命令组已达 29 个（新增 `doc / enter / context-pressure / ra-gate / flow-violation-scan / ra-depth-scan / ra-implementation-scan / review-loop / plugin / iteration-check` 等）；原表格中列出的 `route / sync-tools / run / quick / proposal` 顶层命令**不存在**，已从下表删除。
 
-- 入口：`tools/bin/ae-sdd`（Python 3），lib 模块（`assets_index / classify / db_tool / gates / gate_intercept / git_insight / memory_gate / memory_store / output / paths / session / state / update_graph` 等）
-- 输出协议：JSON 走 stdout，日志走 stderr，pipeline 友好
+### 实现
 
-| 类别 | 核心子命令 |
+| 入口 | `tools/bin/ae-sdd`（Python 3），lib 模块见各章节 |
 | --- | --- |
-| 资产类 | `assets read / outline / section / query / stats`（🆕 v3.4.0 修正：原 check/generate/update/audit 为文档撒谎，已删除；G-00 走 `gates check --only G-00`，资产生成走 project-assets-update-skill §3）|
-| 状态机类 | `state read / write / next-step / confirm / validate / show / diff / lock` |
-| 入口凭证类（🆕 v3.4.0） | `enter <projectKey> [--story <ID>]`（关卡1 入口 token）|
-| 路由类 | `classify / route` |
-| 门禁类 | `gates check / gate ra-required / gate coding-required / gate doc-storage / review` |
+| 输出协议 | JSON 走 stdout，日志走 stderr，pipeline 友好 |
+
+| 类别 | 实际子命令（按 `tools/bin/ae-sdd` 现状） |
+| --- | --- |
+| 资产类 | `assets read / outline / section / query / stats` |
+| 文档存取类 | `doc save / resolve / finalize` |
+| 状态机类 | `state read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive` |
+| 入口凭证类 | `enter <projectKey> [--story <ID>]` |
+| 路由类 | `classify` |
+| 门禁类 | `gates check / gate ra-required / gate coding-required / gate doc-storage / gate-intercept / ra-gate` |
 | 记忆类 | `memory enter / write / exit / read / search / promote / summarize` |
-| 数据库类 | `db profiles / query / explain / audit`（只读，本地 profile） |
-| Git 类 | `git status / diff / log / blame / impact`（只读，结构化 JSON 输出） |
+| 数据库类（只读） | `db profiles / query / explain / audit` |
+| Git 类（只读） | `git status / diff / log / blame / impact` |
 | 更新图谱 | `update-check [--only UC-XX] / update-check --affected <文件>` |
+| 迭代检查 | `iteration-check` |
+| 上下文压力 | `context-pressure` |
+| RA 扫描类 | `ra-depth-scan / ra-implementation-scan / flow-violation-scan` |
+| Review 类 | `review-loop` |
 | 版本类 | `bump <ver> / version` |
-| 维护类 | `health / sync-tools / init / run / quick / proposal` |
+| 维护类 | `health / init / init-hooks / runtime / plugin / scripts-dir / prompt-inject / stop-check` |
 
 - `ae-sdd health` 9 项自检：子 SKILL 章节完整性 / 项目资产双源一致 / 规则-工具同步 / 门禁覆盖度 / TR-1~7 / 扫描器就绪 / CHANGELOG 版本一致
-- `ae-sdd update-check` 6 项检查（UC-01~06）：版本号三处一致 / 门禁注册一致 / 命令契约闭环 / 扫描器分发 / 健康度清单覆盖 / 🆕 v3.4.0 文档-实现一致性（SKILL/子SKILL 命令 + HARNESS HS 规则）；dev-sync 前必须全绿
-- 🆕 v3.5.3 设计-实现一致性迭代检查（人工/Agent 深度核对，补 UC 盲区）：每月/重大变更后跑，4 步 SOP —— ① 跑 UC+health+gates 作基线 ② HS 规则 vs 物理实现交叉核对（查"声明物理拦截实为零"的撒谎）③ CLI 命令契约深挖（查幽灵命令整段描述 + F-1 交叉验证覆盖面）④ 已实现未接入扫描（查 untracked + 未 import 模块）。补 UC 查不到的 4 类盲区：HS 物理拦截实现齐全度 / 幽灵命令整段描述 / 交叉验证覆盖面 / 已实现未接入。定位为 UC 的"深挖层"，不替代 UC（UC 是改完即跑的快速防线，本节是周期性深度体检）。
-- 🆕 v3.5.4 迭代检查硬化为 CLI + P0 撒谎项修复：`ae-sdd iteration-check` 子命令（`tools/lib/iteration_check.py` + `tools/bin/ae-sdd:cmd_iteration_check`）跑 IC-1~4 机器粗筛（report-only 不阻断），接管 SOP 步骤 2/3/4 人工粗筛；HS-7 补 PreToolUse 物理拦截（`gate_intercept.py:check_intercept` + 复用 `state.check_prd_4_layers` 实时校验，堵 `cmd_state_prd_complete` 跳 4 层 AND 漏洞）；HS-8 补 Stop hook 检测（`stop_check.py:_check_compact_failure` 检测 `prdStatus=awaiting_compact` 无 `summary.md` 卡住态）；HS-4/6 诚实自认降级（待 events 接入 + testCodeAuditedAt 标记机制落地后补物理拦截）；SKILL.md §🛠️ 工具 API 速查重写删除幽灵命令段（v3.0 rules.yaml/.mjs/sync-tools 残留）。
-- 🆕 v3.5.5 主会话职责收口 + 节点级上下文压力软提示：**`ae-sdd context-pressure`** 子命令（`tools/lib/context_pressure.py` + `tools/bin/ae-sdd:cmd_context_pressure`）跑 5 信号采集（session.userConfirmedPhases / state.events / state.history / state.activeAgents / 落盘文档总字节）+ 与可配置阈值比对输出 low/medium/high/critical 评级；6 个审核点边界（1/1.5/2/2.5/4/5）必调一次，report-only 不阻断流程；与 v3.3.0 PRD 级 compact（事后收尾）互补不替代。同时 SKILL.md §🤖 章节新增"主会话职责边界"小节（主会话 = 路由 + 编排 + 汇总 + 讲解 + 用户对话；其他全部派 sub-agent），agent-orchestration-skill.md 新增 §8.5 默认单 sub-agent 模式 + §8.6 节点级派活清单（审核点 → sub-agent 映射表）。缺省阈值硬编码首版，可被 `.ae-sdd/config.yaml` 的 `contextPressure.thresholds.<level>.<signal>` override（字段缺失/非法保留缺省不抛异常）。
+- `ae-sdd update-check`：权威源 `source/standards/update-graph.json`（UC-01~UC-13，比早期 UC-01~06 更完整），版本号三处一致 / 门禁注册一致 / 命令契约闭环 / 扫描器分发 / 健康度清单覆盖 / 文档-实现一致性等；dev-sync 前必须全绿
+- `ae-sdd iteration-check`：IC-1~4 机器粗筛（report-only），接管人工 SOP 步骤 2/3/4
 
-**颗粒度与边界**：db/git 工具为只读；🆕 v3.4.0 G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json（UC-03/UC-06 兜底）；🆕 v3.5.3 迭代检查不阻断 dev-sync（报告 + 修复建议，由用户决定是否本次迭代修）；🆕 v3.5.4 iteration-check 同样 report-only，机器粗筛 + 人工复核语义层；🆕 v3.5.5 context-pressure 同样 report-only，节点级预警 + critical 推荐动作（不阻断）。
+**颗粒度与边界**：db/git 工具为只读；G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json；iteration-check/context-pressure 均 report-only，不阻断 dev-sync。
 
 ---
 
-## 🆕 v3.4.2 state.json events 操作日志设计
+## 14. state.json events 操作日志设计
 
-### 背景与动机
+### 设计
 
-v3.4.0 引入 PRD 级 state.json + 11 phase 状态机（`initialized → ra-generated → dr-generated → ... → completed`，🆕 v3.5.15 起按 scale 拆 4 子链：大链沿用此 11 phase，中/小/微链依次缩减），但**子任务级操作的可追溯性弱**：
+v3.4.0 引入 PRD 级 state.json + phase 状态机，但子任务级操作的可追溯性弱：`phase` 字段只记"当前阶段"没有轨迹，`history` 字段粒度过粗，门禁拦截只在触发时记录结果没有"何时由谁触发"的 audit trail。
 
-- 现有 `phase` 字段只记"当前阶段"，**没有"如何到达此处"的轨迹**
-- 现有 `history` 字段只记阶段切换（`{phase, timestamp, by}`），**粒度过粗**（如 router 把请求路由到 story-generate-skill、随后该 SKILL 完成、随后用户确认 → 这三步之间发生了什么无法回溯）
-- 26 门禁拦截（`G-09` 测试真实性、`G-CODEPLAN-SRC` 源码核对等）只在被触发时记录结果，**没有"何时由谁触发拦截"的 audit trail**
+**方案**：state.json 增加 append-only `events` 数组，每条记录一次"流程动作"（路由/门禁/阶段切换/用户确认等）。**不替代**现有字段——events 与 `phase`/`history`/`currentStory`/`currentTask` 共存：phase = 当前阶段（高频读），history = 阶段切换摘要（低频读），events = 细粒度操作（运维审计/复盘）。
 
-→ 运维场景痛点：用户问"STORY-020-BE 昨天为什么 Phase 2 没走完？"时，AI 只能查 `phase` + `history`，无法还原"哪一步门禁拦截了、是哪个 gate_id、谁确认的"。
+关键设计决策：① 继承 `str, Enum` 使 JSON 序列化直接得字符串，日志人工可读；② append-only 不去重，保证 audit trail 真实性；③ `txnName` 区分 PRD/Story/Task/Plan 事件；④ 不强制落盘，事件写入与持久化解耦，调用方按需 write_state；⑤ 向后兼容，旧 v1 state.json 无 events 字段时不报错。
 
-### 方案：events 操作日志
+### 实现
 
-**核心思路**：state.json 增加 append-only `events` 数组，每条记录一次"流程动作"（路由/门禁/阶段切换/用户确认等），提供"全程 audit trail"能力。
+| 设计点 | 实现方式 |
+| --- | --- |
+| 3 个枚举 | `tools/lib/flow_enums.py`：`FlowNode`(6成员) / `FlowSkill`(15成员) / `FlowEventType`(8成员：routed-to/skill-completed/gate-blocked/gate-cleared/user-confirmed/phase-changed/reopened/aborted) |
+| 事件数据类 | `FlowEvent`，必填 `seq/ts/event/node/by`，条件必填 `skill/gate_id/phase`，可选 `txnName/from_node/reason/output/meta` |
+| 5 个工厂函数 | `make_routed_to` / `make_skill_completed` / `make_gate_blocked` / `make_phase_changed` / `make_user_confirmed` |
+| 追加事件 API | `tools/lib/state.py:append_event(state, event)`：原地追加，自动填 seq/ts，不自动落盘 |
+| 查询事件 API | `tools/lib/state.py:get_events(state, *, txn_name=None, event_type=None, node=None)`：三维过滤 |
 
-**不替代现有字段**：events 与 `phase` / `history` / `currentStory` / `currentTask` **共存**。phase = "当前阶段"（高频读），history = "阶段切换摘要"（低频读），events = "细粒度操作"（运维审计/复盘）。
+**⚠️ 已知缺口（业务调用方尚未全部接入）**：
 
-### 数据结构（v3.4.2 schema v2）
+| 缺失点 | 预期接入方 | 状态 |
+| --- | --- | --- |
+| 路由时记录 `routed-to` | `cmd_classify` / router | 待接入 |
+| 阶段切换时记录 `phase-changed` | `cmd_state_write` | 待接入 |
+| 门禁检查时记录 `gate-blocked`/`gate-cleared` | `gates.py` 各 check_gXX() | 待接入 |
+| SKILL 完成时记录 `skill-completed` | 各 SKILL orchestrator | 待接入 |
+| 用户确认审核点时记录 `user-confirmed` | ae-sdd-update-skill §审核点双支柱 | 待接入 |
 
-**3 个枚举**（`tools/lib/flow_enums.py`）：
+lib 层 schema 已就绪且测试通过；一旦业务调用方接入，events 立即生效，无需 schema 升级。
 
-| 枚举 | 成员数 | 用途 |
-|---|---|---|
-| `FlowNode` | 6 | 流程节点原语（PRD / RA / DR / STORY / TASK / PLAN）|
-| `FlowSkill` | 15 | SKILL 标识符（与 `source/skills/` 目录文件一一对应）|
-| `FlowEventType` | 8 | 事件类型（routed-to / skill-completed / gate-blocked / gate-cleared / user-confirmed / phase-changed / reopened / aborted）|
-
-**事件数据类** `FlowEvent`（继承 `str, Enum` → JSON 序列化直接得字符串，无需额外转换）：
-- 必填：`seq`（自增）/ `ts`（ISO 8601 UTC）/ `event` / `node` / `by`
-- 条件必填：`skill`（routed-to/skill-completed）/ `gate_id`（gate-blocked/cleared）/ `phase`（phase-changed）
-- 可选：`txnName`（子任务标识，PRD 级事件为 None）/ `from_node`（路由来源）/ `reason` / `output`（产物描述）/ `meta`（预留扩展）
-
-**5 个工厂函数**（防字段拼写错）：`make_routed_to` / `make_skill_completed` / `make_gate_blocked` / `make_phase_changed` / `make_user_confirmed`。
-
-**2 个 lib API**（`tools/lib/state.py`）：
-- `append_event(state, event)` — 原地追加，自动填 `seq` / `ts`，**不**自动落盘（调用方决定何时 write_state）
-- `get_events(state, *, txn_name=None, event_type=None, node=None)` — 三维过滤（txn / event 类型 / node），按 seq 升序返回
-
-### 关键设计决策
-
-1. **继承 `str, Enum`**：避免 `.value` 解包，JSON 序列化直接得字符串，**日志人工读也能秒懂**（无需查枚举定义）。
-2. **`append-only` + 不去重**：保证 audit trail 真实性，不做"看起来更整洁"的合并/裁剪。
-3. **`txnName` 区分 PRD/Story/Task/Plan 事件**：PRD 级事件 `txnName=null`，Story/Task/Plan 用各自的 ID；`get_events(txn_name=...)` 单一过滤就能拿到"某个子任务的全过程"。
-4. **不强制落盘**：事件写入与 state.json 持久化解耦，避免高频事件导致磁盘 IO 风暴。调用方按需落盘（如 SKILL 完成时批量 write_state）。
-5. **向后兼容**：旧 v1 state.json 无 `events` 字段时 `get_events()` 返回 `[]` 不报错，`append_event()` 自动初始化 `events: []`。
-
-### 已知缺口（v3.4.2 不闭环、留待后续 PR）
-
-按 ae-sdd-update-skill §改⑤工具链 SOP 第 3 步"新增/修改门禁/CLI → 同步"原则，**当前 lib 层已发布，但业务调用方尚未接入**：
-
-| 缺失点 | 预期接入方 | v3.4.2 状态 |
-|---|---|---|
-| 路由时记录 `routed-to` | `tools/bin/ae-sdd:cmd_classify` / router | ❌ 后续 PR |
-| 阶段切换时记录 `phase-changed` | `tools/bin/ae-sdd:cmd_state_write` | ❌ 后续 PR |
-| 门禁检查时记录 `gate-blocked` / `gate-cleared` | `tools/lib/gates.py` 各 `check_gXX()` | ❌ 后续 PR |
-| SKILL 完成时记录 `skill-completed` | 各 SKILL orchestrator | ❌ 后续 PR |
-| 用户确认审核点时记录 `user-confirmed` | ae-sdd-update-skill §审核点双支柱 | ❌ 后续 PR |
-
-**当前 schema 已就绪，lib 测试已通过（32/32 PASS）**——一旦后续 PR 接入调用方，events 立即生效，无需 schema 升级。
+**颗粒度与边界**：events 只追加不修改历史记录；txnName 为 None 表示 PRD 级事件；事件写入与磁盘持久化解耦，避免高频事件导致 IO 风暴。
 
 ---
 
-## Hook 层（三层拦截体系）
+## 15. Hook 层（三层拦截体系）
 
-> 三个 Claude Code hook 实现物理级流程纪律，覆盖工具调用拦截、上下文注入、响应后校验三个时机。
+### 设计
 
-**是什么**：hook 层是 ae-sdd 流程纪律的"物理防线"，不依赖 LLM 自律。三个 hook 分别在工具调用前 / 用户消息提交前 / AI 回复结束后触发，实现工具权限管控、状态上下文注入、响应合规校验。
+三个 Claude Code hook 实现物理级流程纪律，覆盖工具调用拦截、上下文注入、响应后校验三个时机，不依赖 LLM 自律。
 
-**设计实现**：
+- **PreToolUse**：AI 每次调用工具前触发，按 phase 限定允许工具集
+- **UserPromptSubmit**：用户每次提交消息前触发，注入状态上下文 + 主流程监管器逻辑（见 §16）
+- **Stop**：AI 每次回复结束后触发，防无限循环 + 检测结构性错误
 
-- **PreToolUse hook**（`tools/lib/gate_intercept.py`）：AI 每次调用工具前触发。按 `PHASE_PERMIT` 字典按 phase 限定允许工具集（如 design 阶段禁止 Bash；`code-reviewed` 阶段禁止改源码）；只读工具（Read/Grep/Glob 等）任何 phase 放行；`paused` phase 禁止全部写操作（v3.6 新增）。链式 Bash 命令绕过防护（v1.4：含 `&&`/`||`/`;`/`|` 的命令不认为只读）；快速通道状态经 `.ae-sdd/.quick_channel` 文件跨 hook 共享；输入 stdin JSON（`hook_event_name / tool_name / tool_input`），拒绝时输出 `permissionDecision: "deny"` + `systemMessage`，exit 始终 0
-- **UserPromptSubmit hook**（`tools/lib/prompt_inject.py`）：用户每次提交消息前触发。功能：① 读 state.json 注入当前阶段 + 下一步 + SKILL 路径上下文；② 检测 `/ae-sdd` 触发词注入入口凭证强提醒（关卡 1）；③ 快速通道标记写入 `.quick_channel`；④ 重置 Stop hook 重试计数；⑤ plugin_loader 解析 SKILL 文件路径（B1 修复）。输出 `additionalContext` 追加到对话上下文，AI 可见用户不可见
-  - 🆕 v3.6（规划中）：新增主流程监管器主逻辑——每轮执行 gates check + 偏移检测 + 矫正注入（见 §流程偏移检测与矫正）；废弃 `◆ STATE:` 自报依赖（决策 1B），改为纯产物核查
-- **Stop hook**（`tools/lib/stop_check.py`）：AI 每次回复结束后触发。防无限循环：`.stop_retry_count` 持久化计数，MAX_RETRY=2，用户每轮发消息时重置；v1.3：只检查最后一段 AI 响应（不全文搜索）；v1.4：优先读 `last_assistant_message` 字段，降级为 transcript_path 解析
-  - 当前检测 `◆ STATE:` / `◆ LOADED:` 自报标记（stop_check.py 自注"防君子不防小人，可谎报"）
-  - 🆕 v3.6（规划中）：废弃自报标记（决策 1B）；Stop hook 职责简化为检测 AI 结构性错误（空响应 / 截断）；流程合规性检测整体转移到 UserPromptSubmit hook
-- **安装**：`ae-sdd init-hooks` 写 PreToolUse / UserPromptSubmit / Stop 三段配置到 `.claude/settings.json`
-- **快速通道**：用户显式说 `/ae-sdd-quick` → `.quick_channel` 写入 → PreToolUse 跳过 phase 工具拦截（产物落地关卡仍生效）
+**决策 1B（v3.6）**：废弃 `◆ STATE:`/`◆ LOADED:` 自报标记检测（"防君子不防小人，可谎报"），改为纯产物核查（gates check 结果为唯一权威判定）。
 
-**颗粒度与边界**：hook 层只做物理拦截（工具权限 / 上下文注入 / 结构校验），不做业务逻辑判断（业务规则在 SKILL.md + CLI gates）；hook 任何异常降级不阻断主流程（全流程 try/except，exit 始终 0）；改 hook 须同步 HARNESS.md HS 规则；禁止手工编辑已安装的 hook 脚本，改完须重跑 `ae-sdd init-hooks` 重新写入。
+### 实现
 
----
+| 设计点 | 实现方式 |
+| --- | --- |
+| PreToolUse hook | `tools/lib/gate_intercept.py`：`PHASE_PERMIT` 字典按 phase 限定工具集；只读工具任何 phase 放行；`paused` phase 禁全部写操作；链式 Bash（含 `&&`/`\|\|`/`;`/`\|`）不认为只读；输出 `permissionDecision: "deny"` + `systemMessage`，exit 始终 0 |
+| UserPromptSubmit hook | `tools/lib/prompt_inject.py`：读 state 注入阶段上下文 + `/ae-sdd` 触发词强提醒（关卡1）+ 快速通道标记 + 重置 Stop hook 重试计数 + 母版版本漂移探测（行198起）+ 主流程监管器调用（`_run_flow_monitor()`，行242，见§16） |
+| Stop hook | `tools/lib/stop_check.py`：`.stop_retry_count` 持久化计数 MAX_RETRY=2；已废弃 `◆ STATE:`/`◆ LOADED:` 自报标记检测（行5/152注释自述"已由 flow_monitor 产物核查替代"）；补 `_check_compact_failure()` 检测卡住态 |
+| Hook 安装 | `ae-sdd init-hooks` 写三段配置到 `.claude/settings.json` |
+| 快速通道 | 用户说 `/ae-sdd-quick` → `.quick_channel` 写入 → PreToolUse 跳过 phase 工具拦截（产物落地关卡仍生效） |
 
-## 主流程监管器（🆕 v3.6 规划中）
-
-> /ae-sdd 触发后全生命周期的编排角色，负责工作区初始化、资产检查、智能路由、各系列循环执行、收尾交付，不执行任何具体业务工作。
-
-**是什么**：主流程监管器是 ae-sdd 的"项目经理"——只管"下一步该做什么、由谁做、做完了没有"，不参与 RA 分析、Story 编写、代码实现等具体工作。定义在 SKILL.md，执行实体在 UserPromptSubmit hook Python 逻辑（决策 2B）。
-
-**设计实现**：
-
-5 步标准启动序列（替换现有 §🔴 第一动作）：
-- **Step 1 工作区确认与初始化**：检查 `.ae-sdd/` 是否存在；不存在→调 `ae-sdd init <dir> <key>` 创建 state.json + session.json 空模板；已存在→读 state，`phase=paused` 时播报暂停原因并等用户选择（恢复/新任务/查看状态），`phase=in-progress` 时自动续接（输出续接播报）
-- **Step 2 项目资产检查（G-00）**：`ae-sdd gates check --only G-00`；不通过→路由到 `project-assets-update-skill §3` 生成；生成完成 + 用户确认→继续
-- **Step 3 智能路由（双层裁定）**：第一层任务类型（ae-sdd 自更新→交接 update-skill 监管器休眠 / 编码→第二层）；第二层任务规格（已有 PRD=大→RA / 已有 DR=中→DR / 已有 Story=小→Story / BUG 修复=微→Task / 新需求无 PRD→阻断）；写 `state.json: scale + entryNode + phase`；领取 entry token：`ae-sdd enter <key> [--story <ID>]`
-- **Step 4 主流程监管器执行编码流程**：按 scale 子链逐系列执行（见每系列执行协议）
-- **Step 5 收尾交付**：⑦ter 合规自检→⑧完成输出→`state.phase=completed`→监管器退出，输出交付报告
-
-每系列执行协议（sub-step 0~5）：
-- sub-step 0：`/compact` 上下文清理（**每系列必做**，防跨系列上下文污染）
-- sub-step 1：SKILL 调用声明（格式：调用 / 理由 / 期望产出 / 完成后 state 推进方向）
-- sub-step 2：调用 generate-skill + agent-orchestration-skill，等待 sub-agent 报告，→ 产物核查（gates check）
-- sub-step 3：调用 review-skill + agent-orchestration-skill，汇总错误报告，→ 产物核查
-- sub-step 4：Loop 控制（有错误且矫正次数 < 3 → 重回 sub-step 2；矫正次数 = 3 → Level 3 暂停；连续 3 轮无新错误 → 退出）
-- sub-step 5：人工审核（播报本系列产物摘要 → 等待用户 ✅/⚠️/❌ → 推进/带意见重跑/paused）
-
-标准化续接播报格式：
-```
-【流程已恢复 — 主流程监管器续接】
-项目 Key：{projectKey}  |  Story ID：{STORY-ID}  |  规模：{大/中/小/微}
-当前阶段：{phase 中文名}  |  已完成系列：{列表}
-下一步：将调用 {SKILL 名}，原因：{reason}
-```
-
-SKILL 调用声明格式（每次加载子 SKILL 前输出）：
-```
-【主流程监管器 → 调用 SKILL】
-调用：{skill-name}  |  理由：{路由决策或错误报告原因}
-期望产出：{产出物列表}
-完成后：state.phase 推进至 {X}，下一步 {Y}
-```
-
-**颗粒度与边界**：监管器角色定义在 SKILL.md，执行实体在 UserPromptSubmit hook（Python，决策 2B）；监管器不执行业务工作，只做编排 + 校验；ae-sdd 自更新触发时监管器休眠（流程控制权全部交接给 update-skill，含收尾）；监管器退出条件：`phase=completed` 或用户手动中止；每系列入口必做 compact（不可跳过，防上下文污染）。
+**颗粒度与边界**：hook 层只做物理拦截（工具权限/上下文注入/结构校验），不做业务逻辑判断；hook 任何异常降级不阻断主流程（全流程 try/except，exit 始终 0）；改 hook 须同步 HARNESS.md HS 规则；禁止手工编辑已安装的 hook 脚本，改完须重跑 `ae-sdd init-hooks`。
 
 ---
 
-## 流程偏移检测与矫正（🆕 v3.6 规划中）
+## 16. 主流程监管器（v3.6，已实现）
 
-> 识别 AI 在执行过程中的语义漂移行为（跳步 / 停滞 / 伪完成 / 旁路），按 3 级矫正机制自动纠正，超出阈值升级人工干预并暂停流程。
+> 文档修正说明：本节原标"🆕 v3.6 规划中"，经代码核实（`tools/lib/flow_monitor.py` 全文 326 行 + `prompt_inject.py:_run_flow_monitor()` 行242 + `state.py` 暂停/恢复/矫正计数 API 均已存在并接入 UserPromptSubmit hook），确认**已完整实现并生效**，非规划态。
 
-**是什么**：流程偏移分两类：物理越权（已由 PreToolUse hook 拦截）和语义漂移（本模块处理）。语义漂移指 AI 工具调用合规但行为偏离监管器期望路径，包括跳步、停滞、伪完成、旁路 4 种。
+### 设计
 
-**设计实现**：
+`/ae-sdd` 触发后全生命周期的编排角色，负责工作区初始化、资产检查、智能路由、各系列循环执行、收尾交付，不执行任何具体业务工作——是 ae-sdd 的"项目经理"，只管"下一步该做什么、由谁做、做完了没有"。角色定义在 SKILL.md，执行实体是 UserPromptSubmit hook 的 Python 逻辑（决策 2B）。
 
-漂移类型：
-- **B1 跳步漂移**：AI 跳过 Review 直接宣布进入下一系列
-- **B2 停滞漂移**：同一 phase 经过 N 轮，产物始终未通过 gates check（N=5）
-- **B3 伪完成漂移**：AI 声称完成某阶段但对应产物门禁未通过（原依赖 `◆ STATE:` 自报检测，v3.6 废弃，改为纯产物核查，决策 1B）
-- **B4 旁路漂移**：用户问题外话，AI 回答后未主动回到流程
+5 步标准启动序列：Step 1 工作区确认与初始化 → Step 2 项目资产检查(G-00) → Step 3 智能路由（双层裁定）→ Step 4 按 scale 子链执行编码流程 → Step 5 收尾交付。每系列执行协议含 sub-step 0~5（compact清理 → SKILL调用声明 → 生成 → Review → Loop控制 → 人工审核）。
 
-检测机制（UserPromptSubmit hook 每轮执行，决策 2B）：
-- **Layer 1 产物核查**（解决 B1/B3）：依据 `phase_gate_map`（phase→gate_id 映射表）跑 `ae-sdd gates check --only {gate_id}`，timeout=10s 超时降级跳过；不通过即判定漂移；不信任 AI 自报（决策 1B）
-- **Layer 2 轮次停滞检测**（解决 B2/B4）：`correctionCounts[current_phase] ≥ 5` 触发 stagnation 告警；`correctionCounts[current_phase] ≥ 3` 且同一门禁持续不通过 → Level 3 升级
+### 实现
 
-矫正机制：
-- **Level 1 静默注入**（severity=1）：下一轮 UserPromptSubmit `additionalContext` 注入当前 phase + 待完成步骤提醒，用户不可见，AI 可感知
-- **Level 2 矫正提示词**（severity=2）：监管器在对话中直接输出"【主流程监管器 🔴 矫正】检测到 {drift_type}，当前有效 phase={X}，请继续执行 {SKILL}，完成 {missing_product}"；同一步骤最多触发 3 次
-- **Level 3 人工升级暂停**（severity=3）：Level 2 矫正 3 次未收敛 → 写 `state.phase=paused`（含 `pausedFromPhase` + `pauseReason=level3-escalation`）→ 输出暂停报告请用户决策（继续 / 跳过 / 回退 / 修改产物）
+| 设计点 | 实现方式 |
+| --- | --- |
+| 偏移检测核心逻辑 | `tools/lib/flow_monitor.py:detect_drift(state, ade_sdd)`（行144），Layer 1 产物核查 + Layer 3 矫正次数升级 |
+| phase→gate 映射表 | `flow_monitor.py:get_phase_gate_map()`（行70），覆盖 ra-generated~test-running 各 phase |
+| 升级判定 | `flow_monitor.py:should_escalate(state)`（行236），矫正次数 ≥ `CORRECTION_THRESHOLD_PAUSE`(3) |
+| 矫正消息生成 | `flow_monitor.py:build_correction_message(drift)`（行272），severity 1/2/3 三级文本模板 |
+| gates check 子进程调用 | `flow_monitor.py:_run_gates_check(gate_id, ade_sdd)`（行115），10s 超时降级放行 |
+| Hook 侧调用入口 | `tools/lib/prompt_inject.py:_run_flow_monitor(ade_sdd, state)`（行242），每轮 UserPromptSubmit 执行，异常降级返回 None |
+| 状态暂停/恢复 | `tools/lib/state.py:pause_state()`（行663）/ `resume_state()`（行684） |
+| 矫正次数持久化 | `state.py:increment_correction()`（行706）/ `get_correction_count()`（行725），写入 `state.correctionCounts` |
+| SKILL 侧角色定义 | `source/skills/orchestration/ae-sdd-update-skill.md`（5步启动序列文字描述） |
 
-实现结构：
-- `tools/lib/flow_monitor.py`（**新建**）：`DriftResult` 数据类（`drift_type / severity / gate_result / message`）/ `detect_drift(state, gate_results) → DriftResult` / `build_correction_message(drift, state) → str` / `get_phase_gate_map() → dict` / `should_escalate(state) → bool`
-- `tools/lib/prompt_inject.py`（扩展）：新增 `_run_flow_monitor(ade_sdd, master) → Optional[str]`，每轮 UserPromptSubmit 执行；全流程 try/except，任何异常降级为 None 不阻断主流程；severity≥2 的矫正文本追加到 `additionalContext`；severity=3 同时调 `state.pause_state()` 写 state.json
-- `tools/lib/stop_check.py`（精简）：删除 `◆ STATE:` / `◆ LOADED:` 检测；职责简化为防空响应 + 防无限循环；流程合规检测整体交 UserPromptSubmit hook
+**颗粒度与边界**：监管器角色定义在 SKILL.md，执行实体在 UserPromptSubmit hook（Python，决策 2B）；监管器不执行业务工作，只做编排+校验；ae-sdd 自更新触发时监管器休眠；退出条件：`phase=completed` 或用户手动中止；每系列入口必做 compact（防上下文污染）。
 
-phase → gate 映射（`get_phase_gate_map()` 返回值）：
+---
 
-| phase | 对应 gate_id |
-|---|---|
-| ra-generated | G-RA-1, G-RA-2, G-RA-3, G-RA-4 |
-| dr-generated | G-01 |
-| story-generated | G-02 |
-| story-reviewed | G-03 |
-| task-generated | G-04 |
-| coding-process | G-08 |
-| coding | G-CODEPLAN-SRC |
-| code-reviewed | G-05 |
-| test-running | G-09 |
+## 17. 流程偏移检测与矫正（v3.6，已实现）
 
-**颗粒度与边界**：只检测语义漂移（物理越权由 PreToolUse 拦截）；gates check 结果为唯一权威判定，不信任 AI 自报（决策 1B）；`correctionCounts` 写入 state.json 跨 session 持久化；flow_monitor.py 是纯计算模块（只返回结论，不直接写 state），写 state 由 prompt_inject.py 调用 state API 执行；Level 3 暂停后 Step 1 续接检测自动识别 `phase=paused` 并播报。
+> 文档修正说明：本节原标"🆕 v3.6 规划中"，实际与 §16 共用同一套 `flow_monitor.py` 实现，已完整生效。
+
+### 设计
+
+识别 AI 在执行过程中的语义漂移行为，按 3 级矫正机制自动纠正，超出阈值升级人工干预并暂停流程。流程偏移分两类：物理越权（已由 PreToolUse hook 拦截）和语义漂移（本模块处理）。
+
+漂移类型：B1 跳步（跳过 Review 宣布进入下一系列）/ B2 停滞（同一 phase 经 N 轮产物未过 gates check）/ B3 伪完成（声称完成但门禁未过，原依赖自报检测，v3.6 改产物核查）/ B4 旁路（题外话后未回到流程）。
+
+矫正级别：Level 1 静默注入（用户不可见，AI 可感知）/ Level 2 矫正提示词（AI 须说明修复计划，同步骤最多3次）/ Level 3 人工升级（`state.phase=paused`，流程暂停待用户决策）。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 漂移结果数据类 | `flow_monitor.py:DriftResult`（行45起）：`drift_type/severity/gate_id/gate_passed/gate_message/phase/correction_count/message` |
+| 阈值常量 | `flow_monitor.py`：`CORRECTION_THRESHOLD_WARN=5`（行36）/ `CORRECTION_THRESHOLD_PAUSE=3`（行38）/ `GATES_CHECK_TIMEOUT=10`（行40） |
+| Layer 1 产物核查（解 B1/B3） | `detect_drift()`（行144-225）依据 `get_phase_gate_map()` 跑 gates check，不通过判定漂移，不信任 AI 自报 |
+| Layer 3 矫正次数升级（解 B2） | `detect_drift()` 行204：`correction_count >= CORRECTION_THRESHOLD_PAUSE` → severity=3 |
+| severity=1 矫正文本 | `build_correction_message()` 行290-296：静默提醒 |
+| severity=2 矫正文本 | `build_correction_message()` 行298-309：含矫正次数/失败门禁详情 |
+| severity=3 暂停文本 | `build_correction_message()` 行311-323：含继续/跳过/回退/查看四个用户决策选项 |
+| phase→gate 映射（9个phase） | `get_phase_gate_map()`（行70-89）：ra-generated→G-RA-1~4，dr-generated→G-01，story-generated→G-02，story-reviewed→G-03，task-generated/task-reviewed→G-04，coding-process→G-08，coding→G-CODEPLAN-SRC，code-reviewed→G-05，test-running→G-09 |
+| Stop hook 职责精简 | `tools/lib/stop_check.py`：已删除 `◆ STATE:`/`◆ LOADED:` 自报检测，职责简化为防空响应+防无限循环 |
+| 全流程降级保护 | `detect_drift()` 行227-233：任何异常返回 `drift_type="none"` 不阻断主流程 |
+
+**颗粒度与边界**：只检测语义漂移（物理越权由 PreToolUse 拦截）；gates check 结果为唯一权威判定，不信任 AI 自报（决策1B）；`correctionCounts` 写入 state.json 跨 session 持久化；`flow_monitor.py` 是纯计算模块（只返回结论不直接写 state），写 state 由 `prompt_inject.py` 调用 state API 执行；Level 3 暂停后续接检测自动识别 `phase=paused` 并播报。

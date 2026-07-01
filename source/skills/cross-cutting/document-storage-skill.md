@@ -6,7 +6,7 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 # Document Storage — 文档存放标准 Skill（AE 体系横切依赖）
 
 > **🔴 核心定位：** 本 SKILL 是 AE 体系的"**横切依赖**"，**任何 SKILL 在生成/更新文档前都必须先调用本 SKILL** 确定：
-> 1. 文档存哪里（统一目录 §1.2：`{工程根}/ae-sdd-doc/`）
+> 1. 文档存哪里（统一目录 §1.2：`{文档工作区根}/ae-sdd-doc/`）
 > 2. 文档怎么命名（命名 + 版本号 §2）
 > 3. 是新建还是修改（重入 SOP §5.1）
 > 4. 属于哪个迭代（关联性分析 §6.3）
@@ -69,10 +69,11 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 
 ### 1.2 统一根目录
 
-> **🔴 强制：** 所有 AE 流程产出的文档**必须**写入 `{工程根}/ae-sdd-doc/` 目录。
+> **🔴 强制：** 所有 AE 流程产出的文档**必须**写入 `{文档工作区根}/ae-sdd-doc/` 目录。
 
 **根目录定位：**
 - `{工程根}` 由 `assets.md §1 gitPath` 字段决定
+- `{文档工作区根}` 由 `assets.md §1 docWorkspacePath` 字段决定，缺省回退到 `{工程根}`
 - 设计类文档路径基于 `docWorkspacePath`（§3.1 第四维，缺省=gitPath）
 - 示例：`d:\Item\icec-cloud-boss\ae-sdd-doc\`
 
@@ -94,26 +95,44 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 
 ### 1.3 路径模板总表
 
-> **🔴 SSOT：** 下表合并了原路径模板表与命名规则。**设计类不带版本号（原地更新），事件类带版本号（保留历史）**——与 `document_storage.py` `_PATH_TEMPLATES` 一致。
+> **🔴 SSOT：** 下表合并了原路径模板表与命名规则。**Task/Coding/Test/CR 使用 `{WORKITEM-ID}` 分桶**，它代表一次独立编码任务（PRD / BUG / OPT / Story 均可），而不是只能代表 Story。**设计类不带版本号（原地更新），事件类带版本号（保留历史）**——与 `document_storage.py` `_PATH_TEMPLATES` 一致。
 
-| 文档类型 | 路径模板 | 例子 | 版本策略 |
+| 文档类型 / intent | 路径模板 | 例子 | 版本策略 |
 |---------|---------|------|---------|
-| **PRD** | `{工程根}/ae-sdd-doc/PRD/{PRD-ID}.md` | `PRD-001-用户管理.md` | 不带版本号 |
-| **RA** | `{工程根}/ae-sdd-doc/RA/{RA-ID}.md` | `RA-001-用户列表查询.md` | 不带版本号 |
-| **DR** | `{工程根}/ae-sdd-doc/DR/{DR-ID}.md` | `DR-2026-06-04-Boss用户列表查询接口.md` | 不带版本号 |
-| **Story 文档** | `{工程根}/ae-sdd-doc/Story/{STORY-ID}.md` | `STORY-001-BE.md` | 不带版本号 |
-| **Story Supplement** | `{工程根}/ae-sdd-doc/Story/{STORY-ID}/{STORY-ID}-Supplement.md` | 原地累加 | 不带版本号 |
-| **Task 文档** | `{工程根}/ae-sdd-doc/Task/{STORY-ID}/{TASK-ID}.md` | `task-1-BossUserQuery.md` | 不带版本号 |
-| **CodingPlan** | `{工程根}/ae-sdd-doc/Coding/{STORY-ID}/{STORY-ID}-CodingPlan.md` | `STORY-001-BE-CodingPlan.md` | 不带版本号 |
-| **Coding 报告** | `{工程根}/ae-sdd-doc/Coding/{STORY-ID}/{STORY-ID}-CodingReport-v{N}-r{M}.md` | `...CodingReport-v1-r1.md` | 带 v{N}-r{M} |
-| **测试用例** | `{工程根}/ae-sdd-doc/Test/{STORY-ID}/{STORY-ID}-testcase.md` | `STORY-001-BE-testcase.md` | 不带版本号 |
-| **测试报告** | `{工程根}/ae-sdd-doc/Test/{STORY-ID}/{STORY-ID}-Report-v{N}-r{M}.md` | `...Report-v1-r1.md` | 带 v{N}-r{M} |
-| **CR 报告** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-CodeReview-v{N}-r{M}.md` | `...CodeReview-v1-r1.md` | 带 v{N}-r{M} |
-| **追溯矩阵** | `{工程根}/ae-sdd-doc/Coding/{STORY-ID}/{STORY-ID}-追溯矩阵-v{N}-r{M}.md` | （独立成文件）| 带 v{N}-r{M} |
-| **Story Review** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-StoryReviewReport-r{N}.md` | `...StoryReviewReport-r1.md` | 带 r{N} |
-| **Review Proposal** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-Proposal-{N}.md` | `...Proposal-1.md` | 按 N 编号 |
-| **跨轮 Review 对比** | `{工程根}/ae-sdd-doc/CR/{STORY-ID}/{STORY-ID}-ReviewCompare-v1-to-v2.md` | `...ReviewCompare-v1-to-v2.md` | 带 v1-to-v2 |
-| **项目资产** | 见 §1.4 | `icec-cloud-boss.assets.md` | 不带版本号 |
+| **PRD** / `PRD` | `{文档工作区根}/ae-sdd-doc/PRD/{PRD-ID}.md` | `PRD-LIFE-001.md` | 不带版本号 |
+| **Issue** / `ISSUE` | `{文档工作区根}/ae-sdd-doc/Issue/{ISSUE-ID}.md` | `BUG-LIFE-001.md` | 不带版本号 |
+| **RA** / `RA` | `{文档工作区根}/ae-sdd-doc/RA/{RA-ID}.md` | `RA-LIFE-001.md` | 不带版本号 |
+| **RA 生成计划** / `RA_GENERATE_PLAN` | `{文档工作区根}/ae-sdd-doc/RA/{RA-ID}-GeneratePlan-r{N}.md` | `...GeneratePlan-r1.md` | 带 r{N} |
+| **RA 影响分析** / `RA_IMPACT` | `{文档工作区根}/ae-sdd-doc/RA/{RA-ID}-Impact-r{N}.md` | `...Impact-r1.md` | 带 r{N} |
+| **RA 反向问题登记** / `RA_REVERSE_ISSUES` | `{文档工作区根}/ae-sdd-doc/RA/{RA-ID}-ReverseIssues.md` | 原地累加 | 不带版本号 |
+| **DR** / `DR` | `{文档工作区根}/ae-sdd-doc/DR/{DR-ID}.md` | `DR-LIFE-001.md` | 不带版本号 |
+| **DR Supplement** / `DR_SUPPLEMENT` | `{文档工作区根}/ae-sdd-doc/DR/{DR-ID}-Supplement.md` | 原地累加 | 不带版本号 |
+| **Story 文档** / `STORY` | `{文档工作区根}/ae-sdd-doc/Story/{STORY-ID}.md` | `STORY-LIFE-001-BE.md` | 不带版本号 |
+| **Story Supplement** / `STORY_SUPPLEMENT` | `{文档工作区根}/ae-sdd-doc/Story/{WORKITEM-ID}/{WORKITEM-ID}-Supplement.md` | `STORY-LIFE-001-BE-Supplement.md` | 不带版本号 |
+| **Story 生成计划** / `STORY_GENERATE_PLAN` | `{文档工作区根}/ae-sdd-doc/Story/{WORKITEM-ID}/{WORKITEM-ID}-GeneratePlan-r{N}.md` | `...GeneratePlan-r1.md` | 带 r{N} |
+| **Story 撰写报告** / `STORY_WRITER_REPORT` | `{文档工作区根}/ae-sdd-doc/Story/{WORKITEM-ID}/{WORKITEM-ID}-WriterReport-r{N}.md` | `...WriterReport-r1.md` | 带 r{N} |
+| **Task 文档** / `TASK` | `{文档工作区根}/ae-sdd-doc/Task/{WORKITEM-ID}/{TASK-ID}.md` | `Task/BUG-LIFE-001/TASK-001.md` | 不带版本号 |
+| **Task Supplement** / `TASK_SUPPLEMENT` | `{文档工作区根}/ae-sdd-doc/Task/{WORKITEM-ID}/{TASK-ID}-Supplement.md` | 原地累加 | 不带版本号 |
+| **Task Writer Report** / `TASK_WRITER_REPORT` | `{文档工作区根}/ae-sdd-doc/Task/{WORKITEM-ID}/{WORKITEM-ID}-TaskWriterReport-r{N}.md` | `...TaskWriterReport-r1.md` | 带 r{N} |
+| **Task Review** / `TASK_REVIEW` | `{文档工作区根}/ae-sdd-doc/Task/{WORKITEM-ID}/{WORKITEM-ID}-TaskReview-r{N}.md` | `...TaskReview-r1.md` | 带 r{N} |
+| **Task 实现方案** / `TASK_IMPL_PLAN` | `{文档工作区根}/ae-sdd-doc/Task/{WORKITEM-ID}/{TASK-ID}-ImplPlan.md` | `...ImplPlan.md` | 不带版本号 |
+| **小任务旧兼容目录** / `TASK_SMALL` | `{文档工作区根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/{DOC-ID}/` | 目录型兼容 | 不带版本号 |
+| **CodingPlan** / `CODING_PLAN` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingPlan.md` | `BUG-LIFE-001-CodingPlan.md` | 不带版本号 |
+| **Coding 报告** / `CODING_REPORT` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingReport-v{N}-r{M}.md` | `...CodingReport-v1-r1.md` | 带 v{N}-r{M} |
+| **Coding 问题日志** / `CODING_ISSUE_LOG` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingIssueLog.md` | 原地累加 | 不带版本号 |
+| **微任务旧兼容目录** / `PLAN_MICRO` | `{文档工作区根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/Coding/{DOC-ID}/` | 目录型兼容 | 不带版本号 |
+| **测试用例** / `TESTCASE` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-testcase.md` | `BUG-LIFE-001-testcase.md` | 不带版本号 |
+| **测试用例合规报告** / `TESTCASE_COMPLIANCE_REPORT` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-TestCaseCompliance-r{N}.md` | `...Compliance-r1.md` | 带 r{N} |
+| **TestCase Review** / `TESTCASE_REVIEW` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-TestCaseReview-r{N}.md` | `...TestCaseReview-r1.md` | 带 r{N} |
+| **测试报告** / `TEST_REPORT` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-Report-v{N}-r{M}.md` | `...Report-v1-r1.md` | 带 v{N}-r{M} |
+| **CR 报告** / `CODE_REVIEW` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-CodeReview-v{N}-r{M}.md` | `...CodeReview-v1-r1.md` | 带 v{N}-r{M} |
+| **追溯矩阵** / `TRACE_MATRIX` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-追溯矩阵-v{N}-r{M}.md` | （独立成文件）| 带 v{N}-r{M} |
+| **Story Review** / `STORY_REVIEW` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-StoryReviewReport-r{N}.md` | `...StoryReviewReport-r1.md` | 带 r{N} |
+| **Review UpdatePlan** / `REVIEW_UPDATEPLAN` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-StoryReviewUpdatePlan-r{N}.md` | `...UpdatePlan-r1.md` | 带 r{N} |
+| **跨轮 Review 对比** / `REVIEW_COMPARE` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-ReviewCompare-v{N}-to-v{M}.md` | `...ReviewCompare-v1-to-v2.md` | 显式传版本 |
+| **Review Proposal** / `PROPOSAL` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-Proposal.md` | 原地更新 | 不带版本号 |
+| **Proposal Archive** / `PROPOSAL_ARCHIVE` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/archive/{DOC-ID}.md` | `archive/Proposal-001.md` | 不带版本号 |
+| **项目资产** / `ASSETS` | `{文档工作区根}/.ae-sdd/assets/{projectKey}/{projectKey}.assets.md` | `life.assets.md` | 不带版本号 |
 
 ### 1.4 资产类路径模板（🔴 资产路径 SSOT）
 
@@ -234,9 +253,10 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | 字段 | 是否必填 | 说明 |
 |------|---------|------|
 | `{doc-id}` | ✅ | 文档唯一标识（如 `STORY-001-BE`、`DR-2026-06-04-Boss用户列表查询接口`）|
+| `{WORKITEM-ID}` | Task/Coding/Test/CR 必填 | 独立编码任务 ID（PRD / BUG / OPT / Story 均可）；CLI/API 未显式传 `workItemId` 时回退到 `storyId` / `docId` |
 | `{v{N}-r{M}}` | 事件类报告必填 | 事件类报告（Coding 报告 / 测试报告 / CR 报告 / 追溯矩阵）|
-| `{r{N}}` | Review 报告用 | Story Review 报告 |
-| `{N}` | Proposal 用 | Review Proposal（1 份/轮）|
+| `{r{N}}` | Review / 生成计划报告用 | Story Review / Task Review / TestCase Review / RA 生成计划等 |
+| `{N}` | 历史兼容 | 旧 Proposal 编号；新 `PROPOSAL` 不带编号，归档用 `PROPOSAL_ARCHIVE` 的 `{DOC-ID}` |
 
 ### 2.2 版本号使用规则（🔴 SSOT，与代码一致）
 
@@ -248,14 +268,14 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | **Review Proposal** | **带 N** | `STORY-001-BE-Proposal-1.md` | 1 份/轮 Review |
 | **跨轮 Review 对比表** | **带 v1-to-v2** | `STORY-001-BE-ReviewCompare-v1-to-v2.md` | 表示对比的 2 个版本 |
 | **项目资产 + 更新日志** | **不带版本号** | `icec-cloud-boss.assets.md` + `icec-cloud-boss.update-log.md` | 资产是"单一权威源" |
-| **流程状态文件** | **不带版本号** | `.auto-engineering/{STORY-ID}/state.json` | 状态实时变化 |
-| **流程状态文件（PRD 级）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.json` | 状态实时变化；Story 完成 hook 写入 |
+| **流程状态文件** | **不带版本号** | `.auto-engineering/{WORKITEM-ID}/state.json` | 状态实时变化；每个独立编码任务隔离 |
+| **流程状态文件（PRD 级）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.json` | PRD 本身也是 WorkItem；Story 完成 hook 写入 |
 | **流程状态文件（PRD 级，handoff）**| **不带版本号** | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` 时生成 |
 | **流程状态文件（PRD 级，人类读）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.md` | `ae-sdd state prd-complete` 时一次性生成 |
 
 > **🔴 PRD ID 命名规范（与 `SKILL.md §1.2` SSOT）：** 格式 `PRD-<业务域>-<序号>`（CS / IM / USER / LIFE + 3 位数字）。示例：`PRD-CS-001`。
 
-> **📌 PRD 级 state.json schema 见附录 A。**
+> **📌 PRD 级 state.json schema 见附录 A。普通编码任务 state schema 归 `state.py` 管理，路径隔离键统一叫 `WORKITEM-ID`。**
 
 ### 2.3 版本号含义
 
@@ -285,21 +305,22 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 
 ## 3. 工程解耦定位原则（🆕 🔴 2026-06-10 硬约束）
 
-> **原则：** ae-sdd SKILL 家族与工程代码**解耦**——SKILL 家族不知道工程在哪、工程不知道 SKILL 家族在哪。**document-storage-skill 是中间的"目录路由器"**，接收调用方的"意图"（哪个项目、哪个 STORY-ID、哪个微服务、什么任务），输出"文档/代码/产出物"的完整路径。
+> **原则：** ae-sdd SKILL 家族与工程代码**解耦**——SKILL 家族不知道工程在哪、工程不知道 SKILL 家族在哪。**document-storage-skill 是中间的"目录路由器"**，接收调用方的"意图"（哪个项目、哪个 WORKITEM-ID、哪个 STORY-ID、哪个微服务、什么任务），输出"文档/代码/产出物"的完整路径。
 
-### 3.1 五维定位模型（🆕 v4.1 四维→五维，新增"业务线根"；原 v3.4.0 为四维）
+### 3.1 五维定位模型 + WorkItem 隔离键（🆕 v4.1 四维→五维，新增"业务线根"；原 v3.4.0 为四维）
 
 > **🆕 v4.1（2026-06-27，路径治理修订）：** v3.4.0 四维模型（项目根/微服务根/Story根/文档工作区根）解决了"工程目录≠文档目录"，但**资产**侧仍把"工程级子文件"定位甩给了 schema/代码，导致路径规则三处各写一套、改一处漂移两处（"路径偏移"的制度性根因）。本次新增第五维「业务线根」，并把**资产路径的单一权威源**收回本 SKILL。
 >
 > **历史：** v3.4.0（2026-06-25，建议书2）从三维升级为四维，新增"文档工作区根"。
 
-AE 流程涉及 5 类不同维度的位置，必须分别定位：
+AE 流程涉及 5 类位置维度 + 1 个文档隔离键，必须分别定位：
 
-| 维度 | 定位依据 | 谁消费 |
+| 定位项 | 定位依据 | 谁消费 |
 |------|---------|--------|
 | **项目根** | `assets.md` §1 `gitPath` 字段 | 所有"项目级"操作（代码、构建、跑测试）|
 | **微服务根** | `{gitPath} + "/" + {serviceName}`（拼接约定）| 微服务级文档 |
-| **Story 根** | `{文档工作区根}/ae-sdd-doc/Story/{STORY-ID}`（新统一路径）| 重任务 Story/Task/Coding 文档 |
+| **WorkItem 隔离键** | `{文档工作区根}/ae-sdd-doc/{Task|Coding|Test|CR}/{WORKITEM-ID}` | 独立编码任务的 Task/Coding/Test/CR 文档（PRD/BUG/OPT/Story 均可） |
+| **Story 文档** | `{文档工作区根}/ae-sdd-doc/Story/{STORY-ID}.md` | Story 主文档 |
 | **文档工作区根** | `assets.md` §1 `docWorkspacePath` 字段（可选，缺省=gitPath）| 工程目录与文档目录分离的项目（如 life）—— 设计类文档路径基于此维度 |
 | 🆕 **业务线根** | `{docWorkspacePath}/assets/{workspaceKey}/{line}/` | 多业务线项目（如 life=2c/admin/common）—— 工程级资产子文件按业务线分组就近存放 |
 
@@ -314,7 +335,7 @@ AE 流程涉及 5 类不同维度的位置，必须分别定位：
 ### 3.2 动态定位算法
 
 ```
-调用方输入：{ projectKey, intent, storyId?, serviceName? }
+调用方输入：{ projectKey, intent, workItemId?, storyId?, serviceName? }
     ↓
 document-storage-skill.定位(projectKey, intent)
     ↓
@@ -322,9 +343,9 @@ document-storage-skill.定位(projectKey, intent)
 2. 校验 gitPath 存在性（文件系统可达）← 🆕 v3.4.0 落地前强制触发 E003（非仅事后 health）
 3. 根据 intent 选择路径模板 + 路径根：
    ├─ 设计类文档（DR/Story/Task/CodingPlan/测试用例/报告）→ 路径根 = docWorkspacePath（🆕）
-   │   ├─ "重任务 STORY-XXX" → {docWorkspacePath}/ae-sdd-doc/Story/{STORY-ID}/ + 迭代目录
-   │   ├─ "小任务 ServiceX-任务" → {docWorkspacePath}/ae-sdd-doc/Task/{事务简称}/
-   │   └─ "微任务 ServiceX-任务" → {docWorkspacePath}/ae-sdd-doc/Coding/{事务简称}/
+   │   ├─ Story 主文档 → {docWorkspacePath}/ae-sdd-doc/Story/{STORY-ID}.md
+   │   ├─ 独立编码任务 → Task/Coding/Test/CR/{WORKITEM-ID}/（BUG/OPT 不必伪造成 Story）
+   │   └─ 未显式 workItemId → 回退 storyId/docId，兼容旧调用
    └─ 工程类操作（代码、构建）→ 路径根 = gitPath
 4. 拼接具体文档路径
 5. 返回：{完整路径, 文件名, 版本号, ChangeLog 路径, STORING 索引待更新项}
@@ -386,7 +407,8 @@ document-storage-skill.定位(projectKey, intent)
 ```bash
 ae-sdd doc save \
   --intent {INTENT} \           # 必填，取自 §4.10 intent 枚举表
-  --story-id {STORY-ID} \        # intent=STORY/TASK/CODING 等时填
+  --work-item {WORKITEM-ID} \    # 独立编码任务分桶键，Task/Coding/Test/CR 推荐必填
+  --story-id {STORY-ID} \        # Story 主文档或需保留 Story 语义时填；旧调用会回退为 workItem
   --doc-id {DOC-ID} \            # raId/prdId/drId/taskId 等归一到此
   --content-file .ae-sdd/tmp/{doc-id}-draft.md \  # 必填，存完自动删除
   --version "v1-r1" \            # 事件类报告填（r 自动自增）；设计类不填
@@ -405,7 +427,8 @@ ae-sdd doc save \
 | `projectKey` | string | ✅ | 项目键（如 `icec-cloud-boss`）|
 | `intent` | enum | ✅ | 文档意图（取自 §4.10 intent 枚举表）|
 | `docType` | string | ✅ | 文档类型（如 `Story`、`CodingReport`、`CodeReview`）|
-| `storyId` | string | 条件 | `intent=STORY/TASK/...` 时必填 |
+| `workItemId` | string | 条件 | 独立编码任务 ID；`intent=TASK/CODING_PLAN/CODING_REPORT/TESTCASE/TEST_REPORT/CODE_REVIEW/...` 时推荐必填 |
+| `storyId` | string | 条件 | Story 主文档或需要保留 Story 语义时填；旧调用中可作为 `workItemId` 回退 |
 | `serviceName` | string | 条件 | `intent` 含微服务时填 |
 | `taskName` | string | 条件 | `intent=TASK_SMALL/PLAN_MICRO` 时必填（事务简称）|
 | `version` | object | 条件 | `intent` 含版本号时填（`{major: 1, minor: 0}`）|
@@ -434,10 +457,11 @@ interface ResolvedPath {
 1. 读工作区级索引资产 §1 获取 `gitPath`（+ `docWorkspacePath`，缺省=gitPath）—— 资产路径见 §1.4（`{docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/{workspaceKey}.assets.md`）
 2. 校验 `gitPath` 存在性（文件系统可达）
 3. 根据 `intent` 选路径模板（§1.3 路径模板总表）
-4. 替换所有占位符
-5. 调用 `choose_iteration()` 判定迭代归属（如未指定 `iterationDate`）
-6. 拼接版本号
-7. 返回 ResolvedPath
+4. 计算 `workItemId`：显式 `workItemId` > `storyId` > `docId` > `taskName`
+5. 替换所有占位符
+6. 调用 `choose_iteration()` 判定迭代归属（如未指定 `iterationDate`）
+7. 拼接版本号
+8. 返回 ResolvedPath
 
 ### 4.2 工具 API（定位原语）
 
@@ -529,41 +553,45 @@ interface ResolvedPath {
 | intent 值 | 文档类型 | 产出 SKILL | 命名规则 | 实现 |
 |-----------|---------|-----------|---------|------|
 | `PRD` | 产品需求文档 | requirement-analysis-skill | 不带版本号（原地更新）| ✅ |
-| `ISSUE` | Issue 文档 | requirement-analysis-skill | 不带版本号（原地更新）| 📝 |
+| `ISSUE` | Issue 文档 | requirement-analysis-skill | 不带版本号（原地更新）| ✅ |
 | `STORY` | Story 主文档 | story-generate-skill | 不带版本号（原地更新）| ✅ |
-| `STORY_SUPPLEMENT` | Story 补充说明 | story-generate-skill | 不带版本号（原地累加）| 📝 |
+| `STORY_SUPPLEMENT` | Story 补充说明 | story-generate-skill | 不带版本号（原地累加）| ✅ |
 | `DR` | DR 主文档 | dr-generate-skill | 不带版本号（原地更新）| ✅ |
-| `DR_SUPPLEMENT` | DR 补充说明 | dr-update-skill | 不带版本号（原地累加）| 📝 |
+| `DR_SUPPLEMENT` | DR 补充说明 | dr-update-skill | 不带版本号（原地累加）| ✅ |
 | `STORY_REVIEW` | Story Review 报告 | story-review-skill | 带 r{N} | ✅ |
+| `REVIEW_UPDATEPLAN` | Story Review 更新计划 | story-review-skill | 带 r{N} | ✅ |
 | `TESTCASE` | 测试用例文档 | testcase-generate-skill | 不带版本号（原地更新）| ✅ |
-| `TESTCASE_COMPLIANCE_REPORT` | 测试用例合规性校验报告 | testcase-generate-skill | 带 r{N} | 📝 |
-| `TESTCASE_REVIEW` | TestCase Review 报告 | testcase-review-skill 🆕 v3.7.0 | 带 r{N} | 📝 |
+| `TESTCASE_COMPLIANCE_REPORT` | 测试用例合规性校验报告 | testcase-generate-skill | 带 r{N} | ✅ |
+| `TESTCASE_REVIEW` | TestCase Review 报告 | testcase-review-skill 🆕 v3.7.0 | 带 r{N} | ✅ |
 | `TASK` | Task 文档（含 Task-0）| task-generate-skill | 不带版本号（原地更新）| ✅ |
-| `TASK_SUPPLEMENT` | Task 补充说明 | task-generate-skill | 不带版本号（原地累加）| 📝 |
-| `TASK_WRITER_REPORT` | Task 撰写报告 | task-generate-skill | 带 r{N} | 📝 |
-| `TASK_REVIEW` | Task Review 报告 | task-generate-skill | 带 r{N} | 📝 |
-| `TASK_IMPL_PLAN` | Task 实现方案 | task-generate-skill | 不带版本号（原地覆盖）| 📝 |
+| `TASK_SUPPLEMENT` | Task 补充说明 | task-generate-skill | 不带版本号（原地累加）| ✅ |
+| `TASK_WRITER_REPORT` | Task 撰写报告 | task-generate-skill | 带 r{N} | ✅ |
+| `TASK_REVIEW` | Task Review 报告 | task-generate-skill | 带 r{N} | ✅ |
+| `TASK_IMPL_PLAN` | Task 实现方案 | task-generate-skill | 不带版本号（原地覆盖）| ✅ |
+| `TASK_SMALL` | 小任务旧兼容目录 | task-generate-skill | 不带版本号（目录型兼容）| ✅ |
 | `CODING_PLAN` | 统一版 CodingPlan | task-generate-skill | 不带版本号（原地更新）| ✅ |
 | `CODING_REPORT` | Coding 报告 | coding-report-skill | 带 v{N}-r{M} | ✅ |
+| `CODING_ISSUE_LOG` | Coding 问题日志 | coding-skill / coding-report-skill | 不带版本号（原地累加）| ✅ |
+| `PLAN_MICRO` | 微任务旧兼容目录 | task-generate-skill | 不带版本号（目录型兼容）| ✅ |
 | `TEST_REPORT` | 测试报告 | test-generate-skill / test-review-skill | 带 v{N}-r{M} | ✅ |
 | `TRACE_MATRIX` | ⑦bis 全链路追溯矩阵 | coding-report-skill / code-review-skill | 带 v{N}-r{M} | ✅ |
 | `CODE_REVIEW` | CodeReview 报告 | code-review-skill | 带 v{N}-r{M} | ✅ |
-| `PROPOSAL` | Proposal 文档 | proposal-skill | 不带版本号（按 N 编号）| ✅ |
-| `PROPOSAL_ARCHIVE` | Proposal 归档文档 | proposal-skill | 不带版本号（按 N 编号）| 📝 |
-| `ASSETS` | 项目资产主体 + 更新日志 | project-assets-update-skill | 不带版本号（原地修改）| 📝 |
+| `PROPOSAL` | Proposal 文档 | proposal-skill | 不带版本号（原地更新）| ✅ |
+| `PROPOSAL_ARCHIVE` | Proposal 归档文档 | proposal-skill | 不带版本号（按 docId）| ✅ |
+| `ASSETS` | 项目资产主体 + 更新日志 | project-assets-update-skill | 不带版本号（原地修改）| ✅ |
 | `RA` | 需求分析文档 | requirement-analysis-skill | 不带版本号（原地更新）| ✅ |
-| `RA_GENERATE_PLAN` | RA 生成计划 | requirement-analysis-skill | 带 r{N} | 📝 |
-| `RA_IMPACT` | RA 修订影响分析报告 | requirement-analysis-skill | 带 r{N} | 📝 |
-| `RA_REVERSE_ISSUES` | RA 反向问题登记 | requirement-analysis-skill | 不带版本号（原地累加）| 📝 |
-| `STORY_GENERATE_PLAN` | Story 生成计划 | story-generate-skill | 带 r{N} | 📝 |
-| `STORY_WRITER_REPORT` | Story 撰写报告 | story-generate-skill | 带 r{N} | 📝 |
-| `REVIEW_COMPARE` | 跨轮 Review 对比表 | story-generate-skill | 带 v{N}-to-v{M} | 📝 |
+| `RA_GENERATE_PLAN` | RA 生成计划 | requirement-analysis-skill | 带 r{N} | ✅ |
+| `RA_IMPACT` | RA 修订影响分析报告 | requirement-analysis-skill | 带 r{N} | ✅ |
+| `RA_REVERSE_ISSUES` | RA 反向问题登记 | requirement-analysis-skill | 不带版本号（原地累加）| ✅ |
+| `STORY_GENERATE_PLAN` | Story 生成计划 | story-generate-skill | 带 r{N} | ✅ |
+| `STORY_WRITER_REPORT` | Story 撰写报告 | story-generate-skill | 带 r{N} | ✅ |
+| `REVIEW_COMPARE` | 跨轮 Review 对比表 | story-generate-skill | 带 v{N}-to-v{M}（需显式传版本） | ✅ |
 
 ### 4.11 错误码
 
 | 错误码 | 含义 | 恢复 |
 |--------|------|------|
-| `E000` | 未知 intent（不在 §4.10 枚举表或代码未实现）| 提示检查 intent 拼写，或确认是否属 📝 未实现项 |
+| `E000` | 未知 intent（不在 §4.10 枚举表或代码未实现）| 提示检查 intent 拼写；如新增 intent，先补 §4.10 与 `_PATH_TEMPLATES` |
 | `E001` | `assets.md` 不存在 | 提示运行 `project-assets-update-skill.md §3 生成动作` |
 | `E002` | `gitPath` 字段为空 | 提示检查 assets.md §1 |
 | `E003` | `gitPath` 路径不存在 | 提示检查文件系统。🆕 v3.4.0：**落地前强制触发**（resolve_path step 2，非仅事后 health）—— gitPath 无效即阻断文档落地，由 G-DOC-STORAGE 门禁兜底 |
@@ -600,14 +628,14 @@ interface ResolvedPath {
 | PRD / RA / DR | 原地更新 + ChangeLog | `PRD-001.md`（不变）|
 | Story / Task / CodingPlan / 测试用例 | 原地更新 + ChangeLog | 同名（不变）|
 | Story Supplement | 原地累加（不删旧的）| 同名 |
-| Coding 报告 | **新增**（r 递增）| `STORY-001-BE-CodingReport-v1-r2.md` |
-| 测试报告 | **新增**（r 递增）| `STORY-001-BE-Report-v1-r2.md` |
-| CR 报告 | **新增**（r 递增）| `STORY-001-BE-CodeReview-v1-r2.md` |
-| Story Review 报告 | **新增**（r 递增）| `STORY-001-BE-StoryReviewReport-r2.md` |
-| Review Proposal | **新增**（N 递增）| `STORY-001-BE-Proposal-2.md` |
-| 跨轮 Review 对比表 | **新增**（按 v1-to-v2 命名）| `STORY-001-BE-ReviewCompare-v1-to-v2.md` |
+| Coding 报告 | **新增**（r 递增）| `{WORKITEM-ID}-CodingReport-v1-r2.md` |
+| 测试报告 | **新增**（r 递增）| `{WORKITEM-ID}-Report-v1-r2.md` |
+| CR 报告 | **新增**（r 递增）| `{WORKITEM-ID}-CodeReview-v1-r2.md` |
+| Story Review 报告 | **新增**（r 递增）| `{WORKITEM-ID}-StoryReviewReport-r2.md` |
+| Review Proposal | 原地更新；需要留痕时归档 | `{WORKITEM-ID}-Proposal.md` / `archive/{DOC-ID}.md` |
+| 跨轮 Review 对比表 | **新增**（按 v1-to-v2 命名）| `{WORKITEM-ID}-ReviewCompare-v1-to-v2.md` |
 | 项目资产 | 原地修改 + 写更新日志 | `icec-cloud-boss.assets.md` + `icec-cloud-boss.update-log.md` |
-| 流程状态文件 | 原地修改 | `.auto-engineering/{STORY-ID}/state.json` |
+| 流程状态文件 | 原地修改 | `.auto-engineering/{WORKITEM-ID}/state.json` |
 
 **步骤 3：归档旧版本（如需）**
 
@@ -617,11 +645,11 @@ interface ResolvedPath {
 |------|------|
 | v1-r1, v1-r2, v2-r1 | 保留（不归档）|
 | v1-r1 / v1-r2 / ... v4-r1+ | 可归档到 `archive/{date}/` 子目录 |
-| **归档命令** | `mv ae-sdd-doc/Coding/{STORY-ID}/{STORY-ID}-CodingReport-v1-r4.md ae-sdd-doc/Coding/{STORY-ID}/archive/2026-07-01/` |
+| **归档命令** | `mv ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingReport-v1-r4.md ae-sdd-doc/Coding/{WORKITEM-ID}/archive/2026-07-01/` |
 
 **步骤 4：更新流程状态**
 
-修改 `.auto-engineering/{STORY-ID}/state.json` 记录：
+修改 `.auto-engineering/{WORKITEM-ID}/state.json` 记录：
 - `currentStep` 推进
 - `codingRound` 递增
 - `currentSubStep` 更新（如 "编码后" / "测试中" / "评审中"）
@@ -987,15 +1015,15 @@ migrate_old_docs(
 | `story-generate-skill.md` | Story / Story Supplement / Story 生成计划 | `save_doc(intent="STORY"/"STORY_SUPPLEMENT"/"STORY_GENERATE_PLAN", version=None)` |
 | `dr-generate-skill.md` | DR 主文档 | `save_doc(intent="DR", version=None)` |
 | `dr-update-skill.md` | DR 补充说明 | `save_doc(intent="DR_SUPPLEMENT")` |
-| `task-generate-skill.md` | Task / Task 补充 / CodingPlan | `save_doc(intent="TASK"/"TASK_SUPPLEMENT"/"CODING_PLAN", storyId, version=None)` |
-| `coding-report-skill.md` | Coding 报告 / 追溯矩阵 | `save_doc(intent="CODING_REPORT"/"TRACE_MATRIX", storyId, version={v, r})` |
+| `task-generate-skill.md` | Task / Task 补充 / CodingPlan | `save_doc(intent="TASK"/"TASK_SUPPLEMENT"/"CODING_PLAN", workItemId, storyId?, version=None)` |
+| `coding-report-skill.md` | Coding 报告 / 追溯矩阵 | `save_doc(intent="CODING_REPORT"/"TRACE_MATRIX", workItemId, storyId?, version={v, r})` |
 | `coding-skill.md` | （编码执行，报告交 coding-report-skill）| 引用 coding-report-skill.md |
-| `testcase-generate-skill.md` | 测试用例 | `save_doc(intent="TESTCASE", storyId, version=None)` |
-| `testcase-review-skill.md` | TestCase Review 报告 | `save_doc(intent="TESTCASE_REVIEW", storyId, version={r})` |
-| `test-generate-skill.md` / `test-review-skill.md` | 测试报告 | `save_doc(intent="TEST_REPORT", storyId, version={v:N, r:M})` |
-| `code-review-skill.md` | CR 报告 | `save_doc(intent="CODE_REVIEW", storyId, version={v, r})` |
-| `story-review-skill.md` | Story Review 报告 | `save_doc(intent="STORY_REVIEW", storyId, version={r})` |
-| `proposal-skill.md` | Proposal | `save_doc(intent="PROPOSAL", storyId)` |
+| `testcase-generate-skill.md` | 测试用例 | `save_doc(intent="TESTCASE", workItemId, storyId?, version=None)` |
+| `testcase-review-skill.md` | TestCase Review 报告 | `save_doc(intent="TESTCASE_REVIEW", workItemId, storyId?, version={r})` |
+| `test-generate-skill.md` / `test-review-skill.md` | 测试报告 | `save_doc(intent="TEST_REPORT", workItemId, storyId?, version={v:N, r:M})` |
+| `code-review-skill.md` | CR 报告 | `save_doc(intent="CODE_REVIEW", workItemId, storyId?, version={v, r})` |
+| `story-review-skill.md` | Story Review 报告 | `save_doc(intent="STORY_REVIEW", workItemId, storyId?, version={r})` |
+| `proposal-skill.md` | Proposal | `save_doc(intent="PROPOSAL", workItemId, storyId?)` |
 | `project-assets-update-skill.md` | 项目资产 + 更新日志 | `save_doc(intent="ASSETS")` + `check_and_update_gitignore()` |
 
 ### 9.2 标准调用段（🔴 各 SKILL 必加）
@@ -1024,7 +1052,7 @@ migrate_old_docs(
 | 输出文档 | 路径模板 | 命名规则 | ChangeLog | 重入时动作 |
 |---------|---------|---------|----------|----------|
 | {设计类文档名} | `ae-sdd-doc/{DocType}/{doc-id}.md` | 不带版本号 | 必填 | 原地更新 |
-| {事件类报告名} | `ae-sdd-doc/{DocType}/{STORY-ID}/{doc-id}-v{N}-r{M}.md` | v{N}-r{M} | 必填 | r 递增 |
+| {事件类报告名} | `ae-sdd-doc/{DocType}/{WORKITEM-ID}/{doc-id}-v{N}-r{M}.md` | v{N}-r{M} | 必填 | r 递增 |
 ```
 
 ### 9.3 调用时机（🔴 必在文档落地前调用）
@@ -1133,6 +1161,7 @@ SKILL 流程
   - 所有 SKILL 引用本文件作为"文档存放标准"（统一引用）
   - 与 `ae-sdd-update-skill.md` 协调（边界判定表增补 1 行）
 - **关键变化（2026-07-01 结构重构）：**
+  - 🔧 v3.7.4：Task/Coding/Test/CR 路径从 Story 分桶升级为 WorkItem 分桶，支持 life 这类持续迭代项目中 PRD / BUG / OPT / Story 独立编码任务的目录与状态隔离
   - 🔧 消除 `§0.x` 游离编号：§0.5 工程解耦→§3，§0.6 API 契约→§4
   - 🔧 3 处矛盾收敛（跟随代码方向）：
     - 设计类文档：明确"原地更新、不带版本号"（统一 §1.1/§2.2/§4.10）

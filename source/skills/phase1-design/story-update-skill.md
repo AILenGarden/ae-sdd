@@ -23,8 +23,8 @@ description: 根据 Proposal、Story 补充说明文档和 Story 模板更新 St
 | 文档类型 | API 调用 | 命名规则 | 动作 |
 |---------|---------|---------|------|
 | Story 主文档 | `ae-sdd doc save --intent STORY --story-id {S} --content-file 草稿.md` | 不带版本号（原地更新）|
-| Story Supplement | `ae-sdd doc finalize --intent STORY_SUPPLEMENT --story-id {S}` | 📝 手写+finalize |
-| Proposal | `ae-sdd doc save --intent PROPOSAL --story-id {S} --content-file 草稿.md` | 不带版本号 | 新增 |
+| Story Supplement | `ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 | 原地更新 |
+| Proposal | `ae-sdd doc save --intent PROPOSAL --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 | 原地更新 |
 
 ## 流程
 

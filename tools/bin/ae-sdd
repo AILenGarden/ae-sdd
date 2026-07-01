@@ -118,12 +118,55 @@ def cmd_scripts_dir(args, parser):
     return 0
 
 
+def _work_item_arg(args) -> str:
+    """Return explicit work item id, falling back to --story for old commands."""
+    return (getattr(args, "work_item", "") or getattr(args, "story", "") or "").strip()
+
+
+def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
+    """Resolve state path for main state commands.
+
+    No work item keeps the legacy project-level state. Passing --work-item or
+    --story reads/writes the isolated .auto-engineering/{id}/state.json file.
+    """
+    work_item = _work_item_arg(args)
+    if work_item:
+        return paths.work_item_state_path(ade_sdd, work_item), work_item
+    return paths.state_path(ade_sdd), ""
+
+
+def _write_active_state_mirror(ade_sdd: Path, state_data: dict, work_item: str, source_path: Path) -> None:
+    """Write .ae-sdd/state.json as an active-work-item mirror for old gates/hooks."""
+    if not work_item:
+        return
+    mirror = dict(state_data)
+    mirror["activeWorkItem"] = work_item
+    mirror["activeStatePath"] = str(source_path)
+    state.write_state(paths.state_path(ade_sdd), mirror)
+
+
+def _infer_scale_for_work_item(work_item: str, entry_node: str | None) -> tuple[str, str] | None:
+    """Infer micro-chain routing for explicit BUG/OPT/CONFIG work items."""
+    marker = (entry_node or "").strip().upper()
+    item = (work_item or "").strip().upper()
+    if marker in {"BUG", "OPT", "CONFIG"}:
+        return "微", marker
+    if item.startswith("BUG-"):
+        return "微", "BUG"
+    if item.startswith("OPT-"):
+        return "微", "OPT"
+    if item.startswith("CONFIG-"):
+        return "微", "CONFIG"
+    return None
+
+
 def cmd_state_read(args, parser):
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
-    s = state.read_state(paths.state_path(ade_sdd))
+    sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+    s = state.read_state(sp)
     output.emit(s, as_json=args.json)
     return 0
 
@@ -133,10 +176,21 @@ def cmd_state_write(args, parser):
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
-    s = state.read_state(paths.state_path(ade_sdd))
+    sp, work_item = _main_state_path_for_args(ade_sdd, args)
+    s = state.read_state(sp)
+    cfg = paths.read_config(ade_sdd)
+    if cfg.get("projectKey") and not s.get("projectKey"):
+        s["projectKey"] = cfg.get("projectKey")
+    if work_item:
+        s["currentWorkItem"] = work_item
+        # Backward compatibility: older gates still key off currentStory.
+        if not s.get("currentStory") and not args.story:
+            s["currentStory"] = work_item
     effective_state = dict(s)
     if args.story and not effective_state.get("currentStory"):
         effective_state["currentStory"] = args.story
+    if work_item and not effective_state.get("currentWorkItem"):
+        effective_state["currentWorkItem"] = work_item
     if args.task and not effective_state.get("currentTask"):
         effective_state["currentTask"] = args.task
     memory_result = memory_gate.check_state_transition(
@@ -154,22 +208,32 @@ def cmd_state_write(args, parser):
         return 1
     try:
         # 🆕 v3.5.15：首次 state write 携带 --scale 时写入（幂等：已存在则 warn 不覆盖）
-        if args.scale:
+        # WorkItem 入口为 BUG/OPT/CONFIG 时默认走微链，避免独立缺陷/优化误落大流程。
+        requested_scale = args.scale
+        requested_entry_node = args.entry_node
+        if not requested_scale and not s.get("scale"):
+            inferred = _infer_scale_for_work_item(work_item, requested_entry_node)
+            if inferred:
+                requested_scale, requested_entry_node = inferred
+        if requested_scale:
             existing_scale = s.get("scale")
-            if existing_scale and existing_scale != args.scale:
-                output.warn(f"state 已有 scale={existing_scale}，与本次 --scale={args.scale} 冲突，"
+            if existing_scale and existing_scale != requested_scale:
+                output.warn(f"state 已有 scale={existing_scale}，与本次 --scale={requested_scale} 冲突，"
                             f"保留现有 scale（如需切换请先 set_scale 重置）")
             else:
-                state.set_scale(s, args.scale, entry_node=args.entry_node)
+                state.set_scale(s, requested_scale, entry_node=requested_entry_node)
         changed = state.set_phase(s, args.phase, by="ae-sdd state write")
     except ValueError as e:
         output.err(str(e))
         return 1
     if args.story:
         s["currentStory"] = args.story
+    if work_item:
+        s["currentWorkItem"] = work_item
     if args.task:
         s["currentTask"] = args.task
-    state.write_state(paths.state_path(ade_sdd), s)
+    state.write_state(sp, s)
+    _write_active_state_mirror(ade_sdd, s, work_item, sp)
     if changed:
         output.ok(f"state 更新：phase={args.phase}")
     else:
@@ -182,7 +246,8 @@ def cmd_state_next_step(args, parser):
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
-    s = state.read_state(paths.state_path(ade_sdd))
+    sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+    s = state.read_state(sp)
     suggestion = state.next_step_suggestion(s)
     if args.json:
         output.emit(suggestion, as_json=True)
@@ -619,6 +684,7 @@ def cmd_doc_save(args, parser):
         ade_sdd, project_key, args.intent, content,
         story_id=args.story_id, doc_id=args.doc_id,
         version=version, changelog_note=args.changelog_note,
+        work_item_id=args.work_item,
     )
 
     if not result.success:
@@ -659,6 +725,7 @@ def cmd_doc_resolve(args, parser):
         resolved = document_storage.resolve_path(
             ade_sdd, project_key, args.intent,
             story_id=args.story_id, doc_id=args.doc_id,
+            work_item_id=args.work_item,
         )
     except document_storage.DocStorageError as e:
         output.err(f"❌ {e}")
@@ -702,6 +769,7 @@ def cmd_doc_finalize(args, parser):
             ade_sdd, project_key, args.intent, args.path,
             story_id=args.story_id, doc_id=args.doc_id,
             changelog_note=args.changelog_note,
+            work_item_id=args.work_item,
         )
     except document_storage.DocStorageError as e:
         output.err(f"❌ {e}")
@@ -2617,11 +2685,16 @@ def main() -> int:
     p_state = sub.add_parser("state", help="项目状态管理", parents=[common])
     state_sub = p_state.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_state_read = state_sub.add_parser("read", help="读 state.json", parents=[common])
+    p_state_read.add_argument("--work-item", default="", help="独立编码任务 ID（PRD/BUG/OPT/Story 均可）")
+    p_state_read.add_argument("--story", default="", help="兼容参数：等价于 --work-item，且作为 currentStory")
     p_state_read.set_defaults(func=cmd_state_read)
     p_state_next = state_sub.add_parser("next-step", help="下一步建议", parents=[common])
+    p_state_next.add_argument("--work-item", default="", help="独立编码任务 ID（PRD/BUG/OPT/Story 均可）")
+    p_state_next.add_argument("--story", default="", help="兼容参数：等价于 --work-item")
     p_state_next.set_defaults(func=cmd_state_next_step)
     p_state_write = state_sub.add_parser("write", help="更新 state", parents=[common])
     p_state_write.add_argument("--phase", required=True, help="新 phase")
+    p_state_write.add_argument("--work-item", default="", help="独立编码任务 ID（PRD/BUG/OPT/Story 均可）；不传则沿用项目级 legacy state")
     p_state_write.add_argument("--story", help="当前 Story ID")
     p_state_write.add_argument("--task", help="当前 Task ID")
     p_state_write.add_argument("--scale", choices=["大", "中", "小", "微"], default=None,
@@ -2729,6 +2802,8 @@ def main() -> int:
                                     parents=[common])
     p_doc_save.add_argument("--intent", required=True,
                             help="文档意图（见 document-storage §4.10 intent 枚举）")
+    p_doc_save.add_argument("--work-item", default=None,
+                            help="独立编码任务 ID（PRD/BUG/OPT/Story 均可）；优先作为 Task/Coding/Test/CR 分桶")
     p_doc_save.add_argument("--story-id", default=None, help="Story ID（intent=STORY/TASK/CODING 等时填）")
     p_doc_save.add_argument("--doc-id", default=None, help="文档 ID（raId/prdId/issueId/taskId 等归一到此）")
     p_doc_save.add_argument("--content-file", required=True,
@@ -2743,6 +2818,7 @@ def main() -> int:
     p_doc_resolve = doc_sub.add_parser("resolve", help="只推路径不写（查会写到哪/落地前校验）",
                                        parents=[common])
     p_doc_resolve.add_argument("--intent", required=True, help="文档意图")
+    p_doc_resolve.add_argument("--work-item", default=None)
     p_doc_resolve.add_argument("--story-id", default=None)
     p_doc_resolve.add_argument("--doc-id", default=None)
     p_doc_resolve.add_argument("--project", default="", help="项目根目录（默认 cwd）")
@@ -2754,6 +2830,7 @@ def main() -> int:
                                         parents=[common])
     p_doc_finalize.add_argument("--path", required=True, help="已写好的文件路径")
     p_doc_finalize.add_argument("--intent", required=True, help="文档意图（用于 STORING 登记 category）")
+    p_doc_finalize.add_argument("--work-item", default=None)
     p_doc_finalize.add_argument("--story-id", default=None)
     p_doc_finalize.add_argument("--doc-id", default=None)
     p_doc_finalize.add_argument("--changelog-note", default=None, help="ChangeLog 记录")

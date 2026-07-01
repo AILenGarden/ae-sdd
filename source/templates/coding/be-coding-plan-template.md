@@ -8,7 +8,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 > **本质：** Coding 阶段的施工蓝图。**实现细节在 Task 里**，Code Plan 只做 **Task 编排 + 类骨架 + 方法级逻辑说明 + 目录对应**。
 >
 > **使用：**
-> 1. 落地路径由 `document-storage.resolve_path(intent="CODING_PLAN", storyId={STORY-ID})` 推导（见 document-storage §2.2），不硬编码
+> 1. 落地路径由 `document-storage.resolve_path(intent="CODING_PLAN", workItemId={WORKITEM-ID}, storyId={STORY-ID?})` 推导（见 document-storage §1.3），不硬编码
 > 2. 选 Tier（见 §0.5）
 > 3. 逐节填值（**禁止留空**；无则填 N/A 并说明）
 > 4. 通过 10 条门禁后进入 ⑤ Coding

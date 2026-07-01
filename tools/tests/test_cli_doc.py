@@ -123,6 +123,23 @@ class TestDocSave(unittest.TestCase):
         self.assertIn("CodingReport-v1-r1", results[0])
         self.assertIn("CodingReport-v1-r2", results[1])
 
+    def test_save_task_with_work_item(self):
+        """BUG/OPT 独立任务通过 --work-item 分桶，不依赖 --story-id。"""
+        tmp = _setup_project()
+        draft = tmp / ".ae-sdd" / "tmp" / "task.md"
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text("# task", encoding="utf-8")
+
+        code, out, err = _run_cli(tmp, "doc", "save",
+                                  "--intent", "TASK",
+                                  "--work-item", "BUG-LIFE-001",
+                                  "--doc-id", "TASK-001",
+                                  "--content-file", str(draft),
+                                  "--keep-draft")
+        self.assertEqual(code, 0, msg=f"stderr={err}\nstdout={out}")
+        final = tmp / "ae-sdd-doc" / "Task" / "BUG-LIFE-001" / "TASK-001.md"
+        self.assertTrue(final.is_file(), f"最终文件不存在：{final}")
+
 
 class TestDocResolve(unittest.TestCase):
     """`ae-sdd doc resolve` 只推路径不写。"""

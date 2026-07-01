@@ -52,11 +52,11 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 测试 | 禁止 `-DskipTests`、`maven.test.skip=true`、`testFailureIgnore=true` |
 | 扫描 | 运行 `scripts/test_authenticity_scan.py` 或 `ae-sdd gates check --only G-09` |
 
-所有 stdout/stderr、Surefire/Failsafe XML、扫描报告必须归档到 `.auto-engineering/{STORY-ID}/evidence/` 或测试报告可引用路径。
+所有 stdout/stderr、Surefire/Failsafe XML、扫描报告必须归档到 `.auto-engineering/{WORKITEM-ID}/evidence/` 或测试报告可引用路径。
 
 ### 3. 生成测试报告
 
-使用 `ae-sdd doc save --intent TEST_REPORT --story-id {S} --version "v1-r1" --content-file 草稿.md` 写报告。报告必须包含：
+使用 `ae-sdd doc save --intent TEST_REPORT --work-item {WORKITEM-ID} --story-id {S?} --version "v1-r1" --content-file 草稿.md` 写报告。报告必须包含：
 
 - 实际命令、工作目录、退出码、Profile。
 - 原始日志、XML、扫描报告路径。

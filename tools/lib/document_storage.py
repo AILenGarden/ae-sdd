@@ -30,26 +30,57 @@ from . import paths
 
 # ─── intent → 路径模板表（对齐 document-storage-skill §2.2 8 类流程目录）────────
 # 每条 = (intent, 子目录模板, 是否带版本号, STORING 分类)
-# 模板占位符：{docWorkspace} {storyId} {docId} {major} {minor}
+# 模板占位符：{docWorkspace} {projectKey} {workItem} {storyId} {docId} {major} {minor}
 # 未带版本号的文档（设计类）原地更新；带版本号的（事件报告）每次写新版本。
 _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
     "PRD":               ("{docWorkspace}/ae-sdd-doc/PRD/{docId}.md",                  False, "PRD"),
+    "ISSUE":             ("{docWorkspace}/ae-sdd-doc/Issue/{docId}.md",                False, "Issue"),
     "RA":                ("{docWorkspace}/ae-sdd-doc/RA/{docId}.md",                   False, "RA"),
+    "RA_GENERATE_PLAN":  ("{docWorkspace}/ae-sdd-doc/RA/{docId}-GeneratePlan-r{minor}.md", True, "RA"),
+    "RA_IMPACT":         ("{docWorkspace}/ae-sdd-doc/RA/{docId}-Impact-r{minor}.md",    True, "RA"),
+    "RA_REVERSE_ISSUES": ("{docWorkspace}/ae-sdd-doc/RA/{docId}-ReverseIssues.md",      False, "RA"),
     "DR":                ("{docWorkspace}/ae-sdd-doc/DR/{docId}.md",                   False, "DR"),
+    "DR_SUPPLEMENT":     ("{docWorkspace}/ae-sdd-doc/DR/{docId}-Supplement.md",         False, "DR"),
     "STORY":             ("{docWorkspace}/ae-sdd-doc/Story/{docId}.md",                False, "Story"),
-    "TASK":              ("{docWorkspace}/ae-sdd-doc/Task/{storyId}/{docId}.md",       False, "Task"),
-    "CODING_PLAN":       ("{docWorkspace}/ae-sdd-doc/Coding/{storyId}/{storyId}-CodingPlan.md", False, "Coding"),
-    "CODING_REPORT":     ("{docWorkspace}/ae-sdd-doc/Coding/{storyId}/{storyId}-CodingReport-v{major}-r{minor}.md", True, "Coding"),
-    "TESTCASE":          ("{docWorkspace}/ae-sdd-doc/Test/{storyId}/{storyId}-testcase.md",  False, "Test"),
-    "TEST_REPORT":       ("{docWorkspace}/ae-sdd-doc/Test/{storyId}/{storyId}-Report-v{major}-r{minor}.md", True, "Test"),
-    "CODE_REVIEW":       ("{docWorkspace}/ae-sdd-doc/CR/{storyId}/{storyId}-CodeReview-v{major}-r{minor}.md", True, "CR"),
-    "TRACE_MATRIX":      ("{docWorkspace}/ae-sdd-doc/Coding/{storyId}/{storyId}-追溯矩阵-v{major}-r{minor}.md", True, "Coding"),
-    "STORY_REVIEW":      ("{docWorkspace}/ae-sdd-doc/CR/{storyId}/{storyId}-StoryReviewReport-r{minor}.md", True, "CR"),
-    "REVIEW_UPDATEPLAN": ("{docWorkspace}/ae-sdd-doc/CR/{storyId}/{storyId}-StoryReviewUpdatePlan-r{minor}.md", True, "CR"),
+    "STORY_SUPPLEMENT":  ("{docWorkspace}/ae-sdd-doc/Story/{workItem}/{workItem}-Supplement.md", False, "Story"),
+    "STORY_GENERATE_PLAN": ("{docWorkspace}/ae-sdd-doc/Story/{workItem}/{workItem}-GeneratePlan-r{minor}.md", True, "Story"),
+    "STORY_WRITER_REPORT": ("{docWorkspace}/ae-sdd-doc/Story/{workItem}/{workItem}-WriterReport-r{minor}.md", True, "Story"),
+    "TASK":              ("{docWorkspace}/ae-sdd-doc/Task/{workItem}/{docId}.md",       False, "Task"),
+    "TASK_SUPPLEMENT":   ("{docWorkspace}/ae-sdd-doc/Task/{workItem}/{docId}-Supplement.md", False, "Task"),
+    "TASK_WRITER_REPORT": ("{docWorkspace}/ae-sdd-doc/Task/{workItem}/{workItem}-TaskWriterReport-r{minor}.md", True, "Task"),
+    "TASK_REVIEW":       ("{docWorkspace}/ae-sdd-doc/Task/{workItem}/{workItem}-TaskReview-r{minor}.md", True, "Task"),
+    "TASK_IMPL_PLAN":    ("{docWorkspace}/ae-sdd-doc/Task/{workItem}/{docId}-ImplPlan.md", False, "Task"),
+    "CODING_PLAN":       ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-CodingPlan.md", False, "Coding"),
+    "CODING_REPORT":     ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-CodingReport-v{major}-r{minor}.md", True, "Coding"),
+    "CODING_ISSUE_LOG":  ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-CodingIssueLog.md", False, "Coding"),
+    "TESTCASE":          ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-testcase.md",  False, "Test"),
+    "TESTCASE_COMPLIANCE_REPORT": ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-TestCaseCompliance-r{minor}.md", True, "Test"),
+    "TESTCASE_REVIEW":   ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-TestCaseReview-r{minor}.md", True, "Test"),
+    "TEST_REPORT":       ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-Report-v{major}-r{minor}.md", True, "Test"),
+    "CODE_REVIEW":       ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-CodeReview-v{major}-r{minor}.md", True, "CR"),
+    "TRACE_MATRIX":      ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-追溯矩阵-v{major}-r{minor}.md", True, "Coding"),
+    "STORY_REVIEW":      ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-StoryReviewReport-r{minor}.md", True, "CR"),
+    "REVIEW_UPDATEPLAN": ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-StoryReviewUpdatePlan-r{minor}.md", True, "CR"),
+    "REVIEW_COMPARE":    ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-ReviewCompare-v{major}-to-v{minor}.md", True, "CR"),
     "TASK_SMALL":        ("{docWorkspace}/ae-sdd-doc/iterations/{iterDate}/Task/{docId}/",  False, "Task"),
     "PLAN_MICRO":        ("{docWorkspace}/ae-sdd-doc/iterations/{iterDate}/Coding/{docId}/", False, "Coding"),
-    "PROPOSAL":          ("{docWorkspace}/ae-sdd-doc/CR/{storyId}/{storyId}-Proposal.md",  False, "CR"),
+    "PROPOSAL":          ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-Proposal.md",  False, "CR"),
+    "PROPOSAL_ARCHIVE":  ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/archive/{docId}.md", False, "CR"),
+    "ASSETS":            ("{docWorkspace}/.ae-sdd/assets/{projectKey}/{projectKey}.assets.md", False, "Assets"),
 }
+
+
+_VERSION_SUFFIX_RE = re.compile(
+    r"(?:-v(?P<dash_v>\d+)-r(?P<dash_r>\d+)"
+    r"|-v(?P<dot_v>\d+)\.(?P<dot_m>\d+)(?:-r(?P<dot_r>\d+))?"
+    r"|-r(?P<only_r>\d+)"
+    r"|-v(?P<from_v>\d+)-to-v(?P<to_v>\d+))$"
+)
+
+
+def _versionless_stem(stem: str) -> str:
+    """Strip a supported version suffix from a document stem."""
+    return _VERSION_SUFFIX_RE.sub("", stem)
 
 
 # ─── 错误码（对齐 §4.11）────────────────────────────────────────────────────
@@ -150,7 +181,8 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
                  story_id: Optional[str] = None, doc_id: Optional[str] = None,
                  service_name: Optional[str] = None, task_name: Optional[str] = None,
                  version: Optional[dict] = None,
-                 iteration_date: Optional[str] = None) -> ResolvedPath:
+                 iteration_date: Optional[str] = None,
+                 work_item_id: Optional[str] = None) -> ResolvedPath:
     """§4.1：核心 API，推导文档完整落地路径。
 
     步骤（对齐 §4.1 行为）：
@@ -196,11 +228,19 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
     version_suffix = f"{major}.{minor}" if has_version else ""
 
     # 4. 替换占位符
-    # docId 回退链：显式 doc_id > task_name > story_id（Story/PRD/RA/DR 等单标识文档，
-    # 其 doc-id 语义上 = story-id/prd-id 等，调用方常只传 story_id）
+    # workItem 是独立编码任务隔离键：PRD / BUG / OPT / Story 均可。
+    # 旧调用只传 story_id 时，workItem 回退到 story_id，保持路径兼容。
+    effective_work_item = work_item_id or story_id or doc_id or task_name or ""
+
+    # docId 回退链：显式 doc_id > task_name > workItem > story_id（Story/PRD/RA/DR 等单标识文档，
+    # 其 doc-id 语义上 = story-id/prd-id/issue-id 等，调用方常只传 story_id/work_item_id）
     effective_doc_id = doc_id or task_name or story_id or ""
+    if not effective_doc_id:
+        effective_doc_id = effective_work_item
     full = template.format(
         docWorkspace=str(doc_ws).replace("\\", "/"),
+        projectKey=project_key,
+        workItem=effective_work_item,
         storyId=story_id or "",
         docId=effective_doc_id,
         major=major,
@@ -212,7 +252,7 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
     full_path_obj = Path(full)
 
     scope = "service" if service_name else "project"
-    changelog_path = str(full_path_obj.parent / f"{full_path_obj.stem}-changelog.md")
+    changelog_path = str(full_path_obj.parent / f"{_versionless_stem(full_path_obj.stem)}-changelog.md")
 
     return ResolvedPath(
         full_path=str(full_path_obj),
@@ -230,12 +270,6 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
 # P2 中级 API（版本号自增 + 文件 IO，确定性）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# 匹配两种版本号格式（2026-07-01 修复：v4.1 原正则只匹配点格式，漏事件类报告 dash 格式）：
-#   点格式：-v1.0.md 或 -v1.0-r2.md（设计类历史格式）
-#   dash 格式：-v1-r2.md（事件类报告格式，major=r 部分）
-_VERSION_RE = re.compile(r"-v(\d+)(?:\.(\d+)(?:-r(\d+))?|-r(\d+))\.md$")
-
-
 def _normalize_version(version: Optional[dict | str], has_version: bool) -> tuple[int, int]:
     """Return (major, minor/r) for versioned document paths.
 
@@ -250,6 +284,9 @@ def _normalize_version(version: Optional[dict | str], has_version: bool) -> tupl
         minor = version.get("minor", version.get("r", 1))
         return (int(major), int(minor))
     text = str(version).strip()
+    compare = re.search(r"v?(\d+)-to-v?(\d+)", text, re.IGNORECASE)
+    if compare:
+        return (int(compare.group(1)), int(compare.group(2)))
     m = re.search(r"v?(\d+)(?:[.\-]r?(\d+))?", text, re.IGNORECASE)
     if not m:
         return (1, 1)
@@ -262,6 +299,8 @@ def get_latest_version(doc_dir: Path, stem_prefix: str) -> Optional[tuple[int, i
     支持两种版本号格式（2026-07-01 修复：原仅匹配点格式，漏匹配事件类报告 dash 格式）：
       - 点格式：-v1.0.md（设计类历史格式）→ group(1)=major, group(2)=minor
       - dash 格式：-v1-r2.md（事件类报告格式）→ group(1)=v, group(4)=r
+      - r-only：-r2.md（Review 报告）→ (1, 2)
+      - compare：-v1-to-v2.md（跨轮对比）→ (1, 2)
 
     Returns:
         (major, minor/r) 最大者；无版本文件返回 None。
@@ -269,15 +308,17 @@ def get_latest_version(doc_dir: Path, stem_prefix: str) -> Optional[tuple[int, i
     if not doc_dir.is_dir():
         return None
     best: Optional[tuple[int, int]] = None
-    for f in doc_dir.glob(f"{stem_prefix}-v*.md"):
-        m = _VERSION_RE.search(f.name)
+    for f in doc_dir.glob(f"{stem_prefix}*.md"):
+        m = _VERSION_SUFFIX_RE.search(f.stem)
         if m:
-            if m.group(2) is not None:
-                # 点格式：-v{major}.{minor}(-r{r})?
-                cur = (int(m.group(1)), int(m.group(2)))
+            if m.group("dash_v") is not None:
+                cur = (int(m.group("dash_v")), int(m.group("dash_r")))
+            elif m.group("dot_v") is not None:
+                cur = (int(m.group("dot_v")), int(m.group("dot_m")))
+            elif m.group("only_r") is not None:
+                cur = (1, int(m.group("only_r")))
             else:
-                # dash 格式：-v{v}-r{r}
-                cur = (int(m.group(1)), int(m.group(4)))
+                cur = (int(m.group("from_v")), int(m.group("to_v")))
             if best is None or cur > best:
                 best = cur
     return best
@@ -366,7 +407,8 @@ def check_ra_prerequisites(content: str) -> None:
 def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
              story_id: Optional[str] = None, doc_id: Optional[str] = None,
              version: Optional[dict] = None,
-             changelog_note: Optional[str] = None) -> SaveResult:
+             changelog_note: Optional[str] = None,
+             work_item_id: Optional[str] = None) -> SaveResult:
     """§4.3：统一文档保存入口（版本号自增 + ChangeLog + 目录创建 + .gitignore）。
 
     步骤（对齐 §4.3）：
@@ -381,7 +423,8 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
     """
     try:
         resolved = resolve_path(ade_sdd, project_key, intent,
-                                story_id=story_id, doc_id=doc_id, version=version)
+                                story_id=story_id, doc_id=doc_id, version=version,
+                                work_item_id=work_item_id)
     except DocStorageError as e:
         return SaveResult(False, None, None, "", error=str(e))
 
@@ -399,7 +442,7 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
     if resolved.version_suffix:
         # 带版本号：未显式指定时自增（E007：重入必须递增）
         if version is None:
-            stem = full_path.stem.rsplit("-v", 1)[0] if "-v" in full_path.stem else full_path.stem
+            stem = _versionless_stem(full_path.stem)
             latest = get_latest_version(full_path.parent, stem)
             if latest:
                 new_version = f"{latest[0]}.{latest[1] + 1}"
@@ -414,10 +457,11 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
         _vparts = new_version.split(".")
         re_resolved = resolve_path(ade_sdd, project_key, intent,
                                    story_id=story_id, doc_id=doc_id,
-                                   version={"major": int(_vparts[0]), "minor": int(_vparts[1])})
+                                   version={"major": int(_vparts[0]), "minor": int(_vparts[1])},
+                                   work_item_id=work_item_id)
         full_path = Path(re_resolved.full_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        resolved.changelog_path = re_resolved.changelog_path
+        resolved = re_resolved
 
     full_path.write_text(content, encoding="utf-8")
 
@@ -443,7 +487,8 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
 
 def finalize_doc(ade_sdd: Path, project_key: str, intent: str, file_path: str,
                  story_id: Optional[str] = None, doc_id: Optional[str] = None,
-                 changelog_note: Optional[str] = None) -> SaveResult:
+                 changelog_note: Optional[str] = None,
+                 work_item_id: Optional[str] = None) -> SaveResult:
     """§4.3 补充：对已手写文件补版本号/ChangeLog/STORING（不改文件位置，不覆盖内容）。
 
     适用场景：未实现 intent（📝 标记）的文档，LLM 手写后用本函数补登记；
@@ -472,7 +517,8 @@ def finalize_doc(ade_sdd: Path, project_key: str, intent: str, file_path: str,
     # resolve 用于拿 STORING 登记所需的 category（不强制路径与已写文件一致，
     # 因为未实现 intent 的模板可能缺；已写文件路径以 file_path 为准）
     resolved = resolve_path(ade_sdd, project_key, intent,
-                            story_id=story_id, doc_id=doc_id)
+                            story_id=story_id, doc_id=doc_id,
+                            work_item_id=work_item_id)
 
     # 版本号（从文件名解析，若已带 -v{N}-r{M}）
     new_version = resolved.version_suffix
@@ -480,7 +526,7 @@ def finalize_doc(ade_sdd: Path, project_key: str, intent: str, file_path: str,
     changelog_entry = None
     if changelog_note:
         # ChangeLog 落在已写文件的同级目录（与 save_doc 一致）
-        cl_path = target.parent / f"{target.stem}-changelog.md"
+        cl_path = target.parent / f"{_versionless_stem(target.stem)}-changelog.md"
         entry = f"- {datetime.now().strftime('%Y-%m-%d %H:%M')} v{new_version or 'N/A'}: {changelog_note}"
         with cl_path.open("a", encoding="utf-8") as f:
             f.write(entry + "\n")

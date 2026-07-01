@@ -44,6 +44,14 @@ class TestResolvePathVersion(unittest.TestCase):
         )
         self.assertTrue(r.full_path.endswith("STORY-001-CodingReport-v3-r5.md"))
 
+    def test_compare_version_string(self):
+        tmp = _setup_project()
+        r = document_storage.resolve_path(
+            tmp / ".ae-sdd", "test", "REVIEW_COMPARE",
+            work_item_id="STORY-001", version="v1-to-v2",
+        )
+        self.assertTrue(r.full_path.endswith("STORY-001-ReviewCompare-v1-to-v2.md"))
+
 
 class TestSaveDoc(unittest.TestCase):
     """save_doc 端到端：写文件 + ChangeLog + STORING + .gitignore + 版本号自增。"""
@@ -126,6 +134,45 @@ class TestSaveDoc(unittest.TestCase):
         )
         self.assertFalse(result.success)
         self.assertIn("E000", result.error)
+
+    def test_issue_intent_is_implemented(self):
+        """ISSUE 已登记的 intent 必须有真实路径实现。"""
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "ISSUE", "# Bug issue",
+            doc_id="BUG-LIFE-001",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        self.assertTrue(result.full_path.replace("\\", "/").endswith("ae-sdd-doc/Issue/BUG-LIFE-001.md"))
+        self.assertTrue(Path(result.full_path).is_file())
+
+    def test_work_item_id_buckets_task_without_story_id(self):
+        """BUG/OPT 等独立编码任务可用 work_item_id 分桶，不必伪造成 Story。"""
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "TASK", "# Task",
+            work_item_id="BUG-LIFE-001", doc_id="TASK-001",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        normalized = result.full_path.replace("\\", "/")
+        self.assertTrue(normalized.endswith("ae-sdd-doc/Task/BUG-LIFE-001/TASK-001.md"))
+
+    def test_r_only_report_version_increment(self):
+        """r-only 报告（如 TESTCASE_REVIEW）重入时 r 自增，不覆盖 r1。"""
+        tmp = _setup_project()
+        r1 = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "TESTCASE_REVIEW", "# review r1",
+            work_item_id="BUG-LIFE-001",
+        )
+        r2 = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "TESTCASE_REVIEW", "# review r2",
+            work_item_id="BUG-LIFE-001",
+        )
+        self.assertTrue(r1.success, msg=r1.error)
+        self.assertTrue(r2.success, msg=r2.error)
+        self.assertNotEqual(r1.full_path, r2.full_path)
+        self.assertTrue(r1.full_path.endswith("TestCaseReview-r1.md"))
+        self.assertTrue(r2.full_path.endswith("TestCaseReview-r2.md"))
 
 
 class TestFinalizeDoc(unittest.TestCase):

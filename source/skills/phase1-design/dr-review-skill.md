@@ -25,16 +25,16 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 DR Review 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **存文档**：`ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md`（📝 未实现 intent，手写后 `ae-sdd doc finalize` 补登记）
+> 1. **存文档**：`ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md`
 > 2. **命名**（§3 命名规则）：Review 类文档带 `vN.m`（版本.轮次，m 随 Review 轮次递增）
 > 3. **重入判定**（§4 重入 SOP）：DR Review 重入时**新增报告**（m 递增，N 表 DR 主版本号）
 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| DR Review 报告 | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 📝 手写+finalize |
-| DR Review UpdatePlan | 同上（附 UpdatePlan 后缀）| 📝 手写+finalize |
-| DR Review ChangeLog | `ae-sdd doc finalize --changelog-note` 追加 | — | 原地累加 |
-| DR Review Supplement | `ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id {drId}` | 📝 手写+finalize |
+| DR Review 报告 | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
+| DR Review UpdatePlan | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md --changelog-note "UpdatePlan"` | 不带版本号 |
+| DR Review ChangeLog | `ae-sdd doc save --changelog-note` 追加 | — | 原地累加 |
+| DR Review Supplement | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
 
 > **存放目录语义：** `CR/`（Code Review / 文档 Review）目录统管所有 Review 类产出；`ChangeLog/` 子目录集中维护 DR Review 累积变更记录。
 
@@ -879,8 +879,8 @@ DR Review 发现 RA-DEFECT
 | 1 | RA 新版本 | `ae-sdd doc save --intent RA --doc-id {raId}` | 原地更新 |
 | 2 | RA ChangeLog 行 | `ae-sdd doc save` 自动追加 | 追加 1 行 |
 | 3 | RA §13 关联矩阵修订记录 | RA 文档内 §13 | 标注"本次修订影响 N 个下游文档" |
-| 4 | DR 重审报告 | `ae-sdd doc finalize --intent DR_SUPPLEMENT --doc-id {drId}` | 📝 手写+finalize |
-| 5 | Story 重审报告 | `ae-sdd doc save --intent STORY_REVIEW --story-id {S}` | 带 r{N} |
+| 4 | DR 重审报告 | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
+| 5 | Story 重审报告 | `ae-sdd doc save --intent STORY_REVIEW --work-item {W} --story-id {S}` | 带 r{N} |
 | 6 | 闭环审计行 | `ae-sdd doc finalize` 独立审计文件 | 独立审计文件 |
 
 #### 3.4.4 闭环审计行模板

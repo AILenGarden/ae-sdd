@@ -12,7 +12,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.7.3"
+MASTER_VERSION = "3.7.4"
 
 
 def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:
@@ -135,6 +135,16 @@ def read_config(ade_sdd: Path) -> dict:
 
 def state_path(ade_sdd: Path) -> Path:
     return ade_sdd / "state.json"
+
+
+def work_item_state_path(ade_sdd: Path, work_item_id: str) -> Path:
+    """Return the isolated state.json path for one coding work item.
+
+    The project-level .ae-sdd/state.json remains as an active-work-item mirror
+    for older gates/hooks. Durable task state lives under
+    .auto-engineering/{WORKITEM-ID}/state.json.
+    """
+    return project_root(ade_sdd) / ".auto-engineering" / work_item_id / "state.json"
 
 
 def assets_dir(ade_sdd: Path) -> Path:

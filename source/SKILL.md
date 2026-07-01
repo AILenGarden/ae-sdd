@@ -1,10 +1,10 @@
 ---
 name: ae-sdd
-version: 3.7.3
+version: 3.7.4
 description: |
-  端到端自动化工程主入口（v3.7.3）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.7.4）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
-  🆕 v3.7.3：CodingProcess 5 上下文改为项目约束/技术约束/Story/Task/TestCase（原第⑤项目资产并入 CodeAnalysis 内部步骤），5 上下文读取统一走 document-storage-skill。
+  🆕 v3.7.4：document-storage 与 state 支持 WorkItem 隔离，PRD / BUG / OPT / Story 均可作为独立编码任务分桶与状态目录。
   历史变更见 source/CHANGELOG/。
 ---
 
@@ -46,7 +46,7 @@ triggers:
 > **续接播报格式**：
 > ```
 > 【流程已恢复 — 主流程监管器续接】
-> 项目 Key：{projectKey}  |  Story ID：{STORY-ID}  |  规模：{大/中/小/微}
+> 项目 Key：{projectKey}  |  WorkItem ID：{WORKITEM-ID}  |  Story ID：{STORY-ID?}  |  规模：{大/中/小/微}
 > 当前阶段：{phase}  |  已完成：{列表}  |  下一步：{SKILL名}，原因：{reason}
 > ```
 >
@@ -357,9 +357,9 @@ PRD收尾（可选）：
 
 ## 流程状态与再启动
 
-**state.json** 路径：`.auto-engineering/{STORY-ID}/state.json`
+**state.json** 路径：`.auto-engineering/{WORKITEM-ID}/state.json`
 
-关键字段：`scale` / `entryNode` / `phase` / `completedSteps` / `correctionCounts`
+关键字段：`scale` / `entryNode` / `phase` / `currentWorkItem` / `currentStory` / `completedSteps` / `correctionCounts`
 
 **再启动判定**：
 
@@ -368,7 +368,7 @@ PRD收尾（可选）：
 | 继续/接着做 | 读 state.json，恢复当前步骤 |
 | 从某步骤继续 | 从指定步骤恢复（不可倒退已完成关键门禁）|
 | 放弃重新开始 | 确认后删 state.json，从 Phase 1 ① 重启 |
-| 切换Story | 保留当前 state.json，切换新 state.json |
+| 切换WorkItem/Story | 保留当前 state.json，切换 `.auto-engineering/{WORKITEM-ID}/state.json` |
 | 偏离流程 | 简短回应，不更新 state |
 | PRD收尾 | 跑 prd-check-complete → 4层AND全过 → 审核点5 → prd-complete |
 
@@ -447,7 +447,7 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 |------|------|---------|
 | 7t-1 全门禁 | `ae-sdd gates check` | failed=0 |
 | 7t-2 文档位置 | `gates check --only G-DOC-STORAGE` | stray=[] |
-| 7t-3 state完整 | `ae-sdd state read --json` | phase合法+currentStory非空 |
+| 7t-3 state完整 | `ae-sdd state read --work-item <WORKITEM-ID> --json` | phase合法+currentWorkItem非空；Story 流程需 currentStory非空 |
 | 7t-4 产出物齐全 | 逐项核§⑧产出物表 | 全部文件真实存在 |
 | 7t-5 无遗留🔴 | 读CodeReview报告 | 无Open态🔴问题 |
 
@@ -458,14 +458,14 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 | 产出物 | 路径定位 |
 |--------|---------|
 | Story文档 | `resolve_path(intent="STORY", storyId)` |
-| Task文档 | `resolve_path(intent="TASK", storyId, taskId)` |
-| Coding报告 | `resolve_path(intent="CODING_REPORT", storyId, version={v,r})` |
-| CodeReview报告 | `resolve_path(intent="CODE_REVIEW", storyId, version={v,r})` |
-| 测试用例 | `resolve_path(intent="TESTCASE", storyId)` |
-| 测试报告 | `resolve_path(intent="TEST_REPORT", storyId, version={v,r})` |
+| Task文档 | `resolve_path(intent="TASK", workItemId, storyId?, taskId)` |
+| Coding报告 | `resolve_path(intent="CODING_REPORT", workItemId, storyId?, version={v,r})` |
+| CodeReview报告 | `resolve_path(intent="CODE_REVIEW", workItemId, storyId?, version={v,r})` |
+| 测试用例 | `resolve_path(intent="TESTCASE", workItemId, storyId?)` |
+| 测试报告 | `resolve_path(intent="TEST_REPORT", workItemId, storyId?, version={v,r})` |
 | 源代码 | 工程目录 |
 
-路径均通过 `documentStorage.resolve_path()` 定位，禁止硬编码（路径模板见 `document-storage-skill.md` §2.2）。
+路径均通过 `documentStorage.resolve_path()` 定位，禁止硬编码（路径模板见 `document-storage-skill.md` §1.3）。
 
 ---
 

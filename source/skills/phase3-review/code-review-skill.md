@@ -49,8 +49,8 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 | 输出文档 | intent | 命令示例 | 版本策略 |
 |---------|--------|---------|---------|
-| CodeReview 报告 | `CODE_REVIEW` | `ae-sdd doc save --intent CODE_REVIEW --story-id {S} --version "v1-r1" ...` | 带 v{N}-r{M}（r 自增）|
-| ⑦bis 追溯矩阵 | `TRACE_MATRIX` | `ae-sdd doc save --intent TRACE_MATRIX --story-id {S} --version "v1-r1" ...` | 带 v{N}-r{M} |
+| CodeReview 报告 | `CODE_REVIEW` | `ae-sdd doc save --intent CODE_REVIEW --work-item {W} --story-id {S?} --version "v1-r1" ...` | 带 v{N}-r{M}（r 自增）|
+| ⑦bis 追溯矩阵 | `TRACE_MATRIX` | `ae-sdd doc save --intent TRACE_MATRIX --work-item {W} --story-id {S?} --version "v1-r1" ...` | 带 v{N}-r{M} |
 | CodeReviewUpdatePlan | 嵌入 CodeReview 报告 §十（**2026-06-06 改造：改为 Proposal 指针 → `proposal-skill.md`）** | 走 Proposal | Proposal 替代 |
 
 > 🔴 **关键：** 评审通过后**触发下游 Proposal 流程**（proposal-skill.md），评审发现的问题统一用 Proposal 描述。
@@ -810,12 +810,12 @@ Code Review 发现问题
 | 产出物 | 实际路径（由 `ae-sdd doc resolve` 定位） | 是否存在 | 与报告一致 |
 |--------|---------|---------|----------|
 | Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}` | □ | □ |
-| 统一版 CodePlan | `ae-sdd doc resolve --intent CODING_PLAN --story-id {S}` | □ | □ |
-| Coding 报告 | `ae-sdd doc resolve --intent CODING_REPORT --story-id {S}` | □ | □ |
-| 测试用例 | `ae-sdd doc resolve --intent TESTCASE --story-id {S}` | □ | □ |
-| 测试报告 | `ae-sdd doc resolve --intent TEST_REPORT --story-id {S}` | □ | □ |
+| 统一版 CodePlan | `ae-sdd doc resolve --intent CODING_PLAN --work-item {W} --story-id {S?}` | □ | □ |
+| Coding 报告 | `ae-sdd doc resolve --intent CODING_REPORT --work-item {W} --story-id {S?}` | □ | □ |
+| 测试用例 | `ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}` | □ | □ |
+| 测试报告 | `ae-sdd doc resolve --intent TEST_REPORT --work-item {W} --story-id {S?}` | □ | □ |
 | 源代码 | 工作目录对应工程 | □ | □ |
-| CodeReview 报告 | `ae-sdd doc resolve --intent CODE_REVIEW --story-id {S}` | □ | □ |
+| CodeReview 报告 | `ae-sdd doc resolve --intent CODE_REVIEW --work-item {W} --story-id {S?}` | □ | □ |
 
 > **🔴 任何产出物不存在或不一致 → 必须修正报告或补充产出物，不得跳过。**
 
