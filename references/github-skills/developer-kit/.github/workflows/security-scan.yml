@@ -1,0 +1,61 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  security-scan:
+    name: MCP-Scan Security Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run MCP-Scan (changed skills only on PRs)
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "🔍 Running MCP-Scan on changed skills..."
+          python .skills-validator-check/validators/mcp_scan_checker.py --changed --base origin/${{ github.base_ref }} -v
+
+      - name: Run MCP-Scan (all skills on push)
+        if: github.event_name == 'push'
+        run: |
+          echo "🔍 Running MCP-Scan security check on all skills..."
+          python .skills-validator-check/validators/mcp_scan_checker.py --all -v
+
+      - name: Run Trust Hub Security Check (PR only)
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          echo "🔐 Running Trust Hub security check on changed skills..."
+          python .skills-validator-check/validators/security_checker.py
+
+      - name: Run Trust Hub Security Check (push to main/develop)
+        if: github.event_name == 'push'
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_HEAD_REF: ${{ github.ref_name }}
+          GITHUB_BASE_REF: ${{ github.event.before }}
+        run: |
+          echo "🔐 Running Trust Hub security check..."
+          python .skills-validator-check/validators/security_checker.py

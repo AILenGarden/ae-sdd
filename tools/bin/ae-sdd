@@ -4,9 +4,9 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 门禁检查（pre-flight；v3.5.18 共 29 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
+  - gates    : 门禁检查（pre-flight；v3.8.0 共 30 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
                G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION +
-               G-CODE-1 + G-REVIEW-LOOP）
+               G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
 
 🆕 v3.3.0+ PRD 级状态机与自检（2026-06-25）：
@@ -56,6 +56,11 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health
+    ae-sdd automation status                       # 自动化开关配置（v3.8.0）
+    ae-sdd automation enable                       # 开启全自动化（v3.8.0）
+    ae-sdd automation disable                      # 关闭自动化（v3.8.0）
+    ae-sdd preflight collect [--story <ID>]        # 开工前信息预收集（v3.8.0）
+    ae-sdd state register-review-consensus --point 1 --passed true  # 写联审共识（v3.8.0）
 """
 from __future__ import annotations
 
@@ -73,7 +78,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, classify, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, session, state, stop_check, update_graph  # noqa: E402
+from lib import assets_index, classify, config, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, runtime_verify, session, state, stop_check, update_graph  # noqa: E402
 
 
 def _read_stdin_json() -> dict:
@@ -461,6 +466,40 @@ def cmd_runtime_compact(args, parser):
     else:
         output.warn(f"PRD state.json 不存在（{prd_state_path}），跳过 prdStatus 写入")
     return 0
+
+
+def _default_runtime_verify_path() -> Path:
+    root = Path(__file__).resolve().parent.parent.parent
+    if (root / "SKILL.md").is_file():
+        return root
+    dist = root / "dist" / "ae-sdd"
+    if (dist / "SKILL.md").is_file():
+        return dist
+    return root
+
+
+def cmd_runtime_verify(args, parser):
+    target = Path(args.path).expanduser() if args.path else _default_runtime_verify_path()
+    result = runtime_verify.verify_runtime_package(target)
+    payload = result.to_dict()
+
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        if result.ok:
+            manifest = result.manifest or {}
+            output.ok(f"compiled runtime verified: {result.package_path}")
+            output.info(f"version: {manifest.get('version', '(unknown)')}")
+            output.info(f"runtime_fingerprint: {manifest.get('runtime_fingerprint', '(missing)')}")
+            if result.warnings:
+                output.warn(f"warnings: {result.warnings}")
+        else:
+            output.err(f"compiled runtime verify failed: {result.package_path}")
+            for item in result.issues:
+                output.err(f"  - {item}")
+            if result.warnings:
+                output.warn(f"warnings: {result.warnings}")
+    return 0 if result.ok else 1
 
 
 def cmd_gates_check(args, parser):
@@ -1347,6 +1386,224 @@ def cmd_review_loop_verify_exit(args, parser):
         mark = "✅" if passed else "❌"
         output.info(f"{mark} review-loop verify-exit: {reason}")
     return 0 if passed else 1
+
+
+# ─── 🆕 v3.8.0 自动化开关 / 预收集 / 联审共识 ────────────────────────────────
+def cmd_automation_status(args, parser):
+    """automation status — 读自动化配置。"""
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/，请先 ae-sdd init")
+        return 1
+    cfg = config.load_automation_config(ade_sdd)
+    if args.json:
+        output.emit(cfg, as_json=True)
+    else:
+        mark = "🟢 已启用" if cfg["enabled"] else "⚪ 未启用（默认）"
+        output.info(f"自动化模式：{mark}")
+        output.info(f"  reviewerTier: {cfg['reviewerTier']}")
+        output.info(f"  preflightInfoCollection: {cfg['preflightInfoCollection']}")
+        output.info(f"  onConsensusStall: {cfg['onConsensusStall']}")
+        output.info(f"  automatedReviewPoints: {cfg['automatedReviewPoints']}")
+        if cfg["enabledAt"]:
+            output.info(f"  enabledAt: {cfg['enabledAt']}")
+    return 0
+
+
+def _write_automation_config(ade_sdd: Path, cfg: dict) -> None:
+    """把 automation 段写回 .ae-sdd/config.yaml（保留其余段落，仅替换 automation 段）。
+
+    简易实现：读原文 → 删除已有 automation 段 → 末尾追加新段。
+    config.yaml 是人工可读 YAML，此写法足够（init.py 生成的格式稳定）。
+    """
+    cfg_path = ade_sdd / "config.yaml"
+    text = cfg_path.read_text(encoding="utf-8") if cfg_path.is_file() else ""
+    # 删除已有 automation 段（从 "automation:" 行到下一个顶级 key 前或文件末）
+    lines = text.splitlines()
+    out, in_auto, i = [], False, 0
+    while i < len(lines):
+        ln = lines[i]
+        if ln.startswith("automation:"):
+            in_auto = True
+            i += 1
+            # 跳过后续缩进行
+            while i < len(lines) and (lines[i].startswith(" ") or lines[i].startswith("\t")
+                                      or not lines[i].strip()):
+                # 但停在下一个顶级 key
+                if lines[i] and not lines[i][0].isspace() and ":" in lines[i]:
+                    break
+                i += 1
+            continue
+        out.append(ln)
+        i += 1
+    # 追加新段
+    pts = ", ".join(str(p) for p in cfg["automatedReviewPoints"])
+    out.append("")
+    out.append("# 🆕 v3.8.0 自动化开关（ae-sdd automation enable/disable 维护）")
+    out.append("automation:")
+    out.append(f"  enabled: {'true' if cfg['enabled'] else 'false'}")
+    out.append(f"  reviewerTier: {cfg['reviewerTier']}")
+    out.append(f"  preflightInfoCollection: {'true' if cfg['preflightInfoCollection'] else 'false'}")
+    out.append(f"  onConsensusStall: {cfg['onConsensusStall']}")
+    out.append(f"  automatedReviewPoints: [{pts}]")
+    out.append(f'  enabledAt: "{cfg["enabledAt"]}"')
+    cfg_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def cmd_automation_enable(args, parser):
+    """automation enable — 开启全自动化（写 config.yaml，记 enabledAt）。"""
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/，请先 ae-sdd init")
+        return 1
+    cfg = config.load_automation_config(ade_sdd)
+    if cfg["enabled"]:
+        output.info("自动化模式已启用，无需重复操作")
+        return 0
+    cfg["enabled"] = True
+    cfg["enabledAt"] = _now_iso()
+    _write_automation_config(ade_sdd, cfg)
+    output.ok("🟢 自动化模式已启用")
+    output.info(f"  审核点将走 Tier {cfg['reviewerTier']} 联审共识，跳过人工✅")
+    output.info(f"  开工前信息预收集：{'开' if cfg['preflightInfoCollection'] else '关'}")
+    output.info(f"  阻断出口：{cfg['onConsensusStall']}")
+    return 0
+
+
+def cmd_automation_disable(args, parser):
+    """automation disable — 关闭自动化（保留 enabledAt 审计痕迹）。"""
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/，请先 ae-sdd init")
+        return 1
+    cfg = config.load_automation_config(ade_sdd)
+    if not cfg["enabled"]:
+        output.info("自动化模式未启用，无需操作")
+        return 0
+    cfg["enabled"] = False
+    _write_automation_config(ade_sdd, cfg)
+    output.ok("⚪ 自动化模式已关闭（回退人工审核）")
+    return 0
+
+
+def cmd_preflight_collect(args, parser):
+    """preflight collect — 开工前信息预收集（扫输入材料+资产，列待补信息清单）。
+
+    机器粗筛 6 类待补信息：
+      1. 第三方平台凭证（极光/融云/Key/Secret/AppKey 等占位词）
+      2. 复用项选择（{待确认}/{待复用} 占位）
+      3. 环境配置（DB/Redis/MQ 地址占位）
+      4. 命名约定
+      5. 已有对接方信息
+      6. 数据初始化要求
+    """
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/，请先 ae-sdd init")
+        return 1
+    import re
+
+    # 扫描范围：DR/PRD/Story/RA 文档 + 项目资产
+    scan_dirs = [ade_sdd / "assets", ade_sdd.parent / "design"]
+    # 也扫可能的产物目录
+    for d in [ade_sdd.parent / "docs", ade_sdd.parent / "ae-sdd"]:
+        if d.is_dir():
+            scan_dirs.append(d)
+
+    patterns = {
+        "第三方平台凭证": re.compile(
+            r"(极光|融云|AppKey|AppSecret|access[_-]?key|secret[_-]?key|api[_-]?key)", re.I),
+        "复用项选择": re.compile(r"(\{待确认\}|\{待复用\}|\{TODO\}|待确认|待复用)"),
+        "环境配置": re.compile(r"(数据库地址|redis地址|mq地址|\{db_host\}|\{redis_host\})", re.I),
+        "命名约定": re.compile(r"(\{命名待定\}|命名待定|服务名待定)"),
+        "对接方信息": re.compile(r"(对接方|联调方|\{对接方待补\})"),
+        "数据初始化": re.compile(r"(初始化数据|种子数据|\{初始化待补\})"),
+    }
+    findings: dict[str, list[str]] = {k: [] for k in patterns}
+    scanned = 0
+    for d in scan_dirs:
+        if not d.is_dir():
+            continue
+        for md in d.rglob("*.md"):
+            try:
+                content = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            scanned += 1
+            for cat, pat in patterns.items():
+                for m in pat.finditer(content):
+                    snippet = content[max(0, m.start() - 20):m.end() + 20].replace("\n", " ")
+                    findings[cat].append(f"{md.relative_to(ade_sdd.parent)}: …{snippet}…")
+
+    # 输出清单
+    total = sum(len(v) for v in findings.values())
+    pf_path = ade_sdd / "preflight-info.yaml"
+    if args.json:
+        output.emit({"scanned": scanned, "totalFindings": total, "findings": findings},
+                    as_json=True)
+    else:
+        output.info(f"🔍 开工前信息预收集（扫描 {scanned} 个文档）")
+        if total == 0:
+            output.ok("✅ 无待补信息，可直接开工")
+        else:
+            output.info(f"📋 待补信息清单（共 {total} 项，请一次性补齐）：")
+            for cat, items in findings.items():
+                if not items:
+                    continue
+                output.info(f"  【{cat}】({len(items)} 项)")
+                for it in items[:5]:
+                    output.info(f"    - {it}")
+                if len(items) > 5:
+                    output.info(f"    ... 另有 {len(items) - 5} 项")
+        output.info(f"  清单已写入 {pf_path}")
+
+    # 写 preflight-info.yaml（占位，待用户补齐）
+    lines = ["# ae-sdd 开工前信息预收集清单（🆕 v3.8.0，由 ae-sdd preflight collect 生成）",
+             f"# 生成时间: {_now_iso()}",
+             f"# 扫描文档数: {scanned}",
+             f"# 待补项总数: {total}", ""]
+    for cat, items in findings.items():
+        lines.append(f"{cat}:")
+        if not items:
+            lines.append("  - （未识别到待补项，用户可手工补充）")
+        else:
+            for it in items:
+                lines.append(f"  - {it}")
+        lines.append("")
+    pf_path.write_text("\n".join(lines), encoding="utf-8")
+    return 0
+
+
+def cmd_state_register_review_consensus(args, parser):
+    """state register-review-consensus — 写联审共识结果到 state.reviewConsensus[point]。"""
+    from lib import state as state_mod
+    ade_sdd, story_id, sp = _resolve_state_path(args)
+    st = state_mod.read_state(sp)
+    reviewers = []
+    if args.reviewers:
+        # 格式 agentId|role|verdict|sessionId，逗号分隔多条
+        for tok in args.reviewers.split(","):
+            parts = tok.strip().split("|")
+            if len(parts) >= 4:
+                reviewers.append({"agentId": parts[0], "role": parts[1],
+                                  "verdict": parts[2], "sessionId": parts[3]})
+            elif len(parts) >= 1:
+                reviewers.append({"agentId": parts[0]})
+    # args.passed 是字符串 "true"/"false"（choices），转 bool
+    passed_bool = (args.passed == "true")
+    state_mod.register_review_consensus(
+        st, point=args.point, tier=args.tier, passed=passed_bool,
+        rounds=args.rounds, reviewers=reviewers, stall_reason=args.stall_reason)
+    state_mod.write_state(sp, st)
+    mark = "✅" if passed_bool else "❌"
+    output.ok(f"{mark} 已写联审共识：审核点 {args.point} Tier {args.tier} "
+              f"passed={args.passed} rounds={args.rounds}")
+    return 0
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def cmd_bump(args, parser):
@@ -2744,6 +3001,22 @@ def main() -> int:
                                    help="保留最近 N 条（默认 5）")
     p_state_prd_arch.set_defaults(func=cmd_state_prd_archive)
 
+    # state register-review-consensus（🆕 v3.8.0 写联审共识）
+    p_state_rrc = state_sub.add_parser("register-review-consensus",
+                                        help="[v3.8.0] 写联审共识结果到 reviewConsensus[point]",
+                                        parents=[common])
+    p_state_rrc.add_argument("--story", default="", help="Story ID（空=项目级）")
+    p_state_rrc.add_argument("--point", type=float, required=True,
+                             help="审核点编号（1/1.5/2/2.5/4/5）")
+    p_state_rrc.add_argument("--tier", type=int, default=3, help="reviewer Tier（自动化模式固定 3）")
+    p_state_rrc.add_argument("--passed", choices=["true", "false"], required=True,
+                             help="联审共识是否通过")
+    p_state_rrc.add_argument("--rounds", type=int, default=1, help="矫正轮次")
+    p_state_rrc.add_argument("--reviewers", default="",
+                             help="reviewer 摘要列表（agentId|role|verdict|sessionId，逗号分隔）")
+    p_state_rrc.add_argument("--stall-reason", default="", help="未通过原因")
+    p_state_rrc.set_defaults(func=cmd_state_register_review_consensus)
+
     # runtime（🆕 v3.3.0 runtime-specific compact 适配层）
     p_runtime = sub.add_parser("runtime", help="[v3.3.0] runtime-specific 适配（compact 等）",
                                 parents=[common])
@@ -2756,9 +3029,37 @@ def main() -> int:
                                    help="目标 runtime")
     p_runtime_compact.add_argument("--prd", required=True, help="PRD ID")
     p_runtime_compact.set_defaults(func=cmd_runtime_compact)
+    p_runtime_verify = runtime_sub.add_parser("verify",
+                                              help="校验 compiled runtime package（manifest/load_order/fingerprint）",
+                                              parents=[common])
+    p_runtime_verify.add_argument("--path", default="",
+                                  help="要校验的包目录；默认当前安装包，母版仓中默认 dist/ae-sdd")
+    p_runtime_verify.set_defaults(func=cmd_runtime_verify)
+
+    # automation（🆕 v3.8.0 自动化开关配置）
+    p_auto = sub.add_parser("automation",
+                            help="[v3.8.0] 自动化开关配置（status/enable/disable）",
+                            parents=[common])
+    auto_sub = p_auto.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_auto_status = auto_sub.add_parser("status", help="读自动化配置", parents=[common])
+    p_auto_status.set_defaults(func=cmd_automation_status)
+    p_auto_enable = auto_sub.add_parser("enable", help="开启全自动化", parents=[common])
+    p_auto_enable.set_defaults(func=cmd_automation_enable)
+    p_auto_disable = auto_sub.add_parser("disable", help="关闭自动化", parents=[common])
+    p_auto_disable.set_defaults(func=cmd_automation_disable)
+
+    # preflight（🆕 v3.8.0 开工前信息预收集）
+    p_pf = sub.add_parser("preflight",
+                          help="[v3.8.0] 开工前信息预收集（自动化模式专属）",
+                          parents=[common])
+    pf_sub = p_pf.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_pf_collect = pf_sub.add_parser("collect", help="扫描材料生成待补信息清单",
+                                     parents=[common])
+    p_pf_collect.add_argument("--story", default="", help="Story ID（扫描范围参考）")
+    p_pf_collect.set_defaults(func=cmd_preflight_collect)
 
     # gates
-    p_gates = sub.add_parser("gates", help="门禁检查（29 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP）", parents=[common])
+    p_gates = sub.add_parser("gates", help="门禁检查（30 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS）", parents=[common])
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
     p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")

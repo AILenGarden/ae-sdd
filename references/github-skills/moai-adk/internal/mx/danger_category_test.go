@@ -1,0 +1,253 @@
+package mx
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// TestDangerCategoryMatcher_Match tests matching REASON text against categories.
+func TestDangerCategoryMatcher_Match(t *testing.T) {
+	matcher := NewDangerCategoryMatcher(DangerCategoryConfig{})
+
+	tests := []struct {
+		name     string
+		reason   string
+		category string
+		expected bool
+	}{
+		{
+			name:     "goroutine leak → concurrency",
+			reason:   "goroutine leak on panic",
+			category: "concurrency",
+			expected: true,
+		},
+		{
+			name:     "unbounded channel → concurrency",
+			reason:   "unbounded channel usage detected",
+			category: "concurrency",
+			expected: true,
+		},
+		{
+			name:     "race condition → concurrency",
+			reason:   "race condition between goroutines",
+			category: "concurrency",
+			expected: true,
+		},
+		{
+			name:     "missing Close → resource-leak",
+			reason:   "missing Close on io.Reader",
+			category: "resource-leak",
+			expected: true,
+		},
+		{
+			name:     "fd leak → resource-leak",
+			reason:   "fd leak in error path",
+			category: "resource-leak",
+			expected: true,
+		},
+		{
+			name:     "defer missing → cleanup",
+			reason:   "defer missing for cleanup",
+			category: "cleanup",
+			expected: true,
+		},
+		{
+			name:     "hardcoded credential → security",
+			reason:   "hardcoded credential in source",
+			category: "security",
+			expected: true,
+		},
+		{
+			name:     "sql injection → security",
+			reason:   "sql injection vulnerability",
+			category: "security",
+			expected: true,
+		},
+		{
+			name:     "goroutine leak ≠ resource-leak",
+			reason:   "goroutine leak",
+			category: "resource-leak",
+			expected: false,
+		},
+		{
+			name:     "관련 없는 텍스트",
+			reason:   "단순 경고 메시지",
+			category: "concurrency",
+			expected: false,
+		},
+		{
+			name:     "대소문자 구분 없는 매칭",
+			reason:   "Goroutine Leak on panic",
+			category: "concurrency",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matcher.Match(tt.reason, tt.category)
+			if got != tt.expected {
+				t.Errorf("Match(%q, %q): 기대 %v, 실제 %v", tt.reason, tt.category, tt.expected, got)
+			}
+		})
+	}
+}
+
+// TestDangerCategoryMatcher_CategoryOf tests category inference from REASON text.
+func TestDangerCategoryMatcher_CategoryOf(t *testing.T) {
+	matcher := NewDangerCategoryMatcher(DangerCategoryConfig{})
+
+	tests := []struct {
+		reason   string
+		expected string
+	}{
+		{"goroutine leak detected", "concurrency"},
+		{"missing Close on error", "resource-leak"},
+		{"defer missing in handler", "cleanup"},
+		{"hardcoded credential found", "security"},
+		{"관련 없는 텍스트", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			got := matcher.CategoryOf(tt.reason)
+			if got != tt.expected {
+				t.Errorf("CategoryOf(%q): 기대 %q, 실제 %q", tt.reason, tt.expected, got)
+			}
+		})
+	}
+}
+
+// TestDangerCategoryMatcher_ValidateCategory tests category validity checks.
+func TestDangerCategoryMatcher_ValidateCategory(t *testing.T) {
+	matcher := NewDangerCategoryMatcher(DangerCategoryConfig{})
+
+	validCategories := []string{"concurrency", "resource-leak", "cleanup", "security"}
+	for _, cat := range validCategories {
+		t.Run("valid:"+cat, func(t *testing.T) {
+			if !matcher.ValidateCategory(cat) {
+				t.Errorf("ValidateCategory(%q): 유효한 카테고리인데 false 반환", cat)
+			}
+		})
+	}
+
+	invalidCategories := []string{"nonexistent", "random", ""}
+	for _, cat := range invalidCategories {
+		t.Run("invalid:"+cat, func(t *testing.T) {
+			if matcher.ValidateCategory(cat) {
+				t.Errorf("ValidateCategory(%q): 유효하지 않은 카테고리인데 true 반환", cat)
+			}
+		})
+	}
+}
+
+// TestDangerCategoryMatcher_CustomConfig tests custom configuration.
+func TestDangerCategoryMatcher_CustomConfig(t *testing.T) {
+	config := DangerCategoryConfig{
+		Categories: map[string][]string{
+			"custom": {"my-pattern", "another-pattern"},
+		},
+	}
+
+	matcher := NewDangerCategoryMatcher(config)
+
+	if !matcher.Match("my-pattern found in code", "custom") {
+		t.Error("커스텀 카테고리 패턴 매칭 실패")
+	}
+
+	// Default categories must not be applied.
+	if matcher.Match("goroutine leak", "concurrency") {
+		t.Error("커스텀 설정 시 기본 카테고리 사용됨")
+	}
+}
+
+// TestLoadDangerConfig_UserCustomCategories verifies that LoadDangerConfig
+// correctly loads user-defined categories declared in mx.yaml.
+// SPEC-V3R2-SPC-004 M2 RED — T-SPC004-03
+func TestLoadDangerConfig_UserCustomCategories(t *testing.T) {
+	tempDir := t.TempDir()
+	mxYAML := `danger_categories:
+  critical:
+    - "unwrap()"
+    - "panic()"
+`
+	// mx.yaml is deployed to .moai/config/sections/mx.yaml (see mx-tag-protocol.md),
+	// NOT the project root. LoadDangerConfig must read it from that canonical location.
+	sectionsDir := filepath.Join(tempDir, ".moai", "config", "sections")
+	if err := os.MkdirAll(sectionsDir, 0o755); err != nil {
+		t.Fatalf("sections 디렉터리 생성 실패: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sectionsDir, "mx.yaml"), []byte(mxYAML), 0o600); err != nil {
+		t.Fatalf("mx.yaml 작성 실패: %v", err)
+	}
+
+	cfg, err := LoadDangerConfig(tempDir)
+	if err != nil {
+		t.Fatalf("LoadDangerConfig 오류: %v", err)
+	}
+
+	patterns, ok := cfg.Categories["critical"]
+	if !ok {
+		t.Fatalf("'critical' 카테고리 없음: %v", cfg.Categories)
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p == "unwrap()" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("'unwrap()' 패턴 없음: %v", patterns)
+	}
+}
+
+// TestLoadDangerConfig_FileMissing_DefaultUsed verifies that LoadDangerConfig
+// returns an empty DangerCategoryConfig when mx.yaml is missing.
+// SPEC-V3R2-SPC-004 M2 RED — T-SPC004-03
+func TestLoadDangerConfig_FileMissing_DefaultUsed(t *testing.T) {
+	tempDir := t.TempDir()
+	// mx.yaml is absent.
+
+	cfg, err := LoadDangerConfig(tempDir)
+	if err != nil {
+		t.Fatalf("mx.yaml 없을 때 오류 없어야 함: %v", err)
+	}
+
+	if len(cfg.Categories) != 0 {
+		t.Errorf("mx.yaml 없을 때 빈 Categories 기대, 실제: %v", cfg.Categories)
+	}
+	if len(cfg.TestPaths) != 0 {
+		t.Errorf("mx.yaml 없을 때 빈 TestPaths 기대, 실제: %v", cfg.TestPaths)
+	}
+}
+
+// TestDangerCategoryMatcher_KnownCategories tests the list of known categories.
+func TestDangerCategoryMatcher_KnownCategories(t *testing.T) {
+	matcher := NewDangerCategoryMatcher(DangerCategoryConfig{})
+
+	categories := matcher.KnownCategories()
+	if len(categories) == 0 {
+		t.Error("알려진 카테고리 없음")
+	}
+
+	// The default four categories must all be present.
+	expected := map[string]bool{
+		"concurrency":   false,
+		"resource-leak": false,
+		"cleanup":       false,
+		"security":      false,
+	}
+
+	for _, cat := range categories {
+		expected[cat] = true
+	}
+
+	for cat, found := range expected {
+		if !found {
+			t.Errorf("기본 카테고리 누락: %s", cat)
+		}
+	}
+}

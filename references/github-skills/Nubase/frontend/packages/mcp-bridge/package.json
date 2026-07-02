@@ -1,0 +1,33 @@
+{
+  "name": "nubase_cli",
+  "version": "0.3.0",
+  "license": "Apache-2.0",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "nubase_cli": "dist/src/index.js"
+  },
+  "files": [
+    "dist/src",
+    "skills",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/test/*.test.js",
+    "prepack": "pnpm run build",
+    "pack:check": "npm_config_cache=../../.npm-cache npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "optionalDependencies": {
+    "esbuild": "0.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,51 @@
+# Minimal local Postgres for nubase development.
+# Uses pgvector/pgvector so tenant databases can create the `vector` extension.
+# Application defaults already point at:
+#   jdbc:postgresql://localhost:5432/postgrest_metadata?allowMultiQueries=true
+#   user/password: postgres/postgres
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: nubase-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-postgrest_metadata}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nubase-network
+
+  postgres-init:
+    image: pgvector/pgvector:pg15
+    container_name: nubase-postgres-init
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    command:
+      - sh
+      - -c
+      - |
+        psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgrest_metadata} \
+          -v ON_ERROR_STOP=1 \
+          -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nubase-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  nubase-network:
+    driver: bridge

@@ -94,6 +94,7 @@ Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
 - **HS-12**（🆕 v3.4.0，建议书3 F-1；🆕 v3.6 决策1B诚实降级）AI 谎报 `◆ GATE: ✅ CLEAR` 但实际门禁未通过（声明但无 Stop 物理实现：Stop hook 已废弃自报标记检测，靠 UserPromptSubmit hook + flow_monitor + `ae-sdd gates check` 兜底）
 - **HS-13** 暂离期间写源码/运行编译测试命令（声明但无物理实现——hook 无法感知"讨论模式"；靠 SKILL.md §🔀 暂离声明约束 AI 自律；未来可通过 `.ae-sdd/.detour_mode` 标记文件补物理拦截）
 - **HS-14** 检测到编码意图词但未执行回归门直接写代码（声明但无物理实现；靠 SKILL.md §🔀 编码意图检测 + 回归门协议约束；AI 必须先输出`【主流程监管器 ❌ 阻断】`并执行 `ae-sdd state read`）
+- **HS-15**（🆕 v3.8.0）自动化模式下未写 `reviewConsensus[point]` 就推进 review 节点 phase（声明但无物理实现——靠 G-AUTO-CONSENSUS 门禁兜底：`tools/lib/gates.py:check_g_auto_consensus` 校验 `state.reviewConsensus[point].passed=true` + reviewer 独立性复用 G-09B；非自动化模式 skip）
 
 ---
 
@@ -172,7 +173,7 @@ G-RA-FLOW-VIOLATION RA流程违规  G-REVIEW-LOOP review-loop退出条件
 
 | # | 事件 | 触发器 | 动作 |
 |---|------|--------|------|
-| 1 | ae-sdd 母版 commit | `.githooks/post-commit`（git hooksPath）| ① `build_dist.py` (source → dist) ② `install.py --target-path ~/.claude/skills/ae-sdd --quiet` ③ `install.py --target-path ~/.zcode/skills/ae-sdd --quiet` ④ `convert-ae-sdd-to-harness.ps1` (SKILL+HARNESS → agent.md) ⑤ `mavis harness remount` |
+| 1 | ae-sdd 母版 commit | `.githooks/post-commit`（git hooksPath）| 单入口 `distribute.py`：① `build_dist.py` (source → dist) ② 遍历 `DISTRIBUTORS` 注册表逐个 compile/install/verify（copytree 类：claude/codex/zcode/hermes；harness_mount 类：mavis，内部含 `convert-ae-sdd-to-harness.ps1` + `mavis harness remount`）|
 | 2 | 业务仓 `ae-sdd init` | `init.py` | 写 `.claude/settings.json` (3 hook) + `.ae-sdd/config.yaml` (master.version = 母版实时 frontmatter version) |
 | 3 | 业务仓每次 UserPromptSubmit | `prompt_inject.py` | 若 `installed MASTER_VERSION < config.yaml master.version` → 注入 `⚠️ master-freshness` 文本（不阻断）|
 | 4 | 任意位置跑 `ae-sdd health` | CLI | 比对 4 个版本源（CLI / source / dist / installed），输出 `master-freshness` 报告 + 修复建议 |

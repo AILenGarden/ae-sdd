@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+# Third-party actions are pinned to floating major tags (@vN). Version bumps are
+# governed by Dependabot (github-actions ecosystem, weekly) — see
+# .github/dependabot.yml. Do NOT downgrade to @main/@latest; Dependabot opens PRs
+# for each major bump so reviews are auditable. (Wave-3 hardening #21.)
+
+# Release publish — cancel-in-progress: false (tag publish + GoReleaser cancel 시 partial release 위험)
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

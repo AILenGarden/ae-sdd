@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.7.4（🆕 2026-07-01：document-storage 与 state 支持 WorkItem 隔离，PRD / BUG / OPT / Story 均可作为独立编码任务分桶与状态目录。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.8.0（🆕 2026-07-02：自动化模式、runtime 编译器与 standalone SKILL 编译器能力进入实现与一致性检查。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -41,6 +41,9 @@ ae-sdd/                                # 仓库根（GitHub 直发）
 │   ├── ra_depth_scan.py               #    RA 机械派生深度扫描器（G-RA-5 运行时依赖）
 │   ├── ra_implementation_scan.py      #    RA 实现视角七要素扫描器（G-RA-6 运行时依赖）
 │   └── coding_authenticity_scan.py    #    Coding 真实性扫描器（G-CODE-1 运行时依赖）
+│
+├── standalone-skills/                 # 🟨 可复制到其它 agent/仓库的独立 SKILL
+│   └── skill-runtime-compiler/        #    通用 SKILL 编译器：<source-skill> -> <source-skill>-compiled
 │
 ├── .gitignore                         # 忽略 dist/、IDE 数据、临时文件
 └── README.md                          # 📍 你正在看的文件
@@ -85,6 +88,7 @@ bash scripts/install.sh --from-build
 安装路径：
 - Claude Code：`~/.claude/skills/ae-sdd/`
 - Codex：`~/.codex/skills/ae-sdd/`（当目录已存在或检测到 Codex CLI 时自动同步）
+- Hermes：`~/.hermes/skills/ae-sdd/`（当目录已存在或检测到 Hermes CLI 时自动同步）
 
 装完后在 Claude Code 中输入 `/ae-sdd` 即可启动。
 
@@ -123,12 +127,15 @@ bash scripts/dev-sync.sh --watch
 
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
-- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 29 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性）
+- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 30 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性 / 🆕 v3.8.0 自动化模式）
 - **[`source/skills/`](source/skills/)** — 28 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
 - **[`source/templates/`](source/templates/)** — 21 份模板（Story/Task/DR/Report/...）
 - **[`source/standards/`](source/standards/)** — 20 份标准（constraints 11 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
-- **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md)）
+- **[`source/docs/ae-sdd-design.md`](source/docs/ae-sdd-design.md)** — 系统能力说明书（能力语义、边界、当前实现状态）
+- **[`source/docs/ae-sdd-implementation-architecture.md`](source/docs/ae-sdd-implementation-architecture.md)** — 实现架构说明书（CLI / tools/lib / scripts / state/cache / build/distribution / gate/scanner 边界）
+- **[`source/docs/skill-runtime-compiler.md`](source/docs/skill-runtime-compiler.md)** — compiled runtime 与 compact slices 设计
+- **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md) 和 [runtime stats 性能方案](source/docs/plans/2026-07-02-runtime-stats-performance-plan.md)）
 - **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1.2 install-skill + 智能引导](source/CHANGELOG/2026-06-24-ae-sdd-install-skill.md) + [v3.1.1 阶段 H 深度强化](source/CHANGELOG/2026-06-23-requirement-analysis-阶段H深度强化.md) + [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）
 - 🆕 v3.1：[`source/docs/ae-sdd-conventions.md`](source/docs/ae-sdd-conventions.md) — 项目级 SOP 模板（root agent 必读）
 - 🆕 v3.5.0：**CodingSKILL 外挂机制**（[🔌 CodingSKILL 外挂机制（v3.5.0 — 母版内置能力）](#-codingskill-外挂机制v350--母版内置能力)）— 三层 SKILL 注册表（L1 项目层 / L2 全局层 / L3 仓库根层）+ 内置 fallback 零破坏
@@ -137,6 +144,52 @@ bash scripts/dev-sync.sh --watch
   - **模板**：[`source/templates/project-assets/plugin-registry-template.yaml`](source/templates/project-assets/plugin-registry-template.yaml) — 三层通用注册表模板
   - **设计文档**：[`source/docs/plans/2026-06-26-plugin-registry-design.md`](source/docs/plans/2026-06-26-plugin-registry-design.md) — 完整设计说明
   - **示例 scaffolding**：[`plugins/_example-coding-style/`](plugins/_example-coding-style/) — 仓库根层（不自动加载）
+
+---
+
+## 🚀 自动化模式（🆕 v3.8.0 — 输入→结果全自动化）
+
+> **默认关闭。** 开启后 6 个人工审核点（1/1.5/2/2.5/4/5）改走 Tier 3 多 reviewer 联审共识，跳过所有人工✅，实现 ae-sdd 输入→结果。联审机制复用 `agent-orchestration-skill §8.4`（Tier 判定 + 视角正交 + 交叉对比）。
+
+### 配置（`.ae-sdd/config.yaml` 的 `automation` 段）
+
+```yaml
+automation:
+  enabled: false              # 总开关（默认关）
+  reviewerTier: 3             # 强制三审
+  preflightInfoCollection: true
+  onConsensusStall: pause     # pause=paused等用户 / fail=标记失败
+  automatedReviewPoints: [1, 1.5, 2, 2.5, 4, 5]
+  enabledAt: ""               # 审计时间戳，AI 不得自行改
+```
+
+### 用法
+
+```bash
+ae-sdd automation status          # 查看自动化配置
+ae-sdd automation enable          # 开启全自动化（写 enabledAt）
+ae-sdd automation disable         # 关闭（回退人工审核）
+ae-sdd preflight collect          # 开工前信息预收集（列待补信息清单）
+ae-sdd state register-review-consensus --point 1 --passed true  # 写联审共识
+```
+
+### 行为分叉
+
+| 模式 | 审核点行为 |
+|------|----------|
+| 默认（enabled=false）| AI 讲解 → 等用户 ✅/⚠️/❌ |
+| 自动化（enabled=true 且点在白名单）| AI 讲解 → 强制 Tier 3 派 3 独立 session reviewer → §8.4.3 交叉对比 → G-09B+G-REVIEW-LOOP+G-AUTO-CONSENSUS 全过即自动推进 |
+| 自动化但点不在白名单 | 回退人工审核 |
+
+### 开工前信息预收集（Step 1.5）
+
+开工前一次性向用户收集所有必需信息（第三方凭证/复用选择/环境配置/命名约定/对接方/数据初始化），开工后不再打断。
+
+### 阻断出口
+
+联审 3 轮矫正未决 → `state.phase=paused`（默认），输出完整问题清单等用户介入，避免 AI 带病狂奔。
+
+详见 [`source/SKILL.md §🚀 自动化模式`](source/SKILL.md)。
 
 ---
 

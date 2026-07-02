@@ -12,9 +12,9 @@ build_harness.py — ae-sdd 母版 → Mavis harness 格式（agent.md）编译�
   - mavis CLI 探测（mavis / mavis.cmd / mavis.bat）
   - -DryRun / -Force / -Unmount / -Clean 等价参数
 
-产物落在 <Source>/harness/.harness/agent.md —— mavis 的 findHarnessDirs 只在
-<sourceRoot>/.harness/ 下查 identity 文件。.adapter.lock 放在 .harness 父级，
-避免 adapter 内部状态混入 mavis 扫描目录。
+产物落在 <Source>/.harness/agent.md —— mavis 的 findHarnessDirs 优先扫描
+<sourceRoot>/.harness/ 下的 identity 文件。.adapter.lock 同目录保存，用于
+adapter 幂等判断，不参与 Mavis identity 解析。
 
 用法:
     python scripts/build_harness.py                          # 默认 Source=脚本父父目录
@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 ADAPTER_VERSION = "0.2.0"   # 与 PS1 保持一致，幂等锁比对用
+LEGACY_HARNESS_DIR = "harness"
 
 
 # ─── 颜色（ANSI） ────────────────────────────────────────────────────────────
@@ -81,6 +82,51 @@ def cleanup_old_bak(target: Path, keep: int = 3) -> int:
             removed += 1
         except OSError:
             pass  # 并发构建竞态：文件已被删则跳过
+    return removed
+
+
+def mavis_harness_name_for_path(source_path: Path) -> str:
+    """Match Mavis HarnessManager.toKebabCase(sourcePath) for local mounts."""
+    return re.sub(r"--+", "-", re.sub(r"[^a-z0-9-]+", "-", str(source_path).lower())).strip("-")
+
+
+def cleanup_legacy_harness_artifacts(src: Path, quiet: bool = False) -> int:
+    """Remove generated pre-v3.8 harness/harness artifacts so Mavis does not mount duplicates."""
+    legacy_root = src / LEGACY_HARNESS_DIR
+    legacy_target = legacy_root / ".harness"
+    removed = 0
+
+    for path in [
+        legacy_target / "agent.md",
+        legacy_target / "README.md",
+        legacy_root / ".adapter.lock",
+    ]:
+        try:
+            if path.is_file():
+                path.unlink()
+                removed += 1
+        except OSError:
+            pass
+
+    try:
+        for bak in legacy_target.glob("agent.md.bak.*"):
+            try:
+                bak.unlink()
+                removed += 1
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+    for directory in [legacy_target, legacy_root]:
+        try:
+            directory.rmdir()
+            removed += 1
+        except OSError:
+            pass
+
+    if removed and not quiet:
+        warn(f"removed {removed} legacy harness artifact(s) under {legacy_root}")
     return removed
 
 
@@ -275,7 +321,7 @@ def main() -> int:
     parser.add_argument("--force", action="store_true",
                         help="强制重转，忽略幂等锁")
     parser.add_argument("--unmount", action="store_true",
-                        help="反向：mavis harness unmount ae-sdd")
+                        help="反向：mavis harness unmount 当前路径名及历史别名")
     parser.add_argument("--clean", action="store_true",
                         help="配合 --unmount：同时删除 harness 产物目录")
     parser.add_argument("--no-mount", action="store_true",
@@ -287,29 +333,37 @@ def main() -> int:
     template_agent = scripts_dir / "templates" / "agent.md.template"
     template_readme = scripts_dir / "templates" / "README.md.template"
 
-    harness_root = src / "harness"
-    target_root = harness_root / ".harness"
+    harness_root = src
+    target_root = src / ".harness"
     target_agent = target_root / "agent.md"
     target_readme = target_root / "README.md"
-    lock_file = harness_root / ".adapter.lock"
+    lock_file = target_root / ".adapter.lock"
     source_skill = src / "source" / "SKILL.md"
     source_harness = src / "source" / "HARNESS.md"
 
     # ── 反向：unmount 模式 ──────────────────────────────────────────────────
     if args.unmount:
         step("Unmount mode")
-        print("  Will run: mavis harness unmount ae-sdd")
+        mount_names = [
+            mavis_harness_name_for_path(src),
+            mavis_harness_name_for_path(src / LEGACY_HARNESS_DIR),
+            "ae-sdd",
+        ]
+        print("  Will run:")
+        for name in dict.fromkeys(mount_names):
+            print(f"    mavis harness unmount {name}")
         if not args.dry_run:
-            rc, out = run_mavis(["harness", "unmount", "ae-sdd"])
-            print(out)
+            for name in dict.fromkeys(mount_names):
+                rc, out = run_mavis(["harness", "unmount", name])
+                print(out)
         else:
-            print("  [DRY-RUN] would run: mavis harness unmount ae-sdd")
+            print("  [DRY-RUN] would run the unmount commands above")
         if args.clean:
             print(f"  Will remove: {target_root}")
             if not args.dry_run and target_root.exists():
                 shutil.rmtree(target_root)
         else:
-            print("  (use --clean to also remove harness/ dir)")
+            print("  (use --clean to also remove .harness/ dir)")
         return 0
 
     # ── 1. 前置校验 ─────────────────────────────────────────────────────────
@@ -421,6 +475,7 @@ def main() -> int:
         print(f"    4. Write:             {target_readme} ({len(readme_content)} chars)")
         print(f"    5. Write lock:        {lock_file}")
         print(f"    6. Verify mount:      mavis harness mount {harness_root}")
+        print(f"    7. Remove legacy generated harness artifacts under: {src / LEGACY_HARNESS_DIR}")
         print()
         print("  agent.md preview (first 25 lines):")
         print("  " + "-" * 40)
@@ -465,6 +520,7 @@ def main() -> int:
     }
     lock_file.write_bytes(json.dumps(lock_data, indent=2).encode("utf-8"))
     ok(str(lock_file))
+    cleanup_legacy_harness_artifacts(src)
 
     # ── 9. 验证 mount（对齐 PS1，缺失优雅降级） ────────────────────────────
     if args.no_mount:
@@ -503,12 +559,17 @@ def main() -> int:
     rc, out = run_mavis(["harness", "list"])
     print(out)
     if rc != 0:
-        warn("list command failed (artifacts OK)")
+        err("list command failed")
+        return 1
+    expected_name = mavis_harness_name_for_path(src)
+    if "ae-sdd" not in out and expected_name not in out:
+        err(f"mavis harness list did not include ae-sdd/{expected_name}")
+        return 1
 
     step("DONE")
     print(f"  Harness path:  {target_root}")
     print(f"  Mount command: mavis harness mount {harness_root}")
-    print(f"  Unmount:       mavis harness unmount ae-sdd")
+    print(f"  Unmount:       mavis harness unmount {mavis_harness_name_for_path(src)}")
     return 0
 
 

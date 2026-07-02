@@ -1,0 +1,4 @@
+interface:
+  display_name: "SKILL Runtime Compiler"
+  short_description: "Compile SKILL packages into compact runtime packages."
+  default_prompt: "Compile a SKILL directory into a same-parent compiled package while preserving the source."

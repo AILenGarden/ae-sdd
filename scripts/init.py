@@ -83,6 +83,22 @@ assetPath: assets/{project_key}.assets.md
 # Override 目录（项目特化规则覆盖母版）
 overrideDir: overrides
 
+# 🆕 v3.8.0 自动化开关（默认关闭；开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识）
+# 详见 source/SKILL.md §🚀 自动化模式 与 tools/lib/config.py
+automation:
+  # 总开关：false=现状(每审核点等用户✅) / true=全自动化(审核点走联审共识)
+  enabled: false
+  # 联审强度：开启后统一强制 Tier 3（业务/架构/第三方视角三审交叉）
+  reviewerTier: 3
+  # 开工前信息预收集：扫输入材料+资产，列清单让用户一次补齐
+  preflightInfoCollection: true
+  # 阻断出口：联审 3 轮矫正未决时（pause=state.phase=paused等用户 / fail=标记失败）
+  onConsensusStall: pause
+  # 审核点白名单（默认全部 6 个走联审；合法值 1/1.5/2/2.5/4/5）
+  automatedReviewPoints: [1, 1.5, 2, 2.5, 4, 5]
+  # 开启时间戳（审计用，AI 不得自行改；由 ae-sdd automation enable 写入）
+  enabledAt: ""
+
 # 上次更新
 lastUpdated: {timestamp}
 """

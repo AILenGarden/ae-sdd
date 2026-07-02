@@ -1,0 +1,589 @@
+package hook
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestReadInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		input     string
+		wantErr   bool
+		errTarget error
+		check     func(t *testing.T, got *HookInput)
+	}{
+		{
+			name: "valid SessionStart input",
+			input: `{
+				"session_id": "sess-abc-123",
+				"cwd": "/Users/goos/project",
+				"hook_event_name": "SessionStart",
+				"project_dir": "/Users/goos/project"
+			}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.SessionID != "sess-abc-123" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "sess-abc-123")
+				}
+				if got.CWD != "/Users/goos/project" {
+					t.Errorf("CWD = %q, want %q", got.CWD, "/Users/goos/project")
+				}
+				if got.HookEventName != "SessionStart" {
+					t.Errorf("HookEventName = %q, want %q", got.HookEventName, "SessionStart")
+				}
+				if got.ProjectDir != "/Users/goos/project" {
+					t.Errorf("ProjectDir = %q, want %q", got.ProjectDir, "/Users/goos/project")
+				}
+			},
+		},
+		{
+			name: "valid PreToolUse input with tool_name and tool_input",
+			input: `{
+				"session_id": "sess-abc-123",
+				"cwd": "/Users/goos/project",
+				"hook_event_name": "PreToolUse",
+				"tool_name": "Write",
+				"tool_input": {"file_path": "/tmp/test.go", "content": "package main"}
+			}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.ToolName != "Write" {
+					t.Errorf("ToolName = %q, want %q", got.ToolName, "Write")
+				}
+				if got.ToolInput == nil {
+					t.Fatal("ToolInput is nil, want non-nil")
+				}
+				if !json.Valid(got.ToolInput) {
+					t.Errorf("ToolInput is not valid JSON: %s", got.ToolInput)
+				}
+			},
+		},
+		{
+			name: "valid PostToolUse input with tool_output",
+			input: `{
+				"session_id": "sess-abc-123",
+				"cwd": "/Users/goos/project",
+				"hook_event_name": "PostToolUse",
+				"tool_name": "Write",
+				"tool_input": {"file_path": "main.go"},
+				"tool_output": {"success": true, "path": "main.go"}
+			}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.ToolOutput == nil {
+					t.Fatal("ToolOutput is nil, want non-nil")
+				}
+				if !json.Valid(got.ToolOutput) {
+					t.Errorf("ToolOutput is not valid JSON: %s", got.ToolOutput)
+				}
+			},
+		},
+		{
+			// when session_id is absent, falls back to "unknown" (graceful degradation)
+			name:    "missing session_id defaults to unknown",
+			input:   `{"cwd": "/tmp", "hook_event_name": "SessionStart"}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.SessionID != "unknown" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "unknown")
+				}
+			},
+		},
+		{
+			// Workaround for Claude Code bug #538: PostToolUse payloads from
+			// tools outside the matcher pattern may omit session_id entirely.
+			// We expect graceful handling: no error, session_id set to "unknown".
+			name: "PostToolUse without session_id sets default unknown",
+			input: `{
+				"cwd": "/Users/goos/project",
+				"hook_event_name": "PostToolUse",
+				"tool_name": "AskUserQuestion",
+				"tool_input": {},
+				"tool_output": {}
+			}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.SessionID != "unknown" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "unknown")
+				}
+				if got.HookEventName != "PostToolUse" {
+					t.Errorf("HookEventName = %q, want %q", got.HookEventName, "PostToolUse")
+				}
+			},
+		},
+		{
+			// PostToolUseFailure should also tolerate missing session_id.
+			name: "PostToolUseFailure without session_id sets default unknown",
+			input: `{
+				"cwd": "/tmp",
+				"hook_event_name": "PostToolUseFailure",
+				"tool_name": "Bash"
+			}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.SessionID != "unknown" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "unknown")
+				}
+			},
+		},
+		{
+			// when cwd is absent, falls back to $CLAUDE_PROJECT_DIR or allows empty string
+			name:    "missing cwd falls back gracefully",
+			input:   `{"session_id": "sess-1", "hook_event_name": "SessionStart"}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.SessionID != "sess-1" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "sess-1")
+				}
+			},
+		},
+		{
+			// AC-1 (REQ-HIS-001): Claude Code v2.1.69+ sends `globs` as a JSON array
+			// of glob-pattern strings for the InstructionsLoaded event. The decoder
+			// must deserialize it without the "cannot unmarshal array into Go struct
+			// field HookInput.globs of type string" error and populate Globs.
+			name: "instructions-loaded globs array decodes",
+			input: `{
+				"session_id": "sess-il",
+				"cwd": "/tmp",
+				"hook_event_name": "InstructionsLoaded",
+				"globs": ["**/*.go", "**/*.md"]
+			}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if len(got.Globs) != 2 {
+					t.Fatalf("Globs length = %d, want 2 (%v)", len(got.Globs), got.Globs)
+				}
+				if got.Globs[0] != "**/*.go" || got.Globs[1] != "**/*.md" {
+					t.Errorf("Globs = %v, want [**/*.go **/*.md]", got.Globs)
+				}
+			},
+		},
+		{
+			name:    "missing hook_event_name defaults to unknown",
+			input:   `{"session_id": "sess-1", "cwd": "/tmp"}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				if got.HookEventName != "unknown" {
+					t.Errorf("HookEventName = %q, want %q", got.HookEventName, "unknown")
+				}
+				if got.SessionID != "sess-1" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "sess-1")
+				}
+			},
+		},
+		{
+			name:    "empty JSON object defaults to unknown event",
+			input:   `{}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				if got.HookEventName != "unknown" {
+					t.Errorf("HookEventName = %q, want %q", got.HookEventName, "unknown")
+				}
+			},
+		},
+		{
+			name:      "malformed JSON",
+			input:     `this is not json at all`,
+			wantErr:   true,
+			errTarget: ErrHookInvalidInput,
+		},
+		{
+			// AC-2 (REQ-HIS-002): empty stdin is a graceful no-op success, NOT
+			// ErrHookInvalidInput. A non-blocking observer hook must never fail the
+			// tool it observes (PreToolUse on Bash). This case is INTENTIONALLY
+			// inverted from the prior erroring behavior (wantErr true -> false).
+			name:    "empty stdin",
+			input:   ``,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.HookEventName != "unknown" {
+					t.Errorf("HookEventName = %q, want %q (default)", got.HookEventName, "unknown")
+				}
+				if got.SessionID != "unknown" {
+					t.Errorf("SessionID = %q, want %q (default)", got.SessionID, "unknown")
+				}
+			},
+		},
+		{
+			// AC-2 (REQ-HIS-002): whitespace-only stdin behaves identically to empty
+			// stdin — graceful no-op success. INTENTIONALLY inverted from the prior
+			// erroring behavior (wantErr true -> false).
+			name:    "whitespace only stdin",
+			input:   "   \n",
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.HookEventName != "unknown" {
+					t.Errorf("HookEventName = %q, want %q (default)", got.HookEventName, "unknown")
+				}
+			},
+		},
+		{
+			name: "extra unknown fields are ignored",
+			input: `{
+				"session_id": "sess-1",
+				"cwd": "/tmp",
+				"hook_event_name": "SessionStart",
+				"unknown_field": "should be ignored",
+				"another_field": 42
+			}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.SessionID != "sess-1" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "sess-1")
+				}
+			},
+		},
+		{
+			name:    "large tool_output payload",
+			input:   buildLargePayload(t),
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.ToolOutput == nil {
+					t.Fatal("ToolOutput is nil for large payload")
+				}
+			},
+		},
+		// Issue #615: Claude Code 2.1.97 sends minimal payload for UserPromptSubmit.
+		// Only { "prompt": "..." } without session_id, cwd, or hook_event_name.
+		{
+			name:    "issue-615: UserPromptSubmit minimal payload (prompt only)",
+			input:   `{"prompt": "test prompt"}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.Prompt != "test prompt" {
+					t.Errorf("Prompt = %q, want %q", got.Prompt, "test prompt")
+				}
+				if got.HookEventName != "UserPromptSubmit" {
+					t.Errorf("HookEventName = %q, want %q (should be inferred)", got.HookEventName, "UserPromptSubmit")
+				}
+				if got.SessionID != "unknown" {
+					t.Errorf("SessionID = %q, want %q (should default)", got.SessionID, "unknown")
+				}
+			},
+		},
+		// Issue #615: Full UserPromptSubmit payload should still work.
+		{
+			name:    "issue-615: UserPromptSubmit full payload",
+			input:   `{"session_id": "sess-full", "cwd": "/tmp", "hook_event_name": "UserPromptSubmit", "prompt": "hello"}`,
+			wantErr: false,
+			check: func(t *testing.T, got *HookInput) {
+				t.Helper()
+				if got.SessionID != "sess-full" {
+					t.Errorf("SessionID = %q, want %q", got.SessionID, "sess-full")
+				}
+				if got.CWD != "/tmp" {
+					t.Errorf("CWD = %q, want %q", got.CWD, "/tmp")
+				}
+				if got.Prompt != "hello" {
+					t.Errorf("Prompt = %q, want %q", got.Prompt, "hello")
+				}
+			},
+		},
+	}
+
+	proto := &jsonProtocol{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := strings.NewReader(tt.input)
+			got, err := proto.ReadInput(r)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.errTarget != nil && !errors.Is(err, tt.errTarget) {
+					t.Errorf("error = %v, want errors.Is(%v)", err, tt.errTarget)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got == nil {
+				t.Fatal("got nil HookInput, want non-nil")
+			}
+			if tt.check != nil {
+				tt.check(t, got)
+			}
+		})
+	}
+}
+
+func TestWriteOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		output  *HookOutput
+		wantErr bool
+		check   func(t *testing.T, written []byte)
+	}{
+		{
+			name:   "allow output",
+			output: NewAllowOutput(),
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				if !json.Valid(written) {
+					t.Fatalf("output is not valid JSON: %s", written)
+				}
+				var parsed HookOutput
+				if err := json.Unmarshal(written, &parsed); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				// Check hookSpecificOutput.permissionDecision per Claude Code protocol
+				if parsed.HookSpecificOutput == nil {
+					t.Fatal("HookSpecificOutput is nil, want non-nil")
+				}
+				if parsed.HookSpecificOutput.PermissionDecision != DecisionAllow {
+					t.Errorf("PermissionDecision = %q, want %q", parsed.HookSpecificOutput.PermissionDecision, DecisionAllow)
+				}
+			},
+		},
+		{
+			name:   "block output with reason",
+			output: NewBlockOutput("security policy violation"),
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				var parsed HookOutput
+				if err := json.Unmarshal(written, &parsed); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				// Check hookSpecificOutput per Claude Code protocol
+				if parsed.HookSpecificOutput == nil {
+					t.Fatal("HookSpecificOutput is nil, want non-nil")
+				}
+				if parsed.HookSpecificOutput.PermissionDecision != DecisionDeny {
+					t.Errorf("PermissionDecision = %q, want %q", parsed.HookSpecificOutput.PermissionDecision, DecisionDeny)
+				}
+				if parsed.HookSpecificOutput.PermissionDecisionReason != "security policy violation" {
+					t.Errorf("PermissionDecisionReason = %q, want %q", parsed.HookSpecificOutput.PermissionDecisionReason, "security policy violation")
+				}
+			},
+		},
+		{
+			name:   "allow output with data",
+			output: NewAllowOutputWithData(json.RawMessage(`{"project":"moai","version":"1.0.0"}`)),
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				var parsed HookOutput
+				if err := json.Unmarshal(written, &parsed); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				// Check hookSpecificOutput per Claude Code protocol
+				if parsed.HookSpecificOutput == nil {
+					t.Fatal("HookSpecificOutput is nil, want non-nil")
+				}
+				if parsed.HookSpecificOutput.PermissionDecision != DecisionAllow {
+					t.Errorf("PermissionDecision = %q, want %q", parsed.HookSpecificOutput.PermissionDecision, DecisionAllow)
+				}
+			},
+		},
+		{
+			name:   "empty output",
+			output: &HookOutput{},
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				if !json.Valid(written) {
+					t.Fatalf("output is not valid JSON: %s", written)
+				}
+			},
+		},
+		{
+			name:   "nil output",
+			output: nil,
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				if !json.Valid(written) {
+					t.Fatalf("output is not valid JSON: %s", written)
+				}
+			},
+		},
+		{
+			name:   "suppress output",
+			output: NewSuppressOutput(),
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				var parsed HookOutput
+				if err := json.Unmarshal(written, &parsed); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if !parsed.SuppressOutput {
+					t.Error("SuppressOutput = false, want true")
+				}
+			},
+		},
+		{
+			name:   "session output",
+			output: NewSessionOutput(true, "Session started"),
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				var parsed HookOutput
+				if err := json.Unmarshal(written, &parsed); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if !parsed.Continue {
+					t.Error("Continue = false, want true")
+				}
+				if parsed.SystemMessage != "Session started" {
+					t.Errorf("SystemMessage = %q, want %q", parsed.SystemMessage, "Session started")
+				}
+			},
+		},
+		{
+			name:   "post tool output",
+			output: NewPostToolOutput("Formatted with gofmt"),
+			check: func(t *testing.T, written []byte) {
+				t.Helper()
+				var parsed HookOutput
+				if err := json.Unmarshal(written, &parsed); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if parsed.HookSpecificOutput == nil {
+					t.Fatal("HookSpecificOutput is nil, want non-nil")
+				}
+				if parsed.HookSpecificOutput.AdditionalContext != "Formatted with gofmt" {
+					t.Errorf("AdditionalContext = %q, want %q", parsed.HookSpecificOutput.AdditionalContext, "Formatted with gofmt")
+				}
+			},
+		},
+	}
+
+	proto := &jsonProtocol{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			err := proto.WriteOutput(&buf, tt.output)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.check != nil {
+				tt.check(t, buf.Bytes())
+			}
+		})
+	}
+}
+
+func TestJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := &HookOutput{
+		Decision: DecisionAllow,
+		Reason:   "test reason",
+		Data:     json.RawMessage(`{"key":"value","nested":{"a":1}}`),
+	}
+
+	// First serialization
+	first, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("first marshal: %v", err)
+	}
+	if !json.Valid(first) {
+		t.Fatalf("first marshal produced invalid JSON: %s", first)
+	}
+
+	// Deserialize
+	var parsed HookOutput
+	if err := json.Unmarshal(first, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Re-serialize
+	second, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatalf("second marshal: %v", err)
+	}
+	if !json.Valid(second) {
+		t.Fatalf("second marshal produced invalid JSON: %s", second)
+	}
+
+	// Compare
+	if !bytes.Equal(first, second) {
+		t.Errorf("round-trip mismatch:\n  first:  %s\n  second: %s", first, second)
+	}
+}
+
+func TestWriteOutputNoExtraneousContent(t *testing.T) {
+	t.Parallel()
+
+	proto := &jsonProtocol{}
+	var buf bytes.Buffer
+
+	err := proto.WriteOutput(&buf, NewAllowOutput())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Output should be valid JSON followed by a newline only
+	output := buf.String()
+	trimmed := strings.TrimSpace(output)
+	if !json.Valid([]byte(trimmed)) {
+		t.Errorf("trimmed output is not valid JSON: %q", trimmed)
+	}
+}
+
+// buildLargePayload creates a valid hook JSON with a large tool_output field.
+func buildLargePayload(t *testing.T) string {
+	t.Helper()
+
+	// Create ~100KB of tool output data
+	largeData := make(map[string]string)
+	for i := range 1000 {
+		key := strings.Repeat("k", 10)
+		val := strings.Repeat("v", 90)
+		largeData[key+string(rune('0'+i%10))] = val
+	}
+
+	toolOutput, err := json.Marshal(largeData)
+	if err != nil {
+		t.Fatalf("marshal large data: %v", err)
+	}
+
+	input := map[string]any{
+		"session_id":      "sess-large",
+		"cwd":             "/tmp",
+		"hook_event_name": "PostToolUse",
+		"tool_name":       "Write",
+		"tool_output":     json.RawMessage(toolOutput),
+	}
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal large payload: %v", err)
+	}
+	return string(data)
+}

@@ -281,11 +281,15 @@ python scripts/distribute.py
 - `runtime/flow.compact.md` 从 `PHASE_FLOWS` 生成。
 - 单元测试覆盖编译器最小行为和字节级幂等：不同 `--build-date` 重复编译同一输入，runtime 输出完全一致。
 
-第二期可扩展：
+已落地扩展：
+
+- `ae-sdd runtime verify` 校验 installed package 是否为 compiled。
+- `update-check` 增加 UC-15 runtime 编译一致性检查。
+- Agent 分发入口安装前拒绝未编译或不完整 runtime package。
+
+后续可扩展：
 
 - 从子 SKILL 自动抽取更多局部 compact slices。
-- `ae-sdd runtime verify` 校验 installed package 是否为 compiled。
-- `update-check` 增加 runtime 编译一致性检查。
 - Agent 专属分发器可选择二次编译，但不能跳过通用 runtime。
 
 ---
@@ -314,6 +318,9 @@ python scripts/distribute.py
 | compact slices | 已实现 | `boot/route/gates/flow/macros.compact.md` |
 | fallback 原文锚点 | 已实现 | `runtime/fallback/SKILL.full.md` |
 | 字节级幂等测试 | 已实现 | `tools/tests/test_skill_runtime_compiler.py` |
+| runtime package 校验器 | 已实现 | `tools/lib/runtime_verify.py` + `ae-sdd runtime verify` |
+| update-check 编译一致性 | 已实现 | `tools/lib/update_graph.py` UC-15 |
+| 分发器 compiled-only 校验 | 已实现 | `scripts/distribute.py` + `scripts/distributors/_base.py` |
 | 设计文档 | 已实现 | `source/docs/skill-runtime-compiler.md` + `source/docs/ae-sdd-design.md` |
 | 变更记录 | 已实现 | `source/CHANGELOG/2026-07-02-skill-runtime-compiler.md` |
 
@@ -334,18 +341,75 @@ python scripts/compile_skill_runtime.py --source source --dist dist/ae-sdd
 ```bash
 python -m py_compile scripts/compile_skill_runtime.py scripts/build_dist.py
 python tools/tests/run.py skill_runtime_compiler -v
+python tools/tests/run.py runtime_verify -v
+python tools/bin/ae-sdd runtime verify --path dist/ae-sdd
+python tools/bin/ae-sdd update-check --only UC-15
 python scripts/build_dist.py
 ```
 
 实现约束已经进入测试：同一输入重复编译时，`dist/ae-sdd/SKILL.md` 与 `dist/ae-sdd/runtime/**` 必须字节级一致；不同 `--build-date` 不得改变 runtime 输出。
 
-下一步实现准备清单：
+后续实现清单：
 
-| 优先级 | 事项 | 目标 |
+| 状态 | 事项 | 目标 |
 | --- | --- | --- |
-| P1 | `ae-sdd runtime verify` | 校验安装包是否为 compiled runtime，manifest/load_order/fingerprint 是否完整 |
-| P1 | `update-check` 接入 runtime 编译一致性 | 修改编译器、门禁、状态机后自动提示需要重编译或更新测试 |
+| 已实现 | `ae-sdd runtime verify` | 校验安装包是否为 compiled runtime，manifest/load_order/fingerprint 是否完整 |
+| 已实现 | `update-check` 接入 runtime 编译一致性 | 修改编译器、门禁、状态机后自动提示需要重编译或更新测试 |
 | P2 | dist 外层可复现构建 | 让 `VERSION`、`plugin.json` 的构建时间可配置或可复现，扩展到整个分发包幂等 |
-| P2 | 分发器 compiled-only 校验 | `scripts/distribute.py` 安装前拒绝未编译 `source/` 包 |
+| 已实现 | 分发器 compiled-only 校验 | `scripts/distribute.py` 安装前拒绝未编译 `source/` 包 |
 | P3 | 子 SKILL 局部 compact | 从高频子 SKILL 抽取更细粒度 runtime slices，但保持 fallback 可审查 |
 | P3 | Agent 专属二次编译约束 | 允许 Hermes/Mavis 等做二次适配，但输入必须是通用 compiled runtime |
+
+---
+
+## 15. 通用编译器 SKILL
+
+ae-sdd 专用编译器和通用编译器 SKILL 分开维护：
+
+| 编译器 | 位置 | 适用对象 | 输出 |
+| --- | --- | --- | --- |
+| ae-sdd 专用 runtime compiler | `scripts/compile_skill_runtime.py` | `source/` -> `dist/ae-sdd/` | ae-sdd boot/route/gates/flow/macros compact |
+| 通用 compiler SKILL | `standalone-skills/skill-runtime-compiler/` | 任意包含 `SKILL.md` 的 SKILL 包 | 同级 `<skill-name>-compiled/` compact runtime package |
+
+通用 compiler SKILL 的目标是给其它 SKILL 复用，不依赖 ae-sdd 的 `GATE_REGISTRY`、`PHASE_FLOWS`、分发器或项目状态。它只使用 Python 标准库，核心入口是：
+
+```bash
+python standalone-skills/skill-runtime-compiler/scripts/compile_skill_package.py <source-skill-dir>
+```
+
+默认输出：
+
+```text
+<source-skill-dir-parent>/<source-skill-dir-name>-compiled/
+```
+
+输出结构：
+
+```text
+<skill>-compiled/
+├── SKILL.md
+└── runtime/
+    ├── manifest.json
+    ├── boot.compact.md
+    ├── outline.compact.md
+    └── fallback/
+        └── SKILL.full.md
+```
+
+硬约束：
+
+- 源 SKILL 包保持不变。
+- 编译输出目录不得等于源目录，也不得位于源目录内部。
+- 未加 `--force` 时，不覆盖非本编译器生成的既有目录。
+- `runtime_fingerprint` 不包含墙钟时间、临时路径、主机名、随机数或文件 mtime。
+- 同一输入重复编译时，compiled package 的 `SKILL.md` 与 `runtime/**` 必须字节级一致。
+
+验收命令：
+
+```bash
+python -m py_compile standalone-skills/skill-runtime-compiler/scripts/compile_skill_package.py
+python tools/tests/run.py standalone_skill_runtime_compiler -v
+python tools/bin/ae-sdd update-check --only UC-15
+```
+
+UC-15 已同时检查 ae-sdd 专用编译器和 standalone compiler SKILL 的幂等性；修改任一编译器后都必须重跑。

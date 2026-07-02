@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html
+  lang="{{ .Site.Language.Lang }}"
+  class="color-toggle-light"
+  color-theme="light"
+  {{ if default false .Site.Params.geekdocDarkModeCode }}code-theme="dark"{{ end }}
+>
+  <head>
+    {{ partial "head/meta" . }}
+    <title>
+      {{- if eq .Kind "home" -}}
+        {{ .Site.Title }}
+      {{- else -}}
+        {{ printf "%s | %s" (partial "utils/title" .) .Site.Title }}
+      {{- end -}}
+    </title>
+
+    {{ partial "head/favicons" . }}
+    {{ partial "head/rel-me" . }}
+    {{ partial "head/microformats" . }}
+    {{ partial "head/others" . }}
+    {{ partial "head/custom" . }}
+  </head>
+
+  <body itemscope itemtype="https://schema.org/WebPage">
+    <div class="w-full flex justify-center">
+      <a href="#main-content" id="gdoc-to-main" class="gdoc-markdown__link">Skip to main content</a>
+    </div>
+
+    {{ partial "svg-icon-symbols" . }}
+
+
+    <div
+      class="wrapper {{ if default false .Site.Params.geekdocDarkModeDim }}dark-mode-dim{{ end }}"
+    >
+      {{ $navEnabled := default true .Page.Params.geekdocNav }}
+      {{ partial "site-header" (dict "Root" . "MenuEnabled" $navEnabled) }}
+
+
+      <main class="container flex flex-even">
+        {{ if $navEnabled }}
+          <aside class="gdoc-nav">
+            {{ partial "menu" . }}
+          </aside>
+        {{ end }}
+
+
+        <div class="gdoc-page">
+          {{ template "main" . }}
+
+          {{- /* prev/next 2-card 푸터 — main.yaml 메뉴 순서 기반 글로벌 순회
+                 (섹션 인덱스 페이지·섹션 간 이동도 자동 처리. 메뉴에 없는 페이지는 .PrevInSection fallback) */ -}}
+          {{- $prev := false -}}{{- $next := false -}}
+          {{- $current := .RelPermalink -}}
+          {{- $curKey := printf "%s/" (trim $current "/") -}}
+          {{- /* 메뉴 전체 평탄화 */ -}}
+          {{- $flat := slice -}}
+          {{- range hugo.Data.menu.main.main -}}
+            {{- range .sub -}}
+              {{- if and .ref (not .external) -}}
+                {{- $rhref := partial "menu/href" . -}}
+                {{- $refKey := printf "%s/" (trim $rhref "/") -}}
+                {{- $flat = $flat | append (dict "name" (partial "menu/name" .name) "ref" $rhref "key" $refKey) -}}
+              {{- end -}}
+            {{- end -}}
+          {{- end -}}
+          {{- /* 현재 페이지 위치 찾기 */ -}}
+          {{- $idx := -1 -}}
+          {{- range $i, $item := $flat -}}
+            {{- if eq $item.key $curKey -}}{{- $idx = $i -}}{{- end -}}
+          {{- end -}}
+          {{- if ge $idx 0 -}}
+            {{- /* 메뉴에서 발견 → 글로벌 평탄 순회 적용 */ -}}
+            {{- if gt $idx 0 -}}
+              {{- $p := index $flat (sub $idx 1) -}}
+              {{- $prev = dict "title" $p.name "lbl" "← 이전" "url" $p.ref -}}
+            {{- end -}}
+            {{- if lt $idx (sub (len $flat) 1) -}}
+              {{- $n := index $flat (add $idx 1) -}}
+              {{- $next = dict "title" $n.name "lbl" "다음 →" "url" $n.ref -}}
+            {{- end -}}
+          {{- else if eq .Kind "home" -}}
+            {{- /* 홈: 메뉴 첫 항목으로 */ -}}
+            {{- if gt (len $flat) 0 -}}
+              {{- $n := index $flat 0 -}}
+              {{- $next = dict "title" $n.name "lbl" "다음 →" "url" $n.ref -}}
+            {{- end -}}
+          {{- else -}}
+            {{- /* 메뉴에 없는 페이지: 같은 섹션 형제 페이지로 fallback (weight 역순 swap) */ -}}
+            {{- if .NextInSection -}}{{- $prev = dict "title" .NextInSection.Title "lbl" "← 이전" "url" .NextInSection.RelPermalink -}}{{- end -}}
+            {{- if .PrevInSection -}}{{- $next = dict "title" .PrevInSection.Title "lbl" "다음 →" "url" .PrevInSection.RelPermalink -}}{{- end -}}
+          {{- end -}}
+          {{- if or $prev $next -}}
+          <nav class="cw-pg-nav" aria-label="페이지 이동">
+            {{- if $prev -}}
+            <a class="cw-pg-card cw-pg-prev" href="{{ $prev.url }}">
+              <div class="lbl">{{ $prev.lbl }}</div>
+              <div class="ttl">{{ $prev.title }}</div>
+            </a>
+            {{- else -}}
+            <span class="cw-pg-card cw-pg-empty"></span>
+            {{- end -}}
+            {{- if $next -}}
+            <a class="cw-pg-card cw-pg-next" href="{{ $next.url }}">
+              <div class="lbl">{{ $next.lbl }}</div>
+              <div class="ttl">{{ $next.title }}</div>
+            </a>
+            {{- else -}}
+            <span class="cw-pg-card cw-pg-empty"></span>
+            {{- end -}}
+          </nav>
+          {{- end -}}
+        </div>
+
+        {{- /* 우측 TOC rail (디자인 240px) — 모든 페이지에서 실제 헤딩 기반 동적 생성
+               (home 포함). 과거 home 하드코딩 앵커(#quickstart 등)는 현재 홈 헤딩과
+               불일치하여 죽은 링크였으므로 제거하고 .TableOfContents로 통일. */ -}}
+        {{- if .TableOfContents -}}
+        {{- $hasHeadings := gt (len (findRE "<h[23]" .Content)) 0 -}}
+        {{- if $hasHeadings -}}
+        <aside class="cw-toc" aria-label="이 페이지에서">
+          <h6>이 페이지에서</h6>
+          {{ .TableOfContents }}
+        </aside>
+        {{- end -}}
+        {{- end -}}
+      </main>
+
+      {{ partial "site-footer" . }}
+    </div>
+
+    {{ partial "foot" . }}
+
+    <script>
+    // macOS 코드 카드 복사 버튼 (render-codeblock.html이 생성한 .code-card)
+    (function(){
+      document.querySelectorAll('.code-card .copy-btn[data-copy]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var card = btn.closest('.code-card');
+          if (!card) return;
+          // 줄번호 테이블이면 코드 칸(.lntd:last-child)만, 아니면 단일 pre
+          var codeEl = card.querySelector('.lntable .lntd:last-child pre')
+                     || card.querySelector('.chroma > code')
+                     || card.querySelector('pre');
+          var text = codeEl ? codeEl.innerText.replace(/\n+$/, '') : '';
+          if (!text) return;
+          var label = btn.querySelector('.copy-label');
+          var done = btn.getAttribute('data-label-copied') || 'Copied';
+          var orig = btn.getAttribute('data-label-copy') || 'Copy';
+          var ok = function(){
+            btn.classList.add('copied');
+            if (label) label.textContent = done;
+            setTimeout(function(){ btn.classList.remove('copied'); if (label) label.textContent = orig; }, 1600);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(ok).catch(function(){});
+          } else {
+            var ta = document.createElement('textarea');
+            ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); ok(); } catch(e){}
+            document.body.removeChild(ta);
+          }
+        });
+      });
+    })();
+
+    // 라이트 테마 단일화 — 다크 모드 완전 제거 (2026-05-13)
+    // 어떤 상태든 항상 color-theme=light로 강제. 토글 버튼 비활성화.
+    (function(){
+      var html = document.documentElement;
+      var STORE_KEY = 'hugo-geekdoc.color-theme';
+
+      // 라이트 강제 + localStorage 정리
+      html.setAttribute('color-theme', 'light');
+      html.removeAttribute('data-theme');
+      html.setAttribute('class', 'color-toggle-light');
+      try { localStorage.setItem(STORE_KEY, JSON.stringify('light')); } catch(e){}
+
+      // color-theme이 외부에서 변경돼도 즉시 light로 복원
+      new MutationObserver(function(){
+        if (html.getAttribute('color-theme') !== 'light') {
+          html.setAttribute('color-theme', 'light');
+        }
+        if (html.getAttribute('data-theme')) {
+          html.removeAttribute('data-theme');
+        }
+      }).observe(html, { attributes: true, attributeFilter: ['color-theme', 'data-theme'] });
+
+      // Geekdoc 토글 버튼 클릭 핸들러 제거 (CSS에서 display:none으로 숨기지만 안전망)
+      document.addEventListener('DOMContentLoaded', function(){
+        var btn = document.getElementById('gdoc-color-theme');
+        if (btn) {
+          btn.onclick = null;
+          var clone = btn.cloneNode(true);
+          btn.parentNode.replaceChild(clone, btn);
+        }
+      });
+    })();
+
+    // 사이드바 섹션 펼침/접힘 상태 보존 (localStorage) — 페이지 이동 후에도 유지
+    (function(){
+      var STORAGE_KEY = 'cw-side-state';
+      function getSaved(){
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; }
+        catch(e){ return {}; }
+      }
+      function save(state){
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){}
+      }
+      function keyOf(section){
+        var span = section.querySelector('.cw-side-title > span:last-child');
+        return span ? span.textContent.trim() : null;
+      }
+      function init(){
+        var sections = document.querySelectorAll('.cw-side .cw-side-section');
+        if (!sections.length) return;
+        var saved = getSaved();
+        sections.forEach(function(section){
+          var key = keyOf(section);
+          if (!key) return;
+          // 현재 활성 페이지가 속한 섹션은 강제 open (서버 결정 우선)
+          var hasActive = !!section.querySelector('.cw-side-link.active');
+          if (hasActive) {
+            section.setAttribute('open', '');
+          } else if (saved.hasOwnProperty(key)) {
+            // 다른 섹션은 localStorage 상태 적용
+            if (saved[key]) section.setAttribute('open', '');
+            else section.removeAttribute('open');
+          }
+          // 토글 시 상태 저장
+          section.addEventListener('toggle', function(){
+            var s = getSaved();
+            s[key] = section.hasAttribute('open');
+            save(s);
+          });
+        });
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    })();
+    </script>
+  </body>
+</html>

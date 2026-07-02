@@ -1,0 +1,50 @@
+---
+id: SPEC-STATUSLINE-002
+version: "1.0.2"
+status: implemented
+created: "2026-03-20"
+updated: "2026-05-16"
+author: GOOS
+priority: high
+issue_number: 0
+title: "rate_limits statusline 지원"
+phase: "v2.x - Legacy"
+module: "statusline"
+lifecycle: completed
+tags: "legacy"
+---
+
+# SPEC-STATUSLINE-002: rate_limits statusline 지원
+
+
+## HISTORY
+
+| Version | Date       | Author                     | Description |
+|---------|------------|----------------------------|-------------|
+| 1.0.2   | 2026-05-16 | manager-develop (run-phase) | status downgrade completed → implemented — git-implied status 정합성 복원 (SPEC-V3R4-STATUS-DRIFT-FOLLOWUP-001 Wave 2). |
+| 1.0.1   | 2026-05-16 | manager-develop (run-phase) | lint.skip StatusGitConsistency 회피책 제거 — SPEC-V3R4-LINT-STATUS-CHORE-SKIP-001 walker filter 머지로 불필요해짐. |
+
+## 1. 개요
+
+Claude Code v2.1.80에서 statusline JSON에 추가된 `rate_limits` 필드를 파싱하여 5시간/7일 rate limit 사용량을 표시한다.
+
+## 2. 요구사항
+
+### REQ-SL-010: rate_limits 필드 파싱
+
+StdinData에 `rate_limits` 필드를 추가하고, `RateLimitInfo` / `RateLimitWindow` 타입을 정의한다.
+
+### REQ-SL-011: 렌더러에서 rate_limits 우선 사용
+
+기존 MoAI API 호출(`Usage`)보다 Claude Code에서 직접 제공하는 `RateLimits`를 우선 사용한다.
+
+
+### Out of Scope
+
+- N/A (legacy SPEC)
+
+## 3. 구현 요약
+
+- `internal/statusline/types.go`: `RateLimitInfo`, `RateLimitWindow` 타입 추가, `StdinData`/`StatusData`에 필드 추가
+- `internal/statusline/builder.go`: `collectAll()`에서 RateLimits 전달
+- `internal/statusline/renderer.go`: `renderFullV3()`에서 RateLimits 우선 사용 로직

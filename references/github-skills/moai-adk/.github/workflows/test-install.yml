@@ -1,0 +1,272 @@
+name: Test Installation Scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - 'install.bat'
+      - '.github/workflows/test-install.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - 'install.bat'
+      - '.github/workflows/test-install.yml'
+  workflow_dispatch:
+
+# Least-privilege: this workflow only validates install scripts locally on
+# the runner (bash/pwsh/cmd syntax checks, --help flags). No GITHUB_TOKEN
+# write is exercised.
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Job 1: Test install.sh on Unix-like systems
+  test-sh:
+    name: Test install.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Test --help flag
+        run: |
+          bash install.sh --help
+          echo "Exit code: $?"
+
+      - name: Validate bash syntax
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          bash -n install.sh
+          echo "Bash syntax validation passed"
+
+      - name: Display script info
+        run: |
+          echo "=== Script Information ==="
+          wc -l install.sh
+          file install.sh || true
+          echo "=== First 20 lines ==="
+          head -20 install.sh
+
+  # Job 2a: Test install.ps1 with PowerShell Core (pwsh) on all platforms
+  test-ps1-pwsh:
+    name: Test install.ps1 (${{ matrix.os }}, pwsh)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Test --help flag
+        run: |
+          .\install.ps1 -help
+          Write-Host "Exit code: $LASTEXITCODE"
+
+      - name: Validate PowerShell syntax
+        run: |
+          $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content install.ps1 -Raw), [ref]$errors)
+          if ($errors) {
+            Write-Host "PowerShell syntax errors found:"
+            $errors | Format-List
+            exit 1
+          }
+          Write-Host "PowerShell syntax validation passed"
+
+      - name: Test irm pipe iex compatibility
+        run: |
+          # Simulate irm | iex by reading file content and creating a ScriptBlock
+          $content = Get-Content install.ps1 -Raw
+          try {
+            $sb = [ScriptBlock]::Create($content)
+            Write-Host "irm | iex compatibility: PASSED (ScriptBlock parsed successfully)"
+          }
+          catch {
+            Write-Host "irm | iex compatibility: FAILED"
+            Write-Host "Error: $_"
+            exit 1
+          }
+
+      - name: Display script info
+        run: |
+          Write-Host "=== Script Information ==="
+          Write-Host "$((Get-Content install.ps1 | Measure-Object -Line).Lines) lines"
+          Write-Host "=== First 20 lines ==="
+          Get-Content install.ps1 | Select-Object -First 20
+
+  # Job 2b: Test install.ps1 with Windows PowerShell 5.1
+  test-ps1-powershell:
+    name: Test install.ps1 (windows-latest, powershell)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Test --help flag
+        run: |
+          .\install.ps1 -help
+          Write-Host "Exit code: $LASTEXITCODE"
+
+      - name: Validate PowerShell syntax
+        run: |
+          $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content install.ps1 -Raw), [ref]$errors)
+          if ($errors) {
+            Write-Host "PowerShell syntax errors found:"
+            $errors | Format-List
+            exit 1
+          }
+          Write-Host "PowerShell syntax validation passed"
+
+      - name: Test irm pipe iex compatibility
+        run: |
+          # Simulate irm | iex by reading file content and creating a ScriptBlock
+          $content = Get-Content install.ps1 -Raw
+          try {
+            $sb = [ScriptBlock]::Create($content)
+            Write-Host "irm | iex compatibility: PASSED (ScriptBlock parsed successfully)"
+          }
+          catch {
+            Write-Host "irm | iex compatibility: FAILED"
+            Write-Host "Error: $_"
+            exit 1
+          }
+
+      - name: Display script info
+        run: |
+          Write-Host "=== Script Information ==="
+          Write-Host "$((Get-Content install.ps1 | Measure-Object -Line).Lines) lines"
+          Write-Host "=== First 20 lines ==="
+          Get-Content install.ps1 | Select-Object -First 20
+
+  # Job 3: Test install.bat on Windows CMD
+  test-bat:
+    name: Test install.bat (windows-latest, cmd)
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Test /? flag (help)
+        shell: cmd
+        run: |
+          install.bat /?
+          echo Exit code: %ERRORLEVEL%
+
+      - name: Test --help flag
+        shell: cmd
+        run: |
+          install.bat --help
+          echo Exit code: %ERRORLEVEL%
+
+      - name: Test -h flag
+        shell: cmd
+        run: |
+          install.bat -h
+          echo Exit code: %ERRORLEVEL%
+
+      - name: Display script info
+        shell: cmd
+        run: |
+          echo === Script Information ===
+          find /c /v "" install.bat
+          echo === First 20 lines ===
+          powershell -Command "Get-Content install.bat | Select-Object -First 20"
+
+  # Job 4: Cross-platform compatibility check
+  compatibility-check:
+    name: Cross-platform compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check for platform-specific issues
+        run: |
+          echo "=== Checking install.sh ==="
+          grep -q "MOAI_INSTALL_DIR" install.sh && echo "✓ MOAI_INSTALL_DIR support found" || echo "✗ MOAI_INSTALL_DIR support missing"
+          grep -q "\-\-help" install.sh && echo "✓ Help flag support found" || echo "✗ Help flag support missing"
+          grep -q "darwin\|linux" install.sh && echo "✓ Platform detection found" || echo "✗ Platform detection missing"
+
+          echo ""
+          echo "=== Checking install.ps1 ==="
+          grep -q "IsWindows" install.ps1 && echo "✓ IsWindows variable found" || echo "✗ IsWindows variable missing"
+          grep -q "GetTempPath" install.ps1 && echo "✓ GetTempPath found" || echo "✗ GetTempPath missing"
+          grep -q "MOAI_INSTALL_DIR" install.ps1 && echo "✓ MOAI_INSTALL_DIR support found" || echo "✗ MOAI_INSTALL_DIR support missing"
+
+      - name: Verify shebang and encoding
+        run: |
+          echo "=== install.sh ==="
+          head -1 install.sh
+          file install.sh || true
+
+      - name: Check for common issues
+        run: |
+          echo "=== Checking for CRLF issues ==="
+          file install.sh install.ps1 install.bat || true
+
+          echo ""
+          echo "=== Checking for executable permissions pattern ==="
+          grep -q "chmod +x" install.sh && echo "✓ chmod pattern found" || echo "⚠ chmod pattern not found (may be OK)"
+
+  # Summary job
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-sh, test-ps1-pwsh, test-ps1-powershell, test-bat, compatibility-check]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Check test results
+        run: |
+          echo "=== Test Results Summary ==="
+          echo "test-sh: ${{ needs.test-sh.result }}"
+          echo "test-ps1-pwsh: ${{ needs.test-ps1-pwsh.result }}"
+          echo "test-ps1-powershell: ${{ needs.test-ps1-powershell.result }}"
+          echo "test-bat: ${{ needs.test-bat.result }}"
+          echo "compatibility-check: ${{ needs.compatibility-check.result }}"
+
+          if [[ "${{ needs.test-sh.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-ps1-pwsh.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-ps1-powershell.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-bat.result }}" == "failure" ]] || \
+             [[ "${{ needs.compatibility-check.result }}" == "failure" ]]; then
+            echo ""
+            echo "❌ Some tests failed!"
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ All tests passed!"

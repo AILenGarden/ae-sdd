@@ -1,0 +1,8 @@
+{
+  "name": "nubase-functions-dispatcher",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

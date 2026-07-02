@@ -1,0 +1,514 @@
+---
+title: /moai plan
+weight: 30
+draft: false
+---
+
+EARS 形式で明確な SPEC 文書を作成し、AI との対話を永続的な要件文書にします。
+
+{{< callout type="info" >}}
+**スラッシュコマンド**: Claude Code で `/moai:plan` と入力すると、このコマンドを直接実行できます。`/moai` だけ入力すると、利用可能なすべてのサブコマンドの一覧が表示されます。
+{{< /callout >}}
+
+## 概要
+
+`/moai plan` は MoAI-ADK ワークフローの **フェーズ 1 (Plan)** コマンドです。自然言語の機能要求を **EARS** (Easy Approach to Requirements Syntax) 形式の構造化された **SPEC** 文書に変換します。内部的には **manager-spec** エージェントが要件を分析して、曖昧さのない仕様書を生成します。
+
+{{< callout type="info" >}}
+
+**SPEC が必要な理由**
+
+**Vibe Coding** の最大の問題は **コンテキスト消失** です。
+
+AI との対話中にセッションが終了すると **以前の議論内容がすべて消えます**。トークン制限を超過すると **古い会話からカットされます**。翌日作業を再開すると **昨日の決定事項を覚えていません**。
+
+**SPEC 文書がこの問題を解決します。**
+
+要件を **ファイルに保存** して永続的に保持します。EARS 形式で **曖昧さなく** 構造化します。セッションが中断されても SPEC を読むだけで **作業を継続** できます。
+
+{{< /callout >}}
+
+## 使用方法
+
+Claude Code の会話で以下を入力します:
+
+```bash
+> /moai plan "実装したい機能の説明"
+```
+
+**使用例:**
+
+```bash
+# シンプルな機能
+> /moai plan "ユーザーログイン機能"
+
+# 詳細な機能説明
+> /moai plan "JWT ベースのユーザー認証: ログイン、サインアップ、トークンリフレッシュ API"
+
+# リファクタリング要求
+> /moai plan "レガシー認証システムを JWT ベースにリファクタリング"
+```
+
+## サポートされるフラグ
+
+| フラグ                | 説明                        | 例                                |
+| ------------------- | --------------------------- | --------------------------------- |
+| `--worktree`        | ワークツリー自動作成 (最優先) | `/moai plan "機能" --worktree`      |
+| `--branch`          | 従来のブランチ作成            | `/moai plan "機能" --branch`        |
+| `--resume SPEC-XXX` | 中断された SPEC 作業を再開   | `/moai plan --resume SPEC-AUTH-001` |
+| `--team`            | Agent Teams モードを強制      | `/moai plan "feature" --team`          |
+| `--solo`            | サブエージェントモードを強制  | `/moai plan "feature" --solo`          |
+| `--seq`             | 並列ではなく順次診断          | `/moai plan "feature" --seq`           |
+| `--ultrathink`      | Adaptive Thinking を有効化 | `/moai plan "feature" --ultrathink`  |
+
+### フラグ優先順位
+
+複数のフラグが指定されている場合、以下の順序で適用されます:
+
+1. **--worktree** (最優先): 独立した Git ワークツリーを作成
+2. **--branch** (代替): 従来の feature ブランチを作成
+3. **フラグなし** (デフォルト): SPEC のみ作成、ユーザー選択に応じてブランチ作成
+
+### --worktree フラグ
+
+SPEC 作成と同時に **独立した Git ワークツリー** を作成して並列開発環境を準備します:
+
+```bash
+> /moai plan "決済システムの実装" --worktree
+```
+
+このオプションを使用すると:
+
+1. SPEC 文書を作成します
+2. SPEC をコミットします (ワークツリー作成の必須条件)
+3. `feature/SPEC-{ID}` ブランチでワークツリーを作成します
+4. メインコードに影響なしで独立して開発できます
+
+{{< callout type="info" >}}
+  `--worktree` オプションは **複数の機能を同時に開発** する時に便利です。各 SPEC が独立したワークツリーで作業されるため、互いに競合しません。
+{{< /callout >}}
+
+## EARS 形式の要件
+
+SPEC 文書は **EARS** (Easy Approach to Requirements Syntax) 形式で要件を定義します。5 つのパターンがあり、manager-spec エージェントが自然言語を自動的に適切なパターンに変換します。
+
+| パターン         | 形式                          | 目的               | 例                                                |
+| --------------- | ----------------------------- | ------------------ | ------------------------------------------------- |
+| **Ubiquitous**  | "システムは ~しなければならない"            | 常に適用されるルール | "システムはすべての API リクエストをログしなければならない"                |
+| **Event-driven**| "WHEN ~なら、THEN システムは ~しなければならない"| イベント応答        | "WHEN ログインする時、THEN システムは JWT を発行しなければならない"   |
+| **State-driven**| "WHILE ~の間、システムは ~しなければならない"   | 状態ベースの動作     | "WHILE ログインしている間、システムはセッションを維持しなければならない"   |
+| **Unwanted**    | "システムは ~してはならない"        | 禁止事項          | "システムはパスワードを平文で保存してはならない"   |
+| **Optional**    | "可能な限り、システムは ~すべきである" | オプション機能  | "可能な限り、システムは 2FA をサポートすべきである"        |
+
+{{< callout type="info" >}}
+  EARS 形式を暗記する必要はありません。manager-spec エージェントが自然言語を **自動変換** します。望む機能を自然に説明するだけで構いません。
+{{< /callout >}}
+
+## 実行プロセス
+
+`/moai plan` が内部的に実行するプロセスです:
+
+```mermaid
+flowchart TD
+    A["ユーザーリクエスト<br/>/moai plan '機能説明'"] --> B{明確か?}
+    B -->|いいえ| C["Explore サブエージェント<br/>プロジェクト分析"]
+    B -->|はい| D["manager-spec エージェント呼び出し"]
+    C --> D
+    D --> E["要件分析<br/>機能範囲、複雑度評価"]
+    E --> F{"明確化が必要?"}
+    F -->|はい| G["ユーザーに質問<br/>詳細確認"]
+    G --> E
+    F -->|いいえ| H["EARS 形式変換<br/>5 パターン適用"]
+    H --> I["受入条件定義<br/>Given-When-Then"]
+    I --> J["SPEC 文書作成<br/>spec.md、plan.md、acceptance.md"]
+    J --> K{"ユーザー承認"}
+    K -->|承認済み| L["Git 環境設定"]
+    K -->|修正要求| E
+    K -->|キャンセル| M["終了"]
+    L --> N{"フラグ確認"}
+    N -->|--worktree| O["ワークツリー作成"]
+    N -->|--branch| P["ブランチ作成"]
+    N -->|フラグなし| Q["ユーザー選択"]
+    O --> R["完了"]
+    P --> R
+    Q --> R
+```
+
+**主要ポイント:**
+
+- リクエストが不明確な場合は **Explore サブエージェント** がプロジェクトを分析します
+- 要件が不明確な場合は manager-spec エージェントが **ユーザーに追加質問** をします
+- すべての要件に **Given-When-Then 形式の受入条件** を自動生成します
+- 生成された SPEC 文書はユーザーの **承認後** に確定されます
+
+## SPEC 生成フェーズ
+
+### フェーズ 1A: プロジェクト分析 (オプション)
+
+リクエストが不明確またはプロジェクト状況を理解する必要がある場合に実行されます:
+
+| 実行条件         | スキップ条件               |
+| ---------------- | -------------------------- |
+| 不明確なリクエスト     | 明確な SPEC タイトル        |
+| 既存ファイル/パターン発見が必要 | Resume シナリオ         |
+| プロジェクト状態不確実   | 既存 SPEC コンテキスト存在 |
+
+### フェーズ 1B: SPEC 計画
+
+**manager-spec** エージェントが以下のタスクを実行します:
+
+- プロジェクト文書分析 (product.md、structure.md、tech.md)
+- 1-3 個の SPEC 候補提案とネーミング
+- 重複 SPEC 確認 (.moai/specs/)
+- EARS 構造設計
+- 実装計画と技術制約の識別
+- ライブラリバージョン確認 (安定版のみ、beta/alpha 除外)
+
+### フェーズ 1.5: 事前検証ゲート
+
+SPEC 作成前に一般的なエラーを防止します:
+
+**ステップ 1 - 文書タイプ分類:**
+
+- SPEC、Report、Documentation キーワード検出
+- Report は .moai/reports/ にルーティング
+- Documentation は .moai/docs/ にルーティング
+
+**ステップ 2 - SPEC ID 検証 (すべてのチェック必須):**
+
+- **ID 形式**: `SPEC-ドメイン-番号` パターン (例: `SPEC-AUTH-001`)
+- **ドメイン名**: 承認済みドメインリスト (AUTH、API、UI、DB、REFACTOR、FIX、UPDATE、PERF、TEST、DOCS、INFRA、DEVOPS、SECURITY など)
+- **ID 一意性**: .moai/specs/ で重複確認
+- **ディレクトリ構造**: 必ずディレクトリ作成、フラットファイル禁止
+
+**複合ドメインルール:** 最大 2 ドメイン推奨 (例: UPDATE-REFACTOR-001)、最大 3 まで許可
+
+### フェーズ 2: SPEC 文書作成
+
+3 つのファイルが同時に作成されます:
+
+**spec.md:**
+
+- YAML フロントマター (7 つの必須フィールド: id、version、status、created、updated、author、priority)
+- HISTORY セクション (フロントマターの直後)
+- 完全な EARS 構造 (5 つの要件タイプ)
+- conversation_language で記述されたコンテンツ
+
+**plan.md:**
+
+- タスク分解実装計画
+- 技術スタック仕様と依存関係
+- リスク分析と緩和戦略
+
+**acceptance.md:**
+
+- 最小 2 つの Given/When/Then シナリオ
+- エッジケーステストシナリオ
+- パフォーマンスと品質ゲート基準
+
+**品質制約:**
+
+- 要件モジュール: SPEC 当たり最大 5 個
+- 受入条件: 最小 2 つの Given/When/Then シナリオ
+- 技術用語と関数名は英語のまま維持
+
+### フェーズ 3: Git 環境設定 (条件付き)
+
+**実行条件:** フェーズ 2 完了かつ以下のいずれか:
+
+- --worktree フラグ提供
+- --branch フラグ提供またはユーザーがブランチ作成を選択
+- 設定でブランチ作成許可 (git_strategy 設定)
+
+**スキップ時点:** develop_direct ワークフロー、フラグなしで「現在のブランチを使用」を選択
+
+## 出力結果
+
+SPEC 文書は `.moai/specs/` ディレクトリに保存されます:
+
+```
+.moai/
+└── specs/
+    └── SPEC-AUTH-001/
+        ├── spec.md          # EARS 要件
+        ├── plan.md          # 実装計画
+        └── acceptance.md     # 受入条件
+```
+
+**SPEC 文書の基本構造:**
+
+```yaml
+---
+id: SPEC-AUTH-001
+version: 1.0.0
+status: ACTIVE
+created: 2026-01-28
+updated: 2026-01-28
+author: 開発チーム
+priority: HIGH
+---
+```
+
+## SPEC ステータス管理
+
+SPEC 文書は以下のステータスライフサイクルを持ちます:
+
+```mermaid
+flowchart TD
+    A["DRAFT<br/>作成中"] --> B["ACTIVE<br/>承認済み"]
+    B --> C["IN_PROGRESS<br/>実装中"]
+    C --> D["COMPLETED<br/>完了"]
+    B --> E["REJECTED<br/>却下"]
+```
+
+| ステータス          | 説明                 | `/moai run` 実行可 |
+| ------------- | -------------------- | ----------------- |
+| `DRAFT`       | まだ作成中         | いいえ              |
+| `ACTIVE`      | 承認済み、実装待ち   | **はい**           |
+| `IN_PROGRESS` | 現在実装中         | はい (再開)        |
+| `COMPLETED`   | 実装と検証完了      | いいえ             |
+| `REJECTED`    | 却下、再作成必要    | いいえ             |
+
+## 実践例
+
+### 例: JWT 認証 SPEC 作成
+
+**ステップ 1: コマンド実行**
+
+```bash
+> /moai plan "JWT ベースのユーザー認証システム: サインアップ、ログイン、トークンリフレッシュ"
+```
+
+**ステップ 2: manager-spec が質問** (必要時)
+
+manager-spec エージェントが詳細を確認するために質問する場合があります:
+
+- "パスワードの最小長は何文字ですか?"
+- "トークンの有効期限はどのくらいにしますか?"
+- "ソーシャルログインも含みますか?"
+
+**ステップ 3: SPEC 文書作成結果**
+
+以下の構造の SPEC 文書が作成されます:
+
+```yaml
+---
+id: SPEC-AUTH-001
+title: JWT ベースのユーザー認証システム
+priority: HIGH
+status: ACTIVE
+---
+```
+
+```markdown
+# 要件 (EARS 形式)
+
+## Ubiquitous
+
+- システムはすべてのパスワードを bcrypt でハッシュ化して保存しなければならない
+- システムはすべての認証リクエストをログしなければならない
+
+## Event-driven
+
+- WHEN 有効な認証情報でログインする時、THEN システムは JWT アクセストークン(1 時間)とリフレッシュトークン(7 日)を発行しなければならない
+
+## Unwanted
+
+- システムはパスワードを平文で保存してはならない
+- システムは期限切れトークンで API アクセスを許可してはならない
+```
+
+**ステップ 4: ユーザー承認後の Git 環境設定**
+
+```bash
+# --worktree フラグ使用時
+> /moai plan "JWT 認証" --worktree
+
+# 結果:
+# 1. SPEC 文書作成 (.moai/specs/SPEC-AUTH-001/)
+# 2. SPEC コミット (feat(spec): Add SPEC-AUTH-001)
+# 3. ワークツリー作成 (.git/worktrees/SPEC-AUTH-001)
+# 4. ワークツリーパス表示
+```
+
+**ステップ 5: `/clear` 実行後に実装フェーズへ移動**
+
+```bash
+# トークンクリア
+> /clear
+
+# 実装開始
+> /moai run SPEC-AUTH-001
+```
+
+## よくある質問
+
+### Q: SPEC 文書を手動で編集できますか?
+
+はい、`.moai/specs/SPEC-XXX/spec.md` ファイルを直接編集できます。要件を追加または受入条件を修正した後 `/moai run` を実行すると変更が反映されます。
+
+### Q: SPEC なしで直接コードを書くことはできますか?
+
+Claude Code で直接コードを書くこともできますが、SPEC なしで作業するとセッションが終了するたびにコンテキストを失います。**複雑な機能ほど SPEC を最初に作る方が効率的**です。
+
+### Q: SPEC ID はどのようなルールで生成されますか?
+
+`SPEC-ドメイン-番号` 形式です (例: `SPEC-AUTH-001`)
+
+- `SPEC-AUTH-001`: 認証関連の最初の SPEC
+- `SPEC-PAYMENT-002`: 決済関連の 2 番目の SPEC
+
+ドメインは機能領域に応じて manager-spec が自動的に決定します。
+
+### Q: `/moai plan` と `/moai` の違いは何ですか?
+
+`/moai plan` は **SPEC 文書作成のみ** を担当します。`/moai` は SPEC 作成から実装、文書化まで **全ワークフロー** を自動的に実行します。
+
+### Q: --worktree と --branch の違いは何ですか?
+
+**--worktree** は独立した作業ディレクトリを作成して完全に分離された環境を提供します。**--branch** は現在のリポジトリに新しいブランチを作成します。複数の機能を同時に開発する場合は --worktree を推奨します。
+
+## v2.9.0 新機能
+
+### Delta Markers (ブラウンフィールド分類)
+
+既存コードベース (ブラウンフィールド) プロジェクトで SPEC 要件を分類します。
+
+| マーカー | 意味 | 説明 |
+|------|------|------|
+| `[EXISTING]` | 既存を維持 | 変更なしで参照のみ |
+| `[MODIFY]` | 修正 | 既存コード変更 |
+| `[NEW]` | 新規 | 新規作成 |
+| `[REMOVE]` | 削除 | 既存コード削除 |
+
+### spec-compact.md 生成
+
+Plan フェーズで SPEC 文書の要約版 (`spec-compact.md`) を自動生成します。Run フェーズで約 30% トークンを節約します。
+
+### Exclusions 必須化 ("何を構築しないか")
+
+すべての SPEC 文書に **Out of Scope / Exclusions** セクションが必須です。スコープ逸脱を事前に防止します。
+
+### What/Why 制約
+
+SPEC 要件は **What** (何か) と **Why** (なぜ) のみを記述します。**How** (どのように) は実装フェーズで決定し、SPEC に過度に仕様化しません。
+
+### Decision Point 3.5: 実行モード選択ゲート
+
+Plan 完了後 Run 開始前に、実行環境を自動感知してユーザーに最適なモードを提案します。
+
+**感知項目:**
+1. tmux 可用性 (`$TMUX` 環境変数)
+2. 現在の LLM モード (`llm.yaml` の `team_mode`: cc/glm/cg)
+
+**tmux 使用可能時:**
+- ワークツリー + {現在のモード} (推奨)
+- Team Mode (インプロセス)
+- Sub-agent Mode (順序実行)
+
+**tmux 使用不可時:**
+- Sub-agent Mode (推奨)
+- Team Mode (インプロセス)
+
+## GEARS 表記法 (v3.0.0+) {#gears-notation}
+
+MoAI-ADK v3.0.0 から **GEARS**(Generalized Expression for AI-Ready Specs) を SPEC 記述の推奨表記法として導入します。既存の EARS 表記は **6 ヶ月** の期間にわたって後方互換が維持され、その間に段階的に GEARS へ移行できます。新しい SPEC は最初から GEARS パターンに従うことを推奨します。
+
+GEARS は EARS の 5 つの中核パターンを維持しつつ、AI コーディングエージェントがより明確に解釈できるように意味境界を整えた表記法です。主な変更点は、**IF/THEN パターンの廃止**(WHEN への正規化)と、**WHERE の意味再定義**(静的な前提条件・構成・機能フラグ)です。
+
+参考資料: Σ\*/SubLang, **"GEARS: The Spec Syntax That Makes AI Coding Actually Work"**, DEV Community 2026-01-23. <https://dev.to/sublang/gears-the-spec-syntax-that-makes-ai-coding-actually-work-4f3f>
+
+### 5 パターン比較表
+
+| 表記 | EARS (legacy) | GEARS (canonical) | Lint の挙動 |
+|---|---|---|---|
+| Ubiquitous (普遍) | `The system shall <action>` | Same | 変更なし |
+| Event-driven (WHEN) | `WHEN <event>, the system shall <action>` | Same | 変更なし |
+| State-driven (WHILE) | `WHILE <state>, the system shall <action>` | Same (stateful precondition) | 変更なし |
+| Precondition (WHERE) | `WHERE <feature-exists>, the system shall <action>` | `WHERE <precondition>, the system shall <action>` (再定義: 静的前提条件・構成・機能フラグ) | lint 層では変更なし |
+| Negative trigger | `IF <condition>, THEN the system shall <action>` | **DEPRECATED** — 代わりに `WHEN <event-detected>, the system shall <action>` を使用 | **新規: `LegacyEARSKeyword` warning** |
+
+### 後方互換ウィンドウ (6 ヶ月)
+
+マイグレーションウィンドウは v3.0.0 リリース時点から **6 ヶ月**、または一括修正 SPEC である `SPEC-V3R6-GEARS-SWEEP-001`(provisional) の完了時点のうち、いずれか早い方まで有効です。ウィンドウ中の挙動は次の通りです。
+
+- **非 strict モード(既定)**: `LegacyEARSKeyword` の warning のみ発行、lint は失敗しません。
+- **`--strict` モード(opt-in)**: warning が error に昇格し、CI を遮断します。
+- **既存 88 件の SPEC**: 本 SPEC のスコープでは修正しません (REQ-GM-007)。一括修正は後続の SWEEP SPEC の責任範囲です。
+
+### LegacyEARSKeyword 診断
+
+`internal/spec/lint.go` の `isLegacyEARSPattern()` ヘルパーが EARS legacy の IF/THEN パターンを検出すると、次のメッセージを発行します。
+
+```
+REQ <REQ-ID>: GEARS migration: replace IF/THEN with WHEN/event normalization; see https://adk.mo.ai.kr/en/workflow-commands/moai-plan/#gears-notation
+```
+
+- **コード**: `LegacyEARSKeyword`
+- **重大度**: warning (非 strict) / error (`--strict`)
+- **出典**: `internal/spec/lint.go`
+
+### ツール作成者へのガイド
+
+downstream ツール (バリデータ、コード生成器、IDE プラグインなど) で SPEC テキストをマッチングする際は、次のように移行してください。
+
+- `IF .* THEN` のマッチャを今後 `WHEN .* shall` に切り替える。
+- 6 ヶ月の deprecation ウィンドウを考慮し、ウィンドウ終了まで両パターンを認識する。
+- `LegacyEARSKeyword` finding コードを upgrade シグナルとして利用する。
+
+### マイグレーション例
+
+**Before (EARS legacy):**
+
+```
+IF input is null, THEN the system shall return an error.
+```
+
+**After (GEARS canonical):**
+
+```
+WHEN input is null is detected, the system shall return an error.
+```
+
+この正規化はトリガーを "条件" ではなく "事象" として明示することで、AI エージェントの意図解釈の曖昧さを減らし、テストケース作成時の入力・検証タイミングをより明確にします。
+
+## 適応型レコメンデーション配置 (Adaptive Recommendation Placement)
+
+MoAI-ADK v0.1.0 から、**AskUserQuestion レコメンデーション** がユーザーの決定パターンに適応します。システムは選択をキャプチャし、システムデフォルトではなく観測された統計的多数に基づいて将来の質問オプションをパーソナライズします。
+
+### 動作原理
+
+MoAI が `AskUserQuestion` で質問するとき、レコメンデーション配置を案内する 5 つの原則が適用されます:
+
+1. **Fisher 情報タイミング** — 不確実性が最も高いとき (p≈0.5、Fisher 情報 I=p(1−p) が最大となる決定境界) に質問が発火されます。p≈0 または p≈1 (ほぼ確定) のときは、システムが自動処理して質問を省略します。
+
+2. **質問順序 — 情報利得降順** — 複数の質問が必要なとき、推定情報利得が高い順に並べられ、最も重要な決定を先に行います。
+
+3. **統計的多数合理デフォルト** — レコメンデーションオプション (`(推奨)` 表記) は決定履歴の観測された多数選択を反映し、**システムポリシーデフォルトではありません**。データが不足している場合 (cold-start)、*"デフォルト設定ベース、パーソナライズに N 件の観測が必要"* を開示します。
+
+4. **前提条件開示** — 各レコメンデーションオプションは成功前提条件を *"Recommended when <precondition>"* 形式で明示し、トレードオフを直ちに評価できるようにします。
+
+5. **熟練度ベース適応型強度** — レコメンデーション強度はセッションカウントに応じて調整されます:
+   - **エキスパート** (20+ セッション): 弱い強度 — inferred preference を `(推奨)` override なしで公開のみ (info-centric、自律性尊重)
+   - **一般ユーザー** (5-19 セッション): 強い強度 — `(推奨)` + 透明な理由提示
+   - **Cold-start** (<5 セッション): 中立強度 — override なし、システムデフォルト適用
+
+### プライバシーと安全性
+
+- **セッションスコープ トグル**: `moai preference toggle` でプロジェクト別パーソナライゼーション無効化 (セッション間非永続)
+- **機密ドメイン ゲート**: セキュリティ関連トピック (脆弱性、ペネテスト、漏洩) は中立レコメンデーション + 開示ログ
+- **自動減衰**: Transient 選好は 28 日後に soft-delete、stable 選好 (明示的マーク) は保存
+- **Advisory キャプチャ**: PostToolUse キャプチャ フックは AskUserQuestion 実行を絶対にブロックしません (fail-open 設計)
+- **Recovery-Signal Carve-Out**: recovery ターン (compact 復旧、prompt_too_long 等) では advisory フックは復旧に譲歩 (recovery-signal carve-out 準拠、doctrine-honest)
+
+### 技術実装
+
+{{< callout type="info" >}}
+**内部動作**: 5 つの原則は `.claude/rules/moai/core/askuser-protocol.md` § Recommendation Placement Principles に詳細化されており、`moai.md` にレンダリングされます。キャプチャ フックは `internal/hook/user_decision_capture.go` に実装されており、schema 許容パースとドメイン分類をサポートします。減衰ポリシーは power-law 関数 `(age+1)^(-0.5)` に従い、α=0.5 固定 (Standard tier)。完全なアーキテクチャと受諾基準はプロジェクトの SPEC 文書を参照してください。
+{{< /callout >}}
+
+## 関連ドキュメント
+
+- [SPEC ベース開発](/core-concepts/spec-based-dev) - EARS 形式詳細説明
+- [/moai run](./moai-run) - 次のステップ: DDD 実装
+- [/moai sync](./moai-sync) - 最終ステップ: 文書同期

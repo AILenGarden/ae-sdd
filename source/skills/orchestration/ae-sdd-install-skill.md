@@ -19,7 +19,7 @@ allowed_tools:
 
 | 用户说 | 目标产物 |
 |--------|---------|
-| "安装 ae-sdd" / "装 ae-sdd" / "给 <项目> 接 ae-sdd" | ae-sdd 已装到本地 Agent skills（Claude：`~/.claude/skills/ae-sdd/`；Codex：`~/.codex/skills/ae-sdd/`），hooks 已配置 |
+| "安装 ae-sdd" / "装 ae-sdd" / "给 <项目> 接 ae-sdd" | ae-sdd 已装到本地 Agent skills（Claude：`~/.claude/skills/ae-sdd/`；Codex：`~/.codex/skills/ae-sdd/`；Hermes：`~/.hermes/skills/ae-sdd/`），hooks 已配置 |
 | "重装 ae-sdd" / "升级 ae-sdd" / "Python 路径变了" | 重新 build + install + 重写 hooks |
 | "卸载 ae-sdd" | 删除本地 Agent skills 中的 ae-sdd 安装 + 清理 hooks |
 | "把 ae-sdd 装到 <项目路径>" | 仅写 hooks（前提：ae-sdd 已全局装好）|
@@ -143,6 +143,22 @@ ls <项目>/.ae-sdd/ 2>&1
 ```
 
 **🔴 任意一项不通过 → 不交付，告知用户修复。**
+
+---
+
+## 4.5 自动化模式提示（🆕 v3.8.0，可选）
+
+安装/初始化完成后，向用户提示自动化开关选项（**不主动开启**，仅告知）：
+
+```
+ℹ️  ae-sdd v3.8.0 支持自动化模式（默认关闭）：
+   - 开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化
+   - 开启方式：ae-sdd automation enable
+   - 开工前会自动收集所有必需信息（第三方凭证/复用选择/环境配置等）
+   - 详见 source/SKILL.md §🚀 自动化模式
+```
+
+仅在用户明确要求"开启自动化/全自动/跳过人工审核"时执行 `ae-sdd automation enable`；否则只提示不操作。
 
 ---
 

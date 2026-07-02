@@ -1,0 +1,31 @@
+name: SPEC Lint
+
+on:
+  pull_request:
+    paths:
+      - '.moai/specs/**'
+
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same PR (lint is fast and idempotent).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spec-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Version alignment with ci.yml: actions/checkout@v5, actions/setup-go@v6.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run SPEC lint
+        # Invoke the freshly built binary directly via go run instead of
+        # `make install` (which pollutes $GOPATH/bin and is unnecessary for
+        # a one-shot lint invocation).
+        run: go run ./cmd/moai spec lint --strict

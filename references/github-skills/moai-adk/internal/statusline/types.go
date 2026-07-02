@@ -1,0 +1,396 @@
+// Package statusline implements the MoAI-ADK statusline rendering system
+// for Claude Code integration. It collects data from multiple sources
+// (git, context window, session cost, version) and renders a single-line
+// status display with color coding and multiple display modes.
+package statusline
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+)
+
+// StatuslineMode defines the display verbosity of the statusline.
+type StatuslineMode string
+
+const (
+	// ModeDefault displays git status, context ratio in a 3-line layout.
+	ModeDefault StatuslineMode = "default"
+
+	// ModeFull displays all collected data in detailed 5-line layout (v3 name).
+	ModeFull StatuslineMode = "full"
+
+	// ModeMinimal is a deprecated alias for backward compatibility.
+	//
+	// Deprecated: Use ModeDefault.
+	ModeMinimal StatuslineMode = "minimal"
+
+	// ModeCompact is a deprecated alias for backward compatibility.
+	//
+	// Deprecated: Use ModeDefault.
+	ModeCompact StatuslineMode = "compact"
+
+	// ModeVerbose is a deprecated alias for backward compatibility.
+	//
+	// Deprecated: Use ModeFull.
+	ModeVerbose StatuslineMode = "verbose"
+)
+
+// NormalizeMode converts deprecated mode names to current names for backward compatibility.
+// REQ-V3-MODE-001: "minimal" → "default"
+// REQ-V3-MODE-002: "verbose" → "full"
+// REQ-V3-MODE-003: "compact" → "default"
+// Other values are returned unchanged.
+func NormalizeMode(mode StatuslineMode) StatuslineMode {
+	switch mode {
+	case "minimal", "compact":
+		return ModeDefault
+	case "verbose":
+		return ModeFull
+	default:
+		return mode
+	}
+}
+
+// StdinData represents the JSON input from Claude Code's statusline hook.
+// Matches the official JSON structure from https://code.claude.com/docs/en/statusline
+type StdinData struct {
+	HookEventName  string             `json:"hook_event_name"`
+	SessionID      string             `json:"session_id"`
+	TranscriptPath string             `json:"transcript_path"`
+	CWD            string             `json:"cwd"` // Legacy field, prefer Workspace.CurrentDir
+	Model          *ModelInfo         `json:"model"`
+	Workspace      *WorkspaceInfo     `json:"workspace"`
+	Cost           *CostData          `json:"cost"`
+	ContextWindow  *ContextWindowInfo `json:"context_window"`
+	OutputStyle    *OutputStyleInfo   `json:"output_style"`
+	RateLimits     *RateLimitInfo     `json:"rate_limits"`
+	Effort         *EffortInfo        `json:"effort"`   // Claude Code v2.1.139+ effort level (nil if absent)
+	Thinking       *ThinkingInfo      `json:"thinking"` // Claude Code v2.1.139+ thinking flag (nil if absent)
+	Version        string             `json:"version"`  // Claude Code version (e.g., "1.0.80")
+	PR             *PRInfo            `json:"pr,omitempty"`            // Claude Code v2.1.145+ active PR info (nil if no PR detected)
+	ExceedsLong    bool               `json:"exceeds_200k_tokens"`     // long-context overflow boolean (false if absent)
+}
+
+// PRInfo represents GitHub Pull Request metadata from Claude Code v2.1.145+
+// stdin JSON. The struct is raw-passthrough — unknown review_state values
+// are not rejected (REQ-SLV-014 unknown-state default-color fallback).
+//
+// @MX:NOTE: [AUTO] PR info struct — maps Claude Code v2.1.145+ stdin pr.{number,url,review_state} fields.
+// Known review_state values: approved/pending/changes_requested/draft. Other values are passed through raw (REQ-SLV-014).
+type PRInfo struct {
+	Number      int    `json:"number"`
+	URL         string `json:"url"`
+	ReviewState string `json:"review_state"`
+}
+
+// RateLimitInfo represents Claude.ai rate limit usage from Claude Code (v2.1.80+).
+type RateLimitInfo struct {
+	FiveHour *RateLimitWindow `json:"five_hour"`
+	SevenDay *RateLimitWindow `json:"seven_day"`
+}
+
+// RateLimitWindow represents a single rate limit time window.
+// The official Claude Code statusline schema sends resets_at as a Unix epoch
+// integer (e.g., 1738425600), not as an ISO-8601 string.
+type RateLimitWindow struct {
+	UsedPercentage float64 `json:"used_percentage"` // 0-100
+	ResetsAt       int64   `json:"resets_at"`       // Unix epoch seconds (official schema)
+}
+
+// EffortInfo holds the effort level from Claude Code v2.1.139+.
+// The Level field is raw-passthrough — unknown values are not rejected (REQ-CC2122-004).
+//
+// @MX:NOTE: [AUTO] Effort level information struct added in Claude Code v2.1.139+.
+// Receives low/medium/high/xhigh/max values; unknown values are also passed through (REQ-CC2122-004).
+type EffortInfo struct {
+	Level string `json:"level"` // e.g., "low", "medium", "high", "xhigh", "max"
+}
+
+// ThinkingInfo holds the extended reasoning (thinking) activation flag from Claude Code v2.1.139+.
+//
+// @MX:NOTE: [AUTO] Extended reasoning (thinking) activation flag struct added in Claude Code v2.1.139+.
+// Display with ·t suffix in statusline when Enabled=true (REQ-CC2122-002).
+type ThinkingInfo struct {
+	Enabled bool `json:"enabled"` // true when extended reasoning is active
+}
+
+// ModelInfo represents the model information from Claude Code.
+// Claude Code may send this field as either an object or a plain string.
+// Custom UnmarshalJSON handles both formats.
+type ModelInfo struct {
+	ID          string `json:"id"`           // e.g., "claude-opus-4-1"
+	DisplayName string `json:"display_name"` // e.g., "Opus" - use this directly
+	Name        string `json:"name"`         // Legacy field, same as ID
+}
+
+// UnmarshalJSON implements json.Unmarshaler for ModelInfo.
+// It handles both the standard object format and the string shorthand:
+//
+//	Object: {"id": "claude-opus-4-6", "display_name": "Opus"}
+//	String: "claude-opus-4-6"
+//
+// When the string form is received, both ID and Name are set to the string value.
+func (m *ModelInfo) UnmarshalJSON(data []byte) error {
+	// Try string first (some Claude Code versions send model as plain string)
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		m.ID = s
+		m.Name = s
+		m.DisplayName = s
+		return nil
+	}
+
+	// Fall back to object format
+	type modelInfoAlias ModelInfo // prevent infinite recursion
+	var alias modelInfoAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*m = ModelInfo(alias)
+	return nil
+}
+
+// WorkspaceInfo represents the workspace directory information from Claude Code.
+// Claude Code 2.1.97+ adds git_worktree field for active worktree path.
+// Claude Code 2.1.145+ adds repo field for GitHub repository identity.
+type WorkspaceInfo struct {
+	CurrentDir  string    `json:"current_dir"`            // Current working directory
+	ProjectDir  string    `json:"project_dir"`            // Original project directory (used for display)
+	GitWorktree string    `json:"git_worktree"`           // Active git worktree path (2.1.97+, empty string if none)
+	Repo        *RepoInfo `json:"repo,omitempty"`         // GitHub repository identity (2.1.145+, nil if not detected)
+}
+
+// RepoInfo represents the GitHub repository identity discovered by Claude Code v2.1.145+.
+// Used to disambiguate PR segment context when multiple repos are open.
+//
+// @MX:NOTE: [AUTO] Repository identity struct — maps Claude Code v2.1.145+ workspace.repo.{host,owner,name} fields.
+type RepoInfo struct {
+	Host  string `json:"host"`  // e.g., "github.com"
+	Owner string `json:"owner"` // e.g., "modu-ai"
+	Name  string `json:"name"`  // e.g., "moai-adk"
+}
+
+// OutputStyleInfo represents the output style from Claude Code.
+type OutputStyleInfo struct {
+	Name string `json:"name"` // e.g., "MoAI", "R2-D2", "Yoda"
+}
+
+// CostData represents the session cost information from Claude Code.
+type CostData struct {
+	TotalUSD          float64 `json:"total_usd"`
+	TotalCostUSD      float64 `json:"total_cost_usd"`
+	InputTokens       int     `json:"input_tokens"`
+	OutputTokens      int     `json:"output_tokens"`
+	TotalDurationMS   int     `json:"total_duration_ms"`
+	TotalLinesAdded   int     `json:"total_lines_added"`
+	TotalLinesRemoved int     `json:"total_lines_removed"`
+}
+
+// ContextWindowInfo represents the context window usage from Claude Code.
+// Matches the official JSON structure from https://code.claude.com/docs/en/statusline
+type ContextWindowInfo struct {
+	// Pre-calculated percentages (most accurate - use these directly)
+	UsedPercentage      *float64 `json:"used_percentage"`      // 0-100, pre-calculated by Claude Code
+	RemainingPercentage *float64 `json:"remaining_percentage"` // 0-100, pre-calculated by Claude Code
+	ContextWindowSize   int      `json:"context_window_size"`  // e.g., 200000
+
+	// Cumulative session totals
+	TotalInputTokens  int `json:"total_input_tokens"`  // Cumulative input tokens across session
+	TotalOutputTokens int `json:"total_output_tokens"` // Cumulative output tokens across session
+
+	// Legacy/fallback: raw token counts (for backward compatibility)
+	Used  int `json:"used"`
+	Total int `json:"total"`
+
+	// Current usage breakdown (may be null if no messages yet)
+	CurrentUsage *CurrentUsageInfo `json:"current_usage"`
+}
+
+// CurrentUsageInfo contains detailed token usage breakdown.
+type CurrentUsageInfo struct {
+	InputTokens         int `json:"input_tokens"`
+	CacheCreationTokens int `json:"cache_creation_input_tokens"`
+	CacheReadTokens     int `json:"cache_read_input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+}
+
+// StatusData aggregates all collected data for rendering.
+type StatusData struct {
+	Git               GitStatusData
+	Memory            MemoryData
+	Metrics           MetricsData
+	Version           VersionData    // MoAI-ADK version from config
+	ClaudeCodeVersion string         // Claude Code version from JSON input (e.g., "1.0.80")
+	Directory         string         // Project directory name (e.g., "modu-saju")
+	OutputStyle       string         // Output style name (e.g., "Mr.Alfred", "R2-D2")
+	Task              TaskData       // Current active task (rendering enabled in Phase 4)
+	Usage             *UsageResult   // API usage (nil when unavailable)
+	RateLimits        *RateLimitInfo // Rate limit info from Claude Code (nil when unavailable)
+	Worktree          string         // Active git worktree path (empty string if none, REQ-CC297-003)
+	Effort            *EffortInfo    // Effort level from Claude Code v2.1.139+ (nil when unavailable, REQ-CC2122-001)
+	Thinking          *ThinkingInfo  // Thinking flag from Claude Code v2.1.139+ (nil when unavailable, REQ-CC2122-002)
+	PR                *PRInfo        // Active GitHub PR from Claude Code v2.1.145+ (nil when no PR detected, REQ-SLV-010)
+
+	// CacheUsage mirrors context_window.current_usage (SPEC-TOKEN-EFFICIENCY-001
+	// P0-2). Nil when current_usage is absent — before the first API call, or
+	// after /compact until the next call repopulates it — which drives the
+	// cache-hit segment's graceful degradation (REQ-TEF-006).
+	CacheUsage *CurrentUsageInfo
+
+	// Workspace mirrors the v2.1.145+ workspace.* stdin sub-object so the
+	// renderer can access workspace metadata (e.g., Repo) without reaching
+	// back into raw stdin (REQ-SSE-001). Value type — zero-value safe.
+	Workspace WorkspaceData
+
+	// ExceedsLongTokens mirrors StdinData.ExceedsLong (stdin field
+	// exceeds_200k_tokens). true → render Layer 1 ⚠️ long marker; pure
+	// visual signal, no handoff semantics (REQ-SSE-003 / REQ-SSE-004).
+	ExceedsLongTokens bool
+}
+
+// WorkspaceData mirrors the subset of stdin workspace.* fields that the
+// renderer needs at rendering time. Currently carries only Repo (REQ-SSE-001).
+// New v2.1.146+ workspace sub-fields are added here as additional segments
+// are wired into the renderer.
+//
+// @MX:NOTE: [AUTO] StatusData-side workspace projection — populated by
+// builder.collectAll from input.Workspace.* before the renderer runs.
+type WorkspaceData struct {
+	// Repo carries the GitHub repository identity (v2.1.145+). Nil when
+	// stdin lacks workspace.repo or detection failed.
+	Repo *RepoInfo
+}
+
+// GitStatusData holds git repository status information.
+type GitStatusData struct {
+	Branch    string
+	Modified  int
+	Staged    int
+	Untracked int
+	Ahead     int
+	Behind    int
+	Available bool
+}
+
+// MemoryData holds context window token usage information.
+type MemoryData struct {
+	TokensUsed        int
+	TokenBudget       int // Scaled to auto-compact threshold for CW bar (e.g., 1M × 85% = 850K)
+	ContextWindowSize int // Raw context_window_size from Claude Code stdin (1M / 200K) — used by handoff_guide threshold matching
+	Available         bool
+}
+
+// MetricsData holds session cost and model information.
+type MetricsData struct {
+	Model             string
+	CostUSD           float64
+	SessionDurationMS int // Total session duration in milliseconds (REQ-V3-TIME-001)
+	Available         bool
+}
+
+// VersionData holds version and update information.
+type VersionData struct {
+	Current         string
+	Latest          string
+	UpdateAvailable bool
+	Available       bool
+}
+
+// Segment key constants identify individual statusline segments.
+const (
+	SegmentModel         = "model"
+	SegmentContext       = "context"
+	SegmentOutputStyle   = "output_style"
+	SegmentDirectory     = "directory"
+	SegmentGitStatus     = "git_status"
+	SegmentClaudeVersion = "claude_version"
+	SegmentMoaiVersion   = "moai_version"
+	SegmentGitBranch     = "git_branch"
+
+	// v3 new segment constants (REQ-V3-TIME-003, enabled in Phase 4)
+	SegmentSessionTime = "session_time" // Session duration
+	SegmentUsage5H     = "usage_5h"     // 5-hour API usage
+	SegmentUsage7D     = "usage_7d"     // 7-day API usage
+	SegmentTask        = "task"         // Current active task
+
+	// REQ-CC297-003: git worktree segment (Claude Code 2.1.97+)
+	SegmentWorktree = "worktree" // Active worktree indicator [WT]
+
+	// REQ-CC2122-001: effort/thinking segment (Claude Code 2.1.122+)
+	SegmentEffortThinking = "effort_thinking" // Effort level + thinking flag indicator
+
+	// SPEC-TOKEN-EFFICIENCY-001 P0-2: cache-hit-ratio segment. Surfaces
+	// cache_read / (cache_read + cache_creation) as an early-warning signal of
+	// prompt-prefix churn. Like SegmentRepo it is a render-time constant outside
+	// the 15-key CanonicalSegments schema, but — parallel to SegmentEffortThinking
+	// — it IS config-toggleable via isSegmentEnabled (default-on; disable with
+	// `cache_hit: false` in statusline.yaml segments).
+	SegmentCacheHit = "cache_hit" // Cache-read-vs-cache-creation hit ratio indicator
+
+	// REQ-SLV-016: PR segment (Claude Code 2.1.145+)
+	SegmentPR = "pr" // Active GitHub PR indicator (number + review_state)
+
+	// workspace.repo segment (Claude Code 2.1.145+). SegmentRepo is the 16th
+	// segment constant and is intentionally excluded from the 15-key statusline
+	// config schema (the config segments map covers exactly the 15 in
+	// CanonicalSegments); it is a render-time constant, not a configurable toggle.
+	SegmentRepo = "repo" // GitHub repo identity indicator — intentionally outside the config schema (SLM-7)
+
+	// NOTE: SegmentLongContext removed per user explicit request (layout v3 CH1).
+	// StdinData.ExceedsLong + StatusData.ExceedsLongTokens fields preserved
+	// for future use, but no visual segment renders the ⚠️ long marker.
+
+	// NOTE: SegmentHandoffGuide removed per user explicit request (layout v3 CH2).
+	// shouldShowHandoffGuide() preserved as helper — its output is now integrated
+	// into the CW bar as a " (/clear)" suffix at the model-class threshold.
+)
+
+// UsageData represents API usage information.
+type UsageData struct {
+	UsedTokens  int64   `json:"used_tokens"`
+	LimitTokens int64   `json:"limit_tokens"`
+	Percentage  float64 `json:"percentage"`          // 0-100
+	ResetsAt    string  `json:"resets_at,omitempty"` // ISO 8601 reset timestamp
+}
+
+// UsageResult represents 5-hour/7-day usage results.
+type UsageResult struct {
+	Usage5H *UsageData // 5-hour usage
+	Usage7D *UsageData // 7-day usage
+}
+
+// contextLevel represents the severity level for context window usage coloring.
+type contextLevel int
+
+const (
+	levelOk    contextLevel = iota // < 50% usage
+	levelWarn                      // 50-80% usage
+	levelError                     // >= 80% usage
+)
+
+// GitDataProvider abstracts git data collection for testability.
+type GitDataProvider interface {
+	// CollectGitStatus retrieves current git repository status.
+	// Returns empty GitStatusData (not error) when no git repo exists.
+	CollectGitStatus(ctx context.Context) (*GitStatusData, error)
+}
+
+// UpdateProvider abstracts version update checking for testability.
+type UpdateProvider interface {
+	// CheckUpdate checks if a newer version is available.
+	// Uses caching to avoid repeated network calls.
+	CheckUpdate(ctx context.Context) (*VersionData, error)
+}
+
+// Builder composes the statusline output from collected data.
+type Builder interface {
+	// Build generates the formatted statusline string from the given input.
+	// Reads JSON from r, collects data from all sources, and returns
+	// a single-line formatted string. Never returns an error that prevents
+	// output; always produces at least a minimal fallback string.
+	Build(ctx context.Context, r io.Reader) (string, error)
+
+	// SetMode switches between statusline display modes.
+	SetMode(mode StatuslineMode)
+}

@@ -385,6 +385,7 @@ root agent 收集所有产出物
 **Tier 判定输入来源：**
 - **规模**：来自 RA（requirement-analysis-skill）的 5 维评分输出（大/中/小/微）
 - **关键决策点**：各节点本地判定（节点 SKILL 在准入检查时标注本节点是否含关键决策）
+- **🆕 v3.8.0 自动化模式**：`.ae-sdd/config.yaml` 的 `automation.enabled=true` → **强制 Tier 3**，覆盖上述规模/关键决策判定（自动化模式跳过人工✅，必须最高强度联审兜底）
 
 **Tier 判定时机：**
 - Review 节点**准入检查通过后、第一步挖掘前**完成 Tier 判定
@@ -503,6 +504,7 @@ root agent 收集所有产出物
 - ❌ AI 自行决定"这次不派多 reviewer"（必须有用户豁免或环境/预算硬约束）
 - ❌ 降级后不标注（等于隐瞒风险）
 - ❌ 把逻辑多视角当成物理多 reviewer 宣称"已交叉验证"
+- ❌ **🆕 v3.8.0 自动化模式下用逻辑多视角降级**：`automation.enabled=true` 时必须物理 3 个独立 session reviewer（G-09B 校验 sessionId≠root）；环境不支持物理 sub-agent → **不得降级为 logical-multi-perspective**，必须 `state.phase=paused` 等用户（按 `automation.onConsensusStall`）。自动化模式跳过人工✅，逻辑多视角无法消除同模型同盲区，联审形同虚设
 
 ### 8.4.6 与 5 阶段并行挖掘的关系（🔴 正交叠加，不冲突）
 

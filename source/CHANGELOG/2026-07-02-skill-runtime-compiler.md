@@ -7,7 +7,7 @@
 - Extended `source/docs/ae-sdd-design.md` with the new Runtime IR module.
 - Added the initial compiler tool and build integration so `build_dist.py` emits runtime compact slices and a compiled bootloader.
 - Made runtime compiler output deterministic: no wall-clock timestamp is written to `SKILL.md` or `runtime/**`, `runtime_fingerprint` records stable inputs, and repeated compilation preserves the fallback source.
-- Documented the current implementation status and the next implementation backlog: runtime verification, update-check integration, compiled-only distribution checks, and full dist reproducibility.
+- Documented the current implementation status and the remaining backlog. Runtime verification, update-check UC-15, and compiled-only distribution checks are now implemented; full outer dist reproducibility and finer sub-SKILL compact remain future extensions.
 
 ## Rules
 

@@ -1,0 +1,382 @@
+spring:
+  ai:
+    mcp:
+      server:
+        stdio: false
+        name: database-operation-mcp-server
+        version: 1.0.0
+        type: SYNC
+        instructions: "This is a database MCP service. Through this service, you can query all tables in the database, query the structure information of a specific table, execute SQL statements, and query permission policies."
+        sse-endpoint: /mcp
+        protocol: stateless
+  application:
+    name: nubase
+  profiles:
+    active: dev
+
+  # Metadata database connection. This is the only datasource the application strictly needs
+  # at startup — it stores tenant configuration, platform users, and runtime settings.
+  # Defaults point at a local docker-compose postgres so a fresh checkout boots without a
+  # custom .env. Override via env vars in production.
+  datasource:
+    metadata:
+      url: ${METADATA_DB_URL:jdbc:postgresql://localhost:5432/postgrest_metadata?allowMultiQueries=true}
+      username: ${METADATA_DB_USER:postgres}
+      password: ${METADATA_DB_PASSWORD:postgres}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 1
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+
+  # Flyway runs against metadataDataSource (selected via @FlywayDataSource on the bean).
+  # baseline-on-migrate is true so a pre-existing schema (older nubase deployments that
+  # bootstrapped tables by hand) is tolerated — Flyway records a baseline at version 1 and
+  # then only applies V2+ going forward. Fresh installs run V1__init.sql.
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: true
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        multiTenancy: SCHEMA
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+        # Skip the JDBC metadata probe at EMF init. The probe goes through the routing
+        # DataSource (no tenant context yet) → GuardianDataSource → SQLException →
+        # NPE because Hibernate 6's SqlExceptionHelper isn't yet initialised. The probe
+        # is unnecessary anyway: spring.jpa.database-platform above pins the dialect, so
+        # Hibernate doesn't need to ask the driver what it's talking to.
+        # Property name is the Hibernate 6.3 spelling; 6.4+ also accepts
+        # hibernate.boot.allow_jdbc_metadata_access — set both for forward compat.
+        temp:
+          use_jdbc_metadata_defaults: false
+        boot:
+          allow_jdbc_metadata_access: false
+    show-sql: false
+    open-in-view: false
+  # Redis configuration — only consumed when nubase.cache.type=redis below.
+  # Lettuce connects lazily, so leaving these at their defaults while the cache backend
+  # is caffeine has zero startup cost.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 3000ms
+      # Managed Redis (e.g. Aliyun/Upstash) over a TLS endpoint: set REDIS_SSL=true.
+      ssl:
+        enabled: ${REDIS_SSL:false}
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms
+  mail:
+    # Configure via env vars in production. Defaults are non-functional placeholders
+    # so a misconfigured deploy refuses to send mail rather than silently leaking
+    # to a stale provider.
+    host: ${SMTP_HOST:smtp.example.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+server:
+  port: 9999
+
+# Spring AI MCP service configuration
+
+
+# Supabase Auth configuration
+nubase:
+  # Cache backend: caffeine (in-process, default — no external dependency) or redis
+  # (distributed, required for multi-node deployments where caches must stay coherent).
+  # Per-region TTL configured in MultiDatabaseConfiguration; Redis connection details
+  # under spring.data.redis.*.
+  cache:
+    type: ${NUBASE_CACHE_TYPE:caffeine}
+
+  auth:
+    # JWT configuration
+    jwt:
+      algorithm: HS256
+      expiration: 3600  # 1 hour, in seconds
+      issuer: nubase
+
+    # Refresh Token configuration
+    refresh-token:
+      expiration: 2592000  # 30 days, in seconds
+      rotation: true
+
+    # Password configuration (safer defaults for self-hosters; override per deployment)
+    password:
+      min-length: 8
+      require-uppercase: false
+      require-lowercase: true
+      require-number: true
+      require-special: false
+
+    # Email configuration
+    email:
+      confirmation-required: true
+      confirmation-expiration: 86400  # 24 hours
+      from-address: ${MAIL_FROM_ADDRESS:noreply@example.com}
+      from-name: ${MAIL_FROM_NAME:Nubase Auth}
+
+    # Session configuration
+    session:
+      inactivity-timeout: 3600  # 1 hour
+      absolute-timeout: 86400   # 24 hours
+
+    # Security configuration
+    security:
+      rate-limit:
+        enabled: true
+        max-requests: 100
+        window-seconds: 60
+    app:
+      # Public host used to build tenant email links (confirm/recovery/magic-link/invite):
+      #   {scheme}://{appCode}.{service-name}/auth/v1/verify?...
+      # Must be your real domain in production (e.g. nubase.ai) so links aren't localhost.
+      # NOTE: the per-tenant subdomain form requires wildcard DNS (*.your-domain) routed to the app.
+      service-name: ${NUBASE_AUTH_APP_DOMAIN:localhost:9999}
+      scheme: ${NUBASE_AUTH_APP_SCHEME:http}
+
+  # Platform (Studio developer account) configuration.
+  platform:
+    # Display name used in platform verification emails (subject + body).
+    app-name: ${NUBASE_PLATFORM_APP_NAME:Nubase}
+    # Require email-code confirmation for password signup/login and password change.
+    # OAuth (Google/GitHub) sign-ins are always exempt. Set false to disable (e.g. no SMTP).
+    email-verification-enabled: ${NUBASE_PLATFORM_EMAIL_VERIFICATION_ENABLED:true}
+    # One-time verification code settings.
+    otp:
+      length: ${NUBASE_PLATFORM_OTP_LENGTH:6}
+      expiration-seconds: ${NUBASE_PLATFORM_OTP_EXPIRATION_SECONDS:600}
+    # Third-party sign-in for Studio accounts. Each provider auto-hides on the
+    # login page / homepage unless its credentials are set here. Leave blank to disable.
+    oauth:
+      # Public origin used to build OAuth redirect/callback URLs (e.g. https://nubase.ai).
+      # Leave blank to derive it from the incoming request's X-Forwarded-Proto/Host.
+      site-url: ${NUBASE_PLATFORM_OAUTH_SITE_URL:}
+      google:
+        # Google Identity Services client id (used for the GIS button and One Tap).
+        client-id: ${NUBASE_PLATFORM_OAUTH_GOOGLE_CLIENT_ID:}
+        # Optional: set the secret to also enable the GitHub-style authorization-code
+        # redirect login ("Continue with Google"). One Tap / GIS work without it.
+        client-secret: ${NUBASE_PLATFORM_OAUTH_GOOGLE_CLIENT_SECRET:}
+      github:
+        client-id: ${NUBASE_PLATFORM_OAUTH_GITHUB_CLIENT_ID:}
+        client-secret: ${NUBASE_PLATFORM_OAUTH_GITHUB_CLIENT_SECRET:}
+
+
+  # Storage configuration
+  storage:
+    r2:
+      account-id: ${R2_ACCOUNT_ID:your-r2-account-id}
+      access-key-id: ${R2_ACCESS_KEY_ID:your-r2-access-key-id}
+      secret-access-key: ${R2_SECRET_ACCESS_KEY:your-r2-secret-access-key}
+      endpoint: ${R2_ENDPOINT:https://your-account-id.r2.cloudflarestorage.com}
+      region: auto
+      public-url: ${R2_PUBLIC_URL:}
+      global-bucket: ${R2_GLOBAL_BUCKET:nubase-storage}
+      max-file-size: 52428800  # 50MB
+      allowed-mime-types: []
+
+    # AWS S3 Vectors configuration (vector storage)
+    # R2 stores files, S3 Vectors stores vectors — same architecture as Supabase
+    s3vectors:
+      region: ${S3VECTORS_REGION:us-east-1}
+      access-key-id: ${S3VECTORS_ACCESS_KEY_ID:your-s3vectors-access-key-id}
+      secret-access-key: ${S3VECTORS_SECRET_ACCESS_KEY:your-s3vectors-secret-access-key}
+      endpoint: ${S3VECTORS_ENDPOINT:}  # leave empty to use AWS default endpoint, or set a LocalStack address
+      vector-bucket-name: ${S3VECTORS_BUCKET_NAME:nubase-vectors}
+      max-buckets-per-tenant: 100
+      max-indexes-per-bucket: 50
+
+
+  # AI gateway module configuration. When enabled, every newly-provisioned project gets
+  # its own ai_gateway schema (upstream configs, keys, usage logs, daily stats, pricing).
+  ai-gateway:
+    enabled: true
+
+  # Static asset CDN module ("Assets"). Managed via the /assets/admin/v1 control plane
+  # (service_role), Studio, and MCP tools.
+  #
+  # Two delivery modes:
+  #  - CDN mode (recommended for production): set `bucket` to a DEDICATED, PUBLICLY
+  #    accessible R2 bucket with a custom domain in front (e.g. assets.nubase.ai via
+  #    Cloudflare). Objects are keyed {appCode}/{path} and public URLs become
+  #    {public-base-url}/{appCode}/{path} — reads never touch this backend and the CDN
+  #    honors the Cache-Control set at upload time.
+  #  - Backend mode (default for self-hosters): leave `bucket` empty; files live in the
+  #    global Storage bucket under the reserved {appCode}/__assets__/ prefix and are
+  #    served by this app at /assets/v1/** with Cache-Control/ETag/304 semantics.
+  assets:
+    enabled: ${NUBASE_ASSETS_ENABLED:true}
+    # Dedicated public R2 bucket for assets (empty = backend mode using the global bucket).
+    bucket: ${NUBASE_ASSETS_BUCKET:}
+    # Public origin of that bucket's custom domain, e.g. https://assets.nubase.ai
+    # (empty = build URLs against the project subdomain's /assets/v1 backend route).
+    public-base-url: ${NUBASE_ASSETS_PUBLIC_BASE_URL:}
+    # Max size of a single asset in bytes (projects can lower this via assets.settings).
+    max-file-size: ${NUBASE_ASSETS_MAX_FILE_SIZE:26214400}  # 25MB
+
+  # Edge Functions module. Spring remains the public /functions/v1 gateway; the
+  # executor can be swapped from local HTTP to Cloudflare Workers for Platforms.
+  functions:
+    enabled: ${NUBASE_FUNCTIONS_ENABLED:true}
+    executor:
+      provider: ${NUBASE_FUNCTIONS_EXECUTOR_PROVIDER:local}
+      timeout-ms: ${NUBASE_FUNCTIONS_EXECUTOR_TIMEOUT_MS:30000}
+      max-request-bytes: ${NUBASE_FUNCTIONS_MAX_REQUEST_BYTES:10485760}
+      max-response-bytes: ${NUBASE_FUNCTIONS_MAX_RESPONSE_BYTES:10485760}
+      per-project-rpm: ${NUBASE_FUNCTIONS_PER_PROJECT_RPM:600}
+      per-function-rpm: ${NUBASE_FUNCTIONS_PER_FUNCTION_RPM:120}
+      invocation-log-retention-days: ${NUBASE_FUNCTIONS_INVOCATION_LOG_RETENTION_DAYS:30}
+      invocation-log-retention-scan-ms: ${NUBASE_FUNCTIONS_INVOCATION_LOG_RETENTION_SCAN_MS:3600000}
+      local:
+        base-url: ${NUBASE_FUNCTIONS_LOCAL_BASE_URL:http://localhost:8787}
+      cloudflare:
+        api-base-url: ${NUBASE_FUNCTIONS_CLOUDFLARE_API_BASE_URL:${CLOUDFLARE_API_BASE_URL:https://api.cloudflare.com/client/v4}}
+        account-id: ${NUBASE_FUNCTIONS_CLOUDFLARE_ACCOUNT_ID:${CLOUDFLARE_ACCOUNT_ID:}}
+        api-token: ${NUBASE_FUNCTIONS_CLOUDFLARE_API_TOKEN:${CLOUDFLARE_API_TOKEN:}}
+        dispatch-namespace: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCH_NAMESPACE:${CLOUDFLARE_WORKERS_DISPATCH_NAMESPACE:}}
+        dispatcher-url: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCHER_URL:}
+        dispatcher-secret: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCHER_SECRET:}
+
+  deploy:
+    app-worker:
+      cloudflare:
+        enabled: ${NUBASE_APP_WORKER_CLOUDFLARE_ENABLED:false}
+        api-base-url: ${NUBASE_APP_WORKER_CLOUDFLARE_API_BASE_URL:${CLOUDFLARE_API_BASE_URL:https://api.cloudflare.com/client/v4}}
+        account-id: ${NUBASE_APP_WORKER_CLOUDFLARE_ACCOUNT_ID:${CLOUDFLARE_ACCOUNT_ID:}}
+        api-token: ${NUBASE_APP_WORKER_CLOUDFLARE_API_TOKEN:}
+        timeout-ms: ${NUBASE_APP_WORKER_CLOUDFLARE_TIMEOUT_MS:30000}
+        dispatch-namespaces:
+          preview: ${NUBASE_APP_WORKER_CLOUDFLARE_PREVIEW_DISPATCH_NAMESPACE:}
+          production: ${NUBASE_APP_WORKER_CLOUDFLARE_PRODUCTION_DISPATCH_NAMESPACE:}
+
+  # Scheduled jobs (Supabase-Cron-style). The control plane claims due jobs with a
+  # row-level compare-and-set, so any number of instances can run concurrently.
+  # Targets: edge_function (via the functions gateway path) and db_function (a named
+  # Postgres function in the tenant schema, with a per-job statement timeout).
+  cron:
+    enabled: ${NUBASE_CRON_ENABLED:true}
+    tick-ms: ${NUBASE_CRON_TICK_MS:30000}
+    max-jobs-per-tick: ${NUBASE_CRON_MAX_JOBS_PER_TICK:50}
+    default-timeout-seconds: ${NUBASE_CRON_DEFAULT_TIMEOUT_SECONDS:60}
+    max-timeout-seconds: ${NUBASE_CRON_MAX_TIMEOUT_SECONDS:600}
+    run-history-retention-days: ${NUBASE_CRON_RUN_RETENTION_DAYS:30}
+    run-history-retention-scan-ms: ${NUBASE_CRON_RUN_RETENTION_SCAN_MS:3600000}
+
+  # AI memory module configuration
+  mem:
+    enabled: true
+    chat-provider: openai          # openai | anthropic | generic
+    embedding-provider: openai     # openai | generic
+    embedding:
+      model: text-embedding-3-small
+      dimensions: 1536             # must match the vector(N) dimension of the mem.memories.embedding column
+      cache:
+        enabled: true              # reuse embeddings for the same text + model across requests (in-process Caffeine)
+        maximum-size: 10000
+        ttl-minutes: 60
+    chat:
+      model: gpt-4o-mini
+      temperature: 0.0
+    search:
+      default-top-k: 5
+      default-threshold: 0.7       # cosine distance (0 = same direction, 2 = opposite)
+      entity-boost-enabled: true   # disable to skip one LLM call per search
+      entity-match-similarity: 0.5 # similarity threshold for entity matching
+      # PG full-text search config name (BM25). Changing this requires rebuilding the
+      # mem.memories.memories_memory_fts_idx index.
+      # Selection guidance:
+      # - simple   no tokenization, no stopword removal; works for any whitespace-separated
+      #            language but recall quality is lowest
+      # - english  recommended for English corpora; Snowball stemming + stopword filtering
+      #            ("the/a/is" excluded)
+      # - zhparser recommended for Chinese corpora; requires the zhparser extension
+      #            (apt package: postgresql-15-zhparser)
+      # For mixed-language workloads (e.g. EN/ZH mixed SaaS), use simple + client-side
+      # spelling normalization.
+      fts-config: simple
+    session:
+      enabled: true
+      max-messages: 10
+    history-enabled: true
+    entity:
+      # Hard cap on the number of memories linked to a single entity. Once reached, append
+      # silently becomes a no-op (prevents unbounded growth on hot entities).
+      # Memories that hit the cap remain retrievable via vector / BM25 — they just no longer
+      # contribute to the entity boost.
+      max-linked-memory-ids: 1000
+    # Generic OpenAI-compatible configuration (DashScope / DeepSeek / Moonshot / vLLM / Ollama, etc.)
+    generic:
+      auth-token: ${GENERIC_LLM_API_KEY:}
+      base-url: ${GENERIC_LLM_BASE_URL:}
+      timeout: 60000
+
+# Anthropic Claude API configuration (used when chat-provider=anthropic)
+anthropic:
+  auth-token: ${ANTHROPIC_API_KEY:}
+  base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+  timeout: 60000
+  version: "2023-06-01"
+
+# OpenAI API configuration (used when chat-provider=openai or embedding-provider=openai)
+openai:
+  auth-token: ${OPENAI_API_KEY:}
+  base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+  timeout: 60000
+  max-retries: 3
+
+
+# Multi-database routing configuration
+pgrst:
+  multidb:
+    # PostgreSQL server configuration (used for creating new databases)
+    # Defaults point at the local docker-compose postgres; override via env in production.
+    postgres:
+      host: ${POSTGRES_HOST:localhost}
+      port: ${POSTGRES_PORT:5432}
+
+    # service-role JWT for the metadata DB itself (separate from per-tenant service_role).
+    # MUST be set via env in any non-throwaway deployment — the default below is an
+    # obvious placeholder that will fail JWT validation on purpose.
+    metadata:
+      service-role-key: ${METADATA_SERVICE_ROLE_KEY:replace-me-with-a-real-jwt-signed-by-master-key}
+
+    # Encryption configuration: used to encrypt the tenant DB passwords / JWT secrets in
+    # database_configs.
+    # **CRITICAL**: master-key MUST be supplied via env. Startup fails if it is unset, to
+    # prevent encrypting every tenant credential with a publicly known default value —
+    # which would be no encryption at all.
+    encryption:
+      master-key: ${PGRST_ENCRYPTION_MASTER_KEY:}
+      master-key-file: ${PGRST_ENCRYPTION_MASTER_KEY_FILE:}
+
+    # Global connection pool cap
+    max-total-connections: ${PGRST_MAX_TOTAL_CONNECTIONS:500}
+
+    # Per-tenant connection pool defaults
+    pool-defaults:
+      maximum-pool-size: ${PGRST_DEFAULT_POOL_SIZE:10}

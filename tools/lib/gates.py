@@ -67,7 +67,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + G-RA-1~6 + G-RA-FLOW + 1 G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B = 29）
+# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + G-RA-1~6 + G-RA-FLOW + 1 G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B + G-AUTO-CONSENSUS = 30）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -126,6 +126,11 @@ GATE_REGISTRY: list[dict] = [
     # 独立于 review-loop CLI——root 不调 collect 也会跑（堵"root 总派给自己"）。
     # Tier 1（微/小任务 + 无关键决策）豁免；Tier 2/3 无豁免。
     {"id": "G-09B", "name": "reviewer 独立性通过（多 reviewer 机械强制）", "severity": "blocker"},
+    # 🆕 v3.8.0 G-AUTO-CONSENSUS 自动化联审共识门禁：自动化模式下审核点切相前
+    # 校验 state.reviewConsensus[point].passed=true + reviewer 独立性（复用 G-09B 逻辑）。
+    # 非自动化模式 / 审核点不在白名单 → skipped（回退人工审核）。
+    # 注：本门禁需读 config.yaml 判自动化模式，走 check_all 特判传 master_source。
+    {"id": "G-AUTO-CONSENSUS", "name": "自动化联审共识通过", "severity": "blocker"},
 ]
 
 # Story Review 之后允许的 phase
@@ -949,11 +954,20 @@ RA_FILENAME_RE = re.compile(r"RA[-_]", re.IGNORECASE)
 def _iter_ra_files(project_dir: Path) -> list[Path]:
     """枚举项目内 RA 文档（兼容新路径 ae-sdd-doc/ 与旧路径 design/）。"""
     out: list[Path] = []
-    for path in project_dir.rglob("*.md"):
-        if not RA_FILENAME_RE.search(path.name):
-            continue
-        lower = path.as_posix().lower()
-        if any(seg in lower for seg in ("changelog", "template", "ra-template", "change_log")):
+    if not project_dir or not Path(project_dir).is_dir():
+        return out
+    try:
+        paths = list(project_dir.rglob("*.md"))
+    except OSError:
+        return out
+    for path in paths:
+        try:
+            if not RA_FILENAME_RE.search(path.name):
+                continue
+            lower = path.as_posix().lower()
+            if any(seg in lower for seg in ("changelog", "template", "ra-template", "change_log")):
+                continue
+        except OSError:
             continue
         out.append(path)
     return out
@@ -2190,6 +2204,112 @@ def check_g09b(project_dir: Path, st: dict, current_story: str) -> GateResult:
                                "rootSid": root_sid[:8] + "..." if root_sid else None})
 
 
+# ─── 🆕 v3.8.0 G-AUTO-CONSENSUS 自动化联审共识门禁 ─────────────────────────────
+def check_g_auto_consensus(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-AUTO-CONSENSUS 自动化联审共识通过（🆕 v3.8.0）。
+
+    仅在自动化模式（config.yaml automation.enabled=true）下对白名单审核点生效：
+      1. 非自动化模式 → skip（回退人工审核）
+      2. 自动化模式但当前 phase 非 review 节点 → skip
+      3. 自动化模式 + review 节点 → 校验 state.reviewConsensus[point].passed=true
+         + reviewer 独立性（复用 G-09B 模式：activeAgents 有 ≥Tier 个独立 session）
+
+    堵死路径：
+      - 自动化模式下未写 reviewConsensus 就推进 phase → 阻断
+      - reviewConsensus.passed=false 仍推进 → 阻断
+      - reviewer 不独立（复用 G-09B）→ 阻断
+    """
+    name = "自动化联审共识通过"
+    phase = st.get("phase", "initialized")
+
+    # 1. 非自动化模式 → skip
+    try:
+        from lib import config as cfg_mod
+        if not cfg_mod.is_automation_enabled():
+            return GateResult("G-AUTO-CONSENSUS", name, "blocker", True,
+                              "非自动化模式（skip，回退人工审核）",
+                              details={"skipped": True, "reason": "automation-disabled"})
+    except Exception as e:
+        # 读 config 失败 → 保守 skip（不阻断非自动化项目）
+        return GateResult("G-AUTO-CONSENSUS", name, "blocker", True,
+                          f"自动化配置读取失败，保守 skip：{e}",
+                          details={"skipped": True, "reason": "config-read-error"})
+
+    # 2. 非 review 节点 → skip（与 G-09B 同 phase 集）
+    review_phases = {"story-reviewed", "testcase-reviewed", "task-reviewed", "code-reviewed"}
+    if phase not in review_phases:
+        return GateResult("G-AUTO-CONSENSUS", name, "blocker", True,
+                          f"自动化模式但阶段 {phase} 非 review 节点（skip）",
+                          details={"skipped": True, "reason": "non-review-phase"})
+
+    # 3. 校验 reviewConsensus
+    rc = st.get("reviewConsensus") or {}
+    if not rc:
+        return GateResult("G-AUTO-CONSENSUS", name, "blocker", False,
+                          "自动化模式 review 节点但未写 reviewConsensus",
+                          "派 Tier 3 reviewer 跑 §8.4.3 交叉对比后调 "
+                          "state register-review-consensus --point {1|1.5|2|2.5|4|5} --passed true",
+                          details={"skipped": False, "reason": "missing-reviewConsensus"})
+
+    # 取该 phase 对应的审核点共识（取任一即可，因 review 节点切相前应已写）
+    # phase→审核点映射：story-reviewed→1/1.5, testcase-reviewed→(无), task-reviewed→2, code-reviewed→4
+    phase_to_points = {
+        "story-reviewed": [1, 1.5],
+        "task-reviewed": [2],
+        "code-reviewed": [4],
+    }
+    points = phase_to_points.get(phase, [])
+    if not points:
+        # testcase-reviewed 等无对应人工审核点的 review 节点 → 仅校验 reviewer 独立性（G-09B 已管）
+        return GateResult("G-AUTO-CONSENSUS", name, "blocker", True,
+                          f"自动化模式 review 节点 {phase} 无对应人工审核点（仅 G-09B 管独立性）",
+                          details={"skipped": True, "reason": "no-mapped-point"})
+
+    # 找第一个有记录的审核点（兼容 str(int)="1" 与 str(float)="1.0" 两种 key）
+    consensus = None
+    matched_point = None
+    for p in points:
+        c = rc.get(str(p)) or rc.get(str(float(p)))
+        if c:
+            consensus = c
+            matched_point = p
+            break
+
+    if not consensus:
+        return GateResult("G-AUTO-CONSENSUS", name, "blocker", False,
+                          f"自动化模式 {phase} 但审核点 {points} 无 reviewConsensus 记录",
+                          f"调 state register-review-consensus --point {points[0]} --passed true",
+                          details={"skipped": False, "reason": "no-consensus-for-point",
+                                   "expectedPoints": points})
+
+    if not consensus.get("passed"):
+        return GateResult("G-AUTO-CONSENSUS", name, "blocker", False,
+                          f"审核点 {matched_point} 联审共识未通过（rounds={consensus.get('rounds')}）",
+                          f"stallReason={consensus.get('stallReason','')}；按 automation.onConsensusStall 处理",
+                          details={"skipped": False, "point": matched_point,
+                                   "passed": False, "rounds": consensus.get("rounds"),
+                                   "stallReason": consensus.get("stallReason")})
+
+    # 4. reviewer 独立性（复用 G-09B 逻辑）
+    tier = int(consensus.get("tier", 3))
+    reviewers = consensus.get("reviewers") or []
+    reviewer_sids = [r.get("sessionId", "") for r in reviewers
+                     if r.get("sessionId")]
+    if len(reviewer_sids) < tier:
+        return GateResult("G-AUTO-CONSENSUS", name, "blocker", False,
+                          f"审核点 {matched_point} 共识通过但 reviewer 数 {len(reviewer_sids)} < Tier {tier}",
+                          "reviewers 字段需 ≥Tier 个独立 sessionId（与 G-09B 一致）",
+                          details={"skipped": False, "point": matched_point,
+                                   "reviewerCount": len(reviewer_sids),
+                                   "expectedTier": tier})
+
+    return GateResult("G-AUTO-CONSENSUS", name, "blocker", True,
+                      f"审核点 {matched_point} 联审共识通过（Tier {tier}, rounds={consensus.get('rounds')}）",
+                      details={"point": matched_point, "tier": tier,
+                               "passed": True, "rounds": consensus.get("rounds"),
+                               "reviewerCount": len(reviewer_sids)})
+
+
 # ─── 路由表 ─────────────────────────────────────────────────────────────────
 CHECK_FUNCS: dict[str, Callable] = {
     "G-01": check_g01, "G-02": check_g02, "G-03": check_g03,
@@ -2208,6 +2328,7 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-DOC-CONSISTENCY": check_g_doc_consistency,  # 🆕 v3.5.7 项目侧记忆-配置路径一致性
     "G-REVIEW-LOOP": check_g_review_loop,  # 🆕 v3.5.12 review-loop 退出条件
     "G-09B": check_g09b,  # 🆕 v3.5.13 reviewer 独立性硬门禁（堵 root 自扮）
+    "G-AUTO-CONSENSUS": check_g_auto_consensus,  # 🆕 v3.8.0 自动化联审共识
 }
 
 

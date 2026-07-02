@@ -1,8 +1,9 @@
 """
-test_gates.py — gates.py 单元测试（29 门禁：14 主 G-00~G-13 + 3 中段 + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B）
+test_gates.py — gates.py 单元测试（30 门禁：14 主 G-00~G-13 + 3 中段 + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B + G-AUTO-CONSENSUS）
 
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
+import json
 import sys
 import tempfile
 import unittest
@@ -25,9 +26,15 @@ def _setup_project(structure: dict) -> Path:
 def _full_ade_sdd(project_key: str = "test", phase: str = "initialized",
                    current_story: str = "") -> Path:
     """构造最小可用的 .ae-sdd/ + 项目结构"""
+    state = {
+        "version": "1",
+        "projectKey": project_key,
+        "phase": phase,
+        "currentStory": current_story or None,
+    }
     return _setup_project({
         ".ae-sdd/config.yaml": f"projectKey: {project_key}\n",
-        ".ae-sdd/state.json": f'{{"version": "1", "projectKey": "{project_key}", "phase": "{phase}", "currentStory": {"\"" + current_story + "\"" if current_story else "null"}}}\n',
+        ".ae-sdd/state.json": json.dumps(state, ensure_ascii=False) + "\n",
     })
 
 
@@ -650,7 +657,8 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.12：+1 G-REVIEW-LOOP（review-loop 退出条件）= 27
         # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
-        self.assertEqual(len(results), 29)
+        # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
+        self.assertEqual(len(results), 30)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -680,8 +688,9 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.12：+1 G-REVIEW-LOOP（review-loop 退出条件）= 27
         # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
-        self.assertEqual(summary["total"], 29)
-        self.assertEqual(summary["passed"] + summary["failed"], 29)
+        # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
+        self.assertEqual(summary["total"], 30)
+        self.assertEqual(summary["passed"] + summary["failed"], 30)
         self.assertIn("results", summary)
 
 
@@ -1157,6 +1166,95 @@ class TestG13RaLayer(unittest.TestCase):
         r = gates.check_g13(tmp, {"phase": "story-generated"}, "STORY-001")
         self.assertTrue(r.pass_)
         self.assertTrue(r.details.get("ra_layer", {}).get("present"))
+
+
+# ─── G-AUTO-CONSENSUS 自动化联审共识门禁（v3.8.0）─────────────────────────────
+class TestGAutoConsensus(unittest.TestCase):
+    """G-AUTO-CONSENSUS 仅自动化模式 + review 节点生效；非自动化模式 skip。"""
+
+    def _patch_automation(self, enabled: bool):
+        """monkey patch config.is_automation_enabled 返回 enabled。"""
+        import lib.config as cfg
+        orig = cfg.is_automation_enabled
+        cfg.is_automation_enabled = lambda *a, **k: enabled
+        return orig, cfg
+
+    def _restore(self, state):
+        orig, cfg = state
+        cfg.is_automation_enabled = orig
+
+    def test_non_automation_mode_skips(self):
+        """非自动化模式 → skip 通过。"""
+        tmp = _setup_project({})
+        st = self._patch_automation(False)
+        try:
+            r = gates.check_g_auto_consensus(tmp, {"phase": "story-reviewed"}, "S1")
+            self.assertTrue(r.pass_)
+            self.assertTrue(r.details.get("skipped"))
+        finally:
+            self._restore(st)
+
+    def test_automation_non_review_phase_skips(self):
+        """自动化模式但非 review phase → skip。"""
+        tmp = _setup_project({})
+        st = self._patch_automation(True)
+        try:
+            r = gates.check_g_auto_consensus(tmp, {"phase": "coding"}, "S1")
+            self.assertTrue(r.pass_)
+            self.assertTrue(r.details.get("skipped"))
+        finally:
+            self._restore(st)
+
+    def test_automation_review_no_consensus_blocks(self):
+        """自动化模式 + review 节点但未写 reviewConsensus → 阻断。"""
+        tmp = _setup_project({})
+        st = self._patch_automation(True)
+        try:
+            r = gates.check_g_auto_consensus(tmp, {"phase": "story-reviewed"}, "S1")
+            self.assertFalse(r.pass_, f"应阻断，实 {r.message}")
+        finally:
+            self._restore(st)
+
+    def test_automation_consensus_not_passed_blocks(self):
+        """自动化模式 + reviewConsensus.passed=false → 阻断。"""
+        tmp = _setup_project({})
+        st = self._patch_automation(True)
+        try:
+            rc = {"1": {"point": 1, "tier": 3, "passed": False, "rounds": 3,
+                        "reviewers": [], "stallReason": "3轮未决"}}
+            r = gates.check_g_auto_consensus(
+                tmp, {"phase": "story-reviewed", "reviewConsensus": rc}, "S1")
+            self.assertFalse(r.pass_)
+        finally:
+            self._restore(st)
+
+    def test_automation_consensus_passed_with_reviewers_passes(self):
+        """自动化模式 + passed=true + ≥3 个独立 reviewer → 通过。"""
+        tmp = _setup_project({})
+        st = self._patch_automation(True)
+        try:
+            reviewers = [{"sessionId": f"sid-{i}"} for i in range(3)]
+            rc = {"1": {"point": 1, "tier": 3, "passed": True, "rounds": 1,
+                        "reviewers": reviewers, "stallReason": ""}}
+            r = gates.check_g_auto_consensus(
+                tmp, {"phase": "story-reviewed", "reviewConsensus": rc}, "S1")
+            self.assertTrue(r.pass_, f"应通过，实 {r.message}")
+        finally:
+            self._restore(st)
+
+    def test_automation_consensus_insufficient_reviewers_blocks(self):
+        """自动化模式 + passed=true 但 reviewer 数 < Tier → 阻断。"""
+        tmp = _setup_project({})
+        st = self._patch_automation(True)
+        try:
+            reviewers = [{"sessionId": "sid-A"}, {"sessionId": "sid-B"}]  # 仅 2 < Tier 3
+            rc = {"1": {"point": 1, "tier": 3, "passed": True, "rounds": 1,
+                        "reviewers": reviewers, "stallReason": ""}}
+            r = gates.check_g_auto_consensus(
+                tmp, {"phase": "story-reviewed", "reviewConsensus": rc}, "S1")
+            self.assertFalse(r.pass_)
+        finally:
+            self._restore(st)
 
 
 # ─── GateResult 数据类 ─────────────────────────────────────────────────────

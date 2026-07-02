@@ -1,0 +1,51 @@
+# Hook observability configuration (SPEC-V3R2-RT-006 REQ-004)
+hook:
+  # List of retired events to re-enable as observability taps.
+  # Empty list (default) means all retired events are silently no-op.
+  # Example: [notification, elicitation, elicitationResult, taskCreated]
+  observability_events: []
+  # When true, retired events in strict mode still succeed silently.
+  strict_mode: false
+  # Hook opt-in master toggle (SPEC-V3R6-HOOK-OBSERVE-OPT-IN-001 REQ-HOI-001)
+  # Controls TaskCreated, Notification, and handle-harness-observe-* hook execution.
+  # Default: false (hooks are skipped, reduces per-turn overhead by ~25-30%).
+  # NOTE: This key is INDEPENDENT of `observability.enabled` in observability.yaml
+  # (REQ-OBS-005 trace-logging master toggle). See SPEC §A.3 cohabitation contract.
+  opt_in:
+    enabled: false
+
+document_management:
+    block_root_pollution: true
+    directories:
+        cache:
+            auto_cleanup: true
+            base: .moai/cache/
+            retention_days: 30
+        docs:
+            base: .moai/docs/
+            retention_days: null
+        logs:
+            base: .moai/logs/
+            retention_days: 30
+        temp:
+            auto_cleanup: true
+            base: .moai/temp/
+            retention_days: 7
+    enabled: true
+    enforce_structure: true
+    separation_policy:
+        description: Clear separation between logs (runtime data) and docs (documentation content)
+        docs_scope: reports, analysis, validation, sync, inspection, documentation files
+        logs_scope: runtime sessions, errors, execution traces, agent transcripts
+        strict_separation: true
+github:
+    auto_delete_branches: true
+    enable_trust_5: true
+    spec_git_workflow: feature_branch
+moai:
+    template_version: v3.0.0-rc5
+    update_check_frequency: daily
+    version: v3.0.0-rc5
+    version_check:
+        cache_ttl_hours: 24
+        enabled: true

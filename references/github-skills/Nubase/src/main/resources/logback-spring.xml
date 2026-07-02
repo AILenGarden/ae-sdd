@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Load defaults from Spring Boot -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- Log file directory -->
+    <property name="LOG_PATH" value="logs"/>
+    <property name="LOG_FILE" value="nubase"/>
+
+    <!-- Console output appender -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- All-logs file appender (INFO and above) -->
+    <appender name="FILE_ALL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${LOG_FILE}.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+
+        <!-- Rolling policy -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- File name pattern (.gz suffix enables auto-compression) -->
+            <fileNamePattern>${LOG_PATH}/${LOG_FILE}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <!-- Max 100MB per file -->
+            <maxFileSize>100MB</maxFileSize>
+            <!-- Retain for 7 days -->
+            <maxHistory>7</maxHistory>
+            <!-- Total size cap across all archives; oldest are dropped when exceeded -->
+            <totalSizeCap>3GB</totalSizeCap>
+        </rollingPolicy>
+
+        <!-- Filter: only INFO and above -->
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
+    </appender>
+
+    <!-- Separate ERROR-only file appender -->
+    <appender name="FILE_ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${LOG_FILE}-error.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n%ex{full}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+
+        <!-- Rolling policy -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- File name pattern (.gz suffix enables auto-compression) -->
+            <fileNamePattern>${LOG_PATH}/${LOG_FILE}-error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <!-- Max 50MB per file -->
+            <maxFileSize>50MB</maxFileSize>
+            <!-- Retain for 7 days -->
+            <maxHistory>7</maxHistory>
+            <!-- Total size cap across all archives -->
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+
+        <!-- Filter: ERROR only -->
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <!-- MCP-dedicated file appender (for log collection) -->
+    <appender name="MCP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/mcp.log</file>
+        <encoder>
+            <!-- JSON-friendly pattern for log-collection tooling -->
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+
+        <!-- Rolling policy -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- File name pattern (.gz suffix enables auto-compression) -->
+            <fileNamePattern>${LOG_PATH}/mcp.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <!-- Max 50MB per file -->
+            <maxFileSize>50MB</maxFileSize>
+            <!-- Retain for 7 days -->
+            <maxHistory>7</maxHistory>
+            <!-- Total size cap across all archives -->
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+
+        <!-- Filter: DEBUG and above -->
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+
+    <!-- Claude response file appender -->
+    <appender name="CLAUDE_RESPONSE_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/claude-response.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+
+        <!-- Rolling policy -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/claude-response.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+
+        <!-- Filter: DEBUG and above -->
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+
+    <!-- OpenAI response file appender -->
+    <appender name="OPENAI_RESPONSE_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/openai-response.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+
+        <!-- Rolling policy -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/openai-response.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+
+        <!-- Filter: DEBUG and above -->
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+
+    <!-- Spring Profile: dev/test -->
+    <springProfile name="dev | test">
+        <logger name="ai.nubase" level="DEBUG"/>
+        <logger name="org.springframework.web" level="INFO"/>
+        <logger name="org.springframework.security" level="INFO"/>
+        <logger name="org.hibernate.SQL" level="INFO"/>
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="TRACE"/>
+
+        <!-- MCP-dedicated logger (dev: DEBUG level) -->
+        <logger name="McpLogger" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="MCP_FILE"/>
+        </logger>
+
+        <!-- Claude Response Logger (dev: DEBUG level) -->
+        <logger name="ClaudeResponseLogger" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="CLAUDE_RESPONSE_FILE"/>
+        </logger>
+
+        <!-- OpenAI Response Logger (dev: DEBUG level) -->
+        <logger name="OpenAIResponseLogger" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="OPENAI_RESPONSE_FILE"/>
+        </logger>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE_ALL"/>
+            <appender-ref ref="FILE_ERROR"/>
+        </root>
+    </springProfile>
+
+    <!-- Spring Profile: release (production) -->
+    <springProfile name="release | release_zh">
+        <logger name="ai.nubase" level="INFO"/>
+        <logger name="org.springframework" level="WARN"/>
+        <logger name="org.hibernate" level="WARN"/>
+
+        <!-- MCP-dedicated logger (production: INFO level) -->
+        <logger name="McpLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="MCP_FILE"/>
+        </logger>
+
+        <!-- Claude Response Logger (production: INFO level) -->
+        <logger name="ClaudeResponseLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="CLAUDE_RESPONSE_FILE"/>
+        </logger>
+
+        <!-- OpenAI Response Logger (production: INFO level) -->
+        <logger name="OpenAIResponseLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="OPENAI_RESPONSE_FILE"/>
+        </logger>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE_ALL"/>
+            <appender-ref ref="FILE_ERROR"/>
+        </root>
+    </springProfile>
+
+    <!-- Spring Profile: docker (console output only) -->
+    <springProfile name="docker">
+        <logger name="ai.nubase" level="DEBUG"/>
+        <logger name="org.springframework.web" level="INFO"/>
+        <logger name="org.hibernate" level="WARN"/>
+
+        <logger name="McpLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+        <logger name="ClaudeResponseLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+        <logger name="OpenAIResponseLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!-- Default profile (when no profile is specified) -->
+    <springProfile name="default">
+        <logger name="ai.nubase" level="INFO"/>
+
+        <!-- MCP-dedicated logger (default: INFO level) -->
+        <logger name="McpLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="MCP_FILE"/>
+        </logger>
+
+        <!-- Claude Response Logger (default: INFO level) -->
+        <logger name="ClaudeResponseLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="CLAUDE_RESPONSE_FILE"/>
+        </logger>
+
+        <!-- OpenAI Response Logger (default: INFO level) -->
+        <logger name="OpenAIResponseLogger" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="OPENAI_RESPONSE_FILE"/>
+        </logger>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE_ALL"/>
+            <appender-ref ref="FILE_ERROR"/>
+        </root>
+    </springProfile>
+
+</configuration>

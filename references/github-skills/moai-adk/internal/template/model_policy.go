@@ -1,0 +1,383 @@
+package template
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/modu-ai/moai-adk/internal/manifest"
+)
+
+// ModelPolicy represents the token consumption tier for agent models.
+type ModelPolicy string
+
+const (
+	// ModelPolicyHigh uses explicit opus for most agents (Max $200 plan, highest quality).
+	ModelPolicyHigh ModelPolicy = "high"
+	// ModelPolicyMedium uses opus for critical agents, sonnet for standard, haiku for mechanical (Max $100 plan).
+	ModelPolicyMedium ModelPolicy = "medium"
+	// ModelPolicyLow uses no opus (Plus $20 plan). Sonnet for core agents, Haiku for the rest.
+	ModelPolicyLow ModelPolicy = "low"
+)
+
+// DefaultModelPolicy is the default model policy for new projects.
+const DefaultModelPolicy = ModelPolicyHigh
+
+// ValidModelPolicies returns all valid model policy values.
+func ValidModelPolicies() []string {
+	return []string{string(ModelPolicyHigh), string(ModelPolicyMedium), string(ModelPolicyLow)}
+}
+
+// IsValidModelPolicy checks if the given string is a valid model policy.
+func IsValidModelPolicy(s string) bool {
+	switch ModelPolicy(s) {
+	case ModelPolicyHigh, ModelPolicyMedium, ModelPolicyLow:
+		return true
+	}
+	return false
+}
+
+// ModelIDOpus47 is the canonical model ID for Claude Opus 4.7.
+// Used by launcher.go to route the new model and by profile translations.
+const ModelIDOpus47 = "claude-opus-4-7"
+
+// ModelAliasTable is the single source of truth mapping short model aliases
+// (the user-facing wizard picker values) to their canonical Claude Code model
+// ids. Add a new row whenever a new alias is introduced; every call site that
+// needs the alias→id resolution MUST read from this table rather than
+// hard-coding a literal, so the mapping stays in one place.
+//
+// The forward direction (alias → canonical id) is used by expandModelString in
+// launcher.go. The reverse direction (canonical id → alias) is performed by
+// ModelAliasFromCanonicalID, which consults ModelAliasTable for the current id
+// and ModelDeprecatedCanonicalIDs for superseded ids that still appear in
+// historical prefs files.
+//
+// opusplan is a Claude Code native routing alias (Opus for planning, Sonnet for
+// coding) with no standalone full-id form; it maps to itself so the table is
+// total over the wizard picker surface.
+//
+// @MX:ANCHOR: [AUTO] ModelAliasTable — single SSOT for alias↔canonical-id mapping
+// @MX:REASON: [AUTO] fan_in >= 3 (launcher.go expandModelString + profile_setup.go normalizeModel + settings/schema.go modelOptions); hardcoding-prevention per CLAUDE.local.md §14
+var ModelAliasTable = map[string]string{
+	"opus":     ModelIDOpus47,
+	"sonnet":   "claude-sonnet-4-6",
+	"haiku":    "claude-haiku-4-5",
+	"opusplan": "opusplan", // CC-native routing alias, no full-id expansion
+}
+
+// ModelDeprecatedCanonicalIDs maps superseded canonical model ids to their
+// short alias, so wizard migration can normalize historical prefs values that
+// predate the current canonical id. A new row is added whenever a model is
+// bumped to a newer version (e.g. claude-opus-4-6 → claude-opus-4-7); the old
+// id stays here so existing prefs files keep resolving to the right alias.
+//
+// This is the reverse-companion of ModelAliasTable. The current canonical id
+// lives ONLY in ModelAliasTable; deprecated predecessors live ONLY here, so
+// there is exactly one home for each id and no duplication.
+var ModelDeprecatedCanonicalIDs = map[string]string{
+	"claude-opus-4-6": "opus",
+}
+
+// ModelAliasCanonicalID returns the canonical Claude Code model id for the
+// given short alias. It is the programmatic accessor for ModelAliasTable so
+// callers do not reach into the map literal directly. When the alias is absent
+// from the table the input is returned unchanged (callers may then treat it as
+// an already-canonical id or an unknown value).
+func ModelAliasCanonicalID(alias string) string {
+	if id, ok := ModelAliasTable[alias]; ok {
+		return id
+	}
+	return alias
+}
+
+// ModelAliasFromCanonicalID returns the short alias for a canonical model id,
+// performing the reverse lookup of ModelAliasTable. It also consults
+// ModelDeprecatedCanonicalIDs so historical prefs values carrying superseded
+// ids still resolve to the correct alias. Used by wizard migration paths that
+// must normalize deprecated full-id prefs values back to the user-facing alias
+// surface. When the id is absent from both tables the input is returned
+// unchanged (caller decides how to handle unknown ids).
+func ModelAliasFromCanonicalID(canonicalID string) string {
+	for alias, id := range ModelAliasTable {
+		if id == canonicalID {
+			return alias
+		}
+	}
+	if alias, ok := ModelDeprecatedCanonicalIDs[canonicalID]; ok {
+		return alias
+	}
+	return canonicalID
+}
+
+// ModelAliasPickerValues returns the ordered list of short aliases presented to
+// users in the profile wizard model picker. The list is the user-facing surface
+// that the wizard, the settings schema, and the advanced wizard gate all
+// consume, so they stay in sync by reading from here rather than re-declaring
+// the literal array. The [1m] variants are listed alongside the base alias
+// because the [1m] suffix is a Claude Code native context-window modifier, not
+// a separate model.
+func ModelAliasPickerValues() []string {
+	return []string{
+		"opus", "opus[1m]",
+		"sonnet", "sonnet[1m]",
+		"haiku",
+		"opusplan",
+	}
+}
+
+// Effort level constants for the 5-tier effort system.
+// These are separate from ModelPolicy (3-tier). ModelPolicy selects the model;
+// effort levels control reasoning depth within a model session.
+// Supported by Claude Code v2.1.68+ for Opus 4.6 and Opus 4.7.
+const (
+	// EffortLevelLow is the fastest, least thorough effort level.
+	EffortLevelLow = "low"
+	// EffortLevelMedium is the balanced default effort level.
+	EffortLevelMedium = "medium"
+	// EffortLevelHigh activates deep reasoning for complex tasks.
+	EffortLevelHigh = "high"
+	// EffortLevelXHigh is extended high reasoning for Opus 4.7+.
+	// Not supported on Opus 4.6.
+	EffortLevelXHigh = "xhigh"
+	// EffortLevelMax is the maximum effort level.
+	// On Opus 4.6, max is the highest supported level.
+	// On Opus 4.7+, xhigh and max are both available.
+	EffortLevelMax = "max"
+)
+
+// agentEffortMap specifies explicit effort overrides for reasoning-heavy agents.
+//
+// SPEC-CC2178-MODEL-POLICY-REPAIR-001 M2: the map was reconciled against the
+// 8-agent retained catalog. The 3 archived phantom keys (manager-strategy,
+// expert-security, expert-refactoring) were removed; plan-auditor and
+// sync-auditor were synced from "high" to "xhigh" to match their hand-authored
+// agent files (map←file reconciliation per REQ-MPR-011b); manager-develop
+// (xhigh) and builder-harness (high) were added as the missing retained
+// agents. ApplyEffortPolicy + GetAgentEffort are NOT retired — they have 2
+// production callers (initializer.go, update.go); full retirement is deferred
+// to SPEC-CC2178-EFFORT-MAP-RETIREMENT-001 (see research.md §3).
+//
+// Key: agent name, Value: effort level string
+var agentEffortMap = map[string]string{
+	"manager-spec":    EffortLevelXHigh,
+	"plan-auditor":    EffortLevelXHigh, // REQ-MPR-011b: synced from high → xhigh (matches agent file)
+	"sync-auditor":    EffortLevelXHigh, // REQ-MPR-011b: synced from high → xhigh (matches agent file)
+	"manager-develop": EffortLevelXHigh, // REQ-MPR-011a: added retained agent (matches agent file)
+	"builder-harness": EffortLevelHigh,  // REQ-MPR-011a: added retained agent (matches agent file)
+}
+
+// GetAgentEffort returns the effort level override for the given agent.
+// Returns "" (empty string) for agents not in agentEffortMap, which signals
+// the caller to use the runtime default (Opus 4.7 defaults to xhigh).
+//
+// @MX:NOTE: [AUTO] Separate from GetAgentModel — ModelPolicy⊥Effort by design.
+func GetAgentEffort(agentName string) string {
+	return agentEffortMap[agentName]
+}
+
+// effortLineRegex matches an existing effort: field in YAML frontmatter.
+var effortLineRegex = regexp.MustCompile(`(?m)^effort:\s*\S+`)
+
+// frontmatterCloseRegex matches the closing --- delimiter of a YAML frontmatter block.
+// It is intentionally written to match the second occurrence via string splitting logic
+// in insertEffortInFrontmatter, not via regex alone.
+var frontmatterOpenPrefix = "---\n"
+
+// insertEffortInFrontmatter inserts "effort: <level>" into the YAML frontmatter block
+// of content. Returns unchanged content when:
+//   - the file does not start with "---\n" (no frontmatter)
+//   - no closing "---" is found
+//   - an effort: line already exists (caller is responsible for this guard)
+func insertEffortInFrontmatter(content []byte, effortLevel string) []byte {
+	s := string(content)
+	if !strings.HasPrefix(s, frontmatterOpenPrefix) {
+		return content // No YAML frontmatter
+	}
+	// Locate the closing --- after the opening one.
+	// Content after the opening "---\n" (offset 4) is searched for "\n---".
+	rest := s[len(frontmatterOpenPrefix):]
+	closingIdx := strings.Index(rest, "\n---")
+	if closingIdx == -1 {
+		return content // Malformed frontmatter — leave untouched
+	}
+	// closingIdx points at the "\n" before "---". Insert before the newline.
+	insertPos := len(frontmatterOpenPrefix) + closingIdx + 1 // position of the closing "---" line
+	return []byte(s[:insertPos] + "effort: " + effortLevel + "\n" + s[insertPos:])
+}
+
+// ApplyEffortPolicy injects effort level overrides into agent definition files
+// under the given project root. It mirrors ApplyModelPolicy in structure but
+// operates on the effort: frontmatter field instead of model:.
+//
+// Injection rules:
+//   - Agent already has effort: field → preserved (user customisation wins)
+//   - Agent is in agentEffortMap and has no effort: field → value injected
+//   - Agent is not in agentEffortMap → no-op (runtime default applies)
+//   - File has no YAML frontmatter → skipped silently
+//
+// Manifest hashes are updated for every file that is written.
+//
+// @MX:ANCHOR: [AUTO] ApplyEffortPolicy — called from initializer and update paths; mirrors ApplyModelPolicy contract
+// @MX:REASON: [AUTO] fan_in >= 2 (initializer.go + update.go); public API boundary for effort wiring
+func ApplyEffortPolicy(projectRoot string, mgr manifest.Manager) error {
+	// Agents are consolidated under .claude/agents/moai/ (the SPEC-V3R6-AGENT-FOLDER-SPLIT-001
+	// 4-subfolder split was reverted). Iterate the single consolidated directory.
+	domains := []string{"moai"}
+	for _, domain := range domains {
+		agentsDir := filepath.Join(projectRoot, ".claude", "agents", domain)
+		entries, err := os.ReadDir(agentsDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // domain subfolder absent — skip silently
+			}
+			return fmt.Errorf("read agents directory %q: %w", domain, err)
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+
+			agentName := strings.TrimSuffix(entry.Name(), ".md")
+			targetEffort := GetAgentEffort(agentName)
+			if targetEffort == "" {
+				continue // Not in effort map — use runtime default, no injection
+			}
+
+			filePath := filepath.Join(agentsDir, entry.Name())
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return fmt.Errorf("read agent file %q: %w", entry.Name(), err)
+			}
+
+			// Preserve existing effort: value (user customisation wins)
+			if effortLineRegex.Match(content) {
+				continue
+			}
+
+			newContent := insertEffortInFrontmatter(content, targetEffort)
+			if string(newContent) == string(content) {
+				continue // No frontmatter or no change — skip
+			}
+
+			if err := os.WriteFile(filePath, newContent, 0o644); err != nil {
+				return fmt.Errorf("write agent file %q: %w", entry.Name(), err)
+			}
+
+			// Update manifest hash for the patched file
+			relPath := filepath.Join(".claude", "agents", domain, entry.Name())
+			hash := manifest.HashBytes(newContent)
+			if err := mgr.Track(relPath, manifest.TemplateManaged, hash); err != nil {
+				return fmt.Errorf("track patched agent %q: %w", entry.Name(), err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// agentModelMap defines the model assignment for each agent under each policy.
+// Key: agent name, Value: [high_model, medium_model, low_model]
+//
+// SPEC-CC2178-MODEL-POLICY-REPAIR-001 M2: the map was cleaned against the
+// 8-agent retained catalog. The 16 canonical phantom keys (13 archived agents
+// + manager-ddd/manager-tdd legacy aliases of manager-develop + builder-agent
+// legacy alias of builder-harness + builder-skill/builder-plugin archived
+// builder variants) were removed. manager-develop and builder-harness were
+// added back under their canonical names with the iter-2 tuple {sonnet,
+// sonnet, haiku} — aligning with the SPEC's Default-Sonnet cost-routing
+// thesis (D6 rationale: pinning the busiest run-phase agent to Opus would
+// contradict the thesis). The 3 meta/evaluator agents (plan-auditor,
+// sync-auditor) and Explore are intentionally NOT in the map — they use
+// model: inherit per model-policy.md § Inherit-by-Default.
+var agentModelMap = map[string][3]string{
+	// Retained Manager Agents (5 entries total)
+	"manager-spec":    {"opus", "opus", "sonnet"},
+	"manager-develop": {"sonnet", "sonnet", "haiku"}, // REQ-MPR-009 iter-2 tuple (D6: Default-Sonnet-aligned)
+	"manager-docs":    {"sonnet", "haiku", "haiku"},
+	"manager-git":     {"haiku", "haiku", "haiku"},
+	// Retained Builder Agent
+	"builder-harness": {"sonnet", "sonnet", "haiku"}, // REQ-MPR-009 iter-2 tuple (D6: Default-Sonnet-aligned)
+}
+
+// GetAgentModel returns the model string for a given agent under the specified policy.
+func GetAgentModel(policy ModelPolicy, agentName string) string {
+	models, ok := agentModelMap[agentName]
+	if !ok {
+		return "" // Unknown agent: caller should skip to preserve current model
+	}
+
+	switch policy {
+	case ModelPolicyHigh:
+		return models[0]
+	case ModelPolicyMedium:
+		return models[1]
+	case ModelPolicyLow:
+		return models[2]
+	default:
+		return "sonnet" // Unknown policy: safe fallback
+	}
+}
+
+// modelLineRegex matches the "model:" line in YAML frontmatter.
+var modelLineRegex = regexp.MustCompile(`(?m)^model:\s*\S+`)
+
+// ApplyModelPolicy patches the model: field in all agent definition files
+// under the given project root based on the specified model policy.
+// It also updates the manifest hashes for patched files.
+func ApplyModelPolicy(projectRoot string, policy ModelPolicy, mgr manifest.Manager) error {
+	// Agents are consolidated under .claude/agents/moai/ (the SPEC-V3R6-AGENT-FOLDER-SPLIT-001
+	// 4-subfolder split was reverted). Iterate the single consolidated directory.
+	domains := []string{"moai"}
+	for _, domain := range domains {
+		agentsDir := filepath.Join(projectRoot, ".claude", "agents", domain)
+		entries, err := os.ReadDir(agentsDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // domain subfolder absent — skip silently
+			}
+			return fmt.Errorf("read agents directory %q: %w", domain, err)
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+
+			agentName := strings.TrimSuffix(entry.Name(), ".md")
+			targetModel := GetAgentModel(policy, agentName)
+			if targetModel == "" {
+				continue // Unknown agent: preserve current model
+			}
+
+			filePath := filepath.Join(agentsDir, entry.Name())
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return fmt.Errorf("read agent file %q: %w", entry.Name(), err)
+			}
+
+			// Replace the model: line in YAML frontmatter
+			newContent := modelLineRegex.ReplaceAll(content, []byte("model: "+targetModel))
+
+			if string(newContent) == string(content) {
+				continue // No change
+			}
+
+			if err := os.WriteFile(filePath, newContent, 0o644); err != nil {
+				return fmt.Errorf("write agent file %q: %w", entry.Name(), err)
+			}
+
+			// Update manifest hash for the patched file
+			relPath := filepath.Join(".claude", "agents", domain, entry.Name())
+			hash := manifest.HashBytes(newContent)
+			if err := mgr.Track(relPath, manifest.TemplateManaged, hash); err != nil {
+				return fmt.Errorf("track patched agent %q: %w", entry.Name(), err)
+			}
+		}
+	}
+
+	return nil
+}

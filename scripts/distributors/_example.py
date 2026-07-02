@@ -24,7 +24,7 @@ from typing import Optional
 from ._base import Distributor, CopytreeDistributor, DistributeContext, InstallResult
 
 
-# ═══ 示例 A：copytree 协议（最常见，跟 claude/codex/zcode 一样） ═════════════
+# ═══ 示例 A：copytree 协议（最常见，跟 claude/codex/zcode/hermes 一样） ═════════════
 class CursorDistributorExample(CopytreeDistributor):
     """Cursor 分发器示范：copytree → ~/.cursor/skills/ae-sdd。
 

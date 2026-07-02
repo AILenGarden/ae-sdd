@@ -1,0 +1,75 @@
+package constitution
+
+import (
+	"fmt"
+	"regexp"
+)
+
+// ruleIDPattern is a regex constant for validating IDs in CONST-V3R2-NNN, CONST-V3R5-NNN, or CONST-V3R6-NNN format.
+// NNN is 3 or more digits. V3R2 = initial namespace; V3R5 = parallel namespace (SPEC-V3R5-CONSTITUTION-DUAL-001);
+// V3R6 = modern-era namespace (SPEC-V3R6-RULES-CONST-RULEID-001 broadened [25] -> [256]).
+// The character class [256] enumerates exactly the three existing namespaces; V3R3/V3R4 do not exist and remain rejected.
+const ruleIDPattern = `^CONST-V3R[256]-\d{3,}$`
+
+// ruleIDRegexp is the compiled ruleIDPattern.
+var ruleIDRegexp = regexp.MustCompile(ruleIDPattern)
+
+// Rule represents a single entry in the zone registry.
+// Has exactly 6 exported fields, mapped to registry YAML schema via yaml.v3 tags.
+// Directly implements SPEC-V3R2-CON-001 REQ-CON-001-004.
+//
+// Orphan field (unexported) is set internally by the loader when the referenced file is missing.
+// Has no yaml tag, so it does not appear in registry files.
+type Rule struct {
+	// ID is the unique identifier in CONST-V3R2-NNN, CONST-V3R5-NNN, or CONST-V3R6-NNN format.
+	ID string `yaml:"id"`
+	// Zone is the zone of the clause (Frozen or Evolvable).
+	Zone Zone `yaml:"zone"`
+	// File is the path to the rule file where the clause is located.
+	File string `yaml:"file"`
+	// Anchor is the location anchor within the file (#sectionname or Llinenumber).
+	Anchor string `yaml:"anchor"`
+	// Clause is the verbatim text of the HARD clause.
+	Clause string `yaml:"clause"`
+	// CanaryGate indicates whether shadow evaluation is required during amendment.
+	// Frozen → true, Evolvable → false (default).
+	CanaryGate bool `yaml:"canary_gate"`
+	// ZoneClass is the sub-classification within Zone (4-enum, introduced by SPEC-V3R5-CONSTITUTION-DUAL-001).
+	// Valid values: frozen-canonical, frozen-safety, evolvable-tuning, evolvable-experimental.
+	// Optional: empty string is valid for legacy entries that predate V3R5.
+	ZoneClass string `yaml:"zone_class,omitempty"`
+
+	// orphan is set to true by the loader when the referenced file does not exist on disk.
+	// Unexported, so it is not serialized to YAML and not visible as exported via Go reflect.
+	orphan bool
+}
+
+// Orphan returns whether the referenced file does not exist on disk.
+// Set by the loader during LoadRegistry after verifying file existence.
+func (r Rule) Orphan() bool {
+	return r.orphan
+}
+
+// withOrphan is an internal helper that returns a new Rule with the orphan flag set.
+func (r Rule) withOrphan(orphan bool) Rule {
+	r.orphan = orphan
+	return r
+}
+
+// Validate validates the required fields of the Rule.
+// Returns an error if any field is empty or if the ID format is invalid.
+func (r Rule) Validate() error {
+	if r.ID == "" {
+		return fmt.Errorf("rule ID is empty")
+	}
+	if !ruleIDRegexp.MatchString(r.ID) {
+		return fmt.Errorf("rule ID %q does not match pattern %q", r.ID, ruleIDPattern)
+	}
+	if r.File == "" {
+		return fmt.Errorf("rule %q: File field is empty", r.ID)
+	}
+	if r.Clause == "" {
+		return fmt.Errorf("rule %q: Clause field is empty", r.ID)
+	}
+	return nil
+}

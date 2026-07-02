@@ -3,7 +3,7 @@
 #
 # 触发条件：ae-sdd 母版仓的任意 commit 提交完成
 # 动作：调 scripts/distribute.py 单入口 orchestrator，由它内部串联：
-#   build_dist → 遍历分发器（claude/codex/zcode copytree + mavis harness_mount）
+#   build_dist → 遍历分发器（claude/codex/zcode/hermes copytree + mavis harness_mount）
 #   每个分发器各自 compile/install/verify/cleanup
 #
 # 跳过策略：

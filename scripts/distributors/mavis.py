@@ -1,7 +1,7 @@
 """Mavis 分发器：harness_mount 协议。
 
 与其他三个 copytree 分发器不同：
-  - needs_compile=True：mavis 需要专属编译产物 agent.md（调 build_harness.py）
+  - needs_compile=True：mavis 需要专属编译产物 .harness/agent.md（调 build_harness.py）
   - install 协议是 `mavis harness mount` 而非 copytree
   - cleanup 要清 mavis 端 ae-sdd-N 副本 + 同步 sqlite（迁自 install.py:cleanup_mavis_duplicates）
 
@@ -40,7 +40,7 @@ class MavisDistributor(Distributor):
 
     # ── compile（专属产物：agent.md） ───────────────────────────────────────
     def compile(self, repo_root: Path) -> Optional[Path]:
-        """调 build_harness.py 生成 harness/.harness/agent.md，返回 .harness 目录。"""
+        """调 build_harness.py 生成 .harness/agent.md，返回 .harness 目录。"""
         scripts_dir = repo_root / "scripts"
         build_harness = scripts_dir / "build_harness.py"
         if not build_harness.is_file():
@@ -56,7 +56,7 @@ class MavisDistributor(Distributor):
             if result.stderr:
                 print(result.stderr, file=sys.stderr)
             return None
-        harness_dir = repo_root / "harness" / ".harness"
+        harness_dir = repo_root / ".harness"
         if (harness_dir / "agent.md").is_file():
             return harness_dir
         return None
@@ -71,14 +71,23 @@ class MavisDistributor(Distributor):
             return InstallResult(self.name, "skip",
                                  "mavis 未安装，跳过 mount（产物已写入）", time.time() - t0)
 
-        harness_root = source.parent  # source=.harness，mount 入参是 harness/
+        if self.verify(ctx):
+            return InstallResult(self.name, "ok", "mavis harness already mounted", time.time() - t0)
+
+        harness_root = source.parent  # source=.harness，mount 入参是 repo root
         # 先 unmount 旧挂载（对齐 post-commit 第 7 步）
-        run_mavis(["harness", "unmount", "d-item-ae-sdd-harness"])
+        from build_harness import mavis_harness_name_for_path
+        for name in dict.fromkeys([
+            mavis_harness_name_for_path(harness_root),
+            mavis_harness_name_for_path(harness_root / "harness"),
+            SKILL_NAME,
+        ]):
+            run_mavis(["harness", "unmount", name])
         rc, out = run_mavis(["harness", "mount", str(harness_root)])
         if not ctx.quiet:
             for line in out.splitlines():
                 print(f"    {line}")
-        if rc == 0:
+        if rc == 0 and self.verify(ctx):
             return InstallResult(self.name, "ok", "mavis harness mounted", time.time() - t0)
         return InstallResult(self.name, "fail",
                              f"mavis harness mount 失败 (rc={rc})", time.time() - t0)
@@ -91,7 +100,7 @@ class MavisDistributor(Distributor):
         if rc == 0 and "ae-sdd" in out:
             return True
         log_warn(ctx, f"mavis harness list 未确认 ae-sdd（rc={rc}）")
-        return rc == 0
+        return False
 
     # ── cleanup（清 -N 副本 + sqlite，迁自 install.py:cleanup_mavis_duplicates） ─
     def cleanup(self, ctx: DistributeContext) -> None:

@@ -507,6 +507,41 @@ def complete_agent(state: dict, agent_id: str, report_path: str = "",
     })
 
 
+# ─── 🆕 v3.8.0 自动化联审共识 state 写入 helper ───────────────────────────────
+# SKILL.md §🚀 自动化模式：审核点走 Tier 3 联审共识，结果写 reviewConsensus[point]。
+# G-AUTO-CONSENSUS 门禁校验本字段：passed=true + reviewer 独立性（复用 G-09B）。
+def register_review_consensus(state: dict, point: float, tier: int,
+                              passed: bool, rounds: int,
+                              reviewers: list = None,
+                              stall_reason: str = "") -> None:
+    """写联审共识结果到 state.reviewConsensus[point]（原地修改，调用方负责 write_state）。
+
+    Args:
+        point: 审核点编号（1/1.5/2/2.5/4/5）
+        tier: reviewer Tier（自动化模式固定 3）
+        passed: 联审共识是否通过
+        rounds: 矫正轮次
+        reviewers: reviewer 报告摘要列表 [{agentId, role, verdict, sessionId}...]
+        stall_reason: 未通过时的原因（3 轮未决等）
+    """
+    rc = state.setdefault("reviewConsensus", {})
+    rc[str(point)] = {
+        "point": point,
+        "tier": tier,
+        "passed": bool(passed),
+        "rounds": int(rounds),
+        "reviewers": reviewers or [],
+        "stallReason": stall_reason,
+        "recordedAt": _now_ts(),
+    }
+
+
+def get_review_consensus(state: dict, point: float) -> Optional[dict]:
+    """读 reviewConsensus[point]，不存在返回 None。"""
+    rc = state.get("reviewConsensus") or {}
+    return rc.get(str(point))
+
+
 # ─── 🆕 v3.5.12 重入字段写入 helper（治 P1-5 死字段）──────────────────────────
 # SKILL.md §流程状态跟踪承诺：currentStep/completedSteps/codingRound 真实读写。
 # v3.5.12 前零写入（重入只能靠 phase 粗粒度恢复）。

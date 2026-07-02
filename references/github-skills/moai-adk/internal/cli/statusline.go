@@ -1,0 +1,159 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/modu-ai/moai-adk/internal/config"
+	"github.com/modu-ai/moai-adk/internal/statusline"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+)
+
+// StatuslineCmd is the statusline command.
+var StatuslineCmd = &cobra.Command{
+	Use:    "statusline",
+	Short:  "Render statusline for Claude Code",
+	Long:   "Generate a compact statusline string for display in Claude Code's status bar.",
+	Hidden: true,
+	RunE:   runStatusline,
+}
+
+// runStatusline renders a statusline string suitable for Claude Code's status bar.
+//
+// @MX:ANCHOR: statusline CLI entry point (fan_in >= 3: shell wrapper, direct CLI, tests)
+// @MX:REASON: public entry point for statusline rendering — cwd guard is critical for stability
+// @MX:SPEC: SPEC-V3R3-STATUSLINE-FALLBACK-001
+func runStatusline(cmd *cobra.Command, _ []string) error {
+	// AC-SF-006: cwd guard — deleted directory fallback
+	// os.Getwd() may succeed on macOS even with deleted cwd, so also check with os.Stat()
+	if wd, err := os.Getwd(); err != nil || !dirExists(wd) {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			_ = os.Chdir(home)
+		}
+	}
+
+	out := cmd.OutOrStdout()
+	ctx := context.Background()
+
+	// Get project root for git and version detection (error ignored: empty root is valid)
+	projectRoot, _ := findProjectRootFn() //nolint:errcheck // empty root is acceptable fallback
+
+	// Load full statusline config from statusline.yaml
+	statuslineCfg := loadStatuslineFileConfig(projectRoot)
+
+	var segmentConfig map[string]bool
+	var themeName string
+	if statuslineCfg != nil {
+		// Segments map is the only statusline configuration lever besides theme
+		// (SPEC-V3R6-STATUSLINE-PRESET-RETIRE-001 retired the preset shorthand).
+		// When segments is absent the Builder falls back to all-enabled.
+		segmentConfig = statuslineCfg.Segments
+		themeName = statuslineCfg.Theme
+	}
+
+	// Build statusline options - git and version are auto-detected.
+	// Mode is fixed to ModeDefault: the `mode:` config surface was removed
+	// (SLR-1 — mode=full was inert), but the Builder Config Mode field is
+	// preserved as part of the Builder API (HARD-1) and fed ModeDefault.
+	opts := statusline.Options{
+		Mode:          statusline.ModeDefault,
+		NoColor:       os.Getenv("NO_COLOR") != "" || os.Getenv(config.EnvNoColor) != "",
+		RootDir:       projectRoot,
+		SegmentConfig: segmentConfig,
+		ThemeName:     themeName,
+	}
+
+	// Create builder and render
+	builder := statusline.New(opts)
+
+	// Try to read stdin with TTY detection
+	stdinData := readStdinWithTimeout()
+
+	result, err := builder.Build(ctx, stdinData)
+	if err != nil {
+		// Fallback on error
+		_, _ = fmt.Fprintln(out, renderSimpleFallback())
+		return nil
+	}
+
+	_, _ = fmt.Fprintln(out, result)
+	return nil
+}
+
+// dirExists checks whether a directory exists at the given path.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// readStdinWithTimeout reads stdin with TTY detection.
+// Returns an empty reader if stdin is a terminal (to prevent blocking).
+// Returns os.Stdin if stdin is piped or redirected (for Claude Code context).
+func readStdinWithTimeout() io.Reader {
+	stdinFile, err := os.Stdin.Stat()
+	if err != nil {
+		return io.MultiReader()
+	}
+
+	// Check if stdin is a terminal (character device)
+	// If not a terminal (pipe/redirect), read normally
+	if stdinFile.Mode()&os.ModeCharDevice == 0 {
+		return os.Stdin
+	}
+
+	// stdin is a terminal - use empty reader to prevent blocking
+	return io.MultiReader()
+}
+
+// renderSimpleFallback returns a simple fallback statusline.
+func renderSimpleFallback() string {
+	return "moai"
+}
+
+// statuslineFileConfig holds all statusline configuration read from YAML. It
+// mirrors the canonical models.StatuslineConfig shape {Theme, Segments}. The
+// `mode:` surface was removed (SLM-1/SLR-2 — inert) and the `preset:` surface
+// was retired (SPEC-V3R6-STATUSLINE-PRESET-RETIRE-001). A legacy `preset:` key
+// in an existing statusline.yaml is silently ignored (unknown YAML keys do not
+// error on unmarshal).
+type statuslineFileConfig struct {
+	Theme    string
+	Segments map[string]bool
+}
+
+// loadStatuslineFileConfig reads the full statusline configuration from
+// .moai/config/sections/statusline.yaml. Returns nil if the file is missing,
+// unreadable, or unparseable.
+func loadStatuslineFileConfig(projectRoot string) *statuslineFileConfig {
+	if projectRoot == "" {
+		return nil
+	}
+
+	configPath := filepath.Join(projectRoot, ".moai", "config", "sections", "statusline.yaml")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil
+	}
+
+	var raw struct {
+		Statusline struct {
+			Theme    string          `yaml:"theme"`
+			Segments map[string]bool `yaml:"segments"`
+		} `yaml:"statusline"`
+	}
+
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+
+	return &statuslineFileConfig{
+		Theme:    raw.Statusline.Theme,
+		Segments: raw.Statusline.Segments,
+	}
+}

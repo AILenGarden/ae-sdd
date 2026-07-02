@@ -85,7 +85,7 @@
         {"path": "tools/bin/ae-sdd", "action": "update-check 子命令覆盖新检查", "auto_checkable": false},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "图谱章节同步新规则；补 UG/UC 机器锚点", "auto_checkable": true}
       ],
-      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05", "UC-06", "UC-14"]
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05", "UC-06", "UC-14", "UC-15"]
     },
     {
       "id": "UG-08",
@@ -99,7 +99,7 @@
         {"path": ".githooks/post-commit", "action": "🆕 v3.4.0：hook 自身必须存在且可执行（UC-07 验证）", "auto_checkable": true},
         {"path": "git config core.hooksPath", "action": "🆕 v3.4.0：必须 = .githooks（UC-07 验证）", "auto_checkable": true}
       ],
-      "checks": ["UC-01", "UC-03", "UC-04", "UC-05", "UC-06", "UC-07", "UC-14"]
+      "checks": ["UC-01", "UC-03", "UC-04", "UC-05", "UC-06", "UC-07", "UC-14", "UC-15"]
     },
     {
       "id": "UG-11",
@@ -117,7 +117,7 @@
       "affected": [
         {"path": "source/HARNESS.md", "action": "§\"分发闭环 v3.4.0+\" 章节与实现一致；自动触发链表格四行齐", "auto_checkable": true},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "§\"v3.4.0 自动分发闭环\" 章节与触发链同步", "auto_checkable": true},
-        {"path": "harness/.harness/agent.md", "action": "convert-ae-sdd-to-harness.ps1 重转；agent.md templateHash 与 .adapter.lock 一致", "auto_checkable": true},
+        {"path": ".harness/agent.md", "action": "build_harness.py 重转；agent.md templateHash 与 .harness/.adapter.lock 一致", "auto_checkable": true},
         {"path": "$HOME/.zcode/skills/ae-sdd-harness-adapter/", "action": "适配器 SKILL 包版本号 → 0.2.0；SKILL.md 描述与新触发链一致", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-07", "UC-14"]
@@ -269,7 +269,7 @@
       "affected": [
         {"path": "tools/lib/alignment_audit.py", "action": "6 维 check 函数（UC-08 门禁承诺↔注册双向 / UC-09 门禁实现真实性抓 stub-pass / UC-10 state 字段存活性 / UC-11 状态机闭环 / UC-12 幽灵命令全捕获 / UC-13 门禁注册完整性）+ register_to_update_graph 注入 CHECK_FUNCS", "auto_checkable": false},
         {"path": "tools/lib/gates.py", "action": "G-RA-FLOW-VIOLATION 假门禁修复：check_all 加特判传 master_source（原走 CHECK_FUNCS 漏传→恒 stub-pass）+ _sys.executable→sys.executable（原 NameError）", "auto_checkable": true},
-        {"path": "tools/bin/ae-sdd", "action": "cmd_update_check 加 import alignment_audit 触发注册 + 全量调度（UC-01~14）", "auto_checkable": true},
+        {"path": "tools/bin/ae-sdd", "action": "cmd_update_check 加 import alignment_audit 触发注册 + 全量调度（UC-01~15）", "auto_checkable": true},
         {"path": "tools/tests/test_alignment_audit.py", "action": "≥12 用例覆盖 UC-08~13（正例/反例/边界）", "auto_checkable": false},
         {"path": "tools/tests/test_gates.py", "action": "TestGRAFlowViolation 含 3 用例（no_master_source_skips/pre_ra_skips/real_execution_no_namesmoke）防假门禁修复回退", "auto_checkable": true},
         {"path": "source/SKILL.md", "action": "frontmatter version v3.5.11 + AA 描述", "auto_checkable": true},
@@ -283,7 +283,7 @@
         {"path": "README.md", "action": "第 5 行版本行含 v3.5.11 + AA 全维对齐验证器描述", "auto_checkable": true},
         {"path": "source/CHANGELOG/", "action": "新增 2026-06-29-v3.5.11-alignment-audit.md changelog 文件", "auto_checkable": false}
       ],
-      "checks": ["UC-01", "UC-02", "UC-03", "UC-05", "UC-06", "UC-08", "UC-09", "UC-10", "UC-11", "UC-12", "UC-13", "UC-14"]
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-05", "UC-06", "UC-08", "UC-09", "UC-10", "UC-11", "UC-12", "UC-13", "UC-14", "UC-15"]
     },
     {
       "id": "UG-16",
@@ -303,6 +303,71 @@
         {"path": "source/CHANGELOG/", "action": "新增 2026-06-30-v3.5.15-state-machine-multi-entry.md", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-06"]
+    },
+    {
+      "id": "UG-19",
+      "name": "runtime compiler and compiled distribution",
+      "trigger": [
+        "scripts/compile_skill_runtime.py",
+        "scripts/build_dist.py",
+        "scripts/distribute.py",
+        "scripts/distributors/**",
+        "tools/lib/runtime_verify.py",
+        "tools/lib/update_graph.py",
+        "tools/bin/ae-sdd",
+        "tools/tests/test_skill_runtime_compiler.py",
+        "tools/tests/test_runtime_verify.py",
+        "tools/tests/test_standalone_skill_runtime_compiler.py",
+        "standalone-skills/skill-runtime-compiler/SKILL.md",
+        "standalone-skills/skill-runtime-compiler/scripts/compile_skill_package.py",
+        "source/docs/skill-runtime-compiler.md",
+        "source/docs/ae-sdd-design.md",
+        "source/standards/update-graph.json",
+        "source/skills/orchestration/ae-sdd-update-skill.md"
+      ],
+      "trigger_condition": "runtime compiler, runtime verifier, compiled-only distribution, or UC-15 consistency contract changed",
+      "affected": [
+        {"path": "scripts/compile_skill_runtime.py", "action": "runtime output remains deterministic and ignores wall-clock build date", "auto_checkable": true},
+        {"path": "tools/lib/runtime_verify.py", "action": "compiled runtime package verifier matches manifest/load_order/fallback contract", "auto_checkable": true},
+        {"path": "tools/lib/update_graph.py", "action": "UC-15 runtime compile consistency check remains registered", "auto_checkable": true},
+        {"path": "scripts/distribute.py", "action": "distribution refuses uncompiled or incomplete runtime packages", "auto_checkable": true},
+        {"path": "scripts/distributors/_base.py", "action": "copytree distributors reject uncompiled source packages before backup/install", "auto_checkable": true},
+        {"path": "standalone-skills/skill-runtime-compiler/", "action": "standalone compiler skill compiles any SKILL dir to same-parent compiled package without mutating source", "auto_checkable": true},
+        {"path": "tools/tests/test_runtime_verify.py", "action": "runtime verifier positive and negative cases stay covered", "auto_checkable": false},
+        {"path": "tools/tests/test_standalone_skill_runtime_compiler.py", "action": "standalone compiler source-preservation, structure, overwrite guard, CLI JSON, and idempotence coverage stays aligned", "auto_checkable": false},
+        {"path": "tools/tests/test_update_graph.py", "action": "UC-15 count/filter coverage stays aligned with CHECK_FUNCS", "auto_checkable": false},
+        {"path": "source/docs/skill-runtime-compiler.md", "action": "implementation status and validation commands stay current", "auto_checkable": false},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "UG/UC anchors include UG-19 and UC-15", "auto_checkable": true}
+      ],
+      "checks": ["UC-03", "UC-07", "UC-14", "UC-15"]
+    },
+    {
+      "id": "UG-20",
+      "name": "automation switch and auto-consensus gate",
+      "trigger": [
+        "tools/lib/config.py",
+        "scripts/init.py",
+        "tools/lib/gates.py",
+        "tools/lib/state.py",
+        "tools/bin/ae-sdd"
+      ],
+      "trigger_condition": "automation switch config / G-AUTO-CONSENSUS gate / reviewConsensus state field / automation|preflight CLI subcommand changed (🆕 v3.8.0)",
+      "affected": [
+        {"path": "tools/lib/config.py", "action": "AUTOMATION_DEFAULTS 与 .ae-sdd/config.yaml automation 段字段一致；load_automation_config 容错", "auto_checkable": true},
+        {"path": "scripts/init.py", "action": "CONFIG_TEMPLATE 含 automation 段（默认 enabled:false）", "auto_checkable": true},
+        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-AUTO-CONSENSUS + CHECK_FUNCS 注册 + check_g_auto_consensus 实现", "auto_checkable": true},
+        {"path": "tools/lib/state.py", "action": "register_review_consensus / get_review_consensus 函数存在", "auto_checkable": true},
+        {"path": "tools/bin/ae-sdd", "action": "automation status/enable/disable + preflight collect + state register-review-consensus 子命令注册", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "§🚀 自动化模式章节 + G-AUTO-CONSENSUS 门禁速查 + 工具API速查含 automation/preflight + 30门禁", "auto_checkable": true},
+        {"path": "source/skills/cross-cutting/agent-orchestration-skill.md", "action": "§8.4.1 自动化强制 Tier 3 + §8.4.5 禁逻辑多视角降级", "auto_checkable": false},
+        {"path": "tools/tests/test_gates.py", "action": "TestGAutoConsensus + 门禁总数断言 30", "auto_checkable": false},
+        {"path": "tools/tests/test_automation_cli.py", "action": "automation status/enable/disable + preflight collect CLI 测试", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-design.md", "action": "新增 ## 19 自动化能力模块（设计+实现表）", "auto_checkable": false},
+        {"path": "source/HARNESS.md", "action": "HS 规则表诚实降级标注（G-AUTO-CONSENSUS 门禁兜底，非物理 hook）", "auto_checkable": false},
+        {"path": "README.md", "action": "第 5 行版本行 v3.8.0 + 门禁数 30 + 自动化模式章节", "auto_checkable": true},
+        {"path": "source/CHANGELOG/", "action": "新增 2026-07-02-automation-switch.md", "auto_checkable": false}
+      ],
+      "checks": ["UC-02", "UC-03", "UC-16"]
     }
   ]
 }

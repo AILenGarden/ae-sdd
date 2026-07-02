@@ -81,6 +81,30 @@ def _run_build_dist(repo_root: Path, quiet: bool) -> Path:
     return dist_path
 
 
+def _verify_compiled_dist(repo_root: Path, dist_path: Path) -> bool:
+    """Fail before distribution if dist is not a compiled runtime package."""
+    tools_dir = repo_root / "tools"
+    inserted = False
+    if str(tools_dir) not in sys.path:
+        sys.path.insert(0, str(tools_dir))
+        inserted = True
+    try:
+        from lib.runtime_verify import verify_runtime_package  # type: ignore
+        result = verify_runtime_package(dist_path)
+    except Exception as exc:
+        log_error(f"compiled runtime 校验器不可用: {exc}")
+        return False
+    finally:
+        if inserted and str(tools_dir) in sys.path:
+            sys.path.remove(str(tools_dir))
+    if result.ok:
+        return True
+    log_error("dist 不是完整 compiled runtime package，拒绝分发:")
+    for item in result.issues[:8]:
+        log_error(f"  - {item}")
+    return False
+
+
 def subprocess_run(cmd: list[str]):
     """subprocess.run 包装（隔离 import，便于测试 mock）。"""
     import subprocess
@@ -168,6 +192,8 @@ def main() -> int:
                 return 1
         else:
             dist_path = _run_build_dist(repo_root, args.quiet)
+        if not _verify_compiled_dist(repo_root, dist_path):
+            return 1
         ctx = DistributeContext(repo_root=repo_root, dist_path=dist_path,
                                 keep_bak=args.keep_bak, quiet=args.quiet,
                                 from_commit=args.from_commit)
@@ -183,6 +209,8 @@ def main() -> int:
             return 1
     else:
         dist_path = _run_build_dist(repo_root, args.quiet)
+    if not _verify_compiled_dist(repo_root, dist_path):
+        return 1
 
     # ── 2. 收集 active 分发器 ───────────────────────────────────────────────
     ctx = DistributeContext(

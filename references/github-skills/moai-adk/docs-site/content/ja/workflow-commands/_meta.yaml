@@ -1,0 +1,13 @@
+index:
+  title: "ワークフローコマンド"
+  display: "hidden"
+"moai-project":
+  title: "/moai project"
+"moai-plan":
+  title: "/moai plan"
+"moai-run":
+  title: "/moai run"
+"moai-sync":
+  title: "/moai sync"
+"moai-harness":
+  title: "/moai harness"

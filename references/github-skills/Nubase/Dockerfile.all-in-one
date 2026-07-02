@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1.7
+
+FROM maven:3.9-eclipse-temurin-17 AS backend-builder
+
+WORKDIR /workspace
+COPY pom.xml .
+COPY src ./src
+# Bundle the Studio UI into the jar (served same-origin at /studio) via the `with-frontend`
+# profile: frontend-maven-plugin self-installs Node+pnpm and static-exports Studio into the
+# jar's resources. A single `java -jar` then serves both the API (/auth/v1, /rest/v1, …) and
+# the UI (/studio) on one port — so the deployment works at any server IP/domain with no
+# cross-origin "localhost" problem and no separate frontend process.
+COPY frontend ./frontend
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -Pwith-frontend clean package -Dmaven.test.skip=true
+
+FROM pgvector/pgvector:pg15
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -o Acquire::Retries=5 update && \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      dumb-init \
+      netcat-openbsd \
+      openjdk-17-jre-headless \
+      openssl \
+      redis-server && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/nubase
+
+COPY --from=backend-builder /workspace/target/*.jar /opt/nubase/backend/app.jar
+COPY docker/all-in-one/entrypoint.sh /usr/local/bin/nubase-entrypoint
+
+RUN chmod +x /usr/local/bin/nubase-entrypoint && \
+    mkdir -p /data/postgres /data/redis /data/secrets && \
+    chown -R postgres:postgres /data/postgres
+
+ENV PGDATA=/data/postgres \
+    POSTGRES_HOST=127.0.0.1 \
+    POSTGRES_PORT=5432 \
+    POSTGRES_DB=postgrest_metadata \
+    POSTGRES_USER=postgres \
+    POSTGRES_PASSWORD=postgres \
+    REDIS_HOST=127.0.0.1 \
+    REDIS_PORT=6379 \
+    NUBASE_CACHE_TYPE=caffeine \
+    SERVER_PORT=9999
+
+# This batteries-included image ships without SMTP, so email OTP codes can't be delivered —
+# requiring email verification would make signup impossible. Default it OFF here so accounts can
+# be created directly. Production (the plain jar deploy) keeps verification ON via application.yml
+# (default true). To require it in this image, set this to `true` and configure the mail env vars.
+ENV NUBASE_PLATFORM_EMAIL_VERIFICATION_ENABLED=false
+
+VOLUME ["/data"]
+# Single app port: 9999 serves both the API and the Studio UI (/studio). 5432 = Postgres.
+EXPOSE 9999 5432
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+  CMD nc -z 127.0.0.1 9999 && curl -fsS -o /dev/null http://127.0.0.1:9999/studio/ || exit 1
+
+ENTRYPOINT ["dumb-init", "--", "nubase-entrypoint"]

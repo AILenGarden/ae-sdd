@@ -1,0 +1,37 @@
+# gitleaks config for Nubase — https://github.com/gitleaks/gitleaks
+# Run locally:  bash script/check-secrets.sh   (or: gitleaks detect -v)
+# CI:           .github/workflows/secret-scan.yml
+#
+# This extends gitleaks' built-in rule set and only allowlists values that are
+# provably NOT real secrets (test fixtures, placeholder examples, lockfiles).
+# Keep this list tight — every entry is a place a real secret could hide.
+
+title = "Nubase secret-scan config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures, *.example placeholders, and lockfiles — verified non-secret"
+
+paths = [
+  '''\.example$''',                 # *.example files are placeholder templates
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)yarn\.lock$''',
+  # Specific test files whose fixtures gitleaks flags (audited: all fake):
+  #  - functions.test.ts  : fake PEM whose body is the literal word "secret"
+  #  - deploy-app.test.ts : "sk-1234…" string that EXISTS to test the upload
+  #                         security scanner that blocks key-like content
+  #  - JwtServiceTest.java : an obvious HS256 unit-test signing secret
+  '''frontend/packages/mcp-bridge/test/functions\.test\.ts$''',
+  '''frontend/packages/mcp-bridge/test/deploy-app\.test\.ts$''',
+  '''src/test/java/ai/nubase/postgrest/auth/JwtServiceTest\.java$''',
+]
+
+regexes = [
+  '''sk-123456789012345678901234567890''',                 # fake key in deploy-app.test
+  '''test-secret-key-that-is-long-enough-for-hs256''',     # fake HS256 secret in JwtServiceTest
+  '''REPLACE_ME''',                                        # nubase.env.example placeholder
+  '''replace-me-with-a-real-jwt-signed-by-master-key''',   # application.yml placeholder default
+]

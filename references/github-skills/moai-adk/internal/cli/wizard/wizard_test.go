@@ -1,0 +1,1233 @@
+package wizard
+
+import (
+	"os"
+	"testing"
+)
+
+func TestWizardResult(t *testing.T) {
+	result := &WizardResult{
+		ProjectName:     "test-project",
+		DevelopmentMode: "tdd",
+		GitMode:         "personal",
+		GitHubUsername:  "testuser",
+	}
+
+	if result.ProjectName != "test-project" {
+		t.Errorf("expected ProjectName 'test-project', got %q", result.ProjectName)
+	}
+	if result.DevelopmentMode != "tdd" {
+		t.Errorf("expected DevelopmentMode 'tdd', got %q", result.DevelopmentMode)
+	}
+	if result.GitMode != "personal" {
+		t.Errorf("expected GitMode 'personal', got %q", result.GitMode)
+	}
+	if result.GitHubUsername != "testuser" {
+		t.Errorf("expected GitHubUsername 'testuser', got %q", result.GitHubUsername)
+	}
+}
+
+func TestGetLanguageName(t *testing.T) {
+	tests := []struct {
+		code     string
+		expected string
+	}{
+		{"en", "English"},
+		{"ko", "Korean (한국어)"},
+		{"ja", "Japanese (日本語)"},
+		{"zh", "Chinese (中文)"},
+		{"unknown", "English"}, // Default fallback
+		{"", "English"},        // Empty string fallback
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			got := GetLanguageName(tt.code)
+			if got != tt.expected {
+				t.Errorf("GetLanguageName(%q) = %q, want %q", tt.code, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNewStyles(t *testing.T) {
+	styles := NewStyles()
+	if styles == nil {
+		t.Fatal("NewStyles() returned nil")
+	}
+
+	// Verify styles are initialized
+	if styles.Title.String() == "" {
+		t.Log("Title style initialized")
+	}
+}
+
+func TestNoColorStyles(t *testing.T) {
+	styles := NoColorStyles()
+	if styles == nil {
+		t.Fatal("NoColorStyles() returned nil")
+	}
+}
+
+func TestDefaultQuestions(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test-project")
+
+	if len(questions) == 0 {
+		t.Fatal("DefaultQuestions() returned empty slice")
+	}
+
+	// Verify first question is project_name
+	if questions[0].ID != "project_name" {
+		t.Errorf("expected first question ID 'project_name', got %q", questions[0].ID)
+	}
+
+	// Verify project name question default
+	q := QuestionByID(questions, "project_name")
+	if q == nil {
+		t.Fatal("project_name question not found")
+	}
+	if q.Default != "test-project" {
+		t.Errorf("expected project_name default 'test-project', got %q", q.Default)
+	}
+
+	// Verify development_mode question IS in wizard
+	if QuestionByID(questions, "development_mode") == nil {
+		t.Error("development_mode question should be in wizard")
+	}
+}
+
+func TestFilteredQuestions(t *testing.T) {
+	questions := []Question{
+		{ID: "always_show", Type: QuestionTypeInput},
+		{
+			ID:   "conditional",
+			Type: QuestionTypeInput,
+			Condition: func(r *WizardResult) bool {
+				return r.GitMode == "team"
+			},
+		},
+	}
+
+	// With GitMode = "manual", conditional question should be filtered out
+	result := &WizardResult{GitMode: "manual"}
+	filtered := FilteredQuestions(questions, result)
+	if len(filtered) != 1 {
+		t.Errorf("expected 1 filtered question, got %d", len(filtered))
+	}
+
+	// With GitMode = "team", both questions should be included
+	result.GitMode = "team"
+	filtered = FilteredQuestions(questions, result)
+	if len(filtered) != 2 {
+		t.Errorf("expected 2 filtered questions, got %d", len(filtered))
+	}
+}
+
+func TestTotalVisibleQuestions(t *testing.T) {
+	questions := []Question{
+		{ID: "q1", Type: QuestionTypeInput},
+		{ID: "q2", Type: QuestionTypeInput},
+		{
+			ID:   "q3",
+			Type: QuestionTypeInput,
+			Condition: func(r *WizardResult) bool {
+				return false // Always hidden
+			},
+		},
+	}
+
+	result := &WizardResult{}
+	total := TotalVisibleQuestions(questions, result)
+	if total != 2 {
+		t.Errorf("expected 2 visible questions, got %d", total)
+	}
+}
+
+func TestQuestionByID(t *testing.T) {
+	questions := []Question{
+		{ID: "q1", Title: "Question 1"},
+		{ID: "q2", Title: "Question 2"},
+	}
+
+	q := QuestionByID(questions, "q1")
+	if q == nil {
+		t.Fatal("QuestionByID('q1') returned nil")
+	}
+	if q.Title != "Question 1" {
+		t.Errorf("expected Title 'Question 1', got %q", q.Title)
+	}
+
+	q = QuestionByID(questions, "nonexistent")
+	if q != nil {
+		t.Error("QuestionByID('nonexistent') should return nil")
+	}
+}
+
+func TestRunWithEmptyQuestions(t *testing.T) {
+	_, err := Run(nil, nil)
+	if err != ErrNoQuestions {
+		t.Errorf("expected ErrNoQuestions, got %v", err)
+	}
+
+	_, err = Run([]Question{}, nil)
+	if err != ErrNoQuestions {
+		t.Errorf("expected ErrNoQuestions, got %v", err)
+	}
+}
+
+func TestErrors(t *testing.T) {
+	if ErrCancelled.Error() != "wizard cancelled by user" {
+		t.Errorf("unexpected ErrCancelled message: %q", ErrCancelled.Error())
+	}
+	if ErrNoQuestions.Error() != "no questions provided" {
+		t.Errorf("unexpected ErrNoQuestions message: %q", ErrNoQuestions.Error())
+	}
+	if ErrInvalidQuestion.Error() != "invalid question index" {
+		t.Errorf("unexpected ErrInvalidQuestion message: %q", ErrInvalidQuestion.Error())
+	}
+}
+
+// --- saveAnswer standalone function tests ---
+
+func TestSaveAnswer_AllFields(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+
+	tests := []struct {
+		id       string
+		value    string
+		checkFn  func() bool
+		expected string
+	}{
+		{"project_name", "myproject", func() bool { return result.ProjectName == "myproject" }, "ProjectName=myproject"},
+		{"development_mode", "ddd", func() bool { return result.DevelopmentMode == "ddd" }, "DevelopmentMode=ddd"},
+		{"git_mode", "personal", func() bool { return result.GitMode == "personal" }, "GitMode=personal"},
+		{"git_provider", "gitlab", func() bool { return result.GitProvider == "gitlab" }, "GitProvider=gitlab"},
+		{"github_username", "ghuser", func() bool { return result.GitHubUsername == "ghuser" }, "GitHubUsername=ghuser"},
+		{"github_token", "ghp_token", func() bool { return result.GitHubToken == "ghp_token" }, "GitHubToken=ghp_token"},
+		{"gitlab_instance_url", "https://gl.co", func() bool { return result.GitLabInstanceURL == "https://gl.co" }, "GitLabInstanceURL"},
+		{"gitlab_username", "gluser", func() bool { return result.GitLabUsername == "gluser" }, "GitLabUsername=gluser"},
+		{"gitlab_token", "glpat-token", func() bool { return result.GitLabToken == "glpat-token" }, "GitLabToken=glpat-token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			saveAnswer(tt.id, tt.value, result, &locale)
+			if !tt.checkFn() {
+				t.Errorf("saveAnswer(%q, %q) did not set expected: %s", tt.id, tt.value, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSaveAnswer_UnknownID(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+
+	// Should not panic for unknown IDs
+	saveAnswer("unknown_field", "value", result, &locale)
+}
+
+// --- Localization tests ---
+
+func TestGetLocalizedQuestion(t *testing.T) {
+	q := &Question{
+		ID:          "git_mode",
+		Type:        QuestionTypeSelect,
+		Title:       "Select Git automation mode",
+		Description: "Controls how much Git automation Claude can perform.",
+		Options: []Option{
+			{Label: "Manual", Value: "manual", Desc: "AI never commits or pushes"},
+			{Label: "Personal", Value: "personal", Desc: "AI can create branches and commit"},
+			{Label: "Team", Value: "team", Desc: "AI can create branches, commit, and open PRs"},
+		},
+	}
+
+	// Test English (default, no translation)
+	localizedEn := GetLocalizedQuestion(q, "en")
+	if localizedEn.Title != q.Title {
+		t.Errorf("expected English title %q, got %q", q.Title, localizedEn.Title)
+	}
+
+	// Test Korean translation
+	localizedKo := GetLocalizedQuestion(q, "ko")
+	if localizedKo.Title == q.Title {
+		t.Error("Korean title should be different from English")
+	}
+	if localizedKo.Title != "Git 자동화 모드 선택" {
+		t.Errorf("expected Korean title 'Git 자동화 모드 선택', got %q", localizedKo.Title)
+	}
+
+	// Test Japanese translation
+	localizedJa := GetLocalizedQuestion(q, "ja")
+	if localizedJa.Title != "Git自動化モードを選択" {
+		t.Errorf("expected Japanese title 'Git自動化モードを選択', got %q", localizedJa.Title)
+	}
+
+	// Test unknown locale (should return original)
+	localizedUnknown := GetLocalizedQuestion(q, "xx")
+	if localizedUnknown.Title != q.Title {
+		t.Errorf("unknown locale should return original title")
+	}
+}
+
+func TestGetUIStrings(t *testing.T) {
+	// Test English
+	enStrings := GetUIStrings("en")
+	if enStrings.HelpSelect == "" {
+		t.Error("English HelpSelect should not be empty")
+	}
+
+	// Test Korean
+	koStrings := GetUIStrings("ko")
+	if koStrings.HelpSelect == enStrings.HelpSelect {
+		t.Error("Korean HelpSelect should be different from English")
+	}
+	if koStrings.ErrorRequired != "필수 입력 항목입니다" {
+		t.Errorf("expected Korean error '필수 입력 항목입니다', got %q", koStrings.ErrorRequired)
+	}
+
+	// Test unknown locale (should return English)
+	unknownStrings := GetUIStrings("xx")
+	if unknownStrings.HelpSelect != enStrings.HelpSelect {
+		t.Error("unknown locale should return English strings")
+	}
+}
+
+// --- Git provider conditional tests ---
+
+func TestGitProviderQuestion(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test-project")
+
+	// Verify git_provider question exists
+	q := QuestionByID(questions, "git_provider")
+	if q == nil {
+		t.Fatal("git_provider question not found")
+	}
+	if q.Default != "github" {
+		t.Errorf("expected git_provider default 'github', got %q", q.Default)
+	}
+
+	// Verify condition: should show for personal/team modes
+	result := &WizardResult{GitMode: "personal"}
+	if !q.Condition(result) {
+		t.Error("git_provider should be visible for personal mode")
+	}
+	result.GitMode = "team"
+	if !q.Condition(result) {
+		t.Error("git_provider should be visible for team mode")
+	}
+	result.GitMode = "manual"
+	if q.Condition(result) {
+		t.Error("git_provider should be hidden for manual mode")
+	}
+}
+
+func TestGitLabQuestionsConditional(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test-project")
+
+	// gitlab_instance_url should only show for gitlab provider
+	q := QuestionByID(questions, "gitlab_instance_url")
+	if q == nil {
+		t.Fatal("gitlab_instance_url question not found")
+	}
+	result := &WizardResult{GitMode: "personal", GitProvider: "gitlab"}
+	if !q.Condition(result) {
+		t.Error("gitlab_instance_url should be visible for gitlab provider")
+	}
+	result.GitProvider = "github"
+	if q.Condition(result) {
+		t.Error("gitlab_instance_url should be hidden for github provider")
+	}
+
+	// gitlab_username should only show for gitlab provider
+	q = QuestionByID(questions, "gitlab_username")
+	if q == nil {
+		t.Fatal("gitlab_username question not found")
+	}
+	result.GitProvider = "gitlab"
+	if !q.Condition(result) {
+		t.Error("gitlab_username should be visible for gitlab provider")
+	}
+	result.GitProvider = "github"
+	if q.Condition(result) {
+		t.Error("gitlab_username should be hidden for github provider")
+	}
+
+	// gitlab_token should only show for gitlab provider
+	q = QuestionByID(questions, "gitlab_token")
+	if q == nil {
+		t.Fatal("gitlab_token question not found")
+	}
+	result.GitProvider = "gitlab"
+	if !q.Condition(result) {
+		t.Error("gitlab_token should be visible for gitlab provider")
+	}
+	result.GitProvider = "github"
+	if q.Condition(result) {
+		t.Error("gitlab_token should be hidden for github provider")
+	}
+}
+
+func TestGitHubQuestionsHiddenForGitLab(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test-project")
+
+	// github_username should be hidden for gitlab provider
+	q := QuestionByID(questions, "github_username")
+	if q == nil {
+		t.Fatal("github_username question not found")
+	}
+	result := &WizardResult{GitMode: "personal", GitProvider: "gitlab"}
+	if q.Condition(result) {
+		t.Error("github_username should be hidden for gitlab provider")
+	}
+	result.GitProvider = "github"
+	if !q.Condition(result) {
+		t.Error("github_username should be visible for github provider")
+	}
+
+	// github_token should be hidden for gitlab provider
+	q = QuestionByID(questions, "github_token")
+	if q == nil {
+		t.Fatal("github_token question not found")
+	}
+	result.GitProvider = "gitlab"
+	if q.Condition(result) {
+		t.Error("github_token should be hidden for gitlab provider")
+	}
+	result.GitProvider = "github"
+	if !q.Condition(result) {
+		t.Error("github_token should be visible for github provider")
+	}
+}
+
+func TestWizardResultGitLabFields(t *testing.T) {
+	result := &WizardResult{
+		ProjectName:       "test-project",
+		GitMode:           "personal",
+		GitProvider:       "gitlab",
+		GitLabInstanceURL: "https://gitlab.company.com",
+		GitLabUsername:    "gluser",
+		GitLabToken:       "glpat-test-token",
+	}
+
+	if result.ProjectName != "test-project" {
+		t.Errorf("expected ProjectName 'test-project', got %q", result.ProjectName)
+	}
+	if result.GitMode != "personal" {
+		t.Errorf("expected GitMode 'personal', got %q", result.GitMode)
+	}
+	if result.GitProvider != "gitlab" {
+		t.Errorf("expected GitProvider 'gitlab', got %q", result.GitProvider)
+	}
+	if result.GitLabInstanceURL != "https://gitlab.company.com" {
+		t.Errorf("expected GitLabInstanceURL 'https://gitlab.company.com', got %q", result.GitLabInstanceURL)
+	}
+	if result.GitLabUsername != "gluser" {
+		t.Errorf("expected GitLabUsername 'gluser', got %q", result.GitLabUsername)
+	}
+	if result.GitLabToken != "glpat-test-token" {
+		t.Errorf("expected GitLabToken 'glpat-test-token', got %q", result.GitLabToken)
+	}
+}
+
+func TestDevelopmentModeInWizard(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+
+	q := QuestionByID(questions, "development_mode")
+	if q == nil {
+		t.Fatal("development_mode question should be in wizard")
+	}
+	if q.Default != "tdd" {
+		t.Errorf("development_mode default should be 'tdd', got %q", q.Default)
+	}
+}
+
+// --- buildQuestionGroup tests ---
+
+func TestBuildQuestionGroup_Select(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:   "test_select",
+		Type: QuestionTypeSelect,
+		Options: []Option{
+			{Label: "A", Value: "a"},
+			{Label: "B", Value: "b"},
+		},
+	}
+
+	g := buildQuestionGroup(q, result, &locale)
+	if g == nil {
+		t.Error("expected non-nil group")
+	}
+}
+
+func TestBuildQuestionGroup_Input(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:      "test_input",
+		Type:    QuestionTypeInput,
+		Default: "default-val",
+	}
+
+	g := buildQuestionGroup(q, result, &locale)
+	if g == nil {
+		t.Error("expected non-nil group")
+	}
+}
+
+func TestBuildQuestionGroup_WithCondition(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:   "conditional_q",
+		Type: QuestionTypeInput,
+		Condition: func(r *WizardResult) bool {
+			return r.GitMode == "team"
+		},
+	}
+
+	g := buildQuestionGroup(q, result, &locale)
+	if g == nil {
+		t.Error("expected non-nil group even with condition")
+	}
+}
+
+// --- newMoAIWizardTheme tests ---
+
+func TestNewMoAIWizardTheme_ReturnsNonNil(t *testing.T) {
+	theme := newMoAIWizardTheme()
+	if theme == nil {
+		t.Error("expected non-nil theme")
+	}
+}
+
+// --- characterization tests: capture existing behavior before IMPROVE ---
+
+// TestCharacterize_WizardTheme_SelectedPrefix verifies that the focused
+// SelectedPrefix renders with the ◆ diamond marker.
+// This MUST NOT regress after M5 IMPROVE.
+func TestCharacterize_WizardTheme_SelectedPrefix(t *testing.T) {
+	theme := newMoAIWizardTheme()
+	rendered := theme.Focused.SelectedPrefix.Value()
+	if rendered != "◆ " {
+		t.Errorf("SelectedPrefix: expected %q, got %q", "◆ ", rendered)
+	}
+}
+
+// TestCharacterize_WizardTheme_UnselectedPrefix verifies that the focused
+// UnselectedPrefix renders with the ◇ diamond marker.
+// This MUST NOT regress after M5 IMPROVE.
+func TestCharacterize_WizardTheme_UnselectedPrefix(t *testing.T) {
+	theme := newMoAIWizardTheme()
+	rendered := theme.Focused.UnselectedPrefix.Value()
+	if rendered != "◇ " {
+		t.Errorf("UnselectedPrefix: expected %q, got %q", "◇ ", rendered)
+	}
+}
+
+// TestCharacterize_WizardTheme_SelectSelectorPrefix verifies that the
+// SelectSelector prompt is set to "▸ ".
+// This MUST NOT regress after M5 IMPROVE.
+func TestCharacterize_WizardTheme_SelectSelectorPrefix(t *testing.T) {
+	theme := newMoAIWizardTheme()
+	rendered := theme.Focused.SelectSelector.Value()
+	if rendered != "▸ " {
+		t.Errorf("SelectSelector: expected %q, got %q", "▸ ", rendered)
+	}
+}
+
+// TestCharacterize_WizardTheme_BlurredInheritsFromFocused verifies the blurred
+// state is derived from focused (structural invariant that must not regress).
+func TestCharacterize_WizardTheme_BlurredInheritsFromFocused(t *testing.T) {
+	theme := newMoAIWizardTheme()
+	// Blurred selected/unselected prefixes should match focused
+	if theme.Blurred.SelectedPrefix.Value() != theme.Focused.SelectedPrefix.Value() {
+		t.Errorf("Blurred.SelectedPrefix %q != Focused.SelectedPrefix %q",
+			theme.Blurred.SelectedPrefix.Value(), theme.Focused.SelectedPrefix.Value())
+	}
+	if theme.Blurred.UnselectedPrefix.Value() != theme.Focused.UnselectedPrefix.Value() {
+		t.Errorf("Blurred.UnselectedPrefix %q != Focused.UnselectedPrefix %q",
+			theme.Blurred.UnselectedPrefix.Value(), theme.Focused.UnselectedPrefix.Value())
+	}
+}
+
+// TestCharacterize_WizardTotalSteps verifies the canonical step count constant (AC-CLI-TUI-007).
+func TestCharacterize_WizardTotalSteps(t *testing.T) {
+	if wizardTotalSteps != 6 {
+		t.Errorf("wizardTotalSteps: expected 6, got %d", wizardTotalSteps)
+	}
+}
+
+// TestCharacterize_WizardColors_PrimaryIsDeepTeal verifies that after M5 IMPROVE,
+// the primary wizard color resolves to the deep teal accent from internal/tui.
+// This replaces the old terra cotta (#DA7756 / #C45A3C) brand color.
+func TestCharacterize_WizardColors_PrimaryIsDeepTeal(t *testing.T) {
+	c := wizardColors()
+	// Light deep teal accent
+	if c.Primary.Light != "#144a46" {
+		t.Errorf("Primary.Light: expected #144a46 (deep teal), got %q", c.Primary.Light)
+	}
+	// Dark deep teal accent
+	if c.Primary.Dark != "#3eb3a4" {
+		t.Errorf("Primary.Dark: expected #3eb3a4 (deep teal), got %q", c.Primary.Dark)
+	}
+}
+
+// TestCharacterize_WizardColors_NoTerracottaOrPurple verifies that the old
+// forbidden colors are not present in the wizard color set (AC-CLI-TUI-013).
+func TestCharacterize_WizardColors_NoTerracottaOrPurple(t *testing.T) {
+	c := wizardColors()
+	forbidden := []struct {
+		name  string
+		color string
+	}{
+		{"terra cotta dark", "#DA7756"},
+		{"terra cotta light", "#C45A3C"},
+		{"purple dark", "#7C3AED"},
+		{"purple light", "#5B21B6"},
+	}
+	colors := []string{
+		c.Primary.Light, c.Primary.Dark,
+		c.Secondary.Light, c.Secondary.Dark,
+		c.Success.Light, c.Success.Dark,
+		c.Error.Light, c.Error.Dark,
+		c.Muted.Light, c.Muted.Dark,
+		c.Text.Light, c.Text.Dark,
+		c.Border.Light, c.Border.Dark,
+	}
+	for _, fc := range forbidden {
+		for _, col := range colors {
+			if col == fc.color {
+				t.Errorf("forbidden color %s (%s) found in wizard color set", fc.name, fc.color)
+			}
+		}
+	}
+}
+
+// TestCharacterize_WizardTheme_UsesDeepTealForTitle verifies that the theme
+// title foreground is set from the tui primary token (deep teal), not terra cotta.
+func TestCharacterize_WizardTheme_UsesDeepTealForTitle(t *testing.T) {
+	theme := newMoAIWizardTheme()
+	// The theme title should be bold (structural invariant).
+	if !theme.Focused.Title.GetBold() {
+		t.Error("Focused.Title should be bold")
+	}
+	// Verify focused title is not zero (color was applied).
+	if theme.Focused.Title.GetForeground() == nil {
+		t.Error("Focused.Title foreground should not be nil")
+	}
+}
+
+// --- GetLocalizedQuestion edge cases ---
+
+func TestGetLocalizedQuestion_EmptyLocale(t *testing.T) {
+	q := &Question{
+		ID:    "test_q",
+		Title: "Original Title",
+	}
+	result := GetLocalizedQuestion(q, "")
+	if result.Title != "Original Title" {
+		t.Errorf("empty locale should return original title, got %q", result.Title)
+	}
+}
+
+func TestGetLocalizedQuestion_KnownLocaleUnknownID(t *testing.T) {
+	q := &Question{
+		ID:    "nonexistent_question_id",
+		Title: "Original Title",
+	}
+	result := GetLocalizedQuestion(q, "ko")
+	if result.Title != "Original Title" {
+		t.Errorf("unknown question ID should return original title, got %q", result.Title)
+	}
+}
+
+func TestGetLocalizedQuestion_OptionTranslation(t *testing.T) {
+	q := &Question{
+		ID:    "locale",
+		Type:  QuestionTypeSelect,
+		Title: "Select language",
+		Options: []Option{
+			{Label: "Korean (한국어)", Value: "ko", Desc: "Korean"},
+			{Label: "English", Value: "en", Desc: "English"},
+		},
+	}
+
+	// Korean translation should translate option labels
+	result := GetLocalizedQuestion(q, "ko")
+	if len(result.Options) != 2 {
+		t.Fatalf("expected 2 options, got %d", len(result.Options))
+	}
+	// Values should be preserved
+	if result.Options[0].Value != "ko" {
+		t.Errorf("option[0].Value should be 'ko', got %q", result.Options[0].Value)
+	}
+	if result.Options[1].Value != "en" {
+		t.Errorf("option[1].Value should be 'en', got %q", result.Options[1].Value)
+	}
+}
+
+func TestGetLocalizedQuestion_MismatchedOptionCount(t *testing.T) {
+	// git_mode has "ko" translation with 3 options.
+	// Create a question with 4 options to trigger the mismatch branch.
+	q := &Question{
+		ID:    "git_mode",
+		Type:  QuestionTypeSelect,
+		Title: "Select Git automation mode",
+		Options: []Option{
+			{Label: "Manual", Value: "manual"},
+			{Label: "Personal", Value: "personal"},
+			{Label: "Team", Value: "team"},
+			{Label: "Extra", Value: "extra"}, // Extra option causes mismatch
+		},
+	}
+
+	// When option count doesn't match translation count, options should NOT be translated
+	result := GetLocalizedQuestion(q, "ko")
+	// Title should still be translated
+	if result.Title == q.Title {
+		t.Error("title should be translated even with mismatched option count")
+	}
+	// Options should remain original since count mismatch
+	if len(result.Options) != 4 {
+		t.Fatalf("expected 4 options, got %d", len(result.Options))
+	}
+	if result.Options[0].Label != "Manual" {
+		t.Errorf("mismatched options should keep original label, got %q", result.Options[0].Label)
+	}
+}
+
+func TestGetLocalizedQuestion_PreservesNonTranslatedFields(t *testing.T) {
+	q := &Question{
+		ID:       "locale",
+		Type:     QuestionTypeSelect,
+		Title:    "Select language",
+		Default:  "en",
+		Required: true,
+		Options: []Option{
+			{Label: "Korean", Value: "ko"},
+			{Label: "English", Value: "en"},
+		},
+	}
+
+	result := GetLocalizedQuestion(q, "ko")
+	if result.Default != "en" {
+		t.Errorf("Default should be preserved, got %q", result.Default)
+	}
+	if !result.Required {
+		t.Error("Required should be preserved")
+	}
+	if result.Type != QuestionTypeSelect {
+		t.Errorf("Type should be preserved, got %v", result.Type)
+	}
+}
+
+// --- buildSelectField edge cases ---
+
+func TestBuildSelectField_WithDefault(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:      "test_sel",
+		Type:    QuestionTypeSelect,
+		Title:   "Pick one",
+		Default: "b",
+		Options: []Option{
+			{Label: "A", Value: "a"},
+			{Label: "B", Value: "b"},
+			{Label: "C", Value: "c"},
+		},
+	}
+
+	field := buildSelectField(q, result, &locale)
+	if field == nil {
+		t.Error("expected non-nil select field")
+	}
+}
+
+func TestBuildSelectField_WithoutDefault(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:   "test_sel_nodef",
+		Type: QuestionTypeSelect,
+		Options: []Option{
+			{Label: "X", Value: "x"},
+			{Label: "Y", Value: "y"},
+		},
+	}
+
+	field := buildSelectField(q, result, &locale)
+	if field == nil {
+		t.Error("expected non-nil select field")
+	}
+}
+
+func TestBuildSelectField_WithDescriptions(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:   "test_sel_desc",
+		Type: QuestionTypeSelect,
+		Options: []Option{
+			{Label: "Option A", Value: "a", Desc: "Description A"},
+			{Label: "Option B", Value: "b", Desc: ""},
+		},
+	}
+
+	field := buildSelectField(q, result, &locale)
+	if field == nil {
+		t.Error("expected non-nil select field")
+	}
+}
+
+// --- buildInputField edge cases ---
+
+func TestBuildInputField_WithDefault(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:      "test_inp_def",
+		Type:    QuestionTypeInput,
+		Title:   "Enter name",
+		Default: "default-name",
+	}
+
+	field := buildInputField(q, result, &locale)
+	if field == nil {
+		t.Error("expected non-nil input field")
+	}
+}
+
+func TestBuildInputField_WithoutDefault(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:   "test_inp_nodef",
+		Type: QuestionTypeInput,
+	}
+
+	field := buildInputField(q, result, &locale)
+	if field == nil {
+		t.Error("expected non-nil input field")
+	}
+}
+
+func TestBuildInputField_Required(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:       "test_inp_req",
+		Type:     QuestionTypeInput,
+		Required: true,
+	}
+
+	field := buildInputField(q, result, &locale)
+	if field == nil {
+		t.Error("expected non-nil input field")
+	}
+}
+
+func TestBuildInputField_RequiredWithDefault(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:       "test_inp_reqdef",
+		Type:     QuestionTypeInput,
+		Required: true,
+		Default:  "fallback",
+	}
+
+	field := buildInputField(q, result, &locale)
+	if field == nil {
+		t.Error("expected non-nil input field")
+	}
+}
+
+// --- DefaultQuestions comprehensive coverage ---
+
+func TestDefaultQuestions_AllQuestionTypesValid(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+	for _, q := range questions {
+		if q.Type != QuestionTypeSelect && q.Type != QuestionTypeInput {
+			t.Errorf("question %q has invalid type %v", q.ID, q.Type)
+		}
+		if q.ID == "" {
+			t.Error("question has empty ID")
+		}
+		if q.Title == "" {
+			t.Errorf("question %q has empty title", q.ID)
+		}
+	}
+}
+
+func TestDefaultQuestions_SelectQuestionsHaveOptions(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+	for _, q := range questions {
+		if q.Type == QuestionTypeSelect && len(q.Options) == 0 {
+			t.Errorf("select question %q has no options", q.ID)
+		}
+	}
+}
+
+func TestDefaultQuestions_ConditionalQuestionsHaveConditions(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+	conditionalIDs := map[string]bool{
+		"git_provider":        true,
+		"gitlab_instance_url": true,
+		"github_username":     true,
+		"github_token":        true,
+		"gitlab_username":     true,
+		"gitlab_token":        true,
+	}
+
+	for _, q := range questions {
+		if conditionalIDs[q.ID] && q.Condition == nil {
+			t.Errorf("question %q should have a condition", q.ID)
+		}
+	}
+}
+
+func TestDefaultQuestions_UniqueIDs(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+	seen := make(map[string]bool)
+	for _, q := range questions {
+		if seen[q.ID] {
+			t.Errorf("duplicate question ID: %q", q.ID)
+		}
+		seen[q.ID] = true
+	}
+}
+
+// --- RunWithDefaults test ---
+
+func TestRunWithDefaults_CreatesQuestions(t *testing.T) {
+	// RunWithDefaults calls Run which needs TTY, but will fail gracefully.
+	// We just verify it doesn't panic and creates questions correctly.
+	// Since we can't run the form without TTY, we test that it at least
+	// processes questions by verifying DefaultQuestions returns valid data.
+	questions := DefaultQuestions("/tmp/run-defaults-test")
+	if len(questions) == 0 {
+		t.Error("DefaultQuestions should return non-empty for RunWithDefaults")
+	}
+}
+
+// --- REQ-1: RunWithDefaults locale parameter test ---
+
+func TestRunWithDefaults_AcceptsLocaleParameter(t *testing.T) {
+	// Test the RunWithDefaults(projectRoot, locale) signature.
+	// Cannot run without TTY, so this is a compile-level check only.
+	questions := DefaultQuestions("/tmp/run-defaults-locale-test")
+	if len(questions) == 0 {
+		t.Error("DefaultQuestions should return non-empty")
+	}
+	// Verify the new signature that accepts a locale parameter:
+	// RunWithDefaults("/tmp/test", "ko") must compile
+	_ = func() {
+		// Compile-time check only — cannot run without TTY
+		// _, _ = RunWithDefaults("/tmp/test", "ko")
+	}
+}
+
+// --- REQ-2: DefaultQuestions default value override test ---
+
+func TestDefaultQuestions_GitHubUsernameDefaultOverride(t *testing.T) {
+	// The github_username default from DefaultQuestions should be overridable
+	questions := DefaultQuestions("/tmp/test")
+	q := QuestionByID(questions, "github_username")
+	if q == nil {
+		t.Fatal("github_username question not found")
+	}
+
+	// Initial value is an empty string
+	if q.Default != "" {
+		t.Errorf("github_username default should be empty initially, got %q", q.Default)
+	}
+
+	// Verify that the Default field can be overridden
+	q.Default = "existing-user"
+	if q.Default != "existing-user" {
+		t.Error("should be able to override Default field")
+	}
+}
+
+func TestDefaultQuestions_GitLabUsernameDefaultOverride(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+	q := QuestionByID(questions, "gitlab_username")
+	if q == nil {
+		t.Fatal("gitlab_username question not found")
+	}
+
+	// Initial value is an empty string
+	if q.Default != "" {
+		t.Errorf("gitlab_username default should be empty initially, got %q", q.Default)
+	}
+
+	// Verify that the Default field can be overridden
+	q.Default = "existing-gl-user"
+	if q.Default != "existing-gl-user" {
+		t.Error("should be able to override Default field")
+	}
+}
+
+// --- REQ-3: skip github_token question when gh auth is authenticated test ---
+
+func TestDefaultQuestions_GitHubTokenCondition(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+	q := QuestionByID(questions, "github_token")
+	if q == nil {
+		t.Fatal("github_token question not found")
+	}
+
+	// Default Condition: show when using github provider + personal/team mode
+	result := &WizardResult{GitMode: "personal", GitProvider: "github"}
+	if !q.Condition(result) {
+		t.Error("github_token should be visible for github provider + personal mode")
+	}
+
+	// The Condition should be overridable to always hide it (when authenticated via gh auth)
+	q.Condition = func(r *WizardResult) bool {
+		return false // skip when authenticated via gh auth
+	}
+	if q.Condition(result) {
+		t.Error("overridden condition should return false (skip token question)")
+	}
+}
+
+func TestIsGhAuthenticated_ReturnsBoolean(t *testing.T) {
+	// Verify that IsGhAuthenticated() returns a bool
+	// Returns false in environments where gh is not installed or not authenticated
+	result := IsGhAuthenticated()
+	// Must be a bool type (true or false)
+	_ = result // value varies by environment, so only the type is checked
+}
+
+// --- readLocaleFromProject helper function tests ---
+
+func TestReadLocaleFromProject_ReturnsLocale(t *testing.T) {
+	// Create language.yaml in a temporary directory
+	tmpDir := t.TempDir()
+	sectionsDir := tmpDir + "/.moai/config/sections"
+	if err := os.MkdirAll(sectionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	content := "language:\n  conversation_language: ko\n"
+	if err := os.WriteFile(sectionsDir+"/language.yaml", []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	locale := ReadLocaleFromProject(tmpDir)
+	if locale != "ko" {
+		t.Errorf("ReadLocaleFromProject = %q, want %q", locale, "ko")
+	}
+}
+
+func TestReadLocaleFromProject_MissingFile_ReturnsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	locale := ReadLocaleFromProject(tmpDir)
+	if locale != "" {
+		t.Errorf("ReadLocaleFromProject with missing file = %q, want empty", locale)
+	}
+}
+
+func TestReadLocaleFromProject_InvalidYAML_ReturnsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	sectionsDir := tmpDir + "/.moai/config/sections"
+	if err := os.MkdirAll(sectionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Invalid YAML
+	if err := os.WriteFile(sectionsDir+"/language.yaml", []byte("invalid: [yaml"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	locale := ReadLocaleFromProject(tmpDir)
+	if locale != "" {
+		t.Errorf("ReadLocaleFromProject with invalid YAML = %q, want empty", locale)
+	}
+}
+
+func TestReadLocaleFromProject_NoLanguageKey_ReturnsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	sectionsDir := tmpDir + "/.moai/config/sections"
+	if err := os.MkdirAll(sectionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// YAML without a language key
+	if err := os.WriteFile(sectionsDir+"/language.yaml", []byte("other_key: value\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	locale := ReadLocaleFromProject(tmpDir)
+	if locale != "" {
+		t.Errorf("ReadLocaleFromProject with no language key = %q, want empty", locale)
+	}
+}
+
+// --- readGitHubUsernameFromConfig helper function tests ---
+
+func TestReadGitHubUsernameFromConfig_ReturnsUsername(t *testing.T) {
+	tmpDir := t.TempDir()
+	sectionsDir := tmpDir + "/.moai/config/sections"
+	if err := os.MkdirAll(sectionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	content := "user:\n  github_username: existinguser\n"
+	if err := os.WriteFile(sectionsDir+"/user.yaml", []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	username := ReadGitHubUsernameFromConfig(tmpDir)
+	if username != "existinguser" {
+		t.Errorf("ReadGitHubUsernameFromConfig = %q, want %q", username, "existinguser")
+	}
+}
+
+func TestReadGitHubUsernameFromConfig_MissingFile_ReturnsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	username := ReadGitHubUsernameFromConfig(tmpDir)
+	if username != "" {
+		t.Errorf("ReadGitHubUsernameFromConfig with missing file = %q, want empty", username)
+	}
+}
+
+func TestReadGitLabUsernameFromConfig_ReturnsUsername(t *testing.T) {
+	tmpDir := t.TempDir()
+	sectionsDir := tmpDir + "/.moai/config/sections"
+	if err := os.MkdirAll(sectionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	content := "user:\n  gitlab_username: glexistinguser\n"
+	if err := os.WriteFile(sectionsDir+"/user.yaml", []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	username := ReadGitLabUsernameFromConfig(tmpDir)
+	if username != "glexistinguser" {
+		t.Errorf("ReadGitLabUsernameFromConfig = %q, want %q", username, "glexistinguser")
+	}
+}
+
+func TestReadGitLabUsernameFromConfig_MissingFile_ReturnsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	username := ReadGitLabUsernameFromConfig(tmpDir)
+	if username != "" {
+		t.Errorf("ReadGitLabUsernameFromConfig with missing file = %q, want empty", username)
+	}
+}
+
+// --- Additional translation coverage ---
+
+func TestGetUIStrings_AllLocales(t *testing.T) {
+	locales := []string{"en", "ko", "ja", "zh"}
+	for _, locale := range locales {
+		str := GetUIStrings(locale)
+		if str.HelpSelect == "" {
+			t.Errorf("locale %q: HelpSelect should not be empty", locale)
+		}
+		if str.HelpInput == "" {
+			t.Errorf("locale %q: HelpInput should not be empty", locale)
+		}
+		if str.ErrorRequired == "" {
+			t.Errorf("locale %q: ErrorRequired should not be empty", locale)
+		}
+	}
+}
+
+func TestGetLocalizedQuestion_AllLocales_ForGitModeQuestion(t *testing.T) {
+	questions := DefaultQuestions("/tmp/test")
+	q := QuestionByID(questions, "git_mode")
+	if q == nil {
+		t.Fatal("git_mode question not found")
+	}
+
+	locales := []string{"ko", "ja", "zh"}
+	for _, locale := range locales {
+		result := GetLocalizedQuestion(q, locale)
+		if result.Title == "" {
+			t.Errorf("locale %q: title should not be empty", locale)
+		}
+		if result.Description == "" {
+			t.Errorf("locale %q: description should not be empty", locale)
+		}
+	}
+}
+
+// --- buildQuestionGroup tests ---
+
+func TestBuildQuestionGroup_SelectType(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:    "test_group_sel",
+		Type:  QuestionTypeSelect,
+		Title: "Group select",
+		Options: []Option{
+			{Label: "A", Value: "a"},
+		},
+	}
+
+	group := buildQuestionGroup(q, result, &locale)
+	if group == nil {
+		t.Fatal("expected non-nil group for select question")
+	}
+}
+
+func TestBuildQuestionGroup_InputType(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:    "test_group_inp",
+		Type:  QuestionTypeInput,
+		Title: "Group input",
+	}
+
+	group := buildQuestionGroup(q, result, &locale)
+	if group == nil {
+		t.Fatal("expected non-nil group for input question")
+	}
+}
+
+func TestBuildQuestionGroup_WithCondition_Personal(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:    "conditional_personal",
+		Type:  QuestionTypeInput,
+		Title: "Conditional Personal",
+		Condition: func(r *WizardResult) bool {
+			return r.GitMode == "personal"
+		},
+	}
+
+	group := buildQuestionGroup(q, result, &locale)
+	if group == nil {
+		t.Fatal("expected non-nil group for conditional question")
+	}
+}
+
+func TestBuildQuestionGroup_WithoutCondition(t *testing.T) {
+	result := &WizardResult{}
+	locale := ""
+	q := &Question{
+		ID:    "no_cond_q",
+		Type:  QuestionTypeSelect,
+		Title: "Always visible",
+		Options: []Option{
+			{Label: "Yes", Value: "yes"},
+		},
+	}
+
+	group := buildQuestionGroup(q, result, &locale)
+	if group == nil {
+		t.Fatal("expected non-nil group")
+	}
+}

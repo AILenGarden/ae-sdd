@@ -315,14 +315,14 @@ class TestUC14(unittest.TestCase):
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
-    def test_check_all_returns_14(self):
+    def test_check_all_returns_16(self):
         results = ug.check_all(REPO_ROOT)
         # UC-01~07 + UC-14（update_graph 原生 8 项）+ UC-08~13（alignment_audit AA 注入 6 项）= 14。
         # AA 的 register_to_update_graph() 在 import alignment_audit 时自动把 UC-08~13
         # 注入共享的 ug.CHECK_FUNCS（见 alignment_audit.py:666），故全量 pytest 收集
         # test_alignment_audit.py 后本测试拿到 14 而非原生 8。这是已知的 import-time
         # 副作用耦合；若未来把 AA 注册改为显式调用，需同步回退此断言到 8。
-        self.assertEqual(len(results), 14)
+        self.assertEqual(len(results), 16)
 
     def test_check_all_only_filter(self):
         results = ug.check_all(REPO_ROOT, only="UC-01")
@@ -339,6 +339,18 @@ class TestCheckAll(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].check_id, "UC-14")
 
+    def test_check_all_only_uc15(self):
+        results = ug.check_all(REPO_ROOT, only="UC-15")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].check_id, "UC-15")
+        self.assertTrue(results[0].pass_, results[0].message)
+
+    def test_check_all_only_uc16(self):
+        results = ug.check_all(REPO_ROOT, only="UC-16")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].check_id, "UC-16")
+        self.assertTrue(results[0].pass_, results[0].message)
+
     def test_check_all_unknown(self):
         results = ug.check_all(REPO_ROOT, only="UC-99")
         self.assertEqual(len(results), 1)
@@ -348,8 +360,8 @@ class TestCheckAll(unittest.TestCase):
         results = ug.check_all(REPO_ROOT)
         s = ug.summarize(results)
         # 14 = UC-01~07 + UC-14 原生 + UC-08~13 AA 注入（见 test_check_all_returns_14 注释）
-        self.assertEqual(s["total"], 14)
-        self.assertEqual(s["passed"] + s["failed"], 14)
+        self.assertEqual(s["total"], 16)
+        self.assertEqual(s["passed"] + s["failed"], 16)
         self.assertIn("checks", s)
 
 

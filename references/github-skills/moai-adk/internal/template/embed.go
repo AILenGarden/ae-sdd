@@ -1,0 +1,44 @@
+// Package template provides template deployment and rendering for MoAI projects.
+//
+// The templates/ subdirectory contains curated template content that is embedded
+// into the moai binary at compile time via //go:embed. This includes agent
+// definitions, skill files, rules, output styles, configuration references,
+// and root files (CLAUDE.md, .gitignore).
+//
+// Runtime-generated files (settings.json, .mcp.json, .lsp.json) are
+// intentionally excluded from the embedded templates per ADR-011
+// (Zero Runtime Template Expansion) and AD-001 (Go compiled hooks).
+// These files are generated programmatically via Go struct serialization
+// in settings.go (SettingsGenerator, MCPGenerator).
+package template
+
+import (
+	"embed"
+	"io/fs"
+)
+
+// embeddedRaw holds the raw embedded filesystem with the "templates/" prefix.
+// The all: prefix ensures dot-prefixed directories (.claude/, .moai/) and
+// dot-prefixed files (.gitignore) are included.
+//
+// catalog.yaml is a sibling of the templates/ directory (not inside templates/)
+// so it requires an explicit separate embed directive.
+// Added in SPEC-V3R4-CATALOG-001 T-023 (embed gap confirmation).
+//
+//go:embed all:templates
+//go:embed catalog.yaml
+var embeddedRaw embed.FS
+
+// @MX:ANCHOR: [AUTO] go:embed template filesystem access point - depended on by 6 or more callers including init/update/deployer
+// @MX:REASON: [AUTO] fan_in=6, sole embedded template source in the binary; the "templates/" prefix strip rule maps 1:1 to deployment paths
+// EmbeddedTemplates returns the embedded template filesystem with the
+// "templates/" prefix stripped so that paths match deployment targets.
+//
+// For example, the embedded path "templates/.claude/agents/expert/expert-backend.md"
+// becomes ".claude/agents/expert/expert-backend.md" in the returned fs.FS.
+//
+// In production this fs.FS is passed to NewDeployer() to create a Deployer
+// that writes templates to the project root during "moai init".
+func EmbeddedTemplates() (fs.FS, error) {
+	return fs.Sub(embeddedRaw, "templates")
+}

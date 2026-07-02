@@ -2,7 +2,7 @@
 
 > v3.7.4 · 面向开发者、LLM Agent 与项目接入方
 >
-> 本文档每个能力模块统一拆为**设计**（是什么、为什么、原则/决策）与**实现**（表格：设计点 → 具体实现方式，精确到文件:行号/函数名/CLI 命令/gate ID）两部分。表格内容随代码变化，若发现表格与代码不一致，以代码为准并提 issue 修文档。
+> 本文档是**系统能力设计入口**，说明 ae-sdd 的能力语义、边界和当前实现状态。代码分层、模块职责、运行时数据流和变更闭环统一维护在 [`ae-sdd-implementation-architecture.md`](ae-sdd-implementation-architecture.md)。若本文与代码实现冲突，以 CLI/测试输出为准，并同步修正文档。
 
 ---
 
@@ -192,7 +192,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | 存量文档迁移 | `document_storage.py:migrate_old_docs()`（行615） |
 | CLI 入口 | `ae-sdd doc save / resolve / finalize`（`tools/bin/ae-sdd` 行2722起 doc 子命令组） |
 
-**⚠️ 已知缺口**：`get_thinking_engine(projectKey)` 被 `coding-process-skill.md`（行74/104）和 `coding-skill.md`（行84）多处引用为已有 API，但 `document_storage.py` 全文无此函数实现，document-storage-skill.md §4.10 API 契约表也未收录——这是**文档声明但代码未实现**的缺口，尚待补齐或改引用。
+**已补齐**：`get_thinking_engine(projectKey)` 已在 `tools/lib/document_storage.py` 实现，并收录到 `document-storage-skill.md` §4.2。编码流程引用该 API 时会优先读取项目/文档工作区覆盖版本，找不到时回退到 ae-sdd 自带 `standards/thinking/be-coding-thinking-engine.md`，返回 `path/source/content/sha256`。
 
 **颗粒度与边界**：所有 ae-sdd 生成文档的读写必须走本层 API，不允许 SKILL 各自维护路径拼接逻辑；version/ChangeLog 策略变更须同步 §4.10 intent 枚举表的"实现状态"列（✅已实现/📝待实现）。
 
@@ -233,8 +233,8 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | 设计点 | 实现方式 |
 | --- | --- |
 | 转译脚本 | `scripts/build_harness.py`（非 `.ps1`，PS1→Python 迁移已完成） |
-| 产物路径 | `harness/.harness/agent.md` + `harness/.harness/README.md` |
-| 幂等锁 | `harness/.adapter.lock`（JSON：`adapter_version/ae_sdd_version/commit/templateHash/converted_at`），`build_harness.py:read_adapter_lock()` |
+| 产物路径 | `.harness/agent.md` + `.harness/README.md` |
+| 幂等锁 | `.harness/.adapter.lock`（JSON：`adapter_version/ae_sdd_version/commit/templateHash/converted_at`），`build_harness.py:read_adapter_lock()` |
 | 版本号三级 fallback | `build_harness.py:get_ae_sdd_version()`（行88，SKILL.md frontmatter → commit msg vX.Y.Z → git short hash） |
 | tree-hash amend 检测 | `build_harness.py:get_tree_hash()`（行147，🆕 v3.5.6，区分 amend 和真实内容变更） |
 | SKILL frontmatter 解析 | `build_harness.py:parse_skill_frontmatter()`（行168） |
@@ -354,7 +354,7 @@ ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执�
 | 维护类 | `health / init / init-hooks / runtime / plugin / scripts-dir / prompt-inject / stop-check` |
 
 - `ae-sdd health` 9 项自检：子 SKILL 章节完整性 / 项目资产双源一致 / 规则-工具同步 / 门禁覆盖度 / TR-1~7 / 扫描器就绪 / CHANGELOG 版本一致
-- `ae-sdd update-check`：权威源 `source/standards/update-graph.json`（UC-01~UC-13，比早期 UC-01~06 更完整），版本号三处一致 / 门禁注册一致 / 命令契约闭环 / 扫描器分发 / 健康度清单覆盖 / 文档-实现一致性等；dev-sync 前必须全绿
+- `ae-sdd update-check`：权威源 `source/standards/update-graph.json`（UC-01~UC-16，比早期 UC-01~06 更完整），版本号三处一致 / 门禁注册一致 / 命令契约闭环 / 扫描器分发 / 健康度清单覆盖 / 文档-实现一致性 / runtime 编译一致性 / 自动化级联一致性等；dev-sync 前必须全绿
 - `ae-sdd iteration-check`：IC-1~4 机器粗筛（report-only），接管人工 SOP 步骤 2/3/4
 
 **颗粒度与边界**：db/git 工具为只读；G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json；iteration-check/context-pressure 均 report-only，不阻断 dev-sync。
@@ -516,6 +516,7 @@ dist/ae-sdd/
 | 未编译母版 | `source/`，唯一人工编辑点 |
 | 编译实例包 | `dist/ae-sdd/`，由 `scripts/build_dist.py` 生成，git ignored |
 | Runtime 编译器 | `scripts/compile_skill_runtime.py`，生成 `runtime/*.compact.md` 并替换 dist 主入口为 bootloader |
+| 通用编译器 SKILL | `standalone-skills/skill-runtime-compiler/`，可复制到其它 agent/仓库，用于把任意 `SKILL.md` 包编译成同级 `<name>-compiled/` |
 | 编译接入点 | `scripts/build_dist.py` 在复制 source/tools/scripts 后调用 runtime 编译器 |
 | 门禁 compact 数据源 | `tools/lib/gates.py:GATE_REGISTRY` |
 | 状态机 compact 数据源 | `tools/lib/state.py:PHASE_FLOWS` |
@@ -524,4 +525,38 @@ dist/ae-sdd/
 
 **颗粒度与边界**：第一期只编译 boot/route/gates/flow/macros 五类高收益规则；子 SKILL 细节、模板正文、设计背景仍按需 fallback。compact runtime 不替代 CLI gate，任何硬门禁判断以 `ae-sdd gates check`、`state` 等工具输出为准。runtime 编译产物必须字节级幂等，不写入墙钟时间；同一份 `source/`、同一版编译器、同一份 `GATE_REGISTRY` 与 `PHASE_FLOWS` 重复编译，`dist/ae-sdd/SKILL.md` 和 `dist/ae-sdd/runtime/**` 必须完全一致。
 
-**当前实现状态**：第一期编译器、构建接入、runtime manifest、五类 compact slice、fallback 原文锚点、字节级幂等测试均已落地。下一步实现重点是 `ae-sdd runtime verify`、`update-check` 编译一致性检查、分发器 compiled-only 校验，以及外层 `dist` 包可复现构建。详细清单见 [`source/docs/skill-runtime-compiler.md`](skill-runtime-compiler.md) §14。
+**当前实现状态**：第一期编译器、构建接入、runtime manifest、五类 compact slice、fallback 原文锚点、字节级幂等测试、`ae-sdd runtime verify`、`update-check` UC-15 runtime 编译一致性检查、分发器 compiled-only 校验均已落地。另有通用 `skill-runtime-compiler` standalone SKILL，可把任意 SKILL 包编译到同级 `<name>-compiled/`，源包不变，并由 UC-15 覆盖幂等性。后续扩展重点是外层 `dist` 包可复现构建、子 SKILL 局部 compact、Agent 专属二次编译约束细化。详细清单见 [`source/docs/skill-runtime-compiler.md`](skill-runtime-compiler.md) §14~§15。
+
+---
+
+## 19. 自动化模式（v3.8.0，已实现）
+
+### 设计
+
+默认关闭的"全自动化开关"。开启后 6 个人工审核点（1/1.5/2/2.5/4/5）改走 Tier 3 多 reviewer 联审共识，跳过所有人工✅，实现 ae-sdd 输入→结果。联审机制复用 `agent-orchestration-skill §8.4`（Tier 判定 + 视角正交 + 交叉对比 + 降级规则），本模块只管开关与审核点行为分叉。
+
+核心立场：
+- **默认关闭**：`automation.enabled=false`，回退现状（每审核点等用户✅）
+- **开启即强制 Tier 3**：覆盖规模/关键决策判定，自动化模式跳过人工✅必须最高强度联审兜底
+- **禁逻辑多视角降级**：自动化模式必须物理 3 独立 session reviewer，环境不支持 → `state.phase=paused`（不得用 logical-multi-perspective 凑数）
+- **开工前信息预收集**：开工前一次性向用户收集所有必需信息（第三方凭证/复用选择/环境配置/命名约定/对接方/数据初始化），开工后不再打断
+- **阻断出口**：联审 3 轮矫正未决 → `state.phase=paused`（默认），输出完整问题清单等用户介入，避免 AI 带病狂奔
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 配置 SSOT | `.ae-sdd/config.yaml` 的 `automation` 段（`scripts/init.py:CONFIG_TEMPLATE` 生成，默认 `enabled: false`）|
+| 配置加载 | `tools/lib/config.py`：`AUTOMATION_DEFAULTS` + `load_automation_config()` + `is_automation_enabled()`/`get_reviewer_tier()`/`get_automated_points()` |
+| CLI 开关 | `tools/bin/ae-sdd`：`automation status/enable/disable`（enable 写 `enabledAt` 审计时间戳，AI 不得自行改）|
+| 开工前预收集 | `ae-sdd preflight collect`：扫输入材料+资产 7 层索引，识别 6 类待补信息，写 `.ae-sdd/preflight-info.yaml` |
+| 联审共识 state | `tools/lib/state.py`：`reviewConsensus[point]` 字段 + `register_review_consensus()`/`get_review_consensus()` |
+| 联审共识写入 | `ae-sdd state register-review-consensus --point {N} --passed {true\|false}` |
+| 联审共识门禁 | `tools/lib/gates.py:G-AUTO-CONSENSUS`（blocker，30 门禁之一）：自动化模式下 review 节点切相前校验 `reviewConsensus[point].passed=true` + reviewer 独立性（复用 G-09B 模式）|
+| Tier 强制 | `agent-orchestration-skill.md §8.4.1`：`automation.enabled=true` → 强制 Tier 3，覆盖规模判定 |
+| 降级禁止 | `agent-orchestration-skill.md §8.4.5`：自动化模式禁逻辑多视角降级，必须物理 3 独立 session |
+| 流程编排 | `source/SKILL.md §🚀 自动化模式` + Step1 自动化检测 + Step1.5 预收集 + 监管器步骤4 联审共识双模式 |
+| 级联检查 | `tools/lib/update_graph.py:check_uc16_automation_cascade`（UC-16）：校验 config.py/gates/state/CLI/init/SKILL 六处齐备 |
+| 级联图谱 | `source/standards/update-graph.json:UG-20`：trigger 含 config.py/init.py/gates.py/state.py/ae-sdd |
+
+**颗粒度与边界**：自动化模式不新增 phase，复用现有 PHASE_FLOWS 状态机骨架，只在审核点行为分叉（默认 vs 联审共识）；reviewConsensus 仅作用于 review 节点，不挂 PRD 4 层 AND 闸；6 审核点讲解规范（§📖）不变，自动化模式仍讲解，听众从"用户"变成"3 个 reviewer"；G-09B/G-REVIEW-LOOP 现有逻辑复用，不重复实现。

@@ -1,10 +1,10 @@
 ---
 name: ae-sdd
-version: 3.7.4
+version: 3.8.0
 description: |
-  端到端自动化工程主入口（v3.7.4）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.8.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
-  🆕 v3.7.4：document-storage 与 state 支持 WorkItem 隔离，PRD / BUG / OPT / Story 均可作为独立编码任务分桶与状态目录。
+  🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。
   历史变更见 source/CHANGELOG/。
 ---
 
@@ -25,6 +25,13 @@ triggers:
 > - 检查当前目录下 `.ae-sdd/` 是否存在
 > - 不存在 → `ae-sdd init <dir> <projectKey>`（创建 state.json，启动主流程监管器）→ 完成后进 Step 2
 > - 已存在 → `ae-sdd state read`：`paused` → 输出暂停播报，三选一；in-progress → 续接播报；initialized/completed → Step 2
+> - **🆕 v3.8.0 自动化模式检测**：`ae-sdd automation status`；若 `enabled:true` → 输出 `【自动化模式已启用 — 审核点将走 Tier 3 联审共识，跳过人工✅】` 并进 Step 1.5；否则按现状走 Step 2
+>
+> **Step 1.5  开工前信息预收集**（🆕 v3.8.0，仅自动化模式 `automation.preflightInfoCollection=true` 时执行）
+> - 调 `ae-sdd preflight collect` 扫描输入材料（PRD/DR/Story）+ 项目资产 7 层索引
+> - 识别 6 类待补信息：①第三方平台凭证（Key/Secret）②复用项选择（AI 找不到时问用哪个）③环境配置（DB/Redis/MQ 地址）④命名约定 ⑤已有对接方信息 ⑥数据初始化要求
+> - 输出 `【开工前信息清单】`表格，**用户一次性补齐**后才进 Step 2；补齐信息写入 `.ae-sdd/preflight-info.yaml`（流程内只读引用）
+> - 无待补信息 → 直接进 Step 2
 >
 > **Step 2  项目资产检查**
 > - `ae-sdd gates check --only G-00`；不通过 → 加载 `project-assets-update-skill.md §3` 生成资产；完成后进 Step 3
@@ -67,7 +74,7 @@ triggers:
 | 1 | `/compact`（系列入口，防跨系列上下文污染）；输出 SKILL 调用声明；写 events 日志 `ae-sdd state write --event skill-launched` |
 | 2 | 加载 `{series}-generate-skill.md` → 调 `agent-orchestration-skill`（按任务量分配子 Agent workflow）→ 产物核查 |
 | 3 | 加载 `{series}-review-skill.md` → 调 `agent-orchestration-skill`（分配子 Agent）→ 汇总错误报告给监管器；**Loop**：有错+矫正<3 → 回步骤2；矫正=3 → Level 3 暂停等用户；连续3轮无新错 → 步骤4 |
-| 4 | 人工审核：播报产物摘要；等用户 ✅/⚠️/❌ → ✅推进phase→下一系列；⚠️→重回步骤2+重置计数；❌→paused |
+| 4 | **默认模式**：人工审核：播报产物摘要；等用户 ✅/⚠️/❌ → ✅推进phase→下一系列；⚠️→重回步骤2+重置计数；❌→paused<br>**🆕 v3.8.0 自动化模式**：联审共识 — 强制 Tier 3 派 3 个独立 session reviewer（视角正交，见 `agent-orchestration-skill §8.4`）→ 跑 §8.4.3 交叉对比 → `ae-sdd state register-review-consensus` 写 `reviewConsensus[point]` → G-09B + G-REVIEW-LOOP + G-AUTO-CONSENSUS 全过即自动推进 phase；3 轮矫正未决 → L3 `state.phase=paused`（按 `automation.onConsensusStall`） |
 
 **流程偏移与矫正**（自动执行，AI 无法绕过）：
 
@@ -205,6 +212,72 @@ ae-sdd gates check --only G-DOC-CONSISTENCY
 ```bash
 ae-sdd gates check --only G-14
 ```
+
+### G-AUTO-CONSENSUS 自动化联审共识（🆕 v3.8.0，仅自动化模式启用）
+
+| 规则 | 行为 |
+|------|------|
+| 自动化模式开启 + 当前审核点在 `automatedReviewPoints` 白名单 | `state.reviewConsensus[point].passed=true` 否 → 🔴 阻断 |
+| reviewer 独立性（复用 G-09B）| `state.activeAgents` 有 ≥3 个 sessionId≠root 的 reviewer，否 → 🔴 阻断 |
+| 交叉对比完成（§8.4.3）| `reviewConsensus[point].reviewers` 字段 3 份报告齐备，否 → 🔴 阻断 |
+| 非自动化模式 / 审核点不在白名单 | skipped（回退人工审核）|
+
+```bash
+ae-sdd gates check --only G-AUTO-CONSENSUS
+ae-sdd state register-review-consensus --point {1\|1.5\|2\|2.5\|4\|5} --tier 3 --passed {true\|false} --rounds {N}
+```
+
+---
+
+## 🚀 自动化模式（🆕 v3.8.0 — 输入→结果全自动化）
+
+> **定位：** 默认关闭的"全自动化开关"。开启后 6 个人工审核点（1/1.5/2/2.5/4/5）改走 Tier 3 多 reviewer 联审共识，跳过所有人工✅，实现 ae-sdd 输入→结果。联审机制复用 `agent-orchestration-skill §8.4`（已存在），本节只管开关与审核点行为分叉。
+
+### 配置（`.ae-sdd/config.yaml` 的 `automation` 段，SSOT）
+
+```yaml
+automation:
+  enabled: false              # 总开关（默认关）
+  reviewerTier: 3             # 强制三审
+  preflightInfoCollection: true
+  onConsensusStall: pause     # pause=paused等用户 / fail=标记失败
+  automatedReviewPoints: [1, 1.5, 2, 2.5, 4, 5]
+  enabledAt: ""               # 审计时间戳，AI 不得自行改
+```
+
+### 行为分叉（每个审核点）
+
+| 模式 | 审核点行为 |
+|------|----------|
+| 默认（enabled=false）| 现状：AI 讲解 → 等用户 ✅/⚠️/❌ |
+| 自动化（enabled=true 且点在白名单）| AI 讲解（听众变 reviewer）→ 强制 Tier 3 派 3 独立 session reviewer → §8.4.3 交叉对比 → 写 `reviewConsensus[point]` → G-09B+G-REVIEW-LOOP+G-AUTO-CONSENSUS 全过即自动推进 phase |
+| 自动化但点不在白名单 | 回退人工审核（该点仍等用户✅）|
+
+### 阻断出口
+
+联审 3 轮矫正未决 → 按 `onConsensusStall`：
+- `pause`：`state.phase=paused`，输出完整问题清单等用户介入（**默认**，避免 AI 带病狂奔）
+- `fail`：标记失败，终止流程
+
+### 开工前信息预收集（Step 1.5，仅自动化模式）
+
+开工前一次性向用户收集所有必需信息，开工后不再打断。识别 6 类待补信息：
+1. 第三方平台凭证（极光/融云 Key、Secret 等）
+2. 复用项选择（AI 找不到时问用哪个已有实现）
+3. 环境配置（DB/Redis/MQ 地址）
+4. 命名约定
+5. 已有对接方信息
+6. 数据初始化要求
+
+详见 Step 1.5 协议与 `ae-sdd preflight collect`。
+
+### 禁止事项（自动化模式专属）
+
+| 禁止 | 正确做法 |
+|------|---------|
+| AI 自行 `automation enable` | 必须用户显式操作；`enabledAt` 由 CLI 写入 |
+| 自动化模式用逻辑多视角降级 | 必须物理 3 独立 session；环境不支持 → paused（见 `agent-orchestration-skill §8.4.5`）|
+| 联审不通过仍推进 phase | G-AUTO-CONSENSUS 阻断；3 轮未决 → paused |
 
 ---
 
@@ -525,7 +598,7 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | **状态机** | `ae-sdd state read/write/next-step/confirm` | phase读写/推进/审核token |
 | | `ae-sdd state prd-check-complete/prd-complete/prd-archive` | PRD级完成判定 |
 | **路由** | `ae-sdd classify` | 4维判定 |
-| **门禁** | `ae-sdd gates check [--only <G-XX>]` | 29门禁扫描 |
+| **门禁** | `ae-sdd gates check [--only <G-XX>]` | 30门禁扫描（🆕 v3.8.0 +G-AUTO-CONSENSUS） |
 | | `ae-sdd gate ra-required/coding-required/doc-storage` | 单点校验 |
 | | `ae-sdd flow-violation-scan` | RA流程违规审计 |
 | | `ae-sdd ra-depth-scan` | RA机械派生深度扫描 |
@@ -534,6 +607,9 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | **Toolset** | `ae-sdd memory enter/write/exit/read/search` | Phase-aware memory gate |
 | | `ae-sdd db profiles/query/explain/audit` | 本地profile DB |
 | | `ae-sdd git status/diff/log/blame/impact` | 只读Git证据 |
+| **自动化** | `ae-sdd automation status/enable/disable` | 🆕 v3.8.0 自动化开关配置 |
+| | `ae-sdd preflight collect` | 🆕 v3.8.0 开工前信息预收集 |
+| | `ae-sdd state register-review-consensus` | 🆕 v3.8.0 写联审共识结果 |
 | **维护** | `ae-sdd health` | 9项健康度自检 |
 | | `ae-sdd update-check` | UC-01~07更新依赖图谱 |
 | | `ae-sdd iteration-check` | 设计-实现一致性迭代检查 |

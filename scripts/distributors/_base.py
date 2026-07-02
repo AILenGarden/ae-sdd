@@ -11,7 +11,7 @@
 
     CopytreeDistributor（Distributor 子类）
       共享 copytree 类安装逻辑（备份 → 复制 → 校验 → 清旧 .bak），
-      claude/codex/zcode 只需声明 name + target_path + detect()。
+      claude/codex/zcode/hermes 只需声明 name + target_path + detect()。
 
 ────────────────────────────────────────────────────────────────────────
 如何新增一个 Agent 分发器（3 步法）：
@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -100,6 +101,27 @@ def log_success(ctx: Optional[DistributeContext], msg: str) -> None:
         print(f"{C_GREEN}[ae-sdd] ✅{C_RESET} {msg}")
 
 
+def _verify_compiled_runtime_source(source: Path, ctx: DistributeContext) -> tuple[bool, str]:
+    """Reject uncompiled source packages before installation."""
+    tools_dir = ctx.repo_root / "tools"
+    inserted = False
+    if str(tools_dir) not in sys.path:
+        sys.path.insert(0, str(tools_dir))
+        inserted = True
+    try:
+        from lib.runtime_verify import verify_runtime_package  # type: ignore
+        result = verify_runtime_package(source)
+    except Exception as exc:
+        return False, f"compiled runtime 校验器不可用: {exc}"
+    finally:
+        if inserted and str(tools_dir) in sys.path:
+            sys.path.remove(str(tools_dir))
+
+    if result.ok:
+        return True, ""
+    return False, "; ".join(result.issues[:5])
+
+
 # ─── Distributor ABC ─────────────────────────────────────────────────────────
 class Distributor(ABC):
     """Agent 分发器抽象基类。每个子类代表一种 Agent 的安装协议。"""
@@ -138,7 +160,7 @@ BAK_KEEP_DEFAULT = 2
 class CopytreeDistributor(Distributor):
     """copytree 类分发器共享逻辑：备份 → 复制 → 校验 → 清旧 .bak。
 
-    claude/codex/zcode 只需声明 name + target_path + detect()，复用本类的
+    claude/codex/zcode/hermes 只需声明 name + target_path + detect()，复用本类的
     install/verify/cleanup（逻辑迁自 install.py 的 backup_existing /
     install_from_dist / verify / cleanup_old_backups，保持行为一致）。
     """
@@ -218,6 +240,14 @@ class CopytreeDistributor(Distributor):
             if not skill_md.is_file():
                 return InstallResult(self.name, "fail",
                                      f"未找到 {skill_md}，请先跑 build_dist", time.time() - t0)
+            compiled_ok, compiled_msg = _verify_compiled_runtime_source(source, ctx)
+            if not compiled_ok:
+                return InstallResult(
+                    self.name,
+                    "fail",
+                    f"拒绝安装未编译/不完整 runtime package: {compiled_msg}",
+                    time.time() - t0,
+                )
 
             self._backup_existing(dst, ctx)
             self._cleanup_old_backups(ctx.keep_bak)

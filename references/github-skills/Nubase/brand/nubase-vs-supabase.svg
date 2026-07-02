@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="900" viewBox="0 0 1320 900" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3DE3AF"/><stop offset="1" stop-color="#10A074"/></linearGradient><filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect width="1320" height="900" fill="#0B1222"/>
+<svg x="70" y="46" width="80" height="80" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="nStroke" x1="178" y1="148" x2="334" y2="364" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3DE3AF"/>
+      <stop offset="1" stop-color="#10A074"/>
+    </linearGradient>
+    <radialGradient id="nGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#34D9A4" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#34D9A4" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="#0B1222"/>
+  <circle cx="334" cy="148" r="132" fill="url(#nGlow)"/>
+  <rect x="1" y="1" width="510" height="510" rx="117" fill="none" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="2"/>
+  <path d="M178 364 V148 L334 364 V148" fill="none" stroke="url(#nStroke)" stroke-width="52"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="334" cy="148" r="28" fill="#0B1222" stroke="#3DE3AF" stroke-width="14"/>
+  <circle cx="178" cy="364" r="16" fill="#3DE3AF"/>
+</svg>
+<text x="172" y="92" fill="#FFFFFF" font-size="52" font-weight="800">Nubase <tspan fill="#9AA7BD" font-weight="500">vs</tspan> Supabase</text>
+<text x="70" y="138" fill="#3DE3AF" font-size="22" font-weight="600">The AI-native, self-hostable backend — Memory · Database · Storage · Auth</text>
+<rect x="1032" y="168" width="236" height="660" rx="22" fill="url(#g)" opacity="0.10" stroke="url(#g)" stroke-opacity="0.5"/>
+<text x="900" y="254" fill="#9AA7BD" font-size="22" font-weight="700" text-anchor="middle">Supabase</text>
+<text x="900" y="278" fill="#5A6577" font-size="15" text-anchor="middle">self-hosted</text>
+<text x="1150" y="254" fill="#3DE3AF" font-size="24" font-weight="800" text-anchor="middle" filter="url(#glow)">Nubase</text>
+<text x="1150" y="278" fill="#3DE3AF" font-size="15" text-anchor="middle" opacity="0.85">open-source</text>
+<text x="70" y="306" fill="#FFFFFF" font-size="20" font-weight="500">Multi-project · one dashboard</text>
+<circle cx="900" cy="300" r="15" fill="#E06C6C" opacity="0.15"/><path d="M 894 294 l 12 12 M 906 294 l -12 12" stroke="#E06C6C" stroke-width="3" stroke-linecap="round"/>
+<circle cx="1150" cy="300" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 300 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/><text x="1176" y="306" fill="#3DE3AF" font-size="17">★</text>
+<line x1="70" y1="318" x2="1250" y2="318" stroke="#1E2A42"/>
+<text x="70" y="364" fill="#FFFFFF" font-size="20" font-weight="500">Isolated Postgres DB per project</text>
+<circle cx="900" cy="358" r="15" fill="#E06C6C" opacity="0.15"/><path d="M 894 352 l 12 12 M 906 352 l -12 12" stroke="#E06C6C" stroke-width="3" stroke-linecap="round"/>
+<circle cx="1150" cy="358" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 358 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="70" y1="376" x2="1250" y2="376" stroke="#1E2A42"/>
+<text x="70" y="422" fill="#FFFFFF" font-size="20" font-weight="500">Built-in AI Memory · vectors + extraction</text>
+<circle cx="900" cy="416" r="15" fill="#E06C6C" opacity="0.15"/><path d="M 894 410 l 12 12 M 906 410 l -12 12" stroke="#E06C6C" stroke-width="3" stroke-linecap="round"/>
+<circle cx="1150" cy="416" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 416 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/><text x="1176" y="422" fill="#3DE3AF" font-size="17">★</text>
+<line x1="70" y1="434" x2="1250" y2="434" stroke="#1E2A42"/>
+<text x="70" y="480" fill="#FFFFFF" font-size="20" font-weight="500">AI-coding native · MCP tools for agents</text>
+<circle cx="900" cy="474" r="15" fill="#E06C6C" opacity="0.15"/><path d="M 894 468 l 12 12 M 906 468 l -12 12" stroke="#E06C6C" stroke-width="3" stroke-linecap="round"/>
+<circle cx="1150" cy="474" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 474 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/><text x="1176" y="480" fill="#3DE3AF" font-size="17">★</text>
+<line x1="70" y1="492" x2="1250" y2="492" stroke="#1E2A42"/>
+<text x="70" y="538" fill="#FFFFFF" font-size="20" font-weight="500">AI Gateway · OpenAI / Anthropic compatible</text>
+<circle cx="900" cy="532" r="15" fill="#E06C6C" opacity="0.15"/><path d="M 894 526 l 12 12 M 906 526 l -12 12" stroke="#E06C6C" stroke-width="3" stroke-linecap="round"/>
+<circle cx="1150" cy="532" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 532 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="70" y1="550" x2="1250" y2="550" stroke="#1E2A42"/>
+<text x="70" y="596" fill="#FFFFFF" font-size="20" font-weight="500">Auth · MFA · OAuth · SSO</text>
+<circle cx="900" cy="590" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 893 590 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1150" cy="590" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 590 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="70" y1="608" x2="1250" y2="608" stroke="#1E2A42"/>
+<text x="70" y="654" fill="#FFFFFF" font-size="20" font-weight="500">Storage · S3 / R2 compatible</text>
+<circle cx="900" cy="648" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 893 648 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1150" cy="648" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 648 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="70" y1="666" x2="1250" y2="666" stroke="#1E2A42"/>
+<text x="70" y="712" fill="#FFFFFF" font-size="20" font-weight="500">REST API + Row Level Security</text>
+<circle cx="900" cy="706" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 893 706 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1150" cy="706" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 706 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="70" y1="724" x2="1250" y2="724" stroke="#1E2A42"/>
+<text x="70" y="770" fill="#FFFFFF" font-size="20" font-weight="500">Self-host · Open-source (Apache-2.0)</text>
+<circle cx="900" cy="764" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 893 764 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1150" cy="764" r="15" fill="#3DE3AF" opacity="0.15"/><path d="M 1143 764 l 4 5 l 9 -11" fill="none" stroke="#3DE3AF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="70" y1="818" x2="1250" y2="818" stroke="#1E2A42"/>
+<text x="70" y="854" fill="#9AA7BD" font-size="17">★ = where Nubase goes further — built for AI coding &amp; agents</text>
+<text x="70" y="886" fill="#3DE3AF" font-size="19" font-weight="600">Run it: <tspan fill="#FFFFFF" font-family="monospace">npx -y nubase_cli@latest install-skills</tspan></text>
+<text x="1250" y="886" fill="#9AA7BD" font-size="16" text-anchor="end">github.com/OtterMind/Nubase · Apache-2.0</text>
+</svg>

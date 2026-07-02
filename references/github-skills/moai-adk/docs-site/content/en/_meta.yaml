@@ -1,0 +1,30 @@
+"getting-started":
+  title: "Getting Started"
+  weight: 10
+"core-concepts":
+  title: "Core Concepts"
+  weight: 20
+"claude-code":
+  title: "Claude Code Guide"
+  weight: 25
+"workflow-commands":
+  title: "Workflow Commands"
+  weight: 30
+"utility-commands":
+  title: "Utility Commands"
+  weight: 40
+"quality-commands":
+  title: "Quality Commands"
+  weight: 50
+design:
+  title: "Design System"
+  weight: 60
+db:
+  title: "Database Schema Management"
+  weight: 70
+worktree:
+  title: "Git Worktree"
+  weight: 90
+advanced:
+  title: "Advanced"
+  weight: 100

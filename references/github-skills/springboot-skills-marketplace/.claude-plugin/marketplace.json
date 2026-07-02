@@ -1,0 +1,30 @@
+{
+  "name": "springboot-skills-marketplace",
+  "owner": {
+    "name": "Pavithra"
+  },
+  "metadata": {
+    "description": "A collection of Claude Code skills for creating Spring Boot applications with proper architecture patterns",
+    "version": "1.0.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "springboot-architecture",
+      "source": "./plugins/springboot-architecture",
+      "description": "Skills for creating Spring Boot projects with architecture patterns (Layered to DDD+Hexagonal)",
+      "version": "1.0.0",
+      "author": {
+        "name": "Pavithra"
+      },
+      "repository": "https://github.com/a-pavithraa/springboot-skills-marketplace",
+      "category": "spring-boot",
+      "tags": ["spring-boot", "java", "architecture", "ddd", "hexagonal", "spring-data-jpa", "jpa", "hibernate"],
+      "strict": false,
+      "agents": [
+        "./skills/creating-springboot-projects/SKILL.md",
+        "./skills/spring-data-jpa/SKILL.md"
+      ]
+    }
+  ]
+}

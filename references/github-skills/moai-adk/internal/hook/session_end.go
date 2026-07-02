@@ -1,0 +1,780 @@
+// Resolution: KEEP — memo save, MX scan within 1500ms timeout per r3 §3.
+package hook
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/modu-ai/moai-adk/internal/hook/handoff"
+	"github.com/modu-ai/moai-adk/internal/hook/mx"
+	"github.com/modu-ai/moai-adk/internal/hook/trace"
+)
+
+// teamConfig is the minimal structure read from ~/.claude/teams/*/config.json.
+type teamConfig struct {
+	LeadSessionID string `json:"leadSessionId"`
+}
+
+// sessionEndHandler processes SessionEnd events.
+// It persists session metrics, cleans up temporary resources, and optionally
+// submits ranking data (REQ-HOOK-034). Always returns "allow".
+type sessionEndHandler struct {
+	// traceDir is the directory where trace JSONL files are stored.
+	// When non-empty, a session summary Markdown report is generated on SessionEnd (REQ-OBS-004).
+	traceDir string
+	// reportDir is the directory where session summary reports are written.
+	reportDir string
+}
+
+// NewSessionEndHandler creates a new SessionEnd event handler.
+func NewSessionEndHandler() Handler {
+	return &sessionEndHandler{}
+}
+
+// NewSessionEndHandlerWithObservability creates a SessionEnd handler that also
+// generates a Markdown session summary report when the session ends (REQ-OBS-004).
+// traceDir is the directory containing trace JSONL files.
+// reportDir is the directory where the summary report will be written.
+func NewSessionEndHandlerWithObservability(traceDir, reportDir string) Handler {
+	return &sessionEndHandler{
+		traceDir:  traceDir,
+		reportDir: reportDir,
+	}
+}
+
+// EventType returns EventSessionEnd.
+func (h *sessionEndHandler) EventType() EventType {
+	return EventSessionEnd
+}
+
+// Handle processes a SessionEnd event. It logs the session completion,
+// performs best-effort team directory cleanup, garbage-collects stale teams,
+// clears tmux session env vars, and kills orphaned tmux sessions.
+// SessionEnd hooks should not use hookSpecificOutput per Claude Code protocol.
+// All cleanup is best-effort: errors are logged with slog.Warn, never returned.
+func (h *sessionEndHandler) Handle(ctx context.Context, input *HookInput) (*HookOutput, error) {
+	slog.Info("session ending",
+		"session_id", input.SessionID,
+		"project_dir", input.ProjectDir,
+	)
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Warn("session_end: could not determine home directory",
+			"error", err,
+		)
+		return &HookOutput{}, nil
+	}
+
+	cleanupCurrentSessionTeam(input.SessionID, homeDir)
+	garbageCollectStaleTeams(homeDir)
+	garbageCollectOrphanedTasks(homeDir)
+	cleanupOrphanedTmuxSessions(ctx)
+
+	// Always clear tmux session-level GLM env vars to restore Claude models.
+	// This is safe to call unconditionally:
+	//   - If not in tmux: early return (checks TMUX env var)
+	//   - If env vars don't exist: tmux command is a no-op
+	// This ensures the lead session returns to Claude after team completion.
+	clearTmuxSessionEnv(ctx)
+
+	// Clean up GLM env vars from settings.local.json.
+	// This handles the case where the user ran 'moai glm' but ended the session
+	// without running 'moai cc'. Without this, the stale GLM key persists and
+	// the next session fails to authenticate with Claude (no API key error).
+	projectDir := input.CWD
+	if projectDir == "" {
+		projectDir = input.ProjectDir // Fallback for legacy
+	}
+	if projectDir != "" {
+		cleanupGLMSettingsLocal(projectDir)
+		cleanupBogusRootDir(projectDir)
+	}
+
+	// Validate MX tags for files modified during this session.
+	// Best-effort: errors are logged, never block session end (AC-SESSION-002).
+	if projectDir != "" {
+		mxCtx, mxCancel := context.WithTimeout(ctx, 4*time.Second)
+		defer mxCancel()
+		modifiedFiles := getModifiedGoFiles(mxCtx, projectDir)
+		if len(modifiedFiles) > 0 {
+			validateMxTags(mxCtx, modifiedFiles, projectDir)
+		}
+	}
+
+	// Persist paste-ready resume message if the orchestrator wrote a pending file
+	// to .moai/state/session-handoff/pending.md during the session (SPEC-V3R6-SESSION-HANDOFF-AUTO-001).
+	// Best-effort: PersistIfPending always returns nil and logs failures via slog.Warn.
+	if projectDir != "" {
+		memoryDir, mErr := resolveMemoryDir(homeDir, projectDir)
+		if mErr != nil {
+			slog.Warn("session_end: could not resolve memory directory",
+				"error", mErr,
+			)
+		} else {
+			_ = handoff.PersistIfPending(ctx, input.SessionID, projectDir, memoryDir)
+		}
+	}
+
+	slog.Info("session_end: cleanup complete",
+		"session_id", input.SessionID,
+	)
+
+	// Generate session summary report if observability is configured (REQ-OBS-004).
+	if h.traceDir != "" && h.reportDir != "" && input.SessionID != "" {
+		generateSessionSummary(input.SessionID, h.traceDir, h.reportDir)
+	}
+
+	// SessionEnd hooks return empty JSON {} per Claude Code protocol
+	// Do NOT use hookSpecificOutput for SessionEnd events
+	return &HookOutput{}, nil
+}
+
+// generateSessionSummary reads the session trace file and writes a Markdown
+// summary report. All errors are logged with slog.Warn (best-effort, REQ-OBS-004).
+func generateSessionSummary(sessionID, traceDir, reportDir string) {
+	summary, err := trace.GenerateSummary(traceDir, sessionID)
+	if err != nil {
+		slog.Warn("session_end: could not generate summary",
+			"session_id", sessionID,
+			"error", err,
+		)
+		return
+	}
+
+	if summary.TotalHooks == 0 {
+		return
+	}
+
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		slog.Warn("session_end: could not create report directory",
+			"path", reportDir,
+			"error", err,
+		)
+		return
+	}
+
+	reportPath := filepath.Join(reportDir, "session-"+sessionID+".md")
+	content := summary.FormatMarkdown()
+	if err := os.WriteFile(reportPath, []byte(content), 0o644); err != nil {
+		slog.Warn("session_end: could not write session summary",
+			"path", reportPath,
+			"error", err,
+		)
+		return
+	}
+
+	slog.Info("session_end: session summary written",
+		"path", reportPath,
+		"total_hooks", summary.TotalHooks,
+	)
+}
+
+// resolveMemoryDir returns the Claude Code memory directory for the given
+// project under `~/.claude/projects/{slug}/memory/`. The slug is derived from
+// the project's absolute path by replacing path separators and dots with
+// dashes (Claude Code's observed naming convention).
+//
+// @MX:NOTE: [AUTO] per-cwd 해석(slug = raw session CWD 기반, git-root 정규화 없음)은
+// 의도된 동작이다. Claude Code 자체가 ~/.claude/projects/ 아래에 cwd별 해시 디렉터리를
+// 두는 per-cwd 메모리 모델을 따르므로, git-worktree 세션은 main repo와 다른 메모리
+// 디렉터리를 해석한다. git-root 정규화로 "고치면" MoAI의 쓰기(main-root)가 Claude Code의
+// 네이티브 auto-load(cwd)와 desync되어 오히려 회귀를 유발한다. 따라서 projectSlug /
+// resolveMemoryDir 해석 로직은 변경하지 않는다. L3 --worktree resume는 session-handoff.md
+// § Worktree-Anchored Resume Pattern의 Block 0 cwd 재앵커링에 의존한다.
+// 상세: .moai/docs/memory-dir-resolution-doctrine.md
+func resolveMemoryDir(homeDir, projectDir string) (string, error) {
+	if homeDir == "" {
+		return "", fmt.Errorf("home directory is empty")
+	}
+	if projectDir == "" {
+		return "", fmt.Errorf("project directory is empty")
+	}
+	absDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute project path: %w", err)
+	}
+	return filepath.Join(homeDir, ".claude", "projects", projectSlug(absDir), "memory"), nil
+}
+
+// projectSlug encodes an absolute path into Claude Code's project directory
+// naming convention. Both `/` (or `\` on Windows) and `.` are mapped to `-`.
+//
+// Examples (observed empirically from ~/.claude/projects/):
+//
+//	/Users/goos/MoAI/moai-adk-go        → -Users-goos-MoAI-moai-adk-go
+//	/Users/goos/.moai/worktrees/foo     → -Users-goos--moai-worktrees-foo
+//	/Users/goos/.claude                 → -Users-goos--claude
+func projectSlug(absPath string) string {
+	clean := filepath.Clean(absPath)
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', '.':
+			return '-'
+		default:
+			return r
+		}
+	}, clean)
+}
+
+// getModifiedGoFiles returns the list of .go files modified in the current session.
+// Uses `git diff --name-only HEAD` to find modified files.
+// Returns an empty slice if git is unavailable or no Go files were modified.
+func getModifiedGoFiles(ctx context.Context, projectDir string) []string {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD")
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		// git diff may fail in non-git environments; this is expected
+		return nil
+	}
+
+	var goFiles []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasSuffix(line, ".go") {
+			absPath := filepath.Join(projectDir, line)
+			goFiles = append(goFiles, absPath)
+		}
+	}
+	return goFiles
+}
+
+// validateMxTags validates @MX tag presence for the given Go files.
+// Observation-only: errors are logged with slog.Warn, never returned.
+// AC-SESSION-001: results are logged with slog.Info.
+// AC-SESSION-003: respects 4s timeout via context (partial results on timeout).
+func validateMxTags(ctx context.Context, filePaths []string, projectRoot string) {
+	if len(filePaths) == 0 {
+		return
+	}
+
+	// Filter to Go files only
+	var goFiles []string
+	for _, f := range filePaths {
+		if strings.HasSuffix(f, ".go") {
+			goFiles = append(goFiles, f)
+		}
+	}
+	if len(goFiles) == 0 {
+		return
+	}
+
+	validator := mx.NewValidator(nil, projectRoot)
+	report, err := validator.ValidateFiles(ctx, goFiles)
+	if err != nil {
+		slog.Warn("session_end: mx validation error",
+			"error", err,
+			"files", len(goFiles),
+		)
+		return
+	}
+
+	if report == nil {
+		return
+	}
+
+	// AC-SESSION-003: log timed out files
+	if len(report.TimedOutFiles) > 0 {
+		slog.Warn("session_end: mx validation timed out for some files",
+			"timed_out", len(report.TimedOutFiles),
+		)
+	}
+
+	// AC-SESSION-001: log validation results
+	if report.TotalViolations() > 0 || len(report.TimedOutFiles) > 0 {
+		slog.Info("session_end: mx validation complete",
+			"files_validated", len(report.FileReports),
+			"files_timed_out", len(report.TimedOutFiles),
+			"p1_violations", report.P1Count(),
+			"p2_violations", report.P2Count(),
+			"p3_violations", report.P3Count(),
+			"p4_violations", report.P4Count(),
+			"duration_ms", report.Duration.Milliseconds(),
+		)
+
+		if report.HasBlockingViolations() {
+			slog.Warn("session_end: blocking MX violations detected - run /moai run to add missing tags",
+				"p1", report.P1Count(),
+				"p2", report.P2Count(),
+			)
+		}
+	} else {
+		slog.Info("session_end: mx validation passed",
+			"files_validated", len(report.FileReports),
+			"duration_ms", report.Duration.Milliseconds(),
+		)
+	}
+}
+
+// cleanupCurrentSessionTeam removes the team directory whose leadSessionId
+// matches the given sessionID. Errors are logged and never returned.
+func cleanupCurrentSessionTeam(sessionID, homeDir string) {
+	teamsDir := filepath.Join(homeDir, ".claude", "teams")
+
+	entries, err := os.ReadDir(teamsDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("session_end: could not read teams directory",
+				"path", teamsDir,
+				"error", err,
+			)
+		}
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		teamDir := filepath.Join(teamsDir, entry.Name())
+		configPath := filepath.Join(teamDir, "config.json")
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			// Missing config.json is normal; skip silently.
+			continue
+		}
+
+		var cfg teamConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			slog.Warn("session_end: could not parse team config",
+				"path", configPath,
+				"error", err,
+			)
+			continue
+		}
+
+		if cfg.LeadSessionID == sessionID {
+			if err := os.RemoveAll(teamDir); err != nil {
+				slog.Warn("session_end: could not remove team directory",
+					"path", teamDir,
+					"error", err,
+				)
+			} else {
+				slog.Info("session_end: removed team directory for session",
+					"team_dir", teamDir,
+					"session_id", sessionID,
+				)
+				// Also remove the corresponding task directory when the team directory is successfully deleted
+				tasksDir := filepath.Join(homeDir, ".claude", "tasks", entry.Name())
+				if err := os.RemoveAll(tasksDir); err != nil {
+					slog.Warn("session_end: could not remove task directory for session",
+						"path", tasksDir,
+						"error", err,
+					)
+				} else {
+					slog.Info("session_end: removed task directory for session",
+						"task_dir", tasksDir,
+						"session_id", sessionID,
+					)
+				}
+			}
+		}
+	}
+}
+
+// garbageCollectStaleTeams removes team directories that have not been
+// modified in more than 24 hours. This catches teams left behind by
+// interrupted sessions. Errors are logged and never returned.
+func garbageCollectStaleTeams(homeDir string) {
+	const staleDuration = 24 * time.Hour
+
+	teamsDir := filepath.Join(homeDir, ".claude", "teams")
+
+	entries, err := os.ReadDir(teamsDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("session_end: could not read teams directory for GC",
+				"path", teamsDir,
+				"error", err,
+			)
+		}
+		return
+	}
+
+	cutoff := time.Now().Add(-staleDuration)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			slog.Warn("session_end: could not stat team directory",
+				"name", entry.Name(),
+				"error", err,
+			)
+			continue
+		}
+
+		if info.ModTime().Before(cutoff) {
+			teamDir := filepath.Join(teamsDir, entry.Name())
+			if err := os.RemoveAll(teamDir); err != nil {
+				slog.Warn("session_end: could not remove stale team directory",
+					"path", teamDir,
+					"error", err,
+				)
+			} else {
+				slog.Info("session_end: removed stale team directory",
+					"path", teamDir,
+					"age", time.Since(info.ModTime()).Round(time.Minute),
+				)
+				// Also remove the corresponding task directory when a stale team directory is successfully deleted
+				taskDir := filepath.Join(homeDir, ".claude", "tasks", entry.Name())
+				if err := os.RemoveAll(taskDir); err != nil {
+					slog.Warn("session_end: could not remove stale task directory",
+						"path", taskDir,
+						"error", err,
+					)
+				} else {
+					slog.Info("session_end: removed stale task directory",
+						"path", taskDir,
+					)
+				}
+			}
+		}
+	}
+}
+
+// garbageCollectOrphanedTasks cleans up orphaned task directories under ~/.claude/tasks/
+// that have no corresponding team directory. Collects task directories left behind by
+// interrupted sessions or incomplete cleanup. Errors are logged and never returned.
+func garbageCollectOrphanedTasks(homeDir string) {
+	tasksDir := filepath.Join(homeDir, ".claude", "tasks")
+	teamsDir := filepath.Join(homeDir, ".claude", "teams")
+
+	taskEntries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("session_end: could not read tasks directory for orphan GC",
+				"path", tasksDir,
+				"error", err,
+			)
+		}
+		return
+	}
+
+	for _, entry := range taskEntries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Check whether the corresponding team directory exists
+		teamDir := filepath.Join(teamsDir, entry.Name())
+		if _, err := os.Stat(teamDir); err == nil {
+			// Team directory exists, so this is not an orphan — keep it
+			continue
+		}
+
+		// No team directory, so remove the orphaned task directory
+		taskDir := filepath.Join(tasksDir, entry.Name())
+		if err := os.RemoveAll(taskDir); err != nil {
+			slog.Warn("session_end: could not remove orphaned task directory",
+				"path", taskDir,
+				"error", err,
+			)
+		} else {
+			slog.Info("session_end: removed orphaned task directory",
+				"path", taskDir,
+			)
+		}
+	}
+}
+
+// getCurrentTmuxSession returns the name of the current tmux session.
+// Returns empty string if not in tmux or if detection fails.
+func getCurrentTmuxSession(ctx context.Context) string {
+	// Check if we're in tmux
+	if os.Getenv("TMUX") == "" {
+		return ""
+	}
+
+	// Use tmux display-message to get current session name.
+	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-p", "#S")
+	out, err := cmd.Output()
+	if err != nil {
+		slog.Warn("session_end: could not get current tmux session",
+			"error", err,
+		)
+		return ""
+	}
+
+	return strings.TrimSpace(string(out))
+}
+
+// moaiTmuxSessionPrefix is the naming convention for tmux sessions created by
+// MoAI Agent Teams. Only sessions matching this prefix are eligible for cleanup.
+const moaiTmuxSessionPrefix = "moai-"
+
+// cleanupOrphanedTmuxSessions kills detached tmux sessions created by MoAI
+// Agent Teams (prefix "moai-"). User-created sessions are never touched.
+// The cleanup is capped at 4 seconds to stay within the SessionEnd hook
+// timeout budget. If tmux is not installed or no sessions exist, the function
+// returns silently.
+func cleanupOrphanedTmuxSessions(ctx context.Context) {
+	// Reserve 4 seconds for tmux cleanup, leaving 1 second buffer.
+	cleanupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	// Get current tmux session name to protect it from being killed.
+	currentSession := getCurrentTmuxSession(cleanupCtx)
+
+	// List all tmux sessions.
+	listCmd := exec.CommandContext(cleanupCtx, "tmux", "list-sessions")
+	out, err := listCmd.Output()
+	if err != nil {
+		if cleanupCtx.Err() != nil {
+			slog.Warn("session_end: tmux cleanup timed out",
+				"timeout", 4*time.Second,
+			)
+		}
+		return
+	}
+
+	lines := strings.SplitSeq(strings.TrimSpace(string(out)), "\n")
+	for line := range lines {
+		if line == "" {
+			continue
+		}
+		// Skip the current tmux session - never kill the user's actual session.
+		name, _, found := strings.Cut(line, ":")
+		if !found || name == "" {
+			continue
+		}
+		if name == currentSession {
+			continue
+		}
+
+		// Only kill sessions created by MoAI (prefixed with "moai-").
+		// Never kill user-created tmux sessions.
+		if !strings.HasPrefix(name, moaiTmuxSessionPrefix) {
+			continue
+		}
+
+		// Sessions currently attached contain "(attached)".
+		if strings.Contains(line, "(attached)") {
+			continue
+		}
+
+		killCmd := exec.CommandContext(cleanupCtx, "tmux", "kill-session", "-t", name)
+		if err := killCmd.Run(); err != nil {
+			slog.Warn("session_end: could not kill orphaned tmux session",
+				"session", name,
+				"error", err,
+			)
+		} else {
+			slog.Info("session_end: killed orphaned tmux session",
+				"session", name,
+			)
+		}
+	}
+}
+
+// glmEnvVarsToClean is the list of GLM-specific environment variables removed
+// from the tmux session on session end.
+// ANTHROPIC_AUTH_TOKEN is included: moai glm/cg sets it to the GLM API key in
+// the tmux session. Removing it unconditionally restores the pre-v2.6 behavior
+// that had no login issues. The user's real Claude credential is stored in
+// ~/.claude/ (system credential storage), not in the tmux environment, so
+// unsetting the tmux var is always safe — it either removes a GLM key (correct)
+// or is a no-op when it was never set.
+var glmEnvVarsToClean = []string{
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_BASE_URL",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+}
+
+// clearTmuxSessionEnv removes GLM environment variables from tmux session.
+// Called when team mode completes to restore Claude models for the lead session.
+// This ensures that after --team mode, the leader returns to using Claude models
+// instead of continuing to use GLM from the tmux session-level env vars.
+func clearTmuxSessionEnv(ctx context.Context) {
+	// Skip if not in tmux
+	if os.Getenv("TMUX") == "" {
+		return
+	}
+
+	for _, name := range glmEnvVarsToClean {
+		cmd := exec.CommandContext(ctx, "tmux", "set-environment", "-u", name)
+		if err := cmd.Run(); err != nil {
+			// Log warning but don't fail - variable might not exist
+			slog.Warn("session_end: failed to clear tmux env",
+				"env", name,
+				"error", err,
+			)
+		} else {
+			slog.Info("session_end: cleared tmux env", "env", name)
+		}
+	}
+}
+
+// cleanupGLMSettingsLocal removes GLM env vars from .claude/settings.local.json
+// in the given project directory. This handles sessions ended without running
+// 'moai cc': the stale GLM key in settings.local.json would otherwise cause the
+// next Claude Code session to fail auth ("no API key available" / /login loop).
+//
+// Cleanup logic mirrors removeGLMEnv() in internal/cli/cc.go:
+//   - If MOAI_BACKUP_AUTH_TOKEN exists, restore it as ANTHROPIC_AUTH_TOKEN.
+//   - Otherwise, delete ANTHROPIC_AUTH_TOKEN (it was a GLM key, not OAuth).
+//   - Always delete: MOAI_BACKUP_AUTH_TOKEN, ANTHROPIC_BASE_URL, and the three
+//     ANTHROPIC_DEFAULT_*_MODEL vars.
+//
+// ANTHROPIC_BASE_URL is used as the GLM-active indicator: Claude Code's OAuth
+// flow never sets this variable, so its presence reliably signals GLM mode.
+//
+// All operations are best-effort. Errors are logged with slog.Warn and never
+// returned, following the SessionEnd convention of non-fatal cleanup.
+func cleanupGLMSettingsLocal(projectDir string) {
+	settingsPath := filepath.Join(projectDir, ".claude", "settings.local.json")
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("session_end: could not read settings.local.json",
+				"path", settingsPath,
+				"error", err,
+			)
+		}
+		return
+	}
+
+	// Treat empty file as no-op (same as removeGLMEnv in cc.go).
+	if len(data) == 0 {
+		return
+	}
+
+	// Round-trip the file as a raw JSON map to preserve all unknown fields.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		slog.Warn("session_end: could not parse settings.local.json",
+			"path", settingsPath,
+			"error", err,
+		)
+		return
+	}
+
+	// Extract the "env" object. If absent or not an object, nothing to clean.
+	envRaw, hasEnv := raw["env"]
+	if !hasEnv {
+		return
+	}
+
+	var env map[string]string
+	if err := json.Unmarshal(envRaw, &env); err != nil {
+		slog.Warn("session_end: could not parse env in settings.local.json",
+			"path", settingsPath,
+			"error", err,
+		)
+		return
+	}
+
+	// ANTHROPIC_BASE_URL is the GLM-active indicator.
+	// Claude Code's own OAuth flow never sets this variable.
+	if _, glmActive := env["ANTHROPIC_BASE_URL"]; !glmActive {
+		// Not in GLM mode — nothing to clean.
+		return
+	}
+
+	// Restore backed-up OAuth token if present; otherwise remove the GLM key.
+	if backup, ok := env["MOAI_BACKUP_AUTH_TOKEN"]; ok && backup != "" {
+		env["ANTHROPIC_AUTH_TOKEN"] = backup
+	} else {
+		delete(env, "ANTHROPIC_AUTH_TOKEN")
+	}
+
+	delete(env, "MOAI_BACKUP_AUTH_TOKEN")
+	delete(env, "ANTHROPIC_BASE_URL")
+	delete(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+	delete(env, "ANTHROPIC_DEFAULT_SONNET_MODEL")
+	delete(env, "ANTHROPIC_DEFAULT_OPUS_MODEL")
+
+	// Re-encode the cleaned env map back into the raw JSON document.
+	if len(env) == 0 {
+		delete(raw, "env")
+	} else {
+		envData, err := json.Marshal(env)
+		if err != nil {
+			slog.Warn("session_end: could not marshal cleaned env",
+				"path", settingsPath,
+				"error", err,
+			)
+			return
+		}
+		raw["env"] = json.RawMessage(envData)
+	}
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		slog.Warn("session_end: could not marshal settings.local.json",
+			"path", settingsPath,
+			"error", err,
+		)
+		return
+	}
+
+	// @MX:NOTE: [AUTO] cleanup write-back must preserve 0o600 even when env is wiped
+	// @MX:REASON: SPEC-V3R5-SECURITY-CRIT-001 AC-SEC-002 — leftover settings still must not leak.
+	if err := writeSettingsSecure(settingsPath, out); err != nil {
+		slog.Warn("session_end: could not write settings.local.json",
+			"path", settingsPath,
+			"error", err,
+		)
+		return
+	}
+
+	slog.Info("session_end: removed GLM env vars from settings.local.json",
+		"path", settingsPath,
+	)
+}
+
+// cleanupBogusRootDir removes a literal "{}" directory from the project root
+// if it exists. This directory is a side-effect of a Claude Code bug where the
+// {project_root} template variable used for agent memory paths (memory: project)
+// is not substituted when spawning agents inside git worktrees, resulting in a
+// directory named "{}" at the worktree root.
+//
+// The cleanup is best-effort: errors are logged with slog.Warn and never returned.
+func cleanupBogusRootDir(projectDir string) {
+	bogusDir := filepath.Join(projectDir, "{}")
+	info, err := os.Lstat(bogusDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("session_end: could not stat bogus {} directory",
+				"path", bogusDir,
+				"error", err,
+			)
+		}
+		return
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return
+	}
+	if !info.IsDir() {
+		return
+	}
+	if err := os.RemoveAll(bogusDir); err != nil {
+		slog.Warn("session_end: could not remove bogus {} directory",
+			"path", bogusDir,
+			"error", err,
+		)
+		return
+	}
+	slog.Info("session_end: removed bogus {} directory caused by unresolved agent memory path",
+		"path", bogusDir,
+	)
+}

@@ -235,5 +235,25 @@ class TestFinalizeDoc(unittest.TestCase):
         self.assertIn("E009", str(ctx.exception))
 
 
+class TestThinkingEngine(unittest.TestCase):
+    def test_get_thinking_engine_uses_packaged_fallback(self):
+        tmp = _setup_project()
+        result = document_storage.get_thinking_engine(tmp / ".ae-sdd", "test")
+        self.assertTrue(result, "expected packaged thinking engine fallback")
+        self.assertTrue(result["path"].endswith("be-coding-thinking-engine.md"))
+        self.assertIn("sha256", result)
+        self.assertGreater(len(result["content"]), 100)
+
+    def test_get_thinking_engine_prefers_project_override(self):
+        tmp = _setup_project()
+        override = tmp / "standards" / "thinking" / "be-coding-thinking-engine.md"
+        override.parent.mkdir(parents=True)
+        override.write_text("# project override\n\ncustom thinking engine", encoding="utf-8")
+
+        result = document_storage.get_thinking_engine(tmp / ".ae-sdd", "test")
+        self.assertEqual(Path(result["path"]), override.resolve())
+        self.assertIn("custom thinking engine", result["content"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

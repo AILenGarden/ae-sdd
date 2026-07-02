@@ -1,0 +1,1512 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Pending features in development
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [3.1.0] - 2026-06-15
+
+### Added
+
+- **New `pr-review-comments` skill** (`developer-kit-core`):
+  - Posts review findings from a JSON file as inline comments on a GitHub Pull Request
+  - Anchors each comment to its file and line in the PR diff
+  - Validates every finding against the PR's actual hunks and skips non-commentable lines
+  - Uses the GitHub API via the authenticated `gh` CLI (no token handling)
+  - Companion script `post_pr_comments.py` included in `scripts/`
+  - Reference docs: `references/json-schema.md`
+
+- **New `specs.explore` command and `specs-explore` skill** (`developer-kit-specs`):
+  - Investigates the codebase before committing to a change — no code is written or modified
+  - Reads relevant files, identifies affected areas, compares approaches, returns a structured analysis
+  - Supports standalone mode (inline result) and `--spec <path>` mode (saves to `docs/specs/{id}/exploration.md`)
+  - Supports `--lang=<framework>` hint (e.g., `spring`, `react`)
+  - Updated `sdd-init` skill with expanded codebase investigation guidance
+
+- **New `brainstorm-prompt-optimizer` skill** (`developer-kit-specs`):
+  - Transforms raw idea descriptions into structured prompts ready for the brainstorming workflow
+  - Produces prompts that follow EARS syntax, proper acceptance criteria taxonomy, and complete Non-Goals / Negative Requirements sections
+  - Triggers on phrases like "optimize for brainstorm", "prepare idea for brainstorm", "enhance this idea", "imposta per brainstorm"
+  - Bilingual trigger support (English and Italian)
+
+- **New `specs-e2e-verification` skill and `test-execution-patterns` reference** (`developer-kit-specs`):
+  - Executes real end-to-end verification after specification implementation
+  - Auto-detects application type (REST API, Web SPA, Desktop) from project files
+  - Starts local runtime via Docker Compose, Maven, Gradle, npm, or direct binary launch
+  - Runs real tests using `curl` for APIs, Playwright for web apps, computer-use for desktop
+  - Maps test results to `[IMP]` acceptance criteria from the functional specification
+  - Generates a markdown report (`e2e-report-YYYY-MM-DD-HHMMSS.md`) inside the spec folder
+  - Automatic teardown with `--keep-alive` override support
+  - Companion reference `test-execution-patterns.md` documents patterns for various frameworks
+
+### Fixed
+
+- **Review report path** (`developer-kit-specs`):
+  - Updated review report path in `specs.task-implementation` and `specs.task-review` documentation to match the actual generated output
+
+## [3.0.1] - 2026-06-05
+
+### Security
+
+- Removed phantom package reference in TypeScript dependency security guide (`developer-kit-typescript`)
+  - Replaced unclaimed `@my-org/internal-lib` example with real, claimed scope (`@microsoft`) and explicit example disclaimer
+  - Added guidance to never reference unclaimed package names in documentation or install commands
+  - Reported by Noam at Blue Bear Security
+
+## [3.0.0] - 2026-05-18
+
+### Added
+
+- **Anti-Drift Workflow v2.0** (`developer-kit-specs`):
+  - Complete rewrite of Anti-Drift Workflow with improved spec-to-implementation monitoring
+  - Enhanced task lifecycle management with new 'superseded' state
+  - Action routing for task workflows with automatic state transitions
+  - Improved date field type validation in spec handling
+
+- **New `spec-sync` command** (`developer-kit-specs`):
+  - Updated command references to use specs.sync for specification synchronization
+  - Added new specifications for specs command integration
+
+- **New `spec-check` command** (`developer-kit-specs`):
+  - Renamed from spec-quality-check with improved functionality
+  - Integrated [needs clarification] handling for incomplete specifications
+
+- **ADR-039 example** (`developer-kit-core`):
+  - Added Architecture Decision Record example for git worktree management
+
+### Changed
+
+- **Task path derivation improved** (`developer-kit-specs`):
+  - Enhanced task path derivation logic for better spec population
+  - Improved argument parsing for task workflows
+
+- **Command reference updates** (`developer-kit-specs`):
+  - Removed (NEW) markers from spec commands for cleaner output
+
+### Migration from v2.x to v3.0
+
+This release contains breaking changes. Follow this guide to migrate from v2.x.
+
+#### Command Mapping
+
+| Old Command | New Command | Notes |
+|-------------|-------------|-------|
+| `/specs:drift-guard` | `/specs:spec-sync` | New anti-drift approach with improved monitoring |
+| `/specs:spec-quality-check` | `/specs:spec-check` | Renamed for consistency |
+| `/specs:task-tdd` | `/specs:task-implementation` | TDD phase integrated into implementation |
+| `/specs:tdd-implementation` | `/specs:task-implementation` | Merged into single command |
+| `/specs:session-track` | N/A (removed) | Session tracking hooks removed |
+| `/specs:evaluator` | N/A (removed) | KPI evaluation removed |
+
+#### Workflow Changes
+
+- **Simplified Task Lifecycle**: Tasks now have states: `pending` → `in_progress` → `review` → `done` → `superseded`
+- **Integrated Testing**: No separate TDD phase — tests created during `task-implementation`
+- **Removed Hooks**: Drift Guard, TDD, KPI tracking, Sessions hooks removed
+
+#### Migration Steps
+
+1. Update command usage: `/specs:spec-quality-check` → `/specs:spec-check`
+2. Remove old hook configurations: `rm -rf .claude-plugin/hooks/drift-guard/`
+3. Migrate task states: `tdd_red` → `in_progress`, `tdd_green` → `review`
+
+4. Update docs: `docs/sdd-triangle.md` → `docs/sdd-workflow.md`
+
+#### Backward Compatibility
+
+- **Specification files**: Fully compatible — no changes needed
+- **Task files**: Compatible — old statuses auto-mapped
+- **Constitution files**: Fully compatible
+
+### Deprecated
+
+### Removed
+
+- **Drift Guard hook** (Migration v3.0):
+  - Removed deprecated Drift Guard hook functionality
+  - Superseded by new Anti-Drift Workflow v2.0 approach
+
+- **TDD workflow hooks** (Migration v3.0):
+  - Removed Test-Driven Development workflow hooks
+  - Simplified to focused spec-driven approach
+
+- **KPI tracking hooks** (Migration v3.0):
+  - Removed Key Performance Indicator tracking hooks
+  - No longer part of core workflow
+
+- **Sessions hooks** (Migration v3.0):
+  - Removed session management hooks
+  - Simplified session handling
+
+### Fixed
+
+- **Orphan file cleanup** (Migration v3.2):
+  - Cleaned up orphan files and obsolete references
+  - Removed deprecated configuration entries
+
+- **Task `ac-mapping` frontmatter not generated** (`developer-kit-specs`):
+  - Fixed spec-to-tasks command to properly include `ac-mapping` field in task frontmatter
+  - This field is required by task-review for specification compliance verification
+
+### Security
+
+## [2.8.2] - 2026-05-04
+
+### Added
+
+- **New `bug-fix-brief` skill** (`developer-kit-core`):
+  - Structured bug documentation for systematic bug analysis
+  - Follows spec-driven development workflow
+  - Provides comprehensive bug reporting template
+
+- **New `create-pr-from-spec` skill** (`developer-kit-specs`):
+  - Creates GitHub Pull Request from specification documents
+  - Integrates spec-to-code workflow with PR automation
+  - Updates configuration for seamless integration
+
+- **New Phase on Task Generation** (`developer-kit-specs`):
+  - Added new phase for enhanced task generation workflow
+  - Improved task complexity handling
+
+- **New Hooks** (`developer-kit-specs`):
+  - Added new hooks for spec workflow automation
+  - Enhanced hook configuration
+
+- **New `/specs:constitution` skill** (`developer-kit-specs`):
+  - Setup project constitution for team guidelines
+  - Project-level behavior enforcement
+
+### Changed
+
+- **Ralph Loop Skill Refactored** (`developer-kit-specs`):
+  - Refactored to use same approach as Codex plugin
+  - Improved multi-CLI agent integration
+
+- **Documentation Updates** (global):
+  - Added AGENTS.md for AI coding agent workflow
+  - Updated AGENTS.md with behavioral guidelines
+  - Moved agents.md into examples directory
+
+### Fixed
+
+- **Hook Configuration** (`developer-kit-core`):
+  - Fixed edit config with hooks
+  - Disabled Stop hooks to prevent workflow interruptions
+
+## [2.8.1] - 2026-04-20
+
+### Fixed
+
+- Corrected `/specs:` references in `developer-kit-specs` to use the proper `/developer-kit-specs:specs.` command prefix
+- Fixed cross-plugin and skill references for `feature-development` and `code-cleanup`
+- Updated `spec-quality` references to `spec-sync-context` where appropriate
+
+## [2.8.0] - 2026-04-10
+
+### Added
+
+- **New `learn` skill** (`developer-kit-core`):
+  - New `learn` skill for autonomous project pattern learning by analyzing the codebase
+  - Discovers development patterns, conventions, and architectural rules
+  - Outputs structured JSON classifying findings as project rules
+  - Integrates into SDD workflow for spec-driven development
+
+- **New Ralph Loop handler** (`developer-kit-specs`):
+  - New `ralph_loop.py` script for multi-agent task execution automation
+  - State machine: `idle → thinking → working → reviewing → fixing → done`
+  - Supports 7 CLI agents: claude, codex, copilot, gemini, glm4, kimi, minimax
+  - Handles fix iterations and can rewrite `fix_plan.json` when plan changes
+  - Cleanup step on state machine termination
+  - Reference docs: `state-machine.md`, `loop-prompt-template.md`, `multi-cli-integration.md`
+
+- **New `specs-code-cleanup` skill** (`developer-kit-specs`):
+  - Post-review phase cleanup command for final code cleanup after task approval
+  - Removes debug logs, temporary comments, and dead code artifacts
+  - Prepares implementation for final merge
+
+- **New `task-quality-kpi` skill** (`developer-kit-specs`):
+  - Objective task quality evaluation using quantitative KPIs
+  - Weighted scoring: Spec Compliance 30%, Code Quality 25%, Test Coverage 25%, Contract Fulfillment 20%
+  - Auto-generated KPI reports per task (`TASK-XXX--kpi.json`)
+
+- **New Qwen Coder CLI delegation skill** (`developer-kit-tools`):
+  - New `qwen-coder` skill for delegating tasks to Qwen2.5-Coder and QwQ models
+  - Supports both `qwen-coder` and `qwq` model variants
+  - CLI command reference documentation with execution examples
+  - Integrates into multi-CLI delegation workflow
+
+- **New Drift Guard hook** (`developer-kit-specs`):
+  - New hook for real-time spec-to-implementation monitoring
+  - Tracks drift between specifications and actual code
+  - Auto-status updates for task tracking
+
+- **New Architecture and Ontology Definition phase** (`developer-kit-specs`):
+  - Added phase for defining project architecture and ontology
+  - Integrates into brainstorm command for comprehensive spec generation
+
+- **Enhanced TypeScript Claude Code Hooks** (`developer-kit-typescript`):
+  - `ts-rules-verifier.py`: LLM-driven rules verification via Prompt hook
+  - `ts-quality-gate.py`: Prettier check as quality gate hook
+  - `ts-session-context.py`: Session context injection on SessionStart
+  - `ts-dev-server-guard.py`: TMux guard for dev server lifecycle
+  - `ts-file-validator.py`: File path and type validation
+  - `ts-pattern-validator.py`: Code pattern validation
+  - Improved DX with Edit tool coverage and async QA workflows
+
+- **New CI Security Scan Workflow** (`.github/workflows/security-scan.yml`):
+  - Automated MCP-Scan security validation on push and PRs
+  - PRs scan only changed skills for efficiency
+
+### Changed
+
+- **Knowledge Graph skill restructured** (`developer-kit-core`):
+  - Consolidated from multiple reference files into `references/knowledge-graph.md`
+  - Added comprehensive reference docs: `commit-examples.md`, `constraints-warnings.md`, `phase-workflows.md`, `test-commands.md`
+  - Removed fragmented reference files (`schema.md`, `query-examples.md`, `integration-patterns.md`)
+
+- **TypeScript Documentation expanded** (`developer-kit-typescript`):
+  - `typescript-docs`: Added `references/jsdoc-patterns.md`, `references/pipeline-setup.md`, `references/validation.md`
+  - `typescript-security-review`: Enhanced with `references/input-validation.md`, `references/security-headers.md`, `references/xss-prevention.md`
+  - `zod-validation-utilities`: Updated `references/advanced-patterns.md`
+
+- **Gemini CLI skill updated** (`developer-kit-tools`):
+  - Updated to use Gemini 3.0 Flash and Gemini 3.0 Pro models
+  - Added Model Selection Guide section (TASK-002)
+  - Added 3 new gemini-3-flash examples
+  - Added approval-mode plan examples
+
+- **Hooks configuration hardened** (`developer-kit-core`):
+  - Improved `task-review` hook execution handling
+
+- **Docs and guide updates** (global):
+  - `developer-kit-core`: Updated documentation
+  - `developer-kit-ai`: Refreshed agents and commands guides
+  - `developer-kit-specs`: Updated documentation with new features
+
+### Fixed
+
+- **`ralph_loop.py` fix plan rewrite** (`developer-kit-specs`):
+  - Fixed ability to rewrite `fix_plan.json` when the fix plan changes mid-execution
+
+- **Hook configuration errors** (`developer-kit-specs`):
+  - Fixed errors in hooks configuration that prevented proper spec workflow execution
+
+- **`update_done` status bug** (global):
+  - Fixed bug in pipeline where `update_done` status was not correctly set for next step
+
+- **Error messages on wrong state** (`developer-kit-specs`):
+  - Improved error message when state is incorrect in `fix_plan.json`
+
+- **Agent skill reference completeness** (global):
+  - Updated all agents with complete skill references across all plugins
+
+- **Knowledge Graph docs path** (`developer-kit-core`):
+  - Fixed documentation path issues in knowledge graph integration
+
+- **Make command fix** (global):
+  - Fixed `make` command execution in developer-kit
+
+- **Hook supply-chain security** (`developer-kit-core`):
+  - Hardened supply-chain validation and file permission checks
+
+- **`.mcp.json` configuration** (`developer-kit-tools`):
+  - Added proper `.mcp.json` config files for autoloading MCP configuration
+
+- **Kimi CLI installation** (global):
+  - Added installation support for Kimi CLI in developer-kit
+
+### Security
+
+- **Hooks supply-chain hardening** (`developer-kit-core`):
+  - Enhanced file permission validation in hook configurations
+  - Improved security checks for cross-plugin hook dependencies
+
+## [2.7.2] - 2026-03-24
+
+### Changed
+
+- **Skills Optimization — Token & Length Reduction** (global):
+  - Reduced size and token consumption across multiple skills to improve performance and stay within line limits
+  - Refactored `aws-lambda-php-integration` (`developer-kit-php`) — reduced to 94 lines
+  - Refactored `better-auth` (`developer-kit-typescript`) to meet line limit
+  - Refactored `clean-architecture` (`developer-kit-typescript`) — exceeded line limit, now compliant
+  - Refactored `nextjs-app-router` (`developer-kit-typescript`) — reduced SKILL.md to 302 lines
+  - Refactored `nextjs-authentication` (`developer-kit-typescript`) — split docs into focused reference files
+  - Refactored `nextjs-data-fetching` (`developer-kit-typescript`) — split docs into focused reference files
+  - Refactored `drizzle-orm-patterns` (`developer-kit-typescript`) to meet line limit
+
+- **Version Alignment** (global):
+  - Bumped marketplace and all plugin manifests to `2.7.2`
+
+### Fixed
+
+- **AWS Lambda PHP Integration** (`developer-kit-php`):
+  - Fixed `aws-lambda-integration` skill registration and linking on the PHP plugin
+
+- **Command Review List** (global):
+  - Added missing command review list entry
+
+## [2.7.1] - 2026-03-23
+
+### Added
+
+- **SonarQube MCP Integration** (`developer-kit-tools`):
+  - New `sonarqube-mcp` skill for SonarQube-assisted analysis workflows
+  - Plugin-level `.mcp.json` configuration registering the `sonarqube-mcp` MCP server
+  - Environment-driven MCP wiring for `SONARQUBE_TOKEN`, `SONARQUBE_URL`, and `SONARQUBE_ORG`
+  - Quality gate monitoring, issue discovery/triaging, and pre-push code analysis patterns
+  - Reference documentation: `best-practices.md`, `llm-context.md`, `metrics.md`, `severity-levels.md`
+
+- **Knowledge Graph Skill** (`developer-kit-core`):
+  - New `knowledge-graph` skill for managing persistent Knowledge Graphs in specifications
+  - Provides schema definition with entities, relationships, and graph structure
+  - Includes comprehensive query examples for common operations
+  - Documents integration patterns with existing workflows
+  - Reference files: `schema.md`, `query-examples.md`, `integration-patterns.md`
+
+- **ADR Drafting Skill** (`developer-kit-core`):
+  - New `adr-drafting` skill for drafting Architecture Decision Records
+  - Repository-aware naming and storage guidance (`docs/architecture/adr/`)
+  - Standard ADR template with Title, Status, Context, Decision, and Consequences sections
+  - Reference files: `template.md`, `examples.md`
+
+- **Specification Workflow Expansion** (`developer-kit-core`):
+  - Added `devkit.quick-spec` command for lightweight 4-phase specifications
+  - Added `devkit.spec-review` command for interactive specification quality assessment
+  - Added `devkit.spec-sync` command to reconcile specifications with implementation state
+  - Added `devkit.task-implementation` command for guided single-task execution
+  - All spec commands organized into `commands/specs/` subfolder
+
+- **Specs Quality Command** (`developer-kit-core`):
+  - New `devkit.spec-quality` command for maintaining specification context quality
+  - Synchronizes Knowledge Graph, Tasks, and Codebase after implementations
+  - Automatically integrated into `spec-to-tasks` and `feature-development` workflows
+  - Supports options: `--update-kg-only`, `--task=TASK-XXX`, `--dry-run`
+
+- **AWS CDK Skill** (`developer-kit-typescript`):
+  - New AWS CDK infrastructure-as-code skill for TypeScript
+  - Patterns for stack definitions, constructs, and deployment workflows
+
+- **Skill Review & Optimize Workflow** (global):
+  - Evolved from `skill-review` to `skill-review-and-optimize` with AI-powered optimization
+  - Added apply workflow for `/apply-optimize` comment triggers
+  - Added GitHub Action for automated skill review on PRs
+
+### Changed
+
+- **Core Command Organization** (`developer-kit-core`):
+  - Reorganized specification commands into `commands/specs/`
+  - Moved documentation commands into `commands/documentation/`
+  - Updated core documentation to reflect the expanded specification workflow
+
+- **Feature Development Command** (`developer-kit-core`):
+  - Enhanced integration with Knowledge Graph for better context management
+  - Improved workflow coordination with spec-quality command
+
+- **Spec to Tasks Command** (`developer-kit-core`):
+  - Enhanced task generation with Knowledge Graph integration
+  - Improved technical context extraction from codebase analysis
+
+- **Memory Management Skill Rename** (`developer-kit-core`):
+  - Renamed `claude-md-management` to `memory-md-management`
+  - Updated manifest registrations and documentation references
+
+- **Prompt Engineering Skill** (`developer-kit-ai`):
+  - Improved skill structure with concrete examples
+  - Added explicit validation checkpoints and failure-mode diagnosis
+  - Consolidated quality assurance into concise quality gates
+
+- **Version Alignment** (global):
+  - Bumped marketplace and plugin manifests to `2.7.0`
+  - Updated marketplace plugin entries to keep all published versions aligned
+
+- **Documentation Refresh** (global):
+  - Updated top-level and plugin documentation to reflect the current specification workflow
+
+- **Rules Updates**:
+  - Minor updates to rule files across `developer-kit-java`, `developer-kit-php`, `developer-kit-python`, and `developer-kit-typescript`
+  - Consistency improvements and validator/reference updates
+
+## [2.6.3] - 2026-03-18
+
+### Fixed
+
+- **Core Hook Fix** (`developer-kit-core`):
+  - Removed duplicate hook loading issue (Closes #158)
+
+## [2.6.2] - 2026-03-16
+
+### Fixed
+
+- **Global Documentation Fixes**:
+  - Fixed markdown errors on skills and reference files across all plugins
+  - Fixed documentation links in multiple plugin guides
+  - Fixed link issues on reference files in better-auth skill (`developer-kit-typescript`)
+
+### Added
+
+- **Tessl Integration**:
+  - Added `tessl.json` configuration for Tessl registry integration
+  - Added `tile.json` with complete tile definition for 79 skills across 11 plugins
+  - Added workflow for publishing tiles to Tessl registry (`.github/workflows/publish-tiles.yml`)
+
+- **Validation System Enhancements** (`.skills-validator-check`):
+  - Added comprehensive test coverage for CLI and validators
+  - Enhanced validation logic with better error reporting
+  - Added `config.py` for centralized configuration
+  - Added `reporter.py` for improved output formatting
+
+### Changed
+
+- **Version Bump**: Updated all plugins to version 2.6.2
+  - Updated `marketplace.json` with new version
+  - Updated all 11 plugin `plugin.json` files
+
+## [2.6.1] - 2026-03-14
+
+### Fixed
+
+- **Plugin Installation Bug Fix** (`developer-kit-core`):
+  - Fixed plugin.json error that prevented correct installation of developer-kit-core
+  - Updated hooks configuration structure for proper integration
+  - Removed deprecated `hooks/settings.json.example` file
+
+### Added
+
+- **LSP Server Configurations** (`developer-kit-java`, `developer-kit-php`, `developer-kit-python`, `developer-kit-typescript`):
+  - Java: `java`, `kotlin`, `scala` language servers (jdtls, kotlin-language-server, metals)
+  - PHP: `php` language server (intelephense)
+  - Python: `python` language server (pyright-langserver)
+  - TypeScript: `typescript`, `javascript`, `tsx`, `jsx` language servers (typescript-language-server, eslint-language-server, vue-language-server)
+  - Enables real-time code intelligence, diagnostics, and navigation features
+
+- **Validation System Enhancements** (`.skills-validator-check`):
+  - Added `config.py` for centralized validation configuration
+  - Added `validators.py` with improved validation logic
+  - Enhanced plugin validation with better error reporting
+
+## [2.6.0] - 2026-03-13
+
+### Added
+
+- **New Codex CLI delegation skill** (`developer-kit-tools`):
+    - `codex`: Delegates complex development tasks to OpenAI's Codex CLI using GPT-5.3-codex models
+    - Supports `codex exec` for non-interactive code generation and `codex review` for code review workflows
+    - Includes model selection guide (gpt-5.3-codex, o3, o4-mini) and sandbox modes documentation
+    - Comprehensive examples covering main use cases with security warnings for dangerous modes
+    - CLI command reference documentation for all available commands
+
+- **New Destructive Command Prevention Hook** (`developer-kit-core`):
+  - `prevent-destructive-commands.py`: Python 3 PreToolUse hook that prevents execution of dangerous Bash commands
+  - Shell-aware tokenization with `shlex` (pipes, chains, quoted paths)
+  - Recursive analysis: `sudo`, `bash -c`, `find -exec`, `xargs`, `watch` wrappers
+  - Path validation: `rm`/`unlink`/`rmdir`/`shred` blocked outside CWD
+  - Extensible blacklist: AWS CLI, Docker, `git reset --hard`/`clean`
+  - Zero external dependencies (pure Python 3 stdlib)
+  - Installer updated to copy hooks and register in `.claude/settings.json`
+  - Security: Blocks attempts to read sensitive files (.env, keys, creds)
+
+- **New WireMock Standalone Docker skill** (`developer-kit-java`):
+  - `wiremock-standalone-docker`: Integration testing patterns using WireMock standalone server via Docker
+  - Supports stubs configuration with JSON mappings for various HTTP scenarios
+  - Example mappings: success, not found, unauthorized, rate limited, internal error, slow response, malformed response, forbidden DELETE
+  - Docker Compose configuration for quick WireMock server startup
+  - Ideal for integration/E2E testing when real services are unavailable
+
+- **New TypeScript Rules** (`developer-kit-typescript`):
+  - `lambda-conventions`: AWS Lambda TypeScript coding patterns (handler structure, context handling, error responses, logging, Powertools)
+  - `server-feature-conventions`: Server-side feature architecture (routing, controllers, services, validation, error handling, middleware)
+  - Enhanced `zod-validation-patterns`: Updated for Zod v4 with coercion, transforms, complex schema composition, and React Hook Form integration
+
+- **New Task Management command** (`developer-kit-core`):
+  - `devkit.task-manage`: Post-generation task management with 7 actions (add, split, mark-optional, mark-required, update, regenerate-index, list)
+  - Automatically calculate task complexity scores with constraint-based validation
+  - Split complex tasks into smaller, manageable atomic tasks
+  - Mark tasks as optional for MVP prioritization
+  - Dynamically add new tasks to existing specifications
+  - Update task requirements and acceptance criteria
+  - Regenerate task list index after modifications
+  - List all tasks with complexity scores and recommendations
+
+- **New Task Review command** (`developer-kit-core`):
+  - `devkit.task-review`: Verify that implemented tasks meet specifications and pass code review
+  - Validates task implementation against acceptance criteria
+  - Checks specification compliance
+  - Performs language-specific code review
+  - Generates comprehensive review reports
+
+- **New Specification to Tasks command** (`developer-kit-core`):
+  - `devkit.spec-to-tasks`: Converts a functional specification into executable and trackable tasks
+  - Bridge between `devkit.brainstorm` (specification) and `devkit.feature-development` (implementation)
+  - Supports multiple languages: java, spring, typescript, nestjs, react, python, general, php
+  - **Automatic complexity scoring**: Each task receives a complexity score (0-100+) based on files, criteria, components, decisions, and integrations
+  - **Strong constraint**: Tasks with score ≥ 51 MUST be split before implementation
+  - **Optional task support**: Tasks can be marked as optional for MVP prioritization
+  - Output: `docs/specs/[id]/tasks/TASK-XXX.md` with enhanced frontmatter including complexity score and optional status
+  - Includes technical context from codebase analysis (existing patterns, APIs, conventions)
+
+- **Task Complexity Scoring System** (`developer-kit-core`):
+  - Automatic calculation: `(Files × 10) + (Acceptance Criteria × 5) + (Independent Components × 25) + (Design Decisions × 10) + (Integration Points × 15)`
+  - Thresholds: Simple (0-30 ✅), Moderate (31-50 ⚠️), Complex (51+ ❌ must split)
+  - Visual indicators in task lists and management interface
+  - Prevents creation of overly complex tasks that span multiple components
+
+- **Enhanced Task File Format** (`developer-kit-core`):
+  - New frontmatter fields: `optional` (true/false), `complexity` (score/100)
+  - Complexity breakdown analysis in task files
+  - MVP status indicators
+  - Dependency-aware task generation
+
+- **New Developer Workflow** (`developer-kit-core`):
+  - Complete workflow: `Idea → Functional Specification → Tasks → Management → Implementation → Review`
+  - Task complexity validation before implementation
+  - Dynamic task management during development
+  - Post-generation task splitting and updates
+
+### Changed
+
+- **Brainstorm command revised** (`developer-kit-core`):
+  - `devkit.brainstorm`: Now generates pure functional specifications (WHAT, not HOW)
+  - Focus on business logic, use cases, and acceptance criteria
+  - No code, frameworks, or technical patterns in specifications
+  - Output changed to `docs/specs/YYYY-MM-DD-feature-name.md`
+
+- **Specification to Tasks command enhanced** (`developer-kit-core`):
+  - `devkit.spec-to-tasks`: Added automatic complexity scoring with strong constraint (score ≥ 51 must split)
+  - Complexity validation before task generation completes
+  - Post-generation task management section with best practices
+  - Complexity reference guide with examples and red flags
+  - Integration with `devkit.task-manage` for iterative task refinement
+  - Added PHP support and language-specific reviewer mapping
+  - Now ingests original request and technical context from specification
+
+- **Feature Development command enhanced** (`developer-kit-core`):
+  - `devkit.feature-development`: Added Task Mode support
+  - Execute specific tasks from a task list using "Task:" prefix
+  - Example: `/developer-kit:devkit.feature-development "Task: User login"`
+  - Enhanced integration with task complexity system
+  - Added git status check before execution
+
+- **MCP Security Scan Checker enhanced** (`.skills-validator-check`):
+  - Updated to handle new WireMock skill references with external mappings
+  - Improved validation for Docker Compose and mapping files
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Core Commands Bug Fixes** (`developer-kit-core`):
+  - Added missing `[GATE]` markers in workflow commands
+  - Fixed task review command output formatting
+  - Improved specification generation workflow
+  - Enhanced code export with specialized agents
+  - Added missing feature in task manage command
+  - Improved task generation with test guide
+
+- **TypeScript Rules Bug Fixes** (`developer-kit-typescript`):
+  - Enhanced Zod v4 validation patterns with improved error handling
+  - Updated schema composition examples
+
+### Security
+
+- **Destructive Command Prevention Hook Enhanced** (`developer-kit-core`):
+  - Added detection and blocking of attempts to read sensitive files (.env, keys, creds)
+  - Hardened path validation against path traversal attacks
+  - Enhanced recursive analysis for wrapper commands (sudo, bash -c, xargs, watch)
+  - Security-first approach: $VAR, ${VAR}, globs, and {} placeholders flagged for review
+
+## [2.5.1] - 2026-03-06
+
+### Changed
+
+- **Version alignment**: All plugins updated to version 2.5.1 to align with marketplace version
+  - `developer-kit-core`: 2.5.0 → 2.5.1
+  - `developer-kit-ai`: 2.5.0 → 2.5.1
+  - `developer-kit-aws`: 2.5.0 → 2.5.1
+  - `developer-kit-java`: 2.5.0 → 2.5.1
+  - `developer-kit-typescript`: 2.5.0 → 2.5.1
+  - `developer-kit-php`: 2.5.0 → 2.5.1
+  - `developer-kit-python`: 2.5.0 → 2.5.1
+  - `developer-kit-devops`: 2.5.0 → 2.5.1
+  - `developer-kit-project-management`: 2.5.0 → 2.5.1
+  - `developer-kit-tools`: 2.5.0 → 2.5.1
+  - `github-spec-kit`: 2.4.0 → 2.5.1
+
+## [2.5.0] - 2026-03-04
+
+### Added
+
+- **New Documentation Auto-Updater skill** (`developer-kit-core`):
+  - `docs-updater`: Automatically updates project documentation by analyzing git changes between current branch and last release tag
+  - Performs git diff analysis to identify modifications, then updates README.md, CHANGELOG.md (Keep a Changelog standard), and discovers documentation folders
+  - Language-agnostic tool for maintaining documentation sync with codebase
+
+- **New AWS SAM Bootstrap skill** (`developer-kit-aws`):
+  - `aws-sam-bootstrap`: AWS Serverless Application Model (SAM) bootstrap patterns for new and existing projects
+  - Supports Python 3.10-3.14, Node.js 20/22/24, Java 25, and .NET 8-10 runtimes
+  - Includes `sam init`, migration checklist, template examples, and `samconfig.toml` configuration guidance
+
+- **New DynamoDB-Toolbox v2 skill** (`developer-kit-typescript`):
+  - `dynamodb-toolbox-patterns`: TypeScript patterns for DynamoDB-Toolbox v2 including schema/table/entity modeling
+  - Covers `.build()` command workflow, query/scan access patterns, batch and transaction operations, and single-table design with computed keys
+
+- **New Zod validation utilities skill** (`developer-kit-typescript`):
+  - `zod-validation-utilities`: Modern Zod v4 validation utilities and schema patterns including coercion, transforms, complex schema composition, `refine`/`superRefine`, and React Hook Form `zodResolver` integration
+
+- **New Gemini CLI delegation skill** (`developer-kit-tools`):
+  - `gemini`: Delegates tasks to Gemini CLI for large-context analysis workflows with non-interactive mode execution
+  - Includes English prompt formulation, execution flags (`-m`, `--approval-mode`, `-r`, `--output-format`), and safe result handling
+
+- **New Copilot CLI delegation skill** (`developer-kit-tools`):
+  - `copilot-cli`: Delegates tasks to GitHub Copilot CLI with non-interactive mode and multi-model support
+  - Supports model selection (Claude, GPT-5.x, Gemini), permission controls (`--allow-tool`, `--allow-all-tools`, `--yolo`), output capture with `--silent`, session export with `--share`, and session resume with `--resume`
+
+- **New Rules management** (`developer-kit-core`):
+  - Makefile targets for listing and installing plugin rules (`make list-rules`, `make install-rules`)
+  - New `scripts/install-rules.sh` script for automated rule installation
+
+### Changed
+
+- **Core Commands Enhancement**: Enforced mandatory `[GATE]` stop points and `AskUserQuestion` usage in devkit commands (`brainstorm`, `feature-development`, `fix-debugging`, `refactor`, `generate-document`)
+
+## [2.4.1] - 2026-03-01
+
+### Changed
+
+- **Plugin Manifest Cleanup**: Removed `rules` field from plugin.json files (`developer-kit-java`, `developer-kit-php`, `developer-kit-python`, `developer-kit-typescript`) as not yet supported by Anthropic
+- **Marketplace Update**: Added missing `developer-kit-tools` plugin to marketplace.json
+
+## [2.4.0] - 2026-02-28
+
+### Added
+
+- **New TypeScript Code Review Skills** (`developer-kit-typescript`):
+  - `nestjs-code-review`: NestJS code review with controller, service, module, guard, and DI pattern analysis
+  - `nextjs-code-review`: Next.js App Router review covering Server/Client Components, Server Actions, caching, and performance
+  - `react-code-review`: React 19 component review with hooks, accessibility, state management, and TypeScript integration
+  - `typescript-security-review`: Security audit for TypeScript/Node.js covering OWASP Top 10, XSS, injection, JWT, and dependency scanning
+  - Each skill includes reference documentation (patterns, anti-patterns, checklists)
+
+- **New Spring Boot Project Creator skill** (`developer-kit-java`):
+  - `spring-boot-project-creator`: Automated Spring Boot project generation with customizable dependencies
+  - Supports Spring Boot 3.x with Java 17+
+  - Interactive dependency selection (Web, Data JPA, Security, Actuator, etc.)
+  - Best practices enforcement and project structure templates
+
+- **New GraalVM Native Image skill** (`developer-kit-java`):
+  - `graalvm-native-image`: Comprehensive skill for building GraalVM native executables from Java applications
+  - Covers: Maven/Gradle project analysis, Native Build Tools configuration, framework-specific patterns (Spring Boot AOT, Quarkus, Micronaut)
+  - GraalVM reachability metadata (reflect-config, resource-config)
+  - Iterative fix engine for resolving native build failures
+  - Tracing agent for automatic metadata collection
+  - Docker integration with multi-stage builds
+
+- **New GitHub Issue Workflow skill** (`developer-kit-core`):
+  - `github-issue-workflow`: Skill for creating and managing GitHub issues with workflow automation
+  - Plugin manifest updated to integrate new skill
+  - Security hardening: treats issue bodies as untrusted input with content-isolation, mandatory user confirmation, and prompt injection prevention
+
+- **New `developer-kit-tools` plugin** (PR #106):
+  - New plugin for external tools integration (CLI utilities, APIs, third-party services)
+  - `notebooklm`: Google NotebookLM integration skill for generating audio summaries, podcasts, and study guides from source documents
+  - Enforces user-provided sources and includes security guidance for content handling
+
+- **Context7 Integration**: Added `context7.json` for claim skills repository
+
+- **Standardized Coding Rules for Language Plugins** (PR #112, closes #109):
+  - Added `rules/` directory with path-scoped coding rules to 4 language plugins
+  - **Java** (`developer-kit-java`): 4 rules — naming-conventions, project-structure, language-best-practices, error-handling (Java 17+, Spring Boot, constructor DI, Records)
+  - **Python** (`developer-kit-python`): 4 rules — naming-conventions, project-structure, language-best-practices, error-handling (PEP 8, type hints, Pydantic, async patterns)
+  - **PHP** (`developer-kit-php`): 4 rules — naming-conventions, project-structure, language-best-practices, error-handling (PSR-12, PSR-4, PHP 8.1+, readonly properties)
+  - **TypeScript** (`developer-kit-typescript`): 16 rules — core (naming-conventions, project-structure, language-best-practices, error-handling), NestJS (architecture, api-design, security, testing), React (component-conventions, data-fetching, routing-conventions), Tailwind (styling-conventions), Data (drizzle-orm-conventions, shared-dto-conventions), Infra (nx-monorepo-conventions, i18n-conventions)
+  - Rules use Claude Code `.claude/rules/` compatible format with `globs:` frontmatter for automatic path-scoped activation
+
+- **New RuleValidator** (`.skills-validator-check`):
+  - Added `RuleValidator` for validating rule files structure and content
+  - Validates `globs:` frontmatter, required sections (Guidelines, Examples), and formatting
+  - Extended `ValidatorFactory` to include rule validation pattern
+  - Added comprehensive test suite for rule validation
+
+- **Enhanced Security Scanning**:
+  - Added MCP scan checker for per-skill security analysis
+  - Implemented PR-level security scanning (only changed skills)
+  - Added Gen Agent Trust Hub security check
+  - New security scan workflow for CI integration
+
+- **MCP-Scan Security Integration** (`.skills-validator-check`):
+  - New `mcp_scan_checker.py` script for security scanning of skills
+  - Integrates with [mcp-scan](https://github.com/invariantlabs-ai/mcp-scan) from Invariant Labs
+  - Detects prompt injection attacks, malware payloads, sensitive data handling issues, and hard-coded secrets
+  - Supports scanning all skills (`--all`), specific plugins (`--plugin`), specific paths (`--path`), or changed skills only (`--changed`)
+  - Per-skill scanning with clear output and summary statistics
+  - JSON output parsing with structured results
+  - Classifies W004 "not in registry" as informational (expected for custom skills)
+
+- **GitHub Actions Security Scan Workflow** (`.github/workflows/security-scan.yml`):
+  - Automated security scanning on push to main/develop and pull requests
+  - PRs scan only changed skills for efficiency
+  - Push events scan all skills
+  - Uses `uvx` runner for mcp-scan execution
+
+- **Makefile Security Targets**:
+  - `make security-scan`: Run MCP-Scan on all skills
+  - `make security-scan-changed`: Run MCP-Scan only on changed skills
+
+### Changed
+
+- **Updated plugin.json manifests**: All 4 language plugin manifests now include `rules` array with component references
+- **Updated install-claude.sh**: Rules are deployed to `.claude/rules/[plugin-name]/` with conflict resolution
+- **Updated Makefile**: `list-plugins` and `list-components` targets now display rules count
+- **Extended MCP scan checker**: Security scanning now covers rule files
+- **Enhanced README Badges**: Added security scan and plugin-validation badges
+- **Added Marketplace Links**: Added 'Listed on' marketplace links to README
+
+### Security
+
+- **Resolved 14 MCP-Scan Security Failures**:
+  - W007 - Insecure credential handling: Replaced hardcoded apiKey/password with env var references in RAG
+  - W012 - External URL/code execution risks: Pinned Docker images (LocalStack 3.8.1, ollama 0.5.4, qdrant v1.13.2), npm packages (@modelcontextprotocol 0.6.2), and GitHub Actions (trivy-action, snyk/actions)
+  - W011 - Third-party content exposure: Added content validation/filtering warnings across skills (RAG, Bedrock, Messaging, MCP patterns, Qdrant, Spring AI MCP, TS Lambda, Next.js, shadcn-ui)
+
+- **Fixed Trust Hub Security Check**: Disabled Trust Hub API check returning HTTP 400 (incompatible with raw GitHub URLs)
+
+## [2.3.0] - 2026-02-25
+
+### Added
+
+- **New AWS CLI Beast Mode skill** (`developer-kit-aws`):
+  - `aws-cli-beast`: Comprehensive AWS CLI mastery for advanced cloud engineers
+  - Covers EC2, Lambda, S3, DynamoDB, RDS, VPC, IAM, Bedrock, and CloudWatch
+  - Features advanced JMESPath queries, bulk operations, waiters, and security-first patterns
+  - Includes reference guides: compute-mastery, data-ops-beast, networking-security-hardened, automation-patterns
+  - Provides shell aliases and helper scripts for daily AWS operations
+
+- **New AWS Cost Optimization skill** (`developer-kit-aws`):
+  - `aws-cost-optimization`: Structured AWS cost optimization guidance using five pillars (right-sizing, elasticity, pricing models, storage optimization, monitoring) and twelve actionable best practices
+  - Covers AWS native tools: Cost Explorer, Budgets, Compute Optimizer, Trusted Advisor, Cost Anomaly Detection
+  - Includes FinOps practices, EC2/EBS/S3 optimization, Savings Plans evaluation
+
+- **Enhanced Skill Validation System**:
+  - Added support for agentskills.io/specification validation
+  - New skill validator with improved compliance checking
+
+- **CI/CD Security Integration**:
+  - Added Gen Agent Trust Hub security check for affected skills
+  - Automated security validation in CI pipeline
+
+- **GitHub Repository Improvements**:
+  - Added GitHub issue templates for standardized bug reports and feature requests
+  - Updated README.md with comprehensive Developer Kit workflows documentation
+
+### Fixed
+
+- **Skill Metadata Corrections**:
+  - Removed invalid frontmatter fields from SKILL.md files across plugins
+  - Corrected name mismatch in `developer-kit-php` clean-architecture skill
+
+## [2.2.0] - 2026-02-20
+
+### Added
+- **New Better Auth skill** (`developer-kit-typescript`):
+  - `better-auth`: Comprehensive Better Auth integration for NestJS backend and Next.js frontend with Drizzle ORM + PostgreSQL
+  - Complete authentication flow with email/password, OAuth providers, JWT tokens, and session management
+  - Backend patterns for NestJS with Better Auth integration, protected routes, and role-based access control
+  - Frontend patterns for Next.js App Router with Better Auth client, React hooks, and middleware
+  - Database schema with Drizzle ORM for users, sessions, accounts, and verification tokens
+
+- **Enhanced Validation System** (`.skills-validator-check`):
+  - Added `KebabCaseValidator`: Validates markdown filenames follow kebab-case naming convention
+  - Added `SkillPackageValidator`: Detects prohibited `.skill` package files that shouldn't be committed
+  - Added `PluginVersionValidator`: Ensures plugin.json version aligns with marketplace.json version
+  - Added `PluginJsonValidator`: Verifies all components (skills, agents, commands) are properly registered in plugin.json
+  - Added empty skill folder detection to identify malformed skill directories
+
+- **New Draw.io Logical Diagrams skill** (`developer-kit-core`):
+  - `drawio-logical-diagrams`: Professional logical flow diagrams and system architecture diagrams in draw.io XML format
+  - Supports flowcharts, BPMN, UML (class, sequence, activity), DFD, and system interaction diagrams
+  - Includes shape styles reference and diagram templates
+
+- **New Next.js Skills** (5 comprehensive skills for `developer-kit-typescript`):
+  - `nextjs-app-router`: Next.js 16+ App Router patterns, file-based routing, nested layouts, Server Components, Server Actions, and `"use cache"` directive
+  - `nextjs-authentication`: Authentication implementation with Auth.js 5 (NextAuth.js), JWT, OAuth providers, RBAC, and session management
+  - `nextjs-data-fetching`: Data fetching patterns with Server Components, SWR, React Query, ISR, and revalidation strategies
+  - `nextjs-performance`: Performance optimization with Core Web Vitals (LCP, INP, CLS), `next/image`, `next/font`, streaming with Suspense, and bundle optimization
+  - `nextjs-deployment`: Deployment patterns with Docker multi-stage builds, GitHub Actions CI/CD, environment variables, preview deployments, and OpenTelemetry monitoring
+
+- **New Drizzle ORM Skills** (2 skills for `developer-kit-typescript`):
+  - `drizzle-orm-patterns`: Complete Drizzle ORM patterns for schema definitions, CRUD operations, relations (one-to-one, one-to-many, many-to-many), type-safe queries, transactions, and migrations with Drizzle Kit
+  - `nestjs-drizzle-crud-generator`: Automated NestJS CRUD module generation with Drizzle ORM via Python script, including controllers, services, Zod-validated DTOs, schema, and unit tests
+
+- **New Monorepo Skills** (2 skills for `developer-kit-typescript`):
+  - `nx-monorepo`: Complete Nx workspace patterns including configuration, generators, affected commands, Module Federation, CI/CD integration, remote caching with Nx Cloud, and framework-specific guides for NestJS, React, and TypeScript
+  - `turborepo-monorepo`: Complete Turborepo patterns including turbo.json configuration, task dependencies, Next.js and NestJS integration, testing with Vitest/Jest, CI/CD, and remote caching with Vercel
+
+- **New AWS Lambda Integration Skills** (4 skills across multiple plugins):
+  - `aws-lambda-typescript-integration` (`developer-kit-typescript`): AWS Lambda patterns for TypeScript with NestJS adapters, Express/Fastify adapters, raw TypeScript handlers, and Serverless Framework deployment
+  - `aws-lambda-java-integration` (`developer-kit-java`): AWS Lambda patterns for Java with Micronaut Framework (cold start < 1s) and Raw Java handlers (cold start < 500ms), API Gateway/ALB support
+  - `aws-lambda-python-integration` (`developer-kit-python`): AWS Lambda patterns for Python with AWS Chalice Framework (cold start < 200ms) and Raw Python handlers (cold start < 100ms)
+  - `aws-lambda-php-integration` (`developer-kit-php`): AWS Lambda patterns for PHP with Bref Framework and Raw PHP handlers, Symfony integration
+
+- **New Monorepo Documentation**: Comprehensive `guide-skills-monorepo.md` for `developer-kit-typescript` with best practices for both Nx and Turborepo architectures
+
+### Changed
+- **Refactored AWS skill directory structure** (`developer-kit-aws`):
+  - Moved `aws-drawio-architecture-diagrams` skill from `skills/aws-cloudformation/` to `skills/aws/` directory
+  - Better separation between CloudFormation IaC skills and general AWS skills
+- Updated `developer-kit-typescript` plugin.json with 11 new skills and 11 new keywords (nextjs, drizzle, monorepo, aws, lambda, serverless)
+- Updated `developer-kit-python` plugin.json with `aws` and `lambda` keywords
+- Enhanced frontend documentation (`guide-skills-frontend.md`) with Next.js Development Skills section
+- Updated all plugin manifests to include new skills
+- Updated documentation component counts across all plugins:
+  - Total components: **92 skills, 43 agents, 36 commands** (was 77 skills, 43 agents, 36 commands at v2.1.0)
+
+### Fixed
+- Resolved security issues in authentication patterns (better-auth skill)
+- Resolved review findings from component audit (naming conventions, schema compliance)
+- Corrected XML syntax error in draw.io decision diamond example
+- Minor bug fixes in TypeScript skill configurations
+
+## [2.1.0] - 2026-02-14
+
+### Added
+- **New Clean Architecture skills** across multiple languages:
+  - PHP Clean Architecture patterns (Clean Architecture, Hexagonal Architecture, DDD)
+  - Python Clean Architecture patterns with FastAPI/Flask examples
+  - TypeScript/NestJS Clean Architecture with Domain-Driven Design
+  - Java/Spring Boot Clean Architecture with enterprise patterns
+- **New AWS Architecture Diagrams skill**:
+  - Professional AWS architecture diagram creation in draw.io format
+  - Well-Architected Framework visualization patterns
+  - Infrastructure as Code diagram representations
+- **New shadcn-ui Chart component**:
+  - Recharts integration for data visualization
+  - Line, bar, pie, area, and radar chart components
+  - Responsive chart patterns with Tailwind CSS
+- **New CLAUDE.md handler skill**:
+  - Project instruction management and optimization
+  - Best practices for maintaining project guidelines
+
+### Changed
+- Enhanced skill documentation with clearer scope definitions
+- Improved multi-language Clean Architecture coverage
+
+### Fixed
+- YAML parser warning in wordpress-sage-theme skill
+- Clean Architecture skill configuration issues
+
+## [2.0.0] - 2026-02-07
+
+### Changed
+- **Complete restructuring to multi-plugin architecture**:
+  - Restructured codebase from monolithic to multi-plugin system organized by language/technology
+  - Created 10 self-contained plugins in `plugins/` directory:
+    - **developer-kit-core**: Core agents and commands (brainstorm, refactor, debugging, LRA workflow, GitHub integration)
+    - **developer-kit-java**: Java/Spring Boot/LangChain4J/AWS SDK skills and agents
+    - **developer-kit-typescript**: NestJS/React/React Native/TypeScript skills and agents
+    - **developer-kit-python**: Python skills and agents
+    - **developer-kit-php**: PHP/WordPress/Laravel/Symfony skills and agents
+    - **developer-kit-aws**: AWS/CloudFormation skills and agents
+    - **developer-kit-ai**: Prompt engineering, RAG, chunking strategies
+    - **developer-kit-devops**: Docker, GitHub Actions
+    - **developer-kit-project-management**: LRA workflow commands
+    - **github-spec-kit**: GitHub specification tools
+  - Moved all agents to respective plugin directories
+  - Reorganized all commands by category within each plugin
+  - Split all skills by language/technology
+  - Updated `marketplace.json` with new 10 plugin references
+  - Updated Makefile for multi-plugin installation support
+  - Added plugin-specific documentation (README.md, guide-agents.md, guide-commands.md) for each plugin
+
+### Fixed
+- Minor bug fixes
+
+## [1.25.1] - 2026-02-05
+
+### Fixed
+
+- Added wordpress-sage-theme skill to marketplace.json
+
+## [1.25.0] - 2026-02-03
+
+### Added
+- **New Brainstorming Command**:
+  - `/devkit.brainstorm`: Transform ideas into fully formed designs through structured dialogue
+  - 9-phase systematic approach with specialist agents:
+    1. Context Discovery
+    2. Idea Refinement
+    3. Approach Exploration
+    4. Codebase Exploration (uses `developer-kit:general-code-explorer` agent)
+    5. Design Presentation (validated incrementally)
+    6. Documentation Generation (uses `developer-kit:document-generator-expert` agent)
+    7. Document Review (uses `developer-kit:general-code-reviewer` agent)
+    8. Next Steps Recommendation
+    9. Summary
+  - Creates professional design documents at `docs/plans/YYYY-MM-DD--design.md`
+  - Codebase exploration ensures designs are based on actual code patterns (not assumptions)
+  - Professional documentation generated by specialist agent
+  - Document review phase ensures quality before proceeding
+  - Automatic recommendation for next development command with pre-filled arguments
+  - Language-agnostic design - works with any technology stack
+  - One question at a time approach with multiple choice options
+  - Incremental validation of design sections (200-300 words each)
+  - Always proposes 2-3 approaches with trade-offs before settling
+  - Integrates seamlessly with `/devkit.feature-development`, `/devkit.fix-debugging`, and `/devkit.refactor`
+
+### Changed
+- **Improved Command Robustness**:
+  - Made "Current Context" section optional in all workflow commands
+  - Removed automatic git execution (`!` prefix) that could fail in newly initialized repositories
+  - Commands now gather context information conditionally when available:
+    - `/devkit.feature-development`
+    - `/devkit.fix-debugging`
+    - `/devkit.refactor`
+    - `/devkit.brainstorm`
+  - Prevents errors when working with projects without git history
+
+## [1.24.0] - 2026-02-01
+
+### Added
+- **New PHP Agents** (5 new specialized agents):
+  - `php-code-review-expert`: Expert PHP code reviewer specializing in code quality, security, performance, and modern PHP best practices. Reviews PHP codebases (Laravel, Symfony) for bugs, logic errors, security vulnerabilities, and quality issues using confidence-based filtering
+  - `php-refactor-expert`: Expert PHP code refactoring specialist. Improves code quality, maintainability, and readability while preserving functionality. Applies clean code principles, SOLID patterns, and modern PHP 8.3+ best practices for Laravel and Symfony
+  - `php-security-expert`: Expert security auditor specializing in PHP application security, DevSecOps, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/JWT), OWASP standards, and security automation for Laravel and Symfony
+  - `php-software-architect-expert`: Expert PHP software architect specializing in Clean Architecture, Domain-Driven Design (DDD), and modern PHP patterns. Reviews PHP codebases (Laravel, Symfony) for architectural integrity, proper module organization, and SOLID principles
+  - `wordpress-development-expert`: Expert WordPress developer specializing in custom plugin and theme development. Masters WordPress coding standards, hooks/filters architecture, Gutenberg blocks, REST API, WooCommerce integration, and site/portal development
+- **New WordPress Sage Theme Skill**:
+  - `wordpress-sage-theme`: Comprehensive WordPress Sage theme development skill
+  - Sage 10+ theme architecture with modern Blade templates
+  - ACF (Advanced Custom Fields) integration patterns
+  - Bud (Vite-based) build system configuration
+  - Blade templating engine patterns for WordPress themes
+  - Starter layouts and page templates
+  - Reference documentation for Sage, Blade, ACF, and Bud
+  - Asset compilation and optimization strategies
+- **Enhanced Spring Boot Code Review** (contributed by @zmlgit):
+  - Added transaction management checks (JTA, @Transactional, isolation levels)
+  - Added event handling patterns verification (Spring Events, @EventListener)
+  - Added AOP (Aspect-Oriented Programming) patterns review
+  - Added JPA pitfalls detection (N+1 queries, lazy loading, entity lifecycle)
+  - Added MyBatis integration patterns and best practices
+- **Enhanced PHP/Laravel Support**:
+  - PHP 8.3+ specific patterns (readonly classes, enums, constructor property promotion)
+  - Modern PHP patterns (match expressions, named arguments, attributes, first-class callables)
+  - Laravel-specific patterns (Eloquent ORM, query scopes, service container, middleware)
+  - Symfony-specific patterns (autowiring, security voters, doctrine ORM, messenger)
+  - Clean Architecture and DDD patterns for PHP applications
+- **WordPress Development Expertise**:
+  - Custom plugin architecture and WordPress Plugin API
+  - Theme development (child themes, block themes, Full Site Editing)
+  - Gutenberg block development with React
+  - WordPress REST API integration
+  - WooCommerce customization and extensions
+  - WordPress coding standards and security best practices
+
+### Changed
+- Updated `.claude-plugin/marketplace.json` with new PHP and WordPress agents metadata
+- Enhanced README.md with PHP development capabilities documentation
+- Total agents count increased with new PHP and WordPress specialists
+- Updated agents documentation to include PHP/Laravel/Symfony and WordPress development capabilities
+- Organized skills directory structure with `react-patterns` and `tailwind-css-patterns` renames
+- Updated marketplace.json metadata for new skills
+- Enhanced general agents documentation with PHP/WordPress capabilities
+
+### Documentation
+- Added comprehensive PHP agent definitions with specialized expertise in:
+  - Code review with confidence-based filtering (≥80 threshold)
+  - Refactoring with SOLID principles and clean code patterns
+  - Security auditing with OWASP Top 10 compliance
+  - Software architecture with Clean Architecture and DDD patterns
+  - WordPress plugin and theme development best practices
+- Enhanced agent descriptions with PHP framework expertise (Laravel, Symfony)
+- Added WordPress-specific patterns and coding standards
+- Added comprehensive Sage theme development guide with 281 lines of SKILL.md content
+- Added reference documentation for ACF (465 lines), Blade (304 lines), Bud (327 lines), and Sage (130 lines)
+- Included starter Blade templates for layouts and pages
+
+## [1.23.0] - 2025-01-24
+
+### Added
+- **New DevOps Agents** (2 new specialized agents):
+  - `general-docker-expert`: Expert Docker containerization specialist. Masters multi-stage builds, Docker Compose orchestration, container optimization, and production deployment strategies. Proficient in Dockerfile best practices, volume management, networking, security hardening, and container lifecycle management
+  - `github-actions-pipeline-expert`: Expert GitHub Actions CI/CD pipeline architect. Masters workflow automation, pipeline optimization, deployment strategies, and production-grade CI/CD implementations. Proficient in composite actions, reusable workflows, custom actions, matrix builds, caching strategies, security hardening, and pipeline monitoring
+- **New Python Agents** (4 new specialized agents):
+  - `python-code-review-expert`: Expert Python code reviewer specializing in code quality, security, performance, and Pythonic best practices. Reviews Python codebases for bugs, logic errors, security vulnerabilities, and quality issues using confidence-based filtering
+  - `python-refactor-expert`: Expert Python code refactoring specialist. Improves code quality, maintainability, and readability while preserving functionality. Applies clean code principles, SOLID patterns, and Pythonic best practices
+  - `python-security-expert`: Expert security auditor specializing in Python application security, DevSecOps, and compliance frameworks. Masters vulnerability assessment, threat modeling, secure authentication (OAuth2/JWT), OWASP standards, and security automation
+  - `python-software-architect-expert`: Expert Python software architect specializing in Clean Architecture, Domain-Driven Design (DDD), and modern Python patterns. Reviews Python codebases for architectural integrity, proper module organization, and SOLID principles
+- **New AWS CloudFormation Skills** (14 comprehensive skills with complete SKILL.md, examples.md, and reference.md files):
+  - `aws-cloudformation-auto-scaling`: Auto Scaling groups, scaling policies, lifecycle hooks, and scheduled actions
+  - `aws-cloudformation-bedrock`: Amazon Bedrock integration, AI/ML foundation models, and serverless AI inference
+  - `aws-cloudformation-cloudfront`: CloudFront distributions, edge functions, origins, cache behaviors, and WAF integration
+  - `aws-cloudformation-cloudwatch`: CloudWatch dashboards, alarms, metrics, logs, and monitoring strategies
+  - `aws-cloudformation-dynamodb`: DynamoDB tables, GSIs, LSIs, streams, auto-scaling, and TTL configuration
+  - `aws-cloudformation-ec2`: EC2 instances, launch templates, ASG integration, security groups, and ENI configuration
+  - `aws-cloudformation-ecs`: ECS clusters, task definitions, services, capacity providers, and Fargate deployment
+  - `aws-cloudformation-elasticache`: ElastiCache Redis/Memcached clusters, replication groups, and node configuration
+  - `aws-cloudformation-iam`: IAM users, groups, roles, policies, and permission boundary management
+  - `aws-cloudformation-lambda`: Lambda functions, layers, event sources, aliases, and versioning strategies
+  - `aws-cloudformation-rds`: RDS instances, Aurora clusters, parameter groups, snapshot management, and Multi-AZ deployment
+  - `aws-cloudformation-s3`: S3 buckets, policies, lifecycle rules, versioning, replication, and event notifications
+  - `aws-cloudformation-security`: Security best practices, WAF, Shield, KMS encryption, and compliance patterns
+  - `aws-cloudformation-vpc`: VPC design, subnets, route tables, NAT gateways, VPC endpoints, and peering
+- **Enhanced AWS Architecture Review**:
+  - Updated `aws-solution-architect-expert` agent with CloudFormation expertise
+  - Added comprehensive infrastructure as code review capabilities
+  - Enhanced Well-Architected Framework compliance checking
+- **GitHub Actions Task Skill**:
+  - `aws-cloudformation-task-ecs-deploy-gh`: Complete ECS deployment to GitHub Actions workflow skill
+  - Production-grade pipeline templates with blue-green deployment
+  - Comprehensive examples and reference documentation
+
+### Changed
+- Updated `.claude-plugin/marketplace.json` with new agents and skills metadata
+- Enhanced README.md with new DevOps, CloudFormation skills, and Python agents documentation
+- Total skills count increased significantly with 14 new AWS CloudFormation skills
+- Total agents count increased from 28 to 34 with new DevOps and Python specialists
+- Updated agents documentation to include Python development capabilities
+
+### Documentation
+- Added comprehensive SKILL.md files for all 14 CloudFormation skills with detailed patterns
+- Added extensive examples.md files with practical CloudFormation template examples
+- Added complete reference.md files with CloudFormation resource properties and reference documentation
+- Added 4 new Python agent definitions with specialized expertise in code review, refactoring, security, and architecture
+- Enhanced agent descriptions with DevOps and infrastructure expertise
+- Added guide-skills-aws-cloudformation.md for comprehensive CloudFormation patterns documentation
+
+## [1.22.0] - 2026-01-14
+
+### Added
+- **New AWS Cloud Architects Agents** (4 new specialized agents):
+  - `aws-architecture-review-expert`: Expert AWS architecture and CloudFormation reviewer specializing in Well-Architected Framework compliance, security best practices, cost optimization, and IaC quality. Reviews AWS architectures and CloudFormation templates for scalability, reliability, and operational excellence
+  - `aws-cloudformation-devops-expert`: Expert AWS DevOps engineer specializing in CloudFormation templates, Infrastructure as Code (IaC), and AWS deployment automation. Masters nested stacks, cross-stack references, custom resources, and CI/CD pipeline integration
+  - `aws-solution-architect-expert`: Expert AWS Solution Architect specializing in scalable cloud architectures, Well-Architected Framework, and enterprise-grade AWS solutions. Masters multi-region deployments, high availability patterns, cost optimization, and security best practices
+  - `general-refactor-expert`: Expert code refactoring specialist. Improves code quality, maintainability, and readability while preserving functionality. Applies clean code principles, SOLID patterns, and language-specific best practices
+
+## [1.21.0] - 2026-01-12
+
+### Added
+- `document-generator-expert` agent: Expert document generator for creating professional technical and business documentation
+  - Assessment documents (technical debt, security, performance, maturity)
+  - Feature documents (specifications, analysis, proposals)
+  - Analysis documents (gap analysis, impact analysis, comparative studies)
+  - Process documents (SOPs, runbooks, procedures)
+  - Custom documents with user-defined formats
+  - Multi-language support (English, Italian, Spanish, French, German, Portuguese)
+  - Codebase-driven analysis for accurate documentation
+  - Structured templates for each document type
+  - Integration with existing Developer Kit agents
+- `/devkit.generate-document` command: Interactive document generation with multi-language support
+  - Parameters for language (`--lang`), document type (`--type`), and output format (`--format`)
+  - Six-phase workflow (discovery, codebase analysis, content planning, generation, review, output)
+  - Project-specific analysis agents (Spring Boot, NestJS, React, General)
+  - Domain expert coordination for specialized content
+  - Documents saved to `docs/` directory with summary
+
+### Changed
+- Total agents count increased from 27 to 28
+
+## [1.20.0] - 2025-12-26
+
+### Added
+- `react-software-architect-review` agent: Expert React software architect specializing in frontend architecture, component design patterns, state management strategies, and performance optimization for complex React applications
+  - React 19 architecture mastery (Server Components, Actions, use hook, concurrent features)
+  - Component design patterns (Compound Components, Render Props, HOCs, Custom Hooks)
+  - State management architecture (Context, TanStack Query, Zustand, Jotai, Redux Toolkit)
+  - Framework-specific patterns for Next.js App Router, Remix, and Vite+React
+  - Performance architecture (memoization, code splitting, lazy loading, bundle optimization)
+  - Accessibility architecture (WCAG compliance, ARIA patterns, keyboard navigation)
+  - Testing architecture (React Testing Library, Vitest, Playwright)
+  - Design system architecture (component API design, theming, token systems)
+
+### Changed
+- Updated `/devkit.feature-development` command to use `react-software-architect-review` agent for React architecture reviews
+- Updated `/devkit.fix-debugging` command to use `react-software-architect-review` agent for React debugging
+- Updated `/devkit.refactor` command to use `react-software-architect-review` agent for React refactoring
+- Total agents count increased from 26 to 27
+
+## [1.19.0] - 2025-12-24
+
+### Added
+- `/devkit.refactor` command: Comprehensive guided refactoring command with backward compatibility options and multi-phase verification
+  - **Phase 1**: Refactoring discovery and understanding
+  - **Phase 2**: Compatibility requirements clarification (backward compatible, breaking changes, or internal-only)
+  - **Phase 3**: Deep codebase exploration with parallel analysis of code structure, usages, and test coverage
+  - **Phase 4**: Refactoring strategy design with risk assessment
+  - **Phase 5**: Pre-refactoring baseline verification
+  - **Phase 6**: Incremental implementation
+  - **Phase 7**: Comprehensive verification (automated tests, static analysis, code review, architecture validation)
+  - **Phase 8**: Issue resolution and remediation
+  - **Phase 9**: Summary and documentation with migration guides
+  - Multi-language support: `--lang=java|spring|typescript|nestjs|react|general`
+  - Scope selection: `--scope=file|module|feature`
+  - Specialized refactoring agents for each language
+  - Breaking change management and deprecation strategy support
+
+## [1.18.0] - 2025-12-18
+
+### Added
+- `expo-react-native-development-expert` (agents/expo-react-native-development-expert.md): Expert Expo & React Native mobile developer specializing in cross-platform mobile app development with Expo SDK 54, React Native 0.81.5, React 19.1, and TypeScript (781fcb9)
+
+
+## [1.17.1] - 2025-12-16
+
+### Fixed
+- Added TypeScript/React support to `/devkit.feature-development` and `/devkit.fix-debugging` commands
+- Improved language detection for frontend development tasks
+
+## [1.17.0] - 2025-12-11
+
+### Added
+- **New Frontend Development Skills** (4 new skills):
+  - `react`: React development patterns, hooks, state management, performance optimization
+  - `shadcn-ui`: Modern UI component library with Radix UI primitives and Tailwind CSS
+  - `tailwind-css`: Utility-first CSS framework for rapid UI development
+  - `typescript-docs`: TypeScript documentation patterns and type definition best practices
+- **New TypeScript & Frontend Agents** (8 new agents):
+  - `react-frontend-development-expert`: React architecture, hooks, state management, performance
+  - `nestjs-backend-development-expert`: NestJS modules, microservices, authentication, APIs
+  - `nestjs-code-review-expert`: NestJS security, performance, architecture review
+  - `nestjs-unit-testing-expert`: Unit, integration, and e2e testing with Jest
+  - `typescript-documentation-expert`: JSDoc/TSDoc, API documentation, type definitions
+  - `typescript-refactor-expert`: Modern patterns, performance optimization, legacy migration
+  - `typescript-security-expert`: OWASP Top 10, npm audit, secure coding practices
+  - `typescript-software-architect-review`: Design patterns, scalability, module organization
+- **New General Purpose Agents** (3 new agents):
+  - `general-code-explorer`: Code tracing, architecture mapping, dependency documentation
+  - `general-code-reviewer`: Code quality, maintainability, best practices across languages
+  - `general-software-architect`: System design, technology selection, scalability patterns
+- **New Documentation**:
+  - Complete Frontend Skills Guide (`docs/guide-skills-frontend.md`) with comprehensive patterns and examples
+  - Updated Agents Guide with new TypeScript & Frontend Development section
+- **Expanded Language Support**: TypeScript/Node.js added as fully supported language stack
+
+### Changed
+- Updated total skills count from 50 to 54
+- Updated total agents count from 12 to 22
+- Expanded Key Features to reflect full-stack development capabilities
+- Updated Language Roadmap to show TypeScript/Node.js as completed
+
+### Documentation
+- Completely rewrote `docs/guide-skills-frontend.md` with practical examples and best practices
+- Added TypeScript integration examples in frontend guide
+- Updated agents documentation with comprehensive descriptions of all new agents
+
+## [1.16.1] - 2025-12-08
+
+### Added
+- New debugging agent (`general-debugger.md`) for root cause analysis and debugging workflows
+- New `/devkit.fix-debugging` command for quick debugging and issue resolution
+
+### Fixed
+- Fixed feature command issues on Claude Code with proper agent name checking
+- Added missing test and compile checks in development workflows
+- Corrected agent name prefix validation for developer-kit agents
+- Updated agents documentation count in README for accuracy
+
+## [1.15.0] - 2025-12-04
+
+### Added
+- **New comprehensive Makefile with multi-CLI support**:
+  - `make install-claude` - Interactive installer for Claude Code projects
+  - `make install-copilot` - Install for GitHub Copilot CLI
+  - `make install-opencode` - Install for OpenCode CLI
+  - `make install-codex` - Install for Codex CLI
+  - `make install` - Install for all detected CLIs
+  - `make status` - Show installation status for all CLIs
+  - `make backup` - Create backup of existing configurations
+  - `make uninstall` - Remove all installations
+- **Interactive Claude Code installer** (`make install-claude`):
+  - Step-by-step guided installation process with environment validation
+  - Category-based skill selection (AWS Java, AI, JUnit Test, LangChain4j, Spring Boot)
+  - Flexible agent selection (all, specific, or none)
+  - Command selection with full 30-item listing
+  - Smart conflict handling with overwrite, skip, or rename options
+  - Complete project directory structure creation (.claude/skills/, .claude/agents/, .claude/commands/)
+  - Installation progress tracking and detailed summary
+  - Clean, colorized terminal UI with helpful next steps
+- **CLI tool integrations**:
+  - GitHub Copilot CLI support (agents installation)
+  - OpenCode CLI support (agents and commands)
+  - Codex CLI support (instructions and custom prompts)
+- Comprehensive backup system for existing configurations
+- Installation status monitoring and validation commands
+
+### Changed
+- Updated Makefile structure with comprehensive multi-CLI support
+- Enhanced help documentation with clear usage examples for all CLI tools
+- Streamlined installation flow for better user experience
+
+### Fixed
+- Cleaned up ignored files from repository (52bcd54)
+- Fixed merge integration for new installation features
+
+### Security
+- Validates Claude Code environment before installation to ensure proper context
+- Safe file handling with proper backup and restore mechanisms
+
+## [1.14.0] - 2025-12-04
+
+### Added
+- New spring-boot-security-jwt skill with JWT authentication and authorization patterns:
+  - JWT token generation and validation with JJWT
+  - Bearer token and cookie-based authentication
+  - OAuth2/OIDC provider integration
+  - Database-backed authentication integration
+  - Role-based (RBAC) and permission-based access control
+  - Method-level security with annotations
+  - Security headers and CSRF protection
+- New spring-ai-mcp-server-patterns skill for Model Context Protocol:
+  - MCP server implementation patterns for Spring AI
+  - AI tool integration and context management
+  - Function calling patterns
+- Enhanced security documentation and best practices
+- Integration patterns for AI-powered Spring Boot applications
+
+### Changed
+- Enhanced `/devkit.feature-development` command with improved user interaction:
+  - Added `AskUserQuestion` tool for structured user prompts
+  - Improved phase 3 clarifying questions with structured interaction
+  - Enhanced phase 4 architecture design with user choice presentation
+  - Fixed agent fallback order (developer-kit agents first, then general agents)
+  - Better documentation and usage examples
+
+## [1.13.0] - 2025-12-04
+
+### Added
+- New `/devkit.feature-development` command for guided feature development with systematic 7-phase approach
+- Three new general-purpose agents for comprehensive feature development:
+  - `explorer` - Analyzes existing codebase patterns and traces execution paths
+  - `architect` - Designs complete implementation blueprints with detailed architecture decisions
+  - `code-reviewer` - Reviews code for bugs, security vulnerabilities, and quality issues with confidence-based filtering
+- Integrated Task tool usage pattern for parallel agent execution
+- Fallback mechanism ensuring compatibility across different plugin installation scenarios
+
+## [1.12.1] - 2025-11-30
+
+### Fixed
+- Updated commands for selecting correct agent on execution command (0028135)
+
+## [1.12.0] - 2025-11-27
+
+### Added
+- Long-Running Agent (LRA) workflow commands and guide (12f495c)
+
+### Changed
+- Updated package path in refactoring task generator (a9a098f)
+
+### Fixed
+- Removed ignored files from project (cd75bd4)
+
+## [1.11.0] - 2025-11-24
+
+### Added
+- New commands and agents for enhanced development workflow
+- Comprehensive tutorial for agents, commands and skills
+- Documentation updates for commands and project structure
+- Enhanced README with new sections and improved organization
+
+### Changed
+- Removed optimize documentation references for cleaner structure
+- Made changelog command language-agnostic for better cross-platform compatibility
+
+### Fixed
+- Fixed formatting of requirements section in guide
+- Changed release dates in CHANGELOG.md for accuracy
+- Minor fixes and improvements to command structure
+
+## [1.10.0] - 2025-11-12
+
+### Added
+- GitHub workflow automation commands
+- Dependency management commands
+- Code refactoring commands
+- Project documentation generation commands
+
+### Changed
+- Refactored command structure for better maintainability
+- Made changelog generation commands language-agnostic
+
+### Fixed
+- Improved command compatibility across different platforms
+
+## [1.9.0] - 2025-11-10
+
+### Added
+- New Java agents for specialized development tasks
+- Enhanced skill collection for Java development
+- Improved documentation structure
+
+### Changed
+- Updated marketplace configuration for new agents
+- Enhanced README with new features documentation
+
+## [1.8.0] - 2025-11-08
+
+### Added
+- Project documentation generation commands
+- Code documentation automation
+- Enhanced markdown generation capabilities
+
+### Fixed
+- Documentation formatting improvements
+- Updated version management scripts
+
+## [1.7.0] - 2025-11-06
+
+### Added
+- New Java commands for unit and integration testing
+- CRUD pattern generation commands
+- Enhanced testing capabilities
+
+### Changed
+- Improved command structure and organization
+- Updated dependencies and build configuration
+
+## [1.6.0] - 2025-11-05
+
+### Added
+- New agents for specialized development tasks
+- Enhanced skill collection
+- Improved documentation and examples
+
+### Changed
+- Refactored skill organization with Anthropics rules compliance
+- Updated marketplace configuration
+- Enhanced README structure
+
+## [1.5.0] - 2025-11-05
+
+### Added
+- Python script templates for CRUD patterns
+- Enhanced automation capabilities
+- Improved developer experience features
+
+### Changed
+- Restructured project organization
+- Updated documentation and guides
+- Enhanced command-line interface
+
+## [1.4.0] - 2025-11-10
+
+### Added
+- Initial Java development agents
+- Spring Boot specialization
+- Enhanced testing patterns
+
+### Changed
+- Improved project structure
+- Updated dependencies
+- Enhanced documentation
+
+## [1.3.0] - 2024-11-08
+
+### Added
+- Comprehensive skill collection
+- Enhanced command palette
+- Improved developer tools
+
+### Changed
+- Restructured documentation
+- Updated marketplace configuration
+- Enhanced user experience
+
+## [1.2.0] - 2025-11-06
+
+### Added
+- Initial release of Developer Kit
+- Core skill framework
+- Basic agent structure
+- Essential documentation
+
+### Changed
+- Established project foundation
+- Created initial structure
+- Set up development workflow
+
+## [1.1.0] - 2025-11-05
+
+### Added
+- Plugin configuration
+- Marketplace metadata
+- Initial skill templates
+
+### Fixed
+- Setup and configuration issues
+- Documentation improvements
+
+## [1.0.0] - 2025-11-02
+
+### Added
+- Initial project setup
+- Basic structure
+- Core functionality
+- Foundation documentation
+
+[Unreleased]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v3.0.0...v3.1.0
+[3.0.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v3.0.0...v3.0.1
+[3.0.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.8.2...v3.0.0
+[2.8.2]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.8.1...v2.8.2
+[2.8.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.8.0...v2.8.1
+[2.7.2]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.7.1...v2.7.2
+[2.7.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.6.3...v2.7.1
+[2.6.3]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.6.2...v2.6.3
+[2.6.2]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.6.1...v2.6.2
+[2.6.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.6.0...v2.6.1
+[2.6.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.5.1...v2.6.0
+[2.5.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.5.0...v2.5.1
+[2.5.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.4.1...v2.5.0
+[2.4.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.4.0...v2.4.1
+[2.4.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.3.0...v2.4.0
+[2.3.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.25.1...v2.0.0
+[1.25.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.25.0...v1.25.1
+[1.25.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.24.0...v1.25.0
+[1.24.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.23.0...v1.24.0
+[1.23.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.22.0...v1.23.0
+[1.22.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.20.0...v1.22.0
+[1.21.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.20.0...v1.21.0
+[1.20.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.19.0...v1.20.0
+[1.19.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.18.0...v1.19.0
+[1.18.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.17.1...v1.18.0
+[1.17.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.17.0...v1.17.1
+[1.17.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.16.1...v1.17.0
+[1.16.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.15.0...v1.16.1
+[1.15.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.14.0...v1.15.0
+[1.14.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.12.1...v1.13.0
+[1.12.1]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.12.0...v1.12.1
+[1.12.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.9.0...v1.10.0
+[1.9.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.8.0...v1.9.0
+[1.8.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/giuseppe-trisciuoglio/developer-kit/releases/tag/v1.0.0

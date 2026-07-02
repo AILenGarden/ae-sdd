@@ -65,6 +65,7 @@ SKILL_NAME = "ae-sdd"
 CLAUDE_DST = Path.home() / ".claude" / "skills" / SKILL_NAME
 CODEX_DST  = Path.home() / ".codex" / "skills" / SKILL_NAME
 ZCODE_DST  = Path.home() / ".zcode" / "skills" / SKILL_NAME
+HERMES_DST = Path.home() / ".hermes" / "skills" / SKILL_NAME
 
 
 def _target_paths(selection: str) -> list[Path]:
@@ -72,13 +73,16 @@ def _target_paths(selection: str) -> list[Path]:
     if selection == "claude": return [CLAUDE_DST]
     if selection == "codex":  return [CODEX_DST]
     if selection == "zcode":  return [ZCODE_DST]
-    if selection == "all":    return [CLAUDE_DST, CODEX_DST, ZCODE_DST]
+    if selection == "hermes": return [HERMES_DST]
+    if selection == "all":    return [CLAUDE_DST, CODEX_DST, ZCODE_DST, HERMES_DST]
     # auto
     targets = [CLAUDE_DST]
-    if CODEX_DST.exists() or shutil.which("codex") or shutil.which("codex.exe"):
+    if CODEX_DST.parent.is_dir() or CODEX_DST.exists() or shutil.which("codex") or shutil.which("codex.exe"):
         targets.append(CODEX_DST)
-    if ZCODE_DST.exists() or shutil.which("zcode") or shutil.which("zcode.exe"):
+    if ZCODE_DST.parent.is_dir() or ZCODE_DST.exists() or shutil.which("zcode") or shutil.which("zcode.exe"):
         targets.append(ZCODE_DST)
+    if HERMES_DST.parent.is_dir() or HERMES_DST.exists() or shutil.which("hermes") or shutil.which("hermes.exe"):
+        targets.append(HERMES_DST)
     return targets
 
 
@@ -114,6 +118,8 @@ def _detect_agents() -> dict:
         agents["claude"] = "Claude Code"
     if shutil.which("codex") or shutil.which("codex.exe"):
         agents["codex"] = "Codex CLI"
+    if shutil.which("hermes") or shutil.which("hermes.exe"):
+        agents["hermes"] = "Hermes CLI"
     if shutil.which("mavis") or shutil.which("mavis.exe"):
         agents["mavis"] = "Mavis daemon"
     return agents
@@ -153,7 +159,7 @@ def main() -> int:
                         help="卸载本地安装（独立逻辑，不转调 distribute）")
     parser.add_argument("--target", default="auto",
                         help="安装目标：auto=所有 detect=True 的分发器；all=强制全跑；"
-                             "claude/codex/zcode/mavis=单跑指定（透传给 distribute.py）")
+                             "claude/codex/zcode/hermes/mavis=单跑指定（透传给 distribute.py）")
     parser.add_argument("--target-path", type=str, default=None,
                         help="(兼容 post-commit) 显式安装目标绝对路径，优先级高于 --target")
     parser.add_argument("--quiet", action="store_true",
@@ -169,15 +175,15 @@ def main() -> int:
     args = parser.parse_args()
 
     # ── --uninstall：独立逻辑（distribute.py 不处理卸载） ───────────────────
-    # 注：uninstall 仅支持 copytree 类目标（claude/codex/zcode/all/auto）。
+    # 注：uninstall 仅支持 copytree 类目标（claude/codex/zcode/hermes/all/auto）。
     # mavis 卸载请用 `mavis harness unmount ae-sdd`（非文件操作）。
     if args.uninstall:
         if args.target_path:
             targets = [Path(args.target_path).expanduser().resolve()]
-        elif args.target in ("claude", "codex", "zcode", "all", "auto"):
+        elif args.target in ("claude", "codex", "zcode", "hermes", "all", "auto"):
             targets = _target_paths(args.target)
         else:
-            error(f"--uninstall 不支持 target='{args.target}'（仅 claude/codex/zcode/all/auto）")
+            error(f"--uninstall 不支持 target='{args.target}'（仅 claude/codex/zcode/hermes/all/auto）")
             error(f"卸载 mavis 请用：mavis harness unmount ae-sdd")
             return 1
         uninstall(targets)

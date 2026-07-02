@@ -117,7 +117,7 @@ class TestAmendDetection:
     def test_real_amend_scenario_skip(self, ae_sdd_repo):
         """集成测试：lock 指向 fake-amend hash → build_harness --dry-run 应跳过"""
         fake = self._make_fake_amend_commit(ae_sdd_repo)
-        lock_path = ae_sdd_repo / "harness" / ".adapter.lock"
+        lock_path = ae_sdd_repo / ".harness" / ".adapter.lock"
         backup = Path("/tmp/ae-sdd.lock.backup.test_amend")
         shutil.copy2(lock_path, backup)
 
@@ -147,7 +147,7 @@ class TestFullIdempotency:
     def test_lock_equals_head_skip(self):
         """lock 指向 HEAD → 走"全一致"分支跳过（不是 tree-hash 分支）"""
         repo = Path(__file__).resolve().parent.parent.parent
-        lock_path = repo / "harness" / ".adapter.lock"
+        lock_path = repo / ".harness" / ".adapter.lock"
         backup = Path("/tmp/ae-sdd.lock.backup.test_ide")
         shutil.copy2(lock_path, backup)
 
@@ -178,7 +178,7 @@ class TestNormalUpgrade:
     def test_drift_triggers_reconvert(self):
         """lock 写一个不存在的 commit hash → drift 检测 → 应重转（DRY-RUN）"""
         repo = Path(__file__).resolve().parent.parent.parent
-        lock_path = repo / "harness" / ".adapter.lock"
+        lock_path = repo / ".harness" / ".adapter.lock"
         backup = Path("/tmp/ae-sdd.lock.backup.test_drift")
         shutil.copy2(lock_path, backup)
 
@@ -215,14 +215,14 @@ class TestHelpers:
     def test_read_adapter_lock_returns_dict(self):
         """存在 lock → 返回 dict；不存在 → 返回 None"""
         repo = Path(__file__).resolve().parent.parent.parent
-        lock = repo / "harness" / ".adapter.lock"
+        lock = repo / ".harness" / ".adapter.lock"
         assert read_adapter_lock(lock) is not None
-        assert read_adapter_lock(repo / "harness" / "non-existent.lock") is None
+        assert read_adapter_lock(repo / ".harness" / "non-existent.lock") is None
 
     def test_adapter_version_constant(self):
         """ADAPTER_VERSION 与 .adapter.lock 中一致（防止漂移）"""
         repo = Path(__file__).resolve().parent.parent.parent
-        lock = read_adapter_lock(repo / "harness" / ".adapter.lock")
+        lock = read_adapter_lock(repo / ".harness" / ".adapter.lock")
         if lock:
             assert lock.get("adapter_version") == ADAPTER_VERSION
 

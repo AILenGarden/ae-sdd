@@ -470,6 +470,7 @@ interface ResolvedPath {
 | `get_git_path()` | `projectKey` | `string`（项目根绝对路径）| 从 assets.md §1 读取 gitPath |
 | `get_service_root()` | `projectKey`, `serviceName` | `string`（微服务根 = `{gitPath}/{serviceName}`）| 微服务级定位 |
 | `get_constraints()` | `projectKey` | `ConstraintList`（约束文档名 → 完整路径映射）| 取代 SKILL 内写死的 `constraints/` 路径。定位：`{gitPath}/constraints/` 或 `docWorkspace/constraints/`（二者其一）|
+| `get_thinking_engine()` | `projectKey` | `ThinkingEngineRef`（path / source / content / sha256）| 加载 CodingModel / 11 维思维引擎。优先项目覆盖，回退到 ae-sdd 自带 `standards/thinking/be-coding-thinking-engine.md` |
 | `get_assets()` | `projectKey` | `AssetsRef`（项目资产文件路径列表）| 取代 SKILL 内写死的 `assets/{projectKey}/` 路径。复用 `paths.find_module_asset_files`（v4.1 支持 line 分组发现）|
 
 ### 4.3 统一保存 API：`save_doc()`

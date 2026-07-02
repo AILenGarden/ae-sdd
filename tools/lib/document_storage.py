@@ -19,6 +19,7 @@ document_storage.py - 文档存放 API 代码层实现（document-storage-skill 
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -166,6 +167,67 @@ def get_constraints(ade_sdd: Path, project_key: str) -> dict:
             for f in sorted(cdir.glob("*.md")):
                 result[f.stem] = str(f)
     return result
+
+
+def _existing_unique_paths(candidates: list[Path]) -> list[Path]:
+    seen: set[Path] = set()
+    existing: list[Path] = []
+    for item in candidates:
+        try:
+            resolved = item.expanduser().resolve()
+        except OSError:
+            resolved = item.expanduser()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file():
+            existing.append(resolved)
+    return existing
+
+
+def get_thinking_engine(ade_sdd: Path, project_key: str) -> dict:
+    """Return the Coding thinking engine document reference and content.
+
+    Resolution order:
+      1. project/doc-workspace overrides;
+      2. project gitPath overrides;
+      3. ae-sdd packaged standard under source/ or installed runtime.
+
+    The return shape is JSON-friendly because SKILL documents refer to this as
+    a document-storage API contract rather than an internal Python object.
+    """
+    rel = Path("standards") / "thinking" / "be-coding-thinking-engine.md"
+    candidates: list[Path] = []
+
+    doc_ws = paths.resolve_doc_workspace(ade_sdd, project_key)
+    if doc_ws:
+        candidates.extend([doc_ws / rel, doc_ws / ".ae-sdd" / rel])
+
+    git_path = get_git_path(ade_sdd, project_key)
+    if git_path:
+        git_root = Path(git_path)
+        candidates.extend([git_root / rel, git_root / ".ae-sdd" / rel])
+
+    master = paths.locate_master_source()
+    if master:
+        candidates.extend([master / rel, master / "source" / rel])
+
+    package_root = Path(__file__).resolve().parents[2]
+    candidates.extend([package_root / "source" / rel, package_root / rel])
+
+    for path in _existing_unique_paths(candidates):
+        content = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            source = str(path.relative_to(package_root))
+        except ValueError:
+            source = str(path)
+        return {
+            "path": str(path),
+            "source": source,
+            "content": content,
+            "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+    return {}
 
 
 def get_assets(ade_sdd: Path, project_key: str) -> list:

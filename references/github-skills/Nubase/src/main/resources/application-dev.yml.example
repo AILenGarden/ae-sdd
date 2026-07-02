@@ -1,0 +1,44 @@
+# Example local development overrides for nubase.
+#
+# Copy to application-dev.yml (which is .gitignored) and fill in real values.
+# Spring picks it up automatically when SPRING_PROFILES_ACTIVE=dev (the default).
+#
+# Anything you set here overrides the defaults in application.yml.
+
+spring:
+  datasource:
+    metadata:
+      # The metadata DB stores tenant configuration. Point this at any Postgres
+      # you control; nubase will manage its own tenant DBs on the same server.
+      url: jdbc:postgresql://localhost:5432/postgrest_metadata?allowMultiQueries=true
+      username: postgres
+      password: postgres
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 5
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
+
+nubase:
+  storage:
+    # If you want the Storage pillar to work locally, fill in real R2 / S3 creds.
+    # Leave the defaults from application.yml (placeholders) if you only need Memory / DB / Auth.
+    r2:
+      account-id: your-r2-account-id
+      access-key-id: your-r2-access-key-id
+      secret-access-key: your-r2-secret-access-key
+      endpoint: https://your-account-id.r2.cloudflarestorage.com
+      global-bucket: nubase-dev-storage

@@ -17,9 +17,11 @@ update_graph.py — ae-sdd 更新依赖图谱检查器（v3.2）
 from __future__ import annotations
 
 import fnmatch
+import importlib.util
 import json
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -344,6 +346,9 @@ HEALTH_CHECKLIST_REQUIRED = [
     ("G-DOC-CONSISTENCY", "🆕 v3.5.7 项目侧记忆-配置路径一致性门禁"),
     ("UC-06", "🆕 v3.4.0 文档-实现一致性检查"),
     ("UC-14", "🆕 2026-07-02 update-skill 级联图谱同步检查"),
+    ("UC-15", "runtime compile consistency check"),
+    ("G-AUTO-CONSENSUS", "🆕 v3.8.0 自动化联审共识门禁"),
+    ("UC-16", "🆕 v3.8.0 自动化级联一致性检查"),
 ]
 
 
@@ -632,6 +637,289 @@ def check_uc14_update_skill_cascade_sync(repo_root: Path) -> UpdateCheckResult:
     )
 
 
+def _runtime_snapshot(dist: Path) -> dict[str, bytes]:
+    paths = [dist / "SKILL.md"]
+    runtime_dir = dist / "runtime"
+    if runtime_dir.is_dir():
+        paths.extend(path for path in runtime_dir.rglob("*") if path.is_file())
+    return {
+        path.relative_to(dist).as_posix(): path.read_bytes()
+        for path in sorted(paths)
+        if path.is_file()
+    }
+
+
+def check_uc15_runtime_compile_consistency(repo_root: Path) -> UpdateCheckResult:
+    """UC-15：runtime 编译一致性。
+
+    在临时 dist 中编译两次，验证 compiled package 结构和字节级幂等；不依赖
+    工作区当前 dist 是否刚刚重建，避免阻断"先 update-check 再 build"流程。
+    """
+    name = "runtime 编译一致性"
+    source = repo_root / "source"
+    source_skill = source / "SKILL.md"
+    compiler = repo_root / "scripts" / "compile_skill_runtime.py"
+    if not source_skill.is_file():
+        return UpdateCheckResult("UC-15", name, "error", False,
+                                 "source/SKILL.md 不存在",
+                                 "恢复 source/SKILL.md")
+    if not compiler.is_file():
+        return UpdateCheckResult("UC-15", name, "error", False,
+                                 "scripts/compile_skill_runtime.py 不存在",
+                                 "恢复 runtime 编译器")
+
+    scripts_dir = repo_root / "scripts"
+    tools_dir = repo_root / "tools"
+    inserted: list[str] = []
+    for p in (str(scripts_dir), str(tools_dir)):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+            inserted.append(p)
+    try:
+        from compile_skill_runtime import compile_runtime_package  # type: ignore
+        from lib.runtime_verify import verify_runtime_package  # type: ignore
+    except Exception as exc:
+        return UpdateCheckResult("UC-15", name, "error", False,
+                                 f"无法 import runtime 编译/校验模块：{exc}",
+                                 "检查 scripts/compile_skill_runtime.py 与 tools/lib/runtime_verify.py 可 import")
+    finally:
+        for p in inserted:
+            if p in sys.path:
+                sys.path.remove(p)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="ae-sdd-runtime-uc15-") as td:
+            dist = Path(td) / "dist" / "ae-sdd"
+            dist.mkdir(parents=True)
+            (dist / "SKILL.md").write_text(source_skill.read_text(encoding="utf-8"), encoding="utf-8")
+
+            manifest = compile_runtime_package(
+                repo_root,
+                source,
+                dist,
+                build_date="2026-07-02T00:00:00Z",
+            )
+            verify = verify_runtime_package(dist)
+            if not verify.ok:
+                return UpdateCheckResult(
+                    "UC-15",
+                    name,
+                    "error",
+                    False,
+                    f"临时 runtime verify 失败：{verify.issues[:5]}",
+                    "修复 runtime 编译器输出或 manifest/load_order/fallback 结构",
+                    details={"issues": verify.issues, "warnings": verify.warnings},
+                )
+            first = _runtime_snapshot(dist)
+
+            compile_runtime_package(
+                repo_root,
+                source,
+                dist,
+                build_date="2030-01-01T00:00:00Z",
+            )
+            second = _runtime_snapshot(dist)
+            if first != second:
+                changed = sorted(set(first) ^ set(second))
+                common_changed = [k for k in sorted(set(first) & set(second)) if first[k] != second[k]]
+                return UpdateCheckResult(
+                    "UC-15",
+                    name,
+                    "error",
+                    False,
+                    f"runtime 编译非幂等：新增/删除 {changed[:5]}，内容变化 {common_changed[:5]}",
+                    "移除 runtime 输出中的时间/随机/路径依赖，确保重复编译字节一致",
+                    details={"changed_paths": changed, "content_changed": common_changed},
+                )
+
+            standalone_script = (
+                repo_root
+                / "standalone-skills"
+                / "skill-runtime-compiler"
+                / "scripts"
+                / "compile_skill_package.py"
+            )
+            if not standalone_script.is_file():
+                return UpdateCheckResult(
+                    "UC-15",
+                    name,
+                    "error",
+                    False,
+                    "standalone skill runtime compiler script 缺失",
+                    "恢复 standalone-skills/skill-runtime-compiler/scripts/compile_skill_package.py",
+                )
+            spec = importlib.util.spec_from_file_location(
+                "uc15_standalone_skill_runtime_compiler",
+                standalone_script,
+            )
+            if spec is None or spec.loader is None:
+                return UpdateCheckResult(
+                    "UC-15",
+                    name,
+                    "error",
+                    False,
+                    f"无法加载 standalone compiler: {standalone_script}",
+                    "检查 standalone compiler 脚本路径与 Python import 兼容性",
+                )
+            standalone = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(standalone)
+
+            sample = Path(td) / "sample-skill"
+            sample.mkdir()
+            (sample / "SKILL.md").write_text(
+                "---\n"
+                "name: sample-skill\n"
+                "description: Sample skill for UC-15 standalone compiler idempotence.\n"
+                "---\n\n"
+                "# Sample Skill\n\n"
+                "Use this sample to verify deterministic compilation.\n\n"
+                "## Workflow\n\n"
+                "Compile twice.\n",
+                encoding="utf-8",
+            )
+            (sample / "references").mkdir()
+            (sample / "references" / "guide.md").write_text("# Guide\n", encoding="utf-8")
+
+            standalone_manifest = standalone.compile_skill_package(sample)
+            standalone_dist = Path(standalone_manifest["package_path"])
+            standalone_first = _runtime_snapshot(standalone_dist)
+            standalone.compile_skill_package(sample)
+            standalone_second = _runtime_snapshot(standalone_dist)
+            if standalone_first != standalone_second:
+                changed = sorted(set(standalone_first) ^ set(standalone_second))
+                common_changed = [
+                    k for k in sorted(set(standalone_first) & set(standalone_second))
+                    if standalone_first[k] != standalone_second[k]
+                ]
+                return UpdateCheckResult(
+                    "UC-15",
+                    name,
+                    "error",
+                    False,
+                    f"standalone runtime compiler 非幂等：新增/删除 {changed[:5]}，内容变化 {common_changed[:5]}",
+                    "移除 standalone compiler runtime 输出中的时间/随机/路径依赖，确保重复编译字节一致",
+                    details={"changed_paths": changed, "content_changed": common_changed},
+                )
+
+            return UpdateCheckResult(
+                "UC-15",
+                name,
+                "error",
+                True,
+                f"runtime 编译一致：ae-sdd fingerprint={manifest.get('runtime_fingerprint')} standalone fingerprint={standalone_manifest.get('runtime_fingerprint')}",
+                details={
+                    "version": manifest.get("version"),
+                    "runtime_fingerprint": manifest.get("runtime_fingerprint"),
+                    "standalone_runtime_fingerprint": standalone_manifest.get("runtime_fingerprint"),
+                    "gate_count": manifest.get("extracts", {}).get("gate_count"),
+                    "flow_scales": manifest.get("extracts", {}).get("flow_scales"),
+                },
+            )
+    except Exception as exc:
+        return UpdateCheckResult("UC-15", name, "error", False,
+                                 f"runtime 编译一致性检查异常：{type(exc).__name__}: {exc}",
+                                 "修复 compile_skill_runtime.py / runtime_verify.py 后重跑")
+
+
+def check_uc16_automation_cascade(repo_root: Path) -> UpdateCheckResult:
+    """UC-16：自动化开关级联一致性（🆕 v3.8.0）。
+
+    校验自动化开关相关组件齐备且互相一致：
+      1. tools/lib/config.py 存在且含 AUTOMATION_DEFAULTS
+      2. tools/lib/gates.py GATE_REGISTRY 含 G-AUTO-CONSENSUS + CHECK_FUNCS 注册
+      3. tools/bin/ae-sdd 注册 automation/preflight 子命令
+      4. tools/lib/state.py 含 register_review_consensus
+      5. scripts/init.py CONFIG_TEMPLATE 含 automation 段
+      6. source/SKILL.md 含 §🚀 自动化模式 + 30门禁
+    """
+    name = "自动化开关级联一致性"
+    issues = []
+
+    # 1. config.py
+    config_py = repo_root / "tools" / "lib" / "config.py"
+    if not config_py.is_file():
+        issues.append("tools/lib/config.py 不存在")
+    else:
+        cfg_text = config_py.read_text(encoding="utf-8", errors="replace")
+        if "AUTOMATION_DEFAULTS" not in cfg_text:
+            issues.append("config.py 缺 AUTOMATION_DEFAULTS")
+        if "is_automation_enabled" not in cfg_text:
+            issues.append("config.py 缺 is_automation_enabled")
+
+    # 2. gates.py G-AUTO-CONSENSUS
+    gates_py = repo_root / "tools" / "lib" / "gates.py"
+    if gates_py.is_file():
+        g_text = gates_py.read_text(encoding="utf-8", errors="replace")
+        if "G-AUTO-CONSENSUS" not in g_text:
+            issues.append("gates.py GATE_REGISTRY 缺 G-AUTO-CONSENSUS")
+        if "check_g_auto_consensus" not in g_text:
+            issues.append("gates.py 缺 check_g_auto_consensus 实现")
+        if '"G-AUTO-CONSENSUS": check_g_auto_consensus' not in g_text:
+            issues.append("gates.py CHECK_FUNCS 未注册 G-AUTO-CONSENSUS")
+    else:
+        issues.append("gates.py 不存在")
+
+    # 3. CLI automation/preflight 子命令
+    cli = repo_root / "tools" / "bin" / "ae-sdd"
+    if cli.is_file():
+        c_text = cli.read_text(encoding="utf-8", errors="replace")
+        for sub in ("cmd_automation_status", "cmd_automation_enable",
+                    "cmd_automation_disable", "cmd_preflight_collect",
+                    "cmd_state_register_review_consensus"):
+            if sub not in c_text:
+                issues.append(f"CLI 缺 {sub}")
+        if 'add_parser("automation"' not in c_text:
+            issues.append("CLI 未注册 automation 子命令组")
+        if 'add_parser("preflight"' not in c_text:
+            issues.append("CLI 未注册 preflight 子命令组")
+    else:
+        issues.append("tools/bin/ae-sdd 不存在")
+
+    # 4. state.py register_review_consensus
+    state_py = repo_root / "tools" / "lib" / "state.py"
+    if state_py.is_file():
+        s_text = state_py.read_text(encoding="utf-8", errors="replace")
+        if "register_review_consensus" not in s_text:
+            issues.append("state.py 缺 register_review_consensus")
+    else:
+        issues.append("state.py 不存在")
+
+    # 5. init.py CONFIG_TEMPLATE automation 段
+    init_py = repo_root / "scripts" / "init.py"
+    if init_py.is_file():
+        i_text = init_py.read_text(encoding="utf-8", errors="replace")
+        if "automation:" not in i_text or "enabled: false" not in i_text:
+            issues.append("init.py CONFIG_TEMPLATE 缺 automation 段（默认 enabled:false）")
+    else:
+        issues.append("scripts/init.py 不存在")
+
+    # 6. SKILL.md 自动化模式 + 30门禁
+    skill_md = repo_root / "source" / "SKILL.md"
+    if skill_md.is_file():
+        sk_text = skill_md.read_text(encoding="utf-8", errors="replace")
+        if "## 🚀 自动化模式" not in sk_text:
+            issues.append("SKILL.md 缺 §🚀 自动化模式章节")
+        if "G-AUTO-CONSENSUS" not in sk_text:
+            issues.append("SKILL.md 门禁速查缺 G-AUTO-CONSENSUS")
+        if "30门禁" not in sk_text and "30 门禁" not in sk_text:
+            issues.append("SKILL.md 工具速查门禁数未更新为 30")
+    else:
+        issues.append("source/SKILL.md 不存在")
+
+    if issues:
+        return UpdateCheckResult(
+            "UC-16", name, "error", False,
+            "自动化级联不一致：" + "；".join(issues[:4]),
+            "按 UG-20 affected 逐项同步 automation 开关相关组件",
+            details={"issues": issues},
+        )
+    return UpdateCheckResult(
+        "UC-16", name, "error", True,
+        "自动化开关级联一致：config.py/gates/state/CLI/init/SKILL 六处齐备",
+        details={"checked": ["config.py", "gates.py", "state.py", "CLI", "init.py", "SKILL.md"]},
+    )
+
+
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
 CHECK_FUNCS = {
     "UC-01": check_uc01_version,
@@ -642,6 +930,8 @@ CHECK_FUNCS = {
     "UC-06": check_uc06_doc_impl_consistency,
     "UC-07": check_uc07_distribution_closure,
     "UC-14": check_uc14_update_skill_cascade_sync,
+    "UC-15": check_uc15_runtime_compile_consistency,
+    "UC-16": check_uc16_automation_cascade,
 }
 
 

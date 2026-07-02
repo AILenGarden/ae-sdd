@@ -1,0 +1,36 @@
+package cli
+
+// @MX:NOTE: [AUTO] SPEC document management commands for .moai/specs/ directory
+// @MX:NOTE: [AUTO] Supports status, view, and lint subcommands for SPEC documents
+
+import (
+	"github.com/spf13/cobra"
+)
+
+// newSpecCmd creates the 'moai spec' parent command
+func newSpecCmd() *cobra.Command {
+	specCmd := &cobra.Command{
+		Use:   "spec",
+		Short: "Manage SPEC documents",
+		Long:  `Manage SPEC documents in .moai/specs/ directory.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+		GroupID: "tools",
+	}
+
+	// Add subcommands
+	specCmd.AddCommand(newSpecStatusCmd())
+	specCmd.AddCommand(newSpecDriftCmd())
+	specCmd.AddCommand(newSpecViewCmd())
+	specCmd.AddCommand(newSpecLintCmd())
+	// SPEC-V3R6-LIFECYCLE-SYNC-GATE-001 M2 — atomic close + audit subcommands
+	specCmd.AddCommand(newSpecCloseCmd())
+	specCmd.AddCommand(newSpecAuditCmd())
+
+	return specCmd
+}
+
+func init() {
+	rootCmd.AddCommand(newSpecCmd())
+}

@@ -7,6 +7,7 @@ from ._base import Distributor, CopytreeDistributor, DistributeContext, InstallR
 from .claude import ClaudeDistributor
 from .codex import CodexDistributor
 from .zcode import ZcodeDistributor
+from .hermes import HermesDistributor
 from .mavis import MavisDistributor
 
 # 已注册分发器类（顺序=auto 模式下的执行顺序）。
@@ -15,6 +16,7 @@ DISTRIBUTORS: list[type[Distributor]] = [
     ClaudeDistributor,
     CodexDistributor,
     ZcodeDistributor,
+    HermesDistributor,
     MavisDistributor,
 ]
 

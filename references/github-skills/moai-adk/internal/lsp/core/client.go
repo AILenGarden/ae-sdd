@@ -1,0 +1,433 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"sync"
+	"syscall"
+	"time"
+
+	lsp "github.com/modu-ai/moai-adk/internal/lsp"
+	"github.com/modu-ai/moai-adk/internal/lsp/config"
+	"github.com/modu-ai/moai-adk/internal/lsp/subprocess"
+	"github.com/modu-ai/moai-adk/internal/lsp/transport"
+)
+
+// launchFunc is a function type with the same signature as subprocess.Launcher.Launch.
+// Used for dependency injection in tests.
+type launchFunc func(ctx context.Context, cfg config.ServerConfig) (*subprocess.LaunchResult, error)
+
+// transportFactory is a function type that creates a Transport from an io.ReadWriteCloser.
+// Used to inject a fakeTransport in tests.
+type transportFactory func(stream io.ReadWriteCloser) transport.Transport
+
+// supervisorIface abstracts subprocess.Supervisor for testability.
+//
+// @MX:NOTE: [AUTO] supervisorIface — allows faking process supervision in unit tests without real subprocesses
+type supervisorIface interface {
+	Watch(ctx context.Context) <-chan subprocess.ExitEvent
+	Signal(sig os.Signal) error
+	Kill() error
+}
+
+// Client is the public interface for interacting with a language server.
+// It manages the full lifecycle: spawn, initialize, query, and shutdown.
+//
+// Implementations are safe for concurrent use after Start returns nil.
+//
+// @MX:ANCHOR: [AUTO] Client interface — primary LSP client contract consumed across the system
+// @MX:REASON: fan_in >= 3 projected — Ralph engine, Quality Gates, LOOP command, MCP bridge, and integration tests all consume this interface
+type Client interface {
+	// Start spawns the language server subprocess and performs the LSP initialize
+	// handshake. Returns an error if the binary is not found (ErrBinaryNotFound
+	// surfaces to caller) or if initialization fails.
+	Start(ctx context.Context) error
+
+	// Shutdown performs a graceful LSP shutdown: sends shutdown request, exit
+	// notification, sends SIGTERM to the subprocess, and closes the transport.
+	// If the subprocess does not exit within shutdownTimeout, SIGKILL is sent.
+	Shutdown(ctx context.Context) error
+
+	// OpenFile notifies the server that a file has been opened or changed.
+	// Sends textDocument/didOpen on first call for a path, or textDocument/didChange
+	// when content differs from the last known version.
+	// Same content on a previously opened file is a no-op (REQ-LC-006).
+	OpenFile(ctx context.Context, path, content string) error
+
+	// DidSave notifies the server that a tracked file has been saved (REQ-LC-023).
+	// Returns an error if the file is not currently tracked by OpenFile.
+	DidSave(ctx context.Context, path string) error
+
+	// GetDiagnostics returns diagnostics for the given file path.
+	// Uses push model: returns the latest diagnostics received via publishDiagnostics.
+	// Returns ErrFileNotOpen if the file has not been opened via OpenFile.
+	GetDiagnostics(ctx context.Context, path string) ([]lsp.Diagnostic, error)
+
+	// FindReferences returns all references to the symbol at pos in the given file.
+	// Returns ErrCapabilityUnsupported if the server does not advertise references support.
+	FindReferences(ctx context.Context, path string, pos lsp.Position) ([]lsp.Location, error)
+
+	// GotoDefinition returns the definition location for the symbol at pos.
+	// Returns ErrCapabilityUnsupported if the server does not advertise definition support.
+	GotoDefinition(ctx context.Context, path string, pos lsp.Position) ([]lsp.Location, error)
+
+	// State returns the current lifecycle state of the client.
+	State() ClientState
+
+	// Capabilities returns the ServerCapabilities parsed from the LSP initialize response.
+	// Returns zero-value ServerCapabilities when called before Start (REQ-LM-009).
+	Capabilities() ServerCapabilities
+}
+
+// client is the concrete implementation of Client.
+type client struct {
+	cfg             config.ServerConfig
+	launcher        launchFunc
+	trFactory       transportFactory
+	tr              transport.Transport
+	supervisor      supervisorIface
+	state           *StateMachine
+	router          *transport.NotificationRouter
+	shutdownTimeout time.Duration
+	idleTimeout     time.Duration
+	logger          *slog.Logger
+	serverCaps      ServerCapabilities
+
+	// docs is the open document cache. Used from T-011 onwards.
+	docs *documentCache
+
+	// diagnostics stores textDocument/publishDiagnostics results pushed by the server.
+	// Used from T-013 onwards.
+	diagnostics   map[string][]lsp.Diagnostic
+	diagnosticsMu sync.RWMutex
+}
+
+// Option is a functional option for configuring a client.
+type Option func(*client)
+
+// WithLauncherFunc sets a custom launch function (used for dependency injection in tests).
+func WithLauncherFunc(fn launchFunc) Option {
+	return func(c *client) {
+		c.launcher = fn
+	}
+}
+
+// WithTransportFactory sets a custom transport factory (used for dependency injection in tests).
+func WithTransportFactory(fn transportFactory) Option {
+	return func(c *client) {
+		c.trFactory = fn
+	}
+}
+
+// WithShutdownTimeout sets the timeout for graceful shutdown before SIGKILL.
+func WithShutdownTimeout(d time.Duration) Option {
+	return func(c *client) {
+		c.shutdownTimeout = d
+	}
+}
+
+// WithIdleTimeout sets the idle timeout after which an open file is sent textDocument/didClose
+// by the idle reaper (REQ-LC-022). Default: 5 minutes.
+func WithIdleTimeout(d time.Duration) Option {
+	return func(c *client) {
+		c.idleTimeout = d
+	}
+}
+
+// WithLogger sets the logger for state transitions and lifecycle events.
+// @MX:ANCHOR: [AUTO] WithLogger is a functional option used across 3+ packages
+// @MX:REASON: Multi-package dependency — signature changes affect Manager, tests, MCP
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *client) {
+		c.logger = logger
+		c.state = NewStateMachine(logger)
+	}
+}
+
+// withSupervisorIface injects a supervisorIface — used for testing the Shutdown path.
+// Not exported; use only in _test.go files.
+func withSupervisorIface(sv supervisorIface) Option {
+	return func(c *client) {
+		c.supervisor = sv
+	}
+}
+
+// NewClient creates a new client for the given ServerConfig.
+// Default values: shutdownTimeout=10s, launcher=subprocess.NewLauncher().Launch,
+// trFactory=transport.NewPowernapTransport, logger=slog.Default().
+//
+// @MX:ANCHOR: [AUTO] NewClient — factory function, primary entry point for client construction
+// @MX:REASON: fan_in >= 3 — Manager, integration tests, CLI diagnostics command, and MCP bridge all call NewClient
+func NewClient(cfg config.ServerConfig, opts ...Option) *client {
+	c := &client{
+		cfg:             cfg,
+		shutdownTimeout: 10 * time.Second,
+		idleTimeout:     5 * time.Minute,
+		logger:          slog.Default(),
+		router:          transport.NewNotificationRouter(),
+		docs:            newDocumentCache(),
+		diagnostics:     make(map[string][]lsp.Diagnostic),
+	}
+	c.state = NewStateMachine(c.logger)
+
+	// Default launcher: use real subprocess.Launcher.
+	defaultLauncher := subprocess.NewLauncher()
+	c.launcher = defaultLauncher.Launch
+
+	// Default transport factory: powernap Transport.
+	c.trFactory = transport.NewPowernapTransport
+
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// Start spawns the language server and performs the LSP initialize handshake.
+//
+// State transitions:
+//   - spawning → (launch) → initializing → (initialize) → ready
+//   - on ErrBinaryNotFound: spawning → shutdown
+//   - on initialize failure: initializing → degraded
+func (c *client) Start(ctx context.Context) error {
+	// Spawn the subprocess.
+	result, err := c.launcher(ctx, c.cfg)
+	if err != nil {
+		// ErrBinaryNotFound: warn_and_skip pattern (REQ-LC-004).
+		if errors.Is(err, subprocess.ErrBinaryNotFound) {
+			_ = c.state.Transition(StateShutdown)
+			return fmt.Errorf("lsp client start (lang=%s): %w", c.cfg.Language, err)
+		}
+		_ = c.state.Transition(StateShutdown)
+		return fmt.Errorf("lsp client start (lang=%s): launch: %w", c.cfg.Language, err)
+	}
+
+	// Create Supervisor (skip when Cmd is nil — test-only path).
+	if result.Cmd != nil {
+		c.supervisor = subprocess.NewSupervisor(result)
+	}
+
+	// stderr drain goroutine: prevents subprocess stderr buffer deadlock (REQ-UTIL-003-001, REQ-UTIL-003-002).
+	// No goroutine is started when result.Stderr is nil (test-only LaunchResult).
+	// When Supervisor terminates the subprocess the stderr pipe is closed and io.Copy returns naturally (C-06).
+	// @MX:WARN: [AUTO] subprocess stderr drain goroutine — bound to the subprocess stderr pipe lifetime without a context.Context
+	// @MX:REASON: Purpose is to prevent stderr buffer deadlock. When Supervisor closes stderr on subprocess exit, io.Copy returns naturally with no goroutine leak (C-06 guarantee; validated by REQ-UTIL-003-010 test with 128 KiB burst).
+	if result.Stderr != nil {
+		go func() {
+			io.Copy(io.Discard, result.Stderr) //nolint:errcheck
+			result.Stderr.Close()              //nolint:errcheck
+		}()
+	}
+
+	// Create Transport from subprocess stdio.
+	stream := &readWriteCloser{
+		r:       result.Stdout,
+		w:       result.Stdin,
+		closers: []io.Closer{result.Stdin, result.Stdout},
+	}
+	c.tr = c.trFactory(stream)
+
+	// Transition to the initializing state.
+	if err := c.state.Transition(StateInitializing); err != nil {
+		c.cleanupTransport()
+		return fmt.Errorf("lsp client start: state transition: %w", err)
+	}
+
+	// Send the LSP initialize request.
+	if err := c.initialize(ctx); err != nil {
+		_ = c.state.Transition(StateDegraded)
+		return fmt.Errorf("lsp client initialize (lang=%s): %w", c.cfg.Language, err)
+	}
+
+	// Register publishDiagnostics handler: stores server-pushed diagnostics in the diagnostics cache.
+	// @MX:NOTE: [AUTO] Routes async publishDiagnostics notifications to the diagnostic cache via NotificationRouter
+	_ = c.router.RegisterPublishDiagnostics(func(uri string, diags []lsp.Diagnostic) error {
+		c.diagnosticsMu.Lock()
+		c.diagnostics[uri] = diags
+		c.diagnosticsMu.Unlock()
+		return nil
+	})
+	c.router.Attach(c.tr)
+
+	// Transition to the ready state.
+	if err := c.state.Transition(StateReady); err != nil {
+		return fmt.Errorf("lsp client start: state transition to ready: %w", err)
+	}
+
+	return nil
+}
+
+// initialize sends the LSP initialize request and parses server capabilities.
+func (c *client) initialize(ctx context.Context) error {
+	caps := DefaultClientCapabilities()
+
+	// rootUri + workspaceFolders: convert to file:// URI when cfg.RootDir is set.
+	// Servers such as gopls handle workspaceFolders more reliably, so both fields are provided.
+	var rootURI any
+	var workspaceFolders any
+	if c.cfg.RootDir != "" {
+		uri := pathToURI(c.cfg.RootDir)
+		rootURI = uri
+		workspaceFolders = []map[string]any{
+			{"uri": uri, "name": c.cfg.Language},
+		}
+	}
+
+	params := map[string]any{
+		"processId":        nil,
+		"capabilities":     caps,
+		"rootUri":          rootURI,
+		"workspaceFolders": workspaceFolders,
+	}
+	if len(c.cfg.InitOptions) > 0 {
+		params["initializationOptions"] = c.cfg.InitOptions
+	}
+
+	var result lsp.InitializeResult
+	if err := transport.CallWithTimeout(ctx, c.tr, "initialize", params, &result, c.cfg.Language); err != nil {
+		return fmt.Errorf("initialize request: %w", err)
+	}
+
+	// LSP protocol: the initialized notification MUST be sent after receiving the initialize response (fire-and-forget).
+	// Without this notification, servers such as gopls will not activate the workspace.
+	if notifyErr := c.tr.Notify(ctx, "initialized", map[string]any{}); notifyErr != nil {
+		c.logger.Warn("lsp: initialized notification failed",
+			slog.String("language", c.cfg.Language),
+			slog.String("error", notifyErr.Error()),
+		)
+	}
+
+	// Parse server capabilities.
+	serverCaps, err := ParseServerCapabilities(result.Capabilities)
+	if err != nil {
+		// Parse failure is non-fatal — degrade gracefully
+		c.logger.Warn("lsp: failed to parse server capabilities; using empty defaults",
+			slog.String("language", c.cfg.Language),
+			slog.String("error", err.Error()),
+		)
+	} else {
+		c.serverCaps = serverCaps
+	}
+
+	return nil
+}
+
+// Shutdown performs graceful shutdown of the language server.
+//
+// State transitions: any → shutdown
+func (c *client) Shutdown(ctx context.Context) error {
+	// No transport (called before Start): transition to shutdown immediately.
+	if c.tr == nil {
+		_ = c.state.Transition(StateShutdown)
+		return nil
+	}
+
+	// LSP shutdown request (best-effort: errors are only logged).
+	shutCtx, cancel := context.WithTimeout(ctx, c.shutdownTimeout)
+	defer cancel()
+
+	if err := transport.CallWithTimeout(shutCtx, c.tr, "shutdown", nil, nil, c.cfg.Language); err != nil {
+		c.logger.Warn("lsp: shutdown request failed",
+			slog.String("language", c.cfg.Language),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	// exit notification (fire-and-forget).
+	_ = c.tr.Notify(ctx, "exit", nil)
+
+	// Terminate the process via Supervisor.
+	if c.supervisor != nil {
+		if err := c.supervisor.Signal(syscall.SIGTERM); err != nil {
+			c.logger.Warn("lsp: SIGTERM failed, sending SIGKILL",
+				slog.String("language", c.cfg.Language),
+				slog.String("error", err.Error()),
+			)
+			_ = c.supervisor.Kill()
+		} else {
+			// Send SIGKILL if the process does not exit within shutdownTimeout.
+			killTimer := time.NewTimer(c.shutdownTimeout)
+			defer killTimer.Stop()
+
+			watchCtx, watchCancel := context.WithCancel(context.Background())
+			defer watchCancel()
+
+			exitCh := c.supervisor.Watch(watchCtx)
+			select {
+			case <-exitCh:
+				// Clean exit.
+			case <-killTimer.C:
+				_ = c.supervisor.Kill()
+			}
+		}
+	}
+
+	c.cleanupTransport()
+	_ = c.state.Transition(StateShutdown)
+	return nil
+}
+
+// cleanupTransport closes the transport if it exists.
+func (c *client) cleanupTransport() {
+	if c.tr != nil {
+		_ = c.tr.Close()
+	}
+}
+
+// OpenFile notifies the server that a file has been opened or changed (REQ-LC-002a, REQ-LC-020, REQ-LC-021).
+// Delegates to documentCache.openOrChange which selects didOpen or didChange based on cache state.
+func (c *client) OpenFile(ctx context.Context, path, content string) error {
+	uri := pathToURI(path)
+	langID := resolveLanguageID(c.cfg.Language)
+	return c.docs.openOrChange(ctx, c.tr, uri, langID, content)
+}
+
+// DidSave notifies the server that a tracked file has been saved (REQ-LC-023).
+func (c *client) DidSave(ctx context.Context, path string) error {
+	uri := pathToURI(path)
+	return c.docs.didSave(ctx, c.tr, uri)
+}
+
+// GetDiagnostics is implemented in queries.go (T-013).
+
+// FindReferences and GotoDefinition are implemented in queries.go (T-014).
+
+// State returns the current lifecycle state.
+func (c *client) State() ClientState {
+	return c.state.Current()
+}
+
+// Capabilities returns the ServerCapabilities parsed from the LSP initialize response
+// (REQ-LM-009). Returns a zero-value ServerCapabilities before Start completes.
+func (c *client) Capabilities() ServerCapabilities {
+	return c.serverCaps
+}
+
+// readWriteCloser combines a reader and writer into io.ReadWriteCloser for transport.
+type readWriteCloser struct {
+	r       io.ReadCloser
+	w       io.WriteCloser
+	closers []io.Closer
+}
+
+func (rwc *readWriteCloser) Read(p []byte) (n int, err error) {
+	return rwc.r.Read(p)
+}
+
+func (rwc *readWriteCloser) Write(p []byte) (n int, err error) {
+	return rwc.w.Write(p)
+}
+
+func (rwc *readWriteCloser) Close() error {
+	var lastErr error
+	for _, c := range rwc.closers {
+		if err := c.Close(); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}

@@ -1,0 +1,70 @@
+name: Publish nubase_cli to npm
+
+# Publishes the MCP bridge CLI (frontend/packages/mcp-bridge, package "nubase_cli").
+#
+# Trigger by pushing a tag that matches the package version, e.g.:
+#   # bump version in frontend/packages/mcp-bridge/package.json + src/index.ts first
+#   git tag nubase_cli@0.1.11
+#   git push origin nubase_cli@0.1.11
+# or run it manually from the Actions tab (workflow_dispatch).
+#
+# Required repo secret:
+#   NPM_TOKEN — an npm "Automation" (or Granular, with publish access to nubase_cli)
+#               access token from https://www.npmjs.com/settings/<user>/tokens
+on:
+  push:
+    tags:
+      - "nubase_cli@*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm provenance
+    defaults:
+      run:
+        working-directory: frontend/packages/mcp-bridge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        working-directory: frontend
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build
+        run: npm run build
+
+      - name: Guard — tag must match package.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#nubase_cli@}"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::tag version '$TAG' != package.json version '$PKG' — bump the version first"
+            exit 1
+          fi
+          echo "Publishing nubase_cli@$PKG"
+
+      - name: Publish to npm
+        # NOTE: add `--provenance` back once the GitHub repo is PUBLIC — npm provenance
+        # only works for public source repos (id-token: write above is kept ready for it).
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

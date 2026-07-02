@@ -1,0 +1,440 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// --- DDD PRESERVE: Characterization tests for doctor command behavior ---
+
+func TestDoctorCmd_Exists(t *testing.T) {
+	if doctorCmd == nil {
+		t.Fatal("doctorCmd should not be nil")
+	}
+}
+
+func TestDoctorCmd_Use(t *testing.T) {
+	if doctorCmd.Use != "doctor" {
+		t.Errorf("doctorCmd.Use = %q, want %q", doctorCmd.Use, "doctor")
+	}
+}
+
+func TestDoctorCmd_Short(t *testing.T) {
+	if doctorCmd.Short == "" {
+		t.Error("doctorCmd.Short should not be empty")
+	}
+}
+
+func TestDoctorCmd_Long(t *testing.T) {
+	if doctorCmd.Long == "" {
+		t.Error("doctorCmd.Long should not be empty")
+	}
+}
+
+func TestDoctorCmd_IsSubcommandOfRoot(t *testing.T) {
+	found := false
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Use == "doctor" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("doctor should be registered as a subcommand of root")
+	}
+}
+
+func TestDoctorCmd_HasFlags(t *testing.T) {
+	flags := []string{"verbose", "fix", "export", "check"}
+	for _, name := range flags {
+		if doctorCmd.Flags().Lookup(name) == nil {
+			t.Errorf("doctor command should have --%s flag", name)
+		}
+	}
+}
+
+func TestDoctorCmd_VerboseShortFlag(t *testing.T) {
+	f := doctorCmd.Flags().ShorthandLookup("v")
+	if f == nil {
+		t.Error("doctor command should have -v shorthand for --verbose")
+	}
+}
+
+func TestDoctorCmd_Execution(t *testing.T) {
+	buf := new(bytes.Buffer)
+	doctorCmd.SetOut(buf)
+	doctorCmd.SetErr(buf)
+
+	err := doctorCmd.RunE(doctorCmd, []string{})
+	if err != nil {
+		t.Fatalf("doctor command RunE error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "System Diagnostics") {
+		t.Errorf("doctor output should contain 'System Diagnostics', got %q", output)
+	}
+	// After the tui migration, the summary uses the Pill format with the Korean "passed" label.
+	if !strings.Contains(output, "통과") {
+		t.Errorf("doctor output should contain '통과' in summary, got %q", output)
+	}
+}
+
+func TestDoctorCmd_HelpOutput(t *testing.T) {
+	buf := new(bytes.Buffer)
+	doctorCmd.SetOut(buf)
+	doctorCmd.SetErr(buf)
+
+	// Use UsageString() instead of Execute() to avoid global state issues
+	usage := doctorCmd.UsageString()
+	if !strings.Contains(usage, "doctor") {
+		t.Error("doctor usage should contain 'doctor'")
+	}
+
+	// Verify Long description covers diagnostics/health
+	if !strings.Contains(doctorCmd.Long, "diagnostic") || !strings.Contains(doctorCmd.Long, "health") {
+		t.Error("doctor Long description should mention diagnostics/health checks")
+	}
+}
+
+// --- TDD: Tests for GitInstallHint ---
+
+func TestGitInstallHint(t *testing.T) {
+	hint := GitInstallHint()
+	if hint == "" {
+		t.Error("GitInstallHint() returned empty string")
+	}
+	if !strings.Contains(hint, "git") {
+		t.Errorf("GitInstallHint() = %q, expected to contain 'git'", hint)
+	}
+	if !strings.Contains(hint, "Install") {
+		t.Errorf("GitInstallHint() = %q, expected to contain 'Install'", hint)
+	}
+}
+
+func TestCheckGit_DetailWhenMissing(t *testing.T) {
+	// We can only test the Detail field indirectly:
+	// when git IS available, Detail should be empty (non-verbose)
+	// when git is NOT available, Detail should contain install hint
+	check := checkGit(false)
+	if check.Status == CheckFail {
+		if check.Detail == "" {
+			t.Error("checkGit should set Detail with install hint when git is not found")
+		}
+		if !strings.Contains(check.Detail, "Install git") {
+			t.Errorf("checkGit Detail = %q, expected to contain 'Install git'", check.Detail)
+		}
+	}
+	// If git is available, Detail should be empty in non-verbose mode
+	if check.Status == CheckOK && check.Detail != "" {
+		t.Errorf("checkGit Detail should be empty in non-verbose mode when git is found, got %q", check.Detail)
+	}
+}
+
+// --- TDD: Tests for diagnostic check functions ---
+
+func TestCheckGoRuntime(t *testing.T) {
+	check := checkGoRuntime(false)
+	if check.Name != "Go Runtime" {
+		t.Errorf("check.Name = %q, want 'Go Runtime'", check.Name)
+	}
+	if check.Status != CheckOK {
+		t.Errorf("check.Status = %q, want %q", check.Status, CheckOK)
+	}
+	if check.Message == "" {
+		t.Error("check.Message should not be empty")
+	}
+}
+
+func TestCheckGoRuntime_Verbose(t *testing.T) {
+	check := checkGoRuntime(true)
+	if check.Detail == "" {
+		t.Error("check.Detail should not be empty in verbose mode")
+	}
+	if !strings.Contains(check.Detail, "GOPATH") {
+		t.Error("verbose detail should contain GOPATH")
+	}
+}
+
+func TestCheckGit(t *testing.T) {
+	check := checkGit(false)
+	if check.Name != "Git" {
+		t.Errorf("check.Name = %q, want 'Git'", check.Name)
+	}
+	// Git should be available in test environments
+	if check.Status != CheckOK {
+		t.Skipf("git not available: %s", check.Message)
+	}
+	if !strings.Contains(check.Message, "git version") {
+		t.Errorf("check.Message should contain 'git version', got %q", check.Message)
+	}
+}
+
+func TestCheckMoAIConfig_Missing(t *testing.T) {
+	// Use a temp directory without .moai/
+	tmpDir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chErr := os.Chdir(origDir); chErr != nil {
+			t.Logf("failed to restore working directory: %v", chErr)
+		}
+	}()
+
+	check := checkMoAIConfig(false)
+	if check.Status != CheckWarn {
+		t.Errorf("check.Status = %q, want %q for missing .moai/", check.Status, CheckWarn)
+	}
+}
+
+func TestCheckMoAIConfig_Present(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".moai", "config", "sections"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chErr := os.Chdir(origDir); chErr != nil {
+			t.Logf("failed to restore working directory: %v", chErr)
+		}
+	}()
+
+	check := checkMoAIConfig(false)
+	if check.Status != CheckOK {
+		t.Errorf("check.Status = %q, want %q for present .moai/", check.Status, CheckOK)
+	}
+}
+
+func TestCheckClaudeConfig_Missing(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chErr := os.Chdir(origDir); chErr != nil {
+			t.Logf("failed to restore working directory: %v", chErr)
+		}
+	}()
+
+	check := checkClaudeConfig(false)
+	if check.Status != CheckWarn {
+		t.Errorf("check.Status = %q, want %q for missing .claude/", check.Status, CheckWarn)
+	}
+}
+
+func TestCheckMoAIVersion(t *testing.T) {
+	check := checkMoAIVersion(false)
+	if check.Name != "MoAI Version" {
+		t.Errorf("check.Name = %q, want 'MoAI Version'", check.Name)
+	}
+	if check.Status != CheckOK {
+		t.Errorf("check.Status = %q, want %q", check.Status, CheckOK)
+	}
+	if !strings.Contains(check.Message, "moai-adk") {
+		t.Errorf("check.Message should contain 'moai-adk', got %q", check.Message)
+	}
+}
+
+func TestStatusIcon(t *testing.T) {
+	tests := []struct {
+		status   CheckStatus
+		contains string
+	}{
+		{CheckOK, "\u2713"},   // ✓
+		{CheckWarn, "!"},      // ⚠
+		{CheckFail, "\u2717"}, // ✗
+		{CheckStatus("unknown"), "?"},
+	}
+	for _, tt := range tests {
+		got := statusIcon(tt.status)
+		if !strings.Contains(got, tt.contains) {
+			t.Errorf("statusIcon(%q) = %q, want string containing %q", tt.status, got, tt.contains)
+		}
+	}
+}
+
+func TestRunDiagnosticChecks_All(t *testing.T) {
+	checks := runDiagnosticChecks(false, "")
+	if len(checks) < 5 {
+		t.Errorf("expected at least 5 checks, got %d", len(checks))
+	}
+}
+
+func TestRunDiagnosticChecks_Filtered(t *testing.T) {
+	checks := runDiagnosticChecks(false, "Go Runtime")
+	if len(checks) != 1 {
+		t.Errorf("expected 1 check when filtered, got %d", len(checks))
+	}
+	if len(checks) > 0 && checks[0].Name != "Go Runtime" {
+		t.Errorf("filtered check name = %q, want 'Go Runtime'", checks[0].Name)
+	}
+}
+
+func TestExportDiagnostics(t *testing.T) {
+	tmpDir := t.TempDir()
+	exportPath := filepath.Join(tmpDir, "diagnostics.json")
+
+	checks := []DiagnosticCheck{
+		{Name: "Test", Status: CheckOK, Message: "passed"},
+	}
+
+	if err := exportDiagnostics(exportPath, checks); err != nil {
+		t.Fatalf("exportDiagnostics error: %v", err)
+	}
+
+	data, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("read exported file: %v", err)
+	}
+
+	var loaded []DiagnosticCheck
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("unmarshal exported JSON: %v", err)
+	}
+
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(loaded))
+	}
+	if loaded[0].Name != "Test" {
+		t.Errorf("loaded[0].Name = %q, want 'Test'", loaded[0].Name)
+	}
+}
+
+// --- TDD: Tests for Binary Freshness check (stale-binary detection) ---
+
+func TestShortCommit(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"full hash", "339bd4d3c1234567890abcdef", "339bd4d3c"},
+		{"exact 9", "339bd4d3c", "339bd4d3c"},
+		{"short 8", "339bd4d3", "339bd4d3"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shortCommit(tt.in); got != tt.want {
+				t.Errorf("shortCommit(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckBinaryFreshness_BasicInvariants(t *testing.T) {
+	// The check is non-deterministic because it depends on version.GetCommit()
+	// (set at build time) and the CWD's git state. We assert invariants that
+	// hold regardless of which branch the test executes: non-empty name, a
+	// valid status value, and a non-empty message.
+	check := checkBinaryFreshness(false)
+	if check.Name != "Binary Freshness" {
+		t.Errorf("check.Name = %q, want 'Binary Freshness'", check.Name)
+	}
+	if check.Status != CheckOK && check.Status != CheckWarn {
+		t.Errorf("check.Status = %q, want ok or warn", check.Status)
+	}
+	if check.Message == "" {
+		t.Error("check.Message should not be empty")
+	}
+}
+
+// --- T-014: MCP Scope Duplicate Detection ---
+
+func TestCheckMCPScopeDuplicates_NoDuplicates(t *testing.T) {
+	tmpDir := t.TempDir()
+	mcpJSON := `{"mcpServers":{"context7":{"command":"npx","args":["-y","@context7/mcp"]},"sequential-thinking":{"command":"npx","args":["-y","@modelcontextprotocol/server-sequential-thinking"]}}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(mcpJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := checkMCPScopeDuplicates(tmpDir, false)
+	if check.Name != "MCP Scope Duplicates" {
+		t.Errorf("check.Name = %q, want 'MCP Scope Duplicates'", check.Name)
+	}
+	if check.Status != CheckOK {
+		t.Errorf("no duplicates: check.Status = %q, want ok; msg=%s", check.Status, check.Message)
+	}
+}
+
+func TestCheckMCPScopeDuplicates_WithDuplicate(t *testing.T) {
+	// context7 appears in both project .mcp.json and simulated global config
+	// We simulate a duplicate by listing the same server name twice via the
+	// parsed structure (for unit test isolation we test the detection logic).
+	servers := map[string]int{
+		"context7":            2, // duplicate
+		"sequential-thinking": 1,
+	}
+	dups := findMCPDuplicates(servers)
+	if len(dups) != 1 {
+		t.Errorf("findMCPDuplicates: expected 1 duplicate, got %d: %v", len(dups), dups)
+	}
+	if dups[0] != "context7" {
+		t.Errorf("findMCPDuplicates: expected 'context7', got %q", dups[0])
+	}
+}
+
+func TestCheckMCPScopeDuplicates_MissingFile(t *testing.T) {
+	tmpDir := t.TempDir() // no .mcp.json created
+	check := checkMCPScopeDuplicates(tmpDir, false)
+	// Missing .mcp.json is OK — project may not use MCP
+	if check.Status != CheckOK {
+		t.Errorf("missing .mcp.json: check.Status = %q, want ok", check.Status)
+	}
+}
+
+func TestCheckMCPScopeDuplicates_InRunDiagnosticChecks(t *testing.T) {
+	// Verify the check is registered in runDiagnosticChecks
+	results := runDiagnosticChecks(false, "MCP Scope Duplicates")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for MCP Scope Duplicates filter, got %d", len(results))
+	}
+	if results[0].Name != "MCP Scope Duplicates" {
+		t.Errorf("results[0].Name = %q, want 'MCP Scope Duplicates'", results[0].Name)
+	}
+}
+
+func TestCheckBinaryFreshness_RegisteredInAllChecks(t *testing.T) {
+	// Verify the check is wired into runDiagnosticChecks.
+	checks := runDiagnosticChecks(false, "")
+	found := false
+	for _, c := range checks {
+		if c.Name == "Binary Freshness" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Binary Freshness check should be registered in runDiagnosticChecks allChecks array")
+	}
+}
+
+func TestCheckBinaryFreshness_FilterBy(t *testing.T) {
+	checks := runDiagnosticChecks(false, "Binary Freshness")
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check when filtered by 'Binary Freshness', got %d", len(checks))
+	}
+	if checks[0].Name != "Binary Freshness" {
+		t.Errorf("filtered check name = %q, want 'Binary Freshness'", checks[0].Name)
+	}
+}

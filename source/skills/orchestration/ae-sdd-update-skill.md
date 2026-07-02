@@ -87,7 +87,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
 | ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |
 | ⑤ | **工具链（CLI + lib + tests）** | `tools/bin/ae-sdd`(15 子命令：原 14 + v3.5.1 `plugin` 4 子命令平铺) + `tools/lib/`(14 模块：原 13 + v3.5.0 `plugin_loader.py`) + `tools/tests/`(16 测试：原 12 + v3.5.0/1 plugin 系列 4 个) | 门禁检查、状态管理、记忆层、DB/Git 工具集、hook 拦截、update-check | 直接编辑 `tools/`，独立于 `source/` 但被 update-graph 联动 |
-| ⑥ | **Harness 适配层** | `harness/.harness/agent.md` + `.adapter.lock` | 由 ae-sdd-harness-adapter SKILL 自动生成，转译为 Mavis 团队级 agent | ❌ 不手工改；母版升级后重跑 adapter SKILL 重新生成 |
+| ⑥ | **Harness 适配层** | `.harness/agent.md` + `.harness/.adapter.lock` | 由 ae-sdd-harness-adapter SKILL 自动生成，转译为 Mavis 团队级 agent | ❌ 不手工改；母版升级后重跑 adapter SKILL 重新生成 |
 
 ### 子系统协同关系图
 
@@ -128,7 +128,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 │     install-skill.md → 调 install.py → 装到 Layer3 → 调 init.py → 建 Layer4
 │
 │  ⑥ Harness 适配层（派生，非本体）：
-│     source/SKILL.md + HARNESS.md ──adapter SKILL──► harness/.harness/agent.md
+│     source/SKILL.md + HARNESS.md ──adapter SKILL──► .harness/agent.md
 │     （Mavis 团队级 agent 入口，由 .adapter.lock 标记来源 commit）
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -184,7 +184,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 **改 ⑥ Harness 适配层：**
 ```
-❌ 禁止手工编辑 harness/.harness/agent.md
+❌ 禁止手工编辑 .harness/agent.md
 正确流程：
 1. 改 source/SKILL.md 或 HARNESS.md（母版）
 2. 重跑 ae-sdd-harness-adapter SKILL（convert-ae-sdd-to-harness.ps1）
@@ -561,8 +561,8 @@ mavis harness remount
 
 > 本小节是 `source/standards/update-graph.json` 的人读锚点索引，不是权威源。新增/删除 UG 规则或 UC 检查时，必须同步本小节；`ae-sdd update-check --only UC-14` 会自动校验 JSON、`CHECK_FUNCS` 与本小节是否一致。
 
-- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`
-- 检查器锚点：`UC-01`, `UC-02`, `UC-03`, `UC-04`, `UC-05`, `UC-06`, `UC-07`, `UC-08`, `UC-09`, `UC-10`, `UC-11`, `UC-12`, `UC-13`, `UC-14`
+- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`
+- 检查器锚点：`UC-01`, `UC-02`, `UC-03`, `UC-04`, `UC-05`, `UC-06`, `UC-07`, `UC-08`, `UC-09`, `UC-10`, `UC-11`, `UC-12`, `UC-13`, `UC-14`, `UC-15`, `UC-16`
 
 ### 🤖 Agent 程序化消费协议（强制 — Agent 改完文件后必做）
 
@@ -585,7 +585,7 @@ Agent 拿到 `affected_items` 后，**逐项确认是否已同步**：
 
 **第 2 步：跑检查验证**（兜底，防漏）
 ```bash
-ae-sdd update-check          # 全量跑 UC-01~UC-14
+ae-sdd update-check          # 全量跑 UC-01~UC-16
 # 或只跑第 1 步返回的 checks_to_run
 ae-sdd update-check --only UC-02
 ```
@@ -607,6 +607,7 @@ ae-sdd update-check --only UC-02
 | 子 SKILL .md | 健康度清单 / templates / constraints | UC-05 |
 | templates .md | 子 SKILL 锚点 / 章节 1:1 | UC-05 |
 | update_graph.py/json | 图谱表 / 测试 / CLI / 本章节 / UC-14 锚点 | 全量+UC-14 |
+| runtime compiler / compiled package | `compile_skill_runtime.py` / `runtime_verify.py` / `build_dist.py` / `distribute.py` / `standalone-skills/skill-runtime-compiler/` / compiled-only guard | UC-15+UC-14 |
 | 任意 source/tools | CHANGELOG / README:5 / dev-sync / 级联图谱锚点 | UC-01+03+04+05+14 |
 
 ### 图谱使用 SOP（Agent 流程）
@@ -639,6 +640,7 @@ ae-sdd update-check --only UC-02
 | **UC-07** | 分发闭环：post-commit hook、hooksPath、HARNESS/update-skill 声明一致 | error | hook 与文档闭环齐 |
 | **UC-08~UC-13** | AA 全维对齐验证：门禁承诺、实现真实性、state 字段、状态机、幽灵命令、门禁注册完整性 | error/warn | 无 blocker 级漂移 |
 | **UC-14** | update-skill 级联图谱同步：`update-graph.json`、`CHECK_FUNCS`、本节 UG/UC 锚点一致 | error | 三方集合完全一致 |
+| **UC-15** | runtime 编译一致性：临时 dist 编译两次并运行 `runtime verify`，同时用 standalone compiler SKILL 编译 sample SKILL 两次；比较 compiled `SKILL.md` 与 `runtime/**` 字节快照 | error | ae-sdd runtime 与 standalone compiler 输出均字节级幂等 |
 
 ### 图谱维护规则
 
@@ -652,7 +654,7 @@ ae-sdd update-check --only UC-02
 
 ## 设计-实现一致性迭代检查（🆕 v3.5.3 — 每月/重大变更后跑，补 UC 自动检查的盲区）
 
-> **🆕 v3.5.3 新增（2026-06-27，用户需求"执行一次迭代检查，看看有没有设计不一致的实现，把这个逻辑写进 SKILL"）：** UC-01~14 是**自动化机器检查**（版本号 / 门禁注册 / 命令注册 / 扫描器分发 / 清单覆盖 / HS 声明定位 / AA 对齐 / update-skill 图谱锚点），但有盲区——它查"HS 规则声明在哪个文件"，**不查物理拦截实现是否齐全**；查"SKILL.md 引用的命令注册了没"，**不查幽灵命令整段描述是否清理**；查"F-1 交叉验证函数存在没"，**不查它覆盖了几个 gate**。本节是**人工/Agent 深度交叉核对 SOP**，补这个盲区，防止"文档撒谎"长期潜伏。
+> **🆕 v3.5.3 新增（2026-06-27，用户需求"执行一次迭代检查，看看有没有设计不一致的实现，把这个逻辑写进 SKILL"）：** UC-01~15 是**自动化机器检查**（版本号 / 门禁注册 / 命令注册 / 扫描器分发 / 清单覆盖 / HS 声明定位 / AA 对齐 / update-skill 图谱锚点 / runtime 编译一致性），但有盲区——它查"HS 规则声明在哪个文件"，**不查物理拦截实现是否齐全**；查"SKILL.md 引用的命令注册了没"，**不查幽灵命令整段描述是否清理**；查"F-1 交叉验证函数存在没"，**不查它覆盖了几个 gate**。本节是**人工/Agent 深度交叉核对 SOP**，补这个盲区，防止"文档撒谎"长期潜伏。
 
 ### 为什么需要本节（UC 自动检查够不到的 4 类盲区）
 
@@ -674,7 +676,7 @@ ae-sdd update-check --only UC-02
 #### 步骤 1：跑自动化基线（UC + health + gates）
 
 ```bash
-ae-sdd update-check     # UC-01~14，记录所有 warn（warn 是深挖线索，非直接结论）
+ae-sdd update-check     # UC-01~15，记录所有 warn（warn 是深挖线索，非直接结论）
 ae-sdd health           # 9 项自检，记录 ❌（注意：母版仓库无 .ae-sdd/ 是设计如此，非缺陷）
 ae-sdd gates check      # 28 门禁，确认未被破坏
 ```
@@ -731,7 +733,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 
 ### 与 UC 自动检查的关系（不替代，是补充）
 
-| 维度 | UC-01~14（自动） | 本节迭代检查（人工/Agent） |
+| 维度 | UC-01~15（自动） | 本节迭代检查（人工/Agent） |
 |------|----------------|------------------------|
 | 触发 | dev-sync 前 / 改完文件 | 每月 / 重大变更 / 用户要求 |
 | 深度 | 机器可判定的注册/存在性 | 语义级"声明 vs 实现覆盖面" |
@@ -783,10 +785,10 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2 `scripts/ra_authenticity_scan.py` 存在，8 类禁止规则（vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness）+ JSON 输出契约与 test_authenticity_scan.py 一致
 - [ ] 🆕 v3.2 `tools/lib/gates.py` check_g13 接入 RA 层（六层追溯：RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview），RA 为可选层不阻断
 - [ ] 🆕 v3.2 `SKILL.md` 含 `## 🛡️ G-RA 需求分析准入门卫` 章节 + 智能路由表 G-RA 门禁列
-- [ ] 🆕 v3.2+ `tools/lib/update_graph.py` 存在，含 UC-01~UC-07 + UC-14 原生检查、`check_all`/`summarize`；`alignment_audit.py` 注入 UC-08~UC-13
-- [ ] 🆕 v3.2+ `tools/bin/ae-sdd` 含 `update-check` 子命令（跑 UC-01~UC-14）
+- [ ] 🆕 v3.2+ `tools/lib/update_graph.py` 存在，含 UC-01~UC-07 + UC-14/UC-15 原生检查、`check_all`/`summarize`；`alignment_audit.py` 注入 UC-08~UC-13
+- [ ] 🆕 v3.2+ `tools/bin/ae-sdd` 含 `update-check` 子命令（跑 UC-01~UC-16）
 - [ ] 🆕 v3.2+ `tools/tests/test_update_graph.py` 存在，覆盖 UC-01~UC-07 + UC-14 各场景
-- [ ] 🆕 v3.2+ 本文件含 `## 更新依赖图谱` 章节（图谱表 + 使用 SOP + UC-01~14 检查说明 + UG/UC 机器同步锚点）
+- [ ] 🆕 v3.2+ 本文件含 `## 更新依赖图谱` 章节（图谱表 + 使用 SOP + UC-01~15 检查说明 + UG/UC 机器同步锚点）
 - [ ] 🆕 v3.2.1 `tools/lib/gates.py` 含 `G-CODE-1` 门禁（Coding 真实性）+ `scripts/coding_authenticity_scan.py` 存在
 - [ ] 🆕 v3.2.2 `source/skills/cross-cutting/` 含 4 个 toolset SKILL（`database-tool-skill.md` / `git-insight-skill.md` / `memory-management-skill.md` / `toolset-orchestration-skill.md`）
 - [ ] 🆕 v3.2.2 `source/standards/toolsets/` 含 4 份 toolset 标准（`db-connection-profile.schema.md` / `git-insight.md` / `memory-layering.md` / `toolset-security.md`）
@@ -798,9 +800,9 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2.3 `tools/tests/test_memory_gate.py` 存在，覆盖阶段切换记忆门禁各场景
 - [ ] 🆕 v3.2.3 `memory_store.py` 含非破坏性 `check_exit_ready()`（gates 可校验 memory 而不写 exit 事件）+ `--allow-empty-memory` 维护 override
 - [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
-- [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.4.0：G-00~14 + G-CODEPLAN-SRC + G-DOC-STORAGE + G-RA-1~4 + G-CODE-1 = 22）
+- [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.8.0：+ G-AUTO-CONSENSUS = 30）
 - [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 23；v3.5.0 加 `ae-sdd-plugin-loader-skill.md`）
-- [ ] 🆕 v3.2.5 `source/docs/ae-sdd-design.md` 存在，包含 12 个能力模块（端到端流程编排 / 智能路由 / 状态持久化 / 多Agent编排 / 门禁体系 / 项目资产 / 实例化体系 / Harness适配 / 记忆层 / Plan-First / 真实性扫描 / 工具链CLI）
+- [ ] 🆕 v3.2.5 `source/docs/ae-sdd-design.md` 存在，包含 19 个能力模块（端到端流程编排 / 智能路由 / 状态持久化 / 多Agent编排 / 门禁体系 / 项目资产 / 实例化体系 / Harness适配 / 记忆层 / Plan-First / 真实性扫描 / 工具链CLI / ... / 🆕 v3.8.0 自动化模式）
 - [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
 - [ ] 🆕 v3.4.0 `tools/lib/gates.py` GATE_REGISTRY 含 G-14 / G-CODEPLAN-SRC / G-DOC-STORAGE（22 门禁）+ CHECK_FUNCS 注册 + check_g14/check_g_codeplan_src/check_g_doc_storage 实现
@@ -821,7 +823,8 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.5.3 本文件含 `## 设计-实现一致性迭代检查` 章节（4 步 SOP：UC 基线 + HS 物理实现核对 + CLI 命令契约深挖 + 已实现未接入扫描 + 报告模板 + 与 UC 关系定位）；`source/docs/ae-sdd-design.md` 工具链 CLI 模块含 v3.5.3 迭代检查说明
 - [ ] 🆕 v3.5.4 本文件 `## 设计-实现一致性迭代检查` SOP 步骤 2/3/4 改为调 `ae-sdd iteration-check`（IC-1~4 机器粗筛 + 人工复核语义层）；`source/SKILL.md` 含 `## 🛠️ 工具 API 速查` 重写 + 删除幽灵命令段（v3.0 残留 rules.yaml/.mjs/sync-tools）；`source/HARNESS.md` HS-7/8 升级"已补物理实现"+ HS-4/6 降级自认；`tools/lib/iteration_check.py` + `tools/bin/ae-sdd:cmd_iteration_check` 注册；HS-7 物理拦截复用 `tools/lib/state.py:check_prd_4_layers`
 - [ ] 🆕 v3.5.5 `source/SKILL.md` 含 `## ⏱️ 节点级上下文压力软提示` 章节（6 审核点触发表 + 行为约束 + 5 信号表 + 缺省阈值 + config override + SOP + 对话呈现模板 + CLI 速查）+ 整体流程图 6 个审核点后加 ⏱️ 标记 + §🤖 章节含"主会话职责边界"小节；`source/skills/cross-cutting/agent-orchestration-skill.md` 含 §8.5 默认单 sub-agent 模式 + §8.6 节点级派活清单；`tools/lib/context_pressure.py` + `tools/bin/ae-sdd:cmd_context_pressure` + `tools/tests/test_context_pressure.py` 注册并通过；CLI 速查表含 `ae-sdd context-pressure [--story <ID>]`
-- [ ] 🆕 v3.5.11+ `tools/lib/alignment_audit.py` 存在（AA 全维对齐验证器，6 维 UC-08~13：门禁承诺↔注册双向 / 门禁实现真实性抓 stub-pass / state 字段存活性 / 状态机闭环 / 幽灵命令全捕获 / 门禁注册完整性）+ `register_to_update_graph()` 注入 update_graph.CHECK_FUNCS；`tools/bin/ae-sdd:cmd_update_check` import alignment_audit 触发注册 + UC-01~14 全量调度；`tools/tests/test_alignment_audit.py` ≥12 用例；`tools/lib/gates.py` 修复 G-RA-FLOW-VIOLATION 假门禁（check_all 特判传 master_source + `_sys`→`sys` NameError）+ `tools/tests/test_gates.py` TestGRAFlowViolation 3 用例；`source/SKILL.md` frontmatter v3.5.11 + AA 描述；5 个核心 review/生成 SKILL（dr-review/story-review/code-review/requirement-analysis/task-generate）顶部含🟠门禁强度声明；`requirement-analysis-skill.md` 删除 `run dr-review-skill`/`run story-update-skill` 幽灵命令引用；`source/standards/update-graph.json` 含 UG-15 规则；`source/docs/plans/2026-06-29-v3.5.11-aa-tracking-list.md` 存在（AA 首跑 gap 留痕）
+- [ ] 🆕 v3.5.11+ `tools/lib/alignment_audit.py` 存在（AA 全维对齐验证器，6 维 UC-08~13：门禁承诺↔注册双向 / 门禁实现真实性抓 stub-pass / state 字段存活性 / 状态机闭环 / 幽灵命令全捕获 / 门禁注册完整性）+ `register_to_update_graph()` 注入 update_graph.CHECK_FUNCS；`tools/bin/ae-sdd:cmd_update_check` import alignment_audit 触发注册 + UC-01~16 全量调度；`tools/tests/test_alignment_audit.py` ≥12 用例；`tools/lib/gates.py` 修复 G-RA-FLOW-VIOLATION 假门禁（check_all 特判传 master_source + `_sys`→`sys` NameError）+ `tools/tests/test_gates.py` TestGRAFlowViolation 3 用例；`source/SKILL.md` frontmatter v3.5.11 + AA 描述；5 个核心 review/生成 SKILL（dr-review/story-review/code-review/requirement-analysis/task-generate）顶部含🟠门禁强度声明；`requirement-analysis-skill.md` 删除 `run dr-review-skill`/`run story-update-skill` 幽灵命令引用；`source/standards/update-graph.json` 含 UG-15 规则；`source/docs/plans/2026-06-29-v3.5.11-aa-tracking-list.md` 存在（AA 首跑 gap 留痕）
+- [ ] 🆕 v3.8.0 `tools/lib/config.py` 存在（`AUTOMATION_DEFAULTS` + `load_automation_config` + `is_automation_enabled`/`get_reviewer_tier`/`get_automated_points`）；`scripts/init.py` CONFIG_TEMPLATE 含 `automation:` 段（默认 `enabled: false`）；`tools/lib/gates.py` GATE_REGISTRY 含 G-AUTO-CONSENSUS（30 门禁）+ CHECK_FUNCS 注册 + `check_g_auto_consensus` 实现；`tools/lib/state.py` 含 `register_review_consensus`/`get_review_consensus` + `reviewConsensus` 字段；`tools/bin/ae-sdd` 含 `automation status/enable/disable` + `preflight collect` + `state register-review-consensus` 子命令；`source/SKILL.md` 含 `## 🚀 自动化模式` 章节 + G-AUTO-CONSENSUS 门禁速查 + Step1 自动化检测 + Step1.5 预收集 + 监管器步骤4 联审共识双模式 + 30门禁；`source/skills/cross-cutting/agent-orchestration-skill.md` §8.4.1 自动化强制 Tier 3 + §8.4.5 禁逻辑多视角降级；`tools/tests/test_gates.py` TestGAutoConsensus ≥3 用例 + 门禁总数断言 30；`tools/tests/test_automation_cli.py` 存在；`source/docs/ae-sdd-design.md` 含 `## 19` 自动化能力模块；`source/standards/update-graph.json` 含 UG-20 规则；`tools/lib/update_graph.py` 含 `check_uc16_automation_cascade` + CHECK_FUNCS 注册 UC-16；`source/CHANGELOG/` 含 `2026-07-02-automation-switch.md`
 
 ### 跨 SKILL 一致性
 

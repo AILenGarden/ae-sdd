@@ -1,0 +1,35 @@
+.git
+.github
+.idea
+.vscode
+.claude
+.mcp.json
+
+# Maven build output only — must NOT use **/target, which would also drop the
+# Java source package src/main/java/ai/nubase/cron/target (breaks the backend build).
+/target
+**/.next
+**/node_modules
+**/.turbo
+**/dist
+**/build
+**/*.tsbuildinfo
+frontend/apps/www
+frontend/.maven-frontend
+frontend/apps/studio/out
+
+logs
+parser_logs
+*.log
+
+.DS_Store
+*.tar
+*.tar.gz
+*.zip
+frontend/packages/mcp-bridge/*.tgz
+
+script/deploy/nubase.env
+script/deploy/init_apisix.sh
+script/deploy/rolling-deploy.sh
+
+docs
