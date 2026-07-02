@@ -47,6 +47,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 # ─── 颜色（ANSI） ────────────────────────────────────────────────────────────
 def _supports_color() -> bool:
     return sys.stdout.isatty()
@@ -202,6 +208,27 @@ def _copy_runtime_scripts_to_dist(repo_root: Path, dst: Path) -> None:
         warn("没有运行时脚本被复制")
 
 
+def _compile_runtime_to_dist(repo_root: Path, src: Path, dst: Path, build_date: str) -> bool:
+    """Generate compact runtime files and replace dist/SKILL.md with bootloader."""
+    try:
+        from compile_skill_runtime import compile_runtime_package
+        manifest = compile_runtime_package(repo_root, src, dst, build_date=build_date)
+    except Exception as exc:
+        err(f"Runtime 编译失败: {exc}")
+        return False
+
+    runtime_manifest = dst / "runtime" / "manifest.json"
+    runtime_boot = dst / "runtime" / "boot.compact.md"
+    if not runtime_manifest.is_file() or not runtime_boot.is_file():
+        err("Runtime 编译产物不完整：缺少 runtime/manifest.json 或 runtime/boot.compact.md")
+        return False
+
+    extracts = manifest.get("extracts", {})
+    flow_scales = ",".join(extracts.get("flow_scales", []))
+    ok(f"Runtime compact 已生成 (gates={extracts.get('gate_count')}, scales={flow_scales})")
+    return True
+
+
 def _patch_new_source_files(
     src: Path, dst: Path, ignore_dirs: set, ignore_files: list
 ) -> None:
@@ -329,6 +356,11 @@ def main() -> int:
     # 只补充存在于 working tree 但不在 dist 里的文件（不覆盖已存在的）。
     _patch_new_source_files(src, dst, EXCLUDE_DIRS, EXCLUDE_FILES)
 
+    # ── 编译 Runtime compact（source 未编译母版 → dist 编译运行包）────────────
+    step("编译 Runtime compact")
+    if not _compile_runtime_to_dist(repo_root, src, dst, build_date):
+        return 1
+
     # ── 剥离母版专有产物 ────────────────────────────────────────────────────
     step("剥离母版专有产物")
     for rel in EXCLUDE_FILES:
@@ -364,6 +396,10 @@ def main() -> int:
         err(f"致命：{dst_skill} 缺失或为空，构建失败")
         return 1
     ok("主入口 SKILL.md 存在且非空")
+    if not (dst / "runtime" / "manifest.json").is_file():
+        err("致命：compiled runtime manifest 缺失")
+        return 1
+    ok("compiled runtime manifest 存在")
 
     # ── 验证 Harness（v3.1）─────────────────────────────────────────────────
     dst_harness = dst / "HARNESS.md"
@@ -444,6 +480,9 @@ def _fallback_build(src: Path, dst: Path) -> int:
     # fallback 同样复制 tools/
     _copy_tools_to_dist(src.parent, dst)
     _copy_runtime_scripts_to_dist(src.parent, dst)
+
+    if not _compile_runtime_to_dist(src.parent, src, dst, build_date):
+        return 1
 
     (dst / "VERSION").write_bytes(f"{version}\n{build_date}\n".encode("utf-8"))
     plugin_dir = dst / ".claude-plugin"

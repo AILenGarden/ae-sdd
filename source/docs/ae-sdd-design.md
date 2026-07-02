@@ -479,3 +479,49 @@ lib 层 schema 已就绪且测试通过；一旦业务调用方接入，events �
 | 全流程降级保护 | `detect_drift()` 行227-233：任何异常返回 `drift_type="none"` 不阻断主流程 |
 
 **颗粒度与边界**：只检测语义漂移（物理越权由 PreToolUse 拦截）；gates check 结果为唯一权威判定，不信任 AI 自报（决策1B）；`correctionCounts` 写入 state.json 跨 session 持久化；`flow_monitor.py` 是纯计算模块（只返回结论不直接写 state），写 state 由 `prompt_inject.py` 调用 state API 执行；Level 3 暂停后续接检测自动识别 `phase=paused` 并播报。
+
+---
+
+## 18. SKILL 编译与 Runtime IR（v3.8 设计）
+
+### 设计
+
+ae-sdd 分为两种物理版本：`source/` 是未编译母版，面向维护者；`dist/ae-sdd/` 是编译后的实例化运行包，面向各 Agent。正式发版只能分发编译后版本，不能直接把 `source/` 安装到 Agent skills 目录。
+
+编译目标不是把 SKILL 变成不可读"机械码"，而是生成短、结构化、可审查的 runtime compact slices。Agent 主入口 `dist/ae-sdd/SKILL.md` 变为 bootloader，只声明加载顺序、冲突优先级和 fallback 规则；完整 Markdown 保存在 runtime fallback 和子 SKILL 中，只有 compact 不足时才延迟读取。
+
+编译后运行包的核心结构：
+
+```text
+dist/ae-sdd/
+├── SKILL.md                         # compiled bootloader
+└── runtime/
+    ├── manifest.json                # 版本、source hash、runtime_fingerprint、load_order
+    ├── boot.compact.md              # 加载契约
+    ├── route.compact.md             # 路由压缩表
+    ├── gates.compact.md             # 门禁压缩表
+    ├── flow.compact.md              # 状态机压缩表
+    ├── macros.compact.md            # 公共动作宏
+    └── fallback/SKILL.full.md       # 原始主入口 fallback
+```
+
+冲突优先级：用户最新明确指令（不得绕过硬门禁） > CLI/gate/state 真实输出 > runtime compact > 子 SKILL fallback > `fallback/SKILL.full.md` > 历史说明文档。
+
+完整说明见 [`source/docs/skill-runtime-compiler.md`](skill-runtime-compiler.md)。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 未编译母版 | `source/`，唯一人工编辑点 |
+| 编译实例包 | `dist/ae-sdd/`，由 `scripts/build_dist.py` 生成，git ignored |
+| Runtime 编译器 | `scripts/compile_skill_runtime.py`，生成 `runtime/*.compact.md` 并替换 dist 主入口为 bootloader |
+| 编译接入点 | `scripts/build_dist.py` 在复制 source/tools/scripts 后调用 runtime 编译器 |
+| 门禁 compact 数据源 | `tools/lib/gates.py:GATE_REGISTRY` |
+| 状态机 compact 数据源 | `tools/lib/state.py:PHASE_FLOWS` |
+| 机器校验 manifest | `runtime/manifest.json`：`compiled=true`、`deterministic=true`、`runtime_fingerprint`、`load_order`、`source_checksums` |
+| 分发入口 | `scripts/distribute.py` 只接受 `dist/ae-sdd/` 或基于它生成的 Agent 专属产物 |
+
+**颗粒度与边界**：第一期只编译 boot/route/gates/flow/macros 五类高收益规则；子 SKILL 细节、模板正文、设计背景仍按需 fallback。compact runtime 不替代 CLI gate，任何硬门禁判断以 `ae-sdd gates check`、`state` 等工具输出为准。runtime 编译产物必须字节级幂等，不写入墙钟时间；同一份 `source/`、同一版编译器、同一份 `GATE_REGISTRY` 与 `PHASE_FLOWS` 重复编译，`dist/ae-sdd/SKILL.md` 和 `dist/ae-sdd/runtime/**` 必须完全一致。
+
+**当前实现状态**：第一期编译器、构建接入、runtime manifest、五类 compact slice、fallback 原文锚点、字节级幂等测试均已落地。下一步实现重点是 `ae-sdd runtime verify`、`update-check` 编译一致性检查、分发器 compiled-only 校验，以及外层 `dist` 包可复现构建。详细清单见 [`source/docs/skill-runtime-compiler.md`](skill-runtime-compiler.md) §14。

@@ -30,6 +30,10 @@ import sys
 import time
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 # 让 `from distributors ...` / `from build_harness ...` 可用
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
