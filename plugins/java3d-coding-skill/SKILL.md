@@ -1,10 +1,10 @@
 ---
 name: java3d-coding
 description: |
-  Java3D 适配器（🆕 v3.6.2）。承载 Java 语言 + icec/life 项目族的「编码决策知识层」，
-  叠加于共有 coding-skill §3/§4/§8/§11/§12 之上。技术栈锁、DDD 4 层落点决策、骨架展开特化、
-  验证姿态特化、命名/错误码决策、静态扫描特化、icec/life 踩坑决策库。
-  v3.6.2 增强：§1.1bis 固化 life 三条产品线 base package；§2.4 DO/PO 类型差异判定线。
+  Java3D 适配器（🔧 v1.3.0，新增 BFF 三层落点决策）。承载 Java 语言 + icec/life
+  项目族的「编码决策知识层」，叠加于共有 coding-skill §3/§4/§8/§11/§12 之上。技术栈锁、Service DDD 5 模块
+  落点决策（含防腐层 Facade + 集成/领域事件双线）、BFF 三层落点决策（合并 domain、interfaces/converter、
+  数据策略红线）、骨架展开特化、验证姿态特化、命名/错误码决策、静态扫描特化、icec/life 踩坑决策库。
   本文件不复述项目 constraints/ + assets 的纯规则（指针引用，DRY）；只提供"遇到 X 决策时怎么选"。
   注册 key: coding-adapter-java（type=skill-new，母版 L3）。
   触发：共有 coding-skill §13.1 加载协议按项目技术栈解析本适配器后叠加应用。
@@ -41,12 +41,14 @@ description: |
 | 数据库 | MySQL 8.0.17 | utf8mb4；每服务独占 DB，禁跨服务连库 |
 | 缓存 | 本地=Caffeine，分布式=Redis（不混用） | 选型决策：单机一致→Caffeine；多实例一致→Redis |
 | 搜索 | ES 7.10.2（rest-high-level-client） | 复杂检索走 ES，禁 left/full LIKE |
-| 消息 | **casstime messagebus**（`@EnableMessage`+`EventPublisher`+`@EventHandler`） | 🔴 **禁** spring-kafka `@KafkaListener`、禁 courier（见 §8 踩坑#2）|
+| 消息 | 底层 **Kafka**，上层封装为 **casstime messagebus**（`@EnableMessage`+`EventPublisher`+`@EventHandler`） | 🔴 业务代码禁直连 spring-kafka `@KafkaListener`、禁 courier，一律走 messagebus 封装（见 §8 踩坑#2）|
 | RPC/容错 | Feign（Client 继承 SPI 接口）+ Hystrix | 跨服务调用必有降级 `fallbackMethod` |
 | 配置中心 | panda-spring-boot-starter 1.0.9 + cass-config | 走 panda，禁本地硬编码业务配置 |
 | 日志 | casslog-spring-boot-starter 1.5.0 | 🔴 禁直接配 logback/log4j |
 | 定时任务 | job-spring-boot-starter 4.0.5（`@JobHandler`） | 🔴 禁 `@Scheduled`（见 §8 踩坑）|
 | 工具 | Lombok 1.18.16（scope=provided 每模块显式声明）| MapStruct 已在 pom 声明但 🔴 **禁用其生成**（见 §8 踩坑#3）|
+| 工具（🔧 v1.2.0 补） | **Guava** | 集合/缓存/函数式工具优先用 Guava，禁重复造轮子 |
+| 异步/响应式（🔧 v1.2.0 补） | **RxJava** | 异步流式编排场景使用；与 Feign/Hystrix 同步调用并存，按场景二选一，不混用同一调用链 |
 | 公共 | icec-cloud-commons（b2c.1.0，强制每项目） | Result/异常/utils 统一来源 |
 
 ### §1.1bis base package 固化（🆕 v3.6.2 — 消除包路径"前缀待确认"缺口）
@@ -89,36 +91,56 @@ description: |
 >
 > **规则源（不复述）：** life `constraints/project-structure.md §3` + `layered-arch.md` + `life.assets.md §4`（包路径权威映射）
 
-### §2.1 工程模块结构（4 工程类型）
+### §2.1 工程模块结构（5 平级模块 + 独立打包，🔧 v1.2.0 按 life-user README 修正）
 
-| 工程类型 | 模块命名 | 职责 |
-|---------|---------|------|
-| SPI 模块 | `icec-cloud-life-{module}-spi` | 接口契约（interface/DTO/Request/Enum），无 impl |
-| Service（DDD 四层）| `icec-cloud-life-{module}` | domain/application/interfaces/infrastructure + service 启动 |
-| API 聚合 | `icec-cloud-life-api` | 多 bff-api 聚合成一个 Spring Boot |
-| 独立 BFF | `icec-cloud-life-{module}-bff` | 单模块 Spring Boot |
+> **🔴 与旧版差异：** 旧版把 domain/application/infrastructure/interfaces 揪成一个"Service"工程统一命名。实测项目（`icec-cloud-boss-user` 等）是 **5 个平级 Maven 模块**，每层单独一个模块、单独一个 pom、单独打成一个 JAR（README DDD 约定第 3 条），service 模块只是启动壳，不含业务代码。
 
-调用链：`前端 → api → bff → spi(Feign) → service(DDD 四层)`
+| 工程类型 | 模块命名（`{project}` 如 `life-user`） | 职责 | 依赖 |
+|---------|------------------------------------|------|------|
+| SPI 模块 | `{project}-spi` | 接口契约（interface/DTO/Request/Enum），无 impl | 无 |
+| interfaces 模块 | `{project}-interfaces` | 接口层/表现层：外部输入输出协议适配 | application、spi |
+| application 模块 | `{project}-application` | 应用层：薄层业务流程编排 | domain、spi |
+| domain 模块 | `{project}-domain` | 领域层：业务规则与逻辑，不依赖技术框架 | 不依赖任何其他模块 |
+| infrastructure 模块 | `{project}-infrastructure` | 基础设施层：为上层提供技术实现（DB/缓存/MQ/Feign）| domain、application、spi |
+| service 模块 | `{project}-service` | 统一主模块，仅含启动类 + bootstrap 配置 | ALL：domain/application/infrastructure/interfaces/spi |
+| API 聚合 | `icec-cloud-life-api` | 多 bff-api 聚合成一个 Spring Boot | — |
+| 独立 BFF | `icec-cloud-life-{module}-bff` | 单模块 Spring Boot | — |
 
-### §2.2 Service DDD 四层落点表（类角色 → 精确包路径）
+调用链：`前端 → api → bff → spi(Feign) → service(DDD 五模块)`
 
-> **🔴 调用链依赖方向（单向，违反即阻断）：** `service → interfaces → application → domain`；infrastructure 实现侧边抽象（domain 定义接口，infrastructure 实现）。
+### §2.2 Service DDD 五模块落点表（类角色 → 精确包路径，🔧 v1.2.0 按 life-user README 修正）
 
-| 类角色 | 命名模板 | 落点包路径（life 2c 线） | object 持有 |
+> **🔴 调用链依赖方向（单向，违反即阻断）：** `interfaces → application → domain`；infrastructure 实现/依赖其余各层抽象，其余各层不可直接调用 infrastructure（README DDD 约定第 2 条）。
+>
+> **🔴 与旧版差异：** ① application/infrastructure/interfaces 三层去掉 `{subdomain}` 嵌套（仅 domain 层按聚合名嵌套一级，其余 3 层是扁平包结构，见 README 包结构树）；② 新增 Facade（防腐层，接口定义于 domain / 实现于 infrastructure）与 EventPublisher/EventHandler（集成事件 vs 领域事件两条线，见 README DDD 约定第 6/7 条）；③ Mapper 落点补 `dao` 子包 + XML 独立路径；④ 持久化转换器改名 `{Resource}DataConverter`（原 `PersistenceConverter` 为旧命名，弃用）。
+
+| 类角色 | 命名模板 | 落点包路径（life 2c 线，`{domain}`=业务域如 user/cs，`{aggregate}`=聚合名，单聚合服务通常=`{domain}`） | object 持有 |
 |--------|---------|----------------------|-----------|
 | SPI 实现类（Service 形态）| `{Resource}ServiceImpl implements {Resource}Service` | `...life.{domain}.interfaces.restful` | DTO only |
 | BFF Controller 实现 | `{Resource}RestImpl implements {Resource}Rest` | `...life.bff.{domain}.interfaces.restful` | DTO only |
+| 消息监听（集成事件订阅）| `{Feature}EventHandler` | `...{domain}.interfaces.eventhandlers` | DTO |
 | 异常处理 | `{Domain}ExceptionHandler`（`@RestControllerAdvice`） | `...{domain}.interfaces.config` | — |
 | Job 处理 | `{Feature}JobHandler` | `...{domain}.interfaces.jobhandler` | — |
 | 应用编排 | `{Resource}AppService`（`@Transactional`） | `...{domain}.application.appservice` | DO, DTO |
-| 应用转换器 | `{Resource}Converter`（`@UtilityClass` 静态） | `...{domain}.application.converter` | — |
-| 领域实体（充血）| `{Resource}DO`（**注意：DO=领域对象，非 PO**） | `...{domain}.domain.{subdomain}.model.entity` | DO only |
-| 仓储接口 | `{Resource}Repository`（接口） | `...{domain}.domain.{subdomain}.repository` | — |
-| 领域服务 | `{Resource}DomainService` | `...{domain}.domain.{subdomain}.service` | DO |
-| 仓储实现 | `{Resource}RepositoryImpl extends ServiceImpl<Mapper,PO>` | `...{domain}.infrastructure.{subdomain}.persistence.repository.mysql` | DO, PO, DTO |
-| 持久化对象 | `{Resource}PO`（贫血，`@TableName`） | `...{domain}.infrastructure.{subdomain}.persistence.entity` | PO |
-| 持久化转换器 | `{Resource}PersistenceConverter` | `...{domain}.infrastructure.{subdomain}.persistence.converter` | DO↔PO |
-| Mapper | `{Resource}Mapper extends BaseMapper<PO>` | `...{domain}.infrastructure.{subdomain}.persistence.mapper` | — |
+| 应用层写入参 | `{Resource}Command` | `...{domain}.application.vo.command` | — |
+| 应用层查询入参 | `{Resource}Query` | `...{domain}.application.vo.query` | — |
+| 集成事件发布器（接口定义，产生于 application）| `ApplicationEventPublisher` | `...{domain}.application.publisher` | — |
+| 应用转换器 | `{Resource}Converter`（`@UtilityClass` 静态，DTO↔DO） | `...{domain}.application.converter` | — |
+| 领域实体（充血）| `{Resource}DO`（**注意：DO=领域对象，非 PO**） | `...{domain}.domain.{aggregate}.model.entity` | DO only |
+| 领域枚举 | `{Resource}StatusEnum` | `...{domain}.domain.{aggregate}.model.enums` | — |
+| 仓储接口 | `{Resource}Repository`（接口） | `...{domain}.domain.{aggregate}.repository` | — |
+| 领域服务 | `{Resource}DomainService` | `...{domain}.domain.{aggregate}.service` | DO |
+| 领域事件 | `{Resource}{Changed}Event` | `...{domain}.domain.{aggregate}.event` | — |
+| 防腐层定义（Facade）| `{Resource}Facade`（接口，定义于 domain；不放 application 是为防止外部服务需求的领域知识泄露到应用层）| `...{domain}.domain.facade` | — |
+| 领域事件发布器（接口定义，产生于 domain）| `DomainEventPublisher` | `...{domain}.domain.publisher` | — |
+| 仓储实现 | `{Resource}RepositoryImpl extends ServiceImpl<{Resource}Mapper,{Resource}PO> implements {Resource}Repository` | `...{domain}.infrastructure.persistence.repository` | DO, PO, DTO |
+| 持久化对象 | `{Resource}PO`（贫血，`@TableName`） | `...{domain}.infrastructure.persistence.entity` | PO |
+| 持久化转换器 | `{Resource}DataConverter` | `...{domain}.infrastructure.persistence.converter` | DO↔PO |
+| Mapper | `{Resource}Mapper extends BaseMapper<PO>` | `...{domain}.infrastructure.persistence.dao` | — |
+| Mapper XML | `{Resource}Mapper.xml` | `...{domain}.infrastructure.persistence.dao.xml` | — |
+| 集成事件发布器实现 | `KafkaApplicationEventPublisher` | `...{domain}.infrastructure.messaging.publisher` | — |
+| 领域事件发布器实现 | `KafkaDomainEventPublisher` | `...{domain}.infrastructure.messaging.publisher` | — |
+| 防腐层实现（Facade）| `{Resource}FacadeImpl implements {Resource}Facade` | `...{domain}.infrastructure.facade` | — |
 | Feign 客户端 | `{Resource}Client` / `{Resource}ServiceClient` | `...{domain}.infrastructure.feign` | DTO |
 
 ### §2.3 object-per-layer 决策（每层允许持有的对象类型）
@@ -134,13 +156,13 @@ description: |
 
 ### §2.4 DO/PO 类型差异判定线（🆕 v3.6.2 — 消除"合法差异 vs 建模错误"判定缺口）
 
-> **🔴 决策定位：** 测试反馈——icec 里 DO（领域充血对象）与 PO（持久化贫血对象）类型经常**不一致**（DO 用枚举/领域类型、PO 用 String/Long），这是**合法模式**（由 PersistenceConverter 桥接）。但 DO/PO 类型不一致也可能是**建模错误**（如同一业务字段在两边本应一致却写错）。文档此前没给判定线，导致 §10 异常根因分类时"层4 AI犯蠢"vs"合法差异"边界模糊。本节给明确判定线。
+> **🔴 决策定位：** 测试反馈——icec 里 DO（领域充血对象）与 PO（持久化贫血对象）类型经常**不一致**（DO 用枚举/领域类型、PO 用 String/Long），这是**合法模式**（由 DataConverter 桥接）。但 DO/PO 类型不一致也可能是**建模错误**（如同一业务字段在两边本应一致却写错）。文档此前没给判定线，导致 §10 异常根因分类时"层4 AI犯蠢"vs"合法差异"边界模糊。本节给明确判定线。
 
-**判定原则：DO 持领域语义类型、PO 持存储原类型，差异由 PersistenceConverter 桥接 = 合法；同语义字段在 DO/PO 间类型不可互转（无桥接语义）= 建模错误。**
+**判定原则：DO 持领域语义类型、PO 持存储原类型，差异由 DataConverter 桥接 = 合法；同语义字段在 DO/PO 间类型不可互转（无桥接语义）= 建模错误。**
 
 | 场景 | DO 类型 | PO 类型 | 判定 | 依据 |
 |------|---------|---------|------|------|
-| 状态字段 | `TicketStatus`（枚举）| `String`（VARCHAR(32)）| ✅ **合法** | 枚举↔字符串，PersistenceConverter 用 `status.name()`/`TicketStatus.valueOf()` 桥接 |
+| 状态字段 | `TicketStatus`（枚举）| `String`（VARCHAR(32)）| ✅ **合法** | 枚举↔字符串，DataConverter 用 `status.name()`/`TicketStatus.valueOf()` 桥接 |
 | 金额字段 | `BigDecimal`（Money 值对象）| `decimal` | ✅ **合法** | 值对象↔数值，Converter 解包/打包 |
 | 时间字段 | `java.util.Date` | `datetime` | ✅ **合法**（且必须一致用 Date）| 同类型映射，🔴 严禁 DO 用 LocalDateTime |
 | 主键/外键 | `Long` | `bigint` | ✅ **合法** | 同语义；🔴 但若 DO=Long / PO=String(varchar) 则 **🔴 建模错误**（无桥接语义，主键类型应一致） |
@@ -150,9 +172,31 @@ description: |
 | **DO 含 PO/SQL/DTO 引用** | — | — | 🔴 **分层违规**（非类型问题）| 共有§3 + §2.3 object-per-layer，Domain 禁持 PO |
 
 **遇到类型不匹配时的判定 SOP（配合共有 §10 异常根因 4 层）：**
-1. 先查差异是否属上表"✅ 合法"行 → 合法则 PersistenceConverter 正确桥接即可，**不算根因**。
+1. 先查差异是否属上表"✅ 合法"行 → 合法则 DataConverter 正确桥接即可，**不算根因**。
 2. 不属合法行 → 进共有 §10 逐层判定：层1 Task 数据结构表类型矛盾？层2 Story 字段语义？层3 DR 业务规则？层4 AI 笔误/分层违规。
 3. **主键/业务关键字段类型在 DO/PO 间不可互转 → 直接判层4**（除非 Task 明确要求异构存储，需 DR 举证）。
+
+### §2.5 BFF 三层落点表（🆕 v1.3.0 — BFF 工程形态决策）
+
+> **🔴 决策定位：** BFF（`{project}-bff`）是与 Service 五模块（§2.2）并列的**独立工程形态**，走**完全不同的落点规则**。
+> AI 编码前必须先判工程类型：`-bff` 结尾 → 用本表；否则 → 用 §2.2 service 五模块表。**BFF 不得套用 §2.2 上半部分 service 规则。**
+>
+> **🔴 关键特征：BFF 不设独立 domain 层。** README 原文「application 合并 application 和 domain」——BFF 的 application 层直接承担领域职责，**不生成 `domain/` 包**（区别于 Service 的独立 domain 模块）。
+>
+> **规则源（不复述）：** life 项目族 14 份 BFF README（2c 6 份 + admin 8 份，全线逐字节一致）：`icec-cloud-life-{module}-bff/readme.md` + `icec-cloud-boss-{module}-bff/README.md`
+
+| 类角色 | 命名模板 | 落点包路径（`{domain}`=业务域） | object 持有 |
+|--------|---------|----------------------|-----------|
+| Rest 接口实现（实现 api 契约层定义的 Rest 接口）| `{Resource}RestImpl implements {Resource}Rest` | `...{domain}.interfaces.restful` | VO, DTO |
+| DTO↔VO 转换器（在 interfaces 层，不在 application）| `{Resource}Converter` | `...{domain}.interfaces.converter` | — |
+| 应用服务（合并 domain，命名 `ServiceApp` 非 `AppService`）| `{Resource}ServiceApp` | `...{domain}.application.appservice` | DTO |
+| 防腐层定义（在 application 层，非 domain）| `{Resource}Facade` | `...{domain}.application.facade` | — |
+| 防腐层实现 | `{Resource}FacadeImpl implements {Resource}Facade` | `...{domain}.infrastructure.facade` | — |
+| Feign 客户端（调 SPI）| `{Resource}ServiceClient` | `...{domain}.infrastructure.feign` | DTO |
+| Web 配置（如 WebMvcConfig）| `{Resource}Config` | `...{domain}.infrastructure.config` | — |
+| 启动类 | `WebApplication` | `...{domain}.`（包根） | — |
+
+> **BFF object 持有约束：** 仅允许 VO/DTO；🔴 禁持有 PO（BFF 不触 DB）、禁持有 DO（无独立 domain 层）。
 
 ---
 
@@ -162,7 +206,9 @@ description: |
 
 | 🔴 红线（icec/life 特有）| 决策 |
 |------------------------|------|
-| BFF 直接操作 DB / Redis / Kafka | 禁。BFF 必须通过 Feign SPI 调用 Service |
+| BFF 直接操作 DB | 禁。BFF 必须通过 Feign SPI 调用 Service |
+| BFF 操作 Redis / Kafka | 禁（🔧 v1.3.0 精确化）。BFF 无状态，不触分布式中间件 |
+| BFF 使用分布式缓存 | 禁；可用本地缓存（Caffeine）（🔧 v1.3.0，README「万不得已可用本地缓存而非分布式缓存/数据库」）|
 | BFF 写 `@Transactional` | 禁。事务只在 Service 层 AppService |
 | `@Transactional` 方法内调 Feign/MQ/Kafka | 禁。事务内禁网络调用（AGENTS 红线#2）|
 | 查询方法开事务 | 禁。查询方法不加 `@Transactional` |
@@ -187,7 +233,9 @@ description: |
 | Controller 注解 | `@RestController @Slf4j @RequiredArgsConstructor @Validated` | 构造器注入优先于 `@Autowired` |
 | 依赖注入 | `@RequiredArgsConstructor`（final 字段）| Lombok 构造器注入 |
 | 对象转换 | 调 `{Resource}Converter.toXxx()`（`@UtilityClass` 静态方法）；禁 MapStruct | team 约定 |
-| PO↔DO 转换 | 调 `{Resource}PersistenceConverter`（infrastructure 层）| 防腐层 |
+| PO↔DO 转换 | 调 `{Resource}DataConverter`（infrastructure 层）| 防腐层 |
+| 跨模块调用（接口型）| 调 `{Resource}Facade`（domain 定义接口）/ `{Resource}FacadeImpl`（infrastructure 实现）| 防腐层，隔离外部服务知识 |
+| 跨模块调用（消息型）| 集成事件：`ApplicationEventPublisher` 发布（application 定义/infrastructure 实现），对应 `EventHandler` 在 interfaces 层订阅 | 解耦模块间强依赖 |
 | 跨服务调用 | FeignClient 继承 SPI 接口 + `@HystrixCommand(fallbackMethod)` | 容错降级 |
 | 仓储实现 | `extends ServiceImpl<{Resource}Mapper, {Resource}PO>` | MyBatis-Plus |
 | 分页 | PageHelper（禁手写分页 SQL）| 统一分页 |
@@ -217,8 +265,8 @@ description: |
 | 断言 | 禁只断 HTTP status；须断响应体业务字段；异常路径断 code+message | — |
 | 覆盖率（JaCoCo）| 总体≥60%；Service 核心≥70%（核心方法 100%）；Mapper≥60%；Controller≥50% | — |
 | 静态分析 | Checkstyle + SpotBugs，P0 阻断 CI | — |
-| 构建（no-root-pom）| 🔴 无根 pom，每模块独立构建；跨模块依赖须先 `mvn install` 到本地仓 | 见 §8 踩坑#1 |
-| 编译验证 | 父工程根目录 `mvn compile`（但 icec 无根 pom → 各模块 `mvn -pl {module} compile`）| 叠加：icec 无根 pom 时按模块 |
+| 构建（有根 pom，🔧 v1.2.0 修正）| 根 `pom.xml` 只做依赖管理（`dependencyManagement`）+ 插件管理 + `<modules>` 声明，**不直接定义 dependencies**；各层子模块各自 pom 声明自身依赖并独立打包成 JAR | 见 §8 踩坑#1（原"无根 pom"表述已修正）|
+| 编译验证 | 父工程根目录 `mvn compile`（走根 pom 的 `<modules>` 聚合构建，依赖版本仲裁由根 pom `dependencyManagement` 统一）| — |
 
 ---
 
@@ -299,7 +347,7 @@ grep -rn "Executors\.\(newFixed\|newCached\|newSingle\|newScheduled\)" --include
 
 | # | 陷阱 | 决策规避 |
 |---|------|---------|
-| 1 | **无根 pom**：所有模块独立构建，跨模块依赖需先 `mvn install` | 跨模块引用前先 `mvn install` 被依赖模块到本地仓；CI 流水线按依赖序构建 |
+| 1 | **根 pom 不管依赖内容**（🔧 v1.2.0 修正）：根 pom 只做 `dependencyManagement`+插件+`<modules>` 聚合，不声明 `dependencies`；单独在某子模块目录下跑 `mvn compile`（不走根 reactor）时，其依赖的兄弟模块须已 `mvn install` 到本地仓 | 优先走根目录 `mvn compile`（reactor 按 `<modules>` 顺序自动构建）；仅需单模块编译时，先 `mvn install` 被依赖模块到本地仓 |
 | 2 | **messagebus ≠ courier**：constraints 文档写"Kafka via courier"，但生产实际用 casstime 自建 messagebus（`@EnableMessage`+`EventPublisher`+`KafkaApplicationEventPublisher`） | 消息发送一律走 messagebus；禁 `@KafkaListener`、禁 courier；外部 Kafka PUSH 经 handwritten KafkaConsumer → messagebus 桥接 |
 | 3 | **MapStruct 声明却禁用**：pom 有 `mapstruct.version=1.5.3.Final`，但 code-style/project-structure 禁用其生成 | 一律显式 Converter（cs=`@UtilityClass`，im=`public final class`+私有构造）；pom 的 MapStruct 声明是历史遗留，勿启用 |
 | 4 | **@NotBlank 包版本**：Spring Cloud Dalston（hibernate-validator 5.x）用 `org.hibernate.validator.constraints.NotBlank`（非 javax.validation）| 校验注解按 Boot 版本确认来源包 |
@@ -322,9 +370,9 @@ grep -rn "Executors\.\(newFixed\|newCached\|newSingle\|newScheduled\)" --include
 
 | 共有 coding-skill 章节 | 本适配器叠加章节 | 叠加内容 | 优先级 |
 |----------------------|---------------|---------|--------|
-| §3 分层职责红线 | §2（落点表）+ §2.4（DO/PO 判定线）+ §3（特化红线）| icec/life 精确包路径（含 §1.1bis 固化 base package）+ DO/PO 合法差异 vs 建模错误判定 + BFF禁触DB/事务只在AppService 等特化红线 | adapter > 共有 |
-| §4 骨架展开规则 | §4（骨架特化）| 注解选型/Converter形态/Feign+Hystrix/事务/对象契约 | adapter > 共有 |
-| §8 验证判定标准 | §5（验证特化）| JUnit4+Mockito / dev-DB+@Transactional / no-root-pom 构建 | adapter > 共有（§8.5 H2 被 dev-DB 覆盖）|
+| §3 分层职责红线 | §2（落点表，🔧 v1.2.0 补 Facade/事件发布器落点）+ §2.4（DO/PO 判定线）+ §2.5（BFF 三层落点表，🆕 v1.3.0）+ §3（特化红线，BFF 数据策略拆 3 条，🔧 v1.3.0）| icec/life 精确包路径（含 §1.1bis 固化 base package）+ 防腐层 Facade（domain 定义/infrastructure 实现）+ 集成/领域事件双线 + DO/PO 合法差异 vs 建模错误判定 + BFF 三层落点（合并 domain、interfaces/converter、application/facade）+ BFF禁触DB/Redis/Kafka/分布式缓存（可本地缓存）/事务只在AppService 等特化红线 | adapter > 共有 |
+| §4 骨架展开规则 | §4（骨架特化）| 注解选型/DataConverter形态/Facade/事件发布/Feign+Hystrix/事务/对象契约 | adapter > 共有 |
+| §8 验证判定标准 | §5（验证特化）| JUnit4+Mockito / dev-DB+@Transactional / 根pom聚合构建（dependencyManagement，🔧 v1.2.0 修正） | adapter > 共有（§8.5 H2 被 dev-DB 覆盖）|
 | §11 经验检查清单 | §6（命名/错误码）+ §8（踩坑库）| icec/life 命名表 + 错误码段 + 14 项踩坑决策 | adapter > 共有（§11.1 第3/4/7/10/11项被 §8 踩坑库取代）|
 | §12 静态扫描规则 | §7（静态扫描特化）| 8 条 icec 工程特化 grep（防分层/防框架误用）| adapter > 共有（叠加在通用 §12 之上）|
 | §1 CodingModel 决策 | §1（技术栈锁）+ §1.1bis（base package）| 11 维决策时锁定 Java8/SB1.5.7/messagebus 等技术前提 + 固化包路径前缀 | adapter 补充（不取消共有）|
@@ -344,8 +392,8 @@ name: java3d-coding-skill
 type: skill-new
 provides: coding-adapter-java
 path: ./java3d-coding-skill/SKILL.md
-version: 1.1.0
-description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill）
+version: 1.3.0
+description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill；🆕 v1.3.0 新增 BFF 三层落点决策）
 ```
 
 **查加载路径：** `ae-sdd plugin trace coding-adapter-java` → 应命中 L3-master: java3d-coding-skill → resolved: .../plugins/java3d-coding-skill/SKILL.md
