@@ -7,6 +7,7 @@ intentionally read-only and does not rebuild or modify the package.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Any
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SUBSKILL_SCHEMA = "ae-sdd-subskill-runtime/v1"
 
 
 @dataclass
@@ -51,6 +53,10 @@ def _read_frontmatter(text: str) -> dict[str, str]:
 
 def _is_sha256(value: Any) -> bool:
     return isinstance(value, str) and bool(_SHA256_RE.fullmatch(value))
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def verify_runtime_package(package_path: str | Path) -> RuntimeVerifyResult:
@@ -193,5 +199,116 @@ def verify_runtime_package(package_path: str | Path) -> RuntimeVerifyResult:
                 issue("fallback SKILL.full.md appears to contain the generated bootloader")
             if len(fallback_text.strip()) < 100:
                 warn("fallback SKILL.full.md is unexpectedly short")
+
+    source_checksums = {}
+    if isinstance(source, dict) and isinstance(source.get("checksums"), dict):
+        source_checksums = source["checksums"]
+    source_skill_entries = sorted(
+        rel
+        for rel in source_checksums
+        if isinstance(rel, str) and rel.startswith("skills/") and rel.endswith(".md")
+    )
+
+    subskills = manifest.get("subskills") if manifest else None
+    if source_skill_entries:
+        if "runtime/subskills.compact.md" not in (load_order or []):
+            issue("manifest.load_order must include runtime/subskills.compact.md when child SKILL files exist")
+        if not (package / "runtime" / "subskills.compact.md").is_file():
+            issue("runtime/subskills.compact.md is missing")
+        if not isinstance(subskills, list) or not subskills:
+            issue("manifest.subskills must list compiled child SKILL entries")
+            subskills = []
+
+        if isinstance(extracts, dict) and extracts.get("subskill_count") != len(source_skill_entries):
+            issue(
+                "manifest.extracts.subskill_count must equal source child SKILL count: "
+                f"{extracts.get('subskill_count')} != {len(source_skill_entries)}"
+            )
+
+        by_entry: dict[str, dict[str, Any]] = {}
+        for item in subskills:
+            if not isinstance(item, dict):
+                issue(f"manifest.subskills contains non-object item: {item!r}")
+                continue
+            entry_name = item.get("entry")
+            if not isinstance(entry_name, str):
+                issue(f"manifest.subskills item missing entry: {item!r}")
+                continue
+            by_entry[entry_name] = item
+
+        missing = [entry for entry in source_skill_entries if entry not in by_entry]
+        if missing:
+            issue(f"manifest.subskills missing entries for source child SKILL files: {missing[:5]}")
+
+        for entry in source_skill_entries:
+            record = by_entry.get(entry)
+            if not record:
+                continue
+
+            entry_path = package / entry
+            if not entry_path.is_file():
+                issue(f"compiled child SKILL entry missing: {entry}")
+                continue
+            try:
+                entry_text = entry_path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                issue(f"compiled child SKILL entry unreadable: {entry}: {exc}")
+                continue
+
+            entry_frontmatter = _read_frontmatter(entry_text)
+            manifest_rel = record.get("manifest")
+            if entry_frontmatter.get("compiled", "").lower() != "true":
+                issue(f"child SKILL entry must be compiled: true: {entry}")
+            if entry_frontmatter.get("runtime") != manifest_rel:
+                issue(f"child SKILL entry runtime mismatch: {entry}")
+            if "# " in entry_text and "Compiled Sub-SKILL Entry" not in entry_text[:800]:
+                issue(f"child SKILL entry appears to contain uncompiled source: {entry}")
+
+            for key in ("manifest", "boot", "outline", "fallback"):
+                rel = record.get(key)
+                if not isinstance(rel, str):
+                    issue(f"manifest.subskills[{entry}].{key} must be a path string")
+                    continue
+                if not (package / rel).is_file():
+                    issue(f"child SKILL generated file missing: {rel}")
+
+            child_manifest = None
+            if isinstance(manifest_rel, str) and (package / manifest_rel).is_file():
+                try:
+                    child_manifest = json.loads((package / manifest_rel).read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    issue(f"child SKILL manifest invalid: {manifest_rel}: {exc}")
+
+            if child_manifest is not None:
+                if child_manifest.get("schema") != _SUBSKILL_SCHEMA:
+                    issue(f"child SKILL manifest schema mismatch: {manifest_rel}")
+                if child_manifest.get("compiled") is not True:
+                    issue(f"child SKILL manifest compiled must be true: {manifest_rel}")
+                if child_manifest.get("deterministic") is not True:
+                    issue(f"child SKILL manifest deterministic must be true: {manifest_rel}")
+                if child_manifest.get("entry") != entry:
+                    issue(f"child SKILL manifest entry mismatch: {manifest_rel}")
+                child_fp = child_manifest.get("runtime_fingerprint")
+                if not _is_sha256(child_fp):
+                    issue(f"child SKILL manifest runtime_fingerprint must be sha256: {manifest_rel}")
+                if record.get("runtime_fingerprint") != child_fp:
+                    issue(f"manifest.subskills fingerprint differs from child manifest: {entry}")
+                for rel in child_manifest.get("load_order", []):
+                    if not isinstance(rel, str) or not (package / rel).is_file():
+                        issue(f"child SKILL load_order file missing: {rel!r}")
+
+            fallback_rel = record.get("fallback")
+            if isinstance(fallback_rel, str) and (package / fallback_rel).is_file():
+                try:
+                    child_fallback_text = (package / fallback_rel).read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    issue(f"child SKILL fallback unreadable: {fallback_rel}: {exc}")
+                else:
+                    fallback_hash = _sha256_text(child_fallback_text)
+                    expected_fallback_hash = record.get("fallback_sha256")
+                    if expected_fallback_hash and expected_fallback_hash != fallback_hash:
+                        issue(f"child SKILL fallback hash mismatch: {entry}")
+                    if "Compiled Sub-SKILL Entry" in child_fallback_text[:800] and "compiled: true" in child_fallback_text[:400]:
+                        issue(f"child SKILL fallback appears to contain generated entry: {fallback_rel}")
 
     return RuntimeVerifyResult(str(package), not issues, issues, warnings, manifest)

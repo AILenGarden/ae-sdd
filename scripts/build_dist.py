@@ -225,7 +225,12 @@ def _compile_runtime_to_dist(repo_root: Path, src: Path, dst: Path, build_date: 
 
     extracts = manifest.get("extracts", {})
     flow_scales = ",".join(extracts.get("flow_scales", []))
-    ok(f"Runtime compact 已生成 (gates={extracts.get('gate_count')}, scales={flow_scales})")
+    ok(
+        "Runtime compact 已生成 "
+        f"(gates={extracts.get('gate_count')}, "
+        f"scales={flow_scales}, "
+        f"subskills={extracts.get('subskill_count', 0)})"
+    )
     return True
 
 

@@ -20,11 +20,13 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-COMPILER_VERSION = "1"
+COMPILER_VERSION = "2"
+SUBSKILL_SCHEMA = "ae-sdd-subskill-runtime/v1"
 
 LOAD_ORDER = [
     "runtime/boot.compact.md",
     "runtime/route.compact.md",
+    "runtime/subskills.compact.md",
     "runtime/gates.compact.md",
     "runtime/flow.compact.md",
     "runtime/macros.compact.md",
@@ -32,14 +34,14 @@ LOAD_ORDER = [
 
 
 ROUTE_ROWS = [
-    ("self-update", "modify/optimize/update ae-sdd or SKILL", "source/skills/orchestration/ae-sdd-update-skill.md"),
+    ("self-update", "modify/optimize/update ae-sdd or SKILL", "skills/orchestration/ae-sdd-update-skill.md"),
     ("resume", "continue/resume/previous flow", "read state, report phase, load next slice"),
     ("large", "has PRD", "RA -> DR -> Story -> TestCase -> Task -> Coding -> Test -> Review"),
     ("medium", "has DR, no PRD path needed", "DR -> Story -> TestCase -> Task -> Coding -> Test -> Review"),
     ("small", "has Story", "Story -> TestCase -> Task -> Coding -> Test -> Review"),
     ("micro", "BUG/config/code adjustment", "Task -> CodingPlan -> Coding -> Test"),
-    ("doc-storage", "where to write/read generated docs", "source/skills/cross-cutting/document-storage-skill.md"),
-    ("plugin", "load/override coding skill", "source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md"),
+    ("doc-storage", "where to write/read generated docs", "skills/cross-cutting/document-storage-skill.md"),
+    ("plugin", "load/override coding skill", "skills/cross-cutting/ae-sdd-plugin-loader-skill.md"),
 ]
 
 
@@ -120,6 +122,274 @@ def _table(headers: list[str], rows: list[tuple[Any, ...]]) -> str:
     return "\n".join(lines)
 
 
+def _yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _yaml_block_scalar(value: str) -> str:
+    text = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        text = "ae-sdd compiled sub-SKILL entry."
+    return "\n".join(f"  {line}" if line else "  " for line in text.split("\n"))
+
+
+def read_frontmatter(text: str) -> dict[str, str]:
+    if not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    if end == -1:
+        return {}
+    data: dict[str, str] = {}
+    lines = text[3:end].splitlines()
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if ":" not in line:
+            idx += 1
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if value in {"|", ">"}:
+            idx += 1
+            parts: list[str] = []
+            while idx < len(lines) and (lines[idx].startswith(" ") or not lines[idx].strip()):
+                parts.append(lines[idx].strip())
+                idx += 1
+            data[key] = " ".join(part for part in parts if part).strip()
+            continue
+        data[key] = value.strip().strip('"').strip("'")
+        idx += 1
+    return data
+
+
+def extract_headings(text: str, limit: int = 80) -> list[dict[str, Any]]:
+    headings: list[dict[str, Any]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if not match:
+            continue
+        title = re.sub(r"\s+", " ", match.group(2)).strip()
+        headings.append({"level": len(match.group(1)), "line": line_no, "title": title})
+        if len(headings) >= limit:
+            break
+    return headings
+
+
+def extract_inline_refs(text: str, limit: int = 80) -> list[str]:
+    refs: set[str] = set()
+    for match in re.finditer(r"`([^`\n]+)`", text):
+        value = match.group(1).strip()
+        if not value:
+            continue
+        if ".md" in value or value.startswith("ae-sdd ") or "/" in value or "\\" in value:
+            refs.add(value)
+    return sorted(refs)[:limit]
+
+
+def subskill_runtime_base(rel: Path) -> Path:
+    stem_rel = rel.with_suffix("")
+    parts = stem_rel.parts
+    if parts and parts[0] == "skills":
+        parts = parts[1:]
+    return Path("runtime") / "skills" / Path(*parts)
+
+
+def render_subskill_boot_compact(record: dict[str, Any]) -> str:
+    return f"""# ae-sdd Sub-SKILL Boot Compact
+
+- schema: {SUBSKILL_SCHEMA}
+- entry: `{record["entry"]}`
+- source: `{record["source_path"]}`
+- runtime_fingerprint: {record["runtime_fingerprint"]}
+- deterministic: true
+
+## Load Order
+
+1. `{record["manifest"]}`
+2. `{record["boot"]}`
+3. `{record["outline"]}`
+
+## Runtime Contract
+
+- Use this compact entry before reading the full source fallback.
+- Keep the public entry path stable: `{record["entry"]}`.
+- Load fallback only when outline and compact route do not contain enough detail.
+- Fallback source: `{record["fallback"]}`.
+"""
+
+
+def render_subskill_outline_compact(
+    rel: str,
+    metadata: dict[str, str],
+    headings: list[dict[str, Any]],
+    refs: list[str],
+) -> str:
+    heading_rows = [
+        (item["level"], item["line"], item["title"])
+        for item in headings
+    ] or [("-", "-", "(no headings extracted)")]
+    ref_rows = [(ref,) for ref in refs] or [("(no inline refs extracted)",)]
+    return (
+        "# ae-sdd Sub-SKILL Outline Compact\n\n"
+        f"- entry: `{rel}`\n"
+        f"- name: {metadata.get('name') or Path(rel).stem}\n"
+        f"- description: {metadata.get('description') or '(none)'}\n\n"
+        "## Headings\n\n"
+        + _table(["level", "line", "title"], heading_rows)
+        + "\n\n## Inline References\n\n"
+        + _table(["ref"], ref_rows)
+        + "\n"
+    )
+
+
+def render_subskill_entry(
+    rel: str,
+    metadata: dict[str, str],
+    manifest_rel: str,
+    boot_rel: str,
+    outline_rel: str,
+    fallback_rel: str,
+    runtime_fingerprint: str,
+) -> str:
+    name = metadata.get("name") or Path(rel).stem
+    description = metadata.get("description") or f"ae-sdd compiled sub-SKILL entry for {rel}."
+    return f"""---
+name: {_yaml_string(name)}
+description: |-
+{_yaml_block_scalar(description)}
+compiled: true
+runtime: {manifest_rel}
+source: source/{rel}
+---
+
+# {name} Compiled Sub-SKILL Entry
+
+This is a generated compact entry for an ae-sdd child SKILL. Do not hand-edit it.
+
+## Load
+
+1. Read `{manifest_rel}`.
+2. Read `{boot_rel}`.
+3. Read `{outline_rel}`.
+4. Use fallback only when compact runtime is insufficient: `{fallback_rel}`.
+
+runtime_fingerprint: {runtime_fingerprint}
+"""
+
+
+def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    skills_root = source / "skills"
+    if not skills_root.is_dir():
+        return [], []
+
+    records: list[dict[str, Any]] = []
+    generated_files: list[str] = []
+    for source_skill in sorted(skills_root.rglob("*.md")):
+        rel_path = source_skill.relative_to(source)
+        rel = rel_path.as_posix()
+        text = source_skill.read_text(encoding="utf-8")
+        metadata = read_frontmatter(text)
+        headings = extract_headings(text)
+        refs = extract_inline_refs(text)
+        source_sha = sha256_file(source_skill)
+
+        base_rel = subskill_runtime_base(rel_path)
+        manifest_rel = (base_rel / "manifest.json").as_posix()
+        boot_rel = (base_rel / "boot.compact.md").as_posix()
+        outline_rel = (base_rel / "outline.compact.md").as_posix()
+        fallback_rel = (base_rel / "fallback" / "SKILL.full.md").as_posix()
+
+        fingerprint_payload = {
+            "schema": SUBSKILL_SCHEMA,
+            "compiler": {"name": "compile_skill_runtime.py", "version": COMPILER_VERSION},
+            "entry": rel,
+            "source_sha256": source_sha,
+            "metadata": metadata,
+            "headings": headings,
+            "refs": refs,
+            "contract": ["manifest", "boot.compact.md", "outline.compact.md", "fallback/SKILL.full.md"],
+        }
+        runtime_fingerprint = _sha256_text(_stable_json(fingerprint_payload))
+
+        record = {
+            "entry": rel,
+            "source_path": f"source/{rel}",
+            "manifest": manifest_rel,
+            "boot": boot_rel,
+            "outline": outline_rel,
+            "fallback": fallback_rel,
+            "source_sha256": source_sha,
+            "fallback_sha256": _sha256_text(text),
+            "runtime_fingerprint": runtime_fingerprint,
+            "heading_count": len(headings),
+            "ref_count": len(refs),
+        }
+
+        manifest = {
+            "schema": SUBSKILL_SCHEMA,
+            "compiled": True,
+            "deterministic": True,
+            "compiler": {"name": "compile_skill_runtime.py", "version": COMPILER_VERSION},
+            "entry": rel,
+            "source_path": f"source/{rel}",
+            "runtime_fingerprint": runtime_fingerprint,
+            "load_order": [boot_rel, outline_rel],
+            "generated_files": [manifest_rel, boot_rel, outline_rel, fallback_rel, rel],
+            "source": {
+                "sha256": source_sha,
+                "fallback_sha256": _sha256_text(text),
+            },
+            "extracts": {
+                "heading_count": len(headings),
+                "ref_count": len(refs),
+            },
+        }
+
+        _write_text(dist / fallback_rel, text)
+        _write_text(dist / boot_rel, render_subskill_boot_compact(record))
+        _write_text(dist / outline_rel, render_subskill_outline_compact(rel, metadata, headings, refs))
+        _write_text(dist / manifest_rel, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+        _write_text(
+            dist / rel,
+            render_subskill_entry(
+                rel,
+                metadata,
+                manifest_rel,
+                boot_rel,
+                outline_rel,
+                fallback_rel,
+                runtime_fingerprint,
+            ),
+        )
+
+        records.append(record)
+        generated_files.extend([manifest_rel, boot_rel, outline_rel, fallback_rel, rel])
+
+    return records, sorted(generated_files)
+
+
+def render_subskills_compact(subskills: list[dict[str, Any]]) -> str:
+    rows = [
+        (
+            item["entry"],
+            item["manifest"],
+            item["outline"],
+            item["fallback"],
+            item["heading_count"],
+        )
+        for item in subskills
+    ]
+    return (
+        "# ae-sdd Sub-SKILL Index Compact\n\n"
+        f"- subskill_count: {len(subskills)}\n"
+        "- entry files under `skills/` are compiled bootloaders.\n"
+        "- full source fallbacks live under `runtime/skills/**/fallback/SKILL.full.md`.\n\n"
+        + _table(["entry", "manifest", "outline", "fallback", "headings"], rows)
+        + "\n"
+    )
+
+
 def collect_source_checksums(source: Path) -> dict[str, str]:
     patterns = [
         "SKILL.md",
@@ -165,6 +435,7 @@ def compute_runtime_fingerprint(
     fallback_hash: str,
     gates: list[dict[str, Any]],
     flows: dict[str, list[str]],
+    subskills: list[dict[str, Any]],
 ) -> str:
     payload = {
         "compiler": {"name": "compile_skill_runtime.py", "version": COMPILER_VERSION},
@@ -177,6 +448,7 @@ def compute_runtime_fingerprint(
         "fallback_sha256": fallback_hash,
         "gates": gates,
         "flows": flows,
+        "subskills": subskills,
     }
     return _sha256_text(_stable_json(payload))
 
@@ -206,7 +478,9 @@ def render_boot_compact(version: str, source_hash: str, runtime_fingerprint: str
 ## Fallback
 
 - Main fallback: `runtime/fallback/SKILL.full.md`
-- Phase details: `skills/**/*.md`
+- Child SKILL compact index: `runtime/subskills.compact.md`
+- Child SKILL entries: `skills/**/*.md` (compiled bootloaders)
+- Child SKILL fallbacks: `runtime/skills/**/fallback/SKILL.full.md`
 - Standards/templates: `standards/`, `templates/`
 """
 
@@ -350,11 +624,13 @@ def compile_runtime_package(
     _write_text(fallback_path, fallback_text)
     fallback_hash = _sha256_text(fallback_text)
 
-    runtime_fingerprint = compute_runtime_fingerprint(version, source_checksums, fallback_hash, gates, flows)
+    subskills, subskill_generated_files = compile_subskills(source, dist)
+    runtime_fingerprint = compute_runtime_fingerprint(version, source_checksums, fallback_hash, gates, flows, subskills)
 
     runtime_files = {
         "runtime/boot.compact.md": render_boot_compact(version, source_hash, runtime_fingerprint),
         "runtime/route.compact.md": render_route_compact(),
+        "runtime/subskills.compact.md": render_subskills_compact(subskills),
         "runtime/gates.compact.md": render_gates_compact(gates),
         "runtime/flow.compact.md": render_flow_compact(flows),
         "runtime/macros.compact.md": render_macros_compact(),
@@ -374,7 +650,7 @@ def compile_runtime_package(
         "runtime_fingerprint": runtime_fingerprint,
         "entry": "SKILL.md",
         "load_order": LOAD_ORDER,
-        "generated_files": sorted(runtime_files.keys()) + ["runtime/fallback/SKILL.full.md"],
+        "generated_files": sorted(runtime_files.keys()) + ["runtime/fallback/SKILL.full.md"] + subskill_generated_files,
         "source": {
             "root": "source",
             "skill_sha256": source_hash,
@@ -382,9 +658,11 @@ def compile_runtime_package(
             "file_count": len(source_checksums),
             "checksums": source_checksums,
         },
+        "subskills": subskills,
         "extracts": {
             "gate_count": len(gates),
             "flow_scales": _ordered_scales(flows),
+            "subskill_count": len(subskills),
         },
         "warnings": warnings,
     }

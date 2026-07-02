@@ -698,6 +698,9 @@ def _runtime_snapshot(dist: Path) -> dict[str, bytes]:
     runtime_dir = dist / "runtime"
     if runtime_dir.is_dir():
         paths.extend(path for path in runtime_dir.rglob("*") if path.is_file())
+    skills_dir = dist / "skills"
+    if skills_dir.is_dir():
+        paths.extend(path for path in skills_dir.rglob("*.md") if path.is_file())
     return {
         path.relative_to(dist).as_posix(): path.read_bytes()
         for path in sorted(paths)

@@ -58,12 +58,14 @@ dist/ae-sdd/
 │   ├── manifest.json                # 机器可校验 manifest：版本、source hash、runtime_fingerprint、load_order
 │   ├── boot.compact.md              # 运行时总契约
 │   ├── route.compact.md             # 路由压缩表
+│   ├── subskills.compact.md         # 子 SKILL 编译入口索引
 │   ├── gates.compact.md             # 门禁压缩表
 │   ├── flow.compact.md              # 状态机压缩表
 │   ├── macros.compact.md            # 公共动作宏
+│   ├── skills/                      # 子 SKILL 局部 runtime：boot/outline/manifest/fallback
 │   └── fallback/
 │       └── SKILL.full.md            # 原始 source/SKILL.md 备份，只做 fallback
-├── skills/                          # 子 SKILL fallback
+├── skills/                          # 子 SKILL compiled bootloader；非原文
 ├── standards/                       # 标准 fallback
 ├── templates/                       # 模板 fallback
 ├── tools/                           # CLI 与 lib
@@ -77,10 +79,12 @@ dist/ae-sdd/
 1. `SKILL.md`
 2. `runtime/boot.compact.md`
 3. `runtime/route.compact.md`
-4. `runtime/gates.compact.md`
-5. `runtime/flow.compact.md`
-6. `runtime/macros.compact.md`
-7. 仅在 compact 不足时读取 `runtime/fallback/SKILL.full.md` 或对应子 SKILL
+4. `runtime/subskills.compact.md`
+5. `runtime/gates.compact.md`
+6. `runtime/flow.compact.md`
+7. `runtime/macros.compact.md`
+8. 命中特定子 SKILL 时读取 `skills/**/*.md` 编译入口，再按入口加载 `runtime/skills/**/{boot,outline,manifest}`
+9. 仅在 compact 不足时读取 `runtime/fallback/SKILL.full.md` 或 `runtime/skills/**/fallback/SKILL.full.md`
 
 ---
 
@@ -112,7 +116,7 @@ runtime 编译器必须满足字节级幂等：
   ↓
 重复运行 scripts/compile_skill_runtime.py
   ↓
-dist/ae-sdd/SKILL.md 与 dist/ae-sdd/runtime/** 字节内容完全一致
+dist/ae-sdd/SKILL.md、dist/ae-sdd/runtime/** 与 dist/ae-sdd/skills/**/*.md 字节内容完全一致
 ```
 
 硬性约束：
@@ -124,7 +128,7 @@ dist/ae-sdd/SKILL.md 与 dist/ae-sdd/runtime/** 字节内容完全一致
 - `source_checksums`、fallback 原文哈希、`GATE_REGISTRY`、`PHASE_FLOWS`、路由表、宏表、编译器版本共同参与 `runtime_fingerprint`。
 - `dist/ae-sdd/VERSION`、`.claude-plugin/plugin.json` 等分发元数据若继续保留构建时间，属于外层打包元数据，不得污染 runtime 编译产物。
 
-验收方式：单元测试必须用不同 `--build-date` 连续编译同一目录，并比较 `SKILL.md` 与 `runtime/**` 的字节快照完全一致。
+验收方式：单元测试必须用不同 `--build-date` 连续编译同一目录，并比较 `SKILL.md`、`runtime/**` 与 `skills/**/*.md` 的字节快照完全一致。
 
 ---
 
@@ -136,13 +140,14 @@ dist/ae-sdd/SKILL.md 与 dist/ae-sdd/runtime/** 字节内容完全一致
 | --- | --- | --- |
 | `boot.compact.md` | 固定契约 + manifest | 加载顺序、冲突优先级、fallback 规则 |
 | `route.compact.md` | `source/SKILL.md` 规则摘要 | 自更新、大/中/小/微任务、继续流程、文档定位等路由 |
+| `subskills.compact.md` | `source/skills/**/*.md` | 子 SKILL compiled bootloader 索引、局部 manifest/outline/fallback 路径 |
 | `gates.compact.md` | `tools/lib/gates.py:GATE_REGISTRY` | Gate ID、名称、强度、运行命令、关键触发点 |
 | `flow.compact.md` | `tools/lib/state.py:PHASE_FLOWS` | 大/中/小/微四条状态链 |
 | `macros.compact.md` | 固定宏表 | BLOCK、WARN、ASK_USER、LOOP3、EVIDENCE、STATE_WRITE 等 |
 
 暂不编译的内容：
 
-- 具体子 SKILL 的长流程细节
+- 具体子 SKILL 的完整长流程原文（已移入 `runtime/skills/**/fallback/SKILL.full.md`，由 compiled bootloader 延迟读取）
 - 模板正文
 - 设计背景、历史变更、FAQ
 - 项目资产内容
@@ -159,9 +164,10 @@ dist/ae-sdd/SKILL.md 与 dist/ae-sdd/runtime/** 字节内容完全一致
 1. 用户最新明确指令，但不能绕过安全、权限和流程硬门禁。
 2. CLI / gate / state 工具真实输出。
 3. runtime compact 规则。
-4. 子 SKILL fallback。
-5. `runtime/fallback/SKILL.full.md`。
-6. 历史文档、CHANGELOG、说明性背景。
+4. 子 SKILL compiled bootloader 与局部 outline。
+5. 子 SKILL fallback：`runtime/skills/**/fallback/SKILL.full.md`。
+6. 主入口 fallback：`runtime/fallback/SKILL.full.md`。
+7. 历史文档、CHANGELOG、说明性背景。
 
 如果 compact 规则与 fallback 文档冲突，且 `runtime/manifest.json` 的 source hash 与当前包一致，优先 compact；否则降级读取 fallback 并报告可能的编译漂移。
 
@@ -286,10 +292,11 @@ python scripts/distribute.py
 - `ae-sdd runtime verify` 校验 installed package 是否为 compiled。
 - `update-check` 增加 UC-15 runtime 编译一致性检查。
 - Agent 分发入口安装前拒绝未编译或不完整 runtime package。
+- 所有 `source/skills/**/*.md` 子 SKILL 在 `dist/ae-sdd/skills/**/*.md` 中替换为 compiled bootloader，原文保存在 `runtime/skills/**/fallback/SKILL.full.md`。
 
 后续可扩展：
 
-- 从子 SKILL 自动抽取更多局部 compact slices。
+- 从子 SKILL 自动抽取比当前 heading/inline-ref outline 更细的语义 compact slices。
 - Agent 专属分发器可选择二次编译，但不能跳过通用 runtime。
 
 ---
@@ -315,8 +322,9 @@ python scripts/distribute.py
 | 构建链路接入 | 已实现 | `scripts/build_dist.py` 调用 runtime 编译器 |
 | compiled bootloader | 已实现 | `dist/ae-sdd/SKILL.md` 由编译器生成 |
 | runtime manifest | 已实现 | `dist/ae-sdd/runtime/manifest.json` |
-| compact slices | 已实现 | `boot/route/gates/flow/macros.compact.md` |
-| fallback 原文锚点 | 已实现 | `runtime/fallback/SKILL.full.md` |
+| compact slices | 已实现 | `boot/route/subskills/gates/flow/macros.compact.md` |
+| 子 SKILL compiled bootloader | 已实现 | `dist/ae-sdd/skills/**/*.md`，每个入口指向局部 runtime |
+| fallback 原文锚点 | 已实现 | `runtime/fallback/SKILL.full.md` + `runtime/skills/**/fallback/SKILL.full.md` |
 | 字节级幂等测试 | 已实现 | `tools/tests/test_skill_runtime_compiler.py` |
 | runtime package 校验器 | 已实现 | `tools/lib/runtime_verify.py` + `ae-sdd runtime verify` |
 | update-check 编译一致性 | 已实现 | `tools/lib/update_graph.py` UC-15 |
@@ -347,7 +355,7 @@ python tools/bin/ae-sdd update-check --only UC-15
 python scripts/build_dist.py
 ```
 
-实现约束已经进入测试：同一输入重复编译时，`dist/ae-sdd/SKILL.md` 与 `dist/ae-sdd/runtime/**` 必须字节级一致；不同 `--build-date` 不得改变 runtime 输出。
+实现约束已经进入测试：同一输入重复编译时，`dist/ae-sdd/SKILL.md`、`dist/ae-sdd/runtime/**` 与 `dist/ae-sdd/skills/**/*.md` 必须字节级一致；不同 `--build-date` 不得改变 runtime 输出。
 
 后续实现清单：
 
@@ -357,7 +365,8 @@ python scripts/build_dist.py
 | 已实现 | `update-check` 接入 runtime 编译一致性 | 修改编译器、门禁、状态机后自动提示需要重编译或更新测试 |
 | P2 | dist 外层可复现构建 | 让 `VERSION`、`plugin.json` 的构建时间可配置或可复现，扩展到整个分发包幂等 |
 | 已实现 | 分发器 compiled-only 校验 | `scripts/distribute.py` 安装前拒绝未编译 `source/` 包 |
-| P3 | 子 SKILL 局部 compact | 从高频子 SKILL 抽取更细粒度 runtime slices，但保持 fallback 可审查 |
+| 已实现 | 子 SKILL compiled bootloader | 全量编译 `source/skills/**/*.md` 为入口薄片，局部 outline/manifest/fallback 进入 `runtime/skills/**` |
+| P3 | 子 SKILL 语义 compact 增强 | 在现有 heading/inline-ref outline 基础上，从高频子 SKILL 抽取更细粒度 runtime slices |
 | P3 | Agent 专属二次编译约束 | 允许 Hermes/Mavis 等做二次适配，但输入必须是通用 compiled runtime |
 
 ---

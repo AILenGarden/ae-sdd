@@ -42,6 +42,9 @@ class TestSkillRuntimeCompiler(unittest.TestCase):
         paths = [self.dist / "SKILL.md"]
         runtime_dir = self.dist / "runtime"
         paths.extend(path for path in runtime_dir.rglob("*") if path.is_file())
+        skills_dir = self.dist / "skills"
+        if skills_dir.is_dir():
+            paths.extend(path for path in skills_dir.rglob("*.md") if path.is_file())
         return {
             path.relative_to(self.dist).as_posix(): path.read_bytes()
             for path in sorted(paths)
@@ -67,17 +70,31 @@ class TestSkillRuntimeCompiler(unittest.TestCase):
         self.assertEqual(parsed["version"], "9.9.9")
         self.assertTrue(parsed["deterministic"])
         self.assertNotIn("compiled_at", parsed)
-        self.assertEqual(parsed["compiler"]["version"], "1")
+        self.assertEqual(parsed["compiler"]["version"], "2")
         self.assertEqual(len(parsed["runtime_fingerprint"]), 64)
         self.assertEqual(len(parsed["source"]["fallback_sha256"]), 64)
         self.assertEqual(parsed["source"]["file_count"], 2)
         self.assertEqual(parsed["extracts"]["gate_count"], len(GATE_REGISTRY))
         self.assertEqual(set(parsed["extracts"]["flow_scales"]), set(PHASE_FLOWS.keys()))
+        self.assertEqual(parsed["extracts"]["subskill_count"], 1)
+        self.assertEqual(len(parsed["subskills"]), 1)
         self.assertEqual(manifest["version"], parsed["version"])
 
         fallback = self.dist / "runtime" / "fallback" / "SKILL.full.md"
         self.assertTrue(fallback.is_file())
         self.assertEqual(fallback.read_text(encoding="utf-8"), "# Dist Skill Full\n")
+
+        child_entry = self.dist / "skills" / "child-skill.md"
+        child_fallback = self.dist / "runtime" / "skills" / "child-skill" / "fallback" / "SKILL.full.md"
+        child_manifest = self.dist / "runtime" / "skills" / "child-skill" / "manifest.json"
+        child_outline = self.dist / "runtime" / "skills" / "child-skill" / "outline.compact.md"
+        self.assertTrue(child_entry.is_file())
+        self.assertTrue(child_fallback.is_file())
+        self.assertTrue(child_manifest.is_file())
+        self.assertTrue(child_outline.is_file())
+        self.assertIn("compiled: true", child_entry.read_text(encoding="utf-8"))
+        self.assertIn("Compiled Sub-SKILL Entry", child_entry.read_text(encoding="utf-8"))
+        self.assertEqual(child_fallback.read_text(encoding="utf-8"), "# Child\n")
 
     def test_compile_is_byte_idempotent(self):
         compile_runtime_package(
