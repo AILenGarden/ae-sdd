@@ -77,6 +77,20 @@ class TestIC2GateClaimCoverage:
         findings = ic.check_ic2_gate_claim_coverage(stop, gates)
         assert not any("F-1 交叉验证" in f.item for f in findings)
 
+    def test_retired_self_report_check_no_warn(self, tmp_path):
+        """v3.6 Stop hook 废弃 GATE 自报检测后，不再按旧 _G08_CLEAR_RE 覆盖面报 warn。"""
+        stop = tmp_path / "stop_check.py"
+        gates = tmp_path / "gates.py"
+        stop.write_text(
+            "废弃 _verify_gate_claims()（gate 自报交叉验证）\n"
+            "流程合规性检测已全部转移到 UserPromptSubmit hook\n",
+            encoding="utf-8",
+        )
+        gates.write_text('"G-01" "G-02" "G-03" "G-04" "G-05" "G-06" "G-07" "G-08"\n', encoding="utf-8")
+        findings = ic.check_ic2_gate_claim_coverage(stop, gates)
+        assert not any(f.severity == "warn" for f in findings)
+        assert any("已废弃" in f.item for f in findings)
+
 
 # ─── IC-3 ────────────────────────────────────────────────────────────────────
 

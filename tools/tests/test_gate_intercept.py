@@ -163,6 +163,42 @@ class TestNonAeSddProject:
         assert allowed
 
 
+class TestHS10DocumentStoragePathGuard:
+    """HS-10：流程产物必须落在 document-storage 推导的文档工作区内。"""
+
+    def _make_project(self, tmp_path, phase="story-generated"):
+        ae_sdd = tmp_path / ".ae-sdd"
+        assets = ae_sdd / "assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (ae_sdd / "state.json").write_text(json.dumps({
+            "version": "1",
+            "projectKey": "test",
+            "phase": phase,
+            "scale": "大",
+            "currentStory": "STORY-001",
+            "currentTask": None,
+            "history": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        (assets / "test.assets.md").write_text(
+            f"| gitPath | `{tmp_path}` |\n| docWorkspacePath | `{tmp_path}` |\n",
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_product_doc_outside_doc_workspace_blocked(self, tmp_path):
+        project_dir = self._make_project(tmp_path, phase="story-generated")
+        detached = tmp_path.parent / "detached" / "STORY-001-Story.md"
+        allowed, reason = check_intercept(
+            "Write",
+            file_path=str(detached),
+            project_dir=project_dir,
+        )
+        assert not allowed
+        assert "HS-10" in reason
+        assert "document_storage.resolve_path" in reason
+
+
 # ─── is_quick_channel_active ─────────────────────────────────────────────────
 
 class TestQuickChannel:

@@ -1,12 +1,13 @@
 """
-test_update_graph.py — update_graph.py 单元测试（UC-01~UC-07 + AA 注入 UC-08~13）
+test_update_graph.py — update_graph.py 单元测试（UC-01~UC-07 + UC-14 + AA 注入 UC-08~13）
 
 覆盖每项检查的核心场景：通过、失败、反例。
 
 注：import alignment_audit 会触发其 register_to_update_graph()（import-time 副作用，
 见 alignment_audit.py:666），把 UC-08~13 注入 ug.CHECK_FUNCS。本模块显式 import 它，
-使 check_all 在任何测试执行顺序下都确定返回 13（原生 7 + AA 注入 6）。
+使 check_all 在任何测试执行顺序下都确定返回 14（原生 8 + AA 注入 6）。
 """
+import json
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import update_graph as ug  # noqa: E402
-import lib.alignment_audit  # noqa: E402,F401  — 触发 AA 注册，使 check_all 确定返回 13
+import lib.alignment_audit  # noqa: E402,F401  — 触发 AA 注册，使 check_all 确定返回 14
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -252,17 +253,76 @@ class TestBumpVersion(unittest.TestCase):
             ug.bump_version(tmp, "3.2.5")
 
 
+# ─── UC-14 update-skill 级联图谱同步 ─────────────────────────────────────────
+class TestUC14(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        r = ug.check_uc14_update_skill_cascade_sync(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+
+    def test_missing_rule_anchor_blocks(self):
+        graph = {
+            "rules": [
+                {"id": "UG-X", "checks": ["UC-01"], "affected": []},
+            ]
+        }
+        tmp = _setup_repo({
+            "source/standards/update-graph.json": json.dumps(graph, ensure_ascii=False),
+            "source/skills/orchestration/ae-sdd-update-skill.md":
+                "source/standards/update-graph.json\n"
+                "ae-sdd update-check --affected x\n"
+                "UC-01 UC-14\n",
+        })
+        r = ug.check_uc14_update_skill_cascade_sync(tmp)
+        self.assertFalse(r.pass_)
+        self.assertIn("UG-X", r.details.get("missing_rule_ids", []))
+
+    def test_missing_check_func_blocks(self):
+        graph = {
+            "rules": [
+                {"id": "UG-X", "checks": ["UC-99"], "affected": []},
+            ]
+        }
+        tmp = _setup_repo({
+            "source/standards/update-graph.json": json.dumps(graph, ensure_ascii=False),
+            "source/skills/orchestration/ae-sdd-update-skill.md":
+                "source/standards/update-graph.json\n"
+                "ae-sdd update-check --affected x\n"
+                "UG-X UC-99 UC-14\n",
+        })
+        r = ug.check_uc14_update_skill_cascade_sync(tmp)
+        self.assertFalse(r.pass_)
+        self.assertIn("UC-99", r.details.get("missing_check_funcs", []))
+
+    def test_registered_check_missing_from_graph_blocks(self):
+        graph = {
+            "rules": [
+                {"id": "UG-X", "checks": ["UC-01"], "affected": []},
+            ]
+        }
+        tmp = _setup_repo({
+            "source/standards/update-graph.json": json.dumps(graph, ensure_ascii=False),
+            "source/skills/orchestration/ae-sdd-update-skill.md":
+                "source/standards/update-graph.json\n"
+                "ae-sdd update-check --affected x\n"
+                "UG-X UC-01 UC-14\n",
+        })
+        r = ug.check_uc14_update_skill_cascade_sync(tmp)
+        self.assertFalse(r.pass_)
+        self.assertIn("UC-14", r.details.get("unreferenced_check_funcs", []))
+
+
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
-    def test_check_all_returns_13(self):
+    def test_check_all_returns_14(self):
         results = ug.check_all(REPO_ROOT)
-        # UC-01~07（update_graph 原生 7 项）+ UC-08~13（alignment_audit AA 注入 6 项）= 13。
+        # UC-01~07 + UC-14（update_graph 原生 8 项）+ UC-08~13（alignment_audit AA 注入 6 项）= 14。
         # AA 的 register_to_update_graph() 在 import alignment_audit 时自动把 UC-08~13
         # 注入共享的 ug.CHECK_FUNCS（见 alignment_audit.py:666），故全量 pytest 收集
-        # test_alignment_audit.py 后本测试拿到 13 而非原生 7。这是已知的 import-time
-        # 副作用耦合；若未来把 AA 注册改为显式调用，需同步回退此断言到 7。
-        self.assertEqual(len(results), 13)
+        # test_alignment_audit.py 后本测试拿到 14 而非原生 8。这是已知的 import-time
+        # 副作用耦合；若未来把 AA 注册改为显式调用，需同步回退此断言到 8。
+        self.assertEqual(len(results), 14)
 
     def test_check_all_only_filter(self):
         results = ug.check_all(REPO_ROOT, only="UC-01")
@@ -274,6 +334,11 @@ class TestCheckAll(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].check_id, "UC-06")
 
+    def test_check_all_only_uc14(self):
+        results = ug.check_all(REPO_ROOT, only="UC-14")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].check_id, "UC-14")
+
     def test_check_all_unknown(self):
         results = ug.check_all(REPO_ROOT, only="UC-99")
         self.assertEqual(len(results), 1)
@@ -282,9 +347,9 @@ class TestCheckAll(unittest.TestCase):
     def test_summarize(self):
         results = ug.check_all(REPO_ROOT)
         s = ug.summarize(results)
-        # 13 = UC-01~07 原生 + UC-08~13 AA 注入（见 test_check_all_returns_13 注释）
-        self.assertEqual(s["total"], 13)
-        self.assertEqual(s["passed"] + s["failed"], 13)
+        # 14 = UC-01~07 + UC-14 原生 + UC-08~13 AA 注入（见 test_check_all_returns_14 注释）
+        self.assertEqual(s["total"], 14)
+        self.assertEqual(s["passed"] + s["failed"], 14)
         self.assertIn("checks", s)
 
 

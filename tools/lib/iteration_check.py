@@ -4,7 +4,7 @@ iteration_check.py — 设计-实现一致性迭代检查器（🆕 v3.5.4）
 把 ae-sdd-update-skill 的"设计-实现一致性迭代检查"从纯人工 SOP 硬化为可执行 CLI。
 补 UC-01~07 自动检查的 4 类盲区：
   IC-1 过时技术栈/幽灵命令扫描  SKILL.md 引用的命令/机制是否与 CLI 实际注册/技术栈匹配
-  IC-2 F-1 交叉验证覆盖面        stop_check.py 的 GATE 交叉验证覆盖几个 gate（不只 G-08）
+  IC-2 F-1 交叉验证覆盖面        stop_check.py 的 GATE 交叉验证覆盖几个 gate；若已废弃自报检测则确认诚实降级
   IC-3 已实现未接入扫描          tools/lib/*.py 实现了但无人 import + untracked 模块
   IC-4 HS 物理实现粗筛           HARNESS.md HS-N 声明 vs 三 hook 文件实际实现
 
@@ -126,11 +126,17 @@ def check_ic1_obsolete_tech(skill_md: Path, cli_path: Path) -> list[IterationFin
 
 # ─── IC-2 F-1 交叉验证覆盖面 ──────────────────────────────────────────────────
 def check_ic2_gate_claim_coverage(stop_check_py: Path, gates_py: Path) -> list[IterationFinding]:
-    """IC-2：统计 stop_check.py 的 GATE 交叉验证覆盖几个 gate（不只 G-08）。"""
+    """IC-2：统计 stop_check.py 的 GATE 交叉验证覆盖几个 gate；识别 v3.6 自报检测废弃。"""
     findings: list[IterationFinding] = []
     if not stop_check_py.is_file():
         return findings
     text = stop_check_py.read_text(encoding="utf-8", errors="replace")
+
+    self_report_retired = (
+        "废弃 _verify_gate_claims" in text
+        or "废弃自报标记检测" in text
+        or "流程合规性检测已全部转移到 UserPromptSubmit hook" in text
+    )
 
     # 🆕 v3.5.10 Gap-012：识别两种覆盖模式
     #   模式 A（旧）：_G08_CLEAR_RE / _G\d+_CLEAR_RE 单 gate 正则
@@ -156,8 +162,19 @@ def check_ic2_gate_claim_coverage(stop_check_py: Path, gates_py: Path) -> list[I
         gates_text = gates_py.read_text(encoding="utf-8", errors="replace")
         total_gates = len(re.findall(r'"G-\d+"', gates_text))
 
+    if self_report_retired and not covered:
+        findings.append(IterationFinding(
+            check_id="IC-2", severity="info",
+            item="F-1 GATE 自报交叉验证已废弃（Stop hook 不再相信 ◆ GATE 自报）",
+            location=f"{stop_check_py.name}",
+            detail=(
+                "v3.6 决策 1B：Stop hook 不再做 ◆ GATE 自报标记交叉验证，"
+                "流程合规性转移到 UserPromptSubmit hook + flow_monitor + gates check。"
+                "这是诚实降级，不再按旧 _G08_CLEAR_RE 覆盖面报 warn。"
+            ),
+        ))
     # 🆕 v3.5.10：覆盖 ≥ 5 个 gate 即视为"已扩展"，不再 warn
-    if len(covered) <= 1 and total_gates > 1:
+    elif len(covered) <= 1 and total_gates > 1:
         findings.append(IterationFinding(
             check_id="IC-2", severity="warn",
             item=f"F-1 交叉验证仅覆盖 {len(covered)} 个 gate（{sorted(covered)}）",

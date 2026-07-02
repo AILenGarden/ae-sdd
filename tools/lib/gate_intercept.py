@@ -187,6 +187,64 @@ def _match_product_type(file_path: str) -> Optional[str]:
     return None
 
 
+def _is_relative_to_path(path: Path, base: Path) -> bool:
+    """Path.is_relative_to 的兼容封装，统一先 resolve(strict=False)。"""
+    try:
+        path.resolve(strict=False).relative_to(base.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def _check_product_storage_path(
+    file_path: str,
+    product_type: str,
+    ade_sdd: Optional[Path],
+) -> tuple[bool, str]:
+    """HS-10：流程产物必须落在 document-storage 推导的文档工作区内。
+
+    这是关卡2的物理路径归属校验。它不尝试从文件名反推完整 intent 参数，
+    但会强制产物位于 `{docWorkspace}/ae-sdd-doc/` 下，防止写到 `d:\tmp\`
+    这类游离位置。具体文件名/版本号由 `ae-sdd doc save` / G-DOC-STORAGE 继续校验。
+    """
+    if ade_sdd is None:
+        return True, ""
+
+    cfg = paths.read_config(ade_sdd)
+    project_key = cfg.get("projectKey")
+    if not project_key:
+        return False, (
+            f"HS-10 阻断：无法读取 projectKey，不能验证 {product_type} 产物落地路径。\n"
+            f"目标文件: {file_path}\n"
+            f"请先修复 .ae-sdd/config.yaml，或用 `ae-sdd doc save` 通过 document_storage.resolve_path 落地。"
+        )
+
+    doc_workspace = paths.resolve_doc_workspace(ade_sdd, project_key)
+    if doc_workspace is None:
+        return False, (
+            f"HS-10 阻断：无法从 assets 解析 docWorkspacePath/gitPath，不能验证 {product_type} 产物落地路径。\n"
+            f"目标文件: {file_path}\n"
+            f"请先补齐项目资产，或用 `ae-sdd doc save` 通过 document_storage.resolve_path 落地。"
+        )
+
+    target = Path(file_path)
+    if not target.is_absolute():
+        target = paths.project_root(ade_sdd) / target
+    target = target.resolve(strict=False)
+    expected_root = (doc_workspace / "ae-sdd-doc").resolve(strict=False)
+
+    if _is_relative_to_path(target, expected_root):
+        return True, ""
+
+    return False, (
+        f"HS-10 阻断：{product_type} 流程产物未落在 document-storage 推导的文档工作区内。\n"
+        f"目标文件: {target}\n"
+        f"允许根目录: {expected_root}\n"
+        f"请改用 `ae-sdd doc save` 或 `ae-sdd doc resolve`，由 document_storage.resolve_path 推导路径后再落地。\n"
+        f"（HS-10 物理拦截 + G-DOC-STORAGE 兜底）"
+    )
+
+
 def _check_product_landing(
     file_path: str, phase: str, ade_sdd: Optional[Path]
 ) -> tuple[bool, str]:
@@ -202,6 +260,11 @@ def _check_product_landing(
     product_type = _match_product_type(file_path)
     if product_type is None:
         return True, ""
+
+    # HS-10：先校验路径归属，避免 d:\tmp\ 等游离路径被 entry-token/phase 检查遮住。
+    allowed, reason = _check_product_storage_path(file_path, product_type, ade_sdd)
+    if not allowed:
+        return False, reason
 
     # 从 state 读 currentStory（用于定位 session.json）
     st = state_mod.read_state(paths.state_path(ade_sdd)) if ade_sdd else {}

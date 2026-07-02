@@ -4,18 +4,20 @@ update_graph.py — ae-sdd 更新依赖图谱检查器（v3.2）
 把 ae-sdd-update-skill 的"更新依赖图谱"从纸面规则变成可执行检查。
 对标 gates.py 的 GateResult 模式：每项检查产出一个 UpdateCheckResult。
 
-5 类检查：
+基础检查：
   UC-01 版本号一致性    SKILL.md / paths.py / README.md 三处版本号必须一致
   UC-02 门禁注册一致性  GATE_REGISTRY 每个 id 都在 CHECK_FUNCS 或 check_all 特判中
   UC-03 命令契约闭环    SKILL.md 引用的 `ae-sdd <cmd>` 都在 CLI add_parser 注册
   UC-04 扫描器分发一致性 scripts/*_scan.py 都在 build_dist.py runtime_scripts 白名单
   UC-05 健康度清单覆盖  ae-sdd-update-skill 健康度清单含本仓库关键组件
+  UC-14 update-skill 级联图谱同步  update-graph.json / CHECK_FUNCS / 人读视图三方同步
 
 无第三方依赖，可独立运行。
 """
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -341,6 +343,7 @@ HEALTH_CHECKLIST_REQUIRED = [
     ("G-DOC-STORAGE", "🆕 v3.4.0 文档存放门禁"),
     ("G-DOC-CONSISTENCY", "🆕 v3.5.7 项目侧记忆-配置路径一致性门禁"),
     ("UC-06", "🆕 v3.4.0 文档-实现一致性检查"),
+    ("UC-14", "🆕 2026-07-02 update-skill 级联图谱同步检查"),
 ]
 
 
@@ -532,6 +535,103 @@ def check_uc07_distribution_closure(repo_root: Path) -> UpdateCheckResult:
     )
 
 
+def _read_update_graph_data(repo_root: Path) -> tuple[Optional[dict], Optional[str]]:
+    """读取 update-graph.json；返回 (data, error_message)。"""
+    graph_path = repo_root / "source" / "standards" / "update-graph.json"
+    if not graph_path.is_file():
+        return None, f"图谱数据文件不存在：{graph_path}"
+    try:
+        return json.loads(graph_path.read_text(encoding="utf-8")), None
+    except json.JSONDecodeError as e:
+        return None, f"update-graph.json 不是合法 JSON：{e}"
+
+
+def _graph_rule_and_check_ids(graph: dict) -> tuple[list[str], list[str]]:
+    """从图谱提取去重后的 UG/UC ID，排序后稳定输出。"""
+    rule_ids = []
+    check_ids = []
+    for rule in graph.get("rules", []):
+        rid = rule.get("id")
+        if rid:
+            rule_ids.append(rid)
+        check_ids.extend(rule.get("checks", []))
+    return sorted(set(rule_ids)), sorted(set(check_ids))
+
+
+def check_uc14_update_skill_cascade_sync(repo_root: Path) -> UpdateCheckResult:
+    """UC-14：update-graph.json / CHECK_FUNCS / ae-sdd-update-skill 人读视图三方同步。"""
+    name = "update-skill 级联图谱同步"
+    graph, error = _read_update_graph_data(repo_root)
+    if error:
+        return UpdateCheckResult("UC-14", name, "error", False, error,
+                                 "修复 source/standards/update-graph.json")
+
+    update_skill = repo_root / "source" / "skills" / "orchestration" / "ae-sdd-update-skill.md"
+    if not update_skill.is_file():
+        return UpdateCheckResult("UC-14", name, "error", False,
+                                 "ae-sdd-update-skill.md 不存在",
+                                 "恢复 source/skills/orchestration/ae-sdd-update-skill.md")
+
+    text = update_skill.read_text(encoding="utf-8", errors="replace")
+    rule_ids, graph_check_ids = _graph_rule_and_check_ids(graph or {})
+    registered_check_ids = sorted(cid for cid in CHECK_FUNCS if re.fullmatch(r"UC-\d+", cid))
+
+    missing_rule_ids = [rid for rid in rule_ids if rid not in text]
+    missing_check_ids_in_skill = [cid for cid in graph_check_ids if cid not in text]
+    missing_check_funcs = sorted(set(graph_check_ids) - set(registered_check_ids))
+    unreferenced_check_funcs = sorted(set(registered_check_ids) - set(graph_check_ids))
+    missing_protocol_terms = [
+        term for term in (
+            "source/standards/update-graph.json",
+            "ae-sdd update-check --affected",
+            "UC-14",
+        )
+        if term not in text
+    ]
+
+    issues = []
+    if missing_rule_ids:
+        issues.append(f"update-skill 缺 UG 锚点：{missing_rule_ids}")
+    if missing_check_ids_in_skill:
+        issues.append(f"update-skill 缺 UC 锚点：{missing_check_ids_in_skill}")
+    if missing_check_funcs:
+        issues.append(f"图谱引用了未注册检查：{missing_check_funcs}")
+    if unreferenced_check_funcs:
+        issues.append(f"CHECK_FUNCS 有检查未被图谱引用：{unreferenced_check_funcs}")
+    if missing_protocol_terms:
+        issues.append(f"update-skill 缺协议关键词：{missing_protocol_terms}")
+
+    details = {
+        "rule_ids": rule_ids,
+        "graph_check_ids": graph_check_ids,
+        "registered_check_ids": registered_check_ids,
+        "missing_rule_ids": missing_rule_ids,
+        "missing_check_ids_in_skill": missing_check_ids_in_skill,
+        "missing_check_funcs": missing_check_funcs,
+        "unreferenced_check_funcs": unreferenced_check_funcs,
+        "missing_protocol_terms": missing_protocol_terms,
+    }
+    if issues:
+        return UpdateCheckResult(
+            "UC-14",
+            name,
+            "error",
+            False,
+            "；".join(issues[:3]),
+            "同步 source/standards/update-graph.json、tools/lib/update_graph.py:CHECK_FUNCS 与 ae-sdd-update-skill.md §更新依赖图谱锚点",
+            details,
+        )
+
+    return UpdateCheckResult(
+        "UC-14",
+        name,
+        "error",
+        True,
+        f"级联图谱同步：{len(rule_ids)} 条 UG / {len(graph_check_ids)} 个 UC / {len(registered_check_ids)} 个注册检查一致",
+        details=details,
+    )
+
+
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
 CHECK_FUNCS = {
     "UC-01": check_uc01_version,
@@ -541,6 +641,7 @@ CHECK_FUNCS = {
     "UC-05": check_uc05_health_checklist,
     "UC-06": check_uc06_doc_impl_consistency,
     "UC-07": check_uc07_distribution_closure,
+    "UC-14": check_uc14_update_skill_cascade_sync,
 }
 
 

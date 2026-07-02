@@ -58,11 +58,11 @@
       "trigger": ["source/skills/**/*.md"],
       "trigger_condition": "修改子 SKILL 内容",
       "affected": [
-        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "健康度清单对应项更新", "auto_checkable": true},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "健康度清单对应项更新；UC-14 级联图谱锚点同步", "auto_checkable": true},
         {"path": "source/templates/**/*.md", "action": "引用的模板章节锚点同步", "auto_checkable": false},
         {"path": "source/standards/**/*.md", "action": "引用的 constraints 是否存在", "auto_checkable": false}
       ],
-      "checks": ["UC-05"]
+      "checks": ["UC-05", "UC-14"]
     },
     {
       "id": "UG-06",
@@ -83,9 +83,9 @@
         {"path": "source/standards/update-graph.json", "action": "图谱表追加对应规则；与检查器 UC-XX 对齐", "auto_checkable": false},
         {"path": "tools/tests/test_update_graph.py", "action": "新增对应测试", "auto_checkable": false},
         {"path": "tools/bin/ae-sdd", "action": "update-check 子命令覆盖新检查", "auto_checkable": false},
-        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "图谱章节同步新规则", "auto_checkable": false}
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "图谱章节同步新规则；补 UG/UC 机器锚点", "auto_checkable": true}
       ],
-      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05", "UC-06"]
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05", "UC-06", "UC-14"]
     },
     {
       "id": "UG-08",
@@ -99,7 +99,7 @@
         {"path": ".githooks/post-commit", "action": "🆕 v3.4.0：hook 自身必须存在且可执行（UC-07 验证）", "auto_checkable": true},
         {"path": "git config core.hooksPath", "action": "🆕 v3.4.0：必须 = .githooks（UC-07 验证）", "auto_checkable": true}
       ],
-      "checks": ["UC-01", "UC-03", "UC-04", "UC-05", "UC-06", "UC-07"]
+      "checks": ["UC-01", "UC-03", "UC-04", "UC-05", "UC-06", "UC-07", "UC-14"]
     },
     {
       "id": "UG-11",
@@ -120,7 +120,7 @@
         {"path": "harness/.harness/agent.md", "action": "convert-ae-sdd-to-harness.ps1 重转；agent.md templateHash 与 .adapter.lock 一致", "auto_checkable": true},
         {"path": "$HOME/.zcode/skills/ae-sdd-harness-adapter/", "action": "适配器 SKILL 包版本号 → 0.2.0；SKILL.md 描述与新触发链一致", "auto_checkable": false}
       ],
-      "checks": ["UC-01", "UC-07"]
+      "checks": ["UC-01", "UC-07", "UC-14"]
     },
     {
       "id": "UG-10",
@@ -255,7 +255,7 @@
     },
     {
       "id": "UG-15",
-      "name": "🆕 v3.5.11 AA 全维对齐验证器（UC-08~12，根治「协议详尽 vs 工具链缺失」体系性病根）",
+      "name": "🆕 v3.5.11 AA 全维对齐验证器（UC-08~14，根治「协议详尽 vs 工具链缺失」体系性病根）",
       "trigger": [
         "tools/lib/alignment_audit.py",
         "tools/lib/gates.py",
@@ -267,10 +267,10 @@
       ],
       "trigger_condition": "修改 AA 全维对齐验证器 alignment_audit.py / G-RA-FLOW-VIOLATION 假门禁修复 / update-check 接入 AA / SKILL.md 门禁强度声明 / update-skill AA 章节任一",
       "affected": [
-        {"path": "tools/lib/alignment_audit.py", "action": "5 维 check 函数（UC-08 门禁承诺↔注册双向 / UC-09 门禁实现真实性抓 stub-pass / UC-10 state 字段存活性 / UC-11 状态机闭环 / UC-12 幽灵命令全捕获）+ register_to_update_graph 注入 CHECK_FUNCS", "auto_checkable": false},
+        {"path": "tools/lib/alignment_audit.py", "action": "6 维 check 函数（UC-08 门禁承诺↔注册双向 / UC-09 门禁实现真实性抓 stub-pass / UC-10 state 字段存活性 / UC-11 状态机闭环 / UC-12 幽灵命令全捕获 / UC-13 门禁注册完整性）+ register_to_update_graph 注入 CHECK_FUNCS", "auto_checkable": false},
         {"path": "tools/lib/gates.py", "action": "G-RA-FLOW-VIOLATION 假门禁修复：check_all 加特判传 master_source（原走 CHECK_FUNCS 漏传→恒 stub-pass）+ _sys.executable→sys.executable（原 NameError）", "auto_checkable": true},
-        {"path": "tools/bin/ae-sdd", "action": "cmd_update_check 加 import alignment_audit 触发注册 + 12 项全量调度（UC-01~12）", "auto_checkable": true},
-        {"path": "tools/tests/test_alignment_audit.py", "action": "≥12 用例覆盖 UC-08~12（正例/反例/边界）", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "cmd_update_check 加 import alignment_audit 触发注册 + 全量调度（UC-01~14）", "auto_checkable": true},
+        {"path": "tools/tests/test_alignment_audit.py", "action": "≥12 用例覆盖 UC-08~13（正例/反例/边界）", "auto_checkable": false},
         {"path": "tools/tests/test_gates.py", "action": "TestGRAFlowViolation 含 3 用例（no_master_source_skips/pre_ra_skips/real_execution_no_namesmoke）防假门禁修复回退", "auto_checkable": true},
         {"path": "source/SKILL.md", "action": "frontmatter version v3.5.11 + AA 描述", "auto_checkable": true},
         {"path": "source/skills/phase1-design/dr-review-skill.md", "action": "顶部加🟠门禁强度声明（软门禁 report-only，硬门禁见 GATE_REGISTRY）", "auto_checkable": false},
@@ -278,12 +278,12 @@
         {"path": "source/skills/phase3-review/code-review-skill.md", "action": "顶部加🟠门禁强度声明（7 道闸为软门禁）", "auto_checkable": false},
         {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "顶部加🟠门禁强度声明（16 道质量闸为软门禁，G-RA-1~5+FLOW 为真硬门禁）+ 删除 run dr-review-skill 幽灵命令", "auto_checkable": false},
         {"path": "source/skills/phase2-task/task-generate-skill.md", "action": "顶部加🟠门禁强度声明（TC-1~9/TR-1~7 为软门禁）", "auto_checkable": false},
-        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "新增 AA 章节 + UC-08~12 健康度清单项", "auto_checkable": false},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "新增 AA 章节 + UC-08~14 健康度清单项 + UG/UC 机器锚点", "auto_checkable": true},
         {"path": "source/docs/plans/2026-06-29-v3.5.11-aa-tracking-list.md", "action": "AA 首跑 gap 留痕（15 死字段 + 3 状态机未闭环）", "auto_checkable": false},
         {"path": "README.md", "action": "第 5 行版本行含 v3.5.11 + AA 全维对齐验证器描述", "auto_checkable": true},
         {"path": "source/CHANGELOG/", "action": "新增 2026-06-29-v3.5.11-alignment-audit.md changelog 文件", "auto_checkable": false}
       ],
-      "checks": ["UC-01", "UC-02", "UC-03", "UC-05", "UC-06", "UC-08", "UC-09", "UC-10", "UC-11", "UC-12"]
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-05", "UC-06", "UC-08", "UC-09", "UC-10", "UC-11", "UC-12", "UC-13", "UC-14"]
     },
     {
       "id": "UG-16",
