@@ -1,7 +1,7 @@
 """ZCode CLI 分发器：copytree → ~/.zcode/skills/ae-sdd。
 
 逻辑迁自 install.py 的 ZCODE_DST 分支（v3.4.0+ post-commit hook 默认装 zcode）。
-auto 模式下：目录已存在 或 zcode CLI 可用时才包含。
+auto 模式下：ZCode skills 根目录存在、目标目录已存在或 zcode CLI 可用时包含。
 """
 from __future__ import annotations
 
@@ -16,10 +16,17 @@ SKILL_NAME = "ae-sdd"
 class ZcodeDistributor(CopytreeDistributor):
     name = "zcode"
 
+    def skills_root(self) -> Path:
+        return Path.home() / ".zcode" / "skills"
+
     def target_path(self) -> Path:
-        return Path.home() / ".zcode" / "skills" / SKILL_NAME
+        return self.skills_root() / SKILL_NAME
 
     def detect(self) -> bool:
-        """auto 模式：zcode 已安装或 CLI 存在时包含（迁自 install.py:_target_paths）。"""
+        """auto 模式：ZCode skills 根目录存在、ae-sdd 已安装或 CLI 存在时包含。"""
         dst = self.target_path()
-        return dst.exists() or bool(shutil.which("zcode") or shutil.which("zcode.exe"))
+        return (
+            self.skills_root().is_dir()
+            or dst.exists()
+            or bool(shutil.which("zcode") or shutil.which("zcode.exe"))
+        )
