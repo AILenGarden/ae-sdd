@@ -524,9 +524,65 @@ def check_uc07_distribution_closure(repo_root: Path) -> UpdateCheckResult:
     else:
         warnings.append("ae-sdd-update-skill.md 不存在")
 
+    # 5. Mavis harness adapter lock must match the current source inputs.
+    harness_agent = repo_root / ".harness" / "agent.md"
+    harness_lock = repo_root / ".harness" / ".adapter.lock"
+    if not harness_agent.is_file():
+        issues.append(".harness/agent.md missing; run python scripts/build_harness.py --source <repo>")
+    if not harness_lock.is_file():
+        issues.append(".harness/.adapter.lock missing; run python scripts/build_harness.py --source <repo>")
+    else:
+        try:
+            lock_data = json.loads(harness_lock.read_text(encoding="utf-8"))
+        except Exception as e:
+            issues.append(f".harness/.adapter.lock is unreadable JSON: {e}")
+            lock_data = None
+
+        if lock_data is not None:
+            build_harness_path = repo_root / "scripts" / "build_harness.py"
+            if not build_harness_path.is_file():
+                issues.append("scripts/build_harness.py missing; cannot verify .harness/.adapter.lock")
+            else:
+                try:
+                    spec = importlib.util.spec_from_file_location("_ae_sdd_build_harness_for_uc07", build_harness_path)
+                    if spec is None or spec.loader is None:
+                        raise ImportError(f"cannot load {build_harness_path}")
+                    build_harness = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(build_harness)
+
+                    tpl_agent = repo_root / "scripts" / "templates" / "agent.md.template"
+                    tpl_readme = repo_root / "scripts" / "templates" / "README.md.template"
+                    expected_source_hash = build_harness.source_input_hash(repo_root, tpl_agent, tpl_readme)
+                    expected_template_hash = build_harness.template_hash(tpl_agent)
+                    expected_version = build_harness.get_ae_sdd_version(repo_root)
+                    expected_adapter = build_harness.ADAPTER_VERSION
+
+                    if lock_data.get("source_input_sha256") != expected_source_hash:
+                        issues.append(
+                            ".harness/.adapter.lock source_input_sha256 drift: "
+                            f"{lock_data.get('source_input_sha256')} != {expected_source_hash}"
+                        )
+                    if lock_data.get("templateHash") != expected_template_hash:
+                        issues.append(
+                            ".harness/.adapter.lock templateHash drift: "
+                            f"{lock_data.get('templateHash')} != {expected_template_hash}"
+                        )
+                    if lock_data.get("ae_sdd_version") != expected_version:
+                        issues.append(
+                            ".harness/.adapter.lock ae_sdd_version drift: "
+                            f"{lock_data.get('ae_sdd_version')} != {expected_version}"
+                        )
+                    if lock_data.get("adapter_version") != expected_adapter:
+                        issues.append(
+                            ".harness/.adapter.lock adapter_version drift: "
+                            f"{lock_data.get('adapter_version')} != {expected_adapter}"
+                        )
+                except Exception as e:
+                    warnings.append(f"cannot verify .harness/.adapter.lock: {e}")
+
     passed = len(issues) == 0
     if passed:
-        msg = "post-commit hook 已装 + hooksPath 正确 + 文档章节齐全"
+        msg = "post-commit hook 已装 + hooksPath 正确 + 文档章节齐全 + harness source hash aligned"
     else:
         msg = f"{len(issues)} 项缺失：{'；'.join(issues[:3])}"
     return UpdateCheckResult(

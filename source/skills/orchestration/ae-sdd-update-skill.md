@@ -129,7 +129,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 │
 │  ⑥ Harness 适配层（派生，非本体）：
 │     source/SKILL.md + HARNESS.md ──adapter SKILL──► .harness/agent.md
-│     （Mavis 团队级 agent 入口，由 .adapter.lock 标记来源 commit）
+│     （Mavis 团队级 agent 入口，由 .adapter.lock 标记 source input hash）
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -145,7 +145,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | **④ 安装引导 SKILL**（改 `install-skill.md`） | 无连带（纯文档） | 确认与 ③ install.py 实际行为一致 | 人工核对 |
 | **⑤ 工具链**（改 `tools/lib/*.py` 或 `tools/bin/ae-sdd`） | ①（SKILL 引用的 CLI 命令契约）+ ⑤（测试） | 同步 SKILL.md 命令引用；补/改对应 `tools/tests/test_*.py` | `update-check` UC-02/03 |
 | **⑤ 新增 scanner**（`scripts/*_scan.py`） | ③（build 白名单）+ ①（gates.py 注册）+ ⑤（gates _locate） | 加入 `build_dist.py` 白名单；gates.py 注册门禁；SKILL 引用 | `update-check` UC-04 |
-| **⑥ Harness 适配层** | ❌ 不手工改 | 母版升级后重跑 `ae-sdd-harness-adapter` SKILL 重新生成 | `.adapter.lock` commit hash 一致性 |
+| **⑥ Harness 适配层** | ❌ 不手工改 | 母版升级后重跑 `ae-sdd-harness-adapter` SKILL 重新生成 | `.adapter.lock` source input hash 一致性 |
 | **任意 source/ 或 tools/** | ①（CHANGELOG）+ README:5 + dev-sync | 写 CHANGELOG；更新 README:5；跑 update-check 全绿才 dev-sync | `update-check` 全量 |
 
 ### 维护者 SOP（按子系统）
@@ -188,7 +188,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 正确流程：
 1. 改 source/SKILL.md 或 HARNESS.md（母版）
 2. 重跑 ae-sdd-harness-adapter SKILL（convert-ae-sdd-to-harness.ps1）
-3. 检查 .adapter.lock 的 commit hash 已更新
+3. 检查 .adapter.lock 的 source_input_sha256 已更新
 ```
 
 ### 实例化 4 层架构速查（与 SKILL.md §6 互补）

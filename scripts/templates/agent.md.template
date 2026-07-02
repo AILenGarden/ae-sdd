@@ -12,7 +12,7 @@ version: {{AE_SDD_VERSION}}
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd @ `{{AE_SDD_COMMIT_HASH}}` ({{AE_SDD_VERSION}})
+> 源版本：ae-sdd source `{{AE_SDD_SOURCE_HASH_SHORT}}` ({{AE_SDD_VERSION}})
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -119,7 +119,7 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 - 生成时间：{{TIMESTAMP}}
 - 源 ae-sdd 版本：{{AE_SDD_VERSION}}
-- 源 ae-sdd commit：{{AE_SDD_COMMIT_HASH}}
+- 源 ae-sdd input hash：{{AE_SDD_SOURCE_HASH}}
 - 适配器版本：v{{ADAPTER_VERSION}}
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

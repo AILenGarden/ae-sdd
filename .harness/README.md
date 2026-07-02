@@ -15,18 +15,18 @@
 | 文件 | 来源 | 说明 |
 |------|------|------|
 | `agent.md` | `templates/agent.md.template` 渲染 | Mavis harness 主入口 |
-| `.adapter.lock` | 脚本生成 | 幂等标记：上次转换的 ae-sdd commit hash + 时间戳 |
+| `.adapter.lock` | 脚本生成 | 幂等标记：上次转换的 source input hash + 时间戳 |
 
 ## 重新生成
 
-ae-sdd 母版升级后（`D:\Item\ae-sdd\.git` 有新 commit），跑：
+ae-sdd 母版输入升级后（`source/SKILL.md`、`source/HARNESS.md` 或模板变化），跑：
 
 ```bash
 python scripts/build_harness.py --source "D:\Item\ae-sdd"
 ```
 
 脚本会自动：
-1. 检测到 commit hash 变化 → 触发重转
+1. 检测到 source input hash 变化 → 触发重转
 2. 渲染新 `agent.md`（保留旧版本作 `.bak.<timestamp>`）
 3. 重新 `mavis harness mount` 验证
 
@@ -39,7 +39,7 @@ mavis harness unmount ae-sdd
 
 ## 元数据
 
-- 生成时间：2026-07-02T11:29:00Z
+- 生成时间：2026-07-02T12:03:42Z
 - ae-sdd 版本：3.8.0
-- ae-sdd commit：b256d60
-- 适配器：v0.2.0
+- ae-sdd input hash：6da8880554b66d679705deb05abb41624d3b016f0bc80569611272d0936c2670
+- 适配器：v0.3.0

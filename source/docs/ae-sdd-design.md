@@ -234,7 +234,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | --- | --- |
 | 转译脚本 | `scripts/build_harness.py`（非 `.ps1`，PS1→Python 迁移已完成） |
 | 产物路径 | `.harness/agent.md` + `.harness/README.md` |
-| 幂等锁 | `.harness/.adapter.lock`（JSON：`adapter_version/ae_sdd_version/commit/templateHash/converted_at`），`build_harness.py:read_adapter_lock()` |
+| 幂等锁 | `.harness/.adapter.lock`（JSON：`adapter_version/ae_sdd_version/source_input_sha256/source_commit/templateHash/converted_at`），`build_harness.py:read_adapter_lock()` |
 | 版本号三级 fallback | `build_harness.py:get_ae_sdd_version()`（行88，SKILL.md frontmatter → commit msg vX.Y.Z → git short hash） |
 | tree-hash amend 检测 | `build_harness.py:get_tree_hash()`（行147，🆕 v3.5.6，区分 amend 和真实内容变更） |
 | SKILL frontmatter 解析 | `build_harness.py:parse_skill_frontmatter()`（行168） |
@@ -243,7 +243,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | 备份轮转 | `build_harness.py:cleanup_old_bak()`（行68，保留最近3个 `.bak.<ts>`） |
 | CLI 用法 | `python scripts/build_harness.py [--dry-run/--force/--unmount/--clean/--no-mount]` |
 
-**颗粒度与边界**：禁止手工编辑 agent.md；母版（source/SKILL.md）升级后必须重跑 `build_harness.py` 重新生成；harness 格式由 Mavis 规范决定，转译脚本负责映射；`.adapter.lock` 多维比对（commit + ae_sdd_version + adapter_version + templateHash）任一漂移触发重转。
+**颗粒度与边界**：禁止手工编辑 agent.md；母版（source/SKILL.md / source/HARNESS.md / harness 模板）升级后必须重跑 `build_harness.py` 重新生成；harness 格式由 Mavis 规范决定，转译脚本负责映射；`.adapter.lock` 多维比对（source_input_sha256 + ae_sdd_version + adapter_version + templateHash）任一漂移触发重转，`source_commit` 只作诊断，不参与幂等判断，避免提交生成物后继续漂移。
 
 ---
 

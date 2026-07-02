@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-ADAPTER_VERSION = "0.2.0"   # 与 PS1 保持一致，幂等锁比对用
+ADAPTER_VERSION = "0.3.0"   # 幂等锁比对用；v0.3 起以 source_input_sha256 为主键
 LEGACY_HARNESS_DIR = "harness"
 
 
@@ -275,6 +275,29 @@ def template_hash(template_path: Path) -> str:
     return h.hexdigest().upper()
 
 
+def source_input_hash(src: Path, template_agent: Path, template_readme: Path) -> str:
+    """Hash only the inputs that affect generated Mavis harness bytes."""
+    h = hashlib.sha256()
+    for label, path in [
+        ("adapter_version", None),
+        ("source/SKILL.md", src / "source" / "SKILL.md"),
+        ("source/HARNESS.md", src / "source" / "HARNESS.md"),
+        ("scripts/templates/agent.md.template", template_agent),
+        ("scripts/templates/README.md.template", template_readme),
+    ]:
+        h.update(label.encode("utf-8"))
+        h.update(b"\0")
+        if path is None:
+            data = ADAPTER_VERSION.encode("utf-8")
+        elif path.is_file():
+            data = path.read_bytes()
+        else:
+            data = b""
+        h.update(data)
+        h.update(b"\0")
+    return h.hexdigest()
+
+
 # ─── mavis CLI 探测（对齐 PS1 mount 预检） ───────────────────────────────────
 def find_mavis_cmd() -> Optional[list[str]]:
     """探测 mavis 可执行命令（迁自 PS1 mavisCmd 探测 + post-commit MAVIS_RUN）。
@@ -404,10 +427,29 @@ def main() -> int:
     step("Idempotency check")
     lock = read_adapter_lock(lock_file)
     tpl_hash = template_hash(template_agent)
+    input_hash = source_input_hash(src, template_agent, template_readme)
     should_convert = True
     reason = ""
 
-    if lock and not args.force:
+    if lock and not args.force and "source_input_sha256" in lock:
+        drift = []
+        if lock.get("source_input_sha256") != input_hash:
+            drift.append("source input hash changed")
+        if lock.get("ae_sdd_version") != version:
+            drift.append(f"ae_sdd_version {lock.get('ae_sdd_version')}->{version}")
+        if lock.get("adapter_version") != ADAPTER_VERSION:
+            drift.append(f"adapter {lock.get('adapter_version')}->{ADAPTER_VERSION}")
+        if lock.get("templateHash") != tpl_hash:
+            drift.append("agent template changed")
+        if not drift:
+            should_convert = False
+            reason = (
+                f"source inputs unchanged "
+                f"(hash={input_hash[:12]}, version={version}, adapter={ADAPTER_VERSION})"
+            )
+        else:
+            reason = "detected drift: " + "; ".join(drift)
+    elif lock and not args.force:
         # 🆕 v3.5.6：tree-hash 一致性提前返回（修 amend 循环）
         # amend 后 commit hash 会变（新 hash），但 tree hash 不变（同内容），
         # 借此区分"amend 重转"和"真实内容变更"。
@@ -448,13 +490,16 @@ def main() -> int:
     # ── 4. 渲染模板 ────────────────────────────────────────────────────────
     step("Rendering agent.md")
     commit_short = commit[:7]
+    input_hash_short = input_hash[:16]
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     vars_map = {
-        "AUTO_GEN_HEADER": f"# AUTO-GEN @ ae-sdd@{commit} @ {timestamp}",
+        "AUTO_GEN_HEADER": f"# AUTO-GEN @ ae-sdd-source@{input_hash_short} @ {timestamp}",
         "SKILL_DESCRIPTION": skill_description,
         "AE_SDD_VERSION": version,
         "AE_SDD_COMMIT_HASH": commit_short,
+        "AE_SDD_SOURCE_HASH": input_hash,
+        "AE_SDD_SOURCE_HASH_SHORT": input_hash_short,
         "ADAPTER_VERSION": ADAPTER_VERSION,
         "TIMESTAMP": timestamp,
     }
@@ -514,7 +559,8 @@ def main() -> int:
     lock_data = {
         "adapter_version": ADAPTER_VERSION,
         "ae_sdd_version": version,
-        "commit": commit,
+        "source_input_sha256": input_hash,
+        "source_commit": commit,
         "templateHash": tpl_hash,
         "converted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
