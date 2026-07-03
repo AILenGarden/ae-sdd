@@ -302,7 +302,50 @@ def _check_product_landing(
             f"{doc_save_hint}"
         )
 
+    # 🆕 v3.8.1 S-3：文件意图锁冲突检测（多 sub-agent 并发写防护）
+    # PreToolUse hook 无法可靠识别"当前是哪个 agent 在写"，故本层只做冲突告警不硬阻断。
+    # 锁的获取/释放由 agent 显式调 `ae-sdd state lock/unlock` CLI（与 register_agent 同模式）。
+    # 仅当存在 ≥2 个活跃 agent 且目标文件已被锁时告警（单 agent 场景不触发，防误伤）。
+    if ade_sdd and st:
+        try:
+            active_agents = st.get("activeAgents") or []
+            if len(active_agents) >= 2:
+                rel_path = _relative_product_path(file_path, ade_sdd)
+                if rel_path:
+                    lock_info = state_mod.check_file_lock(st, rel_path)
+                    if lock_info:
+                        holder = lock_info.get("agentId", "unknown")
+                        # warn 不阻断（首版策略，与 B-3 remediation 同思路）
+                        import sys
+                        sys.stderr.write(
+                            f"[ae-sdd harness] ⚠️ S-3 文件锁告警：{product_type} 产物 {rel_path} "
+                            f"已被 agent {holder} 持锁，当前有 {len(active_agents)} 个活跃 agent 并发。"
+                            f"并发写同一文件会丢更新，建议协调或用 `ae-sdd state lock --path {rel_path}` 重新登记。\n"
+                        )
+        except Exception:
+            pass  # 锁检查异常不阻断（兜底放行）
+
     return True, ""
+
+
+def _relative_product_path(file_path: str, ade_sdd: Optional[Path]) -> str:
+    """把绝对/相对文件路径归一为 state.fileLocks 的 key（相对 project_dir，正斜杠）。
+
+    project_dir 推导自 ade_sdd（.ae-sdd/ 的父目录）。无法推导时返回空串。
+    """
+    if not ade_sdd:
+        return ""
+    try:
+        project_dir = ade_sdd.parent
+        p = Path(file_path)
+        try:
+            rel = p.resolve().relative_to(project_dir.resolve())
+        except ValueError:
+            # file_path 可能已是相对路径
+            rel = Path(file_path)
+        return str(rel).replace("\\", "/")
+    except Exception:
+        return ""
 
 
 def _is_source_code_path(file_path: str) -> bool:

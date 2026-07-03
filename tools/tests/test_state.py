@@ -353,5 +353,151 @@ class TestSetPhasePerScale(unittest.TestCase):
         self.assertEqual(s["scale"], "大")
 
 
+# ─── 🆕 v3.8.1 S-3：文件意图锁测试 ─────────────────────────────────────────────
+
+
+class TestFileLocks(unittest.TestCase):
+    """S-3 文件意图锁：acquire / check / release / TTL / 冲突。"""
+
+    def test_acquire_and_check_lock(self):
+        """获取锁后 check_file_lock 返回持锁信息"""
+        s = {"phase": "coding", "history": []}
+        ok, reason = state_mod.acquire_file_lock(s, "design/STORY-001.md", "agent-1")
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+        lock = state_mod.check_file_lock(s, "design/STORY-001.md")
+        self.assertIsNotNone(lock)
+        self.assertEqual(lock["agentId"], "agent-1")
+        self.assertEqual(lock["ttlSeconds"], 1800)
+
+    def test_acquire_conflict_blocks(self):
+        """被他人持锁时获取失败，reason 含持锁 agentId"""
+        s = {"phase": "coding", "history": []}
+        state_mod.acquire_file_lock(s, "design/STORY-001.md", "agent-1")
+        ok, reason = state_mod.acquire_file_lock(s, "design/STORY-001.md", "agent-2")
+        self.assertFalse(ok)
+        self.assertIn("agent-1", reason)
+        # 原 lock 未被覆盖
+        self.assertEqual(s["fileLocks"]["design/STORY-001.md"]["agentId"], "agent-1")
+
+    def test_acquire_idempotent_same_agent(self):
+        """同 agent 重复获取同一文件锁 → 幂等成功"""
+        s = {"phase": "coding", "history": []}
+        state_mod.acquire_file_lock(s, "design/STORY-001.md", "agent-1")
+        ok, reason = state_mod.acquire_file_lock(s, "design/STORY-001.md", "agent-1")
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+
+    def test_release_only_by_holder(self):
+        """仅持锁者能释放；非持锁者释放返回 False"""
+        s = {"phase": "coding", "history": []}
+        state_mod.acquire_file_lock(s, "design/STORY-001.md", "agent-1")
+        # 非持锁者释放
+        self.assertFalse(state_mod.release_file_lock(s, "design/STORY-001.md", "agent-2"))
+        self.assertIsNotNone(state_mod.check_file_lock(s, "design/STORY-001.md"))
+        # 持锁者释放
+        self.assertTrue(state_mod.release_file_lock(s, "design/STORY-001.md", "agent-1"))
+        self.assertIsNone(state_mod.check_file_lock(s, "design/STORY-001.md"))
+
+    def test_ttl_expiry_allows_preempt(self):
+        """TTL 过期的旧锁可被新 agent 抢占（防崩溃死锁）"""
+        s = {"phase": "coding", "history": []}
+        # 注入一个已过期的锁（acquiredAt 为 1 小时前）
+        from datetime import datetime, timezone, timedelta
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=1))
+        old_ts_str = old_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+        s["fileLocks"] = {"design/STORY-001.md": {
+            "agentId": "agent-dead", "acquiredAt": old_ts_str, "ttlSeconds": 1800,
+        }}
+        # 过期锁 → check 视作未锁
+        self.assertIsNone(state_mod.check_file_lock(s, "design/STORY-001.md"))
+        # 新 agent 可抢占
+        ok, _ = state_mod.acquire_file_lock(s, "design/STORY-001.md", "agent-2")
+        self.assertTrue(ok)
+        self.assertEqual(s["fileLocks"]["design/STORY-001.md"]["agentId"], "agent-2")
+
+    def test_check_unlocked_returns_none(self):
+        """未上锁的文件 check 返回 None"""
+        s = {"phase": "coding", "history": []}
+        self.assertIsNone(state_mod.check_file_lock(s, "nonexistent.md"))
+
+
+# ─── 🆕 v3.8.1 S-5：PRD compact runtime 分支测试 ───────────────────────────────
+
+
+class TestPrdComplete(unittest.TestCase):
+    """S-5 prd_complete：3 runtime 分支 + summary.md 生成 + prdStatus 流转。"""
+
+    def _make_prd_state(self):
+        return {
+            "prdId": "PRD-CS-001",
+            "prdTitle": "测试 PRD",
+            "prdStatus": "in_progress",
+            "storyIds": [{"storyId": "STORY-001"}, {"storyId": "STORY-002"}],
+            "events": [{"seq": 1}, {"seq": 2}],
+        }
+
+    def test_mavis_generates_summary_and_status(self):
+        """mavis runtime：生成 summary.md + prdStatus → awaiting_compact，无 trigger"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ps = self._make_prd_state()
+            r = state_mod.prd_complete(ps, "PRD-CS-001", "mavis", root)
+            self.assertTrue(r["summaryPath"].endswith("summary.md"))
+            self.assertFalse(r["compactTrigger"])
+            self.assertIn("mavis session rotate", r["runtimeHint"])
+            # summary.md 真实生成
+            self.assertTrue(Path(r["summaryPath"]).is_file())
+            # prdStatus 流转
+            self.assertEqual(ps["prdStatus"], "awaiting_compact")
+            # 无 compact-trigger 文件
+            self.assertFalse((root / ".ae-sdd" / "compact-trigger").is_file())
+
+    def test_claude_code_writes_compact_trigger(self):
+        """claude-code runtime：生成 summary.md + 写 compact-trigger 文件"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ps = self._make_prd_state()
+            r = state_mod.prd_complete(ps, "PRD-CS-001", "claude-code", root)
+            self.assertTrue(r["compactTrigger"])
+            self.assertIn("/compact", r["runtimeHint"])
+            trigger = root / ".ae-sdd" / "compact-trigger"
+            self.assertTrue(trigger.is_file())
+            import json as _json
+            payload = _json.loads(trigger.read_text(encoding="utf-8"))
+            self.assertEqual(payload["prdId"], "PRD-CS-001")
+
+    def test_codex_marks_pending_research(self):
+        """codex runtime：生成 summary.md，runtimeHint 标注'待调研'"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ps = self._make_prd_state()
+            r = state_mod.prd_complete(ps, "PRD-CS-001", "codex", root)
+            self.assertFalse(r["compactTrigger"])
+            self.assertIn("待调研", r["runtimeHint"])
+            self.assertTrue(Path(r["summaryPath"]).is_file())
+
+    def test_summary_contains_prd_metadata(self):
+        """summary.md 含 prdId/prdTitle/storyIds 等关键元数据"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ps = self._make_prd_state()
+            r = state_mod.prd_complete(ps, "PRD-CS-001", "mavis", root)
+            content = Path(r["summaryPath"]).read_text(encoding="utf-8")
+            self.assertIn("PRD-CS-001", content)
+            self.assertIn("测试 PRD", content)
+            self.assertIn("STORY-001", content)
+            self.assertIn("STORY-002", content)
+
+    def test_already_compacted_not_overwritten(self):
+        """prdStatus 已 compacted 时不重复流转（幂等）"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ps = self._make_prd_state()
+            ps["prdStatus"] = "compacted"
+            state_mod.prd_complete(ps, "PRD-CS-001", "mavis", root)
+            self.assertEqual(ps["prdStatus"], "compacted")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

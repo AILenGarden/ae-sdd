@@ -1145,3 +1145,173 @@ def query_affected(changed_files: list, repo_root: Optional[Path] = None) -> Aff
         affected_items=affected_items,
         checks_to_run=checks_to_run,
     )
+
+
+# ─── 🆕 v3.8.1 S-4：规则-工具同步 manifest（health 第 10 项依赖） ──────────────
+# 治 S-4 缺口：health 原 item 9 master-freshness 只比版本号字符串，无法检测
+# "同版本内规则-代码漂移"（如 SKILL.md 声明了 gate 但 gates.py 未实装）。
+# 本节提供 manifest 生成 + 漂移检测：build_dist 时生成 .sync-manifest.json，
+# health 读 manifest 比对当前文件 hash，漂移则 warn（不阻断，与 item 9 同级）。
+import hashlib as _hashlib
+
+SYNC_MANIFEST_FILENAME = ".sync-manifest.json"
+SYNC_MANIFEST_GENERATOR_VERSION = "1.0"
+
+
+def _sha256_of_file(path: Path) -> Optional[str]:
+    """计算文件 sha256；不存在或读失败返回 None。"""
+    if not path.is_file():
+        return None
+    try:
+        h = _hashlib.sha256()
+        h.update(path.read_bytes())
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def sync_manifest_path(repo_root: Path) -> Path:
+    """manifest 落地路径：tools/.sync-manifest.json（与 tools/ 同目录便于分发）。"""
+    return repo_root / "tools" / SYNC_MANIFEST_FILENAME
+
+
+def generate_sync_manifest(repo_root: Path) -> dict:
+    """生成规则-工具同步 manifest（供 build_dist 调用）。
+
+    读取 update-graph.json 的每条 UG 规则，记录 trigger 文件 + 所有 affected 文件的
+    sha256。生成后由调用方写入 sync_manifest_path(repo_root)。
+
+    Returns:
+        manifest dict（可 json.dump）
+    """
+    graph, error = _read_update_graph_data(repo_root)
+    if error:
+        return {"error": error, "generatedAt": _graph_now_iso()}
+
+    rules_snapshot = []
+    for rule in (graph or {}).get("rules", []):
+        rule_id = rule.get("id", "")
+        name = rule.get("name", "")
+        triggers = rule.get("trigger", []) or []
+        affected = rule.get("affected", []) or []
+
+        trigger_files = []
+        for trig in triggers:
+            # trigger 支持 glob 模式（如 "source/skills/**"），展开为实际文件
+            for resolved in _resolve_trigger_paths(repo_root, trig):
+                sha = _sha256_of_file(resolved)
+                if sha is not None:
+                    trigger_files.append({
+                        "path": _rel_path(resolved, repo_root),
+                        "sha256": sha,
+                    })
+
+        affected_files = []
+        for aff in affected:
+            aff_path = aff.get("path", "")
+            resolved = repo_root / aff_path
+            sha = _sha256_of_file(resolved)
+            if sha is not None:
+                affected_files.append({
+                    "path": aff_path,
+                    "sha256": sha,
+                    "auto_checkable": bool(aff.get("auto_checkable", False)),
+                })
+
+        rules_snapshot.append({
+            "id": rule_id,
+            "name": name,
+            "trigger_files": trigger_files,
+            "affected_files": affected_files,
+        })
+
+    return {
+        "generatedAt": _graph_now_iso(),
+        "generatorVersion": SYNC_MANIFEST_GENERATOR_VERSION,
+        "rules": rules_snapshot,
+    }
+
+
+def write_sync_manifest(repo_root: Path) -> Path:
+    """生成并写入 sync manifest，返回落地路径。"""
+    manifest = generate_sync_manifest(repo_root)
+    out_path = sync_manifest_path(repo_root)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return out_path
+
+
+def check_sync_drift(repo_root: Path) -> dict:
+    """比对当前文件 hash 与 manifest 记录，返回漂移报告（供 health 第 10 项调用）。
+
+    Returns:
+        {
+          "manifest_exists": bool,
+          "generatedAt": str,
+          "total_rules": int,
+          "drifted_rules": [{"id","name","drifted_files":[{"path","kind"}]}],
+          "drift_count": int,
+        }
+        manifest 缺失时 manifest_exists=False，其余字段为零值。
+    """
+    out_path = sync_manifest_path(repo_root)
+    if not out_path.is_file():
+        return {"manifest_exists": False, "generatedAt": "", "total_rules": 0,
+                "drifted_rules": [], "drift_count": 0}
+    try:
+        manifest = json.loads(out_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"manifest_exists": False, "generatedAt": "", "total_rules": 0,
+                "drifted_rules": [], "drift_count": 0}
+
+    drifted_rules = []
+    for rule in manifest.get("rules", []):
+        drifted_files = []
+        for entry in rule.get("trigger_files", []) + rule.get("affected_files", []):
+            cur_sha = _sha256_of_file(repo_root / entry["path"])
+            if cur_sha != entry.get("sha256"):
+                drifted_files.append({
+                    "path": entry["path"],
+                    "kind": "trigger" if entry in rule.get("trigger_files", []) else "affected",
+                })
+        if drifted_files:
+            drifted_rules.append({
+                "id": rule.get("id", ""),
+                "name": rule.get("name", ""),
+                "drifted_files": drifted_files,
+            })
+
+    return {
+        "manifest_exists": True,
+        "generatedAt": manifest.get("generatedAt", ""),
+        "total_rules": len(manifest.get("rules", [])),
+        "drifted_rules": drifted_rules,
+        "drift_count": len(drifted_rules),
+    }
+
+
+def _graph_now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _resolve_trigger_paths(repo_root: Path, trigger: str) -> list[Path]:
+    """把 trigger 模式（含 glob 如 source/skills/**）展开为实际文件路径。
+
+    对非 glob 路径直接返回单元素列表（文件存在与否由调用方 _sha256_of_file 判定）。
+    """
+    if "*" not in trigger and "?" not in trigger:
+        return [repo_root / trigger]
+    # glob 展开（相对 repo_root）
+    return sorted((repo_root).glob(trigger))
+
+
+def _rel_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root)).replace("\\", "/")
+    except ValueError:
+        return str(path).replace("\\", "/")
+

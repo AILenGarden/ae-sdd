@@ -350,7 +350,12 @@ def cmd_state_prd_check_complete(args, parser):
 
 
 def cmd_state_prd_complete(args, parser):
-    """🆕 v3.3.0 — 校验通过后执行 compact，更新 prdStatus."""
+    """🆕 v3.3.0 — 校验通过后执行 compact，更新 prdStatus.
+
+    🆕 v3.8.1 S-5：按 --runtime 分支生成 summary.md + runtime 差异化提示。
+    实际 compact 由 runtime hook/session 协议执行（保持协议骨架，不直接 exec shell）。
+    """
+    from lib import state as state_mod
     project_root = Path.cwd()
     prd_id = args.prd
     runtime = args.runtime
@@ -364,19 +369,22 @@ def cmd_state_prd_complete(args, parser):
         output.warn(f"PRD {prd_id} 已 compacted，跳过")
         return 0
 
-    # 先校验 4 层 AND
-    # （简化：内部调用 prd-check-complete 逻辑；此处省略重复代码，提示用户先跑）
+    # 先校验 4 层 AND（建议用户先跑 prd-check-complete）
     output.info(f"PRD {prd_id} 当前 prdStatus = {ps.get('prdStatus', 'unknown')}")
     output.info("提示：建议先跑 `ae-sdd state prd-check-complete --prd {prd_id}` 校验")
     output.info(f"将触发 compact：runtime={runtime}")
 
-    # 更新 prdStatus → awaiting_compact → 等 compact hook 触发 → compacted
-    ps["prdStatus"] = "awaiting_compact"
-    ps["lastUpdated"] = _now_iso()
+    # 🆕 v3.8.1 S-5：调 state.prd_complete 生成 summary.md + 流转 prdStatus + runtime 差异化
+    result = state_mod.prd_complete(ps, prd_id, runtime, project_root)
     p = _prd_state_path(project_root, prd_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(ps, ensure_ascii=False, indent=2), encoding="utf-8")
-    output.ok(f"PRD {prd_id} prdStatus → awaiting_compact；等待 compact hook 触发")
+    state_mod.write_state(p, ps)
+
+    output.ok(f"PRD {prd_id} prdStatus → awaiting_compact；summary.md 已生成")
+    output.info(f"  summary: {result['summaryPath']}")
+    output.info(f"  {result['runtimeHint']}")
+    if result["compactTrigger"]:
+        output.info("  claude-code compact-trigger 文件已写（UserPromptSubmit hook 将注入 /compact）")
     output.info(f"下一步：跑 `ae-sdd runtime compact --runtime {runtime} --prd {prd_id}`")
     return 0
 
@@ -455,6 +463,7 @@ def cmd_runtime_compact(args, parser):
     output.info("    实施完会标记 prdStatus → compacted 并写 summary.md")
 
     # 🆕 v3.5.12：补真实 prdStatus 写入（闭环 5 态，治 P1-4 状态机残缺）
+    # 🆕 v3.8.1 S-5：复用 state.prd_complete 的 summary.md 生成 + runtime 差异化提示
     # 协议骨架不变（实际 compact 由 runtime hook 执行），但状态写入要真实，
     # 否则 prdStatus 永远卡 awaiting_compact，stop_check HS-8 误报。
     from lib import state as state_mod
@@ -462,9 +471,14 @@ def cmd_runtime_compact(args, parser):
     prd_state_path = project_root / ".auto-engineering" / prd_id / "state.json"
     if prd_state_path.is_file():
         ps = state_mod.read_state(prd_state_path)
+        # 若 summary.md 未生成（用户直接跑 runtime compact 跳过 prd-complete），补生成
+        summary_path = project_root / ".auto-engineering" / prd_id / "summary.md"
+        if not summary_path.is_file():
+            state_mod.prd_complete(ps, prd_id, runtime, project_root)
         state_mod.set_prd_status(ps, "compacted")
         state_mod.write_state(prd_state_path, ps)
         output.ok(f"prdStatus → compacted（v3.5.12 闭环写入）")
+        output.info(f"summary.md: {summary_path}")
     else:
         output.warn(f"PRD state.json 不存在（{prd_state_path}），跳过 prdStatus 写入")
     return 0
@@ -1626,6 +1640,41 @@ def cmd_state_register_review_consensus(args, parser):
     mark = "✅" if passed_bool else "❌"
     output.ok(f"{mark} 已写联审共识：审核点 {args.point} Tier {args.tier} "
               f"passed={args.passed} rounds={args.rounds}")
+    return 0
+
+
+def cmd_state_lock(args, parser):
+    """state lock — 🆕 v3.8.1 S-3 获取文件意图锁（防多 agent 并发写同一产物）。
+
+    用法：ae-sdd state lock --path <相对路径> --agent <agentId> [--ttl 1800]
+    冲突时退出码 1 并输出持锁方信息（供 agent 协调后重试）。
+    """
+    from lib import state as state_mod
+    ade_sdd, story_id, sp = _resolve_state_path(args)
+    st = state_mod.read_state(sp)
+    ok, reason = state_mod.acquire_file_lock(st, args.path, args.agent, args.ttl)
+    if not ok:
+        output.err(f"❌ 获取文件锁失败：{reason}")
+        return 1
+    state_mod.write_state(sp, st)
+    output.ok(f"✅ 已获文件锁：path={args.path} agent={args.agent} ttl={args.ttl}s")
+    return 0
+
+
+def cmd_state_unlock(args, parser):
+    """state unlock — 🆕 v3.8.1 S-3 释放文件意图锁（仅持锁者能释放）。
+
+    用法：ae-sdd state unlock --path <相对路径> --agent <agentId>
+    """
+    from lib import state as state_mod
+    ade_sdd, story_id, sp = _resolve_state_path(args)
+    st = state_mod.read_state(sp)
+    released = state_mod.release_file_lock(st, args.path, args.agent)
+    if not released:
+        output.warn(f"⚠️ 未释放（path={args.path} 非 agent {args.agent} 持锁，或锁不存在）")
+        return 0
+    state_mod.write_state(sp, st)
+    output.ok(f"✅ 已释放文件锁：path={args.path} agent={args.agent}")
     return 0
 
 
@@ -2985,19 +3034,60 @@ def cmd_health(args, parser):
         "message": freshness_msg,
     })
 
+    # 10. 🆕 v3.8.1 S-4：规则-工具同步状态（检测同版本内规则-代码漂移）
+    # item 9 只比版本号字符串，本项比 update-graph.json 各 UG 规则 trigger/affected 文件的
+    # sha256，能发现"同版本内 SKILL.md 声明了 gate 但 gates.py 未实装"这类漂移。
+    # manifest 缺失 → warn 不 fail（旧环境兼容）；漂移 → warn 不 fail（与 item 9 同级）。
+    sync_msg = "（无母版）"
+    sync_ok = True
+    if master:
+        repo_root_for_manifest = master.parent  # master = source/ → 父目录是仓库根
+        try:
+            drift = update_graph.check_sync_drift(repo_root_for_manifest)
+            if not drift["manifest_exists"]:
+                sync_ok = True  # manifest 缺失视作 pass（旧环境，未跑 build_dist）
+                sync_msg = "manifest 不存在（建议跑 build_dist.py 生成；旧环境跳过）"
+            elif drift["drift_count"] == 0:
+                sync_ok = True
+                sync_msg = (f"全部一致（{drift['total_rules']} 条 UG 规则，"
+                            f"manifest 生成于 {drift['generatedAt']}）")
+            else:
+                sync_ok = False  # 漂移 → warn（但不计入 failed 阻断退出码，见下方 summary 处理）
+                drifted_ids = [r["id"] for r in drift["drifted_rules"][:5]]
+                sync_msg = (f"{drift['drift_count']}/{drift['total_rules']} 条规则漂移："
+                            f"{drifted_ids}…（跑 build_dist.py 重新生成 manifest）")
+        except Exception as e:
+            sync_ok = True
+            sync_msg = f"检测异常（兜底放行）：{e}"
+    items.append({
+        "name": "规则-工具同步状态（v3.8.1 S-4）",
+        "pass": sync_ok,
+        "message": sync_msg,
+        "warn_only": not sync_ok,  # 漂移仅 warn，不计入 failed 退出码
+    })
+
     summary = {
         "total": len(items),
         "passed": sum(1 for i in items if i["pass"]),
-        "failed": sum(1 for i in items if not i["pass"]),
+        "failed": sum(1 for i in items if not i["pass"] and not i.get("warn_only")),
+        "warned": sum(1 for i in items if not i["pass"] and i.get("warn_only")),
         "items": items,
     }
     if args.json:
         output.emit(summary, as_json=True)
     else:
-        output.info(f"健康度自检 ({summary['passed']}/{summary['total']} 通过)：")
+        output.info(f"健康度自检 ({summary['passed']}/{summary['total']} 通过"
+                    + (f"，{summary['warned']} warn" if summary.get("warned") else "")
+                    + ")：")
         for i in items:
-            mark = "✅" if i["pass"] else "❌"
+            if i["pass"]:
+                mark = "✅"
+            elif i.get("warn_only"):
+                mark = "⚠️"
+            else:
+                mark = "❌"
             output.info(f"  {mark} {i['name']}: {i['message']}")
+    # 漂移(warn_only)不计入失败退出码，与 item 9 版本不一致同为 warn 级
     return 0 if summary["failed"] == 0 else 1
 
 
@@ -3177,6 +3267,26 @@ def main() -> int:
                              help="reviewer 摘要列表（agentId|role|verdict|sessionId，逗号分隔）")
     p_state_rrc.add_argument("--stall-reason", default="", help="未通过原因")
     p_state_rrc.set_defaults(func=cmd_state_register_review_consensus)
+
+    # state lock / unlock（🆕 v3.8.1 S-3 文件意图锁）
+    p_state_lock = state_sub.add_parser("lock",
+                                        help="[v3.8.1] 获取文件意图锁（防多 agent 并发写）",
+                                        parents=[common])
+    p_state_lock.add_argument("--story", default="", help="Story ID（空=项目级）")
+    p_state_lock.add_argument("--path", required=True,
+                              help="产物文件相对路径（相对 project_dir，正斜杠）")
+    p_state_lock.add_argument("--agent", required=True, help="申请锁的 agent 标识")
+    p_state_lock.add_argument("--ttl", type=int, default=1800,
+                              help="锁有效期秒数（默认 1800=30 分钟）")
+    p_state_lock.set_defaults(func=cmd_state_lock)
+
+    p_state_unlock = state_sub.add_parser("unlock",
+                                          help="[v3.8.1] 释放文件意图锁（仅持锁者能释放）",
+                                          parents=[common])
+    p_state_unlock.add_argument("--story", default="", help="Story ID（空=项目级）")
+    p_state_unlock.add_argument("--path", required=True, help="产物文件相对路径")
+    p_state_unlock.add_argument("--agent", required=True, help="释放锁的 agent 标识")
+    p_state_unlock.set_defaults(func=cmd_state_unlock)
 
     # runtime（🆕 v3.3.0 runtime-specific compact 适配层）
     p_runtime = sub.add_parser("runtime", help="[v3.3.0] runtime-specific 适配（compact 等）",

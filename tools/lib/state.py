@@ -15,6 +15,11 @@ Story/Task/Plan 级（txn 级）：
   "correctionCounts": { "coding": 2 },  # 🆕 v3.6 各 phase 矫正次数（flow_monitor Level 判定）
   "currentStory": "STORY-001" | null,
   "currentTask": "TASK-001" | null,
+  "activeAgents": [ ... ],          # 🆕 v3.5.12 运行中的 sub-agent 列表（agent 生命周期）
+  "agentReports": [ ... ],          # 🆕 v3.5.12 已完成 sub-agent 报告
+  "fileLocks": {                    # 🆕 v3.8.1 S-3 文件意图锁（防多 agent 并发写同一产物）
+    "<相对路径>": {"agentId": "...", "acquiredAt": "ISO8601", "ttlSeconds": 1800}
+  },
   "history": [
     { "phase": "...", "timestamp": "...", "by": "..." }
   ],
@@ -507,6 +512,102 @@ def complete_agent(state: dict, agent_id: str, report_path: str = "",
     })
 
 
+# ─── 🆕 v3.8.1 S-3：文件意图锁（防多 sub-agent 并发写同一产物）──────────────────
+# SKILL.md §🤖 多 Agent 任务分配机制："禁止多个 sub-agent 并发写同一文件/同一目录"。
+# v3.8.1 前该规则仅文档，无工具强制。本节提供基于 state.json 的中央意图锁：
+#   - activeAgents 记录 agent 生命周期（谁在跑），fileLocks 记录文件意图（谁要写哪个文件）
+#   - 两者职责正交：一个 agent 可持多把锁，一把锁只属一个 agent
+#   - 锁检查由 gate_intercept 的 PreToolUse hook 在 Write/Edit 前调用（不在 write_state 内，
+#     避免 state.json 自写时自锁死锁）
+#   - TTL 30 分钟防 agent 崩溃后死锁（复用 AGENTS.md 分布式锁 TTL 语义），惰性失效
+FILE_LOCK_TTL_SECONDS = 1800  # 锁默认有效期 30 分钟（常量，禁止魔法值）
+
+
+def _file_lock_expired(lock_info: dict, now_ts: str) -> bool:
+    """判断锁是否已过 TTL。now_ts 为当前 ISO8601 UTC 时间戳。"""
+    acquired = lock_info.get("acquiredAt")
+    if not acquired:
+        return True  # 无 acquiredAt 视作无效锁，允许失效
+    try:
+        acquired_dt = datetime.fromisoformat(acquired.replace("Z", "+00:00"))
+        now_dt = datetime.fromisoformat(now_ts.replace("Z", "+00:00"))
+        ttl = int(lock_info.get("ttlSeconds", FILE_LOCK_TTL_SECONDS))
+        return (now_dt - acquired_dt).total_seconds() > ttl
+    except Exception:
+        return True  # 时间解析异常视作过期（惰性失效，防脏数据死锁）
+
+
+def check_file_lock(state: dict, path: str) -> Optional[dict]:
+    """检查路径是否被锁。TTL 过期自动视作未锁（惰性失效，不写回 state）。
+
+    Args:
+        state: read_state() 返回的 dict（只读，不修改）
+        path:  产物文件相对路径（相对 project_dir，正斜杠分隔）
+
+    Returns:
+        持锁信息 dict（含 agentId/acquiredAt/ttlSeconds）或 None（未锁/已过期）
+    """
+    locks = state.get("fileLocks") or {}
+    lock_info = locks.get(path)
+    if not lock_info:
+        return None
+    if _file_lock_expired(lock_info, _now_ts()):
+        return None  # 过期视作未锁（惰性失效，调用方不感知过期细节）
+    return lock_info
+
+
+def acquire_file_lock(state: dict, path: str, agent_id: str,
+                      ttl_seconds: int = FILE_LOCK_TTL_SECONDS) -> tuple[bool, str]:
+    """获取文件意图锁（原地修改 state，调用方负责 write_state）。
+
+    冲突时返回 (False, reason)，reason 含持锁 agentId 便于排查。
+    TTL 过期的旧锁会被新 agent 抢占（防崩溃 agent 死锁）。
+
+    Args:
+        state:       read_state() 返回的 dict（原地修改）
+        path:        产物文件相对路径
+        agent_id:    申请锁的 sub-agent 标识
+        ttl_seconds: 锁有效期（默认 30 分钟）
+
+    Returns:
+        (success, reason)：success=True 时 reason 为空；失败时 reason 含持锁方信息
+    """
+    locks = state.setdefault("fileLocks", {})
+    existing = locks.get(path)
+    if existing and existing.get("agentId") == agent_id:
+        return True, ""  # 幂等：同 agent 重复获取
+    if existing and not _file_lock_expired(existing, _now_ts()):
+        holder = existing.get("agentId", "unknown")
+        return False, f"文件 {path} 已被 agent {holder} 持锁，禁止并发写"
+    # 无锁或旧锁过期 → 抢占
+    locks[path] = {
+        "agentId": agent_id,
+        "acquiredAt": _now_ts(),
+        "ttlSeconds": int(ttl_seconds),
+    }
+    return True, ""
+
+
+def release_file_lock(state: dict, path: str, agent_id: str) -> bool:
+    """释放文件意图锁（仅持锁者能释放，原地修改 state）。
+
+    Args:
+        state:    read_state() 返回的 dict（原地修改）
+        path:     产物文件相对路径
+        agent_id: 释放锁的 agent 标识（须与持锁 agentId 一致）
+
+    Returns:
+        True=实际释放；False=未持锁/非持锁者/锁不存在
+    """
+    locks = state.get("fileLocks") or {}
+    existing = locks.get(path)
+    if not existing or existing.get("agentId") != agent_id:
+        return False
+    del locks[path]
+    state["fileLocks"] = locks
+    return True
+
+
 # ─── 🆕 v3.8.0 自动化联审共识 state 写入 helper ───────────────────────────────
 # SKILL.md §🚀 自动化模式：审核点走 Tier 3 联审共识，结果写 reviewConsensus[point]。
 # G-AUTO-CONSENSUS 门禁校验本字段：passed=true + reviewer 独立性（复用 G-09B）。
@@ -689,6 +790,94 @@ def set_prd_status(state: dict, status: str) -> bool:
             "status": "compacted",
         })
     return True
+
+
+# ─── 🆕 v3.8.1 S-5：PRD compact 前置 helper（runtime 差异化） ──────────────────
+# 治 S-5 缺口：cmd_state_prd_complete 接收 --runtime 但从不分支；state.py 无 prd_complete。
+# 本 helper 封装"生成 summary.md + 流转 prdStatus → awaiting_compact + 返回 runtime 差异化提示"，
+# 消除 CLI 与 state 库职责分散。实际 compact 由各 runtime 的 hook/session 协议执行（保持协议骨架）。
+# runtime 差异表（对齐 2026-07-02 remediation plan §1.4）：
+#   mavis       → summary.md + mavis session rotate --handoff-file 指令
+#   claude-code → summary.md + 写 .ae-sdd/compact-trigger 文件（UserPromptSubmit hook 读取注入 /compact）
+#   codex       → summary.md + 标注"待调研"（codex 无 compact 机制）
+RUNTIME_COMPACT_HINTS: dict[str, str] = {
+    "mavis": "下一步：mavis session rotate --handoff-file {summary_path}",
+    "claude-code": "下一步：已写 compact-trigger 文件，UserPromptSubmit hook 将注入 /compact 指令",
+    "codex": "下一步：codex 无原生 compact 机制（待调研），summary.md 已生成供人工衔接",
+}
+
+
+def prd_complete(state: dict, prd_id: str, runtime: str,
+                 project_root: Path) -> dict:
+    """执行 PRD compact 前置：生成 summary.md + 流转 prdStatus → awaiting_compact。
+
+    Args:
+        state:        PRD 级 state.json 的 dict（read_state 结果，原地修改）
+        prd_id:       PRD 标识
+        runtime:      目标 runtime（mavis / claude-code / codex）
+        project_root: 项目根路径（用于定位 .auto-engineering/{prd_id}/summary.md）
+
+    Returns:
+        {"summaryPath": str, "runtimeHint": str, "compactTrigger": bool}
+        compactTrigger=True 仅 claude-code（写了 trigger 文件）
+    """
+    prd_dir = project_root / ".auto-engineering" / prd_id
+    prd_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = prd_dir / "summary.md"
+
+    # 生成 summary.md（compact 交接件，供下一 runtime/session 续接上下文）
+    summary_content = _build_prd_summary(state, prd_id, runtime)
+    summary_path.write_text(summary_content, encoding="utf-8")
+
+    # 流转 prdStatus → awaiting_compact（等 runtime compact hook 触发 → compacted）
+    if state.get("prdStatus") != "compacted":
+        set_prd_status(state, "awaiting_compact")
+    state["lastUpdated"] = _now_ts()
+
+    # runtime 差异化：claude-code 写 compact-trigger 文件
+    compact_trigger = False
+    if runtime == "claude-code":
+        trigger_file = project_root / ".ae-sdd" / "compact-trigger"
+        trigger_file.parent.mkdir(parents=True, exist_ok=True)
+        trigger_file.write_text(
+            json.dumps({"prdId": prd_id, "summaryPath": str(summary_path),
+                        "triggeredAt": _now_ts()}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        compact_trigger = True
+
+    hint_template = RUNTIME_COMPACT_HINTS.get(runtime, "")
+    runtime_hint = hint_template.format(summary_path=str(summary_path))
+
+    return {
+        "summaryPath": str(summary_path),
+        "runtimeHint": runtime_hint,
+        "compactTrigger": compact_trigger,
+    }
+
+
+def _build_prd_summary(state: dict, prd_id: str, runtime: str) -> str:
+    """构造 PRD compact summary.md 内容（compact 交接件）。
+
+    摘取 PRD state 的关键信息（prdId/title/storyIds/prdStatus/事件数），
+    供下一 runtime/session 快速续接上下文，不重复完整 state.json。
+    """
+    story_ids = [s.get("storyId", "") if isinstance(s, dict) else str(s)
+                 for s in state.get("storyIds", [])]
+    events = state.get("events", [])
+    return (
+        f"# PRD {prd_id} Compact Summary\n\n"
+        f"- **prdId**: {prd_id}\n"
+        f"- **prdTitle**: {state.get('prdTitle', '')}\n"
+        f"- **runtime**: {runtime}\n"
+        f"- **prdStatus**: {state.get('prdStatus', 'unknown')}\n"
+        f"- **storyIds**: {', '.join(story_ids) or '(无)'}\n"
+        f"- **events 数**: {len(events)}\n"
+        f"- **generatedAt**: {_now_ts()}\n\n"
+        f"## 交接说明\n\n"
+        f"本文件由 `ae-sdd state prd-complete --runtime {runtime}` 生成，"
+        f"供 {runtime} runtime 续接上下文。完整 PRD state 见同目录 state.json。\n"
+    )
 
 
 # ─── 🆕 v3.6 主流程监管器：paused 状态 + 矫正计数 API ─────────────────────────

@@ -435,5 +435,72 @@ class TestQueryAffected(unittest.TestCase):
         self.assertEqual(qr.checks_to_run.count("UC-03"), 1)
 
 
+# ─── 🆕 v3.8.1 S-4：规则-工具同步 manifest 测试 ───────────────────────────────
+
+
+class TestSyncManifest(unittest.TestCase):
+    """S-4 sync manifest：生成 / 漂移检测 / 缺失兜底。"""
+
+    def test_generate_manifest_structure(self):
+        """生成的 manifest 含 20 条 UG 规则 + trigger/affected sha256"""
+        manifest = ug.generate_sync_manifest(REPO_ROOT)
+        self.assertNotIn("error", manifest)
+        self.assertEqual(manifest["generatorVersion"], "1.0")
+        self.assertIn("generatedAt", manifest)
+        self.assertEqual(len(manifest["rules"]), 20)
+        # 每条规则有 id/name/trigger_files/affected_files
+        for rule in manifest["rules"]:
+            self.assertIn("id", rule)
+            self.assertIn("name", rule)
+            self.assertIsInstance(rule["trigger_files"], list)
+            self.assertIsInstance(rule["affected_files"], list)
+            # sha256 为 64 位十六进制
+            for tf in rule["trigger_files"]:
+                self.assertEqual(len(tf["sha256"]), 64)
+
+    def test_check_drift_no_drift_when_consistent(self):
+        """manifest 与当前文件一致 → drift_count=0"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp_repo = Path(td)
+            (tmp_repo / "source" / "standards").mkdir(parents=True)
+            import shutil
+            shutil.copy(REPO_ROOT / "source" / "standards" / "update-graph.json",
+                        tmp_repo / "source" / "standards" / "update-graph.json")
+            shutil.copytree(REPO_ROOT / "tools" / "lib", tmp_repo / "tools" / "lib")
+            ug.write_sync_manifest(tmp_repo)
+            drift = ug.check_sync_drift(tmp_repo)
+            self.assertTrue(drift["manifest_exists"])
+            self.assertEqual(drift["drift_count"], 0)
+
+    def test_check_drift_detects_tampered_hash(self):
+        """篡改 manifest 里某 trigger sha → 检测到漂移"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp_repo = Path(td)
+            (tmp_repo / "source" / "standards").mkdir(parents=True)
+            import shutil
+            shutil.copy(REPO_ROOT / "source" / "standards" / "update-graph.json",
+                        tmp_repo / "source" / "standards" / "update-graph.json")
+            shutil.copytree(REPO_ROOT / "tools" / "lib", tmp_repo / "tools" / "lib")
+            ug.write_sync_manifest(tmp_repo)
+            mp = ug.sync_manifest_path(tmp_repo)
+            m = json.loads(mp.read_text(encoding="utf-8"))
+            for r in m["rules"]:
+                if r["id"] == "UG-02" and r["trigger_files"]:
+                    r["trigger_files"][0]["sha256"] = "0" * 64
+            mp.write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
+            drift = ug.check_sync_drift(tmp_repo)
+            self.assertGreaterEqual(drift["drift_count"], 1)
+            self.assertEqual(drift["drifted_rules"][0]["id"], "UG-02")
+
+    def test_check_drift_missing_manifest(self):
+        """manifest 不存在 → manifest_exists=False，零值兜底"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp_repo = Path(td)
+            drift = ug.check_sync_drift(tmp_repo)
+            self.assertFalse(drift["manifest_exists"])
+            self.assertEqual(drift["drift_count"], 0)
+            self.assertEqual(drift["total_rules"], 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

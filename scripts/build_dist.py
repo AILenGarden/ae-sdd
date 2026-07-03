@@ -349,6 +349,18 @@ def main() -> int:
     _extract_tar_to(tar_bytes, dst, EXCLUDE_DIRS, EXCLUDE_FILES)
     ok("整树复制完成（git archive → 字节级一致）")
 
+    # ── 🆕 v3.8.1 S-4：生成规则-工具同步 manifest（health 第 10 项依赖）─────────
+    # 在复制 tools/ 之前生成到 repo_root/tools/.sync-manifest.json，随 tools/ 一并分发。
+    # health 读此 manifest 比对当前文件 hash，检测"同版本内规则-代码漂移"。
+    step("生成规则-工具同步 manifest（S-4）")
+    try:
+        sys.path.insert(0, str(repo_root / "tools"))
+        from lib import update_graph as _ug  # noqa: E402
+        manifest_path = _ug.write_sync_manifest(repo_root)
+        ok(f"sync manifest 已生成: {manifest_path}")
+    except Exception as e:
+        warn(f"sync manifest 生成失败（不影响构建）: {e}")
+
     # ── 复制 tools/（working tree，非 git archive，无 CRLF 问题）────────────
     _copy_tools_to_dist(repo_root, dst)
 
