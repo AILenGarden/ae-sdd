@@ -4,7 +4,7 @@
 
 ae-sdd 的工具链能力已经从单一 SKILL 文档扩展为 CLI、门禁、扫描器、状态机、hook、runtime 编译器和分发器协同运行。当前缺少统一运行时统计，导致慢点只能靠人工 `Measure-Command` 粗测，无法在 `gates check`、`update-check`、扫描器、子进程调用之间定位瓶颈。
 
-本方案先归档设计，不代表已实现。
+> 状态更新（2026-07-03）：P0 已实现，包含 `tools/lib/runtime_stats.py`、`tools/lib/runtime_exec.py`、CLI 命令级统计、gate/span 统计、`perf report/doctor/clear` 与 UTF-8 子进程包装。P1+ 仍作为后续性能优化方向。
 
 ## 当前基线
 
@@ -78,9 +78,9 @@ ae-sdd 的工具链能力已经从单一 SKILL 文档扩展为 CLI、门禁、�
 | --- | --- |
 | `command` | CLI 命令名，例如 `gates check` |
 | `durationMs` | 墙钟耗时 |
-| `processMs` | 进程 CPU 近似耗时 |
+| `cpuMs` | 进程 CPU 近似耗时 |
 | `exitCode` | 命令退出码 |
-| `spans[]` | 子 span，例如 `gate:G-CODE-1`、`scanner:coding_authenticity` |
+| `spans[]` | 子 span，例如 `gate`（attrs.gateId=`G-CODE-1`）、`scanner:coding_authenticity` |
 | `cacheHit` | 扫描器或 inventory 是否命中缓存 |
 | `errorClass` | 异常类型，不记录敏感参数 |
 
@@ -91,7 +91,7 @@ ae-sdd 的工具链能力已经从单一 SKILL 文档扩展为 CLI、门禁、�
 1. 在 `tools/bin/ae-sdd` 的 `args.func(args, parser)` 外层包 command span。
 2. 在 `tools/lib/gates.py::check_all()` 内给每个 gate 包 span。
 3. `GateResult` 或 `details` 增加 `durationMs`，`summarize()` 输出 `slowest`。
-4. 把 `gates.py`、`update_graph.py`、`iteration_check.py`、`tools/bin/ae-sdd` 中直接 `subprocess.run(..., text=True)` 调用收敛到 `runtime_exec.run_command()`。
+4. 第一批把 `gates.py` 与 `tools/bin/ae-sdd` 中的扫描器/脚本类 `subprocess.run(..., text=True)` 调用收敛到 `runtime_exec.run_command()`；`update_graph.py`、`iteration_check.py` 后续按慢点再收敛。
 5. `runtime_exec` 默认 `encoding="utf-8"`、`errors="replace"`，并向子进程环境注入 `PYTHONUTF8=1`。
 
 ### P1：轻量命令 fast path
@@ -127,10 +127,9 @@ ae-sdd 的工具链能力已经从单一 SKILL 文档扩展为 CLI、门禁、�
 
 新增测试：
 
-- `tools/tests/test_runtime_stats.py`
-- `tools/tests/test_runtime_exec.py`
+- `tools/tests/test_runtime_stats.py`（同时覆盖 `runtime_exec` UTF-8 span）
 - `tools/tests/test_cli_perf.py`
-- `tools/tests/test_gates.py` 增加 `durationMs/slowest/details` 覆盖
+- `tools/tests/test_gates.py` 后续可增加 `durationMs/slowest/details` 覆盖
 - 扫描器行为回归：优化前后 findings 数量一致
 
 性能阈值不直接写入 CI 强约束。CI 只验证契约和行为；耗时目标由本地 benchmark 或 `perf doctor` 报告。
@@ -144,4 +143,3 @@ ae-sdd 的工具链能力已经从单一 SKILL 文档扩展为 CLI、门禁、�
 - `README.md` 详细文档索引
 - `source/standards/update-graph.json`（如新增 UC/UG）
 - `source/CHANGELOG/`
-

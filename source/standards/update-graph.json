@@ -36,7 +36,9 @@
       "affected": [
         {"path": "source/SKILL.md", "action": "若 SKILL.md 引用该命令则确认存在；头注释用法示例更新", "auto_checkable": true},
         {"path": "tools/bin/ae-sdd", "action": "头注释用法示例更新", "auto_checkable": false},
-        {"path": "tools/tests/", "action": "新增对应子命令测试", "auto_checkable": false}
+        {"path": "tools/tests/", "action": "新增对应子命令测试", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-design.md", "action": "CLI 能力表同步新增/修改命令；若无用户可见影响，在 CHANGELOG 写明 N/A", "auto_checkable": false},
+        {"path": "README.md", "action": "若命令属于用户可见入口，版本摘要或文档索引同步", "auto_checkable": false}
       ],
       "checks": ["UC-03"]
     },
@@ -95,6 +97,8 @@
       "affected": [
         {"path": "source/CHANGELOG/", "action": "新增 CHANGELOG 文件", "auto_checkable": false},
         {"path": "README.md", "action": "第 5 行版本行更新", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-design.md", "action": "若能力语义、流程边界、门禁语义或用户可见行为变化，必须同步；若无影响，在 CHANGELOG 写明 N/A", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "若 CLI/lib/scripts/hook/build/distribution/cache/scanner/state 等实现边界或数据流变化，必须同步；若无影响，在 CHANGELOG 写明 N/A", "auto_checkable": false},
         {"path": "(分发闭环 v3.4.0)", "action": ".githooks/post-commit 自动触发 build_dist → install → harness adapter → mavis remount；不再依赖手工 dev-sync", "auto_checkable": true},
         {"path": ".githooks/post-commit", "action": "🆕 v3.4.0：hook 自身必须存在且可执行（UC-07 验证）", "auto_checkable": true},
         {"path": "git config core.hooksPath", "action": "🆕 v3.4.0：必须 = .githooks（UC-07 验证）", "auto_checkable": true}
@@ -368,6 +372,34 @@
         {"path": "source/CHANGELOG/", "action": "新增 2026-07-02-automation-switch.md", "auto_checkable": false}
       ],
       "checks": ["UC-02", "UC-03", "UC-16"]
+    },
+    {
+      "id": "UG-21",
+      "name": "Runtime Stats and subprocess wrapper",
+      "trigger": [
+        "tools/lib/runtime_stats.py",
+        "tools/lib/runtime_exec.py",
+        "tools/lib/gates.py",
+        "tools/bin/ae-sdd",
+        "tools/tests/test_runtime_stats.py",
+        "tools/tests/test_cli_perf.py"
+      ],
+      "trigger_condition": "Runtime Stats 统计存储、perf 子命令、gate/span 耗时或子进程 UTF-8 包装变更",
+      "affected": [
+        {"path": "tools/lib/runtime_stats.py", "action": "command/span JSONL schema、脱敏、AE_SDD_STATS/AE_SDD_STATS_DIR 开关保持兼容", "auto_checkable": false},
+        {"path": "tools/lib/runtime_exec.py", "action": "默认 UTF-8、timeout、span 属性和 subprocess.run 兼容参数保持稳定", "auto_checkable": false},
+        {"path": "tools/lib/gates.py", "action": "check_all 记录 gate durationMs；summarize 输出 slowest 且不改变 pass/fail 语义", "auto_checkable": false},
+        {"path": "tools/bin/ae-sdd", "action": "perf report/doctor/clear 子命令注册；业务 --json 输出不被统计污染", "auto_checkable": true},
+        {"path": "tools/tests/test_runtime_stats.py", "action": "覆盖 JSONL 写入、脱敏、runtime_exec UTF-8 span、clear", "auto_checkable": false},
+        {"path": "tools/tests/test_cli_perf.py", "action": "覆盖真实 CLI version -> perf report/doctor/clear", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-design.md", "action": "性能诊断类 CLI 能力与 report-only 边界同步", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "Runtime Stats 模块、存储、环境开关、子进程边界同步", "auto_checkable": false},
+        {"path": "source/docs/plans/2026-07-02-runtime-stats-performance-plan.md", "action": "P0/P1+ 状态与验证清单同步", "auto_checkable": false},
+        {"path": "README.md", "action": "版本摘要或文档索引同步 Runtime Stats 状态", "auto_checkable": false},
+        {"path": ".gitignore", "action": "忽略 .ae-sdd/runtime-stats/ 等本地观测数据目录", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "新增 Runtime Stats 变更记录", "auto_checkable": false}
+      ],
+      "checks": ["UC-03"]
     }
   ]
 }

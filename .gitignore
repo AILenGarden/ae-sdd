@@ -32,6 +32,8 @@ nul
 
 # ae-sdd local toolset secrets (DB profiles, tokens, local-only adapters)
 .ae-sdd/secrets/
+# ae-sdd local runtime telemetry (perf report/doctor source data)
+.ae-sdd/runtime-stats/
 
 # =============================================
 # Python

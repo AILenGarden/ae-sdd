@@ -112,6 +112,7 @@ harness/                        派生适配层，不手工改生成物
 | `.ae-sdd/memory/` | 分层记忆 |
 | `.ae-sdd/plugins/` | 项目层插件注册 |
 | `.ae-sdd/cache/` | 工具链缓存，新增缓存优先放这里 |
+| `.ae-sdd/runtime-stats/` | Runtime Stats JSONL，本地观测数据，可清理，不进入版本控制 |
 
 新增项目侧文件必须说明是否可删、是否进入版本控制、是否参与 gate。
 
@@ -162,20 +163,26 @@ source/skills/**/*.md
 - `tools/lib/runtime_verify.py` 负责校验 installed package 是否为完整 compiled runtime；如果存在 source child SKILL 而缺少 compiled 子入口，必须报错。
 - `tools/lib/update_graph.py` 的 UC-15 必须把 `SKILL.md`、`runtime/**`、`skills/**/*.md` 都纳入幂等快照。
 
-## 9. Runtime Stats 预留架构
+## 9. Runtime Stats 架构
 
-运行时统计方案归档在 [`plans/2026-07-02-runtime-stats-performance-plan.md`](plans/2026-07-02-runtime-stats-performance-plan.md)。
-
-落地时建议新增：
+运行时统计 P0 已落地；性能优化的阶段性方案归档在 [`plans/2026-07-02-runtime-stats-performance-plan.md`](plans/2026-07-02-runtime-stats-performance-plan.md)。
 
 | 模块 | 职责 |
 | --- | --- |
-| `tools/lib/runtime_stats.py` | command/span 统计、JSONL 落盘、慢点汇总 |
+| `tools/lib/runtime_stats.py` | command/span 统计、JSONL 落盘、慢点汇总、敏感 argv 脱敏、`AE_SDD_STATS`/`AE_SDD_STATS_DIR` 环境开关 |
 | `tools/lib/runtime_exec.py` | 统一子进程执行、UTF-8、timeout、span 接入 |
-| `ae-sdd perf report` | 查询运行统计 |
-| `ae-sdd perf doctor` | 根据慢点输出优化建议 |
+| `tools/bin/ae-sdd` | 在 `args.func(args, parser)` 外层记录命令事件；`perf report/doctor/clear` 查询、诊断、清理统计 |
+| `tools/lib/gates.py` | `check_all()` 为每个 gate 增加 span，并在 `summarize()` 输出 `durationMs` 与 `slowest` |
 
-统计不得污染 stdout；`--json` 业务输出保持可解析。
+统计存储与输出规则：
+
+- 项目内运行写入 `.ae-sdd/runtime-stats/YYYY-MM-DD.jsonl`；无项目 `.ae-sdd/` 时写入系统临时目录 `ae-sdd/runtime-stats/`。
+- 测试和临时环境可用 `AE_SDD_STATS_DIR=<dir>` 改写存储目录；`AE_SDD_STATS=0` 可关闭统计。
+- 统计不得污染业务 stdout；`--json` 业务输出保持可解析。查询统计必须显式调用 `ae-sdd perf report --json`。
+- `perf clear` 清理当前统计文件并抑制自身 command event，避免刚清理又写入一条 clear 记录。
+- 子进程调用默认注入 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并使用 `encoding="utf-8", errors="replace"` 解码。
+
+边界：Runtime Stats 只记录命令名、脱敏 argv、耗时、退出码和 span 属性，不记录业务文档正文；它用于定位慢点，不作为硬门禁。
 
 ## 10. 设计-实现对齐闭环
 

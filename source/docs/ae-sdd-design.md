@@ -124,7 +124,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，**实际 29 个**：G-00~G-14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP） |
+| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，**实际 30 个**：G-00~G-14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS） |
 | CLI 统一扫描入口 | `ae-sdd gates check`（`tools/bin/ae-sdd` 行2688，帮助文本自带门禁清单） |
 | 单个门禁定向检查 | `ae-sdd gates check --only <gate_id>` |
 | G-00 资产门卫 | `gates.py` G-00 check 函数；不通过时 AI 手动路由到 `project-assets-update-skill §3`（无 CLI 自动生成） |
@@ -326,7 +326,7 @@ CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策�
 
 ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执行"双轨 SSOT。规则在 SKILL.md 描述，执行在 CLI 实现，两者通过 `ae-sdd update-check` 自动验证一致性；CLI 是门禁、状态、资产、记忆等能力的统一执行入口。
 
-**⚠️ 文档滞后修正**：原文档标题写"14 大类子命令"，实际顶层子命令组已达 29 个（新增 `doc / enter / context-pressure / ra-gate / flow-violation-scan / ra-depth-scan / ra-implementation-scan / review-loop / plugin / iteration-check` 等）；原表格中列出的 `route / sync-tools / run / quick / proposal` 顶层命令**不存在**，已从下表删除。
+**⚠️ 文档滞后修正**：原文档标题写"14 大类子命令"，实际顶层子命令组已达 30 个（新增 `doc / enter / context-pressure / ra-gate / flow-violation-scan / ra-depth-scan / ra-implementation-scan / review-loop / plugin / iteration-check / perf` 等）；原表格中列出的 `route / sync-tools / run / quick / proposal` 顶层命令**不存在**，已从下表删除。
 
 ### 实现
 
@@ -350,14 +350,16 @@ ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执�
 | 上下文压力 | `context-pressure` |
 | RA 扫描类 | `ra-depth-scan / ra-implementation-scan / flow-violation-scan` |
 | Review 类 | `review-loop` |
+| 性能诊断类 | `perf report / perf doctor / perf clear` |
 | 版本类 | `bump <ver> / version` |
 | 维护类 | `health / init / init-hooks / runtime / plugin / scripts-dir / prompt-inject / stop-check` |
 
 - `ae-sdd health` 9 项自检：子 SKILL 章节完整性 / 项目资产双源一致 / 规则-工具同步 / 门禁覆盖度 / TR-1~7 / 扫描器就绪 / CHANGELOG 版本一致
 - `ae-sdd update-check`：权威源 `source/standards/update-graph.json`（UC-01~UC-16，比早期 UC-01~06 更完整），版本号三处一致 / 门禁注册一致 / 命令契约闭环 / 扫描器分发 / 健康度清单覆盖 / 文档-实现一致性 / runtime 编译一致性 / 自动化级联一致性等；dev-sync 前必须全绿
 - `ae-sdd iteration-check`：IC-1~4 机器粗筛（report-only），接管人工 SOP 步骤 2/3/4
+- `ae-sdd perf report/doctor/clear`：运行时统计查询、慢点建议和本地统计清理；统计只记录命令/span 耗时、退出码、脱敏 argv 与有限属性，不记录业务文档正文
 
-**颗粒度与边界**：db/git 工具为只读；G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json；iteration-check/context-pressure 均 report-only，不阻断 dev-sync。
+**颗粒度与边界**：db/git 工具为只读；G-00 由 AI Agent 手动 `gates check --only G-00`（非 CLI 自动触发）；update-check 权威源是 `source/standards/update-graph.json`；改 CLI 命令契约须同步 update-graph.json；iteration-check/context-pressure/perf 均 report-only，不阻断 dev-sync。
 
 ---
 

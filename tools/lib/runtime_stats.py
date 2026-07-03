@@ -1,0 +1,339 @@
+"""
+Lightweight runtime statistics for ae-sdd commands.
+
+The recorder is intentionally best-effort: statistics must never fail the
+business command. Events are stored as JSONL under `.ae-sdd/runtime-stats/`
+or an override directory from `AE_SDD_STATS_DIR`.
+"""
+from __future__ import annotations
+
+import contextvars
+import json
+import os
+import tempfile
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+
+_CURRENT: contextvars.ContextVar["TraceRecorder | None"] = contextvars.ContextVar(
+    "ae_sdd_runtime_stats_current",
+    default=None,
+)
+
+_FALSE_VALUES = {"0", "false", "no", "off"}
+_SENSITIVE_MARKERS = ("password", "passwd", "secret", "token", "apikey", "api-key", "key")
+
+
+def is_enabled() -> bool:
+    return os.environ.get("AE_SDD_STATS", "1").strip().lower() not in _FALSE_VALUES
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _find_project_root(start: Optional[Path] = None) -> Optional[Path]:
+    cur = (start or Path.cwd()).expanduser().resolve()
+    if cur.name == ".ae-sdd":
+        return cur.parent
+    if (cur / ".ae-sdd").is_dir():
+        return cur
+    for parent in cur.parents:
+        if (parent / ".ae-sdd").is_dir():
+            return parent
+    return None
+
+
+def stats_dir(project: Optional[Path] = None) -> Path:
+    override = os.environ.get("AE_SDD_STATS_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+
+    root = _find_project_root(project)
+    if root is not None:
+        return root / ".ae-sdd" / "runtime-stats"
+
+    return Path(tempfile.gettempdir()) / "ae-sdd" / "runtime-stats"
+
+
+def _event_file(directory: Path, started_at: Optional[str] = None) -> Path:
+    day = (started_at or _utc_now())[:10]
+    return directory / f"{day}.jsonl"
+
+
+def _is_sensitive_flag(value: str) -> bool:
+    key = value.lstrip("-").split("=", 1)[0].lower()
+    return any(marker in key for marker in _SENSITIVE_MARKERS)
+
+
+def _redact_argv(argv: list[str]) -> list[str]:
+    redacted: list[str] = []
+    redact_next = False
+    for item in argv:
+        text = str(item)
+        if redact_next:
+            redacted.append("***")
+            redact_next = False
+            continue
+        if "=" in text and _is_sensitive_flag(text.split("=", 1)[0]):
+            redacted.append(f"{text.split('=', 1)[0]}=***")
+            continue
+        if text.startswith("-") and _is_sensitive_flag(text):
+            redacted.append(text)
+            redact_next = True
+            continue
+        redacted.append(text)
+    return redacted
+
+
+@dataclass
+class TraceRecorder:
+    command: str
+    argv: list[str]
+    directory: Path
+    attrs: dict[str, Any] = field(default_factory=dict)
+    started_at: str = field(default_factory=_utc_now)
+    started_ns: int = field(default_factory=time.perf_counter_ns)
+    started_cpu_ns: int = field(default_factory=time.process_time_ns)
+    spans: list[dict[str, Any]] = field(default_factory=list)
+    suppressed: bool = False
+
+    def to_event(self, exit_code: int, error_class: Optional[str] = None) -> dict[str, Any]:
+        duration_ms = (time.perf_counter_ns() - self.started_ns) / 1_000_000
+        cpu_ms = (time.process_time_ns() - self.started_cpu_ns) / 1_000_000
+        event = {
+            "schema": "ae-sdd.runtimeStats.v1",
+            "startedAt": self.started_at,
+            "finishedAt": _utc_now(),
+            "command": self.command,
+            "argv": _redact_argv(self.argv),
+            "exitCode": int(exit_code),
+            "durationMs": round(duration_ms, 3),
+            "cpuMs": round(cpu_ms, 3),
+            "spans": self.spans,
+            "attrs": self.attrs,
+        }
+        if error_class:
+            event["errorClass"] = error_class
+        return event
+
+
+class Span:
+    def __init__(self, name: str, attrs: Optional[dict[str, Any]] = None) -> None:
+        self.name = name
+        self.attrs: dict[str, Any] = dict(attrs or {})
+        self.duration_ms = 0.0
+        self.cpu_ms = 0.0
+        self._started_ns = 0
+        self._started_cpu_ns = 0
+        self._finished = False
+
+    def __enter__(self) -> "Span":
+        self._started_ns = time.perf_counter_ns()
+        self._started_cpu_ns = time.process_time_ns()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is not None:
+            self.attrs.setdefault("errorClass", getattr(exc_type, "__name__", str(exc_type)))
+        self.finish()
+
+    def finish(self) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        self.duration_ms = round((time.perf_counter_ns() - self._started_ns) / 1_000_000, 3)
+        self.cpu_ms = round((time.process_time_ns() - self._started_cpu_ns) / 1_000_000, 3)
+        recorder = _CURRENT.get()
+        if recorder is None:
+            return
+        recorder.spans.append({
+            "name": self.name,
+            "durationMs": self.duration_ms,
+            "cpuMs": self.cpu_ms,
+            "attrs": _jsonable(self.attrs),
+        })
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
+
+
+def start_command(
+    command: str,
+    argv: Optional[list[str]] = None,
+    project: Optional[Path] = None,
+    attrs: Optional[dict[str, Any]] = None,
+) -> Optional[TraceRecorder]:
+    if not is_enabled():
+        _CURRENT.set(None)
+        return None
+    recorder = TraceRecorder(
+        command=command or "unknown",
+        argv=list(argv or []),
+        directory=stats_dir(project),
+        attrs=_jsonable(attrs or {}),
+    )
+    _CURRENT.set(recorder)
+    return recorder
+
+
+def current() -> Optional[TraceRecorder]:
+    return _CURRENT.get()
+
+
+def suppress_current_event() -> None:
+    recorder = _CURRENT.get()
+    if recorder is not None:
+        recorder.suppressed = True
+
+
+def span(name: str, attrs: Optional[dict[str, Any]] = None) -> Span:
+    return Span(name, attrs)
+
+
+def finish_command(exit_code: int = 0, error_class: Optional[str] = None) -> int:
+    recorder = _CURRENT.get()
+    _CURRENT.set(None)
+    if recorder is None or recorder.suppressed:
+        return int(exit_code)
+
+    try:
+        recorder.directory.mkdir(parents=True, exist_ok=True)
+        event = recorder.to_event(exit_code=exit_code, error_class=error_class)
+        target = _event_file(recorder.directory, recorder.started_at)
+        with target.open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    except Exception:
+        pass
+    return int(exit_code)
+
+
+def read_events(limit: int = 100, project: Optional[Path] = None) -> list[dict[str, Any]]:
+    directory = stats_dir(project)
+    if limit <= 0 or not directory.exists():
+        return []
+
+    events: list[dict[str, Any]] = []
+    try:
+        files = sorted(directory.glob("*.jsonl"), reverse=True)
+        for file in files:
+            try:
+                lines = file.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line in reversed(lines):
+                if not line.strip():
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+                if len(events) >= limit:
+                    return events
+    except Exception:
+        return events
+    return events
+
+
+def clear_events(project: Optional[Path] = None) -> int:
+    directory = stats_dir(project)
+    if not directory.exists():
+        return 0
+    count = 0
+    for file in directory.glob("*.jsonl"):
+        try:
+            file.unlink()
+            count += 1
+        except OSError:
+            pass
+    return count
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = int(round((len(ordered) - 1) * pct))
+    return round(ordered[index], 3)
+
+
+def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict[str, Any]:
+    durations = [float(e.get("durationMs") or 0.0) for e in events]
+    command_map: dict[str, dict[str, Any]] = {}
+    spans: list[dict[str, Any]] = []
+
+    for event in events:
+        command = str(event.get("command") or "unknown")
+        duration = float(event.get("durationMs") or 0.0)
+        item = command_map.setdefault(command, {
+            "command": command,
+            "count": 0,
+            "totalMs": 0.0,
+            "maxMs": 0.0,
+            "lastStartedAt": "",
+        })
+        item["count"] += 1
+        item["totalMs"] += duration
+        item["maxMs"] = max(float(item["maxMs"]), duration)
+        if not item["lastStartedAt"]:
+            item["lastStartedAt"] = event.get("startedAt", "")
+        for span_event in event.get("spans", []) or []:
+            span_copy = dict(span_event)
+            span_copy["command"] = command
+            span_copy["startedAt"] = event.get("startedAt", "")
+            spans.append(span_copy)
+
+    commands = []
+    for item in command_map.values():
+        total = float(item["totalMs"])
+        count = int(item["count"])
+        item["totalMs"] = round(total, 3)
+        item["avgMs"] = round(total / count, 3) if count else 0.0
+        item["maxMs"] = round(float(item["maxMs"]), 3)
+        commands.append(item)
+
+    slowest_commands = sorted(
+        events,
+        key=lambda e: float(e.get("durationMs") or 0.0),
+        reverse=True,
+    )[:slow_limit]
+    slowest_spans = sorted(
+        spans,
+        key=lambda e: float(e.get("durationMs") or 0.0),
+        reverse=True,
+    )[:slow_limit]
+
+    return {
+        "count": len(events),
+        "duration": {
+            "avgMs": round(sum(durations) / len(durations), 3) if durations else 0.0,
+            "p50Ms": _percentile(durations, 0.50),
+            "p95Ms": _percentile(durations, 0.95),
+            "maxMs": round(max(durations), 3) if durations else 0.0,
+        },
+        "commands": sorted(commands, key=lambda e: float(e["totalMs"]), reverse=True),
+        "slowestCommands": [
+            {
+                "command": e.get("command"),
+                "durationMs": e.get("durationMs"),
+                "exitCode": e.get("exitCode"),
+                "startedAt": e.get("startedAt"),
+            }
+            for e in slowest_commands
+        ],
+        "slowestSpans": slowest_spans,
+    }

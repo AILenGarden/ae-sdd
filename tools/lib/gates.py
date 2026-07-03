@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import paths, state as state_mod  # noqa: E402
+from lib import paths, runtime_exec, runtime_stats, state as state_mod  # noqa: E402
 
 
 @dataclass
@@ -601,9 +601,10 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
 
     # 跑扫描（不卡 phase：保证能发现违规测试）
     try:
-        result = _subprocess.run(
+        result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
+            span_name="scanner:test_authenticity",
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
@@ -718,9 +719,10 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
                           details={"scanned": False, "skipped": True, "stub": True})
 
     try:
-        result = _subprocess.run(
+        result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
+            span_name="scanner:coding_authenticity",
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
@@ -1158,9 +1160,10 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
 
     # 跑扫描
     try:
-        result = _subprocess.run(
+        result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
+            span_name="scanner:ra_authenticity",
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-4", name, "blocker", False,
@@ -1251,9 +1254,10 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
                           details={"skipped": True, "reason": "scanner-not-found"})
 
     try:
-        result = _subprocess.run(
+        result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60, check=False,
+            span_name="scanner:flow_violation",
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
@@ -1339,9 +1343,10 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
                           details={"scanned": False, "stub": True, "phase": phase})
 
     try:
-        result = _subprocess.run(
+        result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
+            span_name="scanner:ra_depth",
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-5", name, "blocker", False,
@@ -1426,9 +1431,10 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
                           details={"scanned": False, "stub": True, "phase": phase})
 
     try:
-        result = _subprocess.run(
+        result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
+            span_name="scanner:ra_implementation",
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-6", name, "blocker", False,
@@ -1698,9 +1704,10 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
     # 仅对"未跟踪 + 新产出"的游离文件报。修复 fixture / 项目迁移场景误报。
     git_tracked: set[str] = set()
     try:
-        ls_result = _subprocess.run(
+        ls_result = runtime_exec.run_command(
             ["git", "ls-files", "*.md"],
             cwd=project_dir, capture_output=True, text=True, timeout=10,
+            span_name="subprocess:git_ls_files_md",
         )
         for line in ls_result.stdout.splitlines():
             git_tracked.add(line.strip().replace("\\", "/"))
@@ -2356,35 +2363,40 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
             message=f"未知门禁 ID: {only}（允许: {[g['id'] for g in GATE_REGISTRY]}）",
         )]
 
-    for g in targets:
+    def _run_gate(g: dict) -> GateResult:
         if g["id"] == "G-00":
-            results.append(check_g00(master_source, ade_sdd, project_key))
-        elif g["id"] == "G-09":
+            return check_g00(master_source, ade_sdd, project_key)
+        if g["id"] == "G-09":
             # G-09 需要 master_source 调子脚本
-            results.append(check_g09(project_dir, st, current_story, master_source=master_source))
-        elif g["id"] == "G-RA-4":
+            return check_g09(project_dir, st, current_story, master_source=master_source)
+        if g["id"] == "G-RA-4":
             # G-RA-4 同样需要 master_source 调 ra_authenticity_scan.py
-            results.append(check_ra_authenticity(project_dir, st, current_story, master_source=master_source))
-        elif g["id"] == "G-RA-5":
+            return check_ra_authenticity(project_dir, st, current_story, master_source=master_source)
+        if g["id"] == "G-RA-5":
             # 🆕 v3.5.9 G-RA-5 需要 master_source 调 ra_depth_scan.py
-            results.append(check_ra_depth(project_dir, st, current_story, master_source=master_source))
-        elif g["id"] == "G-RA-6":
+            return check_ra_depth(project_dir, st, current_story, master_source=master_source)
+        if g["id"] == "G-RA-6":
             # 🆕 v3.5.18 G-RA-6 需要 master_source 调 ra_implementation_scan.py
-            results.append(check_ra_implementation(project_dir, st, current_story, master_source=master_source))
-        elif g["id"] == "G-CODE-1":
+            return check_ra_implementation(project_dir, st, current_story, master_source=master_source)
+        if g["id"] == "G-CODE-1":
             # G-CODE-1 需要 master_source 调 coding_authenticity_scan.py
-            results.append(check_gcode1(project_dir, st, current_story, master_source=master_source))
-        elif g["id"] == "G-RA-FLOW-VIOLATION":
+            return check_gcode1(project_dir, st, current_story, master_source=master_source)
+        if g["id"] == "G-RA-FLOW-VIOLATION":
             # 🆕 v3.5.11 修复假门禁：G-RA-FLOW-VIOLATION 需要 master_source 调 flow_violation_scan.py
             # 历史漏洞：走 CHECK_FUNCS 漏传 master_source → scanner 恒定位失败 → stub-pass
-            results.append(check_ra_flow_violation(project_dir, st, current_story, master_source=master_source))
-        elif g["id"] == "G-PATH":
+            return check_ra_flow_violation(project_dir, st, current_story, master_source=master_source)
+        if g["id"] == "G-PATH":
             # 🆕 v4.1 G-PATH 需要 master_source 扫母版 source/ 路径越界
-            results.append(check_g_path(master_source, project_dir, st, current_story))
-        elif g["id"] in CHECK_FUNCS:
-            results.append(CHECK_FUNCS[g["id"]](project_dir, st, current_story))
-        else:
-            results.append(_stub_v31(g["id"], g["name"]))
+            return check_g_path(master_source, project_dir, st, current_story)
+        if g["id"] in CHECK_FUNCS:
+            return CHECK_FUNCS[g["id"]](project_dir, st, current_story)
+        return _stub_v31(g["id"], g["name"])
+
+    for g in targets:
+        with runtime_stats.span("gate", {"gateId": g["id"], "gateName": g["name"]}) as gate_span:
+            result = _run_gate(g)
+        result.details.setdefault("durationMs", gate_span.duration_ms)
+        results.append(result)
 
     return results
 
@@ -2404,21 +2416,38 @@ def _stub_v31(gate_id: str, name: str) -> GateResult:
 
 def summarize(results: list[GateResult]) -> dict:
     """汇总结果"""
+    result_items = [
+        {
+            "gate_id": r.gate_id,
+            "name": r.name,
+            "severity": r.severity,
+            "pass": r.pass_,
+            "message": r.message,
+            "action": r.action,
+            "durationMs": r.details.get("durationMs"),
+            "details": r.details,
+        }
+        for r in results
+    ]
+    slowest = sorted(
+        (item for item in result_items if item.get("durationMs") is not None),
+        key=lambda item: float(item.get("durationMs") or 0.0),
+        reverse=True,
+    )[:5]
     return {
         "total": len(results),
         "passed": sum(1 for r in results if r.pass_),
         "failed": sum(1 for r in results if not r.pass_),
         "stubs": sum(1 for r in results if r.details.get("stub")),
         "all_pass": all(r.pass_ for r in results),
-        "results": [
+        "slowest": [
             {
-                "gate_id": r.gate_id,
-                "name": r.name,
-                "severity": r.severity,
-                "pass": r.pass_,
-                "message": r.message,
-                "action": r.action,
+                "gate_id": item["gate_id"],
+                "name": item["name"],
+                "durationMs": item["durationMs"],
+                "pass": item["pass"],
             }
-            for r in results
+            for item in slowest
         ],
+        "results": result_items,
     }

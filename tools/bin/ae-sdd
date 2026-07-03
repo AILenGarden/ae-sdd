@@ -53,6 +53,8 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd plugin validate                       # 校验三层注册表（v3.5.1）
     ae-sdd plugin trace coding-skill.md          # 查某 SKILL 加载路径（v3.5.1）
     ae-sdd plugin init --layer project           # 生成项目层注册表（v3.5.1）
+    ae-sdd perf report --last 50                 # Runtime Stats 运行统计报告
+    ae-sdd perf doctor                           # Runtime Stats 慢点诊断
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health
@@ -78,7 +80,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, classify, config, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, runtime_verify, session, state, stop_check, update_graph  # noqa: E402
+from lib import assets_index, classify, config, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, runtime_exec, runtime_stats, runtime_verify, session, state, stop_check, update_graph  # noqa: E402
 
 
 def _read_stdin_json() -> dict:
@@ -521,9 +523,14 @@ def cmd_gates_check(args, parser):
         output.info(f"跑了 {summary['total']} 门禁：✅ {summary['passed']} / ❌ {summary['failed']} / 🟡 {summary['stubs']} stub")
         for r in summary["results"]:
             mark = "✅" if r["pass"] else "❌"
-            output.info(f"  {mark} {r['gate_id']} {r['name']}: {r['message']}")
+            duration = f" ({_fmt_ms(r.get('durationMs'))})" if r.get("durationMs") is not None else ""
+            output.info(f"  {mark} {r['gate_id']} {r['name']}{duration}: {r['message']}")
             if r.get("action"):
                 output.info(f"      → {r['action']}")
+        if summary.get("slowest"):
+            output.info("最慢门禁:")
+            for item in summary["slowest"]:
+                output.info(f"  {item['gate_id']} {_fmt_ms(item.get('durationMs'))}")
 
     # 任何 blocker 失败 → exit 1
     return 0 if summary["all_pass"] else 1
@@ -1050,7 +1057,14 @@ def cmd_flow_violation_scan(args, parser):
     root = args.root or str(Path.cwd())
     cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        result = runtime_exec.run_command(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            span_name="scanner:flow_violation",
+        )
     except subprocess.TimeoutExpired:
         output.error("flow_violation_scan.py 跑超过 120 秒")
         return 3
@@ -1109,7 +1123,14 @@ def cmd_ra_depth_scan(args, parser):
     root = args.root or str(Path.cwd())
     cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        result = runtime_exec.run_command(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            span_name="scanner:ra_depth",
+        )
     except subprocess.TimeoutExpired:
         output.error("ra_depth_scan.py 跑超过 120 秒")
         return 3
@@ -1169,7 +1190,14 @@ def cmd_ra_implementation_scan(args, parser):
     root = args.root or str(Path.cwd())
     cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        result = runtime_exec.run_command(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            span_name="scanner:ra_implementation",
+        )
     except subprocess.TimeoutExpired:
         output.error("ra_implementation_scan.py 跑超过 120 秒")
         return 3
@@ -1674,7 +1702,12 @@ def cmd_init(args, parser):
         return 1
 
     try:
-        result = subprocess.run(cmd)
+        result = runtime_exec.run_command(
+            cmd,
+            capture_output=False,
+            text=False,
+            span_name="script:init",
+        )
         return result.returncode
     except OSError as e:
         output.err(f"调用 init.py 失败：{e}")
@@ -2712,6 +2745,126 @@ def cmd_assets_read(args, parser):
     return 0
 
 
+def _perf_project_arg(args) -> Optional[Path]:
+    project = getattr(args, "project", "") or ""
+    return Path(project).expanduser() if project else None
+
+
+def _fmt_ms(value) -> str:
+    try:
+        ms = float(value or 0.0)
+    except (TypeError, ValueError):
+        ms = 0.0
+    if ms >= 1000:
+        return f"{ms / 1000:.2f}s"
+    return f"{ms:.1f}ms"
+
+
+def cmd_perf_report(args, parser):
+    """Report recent ae-sdd runtime statistics."""
+    project = _perf_project_arg(args)
+    events = runtime_stats.read_events(limit=max(int(args.last), 0), project=project)
+    summary = runtime_stats.summarize_events(events, slow_limit=max(int(args.limit), 1))
+    payload = {
+        "statsDir": str(runtime_stats.stats_dir(project)),
+        "last": args.last,
+        "summary": summary,
+    }
+    if args.json:
+        output.emit(payload, as_json=True)
+        return 0
+
+    output.info(f"runtime stats: {len(events)} events from {payload['statsDir']}")
+    duration = summary["duration"]
+    output.info(
+        "duration: "
+        f"avg={_fmt_ms(duration['avgMs'])} "
+        f"p50={_fmt_ms(duration['p50Ms'])} "
+        f"p95={_fmt_ms(duration['p95Ms'])} "
+        f"max={_fmt_ms(duration['maxMs'])}"
+    )
+    if summary["commands"]:
+        output.info("commands by total time:")
+        for item in summary["commands"][:args.limit]:
+            output.info(
+                f"  {item['command']}: count={item['count']} "
+                f"avg={_fmt_ms(item['avgMs'])} max={_fmt_ms(item['maxMs'])} "
+                f"total={_fmt_ms(item['totalMs'])}"
+            )
+    if summary["slowestSpans"]:
+        output.info("slowest spans:")
+        for item in summary["slowestSpans"][:args.limit]:
+            attrs = item.get("attrs") or {}
+            label = attrs.get("gateId") or attrs.get("cmd") or item.get("name")
+            output.info(
+                f"  {item.get('name')} {label}: {_fmt_ms(item.get('durationMs'))} "
+                f"({item.get('command')})"
+            )
+    return 0
+
+
+def _perf_advice(summary: dict) -> list[str]:
+    advice: list[str] = []
+    if summary.get("count", 0) == 0:
+        return ["暂无统计数据：先运行 ae-sdd gates check / update-check / health 等命令后再查看。"]
+
+    slow_spans = summary.get("slowestSpans") or []
+    if slow_spans:
+        top = slow_spans[0]
+        name = top.get("name", "span")
+        duration = float(top.get("durationMs") or 0.0)
+        attrs = top.get("attrs") or {}
+        label = attrs.get("gateId") or attrs.get("cmd") or name
+        advice.append(f"当前最慢 span 是 {name} {label}，耗时 {_fmt_ms(duration)}。")
+        scanner_spans = [s for s in slow_spans if str(s.get("name", "")).startswith("scanner:")]
+        if scanner_spans:
+            advice.append("扫描器 span 位于慢路径中；优先检查扫描范围、文件枚举和可缓存输入。")
+
+    command_items = summary.get("commands") or []
+    gates_item = next((item for item in command_items if item.get("command") == "gates check"), None)
+    if gates_item and float(gates_item.get("avgMs") or 0.0) > 1000:
+        advice.append("gates check 平均耗时超过 1 秒；优先看 slowest spans 中的 gate/scanner。")
+
+    if not advice:
+        advice.append("未发现明显慢点；继续积累更多事件后再看 p95 与 slowest spans。")
+    return advice
+
+
+def cmd_perf_doctor(args, parser):
+    """Diagnose obvious runtime bottlenecks from recent statistics."""
+    project = _perf_project_arg(args)
+    events = runtime_stats.read_events(limit=max(int(args.last), 0), project=project)
+    summary = runtime_stats.summarize_events(events, slow_limit=max(int(args.limit), 1))
+    advice = _perf_advice(summary)
+    payload = {
+        "statsDir": str(runtime_stats.stats_dir(project)),
+        "last": args.last,
+        "summary": summary,
+        "advice": advice,
+    }
+    if args.json:
+        output.emit(payload, as_json=True)
+        return 0
+
+    output.info(f"runtime doctor: {len(events)} events from {payload['statsDir']}")
+    for item in advice:
+        output.info(f"  - {item}")
+    return 0
+
+
+def cmd_perf_clear(args, parser):
+    """Clear runtime statistics for the selected project."""
+    project = _perf_project_arg(args)
+    count = runtime_stats.clear_events(project=project)
+    runtime_stats.suppress_current_event()
+    payload = {"statsDir": str(runtime_stats.stats_dir(project)), "deletedFiles": count}
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.info(f"cleared runtime stats: {count} files from {payload['statsDir']}")
+    return 0
+
+
 def cmd_health(args, parser):
     """健康度自检（v1 最小实现）"""
     master = paths.locate_master_source()
@@ -2899,10 +3052,10 @@ def _check_post_commit_hook(master: Optional[Path]) -> dict:
         return {"installed": False, "detail": ".githooks/post-commit 不存在"}
     # 检查 git core.hooksPath
     try:
-        import subprocess
-        r = subprocess.run(
+        r = runtime_exec.run_command(
             ["git", "config", "--get", "core.hooksPath"],
             cwd=str(repo_root), capture_output=True, text=True, timeout=5,
+            span_name="subprocess:git_config_hooks_path",
         )
         hooks_path = r.stdout.strip() if r.returncode == 0 else ""
         if hooks_path != ".githooks":
@@ -2914,6 +3067,14 @@ def _check_post_commit_hook(master: Optional[Path]) -> dict:
     if not _os_fresh.access(str(githooks_post_commit), _os_fresh.X_OK):
         return {"installed": False, "detail": ".githooks/post-commit 不可执行（chmod +x）"}
     return {"installed": True, "detail": ".githooks/post-commit 已装 + hooksPath 正确"}
+
+
+def _runtime_command_name(args) -> str:
+    parts = [getattr(args, "command", "") or ""]
+    subcmd = getattr(args, "subcmd", "") or ""
+    if subcmd:
+        parts.append(subcmd)
+    return " ".join(part for part in parts if part) or "unknown"
 
 
 # ─── CLI 主入口 ──────────────────────────────────────────────────────────────
@@ -3426,6 +3587,26 @@ def main() -> int:
     p_assets_read.add_argument("--asset-file", default="", help="直接指定资产文件路径")
     p_assets_read.set_defaults(func=cmd_assets_read)
 
+    # perf
+    p_perf = sub.add_parser("perf", help="runtime statistics and bottleneck diagnostics", parents=[common])
+    perf_sub = p_perf.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    p_perf_report = perf_sub.add_parser("report", help="show recent runtime statistics", parents=[common])
+    p_perf_report.add_argument("--last", type=int, default=50, help="number of recent events to read")
+    p_perf_report.add_argument("--limit", type=int, default=10, help="number of rows to show")
+    p_perf_report.add_argument("--project", default="", help="project root or .ae-sdd dir (default cwd)")
+    p_perf_report.set_defaults(func=cmd_perf_report)
+
+    p_perf_doctor = perf_sub.add_parser("doctor", help="diagnose obvious runtime bottlenecks", parents=[common])
+    p_perf_doctor.add_argument("--last", type=int, default=50, help="number of recent events to read")
+    p_perf_doctor.add_argument("--limit", type=int, default=10, help="number of rows to inspect")
+    p_perf_doctor.add_argument("--project", default="", help="project root or .ae-sdd dir (default cwd)")
+    p_perf_doctor.set_defaults(func=cmd_perf_doctor)
+
+    p_perf_clear = perf_sub.add_parser("clear", help="clear runtime statistics", parents=[common])
+    p_perf_clear.add_argument("--project", default="", help="project root or .ae-sdd dir (default cwd)")
+    p_perf_clear.set_defaults(func=cmd_perf_clear)
+
     # health
     p_health = sub.add_parser("health", help="健康度自检", parents=[common])
     p_health.set_defaults(func=cmd_health)
@@ -3479,11 +3660,17 @@ def main() -> int:
     if not hasattr(args, "func"):
         parser.print_help()
         return 1
+    runtime_stats.start_command(_runtime_command_name(args), argv=sys.argv[1:])
     try:
-        return args.func(args, parser)
+        rc = args.func(args, parser)
+        return runtime_stats.finish_command(int(rc or 0))
     except KeyboardInterrupt:
+        runtime_stats.finish_command(130, "KeyboardInterrupt")
         output.err("用户中断")
         return 130
+    except Exception as e:
+        runtime_stats.finish_command(1, e.__class__.__name__)
+        raise
 
 
 if __name__ == "__main__":

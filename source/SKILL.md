@@ -611,9 +611,10 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | | `ae-sdd preflight collect` | 🆕 v3.8.0 开工前信息预收集 |
 | | `ae-sdd state register-review-consensus` | 🆕 v3.8.0 写联审共识结果 |
 | **维护** | `ae-sdd health` | 9项健康度自检 |
-| | `ae-sdd update-check` | UC-01~07更新依赖图谱 |
+| | `ae-sdd update-check` | UC-01~16更新依赖图谱 |
 | | `ae-sdd iteration-check` | 设计-实现一致性迭代检查 |
 | | `ae-sdd context-pressure [--story <ID>]` | 上下文压力软提示 |
+| | `ae-sdd perf report/doctor/clear` | Runtime Stats 统计、诊断、清理 |
 | | `ae-sdd version/bump/init` | 版本/初始化 |
 | | `ae-sdd plugin list/validate/trace/init` | 三层SKILL注册表 |
 | | `ae-sdd runtime compact` | compact适配层 |
@@ -624,7 +625,7 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 
 ```
 修改 source/SKILL.md 或子SKILL
-    → ae-sdd update-check（UC-01~07全绿）
+    → ae-sdd update-check（UC-01~16全绿）
     → scripts/dev-sync.sh（分发到 ~/.claude/skills/）
     → post-commit hook 自动触发
 ```
