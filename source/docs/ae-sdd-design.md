@@ -30,7 +30,7 @@
 | 4 层 AND 校验 | `tools/lib/state.py:check_prd_4_layers()`（G-PRD-1~4） |
 | 审核点用户确认 token | `ae-sdd state confirm --phase <审核点>`（防 AI 自填，`tools/bin/ae-sdd` state confirm 子命令） |
 
-**颗粒度与边界**：流程节点粒度；Phase 1 完成确认、CodingPlan 审核等关键节点锁定后不允许重跑；不可跳过任何节点，微任务走快速通道也须经路由判定后才豁免；自检不替代人工审核，不得跳过自检直接收尾。
+**颗粒度与边界**：流程节点粒度；Phase 1 完成确认、CodingPlan 审核等关键节点锁定后不允许重跑；不可跳过任何节点，微任务走快速通道也须经路由判定后才豁免；自检不替代人工审核，不得跳过自检直接收尾。🆕 2026-07-03(B1)：明确"快速通道"仅指 `/ae-sdd-quick` escape hatch（豁免 G-00/路由判定维度，详见 conventions §3.1），**不等于 scale=微 的子链豁免**；微链（scale=微）同样必须走 code-reviewed 节点出 CodeReview 报告（conventions §3.1 质量底线：Plan-first/CodeReview 报告/state.json 更新 ❌不豁免）。
 
 ---
 
@@ -60,7 +60,9 @@
 
 ### 设计
 
-每个独立编码任务（WorkItem：PRD / BUG / OPT / Story 均可）的执行进度持久化到 state.json，支持跨 session 中断恢复与多任务并行执行。AI 重入时读对应 WorkItem state 跳过已完成步骤，避免重复执行。
+每个新需求必须先创建一个独立状态机，再进入 phase 流转。WorkItem（PRD / BUG / OPT / Story 均可）的执行进度持久化到独立 `state.json`，支持跨 session 中断恢复与多任务并行执行。AI 重入时读对应 WorkItem state 跳过已完成步骤，避免重复执行。
+
+**WorkItem 标识约定（2026-07-03 强化）**：每个状态机必须同时具备独立 ID 与名称。CLI 入口为 `ae-sdd state new --id <ID> --name "<需求名>"`，物理目录名为 `WORKITEM-KEY = {ID}--{name}`（路径非法字符与空白归一化），并写入 `workItemId`、`workItemName`、`workItemKey`。`--work-item <ID>` 会优先解析已有命名目录；`--work-item <WORKITEM-KEY>` 也可直接定位。没有 active work item 时，`ae-sdd state write` 默认拒绝写项目级 state；确需维护 legacy 项目级 state 时必须显式加 `--project-state`。
 
 **v3.5.15 多子链状态机**：单条 PHASE_FLOW 拆为 4 条 PHASE_FLOWS（大/中/小/微），按 scale 路由，微链最短单步合法，修复微任务 next-step 误建议跑 RA 的问题。旧 state 无 scale 字段时按 completedSteps 反推，默认"大"（最保守）。
 
@@ -70,8 +72,8 @@
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 存储路径 | `.auto-engineering/{WORKITEM-ID}/state.json`；`.ae-sdd/state.json` 仅保留 activeWorkItem 镜像，兼容旧 gate/hook |
-| 4 条子链定义 | `tools/lib/state.py:PHASE_FLOWS`（行69-88），大链 14 phase / 中链 13 / 小链 12 / 微链 7（含 TestCase 系列后已扩容，🆕 v3.7.x） |
+| 存储路径 | `.auto-engineering/{WORKITEM-KEY}/state.json`，其中 `WORKITEM-KEY={ID}--{name}`；`.ae-sdd/state.json` 仅保留 activeWorkItem/activeStatePath 镜像，兼容旧 gate/hook |
+| 4 条子链定义 | `tools/lib/state.py:PHASE_FLOWS`（行69-92），大链 14 phase / 中链 13 / 小链 12 / 微链 8（🆕 2026-07-03 B1：微链加回 code-reviewed，与"CodeReview 报告不豁免"对齐；含 TestCase 系列后已扩容，🆕 v3.7.x） |
 | 向后兼容别名 | `PHASE_FLOW = PHASE_FLOWS["大"]`（行95，🟡 deprecated） |
 | 合法 scale 枚举 | `VALID_SCALES = ("大", "中", "小", "微")`（行88） |
 | phase 允许工具集 | `tools/lib/gate_intercept.py:PHASE_PERMIT`（行64） |
@@ -80,7 +82,7 @@
 | 多 Agent 状态字段 API | `state.py` 行472注释起：`activeAgents` 写入 + `agentReports` 归档（见 §4） |
 | memory 生命周期强制校验 | `tools/lib/memory_gate.py:check_state_transition()`（行51），`state write --phase` 切相前调用 |
 | PRD 4 层 AND 校验 | `state.py:check_prd_4_layers()` |
-| CLI 入口 | `ae-sdd state read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive`（`tools/bin/ae-sdd` state 子命令组） |
+| CLI 入口 | `ae-sdd state new / read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive`（`tools/bin/ae-sdd` state 子命令组） |
 
 **颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；多个 Story 的 state 文件互不干扰；state 仅记录进度，不存储业务产物内容。
 
@@ -571,3 +573,37 @@ dist/ae-sdd/
 | 级联图谱 | `source/standards/update-graph.json:UG-20`：trigger 含 config.py/init.py/gates.py/state.py/ae-sdd |
 
 **颗粒度与边界**：自动化模式不新增 phase，复用现有 PHASE_FLOWS 状态机骨架，只在审核点行为分叉（默认 vs 联审共识）；reviewConsensus 仅作用于 review 节点，不挂 PRD 4 层 AND 闸；6 审核点讲解规范（§📖）不变，自动化模式仍讲解，听众从"用户"变成"3 个 reviewer"；G-09B/G-REVIEW-LOOP 现有逻辑复用，不重复实现。
+
+---
+
+## 20. ae-sdd Monitor（只读可视化投影）
+
+### 设计
+
+ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父目录下发现多个 ae-sdd 工作区，并集中查看每个工作区的当前 phase、派生状态、最近活动、工作项和 Runtime Stats。它服务的是“监管运行状态”和“快速定位异常/暂停/完成态”，不改变 ae-sdd 主流程。
+
+核心立场：
+
+- **只读投影**：Monitor 不写 `.ae-sdd/`、不写 `.auto-engineering/`、不执行 gate，不把 UI 状态反写为 ae-sdd 状态。
+- **主设计优先**：phase、scale、entry node、门禁语义和 Runtime Stats 含义以本文档其它章节与实现架构文档为准，Monitor 只能跟随展示。
+- **多工作区入口**：用户选择父目录，Monitor 扫描其中所有包含 `.ae-sdd/` 的工作区；左侧列表用于选择，右侧详情用于观察。
+- **结束态也可观察**：`completed`、`paused`、`idle`、`invalid` 等状态都必须可展示，不能只服务正在运行的工作区。
+- **多活跃任务可见**：Monitor 必须同时展示根 state、activeAgents 和 `.auto-engineering/*` 中的活跃/未完成工作项，不能压缩成单个 activeWorkItem。
+- **阶段轴可见**：时间线必须展示完整 phase 链和当前节点说明，即使 state history/events 为空也能判断工作区处于哪个节点。
+- **体验连续性**：目录选择必须有即时反馈；重启后必须恢复上次父目录和选中工作区；类 Mac 窗口三点必须是真实窗口控制。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 独立设计文档 | [`source/docs/ae-sdd-monitor-design.md`](ae-sdd-monitor-design.md) |
+| 应用位置 | `apps/ae-sdd-monitor/` |
+| 扫描入口 | `apps/ae-sdd-monitor/src/workspace.js:scanForWorkspaces()` |
+| 状态读取 | `.ae-sdd/state.json`、`.auto-engineering/*/state.json` |
+| 性能读取 | `.ae-sdd/runtime-stats/*.jsonl` |
+| 展示结构 | 左侧工作区列表 + 右侧总览/阶段轴与事件流/活跃任务与工作项/性能/原始状态 |
+| 偏好保存 | Electron userData `preferences.json`，保存父目录、选中工作区和主题 |
+| 发包目标 | Windows setup exe/zip + macOS dmg/zip |
+| 同步闭环 | `source/standards/update-graph.json:UG-22` |
+
+**颗粒度与边界**：Monitor 是伴随工具，不是 ae-sdd runtime 的一部分；它可以把文件状态可视化，但不能成为 gate、state 或 Runtime Stats 的权威源。任何涉及状态 schema、阶段链、Runtime Stats JSONL 字段或项目侧路径的变化，必须同步 Monitor 独立设计文档、解析代码、测试和 README。

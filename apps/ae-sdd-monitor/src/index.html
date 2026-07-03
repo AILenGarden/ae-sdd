@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ae-sdd Monitor</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./renderer.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="toolbar">
+        <div class="traffic" aria-label="窗口控制">
+          <button id="closeWindowButton" class="traffic-button close" title="关闭" aria-label="关闭"></button>
+          <button id="minimizeWindowButton" class="traffic-button minimize" title="最小化" aria-label="最小化"></button>
+          <button id="maximizeWindowButton" class="traffic-button maximize" title="最大化" aria-label="最大化"></button>
+        </div>
+        <div class="brand">
+          <strong>ae-sdd Monitor</strong>
+          <span id="rootPath">未选择目录</span>
+        </div>
+        <div class="toolbar-actions">
+          <span id="scanStatus" class="scan-status"></span>
+          <button id="themeButton" class="icon-button" title="切换明暗">Aa</button>
+          <button id="chooseButton" class="button primary">选择目录</button>
+          <button id="refreshButton" class="button">刷新</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="sidebar">
+          <div class="search-row">
+            <input id="searchInput" type="search" placeholder="搜索" autocomplete="off" />
+          </div>
+          <div id="filters" class="filters"></div>
+          <div id="workspaceList" class="workspace-list"></div>
+        </aside>
+
+        <section id="detail" class="detail">
+          <div class="empty-state">
+            <div class="empty-mark">.ae-sdd</div>
+            <h1>选择目录开始扫描</h1>
+            <p>左侧会列出找到的 ae-sdd 工作区。</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

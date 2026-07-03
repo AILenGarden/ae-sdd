@@ -236,8 +236,15 @@ class TestPhaseFlowCoverage(unittest.TestCase):
     def test_small_chain_has_12_phases(self):
         self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 12)
 
-    def test_micro_chain_has_7_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 7)
+    def test_micro_chain_has_8_phases(self):
+        # 🆕 2026-07-03(B1): 微链从 7 phase → 8 phase，加回 code-reviewed。
+        # 设计文档 conventions.md §3.1 明确"出 CodeReview 报告 ❌不豁免"，
+        # 此前微链物理跳过 code-reviewed 导致 gate_intercept 门禁不可达。
+        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 8)
+
+    def test_micro_chain_includes_code_reviewed(self):
+        """🆕 2026-07-03(B1): 微链必须含 code-reviewed（CodeReview 报告不豁免）"""
+        self.assertIn("code-reviewed", state_mod.PHASE_FLOWS["微"])
 
     def test_all_chains_start_with_initialized(self):
         for scale, chain in state_mod.PHASE_FLOWS.items():

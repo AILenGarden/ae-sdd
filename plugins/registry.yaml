@@ -27,9 +27,9 @@ plugins:
   # ─────────────────────────────────────────────────────────────
   - name: java3d-coding-skill
     type: skill-new                             # 新增 SKILL（非覆盖内置）
-    version: 1.3.0
+    version: 1.4.0
     author: "ae-sdd"
-    description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill；🆕 v1.3.0 新增 BFF 三层落点决策）
+    description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill；🆕 v1.4.0 基于参考文献增强：聚合边界判定线 + messagebus 事件设计 + @Transactional 传播陷阱 + 分布式锁反模式 + 静态扫描补充）
     provides: coding-adapter-java               # coding-skill §13 查找的路由 key
     path: ./java3d-coding-skill/SKILL.md
     compatibility:

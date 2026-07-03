@@ -54,6 +54,26 @@ class TestMemoryStore(unittest.TestCase):
         entries = memory_store.read(scope)
         self.assertTrue(any(e.get("summary") == "RA confirmed user roles" for e in entries))
 
+    def test_exit_writes_last_exit_at_to_stage(self):
+        """🆕 v3.8.2 exit_phase 成功后 .stage 含 last_exit_at，且 scope 变为非活跃。"""
+        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
+        memory_store.enter(scope, actor="test")
+        memory_store.write(scope, summary="RA done", evidence=["ra.md:1"], actor="test")
+        result = memory_store.exit_phase(scope, actor="test")
+        self.assertTrue(result["pass"])
+        self.assertIsNotNone(result["stage"].get("last_exit_at"))
+        self.assertFalse(memory_store.is_scope_active(scope))
+
+    def test_enter_clears_last_exit_at(self):
+        """🆕 v3.8.2 重新 enter 清除 last_exit_at，scope 重新变为活跃。"""
+        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
+        memory_store.enter(scope, actor="test")
+        memory_store.write(scope, summary="RA done", evidence=["ra.md:1"], actor="test")
+        memory_store.exit_phase(scope, actor="test")
+        self.assertFalse(memory_store.is_scope_active(scope))
+        memory_store.enter(scope, actor="test")
+        self.assertTrue(memory_store.is_scope_active(scope))
+
     def test_promote_l1_to_l2(self):
         scope = memory_store.locate_scope(project=str(self.tmp), phase="coding-plan", story="STORY-001")
         memory_store.write(scope, summary="Use existing repository pattern", layer="L1", actor="test")

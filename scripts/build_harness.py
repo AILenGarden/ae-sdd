@@ -502,6 +502,9 @@ def main() -> int:
         "AE_SDD_SOURCE_HASH_SHORT": input_hash_short,
         "ADAPTER_VERSION": ADAPTER_VERSION,
         "TIMESTAMP": timestamp,
+        # 🆕 v3.8.2：动态计算 SKILL 行数，避免瘦身后元数据撒谎（原硬编码 2477）
+        "SKILL_LINES": str(sum(1 for _ in (src / "source" / "SKILL.md").open(encoding="utf-8"))),
+        "SKILL_FULL_LINES": str(sum(1 for _ in (src / "source" / "skill-fallbacks" / "SKILL.full.md").open(encoding="utf-8"))),
     }
     agent_content = render_template(template_agent, vars_map)
     readme_content = render_template(template_readme, vars_map)

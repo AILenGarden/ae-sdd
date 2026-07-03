@@ -400,6 +400,30 @@
         {"path": "source/CHANGELOG/", "action": "新增 Runtime Stats 变更记录", "auto_checkable": false}
       ],
       "checks": ["UC-03"]
+    },
+    {
+      "id": "UG-22",
+      "name": "ae-sdd Monitor read-only workspace visualization",
+      "trigger": [
+        "source/docs/ae-sdd-design.md",
+        "source/docs/ae-sdd-implementation-architecture.md",
+        "source/docs/ae-sdd-monitor-design.md",
+        "tools/lib/state.py",
+        "tools/lib/runtime_stats.py",
+        "tools/bin/ae-sdd",
+        "apps/ae-sdd-monitor/**"
+      ],
+      "trigger_condition": "ae-sdd 状态机、项目侧状态存储、Runtime Stats、用户可见流程语义或 Monitor 应用解析/展示/打包行为变更",
+      "affected": [
+        {"path": "source/docs/ae-sdd-monitor-design.md", "action": "同步 Monitor 对 ae-sdd phase/state/runtime 的只读投影语义和边界", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-design.md", "action": "若 Monitor 暴露新的用户可见能力或状态语义，主设计文档保留入口和边界说明", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "同步 Monitor 模块职责、数据流、只读边界和打包边界", "auto_checkable": false},
+        {"path": "apps/ae-sdd-monitor/src/workspace.js", "action": "保持 .ae-sdd/state.json、.auto-engineering/*/state.json、runtime-stats JSONL 解析兼容", "auto_checkable": false},
+        {"path": "apps/ae-sdd-monitor/test/workspace.test.js", "action": "覆盖新增/调整的 phase、scale、state 字段、work item 或 Runtime Stats 投影", "auto_checkable": false},
+        {"path": "apps/ae-sdd-monitor/README.md", "action": "同步安装、运行和设计契约说明", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录 Monitor 或 ae-sdd 状态/运行时契约对 Monitor 的影响", "auto_checkable": false}
+      ],
+      "checks": ["UC-03", "UC-14"]
     }
   ]
 }

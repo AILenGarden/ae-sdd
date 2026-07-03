@@ -1,7 +1,7 @@
-"""Hermes 分发器：copytree → ~/.hermes/skills/ae-sdd。
+"""Hermes 分发器（兼容 shim）。
 
-逻辑对齐 codex.py/zcode.py（标准 copytree 协议）。
-auto 模式下：目录已存在 或 hermes CLI 可用时才包含。
+🆕 2026-07-03 注册表模式：分发器实例现由 ~/.ae-sdd/distributors.json 驱动构造。
+本文件保留为向后兼容 shim，供旧测试与直接 import 使用。
 """
 from __future__ import annotations
 
@@ -14,19 +14,22 @@ SKILL_NAME = "ae-sdd"
 
 
 class HermesDistributor(CopytreeDistributor):
-    name = "hermes"
+    """兼容 shim：Hermes → ~/.hermes/skills/ae-sdd（copytree, detect=path_exists|cli）。"""
+
+    def __init__(self) -> None:
+        skills_root = Path.home() / ".hermes" / "skills"
+        target = skills_root / SKILL_NAME
+
+        def _detect() -> bool:
+            return (
+                skills_root.is_dir()
+                or target.exists()
+                or bool(shutil.which("hermes") or shutil.which("hermes.exe"))
+            )
+
+        super().__init__(name="hermes", target_path=target, detect_fn=_detect)
+        self._skills_root = skills_root
 
     def skills_root(self) -> Path:
-        return Path.home() / ".hermes" / "skills"
-
-    def target_path(self) -> Path:
-        return self.skills_root() / SKILL_NAME
-
-    def detect(self) -> bool:
-        """auto 模式：hermes 已安装或 CLI 存在时包含（同 codex/zcode 判定模式）。"""
-        dst = self.target_path()
-        return (
-            self.skills_root().is_dir()
-            or dst.exists()
-            or bool(shutil.which("hermes") or shutil.which("hermes.exe"))
-        )
+        """保留旧接口（测试可能调用）。"""
+        return self._skills_root

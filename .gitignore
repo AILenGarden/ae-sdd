@@ -1,4 +1,5 @@
 .gitignore
+!apps/ae-sdd-monitor/.gitignore
 # =============================================
 # IDE / Editor
 # =============================================
@@ -54,6 +55,7 @@ dist/
 build/
 out/
 target/
+apps/ae-sdd-monitor/release/
 *.class
 *.jar
 

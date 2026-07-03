@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程主入口（v3.8.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。 历史变更见 source/CHANGELOG/。
-version: 3.8.0
+description: 端到端自动化工程主入口（v3.8.2）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。 🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。 历史变更见 source/CHANGELOG/。
+version: 3.8.2
 ---
 
-<!-- # AUTO-GEN @ ae-sdd-source@23933bfdfd5344f5 @ 2026-07-03T02:42:49Z -->
+<!-- # AUTO-GEN @ ae-sdd-source@6fc5fe18038e18f1 @ 2026-07-03T13:04:40Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-03T02:42:49Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-03T13:04:40Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd source `23933bfdfd5344f5` (3.8.0)
+> 源版本：ae-sdd source `6fc5fe18038e18f1` (3.8.2)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -109,7 +109,7 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 引用源
 
-- ae-sdd 主入口：`../source/SKILL.md`（2477 行完整 SOP）
+- ae-sdd 主入口：`../source/SKILL.md`（205 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` 700 行）
 - ae-sdd harness 配置：`../source/HARNESS.md`（PHASE MACHINE + 12 HARD STOPS + 3 hook 配置）
 - 子 SKILL 索引：`../source/skills/`
 - 项目资产模板：`../source/assets/`
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-07-03T02:42:49Z
-- 源 ae-sdd 版本：3.8.0
-- 源 ae-sdd input hash：23933bfdfd5344f54a806164d7a9226c98c8ce1bb5f27b48a5b00d726c1faf5c
+- 生成时间：2026-07-03T13:04:40Z
+- 源 ae-sdd 版本：3.8.2
+- 源 ae-sdd input hash：6fc5fe18038e18f1bf19b4be57d678dd111befa9ce13d0cbcc096594104ad40f
 - 适配器版本：v0.3.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

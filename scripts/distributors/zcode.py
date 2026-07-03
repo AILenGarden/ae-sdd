@@ -1,7 +1,7 @@
-"""ZCode CLI 分发器：copytree → ~/.zcode/skills/ae-sdd。
+"""ZCode CLI 分发器（兼容 shim）。
 
-逻辑迁自 install.py 的 ZCODE_DST 分支（v3.4.0+ post-commit hook 默认装 zcode）。
-auto 模式下：ZCode skills 根目录存在、目标目录已存在或 zcode CLI 可用时包含。
+🆕 2026-07-03 注册表模式：分发器实例现由 ~/.ae-sdd/distributors.json 驱动构造。
+本文件保留为向后兼容 shim，供旧测试与直接 import 使用。
 """
 from __future__ import annotations
 
@@ -14,19 +14,22 @@ SKILL_NAME = "ae-sdd"
 
 
 class ZcodeDistributor(CopytreeDistributor):
-    name = "zcode"
+    """兼容 shim：ZCode → ~/.zcode/skills/ae-sdd（copytree, detect=path_exists|cli）。"""
+
+    def __init__(self) -> None:
+        skills_root = Path.home() / ".zcode" / "skills"
+        target = skills_root / SKILL_NAME
+
+        def _detect() -> bool:
+            return (
+                skills_root.is_dir()
+                or target.exists()
+                or bool(shutil.which("zcode") or shutil.which("zcode.exe"))
+            )
+
+        super().__init__(name="zcode", target_path=target, detect_fn=_detect)
+        self._skills_root = skills_root
 
     def skills_root(self) -> Path:
-        return Path.home() / ".zcode" / "skills"
-
-    def target_path(self) -> Path:
-        return self.skills_root() / SKILL_NAME
-
-    def detect(self) -> bool:
-        """auto 模式：ZCode skills 根目录存在、ae-sdd 已安装或 CLI 存在时包含。"""
-        dst = self.target_path()
-        return (
-            self.skills_root().is_dir()
-            or dst.exists()
-            or bool(shutil.which("zcode") or shutil.which("zcode.exe"))
-        )
+        """保留旧接口（测试可能调用）。"""
+        return self._skills_root

@@ -1,0 +1,79 @@
+{
+  "name": "ae-sdd-monitor",
+  "version": "0.1.0",
+  "description": "Desktop workspace monitor for ae-sdd runtime state.",
+  "main": "src/main.js",
+  "author": "ae-sdd",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "pack:dir": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1 -NoArchive",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1",
+    "dist:mac": "electron-builder --mac dmg zip --x64 --arm64",
+    "dist:mac:unsigned": "powershell -ExecutionPolicy Bypass -File scripts/package-mac-unsigned.ps1",
+    "dist": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1",
+    "pack:builder": "electron-builder --dir",
+    "dist:builder": "electron-builder --win nsis zip",
+    "dist:builder:all": "electron-builder --win nsis zip --mac dmg zip"
+  },
+  "build": {
+    "appId": "local.ae-sdd.monitor",
+    "productName": "ae-sdd Monitor",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "README.md"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^40.10.2",
+    "electron-builder": "^26.15.3"
+  }
+}

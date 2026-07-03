@@ -501,15 +501,23 @@ class TestCodingProcessHardGuard:
         assert "CodingProcess" in reason, f"拦截原因应提及 CodingProcess: {reason}"
 
     def test_coding_src_allowed_with_coding_process_confirm(self, tmp_path):
-        """🆕 v3.5.16 coding phase 写 src/ 且 coding-process 已 confirm → 放行"""
+        """🆕 v3.5.16 coding phase 写 src/ 且 coding-process 已 confirm → 放行
+
+        🆕 v3.8.2 存端兜底：还需 memory enter 才放行（memory 是关联节点强制工具集）。
+        """
         project_dir = self._make_state_with_session(
             tmp_path, phase="coding",
             confirmed_phases=[{"phase": "task-reviewed"}, {"phase": "coding-process"}]  # 齐全
         )
+        # 🆕 v3.8.2：coding 属关联 phase，写 src/ 前须 memory enter
+        from lib import memory_store
+        scope = memory_store.locate_scope(
+            project=str(tmp_path), phase="coding", story="STORY-001")
+        memory_store.enter(scope, actor="test")
         allowed, reason = check_intercept(
             "Write",
             file_path=str(tmp_path / "src/main/java/Foo.java"),
             project_dir=project_dir,
         )
-        assert allowed, f"coding-process 已 confirm 应放行写 src/: {reason}"
+        assert allowed, f"coding-process 已 confirm 且 memory 已 enter 应放行写 src/: {reason}"
 

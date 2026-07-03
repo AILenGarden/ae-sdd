@@ -48,7 +48,9 @@
 
 **只读工具（Read / Glob / Grep）和只读 Bash（cat / ls / git status / ae-sdd state read 等）任何 phase 都允许。**
 
-Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
+新需求入口：`ae-sdd state new --id <ID> --name "<需求名>"`（创建 `.auto-engineering/{ID}--{name}/state.json` 并设为 active）。
+
+Phase 切换：`ae-sdd state write --phase <next>` 默认跟随 active work item；显式定位可用 `--work-item <ID或KEY>`，维护 legacy 项目级 state 才使用 `--project-state`。
 
 → hook 自动运行进入条件 gate 验证，不通过则物理拒绝切换
 

@@ -208,7 +208,10 @@ class TestCodeReviewedSourceProtection:
         assert not allowed, "code-reviewed 阶段不应允许写 resources/application.yaml"
 
     def test_cr_report_allowed_in_code_reviewed(self, tmp_path):
-        """code-reviewed 阶段写 CR 报告（design/ 下）被允许"""
+        """code-reviewed 阶段写 CR 报告（design/ 下）被允许
+
+        🆕 v3.8.2 存端兜底：code-reviewed 属关联 phase（review），须 memory enter 才放行。
+        """
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
@@ -217,6 +220,10 @@ class TestCodeReviewedSourceProtection:
             "phase": "code-reviewed", "currentStory": "STORY-001",
             "currentTask": None, "history": [],
         }))
+        # 🆕 v3.8.2：code-reviewed 属关联 phase，写文件前须 memory enter
+        from lib import memory_store
+        scope = memory_store.locate_scope(project=str(tmp_path), phase="review", story="STORY-001")
+        memory_store.enter(scope, actor="test")
         allowed, _ = check_intercept(
             "Write",
             file_path="design/cr-report.md",

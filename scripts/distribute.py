@@ -180,11 +180,10 @@ def main() -> int:
         target_path = Path(args.target_path).expanduser().resolve()
         if not args.quiet:
             log_info(None, f"target-path 模式：安装到 {target_path}")
-        # 找一个 copytree 分发器，临时改它的 target_path
-        from distributors.claude import ClaudeDistributor
-        d = ClaudeDistributor()
-        d.name = "target-path"
-        d.target_path = (lambda p=target_path: p)  # type: ignore
+        # 🆕 2026-07-03 注册表模式：直接构造 CopytreeDistributor，不依赖 ClaudeDistributor 子类
+        from distributors._base import CopytreeDistributor
+        d = CopytreeDistributor(name="target-path", target_path=target_path,
+                                detect_fn=lambda: True)
         if args.no_build:
             dist_path = repo_root / "dist" / "ae-sdd"
             if not (dist_path / "SKILL.md").is_file():

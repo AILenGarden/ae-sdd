@@ -109,8 +109,8 @@ harness/                        派生适配层，不手工改生成物
 | 路径 | 用途 |
 | --- | --- |
 | `.ae-sdd/config.yaml` | 项目配置 |
-| `.ae-sdd/state.json` | 活跃项目或 work item 状态镜像 |
-| `.auto-engineering/{workItem}/state.json` | work item 隔离状态 |
+| `.ae-sdd/state.json` | active work item 状态镜像，保存 `activeWorkItem` 与 `activeStatePath`，供旧 gate/hook 兼容读取 |
+| `.auto-engineering/{workItemKey}/state.json` | work item 独立状态机；新建入口为 `ae-sdd state new --id <ID> --name "<需求名>"`，目录名为 `{ID}--{name}` |
 | `.ae-sdd/memory/` | 分层记忆 |
 | `.ae-sdd/plugins/` | 项目层插件注册 |
 | `.ae-sdd/cache/` | 工具链缓存，新增缓存优先放这里 |
@@ -176,11 +176,15 @@ source/skills/**/*.md
 
 运行时统计 P0 已落地；性能优化的阶段性方案归档在 [`plans/2026-07-02-runtime-stats-performance-plan.md`](plans/2026-07-02-runtime-stats-performance-plan.md)。
 
+> 🆕 2026-07-03(B2/B3)：
+> - **P1 lazy import 未实施**：plan 文档 P1 声称将 CLI 顶层 import 改 lazy import 以降 bootstrap 固定成本（实测 ~186ms），至今未落地。`perf doctor` 在 avg>150ms 时会提示该挂账。源 SKILL 瘦身（降 Agent token，已落地）与本项（降进程 ms，未落地）是两套不同成本层，勿混。
+> - **scale 维度已加入**：runtime_stats 事件现记录 `scale` 字段（从项目 state.json 探测），`summarize_events` 输出 `byScale` 分桶与 `scaleRatios`（微/小/中 vs 大 的平均开销比），用于诊断"微任务 vs 大任务开销比例失调"。
+
 | 模块 | 职责 |
 | --- | --- |
-| `tools/lib/runtime_stats.py` | command/span 统计、JSONL 落盘、慢点汇总、敏感 argv 脱敏、`AE_SDD_STATS`/`AE_SDD_STATS_DIR` 环境开关 |
+| `tools/lib/runtime_stats.py` | command/span 统计、JSONL 落盘、慢点汇总、敏感 argv 脱敏、`AE_SDD_STATS`/`AE_SDD_STATS_DIR` 环境开关、🆕 scale 探测与按 scale 分桶（B3） |
 | `tools/lib/runtime_exec.py` | 统一子进程执行、UTF-8、timeout、span 接入 |
-| `tools/bin/ae-sdd` | 在 `args.func(args, parser)` 外层记录命令事件；`perf report/doctor/clear` 查询、诊断、清理统计 |
+| `tools/bin/ae-sdd` | 在 `args.func(args, parser)` 外层记录命令事件；`perf report/doctor/clear` 查询、诊断、清理统计；🆕 `_perf_advice` 含 scale 比例失调规则与 lazy import 挂账提示（B2/B3） |
 | `tools/lib/gates.py` | `check_all()` 为每个 gate 增加 span，并在 `summarize()` 输出 `durationMs` 与 `slowest` |
 
 统计存储与输出规则：
@@ -190,10 +194,88 @@ source/skills/**/*.md
 - 统计不得污染业务 stdout；`--json` 业务输出保持可解析。查询统计必须显式调用 `ae-sdd perf report --json`。
 - `perf clear` 清理当前统计文件并抑制自身 command event，避免刚清理又写入一条 clear 记录。
 - 子进程调用默认注入 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并使用 `encoding="utf-8", errors="replace"` 解码。
+- 🆕 2026-07-03(B3)：`scale` 字段由 `start_command` 内部 `_detect_scale()` 从项目 state.json 读取（无则 null，不阻断业务），写入事件顶层；`summarize_events` 的 `byScale`/`scaleRatios` 用于 `perf doctor` 比例失调诊断。
 
-边界：Runtime Stats 只记录命令名、脱敏 argv、耗时、退出码和 span 属性，不记录业务文档正文；它用于定位慢点，不作为硬门禁。
+边界：Runtime Stats 只记录命令名、脱敏 argv、耗时、退出码、span 属性和 scale（任务规模），不记录业务文档正文；它用于定位慢点与比例失调，不作为硬门禁。
 
-## 10. 设计-实现对齐闭环
+## 9.5 分发器注册表架构（🆕 2026-07-03 注册表模式）
+
+分发目标从「`__init__.py` 硬编码 Python 列表」改为「外部 JSON 注册表 + 协议模板」，支持注册/注销/扫描。
+
+### 注册表文件
+
+`~/.ae-sdd/distributors.json`（用户环境态，与 plugins/ 同级）。首次运行无文件时用种子初始化（含 claude/codex/zcode/hermes/mavis，mavis 默认 `enabled:false` 反映无 daemon 环境）。
+
+每条目字段：`name` / `protocol`(copytree|harness_mount) / `target_path` / `detect`(always|path_exists|cli_exists) / `detect_cli` / `enabled` / `registered_at` / `notes`。
+
+### 协议模板（内置，数据填参构造实例）
+
+| 协议 | 模板类 | 适用 | 复杂度 |
+| --- | --- | --- | --- |
+| `copytree` | `CopytreeDistributor` | claude/codex/zcode/hermes 及同类 | 备份→复制→校验→清旧 .bak |
+| `harness_mount` | `HarnessMountDistributor` | mavis 及同类 | compile(build_harness)→mount→verify→cleanup(-N 副本+sqlite) |
+
+注册一个 Agent = 选协议模板 + 填 target_path/detect 参数构造实例；注销 = 注册表除名，实例不再构造。旧 5 个 `*.py` 子类降级为兼容 shim，逻辑迁入模板。
+
+### CLI 管理
+
+`ae-sdd distributor list|register|unregister|enable|disable|scan`。注销 mavis：`ae-sdd distributor disable mavis`（软注销，保留条目可恢复）或 `unregister mavis`（硬注销，删条目）。`scan` 扫描 `~/.*/skills/` 识别已安装 Agent 并建议注册命令，不越权委托 Agent 安装。
+
+### 数据流
+
+```
+~/.ae-sdd/distributors.json (enabled + detect 过滤)
+  → _registry.get_active_distributors() 构造实例
+  → distribute.py 遍历实例调 install()
+  → CopytreeDistributor: copytree 编译后 dist
+  → HarnessMountDistributor: build_harness + mavis harness mount
+```
+
+### 边界
+
+注册表只管"分发到哪、用什么协议"，不管编译（编译在 `build_dist.py`，分发前的硬约束保留）。注册表是用户环境态，不进 git；母版不预置注册表，首次运行种子生成。
+
+## 10. ae-sdd Monitor 架构
+
+Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`。它读取项目侧 ae-sdd 状态文件并做 UI 投影，不进入 `dist/ae-sdd/` runtime 编译链，也不作为 Agent skill 分发内容。
+
+| 模块 | 职责 |
+| --- | --- |
+| `apps/ae-sdd-monitor/src/main.js` | Electron 主进程、窗口生命周期、目录选择、路径打开 IPC |
+| `apps/ae-sdd-monitor/src/preload.js` | 只暴露受控 `monitorApi`，隔离 renderer 与 Node 能力 |
+| `apps/ae-sdd-monitor/src/workspace.js` | 扫描父目录、识别 `.ae-sdd/` 工作区、读取 state/config/runtime-stats、派生展示状态、阶段轴和活跃任务 |
+| `apps/ae-sdd-monitor/src/renderer.js` | 左侧工作区列表、筛选、右侧详情 Tab、本地 UI 状态、目录选择反馈和偏好恢复 |
+| `apps/ae-sdd-monitor/test/workspace.test.js` | 扫描、YAML 读取、work item、Runtime Stats 聚合的契约测试 |
+| `apps/ae-sdd-monitor/scripts/package-win.ps1` | Windows 本地打包、安装 zip、自解压 setup 生成 |
+| `apps/ae-sdd-monitor/scripts/package-mac.sh` | macOS 本地打包入口，调用 electron-builder 生成 dmg/zip |
+| `apps/ae-sdd-monitor/scripts/package-mac-unsigned.ps1` | 跨平台生成未签名 macOS `.app.zip`，基于 Electron darwin runtime 注入 app 资源 |
+| Electron userData `preferences.json` | 保存上次父目录、选中工作区和主题；不写项目侧 `.ae-sdd/` |
+
+数据流：
+
+```text
+用户选择父目录
+  -> Electron dialog 返回 rootPath
+  -> main.js 保存/读取 userData/preferences.json
+  -> workspace.js 递归扫描包含 .ae-sdd/ 的目录
+  -> 读取 .ae-sdd/config.yaml / .ae-sdd/state.json
+  -> 读取 .auto-engineering/*/state.json
+  -> 读取 .ae-sdd/runtime-stats/*.jsonl
+  -> workspace.js 派生 phaseTimeline / activeWorkItems
+  -> renderer.js 展示列表、阶段轴、事件流、活跃任务和详情
+```
+
+边界：
+
+- Monitor 全程只读；扫描、刷新、切换 Tab 不得写项目文件。
+- Monitor 的状态枚举是 UI 派生值，不新增 ae-sdd state schema。
+- Monitor 的偏好文件只保存用户界面上下文，不保存 ae-sdd 业务状态。
+- `PHASE_FLOWS`、state 字段、Runtime Stats JSONL 字段变化时，必须同步 [`ae-sdd-monitor-design.md`](ae-sdd-monitor-design.md)、`workspace.js` 和测试。
+- Monitor 不运行 `ae-sdd gates check`，不替代 CLI/gate 的硬判断；最多展示已有 state/runtime 线索。
+- Mac `.dmg`/签名最终构建必须在 macOS runner 上完成；Windows runner 可生成 Windows setup exe/zip 和未签名 macOS `.app.zip`。
+- `source/standards/update-graph.json:UG-22` 负责把 ae-sdd 设计/实现/state/runtime 变化级联到 Monitor 文档、解析器、测试和 README。
+
+## 11. 设计-实现对齐闭环
 
 | 防线 | 工具 | 覆盖 |
 | --- | --- | --- |
@@ -215,7 +297,7 @@ source/skills/**/*.md
 7. 写 source/CHANGELOG
 ```
 
-## 11. 新实现设计写入规则
+## 12. 新实现设计写入规则
 
 | 内容 | 写入位置 |
 | --- | --- |

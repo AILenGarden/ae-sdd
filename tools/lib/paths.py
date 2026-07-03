@@ -5,14 +5,16 @@ Resolves master source, project .ae-sdd, state.json, assets, and project docs.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.8.0"
+MASTER_VERSION = "3.8.2"
 
 
 def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:
@@ -137,14 +139,106 @@ def state_path(ade_sdd: Path) -> Path:
     return ade_sdd / "state.json"
 
 
-def work_item_state_path(ade_sdd: Path, work_item_id: str) -> Path:
+_WORK_ITEM_DIR_SEP = "--"
+_WORK_ITEM_DIR_MAX_LEN = 140
+
+
+def _normalize_work_item_component(value: str) -> str:
+    """Normalize a work-item id/name component for a cross-platform directory."""
+    text = (value or "").strip()
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", text)
+    text = re.sub(r"\s+", "-", text)
+    text = re.sub(r"-{2,}", "-", text).strip(" .-")
+    return text or "unnamed"
+
+
+def work_items_dir(ade_sdd: Path) -> Path:
+    """Directory that contains all isolated work-item state machines."""
+    return project_root(ade_sdd) / ".auto-engineering"
+
+
+def work_item_dir_name(work_item_id: str, work_item_name: Optional[str] = None) -> str:
+    """Return the canonical directory name for one work-item state machine.
+
+    New work items use `ID--name` so the physical state-machine directory is
+    both unique and readable. Existing callers that pass only an id keep the
+    legacy one-part directory name for backward compatibility.
+    """
+    normalized_id = _normalize_work_item_component(work_item_id)
+    if not work_item_name:
+        return normalized_id[:_WORK_ITEM_DIR_MAX_LEN]
+    normalized_name = _normalize_work_item_component(work_item_name)
+    combined = f"{normalized_id}{_WORK_ITEM_DIR_SEP}{normalized_name}"
+    return combined[:_WORK_ITEM_DIR_MAX_LEN].rstrip(" .-") or normalized_id
+
+
+def _state_matches_work_item(state_data: dict, token: str) -> bool:
+    candidates = {
+        state_data.get("workItemId"),
+        state_data.get("workItemKey"),
+        state_data.get("stateMachineId"),
+        state_data.get("currentWorkItem"),
+        state_data.get("currentStory"),
+    }
+    return token in {str(c) for c in candidates if c}
+
+
+def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Optional[Path]:
+    """Find an existing isolated state.json by directory key or recorded id."""
+    token = (work_item_id_or_key or "").strip()
+    if not token:
+        return None
+
+    base = work_items_dir(ade_sdd)
+    exact = base / token / "state.json"
+    if exact.is_file():
+        return exact
+
+    normalized = work_item_dir_name(token)
+    normalized_exact = base / normalized / "state.json"
+    if normalized_exact.is_file():
+        return normalized_exact
+
+    if not base.is_dir():
+        return None
+
+    matches: list[Path] = []
+    prefix = f"{normalized}{_WORK_ITEM_DIR_SEP}"
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        state_file = child / "state.json"
+        if not state_file.is_file():
+            continue
+        if child.name == token or child.name == normalized or child.name.startswith(prefix):
+            matches.append(state_file)
+            continue
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and _state_matches_work_item(data, token):
+            matches.append(state_file)
+
+    unique = list(dict.fromkeys(matches))
+    return unique[0] if len(unique) == 1 else None
+
+
+def work_item_state_path(ade_sdd: Path, work_item_id: str,
+                         work_item_name: Optional[str] = None) -> Path:
     """Return the isolated state.json path for one coding work item.
 
     The project-level .ae-sdd/state.json remains as an active-work-item mirror
     for older gates/hooks. Durable task state lives under
-    .auto-engineering/{WORKITEM-ID}/state.json.
+    .auto-engineering/{WORKITEM-ID--WORKITEM-NAME}/state.json for newly
+    initialized work items, with legacy `{WORKITEM-ID}` directories still
+    resolved when they already exist.
     """
-    return project_root(ade_sdd) / ".auto-engineering" / work_item_id / "state.json"
+    if work_item_name is None:
+        existing = find_work_item_state_path(ade_sdd, work_item_id)
+        if existing is not None:
+            return existing
+    return work_items_dir(ade_sdd) / work_item_dir_name(work_item_id, work_item_name) / "state.json"
 
 
 def assets_dir(ade_sdd: Path) -> Path:

@@ -1,10 +1,10 @@
-"""Claude Code 分发器：copytree → ~/.claude/skills/ae-sdd。
+"""Claude Code 分发器（兼容 shim）。
 
-逻辑迁自 install.py 的 CLAUDE_DST 分支（auto 模式下永远包含）。
+🆕 2026-07-03 注册表模式：分发器实例现由 ~/.ae-sdd/distributors.json 驱动构造。
+本文件保留为向后兼容 shim，供旧测试与直接 import 使用。
 """
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from ._base import CopytreeDistributor
@@ -13,11 +13,11 @@ SKILL_NAME = "ae-sdd"
 
 
 class ClaudeDistributor(CopytreeDistributor):
-    name = "claude"
+    """兼容 shim：Claude Code → ~/.claude/skills/ae-sdd（copytree, detect=always）。"""
 
-    def target_path(self) -> Path:
-        return Path.home() / ".claude" / "skills" / SKILL_NAME
-
-    def detect(self) -> bool:
-        """auto 模式：Claude 目标永远包含（向后兼容，迁自 install.py:_target_paths）。"""
-        return True
+    def __init__(self) -> None:
+        super().__init__(
+            name="claude",
+            target_path=Path.home() / ".claude" / "skills" / SKILL_NAME,
+            detect_fn=lambda: True,
+        )

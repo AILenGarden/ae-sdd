@@ -32,6 +32,79 @@ def _run_cli(cwd: Path, *args: str) -> tuple[int, str, str]:
 
 
 class TestStateWorkItemIsolation(unittest.TestCase):
+    def test_state_new_creates_named_state_machine_and_active_mirror(self):
+        """state new creates .auto-engineering/{id--name}/state.json and activates it."""
+        tmp = _setup_project()
+
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", "BUG-LIFE-001",
+            "--name", "Login timeout fix",
+            "--entry-node", "BUG",
+            "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["workItemKey"], "BUG-LIFE-001--Login-timeout-fix")
+
+        isolated = tmp / ".auto-engineering" / "BUG-LIFE-001--Login-timeout-fix" / "state.json"
+        mirror = tmp / ".ae-sdd" / "state.json"
+        self.assertTrue(isolated.is_file())
+        self.assertTrue(mirror.is_file())
+
+        isolated_state = json.loads(isolated.read_text(encoding="utf-8"))
+        mirror_state = json.loads(mirror.read_text(encoding="utf-8"))
+        self.assertEqual(isolated_state["workItemId"], "BUG-LIFE-001")
+        self.assertEqual(isolated_state["workItemName"], "Login timeout fix")
+        self.assertEqual(isolated_state["workItemKey"], "BUG-LIFE-001--Login-timeout-fix")
+        self.assertEqual(isolated_state["scale"], "微")
+        self.assertEqual(isolated_state["entryNode"], "BUG")
+        self.assertEqual(mirror_state["activeWorkItem"], "BUG-LIFE-001--Login-timeout-fix")
+        self.assertTrue(mirror_state["activeStatePath"].endswith(str(isolated)))
+
+        code, out, err = _run_cli(tmp, "state", "read", "--work-item", "BUG-LIFE-001", "--json")
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        read_back = json.loads(out)
+        self.assertEqual(read_back["workItemKey"], "BUG-LIFE-001--Login-timeout-fix")
+
+    def test_state_write_without_work_item_follows_active_state_machine(self):
+        """After state new, state write without --work-item updates the active isolated state."""
+        tmp = _setup_project()
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", "BUG-LIFE-001",
+            "--name", "Login timeout fix",
+            "--entry-node", "BUG",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+
+        code, out, err = _run_cli(
+            tmp, "state", "write",
+            "--phase", "task-generated",
+            "--allow-empty-memory",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+
+        isolated = tmp / ".auto-engineering" / "BUG-LIFE-001--Login-timeout-fix" / "state.json"
+        isolated_state = json.loads(isolated.read_text(encoding="utf-8"))
+        mirror_state = json.loads((tmp / ".ae-sdd" / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(isolated_state["phase"], "task-generated")
+        self.assertEqual(mirror_state["phase"], "task-generated")
+        self.assertEqual(mirror_state["activeWorkItem"], "BUG-LIFE-001--Login-timeout-fix")
+
+    def test_state_write_without_active_requires_state_new_or_project_state(self):
+        """Bare state write should not silently create a confusing project-level state."""
+        tmp = _setup_project()
+
+        code, out, err = _run_cli(
+            tmp, "state", "write",
+            "--phase", "task-generated",
+            "--allow-empty-memory",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("state new", out + err)
+        self.assertFalse((tmp / ".ae-sdd" / "state.json").is_file())
+
     def test_state_write_with_story_uses_isolated_work_item_state(self):
         """--story keeps a separate .auto-engineering/{id}/state.json file."""
         tmp = _setup_project()

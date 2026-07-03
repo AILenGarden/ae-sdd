@@ -47,6 +47,27 @@ def _find_project_root(start: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
+def _detect_scale(project: Optional[Path] = None) -> Optional[str]:
+    """🆕 2026-07-03(B3): 从项目 state.json 读取 scale（大/中/小/微），无则 None。
+
+    用于 runtime_stats 按 scale 分桶，诊断"微任务 vs 大任务开销比例失调"。
+    失败静默（统计不得阻断业务命令），返回 None。
+    """
+    try:
+        root = _find_project_root(project)
+        if root is None:
+            return None
+        state_path = root / ".ae-sdd" / "state.json"
+        if not state_path.is_file():
+            return None
+        with state_path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        scale = data.get("scale")
+        return str(scale) if scale else None
+    except Exception:
+        return None
+
+
 def stats_dir(project: Optional[Path] = None) -> Path:
     override = os.environ.get("AE_SDD_STATS_DIR", "").strip()
     if override:
@@ -116,6 +137,10 @@ class TraceRecorder:
             "spans": self.spans,
             "attrs": self.attrs,
         }
+        # 🆕 2026-07-03(B3): scale 提升为顶层字段，便于 summarize 按 scale 分桶。
+        scale = self.attrs.get("scale")
+        if scale:
+            event["scale"] = scale
         if error_class:
             event["errorClass"] = error_class
         return event
@@ -181,11 +206,16 @@ def start_command(
     if not is_enabled():
         _CURRENT.set(None)
         return None
+    merged_attrs = _jsonable(attrs or {})
+    # 🆕 2026-07-03(B3): 探测 scale 写入 attrs，事件落盘后供 summarize 按 scale 分桶。
+    scale = _detect_scale(project)
+    if scale:
+        merged_attrs["scale"] = scale
     recorder = TraceRecorder(
         command=command or "unknown",
         argv=list(argv or []),
         directory=stats_dir(project),
-        attrs=_jsonable(attrs or {}),
+        attrs=merged_attrs,
     )
     _CURRENT.set(recorder)
     return recorder
@@ -317,6 +347,43 @@ def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict
         reverse=True,
     )[:slow_limit]
 
+    # 🆕 2026-07-03(B3): 按 scale 分桶，诊断"微任务 vs 大任务开销比例失调"。
+    # scale 缺失（旧事件或无 state.json）归入 "unknown"。
+    by_scale: dict[str, dict[str, Any]] = {}
+    for event in events:
+        scale = str(event.get("scale") or event.get("attrs", {}).get("scale") or "unknown")
+        bucket = by_scale.setdefault(scale, {
+            "scale": scale,
+            "count": 0,
+            "totalMs": 0.0,
+            "maxMs": 0.0,
+        })
+        duration = float(event.get("durationMs") or 0.0)
+        bucket["count"] += 1
+        bucket["totalMs"] += duration
+        bucket["maxMs"] = max(float(bucket["maxMs"]), duration)
+    scale_list = []
+    for bucket in by_scale.values():
+        total = float(bucket["totalMs"])
+        count = int(bucket["count"])
+        bucket["totalMs"] = round(total, 3)
+        bucket["avgMs"] = round(total / count, 3) if count else 0.0
+        bucket["maxMs"] = round(float(bucket["maxMs"]), 3)
+        scale_list.append(bucket)
+    scale_list.sort(key=lambda b: float(b["avgMs"]), reverse=True)
+
+    # 比例失调诊断：微任务平均开销 / 大任务平均开销。
+    # 微任务走 8-phase 子链、大任务走 14-phase，理论上微任务应显著更轻；
+    # 若比值接近或超过 1，说明微任务可能误判走大链或编码段未瘦身（B1 修复前的症状）。
+    scale_ratios: dict[str, float] = {}
+    avg_by_scale = {b["scale"]: float(b["avgMs"]) for b in scale_list}
+    big_avg = avg_by_scale.get("大")
+    if big_avg and big_avg > 0:
+        for s in ("微", "小", "中"):
+            v = avg_by_scale.get(s)
+            if v and v > 0:
+                scale_ratios[f"{s}/大"] = round(v / big_avg, 3)
+
     return {
         "count": len(events),
         "duration": {
@@ -332,8 +399,11 @@ def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict
                 "durationMs": e.get("durationMs"),
                 "exitCode": e.get("exitCode"),
                 "startedAt": e.get("startedAt"),
+                "scale": e.get("scale") or (e.get("attrs") or {}).get("scale"),
             }
             for e in slowest_commands
         ],
         "slowestSpans": slowest_spans,
+        "byScale": scale_list,
+        "scaleRatios": scale_ratios,
     }

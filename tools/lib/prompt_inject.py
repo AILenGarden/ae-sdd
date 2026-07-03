@@ -103,6 +103,46 @@ def _update_quick_channel(ade_sdd: Path, user_prompt: str) -> None:
             pass
 
 
+# 🆕 v3.8.2：取端注入——memory enter 后的活跃 scope 下注入历史记忆。
+# 解决 memory 只写不读的黑洞问题：LLM 每次对话能看到当前 phase+story 的历史决策。
+# 注入 L1+L2（有证据的记忆），最近 8 条；L0 草稿/事件流不注入，L4 禁止整体注入。
+_MEMORY_INJECT_LIMIT = 8
+
+
+def _inject_memory_block(ade_sdd: Path, phase: str, current_story: str) -> Optional[str]:
+    """构建 ◆ MEMORY 注入块。活跃 scope 返回文本，否则返回 None。
+
+    仅在 memory enter 后未 exit 的活跃 scope 下注入，避免未 enter 时噪声。
+    容错：任何异常静默降级返回 None（与 plugin_loader/drift 探测同模式）。
+    """
+    try:
+        from lib import memory_gate, memory_store
+        memory_phase = memory_gate.memory_phase_for_state_phase(phase)
+        if not memory_phase:
+            return None
+        story = current_story if current_story and current_story != "（未设定）" else None
+        scope = memory_store.locate_scope(
+            project=str(ade_sdd.parent), phase=memory_phase, story=story,
+        )
+        if not memory_store.is_scope_active(scope):
+            return None
+        entries = memory_store.read(scope, include_project=True, limit=_MEMORY_INJECT_LIMIT)
+        memory_entries = [e for e in entries if e.get("type") == "memory"]
+        if not memory_entries:
+            return None
+        lines = [f"◆ MEMORY (recent decisions for {story or '<project>'}, phase={memory_phase})"]
+        for e in memory_entries:
+            layer = e.get("layer", "L1")
+            kind = e.get("kind", "observation")
+            summary = e.get("summary", "")
+            evidence = e.get("evidence") or []
+            ev_str = ", ".join(evidence) if evidence else "—"
+            lines.append(f"  [{layer}] {kind}: {summary}  (evidence: {ev_str})")
+        return "\n".join(lines)
+    except Exception:
+        return None
+
+
 def inject(
     project_dir: Optional[Path] = None,
     user_prompt: str = "",
@@ -212,6 +252,12 @@ def inject(
     flow_msg = _run_flow_monitor(ade_sdd, st)
     if flow_msg:
         lines.append(flow_msg)
+
+    # 🆕 v3.8.2：取端注入——memory enter 后的活跃 scope 下注入历史记忆。
+    # 解决 memory 只写不读黑洞：LLM 进节点时能看到该 story 此前 phase 的决策证据。
+    memory_block = _inject_memory_block(ade_sdd, phase, current_story)
+    if memory_block:
+        lines.append(memory_block)
 
     return {
         "hookSpecificOutput": {

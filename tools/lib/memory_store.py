@@ -173,6 +173,7 @@ def enter(scope: MemoryScope, *, actor: str = "ae-sdd", note: str = "") -> dict:
         "last_enter_at": now,
         "last_enter_by": actor,
         "last_enter_note": note,
+        "last_exit_at": None,  # 🆕 v3.8.2：重新 enter 清除 exit 时间，标记新工作周期开始
     })
     _write_json(_stage_path(scope), stage)
 
@@ -309,7 +310,36 @@ def exit_phase(scope: MemoryScope, *, actor: str = "ae-sdd", allow_empty: bool =
             "reason": check["reason"],
             "stage": stage,
         }
+    # 🆕 v3.8.2：成功 exit 时写 last_exit_at，供 is_scope_active 判断活跃态。
+    # exit_phase 不清除 last_enter_at（保留审计轨迹），仅追加 last_exit_at 时间戳。
+    stage["last_exit_at"] = now
+    _write_json(_stage_path(scope), stage)
     return {"pass": True, "blocked": False, "stage": stage}
+
+
+def is_scope_active(scope: MemoryScope) -> bool:
+    """判断 scope 是否处于 enter 后未 exit 的活跃状态。
+
+    依据 .stage 的 last_enter_at 与 last_exit_at 判断：
+      - 无 last_enter_at → 从未 enter，非活跃
+      - 有 last_enter_at 但无 last_exit_at → 已 enter 未 exit，活跃
+      - last_enter_at > last_exit_at → exit 后重新 enter，活跃
+      - last_enter_at <= last_exit_at → 已 exit，非活跃
+
+    注：enter() 会清除 last_exit_at（标记新工作周期开始），故重新 enter 后
+    last_exit_at 为 None，直接命中第二条规则返回活跃。
+
+    用于 prompt_inject 取端注入：仅在活跃 scope 下注入历史记忆，
+    避免未 enter 或已 exit 时注入噪声上下文。
+    """
+    stage = _read_json(_stage_path(scope))
+    enter_at = stage.get("last_enter_at")
+    if not enter_at:
+        return False
+    exit_at = stage.get("last_exit_at")
+    if not exit_at:
+        return True
+    return enter_at > exit_at
 
 
 def read(scope: MemoryScope, *, include_project: bool = True, limit: int = 20) -> list[dict]:

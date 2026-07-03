@@ -1,9 +1,10 @@
 ---
 name: ae-sdd
-version: 3.8.0
+version: 3.8.2
 description: |
-  端到端自动化工程主入口（v3.8.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.8.2）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。
   🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。
   历史变更见 source/CHANGELOG/。
 source_slimmed: true
@@ -39,8 +40,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 - semantic_inventory_sha256: `6a2b9d6d67fa312a5235353512d45599bb9e44fc41421f3e8f81403b0a504de1`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
-- summary: 端到端自动化工程主入口（v3.8.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+- summary: 端到端自动化工程主入口（v3.8.2）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。
 🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。
 历史变更见 source/CHANGELOG/。
 

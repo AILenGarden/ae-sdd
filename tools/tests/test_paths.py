@@ -217,6 +217,21 @@ class TestPathHelpers(unittest.TestCase):
     def test_state_path(self):
         self.assertEqual(paths.state_path(self.ade_sdd), self.ade_sdd / "state.json")
 
+    def test_work_item_dir_name_includes_id_and_name(self):
+        self.assertEqual(
+            paths.work_item_dir_name("BUG-LIFE-001", "Login timeout fix"),
+            "BUG-LIFE-001--Login-timeout-fix",
+        )
+
+    def test_work_item_state_path_resolves_named_directory_by_id(self):
+        state_path = self.tmp / ".auto-engineering" / "BUG-LIFE-001--Login-timeout-fix" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            '{"workItemId": "BUG-LIFE-001", "workItemName": "Login timeout fix"}',
+            encoding="utf-8",
+        )
+        self.assertEqual(paths.work_item_state_path(self.ade_sdd, "BUG-LIFE-001"), state_path)
+
     def test_assets_dir(self):
         self.assertEqual(paths.assets_dir(self.ade_sdd), self.ade_sdd / "assets")
 

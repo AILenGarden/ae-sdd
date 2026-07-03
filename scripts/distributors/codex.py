@@ -1,7 +1,7 @@
-"""Codex CLI 分发器：copytree → ~/.codex/skills/ae-sdd。
+"""Codex CLI 分发器（兼容 shim）。
 
-逻辑迁自 install.py 的 CODEX_DST 分支。
-auto 模式下：目录已存在 或 codex CLI 可用时才包含。
+🆕 2026-07-03 注册表模式：分发器实例现由 ~/.ae-sdd/distributors.json 驱动构造。
+本文件保留为向后兼容 shim，供旧测试与直接 import 使用。
 """
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ SKILL_NAME = "ae-sdd"
 
 
 class CodexDistributor(CopytreeDistributor):
-    name = "codex"
+    """兼容 shim：Codex → ~/.codex/skills/ae-sdd（copytree, detect=path_exists|cli）。"""
 
-    def target_path(self) -> Path:
-        return Path.home() / ".codex" / "skills" / SKILL_NAME
+    def __init__(self) -> None:
+        target = Path.home() / ".codex" / "skills" / SKILL_NAME
 
-    def detect(self) -> bool:
-        """auto 模式：codex 已安装或 CLI 存在时包含（迁自 install.py:_target_paths）。"""
-        dst = self.target_path()
-        return dst.exists() or bool(shutil.which("codex") or shutil.which("codex.exe"))
+        def _detect() -> bool:
+            return target.exists() or bool(shutil.which("codex") or shutil.which("codex.exe"))
+
+        super().__init__(name="codex", target_path=target, detect_fn=_detect)

@@ -41,6 +41,7 @@ ae-sdd — ae-sdd CLI 入口
 
 用法:
     ae-sdd version
+    ae-sdd state new --id <ID> --name "<需求名>"
     ae-sdd state read
     ae-sdd state next-step
     ae-sdd gates check [--only G-00]
@@ -130,15 +131,64 @@ def _work_item_arg(args) -> str:
     return (getattr(args, "work_item", "") or getattr(args, "story", "") or "").strip()
 
 
+def _state_path_work_item_key(sp: Path, fallback: str = "") -> str:
+    """Return the work-item directory key for an isolated state path."""
+    try:
+        if sp.name == "state.json" and sp.parent.parent.name == ".auto-engineering":
+            return sp.parent.name
+    except Exception:
+        pass
+    return fallback
+
+
+def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
+    """Return the active isolated state path recorded in .ae-sdd/state.json."""
+    mirror_path = paths.state_path(ade_sdd)
+    if not mirror_path.is_file():
+        return None
+    try:
+        mirror = state.read_state(mirror_path)
+    except Exception:
+        return None
+
+    project_root = paths.project_root(ade_sdd).resolve()
+    active_key = (mirror.get("activeWorkItem") or mirror.get("currentWorkItem") or "").strip()
+    raw_path = (mirror.get("activeStatePath") or "").strip()
+    candidates: list[Path] = []
+    if raw_path:
+        p = Path(raw_path)
+        candidates.append(p if p.is_absolute() else project_root / p)
+    if active_key:
+        candidates.append(paths.work_item_state_path(ade_sdd, active_key))
+
+    auto_root = (project_root / ".auto-engineering").resolve()
+    for cand in candidates:
+        try:
+            resolved = cand.resolve()
+            resolved.relative_to(auto_root)
+        except Exception:
+            continue
+        if resolved.is_file():
+            return resolved, _state_path_work_item_key(resolved, active_key)
+    return None
+
+
 def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
     """Resolve state path for main state commands.
 
-    No work item keeps the legacy project-level state. Passing --work-item or
-    --story reads/writes the isolated .auto-engineering/{id}/state.json file.
+    Passing --work-item or --story reads/writes the isolated work-item
+    state. Without an explicit work item, commands follow activeStatePath from
+    the project mirror. --project-state is the explicit legacy escape hatch.
     """
+    if getattr(args, "project_state", False):
+        return paths.state_path(ade_sdd), ""
     work_item = _work_item_arg(args)
     if work_item:
-        return paths.work_item_state_path(ade_sdd, work_item), work_item
+        sp = paths.work_item_state_path(ade_sdd, work_item)
+        return sp, _state_path_work_item_key(sp, work_item)
+    active = _active_state_from_mirror(ade_sdd)
+    if active is not None:
+        return active
     return paths.state_path(ade_sdd), ""
 
 
@@ -178,18 +228,100 @@ def cmd_state_read(args, parser):
     return 0
 
 
+def cmd_state_new(args, parser):
+    """Create a new isolated state machine for one requirement/work item."""
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    work_item_id = (args.id or "").strip()
+    work_item_name = (args.name or "").strip()
+    if not work_item_id or not work_item_name:
+        output.err("新状态机必须同时提供 --id 和 --name")
+        return 1
+
+    work_item_key = paths.work_item_dir_name(work_item_id, work_item_name)
+    sp = paths.work_item_state_path(ade_sdd, work_item_id, work_item_name)
+    if sp.exists() and not args.force:
+        output.err(f"状态机已存在：{sp.parent.name}")
+        output.info("如需重建，请加 --force（会覆盖该 state.json）")
+        return 1
+
+    cfg = paths.read_config(ade_sdd)
+    requested_scale = args.scale
+    requested_entry_node = args.entry_node
+    inferred = _infer_scale_for_work_item(work_item_id, requested_entry_node)
+    if inferred and not requested_scale:
+        requested_scale, requested_entry_node = inferred
+    if not requested_scale:
+        requested_scale = "大"
+
+    now = _now_iso()
+    st = state.read_state(sp)
+    st.update({
+        "version": "1",
+        "projectKey": cfg.get("projectKey"),
+        "phase": "initialized",
+        "scale": requested_scale,
+        "entryNode": requested_entry_node,
+        "stateMachineId": work_item_key,
+        "stateMachineName": work_item_name,
+        "workItemId": work_item_id,
+        "workItemName": work_item_name,
+        "workItemKey": work_item_key,
+        "currentWorkItem": work_item_key,
+        "currentStory": args.story or work_item_id,
+        "currentTask": None,
+        "createdAt": now,
+        "lastUpdated": now,
+        "history": [],
+    })
+    if args.task:
+        st["currentTask"] = args.task
+    state.write_state(sp, st)
+    if args.activate:
+        _write_active_state_mirror(ade_sdd, st, work_item_key, sp)
+
+    payload = {
+        "ok": True,
+        "workItemId": work_item_id,
+        "workItemName": work_item_name,
+        "workItemKey": work_item_key,
+        "statePath": str(sp),
+        "active": bool(args.activate),
+        "scale": requested_scale,
+        "entryNode": requested_entry_node,
+    }
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.ok(f"新状态机已创建：{work_item_key}")
+        output.info(f"  state: {sp}")
+        output.info(f"  scale: {requested_scale}")
+        if args.activate:
+            output.info("  已设为 active work item，后续 state read/write/next-step 默认跟随此状态机")
+    return 0
+
+
 def cmd_state_write(args, parser):
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
     sp, work_item = _main_state_path_for_args(ade_sdd, args)
+    if not work_item and not getattr(args, "project_state", False):
+        output.err("未找到 active work item。新需求必须先创建独立状态机：")
+        output.info('  ae-sdd state new --id <ID> --name "<需求名>"')
+        output.info("若确实要维护 legacy 项目级 state，请显式加 --project-state。")
+        return 1
     s = state.read_state(sp)
     cfg = paths.read_config(ade_sdd)
     if cfg.get("projectKey") and not s.get("projectKey"):
         s["projectKey"] = cfg.get("projectKey")
     if work_item:
         s["currentWorkItem"] = work_item
+        s.setdefault("workItemKey", work_item)
+        s.setdefault("stateMachineId", work_item)
         # Backward compatibility: older gates still key off currentStory.
         if not s.get("currentStory") and not args.story:
             s["currentStory"] = work_item
@@ -239,6 +371,7 @@ def cmd_state_write(args, parser):
         s["currentWorkItem"] = work_item
     if args.task:
         s["currentTask"] = args.task
+    s["lastUpdated"] = _now_iso()
     state.write_state(sp, s)
     _write_active_state_mirror(ade_sdd, s, work_item, sp)
     if changed:
@@ -877,7 +1010,10 @@ def cmd_update_check(args, parser):
                 output.info(f"      → {a['action']}")
             output.info("")
             output.info(f"🔍 该跑检查：{qr.checks_to_run}")
-            output.info(f"   跑 `ae-sdd update-check --only {qr.checks_to_run[0]}` 逐项验证（或直接 `ae-sdd update-check` 全量）")
+            if qr.checks_to_run:
+                output.info(f"   跑 `ae-sdd update-check --only {qr.checks_to_run[0]}` 逐项验证（或直接 `ae-sdd update-check` 全量）")
+            else:
+                output.info("   无需运行图谱检查（未命中已知规则）")
         return 0
 
     # ── 检查模式：跑 UC-01~UC-12（含 AA 全维对齐 UC-08~12，v3.5.11）──
@@ -1259,7 +1395,11 @@ def cmd_context_pressure(args, parser):
     """
     from lib import context_pressure as cp_mod
     ade_sdd = paths.locate_project_ae_sdd()
-    story_id = args.story or ""
+    story_id = _work_item_arg(args)
+    if not story_id and ade_sdd is not None:
+        active = _active_state_from_mirror(ade_sdd)
+        if active is not None:
+            _sp, story_id = active
     report = cp_mod.run_all(ade_sdd, story_id)
 
     if args.json:
@@ -1296,12 +1436,21 @@ def cmd_context_pressure(args, parser):
 # ─── 🆕 v3.5.12 review-loop CLI（编排层状态机，治 P0-1/2/4）─────────────────
 
 def _resolve_state_path(args):
-    """解析 state.json 路径（优先 --story，否则项目级）。"""
+    """解析 state.json 路径（--work-item/--story > active 状态机 > 项目级）。"""
     ade_sdd = paths.locate_project_ae_sdd()
-    story_id = getattr(args, "story", "") or ""
-    if story_id:
-        return ade_sdd, story_id, paths.project_root(ade_sdd) / ".auto-engineering" / story_id / "state.json"
-    return ade_sdd, story_id, paths.state_path(ade_sdd)
+    if ade_sdd is None:
+        return None, "", Path.cwd() / ".ae-sdd" / "state.json"
+    work_item = _work_item_arg(args)
+    if work_item:
+        sp = paths.work_item_state_path(ade_sdd, work_item)
+        return ade_sdd, work_item, sp
+    if getattr(args, "project_state", False):
+        return ade_sdd, "", paths.state_path(ade_sdd)
+    active = _active_state_from_mirror(ade_sdd)
+    if active is not None:
+        sp, active_key = active
+        return ade_sdd, active_key, sp
+    return ade_sdd, "", paths.state_path(ade_sdd)
 
 
 def cmd_review_loop_start(args, parser):
@@ -1780,7 +1929,11 @@ def cmd_enter(args, parser):
     if not project_key:
         output.err("未提供 projectKey，且 .ae-sdd/config.yaml 无 projectKey")
         return 1
-    story_id = args.story or ""
+    story_id = _work_item_arg(args)
+    if not story_id:
+        active = _active_state_from_mirror(ade_sdd)
+        if active is not None:
+            _sp, story_id = active
     s = session_mod.enter(project_key, story_id=story_id, ade_sdd=ade_sdd)
     if args.json:
         output.emit(s, as_json=True)
@@ -1961,7 +2114,11 @@ def cmd_state_confirm(args, parser):
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init + ae-sdd enter）")
         return 1
-    story_id = args.story or ""
+    story_id = _work_item_arg(args)
+    if not story_id:
+        active = _active_state_from_mirror(ade_sdd)
+        if active is not None:
+            _sp, story_id = active
     # 校验 entry token 存在
     if not session_mod.has_valid_entry_token(ade_sdd, story_id):
         output.err("未找到有效 entry token，请先跑 ae-sdd enter")
@@ -2849,6 +3006,20 @@ def cmd_perf_report(args, parser):
                 f"  {item.get('name')} {label}: {_fmt_ms(item.get('durationMs'))} "
                 f"({item.get('command')})"
             )
+    # 🆕 2026-07-03(B3): 按 scale 分桶展示
+    by_scale = summary.get("byScale") or []
+    if by_scale:
+        output.info("by scale (avg duration):")
+        for item in by_scale[:args.limit]:
+            output.info(
+                f"  {item['scale']}: count={item['count']} "
+                f"avg={_fmt_ms(item['avgMs'])} max={_fmt_ms(item['maxMs'])} "
+                f"total={_fmt_ms(item['totalMs'])}"
+            )
+    scale_ratios = summary.get("scaleRatios") or {}
+    if scale_ratios:
+        ratio_str = ", ".join(f"{k}={v:.2f}" for k, v in scale_ratios.items())
+        output.info(f"scale ratios (avg vs 大): {ratio_str}")
     return 0
 
 
@@ -2873,6 +3044,27 @@ def _perf_advice(summary: dict) -> list[str]:
     gates_item = next((item for item in command_items if item.get("command") == "gates check"), None)
     if gates_item and float(gates_item.get("avgMs") or 0.0) > 1000:
         advice.append("gates check 平均耗时超过 1 秒；优先看 slowest spans 中的 gate/scanner。")
+
+    # 🆕 2026-07-03(B3): 比例失调诊断 —— 微任务开销不应接近或超过大任务。
+    # 微任务走 8-phase 子链、大任务走 14-phase，正常应显著更轻。
+    scale_ratios = summary.get("scaleRatios") or {}
+    micro_ratio = scale_ratios.get("微/大")
+    if micro_ratio is not None and micro_ratio >= 0.8:
+        advice.append(
+            f"微任务平均开销 / 大任务平均开销 = {micro_ratio:.2f}，比例偏高（≥0.8）。"
+            "微任务应显著轻于大任务；若比值接近 1，检查是否微任务误判走大链，"
+            "或编码段（CodingPlan/确认/CodeReview）未随规模瘦身。"
+        )
+
+    # 🆕 2026-07-03(B2): bootstrap 固定成本提示（P1 lazy import 未实施）。
+    # 设计 plan runtime-stats-performance-plan.md P1 声称改 lazy import，至今未落地。
+    durations = summary.get("duration") or {}
+    if durations and float(durations.get("avgMs") or 0.0) > 150:
+        advice.append(
+            "命令平均耗时 >150ms，含 CLI 顶层 import 固定成本（实测 ~186ms）。"
+            "P1 lazy import fast path 已在 plan 中识别但未实施，详见 "
+            "source/docs/plans/2026-07-02-runtime-stats-performance-plan.md P1。"
+        )
 
     if not advice:
         advice.append("未发现明显慢点；继续积累更多事件后再看 p95 与 slowest spans。")
@@ -2911,6 +3103,133 @@ def cmd_perf_clear(args, parser):
         output.emit(payload, as_json=True)
     else:
         output.info(f"cleared runtime stats: {count} files from {payload['statsDir']}")
+    return 0
+
+
+# ─── 🆕 2026-07-03 distributor 子命令组（注册表模式） ─────────────────────────
+def cmd_distributor_list(args, parser):
+    """列出已注册的分发器。"""
+    from lib import distributor_registry as dr
+    entries = dr.load_registry()
+    if args.json:
+        output.emit({"distributors": [e.to_dict() for e in entries]}, as_json=True)
+        return 0
+    if not entries:
+        output.info("（注册表为空）")
+        return 0
+    output.info(f"注册表：{len(entries)} 个分发器（{dr.registry_path()}）")
+    for e in entries:
+        status = "✅启用" if e.enabled else "⛔禁用"
+        detect_desc = e.detect
+        if e.detect == "cli_exists" and e.detect_cli:
+            detect_desc = f"cli_exists({e.detect_cli})"
+        output.info(
+            f"  {e.name:10s} {e.protocol:14s} {status}  detect={detect_desc:20s} "
+            f"→ {e.target_path}"
+        )
+    return 0
+
+
+def cmd_distributor_register(args, parser):
+    """注册新分发器。"""
+    from lib import distributor_registry as dr
+    ok, msg, entries = dr.register_one(
+        name=args.name,
+        protocol=args.protocol,
+        target_path=args.target_path,
+        detect=args.detect,
+        detect_cli=args.detect_cli,
+        enabled=not args.disable,
+        notes=args.notes or "",
+        force=args.force,
+    )
+    if args.json:
+        output.emit({"ok": ok, "message": msg,
+                     "distributors": [e.to_dict() for e in entries]}, as_json=True)
+        return 0 if ok else 1
+    if ok:
+        output.info(msg)
+    else:
+        output.err(msg)
+    return 0 if ok else 1
+
+
+def cmd_distributor_unregister(args, parser):
+    """注销分发器（从注册表删除）。"""
+    from lib import distributor_registry as dr
+    ok, msg, entries = dr.unregister_one(args.name)
+    if args.json:
+        output.emit({"ok": ok, "message": msg,
+                     "distributors": [e.to_dict() for e in entries]}, as_json=True)
+        return 0 if ok else 1
+    if ok:
+        output.info(msg)
+    else:
+        output.err(msg)
+    return 0 if ok else 1
+
+
+def cmd_distributor_enable(args, parser):
+    """启用分发器。"""
+    from lib import distributor_registry as dr
+    ok, msg, entries = dr.set_enabled(args.name, True)
+    if args.json:
+        output.emit({"ok": ok, "message": msg}, as_json=True)
+        return 0
+    if ok:
+        output.info(msg)
+    else:
+        output.err(msg)
+    return 0 if ok else 1
+
+
+def cmd_distributor_disable(args, parser):
+    """禁用分发器（软注销）。"""
+    from lib import distributor_registry as dr
+    ok, msg, entries = dr.set_enabled(args.name, False)
+    if args.json:
+        output.emit({"ok": ok, "message": msg}, as_json=True)
+        return 0
+    if ok:
+        output.info(msg)
+    else:
+        output.err(msg)
+    return 0 if ok else 1
+
+
+def cmd_distributor_scan(args, parser):
+    """扫描已安装的 Agent，建议可注册的分发器。"""
+    from lib import distributor_registry as dr
+    found = dr.scan_for_agents() if args.all_agents else dr.scan_unregistered()
+    if args.register:
+        registered = 0
+        for item in found:
+            ok, _, _ = dr.register_one(
+                name=item["name"], protocol=item["protocol"],
+                target_path=item["target_path"], detect=item["detect"],
+                detect_cli=item.get("detect_cli"),
+                notes=item.get("notes", ""), force=True,
+            )
+            if ok:
+                registered += 1
+        msg = f"扫描到 {len(found)} 个，自动注册 {registered} 个"
+        if args.json:
+            output.emit({"found": found, "registered": registered, "message": msg}, as_json=True)
+        else:
+            output.info(msg)
+        return 0
+    if args.json:
+        output.emit({"found": found}, as_json=True)
+        return 0
+    if not found:
+        output.info("未扫描到可注册的 Agent（用 --all-agents 查看全部已知）")
+        return 0
+    output.info(f"扫描到 {len(found)} 个 Agent：")
+    for item in found:
+        output.info(
+            f"  {item['name']:10s} {item['protocol']:14s} → {item['target_path']}"
+        )
+    output.info("用 ae-sdd distributor register <name> --protocol ... 注册，或加 --register 自动注册")
     return 0
 
 
@@ -3192,17 +3511,34 @@ def main() -> int:
     # state
     p_state = sub.add_parser("state", help="项目状态管理", parents=[common])
     state_sub = p_state.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_state_new = state_sub.add_parser("new", help="新建独立需求状态机（.auto-engineering/{ID--name}/state.json）", parents=[common])
+    p_state_new.add_argument("--id", required=True, help="需求/任务 ID（如 BUG-LIFE-001 / STORY-001 / PRD-CS-001）")
+    p_state_new.add_argument("--name", required=True, help="需求/任务名称；会进入目录名")
+    p_state_new.add_argument("--story", default="", help="关联 Story ID（可选；未传时 currentStory 回退为 --id）")
+    p_state_new.add_argument("--task", default="", help="关联 Task ID（可选）")
+    p_state_new.add_argument("--scale", choices=["大", "中", "小", "微"], default=None,
+                             help="任务规模；BUG/OPT/CONFIG 会默认推断为 微，其余默认 大")
+    p_state_new.add_argument("--entry-node", default=None,
+                             help="入口节点语义（BUG/CONFIG/PRD/RA/DR/STORY/TASK/PLAN）")
+    p_state_new.add_argument("--force", action="store_true", help="允许覆盖已存在的同名 state.json")
+    p_state_new.add_argument("--no-activate", dest="activate", action="store_false",
+                             help="创建后不设为 active work item")
+    p_state_new.set_defaults(func=cmd_state_new, activate=True)
     p_state_read = state_sub.add_parser("read", help="读 state.json", parents=[common])
-    p_state_read.add_argument("--work-item", default="", help="独立编码任务 ID（PRD/BUG/OPT/Story 均可）")
+    p_state_read.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名（PRD/BUG/OPT/Story 均可）")
     p_state_read.add_argument("--story", default="", help="兼容参数：等价于 --work-item，且作为 currentStory")
+    p_state_read.add_argument("--project-state", action="store_true",
+                              help="显式读取 legacy 项目级 .ae-sdd/state.json（默认读取 active 状态机）")
     p_state_read.set_defaults(func=cmd_state_read)
     p_state_next = state_sub.add_parser("next-step", help="下一步建议", parents=[common])
-    p_state_next.add_argument("--work-item", default="", help="独立编码任务 ID（PRD/BUG/OPT/Story 均可）")
+    p_state_next.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名（PRD/BUG/OPT/Story 均可）")
     p_state_next.add_argument("--story", default="", help="兼容参数：等价于 --work-item")
+    p_state_next.add_argument("--project-state", action="store_true",
+                              help="显式读取 legacy 项目级 .ae-sdd/state.json（默认读取 active 状态机）")
     p_state_next.set_defaults(func=cmd_state_next_step)
     p_state_write = state_sub.add_parser("write", help="更新 state", parents=[common])
     p_state_write.add_argument("--phase", required=True, help="新 phase")
-    p_state_write.add_argument("--work-item", default="", help="独立编码任务 ID（PRD/BUG/OPT/Story 均可）；不传则沿用项目级 legacy state")
+    p_state_write.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_state_write.add_argument("--story", help="当前 Story ID")
     p_state_write.add_argument("--task", help="当前 Task ID")
     p_state_write.add_argument("--scale", choices=["大", "中", "小", "微"], default=None,
@@ -3211,6 +3547,8 @@ def main() -> int:
                                help="🆕 v3.5.15 入口节点语义（BUG/CONFIG/PRD/RA/DR/STORY/TASK/PLAN）")
     p_state_write.add_argument("--allow-empty-memory", action="store_true",
                                help="maintenance override: allow phase transition without mandatory memory")
+    p_state_write.add_argument("--project-state", action="store_true",
+                               help="显式写 legacy 项目级 .ae-sdd/state.json；新需求默认不允许")
     p_state_write.set_defaults(func=cmd_state_write)
 
     # state confirm（🆕 v3.4.0 — 审核点 token，建议书3 B2-1~5）
@@ -3218,6 +3556,7 @@ def main() -> int:
                                             parents=[common])
     p_state_confirm.add_argument("--phase", required=True, help="已确认的审核点 phase（如 task-reviewed/coding/code-reviewed）")
     p_state_confirm.add_argument("--story", default="", help="Story ID")
+    p_state_confirm.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_state_confirm.add_argument("--by", default="user", help="确认人（默认 user）")
     p_state_confirm.set_defaults(func=cmd_state_confirm)
 
@@ -3257,6 +3596,9 @@ def main() -> int:
                                         help="[v3.8.0] 写联审共识结果到 reviewConsensus[point]",
                                         parents=[common])
     p_state_rrc.add_argument("--story", default="", help="Story ID（空=项目级）")
+    p_state_rrc.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
+    p_state_rrc.add_argument("--project-state", action="store_true",
+                             help="显式写 legacy 项目级 .ae-sdd/state.json")
     p_state_rrc.add_argument("--point", type=float, required=True,
                              help="审核点编号（1/1.5/2/2.5/4/5）")
     p_state_rrc.add_argument("--tier", type=int, default=3, help="reviewer Tier（自动化模式固定 3）")
@@ -3273,6 +3615,9 @@ def main() -> int:
                                         help="[v3.8.1] 获取文件意图锁（防多 agent 并发写）",
                                         parents=[common])
     p_state_lock.add_argument("--story", default="", help="Story ID（空=项目级）")
+    p_state_lock.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
+    p_state_lock.add_argument("--project-state", action="store_true",
+                              help="显式写 legacy 项目级 .ae-sdd/state.json")
     p_state_lock.add_argument("--path", required=True,
                               help="产物文件相对路径（相对 project_dir，正斜杠）")
     p_state_lock.add_argument("--agent", required=True, help="申请锁的 agent 标识")
@@ -3284,6 +3629,9 @@ def main() -> int:
                                           help="[v3.8.1] 释放文件意图锁（仅持锁者能释放）",
                                           parents=[common])
     p_state_unlock.add_argument("--story", default="", help="Story ID（空=项目级）")
+    p_state_unlock.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
+    p_state_unlock.add_argument("--project-state", action="store_true",
+                                help="显式写 legacy 项目级 .ae-sdd/state.json")
     p_state_unlock.add_argument("--path", required=True, help="产物文件相对路径")
     p_state_unlock.add_argument("--agent", required=True, help="释放锁的 agent 标识")
     p_state_unlock.set_defaults(func=cmd_state_unlock)
@@ -3455,6 +3803,7 @@ def main() -> int:
                           help="[v3.5.5] 节点级上下文压力软提示（low/medium/high/critical，不阻断）",
                           parents=[common])
     p_cp.add_argument("--story", default="", help="Story ID（空 = 项目级）")
+    p_cp.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_cp.set_defaults(func=cmd_context_pressure)
 
     # review-loop（🆕 v3.5.12 — review-loop 编排层状态机，治 P0-1/2/4）
@@ -3466,6 +3815,9 @@ def main() -> int:
     p_rl_start = rl_sub.add_parser("start", help="初始化/读 reviewState + 派生 Tier + 输出派活指令",
                                     parents=[common])
     p_rl_start.add_argument("--story", default="", help="Story ID（空 = 项目级）")
+    p_rl_start.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
+    p_rl_start.add_argument("--project-state", action="store_true",
+                            help="显式写 legacy 项目级 .ae-sdd/state.json")
     p_rl_start.add_argument("--node", required=True,
                              help="review 节点（story-review/dr-review/code-review/ra-review）")
     p_rl_start.add_argument("--ra-size", default="中", help="RA 规模（微/小/中/大）")
@@ -3475,6 +3827,9 @@ def main() -> int:
     p_rl_collect = rl_sub.add_parser("collect", help="收报告：验session+算新增+推进轮次",
                                       parents=[common])
     p_rl_collect.add_argument("--story", default="", help="Story ID")
+    p_rl_collect.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
+    p_rl_collect.add_argument("--project-state", action="store_true",
+                              help="显式写 legacy 项目级 .ae-sdd/state.json")
     p_rl_collect.add_argument("--node", required=True, help="review 节点")
     p_rl_collect.add_argument("--reports", default="", help="报告列表（path|sessionId 或 path，逗号分隔）")
     p_rl_collect.add_argument("--session-ids", default="", help="sessionId 列表（逗号分隔，与 reports 对齐）")
@@ -3484,10 +3839,16 @@ def main() -> int:
 
     p_rl_status = rl_sub.add_parser("status", help="读进度（重入用）", parents=[common])
     p_rl_status.add_argument("--story", default="", help="Story ID")
+    p_rl_status.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
+    p_rl_status.add_argument("--project-state", action="store_true",
+                             help="显式读取 legacy 项目级 .ae-sdd/state.json")
     p_rl_status.set_defaults(func=cmd_review_loop_status)
 
     p_rl_verify = rl_sub.add_parser("verify-exit", help="退出条件校验（gates 兜底用）", parents=[common])
     p_rl_verify.add_argument("--story", default="", help="Story ID")
+    p_rl_verify.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
+    p_rl_verify.add_argument("--project-state", action="store_true",
+                             help="显式读取 legacy 项目级 .ae-sdd/state.json")
     p_rl_verify.set_defaults(func=cmd_review_loop_verify_exit)
 
     # memory toolset (P0): mandatory phase-aware memory hooks
@@ -3717,6 +4078,50 @@ def main() -> int:
     p_perf_clear.add_argument("--project", default="", help="project root or .ae-sdd dir (default cwd)")
     p_perf_clear.set_defaults(func=cmd_perf_clear)
 
+    # 🆕 2026-07-03 distributor 子命令组（注册表模式）
+    p_distributor = sub.add_parser("distributor",
+                                   help="分发器注册表管理（list/register/unregister/enable/disable/scan）",
+                                   parents=[common])
+    dist_sub = p_distributor.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    p_dist_list = dist_sub.add_parser("list", help="列出已注册的分发器", parents=[common])
+    p_dist_list.set_defaults(func=cmd_distributor_list)
+
+    p_dist_register = dist_sub.add_parser("register", help="注册新分发器", parents=[common])
+    p_dist_register.add_argument("name", help="分发器名称（如 claude/codex/myagent）")
+    p_dist_register.add_argument("--protocol", required=True,
+                                 choices=["copytree", "harness_mount"],
+                                 help="安装协议")
+    p_dist_register.add_argument("--target-path", required=True,
+                                 help="安装目标路径（支持 ~ 开头）")
+    p_dist_register.add_argument("--detect", default="always",
+                                 choices=["always", "path_exists", "cli_exists"],
+                                 help="探测策略（default: always）")
+    p_dist_register.add_argument("--detect-cli", default=None,
+                                 help="detect=cli_exists 时的 CLI 命令名")
+    p_dist_register.add_argument("--notes", default="", help="备注")
+    p_dist_register.add_argument("--disable", action="store_true", help="注册为禁用状态")
+    p_dist_register.add_argument("--force", action="store_true", help="覆盖已存在的同名条目")
+    p_dist_register.set_defaults(func=cmd_distributor_register)
+
+    p_dist_unregister = dist_sub.add_parser("unregister", help="注销分发器（从注册表删除）", parents=[common])
+    p_dist_unregister.add_argument("name", help="要注销的分发器名称")
+    p_dist_unregister.set_defaults(func=cmd_distributor_unregister)
+
+    p_dist_enable = dist_sub.add_parser("enable", help="启用分发器", parents=[common])
+    p_dist_enable.add_argument("name", help="分发器名称")
+    p_dist_enable.set_defaults(func=cmd_distributor_enable)
+
+    p_dist_disable = dist_sub.add_parser("disable", help="禁用分发器（软注销）", parents=[common])
+    p_dist_disable.add_argument("name", help="分发器名称")
+    p_dist_disable.set_defaults(func=cmd_distributor_disable)
+
+    p_dist_scan = dist_sub.add_parser("scan", help="扫描已安装的 Agent，建议可注册的分发器", parents=[common])
+    p_dist_scan.add_argument("--register", action="store_true", help="自动注册扫描到的（覆盖已存在）")
+    p_dist_scan.add_argument("--all-agents", action="store_true",
+                             help="扫描全部已知 Agent（含已注册的），默认只显示未注册的")
+    p_dist_scan.set_defaults(func=cmd_distributor_scan)
+
     # health
     p_health = sub.add_parser("health", help="健康度自检", parents=[common])
     p_health.set_defaults(func=cmd_health)
@@ -3740,6 +4145,7 @@ def main() -> int:
     p_enter.add_argument("project_key", nargs="?", default="",
                          help="projectKey（缺省从 .ae-sdd/config.yaml 读）")
     p_enter.add_argument("--story", default="", help="Story ID（项目级 enter 可省略）")
+    p_enter.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_enter.set_defaults(func=cmd_enter)
 
     # plugin（🆕 v3.5.1 — plugin_loader CLI 挂载，闭环 SKILL 注册表的用户入口）

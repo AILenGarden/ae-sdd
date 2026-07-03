@@ -575,7 +575,7 @@ mavis harness remount
 
 > 本小节是 `source/standards/update-graph.json` 的人读锚点索引，不是权威源。新增/删除 UG 规则或 UC 检查时，必须同步本小节；`ae-sdd update-check --only UC-14` 会自动校验 JSON、`CHECK_FUNCS` 与本小节是否一致。
 
-- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`
+- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`, `UG-22`
 - 检查器锚点：`UC-01`, `UC-02`, `UC-03`, `UC-04`, `UC-05`, `UC-06`, `UC-07`, `UC-08`, `UC-09`, `UC-10`, `UC-11`, `UC-12`, `UC-13`, `UC-14`, `UC-15`, `UC-16`
 
 ### 🤖 Agent 程序化消费协议（强制 — Agent 改完文件后必做）
@@ -623,6 +623,7 @@ ae-sdd update-check --only UC-02
 | update_graph.py/json | 图谱表 / 测试 / CLI / 本章节 / UC-14 锚点 | 全量+UC-14 |
 | runtime compiler / compiled package | `compile_skill_runtime.py` / `runtime_verify.py` / `build_dist.py` / `distribute.py` / `standalone-skills/skill-runtime-compiler/` / compiled-only guard | UC-15+UC-14 |
 | Runtime Stats / subprocess wrapper | `runtime_stats.py` / `runtime_exec.py` / `perf` CLI / gate duration / UTF-8 子进程 / `.gitignore` / 设计与实现架构文档 | UC-03 |
+| ae-sdd Monitor | `ae-sdd-monitor-design.md` / `apps/ae-sdd-monitor/src/workspace.js` / Monitor tests / README / ae-sdd 设计与实现架构文档 | UC-03+UC-14 |
 | 任意 source/tools | CHANGELOG / README:5 / 设计文档 / 实现架构文档 / dev-sync / 级联图谱锚点 | UC-01+03+04+05+14 |
 
 ### 图谱使用 SOP（Agent 流程）
@@ -842,6 +843,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.5.11+ `tools/lib/alignment_audit.py` 存在（AA 全维对齐验证器，6 维 UC-08~13：门禁承诺↔注册双向 / 门禁实现真实性抓 stub-pass / state 字段存活性 / 状态机闭环 / 幽灵命令全捕获 / 门禁注册完整性）+ `register_to_update_graph()` 注入 update_graph.CHECK_FUNCS；`tools/bin/ae-sdd:cmd_update_check` import alignment_audit 触发注册 + UC-01~16 全量调度；`tools/tests/test_alignment_audit.py` ≥12 用例；`tools/lib/gates.py` 修复 G-RA-FLOW-VIOLATION 假门禁（check_all 特判传 master_source + `_sys`→`sys` NameError）+ `tools/tests/test_gates.py` TestGRAFlowViolation 3 用例；`source/SKILL.md` frontmatter v3.5.11 + AA 描述；5 个核心 review/生成 SKILL（dr-review/story-review/code-review/requirement-analysis/task-generate）顶部含🟠门禁强度声明；`requirement-analysis-skill.md` 删除 `run dr-review-skill`/`run story-update-skill` 幽灵命令引用；`source/standards/update-graph.json` 含 UG-15 规则；`source/docs/plans/2026-06-29-v3.5.11-aa-tracking-list.md` 存在（AA 首跑 gap 留痕）
 - [ ] 🆕 v3.8.0 `tools/lib/config.py` 存在（`AUTOMATION_DEFAULTS` + `load_automation_config` + `is_automation_enabled`/`get_reviewer_tier`/`get_automated_points`）；`scripts/init.py` CONFIG_TEMPLATE 含 `automation:` 段（默认 `enabled: false`）；`tools/lib/gates.py` GATE_REGISTRY 含 G-AUTO-CONSENSUS（30 门禁）+ CHECK_FUNCS 注册 + `check_g_auto_consensus` 实现；`tools/lib/state.py` 含 `register_review_consensus`/`get_review_consensus` + `reviewConsensus` 字段；`tools/bin/ae-sdd` 含 `automation status/enable/disable` + `preflight collect` + `state register-review-consensus` 子命令；`source/SKILL.md` 含 `## 🚀 自动化模式` 章节 + G-AUTO-CONSENSUS 门禁速查 + Step1 自动化检测 + Step1.5 预收集 + 监管器步骤4 联审共识双模式 + 30门禁；`source/skills/cross-cutting/agent-orchestration-skill.md` §8.4.1 自动化强制 Tier 3 + §8.4.5 禁逻辑多视角降级；`tools/tests/test_gates.py` TestGAutoConsensus ≥3 用例 + 门禁总数断言 30；`tools/tests/test_automation_cli.py` 存在；`source/docs/ae-sdd-design.md` 含 `## 19` 自动化能力模块；`source/standards/update-graph.json` 含 UG-20 规则；`tools/lib/update_graph.py` 含 `check_uc16_automation_cascade` + CHECK_FUNCS 注册 UC-16；`source/CHANGELOG/` 含 `2026-07-02-automation-switch.md`
 - [ ] 🆕 2026-07-03 Runtime Stats P0：`tools/lib/runtime_stats.py` 与 `tools/lib/runtime_exec.py` 存在；`tools/bin/ae-sdd` 含 `perf report/doctor/clear`；`tools/lib/gates.py` `summarize()` 输出 `durationMs/slowest`；`tools/tests/test_runtime_stats.py` 与 `tools/tests/test_cli_perf.py` 存在；`.gitignore` 忽略 `.ae-sdd/runtime-stats/`；`source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/plans/2026-07-02-runtime-stats-performance-plan.md` 已同步；`source/standards/update-graph.json` 含 UG-21；`source/CHANGELOG/` 含 `2026-07-03-runtime-stats-p0.md`
+- [ ] 🆕 2026-07-03 ae-sdd Monitor：`apps/ae-sdd-monitor/` 存在；`source/docs/ae-sdd-monitor-design.md` 独立记录只读投影语义；`source/docs/ae-sdd-design.md` 含 Monitor 入口；`source/docs/ae-sdd-implementation-architecture.md` 含 Monitor 模块/数据流边界；`source/standards/update-graph.json` 含 UG-22；`apps/ae-sdd-monitor/src/workspace.js` 和 `apps/ae-sdd-monitor/test/workspace.test.js` 跟随 state/runtime 投影契约；`apps/ae-sdd-monitor/README.md` 链接设计契约
 
 ### 跨 SKILL 一致性
 

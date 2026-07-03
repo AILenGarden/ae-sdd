@@ -152,25 +152,40 @@ class Distributor(ABC):
         pass
 
 
-# ─── CopytreeDistributor 共享基类 ────────────────────────────────────────────
+# ─── CopytreeDistributor 共享基类（🆕 2026-07-03 数据驱动，不再需要子类）───────
 SKILL_NAME = "ae-sdd"
 BAK_KEEP_DEFAULT = 2
 
 
 class CopytreeDistributor(Distributor):
-    """copytree 类分发器共享逻辑：备份 → 复制 → 校验 → 清旧 .bak。
+    """copytree 类分发器：备份 → 复制 → 校验 → 清旧 .bak。
 
-    claude/codex/zcode/hermes 只需声明 name + target_path + detect()，复用本类的
-    install/verify/cleanup（逻辑迁自 install.py 的 backup_existing /
-    install_from_dist / verify / cleanup_old_backups，保持行为一致）。
+    🆕 2026-07-03 注册表模式：不再需要为每个 Agent 写 .py 子类。
+    直接用注册表数据构造实例：
+        CopytreeDistributor(name="claude", target_path=Path("~/.claude/skills/ae-sdd"),
+                            detect_fn=lambda: True)
+    install/verify/cleanup 逻辑迁自 install.py，保持行为一致。
     """
     protocol = "copytree"
     needs_compile = False
 
-    @abstractmethod
+    def __init__(
+        self,
+        name: str = "",
+        target_path: Optional[Path] = None,
+        detect_fn: Optional[callable] = None,
+    ) -> None:
+        self.name = name
+        self._target_path = target_path or Path()
+        # detect_fn 返回 bool；None 时永远 True（向后兼容 claude 的 always）
+        self._detect_fn = detect_fn or (lambda: True)
+
     def target_path(self) -> Path:
-        """该 Agent 的 skills 安装目标绝对路径。"""
-        ...
+        return self._target_path
+
+    def detect(self) -> bool:
+        """auto 模式：由注册表的 detect 策略决定。"""
+        return self._detect_fn()
 
     # ── 备份 ────────────────────────────────────────────────────────────────
     def _backup_root(self) -> Path:
@@ -274,3 +289,157 @@ class CopytreeDistributor(Distributor):
             ver = version_file.read_text(encoding="utf-8").split("\n")[0]
             log_info(ctx, f"安装版本: {ver} ({dst})")
         return True
+
+
+# ─── HarnessMountDistributor（🆕 2026-07-03 从 mavis.py 抽象，参数化）─────────
+# 协议模板：harness_mount 类 Agent（mavis 及未来同类）。
+# 逻辑迁自 distributors/mavis.py，保持行为一致：compile(build_harness) →
+# install(mavis harness mount) → verify(harness list) → cleanup(-N 副本 + sqlite)。
+
+_HARNESS_KEEP_DEFAULT = 0   # 清理 -N 副本保留数（0=全清；负数=不清理）
+
+
+class HarnessMountDistributor(Distributor):
+    """harness_mount 协议模板：调 build_harness.py 生成 agent.md + mavis harness mount。
+
+    🆕 2026-07-03 注册表模式：不再需要 mavis.py 独立子类。
+    直接用注册表数据构造：
+        HarnessMountDistributor(name="mavis", agent_home=Path("~/.mavis"),
+                                detect_fn=lambda: find_mavis_cmd() is not None)
+    """
+    protocol = "harness_mount"
+    needs_compile = True
+
+    def __init__(
+        self,
+        name: str = "",
+        agent_home: Optional[Path] = None,
+        detect_fn: Optional[callable] = None,
+    ) -> None:
+        self.name = name
+        self.agent_home = agent_home or (Path.home() / ".mavis")
+        self._detect_fn = detect_fn or (lambda: False)
+
+    def detect(self) -> bool:
+        return self._detect_fn()
+
+    def compile(self, repo_root: Path) -> Optional[Path]:
+        """调 build_harness.py 生成 .harness/agent.md，返回 .harness 目录。"""
+        scripts_dir = repo_root / "scripts"
+        build_harness = scripts_dir / "build_harness.py"
+        if not build_harness.is_file():
+            log_error(f"build_harness.py 不存在: {build_harness}")
+            return None
+        result = subprocess.run(
+            [sys.executable, str(build_harness), "--source", str(repo_root), "--no-mount"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            log_error(f"build_harness.py 失败 (rc={result.returncode})")
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+            return None
+        harness_dir = repo_root / ".harness"
+        if (harness_dir / "agent.md").is_file():
+            return harness_dir
+        return None
+
+    def install(self, source: Path, ctx: DistributeContext) -> InstallResult:
+        """source 是 compile 产出的 .harness 目录；执行 mavis harness mount。"""
+        import time
+        t0 = time.time()
+        # build_harness 与本包同级（scripts/），由调用方保证 sys.path 含 scripts/
+        try:
+            from build_harness import run_mavis, find_mavis_cmd, mavis_harness_name_for_path
+        except ImportError:
+            return InstallResult(self.name, "skip",
+                                 "build_harness.py 不可导入，跳过 mount", time.time() - t0)
+
+        if find_mavis_cmd() is None:
+            return InstallResult(self.name, "skip",
+                                 f"{self.name} 未安装，跳过 mount（产物已写入）", time.time() - t0)
+
+        if self.verify(ctx):
+            return InstallResult(self.name, "ok", f"{self.name} harness already mounted", time.time() - t0)
+
+        harness_root = source.parent  # source=.harness，mount 入参是 repo root
+        # 先 unmount 旧挂载
+        for hname in dict.fromkeys([
+            mavis_harness_name_for_path(harness_root),
+            mavis_harness_name_for_path(harness_root / "harness"),
+            SKILL_NAME,
+        ]):
+            run_mavis(["harness", "unmount", hname])
+        rc, out = run_mavis(["harness", "mount", str(harness_root)])
+        if not ctx.quiet:
+            for line in out.splitlines():
+                print(f"    {line}")
+        if rc == 0 and self.verify(ctx):
+            return InstallResult(self.name, "ok", f"{self.name} harness mounted", time.time() - t0)
+        return InstallResult(self.name, "fail",
+                             f"{self.name} harness mount 失败 (rc={rc})", time.time() - t0)
+
+    def verify(self, ctx: DistributeContext) -> bool:
+        """harness list 能列出 ae-sdd 即通过。"""
+        try:
+            from build_harness import run_mavis
+        except ImportError:
+            return False
+        rc, out = run_mavis(["harness", "list"])
+        if rc == 0 and SKILL_NAME in out:
+            return True
+        log_warn(ctx, f"{self.name} harness list 未确认 {SKILL_NAME}（rc={rc}）")
+        return False
+
+    def cleanup(self, ctx: DistributeContext) -> None:
+        """清 -N 副本 + 同步 sqlite（迁自 mavis.py:cleanup）。"""
+        import re
+        import sqlite3
+        from datetime import datetime
+        keep = _HARNESS_KEEP_DEFAULT
+        skills_dir = self.agent_home / "skills"
+        if not skills_dir.is_dir():
+            return
+        pattern = re.compile(rf"^{re.escape(SKILL_NAME)}-\d+$")
+        dupes = sorted(
+            [p for p in skills_dir.iterdir() if p.is_dir() and pattern.match(p.name)],
+            key=lambda p: p.name,
+        )
+        if not dupes:
+            return
+        if keep > 0 and len(dupes) > keep:
+            dupes = dupes[:-keep]
+
+        db_path = self.agent_home / "sqlite.db"
+        db_deleted = 0
+        if db_path.is_file():
+            try:
+                db_backup = db_path.with_suffix(
+                    f".db.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                )
+                shutil.copy2(db_path, db_backup)
+                conn = sqlite3.connect(str(db_path))
+                cur = conn.cursor()
+                for d in dupes:
+                    cur.execute("DELETE FROM skills WHERE name = ?", (d.name,))
+                    db_deleted += cur.rowcount
+                conn.commit()
+                conn.close()
+                log_warn(ctx, f"已备份 {self.name} sqlite.db → {db_backup.name}")
+            except Exception as e:
+                log_warn(ctx, f"同步清理 {self.name} sqlite 记录失败（物理目录仍会清理）: {e}")
+        else:
+            log_warn(ctx, f"未找到 {self.name} sqlite.db，跳过索引同步（仅清物理目录）")
+
+        removed = 0
+        for d in dupes:
+            try:
+                shutil.rmtree(d)
+                log_warn(ctx, f"清理 {self.name} 端 -N 副本: {d.name}")
+                removed += 1
+            except OSError as e:
+                log_warn(ctx, f"删除 {d.name} 失败: {e}")
+
+        if removed:
+            log_info(ctx, f"已清理 {self.name} 端 {removed} 个 {SKILL_NAME}-N 副本"
+                          f"（sqlite 同步删 {db_deleted} 条）")

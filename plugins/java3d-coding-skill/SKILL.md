@@ -1,10 +1,11 @@
 ---
 name: java3d-coding
 description: |
-  Java3D 适配器（🔧 v1.3.0，新增 BFF 三层落点决策）。承载 Java 语言 + icec/life
+  Java3D 适配器（🔧 v1.4.0，基于 references 学习成果增强：聚合边界判定线 + messagebus 事件设计 +
+  @Transactional 传播陷阱 + 分布式锁反模式 + 静态扫描补充）。承载 Java 语言 + icec/life
   项目族的「编码决策知识层」，叠加于共有 coding-skill §3/§4/§8/§11/§12 之上。技术栈锁、Service DDD 5 模块
   落点决策（含防腐层 Facade + 集成/领域事件双线）、BFF 三层落点决策（合并 domain、interfaces/converter、
-  数据策略红线）、骨架展开特化、验证姿态特化、命名/错误码决策、静态扫描特化、icec/life 踩坑决策库。
+  数据策略红线）、聚合边界判定线、骨架展开特化、验证姿态特化、命名/错误码决策、静态扫描特化、icec/life 踩坑决策库。
   本文件不复述项目 constraints/ + assets 的纯规则（指针引用，DRY）；只提供"遇到 X 决策时怎么选"。
   注册 key: coding-adapter-java（type=skill-new，母版 L3）。
   触发：共有 coding-skill §13.1 加载协议按项目技术栈解析本适配器后叠加应用。
@@ -82,6 +83,7 @@ description: |
 | Kafka 消费 | `@KafkaListener` / courier | messagebus `@EventHandler` | 走统一消息总线 |
 | 缓存混用 | 本地+分布式混用 | 二选一（按一致性需求） | 防双写不一致 |
 | 跨服务数据 | 直接连别服务 DB | 走该服务 SPI（Feign） | 数据所有权隔离 |
+| 分布式锁 | `setIfAbsent`+分离 `expire`（非原子，崩溃间隙丢 TTL=经典坏锁）| Redisson `tryLock`/`trySet`（原子带 TTL）；或注入项目已有锁 wrapper | 非原子→锁泄露/互斥失效（见 §8 踩坑#20）|
 
 ---
 
@@ -198,6 +200,28 @@ description: |
 
 > **BFF object 持有约束：** 仅允许 VO/DTO；🔴 禁持有 PO（BFF 不触 DB）、禁持有 DO（无独立 domain 层）。
 
+### §2.6 聚合边界判定线（🆕 v1.4.0 — 补强 §2 DDD 落点表的边界决策缺口）
+
+> **🔴 决策定位：** §2.2 给了"类角色→包路径"落点表，§2.4 给了 DO/PO 类型差异判定线，但都没回答"**什么时候该拆聚合、聚合方法能不能传别的聚合对象**"这类边界判定问题。本节给可操作判定线（AB-1~AB-4），供 CodeAnalysis §6「要素 4 包路径映射」+ Domain 层建模决策时核对。
+>
+> **来源：** `ddd-architecture-coach/phase3-implementation-spec.md` AB-1~AB-4 + `spring-boot-skills/domain-driven-design` + DDD 蓝皮书/IDDD 交叉印证。
+
+**判定总则：聚合边界 = 必须立即成立的不变量（invariant）的保护范围**，不是对象图的自然连接关系，也不是实体数量。
+
+| 编号 | 判定线 | 决策 | 依据 |
+|------|--------|------|------|
+| **AB-1** | 聚合的不变量描述文本只能引用**本聚合自己的字段/方法名** | "An Aggregate must never query another Aggregate's internal state"——不变量不得跨聚合引用 | 跨聚合引用=耦合，破坏聚合独立性 |
+| **AB-2** | 聚合方法参数**禁传其他聚合对象**，只能传 ID（或值对象） | 跨聚合操作在 AppService 层分别 `repository.findById(id)` 加载两个聚合后协调，**不**把聚合 A 作为参数塞进聚合 B 的方法 | 单事务内只持有一个聚合根的引用，防聚合越界修改 |
+| **AB-3** | 单聚合内子实体（值对象/子实体）**超过 3-4 个** → 考虑拆分聚合 | 启发式数字：>4 子实体通常暗示不变量边界划得过宽，应拆为多个小聚合 | 小聚合=高并发+低锁竞争（DDD 蓝皮书推荐小聚合）|
+| **AB-4** | 允许"故意违反单聚合单事务"（一个事务改多个聚合） | 🔴 但**必须显式 callout**：①理由（为何不能用最终一致性/领域事件）②并发风险（多聚合同时被改时的竞态）③补偿方案 | 例外须可追溯，禁止默认行为 |
+
+**遇到"要不要拆聚合"时的判定 SOP：**
+1. 先问"这些实体之间有没有**必须同时成立**的不变量？" → 有→同聚合；无→拆。
+2. 同事务修改频率高 + 不变量弱 → 拆聚合 + 领域事件最终一致（AB-4 例外才同事务）。
+3. 聚合方法需要别聚合的数据 → 走 Facade（§2.2 domain 定义/infrastructure 实现）取 ID，**不**直接传聚合对象（AB-2）。
+
+> **与 §2.2 落点表的衔接：** AB-2 的"AppService 分别加载两个聚合后协调"对应 §2.2 `{Resource}AppService`（应用编排）持 DO + DTO 的职责；Facade 落 `domain.facade`（接口）/`infrastructure.facade`（实现）。本节只给"边界判定"，落点仍查 §2.2。
+
 ---
 
 ## §3 分层红线决策（icec/life 特化 → 叠加共有 §3）
@@ -239,7 +263,9 @@ description: |
 | 跨服务调用 | FeignClient 继承 SPI 接口 + `@HystrixCommand(fallbackMethod)` | 容错降级 |
 | 仓储实现 | `extends ServiceImpl<{Resource}Mapper, {Resource}PO>` | MyBatis-Plus |
 | 分页 | PageHelper（禁手写分页 SQL）| 统一分页 |
-| 消息发送 | 事务提交后 `@TransactionalEventListener` 发 messagebus 事件 | 先写库后发消息 |
+| 消息发送（触发时机） | 事务提交后 `@TransactionalEventListener(phase=AFTER_COMMIT)` 发 messagebus 事件 | 先写库后发消息；🔴 注意 AFTER_COMMIT 在原事务**之外**运行（见 §8 踩坑#17）|
+| 消息发送（事件信封，🆕 v1.4.0）| messagebus `Message` 信封**缺** eventId/schemaVersion/correlationId 标准字段（仅有 id/primaryKey/topic/timeStamp）→ 业务 payload **必须自带**：`eventId`(UUID)/`occurredAt`/`schemaVersion`/可选 `correlationId`（跨服务追踪）| 核实结论：框架不提供标准信封，业务侧补齐（见 §8 踩坑#15）|
+| 消息消费（幂等，🆕 v1.4.0）| messagebus 是 at-least-once 投递 + broker 侧重投（`ConsumeFailMessage.needRepush`），**框架不做去重** → 业务 EventHandler 必须自实现幂等：①去重表（`ProcessedEvent(event_id unique)` 与业务同事务，冲突即 no-op）②自然幂等（按业务键 upsert / 状态守卫忽略重放）。**判定线：涉及邮件/支付/下游事件等不可重复副作用 → 必须用去重表，不能只依赖自然幂等** | 核实结论：框架不覆盖幂等（见 §8 踩坑#15）|
 | 定时任务 | `@JobHandler`（job-spring-boot-starter）| 禁 `@Scheduled` |
 | 时间字段 | `java.util.Date`（全层统一）| Feign+JSON 兼容 |
 | 异常抛出 | 自定义异常 `extends RuntimeException`（带 code），在 domain `exception` 包 | 禁裸 RuntimeException |
@@ -337,6 +363,11 @@ grep -rn "new ObjectMapper" --include="*.java" src/main/java/ 2>/dev/null
 # 8. 禁 Executors（强制 ThreadPoolExecutor）
 grep -rn "Executors\.\(newFixed\|newCached\|newSingle\|newScheduled\)" --include="*.java" src/main/java/ 2>/dev/null
 # 期望空
+
+# 9. Domain 层禁框架注解污染（🆕 v1.4.0 — 防 AI 把 Spring 语法写进领域层）
+grep -rn "@Service\|@Component\|@Autowired\|@Repository" \
+  --include="*.java" src/main/java/**/domain/ 2>/dev/null
+# 期望空；非空 = 领域层被框架污染（🔴 阻断）。依据：§2.1 domain 模块"不依赖任何其他模块"+ §3"Domain 引用 PO/DTO/SQL 禁"
 ```
 
 ---
@@ -347,7 +378,7 @@ grep -rn "Executors\.\(newFixed\|newCached\|newSingle\|newScheduled\)" --include
 
 | # | 陷阱 | 决策规避 |
 |---|------|---------|
-| 1 | **根 pom 不管依赖内容**（🔧 v1.2.0 修正）：根 pom 只做 `dependencyManagement`+插件+`<modules>` 聚合，不声明 `dependencies`；单独在某子模块目录下跑 `mvn compile`（不走根 reactor）时，其依赖的兄弟模块须已 `mvn install` 到本地仓 | 优先走根目录 `mvn compile`（reactor 按 `<modules>` 顺序自动构建）；仅需单模块编译时，先 `mvn install` 被依赖模块到本地仓 |
+| 1 | **根 pom 不管依赖内容**（🔧 v1.2.0 修正；🔧 v1.4.0 补检测手段）：根 pom 只做 `dependencyManagement`+插件+`<modules>` 聚合，不声明 `dependencies`；单独在某子模块目录下跑 `mvn compile`（不走根 reactor）时，其依赖的兄弟模块须已 `mvn install` 到本地仓 | 优先走根目录 `mvn compile`（reactor 按 `<modules>` 顺序自动构建）；仅需单模块编译时，先 `mvn install` 被依赖模块到本地仓。**依赖冲突检测（🔧 v1.4.0）：** Maven `nearest wins`——最近声明胜出（非最近版本）；同一 artifact 不同版本在依赖树多路径出现时，用 `mvn dependency:tree -Dverbose` 查 `omitted for duplicate`/`managed from`；CI 加 `maven-enforcer-plugin` 的 `dependencyConvergence` 规则，冲突即 fail（禁止靠"碰巧选到能跑的版本"蒙混）|
 | 2 | **messagebus ≠ courier**：constraints 文档写"Kafka via courier"，但生产实际用 casstime 自建 messagebus（`@EnableMessage`+`EventPublisher`+`KafkaApplicationEventPublisher`） | 消息发送一律走 messagebus；禁 `@KafkaListener`、禁 courier；外部 Kafka PUSH 经 handwritten KafkaConsumer → messagebus 桥接 |
 | 3 | **MapStruct 声明却禁用**：pom 有 `mapstruct.version=1.5.3.Final`，但 code-style/project-structure 禁用其生成 | 一律显式 Converter（cs=`@UtilityClass`，im=`public final class`+私有构造）；pom 的 MapStruct 声明是历史遗留，勿启用 |
 | 4 | **@NotBlank 包版本**：Spring Cloud Dalston（hibernate-validator 5.x）用 `org.hibernate.validator.constraints.NotBlank`（非 javax.validation）| 校验注解按 Boot 版本确认来源包 |
@@ -361,6 +392,12 @@ grep -rn "Executors\.\(newFixed\|newCached\|newSingle\|newScheduled\)" --include
 | 12 | **im-bff 跨域消费**：im-bff 同时消费 im-spi 和 cs-spi（跨域）| im-bff 编排时承认跨域依赖 |
 | 13 | **boss-vechcle 拼写**：`boss-vehicle-bff` 包名历史拼成 `vechcle`（应为 vehicle），留原状兼容 | 勿"修正"包名，破坏兼容 |
 | 14 | **安全债警示**：历史发现 12 处明文密钥（Redis/MySQL 密码、appKey/appSecret、RSA 私钥 in `boss-common JwtEncoderUtil`）| 🔴 编码时绝不可硬编码密钥/Token/身份证（AGENTS 红线#4）|
+| 15 | **messagebus 不保证幂等/无标准信封/无 Outbox**（🆕 v1.4.0，核实结论）：courier/messagebus 提供的是 at-least-once 投递 + broker 侧重投（`ConsumeFailMessage.needRpush`），**使重复更可能而非更少**；`Message` 信封仅 `id/primaryKey/topic/timeStamp`，缺 `eventId/schemaVersion/occurredAt/correlationId`；无 Outbox 表（`EventPublisher.publish` 同步交 broker，与业务事务不原子）。现网 `WorkTicketEventHandler`/`AbnormalTicketEventAppService.handle` 无去重且显式不重试 | ①事件信封：业务 payload 自带 `eventId`(UUID)/`occurredAt`/`schemaVersion`/可选 `correlationId`。②幂等消费：EventHandler 必须自实现——去重表（`ProcessedEvent(event_id unique)` 与业务同事务，冲突即 no-op）或自然幂等（业务键 upsert/状态守卫）；**涉及邮件/支付/下游事件等不可重复副作用 → 必须去重表**。③先写库后发消息：用 `@TransactionalEventListener(AFTER_COMMIT)` 但注意边界（见 #17）。详见 §4 消息发送行 |
+| 16 | **`@Transactional` 自调用陷阱**（🆕 v1.4.0）：同类内 `this.processSingle()` 调用绕过 Spring AOP 代理，被调方法上的 `@Transactional(REQUIRES_NEW)` 等 propagation **静默失效**（不报错，事务语义直接丢失）| 自调用跨事务方法时：①注入自身代理（`@Autowired private XxxService self; self.processSingle()`）②或把方法抽到独立 bean。🔴 禁用 `AopContext.currentProxy()`（需开 `exposeProxy=true`，易遗漏）。与 Spring Boot 版本无关，1.5.7 同样适用 |
+| 17 | **`@TransactionalEventListener(AFTER_COMMIT)` 在原事务之外**（🆕 v1.4.0）：AFTER_COMMIT 阶段运行在原事务提交**之后**、但**不在原事务上下文内**——若 listener 自己要写库，必须新开 `@Transactional(REQUIRES_NEW)`，不能假设还在原事务里。icec 现有"事务提交后 `@TransactionalEventListener` 发 messagebus 事件"规则正好撞此边界 | listener 内：①只发消息（无写库）→ 安全，无需额外事务。②有写库 → listener 方法加 `@Transactional(REQUIRES_NEW)` 开新事务。③listener 内禁直接查原事务未提交的数据（已提交才能查到）。与 §4"消息发送（触发时机）"行呼应 |
+| 18 | **checked 异常默认不回滚**（🆕 v1.4.0）：`@Transactional` 默认只在 `RuntimeException`/`Error` 时回滚，checked 异常（如 `IOException`/自定义 checked）**不回滚**，导致部分成功数据残留 | 业务抛 checked 异常需回滚时，显式声明 `@Transactional(rollbackFor = Exception.class)`；或业务异常一律继承 `RuntimeException`（§4 已规定"自定义异常 extends RuntimeException"）|
+| 19 | **容错超时预算不一致**（🆕 v1.4.0，工具无关原则）：调用方超时 < 下游超时 × 重试次数之和 → 调用方提前超时但下游仍在重试，造成"调用方已失败、下游仍在消耗资源"的资源泄漏；icec 用 Hystrix 非 Resilience4j，但此原则语言/工具无关 | 排查 Feign+Hystrix 调用链时核对：`caller_timeout > Σ(downstream_timeout × downstream_retries)`；违反即视为 bug。连接池经验公式：`pool_size ≈ cores × 2`（仅参考，按实际 QPS/RT 调）|
+| 20 | **分布式锁非原子坏锁**（🆕 v1.4.0，核实发现现网反模式）：`redisTemplate.opsForValue().setIfAbsent(key,value)` + 分离 `expire(key,ttl)` 两步非原子——若 setIfAbsent 成功后进程崩溃未及 expire，key 永不过期=锁永久泄露。现网 `SmsPushRuleAppService.java:142` 即此模式 | 用 Redisson `tryLock`/`trySet`（原子 SET + TTL，单命令 `SET key val NX PX ttl`）；或注入项目已有 wrapper：life-user `RedissonDistributedLock`（短租约 caller-managed）/ life-cs `CsDistributedLock`（callback 长租约，`finally`+`isHeldByCurrentThread` 释放）。🔴 禁裸 `setIfAbsent`+分离`expire`。key 命名/雪崩防护等纯规则归 life constraints（非 java3d 职责）|
 
 ---
 
@@ -370,14 +407,14 @@ grep -rn "Executors\.\(newFixed\|newCached\|newSingle\|newScheduled\)" --include
 
 | 共有 coding-skill 章节 | 本适配器叠加章节 | 叠加内容 | 优先级 |
 |----------------------|---------------|---------|--------|
-| §3 分层职责红线 | §2（落点表，🔧 v1.2.0 补 Facade/事件发布器落点）+ §2.4（DO/PO 判定线）+ §2.5（BFF 三层落点表，🆕 v1.3.0）+ §3（特化红线，BFF 数据策略拆 3 条，🔧 v1.3.0）| icec/life 精确包路径（含 §1.1bis 固化 base package）+ 防腐层 Facade（domain 定义/infrastructure 实现）+ 集成/领域事件双线 + DO/PO 合法差异 vs 建模错误判定 + BFF 三层落点（合并 domain、interfaces/converter、application/facade）+ BFF禁触DB/Redis/Kafka/分布式缓存（可本地缓存）/事务只在AppService 等特化红线 | adapter > 共有 |
-| §4 骨架展开规则 | §4（骨架特化）| 注解选型/DataConverter形态/Facade/事件发布/Feign+Hystrix/事务/对象契约 | adapter > 共有 |
+| §3 分层职责红线 | §2（落点表，🔧 v1.2.0 补 Facade/事件发布器落点）+ §2.4（DO/PO 判定线）+ §2.5（BFF 三层落点表，🆕 v1.3.0）+ §2.6（聚合边界判定线 AB-1~AB-4，🆕 v1.4.0）+ §3（特化红线，BFF 数据策略拆 3 条，🔧 v1.3.0）| icec/life 精确包路径（含 §1.1bis 固化 base package）+ 防腐层 Facade（domain 定义/infrastructure 实现）+ 集成/领域事件双线 + DO/PO 合法差异 vs 建模错误判定 + 聚合边界判定（不变量引用/禁传聚合对象/拆分启发式/单聚合单事务例外）+ BFF 三层落点（合并 domain、interfaces/converter、application/facade）+ BFF禁触DB/Redis/Kafka/分布式缓存（可本地缓存）/事务只在AppService 等特化红线 | adapter > 共有 |
+| §4 骨架展开规则 | §4（骨架特化，🔧 v1.4.0 补消息发送三行：触发时机/事件信封/幂等消费）| 注解选型/DataConverter形态/Facade/事件发布/Feign+Hystrix/事务/对象契约 + messagebus 事件信封缺失字段补齐 + at-least-once 幂等消费决策 | adapter > 共有 |
 | §8 验证判定标准 | §5（验证特化）| JUnit4+Mockito / dev-DB+@Transactional / 根pom聚合构建（dependencyManagement，🔧 v1.2.0 修正） | adapter > 共有（§8.5 H2 被 dev-DB 覆盖）|
-| §11 经验检查清单 | §6（命名/错误码）+ §8（踩坑库）| icec/life 命名表 + 错误码段 + 14 项踩坑决策 | adapter > 共有（§11.1 第3/4/7/10/11项被 §8 踩坑库取代）|
-| §12 静态扫描规则 | §7（静态扫描特化）| 8 条 icec 工程特化 grep（防分层/防框架误用）| adapter > 共有（叠加在通用 §12 之上）|
+| §11 经验检查清单 | §6（命名/错误码）+ §8（踩坑库）+ §1.2（分布式锁禁用，🆕 v1.4.0）| icec/life 命名表 + 错误码段 + 20 项踩坑决策（🆕 v1.4.0 增 messagebus/#15、@Transactional三坑/#16-18、容错超时/#19、分布式锁坏锁/#20、充实 Maven 治理/#1）+ 分布式锁 API 选型（禁非原子 setIfAbsent+expire，应 Redisson） | adapter > 共有（§11.1 第3/4/7/10/11项被 §8 踩坑库取代）|
+| §12 静态扫描规则 | §7（静态扫描特化，🔧 v1.4.0 补规则#9）| 9 条 icec 工程特化 grep（防分层/防框架误用/防 domain 层框架注解污染）| adapter > 共有（叠加在通用 §12 之上）|
 | §1 CodingModel 决策 | §1（技术栈锁）+ §1.1bis（base package）| 11 维决策时锁定 Java8/SB1.5.7/messagebus 等技术前提 + 固化包路径前缀 | adapter 补充（不取消共有）|
 | §2 约束文件引用 | §1（技术栈事实）| 给出 9 项约束的具体 Java+icec 事实 | adapter 补充 |
-| §10 异常根因 4 层 | §2.4（DO/PO 判定线，🆕 v3.6.2）| 层1/层4 判定时区分"DO/PO 合法差异"与"建模错误" | adapter 辅助（不覆盖共有§10 方法论）|
+| §10 异常根因 4 层 | §2.4（DO/PO 判定线，🆕 v3.6.2）+ §2.6（聚合边界判定线，🆕 v1.4.0）| 层1/层4 判定时区分"DO/PO 合法差异"与"建模错误"；聚合越界/多聚合同事务问题用 §2.6 AB-1~AB-4 判定归属 | adapter 辅助（不覆盖共有§10 方法论）|
 
 > **未被覆盖的共有章节（仍按共有生效）：** §5 CodeAnalysis ④bis 全套、§6 ④bis 实战 SOP、§7 G-CODEPLAN-SRC、§9 漂移核查、§13 适配器注册加载协议本身（含 §13.1bis 叠加视图速查表，🆕 v3.6.2）——这些是语言/项目无关的方法论，本适配器不覆盖。
 
@@ -392,8 +429,8 @@ name: java3d-coding-skill
 type: skill-new
 provides: coding-adapter-java
 path: ./java3d-coding-skill/SKILL.md
-version: 1.3.0
-description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill；🆕 v1.3.0 新增 BFF 三层落点决策）
+version: 1.4.0
+description: Java 语言 + icec/life 项目编码决策知识层（叠加于共有 coding-skill；🆕 v1.4.0 基于参考文献增强：聚合边界判定线 + messagebus 事件设计 + @Transactional 传播陷阱 + 分布式锁反模式 + 静态扫描补充）
 ```
 
 **查加载路径：** `ae-sdd plugin trace coding-adapter-java` → 应命中 L3-master: java3d-coding-skill → resolved: .../plugins/java3d-coding-skill/SKILL.md

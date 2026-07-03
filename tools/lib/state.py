@@ -42,7 +42,8 @@ Story/Task/Plan 级（txn 级）：
   - 大链（14 phase）：已有PRD，走全流程 initialized→ra-generated→dr-generated→...→completed
   - 中链（13 phase）：已有DR，跳RA，从DR系列入
   - 小链（12 phase）：已有Story，跳RA+DR，从Story系列入
-  - 微链（7 phase）：BUG/调整，从Task系列入（含轻量CodingPlan），跳RA+DR+Story+TestCase
+  - 微链（8 phase）：BUG/调整，从Task系列入（含轻量CodingPlan），跳RA+DR+Story+TestCase；
+    🆕 2026-07-03(B1)：加回 code-reviewed，与设计文档"CodeReview 报告不豁免"对齐
   - 🆕 v3.7.0：大/中/小链新增 testcase-generated→testcase-reviewed（TestCase 独立系列，
     story-reviewed 之后、task-generated 之前；微链不受影响，仍跳过整个 TestCase 系列）
   - 旧 state 无 scale → _infer_scale 按 completedSteps/phase 反推，默认"大"（最保守）
@@ -88,7 +89,13 @@ PHASE_FLOWS: dict[str, list[str]] = {
         "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
     "微": [   # 微任务/BUG/配置类：从 Task 系列入（含轻量 CodingPlan），跳 RA+DR+Story+TestCase
-        "initialized", "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "completed",
+        # 🆕 2026-07-03 一致性修复（B1）：微链加回 code-reviewed phase。
+        # 设计文档 conventions.md §3.1 明确"出 CodeReview 报告 ❌不豁免"，
+        # 此前微链序列 (...→test-running→completed) 物理跳过 code-reviewed，
+        # 导致 gate_intercept 微链 code-reviewed 门禁(G-09/G-CODE-1)声明却不可达（死代码）。
+        # 现对齐设计：微任务也必须出 CodeReview 报告，与 coding-process-skill.full.md:180
+        # "微任务 CodingPlan 全流程" 一致。
+        "initialized", "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
 }
 

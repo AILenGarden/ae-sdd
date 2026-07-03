@@ -424,6 +424,52 @@ def _check_path_permission(
     return True, ""
 
 
+# ─── 🆕 v3.8.2 存端兜底：关联 phase 写操作前检查 memory enter ──────────────────
+def _check_memory_entered(
+    phase: str,
+    ade_sdd: Optional[Path],
+    state_data: Optional[dict],
+) -> tuple[bool, str]:
+    """关联 phase 写操作前检查 memory 是否已 enter。
+
+    堵住 Agent 不调 state write 直接写源码绕过 memory gate 的漏洞：
+    PHASE_PERMIT 放行 Write/Edit 前，若当前 phase 属于 5 个关联节点
+    (ra/design/coding-plan/coding/review)，强制要求该 scope 已 memory enter。
+
+    Returns:
+        (allowed, deny_reason)
+        allowed=True  → 已 enter 或非关联 phase，放行
+        allowed=False → 未 enter，返回 deny reason 含修复命令
+    """
+    if ade_sdd is None:
+        return True, ""  # 非 ae-sdd 项目，不拦截
+    try:
+        from lib import memory_gate, memory_store
+        memory_phase = memory_gate.memory_phase_for_state_phase(phase)
+        if not memory_phase:
+            return True, ""  # 非关联 phase（如 initialized/completed），跳过
+        story = (state_data or {}).get("currentStory") or None
+        scope = memory_store.locate_scope(
+            project=str(ade_sdd.parent), phase=memory_phase, story=story,
+        )
+        if memory_store.is_scope_active(scope):
+            return True, ""  # 已 enter 未 exit，放行
+        story_arg = f" --story {story}" if story else ""
+        return False, (
+            f"存端记忆门禁：当前 phase={phase}（memory phase={memory_phase}）"
+            f"尚未执行 memory enter，禁止写操作。\n"
+            f"memory 是关联节点的强制工具集，不写记忆不得推进工作。\n"
+            f"请先执行:\n"
+            f"  ae-sdd memory enter --phase {memory_phase}{story_arg}\n"
+            f"  ae-sdd memory write --phase {memory_phase}{story_arg}"
+            f" --summary \"...\" --evidence <file:line>\n"
+            f"  ae-sdd memory exit --phase {memory_phase}{story_arg}\n"
+            f"（🆕 v3.8.2 存端兜底，堵 PHASE_PERMIT 放行绕过 memory gate 漏洞）"
+        )
+    except Exception:
+        return True, ""  # 异常降级放行，不阻断主流程
+
+
 # ─── ae-sdd state write 保护 ─────────────────────────────────────────────────
 # 只匹配以 ae-sdd 或 python .../ae-sdd 开头的命令，
 # 排除 echo/注释等非执行形式（防止 '# ae-sdd state write' 等误触发 gate check）
@@ -610,8 +656,11 @@ def _check_state_write(
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "微": {  # 跳过 RA/DR/Story/Task：initialized→coding，coding 入口仅 G-00
-            "coding":          ["G-00"],
+        "微": {  # 跳过 RA/DR/Story：initialized→task，coding 入口 G-00+G-07+G-08（Plan-first 不豁免）
+            # 🆕 2026-07-03(B1)：coding 入口加 G-07/G-08，与大链对齐（Plan-first 是质量底线，
+            # conventions.md §3.1 明确"Plan-first ❌不豁免"）。code-reviewed 门禁现已可达
+            # （state.py 微链已加回 code-reviewed phase）。
+            "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
             "completed":       ["G-00", "G-12", "G-13"],
@@ -747,6 +796,14 @@ def check_intercept(
     # 5. 路径感知（🆕 v3.4.0 关卡2 产物落地校验内嵌）
     if file_path:
         allowed, reason = _check_path_permission(tool_name, file_path, phase, ade_sdd)
+        if not allowed:
+            return False, reason
+
+    # 5.5 🆕 v3.8.2 存端兜底：关联 phase 写操作前检查 memory enter。
+    # 堵住 Agent 不调 state write 直接写源码绕过 memory gate 的漏洞。
+    # 仅对写工具（Write/Edit/MultiEdit）触发，只读工具与 Bash 已在第1/4步放行。
+    if tool_name in WRITE_TOOLS and ade_sdd is not None:
+        allowed, reason = _check_memory_entered(phase, ade_sdd, st)
         if not allowed:
             return False, reason
 

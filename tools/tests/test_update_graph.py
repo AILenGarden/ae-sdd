@@ -8,6 +8,8 @@ test_update_graph.py — update_graph.py 单元测试（UC-01~UC-07 + UC-14 + AA
 使 check_all 在任何测试执行顺序下都确定返回 14（原生 8 + AA 注入 6）。
 """
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -434,6 +436,48 @@ class TestQueryAffected(unittest.TestCase):
         # UC-03 被多条规则引用，应只出现一次
         self.assertEqual(qr.checks_to_run.count("UC-03"), 1)
 
+    def test_query_state_py_hits_monitor_sync_rule(self):
+        qr = ug.query_affected(["tools/lib/state.py"], REPO_ROOT)
+        rule_ids = [r["id"] for r in qr.matched_rules]
+        self.assertIn("UG-22", rule_ids)
+        paths = [a["path"] for a in qr.affected_items]
+        self.assertIn("source/docs/ae-sdd-monitor-design.md", paths)
+        self.assertIn("apps/ae-sdd-monitor/src/workspace.js", paths)
+        self.assertIn("apps/ae-sdd-monitor/test/workspace.test.js", paths)
+
+    def test_query_monitor_app_hits_monitor_sync_rule(self):
+        qr = ug.query_affected(["apps/ae-sdd-monitor/src/workspace.js"], REPO_ROOT)
+        rule_ids = [r["id"] for r in qr.matched_rules]
+        self.assertIn("UG-22", rule_ids)
+        self.assertIn("UC-14", qr.checks_to_run)
+
+
+class TestUpdateCheckCli(unittest.TestCase):
+
+    def test_affected_no_match_returns_zero(self):
+        env = dict(os.environ)
+        env["AE_SDD_STATS"] = "0"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "tools" / "bin" / "ae-sdd"),
+                "update-check",
+                "--json",
+                "--affected",
+                "scratch/unmatched.txt",
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["matched_rules"], [])
+        self.assertEqual(payload["affected_items"], [])
+        self.assertEqual(payload["checks_to_run"], [])
+
 
 # ─── 🆕 v3.8.1 S-4：规则-工具同步 manifest 测试 ───────────────────────────────
 
@@ -442,12 +486,12 @@ class TestSyncManifest(unittest.TestCase):
     """S-4 sync manifest：生成 / 漂移检测 / 缺失兜底。"""
 
     def test_generate_manifest_structure(self):
-        """生成的 manifest 含 20 条 UG 规则 + trigger/affected sha256"""
+        """生成的 manifest 含 21 条 UG 规则 + trigger/affected sha256"""
         manifest = ug.generate_sync_manifest(REPO_ROOT)
         self.assertNotIn("error", manifest)
         self.assertEqual(manifest["generatorVersion"], "1.0")
         self.assertIn("generatedAt", manifest)
-        self.assertEqual(len(manifest["rules"]), 20)
+        self.assertEqual(len(manifest["rules"]), 21)
         # 每条规则有 id/name/trigger_files/affected_files
         for rule in manifest["rules"]:
             self.assertIn("id", rule)

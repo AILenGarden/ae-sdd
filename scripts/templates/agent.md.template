@@ -109,7 +109,7 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 引用源
 
-- ae-sdd 主入口：`../source/SKILL.md`（2477 行完整 SOP）
+- ae-sdd 主入口：`../source/SKILL.md`（{{SKILL_LINES}} 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` {{SKILL_FULL_LINES}} 行）
 - ae-sdd harness 配置：`../source/HARNESS.md`（PHASE MACHINE + 12 HARD STOPS + 3 hook 配置）
 - 子 SKILL 索引：`../source/skills/`
 - 项目资产模板：`../source/assets/`

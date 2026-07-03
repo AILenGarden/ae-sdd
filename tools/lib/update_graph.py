@@ -619,6 +619,47 @@ def _graph_rule_and_check_ids(graph: dict) -> tuple[list[str], list[str]]:
     return sorted(set(rule_ids)), sorted(set(check_ids))
 
 
+def _read_frontmatter_values(text: str) -> dict[str, str]:
+    """Read simple YAML frontmatter scalar values used by slim source entries."""
+    candidate = text[1:] if text.startswith("\ufeff") else text
+    match = re.match(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", candidate, re.DOTALL)
+    if not match:
+        return {}
+    values: dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        item = re.match(r"^([A-Za-z0-9_-]+):\s*(.*?)\s*$", line)
+        if not item:
+            continue
+        value = item.group(2).strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        values[item.group(1)] = value
+    return values
+
+
+def _read_update_skill_semantic_text(repo_root: Path, update_skill: Path) -> tuple[str, list[str], list[str]]:
+    """Return the update-skill semantic text, including source-slim fallback when present."""
+    text = update_skill.read_text(encoding="utf-8", errors="replace")
+    texts = [text]
+    sources = [update_skill.relative_to(repo_root).as_posix()]
+    warnings: list[str] = []
+
+    metadata = _read_frontmatter_values(text)
+    if str(metadata.get("source_slimmed", "")).strip().lower() == "true":
+        fallback_rel = metadata.get("source_fallback")
+        if not fallback_rel:
+            warnings.append("ae-sdd-update-skill.md is source_slimmed but has no source_fallback")
+        else:
+            fallback_path = repo_root / "source" / fallback_rel.replace("\\", "/")
+            if fallback_path.is_file():
+                texts.append(fallback_path.read_text(encoding="utf-8", errors="replace"))
+                sources.append(fallback_path.relative_to(repo_root).as_posix())
+            else:
+                warnings.append(f"source_fallback missing: source/{fallback_rel}")
+
+    return "\n".join(texts), sources, warnings
+
+
 def check_uc14_update_skill_cascade_sync(repo_root: Path) -> UpdateCheckResult:
     """UC-14：update-graph.json / CHECK_FUNCS / ae-sdd-update-skill 人读视图三方同步。"""
     name = "update-skill 级联图谱同步"
@@ -633,7 +674,7 @@ def check_uc14_update_skill_cascade_sync(repo_root: Path) -> UpdateCheckResult:
                                  "ae-sdd-update-skill.md 不存在",
                                  "恢复 source/skills/orchestration/ae-sdd-update-skill.md")
 
-    text = update_skill.read_text(encoding="utf-8", errors="replace")
+    text, semantic_sources, semantic_warnings = _read_update_skill_semantic_text(repo_root, update_skill)
     rule_ids, graph_check_ids = _graph_rule_and_check_ids(graph or {})
     registered_check_ids = sorted(cid for cid in CHECK_FUNCS if re.fullmatch(r"UC-\d+", cid))
 
@@ -661,6 +702,8 @@ def check_uc14_update_skill_cascade_sync(repo_root: Path) -> UpdateCheckResult:
         issues.append(f"CHECK_FUNCS 有检查未被图谱引用：{unreferenced_check_funcs}")
     if missing_protocol_terms:
         issues.append(f"update-skill 缺协议关键词：{missing_protocol_terms}")
+    if semantic_warnings:
+        issues.extend(semantic_warnings)
 
     details = {
         "rule_ids": rule_ids,
@@ -671,6 +714,8 @@ def check_uc14_update_skill_cascade_sync(repo_root: Path) -> UpdateCheckResult:
         "missing_check_funcs": missing_check_funcs,
         "unreferenced_check_funcs": unreferenced_check_funcs,
         "missing_protocol_terms": missing_protocol_terms,
+        "semantic_sources": semantic_sources,
+        "semantic_warnings": semantic_warnings,
     }
     if issues:
         return UpdateCheckResult(
@@ -953,17 +998,26 @@ def check_uc16_automation_cascade(repo_root: Path) -> UpdateCheckResult:
         issues.append("scripts/init.py 不存在")
 
     # 6. SKILL.md 自动化模式 + 30门禁
+    # 🆕 2026-07-03(B6): 适配 source-slim 架构。source/SKILL.md 可能是 slim entry，
+    # 完整章节在 skill-fallbacks/SKILL.full.md。检查时两处都看：slim entry 的语义
+    # 清单指针 + fallback 的完整章节。只要任一含目标即视为一致。
     skill_md = repo_root / "source" / "SKILL.md"
+    fallback_md = repo_root / "source" / "skill-fallbacks" / "SKILL.full.md"
+    sk_text = ""
+    fallback_text = ""
     if skill_md.is_file():
         sk_text = skill_md.read_text(encoding="utf-8", errors="replace")
-        if "## 🚀 自动化模式" not in sk_text:
-            issues.append("SKILL.md 缺 §🚀 自动化模式章节")
-        if "G-AUTO-CONSENSUS" not in sk_text:
-            issues.append("SKILL.md 门禁速查缺 G-AUTO-CONSENSUS")
-        if "30门禁" not in sk_text and "30 门禁" not in sk_text:
-            issues.append("SKILL.md 工具速查门禁数未更新为 30")
     else:
         issues.append("source/SKILL.md 不存在")
+    if fallback_md.is_file():
+        fallback_text = fallback_md.read_text(encoding="utf-8", errors="replace")
+    combined = sk_text + "\n" + fallback_text
+    if "## 🚀 自动化模式" not in combined:
+        issues.append("SKILL.md/slim fallback 缺 §🚀 自动化模式章节")
+    if "G-AUTO-CONSENSUS" not in sk_text:
+        issues.append("SKILL.md 门禁速查缺 G-AUTO-CONSENSUS")
+    if "30门禁" not in sk_text and "30 门禁" not in sk_text and "30门禁" not in fallback_text and "30 门禁" not in fallback_text:
+        issues.append("SKILL.md 工具速查门禁数未更新为 30")
 
     if issues:
         return UpdateCheckResult(
