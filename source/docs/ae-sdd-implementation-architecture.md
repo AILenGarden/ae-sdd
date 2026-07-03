@@ -31,6 +31,11 @@ tools/                          CLI 工具链
 
 scripts/                        构建、安装、分发与运行时扫描脚本
 dist/ae-sdd/                    编译后分发包，构建产物，不手工维护
+  SKILL.md                      编译后主入口 bootloader
+  skills/**/*.md                编译后子 SKILL bootloader，非原文
+  runtime/                      compact runtime、manifest、fallback 原文
+    subskills.compact.md        子 SKILL 编译入口索引
+    skills/**                   子 SKILL 局部 manifest/boot/outline/fallback
 harness/                        派生适配层，不手工改生成物
 ```
 
@@ -62,7 +67,7 @@ harness/                        派生适配层，不手工改生成物
 | 文档存取 | `tools/lib/document_storage.py` | intent 驱动的文档定位、保存、finalize | SKILL 不应自行拼接产物路径 |
 | 资产索引 | `tools/lib/assets_index.py` | assets 读取、outline、section、query、stats | 缓存变更需测试缓存失效 |
 | Hook 层 | `gate_intercept.py` / `prompt_inject.py` / `stop_check.py` | 工具调用前、提示注入、响应后校验 | HARNESS 声明必须能追到实现 |
-| Runtime 编译 | `scripts/compile_skill_runtime.py` / `tools/lib/runtime_verify.py` | compact runtime 生成与校验 | 输出必须字节级幂等 |
+| Runtime 编译 | `scripts/compile_skill_runtime.py` / `tools/lib/runtime_verify.py` | 主入口 compact、全量子 SKILL bootloader、局部 runtime、fallback 原文生成与校验 | `SKILL.md`、`runtime/**`、`skills/**/*.md` 输出必须字节级幂等 |
 | 构建分发 | `scripts/build_dist.py` / `scripts/distribute.py` | source -> dist -> runtime 安装 | 不把手工改动写入 dist |
 | 运行时扫描器 | `scripts/*_scan.py` | 静态扫描，输出 JSON 契约 | 新 scanner 需入 build_dist 白名单 |
 
@@ -127,9 +132,35 @@ source/
 
 - `dist/ae-sdd/` 是构建产物，不手工维护。
 - runtime compact 文件由编译器生成，不手改。
+- `dist/ae-sdd/SKILL.md` 必须是编译后的主入口 bootloader。
+- `dist/ae-sdd/skills/**/*.md` 必须是编译后的子 SKILL bootloader，不允许保留 `source/skills/**/*.md` 原文。
+- 子 SKILL 原文 fallback 只允许出现在 `runtime/skills/**/fallback/SKILL.full.md`。
+- `runtime/manifest.json` 必须记录 `subskills` 与 `extracts.subskill_count`，并与实际 `source/skills/**/*.md` 数量一致。
+- `runtime/subskills.compact.md` 是子 SKILL 入口索引，路由到每个子 SKILL 的局部 `manifest.json`、`boot.compact.md`、`outline.compact.md` 和 fallback。
 - 新增工具链模块放 `tools/lib/`，默认随 tools 复制。
 - 新增独立运行时脚本放 `scripts/` 时，必须更新 `build_dist.py` 白名单。
 - 分发器只能安装编译后 package，不能直接安装 `source/`。
+
+Runtime 编译数据流：
+
+```text
+source/SKILL.md
+  -> dist/ae-sdd/SKILL.md
+  -> runtime/{boot,route,gates,flow,macros}.compact.md
+  -> runtime/fallback/SKILL.full.md
+
+source/skills/**/*.md
+  -> dist/ae-sdd/skills/**/*.md
+  -> runtime/subskills.compact.md
+  -> runtime/skills/**/{manifest.json,boot.compact.md,outline.compact.md,fallback/SKILL.full.md}
+```
+
+实现边界：
+
+- 编译器只读取母版与工具注册表，不解释业务流程，不替代 `ae-sdd gates check`。
+- `scripts/build_dist.py` 负责把母版复制为 dist，再调用 `scripts/compile_skill_runtime.py` 生成 runtime。
+- `tools/lib/runtime_verify.py` 负责校验 installed package 是否为完整 compiled runtime；如果存在 source child SKILL 而缺少 compiled 子入口，必须报错。
+- `tools/lib/update_graph.py` 的 UC-15 必须把 `SKILL.md`、`runtime/**`、`skills/**/*.md` 都纳入幂等快照。
 
 ## 9. Runtime Stats 预留架构
 
@@ -153,7 +184,7 @@ source/
 | 快速同步检查 | `ae-sdd update-check` | 版本、命令、门禁、scanner 分发、runtime 编译一致性 |
 | 对齐审计 | `alignment_audit.py` 注入 UC-08~13 | 门禁承诺、state 字段、幽灵命令、注册完整性 |
 | 迭代检查 | `ae-sdd iteration-check` | HS 物理实现、过时描述、未接入模块粗筛 |
-| Runtime 校验 | `ae-sdd runtime verify` / UC-15 | compiled runtime manifest、load_order、幂等输出 |
+| Runtime 校验 | `ae-sdd runtime verify` / UC-15 | compiled runtime manifest、load_order、全量子 SKILL compiled entry、`SKILL.md` + `runtime/**` + `skills/**/*.md` 幂等输出 |
 | 单元测试 | `tools/tests/` | 代码契约 |
 
 重大实现变更流程：
@@ -179,4 +210,3 @@ source/
 | Agent 执行入口和路由 | `source/SKILL.md` |
 | 阶段内具体规则 | 对应 `source/skills/**/**-skill.md` |
 | 机器可读依赖闭环 | `source/standards/update-graph.json` |
-
