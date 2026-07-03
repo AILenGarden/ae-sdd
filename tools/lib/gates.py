@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1663,6 +1664,35 @@ _DOC_STRAY_MARKERS = ("tmp", "temp", "$temp", "/tmp", "\\tmp", "d:\\tmp", "c:\\t
                       "desktop", "下载")
 
 
+def _is_subpath(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _display_doc_path(md_path: Path, project_dir: Path) -> str:
+    try:
+        return str(md_path.relative_to(project_dir)).replace("\\", "/")
+    except ValueError:
+        return str(md_path.resolve()).replace("\\", "/")
+
+
+def _is_doc_product(md_path: Path, current_story: str) -> bool:
+    fname = md_path.name
+    return (current_story and current_story in fname) or any(
+        t in fname for t in _DOC_FLOW_TYPES
+    )
+
+
+def _iter_doc_storage_scan_roots(project_dir: Path, real_workspace: Optional[Path]) -> list[Path]:
+    roots = [project_dir]
+    if real_workspace and not _is_subpath(real_workspace, project_dir):
+        roots.append(real_workspace)
+    return _dedupe_paths(roots)
+
+
 def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-DOC-STORAGE 文档落地存放合规 — 产物路径/命名须合规
 
@@ -1673,29 +1703,16 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
     name = "文档落地存放合规"
     issues: list[str] = []
 
-    # 🆕 v3.7.2：尝试从 project_dir 定位 ade_sdd + 读 docWorkspacePath（真值校验）
-    # 拿不到不报错，回退到硬编码 _DOC_COMPLIANT_ROOTS（向后兼容）
+    # 🆕 v3.8.1：复用 paths.resolve_doc_workspace 解析新旧资产路径，避免本地手写规则漂移。
+    # 拿不到不报错，回退到硬编码 _DOC_COMPLIANT_ROOTS（向后兼容）。
     real_workspace: Optional[Path] = None
     try:
         candidate_ae_sdd = project_dir / ".ae-sdd"
         if candidate_ae_sdd.is_dir():
-            # 从 config.yaml 读 projectKey
-            cfg_path = candidate_ae_sdd / "config.yaml"
-            if cfg_path.is_file():
-                import re as _re
-                cfg = cfg_path.read_text(encoding="utf-8", errors="replace")
-                m_pk = _re.search(r"projectKey:\s*(\S+)", cfg)
-                if m_pk:
-                    pk = m_pk.group(1)
-                    # 读 assets.md §1 docWorkspacePath（缺省=gitPath=project_dir）
-                    asset_md = candidate_ae_sdd / "assets" / f"{pk}.assets.md"
-                    if asset_md.is_file():
-                        am = asset_md.read_text(encoding="utf-8", errors="replace")
-                        m_dws = _re.search(r"docWorkspacePath\s*\|\s*`([^`]+)`", am)
-                        m_gp = _re.search(r"gitPath\s*\|\s*`([^`]+)`", am)
-                        ws_str = (m_dws.group(1) if m_dws else None) or (m_gp.group(1) if m_gp else None)
-                        if ws_str:
-                            real_workspace = Path(ws_str)
+            cfg = paths.read_config(candidate_ae_sdd)
+            pk = cfg.get("projectKey") or cfg.get("project_key")
+            if pk:
+                real_workspace = paths.resolve_doc_workspace(candidate_ae_sdd, pk)
     except Exception:
         pass  # 任何异常都回退硬编码（零误伤）
 
@@ -1714,57 +1731,73 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
     except Exception:
         pass  # git 不可用则空集合，回退到原行为（全部扫）
 
-    # 扫描 project_dir 下疑似流程产物（{STORY}-* 或 {DocType} 命名的 .md）
-    # 限定 2 层深度，避免 rglob 全盘扫描耗时
+    # 扫描 project_dir + 配置 docWorkspacePath 下疑似流程产物（{STORY}-* 或 {DocType} 命名的 .md）。
+    # 限定总量，避免 rglob 全盘扫描耗时。
     stray_files: list[str] = []
     checked = 0
-    for md_path in project_dir.rglob("*.md"):
-        # 限制扫描深度（跳过 node_modules/.git 等无关目录）
-        try:
-            rel = md_path.relative_to(project_dir)
-        except ValueError:
+    for scan_root in _iter_doc_storage_scan_roots(project_dir, real_workspace):
+        if not scan_root.is_dir():
             continue
-        rel_str = str(rel).replace("\\", "/")
-        if any(seg in rel_str for seg in ("node_modules/", ".git/", "dist/", "CHANGELOG/", "docs/plans/")):
-            continue
-        # 🆕 v3.5.10 Gap-007：git 已跟踪 = 历史产物，跳过
-        if rel_str in git_tracked:
-            continue
-        checked += 1
-        if checked > 500:  # 性能护栏
+        for md_path in scan_root.rglob("*.md"):
+            try:
+                rel = md_path.relative_to(scan_root)
+            except ValueError:
+                continue
+            rel_str = str(rel).replace("\\", "/")
+            if any(seg in rel_str for seg in ("node_modules/", ".git/", "dist/", "CHANGELOG/", "docs/plans/")):
+                continue
+            # 🆕 v3.5.10 Gap-007：project_dir 内 git 已跟踪 = 历史产物，跳过
+            if scan_root == project_dir and rel_str in git_tracked:
+                continue
+            checked += 1
+            if checked > 500:  # 性能护栏
+                break
+
+            if not _is_doc_product(md_path, current_story):
+                continue
+
+            rel_lower = rel_str.lower()
+            display_path = _display_doc_path(md_path, project_dir)
+            # 1. 游离位置检测
+            if any(m in rel_lower for m in _DOC_STRAY_MARKERS):
+                stray_files.append(display_path)
+                continue
+
+            # 2. 不在合规根目录下
+            in_compliant = any(rel_str.lower().startswith(r) or f"/{r}/" in f"/{rel_str.lower()}/"
+                               for r in _DOC_COMPLIANT_ROOTS)
+            # 🆕 v3.7.2 真值校验：若拿到 real_workspace，产物在其下也算合规
+            if not in_compliant and real_workspace:
+                try:
+                    rel_ws = md_path.resolve().relative_to(real_workspace.resolve())
+                    rel_ws_str = str(rel_ws).replace("\\", "/").lower()
+                    if any(rel_ws_str.startswith(r) or f"/{r}/" in f"/{rel_ws_str}/"
+                           for r in _DOC_COMPLIANT_ROOTS):
+                        in_compliant = True
+                except Exception:
+                    pass  # resolve 异常回退硬编码判定
+            # 允许直接在 project_dir 根的产物（向后兼容旧项目 design/ 在根的写法）
+            if scan_root == project_dir and "/" not in rel_str:
+                in_compliant = True
+            if not in_compliant:
+                stray_files.append(display_path)
+        if checked > 500:
             break
 
-        fname = md_path.name
-        # 判定是否流程产物：含 Story-ID 或 DocType 关键词
-        is_product = (current_story and current_story in fname) or any(
-            t in fname for t in _DOC_FLOW_TYPES
-        )
-        if not is_product:
-            continue
-
-        rel_lower = rel_str.lower()
-        # 1. 游离位置检测
-        if any(m in rel_lower for m in _DOC_STRAY_MARKERS):
-            stray_files.append(rel_str)
-            continue
-
-        # 2. 不在合规根目录下
-        in_compliant = any(rel_str.lower().startswith(r) or f"/{r}/" in f"/{rel_str.lower()}/"
-                           for r in _DOC_COMPLIANT_ROOTS)
-        # 🆕 v3.7.2 真值校验：若拿到 real_workspace，产物在其下也算合规
-        if not in_compliant and real_workspace:
-            try:
-                real_workspace_resolved = real_workspace.resolve()
-                md_resolved = md_path.resolve()
-                if str(md_resolved).startswith(str(real_workspace_resolved)):
-                    in_compliant = True
-            except Exception:
-                pass  # resolve 异常回退硬编码判定
-        # 允许直接在 project_dir 根的产物（向后兼容旧项目 design/ 在根的写法）
-        if "/" not in rel_str:
-            in_compliant = True
-        if not in_compliant:
-            stray_files.append(rel_str)
+    # 防御纵深：专项探针系统临时目录顶层的当前 Story 游离产物，不做递归全盘扫描。
+    if current_story and checked <= 500:
+        try:
+            temp_root = Path(tempfile.gettempdir())
+            for md_path in temp_root.glob(f"*{current_story}*.md"):
+                checked += 1
+                if checked > 500:
+                    break
+                if _is_doc_product(md_path, current_story):
+                    display_path = _display_doc_path(md_path, project_dir)
+                    if display_path not in stray_files:
+                        stray_files.append(display_path)
+        except Exception:
+            pass
 
     if stray_files:
         issues.append(f"流程产物落在非合规位置（{len(stray_files)} 个）：{stray_files[:5]}")

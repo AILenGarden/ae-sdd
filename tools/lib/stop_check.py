@@ -7,7 +7,8 @@ v2.0 变更（2026-06-30，决策 1B）：
   - check_output() 职责简化为：
       1. 检测空响应 / 结构性错误（AI 截断）→ 重试
       2. 检测 PRD compact 失败（HS-8，保留）
-      3. 其余情况放行（流程合规性已由 UserPromptSubmit hook + flow_monitor 接管）
+      3. 人工审核点对话呈现格式粗筛（自动化模式跳过）→ 重试
+      4. 其余情况放行（流程合规性已由 UserPromptSubmit hook + flow_monitor 接管）
   - 保留：MAX_RETRY 防无限循环 / extract_last_assistant_text() 工具函数
 
 v1.4 变更（2026-06-27）：
@@ -30,6 +31,20 @@ MAX_RETRY = 2
 
 # 重试计数文件名（放在 .ae-sdd/ 下）
 _RETRY_FILE_NAME = ".stop_retry_count"
+
+# 人工审核点格式校验只在响应显式进入审核点时触发，避免普通 phase 输出误伤。
+_REVIEW_POINT_PHASES: dict[str, set[str]] = {
+    "1": {"story-generated", "story-reviewed", "testcase-reviewed"},
+    "1.5": {"story-reviewed", "testcase-reviewed"},
+    "2": {"task-generated", "task-reviewed"},
+    "2.5": {"task-reviewed", "coding-process"},
+    "4": {"code-reviewed"},
+}
+
+_REVIEW_POINT_MARKER_RE = re.compile(
+    r"(?:审核点|人工审核点|review\s*point)\s*(1\.5|2\.5|1|2|4)(?![\d.])",
+    re.IGNORECASE,
+)
 
 
 def _retry_file_path(ade_sdd: Path) -> Path:
@@ -142,6 +157,111 @@ def extract_last_assistant_text(transcript_content: str) -> str:
     return transcript_content[-2000:]
 
 
+def _detect_review_point_context(st: dict, response_text: str) -> Optional[str]:
+    """Return review point id when state phase and response marker both match."""
+    phase = str(st.get("phase") or "")
+    if not phase:
+        return None
+
+    m = _REVIEW_POINT_MARKER_RE.search(response_text)
+    if not m:
+        return None
+
+    point = m.group(1)
+    if phase in _REVIEW_POINT_PHASES.get(point, set()):
+        return point
+    return None
+
+
+def _has_any(text: str, patterns: list[str]) -> bool:
+    return any(re.search(p, text, flags=re.IGNORECASE | re.MULTILINE) for p in patterns)
+
+
+def _check_review_point_format(response_text: str, review_point: str) -> tuple[bool, str]:
+    """Coarse structural checks for manual review point presentation."""
+    checks: dict[str, list[tuple[str, list[str]]]] = {
+        "1": [
+            ("AC验收标准列表", [r"\bAC[-\s]?\d+\b", r"验收标准"]),
+            ("核心接口一览", [r"核心接口", r"\binterface\b", r"\bAPI\b", r"接口"]),
+            ("关键设计决策", [r"关键设计决策", r"设计决策", r"决策"]),
+            ("已识别风险点", [r"风险点", r"风险"]),
+            ("测试用例数量", [r"测试用例数量", r"\d+\s*个测试用例", r"测试用例\s*[:：]\s*\d+"]),
+        ],
+        "1.5": [
+            ("核心业务理解", [r"核心业务理解", r"业务理解"]),
+            ("接口/依赖", [r"接口", r"依赖", r"\bAPI\b"]),
+            ("分层实现思路", [r"分层", r"实现思路"]),
+            ("并发/事务策略", [r"并发", r"事务"]),
+            ("异常处理思路", [r"异常处理", r"异常"]),
+        ],
+        "2": [
+            ("逐文件核对标记", [r"逐文件", r"字典序", r"文件名"]),
+            ("用户逐文件反馈符号", [r"[✅⚠️⏸️]"]),
+            ("文件清单", [r"\.md\b", r"Task", r"文件"]),
+        ],
+        "2.5": [
+            ("14条门禁通过状态", [r"14\s*条门禁", r"门禁.*通过"]),
+            ("CodingModel 11维决策", [r"CodingModel", r"11\s*维"]),
+            ("风险Task", [r"风险\s*Task", r"风险"]),
+            ("关键类骨架", [r"关键类骨架", r"类骨架", r"已读源码"]),
+        ],
+        "4": [
+            ("问题清单表", [r"问题清单", r"\bIssue\b", r"缺陷"]),
+            ("AC覆盖对账表", [r"AC.*(对账|覆盖)", r"(对账|覆盖).*AC"]),
+        ],
+    }
+
+    missing = [
+        label
+        for label, patterns in checks.get(review_point, [])
+        if not _has_any(response_text, patterns)
+    ]
+    if missing:
+        return False, "、".join(missing)
+
+    if review_point == "2":
+        marker_count = len(re.findall(r"[✅⚠️⏸️]", response_text))
+        if marker_count < 1:
+            return False, "用户逐文件反馈符号"
+
+    return True, ""
+
+
+def _is_automation_enabled(ade_sdd: Path) -> bool:
+    """Read automation switch; default to manual mode when unavailable."""
+    try:
+        from lib import config as config_mod
+        return config_mod.is_automation_enabled(ade_sdd)
+    except Exception:
+        return False
+
+
+def _check_manual_review_point_format(ade_sdd: Path, response_text: str) -> str:
+    """Return an inject message when a manual review point response is underspecified."""
+    if _is_automation_enabled(ade_sdd):
+        return ""
+
+    try:
+        from lib import paths, state as state_mod
+        st = state_mod.read_state(paths.state_path(ade_sdd))
+    except Exception:
+        return ""
+
+    review_point = _detect_review_point_context(st, response_text)
+    if not review_point:
+        return ""
+
+    ok, missing = _check_review_point_format(response_text, review_point)
+    if ok:
+        return ""
+
+    return (
+        f"[ae-sdd harness] Stop hook：检测到审核点{review_point}响应缺少必要呈现内容"
+        f"（缺失：{missing}）。\n"
+        "请在对话内直接呈现完整内容，不要仅给出文件路径或让用户自行打开文档。"
+    )
+
+
 def check_output(
     transcript_content: str,
     ade_sdd: Optional[Path] = None,
@@ -154,7 +274,8 @@ def check_output(
     本函数只负责：
       1. 空响应 / 结构性截断检测 → 重试（防 AI 输出残缺）
       2. PRD compact 失败检测（HS-8，保留）→ 重试
-      3. 其余情况放行（allow stop）
+      3. 人工审核点对话呈现格式粗筛 → 重试
+      4. 其余情况放行（allow stop）
 
     Args:
         transcript_content: last_assistant_message 文本；旧版回退时为 transcript_path 完整对话
@@ -188,6 +309,12 @@ def check_output(
     if compact_issue:
         increment_retry(ade_sdd)
         return False, compact_issue
+
+    # 检查 3：人工审核点对话呈现格式（自动化模式下跳过）
+    review_format_issue = _check_manual_review_point_format(ade_sdd, last_response)
+    if review_format_issue:
+        increment_retry(ade_sdd)
+        return False, review_format_issue
 
     # 其余情况放行（流程合规性由 UserPromptSubmit hook + flow_monitor 负责）
     return True, ""

@@ -1,9 +1,9 @@
 # B-2/B-3 阻断级缺口复核与修订方案
 
 > **起草日期**：2026-07-02
-> **目标版本**：v3.8.1（建议编号，紧随当前 v3.8.0）
+> **目标版本**：v3.8.1
 > **起草人**：Claude Opus 4.8（AI 协作分析）
-> **状态**：待用户确认
+> **状态**：已实施（2026-07-03，Codex）
 > **目标读者**：ae-sdd 维护者
 
 ---
@@ -15,6 +15,12 @@
 - **B-1**（entry token / gate ra-required 未实装）：**已修复**，`cmd_enter` 和 `check_ra_required` 均为完整实现，不再处理。
 - **B-2**（G-DOC-STORAGE 物理拦截缺失）：**核心缺口已在今天（2026-07-02）由 commit `b864f9d` 修复**——`gate_intercept.py` 新增 `_check_product_storage_path`，写入前能真实拦截"CodingPlan 写到 d:\tmp\"这类场景。修复过程复用了 `paths.resolve_doc_workspace`，未产生重复路径规则。但 `gates.py` 的 `check_g_doc_storage`（事后兜底层）仍留 2 处次要技术债，本文档给出修复方案。
 - **B-3**（人工审核点格式无强校验）：**原样存在，从诊断报告写下那天到今天未被任何改动触及**。这跟 v3.6 决策1B（废弃 gate 自报交叉验证）是两条平行线，不是因果关系——决策1B处理的是"phase 级宏观门禁的自报是否属实"，B-3 要处理的是"审核点这一动作本身呈现的内容格式是否达标"，两者从未被同一机制覆盖过。本文档给出完整修复方案。
+
+**2026-07-03 实施结果**：
+- B-2 残余已落地：`tools/lib/gates.py::check_g_doc_storage` 复用 `paths.resolve_doc_workspace()`，兼容新旧资产路径；扫描范围扩展到配置的 `docWorkspacePath`；新增系统临时目录当前 Story 顶层 `.md` 专项探针。
+- B-3 已落地：`tools/lib/stop_check.py` 新增人工审核点 1/1.5/2/2.5/4 的对话呈现格式粗筛；手工审核模式下缺结构会触发 Stop hook block reason 并复用 `MAX_RETRY=2`；`automation.enabled=true` 时跳过。
+- 同步项已处理：`source/HARNESS.md` 新增 HS-16，修正 HS-10 与 Stop hook 状态头旧描述；新增 `source/CHANGELOG/2026-07-03-v3.8.1-harness-hard-gate-remediation.md`；补充 `tools/tests/test_stop_check.py` 与 `tools/tests/test_gates.py`。
+- 已验证：`python -m pytest tools/tests/test_stop_check.py tools/tests/test_gates.py -q` 通过（133 passed, 17 subtests passed）；`python tools/bin/ae-sdd update-check --json` 通过（16/16 passed，4 warnings 为既有软门禁/孤儿辅助函数提示）。
 
 ---
 
@@ -202,14 +208,14 @@ if ade_sdd is not None:
 
 ---
 
-## 4. 用户确认清单
+## 4. 实施决策记录
 
-请确认以下决策点后再进入编码阶段：
+原“用户确认清单”已在 2026-07-03 实施时收口，采用以下决策：
 
-1. **B-2 修复点2（扫描范围延伸到 project_dir 之外）是否本次一并做**，还是仅做修复点1（资产路径统一），修复点2 留到下次迭代？（修复点2 是"防御纵深第二层"的增强，非阻断，可以缓做）
-2. **B-3 校验失败的行为**是否同意采用"报警重试，复用现有 MAX_RETRY 机制"，而非新增硬阻断？（设计理由见 §2.2，硬阻断在格式粗筛场景下误报代价过高）
-3. **B-3 是否需要同时新增独立的 HARNESS.md Hard Stop 条目**（比如 HS-15），还是归并进现有 HS-3 的措辞里作为其"已补物理实现"的升级？两种做法都可行，需要你决定文档层面怎么呈现这次变更。
-4. **本文档是否需要写入 CHANGELOG**：按 ae-sdd 自身规范（`ae-sdd-update-skill.md` 步骤4.5），修改母版必须写 CHANGELOG；本文档目前存放于 `update-doc/history/`（非 CHANGELOG 目录），确认后续实施完成后是否需要在 `source/CHANGELOG/` 补一条对应记录。
+1. **B-2 修复点2 本次一并做**：除资产路径统一外，G-DOC-STORAGE 兜底层追加扫描配置 `docWorkspacePath`，并增加系统临时目录当前 Story 顶层 `.md` 专项探针。该探针不递归全盘扫描，只覆盖最典型的 `d:\tmp\{STORY}-CodingPlan.md` 类误放。
+2. **B-3 校验失败行为采用“报警重试 + MAX_RETRY 放行”**：格式校验属于正则粗筛，存在误报空间；因此复用 Stop hook 现有 `MAX_RETRY=2`，前两次 block reason 提醒补全呈现内容，第三次放行。
+3. **B-3 新增独立 HARNESS Hard Stop 条目 HS-16**：不归并到 HS-3。HS-3 关注用户确认语义，HS-16 关注 AI 在人工审核点是否直接呈现必要结构，两者职责不同。
+4. **已写入 CHANGELOG**：新增 `source/CHANGELOG/2026-07-03-v3.8.1-harness-hard-gate-remediation.md`。
 
 ---
 

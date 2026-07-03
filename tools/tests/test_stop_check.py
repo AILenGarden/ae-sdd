@@ -23,12 +23,27 @@ CLI_PATH = REPO_ROOT / "tools" / "bin" / "ae-sdd"
 
 # ─── 辅助：构造 .ae-sdd/ 项目目录 ──────────────────────────────────────────────
 
-def _make_ae_sdd_project(tmp_path: Path) -> Path:
+def _make_ae_sdd_project(tmp_path: Path, config_text: str | None = None) -> Path:
     """在 tmp_path 下建 .ae-sdd/ 并返回 ade_sdd 路径。"""
     ade_sdd = tmp_path / ".ae-sdd"
     ade_sdd.mkdir(parents=True, exist_ok=True)
-    (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
+    (ade_sdd / "config.yaml").write_text(
+        config_text or "projectKey: test-proj\n",
+        encoding="utf-8",
+    )
     return ade_sdd
+
+
+def _write_state(ade_sdd: Path, phase: str, story: str = "STORY-001") -> None:
+    (ade_sdd / "state.json").write_text(
+        json.dumps({
+            "version": "1",
+            "projectKey": "test-proj",
+            "phase": phase,
+            "currentStory": story,
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def _run_stop_check_cli(project_dir: Path, payload: dict) -> dict:
@@ -200,3 +215,112 @@ class TestHS8CompactFailure:
         allowed, msg = stop_check.check_output(response, ade_sdd=ade_sdd)
         if not allowed:
             assert "HS-8" not in msg
+
+
+class TestManualReviewPointFormat:
+    """B-3：人工审核点必须在对话内直接呈现关键结构。"""
+
+    def test_review_point_1_complete_format_allows(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "testcase-reviewed")
+        response = """
+🔍 审核点1 设计完成确认
+| AC | 验收标准 |
+| AC-1 | 用户能登录 |
+核心接口一览：POST /api/login
+关键设计决策：使用现有 AuthService。
+已识别风险点：第三方接口超时。
+测试用例数量：8 个
+"""
+        allowed, msg = stop_check.check_output(response, ade_sdd=ade_sdd)
+        assert allowed
+        assert msg == ""
+
+    def test_review_point_1_path_only_blocks(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "testcase-reviewed")
+        allowed, msg = stop_check.check_output(
+            "🔍 审核点1：设计完成，请查看 design/STORY-001.md",
+            ade_sdd=ade_sdd,
+        )
+        assert not allowed
+        assert "审核点1" in msg
+        assert "AC验收标准列表" in msg
+
+    def test_review_point_2_file_checklist_allows(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "task-reviewed")
+        response = """
+🔍 审核点2 Task文档逐文件核对
+按文件名字典序逐文件核对：
+- STORY-001-task-001.md ✅ 已完整读出并说明重点
+- STORY-001-task-002.md ⚠️ 已指出待确认点
+"""
+        allowed, msg = stop_check.check_output(response, ade_sdd=ade_sdd)
+        assert allowed
+        assert msg == ""
+
+    def test_review_point_25_complete_format_allows(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "coding-process")
+        response = """
+🔍 审核点2.5 CodingPlan评审
+14条门禁通过状态：全部通过。
+CodingModel 11维决策：分层、事务、异常、复用均已记录。
+风险Task：Task-2 第三方接口限流。
+关键类骨架：LoginService【已读源码：src/AuthService.java】。
+"""
+        allowed, msg = stop_check.check_output(response, ade_sdd=ade_sdd)
+        assert allowed
+        assert msg == ""
+
+    def test_review_point_4_complete_format_allows(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "code-reviewed")
+        response = """
+🔍 审核点4 CodeReview完成确认
+| 问题清单 | 严重度 | 处理 |
+| Issue-1 | P1 | 已修复 |
+| AC覆盖对账表 | 状态 |
+| AC-1 覆盖 | ✅ |
+"""
+        allowed, msg = stop_check.check_output(response, ade_sdd=ade_sdd)
+        assert allowed
+        assert msg == ""
+
+    def test_non_review_point_response_allows(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "coding")
+        allowed, msg = stop_check.check_output(
+            "普通编码进展：已完成 LoginService。",
+            ade_sdd=ade_sdd,
+        )
+        assert allowed
+        assert msg == ""
+
+    def test_automation_enabled_skips_review_format_check(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(
+            tmp_path,
+            "projectKey: test-proj\nautomation:\n  enabled: true\n",
+        )
+        _write_state(ade_sdd, "testcase-reviewed")
+        allowed, msg = stop_check.check_output(
+            "🔍 审核点1：设计完成，请查看 design/STORY-001.md",
+            ade_sdd=ade_sdd,
+        )
+        assert allowed
+        assert msg == ""
+
+    def test_review_format_retry_limit_allows_third_attempt(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "testcase-reviewed")
+        response = "🔍 审核点1：设计完成，请查看 design/STORY-001.md"
+
+        first_allowed, _ = stop_check.check_output(response, ade_sdd=ade_sdd)
+        second_allowed, _ = stop_check.check_output(response, ade_sdd=ade_sdd)
+        third_allowed, third_msg = stop_check.check_output(response, ade_sdd=ade_sdd)
+
+        assert not first_allowed
+        assert not second_allowed
+        assert third_allowed
+        assert third_msg == ""

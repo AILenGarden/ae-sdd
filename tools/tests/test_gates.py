@@ -590,6 +590,73 @@ class TestGDocStorage(unittest.TestCase):
         r = gates.check_g_doc_storage(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
+    def test_nested_asset_path_resolves_real_workspace(self):
+        doc_ws = Path(tempfile.mkdtemp())
+        story = "STORY-NESTED-ASSET-001"
+        (doc_ws / "ae-sdd-doc" / "CodingPlan" / story).mkdir(parents=True, exist_ok=True)
+        (doc_ws / "ae-sdd-doc" / "CodingPlan" / story / f"{story}-CodingPlan.md").write_text(
+            "# plan in configured doc workspace\n", encoding="utf-8"
+        )
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test/test.assets.md": (
+                "# §A §B §C §D §E §F §G\n\n"
+                f"| docWorkspacePath | `{doc_ws}` |\n"
+                "| gitPath | `unused` |\n"
+            ),
+        })
+        r = gates.check_g_doc_storage(tmp, {}, story)
+        self.assertTrue(r.pass_, msg=r.message)
+        self.assertEqual(Path(r.details.get("real_workspace")).resolve(), doc_ws.resolve())
+
+    def test_flat_asset_path_still_resolves_real_workspace(self):
+        doc_ws = Path(tempfile.mkdtemp())
+        story = "STORY-FLAT-ASSET-001"
+        (doc_ws / "ae-sdd-doc" / "CodingPlan" / story).mkdir(parents=True, exist_ok=True)
+        (doc_ws / "ae-sdd-doc" / "CodingPlan" / story / f"{story}-CodingPlan.md").write_text(
+            "# plan in configured doc workspace\n", encoding="utf-8"
+        )
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test.assets.md": (
+                "# §A §B §C §D §E §F §G\n\n"
+                f"| docWorkspacePath | `{doc_ws}` |\n"
+            ),
+        })
+        r = gates.check_g_doc_storage(tmp, {}, story)
+        self.assertTrue(r.pass_, msg=r.message)
+        self.assertEqual(Path(r.details.get("real_workspace")).resolve(), doc_ws.resolve())
+
+    def test_doc_workspace_root_product_blocks(self):
+        doc_ws = Path(tempfile.mkdtemp())
+        story = "STORY-DOCWS-ROOT-001"
+        (doc_ws / f"{story}-CodingPlan.md").write_text(
+            "# stray plan at doc workspace root\n", encoding="utf-8"
+        )
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test/test.assets.md": (
+                "# §A §B §C §D §E §F §G\n\n"
+                f"| docWorkspacePath | `{doc_ws}` |\n"
+            ),
+        })
+        r = gates.check_g_doc_storage(tmp, {}, story)
+        self.assertFalse(r.pass_)
+        self.assertGreater(len(r.details.get("stray_files", [])), 0)
+
+    def test_system_tmp_probe_blocks_current_story_product(self):
+        tmp = _setup_project({})
+        story = "STORY-TMP-PROBE-999"
+        probe = Path(tempfile.gettempdir()) / f"{story}-CodingPlan.md"
+        probe.write_text("# stray plan in system temp\n", encoding="utf-8")
+        try:
+            r = gates.check_g_doc_storage(tmp, {}, story)
+            self.assertFalse(r.pass_)
+            joined = "\n".join(r.details.get("stray_files", []))
+            self.assertIn(story, joined)
+        finally:
+            probe.unlink(missing_ok=True)
+
 
 # ─── G-DOC-CONSISTENCY 项目侧记忆-配置路径一致性（🆕 v3.5.7）─────────────────
 class TestGDocConsistency(unittest.TestCase):

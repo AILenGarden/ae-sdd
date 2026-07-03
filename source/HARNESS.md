@@ -72,9 +72,7 @@ Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
 ◆ NEXT:   继续 Task-4 Repository Impl
 ```
 
-**响应中若不包含状态头 → Stop hook 阻止本次响应结束，AI 被迫补充。**
-
-（状态头可位于响应任意位置，Stop hook 检查响应中是否包含 ◆ STATE: 标记）
+**状态头仍是必填响应格式。** 但 v3.6 起 Stop hook 已废弃对 `◆ STATE:` / `◆ GATE:` 自报标记的物理校验；真实状态与门禁以 `UserPromptSubmit` 注入态、`flow_monitor` 和 `ae-sdd gates check` 为准。
 
 ---
 
@@ -89,12 +87,13 @@ Phase 切换：`ae-sdd state write --phase <next> [--story <ID>]`
 - **HS-7**（🆕 v3.3.0，🆕 v3.5.4 补物理实现）未通过 4 层 AND 闸就触发 `ae-sdd state prd-complete`（PreToolUse hook 物理阻断：`tools/lib/gate_intercept.py:check_intercept` + `tools/lib/state.py:check_prd_4_layers` 实时校验）
 - **HS-8**（🆕 v3.3.0，🆕 v3.5.4 补物理实现）PRD 级 compact 失败时未保留旧 PRD state.json（Stop hook 阻断 + 报警：`tools/lib/stop_check.py:_check_compact_failure` 检测 `prdStatus=awaiting_compact` 但无 `summary.md` 的卡住态）
 - **HS-9**（🆕 v3.4.0，建议书4 关卡1）收到 `/ae-sdd` 触发后未跑 `ae-sdd enter` 领 entry token 就落地流程产物（UserPromptSubmit 注入强提醒 + 关卡2/3 物理拦截兜底）
-- **HS-10**（🆕 v3.4.0，建议书4 关卡2）流程产物（Story/Task/CodingPlan/报告）落地未经 `resolve_path` 推导、落在 `d:\tmp\` 等游离位置（PreToolUse hook 用 `document_storage.resolve_path`/docWorkspace 语义做物理拦截 + G-DOC-STORAGE 门禁）
+- **HS-10**（🆕 v3.4.0，建议书4 关卡2；🆕 v3.8.1 兜底层增强）流程产物（Story/Task/CodingPlan/报告）落地未经 `resolve_path` 推导、落在 `d:\tmp\` 等游离位置（PreToolUse hook 用 `document_storage.resolve_path`/docWorkspace 语义做物理拦截；G-DOC-STORAGE 复用 `paths.resolve_doc_workspace` 解析新旧资产路径，并追加系统临时目录当前 Story 专项探针）
 - **HS-11**（🆕 v3.4.0，建议书4 关卡3）非 coding/test-running phase 或无审核点 2.5 确认 token 写 src/ 源码（PreToolUse hook 物理拦截）
 - **HS-12**（🆕 v3.4.0，建议书3 F-1；🆕 v3.6 决策1B诚实降级）AI 谎报 `◆ GATE: ✅ CLEAR` 但实际门禁未通过（声明但无 Stop 物理实现：Stop hook 已废弃自报标记检测，靠 UserPromptSubmit hook + flow_monitor + `ae-sdd gates check` 兜底）
 - **HS-13** 暂离期间写源码/运行编译测试命令（声明但无物理实现——hook 无法感知"讨论模式"；靠 SKILL.md §🔀 暂离声明约束 AI 自律；未来可通过 `.ae-sdd/.detour_mode` 标记文件补物理拦截）
 - **HS-14** 检测到编码意图词但未执行回归门直接写代码（声明但无物理实现；靠 SKILL.md §🔀 编码意图检测 + 回归门协议约束；AI 必须先输出`【主流程监管器 ❌ 阻断】`并执行 `ae-sdd state read`）
 - **HS-15**（🆕 v3.8.0）自动化模式下未写 `reviewConsensus[point]` 就推进 review 节点 phase（声明但无物理实现——靠 G-AUTO-CONSENSUS 门禁兜底：`tools/lib/gates.py:check_g_auto_consensus` 校验 `state.reviewConsensus[point].passed=true` + reviewer 独立性复用 G-09B；非自动化模式 skip）
+- **HS-16**（🆕 v3.8.1）人工审核点对话内呈现缺少必要结构（审核点 1/1.5/2/2.5/4 只给文件路径或空泛摘要）：Stop hook 物理重试拦截（`tools/lib/stop_check.py:_check_manual_review_point_format`），自动化模式 `automation.enabled=true` 时跳过；为降低格式正则误伤，复用 `MAX_RETRY=2` 达上限放行。
 
 ---
 
@@ -109,9 +108,10 @@ G-CODEPLAN-SRC 源码核对  G-DOC-STORAGE 文档存放  G-DOC-CONSISTENCY 记�
 G-PATH 路径越界  G-CODE-1 Coding真实性
 G-RA-1 RA文档存在  G-RA-2 RA维度完整  G-RA-3 RA衍生章节  G-RA-4 RA真实性  G-RA-5 RA派生深度  G-RA-6 RA实现视角
 G-RA-FLOW-VIOLATION RA流程违规  G-REVIEW-LOOP review-loop退出条件
+G-AUTO-CONSENSUS 自动化联审共识
 ```
 
-> 共 29 门禁（GATE_REGISTRY 权威，`tools/lib/gates.py` 实测）。
+> 共 30 门禁（GATE_REGISTRY 权威，`tools/lib/gates.py` 实测）。
 
 一键检查：`ae-sdd gates check --json`
 
