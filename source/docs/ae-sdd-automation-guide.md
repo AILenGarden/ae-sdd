@@ -84,14 +84,18 @@ ae-sdd automation status
 
 ### 2.3 配置字段说明
 
-| 字段 | 默认值 | 含义 | 何时调整 |
+| 字段 | 默认值 | 含义 | 怎么改 |
 |------|-------|------|---------|
-| `enabled` | `false` | 总开关 | 用 `ae-sdd automation enable/disable` 切换，不手改 |
+| `enabled` | `false` | 总开关 | 🔴 **只能用 `ae-sdd automation enable/disable`**，不手改（手改不会写 `enabledAt` 审计时间戳，且 AI 不得自行 enable）|
 | `reviewerTier` | `3` | 联审强度（固定三审） | 暂不支持改，自动化模式强制 3 |
-| `preflightInfoCollection` | `true` | 开工前信息预收集 | 想跳过预收集直接开工 → 改 `false` |
-| `onConsensusStall` | `pause` | 联审 3 轮未决时的出口 | `pause`=暂停等用户 / `fail`=标记失败终止 |
-| `automatedReviewPoints` | `[1, 1.5, 2, 2.5, 4, 5]` | 走自动联审的审核点白名单 | 想让某点仍人工 → 从数组移除该编号 |
-| `enabledAt` | `""` | 开启时间戳（审计） | 不手改，由 CLI 写 |
+| `preflightInfoCollection` | `true` | 开工前信息预收集 | 直接编辑 config.yaml 改 `false` |
+| `onConsensusStall` | `pause` | 联审 3 轮未决时的出口 | 直接编辑 config.yaml 改 `pause`/`fail` |
+| `automatedReviewPoints` | `[1, 1.5, 2, 2.5, 4, 5]` | 走自动联审的审核点白名单 | 直接编辑 config.yaml，增删编号 |
+| `enabledAt` | `""` | 开启时间戳（审计） | 🔴 **不手改**，由 `automation enable` 自动写 |
+
+**修改方式分两类**：
+- **`enabled` / `enabledAt`** → 必须用 CLI 命令（`automation enable/disable`），因为命令会同时写时间戳做审计，防止 AI 偷偷自己开
+- **`preflightInfoCollection` / `onConsensusStall` / `automatedReviewPoints`** → 直接编辑 `.ae-sdd/config.yaml`，改完立即生效，**不用重新 enable**（AI 每次审核点都会重读 config）
 
 **审核点编号对照**：
 
@@ -115,7 +119,9 @@ automation:
   automatedReviewPoints: [1, 1.5, 2, 2.5, 5]  # 移除了 4
 ```
 
-之后 CodeReview 仍会停下来等你 ✅，其余点继续走联审。
+之后 CodeReview 仍会停下来等你 ✅，其余点继续走联审。**改完立即生效，无需重新 enable**。
+
+反过来，想把某个点加回自动化：把编号加回数组即可。
 
 ---
 
@@ -158,9 +164,30 @@ AI 自动跑 `ae-sdd preflight collect`，扫描你的输入材料 + 项目资�
   清单已写入 .ae-sdd/preflight-info.yaml
 ```
 
-**你的动作**：打开 `.ae-sdd/preflight-info.yaml`，把每个待补项填上实际值（或直接在对话里告诉 AI）。补齐后 AI 才进 Step 2 开工，**开工后不再因缺信息打断你**。
+**你也可以自己手动跑预收集**（不依赖 AI）：
+```bash
+ae-sdd preflight collect                # 扫描并生成 .ae-sdd/preflight-info.yaml
+ae-sdd preflight collect --json         # 输出结构化 JSON（便于脚本处理）
+```
+
+**你的动作**：
+- 方式 A：直接在对话里告诉 AI（"极光 AppKey 是 xxx，消息推送用已有的 xxx-sender 组件"）—— AI 会把信息写进 preflight-info.yaml
+- 方式 B：自己编辑 `.ae-sdd/preflight-info.yaml`，把每个待补项的值填到对应行下面
+
+`.ae-sdd/preflight-info.yaml` 示例（填好后）：
+```yaml
+# ae-sdd 开工前信息预收集清单（由 ae-sdd preflight collect 生成）
+第三方平台凭证:
+  - design/PRD-X.md: …极光 AppKey: {待确认}…   # ← 填实际值：a1b2c3...
+  - design/PRD-X.md: …融云 IM Token: {待确认}…  # ← 填实际值或标注"已配置在 nacos"
+复用项选择:
+  - assets/xxx.assets.md: …消息推送组件 {待复用}…  # ← 填：用 icec-message-sender
+```
+
+补齐后 AI 才进 Step 2 开工，**开工后不再因缺信息打断你**。
 
 > 无待补信息时 AI 直接进 Step 2，不卡你。
+> 想跳过预收集（确认材料齐全、不想 AI 卡这步）：把 config.yaml 的 `preflightInfoCollection` 改 `false`。
 
 ### 3.4 正常流程 + 审核点联审
 
@@ -213,6 +240,55 @@ ae-sdd state read    # 看 state.json，含 reviewConsensus 字段
   }
 }
 ```
+
+### 3.6 什么时候你要自己手动注册联审结果？
+
+正常情况下 **AI 自己调 `register-review-consensus`**，你不用管。但以下 3 种情况你要手动调：
+
+**情况 1：AI 漏调了（G-AUTO-CONSENSUS 门禁阻断）**
+
+AI 跑完联审但忘了写 state → 下个 phase 切不过去，报：
+```
+❌ G-AUTO-CONSENSUS 自动化联审共识通过: 自动化模式 review 节点但未写 reviewConsensus
+```
+
+你手动补写：
+```bash
+ae-sdd state register-review-consensus --point 1 --passed true --rounds 1
+```
+
+**情况 2：你想覆盖 AI 的判定**
+
+AI 判 passed=true 但你不认可（比如 reviewer 报告里有未解决的 🟠 严重型问题）：
+```bash
+ae-sdd state register-review-consensus --point 2.5 --passed false --rounds 3 --stall-reason "CodingModel 决策缺理由，用户不认可"
+```
+
+写 passed=false 后流程会暂停（按 onConsensusStall 策略），等你处理。
+
+**情况 3：带详细 reviewer 信息写入**（审计追溯用）
+
+```bash
+ae-sdd state register-review-consensus \
+  --point 4 \
+  --passed true \
+  --rounds 2 \
+  --reviewers "rev-1|code-reviewer|pass|sid-A,rev-2|code-reviewer|pass|sid-B,rev-3|code-reviewer|pass|sid-C"
+```
+
+`--reviewers` 格式：`agentId|role|verdict|sessionId`，多个用逗号分隔。
+
+**命令参数说明**：
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `--point` | 是 | 审核点编号（1/1.5/2/2.5/4/5）|
+| `--passed` | 是 | `true`/`false` |
+| `--tier` | 否 | 默认 3（自动化模式固定）|
+| `--rounds` | 否 | 矫正轮次，默认 1 |
+| `--reviewers` | 否 | reviewer 摘要列表（`agentId\|role\|verdict\|sessionId` 逗号分隔）|
+| `--stall-reason` | 否 | passed=false 时的原因 |
+| `--story` | 否 | Story ID（多 Story 时指定写哪个 state）|
 
 ---
 
@@ -291,6 +367,35 @@ ae-sdd automation disable
 ### Q6：多个 WorkItem / Story 并行，自动化配置是项目级还是 WorkItem 级？
 
 **项目级**。`.ae-sdd/config.yaml` 是项目实例配置，所有 WorkItem / Story 共享同一开关。想让某 WorkItem 走人工、其他走自动化？目前不支持，建议按时间分段：自动化期间跑一批，关掉后再跑需人工把关的。
+
+---
+
+## 5.7 用户命令速查表
+
+把你能用的命令集中列出来（AI 也会调这些，但你随时可手动调）：
+
+| 命令 | 用途 | 何时用 |
+|------|------|--------|
+| `ae-sdd automation status` | 查看自动化配置 | 开启前/后确认配置 |
+| `ae-sdd automation status --json` | 结构化输出（脚本用）| 脚本读取配置 |
+| `ae-sdd automation enable` | 开启全自动化 | 决定走自动化时 |
+| `ae-sdd automation disable` | 关闭自动化 | 想回退人工审核 |
+| `ae-sdd preflight collect` | 开工前信息预收集 | 开工前自己先跑一遍看缺什么 |
+| `ae-sdd preflight collect --json` | 结构化输出 | 脚本处理待补清单 |
+| `ae-sdd state read` | 读 state.json | 查当前 phase / reviewConsensus |
+| `ae-sdd state register-review-consensus --point {N} --passed {true\|false}` | 手动写联审结果 | AI 漏调/你想覆盖判定（见 §3.6）|
+| `ae-sdd gates check --only G-AUTO-CONSENSUS` | 单测联审共识门禁 | 排查"为什么 phase 推不过去" |
+| `ae-sdd gates check --only G-09B` | 单测 reviewer 独立性门禁 | 排查"reviewer 不独立"阻断 |
+| `ae-sdd gates check --only G-00` | 项目资产门卫 | 开启前自检资产齐备 |
+
+**手动编辑 config.yaml 的字段**（改完立即生效，无需重新 enable）：
+- `preflightInfoCollection`（true/false）
+- `onConsensusStall`（pause/fail）
+- `automatedReviewPoints`（[1, 1.5, 2, 2.5, 4, 5] 增删编号）
+
+**禁止手改的字段**（必须用命令）：
+- `enabled` → 用 `automation enable/disable`
+- `enabledAt` → 由 `automation enable` 自动写
 
 ---
 
