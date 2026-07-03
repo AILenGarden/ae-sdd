@@ -1,109 +1,85 @@
 ---
 name: testcase-review
 description: 审查 testcase-generate-skill 产出的测试用例，按 TC-1~TC-10 检查口径核对 AC 覆盖率、全场景覆盖度、L1-L4 分层完整性、缺陷假设覆盖率，挖掘遗漏用例与冗余用例。当 TestCase 生成后自动触发、或开发者说"审查测试用例"、"检查测试覆盖"、"TestCase Review"时触发。
+source_slimmed: true
+source_slim_schema: ae-sdd-source-slim/v2
+source_slim_standard: standards/skill-source-slimming-standard.md
+source_slim_template: templates/skill/source-skill-slim-entry-template.md
+source_fallback: skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md
+source_fallback_sha256: 5d6a77152f39e1a0bb14564e30ad896628b10a4028a2ed549f3bce3c4126acfd
+source_original_bytes: 6175
+source_original_lines: 110
+source_semantic_inventory_sha256: 788c962c64e398a38e40b40b1eac44b2c5302fc167644490fef94894754801ac
+source_slimmer: slim_source_skills.py@2
 ---
 
-# TestCase Review — 测试用例缺陷挖掘 Skill
+# TestCase Review — 测试用例缺陷挖掘 Skill Source SKILL Slim Entry
 
-## 与监管器 4 步的关系
+This source SKILL has been slimmed by the standard source-slimming pipeline. The full pre-slim source is preserved at `skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md` and remains the semantic fallback.
 
-本文件只负责 **TestCase 系列 Step 3：reviewSkill**。Step 1 调用声明、Step 2 生成、Step 4 人工审核由主流程监管器执行；Loop 次数和退出阈值遵守 `review-loop-skill.md`，本文件不重复定义。
+## Load Contract
 
-## 目标
+- Use this slim entry first for routing, scope, semantic inventory, and resource discovery.
+- Load `skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md` before executing any step whose exact wording is not represented in the semantic inventory below.
+- Do not run source slimming again when `source_slimmed: true` is present; use `--upgrade` only to re-render from the fallback with a newer schema.
+- When compiling, runtime fallback must come from `skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md`, not this slim entry.
 
-系统化审查测试用例文档，确认其与 Story（AC/接口/数据模型/异常路径）完全对齐，且四层覆盖（L1/L2/L3/L4）无遗漏、无冗余。发现缺陷后不直接改测试用例，先记录缺陷报告，再触发 TestCase 重新生成修复。
+## Summary
 
-## 依赖标准
+- source: `skills/phase1-design/testcase-review-skill.md`
+- fallback: `skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md`
+- fallback_sha256: `5d6a77152f39e1a0bb14564e30ad896628b10a4028a2ed549f3bce3c4126acfd`
+- original_lines: 110
+- original_bytes: 6175
+- semantic_inventory_sha256: `788c962c64e398a38e40b40b1eac44b2c5302fc167644490fef94894754801ac`
+- standard: `standards/skill-source-slimming-standard.md`
+- template: `templates/skill/source-skill-slim-entry-template.md`
+- summary: 审查 testcase-generate-skill 产出的测试用例，按 TC-1~TC-10 检查口径核对 AC 覆盖率、全场景覆盖度、L1-L4 分层完整性、缺陷假设覆盖率，挖掘遗漏用例与冗余用例。当 TestCase 生成后自动触发、或开发者说"审查测试用例"、"检查测试覆盖"、"TestCase Review"时触发。
 
-- [`testcase-generate-skill.md`](testcase-generate-skill.md)（产出物来源）
-- [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md)（循环退出协议）
-- [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)
+## Semantic Inventory
 
-## 文档存放前置调用
+| category | evidence | design_refs | fallback_policy |
+| --- | --- | --- | --- |
+| identity_trigger | frontmatter: name, description; headings: L2:22 文档存放前置调用; keyword_hits: 12 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | headings: L2:30 流程; keyword_hits: 10 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | headings: L2:103 禁止事项; keyword_hits: 16 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | keyword_hits: 6 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | keyword_hits: 1 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | headings: L2:22 文档存放前置调用; L2:80 输出要求; keyword_hits: 12 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 4; refs: ae-sdd doc save --intent TESTCASE_REVIEW --work-item {W} --story-id {S?} --content-file 草稿.md; document-storage-skill.md; review-loop-skill.md; +1 more; keyword_hits: 14 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | keyword_hits: 7 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
 
-写入前必须先调用 `document-storage-skill.md`，不手写路径。
+## Source Slimming SOP
 
-| 输出文档 | API 调用 | 命名规则 | 动作 |
-|---------|---------|---------|------|
-| TestCase Review 报告 | `ae-sdd doc save --intent TESTCASE_REVIEW --work-item {W} --story-id {S?} --content-file 草稿.md` | 带 r{N} | 新增 |
+1. Read the full source or the recorded fallback as the only semantic input.
+2. Identify semantic categories before slimming: identity/trigger, workflow/route, gates/constraints, tools/API, state/data, output contracts, resources, design alignment, and fallback-only detail.
+3. Render this entry from `templates/skill/source-skill-slim-entry-template.md`; do not hand-edit generated slim sections.
+4. Validate `source_fallback_sha256`, required sections, and `source_semantic_inventory_sha256`.
+5. Rebuild compiled runtime and run runtime verification after any source SKILL slimming change.
 
-## 流程
+## Headings
 
-```text
-触发
-  → 读取 Story（AC/接口/数据模型/异常路径）+ 测试用例文档（含 🆕 缺陷假设清单）
-  → 按 TC-1~TC-10 检查口径逐项核对
-  → 写 Review 报告（含缺陷清单）
-  → 若存在缺陷，回退 testcase-generate-skill 重新生成
-  → 再次 Review
-  → 循环与退出遵守 review-loop-skill.md
-```
+| level | line | title |
+| --- | --- | --- |
+| 1 | 6 | TestCase Review — 测试用例缺陷挖掘 Skill |
+| 2 | 8 | 与监管器 4 步的关系 |
+| 2 | 12 | 目标 |
+| 2 | 16 | 依赖标准 |
+| 2 | 22 | 文档存放前置调用 |
+| 2 | 30 | 流程 |
+| 2 | 42 | 检查口径（TC-1~TC-10） |
+| 3 | 57 | TC-10 缺陷假设覆盖率专项校验（🆕 v3.6.3） |
+| 2 | 73 | 核心原则 |
+| 2 | 80 | 输出要求 |
+| 2 | 86 | 与 generate 假设驱动的衔接（🆕 v3.6.3） |
+| 2 | 99 | 退出条件 |
+| 2 | 103 | 禁止事项 |
 
-## 检查口径（TC-1~TC-10）
+## Inline References
 
-| # | 检查项 | 通过标准 |
-|---|--------|---------|
-| TC-1 | AC 覆盖完整性 | Story 每个 AC 都有至少 1 个对应测试用例 |
-| TC-2 | 全场景覆盖 | 不只覆盖 AC，主流程每一步都有用例，非仅验收点 |
-| TC-3 | L1 单元测试 | 核心方法/边界值/异常入参有对应 L1 用例 |
-| TC-4 | L2 接口测试 | 每个接口的正常/异常/边界响应有对应 L2 用例 |
-| TC-5 | L3 数据层测试 | 涉及写库操作有 INSERT 后 SELECT 校验用例 |
-| TC-6 | L4 集成/端到端测试 | 跨服务调用链路有对应集成用例 |
-| TC-7 | 异常路径覆盖 | Story 列出的异常场景（超时/并发/幂等冲突等）均有用例 |
-| TC-8 | 用例无冗余（🆕 v3.6.3 修订） | 区分两类——①真冗余(剔除)：同一断言点 + 同一触发条件 = 重复；②非冗余(保留)：同一假设 H-{N} 但不同触发条件/不同测试层级 = 合理的多对多证伪 |
-| TC-9 | 用例可执行性 | 每条用例的前置条件/步骤/预期结果三要素齐全，可直接转化为测试代码 |
-| **TC-10** | **🆕 缺陷假设覆盖率（假设驱动第二道把关）** | 见下方专项校验 |
-
-### TC-10 缺陷假设覆盖率专项校验（🆕 v3.6.3）
-
-> **定位：** testcase-generate §TC-G11 是"生成时自检"，本 TC-10 是"生成后独立交叉校验"。两者阈值一致，本节点是假设挖掘质量的第二道把关。
-
-**检查项：**
-
-1. **假设完整性**：测试用例文档中的缺陷假设清单（H-{N}）是否都被至少 1 个证伪用例覆盖？未覆盖 → 🔴 缺陷（必须补用例）
-2. **证伪用例占比**：证伪用例占比是否达 generate 端同款阈值？
-   - 坑库成熟度 ≥ 50% → 阈值 40%
-   - 坑库成熟度 < 50% → 阈值 25%
-   - 不达标 → 🔴 缺陷（回退 generate 重新挖假设）
-3. **纯凑数用例**：是否存在无假设 + 无 AC + 非盲区的用例？→ 🔴 缺陷（必须剔除）
-4. **假设标注规范**：证伪用例是否都标注了 H-{N}？漏标 → 🟡 缺陷（补标注）
-
-**不通过处理：** 按 review-loop-skill.md 记录缺陷，回退 testcase-generate-skill 重新生成（不在 review 阶段直接补写）。
-
-## 核心原则
-
-- TestCase Review 不直接修改测试用例文档。
-- 已确认缺陷必须回退 testcase-generate-skill 重新生成（不在 Review 阶段直接补写用例）。
-- 存疑项不得自动执行，必须人工确认。
-- 循环与退出条件遵守 `review-loop-skill.md`，本文件不重复定义轮次阈值。
-
-## 输出要求
-
-- 必须输出 Review 报告，含 TC-1~TC-10 逐项通过/不通过状态。
-- 不通过项必须列出具体缺失的 AC/场景/层级/假设。
-- TC-10 不通过时，必须在报告中写明"本次坑库成熟度 X%，证伪用例占比阈值 Y%，实际 Z%"。
-
-## 与 generate 假设驱动的衔接（🆕 v3.6.3）
-
-> **设计意图：** testcase-generate 引入"假设驱动"范式后，假设挖掘质量需要双重把关，避免生成端"形式通过、内容空转"。
-
-| 把关点 | 位置 | 角色 |
-|--------|------|------|
-| generate §TC-G11 | 生成时自检 | 第一道——生成时校验假设覆盖率 |
-| review §TC-10 | 生成后独立审查 | 第二道——交叉校验（不依赖 generate 自评） |
-
-**阈值一致性：** 两道把关使用相同阈值（坑库成熟度 ≥50% → 40%；<50% → 25%），避免标准漂移。
-
-**回退机制：** review §TC-10 发现假设覆盖率不达标 → 按 review-loop-skill.md 记录缺陷 → 回退 testcase-generate 重新做 §0 缺陷假设挖掘 + 重新生成用例（不在 review 阶段直接补写用例）。
-
-## 退出条件
-
-满足 `review-loop-skill.md` 的退出条件（连续 3 轮无新增缺陷）。
-
-## 禁止事项
-
-- 禁止直接修改测试用例主文档。
-- 禁止把"用例数量足够"当作覆盖完整的判定依据（必须逐项核对 AC/场景映射）。
-- 禁止把误报当缺陷。
-- **🆕 禁止把"多对多证伪"（同一假设不同触发条件）误判为 TC-8 冗余。**
-- **🆕 禁止跳过 TC-10 假设覆盖率校验（它是假设挖掘质量的第二道把关）。**
+| ref |
+| --- |
+| ae-sdd doc save --intent TESTCASE_REVIEW --work-item {W} --story-id {S?} --content-file 草稿.md |
+| document-storage-skill.md |
+| review-loop-skill.md |
+| testcase-generate-skill.md |

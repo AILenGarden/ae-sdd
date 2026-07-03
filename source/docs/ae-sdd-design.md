@@ -492,6 +492,10 @@ ae-sdd 分为两种物理版本：`source/` 是未编译母版，面向维护者
 
 编译目标不是把 SKILL 变成不可读"机械码"，而是生成短、结构化、可审查的 runtime compact slices。Agent 主入口 `dist/ae-sdd/SKILL.md` 变为 bootloader，只声明加载顺序、冲突优先级和 fallback 规则；子 SKILL 在 `dist/ae-sdd/skills/**/*.md` 中也必须变为 compiled bootloader，完整 Markdown 原文只保存在 runtime fallback 中，只有 compact 不足时才延迟读取。
 
+源 SKILL 入口在进入 runtime 编译前允许标准化瘦身，但瘦身不是自由删减。`scripts/slim_source_skills.py` 必须先把完整原文锚定到 `source/skill-fallbacks/**`，再按 `source/standards/skill-source-slimming-standard.md` 和 `source/templates/skill/source-skill-slim-entry-template.md` 渲染 slim entry。每个 slim entry 必须包含语义识别清单，覆盖身份/触发、流程/路由、门禁/约束、工具/API、状态/数据、产物/文档、资源引用、设计对齐和 fallback-only 细节；已瘦身文件默认跳过，schema 升级只能从 fallback 重渲染，禁止从 slim entry 二次瘦身。
+
+源瘦身的语义边界：slim entry 是索引和加载契约，`source/skill-fallbacks/**` 是完整语义锚点。runtime 编译器遇到 `source_slimmed: true` 时，fallback 和 outline 抽取必须来自 `source_fallback`，不能来自 slim entry。
+
 编译后运行包的核心结构：
 
 ```text
@@ -519,6 +523,8 @@ dist/ae-sdd/
 | 设计点 | 实现方式 |
 | --- | --- |
 | 未编译母版 | `source/`，唯一人工编辑点 |
+| 源 SKILL 瘦身 | `scripts/slim_source_skills.py`，按 v2 标准生成 slim entry；完整原文进入 `source/skill-fallbacks/**` |
+| 源瘦身标准/模板 | `source/standards/skill-source-slimming-standard.md` + `source/templates/skill/source-skill-slim-entry-template.md` |
 | 编译实例包 | `dist/ae-sdd/`，由 `scripts/build_dist.py` 生成，git ignored |
 | Runtime 编译器 | `scripts/compile_skill_runtime.py`，生成 `runtime/*.compact.md`、`runtime/skills/**`，并替换 dist 主入口和子 SKILL 入口为 bootloader |
 | 通用编译器 SKILL | `standalone-skills/skill-runtime-compiler/`，可复制到其它 agent/仓库，用于把任意 `SKILL.md` 包编译成同级 `<name>-compiled/` |
@@ -528,9 +534,9 @@ dist/ae-sdd/
 | 机器校验 manifest | `runtime/manifest.json`：`compiled=true`、`deterministic=true`、`runtime_fingerprint`、`load_order`、`source_checksums` |
 | 分发入口 | `scripts/distribute.py` 只接受 `dist/ae-sdd/` 或基于它生成的 Agent 专属产物 |
 
-**颗粒度与边界**：第一期编译 boot/route/subskills/gates/flow/macros 六类高收益规则，并把所有子 SKILL 入口编译为薄 bootloader；子 SKILL 的完整长流程、模板正文、设计背景仍按需 fallback。compact runtime 不替代 CLI gate，任何硬门禁判断以 `ae-sdd gates check`、`state` 等工具输出为准。runtime 编译产物必须字节级幂等，不写入墙钟时间；同一份 `source/`、同一版编译器、同一份 `GATE_REGISTRY` 与 `PHASE_FLOWS` 重复编译，`dist/ae-sdd/SKILL.md`、`dist/ae-sdd/runtime/**` 和 `dist/ae-sdd/skills/**/*.md` 必须完全一致。
+**颗粒度与边界**：第一期编译 boot/route/subskills/gates/flow/macros 六类高收益规则，并把所有子 SKILL 入口编译为薄 bootloader；子 SKILL 的完整长流程、模板正文、设计背景仍按需 fallback。源瘦身只压入口，不压语义；`source_fallback_sha256` 和语义 inventory hash 是防丢语义的机器锚点。compact runtime 不替代 CLI gate，任何硬门禁判断以 `ae-sdd gates check`、`state` 等工具输出为准。runtime 编译产物必须字节级幂等，不写入墙钟时间；同一份 `source/`、同一版编译器、同一份 `GATE_REGISTRY` 与 `PHASE_FLOWS` 重复编译，`dist/ae-sdd/SKILL.md`、`dist/ae-sdd/runtime/**` 和 `dist/ae-sdd/skills/**/*.md` 必须完全一致。
 
-**当前实现状态**：第一期编译器、构建接入、runtime manifest、六类 compact slice、全量子 SKILL compiled bootloader、fallback 原文锚点、字节级幂等测试、`ae-sdd runtime verify`、`update-check` UC-15 runtime 编译一致性检查、分发器 compiled-only 校验均已落地。另有通用 `skill-runtime-compiler` standalone SKILL，可把任意 SKILL 包编译到同级 `<name>-compiled/`，源包不变，并由 UC-15 覆盖幂等性。后续扩展重点是外层 `dist` 包可复现构建、子 SKILL 语义 compact 增强、Agent 专属二次编译约束细化。详细清单见 [`source/docs/skill-runtime-compiler.md`](skill-runtime-compiler.md) §14~§15。
+**当前实现状态**：源 SKILL 标准化瘦身 v2、瘦身标准/模板、第一期编译器、构建接入、runtime manifest、六类 compact slice、全量子 SKILL compiled bootloader、fallback 原文锚点、字节级幂等测试、`ae-sdd runtime verify`、`update-check` UC-15 runtime 编译一致性检查、分发器 compiled-only 校验均已落地。另有通用 `skill-runtime-compiler` standalone SKILL，可把任意 SKILL 包编译到同级 `<name>-compiled/`，源包不变，并由 UC-15 覆盖幂等性。后续扩展重点是外层 `dist` 包可复现构建、子 SKILL 语义 compact 增强、Agent 专属二次编译约束细化。详细清单见 [`source/docs/skill-runtime-compiler.md`](skill-runtime-compiler.md) §14~§15。
 
 ---
 

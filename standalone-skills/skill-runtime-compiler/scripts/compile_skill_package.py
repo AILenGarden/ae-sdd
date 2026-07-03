@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -26,6 +27,7 @@ COMPILER_NAME = "skill-runtime-compiler"
 COMPILER_SCRIPT = "compile_skill_package.py"
 COMPILER_VERSION = "1"
 MANIFEST_SCHEMA = "skill-runtime-compiler/v1"
+BATCH_MANIFEST_SCHEMA = "skill-runtime-compiler-batch/v1"
 LOAD_ORDER = [
     "runtime/boot.compact.md",
     "runtime/outline.compact.md",
@@ -37,6 +39,15 @@ GENERATED_FILES = [
     "runtime/manifest.json",
 ]
 SKIP_DIRS = {".git", ".hg", ".svn", "__pycache__", ".pytest_cache", "node_modules"}
+BATCH_SKIP_DIRS = SKIP_DIRS | {
+    ".idea",
+    ".vscode",
+    ".worktrees",
+    "build",
+    "dist",
+    "out",
+    "target",
+}
 
 
 class CompileError(RuntimeError):
@@ -67,28 +78,37 @@ def _yaml_scalar(value: str) -> str:
 
 
 def split_frontmatter(text: str) -> tuple[str, str]:
-    if not text.startswith("---\n"):
-        return "", text
-    end = text.find("\n---", 4)
-    if end < 0:
-        return "", text
-    after = end + len("\n---")
-    if after < len(text) and text[after:after + 1] == "\n":
-        after += 1
-    return text[4:end], text[after:]
+    candidate = text[1:] if text.startswith("\ufeff") else text
+    match = re.match(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", candidate, re.DOTALL)
+    if not match:
+        return "", candidate
+    return match.group(1), candidate[match.end():]
 
 
 def parse_simple_frontmatter(text: str) -> dict[str, str]:
     frontmatter, _body = split_frontmatter(text)
     values: dict[str, str] = {}
-    for line in frontmatter.splitlines():
+    lines = frontmatter.replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
         match = re.match(r"^([A-Za-z0-9_-]+):\s*(.*?)\s*$", line)
         if not match:
+            idx += 1
             continue
         raw = match.group(2).strip()
+        if raw in {"|", "|-", "|+", ">", ">-", ">+"}:
+            idx += 1
+            block_lines: list[str] = []
+            while idx < len(lines) and (lines[idx].startswith((" ", "\t")) or not lines[idx].strip()):
+                block_lines.append(lines[idx].strip())
+                idx += 1
+            values[match.group(1)] = "\n".join(block_lines).strip()
+            continue
         if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
             raw = raw[1:-1]
         values[match.group(1)] = raw
+        idx += 1
     return values
 
 
@@ -308,6 +328,211 @@ def _assert_safe_paths(source: Path, output: Path) -> None:
         raise CompileError(f"source SKILL.md not found: {source / 'SKILL.md'}")
 
 
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
+    return slug or "skill"
+
+
+def _path_is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.resolve().relative_to(base.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _frontmatter_declares_compiled(skill_path: Path) -> bool:
+    try:
+        metadata = parse_simple_frontmatter(skill_path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise CompileError(f"source SKILL.md is not UTF-8: {skill_path}") from exc
+    return _is_true(metadata.get("compiled"))
+
+
+def _read_source_fallback_text(source: Path, metadata: dict[str, str], default_text: str) -> str:
+    if not _is_true(metadata.get("source_slimmed")):
+        return default_text
+    rel = metadata.get("source_fallback") or metadata.get("slim_fallback")
+    if not rel:
+        return default_text
+    candidate = (source / rel).resolve()
+    try:
+        candidate.relative_to(source.resolve())
+    except ValueError as exc:
+        raise CompileError(f"source_fallback must stay inside the source package: {rel}") from exc
+    if not candidate.is_file():
+        raise CompileError(f"source_fallback not found: {candidate}")
+    return candidate.read_text(encoding="utf-8")
+
+
+def _is_generated_output(output: Path) -> bool:
+    manifest = output / "runtime" / "manifest.json"
+    if not manifest.is_file():
+        return False
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return (
+        data.get("schema") == MANIFEST_SCHEMA
+        and data.get("compiled") is True
+        and data.get("compiler", {}).get("name") == COMPILER_SCRIPT
+    )
+
+
+def _generated_output_is_current(source: Path, output: Path) -> bool:
+    manifest = output / "runtime" / "manifest.json"
+    if not _is_generated_output(output):
+        return False
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return data.get("source", {}).get("checksums") == collect_checksums(source)
+
+
+def _batch_output_path(root: Path, source: Path, output_root: Path) -> Path:
+    rel = source.resolve().relative_to(root.resolve()).as_posix()
+    digest = hashlib.sha256(rel.encode("utf-8")).hexdigest()[:12]
+    return output_root / f"{_slugify(source.name)}-{digest}"
+
+
+def discover_skill_packages(
+    root: Path,
+    *,
+    include_references: bool = False,
+    include_compiled: bool = False,
+    output_root: Path | None = None,
+    exclude_prefixes: tuple[str, ...] = (),
+) -> tuple[list[Path], list[dict[str, str]]]:
+    root = root.resolve()
+    if not root.is_dir():
+        raise CompileError(f"root is not a directory: {root}")
+
+    output_root_resolved = output_root.resolve() if output_root else None
+    packages: list[Path] = []
+    skipped: list[dict[str, str]] = []
+
+    for current_str, dirnames, filenames in os.walk(root):
+        current = Path(current_str)
+        rel = "." if current == root else current.relative_to(root).as_posix()
+
+        kept_dirnames: list[str] = []
+        for dirname in dirnames:
+            child = current / dirname
+            child_rel = child.relative_to(root).as_posix()
+            should_skip = False
+            reason = ""
+            if dirname in BATCH_SKIP_DIRS or dirname.endswith("-compiled"):
+                should_skip = True
+                reason = "ignored-directory"
+            elif output_root_resolved and _path_is_relative_to(child, output_root_resolved):
+                should_skip = True
+                reason = "output-root"
+            elif not include_references and (child_rel == "references" or child_rel.startswith("references/")):
+                should_skip = True
+                reason = "references-excluded"
+            elif any(child_rel == prefix.rstrip("/") or child_rel.startswith(prefix.rstrip("/") + "/") for prefix in exclude_prefixes):
+                should_skip = True
+                reason = "excluded-prefix"
+
+            if should_skip:
+                if (child / "SKILL.md").is_file():
+                    skipped.append({"source": child_rel, "reason": reason})
+                continue
+            kept_dirnames.append(dirname)
+        dirnames[:] = kept_dirnames
+
+        if "SKILL.md" not in filenames:
+            continue
+        skill_path = current / "SKILL.md"
+        if _frontmatter_declares_compiled(skill_path) and not include_compiled:
+            skipped.append({"source": rel, "reason": "already-compiled-source"})
+            continue
+        packages.append(current)
+
+    return sorted(packages, key=lambda p: p.relative_to(root).as_posix()), skipped
+
+
+def compile_skill_packages_under(
+    root: Path,
+    *,
+    output_root: Path | None = None,
+    include_references: bool = False,
+    include_compiled: bool = False,
+    exclude_prefixes: tuple[str, ...] = (),
+    skip_up_to_date: bool = True,
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    root = root.resolve()
+    output_root = (output_root.resolve() if output_root else root / "dist" / "compiled-skills")
+    packages, skipped = discover_skill_packages(
+        root,
+        include_references=include_references,
+        include_compiled=include_compiled,
+        output_root=output_root,
+        exclude_prefixes=exclude_prefixes,
+    )
+
+    records: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    for package in packages:
+        source_rel = package.relative_to(root).as_posix()
+        output = _batch_output_path(root, package, output_root)
+        output_rel = output.relative_to(root).as_posix() if _path_is_relative_to(output, root) else output.as_posix()
+
+        if skip_up_to_date and _generated_output_is_current(package, output):
+            records.append({"source": source_rel, "output": output_rel, "status": "up-to-date"})
+            continue
+        if dry_run:
+            records.append({"source": source_rel, "output": output_rel, "status": "planned"})
+            continue
+
+        try:
+            result = compile_skill_package(package, output=output, force=force)
+            records.append(
+                {
+                    "source": source_rel,
+                    "output": output_rel,
+                    "status": "compiled",
+                    "runtime_fingerprint": result["runtime_fingerprint"],
+                    "heading_count": result["extracts"]["heading_count"],
+                    "resource_count": result["extracts"]["resource_count"],
+                }
+            )
+        except Exception as exc:
+            failures.append({"source": source_rel, "output": output_rel, "error": str(exc)})
+
+    summary: dict[str, Any] = {
+        "schema": BATCH_MANIFEST_SCHEMA,
+        "deterministic": True,
+        "compiler": {"name": COMPILER_SCRIPT, "version": COMPILER_VERSION, "skill": COMPILER_NAME},
+        "root": ".",
+        "output_root": output_root.relative_to(root).as_posix() if _path_is_relative_to(output_root, root) else output_root.as_posix(),
+        "include_references": include_references,
+        "include_compiled": include_compiled,
+        "skip_up_to_date": skip_up_to_date,
+        "dry_run": dry_run,
+        "counts": {
+            "discovered": len(packages),
+            "compiled": sum(1 for record in records if record["status"] == "compiled"),
+            "planned": sum(1 for record in records if record["status"] == "planned"),
+            "up_to_date": sum(1 for record in records if record["status"] == "up-to-date"),
+            "skipped": len(skipped),
+            "failed": len(failures),
+        },
+        "records": records,
+        "skipped": sorted(skipped, key=lambda item: (item["reason"], item["source"])),
+        "failures": failures,
+    }
+    if failures:
+        return summary
+    if not dry_run:
+        _write_text(output_root / "manifest.json", json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return summary
+
+
 def compile_skill_package(source: Path, output: Path | None = None, force: bool = False) -> dict[str, Any]:
     source = source.resolve()
     output = output.resolve() if output else source.parent / f"{source.name}-compiled"
@@ -318,9 +543,10 @@ def compile_skill_package(source: Path, output: Path | None = None, force: bool 
     metadata = parse_simple_frontmatter(source_text)
     if _is_true(metadata.get("compiled")):
         raise CompileError("source SKILL.md already declares compiled: true; choose the uncompiled master package")
+    fallback_text = _read_source_fallback_text(source, metadata, source_text)
 
     checksums = collect_checksums(source)
-    frontmatter, body = split_frontmatter(source_text)
+    frontmatter, body = split_frontmatter(fallback_text)
     del frontmatter
     title = _title_from_body(body, metadata.get("name", source.name))
     summary = _first_paragraph(body)
@@ -344,7 +570,7 @@ def compile_skill_package(source: Path, output: Path | None = None, force: bool 
     _copy_source(source, output)
 
     fallback_path = output / "runtime" / "fallback" / "SKILL.full.md"
-    _write_text(fallback_path, source_text)
+    _write_text(fallback_path, fallback_text)
     runtime_files = {
         "runtime/boot.compact.md": render_boot_compact(metadata, runtime_fingerprint),
         "runtime/outline.compact.md": render_outline_compact(title, summary, headings, resources),
@@ -365,6 +591,9 @@ def compile_skill_package(source: Path, output: Path | None = None, force: bool 
             "package_name": metadata.get("name", source.name),
             "directory_name": source.name,
             "skill_sha256": checksums.get("SKILL.md", _sha256_bytes(source_skill.read_bytes())),
+            "fallback_sha256": _sha256_text(fallback_text),
+            "source_slimmed": _is_true(metadata.get("source_slimmed")),
+            "source_fallback": metadata.get("source_fallback", ""),
             "file_count": len(checksums),
             "checksums": checksums,
         },
@@ -384,21 +613,56 @@ def compile_skill_package(source: Path, output: Path | None = None, force: bool 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compile a SKILL package into a same-parent compact runtime package.")
-    parser.add_argument("source", type=Path, help="Source SKILL directory containing SKILL.md")
+    parser = argparse.ArgumentParser(description="Compile SKILL package(s) into compact runtime package(s).")
+    parser.add_argument("source", type=Path, nargs="?", help="Source SKILL directory containing SKILL.md")
     parser.add_argument("--output", type=Path, default=None, help="Output package directory; default is <source>-compiled")
+    parser.add_argument("--all-under", type=Path, default=None, help="Discover and compile every SKILL package under this root")
+    parser.add_argument("--output-root", type=Path, default=None, help="Batch output root; default is <root>/dist/compiled-skills")
+    parser.add_argument("--include-references", action="store_true", help="Batch mode: include packages under references/")
+    parser.add_argument("--include-compiled", action="store_true", help="Batch mode: allow compiled sources instead of skipping them")
+    parser.add_argument("--exclude-prefix", action="append", default=[], help="Batch mode: skip a root-relative path prefix")
+    parser.add_argument("--no-skip-up-to-date", action="store_true", help="Batch mode: rebuild generated outputs even when source checksums match")
+    parser.add_argument("--dry-run", action="store_true", help="Batch mode: report planned outputs without writing files")
     parser.add_argument("--force", action="store_true", help="Allow replacing an unrelated existing output directory")
     parser.add_argument("--json", action="store_true", help="Print the manifest/result as JSON")
     args = parser.parse_args()
 
     try:
-        result = compile_skill_package(args.source, output=args.output, force=args.force)
+        if args.all_under:
+            if args.output is not None:
+                raise CompileError("--output is for single-package mode; use --output-root with --all-under")
+            result = compile_skill_packages_under(
+                args.all_under,
+                output_root=args.output_root,
+                include_references=args.include_references,
+                include_compiled=args.include_compiled,
+                exclude_prefixes=tuple(args.exclude_prefix),
+                skip_up_to_date=not args.no_skip_up_to_date,
+                dry_run=args.dry_run,
+                force=args.force,
+            )
+            if result["counts"]["failed"]:
+                raise CompileError(f"batch compile failed for {result['counts']['failed']} package(s)")
+        else:
+            if args.source is None:
+                raise CompileError("source is required unless --all-under is supplied")
+            result = compile_skill_package(args.source, output=args.output, force=args.force)
     except Exception as exc:
         print(f"[skill-runtime-compiler] ERROR: {exc}", file=sys.stderr)
         return 1
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    elif args.all_under:
+        counts = result["counts"]
+        print(
+            "[skill-runtime-compiler] batch ok "
+            f"compiled={counts['compiled']} "
+            f"up_to_date={counts['up_to_date']} "
+            f"planned={counts['planned']} "
+            f"skipped={counts['skipped']} "
+            f"output_root={result['output_root']}"
+        )
     else:
         print(
             "[skill-runtime-compiler] ok "

@@ -27,8 +27,8 @@ ae-sdd 的 SKILL 文档既承担人类维护说明，又承担 LLM 运行时指�
 
 ## 2. 设计原则
 
-1. **人类维护源不压缩**  
-   `source/` 继续保存完整设计、解释、模板、标准和子 SKILL，是唯一人工编辑点。
+1. **源语义不丢失**
+   `source/` 是唯一人工编辑点；源 SKILL 入口允许被标准化瘦身，但瘦身前完整原文必须保存在 `source/skill-fallbacks/**`，并由 `source_fallback_sha256` 锚定。瘦身入口只做语义索引和加载契约，不替代完整原文。
 
 2. **运行时入口必须短**  
    编译后的 `dist/ae-sdd/SKILL.md` 是 bootloader，只负责加载顺序、冲突优先级和最小执行约束。
@@ -44,6 +44,27 @@ ae-sdd 的 SKILL 文档既承担人类维护说明，又承担 LLM 运行时指�
 
 6. **compiled package 才能发版**  
    install/distribute 链路只能安装 `dist/ae-sdd/`，不得直接安装 `source/`。
+
+---
+
+## 2.1 源 SKILL 瘦身预编译阶段
+
+源 SKILL 瘦身是 runtime 编译前的标准化源码变换，不是人工随意删减。标准见 `source/standards/skill-source-slimming-standard.md`，模板见 `source/templates/skill/source-skill-slim-entry-template.md`，执行入口是：
+
+```bash
+python scripts/slim_source_skills.py
+```
+
+处理规则：
+
+- 处理范围只包括 `source/SKILL.md` 和 `source/skills/**/*.md`。
+- 未瘦身文件先复制完整原文到 `source/skill-fallbacks/**`，再渲染 slim entry。
+- 已有 `source_slimmed: true` 的文件默认跳过；schema 过旧时只能用 `--upgrade` 从 fallback 重渲染，禁止从 slim entry 二次摘要。
+- slim entry 必须包含 `source_slim_schema: ae-sdd-source-slim/v2`、fallback 哈希、语义 inventory hash、`## Semantic Inventory`、`## Source Slimming SOP`、heading 与 inline reference 索引。
+- 语义识别必须覆盖身份/触发、流程/路由、门禁/约束、工具/API、状态/数据、产物/文档、资源引用、设计对齐、fallback-only 细节九类信号。
+- `python scripts/slim_source_skills.py --validate` 必须能校验 fallback 哈希、模板重渲染一致性和语义 inventory hash。
+
+runtime 编译器读取源 SKILL 时，如果发现 `source_slimmed: true`，必须把 `source_fallback` 作为 runtime fallback 和 outline 抽取输入；不能把 slim entry 当成完整语义。
 
 ---
 
@@ -92,6 +113,7 @@ dist/ae-sdd/
 
 ```text
 source/                           # 未编译母版
+  ↓ scripts/slim_source_skills.py  # 源入口标准化瘦身；完整语义进入 source/skill-fallbacks/**
   ↓ scripts/build_dist.py
 dist/ae-sdd/                      # 先复制母版必要文件
   ↓ scripts/compile_skill_runtime.py
@@ -242,6 +264,8 @@ python scripts/compile_skill_runtime.py \
 ```text
 维护者修改 source/
   ↓
+python scripts/slim_source_skills.py --validate
+  ↓
 python tools/tests/run.py
   ↓
 python scripts/build_dist.py
@@ -257,6 +281,7 @@ python scripts/distribute.py
 - 手工编辑 `dist/ae-sdd/SKILL.md`。
 - 手工编辑 `runtime/*.compact.md`。
 - 各分发器绕过 `build_dist.py` 自己复制 source。
+- 从已经瘦身的源入口再次摘要或人工删改 slim entry。
 
 ---
 
@@ -266,7 +291,7 @@ python scripts/distribute.py
 
 | Layer | 旧语义 | 新语义 |
 | --- | --- | --- |
-| Layer 1 `source/` | 母版 SSOT | 未编译母版 SSOT |
+| Layer 1 `source/` | 母版 SSOT | 未编译母版 SSOT；源入口可瘦身，完整语义由 `source/skill-fallbacks/**` 锚定 |
 | Layer 2 `dist/ae-sdd/` | 实例化分发包 | 编译后实例化运行包 |
 | Layer 3 `~/.agent/skills/ae-sdd/` | 本地安装 | 编译包安装结果 |
 | Layer 4 `<project>/.ae-sdd/` | 项目实例 | 项目状态、资产、override |
@@ -286,6 +311,8 @@ python scripts/distribute.py
 - `runtime/gates.compact.md` 从 `GATE_REGISTRY` 生成。
 - `runtime/flow.compact.md` 从 `PHASE_FLOWS` 生成。
 - 单元测试覆盖编译器最小行为和字节级幂等：不同 `--build-date` 重复编译同一输入，runtime 输出完全一致。
+- `python scripts/slim_source_skills.py --validate` 通过，确认源瘦身入口符合 `ae-sdd-source-slim/v2` 标准。
+- 编译后的主入口和子 SKILL runtime fallback 均来自 `source/skill-fallbacks/**` 的完整原文，而不是 slim entry。
 
 已落地扩展：
 
@@ -318,6 +345,8 @@ python scripts/distribute.py
 
 | 项 | 状态 | 文件 / 命令 |
 | --- | --- | --- |
+| 源 SKILL 标准化瘦身 | 已实现 | `scripts/slim_source_skills.py` |
+| 源瘦身标准与模板 | 已实现 | `source/standards/skill-source-slimming-standard.md` + `source/templates/skill/source-skill-slim-entry-template.md` |
 | runtime 编译器 | 已实现 | `scripts/compile_skill_runtime.py` |
 | 构建链路接入 | 已实现 | `scripts/build_dist.py` 调用 runtime 编译器 |
 | compiled bootloader | 已实现 | `dist/ae-sdd/SKILL.md` 由编译器生成 |
@@ -348,6 +377,7 @@ python scripts/compile_skill_runtime.py --source source --dist dist/ae-sdd
 
 ```bash
 python -m py_compile scripts/compile_skill_runtime.py scripts/build_dist.py
+python scripts/slim_source_skills.py --validate
 python tools/tests/run.py skill_runtime_compiler -v
 python tools/tests/run.py runtime_verify -v
 python tools/bin/ae-sdd runtime verify --path dist/ae-sdd

@@ -52,6 +52,17 @@ Machine-readable result:
 python scripts/compile_skill_package.py /path/to/my-skill --json
 ```
 
+Batch compile every SKILL package under a repository root:
+
+```bash
+python scripts/compile_skill_package.py --all-under /path/to/repo --output-root /path/to/repo/dist/compiled-skills
+```
+
+Batch mode skips source packages that already declare `compiled: true` unless
+`--include-compiled` is supplied. Existing generated outputs are left untouched
+when their recorded source checksums are current; use `--no-skip-up-to-date`
+to rebuild them.
+
 Replace a non-generated existing output directory:
 
 ```bash
@@ -66,6 +77,7 @@ python scripts/compile_skill_package.py /path/to/my-skill --output /path/to/out 
 - Refuse to compile into the source directory or any child of the source directory.
 - Refuse to overwrite an unrelated existing output directory unless `--force` is supplied.
 - Do not compile a package that already declares `compiled: true` unless the operator explicitly chooses a different source package.
+- In batch mode, do not rediscover generated outputs, `dist/`, `node_modules/`, VCS metadata, or already-compiled sources by default.
 
 ## Output Contract
 

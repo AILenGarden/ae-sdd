@@ -147,6 +147,55 @@ class TestSkillRuntimeCompiler(unittest.TestCase):
             self.assertIn(f"| {scale} |", flow)
         self.assertIn("tools/lib/state.py:PHASE_FLOWS", flow)
 
+    def test_compile_uses_source_fallback_for_slimmed_source_skills(self):
+        root_fallback = self.source / "skill-fallbacks" / "SKILL.full.md"
+        root_fallback.parent.mkdir(parents=True)
+        root_full = "---\nname: ae-sdd\nversion: 9.9.9\n---\n\n# Full Root\n\n## Original Root Detail\n"
+        root_fallback.write_text(root_full, encoding="utf-8")
+        (self.source / "SKILL.md").write_text(
+            "---\n"
+            "name: ae-sdd\n"
+            "version: 9.9.9\n"
+            "source_slimmed: true\n"
+            "source_fallback: skill-fallbacks/SKILL.full.md\n"
+            "---\n\n"
+            "# Slim Root\n",
+            encoding="utf-8",
+        )
+
+        child_fallback = self.source / "skill-fallbacks" / "skills" / "child-skill.full.md"
+        child_fallback.parent.mkdir(parents=True)
+        child_full = "---\nname: child\n---\n\n# Full Child\n\n## Original Child Detail\n"
+        child_fallback.write_text(child_full, encoding="utf-8")
+        (self.source / "skills" / "child-skill.md").write_text(
+            "---\n"
+            "name: child\n"
+            "source_slimmed: true\n"
+            "source_fallback: skill-fallbacks/skills/child-skill.full.md\n"
+            "---\n\n"
+            "# Slim Child\n",
+            encoding="utf-8",
+        )
+
+        manifest = compile_runtime_package(
+            REPO_ROOT,
+            self.source,
+            self.dist,
+            build_date="2026-07-02T00:00:00Z",
+        )
+
+        self.assertTrue(manifest["source"]["source_slimmed"])
+        self.assertEqual(
+            (self.dist / "runtime" / "fallback" / "SKILL.full.md").read_text(encoding="utf-8"),
+            root_full,
+        )
+        child_runtime_fallback = self.dist / "runtime" / "skills" / "child-skill" / "fallback" / "SKILL.full.md"
+        self.assertEqual(child_runtime_fallback.read_text(encoding="utf-8"), child_full)
+        child_outline = (self.dist / "runtime" / "skills" / "child-skill" / "outline.compact.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Original Child Detail", child_outline)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

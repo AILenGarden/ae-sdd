@@ -163,6 +163,38 @@ def read_frontmatter(text: str) -> dict[str, str]:
     return data
 
 
+def _is_true(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"true", "yes", "1"}
+
+
+def _source_fallback_path(source: Path, metadata: dict[str, str]) -> Path | None:
+    rel = metadata.get("source_fallback") or metadata.get("slim_fallback")
+    if not rel:
+        return None
+    candidate = (source / rel).resolve()
+    try:
+        candidate.relative_to(source.resolve())
+    except ValueError:
+        raise ValueError(f"source_fallback must stay inside source root: {rel}")
+    return candidate
+
+
+def _read_source_fallback_text(
+    source: Path,
+    source_skill: Path,
+    metadata: dict[str, str],
+    default_text: str,
+) -> str:
+    if not _is_true(metadata.get("source_slimmed")):
+        return default_text
+    fallback_path = _source_fallback_path(source, metadata)
+    if fallback_path is None:
+        return default_text
+    if not fallback_path.is_file():
+        raise FileNotFoundError(f"source fallback missing for {source_skill}: {fallback_path}")
+    return fallback_path.read_text(encoding="utf-8")
+
+
 def extract_headings(text: str, limit: int = 80) -> list[dict[str, Any]]:
     headings: list[dict[str, Any]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
@@ -290,9 +322,11 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
         rel = rel_path.as_posix()
         text = source_skill.read_text(encoding="utf-8")
         metadata = read_frontmatter(text)
-        headings = extract_headings(text)
-        refs = extract_inline_refs(text)
+        fallback_text = _read_source_fallback_text(source, source_skill, metadata, text)
+        headings = extract_headings(fallback_text)
+        refs = extract_inline_refs(fallback_text)
         source_sha = sha256_file(source_skill)
+        fallback_sha = _sha256_text(fallback_text)
 
         base_rel = subskill_runtime_base(rel_path)
         manifest_rel = (base_rel / "manifest.json").as_posix()
@@ -305,6 +339,7 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
             "compiler": {"name": "compile_skill_runtime.py", "version": COMPILER_VERSION},
             "entry": rel,
             "source_sha256": source_sha,
+            "fallback_sha256": fallback_sha,
             "metadata": metadata,
             "headings": headings,
             "refs": refs,
@@ -320,10 +355,11 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
             "outline": outline_rel,
             "fallback": fallback_rel,
             "source_sha256": source_sha,
-            "fallback_sha256": _sha256_text(text),
+            "fallback_sha256": fallback_sha,
             "runtime_fingerprint": runtime_fingerprint,
             "heading_count": len(headings),
             "ref_count": len(refs),
+            "source_slimmed": _is_true(metadata.get("source_slimmed")),
         }
 
         manifest = {
@@ -338,7 +374,9 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
             "generated_files": [manifest_rel, boot_rel, outline_rel, fallback_rel, rel],
             "source": {
                 "sha256": source_sha,
-                "fallback_sha256": _sha256_text(text),
+                "fallback_sha256": fallback_sha,
+                "source_slimmed": _is_true(metadata.get("source_slimmed")),
+                "source_fallback": metadata.get("source_fallback", ""),
             },
             "extracts": {
                 "heading_count": len(headings),
@@ -346,7 +384,7 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
             },
         }
 
-        _write_text(dist / fallback_rel, text)
+        _write_text(dist / fallback_rel, fallback_text)
         _write_text(dist / boot_rel, render_subskill_boot_compact(record))
         _write_text(dist / outline_rel, render_subskill_outline_compact(rel, metadata, headings, refs))
         _write_text(dist / manifest_rel, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
@@ -394,6 +432,7 @@ def collect_source_checksums(source: Path) -> dict[str, str]:
     patterns = [
         "SKILL.md",
         "HARNESS.md",
+        "skill-fallbacks/**/*.md",
         "skills/**/*.md",
         "standards/**/*.md",
         "templates/**/*.md",
@@ -606,6 +645,7 @@ def compile_runtime_package(
         raise FileNotFoundError(f"dist package not found: {dist}")
 
     source_text = source_skill.read_text(encoding="utf-8")
+    source_metadata = read_frontmatter(source_text)
     version = parse_version(source_text)
     source_checksums = collect_source_checksums(source)
     source_hash = source_checksums.get("SKILL.md", sha256_file(source_skill))
@@ -620,7 +660,12 @@ def compile_runtime_package(
 
     dist_skill = dist / "SKILL.md"
     fallback_path = fallback_dir / "SKILL.full.md"
-    fallback_text = _read_fallback_text(dist_skill, fallback_path, source_text)
+    fallback_text = _read_source_fallback_text(
+        source,
+        source_skill,
+        source_metadata,
+        _read_fallback_text(dist_skill, fallback_path, source_text),
+    )
     _write_text(fallback_path, fallback_text)
     fallback_hash = _sha256_text(fallback_text)
 
@@ -655,6 +700,8 @@ def compile_runtime_package(
             "root": "source",
             "skill_sha256": source_hash,
             "fallback_sha256": fallback_hash,
+            "source_slimmed": _is_true(source_metadata.get("source_slimmed")),
+            "source_fallback": source_metadata.get("source_fallback", ""),
             "file_count": len(source_checksums),
             "checksums": source_checksums,
         },

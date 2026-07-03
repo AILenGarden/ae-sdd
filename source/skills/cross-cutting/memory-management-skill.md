@@ -1,91 +1,77 @@
 ---
 name: memory-management
 description: Phase-aware ae-sdd memory management. Mandatory for associated RA, design, CodingPlan, Coding, and Review nodes. Provides enter/write/exit/read/search/promote workflow and layered memory policy.
+source_slimmed: true
+source_slim_schema: ae-sdd-source-slim/v2
+source_slim_standard: standards/skill-source-slimming-standard.md
+source_slim_template: templates/skill/source-skill-slim-entry-template.md
+source_fallback: skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md
+source_fallback_sha256: 0e4871940d9f5600ee85208e8207a1386fd312d06056288d16cc2aa4a75c7131
+source_original_bytes: 2974
+source_original_lines: 92
+source_semantic_inventory_sha256: bd19f177026e981fa2962da28be9fb42d97f43df495183efcb8a119fa107eb8c
+source_slimmer: slim_source_skills.py@2
 ---
 
-# Memory Management Skill
+# Memory Management Skill Source SKILL Slim Entry
 
-## 1. Core Rule
+This source SKILL has been slimmed by the standard source-slimming pipeline. The full pre-slim source is preserved at `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md` and remains the semantic fallback.
 
-Memory is mandatory on associated nodes.
+## Load Contract
 
-Before a node starts, it must load phase memory:
+- Use this slim entry first for routing, scope, semantic inventory, and resource discovery.
+- Load `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md` before executing any step whose exact wording is not represented in the semantic inventory below.
+- Do not run source slimming again when `source_slimmed: true` is present; use `--upgrade` only to re-render from the fallback with a newer schema.
+- When compiling, runtime fallback must come from `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md`, not this slim entry.
 
-```bash
-ae-sdd memory enter --phase <phase> --story <STORY-ID>
-```
+## Summary
 
-After the Agent outputs the node result, it must write memory:
+- source: `skills/cross-cutting/memory-management-skill.md`
+- fallback: `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md`
+- fallback_sha256: `0e4871940d9f5600ee85208e8207a1386fd312d06056288d16cc2aa4a75c7131`
+- original_lines: 92
+- original_bytes: 2974
+- semantic_inventory_sha256: `bd19f177026e981fa2962da28be9fb42d97f43df495183efcb8a119fa107eb8c`
+- standard: `standards/skill-source-slimming-standard.md`
+- template: `templates/skill/source-skill-slim-entry-template.md`
+- summary: Phase-aware ae-sdd memory management. Mandatory for associated RA, design, CodingPlan, Coding, and Review nodes. Provides enter/write/exit/read/search/promote workflow and layered memory policy.
 
-```bash
-ae-sdd memory write --phase <phase> --story <STORY-ID> --summary "..."
-```
+## Semantic Inventory
 
-Before leaving the node, it must run:
+| category | evidence | design_refs | fallback_policy |
+| --- | --- | --- | --- |
+| identity_trigger | frontmatter: name, description | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | keyword_hits: 20 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | keyword_hits: 10 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | headings: L2:81 6. CLI Contract; keyword_hits: 15 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | keyword_hits: 19 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | keyword_hits: 3 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 2; refs: ae-sdd state write --phase <next>; memory-layering.md; keyword_hits: 3 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | keyword_hits: 1 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
 
-```bash
-ae-sdd memory exit --phase <phase> --story <STORY-ID>
-```
+## Source Slimming SOP
 
-If `memory exit` fails, the node is not complete.
+1. Read the full source or the recorded fallback as the only semantic input.
+2. Identify semantic categories before slimming: identity/trigger, workflow/route, gates/constraints, tools/API, state/data, output contracts, resources, design alignment, and fallback-only detail.
+3. Render this entry from `templates/skill/source-skill-slim-entry-template.md`; do not hand-edit generated slim sections.
+4. Validate `source_fallback_sha256`, required sections, and `source_semantic_inventory_sha256`.
+5. Rebuild compiled runtime and run runtime verification after any source SKILL slimming change.
 
-v3.2.3 adds automatic transition enforcement: `ae-sdd state write --phase <next>`
-checks the current associated node's memory lifecycle before changing phase. A
-missing `memory enter` or missing later `memory write` blocks the phase switch.
+## Headings
 
-## 2. Associated Nodes
+| level | line | title |
+| --- | --- | --- |
+| 1 | 6 | Memory Management Skill |
+| 2 | 8 | 1. Core Rule |
+| 2 | 36 | 2. Associated Nodes |
+| 2 | 46 | 3. Layers |
+| 2 | 58 | 4. Required Write Quality |
+| 2 | 72 | 5. Conflict Handling |
+| 2 | 81 | 6. CLI Contract |
 
-| Node | Phase | Required Memory Read | Required Memory Write |
-|---|---|---|---|
-| requirement-analysis-skill | `ra` | RA, design, project memory | decisions, gaps, assumptions, user-confirmed facts |
-| dr-generate / story-generate / story-review | `design` | RA and design memory | design choices, conflicts, unresolved issues |
-| task-generate / CodingSkill.Plan | `coding-plan` | RA, design, coding-plan memory | architecture decisions, task constraints, risk decisions |
-| CodingSkill.Execute | `coding` | coding-plan and coding memory | compile/test/runtime findings, fixes, evidence |
-| coding-report / code-review | `review` | coding and review memory | defects, residual risk, reusable lessons |
+## Inline References
 
-## 3. Layers
-
-See [`memory-layering.md`](../../standards/toolsets/memory-layering.md).
-
-| Layer | Meaning |
-|---|---|
-| L0 | session scratch |
-| L1 | Story/task memory |
-| L2 | project memory |
-| L3 | ae-sdd pattern memory |
-| L4 | cold archive |
-
-## 4. Required Write Quality
-
-Every L1+ memory entry must include evidence. Acceptable evidence:
-
-- file path and line number
-- ae-sdd report path
-- user confirmation
-- DB tool result
-- Git tool result
-- test output or XML report
-- command output summary
-
-Evidence-free entries stay in L0 only.
-
-## 5. Conflict Handling
-
-When new evidence conflicts with memory:
-
-1. Write `kind=conflict`.
-2. Cite old and new evidence.
-3. Mark downstream conclusions unverified until resolved.
-4. Do not silently overwrite earlier memory.
-
-## 6. CLI Contract
-
-```bash
-ae-sdd memory enter --phase ra --story STORY-001
-ae-sdd memory read --phase ra --story STORY-001
-ae-sdd memory write --phase ra --story STORY-001 --kind decision --summary "..."
-ae-sdd memory search --phase coding --story STORY-001 --query "transaction"
-ae-sdd memory promote --phase coding-plan --story STORY-001 --from-layer L1 --to-layer L2
-ae-sdd memory summarize --phase review --story STORY-001
-ae-sdd memory exit --phase ra --story STORY-001
-```
+| ref |
+| --- |
+| ae-sdd state write --phase <next> |
+| memory-layering.md |

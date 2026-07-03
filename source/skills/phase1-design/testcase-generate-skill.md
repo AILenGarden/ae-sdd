@@ -1,236 +1,102 @@
 ---
 name: testcase-generate
 description: TestCase 系列 Step 2 generateSkill。采用「假设驱动·覆盖兜底」范式——先挖掘缺陷假设（主线），再用三层覆盖矩阵查漏（兜底）。根据已通过 Story Review 的 Story 生成测试用例文档，覆盖 AC、全场景和 L1/L2/L3/L4 分层。
+source_slimmed: true
+source_slim_schema: ae-sdd-source-slim/v2
+source_slim_standard: standards/skill-source-slimming-standard.md
+source_slim_template: templates/skill/source-skill-slim-entry-template.md
+source_fallback: skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md
+source_fallback_sha256: 632b332480f2ba2bc25b44be50eba2cf680d634e884c7692d5f7ae8777dd4771
+source_original_bytes: 12272
+source_original_lines: 237
+source_semantic_inventory_sha256: c3a0be861be068566a442194d3a1f7cb9d8f72aade449466497ad2a646977fb5
+source_slimmer: slim_source_skills.py@2
 ---
 
-# TestCase Generate — 测试用例生成 SKILL
+# TestCase Generate — 测试用例生成 SKILL Source SKILL Slim Entry
 
-## 与监管器 4 步的关系
+This source SKILL has been slimmed by the standard source-slimming pipeline. The full pre-slim source is preserved at `skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md` and remains the semantic fallback.
 
-本文件只负责 **TestCase 系列 Step 2：generateSkill**。
+## Load Contract
 
-| 系列步骤 | 执行方 | 本文件职责 |
-|---|---|---|
-| Step 1 compact + 调用声明 | 主流程监管器 | 无 |
-| Step 2 generateSkill | `testcase-generate-skill.md` | 生成 TestCase 文档与生成报告 |
-| Step 3 reviewSkill + Loop | `testcase-review-skill.md` + 主流程监管器 | 接收缺陷报告后重生用例 |
-| Step 4 人工审核 | 主流程监管器 | 提供审核摘要材料 |
+- Use this slim entry first for routing, scope, semantic inventory, and resource discovery.
+- Load `skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md` before executing any step whose exact wording is not represented in the semantic inventory below.
+- Do not run source slimming again when `source_slimmed: true` is present; use `--upgrade` only to re-render from the fallback with a newer schema.
+- When compiling, runtime fallback must come from `skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md`, not this slim entry.
 
-禁止在本文件内另设逐步人工确认流程；确认、循环、暂停统一由主流程监管器和 `review-loop-skill.md` 管理。
+## Summary
 
-## 输入
+- source: `skills/phase1-design/testcase-generate-skill.md`
+- fallback: `skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md`
+- fallback_sha256: `632b332480f2ba2bc25b44be50eba2cf680d634e884c7692d5f7ae8777dd4771`
+- original_lines: 237
+- original_bytes: 12272
+- semantic_inventory_sha256: `c3a0be861be068566a442194d3a1f7cb9d8f72aade449466497ad2a646977fb5`
+- standard: `standards/skill-source-slimming-standard.md`
+- template: `templates/skill/source-skill-slim-entry-template.md`
+- summary: TestCase 系列 Step 2 generateSkill。采用「假设驱动·覆盖兜底」范式——先挖掘缺陷假设（主线），再用三层覆盖矩阵查漏（兜底）。根据已通过 Story Review 的 Story 生成测试用例文档，覆盖 AC、全场景和 L1/L2/L3/L4 分层。
 
-必须读取：
+## Semantic Inventory
 
-| 输入 | 路径 / 来源 | 用途 |
-|---|---|---|
-| Story 主文档 | 用户提供或 `ae-sdd doc resolve --intent STORY --story-id {S}` | AC、接口、数据、异常路径 |
-| 测试策略 | `source/standards/testing/be-testcase-strategy.md` | 假设驱动范式 + 三层覆盖策略 |
-| 测试约束 | `source/standards/constraints/testing.md` | HTTP/DB/Mock/断言红线 |
-| 测试模板 | `source/templates/testcase/be-testcase-template.md` | 输出格式（含缺陷假设字段） |
-| 项目资产 | `ae-sdd assets read testcase --project <projectKey>` | 测试工具、项目约定 |
+| category | evidence | design_refs | fallback_policy |
+| --- | --- | --- | --- |
+| identity_trigger | frontmatter: name, description; keyword_hits: 12 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | keyword_hits: 26 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | headings: L2:213 禁止事项; keyword_hits: 22 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | keyword_hits: 19 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | keyword_hits: 20 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | headings: L2:145 输出; keyword_hits: 23 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 20; refs: ae-sdd assets read testcase --project <projectKey>; ae-sdd assets section §10; ae-sdd assets section §14; +17 more; keyword_hits: 23 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | keyword_hits: 32 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| fallback_only_detail | keyword_hits: 5 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
-**🆕 v3.6.3 缺陷信号源（假设挖掘的项目素材，缺失时标注"未加载"，禁止编造）：**
+## Source Slimming SOP
 
-| 信号源 | 读取方式 | 信号形态 |
-|---|---|---|
-| assets §6.9 隐性约定 | `ae-sdd assets section §6.9` | 踩坑 Story 出处 + 反向链接 |
-| assets §10 团队惯用反模式 | `ae-sdd assets section §10` 筛"反模式" | 错误写法 + 文件路径 |
-| assets §14 安全隐患登记表 | `ae-sdd assets section §14` | 结构化已发现问题 |
-| function/ 同类 Story §1.8 关键约束 | 读 function/{同类Story}.md | 约束 + 出处/反例 |
-| config/ 模板 §5 已知踩坑 | 读 config/{serviceKey}.md | 显式坑库 |
-| 同类 Story 历史测试报告失败用例 | 读同类 Story 的 *-testcase-report.md | 代码缺陷根因（最高质量信号） |
+1. Read the full source or the recorded fallback as the only semantic input.
+2. Identify semantic categories before slimming: identity/trigger, workflow/route, gates/constraints, tools/API, state/data, output contracts, resources, design alignment, and fallback-only detail.
+3. Render this entry from `templates/skill/source-skill-slim-entry-template.md`; do not hand-edit generated slim sections.
+4. Validate `source_fallback_sha256`, required sections, and `source_semantic_inventory_sha256`.
+5. Rebuild compiled runtime and run runtime verification after any source SKILL slimming change.
 
-PRD / 原型如存在必须读取；不存在时标注"未提供"，禁止编造业务或 UI 场景。
+## Headings
 
-## 生成规则
+| level | line | title |
+| --- | --- | --- |
+| 1 | 6 | TestCase Generate — 测试用例生成 SKILL |
+| 2 | 8 | 与监管器 4 步的关系 |
+| 2 | 21 | 输入 |
+| 2 | 46 | 生成规则 |
+| 3 | 48 | 0. 缺陷假设挖掘（🆕 v3.6.3 主线环节） |
+| 3 | 100 | 1. Story 类型识别 |
+| 3 | 114 | 2. 用例生成（假设驱动 + 覆盖兜底） |
+| 3 | 135 | 3. 测试真实性预埋 |
+| 2 | 145 | 输出 |
+| 2 | 155 | 合规性校验 |
+| 3 | 173 | TC-G11 假设覆盖率专项校验（🆕 v3.6.3） |
+| 2 | 213 | 禁止事项 |
+| 2 | 227 | 执行清单 |
 
-### 0. 缺陷假设挖掘（🆕 v3.6.3 主线环节）
+## Inline References
 
-> **范式定位：** 这是假设驱动的**主线**——先挖"这个 Story 最可能踩什么坑"，再围绕假设生成证伪用例。三层覆盖矩阵（§2）降为查漏兜底。
->
-> **为什么必须做：** 三层覆盖矩阵保证的是**结构完整性**，不是**缺陷发现力**。一个填满的 N×(N-1) 状态机矩阵可以覆盖率 100%，却完全错过"两个并发请求在特定时序下导致状态丢失"。缺陷假设挖掘解决"挖不出真实 BUG"。
-
-**双向挖掘机制：**
-
-**① 自上而下：通用假设库匹配**
-
-拿 `be-testcase-strategy.md §通用缺陷假设库`（7 大类：并发/事务/边界/状态机/集成/安全/时序资源）逐条对照当前 Story：
-
-```
-对每条假设 H-{类}-{N}：
-  判定"这条假设在本 Story 的业务上下文中可能触发吗？"
-  ├─ 是 → 进入假设清单，标注"信号来源=通用库"
-  └─ 否 → 跳过（需说明为何不适用）
-```
-
-**② 自下而上：项目坑库挖掘**
-
-读取 §输入 的缺陷信号源（assets §6.9/§10/§14 + function §1.8 + config §5 + 同类 Story 历史测试报告），从中提取项目特有坑：
-
-```
-对每个信号源中的踩坑/反模式/缺陷：
-  转化为一条假设 H-{类}-PROJ-{N}
-  标注"信号来源=项目坑:{具体出处}"
-  例：assets §6.9"事务中禁止远程调用" → H-TX-PROJ-1"本 Story 的 Feign 调用是否在事务内"
-```
-
-**③ Story 业务分析：基于 Story 自身逻辑挖掘**
-
-基于 Story 的数据模型/接口契约/主流程/异常流程，分析业务特有风险：
-
-```
-Story 含状态流转 → 挖 H-状态机类假设
-Story 含并发写操作 → 挖 H-并发类假设
-Story 含外部依赖 → 挖 H-集成类假设
-Story 涉及金额 → 挖 H-边界类(BigDecimal 精度)假设
-... 等
-```
-
-**产出：缺陷假设清单**
-
-| 假设 ID | 类型 | 触发条件 | 预期暴露方式 | 推荐层级 | 信号来源 |
-|---------|------|---------|------------|---------|---------|
-| H-CONC-1 | 并发 | 同一资源并发写 | 乐观锁冲突时拒绝/重试 | L3 | 通用库 |
-| H-TX-PROJ-1 | 事务 | Feign 在事务内 | 超时致事务假死 | L1 | 项目坑:assets §6.9 |
-| ... | ... | ... | ... | ... | ... |
-
-> 假设清单随测试用例文档一起落地（写入 `be-testcase-template.md §缺陷假设清单` 章节），供 testcase-review TC-10 校验。
-
-### 1. Story 类型识别
-
-按测试策略识别类型，可多选叠加：
-
-| 类型 | 判定证据 | 覆盖策略 |
-|---|---|---|
-| 状态机 | 状态枚举 / transition / 状态流转 | 完整转换矩阵 + 多步序列 |
-| CRUD | 增删改查接口 | 每个操作正常 / 边界 / 规则 / 权限 |
-| 回调/Webhook | 外部推送 / 签名 / 幂等 | 签名 + 幂等 + 数据一致 + 异常恢复 |
-| 定时任务 | 定时触发 / 批处理 | 正常 + 空跑 + 边界 + 并发 + 异常 |
-| 集成/编排 | 多服务 / 事务编排 | 全成功 + 逐环节失败 + 回滚 |
-
-每个判定必须引用 Story/PRD/资产证据；不确定则标 `{待确认}`。
-
-### 2. 用例生成（假设驱动 + 覆盖兜底）
-
-**🆕 v3.6.3 三类用例分级：**
-
-| 类型 | 生成方式 | 是否需假设 | 价值 |
-|------|---------|-----------|------|
-| **证伪用例**（主价值） | 对 §0 假设清单的每个 H-{N} 设计证伪用例（多对多：一个用例可证伪多个假设） | ✅ 必填 H-{N} | 高 — 直接针对 bug 假设 |
-| **正向覆盖用例**（基础价值） | 每个 AC 的正常路径 + 主要异常路径 | 可无，必标"覆盖 AC-xxx" | 合理 — 验证正常流程 |
-| **覆盖兜底用例**（查漏价值） | 跑三层覆盖矩阵补充盲区 | 可无，必标"矩阵-字段边界"等 | 查漏 — 矩阵驱动 |
-| **纯凑数用例** | 无假设 + 无 AC + 非盲区 | — | 🔴 剔除 |
-
-**覆盖兜底矩阵（查漏工具，详细规则见 `be-testcase-strategy.md`）：**
-
-| 层 | 必做 |
-|---|---|
-| 第一层：类型策略 | 按上表覆盖功能路径，实际用例数不得低于策略公式 |
-| 第二层：通用维度 | 字段边界、权限鉴权、并发、关联数据不存在、多步序列、字段组合 |
-| 第三层：测试分层 | 每个用例标注 L1/L2/L3/L4 与自动化入口 |
-
-L2/L4 接口测试默认真实 HTTP：`SpringBootTest(RANDOM_PORT) + TestRestTemplate`。MockMvc 只能降级，且必须在用例备注写明原因。
-
-### 3. 测试真实性预埋
-
-每条用例必须包含：
-
-- 测试数据来源：Story AC / Task / 接口示例 / 项目资产。
-- 真实链路要求：真实 HTTP / 真实 DB / 单元测试 / 外部依赖 Mock。
-- Mock 边界：只 Mock 直接外部依赖，且返回具体业务值。
-- 负向或失败注入：核心 AC 至少一个负向验证。
-- 自动化入口：`src/test/java/...#method`，无法确定则标 `{待确认}`。
-
-## 输出
-
-写入前必须调用 `document-storage-skill.md`，禁止硬编码路径。
-
-| 输出 | API | 通过标准 |
-|---|---|---|
-| 测试用例文档 | `ae-sdd doc save --intent TESTCASE --work-item {W} --story-id {S?} --content-file 草稿.md` | 符合 `be-testcase-template.md` |
-| TestCase Review 报告 | `ae-sdd doc save --intent TESTCASE_REVIEW --work-item {W} --story-id {S?} --content-file 草稿.md` | 带 r{N} |
-| 合规性校验报告 | `ae-sdd doc save --intent TESTCASE_COMPLIANCE_REPORT --work-item {W} --story-id {S?} --content-file 草稿.md` | 带 r{N} |
-
-## 合规性校验
-
-| # | 检查项 | 通过标准 |
-|---|---|---|
-| TC-G1 | AC 覆盖 | 每个 AC 至少 1 条用例 |
-| TC-G2 | 全场景覆盖 | 主流程、异常、边界、权限、并发均有用例或豁免理由 |
-| TC-G3 | 类型策略 | 适用 Story 类型的策略公式已满足 |
-| TC-G4 | L1 | 核心纯逻辑、状态判定、异常分支有单元测试 |
-| TC-G5 | L2 | HTTP 参数、状态码、异常映射有真实 HTTP 用例 |
-| TC-G6 | L3 | 写库、索引、事务、SQL 有真实 DB 用例 |
-| TC-G7 | L4 | 跨 Story / 多组件路径有端到端用例或豁免理由 |
-| TC-G8 | 可执行性 | 前置、步骤、断言、清理动作齐全 |
-| TC-G9 | 真实性预埋 | 数据来源、真实链路、Mock 边界、失败注入齐全 |
-| TC-G10 | 无杜撰 | 所有字段、接口、错误码均来自输入证据或标 `{待确认}` |
-| **TC-G11** | **🆕 假设覆盖率（含成熟度降级）** | 见下方专项校验 |
-
-任一未通过：生成报告标 `BLOCKED`，把缺口交给主流程监管器进入 Loop，不得伪造通过。
-
-### TC-G11 假设覆盖率专项校验（🆕 v3.6.3）
-
-> **定位：** 假设挖掘质量的自检（generate 端）。testcase-review TC-10 会做独立交叉校验，两者阈值一致。
-
-**step 1：评估项目坑库成熟度**
-
-```
-加载率 = 成功加载的缺陷信号源数 / 信号源总数(7个)
-├─ ≥ 50% → 成熟，阈值 = 40%
-└─ < 50% → 初期，阈值降为 25%
-```
-
-| 信号源（7 个） | 加载判定 |
-|---|---|
-| assets §6.9 隐性约定 | `ae-sdd assets section §6.9` 有内容 |
-| assets §10 团队惯用反模式 | §10 有"反模式"标注 |
-| assets §14 安全隐患登记表 | §14.3 有记录 |
-| function/ §1.8 关键约束 | 同类 Story function 文件存在 |
-| config/ §5 已知踩坑 | config 文件 §5 有内容 |
-| 同类 Story 历史测试报告失败用例 | 报告文件存在且有失败用例 |
-| PRD / 产品原型 | 用户提供 |
-
-**step 2：证伪用例占比校验**
-
-```
-证伪用例占比 = 证伪用例数（标注了 H-{N} 的）/ 总用例数
-├─ ≥ 阈值 → ✅ 通过
-├─ 低于阈值但 ≥ 阈值×60% → 🟡 警告（建议补假设挖掘）
-└─ 低于阈值×60% → 🔴 阻断（重新做 §0 缺陷假设挖掘）
-```
-
-**step 3：假设-用例双向校验**
-
-- 每个 H-{N} 是否都被至少 1 个证伪用例覆盖？未覆盖 → 🔴 必须补
-- 是否存在纯凑数用例（无假设 + 无 AC + 非盲区）？→ 🔴 剔除
-
-**step 4：报告明示**
-
-合规报告中必须写明："本次项目坑库成熟度 X%（加载 Y/7 信号源），证伪用例占比阈值 Z%，实际证伪用例占比 W%。"
-
-## 禁止事项
-
-| 禁止 | 正确做法 |
-|---|---|
-| 只覆盖 AC | 覆盖 AC + 全场景 + 分层 |
-| 不读策略/模板/约束 | 先读输入表中必读文件 |
-| 用例无数据来源 | 每条写明来源或 `{待确认}` |
-| 用 MockMvc 冒充真实 HTTP | 仅降级使用并写原因 |
-| 全 Mock 核心落库路径 | L3 用真实 DB/H2/Testcontainers 验证 |
-| 生成阶段直接改 Story | 缺 AC/接口时输出缺口，交监管器路由 |
-| **🆕 跳过缺陷假设挖掘直接填矩阵** | **先做 §0 缺陷假设挖掘（主线），再用矩阵查漏** |
-| **🆕 生成纯凑数用例（无假设+无AC+非盲区）** | **每条用例必须属于证伪/正向/兜底三类之一** |
-| **🆕 缺陷信号源缺失时编造坑内容** | **标注"未加载"，靠通用库+Story分析两路挖掘** |
-
-## 执行清单
-
-| # | 动作 | 产出 | 门禁 |
-|---|---|---|---|
-| 1 | 读取输入（含 🆕 缺陷信号源） | 输入证据清单 | 必读输入齐，缺失已标注；信号源加载率已记录 |
-| 1.5 | **🆕 缺陷假设挖掘（双向）** | **缺陷假设清单 H-{N}** | **假设清单随文档落地；每条有类型/触发/暴露方式/来源** |
-| 2 | 识别 Story 类型 | 类型策略表 | 每项有证据 |
-| 3 | 生成用例（证伪 + 正向 + 兜底） | TestCase 文档草案 | TC-G11 假设覆盖率达标；覆盖公式满足 |
-| 4 | 跑合规性校验（含 TC-G11） | 校验报告 | TC-G1~TC-G11 全通过 |
-| 5 | 落地文档 | TestCase + WriterReport + 校验报告 | `save_doc` 成功，G-DOC-STORAGE ✅ |
+| ref |
+| --- |
+| ae-sdd assets read testcase --project <projectKey> |
+| ae-sdd assets section §10 |
+| ae-sdd assets section §14 |
+| ae-sdd assets section §6.9 |
+| ae-sdd doc resolve --intent STORY --story-id {S} |
+| ae-sdd doc save --intent TESTCASE --work-item {W} --story-id {S?} --content-file 草稿.md |
+| ae-sdd doc save --intent TESTCASE_COMPLIANCE_REPORT --work-item {W} --story-id {S?} --content-file 草稿.md |
+| ae-sdd doc save --intent TESTCASE_REVIEW --work-item {W} --story-id {S?} --content-file 草稿.md |
+| be-testcase-strategy.md |
+| be-testcase-strategy.md §通用缺陷假设库 |
+| be-testcase-template.md |
+| be-testcase-template.md §缺陷假设清单 |
+| document-storage-skill.md |
+| review-loop-skill.md |
+| source/standards/constraints/testing.md |
+| source/standards/testing/be-testcase-strategy.md |
+| source/templates/testcase/be-testcase-template.md |
+| src/test/java/...#method |
+| testcase-generate-skill.md |
+| testcase-review-skill.md |

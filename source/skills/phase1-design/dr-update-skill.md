@@ -1,201 +1,99 @@
 ---
 name: dr-update
 description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Story Update SKILL 发现 DR 设计缺陷时自动触发，或开发者说"更新 DR"、"同步 DR 补充说明"时触发。
+source_slimmed: true
+source_slim_schema: ae-sdd-source-slim/v2
+source_slim_standard: standards/skill-source-slimming-standard.md
+source_slim_template: templates/skill/source-skill-slim-entry-template.md
+source_fallback: skill-fallbacks/skills/phase1-design/dr-update-skill.full.md
+source_fallback_sha256: 6f5b2b83651c01d62afcfaeb01fa903229f90af9886d016f76667a79fe43f493
+source_original_bytes: 7516
+source_original_lines: 202
+source_semantic_inventory_sha256: 6b5ae5def3c08004c2ccccfa306a99c281f24c9b6d2a95c1569a7b56399f0181
+source_slimmer: slim_source_skills.py@2
 ---
 
-# DR Update — DR 文档更新 Skill
+# DR Update — DR 文档更新 Skill Source SKILL Slim Entry
 
-## 📦 文档存放前置调用（🔴 横切依赖）
+This source SKILL has been slimmed by the standard source-slimming pipeline. The full pre-slim source is preserved at `skill-fallbacks/skills/phase1-design/dr-update-skill.full.md` and remains the semantic fallback.
 
-> **🔴 强制：** 本 SKILL 涉及的 DR 主文档、DR Supplement 在读写前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **读取**：`ae-sdd doc resolve --intent DR --doc-id {drId}` 定位 DR 主文档；`--intent DR_SUPPLEMENT` 定位 Supplement
-> 2. **写入**：`ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md`（DR 原地更新）
-> 3. **命名 + 版本号**（§3.1/3.2）：DR 主文档带 v{major}.{minor}；Supplement 不带版本号
-> 3. ChangeLog / .gitignore 由 `ae-sdd doc save` 自动处理
+## Load Contract
 
-**本 SKILL 涉及文档类型与 API 调用对应：**
+- Use this slim entry first for routing, scope, semantic inventory, and resource discovery.
+- Load `skill-fallbacks/skills/phase1-design/dr-update-skill.full.md` before executing any step whose exact wording is not represented in the semantic inventory below.
+- Do not run source slimming again when `source_slimmed: true` is present; use `--upgrade` only to re-render from the fallback with a newer schema.
+- When compiling, runtime fallback must come from `skill-fallbacks/skills/phase1-design/dr-update-skill.full.md`, not this slim entry.
 
-| 文档类型 | API 调用 | 命名规则 | 重入时动作 |
-|---------|---------|---------|----------|
-| DR 主文档 | `ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md` | 不带版本号（原地更新）|
-| DR Supplement | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
-| 受影响 Story 变更通知 | `ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 |
+## Summary
 
-> **调用示例：** 详见 `document-storage-skill.md §9` 横切调用规范。
+- source: `skills/phase1-design/dr-update-skill.md`
+- fallback: `skill-fallbacks/skills/phase1-design/dr-update-skill.full.md`
+- fallback_sha256: `6f5b2b83651c01d62afcfaeb01fa903229f90af9886d016f76667a79fe43f493`
+- original_lines: 202
+- original_bytes: 7516
+- semantic_inventory_sha256: `6b5ae5def3c08004c2ccccfa306a99c281f24c9b6d2a95c1569a7b56399f0181`
+- standard: `standards/skill-source-slimming-standard.md`
+- template: `templates/skill/source-skill-slim-entry-template.md`
+- summary: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Story Update SKILL 发现 DR 设计缺陷时自动触发，或开发者说"更新 DR"、"同步 DR 补充说明"时触发。
 
-> 🆕 **🔴 2026-06-17 修复 P1-2 显式调用示例：**
->
-> ```bash
-> # DR 主文档修订：原地更新
-> ae-sdd doc save --intent DR --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-draft.md --changelog-note "架构优化"
->
-> # DR 补充说明
-> ae-sdd doc save --intent DR_SUPPLEMENT --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-supplement.md --changelog-note "Story反馈归档"
-> ```
+## Semantic Inventory
 
----
+| category | evidence | design_refs | fallback_policy |
+| --- | --- | --- | --- |
+| identity_trigger | frontmatter: name, description; headings: L2:8 📦 文档存放前置调用（🔴 横切依赖）; keyword_hits: 11 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | headings: L2:44 整体流程; keyword_hits: 3 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | headings: L2:179 禁止事项; keyword_hits: 14 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | keyword_hits: 20 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | keyword_hits: 11 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | headings: L1:6 DR Update — DR 文档更新 Skill; L2:8 📦 文档存放前置调用（🔴 横切依赖）; L2:64 第一步：读取 DR 补充说明文档; +2 more; keyword_hits: 46 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 11; refs: ae-sdd doc resolve --intent DR --doc-id {drId}; ae-sdd doc save; ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md; +8 more; keyword_hits: 13 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | keyword_hits: 6 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| fallback_only_detail | headings: L2:64 第一步：读取 DR 补充说明文档; L2:157 {N}、DR 变更通知 - {日期}; L3:159 变更来源; keyword_hits: 27 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
-## 目标
+## Source Slimming SOP
 
-根据 DR 补充说明文档中记录的缺陷和修复建议，更新 DR 主文档。同时评估缺陷对其他 Story 的影响范围。
+1. Read the full source or the recorded fallback as the only semantic input.
+2. Identify semantic categories before slimming: identity/trigger, workflow/route, gates/constraints, tools/API, state/data, output contracts, resources, design alignment, and fallback-only detail.
+3. Render this entry from `templates/skill/source-skill-slim-entry-template.md`; do not hand-edit generated slim sections.
+4. Validate `source_fallback_sha256`, required sections, and `source_semantic_inventory_sha256`.
+5. Rebuild compiled runtime and run runtime verification after any source SKILL slimming change.
 
----
+## Headings
 
-## 整体流程
+| level | line | title |
+| --- | --- | --- |
+| 1 | 6 | DR Update — DR 文档更新 Skill |
+| 2 | 8 | 📦 文档存放前置调用（🔴 横切依赖） |
+| 2 | 38 | 目标 |
+| 2 | 44 | 整体流程 |
+| 2 | 64 | 第一步：读取 DR 补充说明文档 |
+| 2 | 75 | 第二步：读取 DR 模板 |
+| 2 | 83 | 第三步：更新 DR 主文档 |
+| 3 | 87 | 3.1 更新规则 |
+| 3 | 96 | 3.2 常见修改章节 |
+| 3 | 106 | 3.3 更新后标记 |
+| 2 | 112 | 第四步：评估影响范围 |
+| 2 | 127 | 第四步 bis：DR 校验 |
+| 2 | 150 | 第五步：通知受影响的 Story |
+| 2 | 157 | {N}、DR 变更通知 - {日期} |
+| 3 | 159 | 变更来源 |
+| 3 | 164 | 对本 Story 的影响 |
+| 3 | 169 | 处理建议 |
+| 2 | 179 | 禁止事项 |
+| 2 | 189 | 执行清单（逐项执行，不可跳过） |
 
-```
-触发
-  │
-  ├── 第一步：读取 DR 补充说明文档，提取待修复项
-  │
-  ├── 第二步：读取 DR 模板，确认格式规范
-  │
-  ├── 第三步：更新 DR 主文档
-  │
-  ├── 第四步：评估影响范围（其他 Story 是否受影响）
-  │
-  ├── 第五步：通知受影响的 Story（记录到对应 Story 补充说明）
-  │
-  └── 完成
-```
+## Inline References
 
----
-
-## 第一步：读取 DR 补充说明文档
-
-读取 `{dr-prefix}-Supplement*.md`，提取所有状态为 Open 的缺陷项。Open 状态定义：缺陷状态标记为"Open"、"待修复"或"⚠️ 待讨论"，不包括已标记为"✅ 已修复"或"❌ 误报"的项目。
-
-**提取内容：**
-- Story 反馈章节中的 DR 缺陷
-- 修复建议
-- 关联影响
-
----
-
-## 第二步：读取 DR 模板
-
-读取 DR 模板文件，确认格式规范。
-
-**模板路径：** `templates/design/dr-template.md`
-
----
-
-## 第三步：更新 DR 主文档
-
-按补充说明中的修复建议，更新 DR 主文档对应章节：
-
-### 3.1 更新规则
-
-| 规则 | 说明 |
-|------|------|
-| 只改有缺陷的章节 | 不动没有问题的章节 |
-| 格式遵循模板 | 与 DR 模板结构一致 |
-| 标注修订记录 | 在修改处标注修订日期和原因 |
-| 保持一致性 | 修改后检查 DR 内部各章节是否仍然一致 |
-
-### 3.2 常见修改章节
-
-| DR 章节 | 修改场景 |
-|---------|---------|
-| 数据模型 | 表结构设计遗漏字段、索引 |
-| 关键决策 | 技术方案不可行需要调整 |
-| Story 拆分 | Story 依赖关系需要调整 |
-| 接口设计 | 接口契约需要修正 |
-| 非功能设计 | 性能/安全/并发方案需要补充 |
-
-### 3.3 更新后标记
-
-更新完成后，在 DR 补充说明文档中将对应缺陷标记为 ✅ 已修复。
-
----
-
-## 第四步：评估影响范围
-
-DR 修改可能影响多个 Story，需要评估：
-
-| 评估维度 | 检查内容 |
-|---------|---------|
-| 数据模型变更 | 哪些 Story 使用了被修改的表？（分析直接依赖，即 Story 的数据模型章节中明确引用了该表的 Story。间接依赖通过 Story 链路追踪，标记为"间接影响"） |
-| 接口变更 | 哪些 Story 依赖被修改的接口？ |
-| 技术方案变更 | 哪些 Story 基于被修改的技术决策？ |
-| 依赖关系变更 | Story 拆分或依赖顺序是否需要调整？ |
-
-**输出：** 受影响的 Story 列表及影响描述。
-
----
-
-## 第四步 bis：DR 校验
-
-**触发时机：** DR 主文档更新完成后，进入第五步之前
-
-**输入：** 更新后的 DR 主文档 + `dr-template.md` 模板
-
-**校验清单：**
-
-| 检查项 | 说明 |
-|--------|------|
-| 章节完整性 | 模板中标注 `核心` 的章节是否全部存在？ |
-| 格式规范 | 标题层级、表格结构是否与模板一致？ |
-| 决策完整性 | 每个决策是否都有"接受的代价"？ |
-| 数据模型一致性 | 表结构与 DR 内部各章节是否一致？ |
-| 接口契约一致性 | 接口与数据模型是否匹配？ |
-| Story 拆分完整性 | 每个 Story 是否有核心范围和依赖关系？ |
-
-**判定结果：**
-- ✅ 全部通过 → 进入第五步
-- ⚠️ 未通过 → 修正 DR 主文档 → 再次校验
-
----
-
-## 第五步：通知受影响的 Story
-
-> **🔴 前置条件：** DR 主文档已通过 `ae-sdd doc save --intent DR ...` 落地（G-DOC-STORAGE ✅）后，才能通知下游 Story。
-
-对每个受影响的 Story，在其补充说明文档中追加通知：
-
-```markdown
-## {N}、DR 变更通知 - {日期}
-
-### 变更来源
-
-| DR ID | 变更章节 | 变更内容 |
-|-------|---------|---------|
-
-### 对本 Story 的影响
-
-| 影响章节 | 影响描述 | 需要的修改 | 状态 |
-|---------|---------|-----------|------|
-
-### 处理建议
-
-- [ ] 更新 Story 接口契约
-- [ ] 更新 Story 数据模型
-- [ ] 更新 Task 文档
-- [ ] 重新生成代码
-```
-
----
-
-## 禁止事项
-
-| 禁止 | 应该 |
-|------|------|
-| 只改 DR 不评估影响 | 必须评估对其他 Story 的影响 |
-| 直接修改受影响 Story 的主文档 | 写入对应 Story 的补充说明，由 Story Update SKILL 处理。即使是紧急修复也必须走此流程，不得绕过 |
-| 忽略 DR 内部一致性 | 修改后检查 DR 各章节是否仍然自洽。"自洽"定义：DR 章节之间无逻辑矛盾。例如：第7节数据模型定义某字段为"必填"，则第8节接口契约中该字段也必须标注为必填；又如第5节定义的状态机终态，在第9节业务规则中不得出现从终态流转到其他状态的描述 |
-
----
-
-## 执行清单（逐项执行，不可跳过）
-
-> AI 启动本 SKILL 时，必须用 TodoWrite 1:1 映射此表，每完成一行验证"产出物已生成 + 门禁已满足"后才进入下一步。
-
-| # | 动作 | 产出物 | 门禁 |
-|---|------|--------|------|
-| 1 | 读取 DR Supplement（提取 Open 缺陷） | — | 缺陷列表已提取 |
-| 2 | 读取 DR 模板 | — | 格式标准已确认 |
-| 3 | 修复 DR 主文档 | DR 文档更新 | 所有确认缺陷已修复 |
-| 4 | DR 校验 | — | 全部检查项通过 |
-| 5 | 更新 DR Supplement 状态 | DR Supplement 更新 | 缺陷状态标记为 ✅ |
-| 6 | 评估影响范围 | — | 受影响 Story 列表已确定 |
-| 7 | 通知受影响 Story | 各 Story Supplement 更新 | 通知已写入 |
+| ref |
+| --- |
+| ae-sdd doc resolve --intent DR --doc-id {drId} |
+| ae-sdd doc save |
+| ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md |
+| ae-sdd doc save --intent DR ... |
+| ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md |
+| ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md |
+| document-storage-skill.md |
+| document-storage-skill.md §9 |
+| dr-template.md |
+| templates/design/dr-template.md |
+| {dr-prefix}-Supplement*.md |

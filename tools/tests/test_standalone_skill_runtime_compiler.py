@@ -125,6 +125,106 @@ class TestStandaloneSkillRuntimeCompiler(unittest.TestCase):
         self.assertTrue(parsed["compiled"])
         self.assertEqual(parsed["source"]["package_name"], "example-skill")
 
+    def test_frontmatter_parser_handles_crlf_and_block_scalars(self):
+        metadata = compiler.parse_simple_frontmatter(
+            "---\r\n"
+            "name: block-skill\r\n"
+            "description: |-\r\n"
+            "  Line one.\r\n"
+            "  Line two.\r\n"
+            "---\r\n"
+            "# Body\r\n"
+        )
+
+        self.assertEqual(metadata["name"], "block-skill")
+        self.assertEqual(metadata["description"], "Line one.\nLine two.")
+
+    def test_batch_compile_skips_references_and_compiled_sources_by_default(self):
+        root = self.tmp / "repo"
+        owned = root / "plugins" / "owned-skill"
+        reference = root / "references" / "external-skill"
+        compiled_source = root / "standalone-skills" / "compiled-source"
+        for path in (owned, reference, compiled_source):
+            path.mkdir(parents=True)
+        (owned / "SKILL.md").write_text(
+            "---\nname: owned-skill\n---\n\n# Owned\n",
+            encoding="utf-8",
+        )
+        (reference / "SKILL.md").write_text(
+            "---\nname: external-skill\n---\n\n# External\n",
+            encoding="utf-8",
+        )
+        (compiled_source / "SKILL.md").write_text(
+            "---\nname: compiled-source\ncompiled: true\nruntime: runtime/manifest.json\n---\n\n# Compiled\n",
+            encoding="utf-8",
+        )
+
+        summary = compiler.compile_skill_packages_under(root)
+
+        self.assertEqual(summary["counts"]["compiled"], 1)
+        self.assertEqual(summary["counts"]["failed"], 0)
+        self.assertEqual({record["source"] for record in summary["records"]}, {"plugins/owned-skill"})
+        self.assertIn(
+            {"source": "standalone-skills/compiled-source", "reason": "already-compiled-source"},
+            summary["skipped"],
+        )
+        self.assertFalse(any(item["source"] == "references/external-skill" for item in summary["records"]))
+        self.assertTrue((root / summary["records"][0]["output"] / "runtime" / "manifest.json").is_file())
+
+        second = compiler.compile_skill_packages_under(root)
+        self.assertEqual(second["counts"]["compiled"], 0)
+        self.assertEqual(second["counts"]["up_to_date"], 1)
+
+    def test_batch_compile_can_include_references(self):
+        root = self.tmp / "repo-with-refs"
+        owned = root / "plugins" / "owned-skill"
+        reference = root / "references" / "external-skill"
+        for path in (owned, reference):
+            path.mkdir(parents=True)
+            (path / "SKILL.md").write_text(
+                f"---\nname: {path.name}\n---\n\n# {path.name}\n",
+                encoding="utf-8",
+            )
+
+        summary = compiler.compile_skill_packages_under(root, include_references=True)
+
+        self.assertEqual(summary["counts"]["compiled"], 2)
+        self.assertEqual(
+            {record["source"] for record in summary["records"]},
+            {"plugins/owned-skill", "references/external-skill"},
+        )
+
+    def test_compile_uses_source_fallback_for_slimmed_package(self):
+        fallback = self.source / "source-fallback" / "SKILL.full.md"
+        fallback.parent.mkdir()
+        full_text = (
+            "---\nname: example-skill\nversion: 1.2.3\n---\n\n"
+            "# Full Example Skill\n\n"
+            "Use the full source as runtime fallback.\n\n"
+            "## Full Detail\n"
+        )
+        fallback.write_text(full_text, encoding="utf-8")
+        (self.source / "SKILL.md").write_text(
+            "---\n"
+            "name: example-skill\n"
+            "version: 1.2.3\n"
+            "source_slimmed: true\n"
+            "source_fallback: source-fallback/SKILL.full.md\n"
+            "---\n\n"
+            "# Slim Example Skill\n",
+            encoding="utf-8",
+        )
+
+        compiler.compile_skill_package(self.source)
+        package = self.tmp / "example-skill-compiled"
+
+        self.assertEqual(
+            (package / "runtime" / "fallback" / "SKILL.full.md").read_text(encoding="utf-8"),
+            full_text,
+        )
+        outline = (package / "runtime" / "outline.compact.md").read_text(encoding="utf-8")
+        self.assertIn("Full Detail", outline)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -20,6 +20,7 @@
 source/                         母版文档与方法论 SSOT
   SKILL.md                      Agent 主入口
   skills/                       子 SKILL
+  skill-fallbacks/              源 SKILL 瘦身前完整原文，语义 fallback
   docs/                         能力设计、实现架构、方案归档
   standards/                    机器可读或人读标准
   templates/                    产物模板
@@ -67,6 +68,7 @@ harness/                        派生适配层，不手工改生成物
 | 文档存取 | `tools/lib/document_storage.py` | intent 驱动的文档定位、保存、finalize | SKILL 不应自行拼接产物路径 |
 | 资产索引 | `tools/lib/assets_index.py` | assets 读取、outline、section、query、stats | 缓存变更需测试缓存失效 |
 | Hook 层 | `gate_intercept.py` / `prompt_inject.py` / `stop_check.py` | 工具调用前、提示注入、响应后校验 | HARNESS 声明必须能追到实现 |
+| 源 SKILL 瘦身 | `scripts/slim_source_skills.py` / `source/skill-fallbacks/**` | 按标准识别源 SKILL 语义、渲染 slim entry、保留完整 fallback、校验模板一致性 | 已瘦身文件默认跳过；schema 升级必须从 fallback 重渲染，禁止二次摘要 |
 | Runtime 编译 | `scripts/compile_skill_runtime.py` / `tools/lib/runtime_verify.py` | 主入口 compact、全量子 SKILL bootloader、局部 runtime、fallback 原文生成与校验 | `SKILL.md`、`runtime/**`、`skills/**/*.md` 输出必须字节级幂等 |
 | 构建分发 | `scripts/build_dist.py` / `scripts/distribute.py` | source -> dist -> runtime 安装 | 不把手工改动写入 dist |
 | 运行时扫描器 | `scripts/*_scan.py` | 静态扫描，输出 JSON 契约 | 新 scanner 需入 build_dist 白名单 |
@@ -122,6 +124,7 @@ harness/                        派生适配层，不手工改生成物
 
 ```text
 source/
+  -> scripts/slim_source_skills.py
   -> scripts/build_dist.py
   -> scripts/compile_skill_runtime.py
   -> dist/ae-sdd/
@@ -132,6 +135,8 @@ source/
 规则：
 
 - `dist/ae-sdd/` 是构建产物，不手工维护。
+- `source/SKILL.md` 与 `source/skills/**/*.md` 可以是 slim entry，但必须符合 `ae-sdd-source-slim/v2`，完整原文必须在 `source/skill-fallbacks/**`。
+- `scripts/slim_source_skills.py --validate` 必须能验证 fallback 哈希、语义 inventory hash、标准/模板路径和模板重渲染一致性。
 - runtime compact 文件由编译器生成，不手改。
 - `dist/ae-sdd/SKILL.md` 必须是编译后的主入口 bootloader。
 - `dist/ae-sdd/skills/**/*.md` 必须是编译后的子 SKILL bootloader，不允许保留 `source/skills/**/*.md` 原文。
@@ -146,11 +151,13 @@ Runtime 编译数据流：
 
 ```text
 source/SKILL.md
+  -> source/skill-fallbacks/SKILL.full.md               # 源瘦身前完整语义
   -> dist/ae-sdd/SKILL.md
   -> runtime/{boot,route,gates,flow,macros}.compact.md
   -> runtime/fallback/SKILL.full.md
 
 source/skills/**/*.md
+  -> source/skill-fallbacks/skills/**/*.full.md         # 源瘦身前完整语义
   -> dist/ae-sdd/skills/**/*.md
   -> runtime/subskills.compact.md
   -> runtime/skills/**/{manifest.json,boot.compact.md,outline.compact.md,fallback/SKILL.full.md}
@@ -159,6 +166,8 @@ source/skills/**/*.md
 实现边界：
 
 - 编译器只读取母版与工具注册表，不解释业务流程，不替代 `ae-sdd gates check`。
+- 源瘦身器负责修改 `source/SKILL.md` 与 `source/skills/**/*.md`，runtime 编译器不负责瘦身源文件。
+- runtime 编译器发现 `source_slimmed: true` 时，必须从 `source_fallback` 读取完整原文作为 runtime fallback 和 outline 抽取输入。
 - `scripts/build_dist.py` 负责把母版复制为 dist，再调用 `scripts/compile_skill_runtime.py` 生成 runtime。
 - `tools/lib/runtime_verify.py` 负责校验 installed package 是否为完整 compiled runtime；如果存在 source child SKILL 而缺少 compiled 子入口，必须报错。
 - `tools/lib/update_graph.py` 的 UC-15 必须把 `SKILL.md`、`runtime/**`、`skills/**/*.md` 都纳入幂等快照。

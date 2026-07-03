@@ -1,95 +1,86 @@
 ---
 name: test-generate
 description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、启动与 L1/L2/L3/L4 测试，生成带原始证据链的测试报告。
+source_slimmed: true
+source_slim_schema: ae-sdd-source-slim/v2
+source_slim_standard: standards/skill-source-slimming-standard.md
+source_slim_template: templates/skill/source-skill-slim-entry-template.md
+source_fallback: skill-fallbacks/skills/phase3-review/test-generate-skill.full.md
+source_fallback_sha256: 22dbf658b7a1da340a0225dd89b3389962b8c68184fd50e79275f79c0ded121f
+source_original_bytes: 4136
+source_original_lines: 96
+source_semantic_inventory_sha256: 4539a1db0994118829139c3e564d897d82703022ee044c59b628c360ce862098
+source_slimmer: slim_source_skills.py@2
 ---
 
-# Test Generate — 测试运行与报告 SKILL
+# Test Generate — 测试运行与报告 SKILL Source SKILL Slim Entry
 
-## 与监管器 4 步的关系
+This source SKILL has been slimmed by the standard source-slimming pipeline. The full pre-slim source is preserved at `skill-fallbacks/skills/phase3-review/test-generate-skill.full.md` and remains the semantic fallback.
 
-本文件只负责 **Test 系列 Step 2：generateSkill**。
+## Load Contract
 
-| 系列步骤 | 执行方 | 本文件职责 |
-|---|---|---|
-| Step 1 compact + 调用声明 | 主流程监管器 | 无 |
-| Step 2 generateSkill | `test-generate-skill.md` | 运行验证命令并生成 `TEST_REPORT` |
-| Step 3 reviewSkill + Loop | `test-review-skill.md` + 主流程监管器 | 按缺陷报告重跑或补证据 |
-| Step 4 人工审核 | 主流程监管器 | 提供测试摘要材料 |
+- Use this slim entry first for routing, scope, semantic inventory, and resource discovery.
+- Load `skill-fallbacks/skills/phase3-review/test-generate-skill.full.md` before executing any step whose exact wording is not represented in the semantic inventory below.
+- Do not run source slimming again when `source_slimmed: true` is present; use `--upgrade` only to re-render from the fallback with a newer schema.
+- When compiling, runtime fallback must come from `skill-fallbacks/skills/phase3-review/test-generate-skill.full.md`, not this slim entry.
 
-禁止在 CodingSkill 内替代本系列；CodingSkill 只交付代码，测试运行与测试报告归本文件。
+## Summary
 
-## 输入
+- source: `skills/phase3-review/test-generate-skill.md`
+- fallback: `skill-fallbacks/skills/phase3-review/test-generate-skill.full.md`
+- fallback_sha256: `22dbf658b7a1da340a0225dd89b3389962b8c68184fd50e79275f79c0ded121f`
+- original_lines: 96
+- original_bytes: 4136
+- semantic_inventory_sha256: `4539a1db0994118829139c3e564d897d82703022ee044c59b628c360ce862098`
+- standard: `standards/skill-source-slimming-standard.md`
+- template: `templates/skill/source-skill-slim-entry-template.md`
+- summary: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、启动与 L1/L2/L3/L4 测试，生成带原始证据链的测试报告。
 
-| 输入 | 用途 |
-|---|---|
-| Story / TestCase / Task / CodingPlan | 确定 AC、用例、真实 HTTP/DB 要求 |
-| 变更文件清单 | 选择最小但充分的测试范围 |
-| 项目资产 §6.7 / §11.8 | 读取测试框架、环境、惯用写法 |
-| `source/templates/testcase/be-testcase-report-template.md` | 测试报告格式 |
-| `source/standards/constraints/testing.md` | 测试红线 |
+## Semantic Inventory
 
-## 流程
+| category | evidence | design_refs | fallback_policy |
+| --- | --- | --- | --- |
+| identity_trigger | frontmatter: name, description; keyword_hits: 1 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | headings: L2:31 流程; keyword_hits: 10 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | headings: L2:77 禁止事项; keyword_hits: 15 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | headings: L3:44 2. 执行验证命令; keyword_hits: 12 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| output_doc_contract | keyword_hits: 6 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 8; refs: .auto-engineering/{WORKITEM-ID}/evidence/; ae-sdd doc save --intent TEST_REPORT --work-item {WORKITEM-ID} --story-id {S?} --version "v1-r1" --content-file 草稿.md; ae-sdd gates check --only G-09; +5 more; keyword_hits: 11 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | keyword_hits: 3 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| fallback_only_detail | keyword_hits: 1 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
-### 1. 制定执行矩阵
+## Source Slimming SOP
 
-从 TestCase 文档提取应跑用例，形成矩阵：
+1. Read the full source or the recorded fallback as the only semantic input.
+2. Identify semantic categories before slimming: identity/trigger, workflow/route, gates/constraints, tools/API, state/data, output contracts, resources, design alignment, and fallback-only detail.
+3. Render this entry from `templates/skill/source-skill-slim-entry-template.md`; do not hand-edit generated slim sections.
+4. Validate `source_fallback_sha256`, required sections, and `source_semantic_inventory_sha256`.
+5. Rebuild compiled runtime and run runtime verification after any source SKILL slimming change.
 
-| 层级 | 必跑对象 | 证据 |
-|---|---|---|
-| L1 | 单元测试 / 纯逻辑测试 | TestCase ID + 测试类方法 |
-| L2 | 真实 HTTP 接口测试 | `RANDOM_PORT + TestRestTemplate`，MockMvc 降级须写原因 |
-| L3 | 真实 DB / SQL / 事务测试 | INSERT/UPDATE 后 SELECT、回滚证据 |
-| L4 | 端到端 / 跨 Story 路径 | 全链路步骤与外部依赖 Mock 边界 |
+## Headings
 
-### 2. 执行验证命令
+| level | line | title |
+| --- | --- | --- |
+| 1 | 6 | Test Generate — 测试运行与报告 SKILL |
+| 2 | 8 | 与监管器 4 步的关系 |
+| 2 | 21 | 输入 |
+| 2 | 31 | 流程 |
+| 3 | 33 | 1. 制定执行矩阵 |
+| 3 | 44 | 2. 执行验证命令 |
+| 3 | 57 | 3. 生成测试报告 |
+| 3 | 69 | 4. 初步判定 |
+| 2 | 77 | 禁止事项 |
+| 2 | 87 | 执行清单 |
 
-命令必须可复现，并写入测试报告：
+## Inline References
 
-| 目标 | 命令要求 |
-|---|---|
-| 编译 | 父工程根执行 `mvn compile` 或项目等价命令 |
-| 服务启动 | 需验证真实 HTTP 时启动应用，记录端口与启动日志 |
-| 测试 | 禁止 `-DskipTests`、`maven.test.skip=true`、`testFailureIgnore=true` |
-| 扫描 | 运行 `scripts/test_authenticity_scan.py` 或 `ae-sdd gates check --only G-09` |
-
-所有 stdout/stderr、Surefire/Failsafe XML、扫描报告必须归档到 `.auto-engineering/{WORKITEM-ID}/evidence/` 或测试报告可引用路径。
-
-### 3. 生成测试报告
-
-使用 `ae-sdd doc save --intent TEST_REPORT --work-item {WORKITEM-ID} --story-id {S?} --version "v1-r1" --content-file 草稿.md` 写报告。报告必须包含：
-
-- 实际命令、工作目录、退出码、Profile。
-- 原始日志、XML、扫描报告路径。
-- XML 对账：tests / failures / errors / skipped 与报告统计一致。
-- TestCase ID ↔ 测试方法 ↔ AC ID 映射。
-- L1/L2/L3/L4 结果。
-- 失败用例根因分类：代码缺陷 / 测试数据 / 环境问题 / 设计缺陷。
-- 修改测试记录：修改原因、证据、用户确认记录。
-
-### 4. 初步判定
-
-| 判定 | 行为 |
-|---|---|
-| 全部命令成功 + XML 对账一致 + G-09 BLOCKER=0 | 交给 `test-review-skill.md` 独立复核 |
-| 有失败 | 报告结论写“不通过”，不得隐藏失败 |
-| 证据缺失 / 统计不一致 | 报告作废，补证据后重跑 |
-
-## 禁止事项
-
-| 禁止 | 正确做法 |
-|---|---|
-| 口头声称“测试通过” | 以命令、日志、XML、扫描报告为证 |
-| 跳测或忽略失败 | 去掉跳测参数，失败必须暴露 |
-| 人工估算测试数量 | 从 Surefire/Failsafe XML 解析 |
-| 修测试代替修代码 | 先判根因；修测试须记录原因并获用户确认 |
-| Mock 核心 HTTP/DB 路径 | L2 真实 HTTP，L3 真实 DB；只能解释性降级 |
-
-## 执行清单
-
-| # | 动作 | 产出 | 门禁 |
-|---|---|---|---|
-| 1 | 读取输入 | 测试执行矩阵 | TestCase/AC/方法映射齐 |
-| 2 | 运行编译/启动/测试 | 原始证据 | 无跳测、无忽略失败 |
-| 3 | 运行真实性扫描 | 扫描报告 | BLOCKER=0 或报告不通过 |
-| 4 | 生成测试报告 | `TEST_REPORT` | XML 与报告对账一致 |
-| 5 | 交接复核 | 复核输入清单 | 可由 `test-review-skill.md` 独立验证 |
+| ref |
+| --- |
+| .auto-engineering/{WORKITEM-ID}/evidence/ |
+| ae-sdd doc save --intent TEST_REPORT --work-item {WORKITEM-ID} --story-id {S?} --version "v1-r1" --content-file 草稿.md |
+| ae-sdd gates check --only G-09 |
+| scripts/test_authenticity_scan.py |
+| source/standards/constraints/testing.md |
+| source/templates/testcase/be-testcase-report-template.md |
+| test-generate-skill.md |
+| test-review-skill.md |
