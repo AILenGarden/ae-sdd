@@ -189,6 +189,8 @@ ae-sdd state register-review-consensus --point 1 --passed true  # 写联审共�
 
 联审 3 轮矫正未决 → `state.phase=paused`（默认），输出完整问题清单等用户介入，避免 AI 带病狂奔。
 
+📖 **完整使用指南**（前置条件 → 开启 → 第一次跑 → 失败处理 → 关闭）：[`source/docs/ae-sdd-automation-guide.md`](source/docs/ae-sdd-automation-guide.md)
+
 详见 [`source/SKILL.md §🚀 自动化模式`](source/SKILL.md)。
 
 ---
