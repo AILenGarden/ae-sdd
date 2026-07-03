@@ -120,7 +120,7 @@ description: |
 |--------|---------|----------------------|-----------|
 | SPI 实现类（Service 形态）| `{Resource}ServiceImpl implements {Resource}Service` | `...life.{domain}.interfaces.restful` | DTO only |
 | BFF Controller 实现 | `{Resource}RestImpl implements {Resource}Rest` | `...life.bff.{domain}.interfaces.restful` | DTO only |
-| 消息监听（集成事件订阅）| `{Feature}EventHandler` | `...{domain}.interfaces.eventhandlers` | DTO |
+| 消息监听（集成事件订阅 + 领域事件订阅，两类事件均走此路径，README §7）| `{Feature}EventHandler` | `...{domain}.interfaces.eventhandlers` | DTO |
 | 异常处理 | `{Domain}ExceptionHandler`（`@RestControllerAdvice`） | `...{domain}.interfaces.config` | — |
 | Job 处理 | `{Feature}JobHandler` | `...{domain}.interfaces.jobhandler` | — |
 | 应用编排 | `{Resource}AppService`（`@Transactional`） | `...{domain}.application.appservice` | DO, DTO |
@@ -260,6 +260,7 @@ description: |
 | PO↔DO 转换 | 调 `{Resource}DataConverter`（infrastructure 层）| 防腐层 |
 | 跨模块调用（接口型）| 调 `{Resource}Facade`（domain 定义接口）/ `{Resource}FacadeImpl`（infrastructure 实现）| 防腐层，隔离外部服务知识 |
 | 跨模块调用（消息型）| 集成事件：`ApplicationEventPublisher` 发布（application 定义/infrastructure 实现），对应 `EventHandler` 在 interfaces 层订阅 | 解耦模块间强依赖 |
+| 领域事件订阅 | `{Feature}EventHandler`（`interfaces.eventhandlers`）订阅 `DomainEventPublisher`（domain 定义/`KafkaDomainEventPublisher` infrastructure 实现）发出的领域事件；与集成事件 EventHandler **同一包路径**，按事件类型区分（README §7：领域事件订阅也在 interfaces 层）| 领域状态变更通知，解耦聚合间直接调用 |
 | 跨服务调用 | FeignClient 继承 SPI 接口 + `@HystrixCommand(fallbackMethod)` | 容错降级 |
 | 仓储实现 | `extends ServiceImpl<{Resource}Mapper, {Resource}PO>` | MyBatis-Plus |
 | 分页 | PageHelper（禁手写分页 SQL）| 统一分页 |
@@ -378,7 +379,7 @@ grep -rn "@Service\|@Component\|@Autowired\|@Repository" \
 
 | # | 陷阱 | 决策规避 |
 |---|------|---------|
-| 1 | **根 pom 不管依赖内容**（🔧 v1.2.0 修正；🔧 v1.4.0 补检测手段）：根 pom 只做 `dependencyManagement`+插件+`<modules>` 聚合，不声明 `dependencies`；单独在某子模块目录下跑 `mvn compile`（不走根 reactor）时，其依赖的兄弟模块须已 `mvn install` 到本地仓 | 优先走根目录 `mvn compile`（reactor 按 `<modules>` 顺序自动构建）；仅需单模块编译时，先 `mvn install` 被依赖模块到本地仓。**依赖冲突检测（🔧 v1.4.0）：** Maven `nearest wins`——最近声明胜出（非最近版本）；同一 artifact 不同版本在依赖树多路径出现时，用 `mvn dependency:tree -Dverbose` 查 `omitted for duplicate`/`managed from`；CI 加 `maven-enforcer-plugin` 的 `dependencyConvergence` 规则，冲突即 fail（禁止靠"碰巧选到能跑的版本"蒙混）|
+| 1 | **根 pom 仅做 dependencyManagement，不声明 dependencies**（🔧 v1.2.0 修正；🔧 v1.4.0 补检测手段）：根 pom 只做 `dependencyManagement`+插件+`<modules>` 聚合，不声明 `dependencies`；单独在某子模块目录下跑 `mvn compile`（不走根 reactor）时，其依赖的兄弟模块须已 `mvn install` 到本地仓 | 优先走根目录 `mvn compile`（reactor 按 `<modules>` 顺序自动构建）；仅需单模块编译时，先 `mvn install` 被依赖模块到本地仓。**依赖冲突检测（🔧 v1.4.0）：** Maven `nearest wins`——最近声明胜出（非最近版本）；同一 artifact 不同版本在依赖树多路径出现时，用 `mvn dependency:tree -Dverbose` 查 `omitted for duplicate`/`managed from`；CI 加 `maven-enforcer-plugin` 的 `dependencyConvergence` 规则，冲突即 fail（禁止靠"碰巧选到能跑的版本"蒙混）|
 | 2 | **messagebus ≠ courier**：constraints 文档写"Kafka via courier"，但生产实际用 casstime 自建 messagebus（`@EnableMessage`+`EventPublisher`+`KafkaApplicationEventPublisher`） | 消息发送一律走 messagebus；禁 `@KafkaListener`、禁 courier；外部 Kafka PUSH 经 handwritten KafkaConsumer → messagebus 桥接 |
 | 3 | **MapStruct 声明却禁用**：pom 有 `mapstruct.version=1.5.3.Final`，但 code-style/project-structure 禁用其生成 | 一律显式 Converter（cs=`@UtilityClass`，im=`public final class`+私有构造）；pom 的 MapStruct 声明是历史遗留，勿启用 |
 | 4 | **@NotBlank 包版本**：Spring Cloud Dalston（hibernate-validator 5.x）用 `org.hibernate.validator.constraints.NotBlank`（非 javax.validation）| 校验注解按 Boot 版本确认来源包 |
