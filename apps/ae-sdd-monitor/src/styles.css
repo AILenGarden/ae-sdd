@@ -13,10 +13,17 @@
   --selected-text: #ffffff;
   --danger: #b00020;
   --shadow: rgba(0, 0, 0, 0.08);
+  --shadow-hover: rgba(0, 0, 0, 0.14);
+  --press-ring: rgba(0, 0, 0, 0.08);
   --radius-window: 18px;
   --radius-panel: 14px;
   --radius-card: 12px;
   --radius-control: 10px;
+  --ease-ios: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 150ms;
+  --duration-med: 260ms;
+  --duration-slow: 440ms;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
@@ -35,6 +42,8 @@ body.dark {
   --selected-text: #111113;
   --danger: #ff6b7a;
   --shadow: rgba(0, 0, 0, 0.35);
+  --shadow-hover: rgba(0, 0, 0, 0.52);
+  --press-ring: rgba(255, 255, 255, 0.1);
 }
 
 * {
@@ -48,6 +57,8 @@ body {
   font-family: var(--font);
   font-size: 13px;
   letter-spacing: 0;
+  transition: color var(--duration-med) var(--ease-ios), background-color var(--duration-med) var(--ease-ios);
+  animation: appEnter var(--duration-slow) var(--ease-spring) both;
 }
 
 button,
@@ -57,6 +68,14 @@ input {
 
 button {
   cursor: default;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+body.theme-switching *,
+body.theme-switching *::before,
+body.theme-switching *::after {
+  transition-duration: var(--duration-med) !important;
 }
 
 .app {
@@ -174,13 +193,46 @@ button {
   animation: pulse 900ms ease-in-out infinite;
 }
 
+.scan-status.live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 0.35; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1); }
 }
 
+@keyframes appEnter {
+  from { opacity: 0; transform: scale(0.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tapRipple {
+  from { opacity: 0.22; transform: translate(-50%, -50%) scale(0); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes detailDrill {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); filter: blur(6px); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+
+@keyframes detailTab {
+  from { opacity: 0; transform: translateX(10px); filter: blur(4px); }
+  to { opacity: 1; transform: translateX(0); filter: blur(0); }
+}
+
 .button,
 .icon-button {
+  position: relative;
+  overflow: hidden;
   height: 32px;
   border-radius: var(--radius-control);
   border: 1px solid var(--border);
@@ -188,6 +240,14 @@ button {
   background: var(--panel);
   padding: 0 12px;
   box-shadow: 0 1px 1px var(--shadow);
+  transform: translateZ(0);
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    border-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    opacity var(--duration-fast) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
 }
 
 .icon-button {
@@ -198,12 +258,80 @@ button {
 .button:hover,
 .icon-button:hover {
   background: var(--hover);
+  box-shadow: 0 5px 14px var(--shadow);
+  transform: translateY(-1px);
+}
+
+.button:active,
+.icon-button:active,
+.button.pressing,
+.icon-button.pressing {
+  transform: translateY(0) scale(0.975);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+
+.button:disabled,
+.icon-button:disabled {
+  opacity: 0.48;
+  transform: none;
+}
+
+.button:focus-visible,
+.icon-button:focus-visible,
+.filter:focus-visible,
+.workspace-item:focus-visible,
+.task-item:focus-visible,
+.tab:focus-visible,
+.context-card:focus-visible,
+.collapse-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--press-ring), 0 1px 2px var(--shadow);
 }
 
 .button.primary {
   color: var(--selected-text);
   border-color: var(--selected);
   background: var(--selected);
+}
+
+.button.toggle.active {
+  color: var(--selected-text);
+  border-color: var(--selected);
+  background: var(--selected);
+}
+
+.button.toggle.active::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+}
+
+.tap-highlight {
+  position: absolute;
+  z-index: 0;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  animation: tapRipple 520ms var(--ease-ios) forwards;
+}
+
+.button > :not(.tap-highlight),
+.icon-button > :not(.tap-highlight),
+.filter > :not(.tap-highlight),
+.workspace-item > :not(.tap-highlight),
+.task-item > :not(.tap-highlight),
+.tab > :not(.tap-highlight),
+.context-card > :not(.tap-highlight),
+.collapse-button > :not(.tap-highlight),
+.traffic-button > :not(.tap-highlight) {
+  position: relative;
+  z-index: 1;
 }
 
 .layout {
@@ -233,10 +361,17 @@ button {
   background: var(--panel);
   outline: none;
   padding: 0 12px;
+  transition:
+    background-color var(--duration-fast) var(--ease-ios),
+    border-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
 }
 
 .search-row input:focus {
   border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--press-ring), 0 8px 18px var(--shadow);
+  transform: translateY(-1px);
 }
 
 .filters {
@@ -247,18 +382,40 @@ button {
 }
 
 .filter {
+  position: relative;
+  overflow: hidden;
   height: 28px;
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-muted);
   background: transparent;
   padding: 0 10px;
+  transform: translateZ(0);
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    border-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.filter:hover {
+  color: var(--text);
+  background: var(--hover);
+  transform: translateY(-1px);
 }
 
 .filter.active {
   color: var(--selected-text);
   border-color: var(--selected);
   background: var(--selected);
+  box-shadow: 0 5px 14px var(--shadow);
+}
+
+.filter:active,
+.filter.pressing {
+  transform: scale(0.97);
+  box-shadow: none;
 }
 
 .workspace-list {
@@ -267,7 +424,67 @@ button {
   padding: 0 10px 14px;
 }
 
+.project-group {
+  margin-bottom: 6px;
+  animation: detailDrill 360ms var(--ease-spring) both;
+}
+
+.project-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px;
+}
+
+.collapse-button {
+  position: relative;
+  overflow: hidden;
+  width: 24px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--text-muted);
+  background: transparent;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+  transform: rotate(90deg);
+  transform-origin: center;
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.collapse-button:hover {
+  color: var(--text);
+  background: var(--hover);
+  transform: rotate(90deg) scale(1.06);
+}
+
+.collapse-button.collapsed {
+  transform: rotate(0deg);
+}
+
+.collapse-button.collapsed:hover {
+  transform: rotate(0deg) scale(1.06);
+}
+
+.collapse-button:active,
+.collapse-button.pressing {
+  transform: rotate(90deg) scale(0.9);
+}
+
+.collapse-button.collapsed:active,
+.collapse-button.collapsed.pressing {
+  transform: rotate(0deg) scale(0.9);
+}
+
 .workspace-item {
+  position: relative;
+  overflow: hidden;
   width: 100%;
   display: grid;
   grid-template-columns: 12px minmax(0, 1fr);
@@ -278,15 +495,137 @@ button {
   background: transparent;
   padding: 10px;
   text-align: left;
+  transform: translateZ(0);
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
 }
 
 .workspace-item:hover {
   background: var(--hover);
+  box-shadow: 0 6px 16px var(--shadow);
+  transform: translateY(-1px);
 }
 
 .workspace-item.selected {
   color: var(--selected-text);
   background: var(--selected);
+  box-shadow: 0 8px 20px var(--shadow-hover);
+}
+
+.workspace-item:active,
+.workspace-item.pressing {
+  transform: scale(0.985);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+
+.project-group.current-project:not(:has(.workspace-item.selected)) .workspace-item {
+  background: color-mix(in srgb, var(--hover) 72%, transparent);
+}
+
+.task-tree-shell {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin: 3px 0 8px 18px;
+  opacity: 1;
+  overflow: hidden;
+  transform: translateY(0);
+  transition:
+    grid-template-rows var(--duration-slow) var(--ease-spring),
+    margin var(--duration-slow) var(--ease-spring),
+    opacity var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.task-tree-shell.collapsed {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-5px);
+}
+
+.task-tree {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  gap: 2px;
+}
+
+.task-item {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 12px 10px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--text);
+  background: transparent;
+  padding: 8px 9px;
+  text-align: left;
+  transform: translateZ(0);
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.task-item:hover {
+  background: var(--hover);
+  box-shadow: 0 5px 13px var(--shadow);
+  transform: translateX(2px);
+}
+
+.task-item.selected {
+  color: var(--selected-text);
+  background: var(--selected);
+  box-shadow: 0 7px 16px var(--shadow-hover);
+}
+
+.task-item:active,
+.task-item.pressing {
+  transform: translateX(0) scale(0.985);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+
+.tree-line {
+  width: 10px;
+  height: 18px;
+  border-left: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0 0 0 6px;
+}
+
+.task-main {
+  min-width: 0;
+}
+
+.task-title {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-title strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-title span {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .status-dot {
@@ -296,6 +635,16 @@ button {
   border-radius: 999px;
   border: 1px solid currentColor;
   background: currentColor;
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.workspace-item:hover .status-dot,
+.task-item:hover .status-dot,
+.active-item:hover .status-dot {
+  transform: scale(1.16);
 }
 
 .status-idle .status-dot,
@@ -343,15 +692,42 @@ button {
 }
 
 .workspace-item.selected .muted-line,
-.workspace-item.selected .path-line {
+.workspace-item.selected .path-line,
+.task-item.selected .muted-line,
+.task-item.selected .task-title span {
   color: color-mix(in srgb, var(--selected-text) 72%, transparent);
 }
 
 .detail {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 22px;
+  transition: background-color var(--duration-med) var(--ease-ios), box-shadow var(--duration-med) var(--ease-ios);
+}
+
+.detail.motion-drill .workspace-head,
+.detail.motion-drill .context-board,
+.detail.motion-drill .summary-grid,
+.detail.motion-drill #tabContent {
+  animation: detailDrill var(--duration-slow) var(--ease-spring) both;
+}
+
+.detail.motion-drill .context-board {
+  animation-delay: 35ms;
+}
+
+.detail.motion-drill .summary-grid {
+  animation-delay: 70ms;
+}
+
+.detail.motion-drill #tabContent {
+  animation-delay: 105ms;
+}
+
+.detail.motion-tab #tabContent {
+  animation: detailTab 320ms var(--ease-spring) both;
 }
 
 .empty-state {
@@ -381,6 +757,7 @@ button {
   color: var(--text-muted);
   background: var(--panel);
   padding: 8px 14px;
+  animation: pulse 1600ms var(--ease-ios) infinite;
 }
 
 .workspace-head {
@@ -407,6 +784,79 @@ button {
   gap: 8px;
 }
 
+.context-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.context-card {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text);
+  background: var(--panel);
+  padding: 13px 14px;
+  text-align: left;
+  box-shadow: 0 1px 2px var(--shadow);
+  transform: translateZ(0);
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    border-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.context-card.selected {
+  border-color: var(--selected);
+  box-shadow: 0 0 0 1px var(--selected);
+}
+
+.context-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 10px 24px var(--shadow);
+  transform: translateY(-2px);
+}
+
+.context-card:active,
+.context-card.pressing {
+  box-shadow: 0 2px 6px var(--shadow);
+  transform: scale(0.988);
+}
+
+.context-card.selected:hover {
+  box-shadow: 0 0 0 1px var(--selected), 0 10px 24px var(--shadow);
+}
+
+.context-card strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-card span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-kicker {
+  color: var(--text-soft) !important;
+  font-size: 11px !important;
+  text-transform: uppercase;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(120px, 1fr));
@@ -421,6 +871,18 @@ button {
   background: var(--panel);
   padding: 14px;
   box-shadow: 0 1px 2px var(--shadow);
+  transform: translateZ(0);
+  transition:
+    background-color var(--duration-fast) var(--ease-ios),
+    border-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.metric:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 9px 22px var(--shadow);
+  transform: translateY(-2px);
 }
 
 .metric-label {
@@ -449,6 +911,8 @@ button {
   height: 100%;
   border-radius: 999px;
   background: var(--text);
+  transform-origin: left center;
+  transition: width var(--duration-slow) var(--ease-spring), background-color var(--duration-med) var(--ease-ios);
 }
 
 .tabs {
@@ -460,22 +924,38 @@ button {
 }
 
 .tab {
+  position: relative;
+  overflow: hidden;
   height: 30px;
   border: 0;
   border-radius: var(--radius-control);
   color: var(--text-muted);
   background: transparent;
   padding: 0 12px;
+  transform: translateZ(0);
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
 }
 
 .tab:hover {
   color: var(--text);
   background: var(--hover);
+  transform: translateY(-1px);
 }
 
 .tab.active {
   color: var(--selected-text);
   background: var(--selected);
+  box-shadow: 0 6px 16px var(--shadow);
+}
+
+.tab:active,
+.tab.pressing {
+  transform: scale(0.97);
+  box-shadow: 0 1px 2px var(--shadow);
 }
 
 .panel {
@@ -484,6 +964,17 @@ button {
   background: var(--panel);
   overflow: hidden;
   box-shadow: 0 1px 2px var(--shadow);
+  transform: translateZ(0);
+  transition:
+    background-color var(--duration-fast) var(--ease-ios),
+    border-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.panel:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 8px 22px var(--shadow);
 }
 
 .panel-header {
@@ -524,10 +1015,15 @@ button {
   align-items: start;
   border-bottom: 1px solid var(--border);
   padding: 12px 14px;
+  transition: background-color var(--duration-fast) var(--ease-ios);
 }
 
 .active-item:last-child {
   border-bottom: 0;
+}
+
+.active-item:hover {
+  background: color-mix(in srgb, var(--hover) 64%, transparent);
 }
 
 .active-main {
@@ -592,6 +1088,18 @@ button {
   border-radius: var(--radius-control);
   background: var(--panel-raised);
   padding: 10px;
+  transform: translateZ(0);
+  transition:
+    background-color var(--duration-fast) var(--ease-ios),
+    border-color var(--duration-fast) var(--ease-ios),
+    box-shadow var(--duration-med) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
+}
+
+.phase-node:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 8px 18px var(--shadow);
+  transform: translateY(-2px);
 }
 
 .phase-node.done {
@@ -616,12 +1124,17 @@ button {
   background: var(--panel-muted);
   font-size: 12px;
   font-weight: 650;
+  transition:
+    color var(--duration-fast) var(--ease-ios),
+    background-color var(--duration-fast) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
 }
 
 .phase-node.current .phase-index,
 .phase-node.paused .phase-index {
   color: var(--selected-text);
   background: var(--selected);
+  animation: pulse 1600ms var(--ease-ios) infinite;
 }
 
 .phase-copy {
@@ -682,10 +1195,14 @@ button {
   border: 1px solid var(--text);
   border-radius: 999px;
   background: var(--panel);
+  transition:
+    background-color var(--duration-fast) var(--ease-ios),
+    transform var(--duration-med) var(--ease-spring);
 }
 
 .event-item.current .event-point {
   background: var(--text);
+  animation: pulse 1600ms var(--ease-ios) infinite;
 }
 
 .event-title {
@@ -722,6 +1239,14 @@ button {
   border-bottom: 0;
 }
 
+.table tbody tr {
+  transition: background-color var(--duration-fast) var(--ease-ios);
+}
+
+.table tbody tr:hover {
+  background: color-mix(in srgb, var(--hover) 58%, transparent);
+}
+
 .code {
   max-height: 520px;
   overflow: auto;
@@ -754,7 +1279,39 @@ button {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 
+  .context-board {
+    grid-template-columns: 1fr;
+  }
+
   .kv-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .button:hover,
+  .icon-button:hover,
+  .filter:hover,
+  .workspace-item:hover,
+  .task-item:hover,
+  .context-card:hover,
+  .metric:hover,
+  .tab:hover,
+  .panel:hover,
+  .phase-node:hover {
+    transform: none !important;
+  }
+
+  .tap-highlight {
+    display: none;
   }
 }

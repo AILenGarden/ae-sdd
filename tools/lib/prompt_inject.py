@@ -105,7 +105,7 @@ def _update_quick_channel(ade_sdd: Path, user_prompt: str) -> None:
 
 # 🆕 v3.8.2：取端注入——memory enter 后的活跃 scope 下注入历史记忆。
 # 解决 memory 只写不读的黑洞问题：LLM 每次对话能看到当前 phase+story 的历史决策。
-# 注入 L1+L2（有证据的记忆），最近 8 条；L0 草稿/事件流不注入，L4 禁止整体注入。
+# 注入 task/project compact memory，task 优先、project 只补剩余预算；scratch/事件流不注入。
 _MEMORY_INJECT_LIMIT = 8
 
 
@@ -126,19 +126,28 @@ def _inject_memory_block(ade_sdd: Path, phase: str, current_story: str) -> Optio
         )
         if not memory_store.is_scope_active(scope):
             return None
-        entries = memory_store.read(scope, include_project=True, limit=0)
-        memory_entries = [e for e in entries if e.get("type") == "memory" and e.get("layer") != "L0"]
-        memory_entries = memory_entries[-_MEMORY_INJECT_LIMIT:]
+        task_entries = [
+            e for e in memory_store.read(scope, memory_scope="task", limit=0)
+            if e.get("type") == "memory"
+        ]
+        project_entries = [
+            e for e in memory_store.read(scope, memory_scope="project", limit=0)
+            if e.get("type") == "memory"
+        ]
+        task_selected = task_entries[-_MEMORY_INJECT_LIMIT:]
+        project_slots = max(_MEMORY_INJECT_LIMIT - len(task_selected), 0)
+        memory_entries = task_selected + (project_entries[-project_slots:] if project_slots else [])
         if not memory_entries:
             return None
-        lines = [f"MEMORY compact phase={memory_phase} story={story or '<project>'}"]
+        lines = [f"MEMORY compact task-first phase={memory_phase} story={story or '<project>'}"]
         for e in memory_entries:
             layer = e.get("layer", "L1")
+            scope_name = e.get("memoryScope") or memory_store.memory_scope_for_layer(layer)
             kind = e.get("kind", "observation")
             summary = e.get("summary", "")
             evidence = e.get("evidence") or []
             ev_str = ", ".join(evidence) if evidence else "-"
-            lines.append(f"- [{layer} {kind}] {summary} ev: {ev_str}")
+            lines.append(f"- [{scope_name} {kind}] {summary} ev: {ev_str}")
         return "\n".join(lines)
     except Exception:
         return None

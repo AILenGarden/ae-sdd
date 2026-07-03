@@ -145,6 +145,76 @@ test("loadWorkspaceDetail derives work item identity from key directory", async 
   assert.equal(detail.activeWorkItems.some((item) => item.id === "BUG-2--Payment-retry"), true);
 });
 
+test("loadWorkspaceDetail projects project and task memory status", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ae-sdd-monitor-memory-"));
+  const workspace = path.join(root, "workspace");
+  await writeJson(path.join(workspace, ".ae-sdd", "state.json"), {
+    version: "1",
+    projectKey: "workspace",
+    phase: "coding",
+    currentStory: "STORY-001"
+  });
+  await writeJson(path.join(workspace, ".auto-engineering", "BUG-3--Memory-view", "state.json"), {
+    version: "1",
+    workItemId: "BUG-3",
+    workItemName: "Memory view",
+    workItemKey: "BUG-3--Memory-view",
+    currentStory: "STORY-001",
+    phase: "coding",
+    scale: "micro"
+  });
+  await writeJson(path.join(workspace, ".ae-sdd", "memory", ".stage", "coding__STORY-001.json"), {
+    phase: "coding",
+    story: "STORY-001",
+    last_enter_at: "2026-07-03T05:00:00Z",
+    last_write_at: "2026-07-03T04:00:00Z",
+    last_exit_at: null
+  });
+  await fs.mkdir(path.join(workspace, ".ae-sdd", "memory", "project"), { recursive: true });
+  await fs.writeFile(
+    path.join(workspace, ".ae-sdd", "memory", "project", "coding.jsonl"),
+    `${JSON.stringify({
+      type: "memory",
+      layer: "L2",
+      memoryScope: "project",
+      phase: "coding",
+      kind: "constraint",
+      summary: "Project memory is visible.",
+      evidence: ["README.md:1"],
+      timestamp: "2026-07-03T04:10:00Z"
+    })}\n`,
+    "utf8"
+  );
+  await fs.mkdir(path.join(workspace, ".ae-sdd", "memory", "story", "STORY-001"), { recursive: true });
+  await fs.writeFile(
+    path.join(workspace, ".ae-sdd", "memory", "story", "STORY-001", "coding.jsonl"),
+    `${JSON.stringify({
+      type: "memory",
+      layer: "L1",
+      memoryScope: "task",
+      phase: "coding",
+      story: "STORY-001",
+      kind: "fix",
+      summary: "Task memory is visible.",
+      evidence: ["src/Foo.js:1"],
+      timestamp: "2026-07-03T04:20:00Z"
+    })}\n`,
+    "utf8"
+  );
+
+  const detail = await loadWorkspaceDetail(workspace);
+  assert.equal(detail.memory.status, "blocked");
+  assert.equal(detail.memory.projectMemoryCount, 1);
+  assert.equal(detail.memory.taskMemoryCount, 1);
+  assert.equal(detail.memory.blockedScopeCount, 1);
+  assert.equal(detail.summary.memoryStatus, "blocked");
+  assert.equal(detail.summary.status, "blocked");
+  const task = detail.tasks.find((item) => item.id === "BUG-3--Memory-view");
+  assert.equal(task.memory.status, "blocked");
+  assert.equal(task.memory.memoryEntries, 1);
+  assert.equal(task.memory.blockedScopeCount, 1);
+});
+
 test("phaseTimeline describes current node in the scale-specific flow", () => {
   const timeline = phaseTimeline({
     phase: "code-reviewed",

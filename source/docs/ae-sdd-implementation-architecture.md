@@ -111,7 +111,7 @@ harness/                        派生适配层，不手工改生成物
 | `.ae-sdd/config.yaml` | 项目配置 |
 | `.ae-sdd/state.json` | active work item 状态镜像，保存 `activeWorkItem` 与 `activeStatePath`，供旧 gate/hook 兼容读取 |
 | `.auto-engineering/{workItemKey}/state.json` | work item 独立状态机；新建入口为 `ae-sdd state new --id <ID> --name "<需求名>"`，目录名为 `{ID}--{name}` |
-| `.ae-sdd/memory/` | 分层 compact 记忆；L1+ 强制短摘要 + evidence，UserPromptSubmit 只注入 active scope 的非 L0 记忆 |
+| `.ae-sdd/memory/` | 分区 compact 记忆；task(L1) 默认任务级、project(L2) 跨任务复用，UserPromptSubmit 任务优先注入并只用 project 补充 |
 | `.ae-sdd/plugins/` | 项目层插件注册 |
 | `.ae-sdd/cache/` | 工具链缓存，新增缓存优先放这里 |
 | `.ae-sdd/runtime-stats/` | Runtime Stats JSONL，本地观测数据，可清理，不进入版本控制 |
@@ -241,15 +241,16 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
 
 | 模块 | 职责 |
 | --- | --- |
-| `apps/ae-sdd-monitor/src/main.js` | Electron 主进程、窗口生命周期、目录选择、路径打开 IPC |
-| `apps/ae-sdd-monitor/src/preload.js` | 只暴露受控 `monitorApi`，隔离 renderer 与 Node 能力 |
-| `apps/ae-sdd-monitor/src/workspace.js` | 扫描父目录、识别 `.ae-sdd/` 工作区、读取 state/config/runtime-stats、派生展示状态、阶段轴、workItemKey 身份和活跃任务 |
-| `apps/ae-sdd-monitor/src/renderer.js` | 左侧工作区列表、筛选、右侧详情 Tab、本地 UI 状态、目录选择反馈和偏好恢复 |
-| `apps/ae-sdd-monitor/test/workspace.test.js` | 扫描、YAML 读取、work item、Runtime Stats 聚合的契约测试 |
+| `apps/ae-sdd-monitor/src/main.js` | Electron 主进程、窗口生命周期、目录选择、路径打开 IPC、UI 偏好读写、父目录文件 watcher |
+| `apps/ae-sdd-monitor/src/preload.js` | 只暴露受控 `monitorApi` 与 watcher 事件订阅，隔离 renderer 与 Node 能力 |
+| `apps/ae-sdd-monitor/src/workspace.js` | 扫描父目录、识别 `.ae-sdd/` 工作区、读取 state/config/runtime-stats/memory、派生展示状态、阶段轴、workItemKey 身份、任务列表和活跃任务 |
+| `apps/ae-sdd-monitor/src/renderer.js` | 左侧项目/任务两级列表、筛选、右侧详情 Tab、本地 UI 状态、响应式静默刷新、目录选择反馈、交互动效触发和偏好恢复 |
+| `apps/ae-sdd-monitor/src/styles.css` | 黑白圆角类 Mac 外观、iOS 风格轻量交互动效、折叠/切换/按压反馈和 reduced-motion 降级 |
+| `apps/ae-sdd-monitor/test/workspace.test.js` | 扫描、YAML 读取、work item、Memory、Runtime Stats 聚合的契约测试 |
 | `apps/ae-sdd-monitor/scripts/package-win.ps1` | Windows 本地打包、安装 zip、自解压 setup 生成 |
 | `apps/ae-sdd-monitor/scripts/package-mac.sh` | macOS 本地打包入口，调用 electron-builder 生成 dmg/zip |
 | `apps/ae-sdd-monitor/scripts/package-mac-unsigned.ps1` | 跨平台生成未签名 macOS `.app.zip`，基于 Electron darwin runtime 注入 app 资源 |
-| Electron userData `preferences.json` | 保存上次父目录、选中工作区和主题；不写项目侧 `.ae-sdd/` |
+| Electron userData `preferences.json` | 保存上次父目录、选中工作区、选中任务、自动刷新开关和主题；不写项目侧 `.ae-sdd/` |
 
 数据流：
 
@@ -260,9 +261,13 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
   -> workspace.js 递归扫描包含 .ae-sdd/ 的目录
   -> 读取 .ae-sdd/config.yaml / .ae-sdd/state.json
   -> 读取 .auto-engineering/{workItemKey}/state.json
+  -> 读取 .ae-sdd/memory/**/*.jsonl / .ae-sdd/memory/.stage/*.json
   -> 读取 .ae-sdd/runtime-stats/*.jsonl
-  -> workspace.js 派生 phaseTimeline / activeWorkItems
-  -> renderer.js 展示列表、阶段轴、事件流、活跃任务和详情
+  -> workspace.js 派生 phaseTimeline / activeWorkItems / tasks / memory
+  -> renderer.js 展示项目/任务两级列表、阶段轴、Memory、事件流、活跃任务和详情
+  -> main.js 监听 .ae-sdd/ 与 .auto-engineering/ 文件变化并通过 preload 通知 renderer
+  -> renderer.js 只在数据签名变化时重渲染，低频轮询只作为 watcher 兜底
+  -> styles.css 提供只作用于 UI 的折叠、切换、按压和悬浮动效
 ```
 
 边界：
@@ -270,7 +275,9 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
 - Monitor 全程只读；扫描、刷新、切换 Tab 不得写项目文件。
 - Monitor 的状态枚举是 UI 派生值，不新增 ae-sdd state schema。
 - Monitor 的偏好文件只保存用户界面上下文，不保存 ae-sdd 业务状态。
-- `PHASE_FLOWS`、state 字段、Runtime Stats JSONL 字段变化时，必须同步 [`ae-sdd-monitor-design.md`](ae-sdd-monitor-design.md)、`workspace.js` 和测试。
+- 响应式刷新采用 main 侧 `fs.watch` + renderer 侧 debounce：`.ae-sdd/` 与 `.auto-engineering/` 变化触发静默刷新；低频轮询只作为 watcher 漏事件兜底；不使用会改变项目状态的命令。
+- 交互动效只在 renderer/CSS 层表达本地 UI 反馈；不得触发 ae-sdd 命令、不得写 `.ae-sdd/`、不得成为状态权威。
+- `PHASE_FLOWS`、state 字段、Memory JSONL/stage 字段、Runtime Stats JSONL 字段变化时，必须同步 [`ae-sdd-monitor-design.md`](ae-sdd-monitor-design.md)、`workspace.js` 和测试。
 - Monitor 不运行 `ae-sdd gates check`，不替代 CLI/gate 的硬判断；最多展示已有 state/runtime 线索。
 - Mac `.dmg`/签名最终构建必须在 macOS runner 上完成；Windows runner 可生成 Windows setup exe/zip 和未签名 macOS `.app.zip`。
 - `source/standards/update-graph.json:UG-22` 负责把 ae-sdd 设计/实现/state/runtime 变化级联到 Monitor 文档、解析器、测试和 README。

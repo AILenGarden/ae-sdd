@@ -4,15 +4,15 @@ description: 端到端自动化工程主入口（v3.8.2）。从 DR/PRD 出发�
 version: 3.8.2
 ---
 
-<!-- # AUTO-GEN @ ae-sdd-source@6fc5fe18038e18f1 @ 2026-07-03T13:04:40Z -->
+<!-- # AUTO-GEN @ ae-sdd-source@bbd4b41e173b9b37 @ 2026-07-03T15:19:22Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-03T13:04:40Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-03T15:19:22Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd source `6fc5fe18038e18f1` (3.8.2)
+> 源版本：ae-sdd source `bbd4b41e173b9b37` (3.8.2)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -109,7 +109,7 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 引用源
 
-- ae-sdd 主入口：`../source/SKILL.md`（205 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` 700 行）
+- ae-sdd 主入口：`../source/SKILL.md`（205 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` 701 行）
 - ae-sdd harness 配置：`../source/HARNESS.md`（PHASE MACHINE + 12 HARD STOPS + 3 hook 配置）
 - 子 SKILL 索引：`../source/skills/`
 - 项目资产模板：`../source/assets/`
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-07-03T13:04:40Z
+- 生成时间：2026-07-03T15:19:22Z
 - 源 ae-sdd 版本：3.8.2
-- 源 ae-sdd input hash：6fc5fe18038e18f1bf19b4be57d678dd111befa9ce13d0cbcc096594104ad40f
+- 源 ae-sdd input hash：bbd4b41e173b9b3769356279ea3dd0191be6e7e8cf87c6f835291b40032c11a2
 - 适配器版本：v0.3.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

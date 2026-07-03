@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -122,6 +123,40 @@ def test_cli_state_write_allows_maintenance_override(tmp_path):
     assert result.returncode == 0
 
 
+def test_cli_memory_write_scope_project(tmp_path):
+    _project(tmp_path, phase="coding", story="STORY-001")
+    repo = Path(__file__).resolve().parent.parent.parent
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo / "tools" / "bin" / "ae-sdd"),
+            "memory",
+            "write",
+            "--scope",
+            "project",
+            "--phase",
+            "coding",
+            "--story",
+            "STORY-001",
+            "--kind",
+            "constraint",
+            "--summary",
+            "Project-wide rule uses BigDecimal",
+            "--evidence",
+            "standards.md:2",
+            "--json",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONUTF8": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["record"]["memoryScope"] == "project"
+    assert payload["record"]["layer"] == "L2"
+
+
 # ─── 🆕 v3.8.2：is_scope_active 活跃态判断 ─────────────────────────────────
 
 
@@ -199,7 +234,7 @@ def test_prompt_inject_injects_memory_after_enter(tmp_path):
     assert "MEMORY compact" in block
     assert "乐观锁" in block
     assert "src/Order.java:42" in block
-    assert "[L1 decision]" in block
+    assert "[task decision]" in block
 
 
 def test_prompt_inject_no_memory_block_after_exit(tmp_path):
@@ -238,8 +273,39 @@ def test_prompt_inject_includes_l2_project_memory(tmp_path):
     from lib.prompt_inject import _inject_memory_block
     block = _inject_memory_block(tmp_path / ".ae-sdd", "coding", "STORY-001")
     assert block is not None
-    assert "[L2 finding]" in block
+    assert "[project finding]" in block
     assert "BigDecimal" in block
+
+
+def test_prompt_inject_prioritizes_task_memory_over_project_memory(tmp_path):
+    """Task memory owns the injection budget; project memory only fills remaining slots."""
+    _project(tmp_path, phase="coding", story="STORY-001")
+    scope = memory_store.locate_scope(project=str(tmp_path), phase="coding", story="STORY-001")
+    memory_store.enter(scope, actor="test")
+    for i in range(9):
+        memory_store.write(
+            scope,
+            summary=f"Task fact {i}",
+            memory_scope="task",
+            kind="finding",
+            evidence=[f"task.md:{i + 1}"],
+            actor="test",
+        )
+    memory_store.write(
+        scope,
+        summary="Project fact should not displace task facts",
+        memory_scope="project",
+        kind="constraint",
+        evidence=["project.md:1"],
+        actor="test",
+    )
+
+    from lib.prompt_inject import _inject_memory_block
+    block = _inject_memory_block(tmp_path / ".ae-sdd", "coding", "STORY-001")
+    assert block is not None
+    assert "MEMORY compact task-first" in block
+    assert "Task fact 8" in block
+    assert "Project fact should not displace task facts" not in block
 
 
 def test_prompt_inject_l0_events_do_not_squeeze_compact_memory(tmp_path):
@@ -250,7 +316,7 @@ def test_prompt_inject_l0_events_do_not_squeeze_compact_memory(tmp_path):
     memory_store.write(
         scope,
         summary="UserMapper now filters by tenant_id",
-        layer="L1",
+        memory_scope="task",
         kind="fix",
         evidence=["src/UserMapper.xml:31"],
         actor="test",

@@ -388,6 +388,55 @@ async function readRuntimeEvents(aeDir, limit = 120) {
   return events;
 }
 
+async function listFilesRecursive(directory, predicate) {
+  if (!(await pathExists(directory))) {
+    return [];
+  }
+  const files = [];
+
+  async function walk(current) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(target);
+      } else if (entry.isFile() && (!predicate || predicate(target))) {
+        files.push(target);
+      }
+    }
+  }
+
+  await walk(directory);
+  return files;
+}
+
+async function readJsonlRecords(file) {
+  let text = "";
+  try {
+    text = await fs.readFile(file, "utf8");
+  } catch (error) {
+    return [{ type: "corrupt", path: file, error: error.message }];
+  }
+
+  const records = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      records.push({ ...JSON.parse(line), path: file });
+    } catch {
+      records.push({ type: "corrupt", raw: line, path: file });
+    }
+  }
+  return records;
+}
+
 function summarizeRuntimeStats(events) {
   const count = events.length;
   const failures = events.filter((event) => Number(event.exitCode || 0) !== 0).length;
@@ -435,6 +484,198 @@ function summarizeRuntimeStats(events) {
     commands,
     recent: events.slice(0, 30)
   };
+}
+
+function layerToScope(layer) {
+  const scopes = {
+    L0: "scratch",
+    L1: "task",
+    L2: "project",
+    L3: "pattern",
+    L4: "archive"
+  };
+  return scopes[layer] || "event";
+}
+
+function stageStatus(stage) {
+  const enterAt = normalizeDate(stage.last_enter_at);
+  const exitAt = normalizeDate(stage.last_exit_at);
+  const writeAt = normalizeDate(stage.last_write_at);
+  const active = Boolean(enterAt && (!exitAt || new Date(enterAt).getTime() > new Date(exitAt).getTime()));
+  const needsWrite = Boolean(active && (!writeAt || new Date(writeAt).getTime() < new Date(enterAt).getTime()));
+  return {
+    active,
+    needsWrite,
+    lastActivityAt: newestDate([enterAt, exitAt, writeAt])
+  };
+}
+
+function memoryStatusFrom({ exists, corruptCount = 0, activeScopes = [], blockedScopes = [], total = 0 }) {
+  if (!exists) {
+    return "missing";
+  }
+  if (corruptCount > 0) {
+    return "invalid";
+  }
+  if (blockedScopes.length > 0) {
+    return "blocked";
+  }
+  if (activeScopes.length > 0) {
+    return "active";
+  }
+  if (total > 0) {
+    return "ready";
+  }
+  return "empty";
+}
+
+function taskMatchValues(task) {
+  return new Set(
+    [
+      task?.id,
+      task?.workItemId,
+      task?.workItemName,
+      task?.workItemKey,
+      task?.currentStory,
+      task?.currentTask
+    ]
+      .filter(Boolean)
+      .map((value) => String(value))
+  );
+}
+
+function memoryRecordMatchesTask(record, task) {
+  const values = taskMatchValues(task);
+  const story = record.story ? String(record.story) : "";
+  const taskId = record.task ? String(record.task) : "";
+  if (story && values.has(story)) {
+    return true;
+  }
+  if (taskId && values.has(taskId)) {
+    return true;
+  }
+  return false;
+}
+
+function summarizeMemorySlice(memorySummary, records, stages) {
+  const lastMemoryAt = newestDate([
+    ...records.map((record) => normalizeDate(record.timestamp)),
+    ...stages.map((stage) => stage.lastActivityAt)
+  ]);
+  const activeScopes = stages.filter((stage) => stage.active);
+  const blockedScopes = stages.filter((stage) => stage.needsWrite);
+  const corruptCount = records.filter((record) => record.type === "corrupt").length;
+  return {
+    status: memoryStatusFrom({
+      exists: memorySummary.exists,
+      corruptCount,
+      activeScopes,
+      blockedScopes,
+      total: records.length
+    }),
+    total: records.length,
+    memoryEntries: records.filter((record) => record.type === "memory").length,
+    activeScopeCount: activeScopes.length,
+    blockedScopeCount: blockedScopes.length,
+    lastMemoryAt,
+    recent: records
+      .slice()
+      .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
+      .slice(0, 12),
+    activeScopes: activeScopes.slice(0, 12),
+    blockedScopes: blockedScopes.slice(0, 12)
+  };
+}
+
+async function readMemorySummary(aeDir) {
+  const memoryRoot = path.join(aeDir, "memory");
+  const exists = await pathExists(memoryRoot);
+  const jsonlFiles = await listFilesRecursive(memoryRoot, (file) => file.endsWith(".jsonl"));
+  const stageFiles = await listFilesRecursive(path.join(memoryRoot, ".stage"), (file) => file.endsWith(".json"));
+  const records = [];
+  const stages = [];
+
+  for (const file of jsonlFiles) {
+    records.push(...(await readJsonlRecords(file)));
+  }
+
+  for (const file of stageFiles) {
+    const result = await readJsonFile(file);
+    const value = result.value || {};
+    const status = stageStatus(value);
+    stages.push({
+      id: path.basename(file, ".json"),
+      path: file,
+      phase: value.phase || null,
+      story: value.story || null,
+      task: value.task || null,
+      lastEnterAt: normalizeDate(value.last_enter_at),
+      lastWriteAt: normalizeDate(value.last_write_at),
+      lastExitAt: normalizeDate(value.last_exit_at),
+      active: status.active,
+      needsWrite: status.needsWrite,
+      lastActivityAt: status.lastActivityAt,
+      error: result.error
+    });
+  }
+
+  records.sort((a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime());
+
+  const byLayer = {};
+  const byScope = {};
+  const byPhase = {};
+  for (const record of records) {
+    const layer = record.layer || (record.type === "memory" ? "unknown" : "event");
+    const scope = record.memoryScope || layerToScope(layer);
+    const phase = record.phase || "unknown";
+    byLayer[layer] = (byLayer[layer] || 0) + 1;
+    byScope[scope] = (byScope[scope] || 0) + 1;
+    byPhase[phase] = (byPhase[phase] || 0) + 1;
+  }
+
+  const activeScopes = stages.filter((stage) => stage.active);
+  const blockedScopes = stages.filter((stage) => stage.needsWrite);
+  const corruptCount = records.filter((record) => record.type === "corrupt").length + stages.filter((stage) => stage.error).length;
+  const lastMemoryAt = newestDate([
+    ...records.map((record) => normalizeDate(record.timestamp)),
+    ...stages.map((stage) => stage.lastActivityAt)
+  ]);
+
+  return {
+    exists,
+    root: memoryRoot,
+    status: memoryStatusFrom({ exists, corruptCount, activeScopes, blockedScopes, total: records.length }),
+    total: records.length,
+    memoryEntries: records.filter((record) => record.type === "memory").length,
+    eventEntries: records.filter((record) => record.type !== "memory").length,
+    projectMemoryCount: records.filter((record) => record.layer === "L2" || record.memoryScope === "project").length,
+    taskMemoryCount: records.filter((record) => record.layer === "L1" || record.memoryScope === "task").length,
+    scratchEventCount: records.filter((record) => record.layer === "L0" || record.memoryScope === "scratch").length,
+    activeScopeCount: activeScopes.length,
+    blockedScopeCount: blockedScopes.length,
+    corruptCount,
+    byLayer,
+    byScope,
+    byPhase,
+    lastMemoryAt,
+    recent: records.slice().reverse().slice(0, 20),
+    activeScopes: activeScopes.slice(0, 20),
+    blockedScopes: blockedScopes.slice(0, 20),
+    stages,
+    records
+  };
+}
+
+function summarizeTaskMemory(task, memorySummary) {
+  if (!memorySummary?.exists) {
+    return summarizeMemorySlice(memorySummary || { exists: false }, [], []);
+  }
+  const records = memorySummary.records.filter((record) => {
+    const isTaskMemory = record.layer === "L1" || record.memoryScope === "task" || record.layer === "L0";
+    return isTaskMemory && memoryRecordMatchesTask(record, task);
+  });
+  const stages = memorySummary.stages.filter((stage) => memoryRecordMatchesTask(stage, task));
+  return summarizeMemorySlice(memorySummary, records, stages);
 }
 
 function deriveStatus({ state, hasState, errors, lastActivityAt, runtimeSummary }) {
@@ -595,6 +836,79 @@ function deriveActiveWorkItems(state, workItems = []) {
   });
 }
 
+function compactMemorySummary(memorySummary) {
+  if (!memorySummary) {
+    return {
+      exists: false,
+      status: "missing",
+      total: 0,
+      memoryEntries: 0,
+      eventEntries: 0,
+      projectMemoryCount: 0,
+      taskMemoryCount: 0,
+      scratchEventCount: 0,
+      activeScopeCount: 0,
+      blockedScopeCount: 0,
+      corruptCount: 0,
+      byLayer: {},
+      byScope: {},
+      byPhase: {},
+      lastMemoryAt: null,
+      recent: [],
+      activeScopes: [],
+      blockedScopes: []
+    };
+  }
+  const { records, stages, ...compact } = memorySummary;
+  return compact;
+}
+
+function taskDisplayName(task) {
+  return task.workItemName || task.workItemKey || task.currentTask || task.currentStory || task.id;
+}
+
+function deriveTaskList(workItems = [], activeWorkItems = [], memorySummary = null) {
+  const tasks = new Map();
+
+  function addTask(source, item) {
+    const id = item.id || item.workItemKey || item.currentTask || item.currentStory || item.agentId;
+    if (!id) {
+      return;
+    }
+    const existing = tasks.get(String(id)) || {};
+    const task = {
+      ...existing,
+      ...Object.fromEntries(Object.entries(item).filter(([, value]) => value !== null && value !== undefined && value !== "")),
+      id: String(id),
+      source: Array.from(new Set([existing.source, source].filter(Boolean).join("+").split("+"))).join("+")
+    };
+    task.label = taskDisplayName(task);
+    tasks.set(task.id, task);
+  }
+
+  for (const item of workItems) {
+    addTask("workItems", item);
+  }
+  for (const item of activeWorkItems) {
+    addTask("active", item);
+  }
+
+  const result = Array.from(tasks.values()).map((task) => ({
+    ...task,
+    memory: summarizeTaskMemory(task, memorySummary)
+  }));
+
+  result.sort((a, b) => {
+    const statusOrder = { active: 0, blocked: 1, paused: 2, idle: 3, completed: 4, invalid: 5, unknown: 6 };
+    const byStatus = (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
+    if (byStatus !== 0) {
+      return byStatus;
+    }
+    return String(a.label || a.id).localeCompare(String(b.label || b.id), "zh-Hans-CN");
+  });
+  return result;
+}
+
 async function summarizeWorkspace(rootPath) {
   const absoluteRoot = path.resolve(rootPath);
   const aeDir = path.join(absoluteRoot, ".ae-sdd");
@@ -620,14 +934,22 @@ async function summarizeWorkspace(rootPath) {
   const stateStat = await safeStat(statePath);
   const runtimeEvents = await readRuntimeEvents(aeDir, 80);
   const runtimeSummary = summarizeRuntimeStats(runtimeEvents);
+  const memorySummary = await readMemorySummary(aeDir);
+  const workItems = await readWorkItems(absoluteRoot);
+  const activeWorkItems = deriveActiveWorkItems(state || {}, workItems);
+  const tasks = deriveTaskList(workItems, activeWorkItems, memorySummary);
   const timestamps = [
     ...collectStateTimestamps(state || {}),
     normalizeDate(runtimeSummary.lastEventAt),
+    normalizeDate(memorySummary.lastMemoryAt),
     stateStat ? normalizeDate(stateStat.mtime.toISOString()) : null
   ];
   const lastActivityAt = newestDate(timestamps);
   const projectKey = config.value.projectKey || state?.projectKey || path.basename(absoluteRoot);
-  const status = deriveStatus({ state, hasState, errors, lastActivityAt, runtimeSummary });
+  const derivedStatus = deriveStatus({ state, hasState, errors, lastActivityAt, runtimeSummary });
+  const status = memorySummary.status === "blocked" && !["invalid", "completed"].includes(derivedStatus)
+    ? "blocked"
+    : derivedStatus;
   const progress = phaseProgress(state || {});
   const rootWorkItem = resolveWorkItemIdentity(
     state || {},
@@ -650,6 +972,7 @@ async function summarizeWorkspace(rootPath) {
     workItemName: rootWorkItem.workItemName,
     workItemKey: rootWorkItem.workItemKey,
     activeAgentCount: Array.isArray(state?.activeAgents) ? state.activeAgents.length : 0,
+    taskCount: tasks.length,
     status,
     lastActivityAt,
     hasAeDir,
@@ -659,6 +982,15 @@ async function summarizeWorkspace(rootPath) {
     configPath: config.path,
     runtimeEventCount: runtimeSummary.count,
     runtimeFailureCount: runtimeSummary.failures,
+    memoryStatus: memorySummary.status,
+    memoryTotal: memorySummary.total,
+    memoryProjectCount: memorySummary.projectMemoryCount,
+    memoryTaskCount: memorySummary.taskMemoryCount,
+    memoryActiveScopeCount: memorySummary.activeScopeCount,
+    memoryBlockedScopeCount: memorySummary.blockedScopeCount,
+    memoryLastAt: memorySummary.lastMemoryAt,
+    memory: compactMemorySummary(memorySummary),
+    tasks,
     progress,
     phaseTimeline: phaseTimeline(state || {}),
     errors
@@ -766,6 +1098,9 @@ async function readWorkItems(rootPath) {
       currentStory: state.currentStory || null,
       currentTask: state.currentTask || null,
       activeAgentCount: Array.isArray(state.activeAgents) ? state.activeAgents.length : 0,
+      history: Array.isArray(state.history) ? state.history : [],
+      events: Array.isArray(state.events) ? state.events : [],
+      state,
       status: deriveStatus({
         state,
         hasState: result.ok,
@@ -792,8 +1127,10 @@ async function loadWorkspaceDetail(rootPath) {
   const state = stateResult.value || {};
   const runtimeEvents = await readRuntimeEvents(aeDir, 180);
   const runtimeStats = summarizeRuntimeStats(runtimeEvents);
+  const memorySummary = await readMemorySummary(aeDir);
   const workItems = await readWorkItems(absoluteRoot);
   const activeWorkItems = deriveActiveWorkItems(state, workItems);
+  const tasks = deriveTaskList(workItems, activeWorkItems, memorySummary);
   const history = Array.isArray(state.history) ? state.history : [];
   const events = Array.isArray(state.events) ? state.events : [];
 
@@ -804,6 +1141,8 @@ async function loadWorkspaceDetail(rootPath) {
     events,
     workItems,
     activeWorkItems,
+    tasks,
+    memory: compactMemorySummary(memorySummary),
     phaseTimeline: phaseTimeline(state),
     runtimeStats,
     loadedAt: new Date().toISOString()

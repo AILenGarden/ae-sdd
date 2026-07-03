@@ -253,9 +253,9 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 ### 设计
 
-phase-aware 的 5 层持久化记忆，在关联节点（RA/design/coding-plan/coding/review）强制执行 enter→write→exit 生命周期，提供跨 session 上下文连续性。记忆是 compact context index，不是日志/报告；写入质量门禁防止 LLM 把猜测或长段过程写成记忆——L1+ 每条记忆必须有证据（文件路径:行号/报告路径/用户确认/工具结果），无证据只能留 L0。
+phase-aware 的分区持久化记忆，在关联节点（RA/design/coding-plan/coding/review）强制执行 enter→write→exit 生命周期，提供跨 session 上下文连续性。Agent-facing 主分区只有两个：`task`（任务级，默认写入，映射 L1）与 `project`（项目级，跨任务复用，映射 L2）。记忆是 compact context index，不是日志/报告；写入质量门禁防止 LLM 把猜测或长段过程写成记忆——task/project 每条记忆必须有证据（文件路径:行号/报告路径/用户确认/工具结果），无证据只能留 scratch。
 
-5 层架构：L0 会话草稿（session 后可删）/ L1 Story 级记忆 / L2 项目级记忆 / L3 跨项目 pattern / L4 冷归档（postmortem/ADR）。冲突处理：新证据与记忆冲突时写 `kind=conflict`，禁止静默覆盖。
+底层仍保留 5 层存储：scratch/L0 会话草稿（session 后可删）/ task/L1 Story 级记忆 / project/L2 项目级记忆 / pattern/L3 跨项目 pattern / archive/L4 冷归档（postmortem/ADR）。冲突处理：新证据与记忆冲突时写 `kind=conflict`，禁止静默覆盖。
 
 ### 实现
 
@@ -267,10 +267,11 @@ phase-aware 的 5 层持久化记忆，在关联节点（RA/design/coding-plan/c
 | state 切相前自动校验 | `memory_gate.py:check_state_transition()`（行51），`ae-sdd state write --phase` 调用，未完成 enter→write 则阻断 |
 | 校验结果格式化 | `memory_gate.py:format_transition_block()`（行107） |
 | 存储格式 | JSONL，`memory_store.py:_jsonl_path()`（行109）/ `_append_jsonl()`（行131） |
-| compact 写入校验 | `memory_store.py:_validate_compact_memory()`：L1<=180 字符、L2<=140、L3<=120；L1+ 强制 evidence；L2/L3 禁 `kind=observation`；拒绝多行/代码块/长证据 |
-| CLI 入口 | `ae-sdd memory enter / write / exit / read / search / promote / summarize`（`tools/bin/ae-sdd` 行2845起 memory 子命令组） |
+| scope→layer 映射 | `memory_store.py:MEMORY_SCOPE_TO_LAYER`：scratch→L0、task→L1、project→L2、pattern→L3、archive→L4；`--layer` 仅作兼容参数 |
+| compact 写入校验 | `memory_store.py:_validate_compact_memory()`：task<=180 字符、project<=140、pattern<=120；task/project 强制 evidence；project/pattern 禁 `kind=observation`；拒绝多行/代码块/长证据 |
+| CLI 入口 | `ae-sdd memory write/read/search --scope task|project`；`memory promote --from-scope task --to-scope project`；兼容 `--layer L1/L2` |
 
-**颗粒度与边界**：仅 5 个关联节点强制触发；kind 字段：decision/constraint/finding/issue/risk/fix/conflict/observation；L4 只读为主，禁止整体注入上下文。UserPromptSubmit 仅注入 active scope 下的非 L0 compact memory，L0 enter/exit/scratch 不参与上下文注入。
+**颗粒度与边界**：仅 5 个关联节点强制触发；kind 字段：decision/constraint/finding/issue/risk/fix/conflict/observation；任务之间不互读 task memory，跨任务复用必须进入 project memory；archive 只读为主，禁止整体注入上下文。UserPromptSubmit 仅注入 active scope 下的 task/project compact memory，且 task 优先、project 只补充剩余预算。
 
 ---
 
@@ -581,17 +582,21 @@ dist/ae-sdd/
 
 ### 设计
 
-ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父目录下发现多个 ae-sdd 工作区，并集中查看每个工作区的当前 phase、派生状态、最近活动、工作项和 Runtime Stats。它服务的是“监管运行状态”和“快速定位异常/暂停/完成态”，不改变 ae-sdd 主流程。
+ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父目录下发现多个 ae-sdd 工作区，并集中查看每个工作区的当前 phase、派生状态、最近活动、工作项、Memory 状态和 Runtime Stats。它服务的是“监管运行状态”和“快速定位异常/暂停/完成态”，不改变 ae-sdd 主流程。
 
 核心立场：
 
 - **只读投影**：Monitor 不写 `.ae-sdd/`、不写 `.auto-engineering/`、不执行 gate，不把 UI 状态反写为 ae-sdd 状态。
 - **主设计优先**：phase、scale、entry node、门禁语义和 Runtime Stats 含义以本文档其它章节与实现架构文档为准，Monitor 只能跟随展示。
 - **多工作区入口**：用户选择父目录，Monitor 扫描其中所有包含 `.ae-sdd/` 的工作区；左侧列表用于选择，右侧详情用于观察。
+- **两级导航/看板**：左侧必须分项目与任务两级且项目可折叠，点击项目切项目级看板，点击任务切任务级看板，点击折叠控件只展开/收起任务；右侧顶部必须同时体现当前项目与当前任务。
 - **结束态也可观察**：`completed`、`paused`、`idle`、`invalid` 等状态都必须可展示，不能只服务正在运行的工作区。
 - **多活跃任务可见**：Monitor 必须同时展示根 state、activeAgents 和 `.auto-engineering/{WORKITEM-KEY}` 中的活跃/未完成工作项，不能压缩成单个 activeWorkItem。
+- **Memory 状态可见**：Monitor 必须展示 `.ae-sdd/memory` 的项目级/任务级 memory 数量、最近记录、活跃 scope 与阻断 scope，不能只看 phase/state。
 - **阶段轴可见**：时间线必须展示完整 phase 链和当前节点说明，即使 state history/events 为空也能判断工作区处于哪个节点。
-- **体验连续性**：目录选择必须有即时反馈；重启后必须恢复上次父目录和选中工作区；类 Mac 窗口三点必须是真实窗口控制。
+- **响应式观察**：默认通过文件系统事件监听 `.ae-sdd/` 与 `.auto-engineering/` 变化并静默刷新当前项目/任务；低频轮询只作为兜底；自动刷新仍然只读，不执行 gate 或 memory 命令。
+- **动效连续性**：项目/任务折叠、项目/任务切换、Tab 切换、按钮按压和响应式刷新状态提示可以使用轻量 iOS 风格动效，但动效只能表达 UI 反馈，不得暗示 ae-sdd 状态被写入或 gate 被执行；必须支持系统 reduced-motion 降级。
+- **体验连续性**：目录选择必须有即时反馈；重启后必须恢复上次父目录、选中工作区和选中任务；类 Mac 窗口三点必须是真实窗口控制。
 
 ### 实现
 
@@ -601,9 +606,11 @@ ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父
 | 应用位置 | `apps/ae-sdd-monitor/` |
 | 扫描入口 | `apps/ae-sdd-monitor/src/workspace.js:scanForWorkspaces()` |
 | 状态读取 | `.ae-sdd/state.json`、`.auto-engineering/{WORKITEM-KEY}/state.json`；展示 `workItemId/workItemName/workItemKey`，字段缺失时从 `{ID}--{name}` 目录名回退推导 |
+| Memory 读取 | `.ae-sdd/memory/**/*.jsonl`、`.ae-sdd/memory/.stage/*.json`；展示项目/任务 memory、活跃 scope 与阻断 scope |
 | 性能读取 | `.ae-sdd/runtime-stats/*.jsonl` |
-| 展示结构 | 左侧工作区列表 + 右侧总览/阶段轴与事件流/活跃任务与工作项/性能/原始状态 |
-| 偏好保存 | Electron userData `preferences.json`，保存父目录、选中工作区和主题 |
+| 展示结构 | 左侧可折叠项目/任务两级列表 + 右侧当前项目/当前任务两级看板 + 总览/阶段轴与事件流/Memory/活跃任务与工作项/性能/原始状态 |
+| UI 动效 | `src/styles.css` 与 `src/renderer.js` 只实现本地交互反馈、折叠过渡、Tab/detail 过渡和 reduced-motion 降级；响应式刷新不得让看板闪烁，不改变 ae-sdd 项目文件 |
+| 偏好保存 | Electron userData `preferences.json`，保存父目录、选中工作区、选中任务、项目折叠状态、自动刷新开关和主题 |
 | 发包目标 | Windows setup exe/zip + macOS dmg/zip |
 | 同步闭环 | `source/standards/update-graph.json:UG-22` |
 

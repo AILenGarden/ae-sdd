@@ -16,7 +16,7 @@ Every associated node must execute this sequence:
 ```bash
 ae-sdd memory enter --phase <phase> --story <STORY-ID>
 # run the Skill work
-ae-sdd memory write --phase <phase> --story <STORY-ID> --kind <kind> --summary "<one compact atomic fact>" --evidence <file:line>
+ae-sdd memory write --scope task --phase <phase> --story <STORY-ID> --kind <kind> --summary "<one compact atomic fact>" --evidence <file:line>
 ae-sdd memory exit --phase <phase> --story <STORY-ID>
 ```
 
@@ -38,7 +38,20 @@ matching `memory enter` and later `memory write`.
 | CodingSkill.Execute | `coding` | read coding-plan/coding memory | write compile/test/runtime findings and fixes |
 | coding-report / code-review | `review` | read coding/review memory | write defects, residual risks, reusable lessons |
 
-## 4. Layers
+## 4. Partitions and Layers
+
+Agent-facing memory has two primary partitions:
+
+| Scope | Legacy Layer | Content | Default Storage |
+|---|---|---|---|
+| task | L1 | phase decisions for a Story or Task | `.ae-sdd/memory/story/{story}/...` |
+| project | L2 | reusable project constraints and lessons | `.ae-sdd/memory/project/*.jsonl` |
+
+Default write target is `--scope task`. `--scope project` is only for facts that
+remain true across tasks. Task memory must not be read by unrelated tasks; cross
+task reuse must happen through project memory.
+
+Auxiliary layers remain available for lifecycle management:
 
 | Layer | Name | Content | Default Storage |
 |---|---|---|---|
@@ -68,18 +81,18 @@ If new evidence conflicts with existing memory:
 
 ## 7. Minimum Memory Content
 
-Memory is a compact context index, not a process log. Each L1+ memory write is
+Memory is a compact context index, not a process log. Each task/project memory write is
 one atomic fact that can change a later Agent decision.
 
 Hard compact budgets:
 
-| Layer | Summary budget | Evidence |
-|---|---:|---|
-| L0 | <= 240 chars | optional |
-| L1 | <= 180 chars | 1-3 short references required |
-| L2 | <= 140 chars | 1-3 short references required |
-| L3 | <= 120 chars | 1-3 short references required plus changelog/user approval |
-| L4 | <= 180 chars | references required for non-scratch entries |
+| Scope | Legacy Layer | Summary budget | Evidence |
+|---|---|---:|---|
+| scratch | L0 | <= 240 chars | optional |
+| task | L1 | <= 180 chars | 1-3 short references required |
+| project | L2 | <= 140 chars | 1-3 short references required |
+| pattern | L3 | <= 120 chars | 1-3 short references required plus changelog/user approval |
+| archive | L4 | <= 180 chars | references required for non-scratch entries |
 
 Write rules:
 
@@ -90,8 +103,8 @@ Write rules:
 - Evidence is a pointer such as `file:line`, report path, test name, command
   summary, DB result id, Git commit, or user confirmation. Do not paste source
   text or output into memory.
-- L2/L3 entries must not use `kind=observation`; promote only reusable facts.
-- If a fact is useful only during the current tool call, keep it in L0.
+- Project/pattern entries must not use `kind=observation`; promote only reusable facts.
+- If a fact is useful only during the current tool call, keep it in scratch.
 
 Each memory write should include:
 

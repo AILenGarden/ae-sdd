@@ -2,14 +2,30 @@ const state = {
   rootPath: "",
   workspaces: [],
   selectedRoot: "",
+  selectedTaskId: "",
+  collapsedRoots: [],
   detail: null,
   filter: "all",
   query: "",
   tab: "overview",
   loading: false,
+  autoRefresh: true,
+  realtimeRefreshing: false,
+  reactiveRefreshing: false,
+  lastFullRefreshAt: 0,
+  workspaceSignature: "",
+  detailSignature: "",
+  watchedRootPath: "",
+  pendingDetailMotion: "",
   loadingMessage: "",
   preferencesLoaded: false
 };
+
+const DETAIL_REFRESH_MS = 30000;
+const FULL_SCAN_REFRESH_MS = 120000;
+const REACTIVE_REFRESH_DELAY_MS = 180;
+let refreshTimer = null;
+let reactiveRefreshTimer = null;
 
 const statusLabels = {
   active: "活跃",
@@ -21,9 +37,20 @@ const statusLabels = {
   unknown: "未知"
 };
 
+const memoryStatusLabels = {
+  active: "Memory 活跃",
+  ready: "Memory 就绪",
+  empty: "Memory 空",
+  missing: "Memory 缺失",
+  blocked: "Memory 阻断",
+  invalid: "Memory 异常",
+  unknown: "Memory 未知"
+};
+
 const tabs = [
   ["overview", "总览"],
   ["timeline", "时间线"],
+  ["memory", "Memory"],
   ["workitems", "工作项"],
   ["performance", "性能"],
   ["raw", "原始状态"]
@@ -52,6 +79,43 @@ function workItemCaption(item) {
 
 function workItemLabel(item) {
   return item?.workItemKey || item?.id || item?.activeWorkItem || "";
+}
+
+function taskLabel(task) {
+  return task?.label || task?.workItemName || task?.workItemKey || task?.currentTask || task?.currentStory || task?.id || "";
+}
+
+function selectedTask(detail = state.detail) {
+  if (!detail || !state.selectedTaskId) {
+    return null;
+  }
+  return (detail.tasks || []).find((task) => task.id === state.selectedTaskId) || null;
+}
+
+function tasksForWorkspace(workspace) {
+  if (state.detail?.summary?.rootPath === workspace.rootPath) {
+    return state.detail.tasks || [];
+  }
+  return workspace.tasks || [];
+}
+
+function isProjectCollapsed(rootPath) {
+  return state.collapsedRoots.includes(rootPath);
+}
+
+function setProjectCollapsed(rootPath, collapsed) {
+  const next = new Set(state.collapsedRoots);
+  if (collapsed) {
+    next.add(rootPath);
+  } else {
+    next.delete(rootPath);
+  }
+  state.collapsedRoots = Array.from(next);
+}
+
+function memoryLabel(memory) {
+  const status = memory?.status || "unknown";
+  return memoryStatusLabels[status] || status;
 }
 
 function timeAgo(value) {
@@ -109,6 +173,38 @@ function renderScanStatus() {
   }
   status.textContent = state.loadingMessage;
   status.classList.toggle("busy", state.loading);
+  status.classList.toggle("live", !state.loading && state.autoRefresh && /响应|实时/.test(state.loadingMessage));
+}
+
+function signatureOf(value) {
+  return JSON.stringify(value || null);
+}
+
+function queueDetailMotion(kind = "drill") {
+  state.pendingDetailMotion = kind;
+}
+
+function consumeDetailMotion() {
+  const detail = $("detail");
+  if (!detail || !state.pendingDetailMotion) {
+    return;
+  }
+  const className = `motion-${state.pendingDetailMotion}`;
+  detail.classList.remove("motion-drill", "motion-tab");
+  void detail.offsetWidth;
+  detail.classList.add(className);
+  state.pendingDetailMotion = "";
+  window.setTimeout(() => detail.classList.remove(className), 520);
+}
+
+function renderAutoRefreshButton() {
+  const button = $("autoRefreshButton");
+  if (!button) {
+    return;
+  }
+  button.classList.toggle("active", state.autoRefresh);
+  button.textContent = state.autoRefresh ? "响应" : "手动";
+  button.title = state.autoRefresh ? "响应式刷新已开启" : "响应式刷新已关闭";
 }
 
 function workspaceCounts() {
@@ -157,7 +253,18 @@ function filteredWorkspaces() {
       workspace.activeWorkItem,
       workspace.workItemId,
       workspace.workItemName,
-      workspace.workItemKey
+      workspace.workItemKey,
+      workspace.memoryStatus,
+      ...(workspace.tasks || []).flatMap((task) => [
+        task.id,
+        task.label,
+        task.workItemId,
+        task.workItemName,
+        task.workItemKey,
+        task.currentStory,
+        task.currentTask,
+        task.memory?.status
+      ])
     ]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(query));
@@ -174,30 +281,70 @@ function renderSidebar() {
 
   $("workspaceList").innerHTML = list
     .map((workspace) => {
-      const selected = workspace.rootPath === state.selectedRoot ? " selected" : "";
+      const tasks = tasksForWorkspace(workspace);
+      const collapsed = isProjectCollapsed(workspace.rootPath);
+      const projectSelected = workspace.rootPath === state.selectedRoot && !state.selectedTaskId ? " selected" : "";
+      const projectCurrent = workspace.rootPath === state.selectedRoot ? " current-project" : "";
       return `
-        <button class="workspace-item status-${escapeHtml(workspace.status)}${selected}" data-root="${escapeHtml(workspace.rootPath)}">
-          <span class="status-dot"></span>
-          <span class="workspace-main">
-            <span class="workspace-title">
-              <strong>${escapeHtml(workspace.name)}</strong>
-              <span>${escapeHtml(statusLabels[workspace.status] || workspace.status)}</span>
-            </span>
-            <span class="muted-line">${escapeHtml(workspace.phase)} · ${escapeHtml(timeAgo(workspace.lastActivityAt))}</span>
-            <span class="path-line">${escapeHtml(shortPath(workspace.rootPath))}</span>
-          </span>
-        </button>`;
+        <div class="project-group${projectCurrent}">
+          <div class="project-row">
+            <button class="collapse-button${collapsed ? " collapsed" : ""}" data-root="${escapeHtml(workspace.rootPath)}" title="${collapsed ? "展开任务" : "收起任务"}" aria-label="${collapsed ? "展开任务" : "收起任务"}">
+              ${tasks.length ? "›" : ""}
+            </button>
+            <button class="workspace-item status-${escapeHtml(workspace.status)}${projectSelected}" data-root="${escapeHtml(workspace.rootPath)}">
+              <span class="status-dot"></span>
+              <span class="workspace-main">
+                <span class="workspace-title">
+                  <strong>${escapeHtml(workspace.name)}</strong>
+                  <span>${escapeHtml(statusLabels[workspace.status] || workspace.status)}</span>
+                </span>
+                <span class="muted-line">${escapeHtml(workspace.phase)} · ${escapeHtml(timeAgo(workspace.lastActivityAt))}</span>
+                <span class="muted-line">${escapeHtml(memoryLabel(workspace.memory))} · ${escapeHtml(tasks.length)} 任务</span>
+                <span class="path-line">${escapeHtml(shortPath(workspace.rootPath))}</span>
+              </span>
+            </button>
+          </div>
+          ${tasks.length ? `
+            <div class="task-tree-shell${collapsed ? " collapsed" : ""}">
+              <div class="task-tree">
+              ${tasks
+                .map((task) => {
+                  const selected = workspace.rootPath === state.selectedRoot && task.id === state.selectedTaskId ? " selected" : "";
+                  return `
+                    <button class="task-item status-${escapeHtml(task.status || "unknown")}${selected}" data-root="${escapeHtml(workspace.rootPath)}" data-task-id="${escapeHtml(task.id)}">
+                      <span class="tree-line"></span>
+                      <span class="status-dot"></span>
+                      <span class="task-main">
+                        <span class="task-title">
+                          <strong>${escapeHtml(taskLabel(task))}</strong>
+                          <span>${escapeHtml(statusLabels[task.status] || task.status || "未知")}</span>
+                        </span>
+                        <span class="muted-line">${escapeHtml([task.phase, memoryLabel(task.memory)].filter(Boolean).join(" · "))}</span>
+                      </span>
+                    </button>`;
+                })
+                .join("")}
+              </div>
+            </div>` : ""}
+        </div>`;
     })
     .join("");
 
   for (const item of document.querySelectorAll(".workspace-item")) {
-    item.addEventListener("click", () => selectWorkspace(item.dataset.root));
+    item.addEventListener("click", () => selectWorkspace(item.dataset.root, { taskId: "" }));
+  }
+  for (const item of document.querySelectorAll(".collapse-button")) {
+    item.addEventListener("click", () => toggleProjectCollapsed(item.dataset.root));
+  }
+  for (const item of document.querySelectorAll(".task-item")) {
+    item.addEventListener("click", () => selectTask(item.dataset.root, item.dataset.taskId));
   }
 }
 
 function renderRoot() {
   $("rootPath").textContent = state.rootPath || "未选择目录";
   $("refreshButton").disabled = !state.rootPath || state.loading;
+  renderAutoRefreshButton();
 }
 
 function renderDetail() {
@@ -213,80 +360,139 @@ function renderDetail() {
   }
 
   const summary = detail.summary;
+  const task = selectedTask(detail);
   $("detail").innerHTML = `
     <div class="workspace-head">
       <div>
         <h1>${escapeHtml(summary.name)}</h1>
-        <div class="workspace-path">${escapeHtml(summary.rootPath)}</div>
+        <div class="workspace-path">${escapeHtml(task ? `${summary.rootPath} · ${taskLabel(task)}` : summary.rootPath)}</div>
       </div>
       <div class="head-actions">
         <button id="openWorkspaceButton" class="button">打开目录</button>
       </div>
     </div>
-    ${renderMetrics(summary, detail)}
+    ${renderContextBoard(summary, detail, task)}
+    ${renderMetrics(summary, detail, task)}
     <div class="tabs">
       ${tabs
         .map(([key, label]) => `<button class="tab${state.tab === key ? " active" : ""}" data-tab="${key}">${label}</button>`)
         .join("")}
     </div>
-    <div id="tabContent">${renderTabContent(state.tab, detail)}</div>`;
+    <div id="tabContent">${renderTabContent(state.tab, detail, task)}</div>`;
 
   $("openWorkspaceButton").addEventListener("click", () => window.monitorApi.openPath(summary.rootPath));
+  $("projectContextButton")?.addEventListener("click", () => selectWorkspace(summary.rootPath, { taskId: "" }));
   for (const tab of document.querySelectorAll(".tab")) {
     tab.addEventListener("click", () => {
       state.tab = tab.dataset.tab;
+      queueDetailMotion("tab");
       renderDetail();
     });
   }
+  consumeDetailMotion();
 }
 
-function renderMetrics(summary, detail) {
-  const progress = summary.progress || {};
-  const fill = Math.max(0, Math.min(100, Number(progress.percent || 0)));
-  const activeWorkItem = workItemCaption(summary) || workItemLabel(summary) || summary.currentStory || summary.currentTask;
+function renderContextBoard(summary, detail, task) {
+  const projectMemory = detail.memory || summary.memory || {};
   return `
-    <div class="summary-grid">
-      <div class="metric">
-        <div class="metric-label">状态</div>
-        <div class="metric-value">${escapeHtml(statusLabels[summary.status] || summary.status)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">阶段</div>
-        <div class="metric-value">${escapeHtml(summary.phase)}</div>
-        <div class="progress-track"><div class="progress-fill" style="width:${fill}%"></div></div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">活跃任务</div>
-        <div class="metric-value">${escapeHtml(detail.activeWorkItems?.length || summary.activeAgentCount || 0)}</div>
-        <div class="muted-line">${escapeHtml(valueOrDash(activeWorkItem))}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">最近活动</div>
-        <div class="metric-value">${escapeHtml(timeAgo(summary.lastActivityAt))}</div>
-        <div class="muted-line">${escapeHtml(detail.runtimeStats.count)} 条运行记录</div>
+    <div class="context-board">
+      <button class="context-card project-card${task ? "" : " selected"}" id="projectContextButton">
+        <span class="context-kicker">当前项目</span>
+        <strong>${escapeHtml(summary.name)}</strong>
+        <span>${escapeHtml([summary.phase, statusLabels[summary.status] || summary.status].filter(Boolean).join(" · "))}</span>
+        <span>${escapeHtml(memoryLabel(projectMemory))} · ${escapeHtml(detail.tasks?.length || 0)} 任务</span>
+      </button>
+      <div class="context-card task-card${task ? " selected" : ""}">
+        <span class="context-kicker">当前任务</span>
+        ${task
+          ? `
+            <strong>${escapeHtml(taskLabel(task))}</strong>
+            <span>${escapeHtml([task.phase, statusLabels[task.status] || task.status].filter(Boolean).join(" · "))}</span>
+            <span>${escapeHtml(memoryLabel(task.memory))} · ${escapeHtml(task.memory?.memoryEntries || 0)} 条记忆</span>`
+          : `
+            <strong>未选择任务</strong>
+            <span>右侧显示项目级看板</span>
+            <span>${escapeHtml(detail.activeWorkItems?.length || 0)} 个活跃任务</span>`}
       </div>
     </div>`;
 }
 
-function renderTabContent(tab, detail) {
+function renderMetrics(summary, detail, task = null) {
+  const progress = (task?.progress || summary.progress) || {};
+  const fill = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  const memory = task?.memory || detail.memory || summary.memory || {};
+  const activeWorkItem = task ? taskLabel(task) : workItemCaption(summary) || workItemLabel(summary) || summary.currentStory || summary.currentTask;
+  const status = task?.status || summary.status;
+  const phase = task?.phase || summary.phase;
+  const recentAt = task ? task.lastActivityAt || task.memory?.lastMemoryAt : summary.lastActivityAt;
+  return `
+    <div class="summary-grid">
+      <div class="metric">
+        <div class="metric-label">状态</div>
+        <div class="metric-value">${escapeHtml(statusLabels[status] || status)}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">阶段</div>
+        <div class="metric-value">${escapeHtml(phase)}</div>
+        <div class="progress-track"><div class="progress-fill" style="width:${fill}%"></div></div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Memory</div>
+        <div class="metric-value">${escapeHtml(memoryLabel(memory))}</div>
+        <div class="muted-line">${escapeHtml(memory.memoryEntries || 0)} 条 · ${escapeHtml(memory.activeScopeCount || 0)} 活跃 scope</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">最近活动</div>
+        <div class="metric-value">${escapeHtml(timeAgo(recentAt))}</div>
+        <div class="muted-line">${escapeHtml(valueOrDash(activeWorkItem))}</div>
+      </div>
+    </div>`;
+}
+
+function renderTabContent(tab, detail, task = null) {
   switch (tab) {
     case "timeline":
-      return renderTimeline(detail);
+      return renderTimeline(detail, task);
+    case "memory":
+      return renderMemory(detail, task);
     case "workitems":
       return renderWorkItems(detail);
     case "performance":
       return renderPerformance(detail);
     case "raw":
-      return `<pre class="code">${escapeHtml(JSON.stringify(detail.state, null, 2))}</pre>`;
+      return `<pre class="code">${escapeHtml(JSON.stringify(task?.state || detail.state, null, 2))}</pre>`;
     case "overview":
     default:
-      return renderOverview(detail);
+      return renderOverview(detail, task);
   }
 }
 
-function renderOverview(detail) {
+function renderOverview(detail, task = null) {
   const summary = detail.summary;
   const errors = summary.errors || [];
+  const taskPanel = task
+    ? `
+      <div class="panel active-panel">
+        <div class="panel-header">
+          <strong>任务摘要</strong>
+          <span>${escapeHtml(statusLabels[task.status] || task.status || "未知")}</span>
+        </div>
+        <div class="panel-body">
+          <div class="kv-grid">
+            ${kv("taskId", task.id)}
+            ${kv("workItemId", task.workItemId)}
+            ${kv("workItemName", task.workItemName)}
+            ${kv("workItemKey", task.workItemKey)}
+            ${kv("phase", task.phase)}
+            ${kv("currentStory", task.currentStory)}
+            ${kv("currentTask", task.currentTask)}
+            ${kv("statePath", task.statePath)}
+            ${kv("memory", memoryLabel(task.memory))}
+            ${kv("lastActivityAt", task.lastActivityAt)}
+          </div>
+        </div>
+      </div>`
+    : "";
   return `
     <div class="panel">
       <div class="panel-header">
@@ -307,6 +513,9 @@ function renderOverview(detail) {
           ${kv("workItemName", summary.workItemName)}
           ${kv("workItemKey", summary.workItemKey)}
           ${kv("activeAgents", summary.activeAgentCount)}
+          ${kv("taskCount", detail.tasks?.length || 0)}
+          ${kv("memory", memoryLabel(detail.memory || summary.memory))}
+          ${kv("memoryLastAt", detail.memory?.lastMemoryAt || summary.memoryLastAt)}
           ${kv("statePath", summary.statePath)}
           ${kv("configPath", summary.configPath)}
           ${kv("lastActivityAt", summary.lastActivityAt)}
@@ -314,7 +523,8 @@ function renderOverview(detail) {
         ${errors.length ? `<div class="error" style="margin-top:14px">${errors.map(escapeHtml).join("<br>")}</div>` : ""}
       </div>
     </div>
-    ${detail.activeWorkItems?.length ? renderActiveWorkItems(detail.activeWorkItems, "overview") : ""}`;
+    ${taskPanel}
+    ${!task && detail.activeWorkItems?.length ? renderActiveWorkItems(detail.activeWorkItems, "overview") : ""}`;
 }
 
 function kv(label, value) {
@@ -359,16 +569,18 @@ function renderActiveWorkItems(items, context = "workitems") {
     </div>`;
 }
 
-function renderTimeline(detail) {
+function renderTimeline(detail, task = null) {
+  const source = task || detail.summary;
+  const timelineSource = task || detail;
   const items = [];
-  for (const item of detail.history || []) {
+  for (const item of timelineSource.history || []) {
     items.push({
       title: item.phase || item.event || "history",
       time: item.timestamp || item.ts,
       meta: item.by ? `by ${item.by}` : "history"
     });
   }
-  for (const item of detail.events || []) {
+  for (const item of timelineSource.events || []) {
     items.push({
       title: item.event || item.node || "event",
       time: item.ts || item.timestamp,
@@ -380,7 +592,7 @@ function renderTimeline(detail) {
 
   if (!items.length) {
     items.push({
-      title: detail.summary.phase,
+      title: source.phase,
       time: detail.loadedAt,
       meta: "current"
     });
@@ -390,11 +602,11 @@ function renderTimeline(detail) {
     <div class="panel">
       <div class="panel-header">
         <strong>阶段轴</strong>
-        <span>${escapeHtml(detail.phaseTimeline?.scale || valueOrDash(detail.summary.scale))} · ${escapeHtml(detail.summary.phase)}</span>
+        <span>${escapeHtml((task?.phaseTimeline || detail.phaseTimeline)?.scale || valueOrDash(source.scale))} · ${escapeHtml(source.phase)}</span>
       </div>
       <div class="panel-body">
         <div class="phase-axis">
-          ${(detail.phaseTimeline?.nodes || [])
+          ${((task?.phaseTimeline || detail.phaseTimeline)?.nodes || [])
             .map(
               (node) => `
                 <div class="phase-node ${escapeHtml(node.status)}">
@@ -432,6 +644,181 @@ function renderTimeline(detail) {
         </div>
       </div>
     </div>`;
+}
+
+function renderMemory(detail, task = null) {
+  const memory = task?.memory || detail.memory || {};
+  const title = task ? `任务 Memory · ${taskLabel(task)}` : "项目 Memory";
+  return `
+    <div class="panel">
+      <div class="panel-header">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(memoryLabel(memory))}</span>
+      </div>
+      <div class="panel-body">
+        <div class="kv-grid">
+          ${kv("status", memoryLabel(memory))}
+          ${kv("root", memory.root)}
+          ${kv("total", memory.total)}
+          ${kv("memoryEntries", memory.memoryEntries)}
+          ${kv("projectMemory", memory.projectMemoryCount)}
+          ${kv("taskMemory", memory.taskMemoryCount)}
+          ${kv("activeScopes", memory.activeScopeCount)}
+          ${kv("blockedScopes", memory.blockedScopeCount)}
+          ${kv("lastMemoryAt", memory.lastMemoryAt)}
+        </div>
+      </div>
+    </div>
+    ${renderMemoryScopes(memory)}
+    ${renderMemoryRecent(memory)}`;
+}
+
+function renderMemoryScopes(memory) {
+  const scopes = [...(memory.blockedScopes || []), ...(memory.activeScopes || [])];
+  if (!scopes.length) {
+    return `<div class="panel active-panel"><div class="empty-row">没有活跃或阻断的 memory scope</div></div>`;
+  }
+  return `
+    <div class="panel active-panel">
+      <div class="panel-header">
+        <strong>Memory Scope</strong>
+        <span>${escapeHtml(scopes.length)} 个</span>
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>scope</th>
+            <th>状态</th>
+            <th>phase</th>
+            <th>story/task</th>
+            <th>最近活动</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${scopes
+            .map((scope) => `
+              <tr>
+                <td>${escapeHtml(scope.id)}</td>
+                <td>${escapeHtml(scope.needsWrite ? "需写入" : "活跃")}</td>
+                <td>${escapeHtml(valueOrDash(scope.phase))}</td>
+                <td>${escapeHtml([scope.story, scope.task].filter(Boolean).join(" / ") || "-")}</td>
+                <td>${escapeHtml(timeAgo(scope.lastActivityAt))}</td>
+              </tr>`)
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function renderMemoryRecent(memory) {
+  const recent = memory.recent || [];
+  if (!recent.length) {
+    return `<div class="panel active-panel"><div class="empty-row">未发现 memory 记录</div></div>`;
+  }
+  return `
+    <div class="panel active-panel">
+      <div class="panel-header">
+        <strong>最近 Memory</strong>
+        <span>${escapeHtml(recent.length)} 条</span>
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>层级</th>
+            <th>类型</th>
+            <th>摘要</th>
+            <th>证据</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${recent
+            .map((item) => `
+              <tr>
+                <td>${escapeHtml(timeAgo(item.timestamp))}</td>
+                <td>${escapeHtml(item.memoryScope || item.layer || item.type || "-")}</td>
+                <td>${escapeHtml(item.kind || item.type || "-")}</td>
+                <td>${escapeHtml(item.summary || item.note || item.reason || "-")}</td>
+                <td>${escapeHtml((item.evidence || []).join(" / ") || shortPath(item.path || ""))}</td>
+              </tr>`)
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function savePreferences() {
+  await window.monitorApi.savePreferences({
+    rootPath: state.rootPath,
+    selectedRoot: state.selectedRoot,
+    selectedTaskId: state.selectedTaskId,
+    collapsedRoots: state.collapsedRoots,
+    autoRefresh: state.autoRefresh,
+    theme: document.body.classList.contains("dark") ? "dark" : "light"
+  });
+}
+
+async function startReactiveWatch(rootPath = state.rootPath) {
+  if (!state.autoRefresh || !rootPath || !window.monitorApi.watchWorkspaces) {
+    return;
+  }
+  if (state.watchedRootPath === rootPath) {
+    return;
+  }
+  try {
+    const result = await window.monitorApi.watchWorkspaces(rootPath);
+    state.watchedRootPath = result?.rootPath || rootPath;
+  } catch {
+    state.watchedRootPath = "";
+    setStatus("响应式监听不可用，使用兜底刷新");
+  }
+}
+
+async function stopReactiveWatch() {
+  state.watchedRootPath = "";
+  if (window.monitorApi.unwatchWorkspaces) {
+    await window.monitorApi.unwatchWorkspaces();
+  }
+}
+
+function scheduleReactiveRefresh(payload = {}) {
+  if (!state.autoRefresh || !state.rootPath) {
+    return;
+  }
+  if (payload.rootPath && payload.rootPath !== state.rootPath) {
+    return;
+  }
+  if (reactiveRefreshTimer) {
+    clearTimeout(reactiveRefreshTimer);
+  }
+  reactiveRefreshTimer = setTimeout(() => {
+    reactiveRefreshTimer = null;
+    refreshReactive();
+  }, REACTIVE_REFRESH_DELAY_MS);
+}
+
+async function refreshReactive() {
+  if (!state.autoRefresh || state.loading || state.reactiveRefreshing || !state.rootPath) {
+    return false;
+  }
+  state.reactiveRefreshing = true;
+  try {
+    return await scan(state.rootPath, {
+      silent: true,
+      reactive: true,
+      preferredSelectedRoot: state.selectedRoot,
+      preferredSelectedTaskId: state.selectedTaskId
+    });
+  } finally {
+    state.reactiveRefreshing = false;
+  }
+}
+
+function bindReactiveEvents() {
+  if (!window.monitorApi.onWorkspaceFilesChanged) {
+    return;
+  }
+  window.monitorApi.onWorkspaceFilesChanged(scheduleReactiveRefresh);
 }
 
 function renderWorkItems(detail) {
@@ -541,65 +928,216 @@ async function chooseDirectory() {
 
 async function scan(rootPath = state.rootPath, options = {}) {
   if (!rootPath) {
-    return;
+    return false;
   }
-  setLoading(true);
-  setStatus("扫描中...");
+  const silent = Boolean(options.silent);
+  if (!silent) {
+    setLoading(true);
+    setStatus("扫描中...");
+  }
   renderRoot();
   try {
     const result = await window.monitorApi.scanWorkspaces(rootPath);
     const previousSelected = options.preferredSelectedRoot || state.selectedRoot;
+    const previousTask = options.preferredSelectedTaskId ?? state.selectedTaskId;
+    const nextWorkspaceSignature = signatureOf(result.workspaces);
+    const workspaceChanged = nextWorkspaceSignature !== state.workspaceSignature;
     state.rootPath = result.rootPath;
     state.workspaces = result.workspaces;
+    state.workspaceSignature = nextWorkspaceSignature;
+    const roots = new Set(state.workspaces.map((workspace) => workspace.rootPath));
+    state.collapsedRoots = state.collapsedRoots.filter((root) => roots.has(root));
     state.selectedRoot = state.workspaces.some((workspace) => workspace.rootPath === previousSelected)
       ? previousSelected
       : state.workspaces[0]?.rootPath || "";
-    state.detail = null;
-    await window.monitorApi.savePreferences({
-      rootPath: state.rootPath,
-      selectedRoot: state.selectedRoot,
-      theme: document.body.classList.contains("dark") ? "dark" : "light"
-    });
+    state.lastFullRefreshAt = Date.now();
+    if (!silent) {
+      state.detail = null;
+      await savePreferences();
+      await startReactiveWatch(state.rootPath);
+    }
     renderRoot();
-    renderSidebar();
+    if (!silent || workspaceChanged) {
+      renderSidebar();
+    }
+    let detailChanged = false;
     if (state.selectedRoot) {
-      await selectWorkspace(state.selectedRoot);
+      detailChanged = await selectWorkspace(state.selectedRoot, { taskId: previousTask, silent });
     } else {
+      state.selectedTaskId = "";
+      state.detail = null;
+      state.detailSignature = "";
       renderDetail();
     }
-    setStatus(`扫描完成 · ${state.workspaces.length} 个工作区`);
+    if (!silent || workspaceChanged || detailChanged) {
+      setStatus(`${silent ? "响应式更新" : "扫描完成"} · ${state.workspaces.length} 个工作区`);
+    }
+    return workspaceChanged || detailChanged;
   } catch (error) {
-    $("detail").innerHTML = `<div class="empty-state"><div class="empty-mark error">error</div><h1>扫描失败</h1><p>${escapeHtml(error.message)}</p></div>`;
-    setStatus("扫描失败");
+    if (!silent) {
+      $("detail").innerHTML = `<div class="empty-state"><div class="empty-mark error">error</div><h1>扫描失败</h1><p>${escapeHtml(error.message)}</p></div>`;
+    }
+    setStatus(silent ? "响应式更新失败" : "扫描失败");
+    return false;
   } finally {
-    setLoading(false);
+    if (!silent) {
+      setLoading(false);
+    }
     renderRoot();
   }
 }
 
-async function selectWorkspace(rootPath) {
+async function selectWorkspace(rootPath, options = {}) {
+  if (!rootPath) {
+    return false;
+  }
+  const silent = Boolean(options.silent);
+  const nextTaskId = options.taskId ?? (rootPath === state.selectedRoot ? state.selectedTaskId : "");
+  state.selectedRoot = rootPath;
+  state.selectedTaskId = nextTaskId || "";
+  if (!silent) {
+    queueDetailMotion("drill");
+  }
+  if (!silent) {
+    state.detail = null;
+    state.detailSignature = "";
+    renderSidebar();
+    renderDetail();
+  }
+  try {
+    const nextDetail = await window.monitorApi.loadWorkspaceDetail(rootPath);
+    state.detail = nextDetail;
+    if (state.selectedTaskId && !(state.detail.tasks || []).some((task) => task.id === state.selectedTaskId)) {
+      state.selectedTaskId = "";
+    }
+    const nextDetailSignature = signatureOf({
+      rootPath,
+      selectedTaskId: state.selectedTaskId,
+      detail: state.detail
+    });
+    const detailChanged = nextDetailSignature !== state.detailSignature;
+    state.detailSignature = nextDetailSignature;
+    if (!silent) {
+      await savePreferences();
+    }
+    if (!silent || detailChanged) {
+      renderSidebar();
+      renderDetail();
+    }
+    return detailChanged;
+  } catch (error) {
+    if (!silent) {
+      $("detail").innerHTML = `<div class="empty-state"><div class="empty-mark error">error</div><h1>加载失败</h1><p>${escapeHtml(error.message)}</p></div>`;
+    }
+    return false;
+  }
+}
+
+async function selectTask(rootPath, taskId) {
+  if (!rootPath || !taskId) {
+    return;
+  }
+  setProjectCollapsed(rootPath, false);
+  if (rootPath !== state.selectedRoot || !state.detail) {
+    await selectWorkspace(rootPath, { taskId });
+    return;
+  }
+  state.selectedTaskId = taskId;
+  await savePreferences();
+  if (state.detail) {
+    state.detailSignature = signatureOf({
+      rootPath,
+      selectedTaskId: state.selectedTaskId,
+      detail: state.detail
+    });
+  }
+  queueDetailMotion("drill");
+  renderSidebar();
+  renderDetail();
+}
+
+async function toggleProjectCollapsed(rootPath) {
   if (!rootPath) {
     return;
   }
-  state.selectedRoot = rootPath;
-  state.detail = null;
+  setProjectCollapsed(rootPath, !isProjectCollapsed(rootPath));
+  await savePreferences();
   renderSidebar();
-  renderDetail();
+}
+
+async function refreshRealtime() {
+  if (!state.autoRefresh || state.loading || state.realtimeRefreshing || !state.rootPath) {
+    return false;
+  }
+  state.realtimeRefreshing = true;
   try {
-    state.detail = await window.monitorApi.loadWorkspaceDetail(rootPath);
-    await window.monitorApi.savePreferences({
-      rootPath: state.rootPath,
-      selectedRoot: rootPath,
-      theme: document.body.classList.contains("dark") ? "dark" : "light"
-    });
-    renderSidebar();
-    renderDetail();
-  } catch (error) {
-    $("detail").innerHTML = `<div class="empty-state"><div class="empty-mark error">error</div><h1>加载失败</h1><p>${escapeHtml(error.message)}</p></div>`;
+    const shouldFullScan = !state.lastFullRefreshAt || Date.now() - state.lastFullRefreshAt >= FULL_SCAN_REFRESH_MS;
+    if (shouldFullScan) {
+      return await scan(state.rootPath, {
+        silent: true,
+        preferredSelectedRoot: state.selectedRoot,
+        preferredSelectedTaskId: state.selectedTaskId
+      });
+    } else if (state.selectedRoot) {
+      const changed = await selectWorkspace(state.selectedRoot, { taskId: state.selectedTaskId, silent: true });
+      if (changed) {
+        setStatus(`兜底刷新 · ${new Date().toLocaleTimeString("zh-CN")}`);
+      }
+      return changed;
+    }
+    return false;
+  } finally {
+    state.realtimeRefreshing = false;
   }
 }
 
+function bindPressFeedback() {
+  const selector = [
+    ".button",
+    ".icon-button",
+    ".filter",
+    ".workspace-item",
+    ".task-item",
+    ".tab",
+    ".context-card",
+    ".collapse-button",
+    ".traffic-button"
+  ].join(",");
+
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target.closest(selector);
+    if (!target || target.disabled) {
+      return;
+    }
+
+    target.classList.remove("pressing");
+    void target.offsetWidth;
+    target.classList.add("pressing");
+    window.setTimeout(() => target.classList.remove("pressing"), 240);
+
+    const rect = target.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height) * 1.45;
+    const ripple = document.createElement("span");
+    ripple.className = "tap-highlight";
+    ripple.style.width = `${size}px`;
+    ripple.style.height = `${size}px`;
+    ripple.style.left = `${event.clientX - rect.left}px`;
+    ripple.style.top = `${event.clientY - rect.top}px`;
+    target.appendChild(ripple);
+    ripple.addEventListener("animationend", () => ripple.remove(), { once: true });
+  });
+}
+
+function startRealtimeRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+  }
+  refreshTimer = setInterval(refreshRealtime, DETAIL_REFRESH_MS);
+}
+
 function bindEvents() {
+  bindPressFeedback();
+  bindReactiveEvents();
   $("chooseButton").addEventListener("click", chooseDirectory);
   $("refreshButton").addEventListener("click", () => scan());
   $("searchInput").addEventListener("input", (event) => {
@@ -607,12 +1145,23 @@ function bindEvents() {
     renderSidebar();
   });
   $("themeButton").addEventListener("click", () => {
+    document.body.classList.add("theme-switching");
     document.body.classList.toggle("dark");
-    window.monitorApi.savePreferences({
-      rootPath: state.rootPath,
-      selectedRoot: state.selectedRoot,
-      theme: document.body.classList.contains("dark") ? "dark" : "light"
-    });
+    savePreferences();
+    window.setTimeout(() => document.body.classList.remove("theme-switching"), 420);
+  });
+  $("autoRefreshButton").addEventListener("click", async () => {
+    state.autoRefresh = !state.autoRefresh;
+    renderRoot();
+    savePreferences();
+    if (state.autoRefresh) {
+      setStatus("响应式刷新已开启");
+      await startReactiveWatch(state.rootPath);
+      refreshReactive();
+    } else {
+      setStatus("响应式刷新已关闭");
+      await stopReactiveWatch();
+    }
   });
   $("closeWindowButton").addEventListener("click", () => window.monitorApi.windowControl("close"));
   $("minimizeWindowButton").addEventListener("click", () => window.monitorApi.windowControl("minimize"));
@@ -630,15 +1179,24 @@ async function initialize() {
     if (preferences.theme === "dark") {
       document.body.classList.add("dark");
     }
+    state.autoRefresh = preferences.autoRefresh !== false;
+    state.selectedTaskId = preferences.selectedTaskId || "";
+    state.collapsedRoots = Array.isArray(preferences.collapsedRoots) ? preferences.collapsedRoots : [];
+    renderRoot();
     if (preferences.rootPath) {
       state.rootPath = preferences.rootPath;
       state.selectedRoot = preferences.selectedRoot || "";
       renderRoot();
-      await scan(preferences.rootPath, { preferredSelectedRoot: preferences.selectedRoot || "" });
+      await scan(preferences.rootPath, {
+        preferredSelectedRoot: preferences.selectedRoot || "",
+        preferredSelectedTaskId: preferences.selectedTaskId || ""
+      });
+      await startReactiveWatch(preferences.rootPath);
     }
   } catch (error) {
     setStatus("配置读取失败");
   }
+  startRealtimeRefresh();
 }
 
 initialize();

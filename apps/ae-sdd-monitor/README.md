@@ -5,12 +5,14 @@ Desktop monitor for local ae-sdd workspaces.
 ## What It Does
 
 - Select a parent directory and scan for all child workspaces containing `.ae-sdd/`.
-- Show each workspace on the left with project key, phase, derived status, and last activity.
-- Show the selected workspace on the right with state, phase axis, event stream, active work items, all work items, runtime stats, and raw state.
-- Read data locally from `.ae-sdd/state.json`, `.auto-engineering/{workItemKey}/state.json`, and `.ae-sdd/runtime-stats/*.jsonl`.
+- Show each workspace on the left as a collapsible project/task tree; clicking a project switches the project board, clicking a task switches the task board.
+- Show the selected project/task on the right with state, phase axis, event stream, Memory status, active work items, all work items, runtime stats, and raw state.
+- Read data locally from `.ae-sdd/state.json`, `.auto-engineering/{workItemKey}/state.json`, `.ae-sdd/memory/**/*.jsonl`, `.ae-sdd/memory/.stage/*.json`, and `.ae-sdd/runtime-stats/*.jsonl`.
 - Display work item identity as `workItemId`, `workItemName`, and `workItemKey`; state fields win, with `{ID}--{name}` directory names as a compatibility fallback.
-- Restore the last parent directory, selected workspace, and theme when the app opens again.
+- Responsive refresh by default: filesystem changes under `.ae-sdd/` and `.auto-engineering/` trigger quiet updates, with low-frequency polling only as a fallback.
+- Restore the last parent directory, selected workspace, selected task, collapsed project groups, auto-refresh setting, and theme when the app opens again.
 - Use real window controls in the Mac-style title bar.
+- Use iOS-style lightweight interaction motion for presses, collapses, tab/detail transitions, and card/list hover states, with reduced-motion support.
 
 The app is intentionally read-only. It does not mutate ae-sdd state or run gates.
 
@@ -24,7 +26,7 @@ It tracks the ae-sdd capability and implementation docs:
 - `source/docs/ae-sdd-implementation-architecture.md` for `.ae-sdd/`, `.auto-engineering/`, and Runtime Stats storage rules.
 - `source/standards/update-graph.json` rule `UG-22` for the machine-readable sync closure.
 
-When ae-sdd state, phase flow, Runtime Stats, or workspace storage contracts change, update `src/workspace.js`, `test/workspace.test.js`, this README, and the Monitor design doc together.
+When ae-sdd state, phase flow, Memory, Runtime Stats, or workspace storage contracts change, update `src/workspace.js`, `test/workspace.test.js`, this README, and the Monitor design doc together.
 
 ## Development
 

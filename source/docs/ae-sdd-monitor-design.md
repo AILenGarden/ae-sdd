@@ -15,6 +15,7 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 | ae-sdd 能力语义、阶段含义、门禁语义 | `source/docs/ae-sdd-design.md` | 跟随展示，不重新定义 |
 | 实现分层、状态文件、Runtime Stats 存储规则 | `source/docs/ae-sdd-implementation-architecture.md` | 跟随解析，不另建数据契约 |
 | 项目当前状态 | `.ae-sdd/state.json` 与 `.auto-engineering/{workItemKey}/state.json` | 只读解析，派生展示状态 |
+| Memory 状态 | `.ae-sdd/memory/**/*.jsonl` 与 `.ae-sdd/memory/.stage/*.json` | 只读聚合，展示项目/任务 memory 写入、活跃 scope 和阻断线索 |
 | 运行时观测数据 | `.ae-sdd/runtime-stats/*.jsonl` | 只读聚合，展示耗时/失败/最近事件 |
 | Gate 与硬判断 | `tools/bin/ae-sdd`、`tools/lib/gates.py`、CLI 输出 | 不执行，不裁决，只展示已有结果线索 |
 
@@ -31,18 +32,33 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 
 ## 4. 信息架构
 
-左侧是工作区列表，面向“快速定位”。每个条目展示：
+左侧是可折叠两级导航树，面向“快速定位”。一级是 ae-sdd 工作区/项目，二级是该项目下的任务/WorkItem。点击项目切换项目级看板；点击任务切换任务级看板；点击项目左侧展开/收起控件只折叠任务列表，不切换项目。项目条目展示：
 
 - 项目名或 `projectKey`。
 - 派生状态。
 - 当前 `phase`。
+- Memory 状态。
+- 任务数量。
 - 最近活动时间。
 - 工作区路径。
 
-右侧是选中工作区详情，面向“判断当前发生了什么”。详情页分为：
+任务条目展示：
 
-- 总览：状态、阶段、进度、当前 Story/Task、最近活动、配置和 state 文件位置。
-- 时间线：阶段轴 + `state.history` 与 `state.events` 的事件轨迹。阶段轴必须展示当前 scale 下完整 phase 链，并标出已完成、当前、暂停和待执行节点。
+- 任务名、`workItemKey` 或任务 ID。
+- 派生状态。
+- 当前 `phase`。
+- 任务级 Memory 状态。
+
+右侧是选中项目/任务详情，面向“判断当前发生了什么”。顶部必须先展示两级看板：
+
+- 当前项目：项目状态、项目 phase、项目 Memory、任务数。
+- 当前任务：选中任务状态、任务 phase、任务 Memory；未选中任务时显示项目级视图。
+
+详情页分为：
+
+- 总览：状态、阶段、进度、当前 Story/Task、Memory、最近活动、配置和 state 文件位置。
+- 时间线：项目或任务的阶段轴 + `state.history` 与 `state.events` 的事件轨迹。阶段轴必须展示当前 scale 下完整 phase 链，并标出已完成、当前、暂停和待执行节点。
+- Memory：项目级或任务级 Memory 汇总、最近记录、活跃 scope 与阻断 scope。
 - 工作项：活跃任务汇总 + `.auto-engineering/{workItemKey}/state.json` 全量列表。新状态机目录名为 `{ID}--{name}`，详情中必须展示 `workItemId`、`workItemName`、`workItemKey` 和根 state 镜像的 `activeStatePath`，避免只看到旧 `currentStory` 或不可读目录。
 - 性能：Runtime Stats 的命令数、失败数、耗时和最近事件。
 - 原始状态：当前 `.ae-sdd/state.json` 的只读 JSON 视图。
@@ -50,7 +66,9 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 交互要求：
 
 - 点击“选择目录”后必须立即显示反馈：打开选择器、扫描中、取消、扫描完成或扫描失败。
-- 重新打开应用时自动恢复上次选择的父目录，并优先选中上次打开的工作区。
+- 重新打开应用时自动恢复上次选择的父目录，并优先选中上次打开的工作区与任务。
+- 项目折叠/展开状态属于 UI 偏好，必须随父目录、选中项目、选中任务一起恢复。
+- 默认开启响应式刷新：主进程监听父目录下 `.ae-sdd/` 与 `.auto-engineering/` 的文件变化并通知 renderer 静默更新；低频轮询只作为 watcher 失效或漏事件的兜底；自动刷新只读文件，不执行 ae-sdd 命令，不写项目状态。
 - 顶部类 Mac 三点必须是真实窗口控制，分别对应关闭、最小化和最大化/还原；不得保留无功能装饰控件。
 - 应用窗口可拖拽，但按钮、搜索、Tab、列表项等交互区域不得被拖拽区域吞掉。
 
@@ -78,6 +96,24 @@ Monitor 的展示状态是派生值，不是 ae-sdd 的新增状态机字段。
 
 同一个任务从多个来源出现时，Monitor 必须合并展示来源，而不是重复多行或只保留第一项。
 
+Memory 状态是项目/任务看板的一等投影，来源包括：
+
+- `.ae-sdd/memory/project/*.jsonl`：项目级 L2 memory。
+- `.ae-sdd/memory/story/{story}/**/*.jsonl` 与 `.ae-sdd/memory/phase/*.jsonl`：任务/阶段 L1 memory。
+- `.ae-sdd/memory/session/*.jsonl`：L0 session 事件。
+- `.ae-sdd/memory/.stage/*.json`：`last_enter_at`、`last_write_at`、`last_exit_at` 生命周期状态。
+
+Memory 派生状态：
+
+| Memory 状态 | 条件 |
+| --- | --- |
+| `missing` | `.ae-sdd/memory/` 不存在 |
+| `invalid` | JSON/JSONL 读取或解析出现损坏记录 |
+| `blocked` | 存在 enter 后未 write 或 write 早于 enter 的 active scope |
+| `active` | 存在 enter 后未 exit 的 scope，且不阻断 |
+| `ready` | 有 memory 记录，但当前无活跃 scope |
+| `empty` | memory 目录存在但无记录 |
+
 ## 6. 数据读取
 
 | 数据 | 路径 | 读取方式 |
@@ -85,6 +121,7 @@ Monitor 的展示状态是派生值，不是 ae-sdd 的新增状态机字段。
 | 项目配置 | `.ae-sdd/config.yaml` / `.ae-sdd/config.yml` / `.ae-sdd/config.json` | 轻量 YAML/JSON 读取，只取展示字段 |
 | 活跃工作区状态 | `.ae-sdd/state.json` | JSON 读取，缺失时标记 `invalid` |
 | Work item 状态 | `.auto-engineering/{workItemKey}/state.json` | JSON 读取；state 内 `workItemId/workItemName/workItemKey` 优先，目录名 `{ID}--{name}` 作为兼容回退 |
+| Memory 状态 | `.ae-sdd/memory/**/*.jsonl` / `.ae-sdd/memory/.stage/*.json` | JSONL/JSON 只读聚合；按项目与任务分别汇总 |
 | Runtime Stats | `.ae-sdd/runtime-stats/*.jsonl` | 倒序读取最近事件，跳过不完整 JSONL 行 |
 
 所有读取都是本地只读。Monitor 不维护单独数据库；窗口刷新或重新扫描时重新读取文件系统。后续如果引入缓存，缓存只能服务 UI 性能，不得成为状态真相。
@@ -92,6 +129,13 @@ Monitor 的展示状态是派生值，不是 ae-sdd 的新增状态机字段。
 ## 7. UI 风格
 
 Monitor 采用黑白灰、圆角、类 Mac 的本地工具风格。视觉目标是“安静、可扫读、像状态面板”，不是营销页。
+
+动效约束：
+
+- 交互动效采用 iOS 风格的轻量弹性曲线：列表展开/收起、项目/任务切换、Tab 切换、按钮按压、卡片悬浮和实时刷新反馈都应有可感知但不抢注意力的过渡。
+- 动效只用于表达 UI 交互和只读刷新，不得暗示 ae-sdd 状态被写入或 gate 被执行。
+- 响应式刷新不能让当前看板闪烁；未变化的数据不得重渲染，变化数据应静默更新，状态栏只给轻量提示。
+- 必须支持 `prefers-reduced-motion` 降级；系统要求减少动态效果时，动画应接近关闭。
 
 设计约束：
 
@@ -110,6 +154,7 @@ Monitor 当前必须保持零写入：
 - 不修改 `.auto-engineering/`。
 - 不执行 `ae-sdd gates check` 或其它会改变状态的命令。
 - 不自动清理 Runtime Stats。
+- 不调用 `ae-sdd memory write/exit/promote`，不修改 `.ae-sdd/memory/`。
 - “打开目录”只调用系统 shell 打开路径，不改变项目内容。
 
 如果未来新增写入能力，必须先把能力写入本设计文档和实现架构文档，并新增明确的 gate/确认/审计策略；不能把写入能力混进“刷新”或“扫描”动作。
@@ -121,8 +166,9 @@ Monitor 必须时刻跟随 ae-sdd 主设计与实现架构，具体闭环由 `so
 需要同步 Monitor 的典型变更：
 
 - `ae-sdd-design.md` 改了状态机、阶段语义、门禁语义或用户可见流程。
-- `ae-sdd-implementation-architecture.md` 改了 `.ae-sdd/`、`.auto-engineering/` 或 Runtime Stats 存储约定。
+- `ae-sdd-implementation-architecture.md` 改了 `.ae-sdd/`、`.auto-engineering/`、Memory 或 Runtime Stats 存储约定。
 - `tools/lib/state.py` 改了 `PHASE_FLOWS`、`scale`、`entryNode` 或 state 字段。
+- `tools/lib/memory_store.py` 或 `tools/lib/memory_gate.py` 改了 memory 存储路径、JSONL 字段、`.stage` 生命周期语义或阻断条件。
 - `tools/lib/runtime_stats.py` 改了 JSONL 字段、脱敏策略或事件含义。
 - `tools/bin/ae-sdd` 改了会影响状态/性能诊断的命令输出契约。
 - `apps/ae-sdd-monitor/**` 改了解析、展示、打包或安装行为。
@@ -143,10 +189,10 @@ Monitor 必须时刻跟随 ae-sdd 主设计与实现架构，具体闭环由 `so
 - 安全桥接：`src/preload.js`。
 - 状态扫描与解析：`src/workspace.js`。
 - UI 渲染：`src/renderer.js`、`src/index.html`、`src/styles.css`。
-- 用户偏好：Electron `app.getPath("userData")/preferences.json`，保存父目录、选中工作区和主题。
+- 用户偏好：Electron `app.getPath("userData")/preferences.json`，保存父目录、选中工作区、选中任务、自动刷新开关和主题。
 - 单元测试：`test/workspace.test.js`。
 - Windows 打包：`scripts/package-win.ps1`，输出 setup exe 与 installable zip。
 - macOS 正式打包：`npm run dist:mac` / `scripts/package-mac.sh`，在 macOS 输出 dmg 与 zip。
 - macOS 未签名 app zip：`npm run dist:mac:unsigned` / `scripts/package-mac-unsigned.ps1`，可在 Windows/macOS 生成 `*-macos-*-unsigned.zip`，用于未签名试用或交给 macOS runner 后续签名。
 
-当前版本已支持父目录扫描、多工作区列表、详情页、Runtime Stats 汇总、原始状态查看、重启恢复上次目录、真实窗口控制、活跃任务汇总、阶段轴、Windows 安装包、macOS 未签名 zip、macOS 正式打包配置和只读打开目录。
+当前版本已支持父目录扫描、多工作区/任务两级侧边栏、项目/任务两级看板、Memory 状态投影、响应式自动刷新、iOS 风格轻量交互动效、详情页、Runtime Stats 汇总、原始状态查看、重启恢复上次目录/任务、真实窗口控制、活跃任务汇总、阶段轴、Windows 安装包、macOS 未签名 zip、macOS 正式打包配置和只读打开目录。

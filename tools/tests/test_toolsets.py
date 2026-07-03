@@ -79,13 +79,15 @@ class TestMemoryStore(unittest.TestCase):
         memory_store.write(
             scope,
             summary="Use existing repository pattern",
-            layer="L1",
+            memory_scope="task",
             kind="decision",
             evidence=["plan.md:12"],
             actor="test",
         )
-        result = memory_store.promote(scope, from_layer="L1", to_layer="L2", actor="test")
+        result = memory_store.promote(scope, from_memory_scope="task", to_memory_scope="project", actor="test")
         self.assertEqual(result["promoted"], 1)
+        self.assertEqual(result["fromScope"], "task")
+        self.assertEqual(result["toScope"], "project")
 
     def test_l1_memory_requires_evidence(self):
         scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
@@ -94,7 +96,7 @@ class TestMemoryStore(unittest.TestCase):
 
     def test_l0_memory_allows_scratch_without_evidence(self):
         scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        result = memory_store.write(scope, summary="Scratch note", layer="L0", actor="test")
+        result = memory_store.write(scope, summary="Scratch note", memory_scope="scratch", actor="test")
         self.assertTrue(result["written"])
 
     def test_memory_summary_length_is_enforced(self):
@@ -115,11 +117,44 @@ class TestMemoryStore(unittest.TestCase):
             memory_store.write(
                 scope,
                 summary="Project reusable fact",
-                layer="L2",
+                memory_scope="project",
                 kind="observation",
                 evidence=["coding.md:1"],
                 actor="test",
             )
+
+    def test_task_and_project_scope_are_independent_partitions(self):
+        scope = memory_store.locate_scope(project=str(self.tmp), phase="coding", story="STORY-001")
+        task_result = memory_store.write(
+            scope,
+            summary="Task-level fix stays isolated",
+            memory_scope="task",
+            kind="fix",
+            evidence=["src/Foo.java:1"],
+            actor="test",
+        )
+        project_result = memory_store.write(
+            scope,
+            summary="Project-wide rule uses BigDecimal",
+            memory_scope="project",
+            kind="constraint",
+            evidence=["standards.md:2"],
+            actor="test",
+        )
+
+        self.assertEqual(task_result["record"]["layer"], "L1")
+        self.assertEqual(task_result["record"]["memoryScope"], "task")
+        self.assertIn("story", task_result["path"])
+        self.assertEqual(project_result["record"]["layer"], "L2")
+        self.assertEqual(project_result["record"]["memoryScope"], "project")
+        self.assertIn("project", project_result["path"])
+
+        task_entries = memory_store.read(scope, memory_scope="task", limit=0)
+        project_entries = memory_store.read(scope, memory_scope="project", limit=0)
+        self.assertTrue(any(e.get("summary") == "Task-level fix stays isolated" for e in task_entries))
+        self.assertFalse(any(e.get("summary") == "Project-wide rule uses BigDecimal" for e in task_entries))
+        self.assertTrue(any(e.get("summary") == "Project-wide rule uses BigDecimal" for e in project_entries))
+        self.assertFalse(any(e.get("summary") == "Task-level fix stays isolated" for e in project_entries))
 
 
 class TestDbTool(unittest.TestCase):
