@@ -7,7 +7,8 @@ Desktop monitor for local ae-sdd workspaces.
 - Select a parent directory and scan for all child workspaces containing `.ae-sdd/`.
 - Show each workspace on the left with project key, phase, derived status, and last activity.
 - Show the selected workspace on the right with state, phase axis, event stream, active work items, all work items, runtime stats, and raw state.
-- Read data locally from `.ae-sdd/state.json`, `.auto-engineering/*/state.json`, and `.ae-sdd/runtime-stats/*.jsonl`.
+- Read data locally from `.ae-sdd/state.json`, `.auto-engineering/{workItemKey}/state.json`, and `.ae-sdd/runtime-stats/*.jsonl`.
+- Display work item identity as `workItemId`, `workItemName`, and `workItemKey`; state fields win, with `{ID}--{name}` directory names as a compatibility fallback.
 - Restore the last parent directory, selected workspace, and theme when the app opens again.
 - Use real window controls in the Mac-style title bar.
 

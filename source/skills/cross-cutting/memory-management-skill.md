@@ -6,10 +6,10 @@ source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md
-source_fallback_sha256: 0e4871940d9f5600ee85208e8207a1386fd312d06056288d16cc2aa4a75c7131
-source_original_bytes: 2974
-source_original_lines: 92
-source_semantic_inventory_sha256: bd19f177026e981fa2962da28be9fb42d97f43df495183efcb8a119fa107eb8c
+source_fallback_sha256: 03ac23650b6ac5ca9b7aa954b9eb21d2539f22af83d06c87654d01971ae08b50
+source_original_bytes: 5043
+source_original_lines: 132
+source_semantic_inventory_sha256: d8e56aac8b74bcc5d45a491a755a0a59fd80ee4e69c929b85a83fda12ea9e963
 source_slimmer: slim_source_skills.py@2
 ---
 
@@ -28,10 +28,10 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `skills/cross-cutting/memory-management-skill.md`
 - fallback: `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md`
-- fallback_sha256: `0e4871940d9f5600ee85208e8207a1386fd312d06056288d16cc2aa4a75c7131`
-- original_lines: 92
-- original_bytes: 2974
-- semantic_inventory_sha256: `bd19f177026e981fa2962da28be9fb42d97f43df495183efcb8a119fa107eb8c`
+- fallback_sha256: `03ac23650b6ac5ca9b7aa954b9eb21d2539f22af83d06c87654d01971ae08b50`
+- original_lines: 132
+- original_bytes: 5043
+- semantic_inventory_sha256: `d8e56aac8b74bcc5d45a491a755a0a59fd80ee4e69c929b85a83fda12ea9e963`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
 - summary: Phase-aware ae-sdd memory management. Mandatory for associated RA, design, CodingPlan, Coding, and Review nodes. Provides enter/write/exit/read/search/promote workflow and layered memory policy.
@@ -41,12 +41,12 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | category | evidence | design_refs | fallback_policy |
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
-| workflow_route | keyword_hits: 20 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | keyword_hits: 10 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
-| tool_command | headings: L2:81 6. CLI Contract; keyword_hits: 15 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 19 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
-| output_doc_contract | keyword_hits: 3 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
-| resource_reference | inline_refs: 2; refs: ae-sdd state write --phase <next>; memory-layering.md; keyword_hits: 3 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| workflow_route | keyword_hits: 23 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | keyword_hits: 15 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | headings: L2:121 6. CLI Contract; keyword_hits: 19 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | keyword_hits: 22 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | keyword_hits: 4 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 2; refs: ae-sdd state write --phase <next>; memory-layering.md; keyword_hits: 6 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | keyword_hits: 1 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
 
 ## Source Slimming SOP
@@ -66,8 +66,8 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | 2 | 36 | 2. Associated Nodes |
 | 2 | 46 | 3. Layers |
 | 2 | 58 | 4. Required Write Quality |
-| 2 | 72 | 5. Conflict Handling |
-| 2 | 81 | 6. CLI Contract |
+| 2 | 112 | 5. Conflict Handling |
+| 2 | 121 | 6. CLI Contract |
 
 ## Inline References
 

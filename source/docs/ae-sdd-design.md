@@ -253,7 +253,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 ### 设计
 
-phase-aware 的 5 层持久化记忆，在关联节点（RA/design/coding-plan/coding/review）强制执行 enter→write→exit 生命周期，提供跨 session 上下文连续性。写入质量门禁防止 LLM 把猜测写成记忆——L1+ 每条记忆必须有证据（文件路径:行号/报告路径/用户确认/工具结果），无证据只能留 L0。
+phase-aware 的 5 层持久化记忆，在关联节点（RA/design/coding-plan/coding/review）强制执行 enter→write→exit 生命周期，提供跨 session 上下文连续性。记忆是 compact context index，不是日志/报告；写入质量门禁防止 LLM 把猜测或长段过程写成记忆——L1+ 每条记忆必须有证据（文件路径:行号/报告路径/用户确认/工具结果），无证据只能留 L0。
 
 5 层架构：L0 会话草稿（session 后可删）/ L1 Story 级记忆 / L2 项目级记忆 / L3 跨项目 pattern / L4 冷归档（postmortem/ADR）。冲突处理：新证据与记忆冲突时写 `kind=conflict`，禁止静默覆盖。
 
@@ -267,9 +267,10 @@ phase-aware 的 5 层持久化记忆，在关联节点（RA/design/coding-plan/c
 | state 切相前自动校验 | `memory_gate.py:check_state_transition()`（行51），`ae-sdd state write --phase` 调用，未完成 enter→write 则阻断 |
 | 校验结果格式化 | `memory_gate.py:format_transition_block()`（行107） |
 | 存储格式 | JSONL，`memory_store.py:_jsonl_path()`（行109）/ `_append_jsonl()`（行131） |
+| compact 写入校验 | `memory_store.py:_validate_compact_memory()`：L1<=180 字符、L2<=140、L3<=120；L1+ 强制 evidence；L2/L3 禁 `kind=observation`；拒绝多行/代码块/长证据 |
 | CLI 入口 | `ae-sdd memory enter / write / exit / read / search / promote / summarize`（`tools/bin/ae-sdd` 行2845起 memory 子命令组） |
 
-**颗粒度与边界**：仅 5 个关联节点强制触发；kind 字段：decision/finding/issue/risk/fix/conflict/observation；L4 只读为主，禁止整体注入上下文。
+**颗粒度与边界**：仅 5 个关联节点强制触发；kind 字段：decision/constraint/finding/issue/risk/fix/conflict/observation；L4 只读为主，禁止整体注入上下文。UserPromptSubmit 仅注入 active scope 下的非 L0 compact memory，L0 enter/exit/scratch 不参与上下文注入。
 
 ---
 
@@ -418,7 +419,7 @@ lib 层 schema 已就绪且测试通过；一旦业务调用方接入，events �
 | 设计点 | 实现方式 |
 | --- | --- |
 | PreToolUse hook | `tools/lib/gate_intercept.py`：`PHASE_PERMIT` 字典按 phase 限定工具集；只读工具任何 phase 放行；`paused` phase 禁全部写操作；链式 Bash（含 `&&`/`\|\|`/`;`/`\|`）不认为只读；输出 `permissionDecision: "deny"` + `systemMessage`，exit 始终 0 |
-| UserPromptSubmit hook | `tools/lib/prompt_inject.py`：读 state 注入阶段上下文 + `/ae-sdd` 触发词强提醒（关卡1）+ 快速通道标记 + 重置 Stop hook 重试计数 + 母版版本漂移探测（行198起）+ 主流程监管器调用（`_run_flow_monitor()`，行242，见§16） |
+| UserPromptSubmit hook | `tools/lib/prompt_inject.py`：读 state 注入阶段上下文 + `/ae-sdd` 触发词强提醒（关卡1）+ 快速通道标记 + 重置 Stop hook 重试计数 + 母版版本漂移探测（行198起）+ 主流程监管器调用（`_run_flow_monitor()`，行242，见§16）+ active scope 下 compact memory 注入 |
 | Stop hook | `tools/lib/stop_check.py`：`.stop_retry_count` 持久化计数 MAX_RETRY=2；已废弃 `◆ STATE:`/`◆ LOADED:` 自报标记检测（行5/152注释自述"已由 flow_monitor 产物核查替代"）；补 `_check_compact_failure()` 检测卡住态 |
 | Hook 安装 | `ae-sdd init-hooks` 写三段配置到 `.claude/settings.json` |
 | 快速通道 | 用户说 `/ae-sdd-quick` → `.quick_channel` 写入 → PreToolUse 跳过 phase 工具拦截（产物落地关卡仍生效） |
@@ -588,7 +589,7 @@ ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父
 - **主设计优先**：phase、scale、entry node、门禁语义和 Runtime Stats 含义以本文档其它章节与实现架构文档为准，Monitor 只能跟随展示。
 - **多工作区入口**：用户选择父目录，Monitor 扫描其中所有包含 `.ae-sdd/` 的工作区；左侧列表用于选择，右侧详情用于观察。
 - **结束态也可观察**：`completed`、`paused`、`idle`、`invalid` 等状态都必须可展示，不能只服务正在运行的工作区。
-- **多活跃任务可见**：Monitor 必须同时展示根 state、activeAgents 和 `.auto-engineering/*` 中的活跃/未完成工作项，不能压缩成单个 activeWorkItem。
+- **多活跃任务可见**：Monitor 必须同时展示根 state、activeAgents 和 `.auto-engineering/{WORKITEM-KEY}` 中的活跃/未完成工作项，不能压缩成单个 activeWorkItem。
 - **阶段轴可见**：时间线必须展示完整 phase 链和当前节点说明，即使 state history/events 为空也能判断工作区处于哪个节点。
 - **体验连续性**：目录选择必须有即时反馈；重启后必须恢复上次父目录和选中工作区；类 Mac 窗口三点必须是真实窗口控制。
 
@@ -599,7 +600,7 @@ ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父
 | 独立设计文档 | [`source/docs/ae-sdd-monitor-design.md`](ae-sdd-monitor-design.md) |
 | 应用位置 | `apps/ae-sdd-monitor/` |
 | 扫描入口 | `apps/ae-sdd-monitor/src/workspace.js:scanForWorkspaces()` |
-| 状态读取 | `.ae-sdd/state.json`、`.auto-engineering/*/state.json` |
+| 状态读取 | `.ae-sdd/state.json`、`.auto-engineering/{WORKITEM-KEY}/state.json`；展示 `workItemId/workItemName/workItemKey`，字段缺失时从 `{ID}--{name}` 目录名回退推导 |
 | 性能读取 | `.ae-sdd/runtime-stats/*.jsonl` |
 | 展示结构 | 左侧工作区列表 + 右侧总览/阶段轴与事件流/活跃任务与工作项/性能/原始状态 |
 | 偏好保存 | Electron userData `preferences.json`，保存父目录、选中工作区和主题 |

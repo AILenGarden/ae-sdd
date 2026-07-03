@@ -14,7 +14,7 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 | --- | --- | --- |
 | ae-sdd 能力语义、阶段含义、门禁语义 | `source/docs/ae-sdd-design.md` | 跟随展示，不重新定义 |
 | 实现分层、状态文件、Runtime Stats 存储规则 | `source/docs/ae-sdd-implementation-architecture.md` | 跟随解析，不另建数据契约 |
-| 项目当前状态 | `.ae-sdd/state.json` 与 `.auto-engineering/*/state.json` | 只读解析，派生展示状态 |
+| 项目当前状态 | `.ae-sdd/state.json` 与 `.auto-engineering/{workItemKey}/state.json` | 只读解析，派生展示状态 |
 | 运行时观测数据 | `.ae-sdd/runtime-stats/*.jsonl` | 只读聚合，展示耗时/失败/最近事件 |
 | Gate 与硬判断 | `tools/bin/ae-sdd`、`tools/lib/gates.py`、CLI 输出 | 不执行，不裁决，只展示已有结果线索 |
 
@@ -43,7 +43,7 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 
 - 总览：状态、阶段、进度、当前 Story/Task、最近活动、配置和 state 文件位置。
 - 时间线：阶段轴 + `state.history` 与 `state.events` 的事件轨迹。阶段轴必须展示当前 scale 下完整 phase 链，并标出已完成、当前、暂停和待执行节点。
-- 工作项：活跃任务汇总 + `.auto-engineering/{workItemKey}/state.json` 全量列表。新状态机目录名为 `{ID}--{name}`，详情中必须展示 `workItemId`、`workItemName` 和 `workItemKey`，避免只看到旧 `currentStory` 或不可读目录。
+- 工作项：活跃任务汇总 + `.auto-engineering/{workItemKey}/state.json` 全量列表。新状态机目录名为 `{ID}--{name}`，详情中必须展示 `workItemId`、`workItemName`、`workItemKey` 和根 state 镜像的 `activeStatePath`，避免只看到旧 `currentStory` 或不可读目录。
 - 性能：Runtime Stats 的命令数、失败数、耗时和最近事件。
 - 原始状态：当前 `.ae-sdd/state.json` 的只读 JSON 视图。
 
@@ -74,7 +74,7 @@ Monitor 的展示状态是派生值，不是 ae-sdd 的新增状态机字段。
 
 - 根 state 的 `activeWorkItem`、`currentWorkItem`、`currentStory`、`currentTask`。
 - 根 state 的 `activeAgents[]`，按 `txnName`、`workItemId`、`taskId`、`storyId` 或 `agentId` 归并。
-- `.auto-engineering/*/state.json` 中未处于 `completed` 或 `invalid` 的工作项；优先使用 state 内的 `workItemKey` 作为展示 ID，并保留 `workItemId`/`workItemName` 作为辅助信息。
+- `.auto-engineering/{workItemKey}/state.json` 中未处于 `completed` 或 `invalid` 的工作项；优先使用 state 内的 `workItemKey` 作为展示 ID，并保留 `workItemId`/`workItemName` 作为辅助信息；当旧 state 缺少这些字段时，必须从目录名 `{ID}--{name}` 回退推导。
 
 同一个任务从多个来源出现时，Monitor 必须合并展示来源，而不是重复多行或只保留第一项。
 
@@ -84,7 +84,7 @@ Monitor 的展示状态是派生值，不是 ae-sdd 的新增状态机字段。
 | --- | --- | --- |
 | 项目配置 | `.ae-sdd/config.yaml` / `.ae-sdd/config.yml` / `.ae-sdd/config.json` | 轻量 YAML/JSON 读取，只取展示字段 |
 | 活跃工作区状态 | `.ae-sdd/state.json` | JSON 读取，缺失时标记 `invalid` |
-| Work item 状态 | `.auto-engineering/*/state.json` | JSON 读取，按目录名汇总 |
+| Work item 状态 | `.auto-engineering/{workItemKey}/state.json` | JSON 读取；state 内 `workItemId/workItemName/workItemKey` 优先，目录名 `{ID}--{name}` 作为兼容回退 |
 | Runtime Stats | `.ae-sdd/runtime-stats/*.jsonl` | 倒序读取最近事件，跳过不完整 JSONL 行 |
 
 所有读取都是本地只读。Monitor 不维护单独数据库；窗口刷新或重新扫描时重新读取文件系统。后续如果引入缓存，缓存只能服务 UI 性能，不得成为状态真相。

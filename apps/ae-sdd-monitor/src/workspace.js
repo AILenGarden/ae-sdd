@@ -468,16 +468,51 @@ function workspaceId(rootPath) {
   return Buffer.from(rootPath).toString("base64url");
 }
 
+function nameFromWorkItemKeySegment(value) {
+  const text = String(value || "").trim();
+  return text ? text.replace(/[-_]+/g, " ") : null;
+}
+
+function parseWorkItemKey(value) {
+  const key = String(value || "").trim();
+  if (!key) {
+    return { workItemId: null, workItemName: null, workItemKey: null };
+  }
+
+  const splitIndex = key.indexOf("--");
+  if (splitIndex > 0) {
+    return {
+      workItemId: key.slice(0, splitIndex).trim() || null,
+      workItemName: nameFromWorkItemKeySegment(key.slice(splitIndex + 2)),
+      workItemKey: key
+    };
+  }
+
+  return { workItemId: key, workItemName: null, workItemKey: key };
+}
+
+function resolveWorkItemIdentity(state = {}, fallbackKey = null) {
+  const parsed = parseWorkItemKey(state.workItemKey || fallbackKey);
+  return {
+    workItemId: state.workItemId || parsed.workItemId || null,
+    workItemName: state.workItemName || parsed.workItemName || null,
+    workItemKey: state.workItemKey || parsed.workItemKey || null
+  };
+}
+
 function compactActiveEntry(entry) {
   const id = entry.id || entry.workItemKey || entry.workItem || entry.txnName || entry.taskId || entry.storyId || entry.agentId;
   if (!id) {
     return null;
   }
+  const identity = resolveWorkItemIdentity(entry, entry.workItem || entry.workItemKey || null);
   return {
     id: String(id),
-    workItemId: entry.workItemId || null,
-    workItemName: entry.workItemName || entry.name || null,
-    workItemKey: entry.workItemKey || String(id),
+    workItemId: identity.workItemId,
+    workItemName: identity.workItemName || entry.name || null,
+    workItemKey: identity.workItemKey,
+    activeStatePath: entry.activeStatePath || null,
+    statePath: entry.statePath || null,
     source: entry.source || "state",
     status: entry.status || "active",
     phase: entry.phase || null,
@@ -511,13 +546,15 @@ function deriveActiveWorkItems(state, workItems = []) {
 
   for (const key of ["activeWorkItem", "currentWorkItem", "currentStory", "currentTask"]) {
     if (state?.[key]) {
+      const isWorkItemField = key === "activeWorkItem" || key === "currentWorkItem";
       addActiveEntry(activeMap, {
-        id: state[key],
+        id: state.workItemKey || state[key],
         workItemId: state.workItemId,
         workItemName: state.workItemName,
-        workItemKey: state.workItemKey,
+        workItemKey: state.workItemKey || (isWorkItemField ? state[key] : null),
+        activeStatePath: state.activeStatePath,
         source: key,
-        status: state.phase === "paused" ? "paused" : "active",
+        status: state.phase === "paused" ? "paused" : state.phase === "completed" ? "completed" : "active",
         phase: state.phase,
         lastActivityAt: newestDate(collectStateTimestamps(state))
       });
@@ -527,7 +564,7 @@ function deriveActiveWorkItems(state, workItems = []) {
   for (const agent of Array.isArray(state?.activeAgents) ? state.activeAgents : []) {
     addActiveEntry(activeMap, {
       ...agent,
-      id: agent.txnName || agent.workItemId || agent.taskId || agent.storyId || agent.agentId,
+      id: agent.workItemKey || agent.txnName || agent.workItemId || agent.taskId || agent.storyId || agent.agentId,
       source: "activeAgents",
       status: agent.status || "active"
     });
@@ -592,6 +629,10 @@ async function summarizeWorkspace(rootPath) {
   const projectKey = config.value.projectKey || state?.projectKey || path.basename(absoluteRoot);
   const status = deriveStatus({ state, hasState, errors, lastActivityAt, runtimeSummary });
   const progress = phaseProgress(state || {});
+  const rootWorkItem = resolveWorkItemIdentity(
+    state || {},
+    state?.activeWorkItem || state?.currentWorkItem || state?.workItemKey || null
+  );
 
   return {
     id: workspaceId(absoluteRoot),
@@ -603,10 +644,11 @@ async function summarizeWorkspace(rootPath) {
     entryNode: state?.entryNode || null,
     currentStory: state?.currentStory || null,
     currentTask: state?.currentTask || null,
-    activeWorkItem: state?.activeWorkItem || state?.currentWorkItem || state?.workItemKey || null,
-    workItemId: state?.workItemId || null,
-    workItemName: state?.workItemName || null,
-    workItemKey: state?.workItemKey || null,
+    activeWorkItem: state?.activeWorkItem || state?.currentWorkItem || rootWorkItem.workItemKey || null,
+    activeStatePath: state?.activeStatePath || null,
+    workItemId: rootWorkItem.workItemId,
+    workItemName: rootWorkItem.workItemName,
+    workItemKey: rootWorkItem.workItemKey,
     activeAgentCount: Array.isArray(state?.activeAgents) ? state.activeAgents.length : 0,
     status,
     lastActivityAt,
@@ -712,12 +754,12 @@ async function readWorkItems(rootPath) {
       stat ? normalizeDate(stat.mtime.toISOString()) : null
     ]);
     const progress = phaseProgress(state);
-    const workItemKey = state.workItemKey || entry.name;
+    const identity = resolveWorkItemIdentity(state, entry.name);
     items.push({
-      id: workItemKey,
-      workItemId: state.workItemId || null,
-      workItemName: state.workItemName || null,
-      workItemKey,
+      id: identity.workItemKey || entry.name,
+      workItemId: identity.workItemId,
+      workItemName: identity.workItemName,
+      workItemKey: identity.workItemKey || entry.name,
       statePath,
       phase: state.phase || "unknown",
       scale: state.scale || null,
@@ -770,6 +812,7 @@ async function loadWorkspaceDetail(rootPath) {
 
 module.exports = {
   PHASE_FLOWS,
+  parseWorkItemKey,
   parseYamlLite,
   summarizeWorkspace,
   scanForWorkspaces,

@@ -16,7 +16,7 @@ Every associated node must execute this sequence:
 ```bash
 ae-sdd memory enter --phase <phase> --story <STORY-ID>
 # run the Skill work
-ae-sdd memory write --phase <phase> --story <STORY-ID> --summary "..."
+ae-sdd memory write --phase <phase> --story <STORY-ID> --kind <kind> --summary "<one compact atomic fact>" --evidence <file:line>
 ae-sdd memory exit --phase <phase> --story <STORY-ID>
 ```
 
@@ -68,12 +68,37 @@ If new evidence conflicts with existing memory:
 
 ## 7. Minimum Memory Content
 
+Memory is a compact context index, not a process log. Each L1+ memory write is
+one atomic fact that can change a later Agent decision.
+
+Hard compact budgets:
+
+| Layer | Summary budget | Evidence |
+|---|---:|---|
+| L0 | <= 240 chars | optional |
+| L1 | <= 180 chars | 1-3 short references required |
+| L2 | <= 140 chars | 1-3 short references required |
+| L3 | <= 120 chars | 1-3 short references required plus changelog/user approval |
+| L4 | <= 180 chars | references required for non-scratch entries |
+
+Write rules:
+
+- One line only: no Markdown headings, bullet lists, code fences, stack traces,
+  copied command output, or multi-paragraph summaries.
+- One memory entry = one decision, constraint, finding, issue, risk, fix, or
+  conflict. Split unrelated facts into separate entries.
+- Evidence is a pointer such as `file:line`, report path, test name, command
+  summary, DB result id, Git commit, or user confirmation. Do not paste source
+  text or output into memory.
+- L2/L3 entries must not use `kind=observation`; promote only reusable facts.
+- If a fact is useful only during the current tool call, keep it in L0.
+
 Each memory write should include:
 
 - phase
 - story/task scope
 - summary
-- kind: decision, finding, issue, risk, fix, conflict, observation
+- kind: decision, constraint, finding, issue, risk, fix, conflict, observation
 - evidence references
 - timestamp and actor
 

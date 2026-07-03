@@ -126,18 +126,19 @@ def _inject_memory_block(ade_sdd: Path, phase: str, current_story: str) -> Optio
         )
         if not memory_store.is_scope_active(scope):
             return None
-        entries = memory_store.read(scope, include_project=True, limit=_MEMORY_INJECT_LIMIT)
-        memory_entries = [e for e in entries if e.get("type") == "memory"]
+        entries = memory_store.read(scope, include_project=True, limit=0)
+        memory_entries = [e for e in entries if e.get("type") == "memory" and e.get("layer") != "L0"]
+        memory_entries = memory_entries[-_MEMORY_INJECT_LIMIT:]
         if not memory_entries:
             return None
-        lines = [f"◆ MEMORY (recent decisions for {story or '<project>'}, phase={memory_phase})"]
+        lines = [f"MEMORY compact phase={memory_phase} story={story or '<project>'}"]
         for e in memory_entries:
             layer = e.get("layer", "L1")
             kind = e.get("kind", "observation")
             summary = e.get("summary", "")
             evidence = e.get("evidence") or []
-            ev_str = ", ".join(evidence) if evidence else "—"
-            lines.append(f"  [{layer}] {kind}: {summary}  (evidence: {ev_str})")
+            ev_str = ", ".join(evidence) if evidence else "-"
+            lines.append(f"- [{layer} {kind}] {summary} ev: {ev_str}")
         return "\n".join(lines)
     except Exception:
         return None

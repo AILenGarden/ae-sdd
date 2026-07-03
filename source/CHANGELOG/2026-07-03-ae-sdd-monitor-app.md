@@ -15,7 +15,8 @@
 - Added persistent UI preferences under Electron `userData/preferences.json` for the last parent directory, selected workspace, and theme.
 - Replaced decorative Mac-style dots with real window controls and hid the default Electron menu frame.
 - Extended workspace detail with a phase axis that shows the complete scale-specific phase chain and current node explanation.
-- Added active work item aggregation across root state fields, `activeAgents[]`, and unfinished `.auto-engineering/*/state.json` entries.
+- Added active work item aggregation across root state fields, `activeAgents[]`, and unfinished `.auto-engineering/{workItemKey}/state.json` entries.
+- Aligned Monitor work item projection with the current `workItemId` / `workItemName` / `workItemKey` design, including `{ID}--{name}` directory fallback and `activeStatePath` display.
 - Added macOS packaging configuration and `scripts/package-mac.sh` for dmg/zip builds on macOS.
 - Added `scripts/package-mac-unsigned.ps1` and `npm run dist:mac:unsigned` to generate unsigned macOS `.app.zip` artifacts from Windows/macOS.
 

@@ -76,9 +76,50 @@ class TestMemoryStore(unittest.TestCase):
 
     def test_promote_l1_to_l2(self):
         scope = memory_store.locate_scope(project=str(self.tmp), phase="coding-plan", story="STORY-001")
-        memory_store.write(scope, summary="Use existing repository pattern", layer="L1", actor="test")
+        memory_store.write(
+            scope,
+            summary="Use existing repository pattern",
+            layer="L1",
+            kind="decision",
+            evidence=["plan.md:12"],
+            actor="test",
+        )
         result = memory_store.promote(scope, from_layer="L1", to_layer="L2", actor="test")
         self.assertEqual(result["promoted"], 1)
+
+    def test_l1_memory_requires_evidence(self):
+        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
+        with self.assertRaisesRegex(ValueError, "requires --evidence"):
+            memory_store.write(scope, summary="Decision without evidence", layer="L1", actor="test")
+
+    def test_l0_memory_allows_scratch_without_evidence(self):
+        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
+        result = memory_store.write(scope, summary="Scratch note", layer="L0", actor="test")
+        self.assertTrue(result["written"])
+
+    def test_memory_summary_length_is_enforced(self):
+        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
+        with self.assertRaisesRegex(ValueError, "summary too long"):
+            memory_store.write(
+                scope,
+                summary="x" * 181,
+                layer="L1",
+                kind="decision",
+                evidence=["ra.md:1"],
+                actor="test",
+            )
+
+    def test_l2_observation_is_rejected(self):
+        scope = memory_store.locate_scope(project=str(self.tmp), phase="coding", story="STORY-001")
+        with self.assertRaisesRegex(ValueError, "kind=observation"):
+            memory_store.write(
+                scope,
+                summary="Project reusable fact",
+                layer="L2",
+                kind="observation",
+                evidence=["coding.md:1"],
+                actor="test",
+            )
 
 
 class TestDbTool(unittest.TestCase):

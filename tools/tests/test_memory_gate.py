@@ -185,7 +185,7 @@ def test_prompt_inject_no_memory_block_without_enter(tmp_path):
 
 
 def test_prompt_inject_injects_memory_after_enter(tmp_path):
-    """memory enter + write 后 prompt_inject 注入 ◆ MEMORY 块。"""
+    """memory enter + write 后 prompt_inject 注入 compact memory 块。"""
     _project(tmp_path, phase="coding", story="STORY-001")
     scope = memory_store.locate_scope(project=str(tmp_path), phase="coding", story="STORY-001")
     memory_store.enter(scope, actor="test")
@@ -196,10 +196,10 @@ def test_prompt_inject_injects_memory_after_enter(tmp_path):
     from lib.prompt_inject import _inject_memory_block
     block = _inject_memory_block(tmp_path / ".ae-sdd", "coding", "STORY-001")
     assert block is not None
-    assert "◆ MEMORY" in block
+    assert "MEMORY compact" in block
     assert "乐观锁" in block
     assert "src/Order.java:42" in block
-    assert "[L1]" in block
+    assert "[L1 decision]" in block
 
 
 def test_prompt_inject_no_memory_block_after_exit(tmp_path):
@@ -227,7 +227,10 @@ def test_prompt_inject_includes_l2_project_memory(tmp_path):
     _project(tmp_path, phase="coding", story="STORY-001")
     scope = memory_store.locate_scope(project=str(tmp_path), phase="coding", story="STORY-001")
     memory_store.enter(scope, actor="test")
-    memory_store.write(scope, summary="Story 决策", layer="L1", actor="test")
+    memory_store.write(
+        scope, summary="Story 决策", layer="L1",
+        kind="decision", evidence=["story.md:1"], actor="test",
+    )
     memory_store.write(
         scope, summary="项目所有金额用 BigDecimal", layer="L2", kind="finding",
         evidence=["conventions.md:23"], actor="test",
@@ -235,8 +238,31 @@ def test_prompt_inject_includes_l2_project_memory(tmp_path):
     from lib.prompt_inject import _inject_memory_block
     block = _inject_memory_block(tmp_path / ".ae-sdd", "coding", "STORY-001")
     assert block is not None
-    assert "[L2]" in block
+    assert "[L2 finding]" in block
     assert "BigDecimal" in block
+
+
+def test_prompt_inject_l0_events_do_not_squeeze_compact_memory(tmp_path):
+    """L0 enter/scratch events must not hide L1/L2 compact memory from injection."""
+    _project(tmp_path, phase="coding", story="STORY-001")
+    scope = memory_store.locate_scope(project=str(tmp_path), phase="coding", story="STORY-001")
+    memory_store.enter(scope, actor="test")
+    memory_store.write(
+        scope,
+        summary="UserMapper now filters by tenant_id",
+        layer="L1",
+        kind="fix",
+        evidence=["src/UserMapper.xml:31"],
+        actor="test",
+    )
+    for i in range(12):
+        memory_store.write(scope, summary=f"scratch {i}", layer="L0", actor="test")
+
+    from lib.prompt_inject import _inject_memory_block
+    block = _inject_memory_block(tmp_path / ".ae-sdd", "coding", "STORY-001")
+    assert block is not None
+    assert "UserMapper now filters by tenant_id" in block
+    assert "scratch" not in block
 
 
 # ─── 🆕 v3.8.2：存端兜底（gate_intercept 写源码未 enter 被拦） ──────────────

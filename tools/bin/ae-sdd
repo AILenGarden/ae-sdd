@@ -2162,7 +2162,8 @@ def cmd_memory_write(args, parser):
         result = memory_store.write(
             scope,
             summary=args.summary,
-            layer=args.layer,
+            layer=args.layer or None,
+            memory_scope=args.scope or None,
             kind=args.kind,
             evidence=evidence,
             actor=args.actor,
@@ -2192,7 +2193,17 @@ def cmd_memory_exit(args, parser):
 def cmd_memory_read(args, parser):
     try:
         scope = _memory_scope_from_args(args)
-        result = memory_store.read(scope, include_project=not args.no_project, limit=args.limit)
+        memory_scope = getattr(args, "scope", "") or ""
+        if memory_scope == "all":
+            memory_scope = ""
+        if memory_scope == "project" and args.no_project:
+            raise ValueError("--scope project conflicts with --no-project")
+        result = memory_store.read(
+            scope,
+            include_project=not args.no_project,
+            limit=args.limit,
+            memory_scope=memory_scope or None,
+        )
     except Exception as e:
         output.err(str(e))
         return 1
@@ -2203,7 +2214,15 @@ def cmd_memory_read(args, parser):
 def cmd_memory_search(args, parser):
     try:
         scope = _memory_scope_from_args(args)
-        result = memory_store.search(scope, query=args.query, limit=args.limit)
+        memory_scope = getattr(args, "scope", "") or ""
+        if memory_scope == "all":
+            memory_scope = ""
+        result = memory_store.search(
+            scope,
+            query=args.query,
+            limit=args.limit,
+            memory_scope=memory_scope or None,
+        )
     except Exception as e:
         output.err(str(e))
         return 1
@@ -2214,7 +2233,14 @@ def cmd_memory_search(args, parser):
 def cmd_memory_promote(args, parser):
     try:
         scope = _memory_scope_from_args(args)
-        result = memory_store.promote(scope, from_layer=args.from_layer, to_layer=args.to_layer, actor=args.actor)
+        result = memory_store.promote(
+            scope,
+            from_layer=args.from_layer or None,
+            to_layer=args.to_layer or None,
+            from_memory_scope=args.from_scope or None,
+            to_memory_scope=args.to_scope or None,
+            actor=args.actor,
+        )
     except Exception as e:
         output.err(str(e))
         return 1
@@ -3869,10 +3895,23 @@ def main() -> int:
 
     p_mem_write = mem_sub.add_parser("write", help="write phase memory", parents=[common])
     _memory_common(p_mem_write)
-    p_mem_write.add_argument("--summary", required=True, help="memory summary")
+    p_mem_write.add_argument(
+        "--summary",
+        required=True,
+        help="compact atomic memory summary (L1<=180 chars, L2<=140, L3<=120)",
+    )
     p_mem_write.add_argument("--layer", default="L1", help="L0/L1/L2/L3/L4")
-    p_mem_write.add_argument("--kind", default="observation", help="decision / finding / issue / observation")
-    p_mem_write.add_argument("--evidence", action="append", default=[], help="evidence reference")
+    p_mem_write.add_argument(
+        "--kind",
+        default="observation",
+        help="decision / constraint / finding / issue / risk / fix / conflict / observation",
+    )
+    p_mem_write.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="short evidence reference; required for L1+; max 3 refs for L1-L3",
+    )
     p_mem_write.add_argument("--tag", action="append", default=[], help="tag")
     p_mem_write.set_defaults(func=cmd_memory_write)
 

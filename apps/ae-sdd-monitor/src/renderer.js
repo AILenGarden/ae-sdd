@@ -46,6 +46,14 @@ function valueOrDash(value) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
 }
 
+function workItemCaption(item) {
+  return [item?.workItemId, item?.workItemName].filter(Boolean).join(" / ");
+}
+
+function workItemLabel(item) {
+  return item?.workItemKey || item?.id || item?.activeWorkItem || "";
+}
+
 function timeAgo(value) {
   if (!value) {
     return "-";
@@ -141,7 +149,16 @@ function filteredWorkspaces() {
     if (!query) {
       return true;
     }
-    return [workspace.name, workspace.projectKey, workspace.phase, workspace.rootPath]
+    return [
+      workspace.name,
+      workspace.projectKey,
+      workspace.phase,
+      workspace.rootPath,
+      workspace.activeWorkItem,
+      workspace.workItemId,
+      workspace.workItemName,
+      workspace.workItemKey
+    ]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(query));
   });
@@ -226,6 +243,7 @@ function renderDetail() {
 function renderMetrics(summary, detail) {
   const progress = summary.progress || {};
   const fill = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  const activeWorkItem = workItemCaption(summary) || workItemLabel(summary) || summary.currentStory || summary.currentTask;
   return `
     <div class="summary-grid">
       <div class="metric">
@@ -240,7 +258,7 @@ function renderMetrics(summary, detail) {
       <div class="metric">
         <div class="metric-label">活跃任务</div>
         <div class="metric-value">${escapeHtml(detail.activeWorkItems?.length || summary.activeAgentCount || 0)}</div>
-        <div class="muted-line">${escapeHtml(valueOrDash(summary.activeWorkItem || summary.currentStory || summary.currentTask))}</div>
+        <div class="muted-line">${escapeHtml(valueOrDash(activeWorkItem))}</div>
       </div>
       <div class="metric">
         <div class="metric-label">最近活动</div>
@@ -284,6 +302,10 @@ function renderOverview(detail) {
           ${kv("currentStory", summary.currentStory)}
           ${kv("currentTask", summary.currentTask)}
           ${kv("activeWorkItem", summary.activeWorkItem)}
+          ${kv("activeStatePath", summary.activeStatePath)}
+          ${kv("workItemId", summary.workItemId)}
+          ${kv("workItemName", summary.workItemName)}
+          ${kv("workItemKey", summary.workItemKey)}
           ${kv("activeAgents", summary.activeAgentCount)}
           ${kv("statePath", summary.statePath)}
           ${kv("configPath", summary.configPath)}
@@ -313,24 +335,25 @@ function renderActiveWorkItems(items, context = "workitems") {
       </div>
       <div class="active-list">
         ${items
-          .map(
-            (item) => `
+          .map((item) => {
+            const caption = workItemCaption(item);
+            return `
               <div class="active-item status-${escapeHtml(item.status || "unknown")}">
                 <span class="status-dot"></span>
                 <div class="active-main">
                   <div class="active-title">
-                    <strong>${escapeHtml(item.id)}</strong>
+                    <strong>${escapeHtml(workItemLabel(item) || item.id)}</strong>
                     <span>${escapeHtml(statusLabels[item.status] || item.status || "活跃")}</span>
                   </div>
-                  ${item.workItemName || item.workItemId ? `<div class="muted-line">${escapeHtml([item.workItemId, item.workItemName].filter(Boolean).join(" · "))}</div>` : ""}
+                  ${caption ? `<div class="muted-line">${escapeHtml(caption)}</div>` : ""}
                   <div class="muted-line">
                     ${escapeHtml([item.phase, item.source, item.skill, item.role, item.agentId].filter(Boolean).join(" · ") || "-")}
                   </div>
                   ${item.summary ? `<div class="path-line">${escapeHtml(item.summary)}</div>` : ""}
                 </div>
                 <div class="active-time">${escapeHtml(timeAgo(item.lastActivityAt))}</div>
-              </div>`
-          )
+              </div>`;
+          })
           .join("")}
       </div>
     </div>`;
@@ -436,20 +459,21 @@ function renderWorkItems(detail) {
         </thead>
         <tbody>
           ${detail.workItems
-            .map(
-              (item) => `
+            .map((item) => {
+              const caption = workItemCaption(item);
+              return `
                 <tr>
                   <td>
-                    <div>${escapeHtml(item.id)}</div>
-                    ${item.workItemName || item.workItemId ? `<div class="muted-line">${escapeHtml([item.workItemId, item.workItemName].filter(Boolean).join(" · "))}</div>` : ""}
+                    <div>${escapeHtml(workItemLabel(item) || item.id)}</div>
+                    ${caption ? `<div class="muted-line">${escapeHtml(caption)}</div>` : ""}
                   </td>
                   <td>${escapeHtml(statusLabels[item.status] || item.status)}</td>
                   <td>${escapeHtml(item.phase)}</td>
                   <td>${escapeHtml(`${item.progress.index > 0 ? item.progress.index : "-"} / ${item.progress.total}`)}</td>
                   <td>${escapeHtml(item.activeAgentCount || 0)}</td>
                   <td>${escapeHtml(timeAgo(item.lastActivityAt))}</td>
-                </tr>`
-            )
+                </tr>`;
+            })
             .join("")}
         </tbody>
       </table>

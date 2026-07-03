@@ -40,6 +40,42 @@ PHASE_ALIASES = {
 
 VALID_PHASES = {"ra", "design", "coding-plan", "coding", "review"}
 VALID_LAYERS = {"L0", "L1", "L2", "L3", "L4"}
+MEMORY_SCOPE_TO_LAYER = {
+    "scratch": "L0",
+    "task": "L1",
+    "project": "L2",
+    "pattern": "L3",
+    "archive": "L4",
+}
+LAYER_TO_MEMORY_SCOPE = {layer: scope for scope, layer in MEMORY_SCOPE_TO_LAYER.items()}
+VALID_KINDS = {
+    "decision",
+    "constraint",
+    "finding",
+    "issue",
+    "risk",
+    "fix",
+    "conflict",
+    "observation",
+}
+PROMOTABLE_KINDS = {"decision", "constraint", "finding", "issue", "risk", "fix", "conflict"}
+COMPACT_SUMMARY_LIMITS = {
+    "L0": 240,
+    "L1": 180,
+    "L2": 140,
+    "L3": 120,
+    "L4": 180,
+}
+COMPACT_EVIDENCE_LIMITS = {
+    "L0": 5,
+    "L1": 3,
+    "L2": 3,
+    "L3": 3,
+    "L4": 5,
+}
+MAX_EVIDENCE_CHARS = 160
+MAX_TAGS = 5
+MAX_TAG_CHARS = 40
 
 
 @dataclass
@@ -77,6 +113,102 @@ def normalize_layer(layer: str) -> str:
     if l not in VALID_LAYERS:
         raise ValueError(f"unknown memory layer: {layer} (allowed: {sorted(VALID_LAYERS)})")
     return l
+
+
+def normalize_memory_scope(memory_scope: str) -> str:
+    s = (memory_scope or "task").strip().lower()
+    aliases = {
+        "l0": "scratch",
+        "session": "scratch",
+        "story": "task",
+        "story-task": "task",
+        "task-memory": "task",
+        "l1": "task",
+        "project-memory": "project",
+        "l2": "project",
+        "global": "pattern",
+        "global-pattern": "pattern",
+        "l3": "pattern",
+        "cold": "archive",
+        "l4": "archive",
+    }
+    s = aliases.get(s, s)
+    if s not in MEMORY_SCOPE_TO_LAYER:
+        raise ValueError(f"unknown memory scope: {memory_scope} (allowed: {sorted(MEMORY_SCOPE_TO_LAYER)})")
+    return s
+
+
+def layer_for_memory_scope(memory_scope: str) -> str:
+    return MEMORY_SCOPE_TO_LAYER[normalize_memory_scope(memory_scope)]
+
+
+def memory_scope_for_layer(layer: str) -> str:
+    return LAYER_TO_MEMORY_SCOPE[normalize_layer(layer)]
+
+
+def resolve_layer(
+    *,
+    layer: Optional[str] = None,
+    memory_scope: Optional[str] = None,
+    default_scope: str = "task",
+) -> str:
+    if memory_scope:
+        scoped_layer = layer_for_memory_scope(memory_scope)
+        if layer and normalize_layer(layer) != scoped_layer:
+            raise ValueError(
+                f"memory --scope {normalize_memory_scope(memory_scope)} maps to {scoped_layer}, "
+                f"but --layer {normalize_layer(layer)} was also provided"
+            )
+        return scoped_layer
+    if layer:
+        return normalize_layer(layer)
+    return layer_for_memory_scope(default_scope)
+
+
+def normalize_kind(kind: str) -> str:
+    k = (kind or "observation").strip().lower()
+    if k not in VALID_KINDS:
+        raise ValueError(f"unknown memory kind: {kind} (allowed: {sorted(VALID_KINDS)})")
+    return k
+
+
+def _validate_compact_memory(
+    *,
+    layer: str,
+    kind: str,
+    summary: str,
+    evidence: list[str],
+    tags: list[str],
+) -> None:
+    """Enforce write-time compact memory instead of storing longform notes."""
+    limit = COMPACT_SUMMARY_LIMITS[layer]
+    if len(summary) > limit:
+        raise ValueError(
+            f"memory summary too long for {layer}: {len(summary)} chars > {limit}. "
+            "Rewrite as one compact atomic fact with evidence."
+        )
+    if "\n" in summary or "```" in summary or summary.lstrip().startswith("#"):
+        raise ValueError("memory summary must be one compact line; store longform detail in a report/archive")
+
+    if layer != "L0" and not evidence:
+        raise ValueError("task/project compact memory requires --evidence <file:line>; use --scope scratch for scratch")
+    if layer in {"L2", "L3"} and kind == "observation":
+        raise ValueError(f"{layer} compact memory cannot use kind=observation; choose a reusable kind")
+
+    evidence_limit = COMPACT_EVIDENCE_LIMITS[layer]
+    if len(evidence) > evidence_limit:
+        raise ValueError(f"{layer} compact memory allows at most {evidence_limit} evidence references")
+    for item in evidence:
+        if "\n" in item or len(item) > MAX_EVIDENCE_CHARS:
+            raise ValueError(
+                f"memory evidence must be a short reference <= {MAX_EVIDENCE_CHARS} chars, not copied output"
+            )
+
+    if len(tags) > MAX_TAGS:
+        raise ValueError(f"memory tags must be compact: at most {MAX_TAGS} tags")
+    for tag in tags:
+        if "\n" in tag or len(tag) > MAX_TAG_CHARS:
+            raise ValueError(f"memory tag must be one short token <= {MAX_TAG_CHARS} chars")
 
 
 def locate_scope(
@@ -195,7 +327,8 @@ def write(
     scope: MemoryScope,
     *,
     summary: str,
-    layer: str = "L1",
+    layer: Optional[str] = None,
+    memory_scope: Optional[str] = None,
     kind: str = "observation",
     evidence: Optional[list[str]] = None,
     actor: str = "ae-sdd",
@@ -203,7 +336,19 @@ def write(
 ) -> dict:
     if not summary or not summary.strip():
         raise ValueError("memory summary is required")
-    layer = normalize_layer(layer)
+    layer = resolve_layer(layer=layer, memory_scope=memory_scope, default_scope="task")
+    memory_scope_name = memory_scope_for_layer(layer)
+    kind = normalize_kind(kind)
+    summary = summary.strip()
+    evidence = [str(item).strip() for item in (evidence or []) if str(item).strip()]
+    tags = [str(item).strip() for item in (tags or []) if str(item).strip()]
+    _validate_compact_memory(
+        layer=layer,
+        kind=kind,
+        summary=summary,
+        evidence=evidence,
+        tags=tags,
+    )
     now = utc_now()
     record = {
         "type": "memory",
@@ -211,10 +356,11 @@ def write(
         "story": scope.story,
         "task": scope.task,
         "layer": layer,
+        "memoryScope": memory_scope_name,
         "kind": kind,
-        "summary": summary.strip(),
-        "evidence": evidence or [],
-        "tags": tags or [],
+        "summary": summary,
+        "evidence": evidence,
+        "tags": tags,
         "timestamp": now,
         "actor": actor,
     }
@@ -342,12 +488,21 @@ def is_scope_active(scope: MemoryScope) -> bool:
     return enter_at > exit_at
 
 
-def read(scope: MemoryScope, *, include_project: bool = True, limit: int = 20) -> list[dict]:
-    paths_to_read = []
-    if include_project:
-        paths_to_read.append(_jsonl_path(scope, "L2"))
-    paths_to_read.append(_jsonl_path(scope, "L1"))
-    paths_to_read.append(_jsonl_path(scope, "L0"))
+def read(
+    scope: MemoryScope,
+    *,
+    include_project: bool = True,
+    limit: int = 20,
+    memory_scope: Optional[str] = None,
+) -> list[dict]:
+    if memory_scope:
+        paths_to_read = [_jsonl_path(scope, layer_for_memory_scope(memory_scope))]
+    else:
+        paths_to_read = []
+        if include_project:
+            paths_to_read.append(_jsonl_path(scope, "L2"))
+        paths_to_read.append(_jsonl_path(scope, "L1"))
+        paths_to_read.append(_jsonl_path(scope, "L0"))
     entries: list[dict] = []
     for p in paths_to_read:
         entries.extend(_iter_jsonl(p) or [])
@@ -355,13 +510,23 @@ def read(scope: MemoryScope, *, include_project: bool = True, limit: int = 20) -
     return entries[-limit:] if limit > 0 else entries
 
 
-def search(scope: MemoryScope, *, query: str, limit: int = 20) -> list[dict]:
+def search(
+    scope: MemoryScope,
+    *,
+    query: str,
+    limit: int = 20,
+    memory_scope: Optional[str] = None,
+) -> list[dict]:
     q = (query or "").lower()
     if not q:
         return []
     entries: list[dict] = []
-    if scope.memory_root.is_dir():
-        for p in scope.memory_root.rglob("*.jsonl"):
+    if memory_scope:
+        paths_to_search = [_jsonl_path(scope, layer_for_memory_scope(memory_scope))]
+    else:
+        paths_to_search = list(scope.memory_root.rglob("*.jsonl")) if scope.memory_root.is_dir() else []
+    if paths_to_search:
+        for p in paths_to_search:
             for item in _iter_jsonl(p) or []:
                 haystack = json.dumps(item, ensure_ascii=False).lower()
                 if q in haystack:
@@ -374,6 +539,7 @@ def search(scope: MemoryScope, *, query: str, limit: int = 20) -> list[dict]:
 
 def summarize(scope: MemoryScope) -> dict:
     counts: dict[str, int] = {}
+    scope_counts: dict[str, int] = {}
     phases: dict[str, int] = {}
     total = 0
     if scope.memory_root.is_dir():
@@ -381,15 +547,36 @@ def summarize(scope: MemoryScope) -> dict:
             for item in _iter_jsonl(p) or []:
                 total += 1
                 layer = item.get("layer", "event")
+                if layer in VALID_LAYERS:
+                    scope_name = item.get("memoryScope") or memory_scope_for_layer(layer)
+                else:
+                    scope_name = "event"
                 phase = item.get("phase", "unknown")
                 counts[layer] = counts.get(layer, 0) + 1
+                scope_counts[scope_name] = scope_counts.get(scope_name, 0) + 1
                 phases[phase] = phases.get(phase, 0) + 1
-    return {"total": total, "by_layer": counts, "by_phase": phases, "root": str(scope.memory_root)}
+    return {
+        "total": total,
+        "by_layer": counts,
+        "byScope": scope_counts,
+        "by_phase": phases,
+        "root": str(scope.memory_root),
+    }
 
 
-def promote(scope: MemoryScope, *, from_layer: str = "L1", to_layer: str = "L2", actor: str = "ae-sdd") -> dict:
-    from_layer = normalize_layer(from_layer)
-    to_layer = normalize_layer(to_layer)
+def promote(
+    scope: MemoryScope,
+    *,
+    from_layer: Optional[str] = None,
+    to_layer: Optional[str] = None,
+    from_memory_scope: Optional[str] = None,
+    to_memory_scope: Optional[str] = None,
+    actor: str = "ae-sdd",
+) -> dict:
+    from_layer = resolve_layer(layer=from_layer, memory_scope=from_memory_scope, default_scope="task")
+    to_layer = resolve_layer(layer=to_layer, memory_scope=to_memory_scope, default_scope="project")
+    from_scope_name = memory_scope_for_layer(from_layer)
+    to_scope_name = memory_scope_for_layer(to_layer)
     source_path = _jsonl_path(scope, from_layer)
     target_path = _jsonl_path(scope, to_layer)
     promoted = 0
@@ -397,11 +584,28 @@ def promote(scope: MemoryScope, *, from_layer: str = "L1", to_layer: str = "L2",
     for item in _iter_jsonl(source_path) or []:
         if item.get("type") != "memory":
             continue
+        kind = normalize_kind(str(item.get("kind", "observation")))
+        if to_layer in {"L2", "L3"} and kind not in PROMOTABLE_KINDS:
+            continue
+        _validate_compact_memory(
+            layer=to_layer,
+            kind=kind,
+            summary=str(item.get("summary", "")).strip(),
+            evidence=[str(e).strip() for e in (item.get("evidence") or []) if str(e).strip()],
+            tags=[str(t).strip() for t in (item.get("tags") or []) if str(t).strip()],
+        )
         promoted_item = dict(item)
         promoted_item["layer"] = to_layer
+        promoted_item["memoryScope"] = to_scope_name
         promoted_item["promoted_from"] = str(source_path)
         promoted_item["promoted_at"] = now
         promoted_item["promoted_by"] = actor
         _append_jsonl(target_path, promoted_item)
         promoted += 1
-    return {"promoted": promoted, "from": str(source_path), "to": str(target_path)}
+    return {
+        "promoted": promoted,
+        "from": str(source_path),
+        "to": str(target_path),
+        "fromScope": from_scope_name,
+        "toScope": to_scope_name,
+    }

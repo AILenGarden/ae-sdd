@@ -4,7 +4,14 @@ const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
 
-const { deriveActiveWorkItems, loadWorkspaceDetail, parseYamlLite, phaseTimeline, scanForWorkspaces } = require("../src/workspace");
+const {
+  deriveActiveWorkItems,
+  loadWorkspaceDetail,
+  parseWorkItemKey,
+  parseYamlLite,
+  phaseTimeline,
+  scanForWorkspaces
+} = require("../src/workspace");
 
 async function writeJson(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -21,6 +28,19 @@ automation:
   assert.equal(result.projectKey, "demo");
   assert.equal(result.automation.enabled, false);
   assert.equal(result.automation.reviewerTier, 3);
+});
+
+test("parseWorkItemKey derives id and readable name", () => {
+  assert.deepEqual(parseWorkItemKey("BUG-1--Login-timeout-fix"), {
+    workItemId: "BUG-1",
+    workItemName: "Login timeout fix",
+    workItemKey: "BUG-1--Login-timeout-fix"
+  });
+  assert.deepEqual(parseWorkItemKey("TASK-root"), {
+    workItemId: "TASK-root",
+    workItemName: null,
+    workItemKey: "TASK-root"
+  });
 });
 
 test("scanForWorkspaces discovers ae-sdd workspace summaries", async () => {
@@ -66,7 +86,7 @@ test("loadWorkspaceDetail includes work item state and runtime stats", async () 
     phase: "completed",
     history: [{ phase: "completed", timestamp: "2026-07-03T03:00:00Z" }]
   });
-  await writeJson(path.join(workspace, ".auto-engineering", "BUG-1", "state.json"), {
+  await writeJson(path.join(workspace, ".auto-engineering", "BUG-1--Login-timeout-fix", "state.json"), {
     version: "1",
     workItemId: "BUG-1",
     workItemName: "Login timeout fix",
@@ -95,6 +115,34 @@ test("loadWorkspaceDetail includes work item state and runtime stats", async () 
   assert.equal(detail.workItems[0].workItemId, "BUG-1");
   assert.equal(detail.workItems[0].workItemName, "Login timeout fix");
   assert.equal(detail.runtimeStats.failures, 1);
+});
+
+test("loadWorkspaceDetail derives work item identity from key directory", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ae-sdd-monitor-key-"));
+  const workspace = path.join(root, "workspace");
+  await writeJson(path.join(workspace, ".ae-sdd", "state.json"), {
+    version: "1",
+    projectKey: "workspace",
+    phase: "coding",
+    activeWorkItem: "BUG-2--Payment-retry",
+    activeStatePath: ".auto-engineering/BUG-2--Payment-retry/state.json"
+  });
+  await writeJson(path.join(workspace, ".auto-engineering", "BUG-2--Payment-retry", "state.json"), {
+    version: "1",
+    phase: "coding-process",
+    scale: "micro"
+  });
+
+  const detail = await loadWorkspaceDetail(workspace);
+  assert.equal(detail.summary.activeWorkItem, "BUG-2--Payment-retry");
+  assert.equal(detail.summary.activeStatePath, ".auto-engineering/BUG-2--Payment-retry/state.json");
+  assert.equal(detail.summary.workItemId, "BUG-2");
+  assert.equal(detail.summary.workItemName, "Payment retry");
+  assert.equal(detail.summary.workItemKey, "BUG-2--Payment-retry");
+  assert.equal(detail.workItems[0].id, "BUG-2--Payment-retry");
+  assert.equal(detail.workItems[0].workItemId, "BUG-2");
+  assert.equal(detail.workItems[0].workItemName, "Payment retry");
+  assert.equal(detail.activeWorkItems.some((item) => item.id === "BUG-2--Payment-retry"), true);
 });
 
 test("phaseTimeline describes current node in the scale-specific flow", () => {
@@ -127,7 +175,7 @@ test("loadWorkspaceDetail summarizes multiple active work items", async () => {
       }
     ]
   });
-  await writeJson(path.join(workspace, ".auto-engineering", "BUG-1", "state.json"), {
+  await writeJson(path.join(workspace, ".auto-engineering", "BUG-1--Login-timeout-fix", "state.json"), {
     version: "1",
     workItemId: "BUG-1",
     workItemName: "Login timeout fix",
