@@ -606,6 +606,7 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
             span_name="scanner:test_authenticity",
+            attrs={"scanRoot": str(project_dir)},
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-09", "测试真实性扫描通过", "blocker", False,
@@ -724,6 +725,7 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
             span_name="scanner:coding_authenticity",
+            attrs={"scanRoot": str(project_dir)},
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
@@ -1165,6 +1167,7 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
             span_name="scanner:ra_authenticity",
+            attrs={"scanRoot": str(project_dir)},
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-4", name, "blocker", False,
@@ -1259,6 +1262,7 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60, check=False,
             span_name="scanner:flow_violation",
+            attrs={"scanRoot": str(project_dir)},
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
@@ -1348,6 +1352,7 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
             span_name="scanner:ra_depth",
+            attrs={"scanRoot": str(project_dir)},
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-5", name, "blocker", False,
@@ -1436,6 +1441,7 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
             capture_output=True, text=True, timeout=60,
             span_name="scanner:ra_implementation",
+            attrs={"scanRoot": str(project_dir)},
         )
     except _subprocess.TimeoutExpired:
         return GateResult("G-RA-6", name, "blocker", False,

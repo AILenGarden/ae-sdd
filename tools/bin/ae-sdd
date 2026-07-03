@@ -67,6 +67,15 @@ ae-sdd — ae-sdd CLI 入口
 """
 from __future__ import annotations
 
+# 🆕 2026-07-03 缺口1:在所有 import 之前打进程启动戳,供 runtime_stats 计量
+# CLI 顶层 import 固定成本(~200ms,20 个 lib 模块)。打戳须早于 import argparse/os 等,
+# 否则那部分 import 也被漏计。setdefault 保证子进程(gates 调 scanner)不被父戳污染——
+# 子进程入口会重新打自己的戳;finish_command 在写完事件后 pop 此 env。
+import os as _boot_os
+import time as _boot_time
+_boot_os.environ.setdefault("AE_SDD_BOOT_NS", str(_boot_time.perf_counter_ns()))
+del _boot_os, _boot_time
+
 import argparse
 import json
 import sys
@@ -223,7 +232,10 @@ def cmd_state_read(args, parser):
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
     sp, _work_item = _main_state_path_for_args(ade_sdd, args)
-    s = state.read_state(sp)
+    # 🆕 2026-07-03 缺口2:高频命令补 span,记录"被执行过 + 当前 phase"。
+    # 这些命令本身 <1ms,span 价值在留痕与判定结果,而非耗时分解。
+    with runtime_stats.span("state:read", {"workItem": _work_item or ""}):
+        s = state.read_state(sp)
     output.emit(s, as_json=args.json)
     return 0
 
@@ -389,6 +401,11 @@ def cmd_state_next_step(args, parser):
     sp, _work_item = _main_state_path_for_args(ade_sdd, args)
     s = state.read_state(sp)
     suggestion = state.next_step_suggestion(s)
+    # 🆕 2026-07-03 缺口2:记录 next-step 判定结果(当前 phase → 建议 next),便于回溯流程跳转。
+    with runtime_stats.span("state:next-step",
+                            {"currentPhase": suggestion.get("current", ""),
+                             "nextPhase": suggestion.get("next", "")}):
+        pass  # span 仅作留痕,suggestion 已算出
     if args.json:
         output.emit(suggestion, as_json=True)
     else:
@@ -2385,7 +2402,12 @@ def cmd_classify(args, parser):
         if not project_context.is_dir():
             output.warn(f"--project 路径不存在或非目录：{project_context}，忽略项目上下文")
             project_context = None
-    c = classify.classify(text, filename=filename, project_context=project_context)
+    # 🆕 2026-07-03 缺口2:记录规模判定结果(source/scale/ai_fit),是路由决策的关键留痕。
+    with runtime_stats.span("classify", {"textLen": len(text or "")}) as _cls_span:
+        c = classify.classify(text, filename=filename, project_context=project_context)
+        _cls_span.attrs["source"] = c.source
+        _cls_span.attrs["scale"] = c.scale
+        _cls_span.attrs["aiFit"] = c.ai_fit
     if args.json:
         output.emit({
             "source": c.source,
@@ -2483,13 +2505,21 @@ def cmd_gate_intercept(args, parser):
         return 0
 
     try:
-        allowed, reason = gate_intercept.check_intercept(
-            tool_name,
-            bash_command=bash_command,
-            file_path=file_path,
-            allow_readonly=not args.no_readonly,
-            project_dir=project_dir,
-        )
+        # 🆕 2026-07-03 缺口2:gate-intercept 是最高频 hook(日均数百次),此前零 span。
+        # span 记录 tool_name/allowed/reason,让"哪些工具调用被拦截、为何"可回溯。
+        with runtime_stats.span("gate-intercept",
+                                {"toolName": tool_name,
+                                 "hasFilePath": bool(file_path),
+                                 "quickChannel": quick_channel_from_file}) as _gi_span:
+            allowed, reason = gate_intercept.check_intercept(
+                tool_name,
+                bash_command=bash_command,
+                file_path=file_path,
+                allow_readonly=not args.no_readonly,
+                project_dir=project_dir,
+            )
+            _gi_span.attrs["allowed"] = allowed
+            _gi_span.attrs["reason"] = reason[:120] if reason else ""
     except Exception:
         # 任何内部异常（state.json 损坏等）→ 放行（不阻断工具调用）
         print(_json.dumps({}))
@@ -2663,8 +2693,14 @@ def cmd_prompt_inject(args, parser):
 
     user_prompt = input_data.get("user_prompt", "")
     project_dir = Path(args.project) if args.project else None
+    # 🆕 2026-07-03 缺口2:prompt-inject 是高频 UserPromptSubmit hook,此前零 span。
+    # span 记录是否注入了 ae-sdd 上下文(promptLen/injected),量化 hook 实际作用率。
     try:
-        result = prompt_inject.inject(project_dir=project_dir, user_prompt=user_prompt)
+        with runtime_stats.span("prompt-inject",
+                                {"promptLen": len(user_prompt),
+                                 "hasProject": project_dir is not None}) as _pi_span:
+            result = prompt_inject.inject(project_dir=project_dir, user_prompt=user_prompt)
+            _pi_span.attrs["injected"] = bool(result)
     except Exception:
         # 任何异常（state.json 损坏等）→ 放行（不注入），不阻断对话
         result = {}
@@ -2713,9 +2749,15 @@ def cmd_stop_check(args, parser):
         return 0
 
     try:
-        should_stop, inject_msg = stop_check.check_output(
-            transcript_content, ade_sdd=ade_sdd
-        )
+        # 🆕 2026-07-03 缺口2:stop-check 是 Stop hook,此前零 span。
+        # span 记录是否允许停止(shouldStop),量化"阻止 AI 提前收工"的触发率。
+        with runtime_stats.span("stop-check",
+                                {"transcriptReadFailed": transcript_read_failed,
+                                 "hasAeSdd": ade_sdd is not None}) as _sc_span:
+            should_stop, inject_msg = stop_check.check_output(
+                transcript_content, ade_sdd=ade_sdd
+            )
+            _sc_span.attrs["shouldStop"] = should_stop
     except Exception:
         # stop_check 内部异常 → 放行（不阻断对话）
         print(_json.dumps({}))
@@ -3015,6 +3057,28 @@ def cmd_perf_report(args, parser):
         f"p95={_fmt_ms(duration['p95Ms'])} "
         f"max={_fmt_ms(duration['maxMs'])}"
     )
+    # 🆕 2026-07-03 缺口3:补 cpu/ioWait 摘要,区分 CPU 瓶颈与 I/O 等待。
+    cpu = summary.get("cpuMs") or {}
+    io_wait = summary.get("ioWaitMs") or {}
+    output.info(
+        "cpu: "
+        f"avg={_fmt_ms(cpu.get('avgMs'))} "
+        f"p95={_fmt_ms(cpu.get('p95Ms'))} "
+        f"max={_fmt_ms(cpu.get('maxMs'))}  "
+        "| ioWait: "
+        f"avg={_fmt_ms(io_wait.get('avgMs'))} "
+        f"p95={_fmt_ms(io_wait.get('p95Ms'))} "
+        f"max={_fmt_ms(io_wait.get('maxMs'))}"
+    )
+    # 🆕 2026-07-03 缺口1:bootstrap import 固定成本(仅含已打戳事件)。
+    bootstrap = summary.get("bootstrapMs") or {}
+    if int(bootstrap.get("count") or 0) > 0:
+        output.info(
+            f"bootstrap(import): count={bootstrap['count']} "
+            f"avg={_fmt_ms(bootstrap.get('avgMs'))} "
+            f"p95={_fmt_ms(bootstrap.get('p95Ms'))} "
+            f"max={_fmt_ms(bootstrap.get('maxMs'))}"
+        )
     if summary["commands"]:
         output.info("commands by total time:")
         for item in summary["commands"][:args.limit]:
@@ -3061,8 +3125,18 @@ def _perf_advice(summary: dict) -> list[str]:
         duration = float(top.get("durationMs") or 0.0)
         attrs = top.get("attrs") or {}
         label = attrs.get("gateId") or attrs.get("cmd") or name
-        advice.append(f"当前最慢 span 是 {name} {label}，耗时 {_fmt_ms(duration)}。")
+        # 🆕 2026-07-03 缺口5:gate span 包裹其内嵌 scanner span,二者同耗时会重复出现。
+        # doctor 文案标注"含子扫描器",避免误报为两个独立慢点。
         scanner_spans = [s for s in slow_spans if str(s.get("name", "")).startswith("scanner:")]
+        nested_hint = ""
+        if str(name) == "gate" and scanner_spans:
+            nested = scanner_spans[0]
+            nested_name = str(nested.get("name", ""))
+            nested_attrs = nested.get("attrs") or {}
+            scan_root = nested_attrs.get("scanRoot") or nested_attrs.get("cwd") or ""
+            root_hint = f" scanRoot={scan_root}" if scan_root else ""
+            nested_hint = f"（含子扫描器 {nested_name}{root_hint}）"
+        advice.append(f"当前最慢 span 是 {name} {label}{nested_hint}，耗时 {_fmt_ms(duration)}。")
         if scanner_spans:
             advice.append("扫描器 span 位于慢路径中；优先检查扫描范围、文件枚举和可缓存输入。")
 
@@ -3082,14 +3156,31 @@ def _perf_advice(summary: dict) -> list[str]:
             "或编码段（CodingPlan/确认/CodeReview）未随规模瘦身。"
         )
 
-    # 🆕 2026-07-03(B2): bootstrap 固定成本提示（P1 lazy import 未实施）。
-    # 设计 plan runtime-stats-performance-plan.md P1 声称改 lazy import，至今未落地。
-    durations = summary.get("duration") or {}
-    if durations and float(durations.get("avgMs") or 0.0) > 150:
+    # 🆕 2026-07-03 缺口4:bootstrap 诊断改用真实 bootstrapMs(此前用业务 avgMs 误判)。
+    # 旧逻辑"avgMs>150ms 含 import 成本"基于失真数据——import 不在 durationMs 内,
+    # 高频 hook 把 avg 拉到 <1ms,导致该诊断在 hook 重度项目里永远不触发。
+    bootstrap = summary.get("bootstrapMs") or {}
+    boot_count = int(bootstrap.get("count") or 0)
+    boot_p95 = float(bootstrap.get("p95Ms") or 0.0)
+    if boot_count > 0 and boot_p95 > 150:
+        boot_avg = float(bootstrap.get("avgMs") or 0.0)
         advice.append(
-            "命令平均耗时 >150ms，含 CLI 顶层 import 固定成本（实测 ~186ms）。"
-            "P1 lazy import fast path 已在 plan 中识别但未实施，详见 "
+            f"CLI 顶层 import 固定成本 p95={_fmt_ms(boot_p95)}（avg={_fmt_ms(boot_avg)}，"
+            f"基于 {boot_count} 个已打戳事件）。>150ms 建议实施 P1 lazy import fast path，"
+            "将 version/scripts-dir/health 等轻量命令的业务模块改为按需加载。详见 "
             "source/docs/plans/2026-07-02-runtime-stats-performance-plan.md P1。"
+        )
+
+    # 🆕 2026-07-03 缺口3:ioWait 诊断——区分"CPU 慢"与"等子进程 I/O 慢"。
+    # ioWait = duration − cpu;占比高说明瓶颈在 subprocess 调用,应优先改进程内调用(plan P1)。
+    io_wait = summary.get("ioWaitMs") or {}
+    io_avg = float(io_wait.get("avgMs") or 0.0)
+    duration_avg = float((summary.get("duration") or {}).get("avgMs") or 0.0)
+    if duration_avg > 0 and io_avg > 500 and (io_avg / duration_avg) > 0.7:
+        advice.append(
+            f"I/O 等待占比偏高（ioWait avg={_fmt_ms(io_avg)}，占总耗时 "
+            f"{io_avg / duration_avg * 100:.0f}%）。瓶颈在等待子进程(subprocess)，"
+            "优先把 G-CODE-1/G-09/G-RA-4~6 的扫描器改为进程内调用，避免重复 Python 启动。"
         )
 
     if not advice:
@@ -3898,9 +3989,15 @@ def main() -> int:
     p_mem_write.add_argument(
         "--summary",
         required=True,
-        help="compact atomic memory summary (L1<=180 chars, L2<=140, L3<=120)",
+        help="compact atomic memory summary (task<=180 chars, project<=140, pattern<=120)",
     )
-    p_mem_write.add_argument("--layer", default="L1", help="L0/L1/L2/L3/L4")
+    p_mem_write.add_argument(
+        "--scope",
+        default="",
+        choices=["scratch", "task", "project", "pattern", "archive"],
+        help="memory partition: task (default) or project; maps to legacy L1/L2",
+    )
+    p_mem_write.add_argument("--layer", default="", help="compat: L0/L1/L2/L3/L4; prefer --scope")
     p_mem_write.add_argument(
         "--kind",
         default="observation",
@@ -3923,6 +4020,12 @@ def main() -> int:
     p_mem_read = mem_sub.add_parser("read", help="read phase memory", parents=[common])
     _memory_common(p_mem_read)
     p_mem_read.add_argument("--limit", type=int, default=20, help="max entries")
+    p_mem_read.add_argument(
+        "--scope",
+        default="all",
+        choices=["all", "scratch", "task", "project", "pattern", "archive"],
+        help="memory partition to read; default all reads project + task + scratch",
+    )
     p_mem_read.add_argument("--no-project", action="store_true", help="do not include L2 project memory")
     p_mem_read.set_defaults(func=cmd_memory_read)
 
@@ -3930,12 +4033,30 @@ def main() -> int:
     _memory_common(p_mem_search)
     p_mem_search.add_argument("--query", required=True, help="search query")
     p_mem_search.add_argument("--limit", type=int, default=20, help="max entries")
+    p_mem_search.add_argument(
+        "--scope",
+        default="all",
+        choices=["all", "scratch", "task", "project", "pattern", "archive"],
+        help="memory partition to search; default all",
+    )
     p_mem_search.set_defaults(func=cmd_memory_search)
 
-    p_mem_promote = mem_sub.add_parser("promote", help="promote memories across layers", parents=[common])
+    p_mem_promote = mem_sub.add_parser("promote", help="promote memories across memory partitions", parents=[common])
     _memory_common(p_mem_promote)
-    p_mem_promote.add_argument("--from-layer", default="L1", help="source layer")
-    p_mem_promote.add_argument("--to-layer", default="L2", help="target layer")
+    p_mem_promote.add_argument(
+        "--from-scope",
+        default="",
+        choices=["scratch", "task", "project", "pattern", "archive"],
+        help="source partition; default task",
+    )
+    p_mem_promote.add_argument(
+        "--to-scope",
+        default="",
+        choices=["scratch", "task", "project", "pattern", "archive"],
+        help="target partition; default project",
+    )
+    p_mem_promote.add_argument("--from-layer", default="", help="compat: source L0/L1/L2/L3/L4")
+    p_mem_promote.add_argument("--to-layer", default="", help="compat: target L0/L1/L2/L3/L4")
     p_mem_promote.set_defaults(func=cmd_memory_promote)
 
     p_mem_sum = mem_sub.add_parser("summarize", help="summarize memory store", parents=[common])

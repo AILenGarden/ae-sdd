@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -124,3 +125,103 @@ class RuntimeStatsTests(unittest.TestCase):
         project_root.mkdir(parents=True)
         scale = runtime_stats._detect_scale(project_root)
         self.assertIsNone(scale)
+
+    def test_bootstrap_ms_recorded_from_env(self):
+        """🆕 2026-07-03 缺口1:入口 env 戳 → 事件含 bootstrapMs>0(顶层字段)"""
+        # 模拟入口在 import 前打的戳(略早于 start_command)
+        boot_ns = time.perf_counter_ns() - 1_000_000  # 1ms 前
+        os.environ["AE_SDD_BOOT_NS"] = str(boot_ns)
+        try:
+            runtime_stats.start_command("boot test", argv=[])
+            runtime_stats.finish_command(0)
+            events = runtime_stats.read_events(limit=10)
+            self.assertEqual(len(events), 1)
+            # bootstrapMs 是顶层字段(与 scale 同级),值 > 0
+            self.assertIn("bootstrapMs", events[0])
+            self.assertGreater(events[0]["bootstrapMs"], 0.0)
+        finally:
+            os.environ.pop("AE_SDD_BOOT_NS", None)
+
+    def test_bootstrap_ms_absent_without_env(self):
+        """🆕 2026-07-03 缺口1:无 env 戳 → 事件无 bootstrapMs 字段(向后兼容)"""
+        os.environ.pop("AE_SDD_BOOT_NS", None)
+        runtime_stats.start_command("no boot", argv=[])
+        runtime_stats.finish_command(0)
+        events = runtime_stats.read_events(limit=10)
+        self.assertEqual(len(events), 1)
+        # 无戳时不应有 bootstrapMs 字段(旧事件/子进程未继承的兼容形态)
+        self.assertNotIn("bootstrapMs", events[0])
+
+    def test_finish_command_clears_boot_env(self):
+        """🆕 2026-07-03 缺口1:finish_command 后清理 env 戳,防子进程继承错误戳"""
+        os.environ["AE_SDD_BOOT_NS"] = str(time.perf_counter_ns())
+        runtime_stats.start_command("clear boot", argv=[])
+        runtime_stats.finish_command(0)
+        # finish 后 env 应被 pop
+        self.assertNotIn("AE_SDD_BOOT_NS", os.environ)
+
+    def test_summarize_cpu_and_iowait(self):
+        """🆕 2026-07-03 缺口3:summarize 含 cpuMs/ioWaitMs 分桶,ioWait=duration−cpu"""
+        events = [
+            {"command": "gates check", "durationMs": 1000.0, "cpuMs": 200.0,
+             "startedAt": "2026-07-03T00:00:00Z", "spans": [], "attrs": {}},
+            {"command": "gates check", "durationMs": 2000.0, "cpuMs": 300.0,
+             "startedAt": "2026-07-03T00:01:00Z", "spans": [], "attrs": {}},
+        ]
+        summary = runtime_stats.summarize_events(events)
+        # cpuMs 分桶
+        self.assertIn("cpuMs", summary)
+        self.assertAlmostEqual(summary["cpuMs"]["avgMs"], 250.0, places=1)
+        # ioWaitMs = duration − cpu,事件1=800,事件2=1700,avg=1250
+        self.assertIn("ioWaitMs", summary)
+        self.assertAlmostEqual(summary["ioWaitMs"]["avgMs"], 1250.0, places=1)
+        # commands 桶含 avgCpuMs
+        cmds = {c["command"]: c for c in summary["commands"]}
+        self.assertIn("avgCpuMs", cmds["gates check"])
+        self.assertAlmostEqual(cmds["gates check"]["avgCpuMs"], 250.0, places=1)
+
+    def test_summarize_by_scale_includes_cpu(self):
+        """🆕 2026-07-03 缺口3:byScale 桶含 avgCpuMs/avgIoWaitMs"""
+        events = [
+            {"command": "gates check", "durationMs": 1000.0, "cpuMs": 200.0,
+             "scale": "大", "startedAt": "2026-07-03T00:00:00Z", "spans": [], "attrs": {}},
+        ]
+        summary = runtime_stats.summarize_events(events)
+        by_scale = {b["scale"]: b for b in summary["byScale"]}
+        self.assertIn("avgCpuMs", by_scale["大"])
+        self.assertAlmostEqual(by_scale["大"]["avgCpuMs"], 200.0, places=1)
+        # ioWait = 1000 − 200 = 800
+        self.assertAlmostEqual(by_scale["大"]["avgIoWaitMs"], 800.0, places=1)
+
+    def test_summarize_bootstrap_ms_bucket(self):
+        """🆕 2026-07-03 缺口1:summarize 含 bootstrapMs 分桶(仅含已打戳事件)"""
+        events = [
+            {"command": "version", "durationMs": 0.1, "cpuMs": 0.0, "bootstrapMs": 190.0,
+             "startedAt": "2026-07-03T00:00:00Z", "spans": [], "attrs": {}},
+            {"command": "version", "durationMs": 0.2, "cpuMs": 0.0, "bootstrapMs": 210.0,
+             "startedAt": "2026-07-03T00:01:00Z", "spans": [], "attrs": {}},
+        ]
+        summary = runtime_stats.summarize_events(events)
+        boot = summary["bootstrapMs"]
+        self.assertEqual(boot["count"], 2)
+        self.assertAlmostEqual(boot["avgMs"], 200.0, places=1)
+        # slowestCommands 也应携带 bootstrapMs
+        self.assertEqual(summary["slowestCommands"][0]["bootstrapMs"], 210.0)
+
+    def test_runtime_exec_attrs_merged_into_span(self):
+        """🆕 2026-07-03 缺口5:run_command 的 attrs 形参合并进 span attrs(scanRoot 等)"""
+        runtime_stats.start_command("attr test", argv=[])
+        runtime_exec.run_command(
+            [sys.executable, "-c", "pass"],
+            timeout=10,
+            span_name="unit:attr",
+            attrs={"scanRoot": "/tmp/proj"},
+        )
+        runtime_stats.finish_command(0)
+        events = runtime_stats.read_events(limit=10)
+        spans = events[0]["spans"]
+        # 调用方传入的 scanRoot 应出现在 attrs
+        self.assertEqual(spans[0]["attrs"]["scanRoot"], "/tmp/proj")
+        # 内置 attrs(argsCount/arg0)也在
+        self.assertIn("argsCount", spans[0]["attrs"])
+        self.assertIn("arg0", spans[0]["attrs"])

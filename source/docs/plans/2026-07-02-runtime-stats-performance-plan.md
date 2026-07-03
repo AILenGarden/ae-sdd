@@ -6,6 +6,15 @@ ae-sdd 的工具链能力已经从单一 SKILL 文档扩展为 CLI、门禁、�
 
 > 状态更新（2026-07-03）：P0 已实现，包含 `tools/lib/runtime_stats.py`、`tools/lib/runtime_exec.py`、CLI 命令级统计、gate/span 统计、`perf report/doctor/clear` 与 UTF-8 子进程包装。P1+ 仍作为后续性能优化方向。
 
+> 状态更新（2026-07-03 可观测性缺口补全）：P0 统计在 life 项目实测发现 5 处缺口导致诊断失真/盲区，本次补全：
+> - **缺口1（bootstrap 计量）**：CLI 顶层 import 成本（~120-200ms）此前不在统计内（start_command 在 parse_args 后调用）。改为入口脚本在所有 import 前打 `AE_SDD_BOOT_NS` 戳，`start_command` 读它算 `bootstrapMs` 提升为事件顶层字段。`durationMs` 仍只含业务函数耗时（语义不变），doctor 改用真实 `bootstrapMs` 诊断 import 固定成本。
+> - **缺口2（高频 hook 零 span）**：state read/next-step/classify/gate-intercept/prompt-inject/stop-check 此前零 span（318 事件总 span=0）。各补 1 个主 span 记录关键判定结果（toolName/allowed/shouldStop/scale 等），留痕与回溯价值大于耗时分解。
+> - **缺口3（cpuMs 采集未用）**：`cpuMs` 已采集但 `summarize_events` 未汇总。补 `cpuMs`/`ioWaitMs`（=duration−cpu）分桶与 byScale 的 `avgCpuMs`/`avgIoWaitMs`，让 doctor 能区分"CPU 慢"vs"等子进程 I/O 慢"。
+> - **缺口4（doctor 诊断失真）**：原"avgMs>150ms 含 import 成本"判断基于失真数据（import 不在 durationMs 内，高频 hook 把 avg 拉到 <1ms 导致永不触发）。改为读真实 `bootstrapMs`，并新增 ioWait 占比 >70% 的子进程瓶颈诊断。
+> - **缺口5（scanner span 缺属性）**：`runtime_exec.run_command` 加 `attrs` 形参，gates 的 6 处 scanner 调用补 `scanRoot`；span attrs 补 `argsCount`/`arg0`。doctor 在 gate span 含内嵌 scanner 时标注"含子扫描器 X"去重展示。
+>
+> P1 lazy import 仍未实施，但本次让 P1 决策有了真实数据支撑（doctor 可基于 `bootstrapMs` 精确触发建议）。
+
 ## 当前基线
 
 在仓库根 `D:\Item\ae-sdd` 采样：

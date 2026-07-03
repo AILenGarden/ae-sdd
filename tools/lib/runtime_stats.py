@@ -26,6 +26,12 @@ _CURRENT: contextvars.ContextVar["TraceRecorder | None"] = contextvars.ContextVa
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _SENSITIVE_MARKERS = ("password", "passwd", "secret", "token", "apikey", "api-key", "key")
 
+# 🆕 2026-07-03 缺口1:bootstrap import 成本计量。
+# 入口脚本(tools/bin/ae-sdd)在所有 import 之前用 perf_counter_ns 打戳到此 env。
+# start_command 读它算出 bootstrapMs(= start_command 时刻 − 进程启动),
+# 与 durationMs(纯业务函数耗时)分离,让 doctor 能真实诊断 import 固定成本。
+_BOOT_NS_ENV = "AE_SDD_BOOT_NS"
+
 
 def is_enabled() -> bool:
     return os.environ.get("AE_SDD_STATS", "1").strip().lower() not in _FALSE_VALUES
@@ -121,6 +127,9 @@ class TraceRecorder:
     started_cpu_ns: int = field(default_factory=time.process_time_ns)
     spans: list[dict[str, Any]] = field(default_factory=list)
     suppressed: bool = False
+    # 🆕 2026-07-03 缺口1:CLI 顶层 import 固定成本(进程启动 → start_command)。
+    # None 表示未打戳(旧入口或子进程未继承),to_event 时省略该字段以保向后兼容。
+    bootstrap_ms: Optional[float] = None
 
     def to_event(self, exit_code: int, error_class: Optional[str] = None) -> dict[str, Any]:
         duration_ms = (time.perf_counter_ns() - self.started_ns) / 1_000_000
@@ -137,10 +146,14 @@ class TraceRecorder:
             "spans": self.spans,
             "attrs": self.attrs,
         }
-        # 🆕 2026-07-03(B3): scale 提升为顶层字段，便于 summarize 按 scale 分桶。
+        # 🆕 2026-07-03(B3): scale 提升为顶层字段,便于 summarize 按 scale 分桶。
         scale = self.attrs.get("scale")
         if scale:
             event["scale"] = scale
+        # 🆕 2026-07-03 缺口1:bootstrapMs 提升为顶层字段(与 scale 同级)。
+        # 仅在入口打过戳时写入;旧事件/无戳子进程无此字段,summarize 用 .get() 容错。
+        if self.bootstrap_ms is not None:
+            event["bootstrapMs"] = round(self.bootstrap_ms, 3)
         if error_class:
             event["errorClass"] = error_class
         return event
@@ -211,11 +224,22 @@ def start_command(
     scale = _detect_scale(project)
     if scale:
         merged_attrs["scale"] = scale
+    # 🆕 2026-07-03 缺口1:读入口 env 戳算 bootstrap import 成本。
+    # 入口脚本在 import 前打戳;此处(业务函数执行前)与之相减即为 CLI 顶层 import 固定成本。
+    # 失败静默(统计不得阻断业务);无戳时 bootstrap_ms=None,to_event 省略该字段。
+    bootstrap_ms: Optional[float] = None
+    boot_raw = os.environ.get(_BOOT_NS_ENV, "").strip()
+    if boot_raw:
+        try:
+            bootstrap_ms = (time.perf_counter_ns() - int(boot_raw)) / 1_000_000
+        except (ValueError, TypeError):
+            bootstrap_ms = None
     recorder = TraceRecorder(
         command=command or "unknown",
         argv=list(argv or []),
         directory=stats_dir(project),
         attrs=merged_attrs,
+        bootstrap_ms=bootstrap_ms,
     )
     _CURRENT.set(recorder)
     return recorder
@@ -247,6 +271,13 @@ def finish_command(exit_code: int = 0, error_class: Optional[str] = None) -> int
         target = _event_file(recorder.directory, recorder.started_at)
         with target.open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    except Exception:
+        pass
+    # 🆕 2026-07-03 缺口1:清理入口 env 戳,防子进程(如 gates 调 scanner)继承到
+    # 父进程的打戳时刻,导致子进程 bootstrapMs 算成"父进程启动→子进程 start"的大偏差。
+    # 子进程入口会自行 setdefault 重新打戳;此处 pop 仅清当前进程环境,不影响已派生子进程。
+    try:
+        os.environ.pop(_BOOT_NS_ENV, None)
     except Exception:
         pass
     return int(exit_code)
@@ -303,22 +334,32 @@ def _percentile(values: list[float], pct: float) -> float:
 
 def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict[str, Any]:
     durations = [float(e.get("durationMs") or 0.0) for e in events]
+    # 🆕 2026-07-03 缺口3:cpuMs 已采集但此前未汇总,无法区分"CPU 慢"与"等子进程 I/O 慢"。
+    # ioWaitMs = duration − cpu(clamp≥0),衡量 I/O 等待(主要是子进程 subprocess)占比。
+    cpus = [float(e.get("cpuMs") or 0.0) for e in events]
+    io_waits = [max(0.0, d - c) for d, c in zip(durations, cpus)]
+    bootstraps = [float(e.get("bootstrapMs") or 0.0) for e in events if e.get("bootstrapMs") is not None]
     command_map: dict[str, dict[str, Any]] = {}
     spans: list[dict[str, Any]] = []
 
     for event in events:
         command = str(event.get("command") or "unknown")
         duration = float(event.get("durationMs") or 0.0)
+        cpu = float(event.get("cpuMs") or 0.0)
         item = command_map.setdefault(command, {
             "command": command,
             "count": 0,
             "totalMs": 0.0,
             "maxMs": 0.0,
+            "totalCpuMs": 0.0,
+            "maxCpuMs": 0.0,
             "lastStartedAt": "",
         })
         item["count"] += 1
         item["totalMs"] += duration
         item["maxMs"] = max(float(item["maxMs"]), duration)
+        item["totalCpuMs"] += cpu
+        item["maxCpuMs"] = max(float(item["maxCpuMs"]), cpu)
         if not item["lastStartedAt"]:
             item["lastStartedAt"] = event.get("startedAt", "")
         for span_event in event.get("spans", []) or []:
@@ -334,6 +375,9 @@ def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict
         item["totalMs"] = round(total, 3)
         item["avgMs"] = round(total / count, 3) if count else 0.0
         item["maxMs"] = round(float(item["maxMs"]), 3)
+        item["avgCpuMs"] = round(float(item["totalCpuMs"]) / count, 3) if count else 0.0
+        item["maxCpuMs"] = round(float(item["maxCpuMs"]), 3)
+        item["totalCpuMs"] = round(float(item["totalCpuMs"]), 3)
         commands.append(item)
 
     slowest_commands = sorted(
@@ -357,11 +401,14 @@ def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict
             "count": 0,
             "totalMs": 0.0,
             "maxMs": 0.0,
+            "totalCpuMs": 0.0,
         })
         duration = float(event.get("durationMs") or 0.0)
+        cpu = float(event.get("cpuMs") or 0.0)
         bucket["count"] += 1
         bucket["totalMs"] += duration
         bucket["maxMs"] = max(float(bucket["maxMs"]), duration)
+        bucket["totalCpuMs"] += cpu
     scale_list = []
     for bucket in by_scale.values():
         total = float(bucket["totalMs"])
@@ -369,6 +416,10 @@ def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict
         bucket["totalMs"] = round(total, 3)
         bucket["avgMs"] = round(total / count, 3) if count else 0.0
         bucket["maxMs"] = round(float(bucket["maxMs"]), 3)
+        # 🆕 2026-07-03 缺口3:byScale 补 cpu/ioWait,诊断某规模是否卡在 I/O 等待。
+        bucket["avgCpuMs"] = round(float(bucket["totalCpuMs"]) / count, 3) if count else 0.0
+        bucket["avgIoWaitMs"] = round(max(0.0, bucket["avgMs"] - bucket["avgCpuMs"]), 3)
+        bucket["totalCpuMs"] = round(float(bucket["totalCpuMs"]), 3)
         scale_list.append(bucket)
     scale_list.sort(key=lambda b: float(b["avgMs"]), reverse=True)
 
@@ -392,11 +443,34 @@ def summarize_events(events: list[dict[str, Any]], slow_limit: int = 10) -> dict
             "p95Ms": _percentile(durations, 0.95),
             "maxMs": round(max(durations), 3) if durations else 0.0,
         },
+        # 🆕 2026-07-03 缺口3:cpuMs/ioWaitMs 分桶,让 doctor 能区分 CPU 瓶颈 vs I/O 等待。
+        "cpuMs": {
+            "avgMs": round(sum(cpus) / len(cpus), 3) if cpus else 0.0,
+            "p50Ms": _percentile(cpus, 0.50),
+            "p95Ms": _percentile(cpus, 0.95),
+            "maxMs": round(max(cpus), 3) if cpus else 0.0,
+        },
+        "ioWaitMs": {
+            "avgMs": round(sum(io_waits) / len(io_waits), 3) if io_waits else 0.0,
+            "p50Ms": _percentile(io_waits, 0.50),
+            "p95Ms": _percentile(io_waits, 0.95),
+            "maxMs": round(max(io_waits), 3) if io_waits else 0.0,
+        },
+        # 🆕 2026-07-03 缺口1:bootstrapMs 分桶(仅含打过戳的事件),供 doctor 真实诊断 import 固定成本。
+        "bootstrapMs": {
+            "count": len(bootstraps),
+            "avgMs": round(sum(bootstraps) / len(bootstraps), 3) if bootstraps else 0.0,
+            "p50Ms": _percentile(bootstraps, 0.50),
+            "p95Ms": _percentile(bootstraps, 0.95),
+            "maxMs": round(max(bootstraps), 3) if bootstraps else 0.0,
+        } if bootstraps else {"count": 0, "avgMs": 0.0, "p50Ms": 0.0, "p95Ms": 0.0, "maxMs": 0.0},
         "commands": sorted(commands, key=lambda e: float(e["totalMs"]), reverse=True),
         "slowestCommands": [
             {
                 "command": e.get("command"),
                 "durationMs": e.get("durationMs"),
+                "cpuMs": e.get("cpuMs"),
+                "bootstrapMs": e.get("bootstrapMs"),
                 "exitCode": e.get("exitCode"),
                 "startedAt": e.get("startedAt"),
                 "scale": e.get("scale") or (e.get("attrs") or {}).get("scale"),

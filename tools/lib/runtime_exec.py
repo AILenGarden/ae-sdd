@@ -34,6 +34,7 @@ def run_command(
     text: bool = True,
     encoding: Optional[str] = "utf-8",
     errors: Optional[str] = "replace",
+    attrs: Optional[dict[str, Any]] = None,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess:
     merged_env = os.environ.copy()
@@ -43,12 +44,19 @@ def run_command(
         merged_env.update(env)
 
     label = _command_label(args)
-    attrs = {
+    # 🆕 2026-07-03 缺口5:span attrs 补 argsCount/arg0,便于区分是哪个扫描器;
+    # 同时合并调用方传入的 attrs(如 scanRoot),让慢点诊断能看到扫描输入规模。
+    span_attrs = {
         "cmd": label,
         "cwd": str(cwd) if cwd is not None else "",
         "timeoutSec": timeout,
+        "argsCount": len(args) if not isinstance(args, str) else 0,
     }
-    with runtime_stats.span(span_name or f"subprocess:{label}", attrs) as sp:
+    if not isinstance(args, str) and args:
+        span_attrs["arg0"] = str(args[0])
+    if attrs:
+        span_attrs.update(attrs)
+    with runtime_stats.span(span_name or f"subprocess:{label}", span_attrs) as sp:
         try:
             run_kwargs: dict[str, Any] = {
                 "cwd": cwd,
