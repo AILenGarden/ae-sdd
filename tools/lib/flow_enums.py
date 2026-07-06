@@ -31,14 +31,51 @@ class FlowNode(str, Enum):
 
     节点即任务类型：任务从流水线哪个节点进入，就是哪类任务。
     流水线从重到轻：PRD → RA → DR → STORY → TASK → PLAN
+
+    🆕 v3.9.0 嵌套状态模型：entryNode 升级为"容器选择器"。
+      - entryNode=PRD → state 含 prdState + drState + storyStates
+      - entryNode=DR  → state 含 drState + storyStates（DR 为顶层）
+      - entryNode=STORY → state 含 storyStates（Story 为顶层）
+      - entryNode=TASK/PLAN → flat state（微任务，不嵌套）
+    详见 state.py ENTRY_NODE_CONTAINERS 与 init_nested_state()。
     """
 
-    PRD   = "PRD"    # PRD 级聚合（需求文档入口，v3.3.0）
+    PRD   = "PRD"    # PRD 级聚合（需求文档入口，v3.3.0；v3.9.0 嵌套顶层之一）
     RA    = "RA"     # 需求分析（Requirement Analysis）
-    DR    = "DR"     # 设计需求（Design Requirement）
-    STORY = "STORY"  # Story 级（中大任务）
-    TASK  = "TASK"   # 小任务
-    PLAN  = "PLAN"   # 微任务 / CodingPlan 直出
+    DR    = "DR"     # 设计需求（Design Requirement；v3.9.0 嵌套顶层之一）
+    STORY = "STORY"  # Story 级（中大任务；v3.9.0 嵌套顶层之一）
+    TASK  = "TASK"   # 小任务（flat state，不嵌套）
+    PLAN  = "PLAN"   # 微任务 / CodingPlan 直出（flat state，不嵌套）
+
+    def container_fields(self) -> list[str]:
+        """🆕 v3.9.0 返回该入口节点应含的子状态容器名列表。
+
+        - PRD/DR/STORY → 返回对应容器列表（如 ["prdState","drState","storyStates"]）
+        - RA/TASK/PLAN → 返回空列表（flat state，不嵌套）
+
+        Returns:
+            容器名列表；空列表表示该节点走 flat state（R4 微任务）
+        """
+        # 🆕 v3.9.0 嵌套容器映射（与 state.ENTRY_NODE_CONTAINERS 一致）
+        # flat 节点（TASK/PLAN/RA）返回空列表，表示用 flat state 不嵌套。
+        mapping = {
+            "PRD":   ["prdState", "drState", "storyStates"],
+            "DR":    ["drState", "storyStates"],
+            "STORY": ["storyStates"],
+        }
+        return list(mapping.get(self.value, []))
+
+    @classmethod
+    def is_nested_entry(cls, node: str) -> bool:
+        """🆕 v3.9.0 判断节点值是否为嵌套入口（PRD/DR/STORY）。
+
+        Args:
+            node: FlowNode.value 字符串（如 "PRD"）
+
+        Returns:
+            True=该节点可作为嵌套 state 顶层；False=走 flat state
+        """
+        return node in ("PRD", "DR", "STORY")
 
 
 class FlowSkill(str, Enum):

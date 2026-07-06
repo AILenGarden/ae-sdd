@@ -387,3 +387,255 @@ def classify_from_file(path: Path) -> Classification:
         raise FileNotFoundError(f"文件不存在: {path}")
     text = path.read_text(encoding="utf-8")
     return classify(text, filename=path.name)
+
+
+# ─── 🆕 v3.9.0 嵌套状态模型：自动 state 匹配/新建（R7）──────────────────────────
+# 治本缺口：v3.8.x 前 classify() 只判规格+入口系列，不扫现有 state、不做特征匹配，
+#   导致新任务不自动开 state，镜像死锁旧任务。
+#
+# v3.9.0 新增 match_state()：在 /ae-sdd 路由时自动
+#   1. 分析需求特征（提取 PRD/DR/Story ID + 判定是否 Bug/改 Story）
+#   2. 扫描现有嵌套 state，按 R2 向上归入优先级匹配
+#   3. 找不到则建议以当前主体为顶层新建
+#
+# 匹配优先级（R2/R4/R5/R7）：
+#   1. R4: is_bug_fix and not modifies_story → create_flat（微任务独立 state）
+#   2. R5: story_ids 命中现有 state.storyStates → relocate + reset_substate（若已过 coding）
+#   3. R2 向上归入: story_ids 所属 DR 命中现有 state.drState → 归入该 state 的 storyStates
+#   4. R2 向上归入: dr_id 命中现有 state.prdState（DR 属于某 PRD）→ 归入该 state 的 drState
+#   5. R7: 无匹配 → create_nested（以 top_node 为顶层）
+
+
+# Story ID 正则（如 STORY-003-BE / STORY-003）
+_STORY_ID_RE = re.compile(r"STORY[-_]?(\d+)(?:[-_]?\w+)?", re.IGNORECASE)
+# DR ID 正则（如 DR-CS / DR-001）
+_DR_ID_RE = re.compile(r"\bDR[-_]?([A-Za-z0-9-]+)", re.IGNORECASE)
+# PRD ID 正则（如 PRD-IM-CS / PRD-001）
+_PRD_ID_RE = re.compile(r"\bPRD[-_]?([A-Za-z0-9-]+)", re.IGNORECASE)
+
+# Bug/微任务关键词（与 classify() 主逻辑一致）
+_BUG_KEYWORDS = ("bug", "缺陷", "故障", "修复", "fix", "typo", "配置", "config", "改个常量", "改个枚举")
+
+
+@dataclass
+class RequirementFeatures:
+    """需求特征提取结果（R7 match_state 输入）。"""
+    top_node: str                      # 当前工作主体 PRD/DR/STORY
+    prd_id: Optional[str] = None       # 溯源 PRD（从需求文本提取）
+    dr_id: Optional[str] = None        # 溯源 DR
+    story_ids: list = field(default_factory=list)  # 涉及的 Story ID
+    is_bug_fix: bool = False           # R4 判定
+    modifies_story: bool = False       # 是否改动已存在 Story
+    confidence: float = 0.5            # 特征提取置信度
+    reasons: list = field(default_factory=list)    # 提取理由
+
+
+@dataclass
+class StateMatchResult:
+    """match_state 输出：建议的 state 动作。
+
+    action 取值：
+      - "create_flat"      R4 微任务新建独立扁平 state
+      - "create_nested"    R7 无匹配，以当前主体为顶层新建嵌套 state
+      - "relocate"         R5 改已管理 Story，重定位回所属 state
+      - "absorb_into_prd"  R2 DR/Story 归入已存在的 PRD state
+      - "absorb_into_dr"   R2 Story 归入已存在的 DR state
+    """
+    action: str
+    target_state_path: Optional[Path] = None  # relocate/absorb 时指向已存在 state
+    target_state_data: Optional[dict] = None  # 配套 state dict
+    story_to_reset: Optional[str] = None      # R5 需重置的 Story ID
+    naming: Optional[str] = None              # R6 命名（create_nested 时）
+    entry_node: Optional[str] = None          # create_nested 时的 entryNode
+    reasons: list = field(default_factory=list)
+
+
+def extract_requirement_features(text: str,
+                                  project_root: Optional[Path] = None) -> RequirementFeatures:
+    """R7: 从需求文本提取特征（PRD/DR/Story ID + Bug 判定 + 改 Story 判定）。
+
+    Args:
+        text: 用户需求文本
+        project_root: 项目根（用于判定 Story 是否已存在 → modifies_story）
+
+    Returns:
+        RequirementFeatures
+    """
+    reasons: list[str] = []
+    story_ids = list(dict.fromkeys(_STORY_ID_RE.findall(text)))  # 去重保序
+    # 补全 STORY- 前缀（正则只捕获数字部分时）
+    story_ids = [s if s.upper().startswith("STORY") else f"STORY-{s}" for s in story_ids]
+    # 若正则匹配了完整 ID（含 -BE 等），findall 只取数字组，这里重抓完整
+    full_story_matches = re.findall(r"STORY[-_]?\d+(?:[-_]?[A-Za-z]+)?", text, re.IGNORECASE)
+    story_ids = list(dict.fromkeys(s.upper() for s in full_story_matches))
+
+    dr_match = _DR_ID_RE.search(text)
+    dr_id = f"DR-{dr_match.group(1)}" if dr_match else None
+    prd_match = _PRD_ID_RE.search(text)
+    prd_id = f"PRD-{prd_match.group(1)}" if prd_match else None
+
+    # R4 Bug 判定
+    text_lower = text.lower()
+    is_bug_fix = any(kw in text_lower for kw in _BUG_KEYWORDS)
+
+    # modifies_story 判定：有 Story ID 且不是纯 Bug
+    modifies_story = bool(story_ids) and not (is_bug_fix and "story" not in text_lower)
+
+    # top_node 判定优先级：有 Story → STORY；有 DR → DR；有 PRD → PRD；Bug → TASK
+    if is_bug_fix and not modifies_story:
+        top_node = "TASK"
+        reasons.append("Bug/微任务不改 Story → top_node=TASK")
+    elif story_ids:
+        top_node = "STORY"
+        reasons.append(f"含 Story ID {story_ids} → top_node=STORY")
+    elif dr_id:
+        top_node = "DR"
+        reasons.append(f"含 DR ID {dr_id} → top_node=DR")
+    elif prd_id:
+        top_node = "PRD"
+        reasons.append(f"含 PRD ID {prd_id} → top_node=PRD")
+    else:
+        top_node = "STORY"  # 默认按 Story 处理（最常见）
+        reasons.append("无明确 ID，默认 top_node=STORY")
+
+    confidence = 0.9 if (story_ids or dr_id or prd_id) else 0.4
+
+    return RequirementFeatures(
+        top_node=top_node,
+        prd_id=prd_id,
+        dr_id=dr_id,
+        story_ids=story_ids,
+        is_bug_fix=is_bug_fix,
+        modifies_story=modifies_story,
+        confidence=confidence,
+        reasons=reasons,
+    )
+
+
+def match_state(project_root: Path, features: RequirementFeatures) -> StateMatchResult:
+    """R7: 分析需求特征 → 扫描现有 state → 匹配/新建判定。
+
+    匹配优先级见模块 docstring（R4 > R5 > R2向上归入 > R7新建）。
+
+    Args:
+        project_root: 项目根路径
+        features: extract_requirement_features 提取的特征
+
+    Returns:
+        StateMatchResult（含 action + target_state_path/naming 等）
+    """
+    from lib import paths as paths_mod
+
+    ade_sdd = paths_mod.locate_project_ae_sdd(project_root)
+    if ade_sdd is None:
+        # 无 .ae-sdd 目录：仍生成命名，但 action 标记需新建
+        try:
+            naming_features: dict = {}
+            if features.top_node == "PRD":
+                naming_features["prd_feature"] = (features.prd_id or "UNKNOWN").replace("PRD-", "", 1)
+            elif features.top_node == "DR":
+                naming_features["dr_feature"] = (features.dr_id or "UNKNOWN").replace("DR-", "", 1)
+            elif features.top_node == "STORY":
+                naming_features["story_ids"] = features.story_ids or ["STORY-000"]
+            naming = paths_mod.build_state_machine_name(features.top_node, naming_features) if features.top_node in ("PRD", "DR", "STORY") else None
+        except ValueError:
+            naming = None
+        return StateMatchResult(
+            action="create_flat" if features.top_node == "TASK" else "create_nested",
+            entry_node=features.top_node if features.top_node != "TASK" else None,
+            naming=naming,
+            reasons=["未找到 .ae-sdd 目录，建议新建 state"],
+        )
+
+    reasons: list[str] = []
+
+    # 1) R4: Bug/微任务不改 Story → create_flat
+    if features.is_bug_fix and not features.modifies_story:
+        reasons.append("R4: Bug/微任务不改 Story → create_flat")
+        return StateMatchResult(action="create_flat", reasons=reasons)
+
+    # 2) R5: story_ids 命中现有嵌套 state → relocate + reset_substate
+    for sid in features.story_ids:
+        hit = paths_mod.find_nested_state_by_story_id(ade_sdd, sid)
+        if hit:
+            state_path, state_data = hit
+            # 判定是否需要 R5 重置：该 Story phase 已过 story-generated（即下游已动过）
+            from lib import state as state_mod
+            sub = state_mod.get_story_substate(state_data, sid)
+            phase_now = sub.get("phase", "initialized") if sub else "initialized"
+            _STORY_DOWNSTREAM = {"task-generated", "task-reviewed", "coding-process",
+                                 "coding", "test-running", "code-reviewed", "completed"}
+            need_reset = phase_now in _STORY_DOWNSTREAM
+            reasons.append(
+                f"R5: Story {sid} 命中 state {state_data.get('stateMachineId')} "
+                f"(phase={phase_now}) → relocate"
+                + (f" + reset_substate（下游已动）" if need_reset else "")
+            )
+            return StateMatchResult(
+                action="relocate",
+                target_state_path=state_path,
+                target_state_data=state_data,
+                story_to_reset=sid if need_reset else None,
+                reasons=reasons,
+            )
+
+    # 3) R2 向上归入: story_ids 所属 DR 命中现有 state.drState
+    if features.story_ids and features.dr_id:
+        hit = paths_mod.find_nested_state_by_dr_id(ade_sdd, features.dr_id)
+        if hit:
+            state_path, state_data = hit
+            reasons.append(
+                f"R2: Story 所属 DR {features.dr_id} 命中 state "
+                f"{state_data.get('stateMachineId')} → absorb_into_dr"
+            )
+            return StateMatchResult(
+                action="absorb_into_dr",
+                target_state_path=state_path,
+                target_state_data=state_data,
+                reasons=reasons,
+            )
+
+    # 4) R2 向上归入: dr_id 所属 PRD 命中现有 state.prdState
+    if features.dr_id and features.prd_id:
+        hit = paths_mod.find_nested_state_by_prd_id(ade_sdd, features.prd_id)
+        if hit:
+            state_path, state_data = hit
+            reasons.append(
+                f"R2: DR {features.dr_id} 所属 PRD {features.prd_id} 命中 state "
+                f"{state_data.get('stateMachineId')} → absorb_into_prd"
+            )
+            return StateMatchResult(
+                action="absorb_into_prd",
+                target_state_path=state_path,
+                target_state_data=state_data,
+                reasons=reasons,
+            )
+
+    # 5) R7: 无匹配 → create_nested（以 top_node 为顶层）
+    # 若 top_node 是 TASK（Bug），改走 create_flat
+    if features.top_node == "TASK":
+        reasons.append("R7: 无匹配 + top_node=TASK → create_flat")
+        return StateMatchResult(action="create_flat", reasons=reasons)
+
+    # R6 命名
+    naming_features: dict = {}
+    if features.top_node == "PRD":
+        naming_features["prd_feature"] = (features.prd_id or "UNKNOWN").replace("PRD-", "", 1)
+    elif features.top_node == "DR":
+        naming_features["dr_feature"] = (features.dr_id or "UNKNOWN").replace("DR-", "", 1)
+    elif features.top_node == "STORY":
+        naming_features["story_ids"] = features.story_ids or ["STORY-000"]
+
+    try:
+        naming = paths_mod.build_state_machine_name(features.top_node, naming_features)
+    except ValueError as e:
+        naming = f"{features.top_node}-UNKNOWN"
+        reasons.append(f"命名生成失败: {e}")
+
+    reasons.append(f"R7: 无匹配 → create_nested (entryNode={features.top_node}, name={naming})")
+    return StateMatchResult(
+        action="create_nested",
+        entry_node=features.top_node,
+        naming=naming,
+        reasons=reasons,
+    )

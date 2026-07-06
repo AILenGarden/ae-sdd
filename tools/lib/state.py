@@ -967,3 +967,326 @@ def reset_correction_count(state: dict, phase: str) -> None:
     用于用户 ⚠️ 反馈后（带意见重跑 sub-step 2）：重置计数，重新开始矫正轮次。
     """
     state.setdefault("correctionCounts", {})[phase] = 0
+
+
+# ─── 🆕 v3.9.0 嵌套状态模型（Nested State Model）──────────────────────────────
+# 治本缺口：v3.8.x 前是扁平"每 WorkItem 一个 state.json"，导致：
+#   1. 新任务不自动开 state，镜像死锁旧任务（STORY-002-BE/coding 污染 Story-003/004/005）
+#   2. 无"主流程+子系列流程"嵌套，一个 PRD 下 N 个 Story 各自独立 state，无聚合
+#   3. 命名单段 ID，无法表达顶层主体归属
+#
+# v3.9.0 嵌套模型（R1-R7，详见 CHANGELOG/2026-07-06-v3.9.0-nested-state-model.md）：
+#   R1 单文件嵌套：一个 state.json 内含主流程所有子系列（prdState/drState/storyStates{N}）
+#   R2 任意节点出发 + 向上归入：DR/Story 优先归入已存在的上层 state；entryNode 决定容器
+#   R3 子状态容器：prdState/drState/storyStates{N}，按 entryNode 选填
+#   R4 Bug/微任务不改 Story → 独立扁平 state（stateModel="flat"，保留 v1 行为）
+#   R5 改已管理 Story → relocate 回所属 state + 只重置该 Story 子状态到 story-generated
+#   R6 只以顶层主体命名：PRD-{特征} / DR-{特征} / Story-{特征}（多 Story 合并）
+#   R7 /ae-sdd 路由时自动：分析需求特征 → 匹配现有 state → 找不到则以当前主体为顶层新建
+#
+# 与 v1 的关系：v1 扁平 schema 保留可读（stateModel="flat" 或缺省）；
+#   v2 嵌套 schema 通过 stateModel="nested" 标识。所有读取点先判 stateModel 分流。
+
+# stateModel 合法值
+STATE_MODEL_NESTED = "nested"
+STATE_MODEL_FLAT = "flat"
+VALID_STATE_MODELS = (STATE_MODEL_NESTED, STATE_MODEL_FLAT)
+
+# schema 版本号
+SCHEMA_VERSION_V1 = "1"  # 扁平（v3.8.x 及之前）
+SCHEMA_VERSION_V2 = "2"  # 嵌套（v3.9.0+）
+
+# R5 重置目标 phase：改已管理 Story 时，该 Story 子状态重置到这里
+# 含义：Story 系列重新出发（Story→TestCase→Task→Coding 链路重走）
+STORY_RESET_TARGET_PHASE = "story-generated"
+
+# entryNode → 应含的子状态容器名（R2/R3）
+# entryNode=PRD → 含 prdState + drState + storyStates
+# entryNode=DR  → 含 drState + storyStates（无 prdState，DR 是顶层）
+# entryNode=STORY → 含 storyStates（无 prdState/drState，Story 是顶层）
+ENTRY_NODE_CONTAINERS: dict[str, list[str]] = {
+    "PRD":   ["prdState", "drState", "storyStates"],
+    "DR":    ["drState", "storyStates"],
+    "STORY": ["storyStates"],
+}
+
+
+def is_nested_state(state: dict) -> bool:
+    """判断 state 是否为 v3.9.0 嵌套模型。
+
+    判定依据：stateModel == "nested"。
+    旧 v1 state 无此字段或值为 "flat" → 返回 False。
+    """
+    return state.get("stateModel") == STATE_MODEL_NESTED
+
+
+def init_nested_state(
+    project_key: str,
+    entry_node: str,
+    state_machine_id: str,
+    state_machine_name: str,
+    story_ids: Optional[list[str]] = None,
+    prd_id: Optional[str] = None,
+    dr_id: Optional[str] = None,
+    parent_prd_id: Optional[str] = None,
+    parent_dr_id: Optional[str] = None,
+) -> dict:
+    """初始化一个 v3.9.0 嵌套 state（不写盘，返回 dict 由调用方 write_state）。
+
+    Args:
+        project_key:        项目标识（如 "life"）
+        entry_node:         顶层节点 PRD/DR/STORY（R2）
+        state_machine_id:   state 标识（R6 只以顶层命名，如 "PRD-IM-CS"）
+        state_machine_name: 可读名称
+        story_ids:          初始 Story 列表（R3，每个建一条子状态记录）
+        prd_id:             PRD 标识（entryNode=PRD 时必填）
+        dr_id:              DR 标识（entryNode=PRD|DR 时必填）
+        parent_prd_id:      溯源父 PRD（entryNode=DR/STORY 且已知上层 PRD）
+        parent_dr_id:       溯源父 DR（entryNode=STORY 且已知上层 DR）
+
+    Returns:
+        v2 嵌套 state dict（含 version="2" / stateModel="nested" / 按 entry_node 选填容器）
+
+    Raises:
+        ValueError: entry_node 不在 ENTRY_NODE_CONTAINERS，或必填容器缺关键 ID
+    """
+    if entry_node not in ENTRY_NODE_CONTAINERS:
+        raise ValueError(
+            f"未知 entryNode: {entry_node}（允许: {list(ENTRY_NODE_CONTAINERS)}）"
+        )
+
+    now = _now_ts()
+    state: dict = {
+        "version": SCHEMA_VERSION_V2,
+        "projectKey": project_key,
+        "stateModel": STATE_MODEL_NESTED,
+        "entryNode": entry_node,
+        "stateMachineId": state_machine_id,
+        "stateMachineName": state_machine_name,
+        "parentPrdId": parent_prd_id,
+        "parentDrId": parent_dr_id,
+        "activeStory": story_ids[0] if story_ids else None,
+        "activeTask": None,
+        "history": [],
+        "events": [],
+        "createdAt": now,
+        "lastUpdated": now,
+    }
+
+    containers = ENTRY_NODE_CONTAINERS[entry_node]
+
+    # R3：按 entryNode 选填子状态容器
+    if "prdState" in containers:
+        if not prd_id:
+            raise ValueError("entryNode=PRD 必须提供 prd_id")
+        state["prdState"] = {
+            "prdId": prd_id,
+            "phase": "initialized",
+            "completedSteps": [],
+            "lastUpdated": now,
+        }
+
+    if "drState" in containers:
+        if not dr_id:
+            raise ValueError(f"entryNode={entry_node} 必须提供 dr_id")
+        state["drState"] = {
+            "drId": dr_id,
+            "phase": "initialized",
+            "docPath": None,
+            "completedSteps": [],
+            "lastUpdated": now,
+        }
+
+    if "storyStates" in containers:
+        state["storyStates"] = {}
+        for sid in (story_ids or []):
+            state["storyStates"][sid] = {
+                "phase": "initialized",
+                "completedSteps": [],
+                "codingRound": 0,
+                "lastUpdated": now,
+                "resetHistory": [],
+            }
+
+    record_history(state, f"nested-state-init(entryNode={entry_node})", by="ae-sdd")
+    return state
+
+
+def get_story_substate(state: dict, story_id: str) -> Optional[dict]:
+    """读取嵌套 state 内指定 Story 的子状态记录。
+
+    Args:
+        state: 嵌套 state dict（若是 flat state 返回 None）
+        story_id: Story 标识
+
+    Returns:
+        子状态 dict（含 phase/completedSteps/codingRound/lastUpdated/resetHistory）或 None
+    """
+    if not is_nested_state(state):
+        return None
+    return (state.get("storyStates") or {}).get(story_id)
+
+
+def set_story_substate_phase(state: dict, story_id: str, phase: str,
+                              by: str = "ae-sdd") -> bool:
+    """设置嵌套 state 内指定 Story 子状态的 phase（R5 各 Story 独立流转）。
+
+    Args:
+        state: 嵌套 state dict（原地修改）
+        story_id: 目标 Story
+        phase: 新 phase（须在该 Story 所属链路内，校验交给调用方）
+        by: 操作者
+
+    Returns:
+        True=实际更新；False=phase 未变或 story_id 不存在
+
+    Raises:
+        ValueError: state 不是嵌套模型
+    """
+    if not is_nested_state(state):
+        raise ValueError("set_story_substate_phase 仅适用于 nested state")
+    sub = (state.get("storyStates") or {}).get(story_id)
+    if not sub:
+        return False
+    if sub.get("phase") == phase:
+        return False
+    sub["phase"] = phase
+    sub["lastUpdated"] = _now_ts()
+    state["activeStory"] = story_id
+    record_history(state, f"story-{story_id}-phase={phase}", by)
+    return True
+
+
+def add_story_to_nested_state(state: dict, story_id: str,
+                               initial_phase: str = "initialized") -> bool:
+    """向嵌套 state 的 storyStates 新增一条 Story 子状态记录。
+
+    用于 R7 归入场景：Story 被归入已存在的 PRD/DR state 时调用。
+
+    Args:
+        state: 嵌套 state dict（原地修改）
+        story_id: Story 标识
+        initial_phase: 初始 phase（默认 initialized）
+
+    Returns:
+        True=新增成功；False=已存在（幂等不覆盖）
+    """
+    if not is_nested_state(state):
+        raise ValueError("add_story_to_nested_state 仅适用于 nested state")
+    story_states = state.setdefault("storyStates", {})
+    if story_id in story_states:
+        return False
+    now = _now_ts()
+    story_states[story_id] = {
+        "phase": initial_phase,
+        "completedSteps": [],
+        "codingRound": 0,
+        "lastUpdated": now,
+        "resetHistory": [],
+    }
+    if not state.get("activeStory"):
+        state["activeStory"] = story_id
+    record_history(state, f"story-{story_id}-added", by="ae-sdd")
+    return True
+
+
+def reset_story_substate(state: dict, story_id: str,
+                          by: str = "ae-sdd") -> bool:
+    """R5：重置指定 Story 子状态到 STORY_RESET_TARGET_PHASE（story-generated）。
+
+    只重置该 Story 的子状态，兄弟 Story 子状态不动。
+    保留 resetHistory（追加一条重置记录），清空 completedSteps 与 codingRound。
+
+    Args:
+        state: 嵌套 state dict（原地修改）
+        story_id: 要重置的 Story
+        by: 操作者
+
+    Returns:
+        True=重置成功；False=story_id 不在 storyStates 内
+
+    Raises:
+        ValueError: state 不是嵌套模型
+    """
+    if not is_nested_state(state):
+        raise ValueError("reset_story_substate 仅适用于 nested state")
+    sub = (state.get("storyStates") or {}).get(story_id)
+    if not sub:
+        return False
+
+    now = _now_ts()
+    old_phase = sub.get("phase", "initialized")
+    # 追加重置历史（保留审计轨迹，不清空）
+    sub.setdefault("resetHistory", []).append({
+        "resetAt": now,
+        "fromPhase": old_phase,
+        "toPhase": STORY_RESET_TARGET_PHASE,
+        "by": by,
+    })
+    sub["phase"] = STORY_RESET_TARGET_PHASE
+    sub["completedSteps"] = []
+    sub["codingRound"] = 0
+    sub["lastUpdated"] = now
+    state["activeStory"] = story_id
+    record_history(state, f"story-{story_id}-reset-to-{STORY_RESET_TARGET_PHASE}", by)
+    return True
+
+
+def set_active_story(state: dict, story_id: str) -> bool:
+    """切换嵌套 state 的 activeStory 指针（路由切换当前聚焦 Story）。
+
+    Args:
+        state: 嵌套 state dict（原地修改）
+        story_id: 要聚焦的 Story（必须在 storyStates 内）
+
+    Returns:
+        True=切换成功；False=story_id 不在 storyStates 内
+    """
+    if not is_nested_state(state):
+        raise ValueError("set_active_story 仅适用于 nested state")
+    if story_id not in (state.get("storyStates") or {}):
+        return False
+    state["activeStory"] = story_id
+    state["lastUpdated"] = _now_ts()
+    return True
+
+
+def get_active_phase(state: dict) -> str:
+    """获取当前活跃 phase（兼容 v1 flat / v2 nested）。
+
+    - nested state：返回 activeStory 子状态的 phase（若无 activeStory 返回 prdState/drState phase）
+    - flat state：返回顶层 phase
+
+    供 prompt_inject / gate_intercept 等需要"当前 phase"的 hook 统一调用。
+    """
+    if is_nested_state(state):
+        active_story = state.get("activeStory")
+        if active_story:
+            sub = (state.get("storyStates") or {}).get(active_story)
+            if sub:
+                return sub.get("phase", "initialized")
+        # 无 activeStory，回退到 prdState/drState phase
+        if state.get("prdState"):
+            return state["prdState"].get("phase", "initialized")
+        if state.get("drState"):
+            return state["drState"].get("phase", "initialized")
+        return "initialized"
+    return state.get("phase", "initialized")
+
+
+def get_active_story(state: dict) -> Optional[str]:
+    """获取当前 activeStory（nested）或 currentStory（flat），统一接口。"""
+    if is_nested_state(state):
+        return state.get("activeStory")
+    return state.get("currentStory")
+
+
+def list_story_ids_in_state(state: dict) -> list[str]:
+    """列出 state 内所有 Story ID（nested 返回 storyStates 键，flat 返回 currentStory 单值列表）。
+
+    供 match_state 扫描匹配用。
+    """
+    if is_nested_state(state):
+        return list((state.get("storyStates") or {}).keys())
+    cs = state.get("currentStory")
+    return [cs] if cs else []

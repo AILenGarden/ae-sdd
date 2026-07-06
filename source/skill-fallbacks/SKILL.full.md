@@ -1,9 +1,10 @@
 ---
 name: ae-sdd
-version: 3.8.2
+version: 3.9.0
 description: |
-  端到端自动化工程主入口（v3.8.2）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.9.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.9.0：嵌套状态模型——单文件嵌套 state（prdState/drState/storyStates{N}），任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。
   🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。
   🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。
   历史变更见 source/CHANGELOG/。
@@ -307,6 +308,13 @@ automation:
 
 **调用顺序：** ① 自更新识别 → ② 任务类型（编码） → ③ 规格裁定 → ④ G-RA 门禁（大任务时）
 
+> 🆕 v3.9.0 **路由自动 state 匹配**：路由时 `classify.match_state()` 自动分析需求特征（提取 PRD/DR/Story ID + 判定 Bug/改 Story）→ 扫描现有嵌套 state → 命中则 relocate/absorb，未命中则 create_nested。匹配优先级：
+> 1. R4 Bug/微任务不改 Story → `create_flat`
+> 2. R5 Story 命中现有 state → `relocate` + 重置子状态（若下游已动）
+> 3. R2 DR 归入已存在的 PRD state → `absorb_into_prd`
+> 4. R2 Story 归入已存在的 DR state → `absorb_into_dr`
+> 5. R7 无匹配 → `create_nested`（以当前主体为顶层，R6 顶层命名）
+
 ### 路由表（编码类）
 
 | 规格 | 已有产物 / 场景 | 入口系列 | G-RA |
@@ -451,6 +459,7 @@ PRD收尾（可选）：
 | 切换WorkItem/Story | 保留当前 state.json，切换 `.auto-engineering/{WORKITEM-ID}/state.json` |
 | 偏离流程 | 简短回应，不更新 state |
 | PRD收尾 | 跑 prd-check-complete → 4层AND全过 → 审核点5 → prd-complete |
+| 🆕 v3.9.0 改已管理 Story | `ae-sdd state relocate --story <ID>` 重定位到所属 state + 只重置该 Story 子状态到 story-generated（R5） |
 
 **paused 恢复**：输出原因 + pausedFromPhase，三选一：恢复/新任务/查看状态
 

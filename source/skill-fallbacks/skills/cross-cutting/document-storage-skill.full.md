@@ -1299,3 +1299,26 @@ SKILL 流程
 | `prd_aborted` | 异常终止（保留现场，不删 state.json）| 人工触发或门禁失败 |
 
 **字段演进策略：** 所有新字段均为 **optional + 默认值**，旧 PRD 级 state.json 缺字段不报错（v3.3.0 兼容策略）。
+
+**🆕 v3.9.0 `storyIds[]` vs `storyStates{}` 职责分离（消除含糊）：**
+
+| 字段 | 职责 | 写入时机 | 内容 |
+|---|---|---|---|
+| `storyIds[]` | **完成态元数据**（G-PRD 闸校验用） | Story 完成 hook 触发 | `{storyId, state, codeReviewReport, sevenBisPassed, userConfirmedAt, completedAt}` |
+| `storyStates{}` | **进行中子状态**（嵌套 state 路由重入用） | 嵌套 state 创建/归入时写 | `{STORY-003-BE: {phase, completedSteps, codingRound, lastUpdated, resetHistory}}` |
+
+- `storyIds[]` 只在 Story **完成后**写入一条完成态快照；`storyStates{}` 在 Story **进行中**就维护完整流程状态。
+- v3.9.0 嵌套模型下，`storyStates{}` 是 Story 流程状态的**权威来源**；`storyIds[]` 仍保留供 G-PRD-1~4 闸校验。
+- 详见 `state.py:init_nested_state()` / `reset_story_substate()`。
+
+**🆕 v3.9.0 嵌套 state 命名规则（R6 顶层主体命名）：**
+
+| entryNode | stateMachineId | 示例 |
+|---|---|---|
+| PRD | `PRD-{PRD特征}` | `PRD-IM-CS` |
+| DR | `DR-{DR特征}` | `DR-CS` |
+| STORY | `Story-{合并编号}` | `Story-003-004-005`（多 Story 合并） |
+
+- 只以**最顶层主体**特征命名，不拼接下游层级。
+- 多 Story 合并时取编号去重拼接（如 `STORY-003-BE, STORY-004-BE, STORY-005-BE` → `Story-003-004-005`）。
+- 由 `paths.build_state_machine_name(top_node, features)` 生成。

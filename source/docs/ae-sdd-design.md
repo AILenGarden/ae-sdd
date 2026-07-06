@@ -68,6 +68,25 @@
 
 **v3.6 暂停态**：`paused` 作为一级 phase，任何 phase 可跳入，用于 Level 3 人工升级（见 §15 流程偏移检测与矫正）。
 
+**🆕 v3.9.0 嵌套状态模型（Nested State Model）**：取代 v3.8.x 前的扁平"每 WorkItem 一个 state"模型。一个 state.json 内维护主流程所有子系列——`prdState` + `drState` + `storyStates{N个Story各自完整流程状态}`，按 `entryNode` 选填容器：
+
+| entryNode | state 内含容器 | 适用场景 |
+|---|---|---|
+| PRD | prdState + drState + storyStates | 全新 PRD，从 PRD 出发走完整流程 |
+| DR | drState + storyStates | 已有 DR，从 DR 出发（DR 所属 PRD 的 state 不存在时） |
+| STORY | storyStates | 已有 Story 草稿，从 Story 出发（上层 DR/PRD state 不存在时） |
+| TASK/PLAN | （flat state，不嵌套） | Bug/微任务不改 Story（R4 保留微链） |
+
+**R2 任意节点出发 + 向上归入**：DR/Story 优先归入已存在的上层 state。如开 DR-CS 时发现 `PRD-IM-CS` state 已存在且 `drState.drId` 匹配 → 归入该 PRD state 的 drState，不新建 DR state。`classify.match_state()` 实现自动归入判定。
+
+**R5 改已管理 Story 重定位 + 重置子状态**：检测到改 Story 且该 Story 已属某 state 的 `storyStates` → `ae-sdd state relocate --story <ID>` 重定位到该 state + 只重置该 Story 子状态到 `story-generated`（兄弟 Story 不动，resetHistory 保留审计）。
+
+**R6 顶层主体命名**：只以最顶层主体特征命名——`PRD-{特征}` / `DR-{特征}` / `Story-{特征}`（多 Story 合并如 `Story-003-004-005`）。由 `paths.build_state_machine_name()` 生成。
+
+**R7 路由自动匹配/新建**：`/ae-sdd` 路由时 `classify.match_state()` 自动分析需求特征（提取 PRD/DR/Story ID + 判定 Bug/改 Story）→ 扫描现有嵌套 state → 命中则 relocate/absorb，未命中则 create_nested。匹配优先级：R4 微任务 → R5 Story 命中 → R2 DR 归入 PRD → R2 Story 归入 DR → R7 新建。
+
+**v1 扁平 state 完全兼容**：旧 workitem（`stateModel` 缺省或 `"flat"`）保留可读，所有读取点通过 `state.is_nested_state()` 分流。旧 workitem 不迁移、不动。
+
 ### 实现
 
 | 设计点 | 实现方式 |
@@ -83,8 +102,15 @@
 | memory 生命周期强制校验 | `tools/lib/memory_gate.py:check_state_transition()`（行51），`state write --phase` 切相前调用 |
 | PRD 4 层 AND 校验 | `state.py:check_prd_4_layers()` |
 | CLI 入口 | `ae-sdd state new / read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive`（`tools/bin/ae-sdd` state 子命令组） |
+| 🆕 v3.9.0 嵌套 state schema | `state.py:init_nested_state()` / `reset_story_substate()` / `set_story_substate_phase()` / `get_active_phase()` / `get_active_story()` / `ENTRY_NODE_CONTAINERS` |
+| 🆕 v3.9.0 嵌套 state 命名 | `paths.build_state_machine_name(top_node, features)`（R6 顶层命名） |
+| 🆕 v3.9.0 向上归入查找 | `paths.find_nested_state_by_story_id/dr_id/prd_id`（R2 归入） |
+| 🆕 v3.9.0 路由自动匹配 | `classify.match_state()` + `extract_requirement_features()`（R7） |
+| 🆕 v3.9.0 entryNode 容器选择器 | `flow_enums.FlowNode.container_fields()` + `is_nested_entry()` |
+| 🆕 v3.9.0 R5 relocate CLI | `ae-sdd state relocate --story <ID>`（重定位+重置子状态） |
+| 🆕 v3.9.0 嵌套 state write | `ae-sdd state write --sub-story <ID> --phase <phase>` / `--add-story <ID>` |
 
-**颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；多个 Story 的 state 文件互不干扰；state 仅记录进度，不存储业务产物内容。
+**颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；🆕 v3.9.0 嵌套模型下多个 Story 的子状态在同一个 state 的 `storyStates{}` 内各自独立流转、互不干扰（R5 重置只动目标 Story）；state 仅记录进度，不存储业务产物内容。
 
 ---
 
@@ -590,12 +616,14 @@ ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父
 - **主设计优先**：phase、scale、entry node、门禁语义和 Runtime Stats 含义以本文档其它章节与实现架构文档为准，Monitor 只能跟随展示。
 - **多工作区入口**：用户选择父目录，Monitor 扫描其中所有包含 `.ae-sdd/` 的工作区；左侧列表用于选择，右侧详情用于观察。
 - **两级导航/看板**：左侧必须分项目与任务两级且项目可折叠，点击项目切项目级看板，点击任务切任务级看板，点击折叠控件只展开/收起任务；右侧顶部必须同时体现当前项目与当前任务。
+- **局部响应式切换**：同一项目下点击任务不得清空或重建整个详情页；Monitor 只能更新当前任务、指标、Tab 内容和侧边栏选中态。
+- **React renderer**：Monitor 的桌面壳仍由 Electron 提供，本地 UI 内胆必须由 React + TypeScript 组件实现；侧边栏项目/任务树必须通过稳定 key 保持节点连续性，禁止回退到整块 DOM 替换造成闪烁。
 - **结束态也可观察**：`completed`、`paused`、`idle`、`invalid` 等状态都必须可展示，不能只服务正在运行的工作区。
 - **多活跃任务可见**：Monitor 必须同时展示根 state、activeAgents 和 `.auto-engineering/{WORKITEM-KEY}` 中的活跃/未完成工作项，不能压缩成单个 activeWorkItem。
 - **Memory 状态可见**：Monitor 必须展示 `.ae-sdd/memory` 的项目级/任务级 memory 数量、最近记录、活跃 scope 与阻断 scope，不能只看 phase/state。
 - **阶段轴可见**：时间线必须展示完整 phase 链和当前节点说明，即使 state history/events 为空也能判断工作区处于哪个节点。
 - **响应式观察**：默认通过文件系统事件监听 `.ae-sdd/` 与 `.auto-engineering/` 变化并静默刷新当前项目/任务；低频轮询只作为兜底；自动刷新仍然只读，不执行 gate 或 memory 命令。
-- **动效连续性**：项目/任务折叠、项目/任务切换、Tab 切换、按钮按压和响应式刷新状态提示可以使用轻量 iOS 风格动效，但动效只能表达 UI 反馈，不得暗示 ae-sdd 状态被写入或 gate 被执行；必须支持系统 reduced-motion 降级。
+- **动效连续性**：项目折叠、Tab 切换和按钮按压可以使用轻量 iOS 风格动效，但加载、任务切换和响应式刷新不得持续闪烁；动效只能表达 UI 反馈，不得暗示 ae-sdd 状态被写入或 gate 被执行；必须支持系统 reduced-motion 降级。
 - **体验连续性**：目录选择必须有即时反馈；重启后必须恢复上次父目录、选中工作区和选中任务；类 Mac 窗口三点必须是真实窗口控制。
 
 ### 实现
@@ -609,7 +637,7 @@ ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父
 | Memory 读取 | `.ae-sdd/memory/**/*.jsonl`、`.ae-sdd/memory/.stage/*.json`；展示项目/任务 memory、活跃 scope 与阻断 scope |
 | 性能读取 | `.ae-sdd/runtime-stats/*.jsonl` |
 | 展示结构 | 左侧可折叠项目/任务两级列表 + 右侧当前项目/当前任务两级看板 + 总览/阶段轴与事件流/Memory/活跃任务与工作项/性能/原始状态 |
-| UI 动效 | `src/styles.css` 与 `src/renderer.js` 只实现本地交互反馈、折叠过渡、Tab/detail 过渡和 reduced-motion 降级；响应式刷新不得让看板闪烁，不改变 ae-sdd 项目文件 |
+| UI 动效 | `src/styles.css` 与 `renderer/src/App.tsx` 只实现本地交互反馈、折叠过渡、Tab/detail 过渡和 reduced-motion 降级；响应式刷新不得让看板闪烁，不改变 ae-sdd 项目文件 |
 | 偏好保存 | Electron userData `preferences.json`，保存父目录、选中工作区、选中任务、项目折叠状态、自动刷新开关和主题 |
 | 发包目标 | Windows setup exe/zip + macOS dmg/zip |
 | 同步闭环 | `source/standards/update-graph.json:UG-22` |

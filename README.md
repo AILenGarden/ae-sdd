@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.8.2（🆕 2026-07-03：修复五层记忆存取断裂；新增 task/project compact memory 分区与写入硬约束；强化独立需求状态机：`state new --id --name` 创建 `{ID}--{name}` 目录，`state write` 默认跟随 active work item。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.9.0（🆕 2026-07-06：嵌套状态模型——单文件嵌套 state 维护主流程所有子系列，任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

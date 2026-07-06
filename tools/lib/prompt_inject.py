@@ -178,10 +178,40 @@ def inject(
 
     # 读状态 + 配置（entry token 提醒需要 projectKey）
     st = state_mod.read_state(paths.state_path(ade_sdd))
-    phase = st.get("phase", "initialized")
-    current_story = st.get("currentStory") or "（未设定）"
+    # 🆕 v3.9.0 嵌套 state 兼容：用统一接口读 active phase/story
+    # - nested state: 取 activeStory 子状态的 phase
+    # - flat state: 取顶层 phase / currentStory（v1 行为不变）
+    phase = state_mod.get_active_phase(st)
+    current_story = state_mod.get_active_story(st) or "（未设定）"
     cfg = paths.read_config(ade_sdd)
     project_key = cfg.get("projectKey", "unknown")
+
+    # 🆕 v3.9.0 R5：STORY-ID 一致性检测——用户引用的 Story 与 activeStory 不一致时提醒
+    story_mismatch_msg: Optional[str] = None
+    try:
+        from lib.classify import extract_requirement_features, match_state
+        features = extract_requirement_features(user_prompt, ade_sdd.parent)
+        if features.story_ids and features.modifies_story:
+            active = current_story if current_story != "（未设定）" else None
+            mentioned = features.story_ids[0]
+            if active and mentioned != active:
+                # 查该 mentioned Story 是否已被某 state 管理
+                hit = paths.find_nested_state_by_story_id(ade_sdd, mentioned)
+                if hit:
+                    target_path, _ = hit
+                    story_mismatch_msg = (
+                        f"⚠️ R5 重定位提醒：用户引用 {mentioned}，当前 activeStory={active}。"
+                        f"该 Story 已被 {target_path.parent.name} 管理，"
+                        f"建议跑 `ae-sdd state relocate --story {mentioned}` 重定位。"
+                    )
+                else:
+                    story_mismatch_msg = (
+                        f"⚠️ Story 一致性提醒：用户引用 {mentioned}，当前 activeStory={active}，"
+                        f"且 {mentioned} 未被任何 state 管理。建议跑 /ae-sdd 路由或"
+                        f" `ae-sdd state new --entry-node STORY --story-ids {mentioned}`。"
+                    )
+    except Exception:
+        pass  # 一致性检测失败不阻断注入
 
     # 🆕 v3.4.0 关卡1：/ae-sdd 触发词检测 + entry token 提醒（建议书4）
     entry_reminder: list[str] = []
@@ -244,6 +274,10 @@ def inject(
     # 🆕 v3.4.0 关卡1：entry token 提醒前置（最高优先级，在 G-00 之前）
     if entry_reminder:
         lines.insert(1, "\n".join(entry_reminder))
+
+    # 🆕 v3.9.0 R5：Story 一致性提醒（在 entry token 之后、G-00 之前）
+    if story_mismatch_msg:
+        lines.insert(1, story_mismatch_msg)
 
     # 🆕 v3.4.0：母版版本漂移探测（仅文本提醒，不阻断）
     # 检测已安装的 ae-sdd SKILL 是否落后于母版，若落后则在注入块末尾追加提醒

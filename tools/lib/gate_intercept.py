@@ -267,8 +267,26 @@ def _check_product_landing(
         return False, reason
 
     # 从 state 读 currentStory（用于定位 session.json）
+    # 🆕 v3.9.0 嵌套 state 兼容：用统一接口读 activeStory
     st = state_mod.read_state(paths.state_path(ade_sdd)) if ade_sdd else {}
-    current_story = st.get("currentStory", "") if ade_sdd else ""
+    current_story = state_mod.get_active_story(st) or "" if ade_sdd else ""
+
+    # 🆕 v3.9.0 R5：产物 STORY-ID 归属校验——若产物含 STORY-ID，须在当前 state 的 storyStates 内
+    if ade_sdd and product_type in ("Story", "Story Supplement", "TestCase", "Task", "CodingPlan",
+                                     "Coding Report", "Test Report", "CR Report"):
+        story_id_in_path = _extract_story_id_from_path(file_path)
+        if story_id_in_path and state_mod.is_nested_state(st):
+            story_states = st.get("storyStates") or {}
+            if story_id_in_path not in story_states:
+                return False, (
+                    f"产物 {product_type} 的 STORY-ID={story_id_in_path} 未登记到当前 state 的 storyStates。\n"
+                    f"当前 state 仅含: {list(story_states.keys())}\n"
+                    f"目标文件: {file_path}\n"
+                    f"请先跑 /ae-sdd 路由，或 `ae-sdd state relocate --story {story_id_in_path}` 重定位，"
+                    f"或 `ae-sdd state write --add-story {story_id_in_path}` 归入当前 state。\n"
+                    f"（v3.9.0 R5 产物-STORY 归属门禁）"
+                    f"{doc_save_hint}"
+                )
 
     # 🆕 v3.7.2 统一修复建议：被拦截时引导用 ae-sdd doc save（避免手拼路径）
     doc_save_hint = (
@@ -346,6 +364,23 @@ def _relative_product_path(file_path: str, ade_sdd: Optional[Path]) -> str:
         return str(rel).replace("\\", "/")
     except Exception:
         return ""
+
+
+def _extract_story_id_from_path(file_path: str) -> Optional[str]:
+    """🆕 v3.9.0 R5：从产物文件路径提取 STORY-ID。
+
+    扫描路径各段 + 文件名，匹配 STORY-\\d+ 模式。
+    如 "ae-sdd-doc/Story/STORY-003-BE/STORY-003-BE-CodingPlan.md" → "STORY-003-BE"
+
+    Returns:
+        STORY-ID 字符串（大写）或 None
+    """
+    import re
+    if not file_path:
+        return None
+    # 匹配完整 STORY-ID（含后缀如 -BE）
+    m = re.search(r"STORY[-_]?\d+(?:[-_]?[A-Za-z]+)?", file_path, re.IGNORECASE)
+    return m.group(0).upper() if m else None
 
 
 def _is_source_code_path(file_path: str) -> bool:

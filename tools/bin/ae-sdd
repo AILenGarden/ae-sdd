@@ -268,6 +268,59 @@ def cmd_state_new(args, parser):
     if not requested_scale:
         requested_scale = "大"
 
+    # 🆕 v3.9.0 嵌套 state 分支：--nested 或 --story-ids 或 entry-node=PRD/DR/STORY 时启用
+    story_ids_raw = getattr(args, "story_ids", "") or ""
+    story_ids_list = [s.strip() for s in story_ids_raw.split(",") if s.strip()] if story_ids_raw else []
+    use_nested = (getattr(args, "nested", False)
+                  or bool(story_ids_list)
+                  or (requested_entry_node in ("PRD", "DR", "STORY")))
+
+    if use_nested and requested_entry_node in ("PRD", "DR", "STORY"):
+        # 🆕 v3.9.0 创建嵌套 state
+        from lib.flow_enums import FlowNode
+        if not FlowNode.is_nested_entry(requested_entry_node):
+            output.err(f"entry-node={requested_entry_node} 不支持嵌套 state（仅 PRD/DR/STORY）")
+            return 1
+        try:
+            st = state.init_nested_state(
+                project_key=cfg.get("projectKey", ""),
+                entry_node=requested_entry_node,
+                state_machine_id=work_item_key,
+                state_machine_name=work_item_name,
+                story_ids=story_ids_list or ([args.story] if args.story else None),
+                prd_id=work_item_id if requested_entry_node == "PRD" else None,
+                dr_id=work_item_id if requested_entry_node == "DR" else (args.story or None),
+            )
+        except ValueError as e:
+            output.err(str(e))
+            return 1
+        state.write_state(sp, st)
+        if args.activate:
+            _write_active_state_mirror(ade_sdd, st, work_item_key, sp)
+        payload = {
+            "ok": True,
+            "workItemId": work_item_id,
+            "workItemName": work_item_name,
+            "workItemKey": work_item_key,
+            "statePath": str(sp),
+            "active": bool(args.activate),
+            "stateModel": "nested",
+            "entryNode": requested_entry_node,
+            "storyIds": story_ids_list,
+        }
+        if args.json:
+            output.emit(payload, as_json=True)
+        else:
+            output.ok(f"新嵌套状态机已创建：{work_item_key}")
+            output.info(f"  state: {sp}")
+            output.info(f"  stateModel: nested (entryNode={requested_entry_node})")
+            if story_ids_list:
+                output.info(f"  storyStates: {', '.join(story_ids_list)}")
+            if args.activate:
+                output.info("  已设为 active work item")
+        return 0
+
+    # v1 扁平 state 路径（原有逻辑）
     now = _now_iso()
     st = state.read_state(sp)
     st.update({
@@ -373,15 +426,34 @@ def cmd_state_write(args, parser):
                             f"保留现有 scale（如需切换请先 set_scale 重置）")
             else:
                 state.set_scale(s, requested_scale, entry_node=requested_entry_node)
-        changed = state.set_phase(s, args.phase, by="ae-sdd state write")
+
+        # 🆕 v3.9.0 嵌套 state 分支：--sub-story 操作子状态 phase；--add-story 归入新 Story
+        if getattr(args, "add_story", "") and state.is_nested_state(s):
+            new_sid = args.add_story.strip()
+            if state.add_story_to_nested_state(s, new_sid):
+                output.ok(f"Story {new_sid} 已归入 state {s.get('stateMachineId')} 的 storyStates")
+            else:
+                output.warn(f"Story {new_sid} 已在 storyStates 内（幂等不覆盖）")
+
+        if getattr(args, "sub_story", "") and state.is_nested_state(s):
+            # 操作指定 Story 子状态 phase
+            sub_sid = args.sub_story.strip()
+            changed = state.set_story_substate_phase(s, sub_sid, args.phase,
+                                                      by="ae-sdd state write --sub-story")
+        elif state.is_nested_state(s) and args.story and state.get_story_substate(s, args.story):
+            # 嵌套 state + --story 指向已存在子状态 → 操作子状态 phase
+            changed = state.set_story_substate_phase(s, args.story, args.phase,
+                                                      by="ae-sdd state write")
+        else:
+            changed = state.set_phase(s, args.phase, by="ae-sdd state write")
     except ValueError as e:
         output.err(str(e))
         return 1
-    if args.story:
+    if args.story and not state.is_nested_state(s):
         s["currentStory"] = args.story
-    if work_item:
+    if work_item and not state.is_nested_state(s):
         s["currentWorkItem"] = work_item
-    if args.task:
+    if args.task and not state.is_nested_state(s):
         s["currentTask"] = args.task
     s["lastUpdated"] = _now_iso()
     state.write_state(sp, s)
@@ -390,6 +462,54 @@ def cmd_state_write(args, parser):
         output.ok(f"state 更新：phase={args.phase}")
     else:
         output.warn(f"state 未变更：phase 已为 {args.phase}（history 不累加）")
+    return 0
+
+
+def cmd_state_relocate(args, parser):
+    """🆕 v3.9.0 R5：重定位到 Story 所属 state + 重置该 Story 子状态。
+
+    流程：
+      1. 按 --story 扫描现有嵌套 state，定位其所属 state
+      2. 把 .ae-sdd/state.json 镜像切到该 state
+      3. 若非 --no-reset，重置该 Story 子状态到 story-generated（R5）
+    """
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    story_id = (args.story or "").strip()
+    if not story_id:
+        output.err("--story 参数必填")
+        return 1
+
+    # 1) 查找 Story 所属嵌套 state
+    hit = paths.find_nested_state_by_story_id(ade_sdd, story_id)
+    if not hit:
+        output.err(f"Story {story_id} 未被任何嵌套 state 管理。")
+        output.info("若要新建 state，请跑：")
+        output.info(f'  ae-sdd state new --id {story_id} --name "<需求名>" --entry-node STORY --story-ids {story_id} --nested')
+        return 1
+
+    state_path, state_data = hit
+    state_machine_id = state_data.get("stateMachineId", state_path.parent.name)
+
+    # 2) 切镜像到该 state
+    _write_active_state_mirror(ade_sdd, state_data, state_machine_id, state_path)
+    output.ok(f"已重定位到 state: {state_machine_id}")
+    output.info(f"  state: {state_path}")
+
+    # 3) R5 重置子状态（除非 --no-reset）
+    if not args.no_reset:
+        if not state.is_nested_state(state_data):
+            output.warn("该 state 非 nested 模型，跳过子状态重置")
+            return 0
+        if state.reset_story_substate(state_data, story_id, by="ae-sdd state relocate"):
+            state.write_state(state_path, state_data)
+            _write_active_state_mirror(ade_sdd, state_data, state_machine_id, state_path)
+            output.ok(f"Story {story_id} 子状态已重置到 {state.STORY_RESET_TARGET_PHASE}")
+            output.info(f"  （completedSteps 清空，codingRound 归零，resetHistory 保留审计）")
+        else:
+            output.warn(f"Story {story_id} 不在 storyStates 内，未重置")
     return 0
 
 
@@ -3640,6 +3760,13 @@ def main() -> int:
     p_state_new.add_argument("--force", action="store_true", help="允许覆盖已存在的同名 state.json")
     p_state_new.add_argument("--no-activate", dest="activate", action="store_false",
                              help="创建后不设为 active work item")
+    # 🆕 v3.9.0 嵌套 state 支持
+    p_state_new.add_argument("--story-ids", default="",
+                             help="🆕 v3.9.0 多 Story 嵌套 state（逗号分隔，如 STORY-003-BE,STORY-004-BE）；"
+                                  "配合 --entry-node=STORY/PRD/DR 使用")
+    p_state_new.add_argument("--nested", action="store_true",
+                             help="🆕 v3.9.0 显式创建嵌套 state（stateModel=nested）；"
+                                  "传 --story-ids 或 --entry-node=PRD/DR/STORY 时自动启用")
     p_state_new.set_defaults(func=cmd_state_new, activate=True)
     p_state_read = state_sub.add_parser("read", help="读 state.json", parents=[common])
     p_state_read.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名（PRD/BUG/OPT/Story 均可）")
@@ -3666,7 +3793,22 @@ def main() -> int:
                                help="maintenance override: allow phase transition without mandatory memory")
     p_state_write.add_argument("--project-state", action="store_true",
                                help="显式写 legacy 项目级 .ae-sdd/state.json；新需求默认不允许")
+    # 🆕 v3.9.0 嵌套 state 支持
+    p_state_write.add_argument("--add-story", default="",
+                               help="🆕 v3.9.0 向嵌套 state 的 storyStates 新增一条 Story 子状态（R2 归入）")
+    p_state_write.add_argument("--sub-story", default="",
+                               help="🆕 v3.9.0 操作指定 Story 子状态的 phase（嵌套 state 专用，等价于 --story 但写子状态）")
     p_state_write.set_defaults(func=cmd_state_write)
+
+    # 🆕 v3.9.0 state relocate — R5 改已管理 Story 重定位 + 重置子状态
+    p_state_relocate = state_sub.add_parser("relocate",
+                                             help="🆕 v3.9.0 重定位到 Story 所属 state + 重置该 Story 子状态（R5）",
+                                             parents=[common])
+    p_state_relocate.add_argument("--story", required=True,
+                                  help="要重定位的 Story ID（如 STORY-003-BE）")
+    p_state_relocate.add_argument("--no-reset", action="store_true",
+                                  help="只重定位不重置子状态（默认重置到 story-generated）")
+    p_state_relocate.set_defaults(func=cmd_state_relocate)
 
     # state confirm（🆕 v3.4.0 — 审核点 token，建议书3 B2-1~5）
     p_state_confirm = state_sub.add_parser("confirm", help="[v3.4.0] 审核点确认 token（用户触发，防 AI 自填）",

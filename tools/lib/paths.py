@@ -14,7 +14,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.8.2"
+MASTER_VERSION = "3.9.0"
 
 
 def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:
@@ -485,3 +485,146 @@ def list_docs(project_root: Path, story_id: str, suffix: str) -> list[Path]:
     if not task_dir.is_dir():
         return []
     return sorted(task_dir.glob(f"{story_id}{suffix}"))
+
+
+# ─── 🆕 v3.9.0 嵌套状态模型：命名 + 向上归入查找 ──────────────────────────────
+# R6: 只以最顶层主体特征命名
+#   顶层=PRD  → PRD-{PRD特征}        如 PRD-IM-CS
+#   顶层=DR   → DR-{DR特征}          如 DR-CS
+#   顶层=Story → Story-{合并编号}     如 Story-003-004-005
+#
+# R2 向上归入：DR/Story 优先归入已存在的上层 state
+#   find_nested_state_by_story_id() 扫描现有嵌套 state，定位 Story 所属 state
+#   find_nested_state_by_dr_id()    扫描现有嵌套 state，定位 DR 所属 state
+
+
+def _extract_story_number(story_id: str) -> Optional[str]:
+    """从 Story ID 提取编号部分（如 STORY-003-BE → 003）。"""
+    if not story_id:
+        return None
+    m = re.search(r"STORY[-_]?(\d+)", story_id, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def build_state_machine_name(top_node: str, features: dict) -> str:
+    """R6: 只以最顶层主体特征命名 state。
+
+    Args:
+        top_node: 顶层节点类型 "PRD" / "DR" / "STORY"
+        features: {
+            "prd_feature": str,       # PRD 特征（如 "IM-CS"），top_node=PRD 时必填
+            "dr_feature": str,        # DR 特征（如 "CS"），top_node=DR 时必填
+            "story_ids": list[str],   # Story ID 列表，top_node=STORY 时必填
+        }
+
+    Returns:
+        state 标识字符串（如 "PRD-IM-CS" / "DR-CS" / "Story-003-004-005"）
+
+    Raises:
+        ValueError: top_node 非法或缺关键特征
+    """
+    top_node = (top_node or "").upper()
+    if top_node == "PRD":
+        prd_feature = (features or {}).get("prd_feature", "").strip()
+        if not prd_feature:
+            raise ValueError("top_node=PRD 必须提供 prd_feature")
+        return f"PRD-{prd_feature}"
+    if top_node == "DR":
+        dr_feature = (features or {}).get("dr_feature", "").strip()
+        if not dr_feature:
+            raise ValueError("top_node=DR 必须提供 dr_feature")
+        return f"DR-{dr_feature}"
+    if top_node == "STORY":
+        story_ids = (features or {}).get("story_ids") or []
+        if not story_ids:
+            raise ValueError("top_node=STORY 必须提供 story_ids")
+        nums = [n for n in (_extract_story_number(sid) for sid in story_ids) if n]
+        if not nums:
+            # 无法提取编号，用完整 ID 去重拼接
+            nums = list(dict.fromkeys(story_ids))
+        return "Story-" + "-".join(nums)
+    raise ValueError(f"未知 top_node: {top_node}（允许: PRD/DR/STORY）")
+
+
+def _scan_nested_states(ade_sdd: Path) -> list[tuple[Path, dict]]:
+    """扫描 .auto-engineering/ 下所有嵌套 state（stateModel=nested）。
+
+    Returns:
+        [(state_path, state_dict), ...] 仅含嵌套 state，flat state 跳过
+    """
+    base = work_items_dir(ade_sdd)
+    if not base.is_dir():
+        return []
+    results: list[tuple[Path, dict]] = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        state_file = child / "state.json"
+        if not state_file.is_file():
+            continue
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("stateModel") == "nested":
+            results.append((state_file, data))
+    return results
+
+
+def find_nested_state_by_story_id(ade_sdd: Path,
+                                   story_id: str) -> Optional[tuple[Path, dict]]:
+    """R2/R5: 按 Story ID 查找其所属的嵌套 state。
+
+    扫描所有嵌套 state 的 storyStates 键，命中返回 (state_path, state_dict)。
+
+    Args:
+        ade_sdd: 项目 .ae-sdd 目录
+        story_id: 要查找的 Story ID（如 "STORY-003-BE"）
+
+    Returns:
+        (state_path, state_dict) 或 None（未找到/无嵌套 state）
+    """
+    if not story_id:
+        return None
+    for state_path, data in _scan_nested_states(ade_sdd):
+        story_states = data.get("storyStates") or {}
+        if story_id in story_states:
+            return (state_path, data)
+    return None
+
+
+def find_nested_state_by_dr_id(ade_sdd: Path,
+                                dr_id: str) -> Optional[tuple[Path, dict]]:
+    """R2: 按 DR ID 查找其所属的嵌套 state（用于 DR 向上归入 PRD state）。
+
+    扫描所有嵌套 state 的 drState.drId，命中返回 (state_path, state_dict)。
+
+    Args:
+        ade_sdd: 项目 .ae-sdd 目录
+        dr_id: 要查找的 DR ID
+
+    Returns:
+        (state_path, state_dict) 或 None
+    """
+    if not dr_id:
+        return None
+    for state_path, data in _scan_nested_states(ade_sdd):
+        dr_state = data.get("drState") or {}
+        if dr_state.get("drId") == dr_id:
+            return (state_path, data)
+    return None
+
+
+def find_nested_state_by_prd_id(ade_sdd: Path,
+                                 prd_id: str) -> Optional[tuple[Path, dict]]:
+    """R2: 按 PRD ID 查找嵌套 state（用于 DR/Story 向上归入 PRD state）。
+
+    扫描所有嵌套 state 的 prdState.prdId，命中返回 (state_path, state_dict)。
+    """
+    if not prd_id:
+        return None
+    for state_path, data in _scan_nested_states(ade_sdd):
+        prd_state = data.get("prdState") or {}
+        if prd_state.get("prdId") == prd_id:
+            return (state_path, data)
+    return None
