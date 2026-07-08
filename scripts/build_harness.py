@@ -258,6 +258,59 @@ def render_template(template_path: Path, vars: dict) -> str:
     return content
 
 
+# ─── Identity sanity check（防 Mavis/orchestrator 污染回流） ──────────────────
+# 历史背景：v3.9.8 之前的 agent.md.template 错把 ae-sdd 写成 "Mavis Auto-Engineering
+# Orchestrator"，导致 3 个客户端拉取后 AI 跳过"任务大小评估"直接干活。
+# 本函数拦截任何把 ae-sdd 钉死为宿主专属子编排角色的归属声明。
+#
+# ⚠️ 注意：禁止裸禁词（如 "Mavis harness" 整体禁掉），因为宿主名作为正常描述
+# 是合法的（如"宿主 Mavis harness 通过 mount 注册 ae-sdd"）。只拦截"ae-sdd 是
+# Mavis X" / "ae-sdd 是 orchestrator"这种归属句式，避免误报。
+import re as _re_identity
+
+# 身份归属声明句式（任意宿主 + orchestrator 类身份都禁）
+_IDENTITY_ATTRIBUTION_PATTERNS: list[tuple[_re_identity.Pattern[str], str]] = [
+    (_re_identity.compile(
+        r"ae[- ]?sdd\s+(is|acts\s+as|serves\s+as|functions\s+as|works\s+as|=|:)\s+"
+        r".*?\b(Mavis|mavis)[- ]?(Harness|harness)\b",
+        _re_identity.IGNORECASE | _re_identity.DOTALL,
+    ),
+     "禁止把 ae-sdd 写成 Mavis Harness 子编排器（归属动词：is/acts as/...）"),
+    (_re_identity.compile(r"\b(Mavis|Mavis)[- ]?(Harness|harness)\s*(format|mode|role)",
+                          _re_identity.IGNORECASE),
+     "禁止把 ae-sdd 描述成 Mavis Harness 的某种 format/mode/role"),
+    (_re_identity.compile(r"\byou are the[^.\n]*\borchestrator\b", _re_identity.IGNORECASE),
+     "禁止声明 ae-sdd 是 orchestrator（ae-sdd 是 client-agnostic Skill 不是编排器）"),
+    (_re_identity.compile(r"\bae[- ]?sdd[^.\n]*\borchestrator\b", _re_identity.IGNORECASE),
+     "禁止把 ae-sdd 写成 orchestrator"),
+    (_re_identity.compile(r"\bauto[- ]engineering orchestrator\b", _re_identity.IGNORECASE),
+     "禁止出现 'auto-engineering orchestrator' 字样"),
+]
+
+
+def assert_independent_identity(rendered: str, context: str = "agent.md") -> None:
+    """若渲染产物含把 ae-sdd 钉死为宿主子编排角色的归属声明 → 报错并退出。"""
+    violations: list[tuple[int, str, str]] = []  # (line_no, match, reason)
+    for pattern, reason in _IDENTITY_ATTRIBUTION_PATTERNS:
+        for match in pattern.finditer(rendered):
+            line_no = rendered[: match.start()].count("\n") + 1
+            violations.append((line_no, match.group(0).strip(), reason))
+    if violations:
+        err(f"❌ 适配器 identity sanity check FAILED ({context})")
+        err("   检测到把 ae-sdd 钉死为宿主子编排角色的归属句式，禁止渲染。原因：")
+        # 去重 + 按行号排序
+        seen = set()
+        for line_no, matched, reason in sorted(violations, key=lambda x: x[0]):
+            key = (line_no, matched.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            err(f"   - L{line_no}: match='{matched}' → {reason}")
+        err("   修复方法：编辑 scripts/templates/{agent.md,README.md}.template 重写对应句式。")
+        err("   如果确认是合规新用法，请同步更新 _IDENTITY_ATTRIBUTION_PATTERNS 白名单。")
+        raise SystemExit(2)
+
+
 # ─── 幂等锁（对齐 PS1 Read-AdapterLock + 多维比对） ──────────────────────────
 def read_adapter_lock(lock_path: Path) -> Optional[dict]:
     if not lock_path.is_file():
@@ -512,6 +565,12 @@ def main() -> int:
     print(f"  agent.md  length: {len(agent_content)} chars")
     print(f"  README.md length: {len(readme_content)} chars")
 
+    # ── 4.5 Identity sanity check（防 Mavis/orchestrator 污染回流） ────────
+    step("Identity sanity check")
+    assert_independent_identity(agent_content, context="agent.md")
+    assert_independent_identity(readme_content, context="README.md")
+    ok("产物身份描述合规（client-agnostic 独立 Skill，无 Mavis/orchestrator 残留）")
+
     # ── 5. Dry-run ─────────────────────────────────────────────────────────
     if args.dry_run:
         step("DRY-RUN mode - no files will be written")
@@ -594,13 +653,17 @@ def main() -> int:
         ok("mavis harness mounted")
     else:
         err(f"mount failed (rc={rc})")
-        # mount 失败回滚产物（避免 commit 不变 SKIP → 永久卡在错的 agent.md）
-        if target_agent.exists():
-            target_agent.unlink()
-            warn(f"已回滚 {target_agent}（mount 失败时不留半成品）")
-        if lock_file.exists():
-            lock_file.unlink()
-            warn(f"已回滚 {lock_file}")
+        # mount 失败回滚三件套（agent.md / README.md / .adapter.lock），
+        # 避免 commit 不变 SKIP → 永久卡在错的产物。
+        # v3.9.9 fix：补全 README.md（v3.9.8 漏回滚，Out of scope #1）
+        for artifact, label in [
+            (target_agent,  "agent.md"),
+            (target_readme, "README.md"),
+            (lock_file,     ".adapter.lock"),
+        ]:
+            if artifact.exists():
+                artifact.unlink()
+                warn(f"已回滚 {artifact}（{label}，mount 失败时不留半成品）")
         return 1
 
     # ── 10. 验证 list ──────────────────────────────────────────────────────

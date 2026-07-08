@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from build_harness import (  # noqa: E402
     ADAPTER_VERSION,
+    assert_independent_identity,
     cleanup_old_bak,
     get_commit_hash,
     get_tree_hash,
@@ -214,3 +215,84 @@ class TestCleanupOldBak:
         self._make_baks(target, 3)
         assert cleanup_old_bak(target, keep=-1) == 0
         assert len(list(target.parent.glob("agent.md.bak.*"))) == 3
+
+
+class TestIdentitySanityCheck:
+    """assert_independent_identity 正则白名单覆盖测试（v3.9.9 补，Out of scope #2）。
+
+    每条 pattern 都需要：
+    1. 命中用例  → 期待 SystemExit(2)
+    2. 误报用例  → 合法提及宿主名，期待 pass（不抛）
+    """
+
+    def _assert_raises(self, text: str) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            assert_independent_identity(text, context="test")
+        assert exc_info.value.code == 2
+
+    def _assert_pass(self, text: str) -> None:
+        # 不应抛异常
+        assert_independent_identity(text, context="test")
+
+    # ── 干净内容 ────────────────────────────────────────────────────────────
+
+    def test_clean_content_passes(self):
+        self._assert_pass(
+            "You are the ae-sdd skill — a client-agnostic Skill running on any host."
+        )
+
+    # ── Pattern 1: ae-sdd ... Mavis Harness 归属句 ──────────────────────────
+
+    def test_pattern1_ae_sdd_is_mavis_harness(self):
+        self._assert_raises("ae-sdd is the Mavis Harness orchestrator.")
+
+    def test_pattern1_ae_sdd_mavis_harness_variant(self):
+        self._assert_raises("ae-sdd acts as MavisHarness sub-agent.")
+
+    # ── Pattern 2: Mavis Harness format/mode/role ────────────────────────────
+
+    def test_pattern2_mavis_harness_format(self):
+        self._assert_raises("This output is in Mavis Harness format.")
+
+    def test_pattern2_mavis_harness_role(self):
+        self._assert_raises("Mavis-Harness role is to orchestrate tasks.")
+
+    # ── Pattern 3: you are the ... orchestrator ──────────────────────────────
+
+    def test_pattern3_you_are_the_orchestrator(self):
+        self._assert_raises("You are the auto-engineering orchestrator for this project.")
+
+    def test_pattern3_you_are_orchestrator_mixed_case(self):
+        self._assert_raises("you are the Orchestrator that drives ae-sdd.")
+
+    # ── Pattern 4: ae-sdd ... orchestrator ──────────────────────────────────
+
+    def test_pattern4_ae_sdd_orchestrator(self):
+        self._assert_raises("ae-sdd is an orchestrator embedded in Mavis.")
+
+    def test_pattern4_aesdd_orchestrator_no_dash(self):
+        self._assert_raises("aesdd orchestrator runs inside the host.")
+
+    # ── Pattern 5: auto-engineering orchestrator ─────────────────────────────
+
+    def test_pattern5_auto_engineering_orchestrator(self):
+        self._assert_raises("Welcome to the auto-engineering orchestrator.")
+
+    def test_pattern5_autoengineering_orchestrator_space(self):
+        self._assert_raises("auto engineering orchestrator is ready.")
+
+    # ── 合法提及（误报防护）─────────────────────────────────────────────────
+
+    def test_no_false_positive_mavis_as_host_description(self):
+        """合法描述：ae-sdd 运行于 Mavis harness 之上，不是归属声明。"""
+        self._assert_pass(
+            "ae-sdd runs on top of the Mavis harness via `mavis harness mount`."
+        )
+
+    def test_no_false_positive_mavis_harness_mount_command(self):
+        """命令行示例中出现 mavis harness 不应被误报。"""
+        self._assert_pass("Run: mavis harness mount ~/.ae-sdd/harness")
+
+    def test_no_false_positive_orchestration_as_noun(self):
+        """orchestration（名词）≠ orchestrator（角色声明），不应触发。"""
+        self._assert_pass("ae-sdd supports multi-agent orchestration workflows.")

@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.9.8（🆕 2026-07-08：mirror-fallback trap fix——`.ae-sdd/state.json` 镜像可缺。`_active_state_from_mirror` + `_main_state_path_for_args` 在镜像缺失时主动 fallback 到 `.auto-engineering/*/state.json` 源（按 mtime 选最近活跃）；`health` 检查 `state.json 可定位`（镜像 + 源任一即可）。life 等项目 owner 可把镜像当反模式删除，仅留 work-item 源为唯一真值。v3.9.7 修复 `_check_memory_entered` 设计阶段死环。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.9.9（🆕 2026-07-08：harness 回滚补全 README.md + identity sanity check 单测——mount 失败回滚三件套（agent.md/README.md/.adapter.lock）；Pattern 1 正则收窄消除合法提及误报；新增 `TestIdentitySanityCheck` 14 用例。v3.9.8：mirror-fallback trap fix。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
