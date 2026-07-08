@@ -171,22 +171,31 @@ def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[
 
     import json
 
-    # 1) 读项目根 .ae-sdd/state.json 拿 currentStory
+    # 1) 读项目根 .ae-sdd/state.json 拿 activeStory/currentStory
     ae_sdd_dir = project_root / ".ae-sdd"
     story_id: Optional[str] = None
     if (ae_sdd_dir / "state.json").is_file():
         try:
+            from lib import state as state_mod
             s = json.loads((ae_sdd_dir / "state.json").read_text(encoding="utf-8"))
-            story_id = s.get("currentStory") or s.get("storyId")
+            story_id = state_mod.get_active_story(s) or s.get("storyId")
         except (json.JSONDecodeError, OSError):
             story_id = None
 
-    # 2) 读 .auto-engineering/{storyId}/state.json 的 blockingGaps
+    # 2) 读 work-item state.json 的 blockingGaps（兼容 R6 与 legacy 目录）
     blocking_gaps = 0
     ra_outputs: list = []
     completed_steps: list = []
     if story_id:
         story_state_path = project_root / ".auto-engineering" / story_id / "state.json"
+        try:
+            from lib import paths as paths_mod
+            story_state_path = (
+                paths_mod.find_work_item_state_path(ae_sdd_dir, story_id)
+                or story_state_path
+            )
+        except Exception:
+            pass
         if story_state_path.is_file():
             try:
                 ss = json.loads(story_state_path.read_text(encoding="utf-8"))
@@ -581,35 +590,69 @@ def match_state(project_root: Path, features: RequirementFeatures) -> StateMatch
 
     # 3) R2 向上归入: story_ids 所属 DR 命中现有 state.drState
     if features.story_ids and features.dr_id:
-        hit = paths_mod.find_nested_state_by_dr_id(ade_sdd, features.dr_id)
-        if hit:
-            state_path, state_data = hit
-            reasons.append(
-                f"R2: Story 所属 DR {features.dr_id} 命中 state "
-                f"{state_data.get('stateMachineId')} → absorb_into_dr"
-            )
-            return StateMatchResult(
-                action="absorb_into_dr",
-                target_state_path=state_path,
-                target_state_data=state_data,
-                reasons=reasons,
-            )
+        # 🆕 v3.9.3 P-V: 验证父级 DR 文档存在 + 关联性
+        design_dir = paths_mod.project_design_dir(paths_mod.project_root(ade_sdd))
+        for sid in features.story_ids:
+            ok, reason = paths_mod.verify_parent_claim("DR", features.dr_id, design_dir, child_id=sid)
+            if not ok and reason == "relation_mismatch":
+                reasons.append(
+                    f"R2 阻断：DR {features.dr_id} 文档存在但未列出 {sid} → relation_mismatch"
+                )
+                # 关联性不对 → 阻断（用户要求）
+                from dataclasses import dataclass, field as _field
+                return StateMatchResult(
+                    action="create_nested",
+                    reasons=reasons + [f"⚠️ 父级 DR 关联性不对，请去 design/DR-{features.dr_id.replace('DR-', '', 1)}-*.md 补 {sid}"],
+                )
+            if not ok and reason == "doc_not_found":
+                reasons.append(f"R2 父级 DR 文档不存在 → 视为无父级")
+                features.dr_id = None
+                break
+        if features.dr_id:
+            hit = paths_mod.find_nested_state_by_dr_id(ade_sdd, features.dr_id)
+            if hit:
+                state_path, state_data = hit
+                reasons.append(
+                    f"R2: Story 所属 DR {features.dr_id} 命中 state "
+                    f"{state_data.get('stateMachineId')} → absorb_into_dr"
+                )
+                return StateMatchResult(
+                    action="absorb_into_dr",
+                    target_state_path=state_path,
+                    target_state_data=state_data,
+                    reasons=reasons,
+                )
 
     # 4) R2 向上归入: dr_id 所属 PRD 命中现有 state.prdState
     if features.dr_id and features.prd_id:
-        hit = paths_mod.find_nested_state_by_prd_id(ade_sdd, features.prd_id)
-        if hit:
-            state_path, state_data = hit
+        # 🆕 v3.9.3 P-V: 验证父级 PRD 文档存在
+        design_dir = paths_mod.project_design_dir(paths_mod.project_root(ade_sdd))
+        ok, reason = paths_mod.verify_parent_claim("PRD", features.prd_id, design_dir, child_id=features.dr_id)
+        if not ok and reason == "relation_mismatch":
             reasons.append(
-                f"R2: DR {features.dr_id} 所属 PRD {features.prd_id} 命中 state "
-                f"{state_data.get('stateMachineId')} → absorb_into_prd"
+                f"R2 阻断：PRD {features.prd_id} 文档存在但未列出 {features.dr_id}"
             )
             return StateMatchResult(
-                action="absorb_into_prd",
-                target_state_path=state_path,
-                target_state_data=state_data,
-                reasons=reasons,
+                action="create_nested",
+                reasons=reasons + [f"⚠️ 父级 PRD 关联性不对"],
             )
+        if not ok and reason == "doc_not_found":
+            reasons.append(f"R2 父级 PRD 文档不存在 → 视为无父级")
+            features.prd_id = None
+        else:
+            hit = paths_mod.find_nested_state_by_prd_id(ade_sdd, features.prd_id)
+            if hit:
+                state_path, state_data = hit
+                reasons.append(
+                    f"R2: DR {features.dr_id} 所属 PRD {features.prd_id} 命中 state "
+                    f"{state_data.get('stateMachineId')} → absorb_into_prd"
+                )
+                return StateMatchResult(
+                    action="absorb_into_prd",
+                    target_state_path=state_path,
+                    target_state_data=state_data,
+                    reasons=reasons,
+                )
 
     # 5) R7: 无匹配 → create_nested（以 top_node 为顶层）
     # 若 top_node 是 TASK（Bug），改走 create_flat

@@ -217,20 +217,46 @@ class TestPathHelpers(unittest.TestCase):
     def test_state_path(self):
         self.assertEqual(paths.state_path(self.ade_sdd), self.ade_sdd / "state.json")
 
-    def test_work_item_dir_name_includes_id_and_name(self):
-        self.assertEqual(
-            paths.work_item_dir_name("BUG-LIFE-001", "Login timeout fix"),
-            "BUG-LIFE-001--Login-timeout-fix",
-        )
+    def test_work_item_dir_name_v393_r6_only(self):
+        """🆕 v3.9.3 废除 v3.8.2 双段：work_item_dir_name 只接受 (top_node, features) 走 R6 顶层名。"""
+        # 4 种顶层节点
+        self.assertEqual(paths.work_item_dir_name("PRD", {"prd_feature": "IM-CS"}), "PRD-IM-CS")
+        self.assertEqual(paths.work_item_dir_name("DR", {"dr_feature": "CS"}), "DR-CS")
+        self.assertEqual(paths.work_item_dir_name("STORY", {"story_ids": ["STORY-003-BE", "STORY-004-BE"]}), "Story-003-004")
+        self.assertEqual(paths.work_item_dir_name("TASK", {"task_id": "BUG-LIFE-001"}), "Task-BUG-LIFE-001")
 
-    def test_work_item_state_path_resolves_named_directory_by_id(self):
-        state_path = self.tmp / ".auto-engineering" / "BUG-LIFE-001--Login-timeout-fix" / "state.json"
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(
-            '{"workItemId": "BUG-LIFE-001", "workItemName": "Login timeout fix"}',
+    def test_work_item_dir_name_v393_no_legacy_args(self):
+        """v3.9.3 旧 (id, name) 双参调用 → 走新签名但参数语义变了，等价 (top_node, features) 不传 name。"""
+        # 旧 v3.8.2 调用方式: work_item_dir_name("STORY-004-BE", "登录超时")
+        # v3.9.3 后第 1 个参数被当作 top_node="STORY-004-BE"（非法），抛 ValueError
+        with self.assertRaises(ValueError):
+            paths.work_item_dir_name("STORY-004-BE", {"story_ids": ["STORY-004-BE"]})
+
+    def test_work_item_state_path_v393_r6(self):
+        """v3.9.3 state.json 走 R6 顶层目录。"""
+        expected = self.tmp / ".auto-engineering" / "Story-003-004" / "state.json"
+        actual = paths.work_item_state_path(self.ade_sdd, "STORY", {"story_ids": ["STORY-003-BE", "STORY-004-BE"]})
+        self.assertEqual(actual, expected)
+
+    def test_find_work_item_state_path_accepts_existing_legacy_key(self):
+        legacy_key = "STORY-004-BE--车主端预约单操作-BE"
+        state_file = self.tmp / ".auto-engineering" / legacy_key / "state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text('{"workItemKey":"%s"}\n' % legacy_key, encoding="utf-8")
+
+        self.assertEqual(paths.find_work_item_state_path(self.ade_sdd, legacy_key), state_file)
+
+    def test_find_work_item_state_path_matches_nested_active_story(self):
+        """Nested state lookup must not depend on legacy currentStory being present."""
+        state_file = self.tmp / ".auto-engineering" / "custom-state" / "state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(
+            '{"stateModel":"nested","activeStory":"STORY-004-BE",'
+            '"storyStates":{"STORY-004-BE":{"phase":"story-generated"}}}\n',
             encoding="utf-8",
         )
-        self.assertEqual(paths.work_item_state_path(self.ade_sdd, "BUG-LIFE-001"), state_path)
+
+        self.assertEqual(paths.find_work_item_state_path(self.ade_sdd, "STORY-004-BE"), state_file)
 
     def test_assets_dir(self):
         self.assertEqual(paths.assets_dir(self.ade_sdd), self.ade_sdd / "assets")
@@ -434,6 +460,96 @@ class TestAssetFieldAndModuleFiles(unittest.TestCase):
         self.assertEqual(flat_names, ["svc-a"])
         self.assertIn("2c", discovered["line_groups"])
         self.assertEqual([p.parent.name for p in discovered["line_groups"]["2c"]], ["life-cs"])
+
+
+# ─── 🆕 v3.9.3 父级文档字段抽取 + 关联性验证 ───────────────────────────────────
+class TestExtractParentClaim(unittest.TestCase):
+
+    def _tmp_doc(self, content: str) -> Path:
+        import tempfile
+        p = Path(tempfile.mkdtemp(prefix="story-")) / "STORY-006-BE-Story.md"
+        p.write_text(content, encoding="utf-8")
+        return p
+
+    def test_story_chinese_claim(self):
+        """Story 模板中文字段：'- 来源 PRD: PRD-001' / '- 来源 DR: DR-005'"""
+        doc = self._tmp_doc(
+            "# STORY-006\n\n## 元信息\n\n- Story ID：STORY-006-BE\n"
+            "- 来源 PRD：PRD-001\n- 来源 DR：DR-005\n- 优先级：P1\n"
+        )
+        prd, dr = paths.extract_parent_claim(doc, doc_kind="story")
+        self.assertEqual(prd, "PRD-001")
+        self.assertEqual(dr, "DR-005")
+
+    def test_dr_chinese_claim(self):
+        """DR 模板字段：'- PRD: PRD-001' / '- DR ID: DR-005'"""
+        doc = self._tmp_doc(
+            "# DR-005\n\n## 元信息\n\n- DR ID：DR-005\n- PRD：PRD-001\n- 状态：Draft\n"
+        )
+        prd, dr = paths.extract_parent_claim(doc, doc_kind="dr")
+        self.assertEqual(prd, "PRD-001")
+        # DR 文档不应返回自己的 DR ID 作为 parent_dr
+        self.assertIsNone(dr)
+
+    def test_missing_fields(self):
+        """字段缺失 → 返回 (None, None)"""
+        doc = self._tmp_doc("# STORY-X\n\n## 元信息\n\n- Story ID: STORY-X\n- 优先级: P1\n")
+        prd, dr = paths.extract_parent_claim(doc, doc_kind="story")
+        self.assertIsNone(prd)
+        self.assertIsNone(dr)
+
+    def test_nonexistent_file(self):
+        """文档不存在 → (None, None)"""
+        import tempfile
+        nonexistent = Path(tempfile.gettempdir()) / "does-not-exist-XYZ.md"
+        if nonexistent.exists():
+            nonexistent.unlink()
+        prd, dr = paths.extract_parent_claim(nonexistent, doc_kind="story")
+        self.assertIsNone(prd)
+        self.assertIsNone(dr)
+
+
+class TestVerifyParentClaim(unittest.TestCase):
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="vpc-"))
+        self.design = self.tmp / "design"
+        self.design.mkdir()
+
+    def _make_dr(self, dr_id: str, story_ids: list) -> Path:
+        body = f"# {dr_id}\n\n## Story 拆分\n\n" + "\n".join(f"- {s}" for s in story_ids) + "\n"
+        p = self.design / f"{dr_id}-some-title.md"
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_dr_doc_exists_relation_ok(self):
+        self._make_dr("DR-005", ["STORY-006-BE", "STORY-007-BE"])
+        ok, reason = paths.verify_parent_claim("DR", "DR-005", self.design, child_id="STORY-006-BE")
+        self.assertTrue(ok)
+        self.assertEqual(reason, "ok")
+
+    def test_dr_doc_not_found(self):
+        ok, reason = paths.verify_parent_claim("DR", "DR-999", self.design, child_id="STORY-006-BE")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "doc_not_found")
+
+    def test_dr_doc_exists_relation_mismatch(self):
+        self._make_dr("DR-005", ["STORY-999-BE"])
+        ok, reason = paths.verify_parent_claim("DR", "DR-005", self.design, child_id="STORY-006-BE")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "relation_mismatch")
+
+    def test_short_id_fallback_match(self):
+        """弱关联：去掉 -BE/-FE 后缀再查"""
+        self._make_dr("DR-005", ["STORY-006"])
+        ok, reason = paths.verify_parent_claim("DR", "DR-005", self.design, child_id="STORY-006-BE")
+        self.assertTrue(ok)
+
+    def test_invalid_args(self):
+        ok, reason = paths.verify_parent_claim("XYZ", "DR-005", self.design, child_id="STORY-006")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "invalid_args")
 
 
 if __name__ == "__main__":

@@ -11,13 +11,16 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 
 ---
 
-## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
+## 🟠 门禁强度声明（v3.5.11 AA 诚实降级 / v3.9.1 部分硬化）
 
-> 本文件内出现的 `[HARD]` / 「🔴 硬门禁」/ 「道闸」等标注，**当前为软门禁（report-only）**，
+> **v3.9.1 更新：** 本 SKILL 的**上下文加载准入门禁已硬化**——`G-DR-CTX`（注册表 `CONTEXT_GATE_REGISTRY`）
+> 机械校验 `constraints/assets/RA/PRD` 四类上下文已读齐，未过即 BLOCK。详见下方「第零步」。
+>
+> 本文件内出现的 `[HARD]` / 「🔴 硬门禁」/ 「道闸」等标注，**指 Review 内容审查项，当前仍为软门禁（report-only）**，
 > 由 reviewer 在 DR Review 报告内自评判定，**无 GATE_REGISTRY 级机械校验**。
 > 这不意味着这些检查项不重要——它们是 DR Review 的实质内容；只是当前没有 CLI 硬阻断兜底。
 >
-> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py` GATE_REGISTRY：G-13（全链路对称性，含 DR 层）/ G-RA 系列（RA→DR 衍生）/ G-DOC-STORAGE（DR 文档落地合规）。
+> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py` GATE_REGISTRY：G-13（全链路对称性，含 DR 层）/ G-RA 系列（RA→DR 衍生）/ G-DOC-STORAGE（DR 文档落地合规）/ **G-DR-CTX（DR 上下文加载，v3.9.1）**。
 > **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），本文件未绑定 G-XX 的承诺会被 UC-08 标记为「软门禁/待硬化」并持续追踪。
 
 ---
@@ -206,6 +209,14 @@ DR ID：{DR-ID}
 ```
 
 > **🔴 强制门禁：** 准入未通过 → 拒绝进入第一步读取输入 → 拒绝进入第二步评审。reviewer 不得以"边审边补"绕过准入。
+
+**🔴 机械门禁（v3.9.1，对齐 RA/Coding 三合一）：** 上述 prose 准入清单之外，上下文加载部分必须跑：
+
+```bash
+ae-sdd gates check --only G-DR-CTX
+```
+
+`G-DR-CTX` 校验 `constraints/assets/RA/PRD` 四类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API）。未过 → **BLOCK，禁止进入 Review**。注：本门禁只覆盖「上下文加载」维度，0-1/0-5~0-9 等 DR 产物结构审查项仍是 report-only（见本文件「门禁强度声明」）。
 
 **准入记录：** 在 DR Review 报告顶部新增"准入检查记录"章节：
 

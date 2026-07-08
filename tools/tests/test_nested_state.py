@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import sys
+import unittest
 from pathlib import Path
 
 # 让 tools/lib 可导入
@@ -246,10 +247,11 @@ class TestMatchState:
         assert mr.entry_node == "STORY"
         assert mr.naming == "Story-003-004"
 
-    def test_match_life_project_create_nested(self):
-        """life 项目无嵌套 state → create_nested。"""
+    def test_match_empty_project_create_nested(self, tmp_path):
+        """Project without existing nested state → create_nested."""
+        (tmp_path / ".ae-sdd").mkdir()
         f = extract_requirement_features("撰写 STORY-003-BE STORY-004-BE STORY-005-BE 的 Story 文档")
-        mr = match_state(Path("D:/Item/life"), f)
+        mr = match_state(tmp_path, f)
         assert mr.action == "create_nested"
         assert mr.entry_node == "STORY"
         assert mr.naming == "Story-003-004-005"
@@ -285,3 +287,208 @@ class TestV1FlatCompatibility:
         )
         state.set_story_substate_phase(s, "STORY-003-BE", "story-reviewed")
         assert state.get_active_phase(s) == "story-reviewed"
+
+
+# ─── v3.9.1 回归：gate_intercept 对嵌套 state 的感知 ──────────────────────────
+# 病灶：v3.9.0 prompt_inject 迁移到 get_active_phase/get_active_story，但
+#       gate_intercept.check_intercept 漏迁，仍读顶层 phase/currentStory。
+#       嵌套 state 顶层无这些字段 → hook 永远看到 phase=initialized ∈ _DESIGN_PHASES
+#       → 所有 src/ 写入被误拦为"设计阶段禁止写入源码目录"。
+# 本组测试用真实 state.json 文件驱动 check_intercept（不传 forced_phase），
+# 确保 hook 真正读嵌套 state 的 activeStory 子状态 phase。
+
+
+class TestNestedNextStepSuggestion(unittest.TestCase):
+
+    def test_next_step_suggestion_uses_nested_active_phase(self):
+        s = state.init_nested_state(
+            project_key="life", entry_node="STORY",
+            state_machine_id="Story-003", state_machine_name="test",
+            story_ids=["STORY-003-BE"],
+        )
+        state.set_scale(s, "小")
+        state.set_story_substate_phase(s, "STORY-003-BE", "story-generated")
+
+        suggestion = state.next_step_suggestion(s)
+
+        assert suggestion["current"] == "story-generated"
+        assert suggestion["next"] == "story-reviewed"
+
+
+class TestNestedFlowMonitor:
+    """Flow monitor must evaluate the nested activeStory phase, not top-level phase."""
+
+    def test_detect_drift_uses_nested_active_phase(self, tmp_path, monkeypatch):
+        from lib import flow_monitor
+
+        ae_sdd = tmp_path / ".ae-sdd"
+        ae_sdd.mkdir()
+        s = state.init_nested_state(
+            project_key="test",
+            entry_node="STORY",
+            state_machine_id="Story-003",
+            state_machine_name="story",
+            story_ids=["STORY-003-BE"],
+        )
+        state.set_story_substate_phase(s, "STORY-003-BE", "story-generated")
+
+        monkeypatch.setattr(
+            flow_monitor,
+            "_run_gates_check",
+            lambda gate_id, _ade_sdd: (False, f"{gate_id} failed"),
+        )
+
+        drift = flow_monitor.detect_drift(s, ae_sdd)
+
+        assert drift.phase == "story-generated"
+        assert drift.gate_id == "G-02"
+        assert drift.drift_type == "fake-complete"
+
+
+class TestGateInterceptNestedState:
+    """v3.9.1：gate_intercept 必须用统一接口读嵌套 state 的 active phase/story。"""
+
+    def _make_nested_project(self, tmp_path, story_id, sub_phase, scale="微"):
+        """构造嵌套 state 的 .ae-sdd/ 项目目录。
+
+        - state.json 为 v3.9.0 nested schema：storyStates[story_id].phase = sub_phase
+        - config.yaml 含 projectKey
+        - assets/<key>.assets.md 含 docWorkspacePath
+        """
+        import json
+        from lib.state import init_nested_state, set_story_substate_phase, set_scale
+
+        ae_sdd = tmp_path / ".ae-sdd"
+        (ae_sdd / "assets").mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+
+        s = init_nested_state(
+            project_key="test", entry_node="STORY",
+            state_machine_id="Story-X", state_machine_name="tn",
+            story_ids=[story_id],
+        )
+        set_scale(s, scale)
+        set_story_substate_phase(s, story_id, sub_phase)
+        (ae_sdd / "state.json").write_text(
+            json.dumps(s, ensure_ascii=False), encoding="utf-8"
+        )
+
+        (ae_sdd / "assets" / "test.assets.md").write_text(
+            f"| gitPath | `{tmp_path}` |\n| docWorkspacePath | `{tmp_path}` |\n",
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def _stub_session_and_memory(self, monkeypatch):
+        """打桩关卡3（is_phase_confirmed）与关卡5.5（memory enter）放行，聚焦验证 phase 读取。"""
+        from lib import session as session_mod
+        from lib import memory_gate
+
+        monkeypatch.setattr(session_mod, "is_phase_confirmed", lambda *a, **kw: True)
+        monkeypatch.setattr(
+            memory_gate, "check_state_transition",
+            lambda **kw: {"blocked": False},
+        )
+        # 关卡5.5 _check_memory_entered 调 memory_store.is_scope_active
+        from lib import memory_store
+        monkeypatch.setattr(memory_store, "is_scope_active", lambda *a, **kw: True)
+
+    def test_nested_coding_phase_allows_src_write(self, tmp_path, monkeypatch):
+        """嵌套 state activeStory 子状态 phase=coding → src/ 写入放行（不被误判为 initialized）。"""
+        from lib.gate_intercept import check_intercept
+
+        project = self._make_nested_project(
+            tmp_path, story_id="STORY-003-BE", sub_phase="coding"
+        )
+        self._stub_session_and_memory(monkeypatch)
+
+        src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
+        allowed, reason = check_intercept(
+            "Write", file_path=src_file, project_dir=project
+        )
+        assert allowed, f"嵌套 state coding phase 应放行 src/ 写入，但被拦: {reason}"
+
+    def test_nested_design_phase_blocks_src_write(self, tmp_path, monkeypatch):
+        """嵌套 state activeStory 子状态 phase=story-generated → src/ 写入被关卡2拦截。"""
+        from lib.gate_intercept import check_intercept
+
+        project = self._make_nested_project(
+            tmp_path, story_id="STORY-003-BE", sub_phase="story-generated"
+        )
+        # design phase 不触达关卡3/5.5，但打桩以防环境差异
+        self._stub_session_and_memory(monkeypatch)
+
+        src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
+        allowed, reason = check_intercept(
+            "Write", file_path=src_file, project_dir=project
+        )
+        assert not allowed, "嵌套 state story-generated phase 应拦截 src/ 写入"
+        assert "设计阶段" in reason, f"拒绝理由应含'设计阶段'，实际: {reason}"
+
+    def test_product_landing_unknown_story_denies_without_exception(self, tmp_path, monkeypatch):
+        """Product STORY-ID ownership gate should deny cleanly, not crash on doc_save_hint."""
+        from lib.gate_intercept import check_intercept
+
+        project = self._make_nested_project(
+            tmp_path, story_id="STORY-003-BE", sub_phase="task-reviewed", scale="小"
+        )
+        self._stub_session_and_memory(monkeypatch)
+
+        target = tmp_path / "ae-sdd-doc" / "Coding" / "STORY-999-BE" / "STORY-999-BE-CodingPlan.md"
+        allowed, reason = check_intercept(
+            "Write", file_path=str(target), project_dir=project
+        )
+
+        assert not allowed
+        assert "未登记到当前 state" in reason
+
+    def test_source_write_session_check_exception_fails_closed(self, tmp_path, monkeypatch):
+        """Coding source writes must not pass when the session confirmation check crashes."""
+        from lib import session as session_mod
+        from lib.gate_intercept import check_intercept
+
+        project = self._make_nested_project(
+            tmp_path, story_id="STORY-003-BE", sub_phase="coding", scale="小"
+        )
+        monkeypatch.setattr(
+            session_mod,
+            "is_phase_confirmed",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
+        allowed, reason = check_intercept(
+            "Write", file_path=src_file, project_dir=project
+        )
+
+        assert not allowed
+        assert "门禁自检异常" in reason
+
+    def test_flat_state_coding_phase_allows_src_write(self, tmp_path, monkeypatch):
+        """flat state phase=coding → src/ 写入放行（v1 行为回归保护）。"""
+        import json
+        from lib.gate_intercept import check_intercept
+
+        ae_sdd = tmp_path / ".ae-sdd"
+        (ae_sdd / "assets").mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (ae_sdd / "state.json").write_text(json.dumps({
+            "version": "1",
+            "projectKey": "test",
+            "phase": "coding",
+            "scale": "微",
+            "currentStory": "STORY-001",
+            "currentTask": None,
+            "history": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        (ae_sdd / "assets" / "test.assets.md").write_text(
+            f"| gitPath | `{tmp_path}` |\n| docWorkspacePath | `{tmp_path}` |\n",
+            encoding="utf-8",
+        )
+        self._stub_session_and_memory(monkeypatch)
+
+        src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
+        allowed, reason = check_intercept(
+            "Write", file_path=src_file, project_dir=tmp_path
+        )
+        assert allowed, f"flat state coding phase 应放行 src/ 写入，但被拦: {reason}"

@@ -7,16 +7,19 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
-    "start": "electron .",
+    "start": "npm run build:renderer && electron .",
+    "build:renderer": "vite build",
+    "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.js",
-    "pack:dir": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1 -NoArchive",
-    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1",
-    "dist:mac": "electron-builder --mac dmg zip --x64 --arm64",
-    "dist:mac:unsigned": "powershell -ExecutionPolicy Bypass -File scripts/package-mac-unsigned.ps1",
-    "dist": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1",
-    "pack:builder": "electron-builder --dir",
-    "dist:builder": "electron-builder --win nsis zip",
-    "dist:builder:all": "electron-builder --win nsis zip --mac dmg zip"
+    "test:renderer": "npm run typecheck && npm run build:renderer",
+    "pack:dir": "npm run build:renderer && powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1 -NoArchive",
+    "dist:win": "npm run build:renderer && powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1",
+    "dist:mac": "npm run build:renderer && electron-builder --mac dmg zip --x64 --arm64",
+    "dist:mac:unsigned": "npm run build:renderer && powershell -ExecutionPolicy Bypass -File scripts/package-mac-unsigned.ps1",
+    "dist": "npm run build:renderer && powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1",
+    "pack:builder": "npm run build:renderer && electron-builder --dir",
+    "dist:builder": "npm run build:renderer && electron-builder --win nsis zip",
+    "dist:builder:all": "npm run build:renderer && electron-builder --win nsis zip --mac dmg zip"
   },
   "build": {
     "appId": "local.ae-sdd.monitor",
@@ -27,6 +30,7 @@
     },
     "files": [
       "src/**/*",
+      "dist/**/*",
       "package.json",
       "README.md"
     ],
@@ -73,7 +77,16 @@
     }
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
     "electron": "^40.10.2",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.3"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   }
 }

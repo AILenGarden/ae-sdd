@@ -1,5 +1,5 @@
 """
-test_gates.py — gates.py 单元测试（30 门禁：14 主 G-00~G-13 + 3 中段 + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B + G-AUTO-CONSENSUS）
+test_gates.py — gates.py 单元测试（34 门禁：14 主 G-00~G-13 + 3 中段 + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B + G-AUTO-CONSENSUS + G-DR-CTX + G-STORY-CTX + G-TESTCASE-CTX + G-TASK-CTX）
 
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
@@ -79,6 +79,31 @@ class TestG00(unittest.TestCase):
 
 
 # ─── G-01 ───────────────────────────────────────────────────────────────────
+class TestNestedStateGateContext(unittest.TestCase):
+
+    def test_check_all_uses_nested_active_story(self):
+        story_id = "STORY-001-BE"
+        plan_body = "\n".join(gates.CODINGPLAN_REQUIRED_SECTIONS)
+        state_doc = {
+            "version": "2",
+            "projectKey": "test",
+            "stateModel": "nested",
+            "entryNode": "STORY",
+            "activeStory": story_id,
+            "storyStates": {story_id: {"phase": "coding-process"}},
+        }
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/state.json": json.dumps(state_doc, ensure_ascii=False),
+            f"design/{story_id}-CodingPlan.md": plan_body,
+        })
+
+        results = gates.check_all(None, tmp / ".ae-sdd", "test", only="G-07")
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].pass_, msg=results[0].message)
+
+
 class TestG01(unittest.TestCase):
 
     def test_no_design_dir_blocks(self):
@@ -725,7 +750,8 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
         # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
-        self.assertEqual(len(results), 30)
+        # 🆕 v3.9.1：+4 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX（上下文加载准入）= 34
+        self.assertEqual(len(results), 34)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -756,8 +782,9 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.13：+1 G-09B（reviewer 独立性硬门禁）= 28
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
         # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
-        self.assertEqual(summary["total"], 30)
-        self.assertEqual(summary["passed"] + summary["failed"], 30)
+        # 🆕 v3.9.1：+4 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX（上下文加载准入）= 34
+        self.assertEqual(summary["total"], 34)
+        self.assertEqual(summary["passed"] + summary["failed"], 34)
         self.assertIn("results", summary)
 
 

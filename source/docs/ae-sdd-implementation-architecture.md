@@ -101,6 +101,7 @@ harness/                        派生适配层，不手工改生成物
 - scanner 输出 JSON 必须包含 `status`、统计字段和 `findings[]`。
 - 新增 `scripts/*_scan.py` 必须加入 `scripts/build_dist.py` runtime_scripts 白名单。
 - 高频 scanner 应优先支持进程内调用，子进程 CLI 仅作为兼容入口。
+- 🆕 v3.9.1 注册表模式：同族门禁（如 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX 四个上下文加载准入门禁）用 `CONTEXT_GATE_REGISTRY` 注册表 + 单个 `_check_context_loaded` 函数服务多个 gate_id，避免每门禁重复写 scale 豁免/phase 感知/逐项校验逻辑；4 个薄封装 `check_g_*_ctx` 对齐 `CHECK_FUNCS` 的 `(project_dir, st, current_story)` 签名，内部转发到统一实现。
 
 ## 7. 项目侧状态与缓存
 
@@ -244,7 +245,8 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
 | `apps/ae-sdd-monitor/src/main.js` | Electron 主进程、窗口生命周期、目录选择、路径打开 IPC、UI 偏好读写、父目录文件 watcher |
 | `apps/ae-sdd-monitor/src/preload.js` | 只暴露受控 `monitorApi` 与 watcher 事件订阅，隔离 renderer 与 Node 能力 |
 | `apps/ae-sdd-monitor/src/workspace.js` | 扫描父目录、识别 `.ae-sdd/` 工作区、读取 state/config/runtime-stats/memory、派生展示状态、阶段轴、workItemKey 身份、任务列表和活跃任务 |
-| `apps/ae-sdd-monitor/src/renderer.js` | 左侧项目/任务两级列表、筛选、右侧详情 Tab、本地 UI 状态、响应式静默刷新、目录选择反馈、交互动效触发和偏好恢复 |
+| `apps/ae-sdd-monitor/renderer/src/App.tsx` | React + TypeScript renderer；左侧项目/任务两级 keyed 列表、筛选、右侧详情 Tab、本地 UI 状态、响应式静默刷新、任务级局部更新、目录选择反馈、交互动效触发和偏好恢复 |
+| `apps/ae-sdd-monitor/renderer/src/main.tsx` / `renderer/index.html` | Vite renderer 入口，构建到 `dist/renderer/` 后由 Electron 主进程加载 |
 | `apps/ae-sdd-monitor/src/styles.css` | 黑白圆角类 Mac 外观、iOS 风格轻量交互动效、折叠/切换/按压反馈和 reduced-motion 降级 |
 | `apps/ae-sdd-monitor/test/workspace.test.js` | 扫描、YAML 读取、work item、Memory、Runtime Stats 聚合的契约测试 |
 | `apps/ae-sdd-monitor/scripts/package-win.ps1` | Windows 本地打包、安装 zip、自解压 setup 生成 |
@@ -264,9 +266,9 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
   -> 读取 .ae-sdd/memory/**/*.jsonl / .ae-sdd/memory/.stage/*.json
   -> 读取 .ae-sdd/runtime-stats/*.jsonl
   -> workspace.js 派生 phaseTimeline / activeWorkItems / tasks / memory
-  -> renderer.js 展示项目/任务两级列表、阶段轴、Memory、事件流、活跃任务和详情
+  -> React renderer 展示项目/任务两级列表、阶段轴、Memory、事件流、活跃任务和详情
   -> main.js 监听 .ae-sdd/ 与 .auto-engineering/ 文件变化并通过 preload 通知 renderer
-  -> renderer.js 只在数据签名变化时重渲染，低频轮询只作为 watcher 兜底
+  -> React renderer 依靠稳定 key 和 props diff 更新对应组件；同一项目任务切换只更新右侧数据片段和侧边栏选中态
   -> styles.css 提供只作用于 UI 的折叠、切换、按压和悬浮动效
 ```
 
@@ -276,6 +278,7 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
 - Monitor 的状态枚举是 UI 派生值，不新增 ae-sdd state schema。
 - Monitor 的偏好文件只保存用户界面上下文，不保存 ae-sdd 业务状态。
 - 响应式刷新采用 main 侧 `fs.watch` + renderer 侧 debounce：`.ae-sdd/` 与 `.auto-engineering/` 变化触发静默刷新；低频轮询只作为 watcher 漏事件兜底；不使用会改变项目状态的命令。
+- renderer 不得在任务切换或静默刷新时先把 `detail` 置空再整页重画；React 组件不得用整块 `innerHTML` 替换侧边栏/详情页，只有首次加载或无详情态才显示空态。
 - 交互动效只在 renderer/CSS 层表达本地 UI 反馈；不得触发 ae-sdd 命令、不得写 `.ae-sdd/`、不得成为状态权威。
 - `PHASE_FLOWS`、state 字段、Memory JSONL/stage 字段、Runtime Stats JSONL 字段变化时，必须同步 [`ae-sdd-monitor-design.md`](ae-sdd-monitor-design.md)、`workspace.js` 和测试。
 - Monitor 不运行 `ae-sdd gates check`，不替代 CLI/gate 的硬判断；最多展示已有 state/runtime 线索。

@@ -148,7 +148,7 @@ ASSETS_SYNC="$HOME/.claude/skills/ae-sdd/skills/ae-sdd/assets/${PROJECT_KEY}/${P
 
 | 产物类型 | 命名 | 模板 |
 |---------|------|------|
-| Story | `STORY-{ID}-BE.md` | `source/templates/design/be-story-template.md` |
+| Story | `STORY-{ID}-BE.md` | `source/templates/design/story-template.md`（v3.9.3 起主模板，已合并原 be-story-template.md；纯后端在前端章节标注"不涉及"即可） |
 | DR | `DR-{ID}.md` | `source/templates/design/dr-template.md` |
 | CodeReview 报告 | `code-review-report-v{N}-r{N}.md` | `source/templates/coding/be-codereview-template.md` |
 | Coding 报告 | `CodingReport-{事务简称}.md` | `source/templates/coding/be-coding-report-template.md` |

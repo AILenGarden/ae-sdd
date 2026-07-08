@@ -34,6 +34,7 @@ if (Test-Path -LiteralPath $productExe) {
 Rename-Item -LiteralPath $electronExe -NewName "$productName.exe"
 
 Copy-Item -LiteralPath (Join-Path $projectRoot "src") -Destination $resourcesApp -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot "dist") -Destination $resourcesApp -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot "package.json") -Destination $resourcesApp -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot "README.md") -Destination $resourcesApp -Force
 

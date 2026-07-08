@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from lib import state as state_mod
+
 # ─── 阈值常量 ────────────────────────────────────────────────────────────────
 # 矫正次数 >= WARN：停滞告警，severity 升为 2
 CORRECTION_THRESHOLD_WARN = 5
@@ -161,7 +163,7 @@ def detect_drift(state: dict, ade_sdd: Path) -> DriftResult:
         DriftResult；drift_type="none" + severity=0 表示无偏移
     """
     try:
-        phase = state.get("phase", "initialized")
+        phase = state_mod.get_active_phase(state) or state.get("phase", "initialized")
 
         # paused / initialized / completed 不做产物核查
         if phase in ("paused", "initialized", "completed"):
@@ -238,7 +240,7 @@ def should_escalate(state: dict) -> bool:
 
     供 prompt_inject.py 在写 state 前快速判断是否需要 pause_state()。
     """
-    phase = state.get("phase", "initialized")
+    phase = state_mod.get_active_phase(state) or state.get("phase", "initialized")
     count = state.get("correctionCounts", {}).get(phase, 0)
     return count >= CORRECTION_THRESHOLD_PAUSE
 

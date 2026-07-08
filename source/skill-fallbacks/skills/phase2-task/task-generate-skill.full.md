@@ -11,12 +11,15 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 
 ---
 
-## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
+## 🟠 门禁强度声明（v3.5.11 AA 诚实降级 / v3.9.1 部分硬化）
 
-> 本文件「TC-1~TC-9（生成后一致性校验，标题标「强制门禁」）」「TR-1~TR-7（全局 Task Review）」等标注，
-> **当前为软门禁（report-only）**，由 task-writer 在 Task 文档内逐项自评判定，**TC/TR 无逐条 GATE_REGISTRY 注册**。
+> **v3.9.1 更新：** 本 SKILL 的**上下文加载准入门禁已硬化**——`G-TASK-CTX`（注册表 `CONTEXT_GATE_REGISTRY`）
+> 机械校验 `constraints/assets/Story/TestCase` 四类上下文已读齐（微链豁免 Story/TestCase），未过即 BLOCK。详见下方「第一步半」后补充。
 >
-> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py`：G-06（Task Review 通过，看 phase）/ G-08（CodingPlan 14 门禁关键词）/ G-14（CodingPlan-Story 一致性）。
+> 本文件「TC-1~TC-9（生成后一致性校验，标题标「强制门禁」）」「TR-1~TR-7（全局 Task Review）」等标注，
+> **当前仍为软门禁（report-only）**，由 task-writer 在 Task 文档内逐项自评判定，**TC/TR 无逐条 GATE_REGISTRY 注册**。
+>
+> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py`：G-06（Task Review 通过，看 phase）/ G-08（CodingPlan 14 门禁关键词）/ G-14（CodingPlan-Story 一致性）/ **G-TASK-CTX（Task 上下文加载，v3.9.1）**。
 > G-06 只校验 phase 标志位（task-reviewed），**不校验 TR-1~7 逐项内容**——TR 逐项内容是 task-writer 的自评清单。
 > **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），TC/TR 承诺会被 UC-08 持续追踪为「软门禁/待硬化」。
 
@@ -201,6 +204,14 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 | STORY-XXX 接口可调用 | 检查 SPI/接口类是否存在且有实现 | 接口 + 实现均存在 |
 
 **原因：** Task 文档要求写明核心实现代码（方法签名、调用参数、返回值），如果依赖方接口未定义，无法写出正确的调用代码，强行假设会导致依赖方实际设计后不一致而返工。依赖"已实现"的判定标准：①接口已定义（接口类存在）②实现类存在（实现类文件存在）③无编译错误（导入该接口不报错）。部分实现（如只有接口无实现）视为未实现。
+
+**🔴 机械门禁（v3.9.1，对齐 RA/Coding 三合一）：** 上下文加载部分必须跑：
+
+```bash
+ae-sdd gates check --only G-TASK-CTX
+```
+
+`G-TASK-CTX` 校验 `constraints/assets/Story/TestCase` 四类上下文已读齐（微链豁免 Story/TestCase；注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `paths.find_doc`）。未过 → **BLOCK，禁止进入 Task 生成**。注：本门禁覆盖上下文加载维度；TC-1~9/TR-1~7 内容审查项仍是 report-only（见本文件「门禁强度声明」）。
 
 ***
 

@@ -2,17 +2,20 @@
 
 Desktop monitor for local ae-sdd workspaces.
 
+The desktop shell is Electron. The renderer is React + TypeScript built by Vite; Electron keeps the local filesystem and window-control responsibilities, while React owns the project/task UI state.
+
 ## What It Does
 
 - Select a parent directory and scan for all child workspaces containing `.ae-sdd/`.
 - Show each workspace on the left as a collapsible project/task tree; clicking a project switches the project board, clicking a task switches the task board.
 - Show the selected project/task on the right with state, phase axis, event stream, Memory status, active work items, all work items, runtime stats, and raw state.
+- Switch projects/tasks through React state and keyed components instead of clearing and rebuilding the sidebar or detail page.
 - Read data locally from `.ae-sdd/state.json`, `.auto-engineering/{workItemKey}/state.json`, `.ae-sdd/memory/**/*.jsonl`, `.ae-sdd/memory/.stage/*.json`, and `.ae-sdd/runtime-stats/*.jsonl`.
 - Display work item identity as `workItemId`, `workItemName`, and `workItemKey`; state fields win, with `{ID}--{name}` directory names as a compatibility fallback.
 - Responsive refresh by default: filesystem changes under `.ae-sdd/` and `.auto-engineering/` trigger quiet updates, with low-frequency polling only as a fallback.
 - Restore the last parent directory, selected workspace, selected task, collapsed project groups, auto-refresh setting, and theme when the app opens again.
 - Use real window controls in the Mac-style title bar.
-- Use iOS-style lightweight interaction motion for presses, collapses, tab/detail transitions, and card/list hover states, with reduced-motion support.
+- Use iOS-style lightweight interaction motion for presses, collapses, tab/detail transitions, and card/list hover states, while avoiding persistent loading/status flashing.
 
 The app is intentionally read-only. It does not mutate ae-sdd state or run gates.
 
@@ -27,11 +30,14 @@ It tracks the ae-sdd capability and implementation docs:
 - `source/standards/update-graph.json` rule `UG-22` for the machine-readable sync closure.
 
 When ae-sdd state, phase flow, Memory, Runtime Stats, or workspace storage contracts change, update `src/workspace.js`, `test/workspace.test.js`, this README, and the Monitor design doc together.
+When renderer behavior changes, update `renderer/src/**`, `src/styles.css`, this README, and the Monitor design doc together.
 
 ## Development
 
 ```powershell
 npm install
+npm run typecheck
+npm run build:renderer
 npm test
 npm start
 ```

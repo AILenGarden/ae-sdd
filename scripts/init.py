@@ -134,9 +134,9 @@ cp ../ae-sdd/source/standards/constraints/api.md ./api.md
 ```
 
 ### 2. 模板特化
-把母版 `templates/design/be-story-template.md` 复制到这里，按项目调整字段：
+把母版 `templates/design/story-template.md` 复制到这里，按项目调整字段（v3.9.3 起 be-story-template.md 已合并入主模板）：
 ```bash
-cp ../ae-sdd/source/templates/design/be-story-template.md ./be-story-template.md
+cp ../ae-sdd/source/templates/design/story-template.md ./story-template.md
 # 编辑，加项目元信息字段
 ```
 

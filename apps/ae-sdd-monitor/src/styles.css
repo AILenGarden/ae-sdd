@@ -190,7 +190,7 @@ body.theme-switching *::after {
   margin-right: 6px;
   border-radius: 999px;
   background: currentColor;
-  animation: pulse 900ms ease-in-out infinite;
+  opacity: 0.72;
 }
 
 .scan-status.live::before {
@@ -202,11 +202,6 @@ body.theme-switching *::after {
   border-radius: 999px;
   background: currentColor;
   opacity: 0.72;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 0.35; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1); }
 }
 
 @keyframes appEnter {
@@ -426,7 +421,6 @@ body.theme-switching *::after {
 
 .project-group {
   margin-bottom: 6px;
-  animation: detailDrill 360ms var(--ease-spring) both;
 }
 
 .project-row {
@@ -470,6 +464,12 @@ body.theme-switching *::after {
 
 .collapse-button.collapsed:hover {
   transform: rotate(0deg) scale(1.06);
+}
+
+.collapse-button.empty,
+.collapse-button:disabled {
+  opacity: 0.35;
+  pointer-events: none;
 }
 
 .collapse-button:active,
@@ -757,7 +757,6 @@ body.theme-switching *::after {
   color: var(--text-muted);
   background: var(--panel);
   padding: 8px 14px;
-  animation: pulse 1600ms var(--ease-ios) infinite;
 }
 
 .workspace-head {
@@ -1134,7 +1133,6 @@ body.theme-switching *::after {
 .phase-node.paused .phase-index {
   color: var(--selected-text);
   background: var(--selected);
-  animation: pulse 1600ms var(--ease-ios) infinite;
 }
 
 .phase-copy {
@@ -1202,7 +1200,6 @@ body.theme-switching *::after {
 
 .event-item.current .event-point {
   background: var(--text);
-  animation: pulse 1600ms var(--ease-ios) infinite;
 }
 
 .event-title {

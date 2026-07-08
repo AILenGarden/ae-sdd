@@ -506,5 +506,99 @@ class TestPrdComplete(unittest.TestCase):
             self.assertEqual(ps["prdStatus"], "compacted")
 
 
+# ─── 🆕 v3.9.3 R2 递归向上归入 ─────────────────────────────────────────────
+class TestRecursiveR2Absorb(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="r2-"))
+        self.ade_sdd = self.tmp / ".ae-sdd"
+        self.ade_sdd.mkdir()
+        self.design_dir = self.tmp / "design"
+        self.design_dir.mkdir()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_story_doc(self, story_id: str, parent_dr: str = "", parent_prd: str = "") -> Path:
+        body = f"# {story_id}\n\n## 元信息\n\n- Story ID: {story_id}\n"
+        if parent_prd:
+            body += f"- 来源 PRD: {parent_prd}\n"
+        if parent_dr:
+            body += f"- 来源 DR: {parent_dr}\n"
+        p = self.design_dir / f"{story_id}-Story.md"
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def _make_dr_doc(self, dr_id: str, story_ids: list, parent_prd: str = "") -> Path:
+        body = f"# {dr_id}\n\n## 元信息\n\n- DR ID: {dr_id}\n"
+        if parent_prd:
+            body += f"- PRD: {parent_prd}\n"
+        body += "\n## Story 拆分\n\n" + "\n".join(f"- {s}" for s in story_ids) + "\n"
+        p = self.design_dir / f"{dr_id}-some-title.md"
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_no_parent_top_level(self):
+        """无父级 → 当前 STORY 为顶层。"""
+        doc = self._make_story_doc("STORY-006-BE")
+        features = {"story_ids": ["STORY-006-BE"]}
+        sp, st = state_mod.recursive_r2_absorb(
+            self.ade_sdd, "STORY", features, self.design_dir,
+            doc_path=doc, child_id="STORY-006-BE",
+        )
+        self.assertEqual(sp.parent.name, "Story-006")
+        self.assertTrue(sp.is_file())
+
+    def test_parent_dr_doc_not_found_treated_as_no_parent(self):
+        """父级 DR 文档不存在 → 视为无父级（不阻塞）。"""
+        doc = self._make_story_doc("STORY-006-BE", parent_dr="DR-999")
+        features = {"story_ids": ["STORY-006-BE"]}
+        sp, st = state_mod.recursive_r2_absorb(
+            self.ade_sdd, "STORY", features, self.design_dir,
+            doc_path=doc, child_id="STORY-006-BE",
+        )
+        self.assertEqual(sp.parent.name, "Story-006")
+
+    def test_parent_dr_relation_mismatch_returns_top_level(self):
+        """父级 DR 文档存在但关联性不对（DR 没列 STORY-006）→ 顶层（不阻塞）。"""
+        self._make_dr_doc("DR-005", ["STORY-999-BE"])
+        doc = self._make_story_doc("STORY-006-BE", parent_dr="DR-005")
+        features = {"story_ids": ["STORY-006-BE"]}
+        sp, st = state_mod.recursive_r2_absorb(
+            self.ade_sdd, "STORY", features, self.design_dir,
+            doc_path=doc, child_id="STORY-006-BE",
+        )
+        self.assertEqual(sp.parent.name, "Story-006")
+
+    def test_parent_dr_relation_ok_absorbs_into_dr(self):
+        """父级 DR 关联性对 + DR 无 state → 替 DR 递归建 state + Story 嵌进去。"""
+        self._make_dr_doc("DR-005", ["STORY-006-BE", "STORY-007-BE"])
+        doc = self._make_story_doc("STORY-006-BE", parent_dr="DR-005")
+        features = {"story_ids": ["STORY-006-BE"]}
+        sp, st = state_mod.recursive_r2_absorb(
+            self.ade_sdd, "STORY", features, self.design_dir,
+            doc_path=doc, child_id="STORY-006-BE",
+        )
+        self.assertEqual(sp.parent.name, "DR-005")
+        self.assertIn("STORY-006-BE", st.get("storyStates", {}))
+        dr_state_path = self.tmp / ".auto-engineering" / "DR-005" / "state.json"
+        self.assertTrue(dr_state_path.is_file())
+
+    def test_three_layer_chain(self):
+        """三层链：PRD → DR → Story（验证 Story 嵌进 DR）。"""
+        prd_body = "# PRD-001\n\n## DR 拆分\n\n- DR-005\n"
+        (self.design_dir / "PRD-001-some-product.md").write_text(prd_body, encoding="utf-8")
+        self._make_dr_doc("DR-005", ["STORY-006-BE"], parent_prd="PRD-001")
+        doc = self._make_story_doc("STORY-006-BE", parent_dr="DR-005")
+        features = {"story_ids": ["STORY-006-BE"]}
+        sp, st = state_mod.recursive_r2_absorb(
+            self.ade_sdd, "STORY", features, self.design_dir,
+            doc_path=doc, child_id="STORY-006-BE",
+        )
+        self.assertEqual(sp.parent.name, "DR-005")
+        self.assertIn("STORY-006-BE", st.get("storyStates", {}))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

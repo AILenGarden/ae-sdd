@@ -218,5 +218,61 @@ class TestProjectContextScale(unittest.TestCase):
         self.assertEqual(c.scale, "微")
 
 
+# ─── 🆕 v3.9.3 match_state R2 父级文档验证 ──────────────────────────────────
+class TestMatchStateR2ParentVerify(unittest.TestCase):
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="match-v393-"))
+        self.ade_sdd = self.tmp / ".ae-sdd"
+        self.ade_sdd.mkdir()
+        self.design_dir = self.tmp / "design"
+        self.design_dir.mkdir()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_dr(self, dr_id: str, story_ids: list) -> Path:
+        body = f"# {dr_id}\n\n## Story 拆分\n\n" + "\n".join(f"- {s}" for s in story_ids) + "\n"
+        p = self.design_dir / f"{dr_id}-some-title.md"
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_dr_doc_exists_relation_ok(self):
+        """父级 DR 文档存在且关联性对 → 不影响 features.dr_id。"""
+        from lib import paths as paths_mod
+        self._make_dr("DR-005", ["STORY-006-BE"])
+        features = classify.extract_requirement_features(
+            "处理 STORY-006-BE 来自 DR-005", project_root=self.tmp,
+        )
+        self.assertEqual(features.dr_id, "DR-005")
+        # verify_parent_claim 返回 (True, "ok")
+        ok, reason = paths_mod.verify_parent_claim(
+            "DR", features.dr_id, self.design_dir, child_id="STORY-006-BE",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(reason, "ok")
+
+    def test_dr_doc_not_found_treated_as_no_parent(self):
+        """父级 DR 文档不存在 → verify_parent_claim 返 doc_not_found。"""
+        from lib import paths as paths_mod
+        ok, reason = paths_mod.verify_parent_claim(
+            "DR", "DR-999", self.design_dir, child_id="STORY-006-BE",
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "doc_not_found")
+
+    def test_dr_doc_relation_mismatch(self):
+        """父级 DR 文档存在但关联性不对 → verify_parent_claim 返 relation_mismatch。"""
+        from lib import paths as paths_mod
+        self._make_dr("DR-005", ["STORY-999-BE"])
+        ok, reason = paths_mod.verify_parent_claim(
+            "DR", "DR-005", self.design_dir, child_id="STORY-006-BE",
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "relation_mismatch")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -23,6 +23,10 @@
 - Documented the Monitor motion boundary in the Monitor design, ae-sdd main design, and implementation architecture: animation is renderer/CSS-only UI feedback and remains read-only.
 - Added read-only Memory projection from `.ae-sdd/memory/**/*.jsonl` and `.ae-sdd/memory/.stage/*.json`, including project/task Memory status, active scopes, and blocked scopes.
 - Replaced visible polling refresh with responsive file watching: `.ae-sdd/` and `.auto-engineering/` changes trigger quiet updates, unchanged data is not re-rendered, and low-frequency polling remains only as a fallback.
+- Changed task switching to component-level updates: selecting a task updates the right-side task context, metrics, tab content, and sidebar selection without clearing or rebuilding the whole detail page.
+- Removed persistent pulse animations from loading, current phase, current event, and responsive status indicators to avoid a flashing UI.
+- Rewrote the Monitor renderer as React + TypeScript with Vite. The Electron main/preload/workspace layers remain CommonJS, while the UI is now a keyed React project/task tree and detail component graph.
+- Updated Windows and unsigned macOS packaging to build and include `dist/renderer/` before assembling app artifacts.
 - Added macOS packaging configuration and `scripts/package-mac.sh` for dmg/zip builds on macOS.
 - Added `scripts/package-mac-unsigned.ps1` and `npm run dist:mac:unsigned` to generate unsigned macOS `.app.zip` artifacts from Windows/macOS.
 
@@ -37,4 +41,5 @@
 - `python -m unittest tools.tests.test_update_graph.TestUC14 tools.tests.test_update_graph.TestQueryAffected tools.tests.test_update_graph.TestUpdateCheckCli tools.tests.test_update_graph.TestSyncManifest`
 - `node --check src/main.js`
 - `node --check src/preload.js`
-- `node --check src/renderer.js`
+- `npm run typecheck`
+- `npm run build:renderer`

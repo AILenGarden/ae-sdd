@@ -173,6 +173,10 @@ foreach ($arch in $Arch) {
         $relative = $_.FullName.Substring((Join-Path $projectRoot "src").Length).TrimStart("\", "/")
         Add-FileToZip -Zip $targetZip -SourcePath $_.FullName -EntryName "$resourcesAppPrefix/src/$relative"
       }
+      Get-ChildItem -LiteralPath (Join-Path $projectRoot "dist") -Recurse -File | ForEach-Object {
+        $relative = $_.FullName.Substring((Join-Path $projectRoot "dist").Length).TrimStart("\", "/")
+        Add-FileToZip -Zip $targetZip -SourcePath $_.FullName -EntryName "$resourcesAppPrefix/dist/$relative"
+      }
       Add-FileToZip -Zip $targetZip -SourcePath (Join-Path $projectRoot "package.json") -EntryName "$resourcesAppPrefix/package.json"
       Add-FileToZip -Zip $targetZip -SourcePath (Join-Path $projectRoot "README.md") -EntryName "$resourcesAppPrefix/README.md"
     } finally {

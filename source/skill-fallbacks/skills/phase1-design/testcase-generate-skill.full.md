@@ -18,6 +18,30 @@ description: TestCase 系列 Step 2 generateSkill。采用「假设驱动·覆�
 
 禁止在本文件内另设逐步人工确认流程；确认、循环、暂停统一由主流程监管器和 `review-loop-skill.md` 管理。
 
+## 第零步：TestCase 准入检查
+
+必须读齐：
+
+- Story 主文档（AC/接口/数据/异常路径来源）
+- 项目资产（测试工具与项目约定）
+- 项目约束（HTTP/DB/Mock/断言红线）
+- 测试策略 + 测试约束 + 测试模板（生成范式与输出格式）
+
+任一缺失，禁止进入生成。
+
+**🔴 机械门禁（v3.9.1，对齐 RA/Coding 三合一）：** prose 清单之外，必须跑：
+
+```bash
+ae-sdd gates check --only G-TESTCASE-CTX
+```
+
+`G-TESTCASE-CTX` 校验 `constraints/assets/Story` 三类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `paths.find_doc`）。未过 → **BLOCK，禁止进入生成**。
+
+**读取入口（v3.9.1 显式化）：**
+- Story：`ae-sdd doc resolve --intent STORY --story-id {S}`
+- 项目资产：`document-storage-skill.get_assets(projectKey)` + `ae-sdd assets read testcase --project <projectKey>`
+- 项目约束：`document-storage-skill.get_constraints(projectKey)` → `constraints/*.md`
+
 ## 输入
 
 必须读取：

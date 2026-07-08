@@ -38,6 +38,31 @@ def test_memory_gate_blocks_missing_enter_write(tmp_path):
     assert "enter" in result["reason"]
 
 
+def test_memory_gate_uses_nested_active_phase_and_story(tmp_path):
+    ae_sdd = _project(tmp_path, phase="initialized", story="")
+    from lib import state as state_mod
+    nested = state_mod.init_nested_state(
+        project_key="test",
+        entry_node="STORY",
+        state_machine_id="Story-001",
+        state_machine_name="story",
+        story_ids=["STORY-001"],
+    )
+    state_mod.set_scale(nested, "小")
+    state_mod.set_story_substate_phase(nested, "STORY-001", "coding")
+
+    result = memory_gate.check_state_transition(
+        ade_sdd=ae_sdd,
+        state_data=nested,
+        target_phase="test-running",
+    )
+
+    assert result["blocked"]
+    assert result["current_phase"] == "coding"
+    assert result["memory_phase"] == "coding"
+    assert result["story"] == "STORY-001"
+
+
 def test_memory_gate_passes_after_enter_and_write(tmp_path):
     ae_sdd = _project(tmp_path, phase="coding", story="STORY-001")
     scope = memory_store.locate_scope(project=str(tmp_path), phase="coding", story="STORY-001")
@@ -97,6 +122,9 @@ def test_cli_state_write_blocks_before_memory(tmp_path):
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONUTF8": "1"},
     )
     assert result.returncode == 1
     assert "Mandatory memory gate failed" in (result.stdout + result.stderr)
@@ -119,6 +147,9 @@ def test_cli_state_write_allows_maintenance_override(tmp_path):
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONUTF8": "1"},
     )
     assert result.returncode == 0
 

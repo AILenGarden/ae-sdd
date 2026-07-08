@@ -56,7 +56,7 @@ def check_state_transition(
     allow_empty: bool = False,
 ) -> dict:
     """Return whether a phase transition satisfies mandatory memory rules."""
-    current_phase = state_data.get("phase", "initialized")
+    current_phase = state_mod.get_active_phase(state_data) or state_data.get("phase", "initialized")
     if ade_sdd is None:
         return {
             "pass": True,
@@ -84,7 +84,7 @@ def check_state_transition(
         }
 
     project_root = paths.project_root(ade_sdd)
-    story = state_data.get("currentStory") or None
+    story = state_mod.get_active_story(state_data) or None
     scope = memory_store.locate_scope(
         project=str(project_root),
         phase=memory_phase,

@@ -266,6 +266,12 @@ def _check_product_landing(
     if not allowed:
         return False, reason
 
+    # 🆕 v3.7.2 统一修复建议：被拦截时引导用 ae-sdd doc save（避免手拼路径）
+    doc_save_hint = (
+        f"\n💡 建议：用 `ae-sdd doc save` 命令落地流程产物，代码自动处理路径/版本/ChangeLog/索引/"
+        f"gitignore，无需手拼路径（document-storage-skill §4.0 CLI 入口）。"
+    )
+
     # 从 state 读 currentStory（用于定位 session.json）
     # 🆕 v3.9.0 嵌套 state 兼容：用统一接口读 activeStory
     st = state_mod.read_state(paths.state_path(ade_sdd)) if ade_sdd else {}
@@ -288,12 +294,6 @@ def _check_product_landing(
                     f"{doc_save_hint}"
                 )
 
-    # 🆕 v3.7.2 统一修复建议：被拦截时引导用 ae-sdd doc save（避免手拼路径）
-    doc_save_hint = (
-        f"\n💡 建议：用 `ae-sdd doc save` 命令落地流程产物，代码自动处理路径/版本/ChangeLog/索引/"
-        f"gitignore，无需手拼路径（document-storage-skill §4.0 CLI 入口）。"
-    )
-
     # 关卡1：entry token 校验
     try:
         from lib import session as session_mod
@@ -305,9 +305,14 @@ def _check_product_landing(
                 f"（关卡1 入口凭证缺失，建议书4）"
                 f"{doc_save_hint}"
             )
-    except Exception:
-        # session 模块异常不阻断（兜底放行，避免误伤）
-        pass
+    except Exception as e:
+        return False, (
+            f"ae-sdd 流程产物（{product_type}）落地门禁自检异常，禁止放行。\n"
+            f"目标文件: {file_path}\n"
+            f"异常: {type(e).__name__}: {e}\n"
+            f"请先修复 session/entry token 检查，再重试。"
+            f"{doc_save_hint}"
+        )
 
     # 关卡2：产物-Phase 映射校验
     allowed_phases = _PRODUCT_PHASE_MAP.get(product_type)
@@ -428,7 +433,8 @@ def _check_path_permission(
             from lib import session as session_mod
             if ade_sdd is not None:
                 st = state_mod.read_state(paths.state_path(ade_sdd))
-                current_story = st.get("currentStory", "")
+                # 🆕 v3.9.1 嵌套 state 兼容：用统一接口读 activeStory（nested → activeStory）
+                current_story = state_mod.get_active_story(st) or ""
                 scale = st.get("scale") or state_mod._resolve_scale(st)
                 # 微链：免 task-reviewed，改要求 coding phase 确认
                 if scale == "微":
@@ -454,8 +460,13 @@ def _check_path_permission(
                         f"ae-sdd state confirm --phase coding-process --story {current_story or '<STORY-ID>'}\n"
                         f"（🆕 v3.5.16 Task→Coding 解耦，硬层产物校验，防 AI 凭记忆绕过 CodingProcess）"
                     )
-        except Exception:
-            pass  # session 模块异常不阻断（兜底放行）
+        except Exception as e:
+            return False, (
+                f"代码改动准入门禁自检异常，禁止放行。\n"
+                f"目标文件: {file_path}\n"
+                f"异常: {type(e).__name__}: {e}\n"
+                f"请先修复 session 审核点检查，再重试。"
+            )
     return True, ""
 
 
@@ -483,7 +494,8 @@ def _check_memory_entered(
         memory_phase = memory_gate.memory_phase_for_state_phase(phase)
         if not memory_phase:
             return True, ""  # 非关联 phase（如 initialized/completed），跳过
-        story = (state_data or {}).get("currentStory") or None
+        # 🆕 v3.9.1 嵌套 state 兼容：用统一接口读 activeStory（nested → activeStory）
+        story = state_mod.get_active_story(state_data or {}) or None
         scope = memory_store.locate_scope(
             project=str(ade_sdd.parent), phase=memory_phase, story=story,
         )
@@ -501,8 +513,13 @@ def _check_memory_entered(
             f"  ae-sdd memory exit --phase {memory_phase}{story_arg}\n"
             f"（🆕 v3.8.2 存端兜底，堵 PHASE_PERMIT 放行绕过 memory gate 漏洞）"
         )
-    except Exception:
-        return True, ""  # 异常降级放行，不阻断主流程
+    except Exception as e:
+        return False, (
+            f"存端记忆门禁自检异常，禁止放行。\n"
+            f"当前 phase={phase}\n"
+            f"异常: {type(e).__name__}: {e}\n"
+            f"请先修复 memory gate 检查，再重试。"
+        )
 
 
 # ─── ae-sdd state write 保护 ─────────────────────────────────────────────────
@@ -515,6 +532,28 @@ def _is_ae_sdd_cmd(bash_command: str) -> bool:
     """命令是否以 ae-sdd 或 python .../ae-sdd 开头（真实执行形式，排除注释/echo）。"""
     stripped = (bash_command or "").strip()
     return stripped.startswith("ae-sdd") or bool(_STATE_WRITE_CMD_RE.match(stripped))
+
+
+# ─── 🆕 v3.9.2 修复：ae-sdd memory 命令放行（设计阶段死锁 bug）──────────────────
+# v3.8.2 引入 memory gate 后，设计阶段 6 个 phase（ra/design/coding-plan/review 域）
+# 推进前必须完成 ae-sdd memory enter/write/exit，但这三个是 Bash 命令，
+# 而这些 phase 的 PHASE_PERMIT 不含 Bash → AI 跑 memory 被自己设的门禁拦死。
+# 与 step 3 给 ae-sdd state write 开特殊通道同理，memory 命令只动
+# .ae-sdd/memory/ 目录，属流程自管理命令族，独立于 PHASE_PERMIT 放行。
+# 第二个 token 必须是 memory，覆盖全部 8 个子命令
+# （enter/write/exit/read/search/promote/summarize）。
+_MEMORY_CMD_RE = re.compile(r"^(?:ae-sdd|python\s+\S*ae-sdd)\s+memory\b", re.IGNORECASE)
+
+
+def _is_ae_sdd_memory_cmd(bash_command: str) -> bool:
+    """命令是否为 `ae-sdd memory <subcmd>` 真实执行形式（排除注释/echo）。
+
+    Returns:
+        True 当且仅当命令头匹配 ae-sdd memory / python .../ae-sdd memory。
+        不检查子命令是否合法——CLI 自身会校验。
+    """
+    stripped = (bash_command or "").strip()
+    return bool(_MEMORY_CMD_RE.match(stripped))
 
 
 def _extract_option_value(bash_command: str, option: str) -> Optional[str]:
@@ -639,7 +678,8 @@ def _check_state_write(
 
     # 向前跳 1 步：验证进入条件
     effective_state = dict(state_data or {"phase": current_phase})
-    if not effective_state.get("currentStory"):
+    # 🆕 v3.9.1 嵌套 state 兼容：判空用统一接口（nested 读 activeStory，flat 读 currentStory）
+    if not state_mod.get_active_story(effective_state):
         effective_state["currentStory"] = _extract_option_value(bash_command, "--story")
     if not effective_state.get("currentTask"):
         effective_state["currentTask"] = _extract_option_value(bash_command, "--task")
@@ -661,11 +701,13 @@ def _check_state_write(
     PHASE_ENTRY_GATES: dict[str, dict[str, list[str]]] = {
         "大": {
             "ra-generated":    ["G-00"],
-            "dr-generated":    ["G-00", "G-01"],
-            "story-generated": ["G-00", "G-01", "G-02"],
-            "story-reviewed":  ["G-00", "G-02", "G-03"],
-            "task-generated":  ["G-00", "G-03", "G-04"],
-            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
+            "dr-generated":    ["G-00", "G-01", "G-DR-CTX"],
+            "story-generated": ["G-00", "G-01", "G-02", "G-STORY-CTX"],
+            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX"],
+            "testcase-generated": ["G-00", "G-02", "G-TESTCASE-CTX"],
+            "testcase-reviewed":  ["G-00", "G-02", "G-03", "G-TESTCASE-CTX"],
+            "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
+            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
@@ -673,10 +715,12 @@ def _check_state_write(
         },
         "中": {  # 跳过 DR：ra→story，无 dr-generated
             "ra-generated":    ["G-00"],
-            "story-generated": ["G-00", "G-01", "G-02"],
-            "story-reviewed":  ["G-00", "G-02", "G-03"],
-            "task-generated":  ["G-00", "G-03", "G-04"],
-            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
+            "story-generated": ["G-00", "G-01", "G-02", "G-STORY-CTX"],
+            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX"],
+            "testcase-generated": ["G-00", "G-02", "G-TESTCASE-CTX"],
+            "testcase-reviewed":  ["G-00", "G-02", "G-03", "G-TESTCASE-CTX"],
+            "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
+            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
@@ -684,8 +728,8 @@ def _check_state_write(
         },
         "小": {  # 跳过 DR/Story：ra→task，无 dr/story
             "ra-generated":    ["G-00"],
-            "task-generated":  ["G-00", "G-03", "G-04"],
-            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08"],
+            "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
+            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
@@ -695,6 +739,10 @@ def _check_state_write(
             # 🆕 2026-07-03(B1)：coding 入口加 G-07/G-08，与大链对齐（Plan-first 是质量底线，
             # conventions.md §3.1 明确"Plan-first ❌不豁免"）。code-reviewed 门禁现已可达
             # （state.py 微链已加回 code-reviewed phase）。
+            # 🆕 v3.9.1：task-generated/task-reviewed 加 G-TASK-CTX（微链 required 仅
+            # constraints+assets，Story/TestCase 项在 _check_context_loaded 内按 scale=微豁免）。
+            "task-generated":  ["G-00", "G-TASK-CTX"],
+            "task-reviewed":   ["G-00", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
@@ -767,6 +815,45 @@ def _deny_response(tool_name: str, reason: str) -> dict:
     }
 
 
+# ─── 🆕 v3.9.3：待初始化项目拦截 ────────────────────────────────────────────────
+
+def _check_pending_init_intercept(
+    tool_name: str,
+    bash_command: Optional[str],
+    file_path: Optional[str],
+    allow_readonly: bool,
+) -> tuple[bool, str]:
+    """ae-sdd 待初始化项目的拦截逻辑。
+
+    只放行：只读工具、只读 Bash、ae-sdd init 命令。
+    拦截：Write/Edit/MultiEdit 和任意非只读 Bash。
+    """
+    # 只读工具放行
+    if allow_readonly and tool_name in READONLY_TOOLS:
+        return True, ""
+
+    # 只读 Bash 放行
+    if tool_name == "Bash" and _is_readonly_bash(bash_command):
+        return True, ""
+
+    # ae-sdd init 命令放行（含 python -m ae-sdd / 绝对路径等变体）
+    if tool_name == "Bash" and bash_command:
+        stripped = bash_command.strip()
+        if re.match(r'^(python\S*\s+)?\S*ae-sdd\s+init\b', stripped) and not _CHAIN_RE.search(stripped):
+            return True, ""
+
+    # 其余全部拦截
+    return False, (
+        f"ae-sdd 项目尚未初始化（未找到 .ae-sdd/config.yaml）。\n"
+        f"当前 {tool_name} 操作已被拦截。\n\n"
+        f"请先运行 ae-sdd init 初始化项目：\n"
+        f"  ae-sdd init . <projectKey>\n"
+        f"  ae-sdd assets generate --project <projectKey>\n"
+        f"然后重新触发 /ae-sdd。\n\n"
+        f"如需紧急绕过，请说：/ae-sdd-quick 或 '走快速通道'"
+    )
+
+
 # ─── 主拦截逻辑 ───────────────────────────────────────────────────────────────
 def check_intercept(
     tool_name: str,
@@ -797,9 +884,14 @@ def check_intercept(
     if phase is None:
         ade_sdd = paths.locate_project_ae_sdd(project_dir)
         if ade_sdd is None:
+            # 🆕 v3.9.3：用户触发 /ae-sdd 但项目未 init → 检查待初始化标记
+            pending = paths.pending_init_marker(project_dir)
+            if pending.exists():
+                return _check_pending_init_intercept(tool_name, bash_command, file_path, allow_readonly)
             return True, ""  # 非 ae-sdd 项目，不拦截
         st = state_mod.read_state(paths.state_path(ade_sdd))
-        phase = st.get("phase", "initialized")
+        # 🆕 v3.9.1 嵌套 state 兼容：用统一接口读 active phase（nested → storyStates[activeStory].phase）
+        phase = state_mod.get_active_phase(st)
         cfg = paths.read_config(ade_sdd)
         project_key = cfg.get("projectKey", "unknown")
     else:
@@ -811,6 +903,16 @@ def check_intercept(
             allowed, reason = _check_state_write(bash_command, phase, ade_sdd, project_key, state_data=st)
             if not allowed:
                 return False, reason
+            return True, ""
+
+    # 3c. 🆕 v3.9.2 ae-sdd memory 命令放行（修复设计阶段死锁）
+    # memory enter/write/exit 只动 .ae-sdd/memory/，属流程自管理命令族，
+    # 独立于 PHASE_PERMIT 放行（同 step 3 对 state write 的处理）。
+    # 链式命令（&&/||/;/|/换行）不快速放行，交回 step 4-6 正常检查，
+    # 防止 'ae-sdd memory enter && rm -rf .ae-sdd/' 被误放。
+    if tool_name == "Bash" and bash_command:
+        stripped = bash_command.strip()
+        if _is_ae_sdd_memory_cmd(stripped) and not _CHAIN_RE.search(stripped):
             return True, ""
 
     # 3b. 🆕 v3.5.4 HS-7：ae-sdd state prd-complete 前置校验 4 层 AND

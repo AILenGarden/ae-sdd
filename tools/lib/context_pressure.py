@@ -253,9 +253,12 @@ def run_all(ade_sdd: Optional[Path], story_id: str = "") -> PressureReport:
     if ade_sdd is not None:
         from lib import state as state_mod
         from lib import paths as paths_mod
-        # state.json 路径：项目级为 .ae-sdd/state.json，Story 级为 .auto-engineering/{storyId}/state.json
+        # state.json 路径：项目级为 .ae-sdd/state.json；Story 级兼容 R6 与 legacy work-item 目录
         if story_id:
-            sp = paths_mod.project_root(ade_sdd) / ".auto-engineering" / story_id / "state.json"
+            sp = (
+                paths_mod.find_work_item_state_path(ade_sdd, story_id)
+                or paths_mod.project_root(ade_sdd) / ".auto-engineering" / story_id / "state.json"
+            )
         else:
             sp = paths_mod.state_path(ade_sdd)
         st = state_mod.read_state(sp)
@@ -270,6 +273,9 @@ def run_all(ade_sdd: Optional[Path], story_id: str = "") -> PressureReport:
         proj_root = paths_mod.project_root(ade_sdd)
         bases: list[Path] = []
         if story_id:
+            state_file = paths_mod.find_work_item_state_path(ade_sdd, story_id)
+            if state_file is not None:
+                bases.append(state_file.parent)
             bases.append(proj_root / ".auto-engineering" / story_id)
             bases.append(proj_root / "design")
             bases.append(proj_root / "task")

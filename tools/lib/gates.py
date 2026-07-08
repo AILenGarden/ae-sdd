@@ -132,6 +132,14 @@ GATE_REGISTRY: list[dict] = [
     # 非自动化模式 / 审核点不在白名单 → skipped（回退人工审核）。
     # 注：本门禁需读 config.yaml 判自动化模式，走 check_all 特判传 master_source。
     {"id": "G-AUTO-CONSENSUS", "name": "自动化联审共识通过", "severity": "blocker"},
+    # 🆕 v3.9.1 上下文加载准入门禁（注册表模式）— 对齐 RA/Coding 的「prose+CLI+门禁」三合一，
+    # 把 DR/Story/TestCase/Task 四组的「第零步准入检查」从 prose 变成机械阻断。
+    # 治「AI 不读 PRD/DR/项目资产/约束就过门禁切相」的真空带。
+    # 注册表 CONTEXT_GATE_REGISTRY 定义各 gate 的 scale 适用范围 + required 上下文清单。
+    {"id": "G-DR-CTX", "name": "DR 上下文加载", "severity": "blocker"},
+    {"id": "G-STORY-CTX", "name": "Story 上下文加载", "severity": "blocker"},
+    {"id": "G-TESTCASE-CTX", "name": "TestCase 上下文加载", "severity": "blocker"},
+    {"id": "G-TASK-CTX", "name": "Task 上下文加载", "severity": "blocker"},
 ]
 
 # Story Review 之后允许的 phase
@@ -271,7 +279,7 @@ def check_g02(project_dir: Path, st: dict, current_story: str) -> GateResult:
 # ─── G-03 ───────────────────────────────────────────────────────────────────
 def check_g03(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-03 Story Review 通过"""
-    phase = st.get("phase", "initialized")
+    phase = state_mod.get_active_phase(st) or st.get("phase", "initialized")
     if phase in PHASE_PAST_STORY_REVIEW:
         return GateResult("G-03", "Story Review 通过", "blocker", True,
                           f"phase = {phase}（Story Review 已通过）")
@@ -2266,7 +2274,7 @@ def check_g_auto_consensus(project_dir: Path, st: dict, current_story: str) -> G
       - reviewer 不独立（复用 G-09B）→ 阻断
     """
     name = "自动化联审共识通过"
-    phase = st.get("phase", "initialized")
+    phase = state_mod.get_active_phase(st) or st.get("phase", "initialized")
 
     # 1. 非自动化模式 → skip
     try:
@@ -2356,6 +2364,382 @@ def check_g_auto_consensus(project_dir: Path, st: dict, current_story: str) -> G
                                "reviewerCount": len(reviewer_sids)})
 
 
+# ─── 🆕 v3.9.1 上下文加载准入门禁（注册表模式）────────────────────────────────
+# 背景：RA 有 G-RA-1~6、Coding 有 G-CODEPLAN-SRC/G-14/G-08，但 DR/Story/TestCase/Task
+# 四组的「第零步准入检查」长期只是 prose（dr-review L14-21 / task-generate L14-21 还
+# 官方自认 report-only）。本组门禁把这四组的「上下文是否真读齐」从 prose 变成机械阻断。
+#
+# 设计：注册表驱动 — 流程一致用 _check_context_loaded 一个函数封装，上下文差异走
+# CONTEXT_GATE_REGISTRY 注册表；读文件统一走 document-storage-skill API
+# （get_constraints / get_assets / resolve_path / paths.find_doc）。
+#
+# phase 感知：准入门禁挂在「切到 X-phase」入口，但 check 执行时 st["phase"] 仍是前一
+# 阶段，故注册表 key 用 gate_id（不用 target_phase）；用 st["phase"] 是否已过该阶段
+# 判定 stub/skip。
+
+# phase 顺序（对齐 state.py PHASE_FLOWS 大链），用于判定「已过该阶段」
+_PHASE_ORDER = [
+    "initialized", "ra-generated", "dr-generated",
+    "story-generated", "story-reviewed",
+    "testcase-generated", "testcase-reviewed",
+    "task-generated", "task-reviewed",
+    "coding-process", "coding", "test-running", "code-reviewed", "completed",
+]
+
+
+def _phase_index(phase: str) -> int:
+    """返回 phase 在 _PHASE_ORDER 中的位置；未知返回 -1。"""
+    try:
+        return _PHASE_ORDER.index(phase)
+    except ValueError:
+        return -1
+
+
+# 上下文准入门禁注册表：gate_id → 该阶段必须读齐的上下文类型
+# required 的 key 对齐 document-storage-skill API：
+#   constraints → get_constraints(ade_sdd, project_key)
+#   assets      → get_assets(ade_sdd, project_key)
+#   RA          → _iter_ra_files(project_dir)（复用 G-RA-1 逻辑）
+#   PRD         → rglob *PRD*.md / *prd*.md / *需求*.md（gitPath + docWorkspace）
+#   DR          → paths.find_doc 或 design/ rglob *DR*.md（复用 G-01 逻辑）
+#   Story       → paths.find_doc(current_story, ".md")
+#   TestCase    → paths.find_doc(current_story, "-testcase.md")
+#   Story       → paths.find_doc(current_story, ".md")
+#   TestCase    → paths.find_doc(current_story, "-testcase.md")
+#   dependsStory → 🆕 v3.9.3 扫描当前 Story 元信息中"复用其他 Story"表，自动发现依赖并校验可达
+#   sourceTrace → 🆕 v3.9.3 扫描当前 Story 接口契约章节，校验每字段"来源"列非空 + 来源文档可达
+CONTEXT_GATE_REGISTRY: dict[str, dict] = {
+    "G-DR-CTX": {
+        "name": "DR 上下文加载",
+        "scales": {"大", "中"},                 # 大/中链必填，小/微链豁免
+        "pre_phases": {"initialized", "ra-generated"},  # 这些 phase 时 stub 通过
+        "passed_phases": {"story-generated", "story-reviewed",
+                          "testcase-generated", "testcase-reviewed",
+                          "task-generated", "task-reviewed",
+                          "coding-process", "coding", "test-running",
+                          "code-reviewed", "completed"},
+        "required": ["constraints", "assets", "RA", "PRD"],
+    },
+    "G-STORY-CTX": {
+        "name": "Story 上下文加载",
+        "scales": {"大", "中"},
+        "pre_phases": {"initialized", "ra-generated", "dr-generated"},
+        "passed_phases": {"story-reviewed", "testcase-generated", "testcase-reviewed",
+                          "task-generated", "task-reviewed",
+                          "coding-process", "coding", "test-running",
+                          "code-reviewed", "completed"},
+        # 🆕 v3.9.3: 新增 dependsStory 与 sourceTrace，覆盖 SSOT §3 13 项自检中的 C 类与 §4 来源追溯
+        "required": ["constraints", "assets", "DR", "PRD",
+                     "dependsStory", "sourceTrace"],
+    },
+    "G-TESTCASE-CTX": {
+        "name": "TestCase 上下文加载",
+        "scales": {"大", "中", "小"},
+        "pre_phases": {"initialized", "ra-generated", "dr-generated",
+                       "story-generated", "story-reviewed"},
+        "passed_phases": {"task-generated", "task-reviewed",
+                          "coding-process", "coding", "test-running",
+                          "code-reviewed", "completed"},
+        "required": ["constraints", "assets", "Story"],
+    },
+    "G-TASK-CTX": {
+        "name": "Task 上下文加载",
+        "scales": {"大", "中", "小", "微"},
+        "pre_phases": {"initialized", "ra-generated", "dr-generated",
+                       "story-generated", "story-reviewed",
+                       "testcase-generated", "testcase-reviewed"},
+        "passed_phases": {"coding-process", "coding", "test-running",
+                          "code-reviewed", "completed"},
+        # 微链豁免 Story/TestCase（微链无 Story/TestCase 产物）
+        "required": ["constraints", "assets", "Story", "TestCase"],
+        "required_micro": ["constraints", "assets"],
+    },
+}
+
+
+def _find_prd_files(project_dir: Path) -> list[Path]:
+    """rglob PRD 文档（多命名约定：PRD/prd/需求）。"""
+    out: list[Path] = []
+    seen: set[Path] = set()
+    patterns = ["*PRD*.md", "*prd*.md", "*需求*.md"]
+    for pat in patterns:
+        for p in project_dir.rglob(pat):
+            try:
+                resolved = p.resolve()
+            except OSError:
+                resolved = p
+            if resolved in seen:
+                continue
+            # 排除明显的模板/changelog
+            lower = p.as_posix().lower()
+            if any(seg in lower for seg in ("changelog", "template", "change_log")):
+                continue
+            seen.add(resolved)
+            out.append(p)
+    return out
+
+
+# 🆕 v3.9.3: 依赖 Story 自动发现与可达性校验
+# 扫描当前 Story 元信息中"复用其他 Story / 模块的能力"表格，
+# 提取 STORY-XXX-BE 形式 ID，逐个验证 ae-sdd doc resolve --intent STORY --story-id {ID} 可达。
+def _check_depends_story(project_dir: Path, current_story: str) -> tuple[bool, str]:
+    """返回 (ok, detail)：ok=True 通过；ok=False 失败 detail 为人类可读失败原因。"""
+    if not current_story:
+        return True, ""  # 无当前 Story 不阻断（与 G-TESTCASE-CTX 一致处理）
+    story_doc = paths.find_doc(project_dir, current_story, ".md")
+    if story_doc is None:
+        return True, ""  # 当前 Story 不存在 → 由其他门禁阻断，本门禁不重复
+    try:
+        content = story_doc.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return True, ""  # 读不到文件不阻断（其他门禁会处理）
+    # 用正则提取所有 STORY-XXX-BE / STORY-XXX-FE 形式的 ID
+    import re as _re
+    ids = set(_re.findall(r"STORY-[A-Z0-9]+-(?:BE|FE|FULL|MP|MiniProgram)", content))
+    if not ids:
+        return True, ""  # 无依赖声明 → 视为通过（不强求必须声明依赖）
+    missing_ids: list[str] = []
+    for sid in sorted(ids):
+        if paths.find_doc(project_dir, sid, ".md") is None:
+            missing_ids.append(sid)
+    if missing_ids:
+        return False, f"以下依赖 Story 不可达：{', '.join(missing_ids)}"
+    return True, ""
+
+
+# 🆕 v3.9.3: 接口契约字段来源追溯校验
+# 扫描当前 Story 接口契约章节（REST API / SPI），
+# 验证每个字段都有"来源"列填写，且非空。
+def _check_source_trace(project_dir: Path, current_story: str) -> tuple[bool, str]:
+    """返回 (ok, detail)。"""
+    if not current_story:
+        return True, ""
+    story_doc = paths.find_doc(project_dir, current_story, ".md")
+    if story_doc is None:
+        return True, ""
+    try:
+        content = story_doc.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return True, ""
+    # 简化实现：检查"接口契约"章节中是否有 Request/Response 表头，
+    # 且至少有一个非空"来源"列。若章节缺失则视为不适用（不阻断），
+    # 因为纯后端无 API 的 Story 不需要接口契约来源追溯。
+    if "接口契约" not in content and "接口契约-SPI" not in content:
+        return True, ""
+    import re as _re
+    # 抓取接口契约章节内所有表格行（含 | xxx | yyy | zzz |），逐行检查"来源"列
+    in_contract = False
+    bad_rows: list[str] = []
+    for line in content.splitlines():
+        if "## 接口契约" in line or "## 接口契约-SPI" in line:
+            in_contract = True
+            continue
+        if in_contract and line.startswith("## ") and "接口契约" not in line:
+            break  # 离开接口契约章节
+        if not in_contract:
+            continue
+        # 只看表格数据行（以 | 开头且包含 3 个以上 |）
+        if not line.strip().startswith("|") or line.count("|") < 4:
+            continue
+        # 跳过表头分隔行 |---|---|...|
+        if _re.match(r"^\|\s*-+", line):
+            continue
+        # 找到"来源"列索引（在表头行查找，本行按相同索引切分）
+        # 简化策略：本行含"来源"列文本片段 且 同行"来源"位置为空 → 标记 bad
+        # 因为 Markdown 表格解析复杂，此处用"列数对齐 + 至少有一个含来源关键词的列"
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        # 检查是否有"来源"含义的列（第 6 列通常为"来源"，按模板约定）
+        if len(cells) >= 6 and cells[5] in ("", "-", "—", "TODO"):
+            bad_rows.append(line[:80])
+    if bad_rows:
+        return False, f"接口契约中有 {len(bad_rows)} 行『来源』列为空（示例：{bad_rows[0]}...）"
+    return True, ""
+
+
+def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
+                          gate_id: str) -> GateResult:
+    """上下文加载准入门禁统一实现（注册表驱动）。
+
+    复用 document-storage-skill API：
+      - get_constraints(ade_sdd, project_key) → 约束文档
+      - get_assets(ade_sdd, project_key) → 项目资产文件列表
+      - _iter_ra_files / _find_prd_files / paths.find_doc → 上游设计文档
+
+    签名兼容 CHECK_FUNCS 通用路径 (project_dir, st, current_story)；
+    内部从 project_dir/.ae-sdd 反推 ade_sdd + project_key。
+    """
+    spec = CONTEXT_GATE_REGISTRY[gate_id]
+    name = spec["name"]
+    phase = st.get("phase", "initialized")
+    scale = st.get("scale") or "大"
+
+    # 1. scale 豁免
+    if scale not in spec["scales"]:
+        return GateResult(gate_id, name, "blocker", True,
+                          f"scale={scale} 不在本门禁适用范围 {sorted(spec['scales'])}（豁免）",
+                          details={"skipped": True, "reason": "scale-exempt",
+                                   "scale": scale, "applicable_scales": sorted(spec["scales"])})
+
+    # 2. phase 感知：pre-phase stub 通过
+    if phase in spec["pre_phases"]:
+        return GateResult(gate_id, name, "blocker", True,
+                          f"phase={phase}（pre-phase，上下文加载尚不适用，stub 通过）",
+                          details={"skipped": True, "reason": "pre-phase", "phase": phase})
+
+    # 3. 已过该阶段 → skipped（不回溯阻断历史 state）
+    if phase in spec["passed_phases"]:
+        return GateResult(gate_id, name, "blocker", True,
+                          f"phase={phase}（已过本门禁适用阶段，跳过）",
+                          details={"skipped": True, "reason": "passed", "phase": phase})
+
+    # 4. 反推 ade_sdd + project_key
+    ade_sdd = project_dir / ".ae-sdd"
+    if not ade_sdd.is_dir() or not paths.config_path(ade_sdd).is_file():
+        return GateResult(gate_id, name, "blocker", True,
+                          "未找到 .ae-sdd/config.yaml（项目未 init），跳过上下文加载校验",
+                          details={"skipped": True, "reason": "no-config"})
+    cfg = paths.read_config(ade_sdd)
+    project_key = cfg.get("workspaceKey") or cfg.get("projectKey") or ""
+    if not project_key:
+        return GateResult(gate_id, name, "blocker", True,
+                          "config.yaml 无 workspaceKey/projectKey，跳过上下文加载校验",
+                          details={"skipped": True, "reason": "no-project-key"})
+
+    # 5. 确定本 scale 下的 required 列表（微链 Task 豁免 Story/TestCase）
+    if gate_id == "G-TASK-CTX" and scale == "微":
+        required_keys = spec["required_micro"]
+    else:
+        required_keys = spec["required"]
+
+    # 6. 逐项校验
+    status: dict[str, bool] = {}
+    missing: list[str] = []
+    missing_hints: list[str] = []
+
+    for key in required_keys:
+        if key == "constraints":
+            from lib import document_storage as ds
+            constraints = ds.get_constraints(ade_sdd, project_key)
+            ok = bool(constraints)
+            status["constraints"] = ok
+            if not ok:
+                missing.append("项目约束文档")
+                missing_hints.append("走 project-assets-update-skill 生成 constraints/*.md")
+        elif key == "assets":
+            from lib import document_storage as ds
+            assets = ds.get_assets(ade_sdd, project_key)
+            ok = bool(assets)
+            status["assets"] = ok
+            if not ok:
+                missing.append("项目资产")
+                missing_hints.append("走 project-assets-update-skill 生成项目资产")
+        elif key == "RA":
+            ra_files = _iter_ra_files(project_dir)
+            ok = bool(ra_files)
+            status["RA"] = ok
+            if not ok:
+                missing.append("RA 文档")
+                missing_hints.append("跑 requirement-analysis-skill 生成 RA")
+        elif key == "PRD":
+            prd_files = _find_prd_files(project_dir)
+            ok = bool(prd_files)
+            status["PRD"] = ok
+            if not ok:
+                missing.append("PRD 文档")
+                missing_hints.append("向用户索取 PRD，或在 RA 中显式标注豁免理由")
+        elif key == "DR":
+            design = paths.project_design_dir(project_dir)
+            drs = []
+            if design.is_dir():
+                drs = sorted(set(design.rglob("*DR*.md")) | set(design.rglob("*dr*.md")))
+                drs = [d for d in drs if not any(kw in d.name for kw in
+                        ("CodeReview", "CodingReport", "TestReport", "-Report"))]
+            ok = bool(drs)
+            status["DR"] = ok
+            if not ok:
+                missing.append("DR 文档")
+                missing_hints.append("跑 dr-generate-skill 生成 DR")
+        elif key == "Story":
+            if not current_story:
+                status["Story"] = False
+                missing.append("Story 文档（state.currentStory 为空）")
+                missing_hints.append("ae-sdd state write --phase story-generated --story STORY-XXX")
+            else:
+                story_doc = paths.find_doc(project_dir, current_story, ".md")
+                ok = story_doc is not None
+                status["Story"] = ok
+                if not ok:
+                    missing.append(f"Story 文档（{current_story}.md）")
+                    missing_hints.append(f"跑 story-generate-skill 生成 {current_story}")
+        elif key == "TestCase":
+            if not current_story:
+                status["TestCase"] = False
+                missing.append("TestCase 文档（state.currentStory 为空）")
+                missing_hints.append("ae-sdd state write --phase testcase-generated --story STORY-XXX")
+            else:
+                tc_doc = paths.find_doc(project_dir, current_story, "-testcase.md")
+                ok = tc_doc is not None
+                status["TestCase"] = ok
+                if not ok:
+                    missing.append(f"TestCase 文档（{current_story}-testcase.md）")
+                    missing_hints.append(f"跑 testcase-generate-skill 生成 {current_story}-testcase.md")
+        # 🆕 v3.9.3: 依赖 Story 自动发现与可达性校验
+        elif key == "dependsStory":
+            ok, detail = _check_depends_story(project_dir, current_story)
+            status["dependsStory"] = ok
+            if not ok:
+                missing.append(f"依赖 Story：{detail}")
+                missing_hints.append(
+                    "在 Story 元信息的『复用其他 Story / 模块的能力』表中列出依赖 Story ID，"
+                    "并确保 ae-sdd doc resolve --intent STORY --story-id {ID} 可达"
+                )
+        # 🆕 v3.9.3: 接口契约字段来源追溯校验
+        elif key == "sourceTrace":
+            ok, detail = _check_source_trace(project_dir, current_story)
+            status["sourceTrace"] = ok
+            if not ok:
+                missing.append(f"接口契约来源追溯：{detail}")
+                missing_hints.append(
+                    "在 Story 接口契约章节的 Request/Response 表格中，"
+                    "为每个字段填写『来源』列，格式：『调用方从...取得』或『查表X.字段Y』"
+                )
+
+    if missing:
+        hint_str = "；".join(missing_hints)
+        return GateResult(
+            gate_id, name, "blocker", False,
+            f"上下文加载未齐备（缺 {len(missing)} 项）：{', '.join(missing)}",
+            f"{hint_str}；补齐后重跑 ae-sdd gates check --only {gate_id}",
+            details={"status": status, "missing": missing,
+                     "scale": scale, "phase": phase,
+                     "required": required_keys})
+
+    return GateResult(gate_id, name, "blocker", True,
+                      f"上下文加载齐备（{len(required_keys)} 项：{', '.join(required_keys)}）",
+                      details={"status": status, "scale": scale, "phase": phase,
+                               "required": required_keys})
+
+
+def check_g_dr_ctx(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-DR-CTX DR 上下文加载 — 校验 constraints/assets/RA/PRD 已读齐。"""
+    return _check_context_loaded(project_dir, st, current_story, "G-DR-CTX")
+
+
+def check_g_story_ctx(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-STORY-CTX Story 上下文加载 — 校验 constraints/assets/DR/PRD 已读齐。"""
+    return _check_context_loaded(project_dir, st, current_story, "G-STORY-CTX")
+
+
+def check_g_testcase_ctx(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-TESTCASE-CTX TestCase 上下文加载 — 校验 constraints/assets/Story 已读齐。"""
+    return _check_context_loaded(project_dir, st, current_story, "G-TESTCASE-CTX")
+
+
+def check_g_task_ctx(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """G-TASK-CTX Task 上下文加载 — 校验 constraints/assets/Story/TestCase 已读齐（微链豁免 Story/TestCase）。"""
+    return _check_context_loaded(project_dir, st, current_story, "G-TASK-CTX")
+
+
 # ─── 路由表 ─────────────────────────────────────────────────────────────────
 CHECK_FUNCS: dict[str, Callable] = {
     "G-01": check_g01, "G-02": check_g02, "G-03": check_g03,
@@ -2375,6 +2759,10 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-REVIEW-LOOP": check_g_review_loop,  # 🆕 v3.5.12 review-loop 退出条件
     "G-09B": check_g09b,  # 🆕 v3.5.13 reviewer 独立性硬门禁（堵 root 自扮）
     "G-AUTO-CONSENSUS": check_g_auto_consensus,  # 🆕 v3.8.0 自动化联审共识
+    "G-DR-CTX": check_g_dr_ctx,                  # 🆕 v3.9.1 DR 上下文加载
+    "G-STORY-CTX": check_g_story_ctx,            # 🆕 v3.9.1 Story 上下文加载
+    "G-TESTCASE-CTX": check_g_testcase_ctx,      # 🆕 v3.9.1 TestCase 上下文加载
+    "G-TASK-CTX": check_g_task_ctx,              # 🆕 v3.9.1 Task 上下文加载
 }
 
 
@@ -2389,7 +2777,14 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
         st = state_mod.read_state(paths.state_path(ade_sdd))
     else:
         st = {"phase": "initialized", "currentStory": None}
-    current_story = st.get("currentStory") or ""
+    current_story = state_mod.get_active_story(st) or ""
+    active_phase = state_mod.get_active_phase(st)
+    if current_story or active_phase:
+        st = dict(st)
+        if current_story:
+            st["currentStory"] = current_story
+        if active_phase:
+            st["phase"] = active_phase
 
     # 推导 project_dir
     project_dir = paths.project_root(ade_sdd) if ade_sdd else Path.cwd()

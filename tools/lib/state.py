@@ -323,7 +323,7 @@ def next_step_suggestion(state: dict) -> dict:
     - "action": 建议执行的动作（动词）
     - "skill": 对应的 SKILL 文件
     """
-    cur = state.get("phase", "initialized")
+    cur = get_active_phase(state) or state.get("phase", "initialized")
 
     # 🆕 v3.6 paused 元状态：建议恢复到暂停前的 phase
     if cur == "paused":
@@ -1290,3 +1290,219 @@ def list_story_ids_in_state(state: dict) -> list[str]:
         return list((state.get("storyStates") or {}).keys())
     cs = state.get("currentStory")
     return [cs] if cs else []
+
+
+# ─── 🆕 v3.9.3 R2 强制向上归入（递归算法）────────────────────────────────
+# 用户定义的递归算法（CHANGELOG 2026-07-07）：
+#   1. 读当前节点文档 → extract_parent_claim 抽父级声明
+#   2. verify_parent_claim 验证父级文档存在 + 关联性
+#   3. 无父级 / 父级文档找不到 → 视为无父级，当前层为顶层
+#   4. 有父级：
+#      a) 父级已有 state（find_nested_state_by_* 命中）→ 嵌进对应容器
+#      b) 父级无 state → 递归：先替父级创建 state，再嵌
+#   5. 这是从叶子向上"补全缺失祖先"的递归过程
+
+
+def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
+                                design_dir: Path) -> tuple[Optional[Path], Optional[dict]]:
+    """🆕 v3.9.3 内部辅助：确保父级 state 存在，必要时递归创建。
+
+    Args:
+        ade_sdd: 项目 .ae-sdd 目录
+        parent_type: "PRD" 或 "DR"
+        parent_id: 父级 ID（如 "DR-005" / "PRD-001"）
+        design_dir: design/ 目录（用于递归时验证父级的父级）
+
+    Returns:
+        (state_path, state_data) — 父级 state；或 (None, None) 当无法创建
+    """
+    from lib import paths as paths_mod  # 避免循环
+
+    if parent_type == "PRD":
+        hit = paths_mod.find_nested_state_by_prd_id(ade_sdd, parent_id)
+        if hit:
+            return hit
+        # 父级 PRD 无 state → 替它创建
+        try:
+            st = init_nested_state(
+                project_key="",
+                entry_node="PRD",
+                state_machine_id=f"PRD-{parent_id.replace('PRD-', '', 1)}",
+                state_machine_name=parent_id,
+                story_ids=None,
+                prd_id=parent_id,
+            )
+            sp = paths_mod.work_item_state_path(ade_sdd, "PRD",
+                                                {"prd_feature": parent_id.replace("PRD-", "", 1)})
+            write_state(sp, st)
+            return (sp, st)
+        except Exception:
+            return (None, None)
+    elif parent_type == "DR":
+        hit = paths_mod.find_nested_state_by_dr_id(ade_sdd, parent_id)
+        if hit:
+            return hit
+        # 父级 DR 无 state → 检查 DR 有没有 PRD 父级，递归
+        dr_doc = paths_mod._find_design_doc(design_dir, parent_id)
+        prd_parent = None
+        if dr_doc:
+            prd_parent, _ = paths_mod.extract_parent_claim(dr_doc, doc_kind="dr")
+        # 先确保 PRD 父级 state 存在
+        if prd_parent:
+            ok, _ = paths_mod.verify_parent_claim("PRD", prd_parent, design_dir, child_id=parent_id)
+            if ok:
+                prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", prd_parent, design_dir)
+                # PRD 父级 state 准备好后，回到 DR 创建并嵌进 PRD 的 drState
+        # 创建 DR 顶层 state（即使有 PRD 父级，DR 仍可独立创建顶层 state，
+        #   然后下面 R2 吸收逻辑会把它嵌进 PRD）
+        try:
+            st = init_nested_state(
+                project_key="",
+                entry_node="DR",
+                state_machine_id=f"DR-{parent_id.replace('DR-', '', 1)}",
+                state_machine_name=parent_id,
+                story_ids=None,
+                dr_id=parent_id,
+            )
+            sp = paths_mod.work_item_state_path(ade_sdd, "DR",
+                                                {"dr_feature": parent_id.replace("DR-", "", 1)})
+            write_state(sp, st)
+            return (sp, st)
+        except Exception:
+            return (None, None)
+    return (None, None)
+
+
+def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
+                        design_dir: Path,
+                        doc_path: Optional[Path] = None,
+                        child_id: str = "") -> tuple[Path, dict]:
+    """🆕 v3.9.3 递归向上归入（用户定义的 R2 算法）。
+
+    1. extract_parent_claim 读当前节点文档 → 抽父级声明
+    2. verify_parent_claim 验证父级文档存在 + 关联性
+    3. 无父级 / 父级文档找不到 → 当前层为顶层
+    4. 有父级：
+       a) 父级已有 state → 把当前节点加入该 state 的对应容器
+       b) 父级无 state → 递归：先 _ensure_parent_nested_state 替父级建
+          → 把当前节点嵌进新建的父级 state
+
+    Args:
+        ade_sdd: 项目 .ae-sdd 目录
+        top_node: 当前节点类型 PRD/DR/STORY/TASK
+        features: 当前节点 R6 特征
+        design_dir: design/ 目录
+        doc_path: 当前节点文档（Story/DR 文档路径），用于抽父级
+        child_id: 当前节点 ID（用于关联性验证）
+
+    Returns:
+        (state_path, state_data) — 当前节点最终所属嵌套 state
+    """
+    from lib import paths as paths_mod  # 避免循环
+
+    top_node = (top_node or "").upper()
+    if top_node not in ("PRD", "DR", "STORY", "TASK"):
+        # 非法顶层 → 当作无父级 STORY 处理
+        top_node = "STORY"
+
+    # 1) 读当前节点文档抽父级
+    parent_prd: Optional[str] = None
+    parent_dr: Optional[str] = None
+    if doc_path and doc_path.is_file():
+        if top_node == "STORY":
+            parent_prd, parent_dr = paths_mod.extract_parent_claim(doc_path, doc_kind="story")
+        elif top_node == "DR":
+            parent_prd, _ = paths_mod.extract_parent_claim(doc_path, doc_kind="dr")
+
+    # 2) 验证父级
+    valid_parent_dr: Optional[str] = None
+    valid_parent_prd: Optional[str] = None
+    if parent_dr:
+        ok, reason = paths_mod.verify_parent_claim("DR", parent_dr, design_dir, child_id=child_id)
+        if ok:
+            valid_parent_dr = parent_dr
+        # reason=doc_not_found / relation_mismatch → 视为无父级（不阻塞）
+    if parent_prd:
+        ok, reason = paths_mod.verify_parent_claim("PRD", parent_prd, design_dir, child_id=child_id)
+        if ok:
+            valid_parent_prd = parent_prd
+
+    # 3) 无有效父级 → 当前层为顶层
+    if not valid_parent_dr and not valid_parent_prd:
+        from lib import paths as _p
+        sp = _p.work_item_state_path(ade_sdd, top_node, features)
+        try:
+            # 🆕 v3.9.3 补全 init_nested_state 所需形参
+            kwargs = dict(
+                project_key="",
+                entry_node=top_node,
+                state_machine_id=sp.parent.name,
+                state_machine_name=sp.parent.name,
+            )
+            if top_node == "PRD":
+                kwargs["prd_id"] = features.get("prd_id") or child_id
+            elif top_node == "DR":
+                kwargs["dr_id"] = features.get("dr_id") or features.get("dr_feature") or child_id
+            elif top_node == "STORY":
+                kwargs["story_ids"] = features.get("story_ids")
+            st = init_nested_state(**kwargs)
+            write_state(sp, st)
+            return (sp, st)
+        except Exception:
+            # 已存在 → 直接读
+            if sp.is_file():
+                return (sp, read_state(sp))
+            raise
+
+    # 4a) Story → 嵌进父级 DR
+    if top_node == "STORY" and valid_parent_dr:
+        dr_hit = _ensure_parent_nested_state(ade_sdd, "DR", valid_parent_dr, design_dir)
+        if dr_hit and dr_hit[0] is not None:
+            dr_sp, dr_st = dr_hit
+            # 嵌进 DR state 的 storyStates
+            story_id = (features.get("story_ids") or [child_id])[0]
+            add_story_to_nested_state(dr_st, story_id, initial_phase="story-generated")
+            write_state(dr_sp, dr_st)
+            return (dr_sp, dr_st)
+
+    # 4b) DR → 嵌进父级 PRD
+    if top_node == "DR" and valid_parent_prd:
+        prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", valid_parent_prd, design_dir)
+        if prd_hit and prd_hit[0] is not None:
+            prd_sp, prd_st = prd_hit
+            # 嵌进 PRD state 的 drState
+            dr_id = features.get("dr_id") or child_id
+            if prd_st.get("drState") is None:
+                prd_st["drState"] = {"drId": dr_id, "phase": "dr-generated", "lastUpdated": _now_ts()}
+                record_history(prd_st, f"absorb-dr-{dr_id}", by="recursive_r2_absorb")
+            write_state(prd_sp, prd_st)
+            return (prd_sp, prd_st)
+
+    # 4c) Story 有 PRD 但无 DR → 嵌进 PRD（罕见，PRD 直接管 Story）
+    if top_node == "STORY" and valid_parent_prd and not valid_parent_dr:
+        prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", valid_parent_prd, design_dir)
+        if prd_hit and prd_hit[0] is not None:
+            prd_sp, prd_st = prd_hit
+            story_id = (features.get("story_ids") or [child_id])[0]
+            add_story_to_nested_state(prd_st, story_id, initial_phase="story-generated")
+            write_state(prd_sp, prd_st)
+            return (prd_sp, prd_st)
+
+    # 5) 兜底：父级 state 创建失败 → 当前层为顶层
+    from lib import paths as _p
+    sp = _p.work_item_state_path(ade_sdd, top_node, features)
+    if sp.is_file():
+        return (sp, read_state(sp))
+    try:
+        st = init_nested_state(
+            project_key="",
+            entry_node=top_node,
+            state_machine_id=sp.parent.name,
+            state_machine_name=sp.parent.name,
+            story_ids=features.get("story_ids") if top_node == "STORY" else None,
+        )
+        write_state(sp, st)
+        return (sp, st)
+    except Exception:
+        # 已存在则读
+        return (sp, read_state(sp) if sp.is_file() else {})

@@ -168,7 +168,9 @@ def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
         p = Path(raw_path)
         candidates.append(p if p.is_absolute() else project_root / p)
     if active_key:
-        candidates.append(paths.work_item_state_path(ade_sdd, active_key))
+        keyed_state = paths.find_work_item_state_path(ade_sdd, active_key)
+        if keyed_state is not None:
+            candidates.append(keyed_state)
 
     auto_root = (project_root / ".auto-engineering").resolve()
     for cand in candidates:
@@ -183,18 +185,32 @@ def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
 
 
 def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
-    """Resolve state path for main state commands.
+    """🆕 v3.9.3 解析 state 路径：接受 R6 顶层名 或 raw ID 派生顶层名。
 
-    Passing --work-item or --story reads/writes the isolated work-item
-    state. Without an explicit work item, commands follow activeStatePath from
-    the project mirror. --project-state is the explicit legacy escape hatch.
+    优先级：
+      1. --project-state → 项目级 state.json
+      2. --work-item / --story（token）：
+         a) token 是 R6 顶层名（PRD-/DR-/Story-/Task-）→ 直接用
+         b) token 是 raw ID（STORY-006-BE / BUG-LIFE-001）→ 用 _resolve_top_node_from_token 派生
+      3. activeStatePath 镜像
     """
     if getattr(args, "project_state", False):
         return paths.state_path(ade_sdd), ""
     work_item = _work_item_arg(args)
     if work_item:
-        sp = paths.work_item_state_path(ade_sdd, work_item)
-        return sp, _state_path_work_item_key(sp, work_item)
+        existing = paths.find_work_item_state_path(ade_sdd, work_item)
+        if existing is not None:
+            return existing, _state_path_work_item_key(existing, work_item)
+        top_node, features = _resolve_top_node_from_token(ade_sdd, work_item, args)
+        if top_node:
+            sp = paths.work_item_state_path(ade_sdd, top_node, features)
+            return sp, _state_path_work_item_key(sp, sp.parent.name)
+        # 解析不出顶层节点 → 尝试当作顶层名（R6 形式）
+        if work_item.startswith(("PRD-", "DR-", "Story-", "Task-")):
+            # 用顶层名本身当 work_item_key 走 legacy 单段兼容
+            sp = paths.work_items_dir(ade_sdd) / work_item / "state.json"
+            return sp, work_item
+        return paths.state_path(ade_sdd), ""
     active = _active_state_from_mirror(ade_sdd)
     if active is not None:
         return active
@@ -241,86 +257,123 @@ def cmd_state_read(args, parser):
 
 
 def cmd_state_new(args, parser):
-    """Create a new isolated state machine for one requirement/work item."""
+    """🆕 v3.9.3 创建嵌套 state 机 + 强制 R2 向上归入。
+
+    BREAKING v3.9.3：废除 --name 形参；目录名统一走 R6 顶层名。
+    新签名：state new --id <ID> --entry-node <PRD|DR|STORY> [--story-ids ...] [--nested]
+    """
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
     work_item_id = (args.id or "").strip()
-    work_item_name = (args.name or "").strip()
-    if not work_item_id or not work_item_name:
-        output.err("新状态机必须同时提供 --id 和 --name")
+    # v3.9.3 废除 --name 形参；如传了也忽略
+    if not work_item_id:
+        output.err("新状态机必须提供 --id")
         return 1
 
-    work_item_key = paths.work_item_dir_name(work_item_id, work_item_name)
-    sp = paths.work_item_state_path(ade_sdd, work_item_id, work_item_name)
-    if sp.exists() and not args.force:
-        output.err(f"状态机已存在：{sp.parent.name}")
-        output.info("如需重建，请加 --force（会覆盖该 state.json）")
-        return 1
-
-    cfg = paths.read_config(ade_sdd)
-    requested_scale = args.scale
     requested_entry_node = args.entry_node
-    inferred = _infer_scale_for_work_item(work_item_id, requested_entry_node)
-    if inferred and not requested_scale:
-        requested_scale, requested_entry_node = inferred
-    if not requested_scale:
-        requested_scale = "大"
-
-    # 🆕 v3.9.0 嵌套 state 分支：--nested 或 --story-ids 或 entry-node=PRD/DR/STORY 时启用
     story_ids_raw = getattr(args, "story_ids", "") or ""
     story_ids_list = [s.strip() for s in story_ids_raw.split(",") if s.strip()] if story_ids_raw else []
     use_nested = (getattr(args, "nested", False)
                   or bool(story_ids_list)
                   or (requested_entry_node in ("PRD", "DR", "STORY")))
 
-    if use_nested and requested_entry_node in ("PRD", "DR", "STORY"):
-        # 🆕 v3.9.0 创建嵌套 state
-        from lib.flow_enums import FlowNode
-        if not FlowNode.is_nested_entry(requested_entry_node):
+    # 推断顶层节点
+    if not requested_entry_node:
+        upper = work_item_id.upper()
+        if upper.startswith("PRD-"):
+            requested_entry_node = "PRD"
+        elif upper.startswith("DR-"):
+            requested_entry_node = "DR"
+        elif upper.startswith(("BUG-", "OPT-", "CONFIG-", "TASK-")):
+            # 🆕 v3.9.3 BUG/OPT/CONFIG/Task ID 一律走 TASK 顶层名
+            requested_entry_node = "TASK"
+        else:
+            requested_entry_node = "STORY"
+
+    # 构造 R6 顶层 features
+    from lib.flow_enums import FlowNode
+    if not FlowNode.is_nested_entry(requested_entry_node):
+        # TASK 是 v3.9.3 新顶层（BUG/OPT/CONFIG/Task 走 TASK 分支）
+        if requested_entry_node in ("TASK", "BUG", "OPT", "CONFIG"):
+            requested_entry_node = "TASK"
+        else:
             output.err(f"entry-node={requested_entry_node} 不支持嵌套 state（仅 PRD/DR/STORY）")
             return 1
+    features: dict = {}
+    if requested_entry_node == "PRD":
+        features["prd_feature"] = work_item_id.replace("PRD-", "", 1)
+        features["prd_id"] = work_item_id
+    elif requested_entry_node == "DR":
+        features["dr_feature"] = work_item_id.replace("DR-", "", 1)
+        features["dr_id"] = work_item_id
+    elif requested_entry_node == "STORY":
+        features["story_ids"] = story_ids_list or [work_item_id]
+    elif requested_entry_node == "TASK":
+        features["task_id"] = work_item_id
+
+    work_item_key = paths.work_item_dir_name(requested_entry_node, features)
+    sp = paths.work_item_state_path(ade_sdd, requested_entry_node, features)
+    if sp.exists() and not args.force:
+        output.err(f"状态机已存在：{sp.parent.name}")
+        output.info("如需重建，请加 --force（会覆盖该 state.json）")
+        return 1
+
+    cfg = paths.read_config(ade_sdd)
+    requested_scale = args.scale or "大"
+
+    if use_nested and requested_entry_node in ("PRD", "DR", "STORY"):
+        # 🆕 v3.9.3 R2 强制向上归入（递归算法）
+        design_dir = paths.project_design_dir(paths.project_root(ade_sdd))
+        # 找当前节点文档（如果有）用于抽父级
+        doc_path = None
+        if requested_entry_node == "STORY" and features.get("story_ids"):
+            doc_path = paths.find_doc(paths.project_root(ade_sdd), features["story_ids"][0], "-Story.md")
+        elif requested_entry_node == "DR":
+            doc_path = paths.find_doc(paths.project_root(ade_sdd), work_item_id, "-DR.md")
+        elif requested_entry_node == "PRD":
+            doc_path = paths.find_doc(paths.project_root(ade_sdd), work_item_id, "-PRD.md")
+
+        # 跑 R2 递归
         try:
-            st = state.init_nested_state(
-                project_key=cfg.get("projectKey", ""),
-                entry_node=requested_entry_node,
-                state_machine_id=work_item_key,
-                state_machine_name=work_item_name,
-                story_ids=story_ids_list or ([args.story] if args.story else None),
-                prd_id=work_item_id if requested_entry_node == "PRD" else None,
-                dr_id=work_item_id if requested_entry_node == "DR" else (args.story or None),
+            final_sp, final_st = state.recursive_r2_absorb(
+                ade_sdd, requested_entry_node, features, design_dir,
+                doc_path=doc_path, child_id=work_item_id,
             )
         except ValueError as e:
             output.err(str(e))
             return 1
-        state.write_state(sp, st)
+
+        # 若 R2 实际写到了不同的路径（嵌入父级 state），告知用户
+        if str(final_sp) != str(sp):
+            output.info(f"R2 向上归入：当前节点已嵌进父级 state {final_sp.parent.name}")
+
         if args.activate:
-            _write_active_state_mirror(ade_sdd, st, work_item_key, sp)
+            _write_active_state_mirror(ade_sdd, final_st, final_sp.parent.name, final_sp)
         payload = {
             "ok": True,
             "workItemId": work_item_id,
-            "workItemName": work_item_name,
             "workItemKey": work_item_key,
-            "statePath": str(sp),
+            "statePath": str(final_sp),
             "active": bool(args.activate),
             "stateModel": "nested",
             "entryNode": requested_entry_node,
-            "storyIds": story_ids_list,
+            "storyIds": features.get("story_ids") or [],
         }
         if args.json:
             output.emit(payload, as_json=True)
         else:
-            output.ok(f"新嵌套状态机已创建：{work_item_key}")
-            output.info(f"  state: {sp}")
+            output.ok(f"新嵌套状态机已创建：{final_sp.parent.name}")
+            output.info(f"  state: {final_sp}")
             output.info(f"  stateModel: nested (entryNode={requested_entry_node})")
-            if story_ids_list:
-                output.info(f"  storyStates: {', '.join(story_ids_list)}")
+            if features.get("story_ids"):
+                output.info(f"  storyStates: {', '.join(features['story_ids'])}")
             if args.activate:
                 output.info("  已设为 active work item")
         return 0
 
-    # v1 扁平 state 路径（原有逻辑）
+    # v1 扁平 state 路径（v3.9.3 起基本不再使用，保留兼容）
     now = _now_iso()
     st = state.read_state(sp)
     st.update({
@@ -330,12 +383,10 @@ def cmd_state_new(args, parser):
         "scale": requested_scale,
         "entryNode": requested_entry_node,
         "stateMachineId": work_item_key,
-        "stateMachineName": work_item_name,
         "workItemId": work_item_id,
-        "workItemName": work_item_name,
         "workItemKey": work_item_key,
         "currentWorkItem": work_item_key,
-        "currentStory": args.story or work_item_id,
+        "currentStory": work_item_id,
         "currentTask": None,
         "createdAt": now,
         "lastUpdated": now,
@@ -346,25 +397,11 @@ def cmd_state_new(args, parser):
     state.write_state(sp, st)
     if args.activate:
         _write_active_state_mirror(ade_sdd, st, work_item_key, sp)
-
-    payload = {
-        "ok": True,
-        "workItemId": work_item_id,
-        "workItemName": work_item_name,
-        "workItemKey": work_item_key,
-        "statePath": str(sp),
-        "active": bool(args.activate),
-        "scale": requested_scale,
-        "entryNode": requested_entry_node,
-    }
     if args.json:
-        output.emit(payload, as_json=True)
+        output.emit({"ok": True, "statePath": str(sp)}, as_json=True)
     else:
         output.ok(f"新状态机已创建：{work_item_key}")
         output.info(f"  state: {sp}")
-        output.info(f"  scale: {requested_scale}")
-        if args.activate:
-            output.info("  已设为 active work item，后续 state read/write/next-step 默认跟随此状态机")
     return 0
 
 
@@ -389,7 +426,7 @@ def cmd_state_write(args, parser):
         s.setdefault("stateMachineId", work_item)
         # Backward compatibility: older gates still key off currentStory.
         if not s.get("currentStory") and not args.story:
-            s["currentStory"] = work_item
+            s["currentStory"] = state.get_active_story(s) if state.is_nested_state(s) else work_item
     effective_state = dict(s)
     if args.story and not effective_state.get("currentStory"):
         effective_state["currentStory"] = args.story
@@ -444,6 +481,10 @@ def cmd_state_write(args, parser):
             # 嵌套 state + --story 指向已存在子状态 → 操作子状态 phase
             changed = state.set_story_substate_phase(s, args.story, args.phase,
                                                       by="ae-sdd state write")
+        elif state.is_nested_state(s) and state.get_active_story(s):
+            # 嵌套 state 默认推进 activeStory，避免无 --story 时误写顶层 phase。
+            changed = state.set_story_substate_phase(s, state.get_active_story(s), args.phase,
+                                                      by="ae-sdd state write --active-story")
         else:
             changed = state.set_phase(s, args.phase, by="ae-sdd state write")
     except ValueError as e:
@@ -1298,7 +1339,10 @@ def cmd_ra_gate(args, parser):
     if ade_sdd:
         try:
             from lib import session as session_mod
-            if not session_mod.has_valid_entry_token(ade_sdd, getattr(args, "story", "") or ""):
+            story_scope = (getattr(args, "story", "") or "").strip()
+            if not story_scope:
+                story_scope = state.get_active_story(state.read_state(paths.state_path(ade_sdd))) or ""
+            if not session_mod.has_valid_entry_token(ade_sdd, story_scope):
                 entry_warn = "未领 entry token（建议先跑 `ae-sdd enter <projectKey> --story <STORY-ID>`）"
         except Exception:
             pass  # 母版仓库无 .ae-sdd/，跳过
@@ -1579,8 +1623,8 @@ def _resolve_state_path(args):
         return None, "", Path.cwd() / ".ae-sdd" / "state.json"
     work_item = _work_item_arg(args)
     if work_item:
-        sp = paths.work_item_state_path(ade_sdd, work_item)
-        return ade_sdd, work_item, sp
+        sp, resolved_key = _main_state_path_for_args(ade_sdd, args)
+        return ade_sdd, work_item or resolved_key, sp
     if getattr(args, "project_state", False):
         return ade_sdd, "", paths.state_path(ade_sdd)
     active = _active_state_from_mirror(ade_sdd)
@@ -2050,11 +2094,10 @@ def cmd_init(args, parser):
 
 
 def cmd_enter(args, parser):
-    """enter — 入口凭证（🆕 v3.4.0，建议书4 关卡1）
+    """🆕 v3.9.3 enter — 入口凭证（关卡1），走 R6 顶层名空间。
 
-    agent 收到 /ae-sdd 触发后第一动作：领取 entry token 写入
-    .auto-engineering/<STORY>/session.json。关卡2/3 校验该 token。
-    幂等：同 projectKey+storyId 已 enter 则返回现有 token。
+    BREAKING v3.9.3：废除 --story 裸传；必须传 --work-item (R6 顶层名) 或 --id 派生顶层名。
+    落盘路径：{project_root}/.auto-engineering/{R6 顶层名}/session.json
     """
     from lib import session as session_mod
     ade_sdd = paths.locate_project_ae_sdd()
@@ -2066,21 +2109,90 @@ def cmd_enter(args, parser):
     if not project_key:
         output.err("未提供 projectKey，且 .ae-sdd/config.yaml 无 projectKey")
         return 1
-    story_id = _work_item_arg(args)
-    if not story_id:
-        active = _active_state_from_mirror(ade_sdd)
-        if active is not None:
-            _sp, story_id = active
-    s = session_mod.enter(project_key, story_id=story_id, ade_sdd=ade_sdd)
+
+    # 解析顶层节点 + features
+    work_item_token = (getattr(args, "work_item", "") or getattr(args, "story", "") or "").strip()
+    top_node, features = _resolve_top_node_from_token(ade_sdd, work_item_token, args)
+    if not top_node:
+        output.err("未提供 work item（请传 --work-item <R6 顶层名> 或 --story <STORY-ID>）")
+        output.info("提示：先跑 `ae-sdd state new --id <ID> --entry-node <PRD|DR|STORY>` 创建 state")
+        return 1
+
+    s = session_mod.enter(project_key, top_node=top_node, features=features, ade_sdd=ade_sdd)
     if args.json:
         output.emit(s, as_json=True)
         return 0
     output.ok(f"✅ 入口凭证已领取（sessionId={s['sessionId']}）")
-    output.info(f"   projectKey: {s['projectKey']}")
-    output.info(f"   storyId:    {s.get('storyId', '') or '（项目级，无 Story）'}")
-    output.info(f"   写入: {session_mod.session_path(ade_sdd, story_id)}")
+    output.info(f"   projectKey:   {s['projectKey']}")
+    output.info(f"   workItemKey:  {s.get('workItemKey', '')}")
+    output.info(f"   topNode:      {s.get('topNode', '')}")
+    output.info(f"   写入: {session_mod.session_path(ade_sdd, top_node, features)}")
     output.info("   关卡2/3 将校验此凭证；未领凭证的流程产物落地/代码改动将被拦截。")
     return 0
+
+
+def _resolve_top_node_from_token(ade_sdd: Path, token: str, args) -> tuple[str, dict]:
+    """🆕 v3.9.3 内部辅助：从 token（work-item / story ID）反推 (top_node, features)。
+
+    优先级：
+      1. token 是 R6 顶层名（如 Story-003 / DR-CS）→ 直接用
+      2. token 是 Story ID（STORY-006-BE）→ 反查所属嵌套 state，找不到则 STORY 顶层
+      3. args.top_node / args.entry_node 显式传 → 用之
+      4. 都无 → 读 active mirror
+    """
+    if not token:
+        # 尝试从 active mirror
+        active = _active_state_from_mirror(ade_sdd)
+        if active is not None:
+            sp, _ = active
+            try:
+                data = json.loads(sp.read_text(encoding="utf-8"))
+                top_node = data.get("entryNode", "STORY")
+                # 从 stateMachineId 派生 features
+                sm_id = data.get("stateMachineId", sp.parent.name)
+                if top_node == "PRD":
+                    return (top_node, {"prd_feature": sm_id.replace("PRD-", "", 1)})
+                if top_node == "DR":
+                    return (top_node, {"dr_feature": sm_id.replace("DR-", "", 1)})
+                if top_node == "STORY":
+                    story_ids = data.get("storyIds") or list((data.get("storyStates") or {}).keys()) or [sm_id]
+                    return (top_node, {"story_ids": story_ids})
+            except Exception:
+                pass
+        return ("", {})
+
+    # token 是 R6 顶层名？
+    if token.startswith("PRD-"):
+        return ("PRD", {"prd_feature": token.replace("PRD-", "", 1)})
+    if token.startswith("DR-"):
+        return ("DR", {"dr_feature": token.replace("DR-", "", 1)})
+    if token.startswith("Story-"):
+        return ("STORY", {"story_ids": [token]})
+    if token.startswith("Task-"):
+        return ("TASK", {"task_id": token.replace("Task-", "", 1)})
+
+    # token 是 Story/DR/PRD ID
+    upper = token.upper()
+    if upper.startswith("STORY-"):
+        # 反查所属 state
+        hit = paths.find_nested_state_by_story_id(ade_sdd, upper)
+        if hit:
+            sp, data = hit
+            sm_id = data.get("stateMachineId", sp.parent.name)
+            return ("STORY", {"story_ids": [upper]})
+        return ("STORY", {"story_ids": [upper]})
+    if upper.startswith("DR-"):
+        hit = paths.find_nested_state_by_dr_id(ade_sdd, upper)
+        if hit:
+            return ("DR", {"dr_feature": upper.replace("DR-", "", 1)})
+        return ("DR", {"dr_feature": upper.replace("DR-", "", 1)})
+    if upper.startswith("PRD-"):
+        hit = paths.find_nested_state_by_prd_id(ade_sdd, upper)
+        if hit:
+            return ("PRD", {"prd_feature": upper.replace("PRD-", "", 1)})
+        return ("PRD", {"prd_feature": upper.replace("PRD-", "", 1)})
+
+    return ("", {})
 
 
 # === 🆕 v3.5.1 plugin CLI（plugin_loader 用户入口） ===
@@ -2251,18 +2363,20 @@ def cmd_state_confirm(args, parser):
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init + ae-sdd enter）")
         return 1
-    story_id = _work_item_arg(args)
-    if not story_id:
-        active = _active_state_from_mirror(ade_sdd)
-        if active is not None:
-            _sp, story_id = active
+    # 🆕 v3.9.3 用 (top_node, features) 取代 raw story_id
+    work_item_token = (getattr(args, "work_item", "") or getattr(args, "story", "") or "").strip()
+    top_node, features = _resolve_top_node_from_token(ade_sdd, work_item_token, args)
+    if not top_node:
+        output.err("未提供 work item（请传 --work-item <R6 顶层名> 或 --story <STORY-ID>）")
+        return 1
     # 校验 entry token 存在
-    if not session_mod.has_valid_entry_token(ade_sdd, story_id):
+    if not session_mod.has_valid_entry_token(ade_sdd, top_node=top_node, features=features):
         output.err("未找到有效 entry token，请先跑 ae-sdd enter")
         return 1
     phase = args.phase
     confirmed_by = args.by or "user"
-    s = session_mod.confirm_phase(ade_sdd, phase, confirmed_by=confirmed_by, story_id=story_id)
+    s = session_mod.confirm_phase(ade_sdd, phase, confirmed_by=confirmed_by,
+                                  top_node=top_node, features=features)
     if args.json:
         output.emit(s, as_json=True)
         return 0
@@ -3748,9 +3862,10 @@ def main() -> int:
     # state
     p_state = sub.add_parser("state", help="项目状态管理", parents=[common])
     state_sub = p_state.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
-    p_state_new = state_sub.add_parser("new", help="新建独立需求状态机（.auto-engineering/{ID--name}/state.json）", parents=[common])
-    p_state_new.add_argument("--id", required=True, help="需求/任务 ID（如 BUG-LIFE-001 / STORY-001 / PRD-CS-001）")
-    p_state_new.add_argument("--name", required=True, help="需求/任务名称；会进入目录名")
+    p_state_new = state_sub.add_parser("new", help="🆕 v3.9.3 新建独立需求状态机（.auto-engineering/{R6 顶层名}/state.json）", parents=[common])
+    p_state_new.add_argument("--id", required=True, help="需求/任务 ID（如 BUG-LIFE-001 / STORY-001 / PRD-CS-001 / DR-005）")
+    # 🆕 v3.9.3 废除 --name 形参（v3.8.2 required=True → 改 optional，保留以兼容旧 CLI 调用）
+    p_state_new.add_argument("--name", required=False, default="", help="[已废除 v3.9.3] 需求/任务名称；v3.9.3 起目录名走 R6 顶层名，传值被忽略")
     p_state_new.add_argument("--story", default="", help="关联 Story ID（可选；未传时 currentStory 回退为 --id）")
     p_state_new.add_argument("--task", default="", help="关联 Task ID（可选）")
     p_state_new.add_argument("--scale", choices=["大", "中", "小", "微"], default=None,

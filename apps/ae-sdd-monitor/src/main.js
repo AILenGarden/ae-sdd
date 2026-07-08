@@ -11,6 +11,10 @@ let watchDebounceTimer = null;
 
 const WATCH_DEBOUNCE_MS = 350;
 
+function rendererIndexPath() {
+  return path.join(__dirname, "..", "dist", "renderer", "index.html");
+}
+
 function isInterestingWatchPath(filename) {
   if (!filename) {
     return true;
@@ -137,7 +141,11 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, "index.html"));
+  const rendererIndex = rendererIndexPath();
+  if (!nodeFs.existsSync(rendererIndex)) {
+    throw new Error(`Renderer build not found: ${rendererIndex}. Run npm run build:renderer first.`);
+  }
+  mainWindow.loadFile(rendererIndex);
   mainWindow.on("closed", () => {
     mainWindow = null;
     closeWorkspaceWatcher();

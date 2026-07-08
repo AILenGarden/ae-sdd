@@ -27,6 +27,30 @@ description: 审查 testcase-generate-skill 产出的测试用例，按 TC-1~TC-
 |---------|---------|---------|------|
 | TestCase Review 报告 | `ae-sdd doc save --intent TESTCASE_REVIEW --work-item {W} --story-id {S?} --content-file 草稿.md` | 带 r{N} | 新增 |
 
+## 第零步：TestCase Review 准入检查
+
+必须读齐：
+
+- Story 主文档（AC/接口/数据/异常路径，作为审查基准）
+- TestCase 文档（审查对象，含缺陷假设清单）
+- 项目资产（测试工具与项目约定）
+- 项目约束（HTTP/DB/Mock/断言红线）
+
+任一缺失，禁止进入 Review。
+
+**🔴 机械门禁（v3.9.1，对齐 RA/Coding 三合一）：** prose 清单之外，必须跑：
+
+```bash
+ae-sdd gates check --only G-TESTCASE-CTX
+```
+
+`G-TESTCASE-CTX` 校验 `constraints/assets/Story` 三类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `paths.find_doc`）。未过 → **BLOCK，禁止进入 Review**。注：本门禁覆盖上下文加载维度；TC-1~TC-10 检查口径仍是 report-only。
+
+**读取入口（v3.9.1 显式化）：**
+- Story：`ae-sdd doc resolve --intent STORY --story-id {S}`
+- TestCase：`ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}`
+- 项目资产/约束：`document-storage-skill.get_assets/get_constraints(projectKey)`
+
 ## 流程
 
 ```text

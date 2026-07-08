@@ -66,6 +66,8 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 交互要求：
 
 - 点击“选择目录”后必须立即显示反馈：打开选择器、扫描中、取消、扫描完成或扫描失败。
+- 点击同一项目下的任务时只更新右侧当前任务、指标、Tab 内容和左侧选中态；不得清空 detail 区域或重建整个页面。
+- renderer 必须使用 React + TypeScript 组件化实现；项目行、任务行、筛选项和详情 Tab 必须通过稳定 key 和 props 更新，避免以 `innerHTML` 或等价方式整块替换侧边栏/详情页。
 - 重新打开应用时自动恢复上次选择的父目录，并优先选中上次打开的工作区与任务。
 - 项目折叠/展开状态属于 UI 偏好，必须随父目录、选中项目、选中任务一起恢复。
 - 默认开启响应式刷新：主进程监听父目录下 `.ae-sdd/` 与 `.auto-engineering/` 的文件变化并通知 renderer 静默更新；低频轮询只作为 watcher 失效或漏事件的兜底；自动刷新只读文件，不执行 ae-sdd 命令，不写项目状态。
@@ -132,9 +134,11 @@ Monitor 采用黑白灰、圆角、类 Mac 的本地工具风格。视觉目标�
 
 动效约束：
 
-- 交互动效采用 iOS 风格的轻量弹性曲线：列表展开/收起、项目/任务切换、Tab 切换、按钮按压、卡片悬浮和实时刷新反馈都应有可感知但不抢注意力的过渡。
+- 交互动效采用 iOS 风格的轻量弹性曲线：列表展开/收起、Tab 切换、按钮按压和卡片悬浮都应有可感知但不抢注意力的过渡。
 - 动效只用于表达 UI 交互和只读刷新，不得暗示 ae-sdd 状态被写入或 gate 被执行。
 - 响应式刷新不能让当前看板闪烁；未变化的数据不得重渲染，变化数据应静默更新，状态栏只给轻量提示。
+- 左侧侧边栏是 React keyed tree：父目录扫描、watcher 静默刷新、筛选切换和任务切换都不得重建整个列表容器；只允许 React diff 更新发生变化的项目/任务 props。
+- 加载、当前阶段和当前事件不得使用持续闪烁/呼吸动画；状态可以高亮，但不能让用户误以为页面在反复刷新。
 - 必须支持 `prefers-reduced-motion` 降级；系统要求减少动态效果时，动画应接近关闭。
 
 设计约束：
@@ -188,11 +192,11 @@ Monitor 必须时刻跟随 ae-sdd 主设计与实现架构，具体闭环由 `so
 - Electron 主进程：`src/main.js`。
 - 安全桥接：`src/preload.js`。
 - 状态扫描与解析：`src/workspace.js`。
-- UI 渲染：`src/renderer.js`、`src/index.html`、`src/styles.css`。
+- UI 渲染：`renderer/src/App.tsx`、`renderer/src/main.tsx`、`renderer/index.html`、`src/styles.css`，由 Vite 构建到 `dist/renderer/` 后供 Electron 加载。
 - 用户偏好：Electron `app.getPath("userData")/preferences.json`，保存父目录、选中工作区、选中任务、自动刷新开关和主题。
 - 单元测试：`test/workspace.test.js`。
 - Windows 打包：`scripts/package-win.ps1`，输出 setup exe 与 installable zip。
 - macOS 正式打包：`npm run dist:mac` / `scripts/package-mac.sh`，在 macOS 输出 dmg 与 zip。
 - macOS 未签名 app zip：`npm run dist:mac:unsigned` / `scripts/package-mac-unsigned.ps1`，可在 Windows/macOS 生成 `*-macos-*-unsigned.zip`，用于未签名试用或交给 macOS runner 后续签名。
 
-当前版本已支持父目录扫描、多工作区/任务两级侧边栏、项目/任务两级看板、Memory 状态投影、响应式自动刷新、iOS 风格轻量交互动效、详情页、Runtime Stats 汇总、原始状态查看、重启恢复上次目录/任务、真实窗口控制、活跃任务汇总、阶段轴、Windows 安装包、macOS 未签名 zip、macOS 正式打包配置和只读打开目录。
+当前版本已支持 React + TypeScript renderer、父目录扫描、多工作区/任务两级侧边栏、项目/任务两级看板、Memory 状态投影、响应式自动刷新、iOS 风格轻量交互动效、详情页、Runtime Stats 汇总、原始状态查看、重启恢复上次目录/任务、真实窗口控制、活跃任务汇总、阶段轴、Windows 安装包、macOS 未签名 zip、macOS 正式打包配置和只读打开目录。

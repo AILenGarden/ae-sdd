@@ -521,3 +521,64 @@ class TestCodingProcessHardGuard:
         )
         assert allowed, f"coding-process 已 confirm 且 memory 已 enter 应放行写 src/: {reason}"
 
+
+# ─── 🆕 v3.9.2 ae-sdd memory 命令放行（修复设计阶段死锁）──────────────────────
+
+class TestMemoryCommandPassage:
+    """🆕 v3.9.2：设计阶段跑 ae-sdd memory 命令必须放行。
+
+    v3.8.2 引入 memory gate 后，设计阶段 6 个 phase（ra/design/coding-plan/
+    review 域）推进前必须完成 ae-sdd memory enter/write/exit，但这三个是 Bash
+    命令，而这些 phase 的 PHASE_PERMIT 不含 Bash → AI 跑 memory 被自己设的
+    门禁拦死，形成死锁。step 3c 给 memory 命令开特殊通道（同 step 3 对
+    state write 的处理），本类覆盖回归。
+    """
+
+    def _make_design_phase_project(self, tmp_path, phase="task-generated"):
+        """构造设计阶段 .ae-sdd 项目（task-generated 不含 Bash 权限）。"""
+        ae_sdd = tmp_path / ".ae-sdd"
+        ae_sdd.mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (ae_sdd / "state.json").write_text(json.dumps({
+            "version": "1", "projectKey": "test",
+            "phase": phase, "scale": "微",
+            "currentStory": "OPT-LIFE-RC-001", "currentTask": "OPT-LIFE-RC-001",
+            "history": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        return tmp_path
+
+    def test_memory_enter_in_design_phase_allowed(self, tmp_path):
+        """核心回归：task-generated 跑 ae-sdd memory enter → 放行（修复前死锁）"""
+        project_dir = self._make_design_phase_project(tmp_path, phase="task-generated")
+        cmd = "ae-sdd memory enter --phase coding-plan --story OPT-LIFE-RC-001"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert allowed, (
+            f"设计阶段 ae-sdd memory enter 应放行（v3.9.2 修复死锁），但被拒: {reason}"
+        )
+
+    def test_memory_write_in_coding_phase_allowed(self, tmp_path):
+        """不回归：coding phase（本就含 Bash）跑 memory write 也放行"""
+        project_dir = self._make_design_phase_project(tmp_path, phase="coding")
+        cmd = (
+            'ae-sdd memory write --phase coding --story STORY-001 '
+            '--summary "done" --evidence "src/Foo.java:1"'
+        )
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        assert allowed, f"coding phase memory write 应放行: {reason}"
+
+    def test_chained_memory_cmd_not_fast_pathed(self, tmp_path):
+        """链式防护：'ae-sdd memory enter && rm -rf' 不被 step 3c 误放，交回后续检查"""
+        project_dir = self._make_design_phase_project(tmp_path, phase="task-generated")
+        cmd = "ae-sdd memory enter --phase coding-plan && rm -rf .ae-sdd/"
+        allowed, reason = check_intercept(
+            "Bash", bash_command=cmd, project_dir=project_dir
+        )
+        # 含链式分隔符 → step 3c 不快速放行 → 落到 step 6 phase permit
+        # task-generated 不含 Bash → 被拦
+        assert not allowed, "链式 memory 命令不应被 step 3c 误放行"
+        assert "phase=task-generated" in reason
+

@@ -207,6 +207,14 @@ DR 中所有非平凡实现点都必须先完成决策基线（与 story-generat
 - ❌ 任一文件未读取 / 未确认 → **停止，补充读取 + 用户确认后再继续**
 - 🔴 缺 PRD 或 RA → 询问用户（**不编造信息**）
 
+**🔴 机械门禁（v3.9.1，对齐 RA/Coding 三合一）：** prose 清单之外，必须跑：
+
+```bash
+ae-sdd gates check --only G-DR-CTX
+```
+
+`G-DR-CTX` 校验 `constraints/assets/RA/PRD` 四类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `_iter_ra_files/_find_prd_files`）。未过 → **BLOCK，禁止进入生成**。
+
 **第零步 产出：准入检查记录**
 
 ```markdown

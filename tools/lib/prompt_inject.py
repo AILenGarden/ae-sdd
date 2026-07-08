@@ -166,15 +166,26 @@ def inject(
     from lib import gates as gates_mod, paths, state as state_mod
     from lib.stop_check import reset_retry
 
+    # 🆕 v3.9.3：触发检测提前到 ade_sdd 判空前，确保未初始化项目也能收到提示
+    _is_ae_sdd_triggered = any(m in user_prompt for m in AE_SDD_TRIGGER_MARKERS)
+
     ade_sdd = paths.locate_project_ae_sdd(project_dir)
     if ade_sdd is None:
+        if _is_ae_sdd_triggered:
+            return _inject_uninitialized_block(project_dir)
         return {}
+
+    # 清除待初始化标记（已找到 .ae-sdd/，说明项目已初始化）
 
     # 每次对话开始：重置 Stop hook 重试计数
     reset_retry(ade_sdd)
 
     # 更新快速通道状态（让 PreToolUse hook 能读到）
     _update_quick_channel(ade_sdd, user_prompt)
+
+    # 🆕 v3.9.3：清理待初始化标记（与 quick_channel 同理，非触发消息时清除）
+    if not _is_ae_sdd_triggered:
+        _clear_pending_init(project_dir)
 
     # 读状态 + 配置（entry token 提醒需要 projectKey）
     st = state_mod.read_state(paths.state_path(ade_sdd))
@@ -188,6 +199,8 @@ def inject(
 
     # 🆕 v3.9.0 R5：STORY-ID 一致性检测——用户引用的 Story 与 activeStory 不一致时提醒
     story_mismatch_msg: Optional[str] = None
+    # 🆕 v3.9.2 P0-2：新 Story 未被管理时自动创建 work item 并 activate
+    _auto_activate_story: Optional[str] = None
     try:
         from lib.classify import extract_requirement_features, match_state
         features = extract_requirement_features(user_prompt, ade_sdd.parent)
@@ -205,28 +218,95 @@ def inject(
                         f"建议跑 `ae-sdd state relocate --story {mentioned}` 重定位。"
                     )
                 else:
+                    # 🆕 v3.9.2 P0-2：标记待自动 activate（ae-sdd 触发时执行）
+                    _auto_activate_story = mentioned
                     story_mismatch_msg = (
-                        f"⚠️ Story 一致性提醒：用户引用 {mentioned}，当前 activeStory={active}，"
-                        f"且 {mentioned} 未被任何 state 管理。建议跑 /ae-sdd 路由或"
-                        f" `ae-sdd state new --entry-node STORY --story-ids {mentioned}`。"
+                        f"⚠️ Story 切换：当前 activeStory={active}，用户引用 {mentioned}。"
+                        f"{mentioned} 未被任何 state 管理，将在 ae-sdd 触发时自动创建新 work item。"
                     )
     except Exception:
         pass  # 一致性检测失败不阻断注入
 
     # 🆕 v3.4.0 关卡1：/ae-sdd 触发词检测 + entry token 提醒（建议书4）
     entry_reminder: list[str] = []
-    if any(m in user_prompt for m in AE_SDD_TRIGGER_MARKERS):
+    if _is_ae_sdd_triggered:
+        # 🆕 v3.9.3 P-R2：ae-sdd 触发 + 新 Story 未被管理 → 先查 find_nested_state_by_story_id
+        # 找到 → 切到该 state（用现成的顶层名）
+        # 找不到 → 提示用户跑 state new，不再自动用 (id=id) 怪异名建 state
+        if _auto_activate_story:
+            try:
+                from lib import paths as paths_mod2
+                work_item_id = _auto_activate_story
+                # R2 查归属 state
+                hit = paths_mod2.find_nested_state_by_story_id(ade_sdd, work_item_id)
+                if hit:
+                    sp_new, st_new = hit
+                    work_item_key = sp_new.parent.name
+                    story_mismatch_msg = (
+                        f"✅ Story {work_item_id} 已被 state {work_item_key} 管理（R2 命中），"
+                        f"active 已切换。"
+                    )
+                else:
+                    # 找不到归属 state → 不再自动建 (id=id) 怪异名 state
+                    # 改为提示用户跑 state new（带 R2 预检）
+                    work_item_key = ""
+                    sp_new = None
+                    st_new = None
+                    story_mismatch_msg = (
+                        f"⚠️ Story {work_item_id} 未被任何嵌套 state 管理。\n"
+                        f"   🆕 v3.9.3 起不再自动创建怪异名 state（防 STORY-X--STORY-X 蔓延）。\n"
+                        f"   请先跑：\n"
+                        f"     ae-sdd state new --id {work_item_id} --entry-node STORY"
+                        f" [--story-ids {work_item_id}] [--nested]\n"
+                        f"   工具会扫描 design/ 找父级 DR/PRD 文档并验证关联性。"
+                    )
+                if sp_new and st_new is not None:
+                    # 更新 mirror（active 切到该 work item）
+                    mirror = dict(st_new)
+                    mirror["activeWorkItem"] = work_item_key
+                    mirror["activeStatePath"] = str(sp_new)
+                    state_mod.write_state(paths.state_path(ade_sdd), mirror)
+                    # 刷新后续使用的 current_story / st
+                    st = mirror
+                    current_story = work_item_id
+            except Exception:
+                pass  # 自动激活失败不阻断注入
+
         try:
             from lib import session as session_mod
-            cur_story = st.get("currentStory", "") or ""
-            if not session_mod.has_valid_entry_token(ade_sdd, cur_story):
-                enter_cmd = (f"ae-sdd enter {project_key} --story {cur_story}"
+            # 🆕 v3.9.3 优先用 (top_node, features) 校验，否则用项目级
+            cur_story = state_mod.get_active_story(st) or ""
+            has_token = False
+            if cur_story:
+                # 反查 active state 拿顶层名
+                hit = None
+                if cur_story.upper().startswith("STORY-"):
+                    hit = paths.find_nested_state_by_story_id(ade_sdd, cur_story)
+                if hit:
+                    sp_t, _ = hit
+                    top_node = sp_t.parent.name
+                    # 简化：用顶层目录名作为 features key
+                    if top_node.startswith("PRD-"):
+                        has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="PRD", features={"prd_feature": top_node[4:]})
+                    elif top_node.startswith("DR-"):
+                        has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="DR", features={"dr_feature": top_node[3:]})
+                    elif top_node.startswith("Story-"):
+                        has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="STORY", features={"story_ids": [cur_story]})
+                    else:
+                        has_token = session_mod.has_valid_entry_token(ade_sdd, cur_story)
+                else:
+                    # fallback：按当前 Story 查 token，底层兼容 R6 与 legacy raw Story 目录
+                    has_token = session_mod.has_valid_entry_token(ade_sdd, cur_story)
+            else:
+                has_token = session_mod.has_valid_entry_token(ade_sdd)
+            if not has_token:
+                enter_cmd = (f"ae-sdd enter {project_key} --work-item <R6 顶层名>"
                              if cur_story else f"ae-sdd enter {project_key}")
                 entry_reminder.append(
                     f"⚠️ 检测到 ae-sdd 触发，必须先领取流程凭证（关卡1入口关卡）：\n"
                     f"   {enter_cmd}\n"
                     f"   未领凭证的流程产物落地/代码改动将被关卡2/3 物理拦截。\n"
-                    f"   （建议书4 入口关卡方案）"
+                    f"   （v3.9.3 起 work-item 必须传 R6 顶层名，如 Story-003 / DR-CS）"
                 )
         except Exception:
             pass  # session 模块异常不阻断注入
@@ -244,7 +324,9 @@ def inject(
     # completed phase 没有下一步命令，不显示 state write 指引
     next_phase = suggestion['next']
     if next_phase and next_phase not in ("（已结束）", ""):
-        next_line = f"  next:     {suggestion['action']}  →  ae-sdd state write --phase {next_phase}"
+        # 🆕 v3.9.2 P0-2：state write 建议带上 --story，确保路由到正确的 work-item state
+        story_flag = f" --story {current_story}" if current_story and current_story != "（未设定）" else ""
+        next_line = f"  next:     {suggestion['action']}  →  ae-sdd state write{story_flag} --phase {next_phase}"
     else:
         next_line = f"  next:     {suggestion['action']}  （项目已完成，无需切换阶段）"
 
@@ -386,3 +468,60 @@ def _run_flow_monitor(ade_sdd: Path, state: dict) -> Optional[str]:
     except Exception:
         return None  # 任何异常降级放行，不阻断主流程
 
+
+# ─── 🆕 v3.9.3：未初始化项目提示 ───────────────────────────────────────────────
+
+def _inject_uninitialized_block(project_dir: Optional[Path]) -> dict:
+    """用户触发 /ae-sdd 但项目未初始化 → 注入"请先 init"状态块 + 写标记文件。
+
+    标记文件供 gate_intercept 跨 hook 读取，用于拦截未初始化项目的写操作。
+    """
+    from lib import paths as _paths
+    marker = _paths.pending_init_marker(project_dir)
+    try:
+        marker.write_text("ae-sdd pending init", encoding="utf-8")
+    except OSError:
+        pass  # 标记文件写入失败不阻断注入
+
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cwd = (project_dir or Path.cwd()).resolve()
+
+    lines = [
+        f"<!-- ae-sdd harness 自动注入 @ {now} -->",
+        f"⛔ ae-sdd 尚未在此项目初始化（未找到 {cwd}/.ae-sdd/config.yaml）",
+        f"",
+        f"◆ HARNESS STATE",
+        f"  project:  （未初始化）",
+        f"  phase:    （未初始化）",
+        f"  story:    （未设定）",
+        f"  G-00:     🔴 BLOCKED（项目资产缺失 — 尚未 ae-sdd init）",
+        f"  next:     初始化项目  →  ae-sdd init <项目目录> <projectKey>",
+        f"  skill:    —",
+        f"",
+        f"⚡ 修复步骤：",
+        f"  1. 确认 projectKey（如 ae-sdd、life、order 等）",
+        f"  2. 运行: ae-sdd init . <projectKey>",
+        f"  3. 运行: ae-sdd assets generate --project <projectKey>",
+        f"  4. 重新触发: /ae-sdd",
+        f"",
+        f"⛔ G-00 未通过，禁止继续任何业务操作。",
+        f"<!-- /ae-sdd harness -->",
+    ]
+
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "\n".join(lines),
+        }
+    }
+
+
+def _clear_pending_init(project_dir: Optional[Path]) -> None:
+    """非触发消息时清除待初始化标记（与 quick_channel 清理同理）。"""
+    from lib import paths as _paths
+    marker = _paths.pending_init_marker(project_dir)
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError:
+        pass

@@ -1,8 +1,8 @@
 {
   "adapter_version": "0.3.0",
-  "ae_sdd_version": "3.9.0",
-  "source_input_sha256": "337bf20cb618246c9e80a7db1d8ebb4003d0362c4e48dd0ba2eb305797cc0701",
-  "source_commit": "2aeefd724e7f64ea59618c0e111b652ae1dcaba1",
+  "ae_sdd_version": "3.9.1",
+  "source_input_sha256": "e2555416ab0905d7fdc43a163b8a3128102de1c2331921400630e9194028ccbb",
+  "source_commit": "13c270b8bb8572b256da125de4971620934b2a99",
   "templateHash": "2CD4E12AA0FCB041A168504A36E396B4BAA8D842",
-  "converted_at": "2026-07-06T07:27:41Z"
+  "converted_at": "2026-07-06T09:52:07Z"
 }

@@ -148,11 +148,13 @@
 
 G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在需求分析阶段把关；G-CODE-1 在 Coding 完成/CodeReview 前扫描反模式；中段门禁（G-14/G-CODEPLAN-SRC/G-DOC-STORAGE）补"两头强中间空"；入口关卡三道闸（entry token / 产物落地凭证 / 代码改动准入）管住流程入口。
 
+🆕 v3.9.1 上下文加载准入门禁（G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX）补齐 DR/Story/TestCase/Task 四组的"第零步准入检查"——此前这四组只有 prose 清单（dr-review/task-generate 还官方自认 report-only），AI 可不读 PRD/DR/项目资产/约束就过门禁切相。采用**注册表模式**：一个 `_check_context_loaded` 函数 + `CONTEXT_GATE_REGISTRY` 注册表服务 4 个门禁，流程一致用单函数封装，上下文差异（DR 查 RA+PRD，Story 查 DR+PRD，TestCase 查 Story，Task 查 Story+TestCase）走注册表 `required` 字段；读文件统一走 `document-storage-skill` 的 `get_constraints/get_assets` API。微链 G-TASK-CTX 用 `required_micro` 豁免 Story/TestCase。
+
 ### 实现
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，**实际 30 个**：G-00~G-14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS） |
+| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，**实际 34 个**：G-00~G-14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + 🆕 v3.9.1 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX） |
 | CLI 统一扫描入口 | `ae-sdd gates check`（`tools/bin/ae-sdd` 行2688，帮助文本自带门禁清单） |
 | 单个门禁定向检查 | `ae-sdd gates check --only <gate_id>` |
 | G-00 资产门卫 | `gates.py` G-00 check 函数；不通过时 AI 手动路由到 `project-assets-update-skill §3`（无 CLI 自动生成） |
@@ -163,6 +165,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | G-CODE-1 Coding 真实性 | `gates.py` 行697起，调 `scripts/coding_authenticity_scan.py`（AP-1~AP-6反模式） |
 | G-09 测试真实性 | `gates.py` 行578起，调 `scripts/test_authenticity_scan.py`（8类禁止手段） |
 | G-CODEPLAN-SRC / G-DOC-STORAGE / G-DOC-CONSISTENCY / G-PATH | `gates.py` 对应 check 函数，中段门禁补齐 |
+| 🆕 v3.9.1 G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX | `gates.py` 注册表 `CONTEXT_GATE_REGISTRY` + 统一 `_check_context_loaded` 实现 + 4 个薄封装；`gate_intercept.py:PHASE_ENTRY_GATES` 大/中/小/微链各 phase 入口挂载；复用 `get_constraints/get_assets` + `_iter_ra_files/_find_prd_files/paths.find_doc` |
 | G-REVIEW-LOOP | `gates.py` + `tools/lib/review_loop.py`，`ae-sdd review-loop` 子命令 |
 | 入口关卡1（entry token） | `ae-sdd enter <projectKey> [--story <ID>]`（`tools/bin/ae-sdd`），UserPromptSubmit hook 检测 `/ae-sdd` 触发词强提醒 |
 | 入口关卡2（产物落地凭证） | `tools/lib/gate_intercept.py` PreToolUse 拦截，产物路径 + entry token + 产物-Phase 映射校验 |
@@ -593,7 +596,7 @@ dist/ae-sdd/
 | 开工前预收集 | `ae-sdd preflight collect`：扫输入材料+资产 7 层索引，识别 6 类待补信息，写 `.ae-sdd/preflight-info.yaml` |
 | 联审共识 state | `tools/lib/state.py`：`reviewConsensus[point]` 字段 + `register_review_consensus()`/`get_review_consensus()` |
 | 联审共识写入 | `ae-sdd state register-review-consensus --point {N} --passed {true\|false}` |
-| 联审共识门禁 | `tools/lib/gates.py:G-AUTO-CONSENSUS`（blocker，30 门禁之一）：自动化模式下 review 节点切相前校验 `reviewConsensus[point].passed=true` + reviewer 独立性（复用 G-09B 模式）|
+| 联审共识门禁 | `tools/lib/gates.py:G-AUTO-CONSENSUS`（blocker，34 门禁之一）：自动化模式下 review 节点切相前校验 `reviewConsensus[point].passed=true` + reviewer 独立性（复用 G-09B 模式）|
 | Tier 强制 | `agent-orchestration-skill.md §8.4.1`：`automation.enabled=true` → 强制 Tier 3，覆盖规模判定 |
 | 降级禁止 | `agent-orchestration-skill.md §8.4.5`：自动化模式禁逻辑多视角降级，必须物理 3 独立 session |
 | 流程编排 | `source/SKILL.md §🚀 自动化模式` + Step1 自动化检测 + Step1.5 预收集 + 监管器步骤4 联审共识双模式 |
