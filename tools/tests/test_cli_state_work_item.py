@@ -205,6 +205,107 @@ class TestStateActiveMirrorRegression(unittest.TestCase):
         self.assertNotEqual(updated.get("phase"), "story-reviewed")
 
 
+# ─── 🆕 v3.9.7 fallback-trap-fix ─────────────────────────────────────────────
+
+class TestStateMirrorMissingFallback(unittest.TestCase):
+    """🆕 v3.9.7: 镜像文件不存在时 CLI 仍能读 work-item 源。
+
+    背景：life 项目 owner 实测追问 '.ae-sdd/state.json 作为镜像的反模式'，
+    决定删掉镜像让 .auto-engineering/Story-004/state.json 当唯一源。
+    v3.9.7 fallback-trap-fix 改造 _active_state_from_mirror：
+    - 镜像缺失时不立即 return None
+    - 改扫 .auto-engineering/*/state.json，按 mtime 选最近活跃
+    - health 'state.json 可读' → 'state.json 可定位'（镜像或源任一即可）
+    """
+
+    def _setup_v397_work_item(self, work_item_dir: str, story_id: str = "STORY-004-BE") -> tuple[Path, Path]:
+        """构造镜像缺失、源存在的最小项目。返回 (tmp, work_item_state_path)。"""
+        tmp = _setup_project()
+        # 构造 work-item 源（R6 顶层名）
+        work_item_dir_path = tmp / ".auto-engineering" / work_item_dir
+        work_item_dir_path.mkdir(parents=True, exist_ok=True)
+        state_file = work_item_dir_path / "state.json"
+        nested = {
+            "version": "2",
+            "projectKey": "life",
+            "stateModel": "nested",
+            "entryNode": "STORY",
+            "activeStory": story_id,
+            "workItemKey": work_item_dir,
+            "stateMachineId": work_item_dir,
+            "scale": "小",
+            "history": [
+                {"phase": "nested-state-init(entryNode=STORY)",
+                 "timestamp": "2026-07-08T00:00:00Z", "by": "ae-sdd"},
+            ],
+            "storyStates": {story_id: {
+                "phase": "story-generated",
+                "completedSteps": [],
+                "codingRound": 0,
+                "lastUpdated": "2026-07-08T00:00:00Z",
+                "resetHistory": [],
+            }},
+        }
+        state_file.write_text(json.dumps(nested, ensure_ascii=False), encoding="utf-8")
+        # 🔑 故意不创建 .ae-sdd/state.json（模拟镜像已删场景）
+        (tmp / ".ae-sdd" / "state.json").unlink(missing_ok=True)
+        assert not (tmp / ".ae-sdd" / "state.json").exists()
+        return tmp, state_file
+
+    def test_state_read_falls_back_to_work_item_source_when_mirror_missing(self):
+        """核心回归：镜像缺失时 'state read' 应返回 work-item 源的 state.json"""
+        tmp, state_file = self._setup_v397_work_item("Story-004")
+        code, out, err = _run_cli(tmp, "state", "read", "--json")
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        # 应从源读到 story-generated，而不是 default v1 state (phase=initialized)
+        self.assertEqual(payload["version"], "2", "应读嵌套 state 而非 v1 default")
+        self.assertEqual(payload["stateMachineId"], "Story-004")
+        self.assertEqual(payload["activeStory"], "STORY-004-BE")
+        nested_phase = payload["storyStates"]["STORY-004-BE"]["phase"]
+        self.assertEqual(nested_phase, "story-generated",
+                         "应读到 Story-004 子状态的真实 phase，不是 default 'initialized'")
+
+    def test_state_next_step_uses_work_item_source_when_mirror_missing(self):
+        """镜像缺失时 next-step 应按 work-item 源的 phase 推荐下一步"""
+        tmp, state_file = self._setup_v397_work_item("Story-004")
+        code, out, err = _run_cli(tmp, "state", "next-step", "--json")
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        # 真值是 story-generated → next=story-reviewed
+        # 不是 'initialized → ra-generated'（default v1 推荐）
+        self.assertEqual(payload["current"], "story-generated",
+                         "应读 work-item 源的当前 phase 而非 default 'initialized'")
+        self.assertEqual(payload["next"], "story-reviewed")
+
+    def test_health_passes_when_mirror_missing_but_source_exists(self):
+        """镜像缺失但 work-item 源存在时 'state.json 可定位' 应 pass（即便其他 1 项 fail）"""
+        tmp, state_file = self._setup_v397_work_item("Story-004")
+        code, out, err = _run_cli(tmp, "health", "--json")
+        payload = json.loads(out)
+        state_check = next((it for it in payload["items"] if it["name"] == "state.json 可定位"), None)
+        self.assertIsNotNone(state_check, "应改名后 'state.json 可定位' 检查项")
+        self.assertTrue(state_check["pass"],
+                        f"'state.json 可定位' 应通过；msg={state_check.get('message')}")
+        self.assertIn("fallback", state_check.get("message", "").lower(),
+                      "message 应明示走了 fallback 路径")
+        # 其他项（如 master-freshness）可能因测试 project 缺 .githooks/ 而 fail，
+        # 但与镜像 fallback 无关——只断言目标项，不强求 code==0
+
+    def test_health_fails_when_both_mirror_and_source_missing(self):
+        """镜像 + 源都缺失时 health 仍合理 fail（项目未初始化）"""
+        tmp = _setup_project()
+        # 没创建任何 work-item 源
+        (tmp / ".ae-sdd" / "state.json").unlink(missing_ok=True)
+        code, out, err = _run_cli(tmp, "health", "--json")
+        payload = json.loads(out)
+        # health 仍可能 1 项 fail（master-freshness），但 'state.json 可定位' 应 fail
+        state_check = next((it for it in payload["items"] if it["name"] == "state.json 可定位"), None)
+        self.assertIsNotNone(state_check)
+        self.assertFalse(state_check["pass"],
+                         "镜像和源都缺失时，'state.json 可定位' 应 fail")
+
+
 class TestStateWorkItemIsolationLegacy(unittest.TestCase):
     """🆕 v3.9.3 BREAKING：v3.8.2 双段 + --name 形参已废除。
 

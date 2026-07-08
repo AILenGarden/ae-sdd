@@ -151,18 +151,30 @@ def _state_path_work_item_key(sp: Path, fallback: str = "") -> str:
 
 
 def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
-    """Return the active isolated state path recorded in .ae-sdd/state.json."""
+    """Return the active isolated state path recorded in .ae-sdd/state.json.
+
+    🆕 v3.9.7 fallback-trap-fix：镜像文件不存在时主动 fallback：
+      优先级 1）镜像里的 activeStatePath / activeWorkItem
+      优先级 2）扫描 .auto-engineering/*/state.json，按 mtime 选最近活跃
+    与 `_main_state_path_for_args` 主 fallback 不同：
+      - 主 fallback 报回 `paths.state_path(ade_sdd)`（line 213/217）—— 镜像
+      - 本函数返回真实源 —— 因为 active story 一定要有对应 work-item state.json
+    返回 (state_path, work_item_key) 或 None。
+    """
     mirror_path = paths.state_path(ade_sdd)
-    if not mirror_path.is_file():
-        return None
-    try:
-        mirror = state.read_state(mirror_path)
-    except Exception:
-        return None
+    mirror_data: dict = {}
+    mirror_exists = False
+    if mirror_path.is_file():
+        mirror_exists = True
+        try:
+            mirror_data = state.read_state(mirror_path) or {}
+        except Exception:
+            mirror_data = {}
 
     project_root = paths.project_root(ade_sdd).resolve()
-    active_key = (mirror.get("activeWorkItem") or mirror.get("currentWorkItem") or "").strip()
-    raw_path = (mirror.get("activeStatePath") or "").strip()
+    auto_root = (project_root / ".auto-engineering").resolve()
+    active_key = (mirror_data.get("activeWorkItem") or mirror_data.get("currentWorkItem") or "").strip()
+    raw_path = (mirror_data.get("activeStatePath") or "").strip()
     candidates: list[Path] = []
     if raw_path:
         p = Path(raw_path)
@@ -172,7 +184,6 @@ def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
         if keyed_state is not None:
             candidates.append(keyed_state)
 
-    auto_root = (project_root / ".auto-engineering").resolve()
     for cand in candidates:
         try:
             resolved = cand.resolve()
@@ -181,6 +192,27 @@ def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
             continue
         if resolved.is_file():
             return resolved, _state_path_work_item_key(resolved, active_key)
+
+    # 🆕 v3.9.7 fallback：镜像缺失或镜像里记录全失效 → 扫描 .auto-engineering/*
+    #   找最近修改的 work-item state.json 作为活跃
+    if not mirror_exists:
+        candidates_recent: list[Path] = []
+        if auto_root.is_dir():
+            for child in sorted(auto_root.iterdir()):
+                if not child.is_dir():
+                    continue
+                sp = child / "state.json"
+                if sp.is_file():
+                    try:
+                        resolved = sp.resolve()
+                        resolved.relative_to(auto_root)
+                        candidates_recent.append(resolved)
+                    except Exception:
+                        continue
+        if candidates_recent:
+            # 按 mtime 倒序选最近活跃的
+            candidates_recent.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            return candidates_recent[0], _state_path_work_item_key(candidates_recent[0], "")
     return None
 
 
@@ -211,9 +243,31 @@ def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
             sp = paths.work_items_dir(ade_sdd) / work_item / "state.json"
             return sp, work_item
         return paths.state_path(ade_sdd), ""
+    # ─── 🆕 v3.9.7 fallback-trap-fix：line 217 镜像缺失时也扫 work-item 源
+    #   旧版：镜像不存在直接 return paths.state_path(ade_sdd) → state 文件不存在 → default v1 state
+    #   新版：扫描 .auto-engineering/*/state.json，按 mtime 找最近活跃，找不到再 fallback 镜像
     active = _active_state_from_mirror(ade_sdd)
     if active is not None:
         return active
+    # 🆕 v3.9.7 fallback-trap-fix：_active_state_from_mirror 仍返回 None 时，再扫一遍源
+    project_root = paths.project_root(ade_sdd).resolve()
+    auto_root = (project_root / ".auto-engineering").resolve()
+    if auto_root.is_dir():
+        candidates_recent: list[Path] = []
+        for child in sorted(auto_root.iterdir()):
+            if not child.is_dir():
+                continue
+            sp = child / "state.json"
+            if sp.is_file():
+                try:
+                    resolved = sp.resolve()
+                    resolved.relative_to(auto_root)
+                    candidates_recent.append(resolved)
+                except Exception:
+                    continue
+        if candidates_recent:
+            candidates_recent.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            return candidates_recent[0], _state_path_work_item_key(candidates_recent[0], "")
     return paths.state_path(ade_sdd), ""
 
 
@@ -3605,7 +3659,7 @@ def cmd_health(args, parser):
         "message": str(ade_sdd) if ade_sdd else "未在当前目录或上级找到 .ae-sdd/config.yaml",
     })
 
-    # 3. state.json 可读
+    # 3. state.json 可定位（镜像或源任一即可，🆕 v3.9.7 fallback：镜像可缺）
     state_ok = False
     state_msg = "（无 .ae-sdd/）"
     if ade_sdd:
@@ -3618,9 +3672,27 @@ def cmd_health(args, parser):
             except Exception as e:
                 state_msg = f"JSON 解析失败: {e}"
         else:
-            state_msg = f"不存在: {sp}"
+            # 🆕 v3.9.7 fallback：镜像缺失 → 接受 work-item state.json 源作为可定位证据
+            from lib import paths as _paths
+            auto_root = _paths.project_root(ade_sdd) / ".auto-engineering"
+            if auto_root.is_dir():
+                candidates = []
+                for child in auto_root.iterdir():
+                    if child.is_dir() and (child / "state.json").is_file():
+                        candidates.append(child / "state.json")
+                if candidates:
+                    state_ok = True
+                    state_msg = (
+                        f"镜像 .ae-sdd/state.json 缺失；已 fallback 到 work-item 源 "
+                        f"({len(candidates)} 个：{', '.join(c.name for c in candidates[:3])}"
+                        f"{'...' if len(candidates) > 3 else ''})"
+                    )
+                else:
+                    state_msg = f"镜像不存在: {sp}; .auto-engineering/ 也没有 work-item state.json（项目未初始化或全部 reset）"
+            else:
+                state_msg = f"不存在: {sp}"
     items.append({
-        "name": "state.json 可读",
+        "name": "state.json 可定位",
         "pass": state_ok,
         "message": state_msg,
     })
