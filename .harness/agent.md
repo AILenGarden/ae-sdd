@@ -1,18 +1,18 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程主入口（v3.9.7）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.9.7：gate_intercept `_check_memory_entered` 入口惰性创建 `.ae-sdd/memory/` 根目录（best-effort），修复"全新项目从未跑 memory enter 时，目录缺失 = stage 永假"导致的设计阶段死环（life 项目实测触发）；不改变活跃态判定语义。 🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范（必填/选填标记、表格分隔符、章节分隔线、占位符、章节编号、示例引导、强制规则锚点、emoji 语义、文档头部声明、末尾收尾）；新建 `template-layout-standard.md` SSOT。 🆕 v3.9.5：Story 模板接口契约章节合并——原「接口契约-SPI/API」+「🔴 前端接口契约」两段合并为单一 `## 接口契约` 章节；每个接口用 `### 接口 N：{签名}（REST|SPI）` 统一编号锚点 + `---` 强制分隔，解决多接口渲染黏连；接口块内融合后端契约（Request/VO 四维）与前端视角（JSON 示例/调用流程/状态展示/边界处理）；6 个引用文件同步锚点名；`gates.py:_check_source_trace` 兼容性验证通过。 🆕 v3.9.4：Story 流程根治——新增 `story-input-checklist.md` SSOT 输入清单（13 项 4 类）；`G-STORY-CTX` 扩展为 6 类（新增 dependsStory + sourceTrace）；`story-generation-standard.md` §2.5 新增 7 阶段→模板章节映射表，§4 自检闸门 8→10（新增来源追溯闸 + 章节映射闸）；Story generate/review/update 三件套 SSOT 化 + 来源追溯步骤。 🆕 v3.9.3：新增「输出核心原则」第 4 条——禁止文档承载 changelog（设计/架构/模板/标准类文档只写当前生效内容，历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`）。 🆕 v3.9.1：修复 gate_intercept 对嵌套 state 不感知——4 处顶层 phase/currentStory 读取改用 get_active_phase/get_active_story 统一接口，消除嵌套 state 项目 src/ 写入被误拦为"设计阶段禁止写入源码目录"的回归。 🆕 v3.9.0：嵌套状态模型——单文件嵌套 state（prdState/drState/storyStates{N}），任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。 🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。 🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。 历史变更见 source/CHANGELOG/。
-version: 3.9.7
+description: 端到端自动化工程主入口（v3.9.8）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.9.8：mirror-fallback trap fix——`_active_state_from_mirror` + `_main_state_path_for_args` 第 213-235 行在 `.ae-sdd/state.json` 镜像缺失时主动扫描 `.auto-engineering/*/state.json` 按 mtime 选最近活跃为 source；`health` 检查项 `state.json 可读` → `state.json 可定位`（镜像 + 源任一可定位即 pass）。允许 life 等项目把镜像当反模式删除，仅留 work-item 源为唯一真值。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.9.7：gate_intercept `_check_memory_entered` 入口惰性创建 `.ae-sdd/memory/` 根目录（best-effort），修复"全新项目从未跑 memory enter 时，目录缺失 = stage 永假"导致的设计阶段死环（life 项目实测触发）；不改变活跃态判定语义。 🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范（必填/选填标记、表格分隔符、章节分隔线、占位符、章节编号、示例引导、强制规则锚点、emoji 语义、文档头部声明、末尾收尾）；新建 `template-layout-standard.md` SSOT。 🆕 v3.9.5：Story 模板接口契约章节合并——原「接口契约-SPI/API」+「🔴 前端接口契约」两段合并为单一 `## 接口契约` 章节；每个接口用 `### 接口 N：{签名}（REST|SPI）` 统一编号锚点 + `---` 强制分隔，解决多接口渲染黏连；接口块内融合后端契约（Request/VO 四维）与前端视角（JSON 示例/调用流程/状态展示/边界处理）；6 个引用文件同步锚点名；`gates.py:_check_source_trace` 兼容性验证通过。 🆕 v3.9.4：Story 流程根治——新增 `story-input-checklist.md` SSOT 输入清单（13 项 4 类）；`G-STORY-CTX` 扩展为 6 类（新增 dependsStory + sourceTrace）；`story-generation-standard.md` §2.5 新增 7 阶段→模板章节映射表，§4 自检闸门 8→10（新增来源追溯闸 + 章节映射闸）；Story generate/review/update 三件套 SSOT 化 + 来源追溯步骤。 🆕 v3.9.3：新增「输出核心原则」第 4 条——禁止文档承载 changelog（设计/架构/模板/标准类文档只写当前生效内容，历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`）。 🆕 v3.9.1：修复 gate_intercept 对嵌套 state 不感知——4 处顶层 phase/currentStory 读取改用 get_active_phase/get_active_story 统一接口，消除嵌套 state 项目 src/ 写入被误拦为"设计阶段禁止写入源码目录"的回归。 🆕 v3.9.0：嵌套状态模型——单文件嵌套 state（prdState/drState/storyStates{N}），任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。 🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。 🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。 历史变更见 source/CHANGELOG/。
+version: 3.9.8
 ---
 
-<!-- # AUTO-GEN @ ae-sdd-source@1da53f7ab6096182 @ 2026-07-08T04:52:18Z -->
+<!-- # AUTO-GEN @ ae-sdd-source@7c767c2227d045e0 @ 2026-07-08T06:17:05Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-08T04:52:18Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-08T06:17:05Z -->
 
 # ae-sdd Auto-Engineering Orchestrator (Mavis Harness)
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd source `1da53f7ab6096182` (3.9.7)
+> 源版本：ae-sdd source `7c767c2227d045e0` (3.9.8)
 
 You are the **ae-sdd auto-engineering orchestrator** in Mavis harness format. ae-sdd is an end-to-end automated engineering workflow that drives a project from DR (design requirements) through RA → Story → Review → Task → Coding → Testing, gated by 22 mandatory checks and enforced by an 11-phase state machine.
 
@@ -109,7 +109,7 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 引用源
 
-- ae-sdd 主入口：`../source/SKILL.md`（213 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` 716 行）
+- ae-sdd 主入口：`../source/SKILL.md`（215 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` 716 行）
 - ae-sdd harness 配置：`../source/HARNESS.md`（PHASE MACHINE + 12 HARD STOPS + 3 hook 配置）
 - 子 SKILL 索引：`../source/skills/`
 - 项目资产模板：`../source/assets/`
@@ -117,9 +117,9 @@ G-DOC-STORAGE 文档存放（HS-10 兜底）
 
 ## 元数据
 
-- 生成时间：2026-07-08T04:52:18Z
-- 源 ae-sdd 版本：3.9.7
-- 源 ae-sdd input hash：1da53f7ab60961824b3c034ac8e73708272d649dbd1b4107d85ea970cc89e655
+- 生成时间：2026-07-08T06:17:05Z
+- 源 ae-sdd 版本：3.9.8
+- 源 ae-sdd input hash：7c767c2227d045e041c06d08b85512a424bf687efc60c26453e93f27e43ef252
 - 适配器版本：v0.3.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 
