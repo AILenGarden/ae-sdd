@@ -1,5 +1,7 @@
 # Story 生成 Agent 任务分配卡
 
+> **适用场景：** 由 Root Session 调度 Story 生成 Agent（story-writer）时填写本 YAML 任务卡，用于分配 DR/PRD 输入、输出路径与执行标准。
+
 ```yaml
 agent_role: story-writer
 story_id: STORY-XXX-BE

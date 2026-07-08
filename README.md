@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.9.0（🆕 2026-07-06：嵌套状态模型——单文件嵌套 state 维护主流程所有子系列，任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.9.6（🆕 2026-07-08：模板排版规范化——22 个模板统一 10 类排版规范；新建 `template-layout-standard.md` SSOT。v3.9.5：Story 模板接口契约章节合并。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -127,7 +127,7 @@ bash scripts/dev-sync.sh --watch
 
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
-- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 30 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性 / 🆕 v3.8.0 自动化模式）
+- **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 34 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性 / 🆕 v3.8.0 自动化模式 / 🆕 v3.9.1 上下文加载准入门禁）
 - **[`source/skills/`](source/skills/)** — 28 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
 - **[`source/templates/`](source/templates/)** — 21 份模板（Story/Task/DR/Report/...）
 - **[`source/standards/`](source/standards/)** — 20 份标准（constraints 11 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）

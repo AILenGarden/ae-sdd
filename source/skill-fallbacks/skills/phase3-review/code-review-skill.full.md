@@ -241,7 +241,7 @@ Code Review 结论：{STORY-ID}
 | 异常流程 | Story §异常流程 | 错误码 / 异常路径 |
 | 主流程步骤 | Story §主流程 | 业务步骤 |
 | 实现任务映射 | Story §Task 列表 | Task_ID / 名称 / 涉及工程层 |
-| 前端契约 | Story §前端契约 | URL / 错误码 / 边界场景（①bis 已审过） |
+| 前端契约 | Story §接口契约（①bis 6 维度，v3.9.5 起内聚） | URL / 错误码 / 边界场景（①bis 已审过） |
 
 ### 1.2 提取统一版 CodePlan 信息
 

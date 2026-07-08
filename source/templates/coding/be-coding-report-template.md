@@ -1,6 +1,6 @@
 # {WORKITEM-ID}：{标题} - Coding 报告
 
-> **存放路径：** 由 `document-storage.resolve_path(intent="CODING_REPORT", workItemId={WORKITEM-ID}, storyId={STORY-ID?}, version={major,minor})` 推导（见 document-storage §1.3）
+> **存放路径：** 由 `document-storage.resolve_path(intent="CODING_REPORT", workItemId={WORKITEM-ID}, storyId={STORY-ID}, version={major,minor})` 推导（见 document-storage §1.3）
 > 
 > 目录结构示例：
 > ```
@@ -14,7 +14,7 @@
 
 - 文档类型：Coding 报告
 - WorkItem ID：{WORKITEM-ID}
-- Story ID：{STORY-ID?}
+- Story ID：{STORY-ID}
 - 来源 Story：[{story文件名}]({story相对路径})
 - 编码完成时间：{YYYY-MM-DD}
 - 编码人员：{姓名}
@@ -24,19 +24,19 @@
 
 ## 1. Story 任务概述 `必填`
 
-### 1.1 核心功能
+### 1.1 核心功能 `必填`
 
 {一句话描述本 Story 实现的核心功能}
 
 > 示例：实现坐席接单功能，支持并发校验和状态机流转
 
-### 1.2 业务价值
+### 1.2 业务价值 `必填`
 
 {说明实现此功能带来的业务价值}
 
 > 示例：坐席可以主动接入待接待工单，系统自动校验并发数，防止超额接单
 
-### 1.3 实现范围
+### 1.3 实现范围 `必填`
 
 **包含：**
 - {功能点 1}
@@ -69,7 +69,7 @@
 > | SPI 接口 | `icec-cloud-life-spi/icec-cloud-life-im-spi/src/main/java/com/casstime/cloud/life/spi/im/service/session/ImSessionService.java` | 修改 | 新增 `getLatestMessageAt` / `batchGetLatestMessageAt` 方法签名 |
 > | SPI DTO | `icec-cloud-life-spi/icec-cloud-life-im-spi/src/main/java/com/casstime/cloud/life/spi/im/dto/MessageDTO.java` | 无改动 | 现有字段满足本 Story，已核对 |
 
-### 2.2 Domain 层
+### 2.2 Domain 层 `选填（本层有文件变更时必填）`
 
 | 类型 | 文件路径 | 变更类型 | 说明 |
 | --- | --- | --- | --- |
@@ -84,7 +84,7 @@
 > | Repository 接口 | `icec-cloud-life-cs/icec-cloud-life-cs-domain/src/main/java/com/casstime/cloud/life/cs/domain/cs/repository/CsTicketRepository.java` | 修改 | 新增 `syncLastMessageAtFromIm(Long ticketId, Date lastMessageAt)` |
 > | Repository 接口 | `icec-cloud-life-im/icec-cloud-life-im-domain/src/main/java/com/casstime/cloud/life/im/domain/session/repository/ImSessionRepository.java` | 修改 | 新增 `getLatestMessageAt` / `batchGetLatestMessageAt` 方法签名（数据访问下沉） |
 
-### 2.3 Application 层
+### 2.3 Application 层 `选填（本层有文件变更时必填）`
 
 | 类型 | 文件路径 | 变更类型 | 说明 |
 | --- | --- | --- | --- |
@@ -100,7 +100,7 @@
 > | Orchestrator | `icec-cloud-life-cs/icec-cloud-life-cs-application/src/main/java/com/casstime/cloud/life/cs/application/orchestrator/CsTicketCloseOrchestrator.java` | 修改 | CloseContext 加 `lastMessageAt` 字段并用于关单 race 对齐 |
 > | AppService | `icec-cloud-life-cs/icec-cloud-life-cs-application/src/main/java/com/casstime/cloud/life/cs/application/appservice/CsTicketTimeoutAppService.java` | 修改 | 加 `preloadLastMessageAtMap` 并调整超时关单入参 |
 
-### 2.4 Infrastructure 层
+### 2.4 Infrastructure 层 `选填（本层有文件变更时必填）`
 
 | 类型 | 文件路径 | 变更类型 | 说明 |
 | --- | --- | --- | --- |
@@ -130,7 +130,7 @@
 > | JobHandler | `icec-cloud-life-cs/icec-cloud-life-cs-interfaces/src/main/java/com/casstime/cloud/life/cs/interfaces/jobhandler/TimeoutAgentJobHandler.java` | 无改动 | JobHandler 仍只做薄入口，业务逻辑在 AppService |
 > | Controller | `icec-cloud-life-im-bff/src/main/java/com/casstime/cloud/life/im/bff/controller/ImMessageController.java` | 修改 | 新增查询最近消息时间接口 |
 
-### 2.6 Test 层
+### 2.6 Test 层 `选填（本层有文件变更时必填）`
 
 | 类型 | 文件路径 | 变更类型 | 说明 |
 | --- | --- | --- | --- |
@@ -160,7 +160,7 @@
 
 ## 3. 关键业务逻辑说明 `必填`
 
-### 3.1 核心方法实现
+### 3.1 核心方法实现 `必填`
 
 #### 方法 1：{方法名}
 
@@ -250,7 +250,7 @@
 
 ## 4. 数据库变更 `选填（有数据库变更时必填）`
 
-### 4.1 表结构变更
+### 4.1 表结构变更 `选填（有表结构变更时必填）`
 
 **变更类型：** 新增表 / 修改表 / 删除表
 
@@ -267,7 +267,7 @@
 | --- | --- | --- | --- |
 | {column_name} | {type} | {说明} | 新增/修改/删除 |
 
-### 4.2 索引变更
+### 4.2 索引变更 `选填（有索引变更时必填）`
 
 | 索引名 | 表名 | 索引字段 | 索引类型 | 变更类型 | 说明 |
 | --- | --- | --- | --- | --- | --- |
@@ -295,7 +295,7 @@
 
 ## 5. 外部依赖调用 `选填（有外部调用时必填）`
 
-### 5.1 外部服务调用清单
+### 5.1 外部服务调用清单 `选填（有外部调用时必填）`
 
 | 服务名称 | 接口 | 调用位置 | 调用时机 | 超时设置 |
 | --- | --- | --- | --- | --- |
@@ -306,7 +306,7 @@
 > | 极光推送 | `POST /v3/push` | `CsNotificationService#notifyApp` | 工单状态变更后 | 3000ms |
 > | copilot-server | `POST /api/session/sync-status` | `CsTicketAppService#claimTicket` | 接单成功后 | 5000ms |
 
-### 5.2 调用参数说明
+### 5.2 调用参数说明 `选填（有外部调用时必填）`
 
 #### 调用 1：{服务名称} - {接口}
 
@@ -337,7 +337,7 @@
 
 ## 6. 单元测试覆盖 `必填`
 
-### 6.1 测试类清单
+### 6.1 测试类清单 `必填`
 
 | 测试类 | 测试目标 | 测试方法数 | 覆盖率 |
 | --- | --- | --- | --- |
@@ -348,7 +348,7 @@
 > | `CsTicketAppServiceTest` | CsTicketAppService | 5 | 85% |
 > | `CsTicketStateMachineTest` | CsTicketStateMachine | 8 | 100% |
 
-### 6.2 核心场景覆盖
+### 6.2 核心场景覆盖 `必填`
 
 | 场景 | 测试方法 | 验证点 | 状态 |
 | --- | --- | --- | --- |
@@ -360,7 +360,7 @@
 > | 并发数超限 | `CsTicketAppServiceTest#testClaimTicket_ConcurrencyExceeded` | 抛出 ConcurrencyExceededException | ✅ Pass |
 > | 工单状态非法 | `CsTicketAppServiceTest#testClaimTicket_InvalidStatus` | 抛出 IllegalStateException | ✅ Pass |
 
-### 6.3 Mock 策略说明
+### 6.3 Mock 策略说明 `必填`
 
 **Mock 对象：**
 - `{依赖类名}`：{Mock 原因和策略}
@@ -380,7 +380,7 @@
 
 ## 7. 开发问题记录 `选填（有问题时必填）`
 
-### 7.1 已解决问题
+### 7.1 已解决问题 `选填（有问题时必填）`
 
 | # | 问题描述 | 影响范围 | 解决方案 | 解决时间 |
 | --- | --- | --- | --- | --- |
@@ -415,13 +415,13 @@
 
 ## 8. 验证与交付 `必填`
 
-### 8.1 编译验证
+### 8.1 编译验证 `必填`
 
 - [ ] `mvn clean compile` 通过
 - [ ] 无编译警告
 - [ ] 无代码规范检查错误
 
-### 8.2 单元测试验证
+### 8.2 单元测试验证 `必填`
 
 - [ ] 所有单元测试通过
 - [ ] 核心业务逻辑覆盖率 ≥ 80%
@@ -432,7 +432,7 @@
 - [ ] 接口测试通过
 - [ ] 端到端场景验证通过
 
-### 8.4 可交付检查清单
+### 8.4 可交付检查清单 `必填`
 
 - [ ] 代码已提交到分支：`{分支名}`
 - [ ] 代码已通过 Code Review（如需要）
@@ -444,13 +444,13 @@
 
 ## 9. 附录 `选填`
 
-### 9.1 相关文档
+### 9.1 相关文档 `选填`
 
 - Story 文档：[{story文件名}]({story相对路径})
 - DR 文档：[{dr文件名}]({dr相对路径})
 - 测试用例：[{testcase文件名}]({testcase相对路径})
 
-### 9.2 参考资料
+### 9.2 参考资料 `选填`
 
 - {参考资料 1}
 - {参考资料 2}

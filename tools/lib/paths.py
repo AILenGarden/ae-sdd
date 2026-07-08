@@ -14,7 +14,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.9.0"
+MASTER_VERSION = "3.9.6"
 
 
 def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:
@@ -157,19 +157,29 @@ def work_items_dir(ade_sdd: Path) -> Path:
     return project_root(ade_sdd) / ".auto-engineering"
 
 
-def work_item_dir_name(work_item_id: str, work_item_name: Optional[str] = None) -> str:
-    """Return the canonical directory name for one work-item state machine.
+def work_item_dir_name(top_node: str, features: Optional[dict] = None) -> str:
+    """🆕 v3.9.3 废除 v3.8.2 双段：统一走 R6 顶层名（PRD-{特征} / DR-{特征} / Story-{合并编号}）。
 
-    New work items use `ID--name` so the physical state-machine directory is
-    both unique and readable. Existing callers that pass only an id keep the
-    legacy one-part directory name for backward compatibility.
+    Args:
+        top_node: 顶层节点类型 "PRD" / "DR" / "STORY" / "TASK"
+        features: {
+            "prd_feature": str,    # PRD 顶层特征（如 "IM-CS"）
+            "dr_feature": str,     # DR 顶层特征（如 "CS"）
+            "story_ids": list,     # Story ID 列表（如 ["STORY-003-BE", "STORY-004-BE"]）
+            "task_id": str,        # Task 顶层特征（如 "BUG-LIFE-001"）
+        }
+
+    Returns:
+        R6 顶层名（如 "PRD-IM-CS" / "DR-CS" / "Story-003-004" / "Task-BUG-LIFE-001"）
+
+    Raises:
+        ValueError: top_node 非法或缺关键特征（由 build_state_machine_name 抛）
+
+    Notes:
+        v3.9.3 起强制 R6 顶层命名，**不再接受** v3.8.2 双段 `{ID}--{name}` 拼装。
+        旧 `work_item_dir_name(id, name)` 签名的 name 形参被废除。
     """
-    normalized_id = _normalize_work_item_component(work_item_id)
-    if not work_item_name:
-        return normalized_id[:_WORK_ITEM_DIR_MAX_LEN]
-    normalized_name = _normalize_work_item_component(work_item_name)
-    combined = f"{normalized_id}{_WORK_ITEM_DIR_SEP}{normalized_name}"
-    return combined[:_WORK_ITEM_DIR_MAX_LEN].rstrip(" .-") or normalized_id
+    return build_state_machine_name(top_node, features or {})
 
 
 def _state_matches_work_item(state_data: dict, token: str) -> bool:
@@ -178,9 +188,16 @@ def _state_matches_work_item(state_data: dict, token: str) -> bool:
         state_data.get("workItemKey"),
         state_data.get("stateMachineId"),
         state_data.get("currentWorkItem"),
+        state_data.get("activeWorkItem"),
         state_data.get("currentStory"),
+        state_data.get("activeStory"),
     }
-    return token in {str(c) for c in candidates if c}
+    candidates.update(state_data.get("storyIds") or [])
+    candidates.update((state_data.get("storyStates") or {}).keys())
+    tokens = {token}
+    if "--" in token:
+        tokens.add(token.split("--", 1)[0])
+    return bool(tokens & {str(c) for c in candidates if c})
 
 
 def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Optional[Path]:
@@ -194,7 +211,10 @@ def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Option
     if exact.is_file():
         return exact
 
-    normalized = work_item_dir_name(token)
+    try:
+        normalized = work_item_dir_name(token)
+    except ValueError:
+        normalized = token
     normalized_exact = base / normalized / "state.json"
     if normalized_exact.is_file():
         return normalized_exact
@@ -224,21 +244,19 @@ def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Option
     return unique[0] if len(unique) == 1 else None
 
 
-def work_item_state_path(ade_sdd: Path, work_item_id: str,
-                         work_item_name: Optional[str] = None) -> Path:
-    """Return the isolated state.json path for one coding work item.
+def work_item_state_path(ade_sdd: Path, top_node: str,
+                         features: Optional[dict] = None) -> Path:
+    """🆕 v3.9.3 简化：直接走 R6 顶层名，不再探测旧目录。
 
-    The project-level .ae-sdd/state.json remains as an active-work-item mirror
-    for older gates/hooks. Durable task state lives under
-    .auto-engineering/{WORKITEM-ID--WORKITEM-NAME}/state.json for newly
-    initialized work items, with legacy `{WORKITEM-ID}` directories still
-    resolved when they already exist.
+    Args:
+        ade_sdd: 项目 .ae-sdd 目录
+        top_node: 顶层节点类型 "PRD" / "DR" / "STORY" / "TASK"
+        features: 顶层特征字典（见 work_item_dir_name）
+
+    Returns:
+        {项目根}/.auto-engineering/{R6 顶层名}/state.json
     """
-    if work_item_name is None:
-        existing = find_work_item_state_path(ade_sdd, work_item_id)
-        if existing is not None:
-            return existing
-    return work_items_dir(ade_sdd) / work_item_dir_name(work_item_id, work_item_name) / "state.json"
+    return work_items_dir(ade_sdd) / work_item_dir_name(top_node, features) / "state.json"
 
 
 def assets_dir(ade_sdd: Path) -> Path:
@@ -457,6 +475,16 @@ def project_root(ade_sdd: Path) -> Path:
     return ade_sdd.parent
 
 
+def pending_init_marker(project_dir: Optional[Path] = None) -> Path:
+    """返回 ae-sdd 待初始化标记文件路径（用于跨 hook 通信）。
+
+    当用户触发 /ae-sdd 但项目未 init 时，prompt_inject 写入此标记文件，
+    gate_intercept 读取它以决定是否拦截未初始化项目的写操作。
+    """
+    cwd = (project_dir or Path.cwd()).resolve()
+    return cwd / ".ae-sdd-pending-init"
+
+
 def project_design_dir(project_root: Path) -> Path:
     """Project design docs directory for DR, Story, and TestCase docs."""
     return project_root / "design"
@@ -543,7 +571,13 @@ def build_state_machine_name(top_node: str, features: dict) -> str:
             # 无法提取编号，用完整 ID 去重拼接
             nums = list(dict.fromkeys(story_ids))
         return "Story-" + "-".join(nums)
-    raise ValueError(f"未知 top_node: {top_node}（允许: PRD/DR/STORY）")
+    if top_node == "TASK":
+        # 🆕 v3.9.3 TASK 顶层名：Task-{task_id}（如 Task-BUG-LIFE-001）
+        task_id = (features or {}).get("task_id") or (features or {}).get("story_ids", [""])[0]
+        if not task_id:
+            raise ValueError("top_node=TASK 必须提供 task_id")
+        return "Task-" + task_id
+    raise ValueError(f"未知 top_node: {top_node}（允许: PRD/DR/STORY/TASK）")
 
 
 def _scan_nested_states(ade_sdd: Path) -> list[tuple[Path, dict]]:
@@ -628,3 +662,132 @@ def find_nested_state_by_prd_id(ade_sdd: Path,
         if prd_state.get("prdId") == prd_id:
             return (state_path, data)
     return None
+
+
+# ─── 🆕 v3.9.3 父级文档字段抽取 + 关联性验证（用于 R2 强制向上归入）───────────
+# 抽取自 Story/DR 文档元信息章节的"来源 DR" / "来源 PRD" 字段，验证：
+#   1. 父级文档是否真实存在于 design/ 目录
+#   2. 父级文档是否真的"包含"当前节点（关联性验证）
+# 找不到 / 关联性不对 → verify_parent_claim 返回 (False, reason)
+#   视为"无父级"，递归 R2 算法继续按无父级路径处理
+
+
+_PARENT_CLAIM_PATTERNS = {
+    # Story 模板元信息章节（list-style）："- 来源 PRD: PRD-001" / "- 来源 DR: DR-005"
+    "story": [
+        (re.compile(r"来源\s*PRD\s*[:：]\s*([A-Za-z0-9\-_]+)", re.IGNORECASE), "prd"),
+        (re.compile(r"来源\s*DR\s*[:：]\s*([A-Za-z0-9\-_]+)", re.IGNORECASE), "dr"),
+    ],
+    # DR 模板元信息章节：只抽"PRD: PRD-001"作为父级；"DR ID: DR-005"是自身标识，不抽
+    "dr": [
+        (re.compile(r"^-\s*PRD\s*[:：]\s*([A-Za-z0-9\-_]+)", re.IGNORECASE | re.MULTILINE), "prd"),
+    ],
+}
+
+
+def extract_parent_claim(doc_path: Path,
+                         doc_kind: str = "story") -> tuple[Optional[str], Optional[str]]:
+    """🆕 v3.9.3 从 Story/DR 文档元信息章节抽取父级声明。
+
+    Args:
+        doc_path: 文档绝对路径
+        doc_kind: "story" 或 "dr" — 选择字段提取模式
+
+    Returns:
+        (parent_prd, parent_dr) — 任一可空；标准化大写
+    """
+    if doc_path is None or not doc_path.is_file():
+        return (None, None)
+    try:
+        text = doc_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return (None, None)
+
+    patterns = _PARENT_CLAIM_PATTERNS.get(doc_kind) or _PARENT_CLAIM_PATTERNS["story"]
+    parent_prd: Optional[str] = None
+    parent_dr: Optional[str] = None
+    for pattern, key in patterns:
+        m = pattern.search(text)
+        if not m:
+            continue
+        value = m.group(1).strip().upper()
+        if key == "prd" and not value.startswith("PRD-"):
+            value = f"PRD-{value}"
+        if key == "dr" and not value.startswith("DR-"):
+            value = f"DR-{value}"
+        if key == "prd" and not parent_prd:
+            parent_prd = value
+        elif key == "dr" and not parent_dr:
+            parent_dr = value
+    return (parent_prd, parent_dr)
+
+
+def _find_design_doc(design_dir: Path, doc_id: str) -> Optional[Path]:
+    """🆕 v3.9.3 在 design/ 目录按 ID 找文档。
+
+    匹配模式：
+      - PRD-001 → design/PRD-001-*.md / design/PRD-001.md
+      - DR-005  → design/DR-005-*.md / design/DR-005.md
+      - 大小写不敏感
+    """
+    if not design_dir or not design_dir.is_dir() or not doc_id:
+        return None
+    upper_id = doc_id.upper()
+    # 先精确前缀匹配
+    for child in sorted(design_dir.iterdir()):
+        if not child.is_file() or not child.suffix == ".md":
+            continue
+        name_upper = child.name.upper()
+        if name_upper == f"{upper_id}.MD" or name_upper.startswith(f"{upper_id}-"):
+            return child
+    return None
+
+
+def verify_parent_claim(parent_type: str, parent_id: str,
+                        design_dir: Path,
+                        child_id: str = "") -> tuple[bool, str]:
+    """🆕 v3.9.3 验证父级文档存在 + 关联性对。
+
+    Args:
+        parent_type: "PRD" 或 "DR"
+        parent_id: 父级 ID（如 "DR-005"）
+        design_dir: design/ 目录
+        child_id: 当前节点 ID（如 "STORY-006-BE"），用于关联性验证
+
+    Returns:
+        (ok, reason)：
+          ok=True, reason="ok" → 真有父级
+          ok=False, reason="doc_not_found" → 父级文档不存在
+          ok=False, reason="relation_mismatch" → 文档存在但关联性不对
+          ok=False, reason="invalid_args" → 参数非法
+    """
+    if not parent_type or not parent_id:
+        return (False, "invalid_args")
+    parent_type = parent_type.upper()
+    parent_id = parent_id.strip().upper()
+    if parent_type not in ("PRD", "DR"):
+        return (False, "invalid_args")
+
+    doc_path = _find_design_doc(design_dir, parent_id)
+    if doc_path is None:
+        return (False, "doc_not_found")
+
+    # 关联性验证：父级文档需在子节点列表中提及 child_id
+    if not child_id:
+        return (True, "ok")  # 没传 child_id 跳过关联性验证
+
+    try:
+        text = doc_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return (True, "ok")  # 读失败不阻断（视为 OK 但给 warn）
+
+    # 关联性关键词：DR 文档中需出现 child_id 完整 ID
+    # PRD 文档中需出现 parent_id（即 DR ID 出现在 PRD 文档中），但 verify 关注的是 DR/Story 的父级
+    child_upper = child_id.strip().upper()
+    if child_upper and child_upper in text.upper():
+        return (True, "ok")
+    # 弱关联：去掉 -BE/-FE 后缀再查
+    short = re.sub(r"[-_][A-Z]+$", "", child_upper)
+    if short and short != child_upper and short in text.upper():
+        return (True, "ok")
+    return (False, "relation_mismatch")

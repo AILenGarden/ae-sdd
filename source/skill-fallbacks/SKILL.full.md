@@ -290,6 +290,7 @@ automation:
 | 基于事实 | 所有输出必须有明确来源（DR/PRD/资产/用户告知/代码读取）|
 | 禁止猜测 | 不确定 → 标 `{待确认}` 并主动询问；禁止推断后输出 |
 | 禁止杜撰 | 不得编造不存在于输入材料中的规则/字段/类名/配置项 |
+| 🆕 禁止文档承载 changelog | 设计/架构/模板/标准类文档只写**当前生效内容**；历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`，文档内仅用一句引用（如「详见 CHANGELOG/...」）指向。混写会破坏主题连续性、加剧检索劣化、让 git blame 失真——属于坏习惯，不是细节。 |
 
 ---
 
@@ -470,7 +471,7 @@ PRD收尾（可选）：
 ### ①bis 前端视角接口审视
 6维度（契约完整性/调用流程/状态展示/错误码/边界场景/联调支持）→ 详细清单见 `story-review-skill.md §📋 ①bis`
 
-AE编排层门禁：① 完成后必做 ①bis；② Story含"前端接口契约"章节；③ Story Review含F-Stage
+AE编排层门禁：① 完成后必做 ①bis；② Story含"接口契约"章节（v3.9.5 起合并，含 ①bis 6 维度）；③ Story Review含F-Stage
 
 ### ② Story Review
 循环：挖掘→判定→Proposal→按Proposal修复→再挖掘→退出（连续3轮无新增）
@@ -683,7 +684,7 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 0b | G-00项目资产检查 | 通过才继续 |
 | 1 | 路由判定（1.5自更新→1.6来源→1.7规模→1.8 G-RA）| 路由明确才继续 |
 | 2 | 生成Story（story-generate-skill）| 文件存在 |
-| 2b | ①bis 前端视角接口审视 | 6维度通过；Story含"前端接口契约" |
+| 2b | ①bis 前端视角接口审视 | 6维度通过；Story含"接口契约"章节（含①bis 6维度） |
 | 3 | Story Review（含F-Stage）| 循环退出（3轮无新增）|
 | 4 | 生成测试用例（testcase-generate-skill）| 文件已生成+合规校验通过 |
 | 4a | TestCase Review（testcase-review-skill，TC-1~TC-9）| 循环退出（3轮无新增）|

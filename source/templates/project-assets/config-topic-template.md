@@ -5,13 +5,15 @@ description: project-assets config/ 环境配置专题 Starter 模板
 
 # {环境或场景} 配置
 
-> **适用范围：** {哪些工程 / 哪些环境}
+> **适用场景：** {哪些工程 / 哪些环境} 的环境配置专题，记录工程信息、登录取 Token 流程、本地测试前置检查、测试接口 Base URL 与待确认事项。
+> **精简规则：** 必填章节不得留空；占位符统一 `{花括号}`；表格分隔符统一 `| --- |`。
+>
 > **最后更新：** {YYYY-MM-DD}
 > **可信度：** {已确认 / 据推断}
 
 ---
 
-## 1. 工程信息
+## 1. 工程信息 `必填`
 
 | 工程 | 路径 | 用途 |
 | --- | --- | --- |
@@ -20,7 +22,7 @@ description: project-assets config/ 环境配置专题 Starter 模板
 
 ---
 
-## 2. {场景 1（如登录获取 Token）}
+## 2. {场景 1（如登录获取 Token）} `必填`
 
 **接口：** `{METHOD} {URL}`
 
@@ -34,11 +36,11 @@ description: project-assets config/ 环境配置专题 Starter 模板
 
 **响应字段：** `{accessToken}` 在 `{Cookie}` 里怎么传
 
-**使用方式：** `{Cookie: security_context=<accessToken>}`
+**使用方式：** `{Cookie: security_context={accessToken}}`
 
 ---
 
-## 3. 本地测试前置检查
+## 3. 本地测试前置检查 `必填`
 
 ### 3.1 FeignClient 指定本地 URL
 
@@ -60,7 +62,7 @@ public interface {Client} extends {SpiService}
 
 ---
 
-## 4. 测试接口 Base URL
+## 4. 测试接口 Base URL `必填`
 
 ### 4.1 本地服务
 
@@ -76,8 +78,8 @@ public interface {Client} extends {SpiService}
 
 ---
 
-## 5. 待确认事项
+## 5. 待确认事项 `选填`
 
 | ID | 问题 | 影响范围 | 优先级 | 待查 |
-|----|------|---------|--------|------|
+| --- | --- | --- | --- | --- |
 | C-{NNN} | {问题} | {范围} | {🟠/🟡} | {方法} |
