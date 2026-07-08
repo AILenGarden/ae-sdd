@@ -281,6 +281,74 @@ def _write_active_state_mirror(ade_sdd: Path, state_data: dict, work_item: str, 
     state.write_state(paths.state_path(ade_sdd), mirror)
 
 
+def _check_and_recover_stuck_mirror(ade_sdd: Path, work_item: str, sp: Path) -> None:
+    """🆕 v3.9.11：检测并恢复冻结的 state.json 镜像。
+
+    Args:
+        ade_sdd: 项目 .ae-sdd 目录
+        work_item: 当前 cmd_state_write 解析出的 work_item key
+        sp: 当前 cmd_state_write 解析出的 state.json 路径
+
+    行为：
+      1. 读镜像 .ae-sdd/state.json 拿 activeWorkItem
+      2. 若镜像 activeWorkItem 与传入 work_item 不一致（且都不为空）→ 镜像冻结
+      3. 镜像冻结时，扫描 .auto-engineering/*/state.json 按 mtime 选最近活跃
+      4. 若最近活跃 work-item 与传入 work_item 一致 → 镜像只是过期，自动刷新
+      5. 若不一致 → 输出 warn，建议用户加 --story 显式指定
+    """
+    mirror_path = paths.state_path(ade_sdd)
+    if not mirror_path.is_file():
+        return  # 无镜像，v3.9.8 fallback 已处理
+    try:
+        mirror = state.read_state(mirror_path) or {}
+    except Exception:
+        return
+    mirror_wi = (mirror.get("activeWorkItem") or mirror.get("currentWorkItem") or "").strip()
+    if not mirror_wi or not work_item:
+        return
+    if mirror_wi == work_item:
+        return  # 镜像与目标一致，OK
+
+    # 镜像冻结！扫描 .auto-engineering/ 下最近活跃 work-item
+    project_root = paths.project_root(ade_sdd)
+    auto_root = project_root / ".auto-engineering"
+    if not auto_root.is_dir():
+        return
+    candidates: list[tuple[Path, float]] = []
+    for child in auto_root.iterdir():
+        if not child.is_dir():
+            continue
+        sp_candidate = child / "state.json"
+        if sp_candidate.is_file():
+            try:
+                candidates.append((sp_candidate, sp_candidate.stat().st_mtime))
+            except OSError:
+                continue
+    if not candidates:
+        return
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    recent_path = candidates[0][0]
+    recent_wi = recent_path.parent.name
+
+    if recent_wi == work_item:
+        # 镜像过期，自动刷新（无侵入恢复）
+        try:
+            recent_data = state.read_state(recent_path)
+            output.warn(
+                f"检测到镜像 .ae-sdd/state.json 冻结指 {mirror_wi}，"
+                f"已自动 fallback 到最近活跃 work-item {work_item}。"
+            )
+            _write_active_state_mirror(ade_sdd, recent_data, work_item, recent_path)
+        except Exception as e:
+            output.warn(f"镜像自动恢复失败（{e}），建议手动 `ae-sdd state relocate --story {work_item}`")
+    else:
+        # 镜像指别的 work-item，且与 cmd 目标不一致 → 显式提示
+        output.warn(
+            f"镜像 activeWorkItem={mirror_wi} 与本次 state write 目标 {work_item} 不一致。"
+            f"建议加 --story {work_item} 显式指定，或跑 `ae-sdd state relocate --story {work_item}` 重定位。"
+        )
+
+
 def _infer_scale_for_work_item(work_item: str, entry_node: str | None) -> tuple[str, str] | None:
     """Infer micro-chain routing for explicit BUG/OPT/CONFIG work items."""
     marker = (entry_node or "").strip().upper()
@@ -465,6 +533,17 @@ def cmd_state_write(args, parser):
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
     sp, work_item = _main_state_path_for_args(ade_sdd, args)
+    # 🆕 v3.9.11：镜像冻结检测 — 防 life 项目事故复发
+    # 根因（v3.9.10 life 实测）：镜像 .ae-sdd/state.json 冻结指 STORY-005 completed，
+    #   但 .auto-engineering/ 下另有活跃 STORY-003 work-item。
+    #   用户跑 `ae-sdd state write --phase testcase-generated`（未传 --story）时，
+    #   _main_state_path_for_args 走 _active_state_from_mirror → 拿到 STORY-005 路径 →
+    #   set_phase 拒绝跨步跳跃（completed 后无 next phase）→ 静默报错 → 镜像永远不刷新。
+    # 修复：state write 入口先做健康检查，发现镜像指向的 work-item 与 .auto-engineering/ 下
+    #   真实活跃 work-item 不一致时，输出 warn + 自动 fallback 到 work-item 源路径
+    #   （按 mtime 选最近活跃），并写回正确镜像。force 参数允许显式锁定旧镜像。
+    if not getattr(args, "project_state", False) and not getattr(args, "force", False):
+        _check_and_recover_stuck_mirror(ade_sdd, work_item, sp)
     if not work_item and not getattr(args, "project_state", False):
         output.err("未找到 active work item。新需求必须先创建独立状态机：")
         output.info('  ae-sdd state new --id <ID> --name "<需求名>"')

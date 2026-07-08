@@ -49,12 +49,21 @@ class TestG00(unittest.TestCase):
     def test_complete_passes(self):
         tmp = _setup_project({
             ".ae-sdd/config.yaml": "projectKey: test\n",
-            ".ae-sdd/state.json": '{"phase": "initialized"}\n',
+            # 🆕 v3.9.11：镜像需有 activeStory 锚点（与 v3.9.10 之前裸 state.json 不同）
+            ".ae-sdd/state.json": json.dumps({
+                "phase": "initialized",
+                "activeStory": "STORY-001-BE",
+                "activeWorkItem": "STORY-001-BE",
+            }) + "\n",
             ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+            # 提供 activeStory 对应 work-item 源（v3.9.11 (b) 分支校验）
+            ".auto-engineering/STORY-001-BE/state.json": json.dumps({
+                "phase": "initialized",
+            }) + "\n",
         })
         ade_sdd = tmp / ".ae-sdd"
         r = gates.check_g00(None, ade_sdd, "test")
-        self.assertTrue(r.pass_)
+        self.assertTrue(r.pass_, f"应通过，实: {r.message}")
 
     def test_missing_assets_blocks(self):
         tmp = _setup_project({
@@ -75,7 +84,113 @@ class TestG00(unittest.TestCase):
         ade_sdd = tmp / ".ae-sdd"
         r = gates.check_g00(None, ade_sdd, "test")
         self.assertFalse(r.pass_)
-        self.assertIn("缺索引层", r.message)
+        # v3.9.11：state.json 镜像存在但无 activeStory 锚点会被先拦下，消息里含「锚点」
+        self.assertTrue("锚点" in r.message or "缺索引层" in r.message,
+                        f"应拦在镜像校验或索引层校验，实: {r.message}")
+
+    # 🆕 v3.9.11：G-00 镜像可缺 + 镜像-源一致性单测
+    # 根因：v3.9.8 mirror-fallback fix 修了 CLI 入口但没修 G-00，
+    #   导致删镜像仍 G-00 阻断。v3.9.10 又复盘出「镜像存在但冻结指旧 work-item」
+    #   仍能通过 G-00 的漏洞。三场景必须全锁。
+
+    def test_mirror_missing_but_workitem_source_exists_passes_v3911(self):
+        """场景 1：镜像缺失但 .auto-engineering/{work-item}/state.json 存在且含 phase → 通过。
+
+        根因复现：v3.9.8 之前 G-00 硬要求镜像存在，删镜像就阻断。
+        v3.9.11 修复：镜像可缺，降级为校验 work-item 源。
+        """
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            # 无 .ae-sdd/state.json 镜像
+            ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+            ".auto-engineering/cs-ai-STORY-003-BE/state.json": json.dumps({
+                "phase": "testcase-generated",
+                "storyId": "cs-ai-STORY-003-BE",
+            }, ensure_ascii=False) + "\n",
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g00(None, ade_sdd, "test")
+        self.assertTrue(r.pass_, f"应通过（镜像缺失有源 fallback），实: {r.message}")
+
+    def test_mirror_missing_no_workitem_source_blocks_v3911(self):
+        """场景 2：镜像缺失且 .auto-engineering/ 下无任何 work-item state → 阻断。
+
+        根因复现：项目未 init 或 .auto-engineering/ 被误删时，state read 走 default v1
+        假象。G-00 必须阻断，避免 hook 链路掉进假象。
+        """
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g00(None, ade_sdd, "test")
+        self.assertFalse(r.pass_)
+        self.assertIn("state.json", r.message)
+        self.assertIn(".auto-engineering", r.message)
+
+    def test_mirror_workitem_source_missing_phase_blocks_v3911(self):
+        """场景 3：镜像缺失 + work-item 源存在但缺 phase 字段 → 阻断。
+
+        根因复现：life 项目 STORY-003 state 只有 currentStep 无 phase 字段。
+        即使镜像能 fallback 到源，源缺 phase 也会让 hook 链路断开（get_active_phase 返回 None）。
+        G-00 必须阻断并明确告诉用户补 phase 字段。
+        """
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+            ".auto-engineering/cs-ai-STORY-003-BE/state.json": json.dumps({
+                "currentStep": "step-3-testcase-generate",
+                # 故意不写 phase 字段
+            }, ensure_ascii=False) + "\n",
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g00(None, ade_sdd, "test")
+        self.assertFalse(r.pass_)
+        self.assertIn("缺 phase", r.message)
+
+    def test_mirror_present_but_active_story_dangling_blocks_v3911(self):
+        """场景 4：镜像存在但 activeStory 指死 work-item（对应 state.json 不存在）→ 阻断。
+
+        根因复现：v3.9.10 life 事故——镜像 activeStory=STORY-005 completed，
+        但 STORY-005 work-item state 不在 .auto-engineering/ 下，hook 读镜像取到
+        冻结的 phase=completed 误判拒绝写。原 G-00 只检查镜像文件存在，不校验指死。
+        """
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+            ".ae-sdd/state.json": json.dumps({
+                "phase": "completed",
+                "activeStory": "cs-ai-STORY-005-BE",
+                "activeWorkItem": "cs-ai-STORY-005-BE",
+                "activeStatePath": "D:\\\\Item\\\\life\\\\.auto-engineering\\\\cs-ai-STORY-005-BE\\\\state.json",
+            }, ensure_ascii=False) + "\n",
+            # 故意不放 cs-ai-STORY-005-BE/state.json — 模拟「镜像指死」
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g00(None, ade_sdd, "test")
+        self.assertFalse(r.pass_)
+        self.assertIn("activeStory", r.message)
+        self.assertIn("不存在", r.message)
+
+    def test_mirror_present_with_consistent_source_passes_v3911(self):
+        """场景 5：镜像存在 + activeStory 对应源存在 + 源有 phase → 通过（正路）。"""
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+            ".ae-sdd/state.json": json.dumps({
+                "phase": "testcase-generated",
+                "activeStory": "cs-ai-STORY-003-BE",
+                "activeWorkItem": "cs-ai-STORY-003-BE",
+                "activeStatePath": "fake-but-mirror-present",
+            }, ensure_ascii=False) + "\n",
+            ".auto-engineering/cs-ai-STORY-003-BE/state.json": json.dumps({
+                "phase": "testcase-generated",
+                "storyId": "cs-ai-STORY-003-BE",
+            }, ensure_ascii=False) + "\n",
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g00(None, ade_sdd, "test")
+        self.assertTrue(r.pass_, f"应通过（镜像+源一致），实: {r.message}")
 
 
 # ─── G-01 ───────────────────────────────────────────────────────────────────
@@ -153,6 +268,12 @@ class TestG02(unittest.TestCase):
         r = gates.check_g02(tmp, {}, "STORY-001")
         self.assertFalse(r.pass_)
 
+    def test_with_document_storage_story_passes(self):
+        """🆕 v3.9.10：document-storage 新布局 ae-sdd-doc/Story/ 下 Story 文档可命中。"""
+        tmp = _setup_project({"ae-sdd-doc/Story/STORY-001.md": "# Story"})
+        r = gates.check_g02(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
 
 # ─── G-03 ───────────────────────────────────────────────────────────────────
 class TestG03(unittest.TestCase):
@@ -191,6 +312,14 @@ class TestG04(unittest.TestCase):
         r = gates.check_g04(tmp, {}, "STORY-001")
         self.assertFalse(r.pass_)
 
+    def test_with_document_storage_testcase_passes(self):
+        """🆕 v3.9.10：document-storage 新布局 ae-sdd-doc/Test/ 下 TestCase 文档可命中。"""
+        tmp = _setup_project({
+            "ae-sdd-doc/Test/STORY-001/STORY-001-testcase.md": "# TC",
+        })
+        r = gates.check_g04(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
+
 
 class TestG05(unittest.TestCase):
 
@@ -213,6 +342,14 @@ class TestG05(unittest.TestCase):
         tmp = _setup_project({})
         r = gates.check_g05(tmp, {}, "STORY-001")
         self.assertFalse(r.pass_)
+
+    def test_with_document_storage_task_passes(self):
+        """🆕 v3.9.10：document-storage 新布局 ae-sdd-doc/Task/ 下 Task 文档可命中。"""
+        tmp = _setup_project({
+            "ae-sdd-doc/Task/STORY-001/STORY-001-task-001.md": "# T1",
+        })
+        r = gates.check_g05(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
 
 
 class TestG06(unittest.TestCase):
@@ -247,6 +384,15 @@ class TestG07(unittest.TestCase):
         tmp = _setup_project({})
         r = gates.check_g07(tmp, {}, "STORY-001")
         self.assertFalse(r.pass_)
+
+    def test_with_document_storage_codingplan_passes(self):
+        """🆕 v3.9.10：document-storage 新布局 ae-sdd-doc/Coding/ 下 CodingPlan 可命中（含 7 章节）。"""
+        sections = "文件顺序 类骨架 数据 Mapper SQL 测试对应 验证点 调试回滚"
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingPlan.md": f"# CP\n{sections}",
+        })
+        r = gates.check_g07(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_)
 
 
 # ─── G-08 ───────────────────────────────────────────────────────────────────

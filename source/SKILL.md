@@ -1,9 +1,11 @@
 ---
 name: ae-sdd
-version: 3.9.9
+version: 3.9.11
 description: |
-  端到端自动化工程主入口（v3.9.9）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.9.11）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.9.11：镜像反模式根除 + 5 层防复发护城河——life 项目 STORY-003 卡死事故复盘，5 个独立缺口叠加（镜像冻结/phase 缺失/G-00 未同步/cmd_state_write 无冻结检测/缺维护脚本）。5 层防御：G-00 二段校验（镜像可缺 + 镜像-源一致性）+ 5 单测 + cmd_state_write 镜像冻结自动恢复 + prompt-inject step-X- 反模式检测 + check_mirror_health.py 维护脚本。
+  🆕 v3.9.10：门禁路径 bug 修复--`paths.find_doc` / `paths.list_docs` 原只搜 `design/` + 项目根（deprecated 旧路径），未覆盖 document-storage 新布局 `ae-sdd-doc/{Category}/`；G-02/G-04/G-05/G-07 + 上下文准入门禁（G-STORY-CTX 等）在项目用新布局存文档时误判 block 失败。新增 `paths.doc_search_roots`（多根：项目根 + docWorkspace），find_doc/list_docs 内部同时搜旧路径 + `ae-sdd-doc/`（rglob 兜底），签名向后兼容；`gates._doc_search_roots` 委托 paths 统一入口（DRY）。
   🆕 v3.9.9：harness 回滚补全 README.md + identity sanity check 单测覆盖——mount 失败回滚三件套（agent.md/README.md/.adapter.lock）；`_IDENTITY_ATTRIBUTION_PATTERNS` Pattern 1 正则收窄（加归属动词限定，消除合法提及误报）；新增 `TestIdentitySanityCheck` 14 用例（11 命中 + 3 误报防护）。
   🆕 v3.9.8：mirror-fallback trap fix——`_active_state_from_mirror` + `_main_state_path_for_args` 第 213-235 行在 `.ae-sdd/state.json` 镜像缺失时主动扫描 `.auto-engineering/*/state.json` 按 mtime 选最近活跃为 source；`health` 检查项 `state.json 可读` → `state.json 可定位`（镜像 + 源任一可定位即 pass）。允许 life 等项目把镜像当反模式删除，仅留 work-item 源为唯一真值。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。

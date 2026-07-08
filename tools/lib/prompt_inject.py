@@ -379,6 +379,17 @@ def inject(
     if flow_msg:
         lines.append(flow_msg)
 
+    # 🆕 v3.9.11：反模式检测 — 防止 user_prompt 中出现非标 phase 名
+    # 根因（v3.9.10 life 实测）：用户/AI 在 prompt 里写 `step-4-test-generate`、
+    #   `step-3-doc-format-adjustment` 等 step-X- 自由命名，state.json 的 currentStep 字段
+    #   也存这种值，但 ae-sdd PHASE_FLOWS 不含，导致 hook 校验走不通（G-00 fail、gate 拒绝写）。
+    # 修复：UserPromptSubmit 注入时正则扫 user_prompt，若含 step-X- 模式或非 PHASE_FLOWS phase 名，
+    #   追加反模式警告块，列出 PHASE_FLOWS[scale] 合法值，引导 LLM 用标准 phase 名。
+    if _is_ae_sdd_triggered:
+        _antipattern_msg = _detect_phase_naming_antipattern(user_prompt, phase)
+        if _antipattern_msg:
+            lines.append(_antipattern_msg)
+
     # 🆕 v3.8.2：取端注入——memory enter 后的活跃 scope 下注入历史记忆。
     # 解决 memory 只写不读黑洞：LLM 进节点时能看到该 story 此前 phase 的决策证据。
     memory_block = _inject_memory_block(ade_sdd, phase, current_story)
@@ -525,3 +536,61 @@ def _clear_pending_init(project_dir: Optional[Path]) -> None:
         marker.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+# ─── 🆕 v3.9.11：phase 命名反模式检测 ────────────────────────────────────────
+import re as _re  # 模块级 import 避免每次调用重导
+
+# step-X- 自由命名模式（如 step-4-test-generate / step-3-doc-format-adjustment）
+_STEP_PATTERN = _re.compile(r"\bstep-\d+-[a-z][a-z0-9-]*", _re.IGNORECASE)
+
+
+def _detect_phase_naming_antipattern(user_prompt: str, current_phase: str) -> Optional[str]:
+    """检测 user_prompt 中是否出现非标 phase 命名（step-X- 自由命名）。
+
+    根因（v3.9.10 life 实测）：
+      用户/AI 在 prompt 里写 `step-4-test-generate`、`step-3-doc-format-adjustment`
+      等 step-X- 自由命名。state.json 的 currentStep 字段也存这种值，但 ae-sdd
+      PHASE_FLOWS 不含此类名，导致：
+        - hook 校验走不通（G-00 fail、gate 拒绝写）
+        - state.json phase 字段缺失时 hook 读到 None 误判
+        - 复盘难度高（命名不统一，无法机械 grep）
+
+    修复策略：检测到 step-X- 模式时，返回警告块文本，由 inject() 追加到注入块末尾。
+    警告块列出当前 scale 的 PHASE_FLOWS 合法值，引导 LLM 用标准 phase 名。
+
+    Args:
+        user_prompt: 用户原始消息文本
+        current_phase: 当前 state 的 phase（用于推断 scale 和列出合法 phase）
+
+    Returns:
+        警告块文本（多行字符串）或 None（未检测到反模式）
+    """
+    if not user_prompt:
+        return None
+    matches = _STEP_PATTERN.findall(user_prompt)
+    if not matches:
+        return None
+
+    # 收集 PHASE_FLOWS 合法值（按 scale 列出，便于 LLM 选择）
+    try:
+        from lib.state import PHASE_FLOWS
+        valid_phases: list[str] = []
+        for scale, chain in PHASE_FLOWS.items():
+            valid_phases.append(f"  [{scale}] {', '.join(chain)}")
+        valid_text = "\n".join(valid_phases)
+    except Exception:
+        valid_text = "  (PHASE_FLOWS 读取失败，参考 ae-sdd 文档)"
+
+    unique_matches = list(dict.fromkeys(matches))  # 去重保序
+    return (
+        f"⛔ PHASE 命名反模式检测：user_prompt 含非标命名 {unique_matches}。\n"
+        f"   ae-sdd PHASE_FLOWS 不识别 step-X-* 命名（仅 state.json.currentStep 字段可存自由文本）。\n"
+        f"   state write / gate / hook 校验全部基于标准 phase 名，混用会导致：\n"
+        f"     - G-00 项目资产门禁阻断（state 缺 phase 字段）\n"
+        f"     - PreToolUse hook 拒绝写操作（phase 不在 PHASE_PERMIT 表）\n"
+        f"     - _PRODUCT_PHASE_MAP 产物-Phase 映射失配（TestCase 仅 testcase-generated/testcase-reviewed 允许写）\n"
+        f"   合法 phase 名（按 scale）：\n{valid_text}\n"
+        f"   若需切换 phase：ae-sdd state write --phase <标准 phase 名> --story <STORY-ID>\n"
+        f"   （🆕 v3.9.11 反模式防护，life 项目事故复盘）"
+    )

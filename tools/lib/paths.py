@@ -14,7 +14,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.9.9"
+MASTER_VERSION = "3.9.11"
 
 
 def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:
@@ -495,24 +495,99 @@ def project_task_dir(project_root: Path) -> Path:
     return project_root / "task"
 
 
+def doc_search_roots(project_dir: Path) -> list[Path]:
+    """🆕 v3.9.10：文档查找的搜索根列表（多根：项目根 + docWorkspace）。
+
+    document-storage-skill §0.5.1 第四维 docWorkspacePath 可与项目根（gitPath）分离，
+    文档可能落在任一根部下的 design/（deprecated 旧路径）或 ae-sdd-doc/（新布局）。
+    本函数返回去重后的搜索根，供 find_doc / list_docs / gates._find_report_doc 共用，
+    消除各处自行拼接 docWorkspace 的重复逻辑（DRY）。
+
+    解析优先级（对齐 resolve_doc_workspace）：assets §1 docWorkspacePath > gitPath 回退。
+    无 .ae-sdd/config.yaml 或无 projectKey 时仅返回 [project_dir]（向后兼容）。
+    """
+    roots: list[Path] = [project_dir]
+    ade_sdd = project_dir / ".ae-sdd"
+    if ade_sdd.is_dir() and config_path(ade_sdd).is_file():
+        cfg = read_config(ade_sdd)
+        project_key = cfg.get("projectKey") or cfg.get("project_key")
+        if project_key:
+            doc_ws = resolve_doc_workspace(ade_sdd, project_key)
+            if doc_ws is not None:
+                roots.append(doc_ws)
+    # 去重（resolve 后比较，容忍 project_dir 与 docWorkspace 指向同一路径）
+    seen: set = set()
+    unique: list[Path] = []
+    for root in roots:
+        try:
+            key = root.resolve()
+        except OSError:
+            key = root
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(root)
+    return unique
+
+
 def find_doc(project_root: Path, story_id: str, suffix: str) -> Optional[Path]:
-    """Find the first existing {story_id}{suffix} doc in design/ or project root."""
-    candidates = [
-        project_design_dir(project_root) / f"{story_id}{suffix}",
-        project_root / f"{story_id}{suffix}",
-    ]
-    for cand in candidates:
-        if cand.is_file():
-            return cand
+    """Find the first existing {story_id}{suffix} doc.
+
+    搜索范围（v3.9.10 扩展，覆盖 document-storage 新布局 ae-sdd-doc/）：
+      1. 旧 deprecated 路径：{root}/design/{story_id}{suffix}、{root}/{story_id}{suffix}
+      2. 新布局：{root}/ae-sdd-doc/ 下任意子目录的 {story_id}{suffix}
+         （含 Story/{story_id}.md、Test/{story_id}/{story_id}-testcase.md、
+          Coding/{story_id}/{story_id}-CodingPlan.md、iterations/*/{cat}/{story_id}/...）
+    root 取自 doc_search_roots（项目根 + docWorkspace），保证 docWorkspace 分离项目也能命中。
+    旧路径优先（design/ > 项目根 > ae-sdd-doc/），保持历史项目行为不变。
+    """
+    pattern = f"{story_id}{suffix}"
+    for root in doc_search_roots(project_root):
+        # 1. 旧 deprecated 路径（design/ + 项目根）
+        for cand in (project_design_dir(root) / pattern, root / pattern):
+            if cand.is_file():
+                return cand
+        # 2. 新布局 ae-sdd-doc/（精确直达目录优先 + rglob 兜底）
+        doc_root = root / "ae-sdd-doc"
+        if doc_root.is_dir():
+            for cand in sorted(doc_root.rglob(pattern)):
+                if cand.is_file():
+                    return cand
     return None
 
 
 def list_docs(project_root: Path, story_id: str, suffix: str) -> list[Path]:
-    """List {story_id}{suffix} docs under the project task directory."""
-    task_dir = project_task_dir(project_root)
-    if not task_dir.is_dir():
-        return []
-    return sorted(task_dir.glob(f"{story_id}{suffix}"))
+    """List {story_id}{suffix} docs under task/ (legacy) and ae-sdd-doc/Task/ (new).
+
+    v3.9.10：补充 document-storage 新布局 ae-sdd-doc/Task/{story_id}/{story_id}{suffix}，
+    与旧 task/ 目录共存向后兼容。结果按路径排序、去重。
+    """
+    pattern = f"{story_id}{suffix}"
+    found: list[Path] = []
+    seen: set = set()
+    for root in doc_search_roots(project_root):
+        for cand in sorted(project_task_dir(root).glob(pattern)):
+            try:
+                key = cand.resolve()
+            except OSError:
+                key = cand
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(cand)
+        # 新布局：ae-sdd-doc/Task/{story_id}/ 下匹配
+        task_dir_new = root / "ae-sdd-doc" / "Task" / story_id
+        if task_dir_new.is_dir():
+            for cand in sorted(task_dir_new.glob(pattern)):
+                try:
+                    key = cand.resolve()
+                except OSError:
+                    key = cand
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(cand)
+    return found
 
 
 # ─── 🆕 v3.9.0 嵌套状态模型：命名 + 向上归入查找 ──────────────────────────────
