@@ -1,11 +1,9 @@
 ---
 name: ae-sdd
-version: 3.9.13
+version: 3.9.11
 description: |
-  端到端自动化工程主入口（v3.9.13）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.9.11）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
-  🆕 v3.9.13：Story 模板删除「用例设计映射」章节——实测 Story-003 该章节产出 700 行级噪音；TestCase 模板 §3 覆盖矩阵已完整承载 AC↔TC 映射（含场景/层级/假设覆盖/自动化方式/状态），Story 内映射为纯冗余。删除涉及 4 个 source 文件：story-template.md（章节本体+填写声明表行）、story-generate-plan-template.md（删项+12~21 重编号 11~20）、story-generation-standard.md §2.5、story-generate-skill fallback 速查表（C 阶段清理 §用例设计映射 引用）。验收记录下的「测试用例执行」台账保留（执行记录非映射）。
-  🆕 v3.9.12：模板标题后缀必填/选填迁移至集中声明表——14 个模板共清除约 280 处标题尾部 `必填`/`选填（条件）` 后缀，改为每个模板顶部新增《填写声明表》集中管理填写义务（🔴 必填 / 🟡 选填（条件）两档 + 适用条件列），子章节也进表。标题回归纯语义，排版 SSOT `template-layout-standard.md §1` 同步改写。
   🆕 v3.9.11：镜像反模式根除 + 5 层防复发护城河——life 项目 STORY-003 卡死事故复盘，5 个独立缺口叠加（镜像冻结/phase 缺失/G-00 未同步/cmd_state_write 无冻结检测/缺维护脚本）。5 层防御：G-00 二段校验（镜像可缺 + 镜像-源一致性）+ 5 单测 + cmd_state_write 镜像冻结自动恢复 + prompt-inject step-X- 反模式检测 + check_mirror_health.py 维护脚本。
   🆕 v3.9.10：门禁路径 bug 修复--`paths.find_doc` / `paths.list_docs` 原只搜 `design/` + 项目根（deprecated 旧路径），未覆盖 document-storage 新布局 `ae-sdd-doc/{Category}/`；G-02/G-04/G-05/G-07 + 上下文准入门禁（G-STORY-CTX 等）在项目用新布局存文档时误判 block 失败。新增 `paths.doc_search_roots`（多根：项目根 + docWorkspace），find_doc/list_docs 内部同时搜旧路径 + `ae-sdd-doc/`（rglob 兜底），签名向后兼容；`gates._doc_search_roots` 委托 paths 统一入口（DRY）。
   🆕 v3.9.9：harness 回滚补全 README.md + identity sanity check 单测覆盖——mount 失败回滚三件套（agent.md/README.md/.adapter.lock）；`_IDENTITY_ATTRIBUTION_PATTERNS` Pattern 1 正则收窄（加归属动词限定，消除合法提及误报）；新增 `TestIdentitySanityCheck` 14 用例（11 命中 + 3 误报防护）。
