@@ -1,9 +1,14 @@
 ---
 name: ae-sdd
-version: 3.9.0
+version: 3.9.6
 description: |
-  端到端自动化工程主入口（v3.9.0）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.9.6）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范。
+  🆕 v3.9.5：Story 模板接口契约章节合并——双段合一 + 统一编号锚点。
+  🆕 v3.9.4：Story 流程根治——SSOT 输入清单 + 来源追溯 + 字段对齐。
+  🆕 v3.9.3：禁止文档承载 changelog。
+  🆕 v3.9.1：gate_intercept 嵌套 state 修复。
   🆕 v3.9.0：嵌套状态模型——单文件嵌套 state（prdState/drState/storyStates{N}），任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。
   🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。
   🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。
