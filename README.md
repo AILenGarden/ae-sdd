@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.9.6（🆕 2026-07-08：模板排版规范化——22 个模板统一 10 类排版规范；新建 `template-layout-standard.md` SSOT。v3.9.5：Story 模板接口契约章节合并。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.9.7（🆕 2026-07-08：gate_intercept `_check_memory_entered` 入口惰性创建 `.ae-sdd/memory/` 根目录（best-effort），修复"全新项目从未跑 memory enter 时，目录缺失 = stage 永假"导致的设计阶段死环（life 项目实测触发）；不改变活跃态判定语义。v3.9.6：模板排版规范化。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

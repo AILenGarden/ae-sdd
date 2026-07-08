@@ -482,6 +482,16 @@ def _check_memory_entered(
     PHASE_PERMIT 放行 Write/Edit 前，若当前 phase 属于 5 个关联节点
     (ra/design/coding-plan/coding/review)，强制要求该 scope 已 memory enter。
 
+    🆕 v3.9.7 fix-life-deadlock：函数入口惰性 mkdir memory_root，避免
+    全新 .ae-sdd 项目的 design/coding-plan 等关联阶段在第一次写操作前
+    因 .ae-sdd/memory/ 不存在导致后续 locate_scope/is_scope_active 链路
+    隐式失败。原行为：缺目录时 _read_json 静默返回 {}，is_scope_active
+    永远返回 False，门槛看似"未 enter"——但实际是"目录都没建"。
+    本修改 best-effort 静默 mkdir，与 ae-sdd init 的"项目首次创建即
+    创建 memory 子目录"对齐；不改 token 判定语义（仍以 is_scope_active
+    为准），仅消除"目录缺失 = 永假"的隐性死路。
+    项目侧仍需 `ae-sdd memory enter` 才能拿到 stage 活跃态。
+
     Returns:
         (allowed, deny_reason)
         allowed=True  → 已 enter 或非关联 phase，放行
@@ -490,6 +500,16 @@ def _check_memory_entered(
     if ade_sdd is None:
         return True, ""  # 非 ae-sdd 项目，不拦截
     try:
+        # 🆕 v3.9.7 fix-life-deadlock：惰性创建 memory 根目录（best-effort）
+        try:
+            memory_root = ade_sdd / "memory"
+            if not memory_root.exists():
+                memory_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # 任何 OSError（如 EROFS、PermissionError）都不应阻断门禁逻辑
+            # ——让下游 locate_scope/is_scope_active 自己处理，保留原失败模式
+            pass
+
         from lib import memory_gate, memory_store
         memory_phase = memory_gate.memory_phase_for_state_phase(phase)
         if not memory_phase:
