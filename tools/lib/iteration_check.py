@@ -68,12 +68,12 @@ _OBSOLETE_TECH_KEYWORDS: tuple[str, ...] = (
     "Node.js ESM",
 )
 # 已知幽灵命令（CLI 未注册但 SKILL.md 可能仍引用）
-# 注：assets check/generate/update/audit 已在 v3.5.4 SKILL.md 修订中删除，
-# 此处仍扫描以防回退；run/quick/init/fork/skill 是 UC-03 已标的历史遗留
+# 注：assets check/generate 已实现；assets update/audit 仍扫描以防文档回退。
+# run/quick/init/fork/skill 是 UC-03 已标的历史遗留
 # 🆕 2026-07-03(B6): "state lock" 已在 v3.8.1 真实注册（cmd_state_lock + argparse），
 #   不再属幽灵命令，移出清单。state validate/show/diff 仍未注册，保留。
 _GHOST_COMMANDS: tuple[str, ...] = (
-    "assets check", "assets generate", "assets update", "assets audit",
+    "assets update", "assets audit",
     "sync-tools", "state validate", "state show", "state diff",
 )
 

@@ -25,10 +25,10 @@ class TestIC1ObsoleteTech:
     def test_ghost_command_detected(self, tmp_path):
         skill = tmp_path / "SKILL.md"
         cli = tmp_path / "ae-sdd"
-        skill.write_text("Run `ae-sdd assets check` to verify.\n", encoding="utf-8")
+        skill.write_text("Run `ae-sdd assets audit` to verify.\n", encoding="utf-8")
         cli.write_text("", encoding="utf-8")
         findings = ic.check_ic1_obsolete_tech(skill, cli)
-        assert any("幽灵命令" in f.item and "assets check" in f.item for f in findings)
+        assert any("幽灵命令" in f.item and "assets audit" in f.item for f in findings)
 
     def test_changelog_line_skipped_for_obsolete_kw(self, tmp_path):
         """含 🆕/v3.x 等历史标记的行不应报过时技术栈"""

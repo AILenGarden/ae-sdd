@@ -65,6 +65,49 @@ class TestG00(unittest.TestCase):
         r = gates.check_g00(None, ade_sdd, "test")
         self.assertTrue(r.pass_, f"应通过，实: {r.message}")
 
+    def test_fresh_initialized_flat_state_without_active_story_passes(self):
+        """init.py 刚生成的 flat state 没有 activeStory，但应允许 G-00 通过。"""
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/state.json": json.dumps({
+                "version": "1",
+                "projectKey": "test",
+                "phase": "initialized",
+                "currentStory": None,
+                "currentTask": None,
+            }, ensure_ascii=False) + "\n",
+            ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g00(None, ade_sdd, "test")
+        self.assertTrue(r.pass_, f"刚 init 的项目应通过 G-00，实: {r.message}")
+
+    def test_workitem_nested_active_phase_passes_v3912(self):
+        """work-item state 为 nested 模型时，G-00 应读取 storyStates[activeStory].phase。"""
+        story_id = "cs-ai-STORY-004-BE"
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: test\n",
+            ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
+            ".ae-sdd/state.json": json.dumps({
+                "phase": "story-reviewed",
+                "activeStory": story_id,
+                "activeWorkItem": story_id,
+            }, ensure_ascii=False) + "\n",
+            f".auto-engineering/{story_id}/state.json": json.dumps({
+                "version": "2",
+                "projectKey": "test",
+                "stateModel": "nested",
+                "entryNode": "STORY",
+                "activeStory": story_id,
+                "storyStates": {
+                    story_id: {"phase": "story-reviewed"},
+                },
+            }, ensure_ascii=False) + "\n",
+        })
+        ade_sdd = tmp / ".ae-sdd"
+        r = gates.check_g00(None, ade_sdd, "test")
+        self.assertTrue(r.pass_, f"nested work-item phase 应被识别，实: {r.message}")
+
     def test_missing_assets_blocks(self):
         tmp = _setup_project({
             ".ae-sdd/config.yaml": "projectKey: test\n",
@@ -112,29 +155,18 @@ class TestG00(unittest.TestCase):
         r = gates.check_g00(None, ade_sdd, "test")
         self.assertTrue(r.pass_, f"应通过（镜像缺失有源 fallback），实: {r.message}")
 
-    def test_mirror_missing_no_workitem_source_blocks_v3911(self):
-        """场景 2：镜像缺失且 .auto-engineering/ 下无任何 work-item state → 阻断。
-
-        根因复现：项目未 init 或 .auto-engineering/ 被误删时，state read 走 default v1
-        假象。G-00 必须阻断，避免 hook 链路掉进假象。
-        """
+    def test_missing_workitem_state_does_not_block_g00_v3913(self):
+        """v3.9.13: G-00 只校验项目资产；workflow state 由任务执行路径校验。"""
         tmp = _setup_project({
             ".ae-sdd/config.yaml": "projectKey: test\n",
             ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
         })
         ade_sdd = tmp / ".ae-sdd"
         r = gates.check_g00(None, ade_sdd, "test")
-        self.assertFalse(r.pass_)
-        self.assertIn("state.json", r.message)
-        self.assertIn(".auto-engineering", r.message)
+        self.assertTrue(r.pass_, r.message)
 
-    def test_mirror_workitem_source_missing_phase_blocks_v3911(self):
-        """场景 3：镜像缺失 + work-item 源存在但缺 phase 字段 → 阻断。
-
-        根因复现：life 项目 STORY-003 state 只有 currentStep 无 phase 字段。
-        即使镜像能 fallback 到源，源缺 phase 也会让 hook 链路断开（get_active_phase 返回 None）。
-        G-00 必须阻断并明确告诉用户补 phase 字段。
-        """
+    def test_workitem_source_missing_phase_does_not_block_g00_v3913(self):
+        """v3.9.13: work-item state 格式错误由 state/hook 路径拦截，不属于 G-00。"""
         tmp = _setup_project({
             ".ae-sdd/config.yaml": "projectKey: test\n",
             ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
@@ -145,16 +177,10 @@ class TestG00(unittest.TestCase):
         })
         ade_sdd = tmp / ".ae-sdd"
         r = gates.check_g00(None, ade_sdd, "test")
-        self.assertFalse(r.pass_)
-        self.assertIn("缺 phase", r.message)
+        self.assertTrue(r.pass_, r.message)
 
-    def test_mirror_present_but_active_story_dangling_blocks_v3911(self):
-        """场景 4：镜像存在但 activeStory 指死 work-item（对应 state.json 不存在）→ 阻断。
-
-        根因复现：v3.9.10 life 事故——镜像 activeStory=STORY-005 completed，
-        但 STORY-005 work-item state 不在 .auto-engineering/ 下，hook 读镜像取到
-        冻结的 phase=completed 误判拒绝写。原 G-00 只检查镜像文件存在，不校验指死。
-        """
+    def test_stale_project_mirror_does_not_block_g00_v3913(self):
+        """v3.9.13: project-level state mirror is ignored by G-00."""
         tmp = _setup_project({
             ".ae-sdd/config.yaml": "projectKey: test\n",
             ".ae-sdd/assets/test.assets.md": "# §A §B §C §D §E §F §G\n",
@@ -168,9 +194,7 @@ class TestG00(unittest.TestCase):
         })
         ade_sdd = tmp / ".ae-sdd"
         r = gates.check_g00(None, ade_sdd, "test")
-        self.assertFalse(r.pass_)
-        self.assertIn("activeStory", r.message)
-        self.assertIn("不存在", r.message)
+        self.assertTrue(r.pass_, r.message)
 
     def test_mirror_present_with_consistent_source_passes_v3911(self):
         """场景 5：镜像存在 + activeStory 对应源存在 + 源有 phase → 通过（正路）。"""
@@ -209,7 +233,7 @@ class TestNestedStateGateContext(unittest.TestCase):
         }
         tmp = _setup_project({
             ".ae-sdd/config.yaml": "projectKey: test\n",
-            ".ae-sdd/state.json": json.dumps(state_doc, ensure_ascii=False),
+            ".auto-engineering/Story-001/state.json": json.dumps(state_doc, ensure_ascii=False),
             f"design/{story_id}-CodingPlan.md": plan_body,
         })
 

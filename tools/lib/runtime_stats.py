@@ -63,11 +63,14 @@ def _detect_scale(project: Optional[Path] = None) -> Optional[str]:
         root = _find_project_root(project)
         if root is None:
             return None
-        state_path = root / ".ae-sdd" / "state.json"
-        if not state_path.is_file():
+        ade_sdd = root / ".ae-sdd"
+        if not ade_sdd.is_dir():
             return None
-        with state_path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        try:
+            from lib import work_item_context
+            data = work_item_context.resolve_default_state(ade_sdd).data
+        except Exception:
+            return None
         scale = data.get("scale")
         return str(scale) if scale else None
     except Exception:

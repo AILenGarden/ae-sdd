@@ -59,7 +59,7 @@ class FlowNode(str, Enum):
         # 🆕 v3.9.0 嵌套容器映射（与 state.ENTRY_NODE_CONTAINERS 一致）
         # flat 节点（TASK/PLAN/RA）返回空列表，表示用 flat state 不嵌套。
         mapping = {
-            "PRD":   ["prdState", "drState", "storyStates"],
+            "PRD":   ["prdState", "drStates", "storyStates"],
             "DR":    ["drState", "storyStates"],
             "STORY": ["storyStates"],
         }

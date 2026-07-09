@@ -90,7 +90,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, classify, config, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, prompt_inject, runtime_exec, runtime_stats, runtime_verify, session, state, stop_check, update_graph  # noqa: E402
+from lib import assets_index, classify, config, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, project_assets, prompt_inject, runtime_exec, runtime_stats, runtime_verify, session, state, stop_check, update_graph, work_item_context  # noqa: E402
 
 
 def _read_stdin_json() -> dict:
@@ -142,29 +142,46 @@ def _work_item_arg(args) -> str:
 
 def _state_path_work_item_key(sp: Path, fallback: str = "") -> str:
     """Return the work-item directory key for an isolated state path."""
-    try:
-        if sp.name == "state.json" and sp.parent.parent.name == ".auto-engineering":
-            return sp.parent.name
-    except Exception:
-        pass
-    return fallback
+    return work_item_context.state_path_work_item_key(sp, fallback)
+
+
+def _emit_work_item_ambiguity(exc: work_item_context.AmbiguousWorkItemError, args) -> None:
+    message = str(exc)
+    if getattr(args, "json", False):
+        output.emit({
+            "ok": False,
+            "error": "work-item-ambiguous",
+            "message": message,
+            "candidates": [c.key for c in exc.candidates],
+        }, as_json=True)
+    else:
+        output.err(message)
+
+
+def _emit_state_resolution_error(exc: Exception, args) -> None:
+    message = str(exc)
+    if getattr(args, "json", False):
+        output.emit({"ok": False, "error": "work-item-required", "message": message}, as_json=True)
+    else:
+        output.err(message)
 
 
 def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
-    """Return the active isolated state path recorded in .ae-sdd/state.json.
+    """Disabled compatibility stub; project-global mirrors are not state sources.
 
     🆕 v3.9.7 fallback-trap-fix：镜像文件不存在时主动 fallback：
       优先级 1）镜像里的 activeStatePath / activeWorkItem
       优先级 2）扫描 .auto-engineering/*/state.json，按 mtime 选最近活跃
     与 `_main_state_path_for_args` 主 fallback 不同：
-      - 主 fallback 报回 `paths.state_path(ade_sdd)`（line 213/217）—— 镜像
+      Project-level state fallback has been removed.
       - 本函数返回真实源 —— 因为 active story 一定要有对应 work-item state.json
     返回 (state_path, work_item_key) 或 None。
     """
-    mirror_path = paths.state_path(ade_sdd)
+    return None
+    mirror_path = None
     mirror_data: dict = {}
     mirror_exists = False
-    if mirror_path.is_file():
+    if mirror_path is not None and mirror_path.is_file():
         mirror_exists = True
         try:
             mirror_data = state.read_state(mirror_path) or {}
@@ -227,7 +244,7 @@ def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
       3. activeStatePath 镜像
     """
     if getattr(args, "project_state", False):
-        return paths.state_path(ade_sdd), ""
+        raise ValueError("project-level .ae-sdd/state.json is not supported; use --work-item with a task-scoped state")
     work_item = _work_item_arg(args)
     if work_item:
         existing = paths.find_work_item_state_path(ade_sdd, work_item)
@@ -242,43 +259,14 @@ def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
             # 用顶层名本身当 work_item_key 走 legacy 单段兼容
             sp = paths.work_items_dir(ade_sdd) / work_item / "state.json"
             return sp, work_item
-        return paths.state_path(ade_sdd), ""
-    # ─── 🆕 v3.9.7 fallback-trap-fix：line 217 镜像缺失时也扫 work-item 源
-    #   旧版：镜像不存在直接 return paths.state_path(ade_sdd) → state 文件不存在 → default v1 state
-    #   新版：扫描 .auto-engineering/*/state.json，按 mtime 找最近活跃，找不到再 fallback 镜像
-    active = _active_state_from_mirror(ade_sdd)
-    if active is not None:
-        return active
-    # 🆕 v3.9.7 fallback-trap-fix：_active_state_from_mirror 仍返回 None 时，再扫一遍源
-    project_root = paths.project_root(ade_sdd).resolve()
-    auto_root = (project_root / ".auto-engineering").resolve()
-    if auto_root.is_dir():
-        candidates_recent: list[Path] = []
-        for child in sorted(auto_root.iterdir()):
-            if not child.is_dir():
-                continue
-            sp = child / "state.json"
-            if sp.is_file():
-                try:
-                    resolved = sp.resolve()
-                    resolved.relative_to(auto_root)
-                    candidates_recent.append(resolved)
-                except Exception:
-                    continue
-        if candidates_recent:
-            candidates_recent.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-            return candidates_recent[0], _state_path_work_item_key(candidates_recent[0], "")
-    return paths.state_path(ade_sdd), ""
+        raise ValueError(f"cannot resolve work item: {work_item}")
+    resolved = work_item_context.resolve_default_state(ade_sdd)
+    return resolved.path, resolved.key
 
 
 def _write_active_state_mirror(ade_sdd: Path, state_data: dict, work_item: str, source_path: Path) -> None:
-    """Write .ae-sdd/state.json as an active-work-item mirror for old gates/hooks."""
-    if not work_item:
-        return
-    mirror = dict(state_data)
-    mirror["activeWorkItem"] = work_item
-    mirror["activeStatePath"] = str(source_path)
-    state.write_state(paths.state_path(ade_sdd), mirror)
+    """No-op: active state is session/work-item scoped, never project-global."""
+    return
 
 
 def _check_and_recover_stuck_mirror(ade_sdd: Path, work_item: str, sp: Path) -> None:
@@ -290,14 +278,14 @@ def _check_and_recover_stuck_mirror(ade_sdd: Path, work_item: str, sp: Path) -> 
         sp: 当前 cmd_state_write 解析出的 state.json 路径
 
     行为：
-      1. 读镜像 .ae-sdd/state.json 拿 activeWorkItem
+      1. disabled; project-global mirrors are ignored
       2. 若镜像 activeWorkItem 与传入 work_item 不一致（且都不为空）→ 镜像冻结
       3. 镜像冻结时，扫描 .auto-engineering/*/state.json 按 mtime 选最近活跃
       4. 若最近活跃 work-item 与传入 work_item 一致 → 镜像只是过期，自动刷新
       5. 若不一致 → 输出 warn，建议用户加 --story 显式指定
     """
-    mirror_path = paths.state_path(ade_sdd)
-    if not mirror_path.is_file():
+    mirror_path = None
+    if mirror_path is None or not mirror_path.is_file():
         return  # 无镜像，v3.9.8 fallback 已处理
     try:
         mirror = state.read_state(mirror_path) or {}
@@ -335,7 +323,7 @@ def _check_and_recover_stuck_mirror(ade_sdd: Path, work_item: str, sp: Path) -> 
         try:
             recent_data = state.read_state(recent_path)
             output.warn(
-                f"检测到镜像 .ae-sdd/state.json 冻结指 {mirror_wi}，"
+                f"检测到禁用镜像冻结指 {mirror_wi}，"
                 f"已自动 fallback 到最近活跃 work-item {work_item}。"
             )
             _write_active_state_mirror(ade_sdd, recent_data, work_item, recent_path)
@@ -364,12 +352,32 @@ def _infer_scale_for_work_item(work_item: str, entry_node: str | None) -> tuple[
     return None
 
 
+def _default_scale_for_state_new(entry_node: str, work_item_id: str) -> str:
+    """Default new state scale by entry semantics instead of always using the large chain."""
+    marker = (entry_node or "").strip().upper()
+    item = (work_item_id or "").strip().upper()
+    if marker in {"TASK", "BUG", "OPT", "CONFIG"} or item.startswith(("BUG-", "OPT-", "CONFIG-", "TASK-")):
+        return "\u5fae"
+    if marker == "STORY":
+        return "\u5c0f"
+    if marker == "DR":
+        return "\u4e2d"
+    return "\u5927"
+
+
 def cmd_state_read(args, parser):
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
-    sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+    try:
+        sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+    except work_item_context.AmbiguousWorkItemError as e:
+        _emit_work_item_ambiguity(e, args)
+        return 1
+    except (work_item_context.NoWorkItemStateError, ValueError) as e:
+        _emit_state_resolution_error(e, args)
+        return 1
     # 🆕 2026-07-03 缺口2:高频命令补 span,记录"被执行过 + 当前 phase"。
     # 这些命令本身 <1ms,span 价值在留痕与判定结果,而非耗时分解。
     with runtime_stats.span("state:read", {"workItem": _work_item or ""}):
@@ -443,7 +451,7 @@ def cmd_state_new(args, parser):
         return 1
 
     cfg = paths.read_config(ade_sdd)
-    requested_scale = args.scale or "大"
+    requested_scale = args.scale or _default_scale_for_state_new(requested_entry_node, work_item_id)
 
     if use_nested and requested_entry_node in ("PRD", "DR", "STORY"):
         # 🆕 v3.9.3 R2 强制向上归入（递归算法）
@@ -470,6 +478,23 @@ def cmd_state_new(args, parser):
         # 若 R2 实际写到了不同的路径（嵌入父级 state），告知用户
         if str(final_sp) != str(sp):
             output.info(f"R2 向上归入：当前节点已嵌进父级 state {final_sp.parent.name}")
+
+        metadata_changed = False
+        final_work_item_key = final_sp.parent.name
+        if cfg.get("projectKey") and not final_st.get("projectKey"):
+            final_st["projectKey"] = cfg.get("projectKey")
+            metadata_changed = True
+        for key, value in (
+            ("scale", requested_scale),
+            ("workItemKey", final_work_item_key),
+            ("currentWorkItem", final_work_item_key),
+            ("stateMachineId", final_work_item_key),
+        ):
+            if value and not final_st.get(key):
+                final_st[key] = value
+                metadata_changed = True
+        if metadata_changed:
+            state.write_state(final_sp, final_st)
 
         if args.activate:
             _write_active_state_mirror(ade_sdd, final_st, final_sp.parent.name, final_sp)
@@ -532,9 +557,16 @@ def cmd_state_write(args, parser):
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
-    sp, work_item = _main_state_path_for_args(ade_sdd, args)
+    try:
+        sp, work_item = _main_state_path_for_args(ade_sdd, args)
+    except work_item_context.AmbiguousWorkItemError as e:
+        _emit_work_item_ambiguity(e, args)
+        return 1
+    except (work_item_context.NoWorkItemStateError, ValueError) as e:
+        _emit_state_resolution_error(e, args)
+        return 1
     # 🆕 v3.9.11：镜像冻结检测 — 防 life 项目事故复发
-    # 根因（v3.9.10 life 实测）：镜像 .ae-sdd/state.json 冻结指 STORY-005 completed，
+    # 根因（v3.9.10 life 实测）：项目级镜像曾冻结指向 STORY-005 completed，
     #   但 .auto-engineering/ 下另有活跃 STORY-003 work-item。
     #   用户跑 `ae-sdd state write --phase testcase-generated`（未传 --story）时，
     #   _main_state_path_for_args 走 _active_state_from_mirror → 拿到 STORY-005 路径 →
@@ -542,12 +574,12 @@ def cmd_state_write(args, parser):
     # 修复：state write 入口先做健康检查，发现镜像指向的 work-item 与 .auto-engineering/ 下
     #   真实活跃 work-item 不一致时，输出 warn + 自动 fallback 到 work-item 源路径
     #   （按 mtime 选最近活跃），并写回正确镜像。force 参数允许显式锁定旧镜像。
-    if not getattr(args, "project_state", False) and not getattr(args, "force", False):
-        _check_and_recover_stuck_mirror(ade_sdd, work_item, sp)
+    # Project-global mirror recovery is intentionally disabled. State is
+    # resolved only from explicit/session/work-item scoped files.
     if not work_item and not getattr(args, "project_state", False):
         output.err("未找到 active work item。新需求必须先创建独立状态机：")
         output.info('  ae-sdd state new --id <ID> --name "<需求名>"')
-        output.info("若确实要维护 legacy 项目级 state，请显式加 --project-state。")
+        output.info("请使用 --work-item 指定任务级 state，或先运行 ae-sdd state new 创建 work-item state。")
         return 1
     s = state.read_state(sp)
     cfg = paths.read_config(ade_sdd)
@@ -644,7 +676,7 @@ def cmd_state_relocate(args, parser):
 
     流程：
       1. 按 --story 扫描现有嵌套 state，定位其所属 state
-      2. 把 .ae-sdd/state.json 镜像切到该 state
+      2. 记录到任务级/session scoped state，不写项目级镜像
       3. 若非 --no-reset，重置该 Story 子状态到 story-generated（R5）
     """
     ade_sdd = paths.locate_project_ae_sdd()
@@ -692,7 +724,14 @@ def cmd_state_next_step(args, parser):
     if ade_sdd is None:
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
-    sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+    try:
+        sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+    except work_item_context.AmbiguousWorkItemError as e:
+        _emit_work_item_ambiguity(e, args)
+        return 1
+    except (work_item_context.NoWorkItemStateError, ValueError) as e:
+        _emit_state_resolution_error(e, args)
+        return 1
     s = state.read_state(sp)
     suggestion = state.next_step_suggestion(s)
     # 🆕 2026-07-03 缺口2:记录 next-step 判定结果(当前 phase → 建议 next),便于回溯流程跳转。
@@ -1474,7 +1513,11 @@ def cmd_ra_gate(args, parser):
             from lib import session as session_mod
             story_scope = (getattr(args, "story", "") or "").strip()
             if not story_scope:
-                story_scope = state.get_active_story(state.read_state(paths.state_path(ade_sdd))) or ""
+                try:
+                    resolved_state = work_item_context.resolve_default_state(ade_sdd)
+                    story_scope = state.get_active_story(resolved_state.data) or resolved_state.key
+                except work_item_context.AmbiguousWorkItemError:
+                    story_scope = ""
             if not session_mod.has_valid_entry_token(ade_sdd, story_scope):
                 entry_warn = "未领 entry token（建议先跑 `ae-sdd enter <projectKey> --story <STORY-ID>`）"
         except Exception:
@@ -1711,9 +1754,12 @@ def cmd_context_pressure(args, parser):
     ade_sdd = paths.locate_project_ae_sdd()
     story_id = _work_item_arg(args)
     if not story_id and ade_sdd is not None:
-        active = _active_state_from_mirror(ade_sdd)
-        if active is not None:
-            _sp, story_id = active
+        try:
+            resolved_state = work_item_context.resolve_default_state(ade_sdd)
+            story_id = resolved_state.key
+        except work_item_context.AmbiguousWorkItemError as e:
+            _emit_work_item_ambiguity(e, args)
+            return 1
     report = cp_mod.run_all(ade_sdd, story_id)
 
     if args.json:
@@ -1759,12 +1805,20 @@ def _resolve_state_path(args):
         sp, resolved_key = _main_state_path_for_args(ade_sdd, args)
         return ade_sdd, work_item or resolved_key, sp
     if getattr(args, "project_state", False):
-        return ade_sdd, "", paths.state_path(ade_sdd)
-    active = _active_state_from_mirror(ade_sdd)
-    if active is not None:
-        sp, active_key = active
-        return ade_sdd, active_key, sp
-    return ade_sdd, "", paths.state_path(ade_sdd)
+        raise ValueError("project-level .ae-sdd/state.json is not supported; use --work-item")
+    resolved = work_item_context.resolve_default_state(ade_sdd)
+    return ade_sdd, resolved.key, resolved.path
+
+
+def _resolve_state_path_or_error(args):
+    try:
+        return _resolve_state_path(args)
+    except work_item_context.AmbiguousWorkItemError as e:
+        _emit_work_item_ambiguity(e, args)
+        return None
+    except (work_item_context.NoWorkItemStateError, ValueError) as e:
+        _emit_state_resolution_error(e, args)
+        return None
 
 
 def cmd_review_loop_start(args, parser):
@@ -1775,7 +1829,10 @@ def cmd_review_loop_start(args, parser):
     """
     from lib import review_loop as rl_mod
     from lib import state as state_mod
-    ade_sdd, story_id, sp = _resolve_state_path(args)
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
     result = rl_mod.start(st, args.node, args.ra_size, args.decision_hints or "")
     state_mod.write_state(sp, st)
@@ -1796,7 +1853,10 @@ def cmd_review_loop_collect(args, parser):
     from lib import review_loop as rl_mod
     from lib import state as state_mod
     from lib import session as session_mod
-    ade_sdd, story_id, sp = _resolve_state_path(args)
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
 
     # 读 root sessionId
@@ -1865,7 +1925,10 @@ def cmd_review_loop_status(args, parser):
     """review-loop status — 读进度（report-only，重入用）。"""
     from lib import review_loop as rl_mod
     from lib import state as state_mod
-    ade_sdd, story_id, sp = _resolve_state_path(args)
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
     result = rl_mod.status(st)
     if args.json:
@@ -1882,7 +1945,10 @@ def cmd_review_loop_verify_exit(args, parser):
     """review-loop verify-exit — 退出条件校验（gates G-REVIEW-LOOP 兜底用）。"""
     from lib import review_loop as rl_mod
     from lib import state as state_mod
-    ade_sdd, story_id, sp = _resolve_state_path(args)
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
     passed, reason = rl_mod.verify_exit(st.get("reviewLoop") or {})
     if args.json:
@@ -2082,7 +2148,10 @@ def cmd_preflight_collect(args, parser):
 def cmd_state_register_review_consensus(args, parser):
     """state register-review-consensus — 写联审共识结果到 state.reviewConsensus[point]。"""
     from lib import state as state_mod
-    ade_sdd, story_id, sp = _resolve_state_path(args)
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
     reviewers = []
     if args.reviewers:
@@ -2113,7 +2182,10 @@ def cmd_state_lock(args, parser):
     冲突时退出码 1 并输出持锁方信息（供 agent 协调后重试）。
     """
     from lib import state as state_mod
-    ade_sdd, story_id, sp = _resolve_state_path(args)
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
     ok, reason = state_mod.acquire_file_lock(st, args.path, args.agent, args.ttl)
     if not ok:
@@ -2130,7 +2202,10 @@ def cmd_state_unlock(args, parser):
     用法：ae-sdd state unlock --path <相对路径> --agent <agentId>
     """
     from lib import state as state_mod
-    ade_sdd, story_id, sp = _resolve_state_path(args)
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
     released = state_mod.release_file_lock(st, args.path, args.agent)
     if not released:
@@ -2275,7 +2350,7 @@ def _resolve_top_node_from_token(ade_sdd: Path, token: str, args) -> tuple[str, 
     """
     if not token:
         # 尝试从 active mirror
-        active = _active_state_from_mirror(ade_sdd)
+        active = None
         if active is not None:
             sp, _ = active
             try:
@@ -2834,6 +2909,7 @@ def cmd_gate_intercept(args, parser):
     file_path = args.file_path or None
 
     input_data = _read_stdin_json()
+    session_key = work_item_context.session_key_from_payload(input_data)
     if input_data:
         tool_name = tool_name or input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input", {})
@@ -2884,6 +2960,7 @@ def cmd_gate_intercept(args, parser):
                 file_path=file_path,
                 allow_readonly=not args.no_readonly,
                 project_dir=project_dir,
+                session_key=session_key,
             )
             _gi_span.attrs["allowed"] = allowed
             _gi_span.attrs["reason"] = reason[:120] if reason else ""
@@ -3059,6 +3136,7 @@ def cmd_prompt_inject(args, parser):
     input_data: dict = _read_stdin_json()
 
     user_prompt = input_data.get("user_prompt", "")
+    session_key = work_item_context.session_key_from_payload(input_data)
     project_dir = Path(args.project) if args.project else None
     # 🆕 2026-07-03 缺口2:prompt-inject 是高频 UserPromptSubmit hook,此前零 span。
     # span 记录是否注入了 ae-sdd 上下文(promptLen/injected),量化 hook 实际作用率。
@@ -3066,7 +3144,7 @@ def cmd_prompt_inject(args, parser):
         with runtime_stats.span("prompt-inject",
                                 {"promptLen": len(user_prompt),
                                  "hasProject": project_dir is not None}) as _pi_span:
-            result = prompt_inject.inject(project_dir=project_dir, user_prompt=user_prompt)
+            result = prompt_inject.inject(project_dir=project_dir, user_prompt=user_prompt, session_key=session_key)
             _pi_span.attrs["injected"] = bool(result)
     except Exception:
         # 任何异常（state.json 损坏等）→ 放行（不注入），不阻断对话
@@ -3224,6 +3302,91 @@ def _build_index(args):
         return None, project_key, cache_path
     idx = assets_index.AssetsIndex.build_from_file(asset_path, cache_path=cache_path)
     return idx, project_key, cache_path
+
+
+def _resolve_assets_workspace(args) -> tuple[Path | None, str]:
+    """Resolve .ae-sdd and projectKey for assets maintenance commands."""
+    project_dir_arg = getattr(args, "project_dir", "") or ""
+    ade_sdd = None
+    if project_dir_arg:
+        candidate = Path(project_dir_arg).expanduser().resolve()
+        if candidate.name == ".ae-sdd" and paths.config_path(candidate).is_file():
+            ade_sdd = candidate
+        else:
+            ade_sdd = paths.locate_project_ae_sdd(candidate)
+    else:
+        ade_sdd = paths.locate_project_ae_sdd()
+
+    project_key = ""
+    if ade_sdd:
+        cfg = paths.read_config(ade_sdd)
+        project_key = cfg.get("projectKey") or cfg.get("workspaceKey") or ""
+    if getattr(args, "project", ""):
+        project_key = args.project
+    return ade_sdd, project_key
+
+
+def cmd_assets_generate(args, parser):
+    """assets generate — create or repair the project asset baseline."""
+    ade_sdd, project_key = _resolve_assets_workspace(args)
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/config.yaml，请先运行 ae-sdd init <project-dir> <projectKey>")
+        return 1
+    if not project_key:
+        output.err("未提供 projectKey，且 .ae-sdd/config.yaml 无 projectKey/workspaceKey")
+        return 1
+
+    source_asset = None
+    if getattr(args, "asset_file", ""):
+        source_asset = Path(args.asset_file).expanduser()
+        if not source_asset.is_file():
+            output.err(f"--asset-file 不存在: {source_asset}")
+            return 1
+
+    result = project_assets.generate_project_assets(
+        ade_sdd,
+        project_key,
+        project_root=paths.project_root(ade_sdd),
+        force=bool(getattr(args, "force", False)),
+        source_asset=source_asset,
+    )
+
+    if args.json:
+        output.emit(result.to_dict(), as_json=True)
+    else:
+        if result.changed:
+            output.ok(f"项目资产已生成: {result.asset_file}")
+        else:
+            output.ok(f"项目资产已存在且完整: {result.asset_file}")
+        if result.backup_file:
+            output.info(f"备份: {result.backup_file}")
+        if result.missing_after:
+            output.err(f"仍缺索引层: {', '.join(result.missing_after)}")
+
+    return 0 if result.pass_ else 1
+
+
+def cmd_assets_check(args, parser):
+    """assets check — verify project asset existence and G-00 sections."""
+    ade_sdd, project_key = _resolve_assets_workspace(args)
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/config.yaml，请先运行 ae-sdd init <project-dir> <projectKey>")
+        return 1
+    if not project_key:
+        output.err("未提供 projectKey，且 .ae-sdd/config.yaml 无 projectKey/workspaceKey")
+        return 1
+
+    result = project_assets.check_asset(ade_sdd, project_key)
+    if args.json:
+        output.emit(result, as_json=True)
+    elif result["pass"]:
+        output.ok(f"项目资产完整: {result['assetFile']}")
+    else:
+        output.err(
+            f"项目资产未就绪: {result['assetFile']} "
+            f"(missing={result['missingSections']}, exists={result['exists']})"
+        )
+    return 0 if result["pass"] else 1
 
 
 def cmd_assets_query(args, parser):
@@ -3742,8 +3905,8 @@ def cmd_health(args, parser):
     state_ok = False
     state_msg = "（无 .ae-sdd/）"
     if ade_sdd:
-        sp = paths.state_path(ade_sdd)
-        if sp.is_file():
+        sp = None
+        if False:
             try:
                 json.loads(sp.read_text(encoding="utf-8"))
                 state_ok = True
@@ -3762,16 +3925,16 @@ def cmd_health(args, parser):
                 if candidates:
                     state_ok = True
                     state_msg = (
-                        f"镜像 .ae-sdd/state.json 缺失；已 fallback 到 work-item 源 "
+                        f"work-item state source found "
                         f"({len(candidates)} 个：{', '.join(c.name for c in candidates[:3])}"
                         f"{'...' if len(candidates) > 3 else ''})"
                     )
                 else:
-                    state_msg = f"镜像不存在: {sp}; .auto-engineering/ 也没有 work-item state.json（项目未初始化或全部 reset）"
+                    state_msg = f".auto-engineering/ has no work-item state.json"
             else:
-                state_msg = f"不存在: {sp}"
+                state_msg = ".auto-engineering/ does not exist"
     items.append({
-        "name": "state.json 可定位",
+        "name": "work-item state.json 可定位",
         "pass": state_ok,
         "message": state_msg,
     })
@@ -4038,13 +4201,13 @@ def main() -> int:
     p_state_read.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名（PRD/BUG/OPT/Story 均可）")
     p_state_read.add_argument("--story", default="", help="兼容参数：等价于 --work-item，且作为 currentStory")
     p_state_read.add_argument("--project-state", action="store_true",
-                              help="显式读取 legacy 项目级 .ae-sdd/state.json（默认读取 active 状态机）")
+                              help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_state_read.set_defaults(func=cmd_state_read)
     p_state_next = state_sub.add_parser("next-step", help="下一步建议", parents=[common])
     p_state_next.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名（PRD/BUG/OPT/Story 均可）")
     p_state_next.add_argument("--story", default="", help="兼容参数：等价于 --work-item")
     p_state_next.add_argument("--project-state", action="store_true",
-                              help="显式读取 legacy 项目级 .ae-sdd/state.json（默认读取 active 状态机）")
+                              help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_state_next.set_defaults(func=cmd_state_next_step)
     p_state_write = state_sub.add_parser("write", help="更新 state", parents=[common])
     p_state_write.add_argument("--phase", required=True, help="新 phase")
@@ -4058,7 +4221,7 @@ def main() -> int:
     p_state_write.add_argument("--allow-empty-memory", action="store_true",
                                help="maintenance override: allow phase transition without mandatory memory")
     p_state_write.add_argument("--project-state", action="store_true",
-                               help="显式写 legacy 项目级 .ae-sdd/state.json；新需求默认不允许")
+                               help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     # 🆕 v3.9.0 嵌套 state 支持
     p_state_write.add_argument("--add-story", default="",
                                help="🆕 v3.9.0 向嵌套 state 的 storyStates 新增一条 Story 子状态（R2 归入）")
@@ -4123,7 +4286,7 @@ def main() -> int:
     p_state_rrc.add_argument("--story", default="", help="Story ID（空=项目级）")
     p_state_rrc.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_state_rrc.add_argument("--project-state", action="store_true",
-                             help="显式写 legacy 项目级 .ae-sdd/state.json")
+                             help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_state_rrc.add_argument("--point", type=float, required=True,
                              help="审核点编号（1/1.5/2/2.5/4/5）")
     p_state_rrc.add_argument("--tier", type=int, default=3, help="reviewer Tier（自动化模式固定 3）")
@@ -4142,7 +4305,7 @@ def main() -> int:
     p_state_lock.add_argument("--story", default="", help="Story ID（空=项目级）")
     p_state_lock.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_state_lock.add_argument("--project-state", action="store_true",
-                              help="显式写 legacy 项目级 .ae-sdd/state.json")
+                              help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_state_lock.add_argument("--path", required=True,
                               help="产物文件相对路径（相对 project_dir，正斜杠）")
     p_state_lock.add_argument("--agent", required=True, help="申请锁的 agent 标识")
@@ -4156,7 +4319,7 @@ def main() -> int:
     p_state_unlock.add_argument("--story", default="", help="Story ID（空=项目级）")
     p_state_unlock.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_state_unlock.add_argument("--project-state", action="store_true",
-                                help="显式写 legacy 项目级 .ae-sdd/state.json")
+                                help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_state_unlock.add_argument("--path", required=True, help="产物文件相对路径")
     p_state_unlock.add_argument("--agent", required=True, help="释放锁的 agent 标识")
     p_state_unlock.set_defaults(func=cmd_state_unlock)
@@ -4342,7 +4505,7 @@ def main() -> int:
     p_rl_start.add_argument("--story", default="", help="Story ID（空 = 项目级）")
     p_rl_start.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_rl_start.add_argument("--project-state", action="store_true",
-                            help="显式写 legacy 项目级 .ae-sdd/state.json")
+                            help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_rl_start.add_argument("--node", required=True,
                              help="review 节点（story-review/dr-review/code-review/ra-review）")
     p_rl_start.add_argument("--ra-size", default="中", help="RA 规模（微/小/中/大）")
@@ -4354,7 +4517,7 @@ def main() -> int:
     p_rl_collect.add_argument("--story", default="", help="Story ID")
     p_rl_collect.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_rl_collect.add_argument("--project-state", action="store_true",
-                              help="显式写 legacy 项目级 .ae-sdd/state.json")
+                              help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_rl_collect.add_argument("--node", required=True, help="review 节点")
     p_rl_collect.add_argument("--reports", default="", help="报告列表（path|sessionId 或 path，逗号分隔）")
     p_rl_collect.add_argument("--session-ids", default="", help="sessionId 列表（逗号分隔，与 reports 对齐）")
@@ -4366,14 +4529,14 @@ def main() -> int:
     p_rl_status.add_argument("--story", default="", help="Story ID")
     p_rl_status.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_rl_status.add_argument("--project-state", action="store_true",
-                             help="显式读取 legacy 项目级 .ae-sdd/state.json")
+                             help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_rl_status.set_defaults(func=cmd_review_loop_status)
 
     p_rl_verify = rl_sub.add_parser("verify-exit", help="退出条件校验（gates 兜底用）", parents=[common])
     p_rl_verify.add_argument("--story", default="", help="Story ID")
     p_rl_verify.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名；不传则跟随 active 状态机")
     p_rl_verify.add_argument("--project-state", action="store_true",
-                             help="显式读取 legacy 项目级 .ae-sdd/state.json")
+                             help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_rl_verify.set_defaults(func=cmd_review_loop_verify_exit)
 
     # memory toolset (P0): mandatory phase-aware memory hooks
@@ -4592,6 +4755,18 @@ def main() -> int:
     # 对标 project-assets-update-skill §G：assets.query/search/outline/section/stats
     p_assets = sub.add_parser("assets", help="项目资产 ES 化索引查询", parents=[common])
     assets_sub = p_assets.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    p_assets_generate = assets_sub.add_parser("generate", help="生成或修复项目资产 baseline（补齐 G-00 §A-§G）", parents=[common])
+    p_assets_generate.add_argument("--project", default="", help="projectKey（默认从 .ae-sdd/config.yaml 读）")
+    p_assets_generate.add_argument("--project-dir", default="", help="项目根目录或 .ae-sdd 目录（默认 cwd 向上查找）")
+    p_assets_generate.add_argument("--asset-file", default="", help="从已有 .assets.md 复制；缺 §A-§G 时自动降级为 baseline")
+    p_assets_generate.add_argument("--force", action="store_true", help="覆盖已有完整资产（覆盖前生成 .bak-* 备份）")
+    p_assets_generate.set_defaults(func=cmd_assets_generate)
+
+    p_assets_check = assets_sub.add_parser("check", help="检查项目资产是否存在且包含 G-00 §A-§G", parents=[common])
+    p_assets_check.add_argument("--project", default="", help="projectKey（默认从 .ae-sdd/config.yaml 读）")
+    p_assets_check.add_argument("--project-dir", default="", help="项目根目录或 .ae-sdd 目录（默认 cwd 向上查找）")
+    p_assets_check.set_defaults(func=cmd_assets_check)
 
     p_assets_query = assets_sub.add_parser("query", help="给 key 返回倒排索引命中（BM25 排序）", parents=[common])
     p_assets_query.add_argument("query", help="查询关键词（支持 camelCase / 中文）")

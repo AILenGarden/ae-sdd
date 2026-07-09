@@ -251,17 +251,21 @@ def run_all(ade_sdd: Optional[Path], story_id: str = "") -> PressureReport:
 
     # 2. state.json → events.length + history.length + activeAgents.length
     if ade_sdd is not None:
-        from lib import state as state_mod
         from lib import paths as paths_mod
-        # state.json 路径：项目级为 .ae-sdd/state.json；Story 级兼容 R6 与 legacy work-item 目录
+        from lib import state as state_mod
+        from lib import work_item_context
+        # state.json path is always task-scoped under .auto-engineering/.
         if story_id:
             sp = (
                 paths_mod.find_work_item_state_path(ade_sdd, story_id)
                 or paths_mod.project_root(ade_sdd) / ".auto-engineering" / story_id / "state.json"
             )
         else:
-            sp = paths_mod.state_path(ade_sdd)
-        st = state_mod.read_state(sp)
+            try:
+                sp = work_item_context.resolve_default_state(ade_sdd).path
+            except Exception:
+                sp = None
+        st = state_mod.read_state(sp) if sp is not None else {}
         if isinstance(st, dict):
             signals["events"] = len(st.get("events") or [])
             signals["historyLen"] = len(st.get("history") or [])

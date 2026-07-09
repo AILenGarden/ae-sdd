@@ -194,6 +194,11 @@ def _state_matches_work_item(state_data: dict, token: str) -> bool:
     }
     candidates.update(state_data.get("storyIds") or [])
     candidates.update((state_data.get("storyStates") or {}).keys())
+    for dr_id, dr_state in (state_data.get("drStates") or {}).items():
+        candidates.add(dr_id)
+        if isinstance(dr_state, dict):
+            candidates.add(dr_state.get("drId"))
+            candidates.update((dr_state.get("storyStates") or {}).keys())
     tokens = {token}
     if "--" in token:
         tokens.add(token.split("--", 1)[0])
@@ -699,6 +704,9 @@ def find_nested_state_by_story_id(ade_sdd: Path,
         story_states = data.get("storyStates") or {}
         if story_id in story_states:
             return (state_path, data)
+        for dr_state in (data.get("drStates") or {}).values():
+            if isinstance(dr_state, dict) and story_id in (dr_state.get("storyStates") or {}):
+                return (state_path, data)
     return None
 
 
@@ -718,6 +726,12 @@ def find_nested_state_by_dr_id(ade_sdd: Path,
     if not dr_id:
         return None
     for state_path, data in _scan_nested_states(ade_sdd):
+        dr_states = data.get("drStates") or {}
+        if dr_id in dr_states:
+            return (state_path, data)
+        for dr_state in dr_states.values():
+            if isinstance(dr_state, dict) and dr_state.get("drId") == dr_id:
+                return (state_path, data)
         dr_state = data.get("drState") or {}
         if dr_state.get("drId") == dr_id:
             return (state_path, data)
@@ -750,6 +764,8 @@ def find_nested_state_by_prd_id(ade_sdd: Path,
 _PARENT_CLAIM_PATTERNS = {
     # Story 模板元信息章节（list-style）："- 来源 PRD: PRD-001" / "- 来源 DR: DR-005"
     "story": [
+        (re.compile(r"^\s*-\s*(?:Source\s+)?PRD\s*[:：]\s*([A-Za-z0-9\-_]+)", re.IGNORECASE | re.MULTILINE), "prd"),
+        (re.compile(r"^\s*-\s*(?:Source\s+)?DR\s*[:：]\s*([A-Za-z0-9\-_]+)", re.IGNORECASE | re.MULTILINE), "dr"),
         (re.compile(r"来源\s*PRD\s*[:：]\s*([A-Za-z0-9\-_]+)", re.IGNORECASE), "prd"),
         (re.compile(r"来源\s*DR\s*[:：]\s*([A-Za-z0-9\-_]+)", re.IGNORECASE), "dr"),
     ],

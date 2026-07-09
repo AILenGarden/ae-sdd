@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import paths, runtime_exec, runtime_stats, state as state_mod  # noqa: E402
+from lib import paths, runtime_exec, runtime_stats, state as state_mod, work_item_context  # noqa: E402
 
 
 @dataclass
@@ -180,89 +180,6 @@ def check_g00(master_source: Optional[Path], ade_sdd: Optional[Path], project_ke
         return GateResult("G-00", name, "blocker", False,
                           f"项目资产不存在: .ae-sdd/assets/{project_key}/{project_key}.assets.md（或旧位置 assets/{project_key}.assets.md）",
                           f"运行: ae-sdd init <project-dir> {project_key} --asset-path <已有资产>（资产路径模型见 document-storage §2.3）")
-
-    # 🆕 v3.9.11：G-00 镜像可缺 + 镜像-源一致性硬约束
-    # 根因：v3.9.8 fix 1d8ea01 让 CLI 入口（state read / next-step / health）支持 mirror-fallback，
-    #   但 G-00 阻塞门禁没跟进：删了镜像 G-00 仍报"项目骨架不完整"。
-    #   此外 v3.9.10 复盘 life 项目事故：镜像存在但冻结指旧的 STORY-005（completed），
-    #   当前活跃 STORY-003 的 work-item 源 phase=testcase-generated 才是真值——
-    #   G-00 此前只检查镜像存在，不校验镜像和源的 activeStory/phase 一致性，
-    #   导致「镜像误指」成为隐性反模式。
-    # 修复（v3.9.11 二段防御）：
-    #   (a) 镜像缺失时：降级校验 work-items_dir 下至少存在一个 work-item state.json
-    #       且当前活跃 work-item state 含 phase 字段（hook 链路完整性）。
-    #   (b) 镜像存在时：校验镜像的 activeStory / currentWorkItem 必须能定位到
-    #       work-item 源 state.json，且源的 phase 字段存在；
-    #       镜像指死 work-item（activeStatePath 不存在）→ G-00 阻断并给修复指令。
-    # 这两条共同堵死「镜像反模式 + 镜像误指」两条复发路径。
-    from lib import state as state_mod  # 局部 import 避免循环
-    work_items_root = paths.work_items_dir(ade_sdd)
-    mirror_path = paths.state_path(ade_sdd)
-    mirror_exists = mirror_path.is_file()
-    mirror_data: dict = {}
-    if mirror_exists:
-        try:
-            mirror_data = state_mod.read_state(mirror_path) or {}
-        except Exception:
-            mirror_data = {}
-
-    if not mirror_exists:
-        # (a) 镜像缺失：降级校验
-        if not work_items_root.is_dir():
-            missing.append("state.json (.auto-engineering/ 也不存在)")
-        else:
-            candidate_states = sorted(
-                p for p in work_items_root.glob("*/state.json") if p.is_file()
-            )
-            if not candidate_states:
-                missing.append("state.json (.auto-engineering/ 下无 work-item state)")
-            else:
-                # 无镜像时按 mtime 选最近活跃 work-item
-                candidate_states.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                active_story = candidate_states[0].parent.name
-                wi_path = paths.find_work_item_state_path(ade_sdd, active_story)
-                if wi_path is None or not wi_path.is_file():
-                    missing.append(f"state.json (activeStory={active_story} 对应 work-item state 不存在)")
-                else:
-                    try:
-                        wi_data = state_mod.read_state(wi_path)
-                        if not wi_data.get("phase"):
-                            missing.append(
-                                f"state.json (activeStory={active_story} work-item state 缺 phase 字段)"
-                            )
-                    except Exception as e:
-                        missing.append(
-                            f"state.json (activeStory={active_story} work-item state 解析失败: {e})"
-                        )
-    else:
-        # (b) 镜像存在：校验 activeStory/activeStatePath 一致性
-        active_story = (
-            mirror_data.get("activeStory")
-            or mirror_data.get("currentStory")
-            or mirror_data.get("activeWorkItem")
-            or mirror_data.get("currentWorkItem")
-            or ""
-        ).strip()
-        if not active_story:
-            missing.append("state.json 镜像存在但缺 activeStory/currentStory/activeWorkItem 锚点字段")
-        else:
-            wi_path = paths.find_work_item_state_path(ade_sdd, active_story)
-            if wi_path is None or not wi_path.is_file():
-                missing.append(
-                    f"state.json 镜像 activeStory={active_story!r} 但对应 work-item state.json 不存在"
-                    f"（镜像指死，建议删除镜像或 `ae-sdd state relocate --story {active_story}`）"
-                )
-            else:
-                try:
-                    wi_data = state_mod.read_state(wi_path)
-                    if not wi_data.get("phase"):
-                        missing.append(
-                            f"state.json 镜像 activeStory={active_story} 对应 work-item state 缺 phase 字段"
-                        )
-                except Exception as e:
-                    missing.append(
-                        f"state.json 镜像 activeStory={active_story} 对应 work-item state 解析失败: {e}"
-                    )
 
     if missing:
         return GateResult("G-00", name, "blocker", False,
@@ -2850,7 +2767,10 @@ def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
 
     # 读 state（如果 .ae-sdd 存在）
     if ade_sdd:
-        st = state_mod.read_state(paths.state_path(ade_sdd))
+        try:
+            st = work_item_context.resolve_default_state(ade_sdd).data
+        except (work_item_context.NoWorkItemStateError, work_item_context.AmbiguousWorkItemError):
+            st = {"phase": "initialized", "currentStory": None}
     else:
         st = {"phase": "initialized", "currentStory": None}
     current_story = state_mod.get_active_story(st) or ""

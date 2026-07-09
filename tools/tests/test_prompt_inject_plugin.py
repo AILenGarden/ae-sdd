@@ -45,6 +45,34 @@ def _run_prompt_inject_cli(project_dir: Path, payload: dict) -> dict:
     return json.loads(raw or "{}")
 
 
+def _write_nested_work_item(tmp: Path, name: str, story_id: str, phase: str) -> Path:
+    state_path = tmp / ".auto-engineering" / name / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": "2",
+        "projectKey": "test-proj",
+        "stateModel": "nested",
+        "entryNode": "STORY",
+        "stateMachineId": name,
+        "workItemKey": name,
+        "currentWorkItem": name,
+        "scale": "小",
+        "activeStory": story_id,
+        "storyStates": {
+            story_id: {
+                "phase": phase,
+                "completedSteps": [],
+                "codingRound": 0,
+                "lastUpdated": "2026-07-09T00:00:00Z",
+                "resetHistory": [],
+            }
+        },
+        "history": [],
+    }
+    state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return state_path
+
+
 def _make_project_with_plugin(tmp: Path, skill_target: str = "coding-skill.md") -> Path:
     """构造一个带 L1 项目层外挂注册表的项目目录，返回其 .ae-sdd 路径。
 
@@ -79,12 +107,7 @@ def _make_project_with_plugin(tmp: Path, skill_target: str = "coding-skill.md") 
     # 让 phase 停在会触发 skill=coding-skill.md 的阶段
     # 🆕 v3.5.16: coding-process → coding（skill=coding-skill.md）
     # （旧 task-reviewed → coding-skill.md 已变更：task-reviewed 现指向 coding-process-skill.md）
-    # 注意：state.json 直接在 .ae-sdd/ 根下（见 paths.state_path），不是 .auto-engineering/<story>/
-    import json
-    (ade_sdd / "state.json").write_text(json.dumps({
-        "phase": "coding-process",
-        "currentStory": "STORY-001",
-    }), encoding="utf-8")
+    _write_nested_work_item(tmp, "Story-001", "STORY-001", "coding-process")
 
     return ade_sdd
 
@@ -147,11 +170,7 @@ class TestInjectPluginLine(unittest.TestCase):
         ade_sdd = tmp / ".ae-sdd"
         ade_sdd.mkdir(parents=True)
         import json
-        # state.json 直接在 .ae-sdd/ 根下（见 paths.state_path）
-        (ade_sdd / "state.json").write_text(json.dumps({
-            "phase": "task-reviewed",
-            "currentStory": "STORY-001",
-        }), encoding="utf-8")
+        _write_nested_work_item(tmp, "Story-001", "STORY-001", "task-reviewed")
         (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
 
         payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
@@ -159,6 +178,43 @@ class TestInjectPluginLine(unittest.TestCase):
         self.assertNotIn("plugin:", msg)
         # 原 skill 行仍在
         self.assertIn("skill:", msg)
+
+
+class TestPromptInjectParallelWorkItemIsolation(unittest.TestCase):
+    """Prompt hook must not consume a stale project-global mirror in multi-work-item projects."""
+
+    def _make_multi_work_item_project(self) -> tuple[Path, Path, Path]:
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-parallel-"))
+        ade_sdd = tmp / ".ae-sdd"
+        ade_sdd.mkdir(parents=True)
+        (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
+        sp_a = _write_nested_work_item(tmp, "Story-004", "STORY-004-BE", "story-generated")
+        sp_b = _write_nested_work_item(tmp, "Story-005", "STORY-005-BE", "coding")
+        mirror = json.loads(sp_a.read_text(encoding="utf-8"))
+        mirror["activeWorkItem"] = "Story-004"
+        mirror["activeStatePath"] = str(sp_a)
+        (ade_sdd / "state.json").write_text(json.dumps(mirror, ensure_ascii=False), encoding="utf-8")
+        return tmp, sp_a, sp_b
+
+    def test_inject_mentioned_story_uses_matching_work_item_not_mirror(self):
+        tmp, _, _ = self._make_multi_work_item_project()
+
+        payload = prompt_inject.inject(project_dir=tmp, user_prompt="/ae-sdd 处理 STORY-005-BE")
+        msg = _additional_context(payload)
+
+        self.assertIn("STORY-005-BE", msg)
+        self.assertNotIn("story:    STORY-004-BE", msg)
+
+    def test_inject_blocks_ambiguous_multi_work_item_without_story(self):
+        tmp, _, _ = self._make_multi_work_item_project()
+
+        payload = prompt_inject.inject(project_dir=tmp, user_prompt="/ae-sdd 继续")
+        msg = _additional_context(payload)
+
+        self.assertIn("--work-item", msg)
+        self.assertIn("Story-004", msg)
+        self.assertIn("Story-005", msg)
+        self.assertNotIn("story:    STORY-004-BE", msg)
 
     def test_inject_degrades_gracefully_on_resolve_failure(self):
         """plugin_loader 异常 → inject 仍返回有效 payload，不含 plugin 行。"""
@@ -177,10 +233,7 @@ class TestPromptInjectCli(unittest.TestCase):
         ade_sdd = tmp / ".ae-sdd"
         ade_sdd.mkdir(parents=True)
         (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
-        (ade_sdd / "state.json").write_text(json.dumps({
-            "phase": "ra-generated",
-            "currentStory": "REQ-001",
-        }), encoding="utf-8")
+        _write_nested_work_item(tmp, "Story-REQ-001", "REQ-001", "ra-generated")
 
         payload = _run_prompt_inject_cli(tmp, {
             "hook_event_name": "UserPromptSubmit",

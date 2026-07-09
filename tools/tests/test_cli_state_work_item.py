@@ -87,6 +87,23 @@ class TestCmdStateNewV393(unittest.TestCase):
         self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
         sp = tmp / ".auto-engineering" / "Task-BUG-LIFE-001" / "state.json"
         self.assertTrue(sp.is_file())
+        payload = json.loads(sp.read_text(encoding="utf-8"))
+        self.assertEqual(payload["scale"], "微", "BUG/OPT/CONFIG 独立任务默认必须走微链")
+
+    def test_state_new_story_defaults_to_small_scale(self):
+        """Story 入口是小链，不应缺省成大链。"""
+        tmp = _setup_project()
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", "STORY-006-BE",
+            "--entry-node", "STORY",
+            "--story-ids", "STORY-006-BE",
+            "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        sp = tmp / ".auto-engineering" / "Story-006" / "state.json"
+        payload = json.loads(sp.read_text(encoding="utf-8"))
+        self.assertEqual(payload["scale"], "小")
 
     def test_state_new_legacy_name_flag_warns_and_ignores(self):
         """v3.9.3 --name 形参废除（传了被忽略，不报错）。"""
@@ -136,6 +153,44 @@ class TestCmdStateNewV393(unittest.TestCase):
         payload = json.loads(out)
         # Story 嵌进 DR-005 嵌套 state
         self.assertIn("DR-005", payload["statePath"])
+
+    def test_state_new_story_with_dr_parent_prd_doc_absorbs_into_prd_root(self):
+        """Story -> DR -> PRD resolves to the PRD root state, not a DR-local state."""
+        tmp = _setup_project()
+        design = tmp / "design"
+        design.mkdir()
+        (design / "PRD-001-product.md").write_text(
+            "# PRD-001\n\n## DR split\n\n- DR-005\n",
+            encoding="utf-8",
+        )
+        (design / "DR-005-some-title.md").write_text(
+            "# DR-005\n\n## Meta\n\n- PRD: PRD-001\n\n## Story split\n\n- STORY-006-BE\n",
+            encoding="utf-8",
+        )
+        (design / "STORY-006-BE-Story.md").write_text(
+            "# STORY-006-BE\n\n## Meta\n\n- Story ID: STORY-006-BE\n- Source DR: DR-005\n- DR: DR-005\n",
+            encoding="utf-8",
+        )
+        cfg = (tmp / ".ae-sdd" / "config.yaml")
+        cfg.write_text(f"projectKey: life\ndocWorkspacePath: {tmp}\n", encoding="utf-8")
+
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", "STORY-006-BE",
+            "--entry-node", "STORY",
+            "--story-ids", "STORY-006-BE",
+            "--json",
+        )
+
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertIn("PRD-001", payload["statePath"])
+        self.assertFalse((tmp / ".auto-engineering" / "DR-005" / "state.json").exists())
+        self.assertFalse((tmp / ".ae-sdd" / "state.json").exists())
+        prd_state = json.loads((tmp / ".auto-engineering" / "PRD-001" / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(prd_state["prdState"]["prdId"], "PRD-001")
+        self.assertIn("DR-005", prd_state.get("drStates", {}))
+        self.assertIn("STORY-006-BE", prd_state["drStates"]["DR-005"].get("storyStates", {}))
 
 
 # ─── v3.8.2 旧测试全部 SKIPPED（BREAKING 变更）────────────────────────────────
@@ -283,12 +338,11 @@ class TestStateMirrorMissingFallback(unittest.TestCase):
         tmp, state_file = self._setup_v397_work_item("Story-004")
         code, out, err = _run_cli(tmp, "health", "--json")
         payload = json.loads(out)
-        state_check = next((it for it in payload["items"] if it["name"] == "state.json 可定位"), None)
-        self.assertIsNotNone(state_check, "应改名后 'state.json 可定位' 检查项")
+        state_check = next((it for it in payload["items"] if it["name"] == "work-item state.json 可定位"), None)
+        self.assertIsNotNone(state_check, "应改名后 'work-item state.json 可定位' 检查项")
         self.assertTrue(state_check["pass"],
                         f"'state.json 可定位' 应通过；msg={state_check.get('message')}")
-        self.assertIn("fallback", state_check.get("message", "").lower(),
-                      "message 应明示走了 fallback 路径")
+        self.assertIn("work-item", state_check.get("message", "").lower())
         # 其他项（如 master-freshness）可能因测试 project 缺 .githooks/ 而 fail，
         # 但与镜像 fallback 无关——只断言目标项，不强求 code==0
 
@@ -299,11 +353,72 @@ class TestStateMirrorMissingFallback(unittest.TestCase):
         (tmp / ".ae-sdd" / "state.json").unlink(missing_ok=True)
         code, out, err = _run_cli(tmp, "health", "--json")
         payload = json.loads(out)
-        # health 仍可能 1 项 fail（master-freshness），但 'state.json 可定位' 应 fail
-        state_check = next((it for it in payload["items"] if it["name"] == "state.json 可定位"), None)
+        # health 仍可能 1 项 fail（master-freshness），但 work-item state 检查应 fail
+        state_check = next((it for it in payload["items"] if it["name"] == "work-item state.json 可定位"), None)
         self.assertIsNotNone(state_check)
         self.assertFalse(state_check["pass"],
                          "镜像和源都缺失时，'state.json 可定位' 应 fail")
+
+
+class TestParallelWorkItemIsolation(unittest.TestCase):
+    """多 work-item 时禁止默认消费全局 mirror，避免 A/B 会话串状态。"""
+
+    def _write_work_item(self, tmp: Path, name: str, story: str, phase: str) -> Path:
+        state_file = tmp / ".auto-engineering" / name / "state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "version": "2",
+            "projectKey": "life",
+            "stateModel": "nested",
+            "entryNode": "STORY",
+            "stateMachineId": name,
+            "workItemKey": name,
+            "currentWorkItem": name,
+            "scale": "小",
+            "activeStory": story,
+            "storyStates": {story: {
+                "phase": phase,
+                "completedSteps": [],
+                "codingRound": 0,
+                "lastUpdated": "2026-07-09T00:00:00Z",
+                "resetHistory": [],
+            }},
+            "history": [],
+        }
+        state_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return state_file
+
+    def test_state_read_without_work_item_blocks_when_multiple_sources_exist(self):
+        tmp = _setup_project()
+        sp_a = self._write_work_item(tmp, "Story-004", "STORY-004-BE", "testcase-generated")
+        self._write_work_item(tmp, "Story-005", "STORY-005-BE", "completed")
+        mirror = json.loads(sp_a.read_text(encoding="utf-8"))
+        mirror["activeWorkItem"] = "Story-004"
+        mirror["activeStatePath"] = str(sp_a)
+        (tmp / ".ae-sdd" / "state.json").write_text(json.dumps(mirror, ensure_ascii=False), encoding="utf-8")
+
+        code, out, err = _run_cli(tmp, "state", "read", "--json")
+
+        self.assertNotEqual(code, 0, msg="多 work-item 时不应静默读取全局 active mirror")
+        self.assertIn("--work-item", err + out)
+        self.assertIn("Story-004", err + out)
+        self.assertIn("Story-005", err + out)
+
+    def test_state_read_explicit_work_item_reads_target_not_mirror(self):
+        tmp = _setup_project()
+        sp_a = self._write_work_item(tmp, "Story-004", "STORY-004-BE", "testcase-generated")
+        self._write_work_item(tmp, "Story-005", "STORY-005-BE", "completed")
+        mirror = json.loads(sp_a.read_text(encoding="utf-8"))
+        mirror["activeWorkItem"] = "Story-004"
+        mirror["activeStatePath"] = str(sp_a)
+        (tmp / ".ae-sdd" / "state.json").write_text(json.dumps(mirror, ensure_ascii=False), encoding="utf-8")
+
+        code, out, err = _run_cli(tmp, "state", "read", "--work-item", "Story-005", "--json")
+
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["stateMachineId"], "Story-005")
+        self.assertEqual(payload["activeStory"], "STORY-005-BE")
 
 
 class TestStateWorkItemIsolationLegacy(unittest.TestCase):

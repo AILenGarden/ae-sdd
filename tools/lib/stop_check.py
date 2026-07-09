@@ -242,8 +242,8 @@ def _check_manual_review_point_format(ade_sdd: Path, response_text: str) -> str:
         return ""
 
     try:
-        from lib import paths, state as state_mod
-        st = state_mod.read_state(paths.state_path(ade_sdd))
+        from lib import work_item_context
+        st = work_item_context.resolve_default_state(ade_sdd).data
     except Exception:
         return ""
 

@@ -23,12 +23,22 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+from lib import project_assets  # noqa: E402
+
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
 
 
 # ─── 颜色（ANSI） ────────────────────────────────────────────────────────────
@@ -256,7 +266,7 @@ def init_project(
     print(f"  项目目录:   {project_dir}")
     print(f"  projectKey: {project_key}")
     print(f"  目标:       {target}")
-    print(f"  资产来源:   {asset_source if asset_source else '（不创建，从母版 schema 生成空模板）' if not no_asset else '（不创建）'}")
+    print(f"  资产来源:   {asset_source if asset_source else '（自动生成 baseline 资产）' if not no_asset else '（不创建）'}")
     print(f"  master 引用: {master_source_rel}")
     if dry_run:
         print(f"  ⚠  dry-run 模式 — 不会真改文件")
@@ -288,42 +298,31 @@ def init_project(
     (target / "config.yaml").write_text(config_content, encoding="utf-8")
     ok(f"已创建 {target/'config.yaml'}")
 
-    # ── state.json ──────────────────────────────────────────────────────────
-    step("生成 state.json")
-    state = json.loads(json.dumps(STATE_TEMPLATE))  # 深拷贝
-    state["projectKey"] = project_key
-    state["history"][0]["timestamp"] = timestamp
-    (target / "state.json").write_text(
-        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    ok(f"已创建 {target/'state.json'}")
+    # Project-level state is forbidden. A task-scoped state is created later
+    # via `ae-sdd state new --id <ID> --entry-node <PRD|DR|STORY|TASK>`.
+    step("跳过项目级 state.json")
+    info("state 将在 .auto-engineering/{WORKITEM}/state.json 中按任务创建")
 
     # ── 项目资产 ────────────────────────────────────────────────────────────
     step("项目资产")
     if no_asset:
         warn("跳过项目资产（--no-asset）")
-        warn("      后续可跑：python scripts/generate-assets.py " + project_key)
-    elif asset_source:
-        target_asset = target / "assets" / f"{project_key}.assets.md"
-        shutil.copy2(asset_source, target_asset)
-        ok(f"已复制 {asset_source} → {target_asset}")
+        warn("      后续可跑：ae-sdd assets generate --project " + project_key)
     else:
-        target_asset = target / "assets" / f"{project_key}.assets.md"
-        target_asset.write_text(
-            f"# {project_key} Project Assets — 项目资产实例（待生成）\n\n"
-            f"> 🆕 此文件是空模板，由 ae-sdd init 生成。\n"
-            f"> 下一步：跑 `python scripts/generate-assets.py {project_key}` "
-            f"按 project-assets-update-skill.md §3 动作 1 生成完整 7 层索引。\n\n"
-            f"## 元信息\n\n"
-            f"| 字段 | 值 |\n"
-            f"|------|---|\n"
-            f"| projectKey | `{project_key}` |\n"
-            f"| gitPath | `{project_dir}` |\n"
-            f"| lastAuditedAt | （待生成） |\n",
-            encoding="utf-8",
+        result = project_assets.generate_project_assets(
+            target,
+            project_key,
+            project_root=project_dir,
+            force=True,
+            source_asset=asset_source,
         )
-        warn(f"已创建空模板 {target_asset}（待生成完整内容）")
+        if result.pass_:
+            if asset_source:
+                ok(f"已复制并校验 {asset_source} → {result.asset_file}")
+            else:
+                ok(f"已自动生成 baseline 项目资产 {result.asset_file}")
+        else:
+            warn(f"项目资产生成后仍缺索引层: {', '.join(result.missing_after)}")
 
     # ── overrides/README.md ─────────────────────────────────────────────────
     step("生成 overrides/README.md")
@@ -349,11 +348,9 @@ def init_project(
     print()
     success("项目实例化完成！下一步：")
     print(f"  1. 校对 .ae-sdd/config.yaml（master 引用是否正确）")
-    print(f"  2. 校对 .ae-sdd/assets/{project_key}.assets.md（7 层索引）")
-    if not asset_source and not no_asset:
-        print(f"  3. 跑 `python scripts/generate-assets.py {project_key}` 生成完整项目资产（未实现，留 v3.1）")
-    print(f"  4. 在 .ae-sdd/overrides/ 添加项目特化规则（可选）")
-    print(f"  5. 在 Claude Code 中启动 /ae-sdd 开始第一个 Story")
+    print(f"  2. 跑 `ae-sdd assets check --project {project_key}` 校验项目资产")
+    print(f"  3. 在 .ae-sdd/overrides/ 添加项目特化规则（可选）")
+    print(f"  4. 在 Claude Code 中启动 /ae-sdd 开始第一个 Story")
     print()
 
     # ── 自动注入 PreToolUse hook（v3.1 Harness 层） ─────────────────────────

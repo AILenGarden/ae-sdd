@@ -581,9 +581,9 @@ class TestRecursiveR2Absorb(unittest.TestCase):
             doc_path=doc, child_id="STORY-006-BE",
         )
         self.assertEqual(sp.parent.name, "DR-005")
+        self.assertTrue(sp.is_file())
+        self.assertEqual(st["drState"]["drId"], "DR-005")
         self.assertIn("STORY-006-BE", st.get("storyStates", {}))
-        dr_state_path = self.tmp / ".auto-engineering" / "DR-005" / "state.json"
-        self.assertTrue(dr_state_path.is_file())
 
     def test_three_layer_chain(self):
         """三层链：PRD → DR → Story（验证 Story 嵌进 DR）。"""
@@ -596,7 +596,12 @@ class TestRecursiveR2Absorb(unittest.TestCase):
             self.ade_sdd, "STORY", features, self.design_dir,
             doc_path=doc, child_id="STORY-006-BE",
         )
-        self.assertEqual(sp.parent.name, "DR-005")
+        self.assertEqual(sp.parent.name, "PRD-001")
+        self.assertTrue(sp.is_file())
+        self.assertFalse((self.tmp / ".auto-engineering" / "DR-005" / "state.json").exists())
+        self.assertEqual(st["prdState"]["prdId"], "PRD-001")
+        self.assertIn("DR-005", st.get("drStates", {}))
+        self.assertIn("STORY-006-BE", st["drStates"]["DR-005"].get("storyStates", {}))
         self.assertIn("STORY-006-BE", st.get("storyStates", {}))
 
 

@@ -1005,7 +1005,7 @@ STORY_RESET_TARGET_PHASE = "story-generated"
 # entryNode=DR  → 含 drState + storyStates（无 prdState，DR 是顶层）
 # entryNode=STORY → 含 storyStates（无 prdState/drState，Story 是顶层）
 ENTRY_NODE_CONTAINERS: dict[str, list[str]] = {
-    "PRD":   ["prdState", "drState", "storyStates"],
+    "PRD":   ["prdState", "drStates", "storyStates"],
     "DR":    ["drState", "storyStates"],
     "STORY": ["storyStates"],
 }
@@ -1086,6 +1086,9 @@ def init_nested_state(
             "lastUpdated": now,
         }
 
+    if "drStates" in containers:
+        state["drStates"] = {}
+
     if "drState" in containers:
         if not dr_id:
             raise ValueError(f"entryNode={entry_node} 必须提供 dr_id")
@@ -1112,6 +1115,71 @@ def init_nested_state(
     return state
 
 
+def _new_story_substate(initial_phase: str = "initialized") -> dict:
+    now = _now_ts()
+    return {
+        "phase": initial_phase,
+        "completedSteps": [],
+        "codingRound": 0,
+        "lastUpdated": now,
+        "resetHistory": [],
+    }
+
+
+def _iter_nested_story_substates(state: dict, story_id: str) -> list[dict]:
+    hits: list[dict] = []
+    for dr_state in (state.get("drStates") or {}).values():
+        if isinstance(dr_state, dict):
+            sub = (dr_state.get("storyStates") or {}).get(story_id)
+            if isinstance(sub, dict):
+                hits.append(sub)
+    sub = (state.get("storyStates") or {}).get(story_id)
+    if isinstance(sub, dict) and all(sub is not h for h in hits):
+        hits.append(sub)
+    return hits
+
+
+def ensure_dr_substate(state: dict, dr_id: str,
+                       initial_phase: str = "initialized",
+                       doc_path: Optional[str] = None) -> dict:
+    """Ensure a DR child substate exists under a PRD-root nested state."""
+    if not is_nested_state(state):
+        raise ValueError("ensure_dr_substate requires nested state")
+    if not dr_id:
+        raise ValueError("dr_id is required")
+    now = _now_ts()
+    if state.get("prdState") is not None:
+        dr_states = state.setdefault("drStates", {})
+        dr_state = dr_states.get(dr_id)
+        if not isinstance(dr_state, dict):
+            dr_state = {
+                "drId": dr_id,
+                "phase": initial_phase,
+                "docPath": doc_path,
+                "completedSteps": [],
+                "lastUpdated": now,
+                "storyStates": {},
+            }
+            dr_states[dr_id] = dr_state
+            record_history(state, f"dr-{dr_id}-added", by="ae-sdd")
+        else:
+            dr_state.setdefault("drId", dr_id)
+            dr_state.setdefault("phase", initial_phase)
+            dr_state.setdefault("completedSteps", [])
+            dr_state.setdefault("storyStates", {})
+            if doc_path and not dr_state.get("docPath"):
+                dr_state["docPath"] = doc_path
+            dr_state["lastUpdated"] = now
+        return dr_state
+
+    dr_state = state.setdefault("drState", {})
+    dr_state.setdefault("drId", dr_id)
+    dr_state.setdefault("phase", initial_phase)
+    dr_state.setdefault("completedSteps", [])
+    dr_state["lastUpdated"] = now
+    return dr_state
+
+
 def get_story_substate(state: dict, story_id: str) -> Optional[dict]:
     """读取嵌套 state 内指定 Story 的子状态记录。
 
@@ -1124,7 +1192,8 @@ def get_story_substate(state: dict, story_id: str) -> Optional[dict]:
     """
     if not is_nested_state(state):
         return None
-    return (state.get("storyStates") or {}).get(story_id)
+    hits = _iter_nested_story_substates(state, story_id)
+    return hits[0] if hits else None
 
 
 def set_story_substate_phase(state: dict, story_id: str, phase: str,
@@ -1145,20 +1214,23 @@ def set_story_substate_phase(state: dict, story_id: str, phase: str,
     """
     if not is_nested_state(state):
         raise ValueError("set_story_substate_phase 仅适用于 nested state")
-    sub = (state.get("storyStates") or {}).get(story_id)
-    if not sub:
+    subs = _iter_nested_story_substates(state, story_id)
+    if not subs:
         return False
-    if sub.get("phase") == phase:
+    if all(sub.get("phase") == phase for sub in subs):
         return False
-    sub["phase"] = phase
-    sub["lastUpdated"] = _now_ts()
+    now = _now_ts()
+    for sub in subs:
+        sub["phase"] = phase
+        sub["lastUpdated"] = now
     state["activeStory"] = story_id
     record_history(state, f"story-{story_id}-phase={phase}", by)
     return True
 
 
 def add_story_to_nested_state(state: dict, story_id: str,
-                               initial_phase: str = "initialized") -> bool:
+                               initial_phase: str = "initialized",
+                               parent_dr_id: Optional[str] = None) -> bool:
     """向嵌套 state 的 storyStates 新增一条 Story 子状态记录。
 
     用于 R7 归入场景：Story 被归入已存在的 PRD/DR state 时调用。
@@ -1174,20 +1246,21 @@ def add_story_to_nested_state(state: dict, story_id: str,
     if not is_nested_state(state):
         raise ValueError("add_story_to_nested_state 仅适用于 nested state")
     story_states = state.setdefault("storyStates", {})
-    if story_id in story_states:
-        return False
-    now = _now_ts()
-    story_states[story_id] = {
-        "phase": initial_phase,
-        "completedSteps": [],
-        "codingRound": 0,
-        "lastUpdated": now,
-        "resetHistory": [],
-    }
+    changed = False
+    if story_id not in story_states:
+        story_states[story_id] = _new_story_substate(initial_phase)
+        changed = True
+    if parent_dr_id:
+        dr_state = ensure_dr_substate(state, parent_dr_id, initial_phase="dr-generated")
+        dr_story_states = dr_state.setdefault("storyStates", {})
+        if story_id not in dr_story_states:
+            dr_story_states[story_id] = dict(story_states[story_id])
+            changed = True
     if not state.get("activeStory"):
         state["activeStory"] = story_id
-    record_history(state, f"story-{story_id}-added", by="ae-sdd")
-    return True
+    if changed:
+        record_history(state, f"story-{story_id}-added", by="ae-sdd")
+    return changed
 
 
 def reset_story_substate(state: dict, story_id: str,
@@ -1210,23 +1283,24 @@ def reset_story_substate(state: dict, story_id: str,
     """
     if not is_nested_state(state):
         raise ValueError("reset_story_substate 仅适用于 nested state")
-    sub = (state.get("storyStates") or {}).get(story_id)
-    if not sub:
+    subs = _iter_nested_story_substates(state, story_id)
+    if not subs:
         return False
 
     now = _now_ts()
-    old_phase = sub.get("phase", "initialized")
+    for sub in subs:
+        old_phase = sub.get("phase", "initialized")
     # 追加重置历史（保留审计轨迹，不清空）
-    sub.setdefault("resetHistory", []).append({
-        "resetAt": now,
-        "fromPhase": old_phase,
-        "toPhase": STORY_RESET_TARGET_PHASE,
-        "by": by,
-    })
-    sub["phase"] = STORY_RESET_TARGET_PHASE
-    sub["completedSteps"] = []
-    sub["codingRound"] = 0
-    sub["lastUpdated"] = now
+        sub.setdefault("resetHistory", []).append({
+            "resetAt": now,
+            "fromPhase": old_phase,
+            "toPhase": STORY_RESET_TARGET_PHASE,
+            "by": by,
+        })
+        sub["phase"] = STORY_RESET_TARGET_PHASE
+        sub["completedSteps"] = []
+        sub["codingRound"] = 0
+        sub["lastUpdated"] = now
     state["activeStory"] = story_id
     record_history(state, f"story-{story_id}-reset-to-{STORY_RESET_TARGET_PHASE}", by)
     return True
@@ -1244,7 +1318,7 @@ def set_active_story(state: dict, story_id: str) -> bool:
     """
     if not is_nested_state(state):
         raise ValueError("set_active_story 仅适用于 nested state")
-    if story_id not in (state.get("storyStates") or {}):
+    if not get_story_substate(state, story_id):
         return False
     state["activeStory"] = story_id
     state["lastUpdated"] = _now_ts()
@@ -1262,7 +1336,7 @@ def get_active_phase(state: dict) -> str:
     if is_nested_state(state):
         active_story = state.get("activeStory")
         if active_story:
-            sub = (state.get("storyStates") or {}).get(active_story)
+            sub = get_story_substate(state, active_story)
             if sub:
                 return sub.get("phase", "initialized")
         # 无 activeStory，回退到 prdState/drState phase
@@ -1287,7 +1361,11 @@ def list_story_ids_in_state(state: dict) -> list[str]:
     供 match_state 扫描匹配用。
     """
     if is_nested_state(state):
-        return list((state.get("storyStates") or {}).keys())
+        ids = set((state.get("storyStates") or {}).keys())
+        for dr_state in (state.get("drStates") or {}).values():
+            if isinstance(dr_state, dict):
+                ids.update((dr_state.get("storyStates") or {}).keys())
+        return sorted(ids)
     cs = state.get("currentStory")
     return [cs] if cs else []
 
@@ -1352,6 +1430,16 @@ def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
             ok, _ = paths_mod.verify_parent_claim("PRD", prd_parent, design_dir, child_id=parent_id)
             if ok:
                 prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", prd_parent, design_dir)
+                if prd_hit and prd_hit[0] is not None:
+                    prd_sp, prd_st = prd_hit
+                    ensure_dr_substate(
+                        prd_st,
+                        parent_id,
+                        initial_phase="dr-generated",
+                        doc_path=str(dr_doc) if dr_doc else None,
+                    )
+                    write_state(prd_sp, prd_st)
+                    return (prd_sp, prd_st)
                 # PRD 父级 state 准备好后，回到 DR 创建并嵌进 PRD 的 drState
         # 创建 DR 顶层 state（即使有 PRD 父级，DR 仍可独立创建顶层 state，
         #   然后下面 R2 吸收逻辑会把它嵌进 PRD）
@@ -1456,6 +1544,33 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
 
     # 4a) Story → 嵌进父级 DR
     if top_node == "STORY" and valid_parent_dr:
+        story_id = (features.get("story_ids") or [child_id])[0]
+        dr_doc = paths_mod._find_design_doc(design_dir, valid_parent_dr)
+        dr_parent_prd = valid_parent_prd
+        if dr_doc:
+            claimed_prd, _ = paths_mod.extract_parent_claim(dr_doc, doc_kind="dr")
+            if claimed_prd:
+                ok, _ = paths_mod.verify_parent_claim("PRD", claimed_prd, design_dir, child_id=valid_parent_dr)
+                if ok:
+                    dr_parent_prd = claimed_prd
+        if dr_parent_prd:
+            prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", dr_parent_prd, design_dir)
+            if prd_hit and prd_hit[0] is not None:
+                prd_sp, prd_st = prd_hit
+                ensure_dr_substate(
+                    prd_st,
+                    valid_parent_dr,
+                    initial_phase="dr-generated",
+                    doc_path=str(dr_doc) if dr_doc else None,
+                )
+                add_story_to_nested_state(
+                    prd_st,
+                    story_id,
+                    initial_phase="story-generated",
+                    parent_dr_id=valid_parent_dr,
+                )
+                write_state(prd_sp, prd_st)
+                return (prd_sp, prd_st)
         dr_hit = _ensure_parent_nested_state(ade_sdd, "DR", valid_parent_dr, design_dir)
         if dr_hit and dr_hit[0] is not None:
             dr_sp, dr_st = dr_hit
@@ -1472,9 +1587,7 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
             prd_sp, prd_st = prd_hit
             # 嵌进 PRD state 的 drState
             dr_id = features.get("dr_id") or child_id
-            if prd_st.get("drState") is None:
-                prd_st["drState"] = {"drId": dr_id, "phase": "dr-generated", "lastUpdated": _now_ts()}
-                record_history(prd_st, f"absorb-dr-{dr_id}", by="recursive_r2_absorb")
+            ensure_dr_substate(prd_st, dr_id, initial_phase="dr-generated")
             write_state(prd_sp, prd_st)
             return (prd_sp, prd_st)
 

@@ -15,10 +15,15 @@ def _project(tmp_path: Path, *, phase: str = "coding", story: str = "STORY-001")
     ae_sdd = tmp_path / ".ae-sdd"
     ae_sdd.mkdir()
     (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
-    (ae_sdd / "state.json").write_text(json.dumps({
+    state_path = tmp_path / ".auto-engineering" / "Story-001" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({
         "version": "1",
         "projectKey": "test",
         "phase": phase,
+        "workItemKey": "Story-001",
+        "stateMachineId": "Story-001",
+        "currentWorkItem": "Story-001",
         "currentStory": story,
         "currentTask": None,
         "history": [],
@@ -117,7 +122,8 @@ def test_cli_state_write_blocks_before_memory(tmp_path):
             "write",
             "--phase",
             "test-running",
-            "--project-state",
+            "--work-item",
+            "Story-001",
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -142,7 +148,8 @@ def test_cli_state_write_allows_maintenance_override(tmp_path):
             "--phase",
             "test-running",
             "--allow-empty-memory",
-            "--project-state",
+            "--work-item",
+            "Story-001",
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -421,9 +428,15 @@ def test_store_gate_blocks_all_associated_phases(tmp_path):
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir(exist_ok=True)
         (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
-        (ae_sdd / "state.json").write_text(json.dumps({
+        state_path = tmp_path / ".auto-engineering" / "Story-001" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({
             "version": "1", "projectKey": "test",
-            "phase": state_phase, "currentStory": "STORY-001",
+            "phase": state_phase,
+            "workItemKey": "Story-001",
+            "stateMachineId": "Story-001",
+            "currentWorkItem": "Story-001",
+            "currentStory": "STORY-001",
             "currentTask": None, "history": [],
         }), encoding="utf-8")
         allowed, reason = check_intercept(

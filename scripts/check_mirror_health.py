@@ -77,14 +77,14 @@ def check_mirror_health(project_dir: Path) -> list[dict]:
             "name": ".ae-sdd/state.json 镜像",
             "pass": True,
             "severity": "warn",
-            "message": "镜像不存在（v3.9.8 mirror-fallback 模式，CLI 走 work-item 源）",
+            "message": "项目级 state 不存在（符合任务级 state 设计）",
         })
     else:
         results.append({
             "name": ".ae-sdd/state.json 镜像",
-            "pass": True,
-            "severity": "warn",
-            "message": f"镜像存在（{mirror_path.stat().st_size} bytes）",
+            "pass": False,
+            "severity": "blocker",
+            "message": f"禁用的项目级 state 存在（{mirror_path.stat().st_size} bytes），请迁移到 .auto-engineering/{{WORKITEM}}/state.json",
         })
 
     # ─── 检查 3：.auto-engineering/ 下 work-item 源清单 ──────────────────────
@@ -195,7 +195,7 @@ def check_mirror_health(project_dir: Path) -> list[dict]:
                 })
 
     # ─── 检查 5：镜像与最近活跃 work-item 一致性 ─────────────────────────────
-    if mirror_exists:
+    if False and mirror_exists:
         mirror_data = _read_json(mirror_path) or {}
         mirror_wi = (
             mirror_data.get("activeWorkItem")

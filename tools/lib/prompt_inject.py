@@ -156,6 +156,7 @@ def _inject_memory_block(ade_sdd: Path, phase: str, current_story: str) -> Optio
 def inject(
     project_dir: Optional[Path] = None,
     user_prompt: str = "",
+    session_key: str = "",
 ) -> dict:
     """
     生成注入到 AI context 的 JSON payload。
@@ -163,7 +164,7 @@ def inject(
     Returns:
         dict → {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "..."}} 或 {}
     """
-    from lib import gates as gates_mod, paths, state as state_mod
+    from lib import gates as gates_mod, paths, state as state_mod, work_item_context
     from lib.stop_check import reset_retry
 
     # 🆕 v3.9.3：触发检测提前到 ade_sdd 判空前，确保未初始化项目也能收到提示
@@ -187,15 +188,30 @@ def inject(
     if not _is_ae_sdd_triggered:
         _clear_pending_init(project_dir)
 
-    # 读状态 + 配置（entry token 提醒需要 projectKey）
-    st = state_mod.read_state(paths.state_path(ade_sdd))
+    cfg = paths.read_config(ade_sdd)
+    project_key = cfg.get("projectKey", "unknown")
+
+    # Read the work-item state, not the project-global mirror, unless this is a
+    # legacy project with no isolated work-item states.
+    try:
+        resolved_state = work_item_context.resolve_default_state(
+            ade_sdd,
+            session_key=session_key,
+            prompt_text=user_prompt,
+            bind_session=True,
+        )
+    except work_item_context.AmbiguousWorkItemError as e:
+        return _inject_work_item_ambiguity(project_key, e)
+    except work_item_context.NoWorkItemStateError as e:
+        return _inject_work_item_required(project_key, e)
+
+    st = resolved_state.data
+    resolved_state_path = resolved_state.path
     # 🆕 v3.9.0 嵌套 state 兼容：用统一接口读 active phase/story
     # - nested state: 取 activeStory 子状态的 phase
     # - flat state: 取顶层 phase / currentStory（v1 行为不变）
     phase = state_mod.get_active_phase(st)
     current_story = state_mod.get_active_story(st) or "（未设定）"
-    cfg = paths.read_config(ade_sdd)
-    project_key = cfg.get("projectKey", "unknown")
 
     # 🆕 v3.9.0 R5：STORY-ID 一致性检测——用户引用的 Story 与 activeStory 不一致时提醒
     story_mismatch_msg: Optional[str] = None
@@ -263,11 +279,16 @@ def inject(
                 if sp_new and st_new is not None:
                     # 更新 mirror（active 切到该 work item）
                     mirror = dict(st_new)
-                    mirror["activeWorkItem"] = work_item_key
-                    mirror["activeStatePath"] = str(sp_new)
-                    state_mod.write_state(paths.state_path(ade_sdd), mirror)
+                    work_item_context.bind_session_state(
+                        ade_sdd,
+                        session_key,
+                        sp_new,
+                        work_item_key,
+                        work_item_id,
+                    )
                     # 刷新后续使用的 current_story / st
-                    st = mirror
+                    st = st_new
+                    resolved_state_path = sp_new
                     current_story = work_item_id
             except Exception:
                 pass  # 自动激活失败不阻断注入
@@ -375,7 +396,7 @@ def inject(
         pass  # 探测失败不影响主流程
 
     # 🆕 v3.6 主流程监管器：偏移检测 + 矫正注入（决策 1B/2B）
-    flow_msg = _run_flow_monitor(ade_sdd, st)
+    flow_msg = _run_flow_monitor(ade_sdd, st, resolved_state_path)
     if flow_msg:
         lines.append(flow_msg)
 
@@ -404,6 +425,44 @@ def inject(
     }
 
 
+def _inject_work_item_ambiguity(project_key: str, exc) -> dict:
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines = [
+        f"<!-- ae-sdd harness automatic injection @ {now} -->",
+        "WORK-ITEM AMBIGUITY",
+        str(exc),
+        "Do not infer phase/story from .ae-sdd/state.json in a multi-work-item project.",
+        f"project: {project_key}",
+        "<!-- /ae-sdd harness -->",
+    ]
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "\n".join(lines),
+        }
+    }
+
+
+def _inject_work_item_required(project_key: str, exc) -> dict:
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines = [
+        f"<!-- ae-sdd harness automatic injection @ {now} -->",
+        "WORK-ITEM STATE REQUIRED",
+        str(exc),
+        "Project-level .ae-sdd/state.json is not a valid active state source.",
+        f"project: {project_key}",
+        "<!-- /ae-sdd harness -->",
+    ]
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "\n".join(lines),
+        }
+    }
+
+
 def _read_project_master_version(ade_sdd: Optional[Path]) -> Optional[str]:
     """🆕 v3.4.0：从业务仓 .ae-sdd/config.yaml 读 master.version。"""
     if ade_sdd is None:
@@ -422,7 +481,7 @@ def _read_project_master_version(ade_sdd: Optional[Path]) -> Optional[str]:
     return None
 
 
-def _run_flow_monitor(ade_sdd: Path, state: dict) -> Optional[str]:
+def _run_flow_monitor(ade_sdd: Path, state: dict, state_path: Optional[Path] = None) -> Optional[str]:
     """🆕 v3.6 主流程监管器：每轮 UserPromptSubmit 时执行偏移检测 + 矫正注入。
 
     决策 1B：废弃 ◆ STATE: 自报标记，完全依赖产物核查（gates check）
@@ -455,7 +514,8 @@ def _run_flow_monitor(ade_sdd: Path, state: dict) -> Optional[str]:
             return None  # 无偏移
 
         # 递增矫正计数并持久化
-        state_path = paths_mod.state_path(ade_sdd)
+        if state_path is None:
+            return None
         fresh_state = state_mod.read_state(state_path)  # 重新读取确保原子性
         state_mod.increment_correction(fresh_state, drift.phase)
 
@@ -512,9 +572,8 @@ def _inject_uninitialized_block(project_dir: Optional[Path]) -> dict:
         f"",
         f"⚡ 修复步骤：",
         f"  1. 确认 projectKey（如 ae-sdd、life、order 等）",
-        f"  2. 运行: ae-sdd init . <projectKey>",
-        f"  3. 运行: ae-sdd assets generate --project <projectKey>",
-        f"  4. 重新触发: /ae-sdd",
+        f"  2. 运行: ae-sdd init . <projectKey>  # 自动生成 baseline 项目资产",
+        f"  3. 重新触发: /ae-sdd",
         f"",
         f"⛔ G-00 未通过，禁止继续任何业务操作。",
         f"<!-- /ae-sdd harness -->",

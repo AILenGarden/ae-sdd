@@ -19,6 +19,20 @@ from lib.gate_intercept import (
 )
 
 
+def _write_work_item_state(project_dir: Path, data: dict, key: str = "Story-001") -> Path:
+    state_path = project_dir / ".auto-engineering" / key / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(data)
+    payload.setdefault("workItemKey", key)
+    payload.setdefault("stateMachineId", key)
+    if payload.get("stateModel") == "nested":
+        payload.setdefault("entryNode", "STORY")
+    else:
+        payload.setdefault("currentWorkItem", key)
+    state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return state_path
+
+
 # ─── check_intercept 基础用例 ────────────────────────────────────────────────
 
 class TestReadonlyAlwaysAllowed:
@@ -163,6 +177,56 @@ class TestNonAeSddProject:
         assert allowed
 
 
+class TestParallelWorkItemHookIsolation:
+    """PreToolUse hook must fail closed when multiple work-item states are possible."""
+
+    def _write_work_item(self, tmp_path: Path, name: str, story_id: str, phase: str) -> Path:
+        state_path = tmp_path / ".auto-engineering" / name / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": "2",
+            "projectKey": "test",
+            "stateModel": "nested",
+            "entryNode": "STORY",
+            "stateMachineId": name,
+            "workItemKey": name,
+            "currentWorkItem": name,
+            "scale": "小",
+            "activeStory": story_id,
+            "storyStates": {
+                story_id: {
+                    "phase": phase,
+                    "completedSteps": [],
+                    "codingRound": 0,
+                    "lastUpdated": "2026-07-09T00:00:00Z",
+                    "resetHistory": [],
+                }
+            },
+            "history": [],
+        }
+        state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return state_path
+
+    def test_write_is_blocked_by_work_item_ambiguity_not_stale_mirror(self, tmp_path):
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        sp_a = self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
+        mirror = json.loads(sp_a.read_text(encoding="utf-8"))
+        mirror["activeWorkItem"] = "Story-004"
+        mirror["activeStatePath"] = str(sp_a)
+        (ade_sdd / "state.json").write_text(json.dumps(mirror, ensure_ascii=False), encoding="utf-8")
+
+        target = tmp_path / "src" / "main" / "java" / "Foo.java"
+        allowed, reason = check_intercept("Write", file_path=str(target), project_dir=tmp_path)
+
+        assert not allowed
+        assert "--work-item" in reason
+        assert "Story-004" in reason
+        assert "Story-005" in reason
+
+
 class TestHS10DocumentStoragePathGuard:
     """HS-10：流程产物必须落在 document-storage 推导的文档工作区内。"""
 
@@ -171,7 +235,7 @@ class TestHS10DocumentStoragePathGuard:
         assets = ae_sdd / "assets"
         assets.mkdir(parents=True, exist_ok=True)
         (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
-        (ae_sdd / "state.json").write_text(json.dumps({
+        _write_work_item_state(tmp_path, {
             "version": "1",
             "projectKey": "test",
             "phase": phase,
@@ -179,7 +243,7 @@ class TestHS10DocumentStoragePathGuard:
             "currentStory": "STORY-001",
             "currentTask": None,
             "history": [],
-        }, ensure_ascii=False), encoding="utf-8")
+        })
         (assets / "test.assets.md").write_text(
             f"| gitPath | `{tmp_path}` |\n| docWorkspacePath | `{tmp_path}` |\n",
             encoding="utf-8",
@@ -351,12 +415,12 @@ class TestScaleRoutedStateWrite:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir(parents=True, exist_ok=True)
         (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
-        (ae_sdd / "state.json").write_text(json.dumps({
+        _write_work_item_state(tmp_path, {
             "version": "1", "projectKey": "test",
             "phase": phase, "scale": scale,
             "currentStory": "STORY-001", "currentTask": None,
             "history": [],
-        }, ensure_ascii=False), encoding="utf-8")
+        })
         return tmp_path
 
     def _bypass_gates_and_memory(self, monkeypatch):
@@ -470,12 +534,12 @@ class TestCodingProcessHardGuard:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir(parents=True, exist_ok=True)
         (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
-        (ae_sdd / "state.json").write_text(json.dumps({
+        _write_work_item_state(tmp_path, {
             "version": "1", "projectKey": "test",
             "phase": phase, "scale": "大",
             "currentStory": "STORY-001", "currentTask": None,
             "history": [],
-        }, ensure_ascii=False), encoding="utf-8")
+        })
         # session.json（关卡3 confirm 校验依赖）
         auto_eng = tmp_path / ".auto-engineering" / "STORY-001"
         auto_eng.mkdir(parents=True, exist_ok=True)
@@ -539,12 +603,12 @@ class TestMemoryCommandPassage:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir(parents=True, exist_ok=True)
         (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
-        (ae_sdd / "state.json").write_text(json.dumps({
+        _write_work_item_state(tmp_path, {
             "version": "1", "projectKey": "test",
             "phase": phase, "scale": "微",
             "currentStory": "OPT-LIFE-RC-001", "currentTask": "OPT-LIFE-RC-001",
             "history": [],
-        }, ensure_ascii=False), encoding="utf-8")
+        }, key="Story-OPT-LIFE-RC-001")
         return tmp_path
 
     def test_memory_enter_in_design_phase_allowed(self, tmp_path):
@@ -622,7 +686,7 @@ class TestMemoryDirLazyInit:
                 "currentStory": "OPT-LIFE-RC-001",
                 "history": [],
             }
-        (ae_sdd / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        _write_work_item_state(tmp_path, state, key="Story-OPT-LIFE-RC-001")
         return tmp_path
 
     def test_memory_dir_auto_created_on_first_check(self, tmp_path):
@@ -638,7 +702,7 @@ class TestMemoryDirLazyInit:
 
         from lib.gate_intercept import _check_memory_entered
         from lib import state as state_mod
-        st = state_mod.read_state(ae_sdd / "state.json")
+        st = state_mod.read_state(project_dir / ".auto-engineering" / "Story-OPT-LIFE-RC-001" / "state.json")
         allowed, reason = _check_memory_entered("story-generated", ae_sdd, st)
 
         # 关键断言 1：memory 目录被惰性创建（fix-life-deadlock 主目标）
@@ -661,7 +725,7 @@ class TestMemoryDirLazyInit:
         # 直接用 _check_memory_entered 验证幂等
         from lib.gate_intercept import _check_memory_entered
         from lib import state as state_mod
-        st = state_mod.read_state(project_dir / ".ae-sdd" / "state.json")
+        st = state_mod.read_state(project_dir / ".auto-engineering" / "Story-OPT-LIFE-RC-001" / "state.json")
         allowed, _ = _check_memory_entered("story-generated", project_dir / ".ae-sdd", st)
 
         # 即使是占位 token 也应放行（写文件后才触发）
@@ -677,7 +741,7 @@ class TestMemoryDirLazyInit:
         # 不创建任何 stage token，写操作应被拒
         from lib.gate_intercept import _check_memory_entered
         from lib import state as state_mod
-        st = state_mod.read_state(project_dir / ".ae-sdd" / "state.json")
+        st = state_mod.read_state(project_dir / ".auto-engineering" / "Story-OPT-LIFE-RC-001" / "state.json")
         allowed, reason = _check_memory_entered(
             "story-generated", project_dir / ".ae-sdd", st
         )

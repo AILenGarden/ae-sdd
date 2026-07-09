@@ -42,7 +42,8 @@ class TestNestedStateSchema:
         assert state.is_nested_state(s)
         assert s["entryNode"] == "PRD"
         assert "prdState" in s
-        assert "drState" in s
+        assert "drStates" in s
+        assert "drState" not in s
         assert "storyStates" in s
         assert "STORY-003-BE" in s["storyStates"]
 
@@ -181,7 +182,7 @@ class TestEntryNodeContainerSelector:
     """R2：FlowNode.container_fields() + is_nested_entry()。"""
 
     def test_prd_containers(self):
-        assert FlowNode.PRD.container_fields() == ["prdState", "drState", "storyStates"]
+        assert FlowNode.PRD.container_fields() == ["prdState", "drStates", "storyStates"]
 
     def test_dr_containers(self):
         assert FlowNode.DR.container_fields() == ["drState", "storyStates"]
@@ -369,7 +370,9 @@ class TestGateInterceptNestedState:
         )
         set_scale(s, scale)
         set_story_substate_phase(s, story_id, sub_phase)
-        (ae_sdd / "state.json").write_text(
+        state_path = tmp_path / ".auto-engineering" / "Story-X" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
             json.dumps(s, ensure_ascii=False), encoding="utf-8"
         )
 
@@ -472,11 +475,16 @@ class TestGateInterceptNestedState:
         ae_sdd = tmp_path / ".ae-sdd"
         (ae_sdd / "assets").mkdir(parents=True, exist_ok=True)
         (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
-        (ae_sdd / "state.json").write_text(json.dumps({
+        state_path = tmp_path / ".auto-engineering" / "Story-001" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({
             "version": "1",
             "projectKey": "test",
             "phase": "coding",
             "scale": "微",
+            "workItemKey": "Story-001",
+            "stateMachineId": "Story-001",
+            "currentWorkItem": "Story-001",
             "currentStory": "STORY-001",
             "currentTask": None,
             "history": [],

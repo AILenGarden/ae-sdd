@@ -171,15 +171,19 @@ def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[
 
     import json
 
-    # 1) 读项目根 .ae-sdd/state.json 拿 activeStory/currentStory
+    # 1) 只通过任务级 resolver 拿 activeStory/currentStory
     ae_sdd_dir = project_root / ".ae-sdd"
     story_id: Optional[str] = None
-    if (ae_sdd_dir / "state.json").is_file():
+    resolved_state_path: Optional[Path] = None
+    if ae_sdd_dir.is_dir():
         try:
             from lib import state as state_mod
-            s = json.loads((ae_sdd_dir / "state.json").read_text(encoding="utf-8"))
-            story_id = state_mod.get_active_story(s) or s.get("storyId")
-        except (json.JSONDecodeError, OSError):
+            from lib import work_item_context
+            resolved = work_item_context.resolve_default_state(ae_sdd_dir)
+            s = resolved.data
+            resolved_state_path = resolved.path
+            story_id = state_mod.get_active_story(s) or s.get("storyId") or resolved.key
+        except Exception:
             story_id = None
 
     # 2) 读 work-item state.json 的 blockingGaps（兼容 R6 与 legacy 目录）
@@ -187,7 +191,7 @@ def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[
     ra_outputs: list = []
     completed_steps: list = []
     if story_id:
-        story_state_path = project_root / ".auto-engineering" / story_id / "state.json"
+        story_state_path = resolved_state_path or project_root / ".auto-engineering" / story_id / "state.json"
         try:
             from lib import paths as paths_mod
             story_state_path = (

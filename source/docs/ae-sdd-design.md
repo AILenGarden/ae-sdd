@@ -62,22 +62,22 @@
 
 每个新需求必须先创建一个独立状态机，再进入 phase 流转。WorkItem（PRD / BUG / OPT / Story 均可）的执行进度持久化到独立 `state.json`，支持跨 session 中断恢复与多任务并行执行。AI 重入时读对应 WorkItem state 跳过已完成步骤，避免重复执行。
 
-**WorkItem 标识约定（2026-07-03 强化）**：每个状态机必须同时具备独立 ID 与名称。CLI 入口为 `ae-sdd state new --id <ID> --name "<需求名>"`，物理目录名为 `WORKITEM-KEY = {ID}--{name}`（路径非法字符与空白归一化），并写入 `workItemId`、`workItemName`、`workItemKey`。`--work-item <ID>` 会优先解析已有命名目录；`--work-item <WORKITEM-KEY>` 也可直接定位。没有 active work item 时，`ae-sdd state write` 默认拒绝写项目级 state；确需维护 legacy 项目级 state 时必须显式加 `--project-state`。
+**WorkItem 标识约定（2026-07-09 修正）**：每个状态机必须归属于真实顶层工作项。CLI 入口为 `ae-sdd state new --id <ID> --entry-node <PRD|DR|STORY|TASK>`；物理目录名采用 R6 顶层名（如 `PRD-001` / `DR-005` / `Story-006` / `Task-BUG-LIFE-001`），并写入 `workItemKey`、`stateMachineId`、`currentWorkItem`。`--work-item <ID|WORKITEM-KEY>` 只定位 `.auto-engineering/{WORKITEM-KEY}/state.json`。项目级 `.ae-sdd/state.json` 不允许作为 active state、mirror 或 fallback；未能唯一定位 work-item 时必须拒绝并要求显式选择。
 
 **v3.5.15 多子链状态机**：单条 PHASE_FLOW 拆为 4 条 PHASE_FLOWS（大/中/小/微），按 scale 路由，微链最短单步合法，修复微任务 next-step 误建议跑 RA 的问题。旧 state 无 scale 字段时按 completedSteps 反推，默认"大"（最保守）。
 
 **v3.6 暂停态**：`paused` 作为一级 phase，任何 phase 可跳入，用于 Level 3 人工升级（见 §15 流程偏移检测与矫正）。
 
-**🆕 v3.9.0 嵌套状态模型（Nested State Model）**：取代 v3.8.x 前的扁平"每 WorkItem 一个 state"模型。一个 state.json 内维护主流程所有子系列——`prdState` + `drState` + `storyStates{N个Story各自完整流程状态}`，按 `entryNode` 选填容器：
+**🆕 v3.9.0/v3.9.13 嵌套状态模型（Nested State Model）**：取代 v3.8.x 前的项目级/扁平状态模型。一个顶层 work-item 的 state.json 内维护主流程所有子系列——`prdState` + `drStates{N个DR}` + `storyStates{Story索引}`；每个 `drStates[DR-ID]` 下再维护自己的 `storyStates{N个Story各自完整流程状态}`。按 `entryNode` 选填容器：
 
 | entryNode | state 内含容器 | 适用场景 |
 |---|---|---|
-| PRD | prdState + drState + storyStates | 全新 PRD，从 PRD 出发走完整流程 |
+| PRD | prdState + drStates + storyStates | 全新 PRD，从 PRD 出发走完整流程，允许多个 DR 子系列 |
 | DR | drState + storyStates | 已有 DR，从 DR 出发（DR 所属 PRD 的 state 不存在时） |
 | STORY | storyStates | 已有 Story 草稿，从 Story 出发（上层 DR/PRD state 不存在时） |
 | TASK/PLAN | （flat state，不嵌套） | Bug/微任务不改 Story（R4 保留微链） |
 
-**R2 任意节点出发 + 向上归入**：DR/Story 优先归入已存在的上层 state。如开 DR-CS 时发现 `PRD-IM-CS` state 已存在且 `drState.drId` 匹配 → 归入该 PRD state 的 drState，不新建 DR state。`classify.match_state()` 实现自动归入判定。
+**R2 任意节点出发 + 递归向上归入**：PRD / DR / Story / Task / BUG 都可作为顶层任务入口，但如果当前节点有合法父级，必须继续向上遍历直到真实顶层。例：Story-007 → DR-005 → PRD-001 时，最终只创建/使用 `.auto-engineering/PRD-001/state.json`；DR 写入 `drStates["DR-005"]`，Story 写入 `drStates["DR-005"].storyStates["STORY-007"]`，并同步到顶层 `storyStates` 索引。只有 DR 没有合法 PRD 父级时才创建 DR 根 state；只有 Story 没有合法 DR/PRD 父级时才创建 Story 根 state。
 
 **R5 改已管理 Story 重定位 + 重置子状态**：检测到改 Story 且该 Story 已属某 state 的 `storyStates` → `ae-sdd state relocate --story <ID>` 重定位到该 state + 只重置该 Story 子状态到 `story-generated`（兄弟 Story 不动，resetHistory 保留审计）。
 
@@ -91,7 +91,7 @@
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 存储路径 | `.auto-engineering/{WORKITEM-KEY}/state.json`，其中 `WORKITEM-KEY={ID}--{name}`；`.ae-sdd/state.json` 仅保留 activeWorkItem/activeStatePath 镜像，兼容旧 gate/hook |
+| 存储路径 | `.auto-engineering/{WORKITEM-KEY}/state.json`。`.ae-sdd/state.json` 禁止作为状态源、active mirror 或 fallback；hook/gate/CLI 均必须通过 work-item/session resolver 定位任务级 state |
 | 4 条子链定义 | `tools/lib/state.py:PHASE_FLOWS`（行69-92），大链 14 phase / 中链 13 / 小链 12 / 微链 8（🆕 2026-07-03 B1：微链加回 code-reviewed，与"CodeReview 报告不豁免"对齐；含 TestCase 系列后已扩容，🆕 v3.7.x） |
 | 向后兼容别名 | `PHASE_FLOW = PHASE_FLOWS["大"]`（行95，🟡 deprecated） |
 | 合法 scale 枚举 | `VALID_SCALES = ("大", "中", "小", "微")`（行88） |
@@ -157,7 +157,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，**实际 34 个**：G-00~G-14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + 🆕 v3.9.1 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX） |
 | CLI 统一扫描入口 | `ae-sdd gates check`（`tools/bin/ae-sdd` 行2688，帮助文本自带门禁清单） |
 | 单个门禁定向检查 | `ae-sdd gates check --only <gate_id>` |
-| G-00 资产门卫 | `gates.py` G-00 check 函数；不通过时 AI 手动路由到 `project-assets-update-skill §3`（无 CLI 自动生成） |
+| G-00 资产门卫 | `gates.py` G-00 check 函数；不通过时可运行 `ae-sdd assets generate --project <key>` 生成/修复 baseline 资产，再用 `ae-sdd assets check` 校验 |
 | G-RA-1~4 需求分析门卫 | `gates.py`，调 `scripts/ra_authenticity_scan.py`（G-RA-4，`_locate_ra_authenticity_scanner` 行1116） |
 | G-RA-5 机械派生深度 | `gates.py` 行1292起，调 `scripts/ra_depth_scan.py` |
 | G-RA-6 实现视角完整性 | `gates.py` 行1378起，调 `scripts/ra_implementation_scan.py`（I1~I7） |
@@ -182,16 +182,16 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 每个接入项目维护一份标准化资产文件，是所有 SKILL 的上下文基础，通过 ES 倒排索引支持按需读取。AI 读资产而非扫描全仓库，保证上下文质量与读取效率。
 
-资产生成由 `project-assets-update-skill` 引导 AI 跑 9 步探查 SOP（读 CLAUDE.md/AGENTS.md → 扫描工程结构 → 抽典型类 → 识别分层/命名/约束），**没有独立的 CLI 生成/更新/审计子命令**——历史上文档曾声称有 `assets check/generate/update/audit`，已确认是文档撒谎并删除。
+资产生成分两层：`ae-sdd init` 首次运行会自动生成可通过 G-00 的 baseline 资产；`ae-sdd assets generate/check` 提供可执行的生成/修复/校验入口。深度业务资产仍由 `project-assets-update-skill` 引导 AI 跑探查 SOP（读 CLAUDE.md/AGENTS.md → 扫描工程结构 → 抽典型类 → 识别分层/命名/约束）后增量完善；`assets update/audit` 仍未实现。
 
 ### 实现
 
 | 设计点 | 实现方式 |
 | --- | --- |
 | 资产文件路径 | `source/assets/{projectKey}/{projectKey}.assets.md`（7 层索引 §A-§G） |
-| 生成/增量更新/审计引导 | `source/skills/cross-cutting/project-assets-update-skill.md` §3/§4/§5（纯 SKILL 文字引导 AI，无独立 CLI） |
+| 生成/增量更新/审计引导 | `tools/lib/project_assets.py` + `ae-sdd assets generate/check` 负责 baseline 生成/校验；`source/skills/cross-cutting/project-assets-update-skill.md` §3/§4/§5 负责深度业务资产更新/审计引导 |
 | ES 倒排索引 + BM25 评分 | `tools/lib/assets_index.py`（`AssetsIndex` 类：outline/query/section/stats 核心逻辑） |
-| CLI 读取入口 | `ae-sdd assets read / outline / section / query / stats`（`tools/bin/ae-sdd` 行3015起 assets 子命令组） |
+| CLI 入口 | `ae-sdd assets generate / check / read / outline / section / query / stats`（`tools/bin/ae-sdd` assets 子命令组） |
 | G-00 门卫自动检查 | `tools/lib/gates.py` G-00 check 函数，7 层索引缺任一层即阻断；距 lastAuditedAt > 30 天触发警告 |
 
 **颗粒度与边界**：项目级隔离（按 projectKey）；7 层索引 §A-§G 必须齐备；RA SKILL 强制通过 `ae-sdd assets read` 接口读取，禁止直接读文件路径。
@@ -369,7 +369,7 @@ ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执�
 
 | 类别 | 实际子命令（按 `tools/bin/ae-sdd` 现状） |
 | --- | --- |
-| 资产类 | `assets read / outline / section / query / stats` |
+| 资产类 | `assets generate / check / read / outline / section / query / stats` |
 | 文档存取类 | `doc save / resolve / finalize` |
 | 状态机类 | `state read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive` |
 | 入口凭证类 | `enter <projectKey> [--story <ID>]` |
@@ -636,7 +636,7 @@ ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父
 | 独立设计文档 | [`source/docs/ae-sdd-monitor-design.md`](ae-sdd-monitor-design.md) |
 | 应用位置 | `apps/ae-sdd-monitor/` |
 | 扫描入口 | `apps/ae-sdd-monitor/src/workspace.js:scanForWorkspaces()` |
-| 状态读取 | `.ae-sdd/state.json`、`.auto-engineering/{WORKITEM-KEY}/state.json`；展示 `workItemId/workItemName/workItemKey`，字段缺失时从 `{ID}--{name}` 目录名回退推导 |
+| 状态读取 | 只读取 `.auto-engineering/{WORKITEM-KEY}/state.json`；展示 `workItemKey/stateMachineId/currentWorkItem`，字段缺失时从 R6 顶层目录名回退推导 |
 | Memory 读取 | `.ae-sdd/memory/**/*.jsonl`、`.ae-sdd/memory/.stage/*.json`；展示项目/任务 memory、活跃 scope 与阻断 scope |
 | 性能读取 | `.ae-sdd/runtime-stats/*.jsonl` |
 | 展示结构 | 左侧可折叠项目/任务两级列表 + 右侧当前项目/当前任务两级看板 + 总览/阶段轴与事件流/Memory/活跃任务与工作项/性能/原始状态 |

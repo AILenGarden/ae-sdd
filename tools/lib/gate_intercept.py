@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import memory_gate, paths, state as state_mod  # noqa: E402
+from lib import memory_gate, paths, state as state_mod, work_item_context  # noqa: E402
 
 
 # ─── Phase → 允许工具表 ─────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ def _check_product_storage_path(
 
 
 def _check_product_landing(
-    file_path: str, phase: str, ade_sdd: Optional[Path]
+    file_path: str, phase: str, ade_sdd: Optional[Path], state_data: Optional[dict] = None
 ) -> tuple[bool, str]:
     """关卡2：ae-sdd 流程产物落地校验（🆕 v3.4.0，建议书4）。
 
@@ -274,7 +274,9 @@ def _check_product_landing(
 
     # 从 state 读 currentStory（用于定位 session.json）
     # 🆕 v3.9.0 嵌套 state 兼容：用统一接口读 activeStory
-    st = state_mod.read_state(paths.state_path(ade_sdd)) if ade_sdd else {}
+    st = state_data if state_data is not None else (
+        work_item_context.resolve_default_state(ade_sdd).data if ade_sdd else {}
+    )
     current_story = state_mod.get_active_story(st) or "" if ade_sdd else ""
 
     # 🆕 v3.9.0 R5：产物 STORY-ID 归属校验——若产物含 STORY-ID，须在当前 state 的 storyStates 内
@@ -282,11 +284,11 @@ def _check_product_landing(
                                      "Coding Report", "Test Report", "CR Report"):
         story_id_in_path = _extract_story_id_from_path(file_path)
         if story_id_in_path and state_mod.is_nested_state(st):
-            story_states = st.get("storyStates") or {}
+            story_states = set(state_mod.list_story_ids_in_state(st))
             if story_id_in_path not in story_states:
                 return False, (
                     f"产物 {product_type} 的 STORY-ID={story_id_in_path} 未登记到当前 state 的 storyStates。\n"
-                    f"当前 state 仅含: {list(story_states.keys())}\n"
+                    f"当前 state 仅含: {sorted(story_states)}\n"
                     f"目标文件: {file_path}\n"
                     f"请先跑 /ae-sdd 路由，或 `ae-sdd state relocate --story {story_id_in_path}` 重定位，"
                     f"或 `ae-sdd state write --add-story {story_id_in_path}` 归入当前 state。\n"
@@ -403,6 +405,7 @@ def _check_path_permission(
     file_path: Optional[str],
     phase: str,
     ade_sdd: Optional[Path] = None,
+    state_data: Optional[dict] = None,
 ) -> tuple[bool, str]:
     if tool_name not in WRITE_TOOLS:
         return True, ""
@@ -410,12 +413,12 @@ def _check_path_permission(
         return True, ""
     if _is_always_allowed_path(file_path):
         # 🆕 v3.4.0 关卡2：即使 always-allow，若是 ae-sdd 流程产物仍校验 entry token + 产物-Phase
-        allowed, reason = _check_product_landing(file_path, phase, ade_sdd)
+        allowed, reason = _check_product_landing(file_path, phase, ade_sdd, state_data=state_data)
         if not allowed:
             return False, reason
         return True, ""
     # 🆕 v3.4.0 关卡2：非 always-allow 路径若命中产物模式也校验（如 d:\tmp\*-CodingPlan.md）
-    allowed, reason = _check_product_landing(file_path, phase, ade_sdd)
+    allowed, reason = _check_product_landing(file_path, phase, ade_sdd, state_data=state_data)
     if not allowed:
         return False, reason
     if phase in _DESIGN_PHASES and _is_source_code_path(file_path):
@@ -432,7 +435,7 @@ def _check_path_permission(
         try:
             from lib import session as session_mod
             if ade_sdd is not None:
-                st = state_mod.read_state(paths.state_path(ade_sdd))
+                st = state_data if state_data is not None else work_item_context.resolve_default_state(ade_sdd).data
                 # 🆕 v3.9.1 嵌套 state 兼容：用统一接口读 activeStory（nested → activeStory）
                 current_story = state_mod.get_active_story(st) or ""
                 scale = st.get("scale") or state_mod._resolve_scale(st)
@@ -563,6 +566,10 @@ def _is_ae_sdd_cmd(bash_command: str) -> bool:
 # 第二个 token 必须是 memory，覆盖全部 8 个子命令
 # （enter/write/exit/read/search/promote/summarize）。
 _MEMORY_CMD_RE = re.compile(r"^(?:ae-sdd|python\s+\S*ae-sdd)\s+memory\b", re.IGNORECASE)
+_ASSETS_GENERATE_CMD_RE = re.compile(
+    r"^(?:ae-sdd|python\S*\s+\S*ae-sdd)\s+assets\s+generate\b",
+    re.IGNORECASE,
+)
 
 
 def _is_ae_sdd_memory_cmd(bash_command: str) -> bool:
@@ -574,6 +581,12 @@ def _is_ae_sdd_memory_cmd(bash_command: str) -> bool:
     """
     stripped = (bash_command or "").strip()
     return bool(_MEMORY_CMD_RE.match(stripped))
+
+
+def _is_ae_sdd_assets_generate_cmd(bash_command: str) -> bool:
+    """命令是否为单条 `ae-sdd assets generate` 维护命令。"""
+    stripped = (bash_command or "").strip()
+    return bool(_ASSETS_GENERATE_CMD_RE.match(stripped))
 
 
 def _extract_option_value(bash_command: str, option: str) -> Optional[str]:
@@ -868,7 +881,7 @@ def _check_pending_init_intercept(
         f"当前 {tool_name} 操作已被拦截。\n\n"
         f"请先运行 ae-sdd init 初始化项目：\n"
         f"  ae-sdd init . <projectKey>\n"
-        f"  ae-sdd assets generate --project <projectKey>\n"
+        f"  # init 会自动生成 baseline 项目资产\n"
         f"然后重新触发 /ae-sdd。\n\n"
         f"如需紧急绕过，请说：/ae-sdd-quick 或 '走快速通道'"
     )
@@ -883,6 +896,7 @@ def check_intercept(
     allow_readonly: bool = True,
     project_dir: Optional[Path] = None,
     forced_phase: Optional[str] = None,
+    session_key: str = "",
 ) -> tuple[bool, str]:
     """
     核心拦截判断。
@@ -909,13 +923,29 @@ def check_intercept(
             if pending.exists():
                 return _check_pending_init_intercept(tool_name, bash_command, file_path, allow_readonly)
             return True, ""  # 非 ae-sdd 项目，不拦截
-        st = state_mod.read_state(paths.state_path(ade_sdd))
+        try:
+            resolved_state = work_item_context.resolve_default_state(
+                ade_sdd,
+                session_key=session_key,
+            )
+        except work_item_context.AmbiguousWorkItemError as e:
+            return False, str(e)
+        except work_item_context.NoWorkItemStateError as e:
+            return False, str(e)
+        st = resolved_state.data
         # 🆕 v3.9.1 嵌套 state 兼容：用统一接口读 active phase（nested → storyStates[activeStory].phase）
         phase = state_mod.get_active_phase(st)
         cfg = paths.read_config(ade_sdd)
         project_key = cfg.get("projectKey", "unknown")
     else:
         st = {"phase": phase}
+
+    # 3a. ae-sdd assets generate 维护命令放行。
+    # G-00 失败时给出的修复动作必须可执行；仅允许单条命令，链式 Bash 继续拦截。
+    if tool_name == "Bash" and bash_command:
+        stripped = bash_command.strip()
+        if _is_ae_sdd_assets_generate_cmd(stripped) and not _CHAIN_RE.search(stripped):
+            return True, ""
 
     # 3. ae-sdd state write 保护
     if tool_name == "Bash" and bash_command:
@@ -952,7 +982,7 @@ def check_intercept(
 
     # 5. 路径感知（🆕 v3.4.0 关卡2 产物落地校验内嵌）
     if file_path:
-        allowed, reason = _check_path_permission(tool_name, file_path, phase, ade_sdd)
+        allowed, reason = _check_path_permission(tool_name, file_path, phase, ade_sdd, state_data=st)
         if not allowed:
             return False, reason
 
