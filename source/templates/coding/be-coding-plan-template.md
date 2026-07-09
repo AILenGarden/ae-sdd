@@ -15,7 +15,50 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 0. 元信息 `必填`
+## 填写声明表
+
+> 本模板采用"两大段"结构：本表集中声明所有章节的**填写义务**，正文每章节按"骨架 + 示例"两段组织。
+> 章节标题不再标注 `必填/选填`；判定依据统一查此表。
+
+| § | 章节 | 填写义务 | 适用条件 |
+| --- | --- | --- | --- |
+| 0 | 元信息 | 🔴 必填 | 全部 |
+| 0.5 | └ Tier 选择 | 🔴 必填 | 全部（强制选择 Tier，决定各章节填/省） |
+| 1 | 项目资产引用块 | 🔴 必填 | 全部（门禁 0：缺资产 = 整 Plan 打回） |
+| 2 | 抽象分层 → 项目分层映射表 | 🔴 必填 | 全部 |
+| 3 | Task 执行顺序编排 | 🔴 必填 | 全部 |
+| 4 | 文件级实现顺序 | 🔴 必填 | 全部 |
+| 5 | 关键类骨架 | 🔴 必填 | 全部（含 🆕 v3.4.0 G-CODEPLAN-SRC 源码核对） |
+| 5.1 | └ `{Resource}DO.java`（Domain 层） | 🔴 必填 | 全部 |
+| 5.2 | └ `{Resource}AppService.java`（Application 层） | 🔴 必填 | 全部 |
+| 5.3 | └ `{Resource}RestImpl.java`（Interfaces 层） | 🔴 必填 | 全部 |
+| 5.4 | └ `{Resource}RepositoryImpl.java`（Infrastructure 层） | 🔴 必填 | 全部 |
+| 5.5 | └ `{Resource}{Action}AppService.java`（BFF 层） | 🟡 选填（条件） | 有 BFF 入口时 |
+| 6 | 数据结构 / 全链路映射照表 | 🔴 必填 | 全部（按项目资产分层结构） |
+| 6.0 | └ 引用项目资产获取分层结构 | 🔴 必填 | 全部 |
+| 6.1 | └ 全链路映射照表（主表） | 🔴 必填 | 全部 |
+| 6.2 | └ 实例：icec-cloud-boss 项目 IM 消息全链路映射 | 🟡 选填（条件） | 需参考实例时 |
+| 6.3 | └ 审计字段（与本项目分层对齐） | 🔴 必填 | 全部 |
+| 6.4 | └ 字段命名转换规则（与项目资产 §6.5 一致） | 🔴 必填 | 全部 |
+| 6.5 | └ 门禁 | 🔴 必填 | 全部 |
+| 7 | Mapper / Repository 关键 SQL | 🟡 选填（条件） | 有数据库操作时 |
+| 8 | 测试用例对应 | 🔴 必填 | 全部 |
+| 9 | 编译与测试验证点 | 🔴 必填 | 全部 |
+| 10 | 调试与回滚方案 | 🔴 必填 | 全部 |
+| 11 | 约束合规自审 | 🟡 选填（条件） | Tier 2/3（Tier 1 免填） |
+| 12 | 与 Story 接口契约一致性确认 | 🟡 选填（条件） | Tier 2/3（Tier 1 免填） |
+| 13 | Task 间依赖与调用关系 | 🟡 选填（条件） | Tier 2/3（Tier 1 免填） |
+| 14 | 实现注意事项 | 🟡 选填（条件） | Tier 2/3（Tier 1 免填） |
+| 15 | 门禁自检（🔴 15 条全部 ✅ 才允许进入 `CodingSkill.Execute`） | 🔴 必填 | 全部 |
+| — | 维护 | 🟡 选填（条件） | 模板维护时 |
+
+**填写义务图例：**
+- 🔴 **必填** — 必须填写，不能为空，不能删章节
+- 🟡 **选填（条件）** — 仅当"适用条件"成立时必填；条件不成立可整节删除
+
+---
+
+## 0. 元信息
 
 | 字段 | 值 |
 | --- | --- |
@@ -27,7 +70,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 | 作者 | AI（Claude Code） |
 | 前置依赖 | Task 实现方案 ✅ / 测试用例 ✅ / 项目资产 ✅ / 约束文档 ✅ |
 
-### 0.5 Tier 选择 `🔴 强制`
+### 0.5 Tier 选择
 
 | Tier | 适用场景 | 必填章节 | 必省章节 |
 | --- | --- | --- | --- |
@@ -39,7 +82,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 1. 项目资产引用块（🔴 门禁 0：缺资产 = 整 Plan 打回） `必填`
+## 1. 项目资产引用块（🔴 门禁 0：缺资产 = 整 Plan 打回）
 
 > 本节是 Plan 的"事实基准"。**所有 §2-§14 的事实陈述必须能从本节指向的项目资产章节找到出处**。
 
@@ -52,7 +95,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 2. 抽象分层 → 项目分层映射表 `必填`
+## 2. 抽象分层 → 项目分层映射表
 
 > **行 = 抽象 4 层 + 可选 2 类；列 = 本项目对应的工程模块 / 包路径 / 典型类名 / 职责落点。**
 > **包路径禁止写"待定/TBD"**；必须能在项目资产 §4 找到对应模式。
@@ -82,7 +125,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 3. Task 执行顺序编排 `必填`
+## 3. Task 执行顺序编排
 
 > **不重写 Task 细节。** 从 `{STORY-ID}-Task实现方案.md` 抽出 Task 列表，按依赖关系画执行顺序。
 
@@ -103,7 +146,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 4. 文件级实现顺序 `必填`
+## 4. 文件级实现顺序
 
 > 每个文件必须有"前置必须先写"和"完成后验证"。**禁止一次性写完所有文件再编译**。
 
@@ -123,7 +166,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 5. 关键类骨架 `必填`
+## 5. 关键类骨架
 
 > **每个类一张子卡**：类签名 + 所在层 + 包路径（步骤 4 已定） + 核心字段 + 核心方法签名 + 方法伪代码（10-30 行）。
 >
@@ -142,7 +185,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 > 每步以**动词开头**（校验/查询/转换/返回/抛异常/组装/调用）。
 > **禁止贴完整方法体**（完整方法体是 ⑤ Coding 的事）。
 
-### 5.1 `{Resource}DO.java`（Domain 层） `必填`
+### 5.1 `{Resource}DO.java`（Domain 层）
 
 | 字段 | 值 |
 | --- | --- |
@@ -162,7 +205,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 5. 返回 this
 ```
 
-### 5.2 `{Resource}AppService.java`（Application 层） `必填`
+### 5.2 `{Resource}AppService.java`（Application 层）
 
 | 字段 | 值 |
 | --- | --- |
@@ -184,7 +227,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 异常：捕获 DomainException → 直接抛；其他异常 → 包装为 AppException(code=...)
 ```
 
-### 5.3 `{Resource}RestImpl.java`（Interfaces 层） `必填`
+### 5.3 `{Resource}RestImpl.java`（Interfaces 层）
 
 | 字段 | 值 |
 | --- | --- |
@@ -200,7 +243,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 3. 返回
 ```
 
-### 5.4 `{Resource}RepositoryImpl.java`（Infrastructure 层） `必填`
+### 5.4 `{Resource}RepositoryImpl.java`（Infrastructure 层）
 
 | 字段 | 值 |
 | --- | --- |
@@ -217,7 +260,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 4. 返回 do
 ```
 
-### 5.5 `{Resource}{Action}AppService.java`（BFF 层，可选） `选填`
+### 5.5 `{Resource}{Action}AppService.java`（BFF 层）
 
 | 字段 | 值 |
 | --- | --- |
@@ -239,7 +282,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 6. 数据结构 / 全链路映射照表（🔴 按项目资产分层结构） `必填`
+## 6. 数据结构 / 全链路映射照表（🔴 按项目资产分层结构）
 
 > **🔴 设计原则（2026-06-05 修订）：** 模板**不写死**全链路的"层"（哪些层、层序、命名、命名风格）—— 这些是**项目特化结构**，必须从**项目资产**读取。
 >
@@ -249,7 +292,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 >
 > **本节目的：** 展示**每个字段跨所有"项目分层"的完整映射**（含命名/类型/特殊处理），按调用链路自上而下溯源。
 
-### 6.0 引用项目资产获取分层结构 `必填`
+### 6.0 引用项目资产获取分层结构
 
 ```
 【本节填写前置动作】
@@ -284,7 +327,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 - `(透传可选)` — 可选透传
 - `(UNIQUE)` — 唯一索引
 
-### 6.1 全链路映射照表（主表） `必填`
+### 6.1 全链路映射照表（主表）
 
 **🔴 强制：每行一个字段跨本项目所有"层"的完整映射**，格式：
 
@@ -294,7 +337,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 > **表头填写：** 按本项目 §3 实际分层顺序填表头（最右一列固定为 DB 列，因为 DDL 是项目必有的）。
 
-### 6.2 实例：icec-cloud-boss 项目 IM 消息全链路映射（🔴 参考实例） `选填`
+### 6.2 实例：icec-cloud-boss 项目 IM 消息全链路映射（🔴 参考实例）
 
 > **🔴 此节是实例（icec-cloud-boss 项目 IM 消息域），不是模板。**
 > 其他项目按本项目 §3 实际分层填写。Icec-cloud-boss 项目有 8 个调用层（§3），IM 消息字段跨这 8 层展示映射规则。
@@ -315,7 +358,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 | `clientIp` (String) | `(丢弃)` | `-` | `-` | `-` | BFF 层丢弃（仅审计日志用）|
 | `appKey/nonce/signature` | `(透传可选)` | `(签名验用)` | `-` | `-` | 仅签名验证；不入数据流 |
 
-### 6.3 审计字段（与本项目分层对齐） `必填`
+### 6.3 审计字段（与本项目分层对齐）
 
 > **按本项目 §3 实际分层填表头**，DB 列遵循项目资产 §6.5（审计四字段 + deleted_flag）。
 
@@ -327,7 +370,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 | `-` | `-` | ... | `lastUpdatedDate: Date` | `last_updated_date` (datetime ON UPDATE CURRENT_TIMESTAMP) | 审计字段 |
 | `-` | `-` | ... | `deletedFlag: Boolean` | `deleted_flag` (tinyint(1) DEFAULT 0) | 逻辑删除（如需） |
 
-### 6.4 字段命名转换规则（与项目资产 §6.5 一致） `必填`
+### 6.4 字段命名转换规则（与项目资产 §6.5 一致）
 
 | 转换类型 | 规则 | 示例 |
 | --- | --- | --- |
@@ -337,7 +380,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 | 字段丢弃 | `(丢弃)` 标记 | `sensitiveType` 在 BFF 层丢弃 |
 | 路由字段 | `(路由用)` 标记 | `channelType` 在 DO 层路由用但不落库 |
 
-### 6.5 门禁 `必填`
+### 6.5 门禁
 
 - 🔴 **表头必须与本项目 §3 实际分层一致**（禁止模板默认 N 层）
 - 🔴 **每行"项目分层数"个字段齐全**（或显式标 `(丢弃)` / `-` / `(路由用)` 等）
@@ -349,7 +392,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 ---
 
-## 7. Mapper / Repository 关键 SQL `选填（有数据库操作时必填）`
+## 7. Mapper / Repository 关键 SQL
 
 > **关键 UPDATE 必须明确 WHERE 条件。** 复杂 SQL 给出 EXPLAIN 验证步骤。
 
@@ -369,7 +412,7 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 
 ---
 
-## 8. 测试用例对应 `必填`
+## 8. 测试用例对应
 
 > **测试数据必须可追溯到 Story/Task 章节**（"假设 userId=1L 就能跑" = 门禁不通过）。
 > **真实 DB/HTTP 判定：** 核心落库 / 事务回滚 / 分布式锁 / Feign 调用 / Redis 缓存失效 这 5 类**必须**真实 DB 或真实 HTTP。
@@ -390,7 +433,7 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 
 ---
 
-## 9. 编译与测试验证点 `必填`
+## 9. 编译与测试验证点
 
 > **至少 5 档验证：** 单文件 / 单层 / 单 Task / 全量 / 真实 HTTP。
 
@@ -406,7 +449,7 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 
 ---
 
-## 10. 调试与回滚方案 `必填`
+## 10. 调试与回滚方案
 
 > **至少覆盖 5 种失败类型：** 编译失败 / 单测失败 / 集成测试失败 / 真实 HTTP 失败 / 性能问题。
 
@@ -421,7 +464,7 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 
 ---
 
-## 11. 约束合规自审 `选填（Tier 1 免填）`
+## 11. 约束合规自审
 
 > 逐条对照项目资产 §6 工程约束 9 类。
 
@@ -443,7 +486,7 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 
 ---
 
-## 12. 与 Story 接口契约一致性确认 `选填（Tier 1 免填）`
+## 12. 与 Story 接口契约一致性确认
 
 | 接口 | Story 定义签名 | Task 实现签名 | 是否一致 |
 | --- | --- | --- | --- |
@@ -452,7 +495,7 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 
 ---
 
-## 13. Task 间依赖与调用关系 `选填（Tier 1 免填）`
+## 13. Task 间依赖与调用关系
 
 ```mermaid
 Task-0 公共依赖
@@ -476,7 +519,7 @@ Task-6 Test (单测 + 集成测试 + 真实 HTTP)
 
 ---
 
-## 14. 实现注意事项 `选填（Tier 1 免填）`
+## 14. 实现注意事项
 
 | # | 注意事项 | 风险等级 | 说明 |
 | --- | --- | --- | --- |
@@ -487,7 +530,7 @@ Task-6 Test (单测 + 集成测试 + 真实 HTTP)
 
 ---
 
-## 15. 门禁自检（🔴 15 条全部 ✅ 才允许进入 `CodingSkill.Execute`） `必填`
+## 15. 门禁自检（🔴 15 条全部 ✅ 才允许进入 `CodingSkill.Execute`）
 
 > **每条门禁附判定 SOP，避免"自我声明 ✅"通过。**  
 > 任一门禁未通过，禁止进入 `CodingSkill.Execute`，必须回到 `CodingSkill.Plan` 阶段修补。
@@ -519,7 +562,7 @@ Task-6 Test (单测 + 集成测试 + 真实 HTTP)
 
 ---
 
-## 维护 `选填`
+## 维护
 
 - **维护人：** 架构组 + Coding 阶段作者
 - **更新频率：** 每次 ④bis 阶段使用本模板
