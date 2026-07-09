@@ -192,6 +192,91 @@ class TestFindDoc(unittest.TestCase):
         result = paths.list_docs(self.tmp, "STORY-001", "-task-*.md")
         self.assertEqual(result, [])
 
+    # ─── 🆕 v3.9.10：document-storage 新布局 ae-sdd-doc/ 覆盖 ──────────────────
+    def test_find_in_ae_sdd_doc_story(self):
+        """新布局：ae-sdd-doc/Story/{docId}.md 可命中（STORY intent）。"""
+        doc = self.tmp / "ae-sdd-doc" / "Story" / "STORY-001.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("# Story", encoding="utf-8")
+        result = paths.find_doc(self.tmp, "STORY-001", ".md")
+        self.assertEqual(result, doc)
+
+    def test_find_in_ae_sdd_doc_testcase(self):
+        """新布局：ae-sdd-doc/Test/{workItem}/{workItem}-testcase.md 可命中（TESTCASE intent）。"""
+        doc = self.tmp / "ae-sdd-doc" / "Test" / "STORY-001" / "STORY-001-testcase.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("# TC", encoding="utf-8")
+        result = paths.find_doc(self.tmp, "STORY-001", "-testcase.md")
+        self.assertEqual(result, doc)
+
+    def test_find_in_ae_sdd_doc_codingplan(self):
+        """新布局：ae-sdd-doc/Coding/{workItem}/{workItem}-CodingPlan.md 可命中（CODING_PLAN intent）。"""
+        doc = self.tmp / "ae-sdd-doc" / "Coding" / "STORY-001" / "STORY-001-CodingPlan.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("# CP", encoding="utf-8")
+        result = paths.find_doc(self.tmp, "STORY-001", "-CodingPlan.md")
+        self.assertEqual(result, doc)
+
+    def test_find_in_ae_sdd_doc_iterations(self):
+        """新布局：iterations/ 迭代目录下文档可命中（TASK_SMALL/PLAN_MICRO 路径）。"""
+        doc = (self.tmp / "ae-sdd-doc" / "iterations" / "2026-07-08"
+               / "Coding" / "STORY-001" / "STORY-001-CodingPlan.md")
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("# CP iter", encoding="utf-8")
+        result = paths.find_doc(self.tmp, "STORY-001", "-CodingPlan.md")
+        self.assertEqual(result, doc)
+
+    def test_find_legacy_design_preferred_over_new(self):
+        """旧 design/ 与新 ae-sdd-doc/ 同时存在时优先返回旧路径（保持历史项目行为）。"""
+        (self.design / "STORY-001.md").write_text("# Story legacy", encoding="utf-8")
+        new_doc = self.tmp / "ae-sdd-doc" / "Story" / "STORY-001.md"
+        new_doc.parent.mkdir(parents=True, exist_ok=True)
+        new_doc.write_text("# Story new", encoding="utf-8")
+        result = paths.find_doc(self.tmp, "STORY-001", ".md")
+        self.assertEqual(result, self.design / "STORY-001.md")
+
+    def test_list_docs_finds_tasks_in_ae_sdd_doc(self):
+        """新布局：ae-sdd-doc/Task/{story_id}/ 下 Task 文档可被 list_docs 列出。"""
+        new_task_dir = self.tmp / "ae-sdd-doc" / "Task" / "STORY-001"
+        new_task_dir.mkdir(parents=True, exist_ok=True)
+        (new_task_dir / "STORY-001-task-001.md").write_text("# t1 new", encoding="utf-8")
+        (new_task_dir / "STORY-001-task-002.md").write_text("# t2 new", encoding="utf-8")
+        result = paths.list_docs(self.tmp, "STORY-001", "-task-*.md")
+        names = sorted(p.name for p in result)
+        self.assertEqual(names, ["STORY-001-task-001.md", "STORY-001-task-002.md"])
+
+    def test_list_docs_dedupes_when_docworkspace_equals_project_root(self):
+        """docWorkspacePath 回退 gitPath（= 项目根）时搜索根重合，list_docs 不应重复返回同一文件。"""
+        # 构造 .ae-sdd/assets 声明 gitPath=项目根、无 docWorkspacePath（回退 gitPath）
+        assets = self.tmp / ".ae-sdd" / "assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        (assets / "test.assets.md").write_text(
+            f"# §A §B §C §D §E §F §G\n\n| gitPath | `{self.tmp}` |\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".ae-sdd" / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (self.task / "STORY-001-task-001.md").write_text("# t1", encoding="utf-8")
+        result = paths.list_docs(self.tmp, "STORY-001", "-task-*.md")
+        # doc_search_roots 去重后仅 1 个根，task-001 只被遍历一次
+        self.assertEqual(len(result), 1)
+
+    def test_doc_search_roots_returns_project_only_without_ae_sdd(self):
+        """无 .ae-sdd/config.yaml 时仅返回 [project_dir]（向后兼容）。"""
+        roots = paths.doc_search_roots(self.tmp)
+        self.assertEqual(roots, [self.tmp])
+
+    def test_doc_search_roots_dedupes_when_docworkspace_equals_gitpath(self):
+        """docWorkspacePath 缺省回退 gitPath 时，搜索根去重为 1 个。"""
+        assets = self.tmp / ".ae-sdd" / "assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        (assets / "test.assets.md").write_text(
+            f"# §A §B §C §D §E §F §G\n\n| gitPath | `{self.tmp}` |\n",
+            encoding="utf-8",
+        )
+        (self.tmp / ".ae-sdd" / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        roots = paths.doc_search_roots(self.tmp)
+        self.assertEqual(roots, [self.tmp])
+
 
 class TestPathHelpers(unittest.TestCase):
     """路径辅助函数测试"""
