@@ -174,13 +174,13 @@ class TestNonAeSddProject:
 
     def test_no_ae_sdd_dir_allows_all(self, tmp_path):
         # tmp_path 是空目录，没有 .ae-sdd/
-        allowed, _ = check_intercept("Write", project_dir=tmp_path)
+        allowed, _ = check_intercept("Write", project_dir=tmp_path, forced_engaged=True)
         assert allowed, "无 .ae-sdd/ 的项目不应被拦截"
 
     def test_no_ae_sdd_bash_allowed(self, tmp_path):
         allowed, _ = check_intercept("Bash",
                                      bash_command="rm -rf /",
-                                     project_dir=tmp_path)
+                                     project_dir=tmp_path, forced_engaged=True)
         assert allowed
 
 
@@ -226,7 +226,7 @@ class TestParallelWorkItemHookIsolation:
         (ade_sdd / "state.json").write_text(json.dumps(mirror, ensure_ascii=False), encoding="utf-8")
 
         target = tmp_path / "src" / "main" / "java" / "Foo.java"
-        allowed, reason = check_intercept("Write", file_path=str(target), project_dir=tmp_path)
+        allowed, reason = check_intercept("Write", file_path=str(target), project_dir=tmp_path, forced_engaged=True)
 
         assert not allowed
         assert "--work-item" in reason
@@ -240,7 +240,7 @@ class TestParallelWorkItemHookIsolation:
         self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
         self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
 
-        allowed, reason = check_intercept("Bash", bash_command="echo test", project_dir=tmp_path)
+        allowed, reason = check_intercept("Bash", bash_command="echo test", project_dir=tmp_path, forced_engaged=True)
 
         assert allowed, reason
 
@@ -252,7 +252,7 @@ class TestParallelWorkItemHookIsolation:
         self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
 
         allowed, reason = check_intercept(
-            "Bash", bash_command="echo test > out.txt", project_dir=tmp_path
+            "Bash", bash_command="echo test > out.txt", project_dir=tmp_path, forced_engaged=True
         )
 
         assert not allowed
@@ -271,7 +271,7 @@ class TestParallelWorkItemHookIsolation:
         allowed, reason = check_intercept(
             "Write",
             file_path=str(tmp_path / "notes.txt"),
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
             session_key="session-005",
         )
 
@@ -290,7 +290,7 @@ class TestParallelWorkItemHookIsolation:
         allowed, reason = check_intercept(
             "Write",
             file_path=str(tmp_path / "notes.txt"),
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
             session_key="session-005",
         )
 
@@ -362,7 +362,7 @@ class TestParallelWorkItemHookIsolation:
         self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
 
         allowed, reason = check_intercept(
-            "Write", file_path=str(tmp_path / "notes.txt"), project_dir=tmp_path
+            "Write", file_path=str(tmp_path / "notes.txt"), project_dir=tmp_path, forced_engaged=True
         )
 
         assert not allowed
@@ -380,7 +380,7 @@ class TestParallelWorkItemHookIsolation:
         allowed, reason = check_intercept(
             "Bash",
             bash_command="ae-sdd state new --id STORY-006 --entry-node STORY",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
 
         assert allowed, reason
@@ -394,7 +394,7 @@ class TestParallelWorkItemHookIsolation:
         allowed, reason = check_intercept(
             "Bash",
             bash_command="ae-sdd enter test --story STORY-006",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
 
         assert allowed, reason
@@ -409,7 +409,7 @@ class TestParallelWorkItemHookIsolation:
         allowed, reason = check_intercept(
             "Bash",
             bash_command="ae-sdd state new --id STORY-006 --entry-node STORY && rm -rf .ae-sdd/",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
 
         assert not allowed
@@ -435,7 +435,7 @@ class TestParallelWorkItemHookIsolation:
         allowed, reason = check_intercept(
             "Bash",
             bash_command=smuggled_command,
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
 
         assert not allowed, f"smuggled payload should not escape: {smuggled_command!r}"
@@ -470,7 +470,7 @@ class TestHS10DocumentStoragePathGuard:
         allowed, reason = check_intercept(
             "Write",
             file_path=str(detached),
-            project_dir=project_dir,
+            project_dir=project_dir, forced_engaged=True,
         )
         assert not allowed
         assert "HS-10" in reason
@@ -565,7 +565,7 @@ class TestHS7PrdCompleteGate:
         project_dir = self._make_prd_state(tmp_path, all_pass=False)
         cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime mavis"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True, forced_phase="code-reviewed"
         )
         assert not allowed, "4 层未过应被 HS-7 拦截"
         assert "HS-7" in reason
@@ -577,7 +577,7 @@ class TestHS7PrdCompleteGate:
         project_dir = self._make_prd_state(tmp_path, all_pass=True)
         cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime mavis"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True, forced_phase="code-reviewed"
         )
         # 4 层全过 → HS-7 放行（可能因 phase=code-reviewed 不允许 Bash 被拦，但不是 HS-7）
         if not allowed:
@@ -587,7 +587,7 @@ class TestHS7PrdCompleteGate:
         """PRD state.json 不存在 → 拦截"""
         cmd = "ae-sdd state prd-complete --prd PRD-NONEXIST --runtime mavis"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=tmp_path, forced_phase="code-reviewed"
+            "Bash", bash_command=cmd, project_dir=tmp_path, forced_engaged=True, forced_phase="code-reviewed"
         )
         assert not allowed
         assert "HS-7" in reason
@@ -598,7 +598,7 @@ class TestHS7PrdCompleteGate:
         project_dir = self._make_prd_state(tmp_path, all_pass=False)
         cmd = "ae-sdd state prd-check-complete --prd PRD-CS-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True, forced_phase="code-reviewed"
         )
         # prd-check-complete 命中只读白名单或 phase 校验，但不应因 HS-7 拦截
         if not allowed:
@@ -609,7 +609,7 @@ class TestHS7PrdCompleteGate:
         project_dir = self._make_prd_state(tmp_path, all_pass=False)
         cmd = "echo 'ae-sdd state prd-complete --prd PRD-CS-001'"
         allowed, _ = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir, forced_phase="code-reviewed"
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True, forced_phase="code-reviewed"
         )
         # echo 命令不应触发 HS-7（_is_ae_sdd_cmd 排除非执行形式）
         # 即使被其他规则拦，reason 也不应含 HS-7
@@ -653,7 +653,7 @@ class TestScaleRoutedStateWrite:
         project_dir = self._make_state(tmp_path, scale="微", phase="initialized")
         cmd = "ae-sdd state write --phase task-generated --story STORY-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert allowed, f"微链 initialized→task-generated 应放行，但被拒: {reason}"
 
@@ -663,7 +663,7 @@ class TestScaleRoutedStateWrite:
         project_dir = self._make_state(tmp_path, scale="微", phase="initialized")
         cmd = "ae-sdd state write --phase coding --story STORY-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert not allowed, "微链 initialized→coding 应被拦（v3.5.16 中间有 coding-process）"
         assert "跨步跳跃" in reason
@@ -674,7 +674,7 @@ class TestScaleRoutedStateWrite:
         project_dir = self._make_state(tmp_path, scale="大", phase="initialized")
         cmd = "ae-sdd state write --phase coding --story STORY-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert not allowed, "大链 initialized→coding 应被拦（跨步跳跃）"
         assert "跨步跳跃" in reason
@@ -686,7 +686,7 @@ class TestScaleRoutedStateWrite:
         project_dir = self._make_state(tmp_path, scale="小", phase="initialized")
         cmd = "ae-sdd state write --phase coding --story STORY-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert not allowed, "小链 initialized→coding 应被拦（跨步跳跃）"
         assert "跨步跳跃" in reason
@@ -698,7 +698,7 @@ class TestScaleRoutedStateWrite:
         project_dir = self._make_state(tmp_path, scale="小", phase="testcase-reviewed")
         cmd = "ae-sdd state write --phase task-generated --story STORY-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert allowed, f"小链 testcase-reviewed→task 应放行，但被拒: {reason}"
 
@@ -709,7 +709,7 @@ class TestScaleRoutedStateWrite:
             project_dir = self._make_state(tmp_path, scale=scale, phase="story-reviewed")
             cmd = "ae-sdd state write --phase testcase-generated --story STORY-001"
             allowed, reason = check_intercept(
-                "Bash", bash_command=cmd, project_dir=project_dir
+                "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
             )
             assert allowed, f"scale={scale} story-reviewed→testcase-generated 应放行，但被拒: {reason}"
 
@@ -720,7 +720,7 @@ class TestScaleRoutedStateWrite:
             project_dir = self._make_state(tmp_path, scale=scale, phase="story-reviewed")
             cmd = "ae-sdd state write --phase task-generated --story STORY-001"
             allowed, reason = check_intercept(
-                "Bash", bash_command=cmd, project_dir=project_dir
+                "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
             )
             assert not allowed, f"scale={scale} story-reviewed→task-generated 应被拦（跳过 TestCase）"
             assert "跨步跳跃" in reason
@@ -732,7 +732,7 @@ class TestScaleRoutedStateWrite:
         project_dir = self._make_state(tmp_path, scale="微", phase="initialized")
         cmd = "ae-sdd state write --phase dr-generated --story STORY-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert allowed, f"微链 initialized→dr 由 set_phase 拦，gate_intercept 跨步判定不应拦: {reason}"
 
@@ -773,7 +773,7 @@ class TestCodingProcessHardGuard:
         allowed, reason = check_intercept(
             "Write",
             file_path=str(tmp_path / "src/main/java/Foo.java"),
-            project_dir=project_dir,
+            project_dir=project_dir, forced_engaged=True,
         )
         assert not allowed, "缺 coding-process confirm 时应拦截写 src/"
         assert "CodingProcess" in reason, f"拦截原因应提及 CodingProcess: {reason}"
@@ -795,7 +795,7 @@ class TestCodingProcessHardGuard:
         allowed, reason = check_intercept(
             "Write",
             file_path=str(tmp_path / "src/main/java/Foo.java"),
-            project_dir=project_dir,
+            project_dir=project_dir, forced_engaged=True,
         )
         assert allowed, f"coding-process 已 confirm 且 memory 已 enter 应放行写 src/: {reason}"
 
@@ -830,7 +830,7 @@ class TestMemoryCommandPassage:
         project_dir = self._make_design_phase_project(tmp_path, phase="task-generated")
         cmd = "ae-sdd memory enter --phase coding-plan --story OPT-LIFE-RC-001"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert allowed, (
             f"设计阶段 ae-sdd memory enter 应放行（v3.9.2 修复死锁），但被拒: {reason}"
@@ -844,7 +844,7 @@ class TestMemoryCommandPassage:
             '--summary "done" --evidence "src/Foo.java:1"'
         )
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         assert allowed, f"coding phase memory write 应放行: {reason}"
 
@@ -853,7 +853,7 @@ class TestMemoryCommandPassage:
         project_dir = self._make_design_phase_project(tmp_path, phase="task-generated")
         cmd = "ae-sdd memory enter --phase coding-plan && rm -rf .ae-sdd/"
         allowed, reason = check_intercept(
-            "Bash", bash_command=cmd, project_dir=project_dir
+            "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
         )
         # 含链式分隔符 → step 3c 不快速放行 → 落到 step 6 phase permit
         # task-generated 不含 Bash → 被拦
@@ -963,4 +963,126 @@ class TestMemoryDirLazyInit:
             "无 stage token 时仍应拦截写操作（防 fix 削弱门禁语义）: " + reason
         )
         assert "memory enter" in reason
+
+
+# ─── 🆕 v3.9.21 engage 按需启用门禁 ────────────────────────────────────────────
+
+class TestSessionEngageGate:
+    """门禁按会话 engage 按需启用：未 engage 放行，engaged 后按 phase 锁。
+
+    核心语义：用户调 /ae-sdd 前 hook 完全不工作；调了之后定位 state 并启用校验。
+    engage 标记按 session_key 维度，子 Agent 继承父会话 session_id 时随主会话 engage。
+    """
+
+    def _make_engaged_project(self, tmp_path: Path, phase: str = "task-reviewed") -> Path:
+        """建一个有 active work-item 的项目（用于 engage 测试）。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        _write_work_item_state(tmp_path, {
+            "version": "1", "projectKey": "test", "phase": phase,
+            "scale": "小", "currentStory": "STORY-001",
+            "currentTask": None, "history": [],
+        })
+        return ade_sdd
+
+    def test_unengaged_session_passthrough_even_with_active_state(self, tmp_path):
+        """未 engage 的会话，即使项目有 active work-item 也放行（修复核心目标）。"""
+        self._make_engaged_project(tmp_path, phase="task-reviewed")
+        # task-reviewed 正常会锁 Bash，但未 engage → 放行
+        allowed, reason = check_intercept(
+            "Bash", bash_command="rm -rf something",
+            project_dir=tmp_path, session_key="never-engaged-xyz",
+        )
+        assert allowed, f"未 engage 会话应放行，但被拒: {reason}"
+        assert reason == ""
+
+    def test_unengaged_write_passthrough(self, tmp_path):
+        """未 engage 的会话写文件也放行。"""
+        self._make_engaged_project(tmp_path, phase="initialized")
+        allowed, reason = check_intercept(
+            "Write", file_path="src/main/java/Foo.java",
+            project_dir=tmp_path, session_key="never-engaged-write",
+        )
+        assert allowed, f"未 engage 写应放行: {reason}"
+
+    def test_engaged_session_enforces_phase_lock(self, tmp_path):
+        """已 engage 的会话按 phase 正常锁（engaged 后门禁生效）。"""
+        ade_sdd = self._make_engaged_project(tmp_path, phase="initialized")
+        # initialized 的 PHASE_PERMIT 不含 Bash → engaged 后应锁
+        work_item_context.mark_session_engaged(ade_sdd, "engaged-session-1")
+        allowed, reason = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="engaged-session-1",
+        )
+        assert not allowed, "engaged 会话在 initialized phase 应锁 Bash"
+        assert "phase=initialized" in reason
+
+    def test_engaged_session_allows_permitted_tool(self, tmp_path):
+        """已 engage 的会话，phase 允许的工具正常放行。"""
+        ade_sdd = self._make_engaged_project(tmp_path, phase="coding")
+        work_item_context.mark_session_engaged(ade_sdd, "engaged-session-2")
+        # coding 的 PHASE_PERMIT 含 Bash → 放行（非只读命令也放行）
+        allowed, reason = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="engaged-session-2",
+        )
+        assert allowed, f"engaged + coding phase 应放行 Bash: {reason}"
+
+    def test_disengage_restores_passthrough(self, tmp_path):
+        """调 /ae-sdd 后说'退出 ae-sdd' → 清除标记 → 恢复放行。"""
+        ade_sdd = self._make_engaged_project(tmp_path, phase="initialized")
+        work_item_context.mark_session_engaged(ade_sdd, "engaged-then-exit")
+        # engage 后确实锁（initialized 不允许 Bash）
+        allowed_before, _ = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="engaged-then-exit",
+        )
+        assert not allowed_before
+        # disengage 后恢复放行
+        work_item_context.disengage_session(ade_sdd, "engaged-then-exit")
+        allowed_after, reason = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="engaged-then-exit",
+        )
+        assert allowed_after, f"disengage 后应放行: {reason}"
+        assert reason == ""
+
+    def test_empty_session_key_treated_as_unengaged(self, tmp_path):
+        """无 session_key 的会话视为未 engage（放行）。"""
+        self._make_engaged_project(tmp_path, phase="initialized")
+        allowed, reason = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="",
+        )
+        assert allowed, "空 session_key 应视为未 engage 放行"
+
+    def test_engage_is_per_session_not_global(self, tmp_path):
+        """engage 标记按 session 隔离：A 会话 engage 不影响 B 会话。"""
+        ade_sdd = self._make_engaged_project(tmp_path, phase="initialized")
+        work_item_context.mark_session_engaged(ade_sdd, "session-A")
+        # A 已 engage → 锁（initialized 不允许 Bash）
+        allowed_a, _ = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="session-A",
+        )
+        assert not allowed_a
+        # B 未 engage → 放行（同一项目，不同会话）
+        allowed_b, reason_b = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="session-B",
+        )
+        assert allowed_b, f"不同会话不应被 A 的 engage 影响: {reason_b}"
+
+    def test_forced_engaged_true_bypasses_marker_check(self, tmp_path):
+        """forced_engaged=True 跳过标记检查（测试用入口）。"""
+        self._make_engaged_project(tmp_path, phase="initialized")
+        # 不写 engage 标记，但 forced_engaged=True → 走门禁（initialized 不允许 Bash）
+        allowed, reason = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="any",
+            forced_engaged=True,
+        )
+        assert not allowed, "forced_engaged=True 应走门禁"
+        assert "phase=initialized" in reason
 

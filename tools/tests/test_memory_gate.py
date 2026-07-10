@@ -88,7 +88,7 @@ def test_gate_intercept_blocks_state_write_before_memory(tmp_path):
     allowed, reason = check_intercept(
         "Bash",
         bash_command="ae-sdd state write --phase test-running",
-        project_dir=tmp_path,
+        project_dir=tmp_path, forced_engaged=True,
     )
     assert not allowed
     assert "Mandatory memory gate failed" in reason
@@ -104,7 +104,7 @@ def test_gate_intercept_reaches_entry_gates_after_memory_passes(tmp_path):
     allowed, reason = check_intercept(
         "Bash",
         bash_command="ae-sdd state write --phase test-running",
-        project_dir=tmp_path,
+        project_dir=tmp_path, forced_engaged=True,
     )
     assert not allowed
     assert "Mandatory memory gate failed" not in reason
@@ -381,7 +381,7 @@ def test_store_gate_blocks_write_src_without_memory_enter(tmp_path):
     allowed, reason = check_intercept(
         "Write",
         file_path=str(tmp_path / "docs" / "note.md"),
-        project_dir=tmp_path,
+        project_dir=tmp_path, forced_engaged=True,
     )
     assert not allowed
     assert "memory enter" in reason
@@ -396,7 +396,7 @@ def test_store_gate_allows_write_after_memory_enter(tmp_path):
     allowed, reason = check_intercept(
         "Write",
         file_path=str(tmp_path / "docs" / "note.md"),
-        project_dir=tmp_path,
+        project_dir=tmp_path, forced_engaged=True,
     )
     # memory enter 后不再因 memory 门禁被拦（可能因其他门禁，但 reason 不含 memory enter）
     assert "memory enter" not in (reason or "")
@@ -408,7 +408,7 @@ def test_store_gate_skips_non_associated_phase(tmp_path):
     allowed, reason = check_intercept(
         "Write",
         file_path=str(tmp_path / "docs/note.md"),
-        project_dir=tmp_path,
+        project_dir=tmp_path, forced_engaged=True,
     )
     # initialized 非关联 phase，不触发 memory 门禁（可能被其他门禁拦，但不因 memory）
     assert "memory enter" not in (reason or "")
@@ -442,7 +442,7 @@ def test_store_gate_blocks_all_associated_phases(tmp_path):
         allowed, reason = check_intercept(
             "Write",
             file_path=str(tmp_path / "docs" / "note.md"),
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed, f"{state_phase} 未 memory enter 应被拦"
         assert f"--phase {mem_phase}" in reason, f"拦截原因应含 memory phase {mem_phase}: {reason}"

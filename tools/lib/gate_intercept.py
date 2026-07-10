@@ -925,9 +925,14 @@ def check_intercept(
     project_dir: Optional[Path] = None,
     forced_phase: Optional[str] = None,
     session_key: str = "",
+    forced_engaged: Optional[bool] = None,
 ) -> tuple[bool, str]:
     """
     核心拦截判断。
+
+    Args:
+        forced_engaged: 测试用。None=按真实 engage 标记判断（生产默认）；
+            True/False=强制跳过 engage 检查（仅测试应传，生产代码勿用）。
 
     Returns:
         (allowed, deny_reason)
@@ -969,6 +974,12 @@ def check_intercept(
             if pending.exists():
                 return _check_pending_init_intercept(tool_name, bash_command, file_path, allow_readonly)
             return True, ""  # 非 ae-sdd 项目，不拦截
+        # 🆕 engage 判定：未 engage 的会话不做门禁校验。
+        # 用户调 /ae-sdd 后 prompt_inject 会写本会话的 engage 标记；
+        # 没调过的会话/子 Agent 直接放行，实现"按需启用 hook"语义。
+        # forced_engaged 非 None 时（测试用）跳过标记检查。
+        if forced_engaged is None and not work_item_context.is_session_engaged(ade_sdd, session_key):
+            return True, ""
         try:
             resolved_state = work_item_context.resolve_default_state(
                 ade_sdd,

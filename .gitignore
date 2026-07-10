@@ -35,6 +35,8 @@ nul
 .ae-sdd/secrets/
 # ae-sdd local runtime telemetry (perf report/doctor source data)
 .ae-sdd/runtime-stats/
+# ae-sdd local session engage markers (per-session gate switch, runtime-only)
+.ae-sdd/.session-engaged/
 
 # =============================================
 # Python

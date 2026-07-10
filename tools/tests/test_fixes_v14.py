@@ -123,7 +123,7 @@ class TestChainedBashFix:
         allowed, reason = check_intercept(
             "Bash",
             bash_command="git status && rm -rf design/",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed, "链式 Bash 在 initialized phase 应被拦截"
 
@@ -140,7 +140,7 @@ class TestChainedBashFix:
         allowed, _ = check_intercept(
             "Bash",
             bash_command="mvn test && git add .",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert allowed, "coding phase 应允许链式 Bash（phase permit 包含 Bash）"
 
@@ -157,7 +157,7 @@ class TestChainedBashFix:
         allowed, _ = check_intercept(
             "Bash",
             bash_command="cat pom.xml | python process.py",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed, "设计阶段 pipe 命令应被拦截"
 
@@ -185,7 +185,7 @@ class TestCodeReviewedSourceProtection:
         allowed, reason = check_intercept(
             "Write",
             file_path="src/main/java/Foo.java",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed, "code-reviewed 阶段不应允许写 Java 源码"
         assert "设计阶段" in reason
@@ -203,7 +203,7 @@ class TestCodeReviewedSourceProtection:
         allowed, _ = check_intercept(
             "Write",
             file_path="src/main/resources/application.yaml",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed, "code-reviewed 阶段不应允许写 resources/application.yaml"
 
@@ -227,7 +227,7 @@ class TestCodeReviewedSourceProtection:
         allowed, _ = check_intercept(
             "Write",
             file_path="design/cr-report.md",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert allowed, "code-reviewed 阶段应允许写 CR 报告文档"
 
@@ -354,10 +354,17 @@ class TestQuickChannelFileExistence:
         if qc.exists():
             qc.unlink()
 
+        # 🆕 v3.9.21：engage 按需启用门禁——subprocess 调真实 CLI 须先 engage
+        # （否则无 session_id 会在 engage 短路层放行，测不到门禁逻辑）
+        from lib import work_item_context as _wic
+        _test_session = "v14-quick-channel-subprocess-test"
+        _wic.mark_session_engaged(ae_sdd, _test_session)
+
         payload = json.dumps({
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": {"command": "mvn compile"},
+            "session_id": _test_session,
         })
         result = subprocess.run(
             ["python", "tools/bin/ae-sdd", "gate-intercept", "--project", str(tmp_path)],
@@ -413,5 +420,5 @@ class TestBashReadonlyPrefixesExpanded:
             "currentTask": None, "history": [],
         }))
         from lib.gate_intercept import check_intercept
-        allowed, _ = check_intercept("Bash", bash_command=cmd, project_dir=tmp_path)
+        allowed, _ = check_intercept("Bash", bash_command=cmd, project_dir=tmp_path, forced_engaged=True)
         assert allowed, f"设计阶段 {cmd!r} 应被放行"

@@ -128,7 +128,7 @@ class TestStateMachineProtection:
         allowed, reason = check_intercept(
             "Bash",
             bash_command="ae-sdd state write --phase coding",  # 跨 5 步
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed
         assert "跨步" in reason or "跳了" in reason
@@ -224,7 +224,7 @@ class TestPathAwareness:
         allowed, reason = check_intercept(
             "Write",
             file_path="src/main/java/Service.java",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed
         assert "设计阶段" in reason

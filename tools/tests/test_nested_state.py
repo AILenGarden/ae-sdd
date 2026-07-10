@@ -447,7 +447,7 @@ class TestGateInterceptNestedState:
 
         src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
         allowed, reason = check_intercept(
-            "Write", file_path=src_file, project_dir=project
+            "Write", file_path=src_file, project_dir=project, forced_engaged=True
         )
         assert allowed, f"嵌套 state coding phase 应放行 src/ 写入，但被拦: {reason}"
 
@@ -463,7 +463,7 @@ class TestGateInterceptNestedState:
 
         src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
         allowed, reason = check_intercept(
-            "Write", file_path=src_file, project_dir=project
+            "Write", file_path=src_file, project_dir=project, forced_engaged=True
         )
         assert not allowed, "嵌套 state story-generated phase 应拦截 src/ 写入"
         assert "设计阶段" in reason, f"拒绝理由应含'设计阶段'，实际: {reason}"
@@ -479,7 +479,7 @@ class TestGateInterceptNestedState:
 
         target = tmp_path / "ae-sdd-doc" / "Coding" / "STORY-999-BE" / "STORY-999-BE-CodingPlan.md"
         allowed, reason = check_intercept(
-            "Write", file_path=str(target), project_dir=project
+            "Write", file_path=str(target), project_dir=project, forced_engaged=True
         )
 
         assert not allowed
@@ -501,7 +501,7 @@ class TestGateInterceptNestedState:
 
         src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
         allowed, reason = check_intercept(
-            "Write", file_path=src_file, project_dir=project
+            "Write", file_path=src_file, project_dir=project, forced_engaged=True
         )
 
         assert not allowed
@@ -537,6 +537,6 @@ class TestGateInterceptNestedState:
 
         src_file = str(tmp_path / "backend" / "src" / "main" / "java" / "X.java")
         allowed, reason = check_intercept(
-            "Write", file_path=src_file, project_dir=tmp_path
+            "Write", file_path=src_file, project_dir=tmp_path, forced_engaged=True
         )
         assert allowed, f"flat state coding phase 应放行 src/ 写入，但被拦: {reason}"

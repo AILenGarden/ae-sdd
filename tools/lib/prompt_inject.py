@@ -83,6 +83,15 @@ AE_SDD_TRIGGER_MARKERS: tuple[str, ...] = (
     "端到端实现",
 )
 
+# 🆕 会话 engage 退出词：用户说这些话时清除本会话 engage 标记，门禁恢复放行。
+# 与 AE_SDD_TRIGGER_MARKERS 对称——触发词开启门禁，退出词关闭。
+AE_SDD_DISENGAGE_MARKERS: tuple[str, ...] = (
+    "ae-sdd-exit",
+    "退出 ae-sdd",
+    "不锁了",
+    "解除门禁",
+)
+
 
 def _story_id_alias_matches(mentioned: str, active: str) -> bool:
     """Return True when a prompt-extracted Story ID is an alias of activeStory.
@@ -197,6 +206,15 @@ def inject(
 
     # 更新快速通道状态（让 PreToolUse hook 能读到）
     _update_quick_channel(ade_sdd, user_prompt)
+
+    # 🆕 会话 engage 标记维护（门禁按需启用）
+    # 触发词 → 写入 engage 标记（gate-intercept 据此启用门禁）
+    # 退出词 → 清除 engage 标记（门禁恢复放行）
+    # 两者互斥：同一消息不会既触发又退出；非触发非退出消息不动标记（持续态）
+    if _is_ae_sdd_triggered:
+        work_item_context.mark_session_engaged(ade_sdd, session_key)
+    elif any(m in user_prompt for m in AE_SDD_DISENGAGE_MARKERS):
+        work_item_context.disengage_session(ade_sdd, session_key)
 
     # 🆕 v3.9.3：清理待初始化标记（与 quick_channel 同理，非触发消息时清除）
     if not _is_ae_sdd_triggered:

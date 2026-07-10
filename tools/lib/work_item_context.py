@@ -188,6 +188,60 @@ def bind_session_state(
         pass
 
 
+# ─── 🆕 会话 engage 标记（门禁按需启用）───────────────────────────────────────
+# 设计：用户调 /ae-sdd 触发词后，prompt_inject 写入本会话的 engage 标记文件；
+# gate_intercept 在 resolve_default_state 前检查该标记——有则启用门禁，无则放行。
+# 这样"没调 ae-sdd 的会话/子 Agent 不被锁"，实现"按需启用 hook"语义。
+# 标记按 session_key 维度（sha256 hash 文件名），子 Agent 继承父会话 session_id
+# 时自动随主会话 engage。
+
+def _engaged_dir(ade_sdd: Path) -> Path:
+    """engage 标记目录（.ae-sdd/.session-engaged/）。"""
+    return ade_sdd / ".session-engaged"
+
+
+def is_session_engaged(ade_sdd: Path, session_key: str) -> bool:
+    """本会话是否已 engage ae-sdd（用户调过 /ae-sdd 触发词）。
+
+    无 session_key → False（无标识的会话视为未 engage，放行）。
+    """
+    if not session_key:
+        return False
+    return _engaged_dir(ade_sdd).joinpath(
+        _safe_session_file_name(session_key)
+    ).is_file()
+
+
+def mark_session_engaged(ade_sdd: Path, session_key: str) -> None:
+    """记录本会话已 engage。持续态，写入后由 disengage_session 清除。"""
+    if not session_key:
+        return
+    p = _engaged_dir(ade_sdd) / _safe_session_file_name(session_key)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps(
+                {"engagedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def disengage_session(ade_sdd: Path, session_key: str) -> None:
+    """退出 engage，清除本会话标记。"""
+    if not session_key:
+        return
+    p = _engaged_dir(ade_sdd) / _safe_session_file_name(session_key)
+    try:
+        p.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 _STORY_RE = re.compile(
     r"\bSTORY-[A-Za-z0-9][A-Za-z0-9_-]*(?:-[A-Za-z0-9][A-Za-z0-9_-]*)*\b",
     re.IGNORECASE,

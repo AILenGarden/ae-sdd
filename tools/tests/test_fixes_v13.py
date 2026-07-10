@@ -62,7 +62,7 @@ class TestMultiEditInterception:
         allowed, reason = check_intercept(
             "MultiEdit",
             file_path="src/main/java/Service.java",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert not allowed
         assert "设计阶段" in reason
@@ -90,7 +90,7 @@ class TestMultiEditInterception:
         allowed, _ = check_intercept(
             "MultiEdit",
             file_path="src/main/java/Service.java",
-            project_dir=tmp_path,
+            project_dir=tmp_path, forced_engaged=True,
         )
         assert allowed
 
