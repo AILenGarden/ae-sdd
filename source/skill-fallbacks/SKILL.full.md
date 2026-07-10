@@ -465,7 +465,7 @@ PRD收尾（可选）：
 | 切换WorkItem/Story | 保留当前 state.json，切换 `.auto-engineering/{WORKITEM-ID}/state.json` |
 | 偏离流程 | 简短回应，不更新 state |
 | PRD收尾 | 跑 prd-check-complete → 4层AND全过 → 审核点5 → prd-complete |
-| 🆕 v3.9.0 改已管理 Story | `ae-sdd state relocate --story <ID>` 重定位到所属 state + 只重置该 Story 子状态到 story-generated（R5） |
+| 🆕 v3.9.0 改已管理 Story | `ae-sdd state relocate --story <ID>` 重定位到所属 state + 只重置该 Story 子状态到 story-generated（R5）。🆕 v3.9.22：重置同时写入 `artifactInvalidated` 信号，下次 task-generate 检测到即强制全量重建 Task（详见 CHANGELOG/2026-07-10-v3.9.22-reset-artifact-invalidation.md）|
 
 **paused 恢复**：输出原因 + pausedFromPhase，三选一：恢复/新任务/查看状态
 

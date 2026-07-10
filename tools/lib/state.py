@@ -1459,9 +1459,53 @@ def reset_story_substate(state: dict, story_id: str,
         sub["completedSteps"] = []
         sub["codingRound"] = 0
         sub["lastUpdated"] = now
+        # 🆕 v3.9.21 产物作废信号：通知下游（task-generate 等）强制全量重生成，
+        # 不依赖 LLM 文本比对判定"跳过/更新"。一次性，由 consume_artifact_invalidation 消费清除。
+        sub["artifactInvalidated"] = {
+            "at": now,
+            "by": by,
+            "scopes": ["TASK", "TESTCASE", "CODING_PLAN"],
+            "reason": "story-substate-reset",
+        }
     state["activeStory"] = story_id
     record_history(state, f"story-{story_id}-reset-to-{STORY_RESET_TARGET_PHASE}", by)
     return True
+
+
+def consume_artifact_invalidation(state: dict, story_id: str) -> Optional[dict]:
+    """v3.9.21：读取并清除该 Story 的产物作废信号（一次性消费）。
+
+    reset_story_substate 重置时会写入 artifactInvalidated，通知下游 skill
+    （task-generate 等）强制全量重生成。本函数供 skill/gate 读取后调用，
+    拿到记录即代表"该 Story 下游产物需强制全量重新生成"，消费后字段清零防累积。
+
+    Args:
+        state:    嵌套 state dict（原地修改）
+        story_id: 目标 Story
+
+    Returns:
+        作废记录 dict（含 at/by/scopes/reason）或 None（无信号/非 nested/story 不存在）
+
+    Note:
+        调用方应在完成全量重生成后调用本函数。若调用方只读不消费，
+        信号会持续保留——但 task-generate 多次全量重生成无副作用
+        （save_doc 无条件覆盖），故"多读一次"是安全的，仅重复劳动。
+    """
+    if not is_nested_state(state):
+        return None
+    subs = _iter_nested_story_substates(state, story_id)
+    if not subs:
+        return None
+    rec = None
+    for sub in subs:
+        inv = sub.get("artifactInvalidated")
+        if inv:
+            rec = inv
+            sub["artifactInvalidated"] = None  # 消费即清除，防累积
+    if rec:
+        state["activeStory"] = story_id
+        record_history(state, f"story-{story_id}-invalidation-consumed", "ae-sdd")
+    return rec
 
 
 def set_active_story(state: dict, story_id: str) -> bool:

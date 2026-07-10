@@ -139,6 +139,44 @@ class TestResetStorySubstate:
         assert rh[0]["fromPhase"] == "coding"
         assert rh[0]["toPhase"] == state.STORY_RESET_TARGET_PHASE
 
+    def test_reset_writes_artifact_invalidation(self):
+        """v3.9.21：重置目标 Story 时写入 artifactInvalidated 信号，兄弟 Story 不写。"""
+        s = self._make_nested()
+        state.set_story_substate_phase(s, "STORY-003-BE", "coding")
+        state.reset_story_substate(s, "STORY-003-BE", by="test")
+        inv = s["storyStates"]["STORY-003-BE"]["artifactInvalidated"]
+        assert inv is not None
+        assert inv["by"] == "test"
+        assert inv["reason"] == "story-substate-reset"
+        assert set(inv["scopes"]) == {"TASK", "TESTCASE", "CODING_PLAN"}
+        # 兄弟 STORY-004 无信号（init_nested_state 未写字段 → .get 返回 None）
+        assert s["storyStates"]["STORY-004-BE"].get("artifactInvalidated") is None
+
+    def test_consume_artifact_invalidation_is_one_shot(self):
+        """v3.9.21：consume 一次性消费——首次返回记录并清除，再次返回 None。"""
+        s = self._make_nested()
+        state.reset_story_substate(s, "STORY-003-BE", by="test")
+        # 首次消费：拿到记录
+        rec = state.consume_artifact_invalidation(s, "STORY-003-BE")
+        assert rec is not None
+        assert rec["reason"] == "story-substate-reset"
+        assert rec["scopes"] == ["TASK", "TESTCASE", "CODING_PLAN"]
+        # 字段已清零
+        assert s["storyStates"]["STORY-003-BE"]["artifactInvalidated"] is None
+        # 再次消费：无信号
+        assert state.consume_artifact_invalidation(s, "STORY-003-BE") is None
+
+    def test_consume_artifact_invalidation_handles_edge_cases(self):
+        """v3.9.21：非 nested / 不存在的 Story / 无信号均返回 None。"""
+        # 非 nested（v1 flat）
+        flat = {"version": "1", "stateModel": "flat"}
+        assert state.consume_artifact_invalidation(flat, "STORY-003-BE") is None
+        # nested 但 Story 不存在
+        s = self._make_nested()
+        assert state.consume_artifact_invalidation(s, "STORY-999-BE") is None
+        # Story 存在但从未 reset（无信号）
+        assert state.consume_artifact_invalidation(s, "STORY-003-BE") is None
+
     def test_reset_nonexistent_story_returns_false(self):
         """重置不存在的 Story 返回 False。"""
         s = self._make_nested()

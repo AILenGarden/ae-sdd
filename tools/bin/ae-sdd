@@ -718,6 +718,7 @@ def cmd_state_relocate(args, parser):
             _write_active_state_mirror(ade_sdd, state_data, state_machine_id, state_path)
             output.ok(f"Story {story_id} 子状态已重置到 {state.STORY_RESET_TARGET_PHASE}")
             output.info(f"  （completedSteps 清空，codingRound 归零，resetHistory 保留审计）")
+            output.info(f"  （已写入 artifactInvalidated 信号：下次 task-generate 将强制全量重建 Task）")
         else:
             output.warn(f"Story {story_id} 不在 storyStates 内，未重置")
     return 0

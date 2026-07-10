@@ -240,12 +240,25 @@ ae-sdd gates check --only G-TASK-CTX
 
 ## 第三步：判断新增/更新
 
+> **🔴 作废优先（强制全量重生成，最高优先级）**
+>
+> 进入本步骤前，**先查 state**：读取当前 Story 子状态是否有 `artifactInvalidated` 信号
+> （`ae-sdd state read` 或等价库调用 `state.consume_artifact_invalidation`）。
+>
+> 若信号存在 → **本 Story 所有 Task 文档一律视为不存在，走"新建"全量重新生成**
+> （不复用旧 Task、不增量更新任何章节），生成完成后消费清除该信号。
+>
+> **此规则优先于下表所有判断。** 语义：该 Story 经历过 `state relocate` 重置，
+> 下游产物（Task/TestCase/CodingPlan）理论全部过期，必须基于最新 Story 重建。
+
 | 情况                          | 处理       |
 | --------------------------- | -------- |
 | Task 文档不存在                  | 新建       |
 | Task 文档存在，Story 中 Task 描述未变 | 跳过       |
 | Task 文档存在，Story 中 Task 描述已变 | 更新受影响的章节 |
 | Task 被删除                    | 标记文档为废弃  |
+
+> 注：下表仅在**无 `artifactInvalidated` 信号**时适用。有信号时一律新建（见上方 🔴 作废优先规则）。
 
 ***
 
