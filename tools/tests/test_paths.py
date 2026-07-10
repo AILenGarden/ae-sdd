@@ -142,6 +142,14 @@ class TestReadConfig(unittest.TestCase):
         cfg = paths.read_config(self.ade_sdd)
         self.assertEqual(cfg["projectKey"], "test")
 
+    def test_hash_inside_quotes_preserved(self):
+        """引号内的 # 不应被当作注释剥离（C7 修复）。"""
+        (self.ade_sdd / "config.yaml").write_text(
+            'desc: "see #123 for details"  # real comment\n',
+            encoding="utf-8")
+        cfg = paths.read_config(self.ade_sdd)
+        self.assertEqual(cfg["desc"], "see #123 for details")
+
     def test_empty_config(self):
         # config.yaml 不存在 → 返回空 dict
         cfg = paths.read_config(self.ade_sdd)

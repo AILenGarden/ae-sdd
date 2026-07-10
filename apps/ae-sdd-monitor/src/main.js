@@ -74,10 +74,18 @@ function startWorkspaceWatcher(rootPath) {
   closeWorkspaceWatcher();
   watchedRootPath = absoluteRoot;
 
+  // Linux 原生不支持 fs.watch 的 recursive: true（仅 macOS/Windows 支持），
+  // 且该失败通过异步 'error' 事件抛出（不进同步 try/catch），会导致 watcher
+  // 静默关闭且无回退。Linux 直接走非递归监听，避免监听彻底失效（B5 修复）。
+  const supportsRecursive = process.platform === "win32" || process.platform === "darwin";
   try {
-    workspaceWatcher = nodeFs.watch(absoluteRoot, { recursive: true }, scheduleWorkspaceChange);
+    if (supportsRecursive) {
+      workspaceWatcher = nodeFs.watch(absoluteRoot, { recursive: true }, scheduleWorkspaceChange);
+    } else {
+      throw new Error("recursive watch unsupported on this platform");
+    }
     workspaceWatcher.on("error", closeWorkspaceWatcher);
-    return { rootPath: watchedRootPath, recursive: true };
+    return { rootPath: watchedRootPath, recursive: supportsRecursive };
   } catch {
     workspaceWatcher = nodeFs.watch(absoluteRoot, scheduleWorkspaceChange);
     workspaceWatcher.on("error", closeWorkspaceWatcher);
@@ -145,7 +153,11 @@ function createWindow() {
   if (!nodeFs.existsSync(rendererIndex)) {
     throw new Error(`Renderer build not found: ${rendererIndex}. Run npm run build:renderer first.`);
   }
-  mainWindow.loadFile(rendererIndex);
+  // loadFile 返回 Promise，加载失败（如 renderer html 损坏）时捕获并记录，
+  // 避免进程级 unhandled rejection（C11 修复）。
+  mainWindow.loadFile(rendererIndex).catch((err) => {
+    console.error(`Failed to load renderer: ${rendererIndex}`, err);
+  });
   mainWindow.on("closed", () => {
     mainWindow = null;
     closeWorkspaceWatcher();
@@ -197,7 +209,9 @@ ipcMain.handle("choose-directory", async (_event, defaultPath) => {
   if (defaultPath && typeof defaultPath === "string") {
     options.defaultPath = defaultPath;
   }
-  const result = await dialog.showOpenDialog(mainWindow, {
+  // mainWindow 可能在窗口关闭瞬间为 null，传 null 会抛 TypeError；
+  // 省略父窗口参数则用无模态对话框（C12 修复）。
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
     ...options
   });
   if (result.canceled || !result.filePaths.length) {

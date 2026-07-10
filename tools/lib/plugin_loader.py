@@ -183,6 +183,24 @@ def plugin_registry_path_master(master: Optional[Path]) -> Optional[Path]:
 
 # === YAML 子集解析器（零依赖） ===
 
+
+def _strip_yaml_comment(raw: str) -> str:
+    """剥离 YAML 行尾注释，但跳过引号内的 #（C7 修复）。
+
+    旧实现 raw.split("#",1)[0] 会切断引号内含 # 的值（如 description: "see #123"）。
+    本函数跟踪单/双引号状态，只剥离引号外的首个 # 之后内容。
+    """
+    in_single = in_double = False
+    for i, ch in enumerate(raw):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            return raw[:i]
+    return raw
+
+
 def _parse_yaml_subset(text: str) -> dict:
     """极简 YAML 解析器，仅覆盖 registry.yaml schema。
 
@@ -206,9 +224,8 @@ def _parse_yaml_subset(text: str) -> dict:
     text = text.lstrip("\ufeff")
     lines = []
     for raw in text.splitlines():
-        # 去掉行尾注释（保留缩进）
-        # 注：split("#", 1) 遇到字符串内的 # 也会被切——但 registry.yaml schema 不含行内字符串含 # 的情况
-        line_no_comment = raw.split("#", 1)[0]
+        # 去掉行尾注释（保留缩进），跳过引号内的 #（C7 修复）
+        line_no_comment = _strip_yaml_comment(raw)
         lines.append(line_no_comment.rstrip())
 
     # 第一遍：解析为节点列表

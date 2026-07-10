@@ -103,6 +103,23 @@ def locate_project_ae_sdd(cwd: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
+def _strip_yaml_comment(raw: str) -> str:
+    """剥离 YAML 行尾注释，但跳过引号内的 #（C7 修复）。
+
+    旧实现 raw.split("#",1)[0] 会切断引号内含 # 的值（如 description: "see #123"）。
+    本函数跟踪单/双引号状态，只剥离引号外的首个 # 之后内容。
+    """
+    in_single = in_double = False
+    for i, ch in enumerate(raw):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            return raw[:i]
+    return raw
+
+
 def read_config(ade_sdd: Path) -> dict:
     """Read .ae-sdd/config.yaml with a tiny key/value parser."""
     cfg_path = ade_sdd / "config.yaml"
@@ -113,7 +130,7 @@ def read_config(ade_sdd: Path) -> dict:
     out: dict = {}
     current_section: Optional[str] = None
     for line in text.splitlines():
-        line = line.split("#", 1)[0].rstrip()
+        line = _strip_yaml_comment(line).rstrip()
         if not line.strip():
             continue
         if line.startswith(" ") and current_section:

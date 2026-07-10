@@ -255,5 +255,61 @@ class TestThinkingEngine(unittest.TestCase):
         self.assertIn("custom thinking engine", result["content"])
 
 
+class TestRaPrerequisites(unittest.TestCase):
+    """G-RA-COMPLETE 章节锚校验（C4 修复：标题行正则匹配，非松散子串）。"""
+
+    def _full_ra_content(self) -> str:
+        """构造含全部 12 必填章节标题 + RAGeneratePlan + 5问 + RA-G PASS 的合法 RA 文档。"""
+        return (
+            "RAGeneratePlan\n\n"
+            "5问自检 通过率100%\n\n"
+            "## 0.5 RequirementAnalysisModel 决策记录\n\n"
+            "## 0.6 需求风险预判\n\n"
+            "## 2. 角色分析\n\n"
+            "## 3. 场景分析\n\n"
+            "## 4. 业务流程\n\n"
+            "## 5. 数据要素\n\n"
+            "## 6. 业务规则与约束\n\n"
+            "## 7. 设计方向论证\n\n"
+            "## 8. 验收标准雏形\n\n"
+            "## 9. 隐性假设与验证\n\n"
+            "## 10. 缺口与未决问题\n\n"
+            "## 11. 规模裁定\n\n"
+            + "\n".join(f"RA-G0{i}: PASS" for i in range(1, 9))
+        )
+
+    def test_full_ra_passes_all_gates(self):
+        """含全部章节的 RA 文档应通过 G-RA-COMPLETE（标题行匹配）。"""
+        document_storage.check_ra_prerequisites(self._full_ra_content())  # 不抛即通过
+
+    def test_missing_section_blocked(self):
+        """缺章节标题的文档应被 G-RA-COMPLETE 拦截。"""
+        content = self._full_ra_content().replace("## 2. 角色分析\n\n", "")
+        with self.assertRaises(document_storage.DocStorageError) as ctx:
+            document_storage.check_ra_prerequisites(content)
+        self.assertIn("G-RA-COMPLETE", str(ctx.exception))
+        self.assertIn("§2 角色", str(ctx.exception))
+
+    def test_section_in_body_prose_does_not_pass(self):
+        """章节名出现在正文而非标题行时不应算作章节存在（收紧子串误判）。"""
+        # 把所有 ## 标题降级成普通正文行（不以 # 开头）
+        content = self._full_ra_content().replace("## ", "章节：")
+        with self.assertRaises(document_storage.DocStorageError):
+            document_storage.check_ra_prerequisites(content)
+
+    def test_template_itself_passes(self):
+        """ra-template.md 自身（补齐 RAGeneratePlan/5问/PASS 后）应通过门禁。"""
+        import sys as _sys
+        from pathlib import Path as _Path
+        tmpl = (_Path(__file__).resolve().parent.parent.parent
+                / "source" / "templates" / "design" / "ra-template.md")
+        if not tmpl.is_file():
+            self.skipTest("ra-template.md not found")
+        text = tmpl.read_text(encoding="utf-8")
+        text += "\nRAGeneratePlan\n5问自检\n" + "\n".join(
+            f"RA-G0{i}: PASS" for i in range(1, 9))
+        document_storage.check_ra_prerequisites(text)  # 不抛即通过
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

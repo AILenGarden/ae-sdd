@@ -309,7 +309,6 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
         minor=minor,
         iterDate=iter_date or datetime.now().strftime("%Y-%m-%d"),
     )
-    p = Path(full.replace("/", "\\" if "\\" in str(doc_ws) else "/") if False else full)
     # 统一用 Path，跨平台
     full_path_obj = Path(full)
 
@@ -397,19 +396,23 @@ def get_changelog(changelog_path: Path) -> list[str]:
 # 触发：save_doc(intent="RA", ...) 或 ra-gate CLI 调用前
 # 豁免：intent ∈ {BUG, CONFIG}（RA skill §第 -1 步双重豁免，不在 save_doc 走 RA 检查路径）
 # 行为：检查通过 = 静默；不通过 = raise DocStorageError("G-RA-*", ...)
-_RA_REQUIRED_SECTIONS = [
-    "§0.5 RequirementAnalysisModel",  # 12 维决策
-    "§0.6 需求风险预判",
-    "§2 角色",     # 8 维度之一：角色分析
-    "§3 场景",     # 场景分析
-    "§4 流程",     # 业务流程（含状态机）
-    "§5 数据",     # 数据要素
-    "§6 规则",     # 业务规则与约束
-    "§7 设计方向", # 设计方向论证
-    "§8 AC",       # 验收标准雏形
-    "§9 假设",     # 隐性假设与验证
-    "§10 缺口",    # 缺口管理
-    "§11 规模",    # 规模裁定
+# G-RA-COMPLETE 必填章节锚：每项为 (显示名, 标题行正则)。
+# 正则匹配 markdown 标题行（^#+ 空格），与 ra-template.md 真实标题对齐
+# （如 "## 2. 角色分析"）。旧实现用 "§2 角色" in content 松散子串匹配，
+# 与真实标题格式（"2. 角色分析"）脱节，导致 12 项里 10 项连模板自身都过不了（C4 修复）。
+_RA_REQUIRED_SECTIONS: list[tuple[str, re.Pattern]] = [
+    ("§0.5 RequirementAnalysisModel", re.compile(r"^#{1,6}\s*0\.5\s*RequirementAnalysisModel", re.MULTILINE)),
+    ("§0.6 需求风险预判", re.compile(r"^#{1,6}\s*0\.6\s*需求风险预判", re.MULTILINE)),
+    ("§2 角色", re.compile(r"^#{1,6}\s*2\.?\s*角色", re.MULTILINE)),
+    ("§3 场景", re.compile(r"^#{1,6}\s*3\.?\s*场景", re.MULTILINE)),
+    ("§4 流程", re.compile(r"^#{1,6}\s*4\.?\s*(业务流程|流程)", re.MULTILINE)),
+    ("§5 数据", re.compile(r"^#{1,6}\s*5\.?\s*数据", re.MULTILINE)),
+    ("§6 规则", re.compile(r"^#{1,6}\s*6\.?\s*(业务规则|规则)", re.MULTILINE)),
+    ("§7 设计方向", re.compile(r"^#{1,6}\s*7\.?\s*设计方向", re.MULTILINE)),
+    ("§8 AC/验收标准", re.compile(r"^#{1,6}\s*8\.?\s*(验收标准|AC)", re.MULTILINE)),
+    ("§9 假设", re.compile(r"^#{1,6}\s*9\.?\s*(隐性假设|假设)", re.MULTILINE)),
+    ("§10 缺口", re.compile(r"^#{1,6}\s*10\.?\s*(缺口|未决)", re.MULTILINE)),
+    ("§11 规模", re.compile(r"^#{1,6}\s*11\.?\s*规模", re.MULTILINE)),
 ]
 
 _RA_REQUIRED_GATES = ["RA-G01", "RA-G02", "RA-G03", "RA-G04",
@@ -444,8 +447,8 @@ def check_ra_prerequisites(content: str) -> None:
         raise DocStorageError("G-RA-PLAN",
             "RA 文档必须先有 RAGeneratePlan 附件（见 requirement-analysis-skill §Plan-first 原则）")
 
-    # G-RA-COMPLETE：必须含 12 个核心章节锚
-    missing = [s for s in _RA_REQUIRED_SECTIONS if s not in content]
+    # G-RA-COMPLETE：必须含 12 个核心章节锚（标题行正则匹配，非松散子串）
+    missing = [name for name, pattern in _RA_REQUIRED_SECTIONS if not pattern.search(content)]
     if missing:
         raise DocStorageError("G-RA-COMPLETE",
             f"RA 文档缺失以下必填章节：{missing}（见 requirement-analysis-skill §整体流程）")

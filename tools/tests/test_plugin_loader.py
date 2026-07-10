@@ -59,6 +59,12 @@ class TestParseYamlSubset(unittest.TestCase):
         d = plugin_loader._parse_yaml_subset(text)
         self.assertEqual(d, {"schema_version": 1, "name": "foo"})
 
+    def test_hash_inside_quotes_preserved(self):
+        """引号内的 # 不应被当作注释剥离（C7 修复）。"""
+        text = 'desc: "see #123 for details"  # real comment\n'
+        d = plugin_loader._parse_yaml_subset(text)
+        self.assertEqual(d["desc"], "see #123 for details")
+
     def test_literal_block(self):
         text = textwrap.dedent("""\
             description: |

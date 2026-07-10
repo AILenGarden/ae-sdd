@@ -1115,7 +1115,7 @@ def check_ra_required(project_dir: Path, st: dict, current_story: str) -> GateRe
     if not ra_files:
         # pre-RA 阶段（还没开始需求分析）→ stub，不阻断
         pre_ra_phases = {"initialized", "ra-generated"}
-        if phase in pre_ra_phases or phase == "initialized":
+        if phase in pre_ra_phases:
             return GateResult("G-RA-1", name, "blocker", True,
                               "pre-RA 阶段，RA 文档尚未生成（stub 通过）",
                               details={"stub": True, "phase": phase, "ra_files": 0})

@@ -10,8 +10,7 @@ classify.py — ae-sdd 4 维判定（v1 最小实现）
 v1.1 修复（2026-06-18, v3.0.1 patch）：
   - 关键词收紧：移除 "问题/工单/想要/希望" 等过宽泛词
   - 标题感知：第一行 / 文件名包含 "PRD"/"DR"/"Issue" 等强信号优先
-  - 低置信度告警：confidence < 0.4 时标记 needs_review=True
-  - 不再硬兜底为 "对话"：低置信度时 source="未知"
+  - 低置信度兜底为 "对话"（保留向后兼容）+ confidence < 0.4 标记 needs_review=True
 
 🟡 LLM 升级路径状态（2026-07-03 核实，B4）：
   原注释"v3.1+ 可升级为 LLM 辅助判定"为悬空承诺，至 v3.8.1 未兑现亦未撤销。
@@ -339,10 +338,8 @@ def classify(text: str, *, filename: Optional[str] = None,
         next_action = "coding"
     elif source in ("PRD", "DR"):
         next_action = "dr-generate"
-    else:  # 对话 / Issue / 未知
+    else:  # 对话 / Issue
         next_action = "requirement-analysis"
-        if source == "未知":
-            review_reasons.append("source 未知，需先做需求分析确认类型")
 
     # 全局 needs_review 判定
     needs_review = (
