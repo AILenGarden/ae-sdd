@@ -20,7 +20,7 @@ from unittest import mock
 
 # Make 'lib' importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import prompt_inject  # noqa: E402
+from lib import prompt_inject, work_item_context  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "tools" / "bin" / "ae-sdd"
@@ -67,6 +67,25 @@ def _write_nested_work_item(tmp: Path, name: str, story_id: str, phase: str) -> 
                 "resetHistory": [],
             }
         },
+        "history": [],
+    }
+    state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return state_path
+
+
+def _write_flat_work_item(tmp: Path, name: str, story_id: str, phase: str) -> Path:
+    state_path = tmp / ".auto-engineering" / name / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": "1",
+        "projectKey": "test-proj",
+        "phase": phase,
+        "scale": "\u5c0f",
+        "stateMachineId": name,
+        "workItemKey": name,
+        "currentWorkItem": name,
+        "storyId": story_id,
+        "currentStory": story_id,
         "history": [],
     }
     state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -215,6 +234,25 @@ class TestPromptInjectParallelWorkItemIsolation(unittest.TestCase):
         self.assertIn("Story-004", msg)
         self.assertIn("Story-005", msg)
         self.assertNotIn("story:    STORY-004-BE", msg)
+
+    def test_cli_prompt_field_binds_full_work_item_key_session(self):
+        tmp, _, _ = self._make_multi_work_item_project()
+        _write_flat_work_item(tmp, "cs-ai-STORY-005-BE", "cs-ai-STORY-005-BE", "initialized")
+
+        payload = _run_prompt_inject_cli(tmp, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "claude-session-005",
+            "prompt": "/ae-sdd continue cs-ai-STORY-005-BE",
+            "cwd": str(tmp),
+        })
+        msg = _additional_context(payload)
+        bound = work_item_context.read_session_binding(tmp / ".ae-sdd", "claude-session-005")
+
+        self.assertIn("cs-ai-STORY-005-BE", msg)
+        self.assertIsNotNone(bound)
+        self.assertEqual(bound.key, "cs-ai-STORY-005-BE")
+        self.assertNotIn("WORK-ITEM AMBIGUITY", msg)
+        self.assertNotIn("state new --id STORY-005-BE", msg)
 
     def test_inject_degrades_gracefully_on_resolve_failure(self):
         """plugin_loader 异常 → inject 仍返回有效 payload，不含 plugin 行。"""

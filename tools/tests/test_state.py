@@ -108,6 +108,118 @@ class TestSetPhase(unittest.TestCase):
         state_mod.set_phase(s, "initialized")
         self.assertEqual(s["history"][0]["by"], "ae-sdd")
 
+    def test_completed_phase_synchronizes_workflow_projection(self):
+        s = {
+            "phase": "code-reviewed",
+            "scale": "大",
+            "history": [{"phase": "coding", "timestamp": "2026-07-09T00:00:00Z", "by": "test"}],
+            "currentPhase": "coding",
+            "currentStep": "step-5-task-review-passed-awaiting-human-confirm",
+            "completedSteps": [],
+            "pendingOutputs": {"humanConfirm": True},
+            "codingRound": "r0",
+        }
+        changed = state_mod.set_phase(s, "completed", by="test")
+        self.assertTrue(changed)
+        self.assertEqual(s["phase"], "completed")
+        self.assertEqual(s["currentPhase"], "completed")
+        self.assertEqual(s["currentStep"], "completed")
+        self.assertEqual(s["pendingOutputs"], {})
+        self.assertEqual(s["codingRound"], 1)
+        self.assertIn("step-5-task-review-passed-awaiting-human-confirm", s["completedSteps"])
+        self.assertEqual(s["history"][-1]["phase"], "completed")
+
+    def test_repeated_completed_repairs_projection_without_history_dup(self):
+        s = {
+            "phase": "completed",
+            "scale": "大",
+            "history": [{"phase": "completed", "timestamp": "2026-07-09T00:00:00Z", "by": "test"}],
+            "currentPhase": "coding",
+            "currentStep": "awaiting-human-confirm",
+            "completedSteps": [],
+            "pendingOutputs": ["confirm"],
+            "codingRound": 0,
+        }
+        changed = state_mod.set_phase(s, "completed", by="test")
+        self.assertTrue(changed)
+        self.assertEqual(len(s["history"]), 1)
+        self.assertEqual(s["currentPhase"], "completed")
+        self.assertEqual(s["currentStep"], "completed")
+        self.assertEqual(s["pendingOutputs"], [])
+        self.assertEqual(s["codingRound"], 1)
+        self.assertIn("awaiting-human-confirm", s["completedSteps"])
+
+    def test_completed_projection_already_synced_is_idempotent(self):
+        s = {
+            "phase": "completed",
+            "scale": "大",
+            "history": [],
+            "currentPhase": "completed",
+            "currentStep": "completed",
+            "completedSteps": [],
+            "pendingOutputs": {},
+            "codingRound": 1,
+        }
+        changed = state_mod.set_phase(s, "completed", by="test")
+        self.assertFalse(changed)
+
+    def test_paused_does_not_complete_current_step(self):
+        s = {
+            "phase": "coding",
+            "scale": "大",
+            "history": [],
+            "currentPhase": "coding",
+            "currentStep": "step-4-coding-r1",
+            "completedSteps": [],
+            "codingRound": 1,
+        }
+        changed = state_mod.set_phase(s, "paused", by="test")
+        self.assertTrue(changed)
+        self.assertEqual(s["phase"], "paused")
+        self.assertEqual(s["currentPhase"], "paused")
+        self.assertEqual(s["currentStep"], "step-4-coding-r1")
+        self.assertEqual(s["completedSteps"], [])
+
+
+class TestStateInvariants(unittest.TestCase):
+    """终态不变量校验"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.state_path = self.tmp / "state.json"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_write_state_rejects_completed_projection_violation(self):
+        s = {
+            "phase": "completed",
+            "scale": "大",
+            "currentPhase": "coding",
+            "currentStep": "awaiting-human-confirm",
+            "pendingOutputs": {"confirm": True},
+            "codingRound": 0,
+            "history": [],
+        }
+        with self.assertRaises(ValueError) as ctx:
+            state_mod.write_state(self.state_path, s)
+        self.assertIn("state invariant violation", str(ctx.exception))
+        self.assertFalse(self.state_path.exists())
+
+    def test_write_state_accepts_synced_completed_projection(self):
+        s = {
+            "phase": "completed",
+            "scale": "大",
+            "currentPhase": "completed",
+            "currentStep": "completed",
+            "pendingOutputs": {},
+            "codingRound": 1,
+            "history": [],
+        }
+        state_mod.write_state(self.state_path, s)
+        self.assertTrue(self.state_path.exists())
+
 
 class TestRecordHistory(unittest.TestCase):
     """record_history 测试"""
@@ -603,6 +715,85 @@ class TestRecursiveR2Absorb(unittest.TestCase):
         self.assertIn("DR-005", st.get("drStates", {}))
         self.assertIn("STORY-006-BE", st["drStates"]["DR-005"].get("storyStates", {}))
         self.assertIn("STORY-006-BE", st.get("storyStates", {}))
+
+
+# ─── 🆕 v3.9.18 is_work_item_completed：聚合全部 Story 子状态判定整体完结 ──────
+class TestIsWorkItemCompleted(unittest.TestCase):
+    """get_active_phase() 只看 activeStory 指向的子状态，某 Story 完成后
+    activeStory 不会自动前移，会把仍有未完成 Story 的 work-item 误判为整体
+    已完结；is_work_item_completed() 改为聚合全部 Story 子状态判定。"""
+
+    def _nested(self, active_story: str, story_states: dict) -> dict:
+        return {
+            "version": "2",
+            "stateModel": "nested",
+            "entryNode": "STORY",
+            "activeStory": active_story,
+            "storyStates": story_states,
+        }
+
+    def test_flat_state_completed(self):
+        self.assertTrue(state_mod.is_work_item_completed({"phase": "completed"}))
+
+    def test_flat_state_not_completed(self):
+        self.assertFalse(state_mod.is_work_item_completed({"phase": "coding"}))
+
+    def test_nested_single_story_completed(self):
+        st = self._nested("STORY-004-BE", {"STORY-004-BE": {"phase": "completed"}})
+        self.assertTrue(state_mod.is_work_item_completed(st))
+
+    def test_nested_single_story_not_completed(self):
+        st = self._nested("STORY-004-BE", {"STORY-004-BE": {"phase": "coding"}})
+        self.assertFalse(state_mod.is_work_item_completed(st))
+
+    def test_nested_active_story_completed_but_sibling_still_active(self):
+        """activeStory 指向的 Story 已完成，但另一个 Story 仍在跑 → 整体未完结。"""
+        st = self._nested(
+            "STORY-004-A",
+            {
+                "STORY-004-A": {"phase": "completed"},
+                "STORY-004-B": {"phase": "coding"},
+            },
+        )
+        self.assertFalse(state_mod.is_work_item_completed(st))
+
+    def test_nested_all_stories_completed(self):
+        st = self._nested(
+            "STORY-004-A",
+            {
+                "STORY-004-A": {"phase": "completed"},
+                "STORY-004-B": {"phase": "completed"},
+            },
+        )
+        self.assertTrue(state_mod.is_work_item_completed(st))
+
+    def test_nested_dr_scoped_stories_aggregated(self):
+        """PRD 入口下 storyStates 嵌在 drStates[*] 内时也要聚合到位。"""
+        st = {
+            "version": "2",
+            "stateModel": "nested",
+            "entryNode": "PRD",
+            "activeStory": "STORY-006-BE",
+            "drStates": {
+                "DR-005": {
+                    "storyStates": {
+                        "STORY-006-BE": {"phase": "completed"},
+                        "STORY-007-BE": {"phase": "coding"},
+                    }
+                }
+            },
+        }
+        self.assertFalse(state_mod.is_work_item_completed(st))
+
+    def test_nested_no_story_records_falls_back_to_active_phase(self):
+        """尚未拆出任何 Story（仅 prdState/drState）时回退 get_active_phase()。"""
+        st = {
+            "version": "2",
+            "stateModel": "nested",
+            "entryNode": "PRD",
+            "prdState": {"phase": "completed"},
+        }
+        self.assertTrue(state_mod.is_work_item_completed(st))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,11 @@ Story/Task/Plan 级（txn 级）：
   "fileLocks": {                    # 🆕 v3.8.1 S-3 文件意图锁（防多 agent 并发写同一产物）
     "<相对路径>": {"agentId": "...", "acquiredAt": "ISO8601", "ttlSeconds": 1800}
   },
+  "currentPhase": "coding",       # 工作流投影字段：必须由 set_phase / set_story_substate_phase 跟 phase 同步
+  "currentStep": "step-4-coding-r1",
+  "completedSteps": [ ... ],
+  "pendingOutputs": {},           # phase=completed 时必须为空
+  "codingRound": 1,               # phase=completed 时必须 >= r1
   "history": [
     { "phase": "...", "timestamp": "...", "by": "..." }
   ],
@@ -128,6 +133,7 @@ def read_state(state_path: Path) -> dict:
 
 def write_state(state_path: Path, state: dict) -> None:
     """写 state.json（原子写：先写 .tmp 再 rename）"""
+    validate_state_invariants(state)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_path.with_suffix(".json.tmp")
     tmp.write_text(
@@ -213,6 +219,131 @@ def set_scale(state: dict, scale: str, entry_node: Optional[str] = None) -> None
         state["entryNode"] = entry_node
 
 
+_CODING_STARTED_PHASES = {"coding", "test-running", "code-reviewed", "completed"}
+_TERMINAL_PHASE = "completed"
+_TERMINAL_STEP = "completed"
+
+
+def _set_if_changed(state: dict, key: str, value) -> bool:
+    if state.get(key) == value:
+        return False
+    state[key] = value
+    return True
+
+
+def _pending_outputs_empty(value) -> bool:
+    if value is None:
+        return True
+    if value is False:
+        return True
+    if isinstance(value, (dict, list, tuple, set, str)):
+        return len(value) == 0
+    return False
+
+
+def _empty_pending_outputs_like(value):
+    if isinstance(value, list):
+        return []
+    if isinstance(value, tuple):
+        return []
+    return {}
+
+
+def _clear_pending_outputs(state: dict) -> bool:
+    empty_value = _empty_pending_outputs_like(state.get("pendingOutputs"))
+    return _set_if_changed(state, "pendingOutputs", empty_value)
+
+
+def _coding_round_number(value) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text.startswith("r") and text[1:].isdigit():
+            return int(text[1:])
+        if text.isdigit():
+            return int(text)
+    return 0
+
+
+def _ensure_coding_round_at_least_started(state: dict) -> bool:
+    if _coding_round_number(state.get("codingRound")) >= 1:
+        return False
+    state["codingRound"] = 1
+    return True
+
+
+def _sync_phase_projection(state: dict, phase: str) -> bool:
+    """Keep lifecycle phase and workflow projection fields in sync."""
+    changed = False
+    changed |= _set_if_changed(state, "currentPhase", phase)
+    if phase == "paused":
+        return changed
+    changed |= set_current_step(state, _TERMINAL_STEP if phase == _TERMINAL_PHASE else phase)
+    if phase in _CODING_STARTED_PHASES:
+        changed |= _ensure_coding_round_at_least_started(state)
+    if phase == _TERMINAL_PHASE:
+        changed |= _clear_pending_outputs(state)
+    return changed
+
+
+def _validate_workflow_state_projection(state: dict, label: str) -> None:
+    if state.get("phase") != _TERMINAL_PHASE:
+        return
+    errors = []
+    if state.get("currentPhase") != _TERMINAL_PHASE:
+        errors.append("currentPhase must be completed")
+    if state.get("currentStep") != _TERMINAL_STEP:
+        errors.append("currentStep must be completed")
+    if not _pending_outputs_empty(state.get("pendingOutputs")):
+        errors.append("pendingOutputs must be empty")
+    if _coding_round_number(state.get("codingRound")) < 1:
+        errors.append("codingRound must be >= r1")
+    if errors:
+        joined = "; ".join(errors)
+        raise ValueError(
+            f"state invariant violation ({label}): phase=completed requires "
+            f"currentPhase=completed, currentStep=completed, empty pendingOutputs, "
+            f"and codingRound>=r1; violations: {joined}"
+        )
+
+
+def _iter_story_projection_records(state: dict):
+    seen: set[int] = set()
+    story_states = state.get("storyStates") or {}
+    if isinstance(story_states, dict):
+        for story_id, sub in story_states.items():
+            if isinstance(sub, dict) and id(sub) not in seen:
+                seen.add(id(sub))
+                yield f"storyStates.{story_id}", sub
+    dr_states = state.get("drStates") or {}
+    if isinstance(dr_states, dict):
+        for dr_id, dr_state in dr_states.items():
+            if not isinstance(dr_state, dict):
+                continue
+            nested_story_states = dr_state.get("storyStates") or {}
+            if not isinstance(nested_story_states, dict):
+                continue
+            for story_id, sub in nested_story_states.items():
+                if isinstance(sub, dict) and id(sub) not in seen:
+                    seen.add(id(sub))
+                    yield f"drStates.{dr_id}.storyStates.{story_id}", sub
+
+
+def validate_state_invariants(state: dict) -> None:
+    """Reject contradictory terminal workflow state before persistence."""
+    if not isinstance(state, dict):
+        return
+    if state.get("stateModel") != "nested" or any(
+        key in state for key in ("currentPhase", "currentStep", "pendingOutputs", "codingRound")
+    ):
+        _validate_workflow_state_projection(state, "root")
+    for label, sub in _iter_story_projection_records(state):
+        _validate_workflow_state_projection(sub, label)
+
+
 def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
     """
     设置当前 phase + 记录历史（🆕 v3.5.15 按 state.scale 选子链校验）。
@@ -222,8 +353,8 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
       - 从 paused 恢复请用 resume_state()，不要直接 set_phase
 
     Returns:
-        True: phase 实际被更新
-        False: phase 等于当前值，不重复记录
+        True: phase 或同步投影字段实际被更新
+        False: phase 与同步投影均未变化，不重复记录
 
     Raises:
         ValueError: phase 不在该 state 所在子链中（paused 除外）
@@ -231,10 +362,14 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
     # 🆕 v3.6 paused 元状态：绕过子链校验，直接写入
     if phase == "paused":
         if state.get("phase") == "paused":
-            return False  # 已经是 paused，幂等
+            changed = _sync_phase_projection(state, "paused")
+            validate_state_invariants(state)
+            return changed  # 已经是 paused，幂等
         state["pausedFromPhase"] = state.get("phase", "initialized")
         state["phase"] = "paused"
         record_history(state, "paused", by)
+        _sync_phase_projection(state, "paused")
+        validate_state_invariants(state)
         return True
 
     scale = _resolve_scale(state)
@@ -246,9 +381,13 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
         )
     if state.get("phase") == phase:
         # 重复写：跳过 history 累积
-        return False
+        changed = _sync_phase_projection(state, phase)
+        validate_state_invariants(state)
+        return changed
     state["phase"] = phase
     record_history(state, phase, by)
+    _sync_phase_projection(state, phase)
+    validate_state_invariants(state)
     return True
 
 
@@ -654,19 +793,28 @@ def get_review_consensus(state: dict, point: float) -> Optional[dict]:
 # SKILL.md §流程状态跟踪承诺：currentStep/completedSteps/codingRound 真实读写。
 # v3.5.12 前零写入（重入只能靠 phase 粗粒度恢复）。
 
-def set_current_step(state: dict, step: str) -> None:
+def set_current_step(state: dict, step: str) -> bool:
     """进入新步骤时写 currentStep + 追加 completedSteps。"""
+    changed = False
     prev = state.get("currentStep")
     if prev and prev != step:
-        completed = state.setdefault("completedSteps", [])
+        completed = state.get("completedSteps")
+        if not isinstance(completed, list):
+            completed = []
+            state["completedSteps"] = completed
+            changed = True
         if prev not in completed:
             completed.append(prev)
-    state["currentStep"] = step
+            changed = True
+    if state.get("currentStep") != step:
+        state["currentStep"] = step
+        changed = True
+    return changed
 
 
 def bump_coding_round(state: dict) -> str:
     """开始新一轮 Coding 前累加 codingRound，返回新轮次标识（如 r1/r2/r3）。"""
-    cur = state.get("codingRound", 0)
+    cur = _coding_round_number(state.get("codingRound", 0))
     new_round = cur + 1
     state["codingRound"] = new_round
     return f"r{new_round}"
@@ -1217,14 +1365,24 @@ def set_story_substate_phase(state: dict, story_id: str, phase: str,
     subs = _iter_nested_story_substates(state, story_id)
     if not subs:
         return False
-    if all(sub.get("phase") == phase for sub in subs):
-        return False
     now = _now_ts()
+    phase_changed = False
+    projection_changed = False
     for sub in subs:
-        sub["phase"] = phase
-        sub["lastUpdated"] = now
+        if sub.get("phase") != phase:
+            sub["phase"] = phase
+            phase_changed = True
+        if _sync_phase_projection(sub, phase):
+            projection_changed = True
+        if phase_changed or projection_changed:
+            sub["lastUpdated"] = now
+        _validate_workflow_state_projection(sub, f"storyStates.{story_id}")
+    changed = phase_changed or projection_changed
+    if not changed:
+        return False
     state["activeStory"] = story_id
-    record_history(state, f"story-{story_id}-phase={phase}", by)
+    if phase_changed:
+        record_history(state, f"story-{story_id}-phase={phase}", by)
     return True
 
 
@@ -1353,6 +1511,24 @@ def get_active_story(state: dict) -> Optional[str]:
     if is_nested_state(state):
         return state.get("activeStory")
     return state.get("currentStory")
+
+
+def is_work_item_completed(state: dict) -> bool:
+    """判断整条 work-item 是否已全部完结（兼容 v1 flat / v2 nested）。
+
+    nested state 下 get_active_phase() 只反映 activeStory 指向的那一个 Story；
+    某 Story 完成后 activeStory 不会自动前移到下一个未完成 Story，导致
+    get_active_phase()=="completed" 时其余 Story 仍可能未完成。这里改为聚合
+    _iter_story_projection_records() 遍历到的全部 Story 子状态，仅当全部
+    completed 才判定整条 work-item 完结；无任何 Story 子状态时回退到
+    get_active_phase()（对应仅有 prdState/drState、尚未拆出 Story 的场景）。
+    """
+    if not is_nested_state(state):
+        return state.get("phase") == "completed"
+    records = list(_iter_story_projection_records(state))
+    if records:
+        return all(sub.get("phase") == "completed" for _, sub in records)
+    return get_active_phase(state) == "completed"
 
 
 def list_story_ids_in_state(state: dict) -> list[str]:

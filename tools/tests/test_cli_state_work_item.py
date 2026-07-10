@@ -388,7 +388,9 @@ class TestParallelWorkItemIsolation(unittest.TestCase):
         state_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         return state_file
 
-    def test_state_read_without_work_item_blocks_when_multiple_sources_exist(self):
+    def test_state_read_without_work_item_resolves_single_active_ignoring_completed(self):
+        """completed 的 work-item 不应再占据隐式候选池：仅 1 个活跃态时应直接解析，
+        不应被已完成的 Story-005 拖成假性歧义（life 项目 2026-07-08/09 故障复现场景）。"""
         tmp = _setup_project()
         sp_a = self._write_work_item(tmp, "Story-004", "STORY-004-BE", "testcase-generated")
         self._write_work_item(tmp, "Story-005", "STORY-005-BE", "completed")
@@ -399,7 +401,45 @@ class TestParallelWorkItemIsolation(unittest.TestCase):
 
         code, out, err = _run_cli(tmp, "state", "read", "--json")
 
-        self.assertNotEqual(code, 0, msg="多 work-item 时不应静默读取全局 active mirror")
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["stateMachineId"], "Story-004")
+
+    def test_state_read_resolves_work_item_with_completed_active_story_and_pending_sibling(self):
+        """同一 work-item 内 activeStory 指向的 Story 已 completed，但还有别的 Story
+        未完成时，隐式解析仍应命中该 work-item，不应因误判"整体已完结"而报
+        NoWorkItemStateError（v3.9.18 修复，复现 Fix A 的多 Story 场景）。"""
+        tmp = _setup_project()
+        state_file = self._write_work_item(tmp, "Story-004", "STORY-004-A", "completed")
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        data["storyStates"]["STORY-004-B"] = {
+            "phase": "coding",
+            "completedSteps": [],
+            "codingRound": 0,
+            "lastUpdated": "2026-07-09T00:00:00Z",
+            "resetHistory": [],
+        }
+        state_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+        code, out, err = _run_cli(tmp, "state", "read", "--json")
+
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["stateMachineId"], "Story-004")
+
+    def test_state_read_without_work_item_blocks_when_multiple_active_sources_exist(self):
+        """两个都还在跑（非 completed）的 work-item 仍应保持歧义拒绝，不允许隐式猜测。"""
+        tmp = _setup_project()
+        sp_a = self._write_work_item(tmp, "Story-004", "STORY-004-BE", "testcase-generated")
+        self._write_work_item(tmp, "Story-005", "STORY-005-BE", "story-generated")
+        mirror = json.loads(sp_a.read_text(encoding="utf-8"))
+        mirror["activeWorkItem"] = "Story-004"
+        mirror["activeStatePath"] = str(sp_a)
+        (tmp / ".ae-sdd" / "state.json").write_text(json.dumps(mirror, ensure_ascii=False), encoding="utf-8")
+
+        code, out, err = _run_cli(tmp, "state", "read", "--json")
+
+        self.assertNotEqual(code, 0, msg="多个活跃 work-item 时不应静默读取全局 active mirror")
         self.assertIn("--work-item", err + out)
         self.assertIn("Story-004", err + out)
         self.assertIn("Story-005", err + out)
@@ -419,6 +459,35 @@ class TestParallelWorkItemIsolation(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(payload["stateMachineId"], "Story-005")
         self.assertEqual(payload["activeStory"], "STORY-005-BE")
+
+    def test_state_write_completed_syncs_story_projection(self):
+        tmp = _setup_project()
+        state_file = self._write_work_item(tmp, "Story-005", "STORY-005-BE", "code-reviewed")
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        sub = data["storyStates"]["STORY-005-BE"]
+        sub["currentPhase"] = "coding"
+        sub["currentStep"] = "step-5-task-review-passed-awaiting-human-confirm"
+        sub["pendingOutputs"] = {"humanConfirm": True}
+        sub["codingRound"] = "r0"
+        state_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+        code, out, err = _run_cli(
+            tmp,
+            "state", "write",
+            "--work-item", "Story-005",
+            "--phase", "completed",
+            "--allow-empty-memory",
+        )
+
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        updated = json.loads(state_file.read_text(encoding="utf-8"))
+        sub = updated["storyStates"]["STORY-005-BE"]
+        self.assertEqual(sub["phase"], "completed")
+        self.assertEqual(sub["currentPhase"], "completed")
+        self.assertEqual(sub["currentStep"], "completed")
+        self.assertEqual(sub["pendingOutputs"], {})
+        self.assertEqual(sub["codingRound"], 1)
+        self.assertIn("step-5-task-review-passed-awaiting-human-confirm", sub["completedSteps"])
 
 
 class TestStateWorkItemIsolationLegacy(unittest.TestCase):

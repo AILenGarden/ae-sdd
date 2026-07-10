@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import memory_store
+from lib import memory_store, work_item_context
 from lib.gate_intercept import (
     PHASE_PERMIT,
     READONLY_TOOLS,
@@ -60,6 +60,7 @@ class TestBashReadonlyCommands:
         "cat pom.xml",
         "ls -la",
         "grep -r 'TODO' src/",
+        "echo test",
         "git status",
         "git log --oneline -10",
         "ae-sdd state read",
@@ -75,6 +76,7 @@ class TestBashReadonlyCommands:
         "rm -rf target/",
         "git commit -m 'fix'",
         "echo 'hello' > file.txt",
+        "printf hello > file.txt",
     ])
     def test_bash_write_blocked_in_initialized(self, cmd):
         """initialized phase 不允许写操作 Bash"""
@@ -116,10 +118,15 @@ class TestPhasePermissions:
         assert allowed
 
     # ── completed：写操作全拒 ──
-    @pytest.mark.parametrize("tool", ["Write", "Edit", "Bash"])
+    @pytest.mark.parametrize("tool", ["Write", "Edit"])
     def test_completed_blocks_all_writes(self, tool):
-        allowed, reason = check_intercept(tool,
-                                          bash_command="echo done",
+        allowed, reason = check_intercept(tool, forced_phase="completed")
+        assert not allowed
+        assert "completed" in reason or "phase" in reason
+
+    def test_completed_blocks_non_readonly_bash(self):
+        allowed, reason = check_intercept("Bash",
+                                          bash_command="mvn test",
                                           forced_phase="completed")
         assert not allowed
         assert "completed" in reason or "phase" in reason
@@ -225,6 +232,213 @@ class TestParallelWorkItemHookIsolation:
         assert "--work-item" in reason
         assert "Story-004" in reason
         assert "Story-005" in reason
+
+    def test_readonly_bash_allowed_despite_work_item_ambiguity(self, tmp_path):
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
+
+        allowed, reason = check_intercept("Bash", bash_command="echo test", project_dir=tmp_path)
+
+        assert allowed, reason
+
+    def test_redirected_echo_still_blocked_by_work_item_ambiguity(self, tmp_path):
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
+
+        allowed, reason = check_intercept(
+            "Bash", bash_command="echo test > out.txt", project_dir=tmp_path
+        )
+
+        assert not allowed
+        assert "--work-item" in reason
+
+    def test_write_uses_session_bound_work_item_without_global_mirror(self, tmp_path):
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        sp_b = self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "initialized")
+        work_item_context.bind_session_state(
+            ade_sdd, "session-005", sp_b, "Story-005", "STORY-005-BE"
+        )
+
+        allowed, reason = check_intercept(
+            "Write",
+            file_path=str(tmp_path / "notes.txt"),
+            project_dir=tmp_path,
+            session_key="session-005",
+        )
+
+        assert allowed, reason
+
+    def test_completed_session_binding_denies_by_phase_not_ambiguity(self, tmp_path):
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "task-reviewed")
+        sp_b = self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
+        work_item_context.bind_session_state(
+            ade_sdd, "session-005", sp_b, "Story-005", "STORY-005-BE"
+        )
+
+        allowed, reason = check_intercept(
+            "Write",
+            file_path=str(tmp_path / "notes.txt"),
+            project_dir=tmp_path,
+            session_key="session-005",
+        )
+
+        assert not allowed
+        assert "phase=completed" in reason
+        assert "Multiple ae-sdd work-item states" not in reason
+
+    def _write_multi_story_work_item(
+        self, tmp_path: Path, name: str, active_story_id: str, story_phases: dict
+    ) -> Path:
+        """写一个内含多个 Story 子状态的单个 work-item（activeStory 指向其中一个）。"""
+        state_path = tmp_path / ".auto-engineering" / name / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": "2",
+            "projectKey": "test",
+            "stateModel": "nested",
+            "entryNode": "STORY",
+            "stateMachineId": name,
+            "workItemKey": name,
+            "currentWorkItem": name,
+            "scale": "小",
+            "activeStory": active_story_id,
+            "storyStates": {
+                story_id: {
+                    "phase": phase,
+                    "completedSteps": [],
+                    "codingRound": 0,
+                    "lastUpdated": "2026-07-09T00:00:00Z",
+                    "resetHistory": [],
+                }
+                for story_id, phase in story_phases.items()
+            },
+            "history": [],
+        }
+        state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return state_path
+
+    def test_active_story_pointing_at_completed_sibling_not_ignored(self, tmp_path):
+        """activeStory 指向的 Story 已 completed，但同一 work-item 内还有别的 Story
+        未完成时，隐式解析不应把整条 work-item 误判为"已完成"而从候选池中排除
+        （v3.9.18 修复：修复前 get_active_phase() 只看 activeStory 指向的子状态，
+        会把仍有未完成 Story 的 work-item 误判为整体已完结）。
+
+        注意：这里只断言 resolve_default_state() 本身不再因误判把它排出候选池、
+        不再退化成 NoWorkItemStateError；activeStory 指向的子状态本身是否允许
+        Write 是另一层 phase 权限判断（取决于用户是否已切换焦点到未完成的
+        Story），不是本用例要覆盖的范围。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_multi_story_work_item(
+            tmp_path,
+            "Story-004",
+            active_story_id="STORY-004-A",
+            story_phases={"STORY-004-A": "completed", "STORY-004-B": "coding"},
+        )
+
+        resolved = work_item_context.resolve_default_state(ade_sdd)
+
+        assert resolved.source == "single-work-item"
+        assert resolved.key == "Story-004"
+
+    def test_only_completed_candidate_ignored_by_implicit_resolution(self, tmp_path):
+        """唯一候选已 completed 时，隐式解析应视为"无活跃态"而非把它当默认态选中。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
+
+        allowed, reason = check_intercept(
+            "Write", file_path=str(tmp_path / "notes.txt"), project_dir=tmp_path
+        )
+
+        assert not allowed
+        assert "No ae-sdd work-item state exists" in reason
+        assert "phase=completed" not in reason
+
+    def test_state_new_escapes_all_completed_deadlock(self, tmp_path):
+        """唯一候选已 completed 时，NoWorkItemStateError 建议的自救命令本身必须可执行，
+        否则会构成"建议的脱困命令自己也被拦"的死锁（v3.9.17 修复）。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command="ae-sdd state new --id STORY-006 --entry-node STORY",
+            project_dir=tmp_path,
+        )
+
+        assert allowed, reason
+
+    def test_enter_escapes_all_completed_deadlock(self, tmp_path):
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command="ae-sdd enter test --story STORY-006",
+            project_dir=tmp_path,
+        )
+
+        assert allowed, reason
+
+    def test_state_new_chained_command_not_escaped(self, tmp_path):
+        """链式命令不得走 state new / enter 逃生通道，防止拼接危险后半段绕过。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command="ae-sdd state new --id STORY-006 --entry-node STORY && rm -rf .ae-sdd/",
+            project_dir=tmp_path,
+        )
+
+        assert not allowed
+
+    @pytest.mark.parametrize(
+        "smuggled_command",
+        [
+            "ae-sdd state new --id STORY-006 --entry-node STORY & echo pwned",
+            "ae-sdd enter test --story STORY-006 & rm -rf .ae-sdd/",
+            "ae-sdd state new --id $(touch pwned) --entry-node STORY",
+            "ae-sdd state new --id `touch pwned` --entry-node STORY",
+            "ae-sdd state new --id STORY-006 --entry-node STORY > /tmp/pwned",
+        ],
+    )
+    def test_state_new_or_enter_smuggled_payload_not_escaped(self, tmp_path, smuggled_command):
+        """单个 & / $() / 反引号 / 重定向夹带的命令不得走该逃生通道放行，
+        否则会越过 completed/paused 等 phase 的全部权限限制（v3.9.18 修复）。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command=smuggled_command,
+            project_dir=tmp_path,
+        )
+
+        assert not allowed, f"smuggled payload should not escape: {smuggled_command!r}"
 
 
 class TestHS10DocumentStoragePathGuard:

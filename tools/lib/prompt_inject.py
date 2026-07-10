@@ -84,6 +84,20 @@ AE_SDD_TRIGGER_MARKERS: tuple[str, ...] = (
 )
 
 
+def _story_id_alias_matches(mentioned: str, active: str) -> bool:
+    """Return True when a prompt-extracted Story ID is an alias of activeStory.
+
+    life has work items such as ``cs-ai-STORY-005-BE``. Some classifiers extract
+    only ``STORY-005-BE`` from that string; that should not be treated as a
+    request to switch stories after the resolver already selected the full ID.
+    """
+    left = (mentioned or "").strip().casefold()
+    right = (active or "").strip().casefold()
+    if not left or not right:
+        return False
+    return left == right or left in right or right in left
+
+
 def _update_quick_channel(ade_sdd: Path, user_prompt: str) -> None:
     """
     根据用户消息更新快速通道状态文件。
@@ -223,7 +237,7 @@ def inject(
         if features.story_ids and features.modifies_story:
             active = current_story if current_story != "（未设定）" else None
             mentioned = features.story_ids[0]
-            if active and mentioned != active:
+            if active and not _story_id_alias_matches(mentioned, active):
                 # 查该 mentioned Story 是否已被某 state 管理
                 hit = paths.find_nested_state_by_story_id(ade_sdd, mentioned)
                 if hit:

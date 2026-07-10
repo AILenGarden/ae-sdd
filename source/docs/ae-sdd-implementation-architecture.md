@@ -110,12 +110,15 @@ harness/                        派生适配层，不手工改生成物
 | 路径 | 用途 |
 | --- | --- |
 | `.ae-sdd/config.yaml` | 项目配置 |
-| `.ae-sdd/state.json` | active work item 状态镜像，保存 `activeWorkItem` 与 `activeStatePath`，供旧 gate/hook 兼容读取 |
+| `.ae-sdd/state.json` | 不再作为 active state、mirror 或 fallback；旧项目残留文件只能视为历史数据，不得参与新状态解析 |
+| `.ae-sdd/session-context/` | 会话级 work-item 绑定缓存；`UserPromptSubmit` 从当前 prompt/cwd 解析真实 work-item 并写入，`PreToolUse` 只用同一 session key 读取，禁止跨会话共享 |
 | `.auto-engineering/{workItemKey}/state.json` | work item 独立状态机；新建入口为 `ae-sdd state new --id <ID> --name "<需求名>"`，目录名为 `{ID}--{name}` |
 | `.ae-sdd/memory/` | 分区 compact 记忆；task(L1) 默认任务级、project(L2) 跨任务复用，UserPromptSubmit 任务优先注入并只用 project 补充 |
 | `.ae-sdd/plugins/` | 项目层插件注册 |
 | `.ae-sdd/cache/` | 工具链缓存，新增缓存优先放这里 |
 | `.ae-sdd/runtime-stats/` | Runtime Stats JSONL，本地观测数据，可清理，不进入版本控制 |
+
+`tools/lib/state.py` 是状态写入与终态一致性的代码权威。`phase`/`history` 表示生命周期主状态；`currentPhase`、`currentStep`、`completedSteps`、`pendingOutputs`、`codingRound` 是工作流投影字段，不能独立滞留在旧步骤。`set_phase()` 和 `set_story_substate_phase()` 写入生命周期 phase 时必须级联同步投影；`write_state()` 落盘前执行终态不变量校验：`phase=completed` 必须满足 `currentPhase=completed`、`currentStep=completed`、`pendingOutputs` 为空、`codingRound>=r1`。嵌套 state 中该规则作用于 `storyStates{}` 与 `drStates[*].storyStates{}`，不强加给 PRD/DR 容器子记录。
 
 新增项目侧文件必须说明是否可删、是否进入版本控制、是否参与 gate。
 

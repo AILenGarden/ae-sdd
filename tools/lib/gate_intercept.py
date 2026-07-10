@@ -109,7 +109,7 @@ BASH_READONLY_PREFIXES: tuple[str, ...] = (
     "ae-sdd assets check",
     # 环境查询
     "which ",
-    # 注意：echo 不加入白名单（echo 'hello' > file.txt 可写文件）
+    # echo 由 _is_readonly_bash 特判：仅无重定向的单条 echo 放行。
 )
 
 # ─── 路径感知 ─────────────────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ def _check_product_storage_path(
     """HS-10：流程产物必须落在 document-storage 推导的文档工作区内。
 
     这是关卡2的物理路径归属校验。它不尝试从文件名反推完整 intent 参数，
-    但会强制产物位于 `{docWorkspace}/ae-sdd-doc/` 下，防止写到 `d:\tmp\`
+    但会强制产物位于 `{docWorkspace}/ae-sdd-doc/` 下，防止写到 `d:\\tmp\\`
     这类游离位置。具体文件名/版本号由 `ae-sdd doc save` / G-DOC-STORAGE 继续校验。
     """
     if ade_sdd is None:
@@ -589,6 +589,27 @@ def _is_ae_sdd_assets_generate_cmd(bash_command: str) -> bool:
     return bool(_ASSETS_GENERATE_CMD_RE.match(stripped))
 
 
+# ─── 🆕 v3.9.17 修复：ae-sdd state new / enter 逃生放行 ────────────────────────
+# resolve_default_state() 会把 completed 状态排除出隐式候选池（避免已完成任务
+# 假性占位歧义/被误当默认态），但这意味着「唯一候选已 completed」或「全部候选
+# 已 completed」时会退化成 NoWorkItemStateError——而该异常建议的自救命令正是
+# `ae-sdd state new` / `ae-sdd enter`。若这两个命令本身还要走 resolve_default_state
+# 才能放行，就会先于自己创建的新状态被同一个异常拦死，构成死锁。
+# state new 只在 .auto-engineering/ 下新建一个工作项目录，enter 只写入其
+# session.json 凭证，二者都不读写任何既有 work-item 的 state.json，因此可以
+# 独立于 work-item 解析结果放行（同 memory / assets generate 命令族）。
+_STATE_NEW_OR_ENTER_CMD_RE = re.compile(
+    r"^(?:ae-sdd|python\s+\S*ae-sdd)\s+(?:state\s+new|enter)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_ae_sdd_state_new_or_enter_cmd(bash_command: str) -> bool:
+    """命令是否为单条 `ae-sdd state new` / `ae-sdd enter` 自救命令。"""
+    stripped = (bash_command or "").strip()
+    return bool(_STATE_NEW_OR_ENTER_CMD_RE.match(stripped))
+
+
 def _extract_option_value(bash_command: str, option: str) -> Optional[str]:
     stripped = bash_command.strip()
     if not (stripped.startswith("ae-sdd") or _STATE_WRITE_CMD_RE.match(stripped)):
@@ -736,27 +757,27 @@ def _check_state_write(
             "ra-generated":    ["G-00"],
             "dr-generated":    ["G-00", "G-01", "G-DR-CTX"],
             "story-generated": ["G-00", "G-01", "G-02", "G-STORY-CTX"],
-            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX"],
+            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
             "testcase-generated": ["G-00", "G-02", "G-TESTCASE-CTX"],
             "testcase-reviewed":  ["G-00", "G-02", "G-03", "G-TESTCASE-CTX"],
             "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
             "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
-            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
         "中": {  # 跳过 DR：ra→story，无 dr-generated
             "ra-generated":    ["G-00"],
             "story-generated": ["G-00", "G-01", "G-02", "G-STORY-CTX"],
-            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX"],
+            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
             "testcase-generated": ["G-00", "G-02", "G-TESTCASE-CTX"],
             "testcase-reviewed":  ["G-00", "G-02", "G-03", "G-TESTCASE-CTX"],
             "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
             "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
-            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
         "小": {  # 跳过 DR/Story：ra→task，无 dr/story
@@ -765,7 +786,7 @@ def _check_state_write(
             "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
-            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
         "微": {  # 跳过 RA/DR/Story：initialized→task，coding 入口 G-00+G-07+G-08（Plan-first 不豁免）
@@ -778,7 +799,7 @@ def _check_state_write(
             "task-reviewed":   ["G-00", "G-07", "G-08", "G-TASK-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
-            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11"],
+            "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
     }
@@ -808,8 +829,10 @@ def _check_state_write(
 
 # ─── 只读 Bash 检测 ───────────────────────────────────────────────────────────
 
-# 链式命令分隔符正则（&&、||、;、|、换行）
-_CHAIN_RE = re.compile(r"&&|\|\||\s*;\s*|\s*\|\s*|\n")
+# 链式命令分隔符正则（&&、||、;、|、换行、单个 &、$() 命令替换、反引号）
+# 单个 & 需与 && 区分：用前后不为 & 的环视避免和 && 分支重复匹配同一位置。
+_CHAIN_RE = re.compile(r"&&|\|\||\s*;\s*|\s*\|\s*|\n|(?<!&)&(?!&)|\$\(|`")
+_REDIRECT_RE = re.compile(r">|<")
 
 
 def _is_readonly_bash(command: Optional[str]) -> bool:
@@ -820,6 +843,7 @@ def _is_readonly_bash(command: Optional[str]) -> bool:
     - 只有命令是「单条」且前缀命中白名单时才认为只读
     - 含 &&、||、;、| 的链式命令一律不认为只读
       （防止 'git status && rm -rf design/' 绕过白名单）
+    - 含 > / < 重定向一律不认为只读
     - 例外：ae-sdd gates check --json 等 ae-sdd 内置命令允许带 --json 参数
     """
     if not command:
@@ -828,6 +852,10 @@ def _is_readonly_bash(command: Optional[str]) -> bool:
     # 链式命令：含分隔符 → 拒绝快速放行，交由 phase permit 决定
     if _CHAIN_RE.search(cmd):
         return False
+    if _REDIRECT_RE.search(cmd):
+        return False
+    if re.match(r"^(echo|printf)\b", cmd):
+        return True
     return any(cmd.startswith(p) for p in BASH_READONLY_PREFIXES)
 
 
@@ -908,6 +936,24 @@ def check_intercept(
     """
     # 1. 只读工具永远放行
     if allow_readonly and tool_name in READONLY_TOOLS:
+        return True, ""
+
+    # 1b. 只读 Bash 不应被 work-item 歧义锁死。
+    if allow_readonly and tool_name == "Bash" and _is_readonly_bash(bash_command):
+        return True, ""
+
+    # 1c. 🆕 v3.9.17 ae-sdd state new / enter 逃生放行，先于 work-item 解析。
+    # 必须在 resolve_default_state() 之前放行，否则「唯一/全部候选已 completed」
+    # 退化出的 NoWorkItemStateError 会先拦住这两个本该用来脱困的自救命令。
+    # 该放行独立于 phase 之外（不经过 PHASE_PERMIT），一旦被链式/替换/重定向
+    # 语法夹带绕过就会越过所有后续检查，因此除 _CHAIN_RE 外再叠加 _REDIRECT_RE。
+    if (
+        tool_name == "Bash"
+        and bash_command
+        and _is_ae_sdd_state_new_or_enter_cmd(bash_command)
+        and not _CHAIN_RE.search(bash_command.strip())
+        and not _REDIRECT_RE.search(bash_command.strip())
+    ):
         return True, ""
 
     # 2. 读取状态

@@ -1033,6 +1033,135 @@ def check_uc16_automation_cascade(repo_root: Path) -> UpdateCheckResult:
     )
 
 
+def check_uc17_repo_layout_contract(repo_root: Path) -> UpdateCheckResult:
+    """UC-17：仓库顶层结构契约（🆕 v3.9.19）。
+
+    保证「发版包只装 ae-sdd 本体」这条核心纪律不被顶层杂物侵蚀。两层校验：
+
+      1. 顶层无 scratch 残留 —— 下列路径一旦出现在仓库顶层即 FAIL：
+         nul / _tmp_*.py / README.docx / update-doc/ / logs/
+         （这些是历史遗留的 Windows 重定向误产物、临时脚本、过期归档目录。）
+      2. README.md §📦 仓库结构 标注发版包边界 —— 断言 README.md 含
+         "发版包边界" 声明，保证结构树与实际取材规则（build_dist.py）同步、
+         不因顶层目录增删而脱节。
+
+    本检查是 update-graph UG-23 的机器可读守门人：任何动顶层结构的改动都会
+    被 ae-sdd-update-skill 经 update-graph.json 命中，提示跑 UC-17 验证。
+    """
+    name = "仓库顶层结构契约"
+    issues: list[str] = []
+
+    # 1. 顶层 scratch 残留（真实文件系统条目存在即 FAIL）
+    #    注意：Windows 上 os.path.exists("nul") 永远返回 True（NUL 是保留设备名，
+    #    非真实文件），故改用 os.listdir 的真实条目集合判定，避免跨平台误报。
+    import os as _os_uc17
+    real_entries = set(_os_uc17.listdir(repo_root))
+    scratch_names = {
+        "nul", "_tmp_mark1.py", "_tmp_mark2.py", "_tmp_norm.py",
+        "README.docx", "update-doc", "logs",
+    }
+    leaked = sorted(scratch_names & real_entries)
+    # _tmp_*.py 用 glob 兜底（防止未来新增的临时脚本漏网）
+    for p in repo_root.glob("_tmp_*.py"):
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        if rel not in leaked:
+            leaked.append(rel)
+    if leaked:
+        issues.append(
+            f"顶层存在 scratch 残留：{leaked}；"
+            f"这些不进发版包但污染仓库观感，应删除（README.docx 已归档为 README.md）"
+        )
+
+    # 2. README.md 仓库结构标注发版包边界
+    readme = repo_root / "README.md"
+    if not readme.is_file():
+        issues.append("README.md 不存在，无法校验仓库结构树")
+    else:
+        readme_text = readme.read_text(encoding="utf-8", errors="replace")
+        if "发版包边界" not in readme_text:
+            issues.append(
+                "README.md §📦 仓库结构 缺「发版包边界」声明；"
+                "顶层结构变更后必须同步该声明（见 RELEASING.md §2.2）"
+            )
+
+    if issues:
+        return UpdateCheckResult(
+            "UC-17", name, "error", False,
+            "顶层结构契约违反：" + "；".join(issues),
+            "删除 scratch 残留 + 在 README §📦 仓库结构补「发版包边界」声明；详见 RELEASING.md §5",
+            details={"issues": issues},
+        )
+    return UpdateCheckResult(
+        "UC-17", name, "error", True,
+        "顶层结构契约满足：无 scratch 残留 + README 已标注发版包边界",
+        details={"checked": ["top-level scratch", "README 发版包边界声明"]},
+    )
+
+
+def check_uc18_manifest_index_contract(repo_root: Path) -> UpdateCheckResult:
+    """UC-18：manifest-index 契约（🆕 v3.9.20）。
+
+    保证 dist 编译后存在 LLM-facing 精简 manifest-index.json，且只含白名单字段
+    （防回归——谁要是不小心把 sha256/checksums/generated_files 塞回 index，
+    token 膨胀会复发）。两项校验：
+
+      1. dist/ae-sdd/runtime/manifest-index.json 存在 + schema = ae-sdd-runtime-index/v1
+      2. index 的 subskills 每条只含白名单字段（entry/manifest/boot/outline/fallback），
+         不得出现 sha256/fingerprint/checksums 等机器字段
+    """
+    name = "manifest-index 契约"
+    index_path = repo_root / "dist" / "ae-sdd" / "runtime" / "manifest-index.json"
+    issues: list[str] = []
+
+    if not index_path.is_file():
+        # dist 可能未构建；仅 warn 不阻断（dist 是 gitignored 产物）
+        return UpdateCheckResult("UC-18", name, "warn", True,
+                                 "dist/ae-sdd/runtime/manifest-index.json 不存在（dist 未构建则跳过；构建后应有）",
+                                 details={"skipped": True})
+
+    try:
+        idx = json.loads(index_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return UpdateCheckResult("UC-18", name, "error", False,
+                                 f"manifest-index.json 不可读：{e}",
+                                 "重新跑 scripts/build-dist.sh 生成")
+
+    # 1. schema 校验
+    if idx.get("schema") != "ae-sdd-runtime-index/v1":
+        issues.append(f"schema 应为 ae-sdd-runtime-index/v1，实为 {idx.get('schema')!r}")
+
+    # 2. subskills 字段白名单（防回归塞回哈希）
+    allowed_subskill_keys = {"entry", "manifest", "boot", "outline", "fallback"}
+    subskills = idx.get("subskills", [])
+    if not isinstance(subskills, list) or not subskills:
+        issues.append("subskills 为空或非 list")
+    else:
+        bad = []
+        for i, rec in enumerate(subskills):
+            if not isinstance(rec, dict):
+                bad.append(f"subskills[{i}] 非 dict")
+                continue
+            extra = set(rec.keys()) - allowed_subskill_keys
+            if extra:
+                bad.append(f"subskills[{i}] 含非白名单字段：{sorted(extra)}")
+        if bad:
+            issues.append("subskills 字段越界（不得含哈希/校验字段）：" + "；".join(bad[:3]))
+
+    # 注：顶层 runtime_fingerprint 是合法路由字段（LLM 需知 runtime 版本指纹），
+    # 不在 forbidden 名单；只有 subskills 内部不得出现 sha256/fingerprint/checksums。
+
+    if issues:
+        return UpdateCheckResult("UC-18", name, "error", False,
+                                 "manifest-index 契约违反：" + "；".join(issues),
+                                 "修正 scripts/compile_skill_runtime.py 的 manifest_index 生成，"
+                                 "确保 index 只含路由字段（entry/load_order/subskill 路径）",
+                                 details={"issues": issues})
+    size = index_path.stat().st_size
+    return UpdateCheckResult("UC-18", name, "error", True,
+                             f"manifest-index 契约满足：schema 正确 + 字段白名单 + {size} bytes",
+                             details={"size": size, "subskill_count": len(subskills)})
+
+
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
 CHECK_FUNCS = {
     "UC-01": check_uc01_version,
@@ -1045,6 +1174,8 @@ CHECK_FUNCS = {
     "UC-14": check_uc14_update_skill_cascade_sync,
     "UC-15": check_uc15_runtime_compile_consistency,
     "UC-16": check_uc16_automation_cascade,
+    "UC-17": check_uc17_repo_layout_contract,
+    "UC-18": check_uc18_manifest_index_contract,
 }
 
 

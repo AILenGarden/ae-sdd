@@ -255,6 +255,80 @@ class TestBumpVersion(unittest.TestCase):
             ug.bump_version(tmp, "3.2.5")
 
 
+# ─── UC-17 仓库顶层结构契约（v3.9.19）─────────────────────────────────────────
+class TestUC17(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        """真实仓库顶层无 scratch 残留 + README 标注发版包边界 → pass"""
+        r = ug.check_uc17_repo_layout_contract(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+
+    def test_scratch_residual_fails(self):
+        """顶层出现 _tmp_*.py 残留 → fail"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            # 复制真实 README（含发版包边界声明）以隔离 scratch 检测
+            (tmp / "README.md").write_text(
+                "# repo\n## 📦 仓库结构\n发版包边界：只从 source/+tools/ 取材\n",
+                encoding="utf-8")
+            (tmp / "_tmp_leak.py").write_text("# scratch\n", encoding="utf-8")
+            r = ug.check_uc17_repo_layout_contract(tmp)
+            self.assertFalse(r.pass_)
+            self.assertIn("_tmp_leak.py", r.message)
+
+    def test_missing_readme_boundary_fails(self):
+        """README 缺「发版包边界」声明 → fail"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            (tmp / "README.md").write_text("# repo\n## 仓库结构\n普通结构树\n", encoding="utf-8")
+            r = ug.check_uc17_repo_layout_contract(tmp)
+            self.assertFalse(r.pass_)
+            self.assertIn("发版包边界", r.message)
+
+    def test_nul_device_not_false_positive(self):
+        """Windows 保留设备名 nul 不应误报（os.path.exists('nul') 恒 True）"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            (tmp / "README.md").write_text(
+                "# repo\n## 📦 仓库结构\n发版包边界\n", encoding="utf-8")
+            # 不创建任何真实 nul 文件；Windows 上 exists('nul') 恒为 True，
+            # 但 listdir 不含 nul，检查必须用 listdir 而非 exists 判定。
+            r = ug.check_uc17_repo_layout_contract(tmp)
+            self.assertTrue(r.pass_, r.message)
+
+
+# ─── UC-18 manifest-index 契约（v3.9.20）──────────────────────────────────────
+class TestUC18(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        """真实 dist 编译后 index 存在 + schema 正确 + 字段白名单"""
+        r = ug.check_uc18_manifest_index_contract(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+
+    def test_missing_index_warns(self):
+        """dist 未构建 → warn（不阻断）"""
+        with tempfile.TemporaryDirectory() as td:
+            r = ug.check_uc18_manifest_index_contract(Path(td))
+            self.assertTrue(r.pass_)  # warn 也算 pass
+            self.assertEqual(r.severity, "warn")
+
+    def test_forbidden_field_fails(self):
+        """index 含 sha256 字段 → fail（防回归）"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            idx_dir = tmp / "dist" / "ae-sdd" / "runtime"
+            idx_dir.mkdir(parents=True)
+            bad_index = {
+                "schema": "ae-sdd-runtime-index/v1",
+                "subskills": [{"entry": "a.md", "source_sha256": "abc"}],
+            }
+            (idx_dir / "manifest-index.json").write_text(
+                json.dumps(bad_index), encoding="utf-8")
+            r = ug.check_uc18_manifest_index_contract(tmp)
+            self.assertFalse(r.pass_)
+            self.assertIn("白名单字段", r.message)
+
+
 # ─── UC-14 update-skill 级联图谱同步 ─────────────────────────────────────────
 class TestUC14(unittest.TestCase):
 
@@ -317,14 +391,15 @@ class TestUC14(unittest.TestCase):
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
-    def test_check_all_returns_16(self):
+    def test_check_all_returns_18(self):
         results = ug.check_all(REPO_ROOT)
-        # UC-01~07 + UC-14（update_graph 原生 8 项）+ UC-08~13（alignment_audit AA 注入 6 项）= 14。
+        # UC-01~07 + UC-14（update_graph 原生 8 项）+ UC-08~13（alignment_audit AA 注入 6 项）
+        # + UC-15~18（runtime 编译一致性 / 自动化级联 / 仓库顶层结构 / manifest-index 契约）= 18。
         # AA 的 register_to_update_graph() 在 import alignment_audit 时自动把 UC-08~13
         # 注入共享的 ug.CHECK_FUNCS（见 alignment_audit.py:666），故全量 pytest 收集
-        # test_alignment_audit.py 后本测试拿到 14 而非原生 8。这是已知的 import-time
-        # 副作用耦合；若未来把 AA 注册改为显式调用，需同步回退此断言到 8。
-        self.assertEqual(len(results), 16)
+        # test_alignment_audit.py 后本测试拿到 18 而非原生 12。这是已知的 import-time
+        # 副作用耦合；若未来把 AA 注册改为显式调用，需同步回退此断言到 12。
+        self.assertEqual(len(results), 18)
 
     def test_check_all_only_filter(self):
         results = ug.check_all(REPO_ROOT, only="UC-01")
@@ -361,9 +436,9 @@ class TestCheckAll(unittest.TestCase):
     def test_summarize(self):
         results = ug.check_all(REPO_ROOT)
         s = ug.summarize(results)
-        # 14 = UC-01~07 + UC-14 原生 + UC-08~13 AA 注入（见 test_check_all_returns_14 注释）
-        self.assertEqual(s["total"], 16)
-        self.assertEqual(s["passed"] + s["failed"], 16)
+        # 18 = UC-01~07 + UC-14 原生 + UC-08~13 AA 注入 + UC-15~18（见 test_check_all_returns_18 注释）
+        self.assertEqual(s["total"], 18)
+        self.assertEqual(s["passed"] + s["failed"], 18)
         self.assertIn("checks", s)
 
 
@@ -486,12 +561,12 @@ class TestSyncManifest(unittest.TestCase):
     """S-4 sync manifest：生成 / 漂移检测 / 缺失兜底。"""
 
     def test_generate_manifest_structure(self):
-        """生成的 manifest 含 21 条 UG 规则 + trigger/affected sha256"""
+        """生成的 manifest 含 24 条 UG 规则 + trigger/affected sha256"""
         manifest = ug.generate_sync_manifest(REPO_ROOT)
         self.assertNotIn("error", manifest)
         self.assertEqual(manifest["generatorVersion"], "1.0")
         self.assertIn("generatedAt", manifest)
-        self.assertEqual(len(manifest["rules"]), 21)
+        self.assertEqual(len(manifest["rules"]), 24)
         # 每条规则有 id/name/trigger_files/affected_files
         for rule in manifest["rules"]:
             self.assertIn("id", rule)

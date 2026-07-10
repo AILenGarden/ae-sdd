@@ -426,6 +426,60 @@
         {"path": "source/CHANGELOG/", "action": "记录 Monitor 或 ae-sdd 状态/运行时契约对 Monitor 的影响", "auto_checkable": false}
       ],
       "checks": ["UC-03", "UC-14"]
+    },
+    {
+      "id": "UG-23",
+      "name": "仓库顶层结构变更",
+      "trigger": [
+        "README.md",
+        "RELEASING.md",
+        ".gitignore"
+      ],
+      "trigger_condition": "顶层目录新增/移动/删除，或 README §📦 仓库结构树 / 发版包边界声明被修改",
+      "affected": [
+        {"path": "RELEASING.md", "action": "§1 构成表 / §2.2 顶层目录归类表同步顶层结构变更", "auto_checkable": false},
+        {"path": "README.md", "action": "§📦 仓库结构 ASCII 树 + 「发版包边界」声明同步顶层结构变更", "auto_checkable": true},
+        {"path": "scripts/build_dist.py", "action": "若变更影响发版包取材来源（source/ + tools/），同步 EXCLUDE_DIRS/EXCLUDE_FILES/DOCS_KEEP/白名单", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录顶层结构整理（一版一文件）", "auto_checkable": false}
+      ],
+      "checks": ["UC-17"]
+    },
+    {
+      "id": "UG-24",
+      "name": "runtime manifest 编译契约变更",
+      "trigger": [
+        "scripts/compile_skill_runtime.py",
+        "tools/lib/runtime_verify.py",
+        "dist/ae-sdd/runtime/manifest.json",
+        "dist/ae-sdd/runtime/manifest-index.json",
+        "dist/ae-sdd/SKILL.md"
+      ],
+      "trigger_condition": "manifest/manifest-index 生成逻辑、bootloader Load 指令、runtime 校验逻辑被修改",
+      "affected": [
+        {"path": "scripts/compile_skill_runtime.py", "action": "manifest.json（机器用，全哈希）+ manifest-index.json（LLM 用，白名单字段）同步生成；bootloader Load 指向 index", "auto_checkable": true},
+        {"path": "tools/lib/runtime_verify.py", "action": "verify 仍读 manifest.json（含全字段），不读 index", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "UC 检查表含 UC-18", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录 manifest 拆双文件变更", "auto_checkable": false}
+      ],
+      "checks": ["UC-15", "UC-18"]
+    },
+    {
+      "id": "UG-25",
+      "name": "上下文加载/Review 深度门禁变更",
+      "trigger": [
+        "tools/lib/gates.py",
+        "tools/lib/gate_intercept.py",
+        "source/standards/constraints/"
+      ],
+      "trigger_condition": "G-STORY-CTX standardsRef / G-REVIEW-DEPTH 逻辑、相位绑定、约束关键词映射被修改",
+      "affected": [
+        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-REVIEW-DEPTH + CHECK_FUNCS 注册；_check_standards_referenced + check_g_review_depth 实现；G-STORY-CTX scales 含 全规模", "auto_checkable": true},
+        {"path": "tools/lib/gate_intercept.py", "action": "PHASE_ENTRY_GATES 的 story-reviewed/code-reviewed 含 G-REVIEW-DEPTH", "auto_checkable": true},
+        {"path": "source/skill-fallbacks/skills/phase3-review/code-review-skill.full.md", "action": "门禁强度声明指向 G-REVIEW-DEPTH 真硬门禁", "auto_checkable": false},
+        {"path": "tools/tests/test_gates.py", "action": "门禁总数计数同步 + G-REVIEW-DEPTH 用例", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录门禁升级变更", "auto_checkable": false}
+      ],
+      "checks": ["UC-02", "UC-14"]
     }
   ]
 }

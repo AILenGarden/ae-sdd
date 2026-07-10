@@ -127,6 +127,10 @@ GATE_REGISTRY: list[dict] = [
     # 独立于 review-loop CLI——root 不调 collect 也会跑（堵"root 总派给自己"）。
     # Tier 1（微/小任务 + 无关键决策）豁免；Tier 2/3 无豁免。
     {"id": "G-09B", "name": "reviewer 独立性通过（多 reviewer 机械强制）", "severity": "blocker"},
+    # 🆕 v3.9.20 G-REVIEW-DEPTH Review 深度门禁：禁裸✅ + 零发现举证。
+    # 治根因：Review 无深度门禁，reviewer 可把所有维度标"无缺陷"而所有门禁照过
+    # （code-review-skill L21-24 坦承"当前为软门禁 report-only"）。本门禁查报告内容证据。
+    {"id": "G-REVIEW-DEPTH", "name": "Review 深度（禁裸✅ + 零发现举证）", "severity": "blocker"},
     # 🆕 v3.8.0 G-AUTO-CONSENSUS 自动化联审共识门禁：自动化模式下审核点切相前
     # 校验 state.reviewConsensus[point].passed=true + reviewer 独立性（复用 G-09B 逻辑）。
     # 非自动化模式 / 审核点不在白名单 → skipped（回退人工审核）。
@@ -459,6 +463,98 @@ def check_g12(project_dir: Path, st: dict, current_story: str) -> GateResult:
                          legacy_suffixes=["-CodeReview.md"],
                          expected_hint=f"ae-sdd-doc/CR/{current_story}/{current_story}-CodeReview-vN-rM.md",
                          action=f"CodeReview 后生成 {current_story}-CodeReview-vN-rM.md")
+
+
+# 🆕 v3.9.20 G-REVIEW-DEPTH：Review 深度门禁——禁裸✅ + 零发现举证。
+# 治根因：Review 无任何深度门禁，reviewer 可把所有维度标"无缺陷"而所有门禁照过。
+# 证据信号（机械可查）：
+#   - 客观证据：file:line / 第N行 / L\d+ / 报文 / 测试输出 / grep / § / .md 引用 / 行号
+#   - 排查证据：排查 / 核查 / 已检查 / 扫描 / 覆盖 + 具体文件/维度名
+import re as _re_review_depth
+_REVIEW_EVIDENCE_SIGNALS = (
+    r"\.java", r"\.kt", r"\.py", r"\.ts", r"\.xml",     # 源码文件引用
+    r":\d+", r"第\s*\d+\s*行", r"L\d+", r"行号",          # 行号定位
+    r"报文", r"测试输出", r"grep", r"EXPLAIN",            # 客观验证手段
+    r"§", r"\.md\b",                                       # 文档章节引用
+    r"TableMapping", r"Mapper SQL", r"落库",              # DB 落库证据（组合词，避免 SQL 泛命中）
+)
+_REVIEW_EVIDENCE_RE = _re_review_depth.compile("|".join(_REVIEW_EVIDENCE_SIGNALS))
+_REVIEW_CHECKED_RE = _re_review_depth.compile(r"排查|核查|已检查|扫描|覆盖|逐一|逐项")
+
+
+def _has_evidence(text: str) -> bool:
+    """单行/单格是否含客观证据信号。"""
+    return _REVIEW_EVIDENCE_RE.search(text) is not None
+
+
+def check_g_review_depth(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """🆕 v3.9.20 G-REVIEW-DEPTH Review 深度门禁。
+
+    两项产物级证据校验（查报告内容，不查 reviewer 行为）：
+      1. 禁裸✅：CodeReview 报告中每个 ✅ 标记须附客观证据（行号/报文/源码引用等）。
+         裸✅（✅ 附近无证据信号）→ 列为问题。
+      2. 零发现举证：若报告结论为"无阻断/严重问题"（无 🔴/🟠 发现），
+         必须含排查证据段（列出核查过的文件/维度），纯"无问题"三字 → FAIL。
+
+    缺报告/current_story 时降级 skip（由 G-12 兜底报告存在性）。
+    """
+    gate_id = "G-REVIEW-DEPTH"
+    name = "Review 深度（禁裸✅ + 零发现举证）"
+    if not current_story:
+        return GateResult(gate_id, name, "blocker", True,
+                          "state.currentStory 为空（skip，由 G-12 兜底）",
+                          details={"skipped": True})
+    doc = _find_report_doc(project_dir, current_story,
+                           category="CR",
+                           patterns=[f"{current_story}-CodeReview-v*-r*.md"],
+                           legacy_suffixes=["-CodeReview.md"])
+    if doc is None:
+        return GateResult(gate_id, name, "blocker", True,
+                          "CodeReview 报告不存在（skip，由 G-12 兜底报告存在性）",
+                          details={"skipped": True})
+    try:
+        content = doc.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return GateResult(gate_id, name, "blocker", True,
+                          f"报告不可读：{doc.name}（skip）",
+                          details={"skipped": True})
+
+    issues: list[str] = []
+
+    # 1. 禁裸✅：定位每个 ✅，检查其所在行 + 下一行是否有证据信号（markdown 表格证据与✅同格或紧邻）
+    lines = content.splitlines()
+    bare_checks = 0
+    for i, line in enumerate(lines):
+        if "✅" not in line:
+            continue
+        window = "\n".join(lines[i:i + 2])
+        if not _has_evidence(window):
+            bare_checks += 1
+    if bare_checks > 3:  # 允许少量表格头 ✅ 噪音，>3 才判定为系统性裸✅
+        issues.append(f"发现 {bare_checks} 处裸✅（✅ 未附客观证据：行号/报文/源码引用）")
+
+    # 2. 零发现举证：无 🔴/🟠 发现时，须有排查证据
+    has_blocker = "🔴" in content or "阻断" in content
+    has_serious = "🟠" in content or "严重" in content
+    if not has_blocker and not has_serious:
+        if not _REVIEW_CHECKED_RE.search(content):
+            issues.append(
+                "报告结论为无阻断/严重问题，但缺排查证据段（须列出核查过的文件/维度，"
+                "如『已排查 Controller/Service/Mapper/SQL 落库路径』）"
+            )
+
+    if issues:
+        return GateResult(gate_id, name, "blocker", False,
+                          "Review 深度不足：" + "；".join(issues),
+                          "为每个 ✅ 补客观证据（file:line/报文/测试输出）；"
+                          "零发现时补排查证据段（列出核查范围）",
+                          details={"issues": issues, "bare_checks": bare_checks,
+                                   "has_blocker": has_blocker, "has_serious": has_serious})
+    return GateResult(gate_id, name, "blocker", True,
+                      f"Review 深度达标：{bare_checks} 处可疑裸✅（≤3 噪音容忍）"
+                      + ("，含阻断/严重发现" if (has_blocker or has_serious) else "，零发现但已附排查证据"),
+                      details={"bare_checks": bare_checks, "has_blocker": has_blocker,
+                               "has_serious": has_serious})
 
 
 # ─── G-08：解析 CodingPlan 14 门禁表 ─────────────────────────────────────────
@@ -2415,15 +2511,17 @@ CONTEXT_GATE_REGISTRY: dict[str, dict] = {
     },
     "G-STORY-CTX": {
         "name": "Story 上下文加载",
-        "scales": {"大", "中"},
+        "scales": {"大", "中", "小", "微"},
         "pre_phases": {"initialized", "ra-generated", "dr-generated"},
         "passed_phases": {"story-reviewed", "testcase-generated", "testcase-reviewed",
                           "task-generated", "task-reviewed",
                           "coding-process", "coding", "test-running",
                           "code-reviewed", "completed"},
-        # 🆕 v3.9.3: 新增 dependsStory 与 sourceTrace，覆盖 SSOT §3 13 项自检中的 C 类与 §4 来源追溯
+        # 🆕 v3.9.3: dependsStory + sourceTrace 覆盖 SSOT §3 C 类与 §4 来源追溯
+        # 🆕 v3.9.20: standardsRef 升级为真"已引用"门禁（查产物证据，不查行为）
+        #              + scales 扩到 {大,中,小,微}，取消小/微豁免（小/微走轻量阈值）
         "required": ["constraints", "assets", "DR", "PRD",
-                     "dependsStory", "sourceTrace"],
+                     "dependsStory", "sourceTrace", "standardsRef"],
     },
     "G-TESTCASE-CTX": {
         "name": "TestCase 上下文加载",
@@ -2547,6 +2645,55 @@ def _check_source_trace(project_dir: Path, current_story: str) -> tuple[bool, st
     if bad_rows:
         return False, f"接口契约中有 {len(bad_rows)} 行『来源』列为空（示例：{bad_rows[0]}...）"
     return True, ""
+
+
+# 🆕 v3.9.20: 约束文档标识性关键词。Story 正文命中这些关键词即视为"已引用并遵循标准"。
+# 关键词取自 source/standards/constraints/*.md 的文档名 + 核心章节锚点。
+# 设计哲学：不查 agent 是否真读（无法机械验证），查产物是否引用了标准的可验证信号。
+_STANDARDS_KEYWORDS = {
+    "database": ["DDL 约束", "标准建表", "分库分表", "索引", "主键", "表名", "字段名"],
+    "api": ["URL 命名", "HTTP 方法", "RESTful", "状态码", "接口规范"],
+    "code-style": ["注释规范", "异常处理", "命名", "代码风格"],
+    "layered-arch": ["分层架构", "Controller", "Service", "Repository", "防腐层", "ACL", "跨层调用"],
+    "security": ["参数化查询", "SQL 注入", "敏感数据", "加密", "脱敏", "XSS", "CSRF"],
+    "testing": ["单元测试", "覆盖率", "测试策略", "Mock"],
+    "project-structure": ["工程结构", "模块划分", "包结构"],
+    "technology-stack": ["技术栈", "Spring Boot", "MyBatis"],
+}
+
+
+def _check_standards_referenced(project_dir: Path, current_story: str,
+                                scale: str) -> tuple[bool, str, list[str]]:
+    """🆕 v3.9.20: 校验 Story 正文是否引用了约束文档标准（产物级证据）。
+
+    返回 (ok, detail, hit_categories)。
+    - 大/中链：正文须命中 ≥3 个约束类别的关键词。
+    - 小/微链：正文须命中 ≥1 个约束类别的关键词（轻量要求）。
+    命中即视为"已加载并遵循标准"——不查行为，查产物证据。
+    缺失 current_story 或 Story 文件时 stub 通过（由外层文件存在检查兜底）。
+    """
+    if not current_story:
+        return True, "", []
+    story_doc = paths.find_doc(project_dir, current_story, ".md")
+    if story_doc is None:
+        return True, "", []
+    try:
+        content = story_doc.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return True, "", []
+
+    threshold = 1 if scale in ("小", "微") else 3
+    hit_categories: list[str] = []
+    for category, keywords in _STANDARDS_KEYWORDS.items():
+        if any(kw in content for kw in keywords):
+            hit_categories.append(category)
+
+    if len(hit_categories) < threshold:
+        return (False,
+                f"Story 正文仅引用 {len(hit_categories)} 个约束类别（需 ≥{threshold}），"
+                f"命中：{hit_categories or '无'}",
+                hit_categories)
+    return True, "", hit_categories
 
 
 def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
@@ -2696,6 +2843,17 @@ def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
                     "在 Story 接口契约章节的 Request/Response 表格中，"
                     "为每个字段填写『来源』列，格式：『调用方从...取得』或『查表X.字段Y』"
                 )
+        # 🆕 v3.9.20: 约束标准引用校验（真"已引用"门禁——查产物证据）
+        elif key == "standardsRef":
+            ok, detail, hit = _check_standards_referenced(project_dir, current_story, scale)
+            status["standardsRef"] = ok
+            if not ok:
+                missing.append(f"约束标准引用：{detail}")
+                missing_hints.append(
+                    "在 Story 正文引用所遵循的约束文档标准（如分层架构/参数化查询/DDL 约束/"
+                    "单元测试覆盖率等具体条目），证明已加载并遵循项目标准。"
+                    f"大/中链需 ≥3 个约束类别，小/微链需 ≥1 个。当前命中：{hit or '无'}"
+                )
 
     if missing:
         hint_str = "；".join(missing_hints)
@@ -2752,6 +2910,7 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-REVIEW-LOOP": check_g_review_loop,  # 🆕 v3.5.12 review-loop 退出条件
     "G-09B": check_g09b,  # 🆕 v3.5.13 reviewer 独立性硬门禁（堵 root 自扮）
     "G-AUTO-CONSENSUS": check_g_auto_consensus,  # 🆕 v3.8.0 自动化联审共识
+    "G-REVIEW-DEPTH": check_g_review_depth,  # 🆕 v3.9.20 Review 深度（禁裸✅+零发现举证）
     "G-DR-CTX": check_g_dr_ctx,                  # 🆕 v3.9.1 DR 上下文加载
     "G-STORY-CTX": check_g_story_ctx,            # 🆕 v3.9.1 Story 上下文加载
     "G-TESTCASE-CTX": check_g_testcase_ctx,      # 🆕 v3.9.1 TestCase 上下文加载

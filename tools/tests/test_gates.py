@@ -921,7 +921,8 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
         # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
         # 🆕 v3.9.1：+4 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX（上下文加载准入）= 34
-        self.assertEqual(len(results), 34)
+        # 🆕 v3.9.20：+1 G-REVIEW-DEPTH（Review 深度，禁裸✅+零发现举证）= 35
+        self.assertEqual(len(results), 35)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -953,8 +954,9 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
         # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
         # 🆕 v3.9.1：+4 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX（上下文加载准入）= 34
-        self.assertEqual(summary["total"], 34)
-        self.assertEqual(summary["passed"] + summary["failed"], 34)
+        # 🆕 v3.9.20：+1 G-REVIEW-DEPTH（Review 深度，禁裸✅+零发现举证）= 35
+        self.assertEqual(summary["total"], 35)
+        self.assertEqual(summary["passed"] + summary["failed"], 35)
         self.assertIn("results", summary)
 
 

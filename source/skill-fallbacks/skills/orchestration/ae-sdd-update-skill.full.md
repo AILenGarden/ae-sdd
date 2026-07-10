@@ -575,7 +575,7 @@ mavis harness remount
 
 > 本小节是 `source/standards/update-graph.json` 的人读锚点索引，不是权威源。新增/删除 UG 规则或 UC 检查时，必须同步本小节；`ae-sdd update-check --only UC-14` 会自动校验 JSON、`CHECK_FUNCS` 与本小节是否一致。
 
-- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`, `UG-22`
+- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`, `UG-22`, `UG-23`, `UG-24`, `UG-25`
 - 检查器锚点：`UC-01`, `UC-02`, `UC-03`, `UC-04`, `UC-05`, `UC-06`, `UC-07`, `UC-08`, `UC-09`, `UC-10`, `UC-11`, `UC-12`, `UC-13`, `UC-14`, `UC-15`, `UC-16`
 
 ### 🤖 Agent 程序化消费协议（强制 — Agent 改完文件后必做）
@@ -657,10 +657,14 @@ ae-sdd update-check --only UC-02
 | **UC-08~UC-13** | AA 全维对齐验证：门禁承诺、实现真实性、state 字段、状态机、幽灵命令、门禁注册完整性 | error/warn | 无 blocker 级漂移 |
 | **UC-14** | update-skill 级联图谱同步：`update-graph.json`、`CHECK_FUNCS`、本节 UG/UC 锚点一致 | error | 三方集合完全一致 |
 | **UC-15** | runtime 编译一致性：临时 dist 编译两次并运行 `runtime verify`，同时用 standalone compiler SKILL 编译 sample SKILL 两次；比较 compiled `SKILL.md` 与 `runtime/**` 字节快照 | error | ae-sdd runtime 与 standalone compiler 输出均字节级幂等 |
+| **UC-16** | 自动化开关级联一致性：config.py/gates/state/CLI/init/SKILL 六处齐备且互相一致 | error | 六处齐备 |
+| **UC-17** | 仓库顶层结构契约：顶层无 scratch 残留（nul/_tmp_*/README.docx/update-doc/logs）+ README §📦 标注「发版包边界」声明 | error | 无残留 + 声明存在 |
+| **UC-18** | manifest-index 契约：dist 编译后 manifest-index.json 存在 + schema 正确 + subskills 只含白名单字段（无 sha256/checksums 回流） | error/warn | index 存在且字段合规 |
 
 ### 图谱维护规则
 
 - **新增组件类型**（如未来加 `*.validator.py`）→ 在 `source/standards/update-graph.json` 追加一条 rule + update_graph.py 加对应 UC-XX 检查 + 本章节人读视图和"机器同步锚点"追加一行/ID
+- **改顶层结构**（新增/移动/删除顶层目录）→ 命中 UG-23，必须同步：RELEASING.md §1/§2.2 + README §📦 仓库结构树（含「发版包边界」声明）+ 若影响取材来源则 build_dist.py 白名单；UC-17 自动校验 scratch 残留与 README 边界声明
 - **权威源是 JSON**：图谱表与 JSON 漂移时，以 JSON 为准并修正 Markdown 表。检查器 UC-XX 验证的是 JSON 描述的依赖，不是 Markdown 表
 - **图谱与检查器必须同步**：JSON 每条 rule 的 `checks` 字段指向的 UC-XX，必须在 update_graph.py 有实现
 - **自更新 SKILL 也必须被自动查**：UC-14 校验 JSON rule/check 集合、`CHECK_FUNCS` 注册集合、本章节 UG/UC 锚点集合，任一缺失都会 error 阻断

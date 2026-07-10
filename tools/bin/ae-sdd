@@ -662,7 +662,11 @@ def cmd_state_write(args, parser):
     if args.task and not state.is_nested_state(s):
         s["currentTask"] = args.task
     s["lastUpdated"] = _now_iso()
-    state.write_state(sp, s)
+    try:
+        state.write_state(sp, s)
+    except ValueError as e:
+        output.err(str(e))
+        return 1
     _write_active_state_mirror(ade_sdd, s, work_item, sp)
     if changed:
         output.ok(f"state 更新：phase={args.phase}")
@@ -2927,7 +2931,13 @@ def cmd_gate_intercept(args, parser):
     # 快速通道检测：优先从 .ae-sdd/.quick_channel 文件读（跨 hook 共享）
     # 其次从 --context 参数（手动测试用）
     # 设计原则：文件存在本身即激活信号（UserPromptSubmit 只在检测到标记时才创建文件）
-    project_dir = Path(args.project) if args.project else None
+    project_dir_raw = (
+        args.project
+        or str(input_data.get("cwd") or "")
+        or str(input_data.get("project_dir") or "")
+        or str(input_data.get("projectDir") or "")
+    ).strip()
+    project_dir = Path(project_dir_raw) if project_dir_raw else None
     context = args.context or ""
     quick_channel_from_file = False
     if not context:
@@ -3123,6 +3133,8 @@ def cmd_prompt_inject(args, parser):
 
     stdin 格式:
       {"hook_event_name": "UserPromptSubmit", "user_prompt": "..."}
+      或新版 Claude Code:
+      {"hook_event_name": "UserPromptSubmit", "prompt": "...", "cwd": "..."}
 
     stdout 格式:
       {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "◆ HARNESS STATE ..."}}
@@ -3135,9 +3147,23 @@ def cmd_prompt_inject(args, parser):
 
     input_data: dict = _read_stdin_json()
 
-    user_prompt = input_data.get("user_prompt", "")
+    user_prompt = (
+        input_data.get("user_prompt")
+        or input_data.get("prompt")
+        or input_data.get("message")
+        or input_data.get("text")
+        or ""
+    )
+    if not isinstance(user_prompt, str):
+        user_prompt = str(user_prompt)
     session_key = work_item_context.session_key_from_payload(input_data)
-    project_dir = Path(args.project) if args.project else None
+    project_dir_raw = (
+        args.project
+        or str(input_data.get("cwd") or "")
+        or str(input_data.get("project_dir") or "")
+        or str(input_data.get("projectDir") or "")
+    ).strip()
+    project_dir = Path(project_dir_raw) if project_dir_raw else None
     # 🆕 2026-07-03 缺口2:prompt-inject 是高频 UserPromptSubmit hook,此前零 span。
     # span 记录是否注入了 ae-sdd 上下文(promptLen/injected),量化 hook 实际作用率。
     try:

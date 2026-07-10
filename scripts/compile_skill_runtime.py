@@ -597,7 +597,7 @@ This is the compiled Agent runtime entry. Do not treat it as the human-maintaine
 
 ## Load
 
-1. Read `runtime/manifest.json`.
+1. Read `runtime/manifest-index.json` (slim routing index; the full `runtime/manifest.json` is for verification only — do not read it into context).
 2. Read `runtime/boot.compact.md`.
 3. Read `runtime/route.compact.md`.
 4. Load only the compact slice or fallback SKILL required by the route.
@@ -714,6 +714,40 @@ def compile_runtime_package(
         "warnings": warnings,
     }
     _write_text(runtime_dir / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+
+    # manifest-index.json: LLM-facing slim view of the manifest.
+    # The full manifest.json retains all sha256/checksums/generated_files for
+    # runtime_verify.py + UC-15 byte-idempotence. But the bootloader instructs
+    # the agent to read the manifest on every load — the full 52KB file wastes
+    # ~13k tokens of pure hash/path data the LLM never consumes. This slim index
+    # keeps only what routing/loading needs (entry, load_order, subskill paths)
+    # and is what the bootloader Load step now reads. Deterministic → UC-15 safe.
+    manifest_index: dict[str, Any] = {
+        "schema": "ae-sdd-runtime-index/v1",
+        "compiled": True,
+        "version": version,
+        "runtime_fingerprint": runtime_fingerprint,
+        "entry": "SKILL.md",
+        "load_order": LOAD_ORDER,
+        "subskills": [
+            {
+                "entry": rec.get("entry", ""),
+                "manifest": rec.get("manifest", ""),
+                "boot": rec.get("boot", ""),
+                "outline": rec.get("outline", ""),
+                "fallback": rec.get("fallback", ""),
+            }
+            for rec in subskills
+        ],
+        "extracts": {
+            "gate_count": len(gates),
+            "subskill_count": len(subskills),
+        },
+    }
+    _write_text(
+        runtime_dir / "manifest-index.json",
+        json.dumps(manifest_index, ensure_ascii=False, indent=2) + "\n",
+    )
     _write_text(dist_skill, render_bootloader(version, runtime_fingerprint))
     return manifest
 

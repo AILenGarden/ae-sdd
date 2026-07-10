@@ -20,7 +20,7 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 > 由 reviewer 在 DR Review 报告内自评判定，**无 GATE_REGISTRY 级机械校验**。
 > 这不意味着这些检查项不重要——它们是 DR Review 的实质内容；只是当前没有 CLI 硬阻断兜底。
 >
-> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py` GATE_REGISTRY：G-13（全链路对称性，含 DR 层）/ G-RA 系列（RA→DR 衍生）/ G-DOC-STORAGE（DR 文档落地合规）/ **G-DR-CTX（DR 上下文加载，v3.9.1）**。
+> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py` GATE_REGISTRY：G-13（全链路对称性，含 DR 层）/ G-RA 系列（RA→DR 衍生）/ G-DOC-STORAGE（DR 文档落地合规）/ **G-DR-CTX（DR 上下文加载，v3.9.1）**。**G-REVIEW-DEPTH（v3.9.20 Review 深度，禁裸✅+零发现举证）** 当前覆盖 CodeReview 报告，DR Review 内容审查项仍 report-only。
 > **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），本文件未绑定 G-XX 的承诺会被 UC-08 标记为「软门禁/待硬化」并持续追踪。
 
 ---

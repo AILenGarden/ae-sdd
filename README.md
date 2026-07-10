@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.9.12（🆕 2026-07-08：Story 模板新增「## 人工任务」选填章节——修复人工任务语义分裂（声明源散在 StoryGeneratePlan、登记在 Story 验收尾巴、正文无声明源）；4 文件联动。v3.9.11：镜像反模式根除 + 5 层防复发护城河。v3.9.10：门禁路径 bug 修复 `paths.doc_search_roots` 多根搜索。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.9.20（🆕 2026-07-10：三症同治——manifest 拆双文件省 75% tokens + G-STORY-CTX 升级真"已引用"门禁 + 新增 G-REVIEW-DEPTH 禁裸✅/零发现举证。v3.9.19：顶层结构整理 + RELEASING.md 发版包指南 + UC-17。v3.9.12：Story 模板「人工任务」章节。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -23,6 +23,11 @@ ae-sdd/                                # 仓库根（GitHub 直发）
 │   ├── .claude-plugin/                #    marketplace 注册表
 │   ├── CHANGELOG/                     #    发版历史
 │   └── docs/                          #    规划/迁移文档
+│
+├── tools/                             # 🟢 运行时工具集（随发版包分发）
+│   ├── bin/ae-sdd                     #    CLI 主入口
+│   ├── lib/                           #    Python 运行时模块（gates/state/update_graph/...）
+│   └── tests/                         #    单元测试
 │
 ├── dist/                              # 🔵 实例化分发包（git ignored，构建产物）
 │   └── ae-sdd/                        #    bash scripts/build-dist.sh 生成
@@ -45,6 +50,12 @@ ae-sdd/                                # 仓库根（GitHub 直发）
 ├── standalone-skills/                 # 🟨 可复制到其它 agent/仓库的独立 SKILL
 │   └── skill-runtime-compiler/        #    通用 SKILL 编译器：<source-skill> -> <source-skill>-compiled
 │
+├── apps/                              # 🟦 配套应用（ae-sdd-monitor 可视化器）
+├── docs/                              # 📄 仓库级规划文档（已实施/归档的 plan，不随发版包分发）
+├── plugins/                           # 🔌 外挂 SKILL 注册表 + 示例 SKILL
+├── references/                        # 📚 第三方参考资料（仅供查阅，不随发版包分发）
+│
+├── RELEASING.md                       # 📦 发版包指南（构成 / 边界 / 版本策略 / cut-a-release）
 ├── .gitignore                         # 忽略 dist/、IDE 数据、临时文件
 └── README.md                          # 📍 你正在看的文件
 ```
@@ -53,6 +64,8 @@ ae-sdd/                                # 仓库根（GitHub 直发）
 - 🟢 **用户/普通开发者**只关心 `dist/ae-sdd/`（装这个）
 - 🟣 **ae-sdd 维护者**只编辑 `source/`（改完跑 `bash scripts/dev-sync.sh`）
 - 🔵 **`dist/ae-sdd/` 由构建脚本生成**，不要手工改
+
+**🚧 发版包边界（核心规则）：** `dist/ae-sdd/` 只从 `source/`（剔除 `CHANGELOG/`/`docs/`/`.idea/`/`marketplace.json`）+ `tools/`（剔除 `tests/`）取材，并注入 `VERSION` + `.claude-plugin/plugin.json` + runtime 编译产物。顶层其余目录（`apps/`/`docs/`/`plugins/`/`references/`/`standalone-skills/`/`scripts/`）**一律不进发版包**。发版包只装 ae-sdd 本体。详见 [`RELEASING.md`](RELEASING.md)。
 
 ---
 

@@ -188,8 +188,11 @@ def bind_session_state(
         pass
 
 
-_STORY_RE = re.compile(r"\bSTORY-[A-Za-z0-9][A-Za-z0-9_-]*(?:-[A-Za-z0-9][A-Za-z0-9_-]*)*\b")
-_WORK_ITEM_RE = re.compile(r"\b(?:PRD|DR|Story|Task)-[A-Za-z0-9][A-Za-z0-9_.-]*\b")
+_STORY_RE = re.compile(
+    r"\bSTORY-[A-Za-z0-9][A-Za-z0-9_-]*(?:-[A-Za-z0-9][A-Za-z0-9_-]*)*\b",
+    re.IGNORECASE,
+)
+_WORK_ITEM_RE = re.compile(r"\b(?:PRD|DR|Story|Task)-[A-Za-z0-9][A-Za-z0-9_.-]*\b", re.IGNORECASE)
 
 
 def _tokens_from_prompt(prompt_text: str) -> list[str]:
@@ -201,7 +204,68 @@ def _tokens_from_prompt(prompt_text: str) -> list[str]:
     return list(dict.fromkeys(tokens))
 
 
+def _state_identifier_values(item: WorkItemState) -> list[str]:
+    data = item.data if isinstance(item.data, dict) else {}
+    values: list[str] = [item.key]
+    for field in (
+        "workItemId",
+        "workItemKey",
+        "stateMachineId",
+        "currentWorkItem",
+        "activeWorkItem",
+        "currentStory",
+        "activeStory",
+        "storyId",
+    ):
+        value = data.get(field)
+        if value:
+            values.append(str(value))
+    values.extend(str(v) for v in (data.get("storyIds") or []) if v)
+    values.extend(str(v) for v in (data.get("storyStates") or {}).keys() if v)
+    for dr_id, dr_state in (data.get("drStates") or {}).items():
+        if dr_id:
+            values.append(str(dr_id))
+        if isinstance(dr_state, dict):
+            dr_value = dr_state.get("drId")
+            if dr_value:
+                values.append(str(dr_value))
+            values.extend(str(v) for v in (dr_state.get("storyStates") or {}).keys() if v)
+    return list(dict.fromkeys(v.strip() for v in values if v and str(v).strip()))
+
+
+def _resolve_prompt_identifier_state(ade_sdd: Path, prompt_text: str) -> Optional[ResolvedWorkItemState]:
+    """Resolve full work-item/story identifiers mentioned in a prompt.
+
+    Regex extraction alone can reduce project-specific IDs such as
+    ``cs-ai-STORY-005-BE`` to ``STORY-005-BE``. Matching against known state
+    identifiers first preserves the real work-item key and keeps the binding
+    session-scoped.
+    """
+    if not prompt_text:
+        return None
+    prompt_lc = prompt_text.casefold()
+    hits: list[tuple[int, int, WorkItemState]] = []
+    for item in list_work_item_states(ade_sdd):
+        positions: list[tuple[int, int]] = []
+        for ident in _state_identifier_values(item):
+            ident_lc = ident.casefold()
+            pos = prompt_lc.find(ident_lc)
+            if pos >= 0:
+                positions.append((pos, len(ident_lc)))
+        if positions:
+            pos, length = min(positions, key=lambda p: (p[0], -p[1]))
+            hits.append((pos, -length, item))
+    if not hits:
+        return None
+    _, _, item = sorted(hits, key=lambda h: (h[0], h[1], h[2].key))[0]
+    return ResolvedWorkItemState(path=item.path, key=item.key, data=item.data, source="prompt-identifier")
+
+
 def resolve_mentioned_state(ade_sdd: Path, prompt_text: str) -> Optional[ResolvedWorkItemState]:
+    direct = _resolve_prompt_identifier_state(ade_sdd, prompt_text)
+    if direct is not None:
+        return direct
+
     for token in _tokens_from_prompt(prompt_text):
         hit = None
         if token.upper().startswith("STORY-"):
@@ -247,10 +311,15 @@ def resolve_default_state(
         return bound
 
     candidates = list_work_item_states(ade_sdd)
-    if len(candidates) == 1:
-        only = candidates[0]
+    # Completed work items must not occupy the implicit-default slot or the
+    # ambiguity pool: once a work item finishes, it should neither be picked
+    # silently nor keep blocking unrelated work as phantom "multiple states"
+    # noise (life project 2026-07-08/09 incident).
+    active_candidates = [c for c in candidates if not state_mod.is_work_item_completed(c.data)]
+    if len(active_candidates) == 1:
+        only = active_candidates[0]
         return ResolvedWorkItemState(path=only.path, key=only.key, data=only.data, source="single-work-item")
-    if len(candidates) > 1:
-        raise AmbiguousWorkItemError(candidates)
+    if len(active_candidates) > 1:
+        raise AmbiguousWorkItemError(active_candidates)
 
     raise NoWorkItemStateError()

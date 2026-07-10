@@ -100,6 +100,7 @@
 | 矫正计数 API | `state.py:increment_correction()`（行706）/ `get_correction_count()`（行725） |
 | 多 Agent 状态字段 API | `state.py` 行472注释起：`activeAgents` 写入 + `agentReports` 归档（见 §4） |
 | memory 生命周期强制校验 | `tools/lib/memory_gate.py:check_state_transition()`（行51），`state write --phase` 切相前调用 |
+| 终态投影不变量 | `state.py:set_phase()` / `set_story_substate_phase()` 写 phase 时同步 `currentPhase/currentStep/completedSteps/pendingOutputs/codingRound`；`write_state()` 拒绝 `phase=completed` 但投影仍处于中间态的 state |
 | PRD 4 层 AND 校验 | `state.py:check_prd_4_layers()` |
 | CLI 入口 | `ae-sdd state new / read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive`（`tools/bin/ae-sdd` state 子命令组） |
 | 🆕 v3.9.0 嵌套 state schema | `state.py:init_nested_state()` / `reset_story_substate()` / `set_story_substate_phase()` / `get_active_phase()` / `get_active_story()` / `ENTRY_NODE_CONTAINERS` |
@@ -110,7 +111,7 @@
 | 🆕 v3.9.0 R5 relocate CLI | `ae-sdd state relocate --story <ID>`（重定位+重置子状态） |
 | 🆕 v3.9.0 嵌套 state write | `ae-sdd state write --sub-story <ID> --phase <phase>` / `--add-story <ID>` |
 
-**颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；🆕 v3.9.0 嵌套模型下多个 Story 的子状态在同一个 state 的 `storyStates{}` 内各自独立流转、互不干扰（R5 重置只动目标 Story）；state 仅记录进度，不存储业务产物内容。
+**颗粒度与边界**：step 级（如 `step-4-coding-r2`）；不可倒退的关键门禁步骤标记为 locked；🆕 v3.9.0 嵌套模型下多个 Story 的子状态在同一个 state 的 `storyStates{}` 内各自独立流转、互不干扰（R5 重置只动目标 Story）；state 仅记录进度，不存储业务产物内容。`phase/history` 是生命周期状态，`currentPhase/currentStep/completedSteps/pendingOutputs/codingRound` 是可恢复执行用的工作流投影；终态写入必须同步两套字段，不能出现 `phase=completed` 但 `currentStep` 仍等待人工确认、`pendingOutputs` 未清空或 `codingRound` 仍为 r0 的组合。
 
 ---
 

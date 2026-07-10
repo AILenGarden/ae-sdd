@@ -144,6 +144,46 @@ class TestResetStorySubstate:
         s = self._make_nested()
         assert state.reset_story_substate(s, "STORY-999-BE") is False
 
+    def test_completed_substate_syncs_workflow_projection(self):
+        """Story 子状态推进 completed 时同步 currentPhase/currentStep/pendingOutputs/codingRound。"""
+        s = self._make_nested()
+        sub = s["storyStates"]["STORY-003-BE"]
+        sub["phase"] = "code-reviewed"
+        sub["currentPhase"] = "coding"
+        sub["currentStep"] = "step-5-task-review-passed-awaiting-human-confirm"
+        sub["pendingOutputs"] = {"humanConfirm": True}
+        sub["codingRound"] = "r0"
+
+        result = state.set_story_substate_phase(s, "STORY-003-BE", "completed")
+
+        assert result is True
+        assert sub["phase"] == "completed"
+        assert sub["currentPhase"] == "completed"
+        assert sub["currentStep"] == "completed"
+        assert sub["pendingOutputs"] == {}
+        assert sub["codingRound"] == 1
+        assert "step-5-task-review-passed-awaiting-human-confirm" in sub["completedSteps"]
+
+    def test_repeated_completed_substate_repairs_projection_without_history_dup(self):
+        """phase 已是 completed 时仍修复投影字段，但不追加 phase history。"""
+        s = self._make_nested()
+        sub = s["storyStates"]["STORY-003-BE"]
+        sub["phase"] = "completed"
+        sub["currentPhase"] = "coding"
+        sub["currentStep"] = "awaiting-human-confirm"
+        sub["pendingOutputs"] = ["confirm"]
+        sub["codingRound"] = 0
+        history_len = len(s["history"])
+
+        result = state.set_story_substate_phase(s, "STORY-003-BE", "completed")
+
+        assert result is True
+        assert len(s["history"]) == history_len
+        assert sub["currentPhase"] == "completed"
+        assert sub["currentStep"] == "completed"
+        assert sub["pendingOutputs"] == []
+        assert sub["codingRound"] == 1
+
 
 # ─── R6：顶层主体命名 ────────────────────────────────────────────────────────
 
