@@ -3,6 +3,7 @@
 
 通过 subprocess 调真实 CLI（非 mock），覆盖 LLM 实际执行路径。
 """
+import json
 import os
 import subprocess
 import sys
@@ -20,6 +21,26 @@ def _setup_project() -> Path:
     (tmp / ".ae-sdd" / "config.yaml").write_text(
         "projectKey: test\nversion: 1\n", encoding="utf-8")
     return tmp
+
+
+def _setup_work_item_state(tmp: Path, work_item: str, story: str, phase: str) -> Path:
+    """建 task-scoped work-item state（.auto-engineering/<id>/state.json）。
+
+    v3.9.13 起 state 源从项目级 .ae-sdd/state.json 改为
+    .auto-engineering/<work-item>/state.json，resolve_default_state() 扫描
+    .auto-engineering/*/state.json，恰好 1 个未 completed 的 work-item 即命中。
+    本 helper 写 nested state（stateModel=nested），兼容 get_active_phase/story。
+    """
+    import json
+    wi_dir = tmp / ".auto-engineering" / work_item
+    wi_dir.mkdir(parents=True, exist_ok=True)
+    sp = wi_dir / "state.json"
+    sp.write_text(json.dumps({
+        "stateModel": "nested",
+        "activeStory": story,
+        "storyStates": {story: {"phase": phase}},
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    return sp
 
 
 def _setup_project_with_assets() -> Path:
@@ -182,17 +203,14 @@ class TestStateRegisterReviewConsensus(unittest.TestCase):
     def test_register_writes_state(self):
         """写联审共识 → state.json reviewConsensus[point] 存在。"""
         tmp = _setup_project()
-        # 先建 state.json
-        import json
-        (tmp / ".ae-sdd" / "state.json").write_text(
-            json.dumps({"version": "1", "phase": "story-reviewed",
-                        "currentStory": "STORY-001"}), encoding="utf-8")
+        # 建 work-item state（v3.9.13 起 state 源改为 .auto-engineering/<id>/state.json）
+        sp = _setup_work_item_state(tmp, "Story-001", "STORY-001", "story-reviewed")
         code, out, err = _run_cli(
             tmp, "state", "register-review-consensus",
             "--point", "1", "--passed", "true", "--rounds", "1")
         self.assertEqual(code, 0, f"stderr={err}")
         self.assertIn("已写联审共识", out + err)
-        st = json.loads((tmp / ".ae-sdd" / "state.json").read_text(encoding="utf-8"))
+        st = json.loads(sp.read_text(encoding="utf-8"))
         self.assertIn("reviewConsensus", st)
         self.assertIn("1.0", st["reviewConsensus"])
         self.assertTrue(st["reviewConsensus"]["1.0"]["passed"])
@@ -200,30 +218,26 @@ class TestStateRegisterReviewConsensus(unittest.TestCase):
     def test_register_with_reviewers(self):
         """带 reviewers 参数写入。"""
         tmp = _setup_project()
-        import json
-        (tmp / ".ae-sdd" / "state.json").write_text(
-            json.dumps({"version": "1", "phase": "code-reviewed"}), encoding="utf-8")
+        sp = _setup_work_item_state(tmp, "Story-001", "STORY-001", "code-reviewed")
         reviewers = "agent-1|code-reviewer|pass|sid-A,agent-2|code-reviewer|pass|sid-B,agent-3|code-reviewer|pass|sid-C"
         code, out, err = _run_cli(
             tmp, "state", "register-review-consensus",
             "--point", "4", "--passed", "true", "--rounds", "2",
             "--reviewers", reviewers)
         self.assertEqual(code, 0, f"stderr={err}")
-        st = json.loads((tmp / ".ae-sdd" / "state.json").read_text(encoding="utf-8"))
+        st = json.loads(sp.read_text(encoding="utf-8"))
         self.assertEqual(len(st["reviewConsensus"]["4.0"]["reviewers"]), 3)
 
     def test_register_failed_consensus(self):
         """passed=false 写入。"""
         tmp = _setup_project()
-        import json
-        (tmp / ".ae-sdd" / "state.json").write_text(
-            json.dumps({"version": "1", "phase": "task-reviewed"}), encoding="utf-8")
+        sp = _setup_work_item_state(tmp, "Story-001", "STORY-001", "task-reviewed")
         code, out, err = _run_cli(
             tmp, "state", "register-review-consensus",
             "--point", "2", "--passed", "false", "--rounds", "3",
             "--stall-reason", "3轮未决")
         self.assertEqual(code, 0, f"stderr={err}")
-        st = json.loads((tmp / ".ae-sdd" / "state.json").read_text(encoding="utf-8"))
+        st = json.loads(sp.read_text(encoding="utf-8"))
         self.assertFalse(st["reviewConsensus"]["2.0"]["passed"])
         self.assertEqual(st["reviewConsensus"]["2.0"]["stallReason"], "3轮未决")
 

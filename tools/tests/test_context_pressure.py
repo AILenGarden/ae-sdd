@@ -51,8 +51,17 @@ def _write_session(ade_sdd: Path, story_id: str, confirmed: int) -> None:
 
 def _write_state(ade_sdd: Path, story_id: str, *, events: int = 0,
                  history: int = 0, active_agents: int = 0) -> None:
-    """写 state.json 含指定 events/history/activeAgents 数。"""
-    sp = ade_sdd if not story_id else (ade_sdd.parent / ".auto-engineering" / story_id)
+    """写 state.json 含指定 events/history/activeAgents 数。
+
+    v3.9.13 起 state 源改为 task-scoped（.auto-engineering/<work-item>/state.json），
+    项目级 .ae-sdd/state.json 不再被读取。story_id="" 时写入唯一活跃 work-item
+    使 resolve_default_state 能命中（见裁定报告变更①）。
+    """
+    if story_id:
+        sp = ade_sdd.parent / ".auto-engineering" / story_id
+    else:
+        # 无显式 story_id：落在固定 work-item 下，保证恰好 1 个活跃候选。
+        sp = ade_sdd.parent / ".auto-engineering" / "Story-001"
     sp.mkdir(parents=True, exist_ok=True)
     state = {
         "version": "1",

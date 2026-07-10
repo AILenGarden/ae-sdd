@@ -1304,7 +1304,7 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
             loc = f.get("file") or f.get("path") or "?"
             line = f.get("line") or f.get("lineno") or ""
             snippet = (f.get("snippet") or f.get("message") or "")[:60]
-            loc_str = f"{loc}" + (f":{line}" if line else "") + f" — {snippet}" if snippet else f"{loc}"
+            loc_str = f"{loc}" + (f":{line}" if line else "") + (f" — {snippet}" if snippet else "")
             location_hints.append(loc_str)
         msg = f"RA 真实性扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}"
         if location_hints:

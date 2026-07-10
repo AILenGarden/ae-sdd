@@ -65,7 +65,17 @@ def _full_context_project(phase: str = "dr-generated", scale: str = "大",
         "RA-001.md": "# RA\n## §2 角色\n## §3 场景\n## §4 流程\n## §5 数据\n## §6 规则\n## §7 设计方向\n## §8 AC\n## §9 假设\n",
         "PRD-001.md": "# PRD\n业务背景\n",
         "design/DR-001.md": "# DR\n业务背景 + 业务规则 + 验收标准\n",
-        f"design/{current_story}.md": "# Story\nAC + 接口契约 + 数据模型\n",
+        f"design/{current_story}.md": (
+            "# Story\n"
+            "AC + 接口契约 + 数据模型\n"
+            # 🆕 v3.9.20 G-STORY-CTX standardsRef 门禁：大/中链正文须引用 ≥3 个约束类别
+            # （_STANDARDS_KEYWORDS 见 gates.py:2653）。此处引用 layered-arch/database/
+            # security/testing 四类关键词，满足大/中链 ≥3、小/微链 ≥1 的阈值。
+            "遵循分层架构（Controller/Service/Repository），禁止跨层调用。\n"
+            "数据库设计含 DDL 约束与索引规范，表名/字段名遵循命名约定。\n"
+            "数据访问一律参数化查询，防 SQL 注入；敏感数据需脱敏。\n"
+            "交付物须含单元测试，覆盖率满足测试策略要求。\n"
+        ),
         f"design/{current_story}-testcase.md": "# TestCase\n场景清单 + 测试分层\n",
     })
     # assets.md 的 gitPath 需指向实际 tmp 目录（_setup_project 先建文件，此处回填真实路径）
@@ -144,11 +154,26 @@ class TestGStoryCtx(unittest.TestCase):
         self.assertIn("DR", r.message)
 
     def test_small_scale_exempt(self):
-        """小链豁免 G-STORY-CTX（小链跳过 Story）。"""
-        tmp = _full_context_project(phase="story-generated", scale="小")
-        r = gates.check_g_story_ctx(tmp, _make_state("story-generated", "小"), "")
-        self.assertTrue(r.pass_)
-        self.assertTrue(r.details.get("skipped"))
+        """🆕 v3.9.20：小/微链豁免已取消，改走 standardsRef 轻量阈值（≥1 类别）。
+
+        原 v3.9.1 语义"小链跳过 Story（skipped=True）"随 G-STORY-CTX scales 扩到
+        {大,中,小,微} 而废弃；现小链与大链同样需加载上下文，仅 standardsRef 阈值
+        从 3 降到 1。本例 Story 正文仅含 1 个约束类别关键词（分层架构），应通过。
+        """
+        tmp = _full_context_project(phase="story-generated", scale="小",
+                                     current_story="STORY-001")
+        # 覆盖 Story 正文为仅 1 个标准类别引用，验证小链阈值=1（非豁免、非 stub）
+        (tmp / "design" / "STORY-001.md").write_text(
+            "# Story\nAC + 数据模型\n遵循分层架构（Controller/Service）。\n",
+            encoding="utf-8")
+        r = gates.check_g_story_ctx(tmp, _make_state("story-generated", "小", "STORY-001"),
+                                    "STORY-001")
+        self.assertTrue(r.pass_, msg=f"small scale should pass with 1 standard ref, got: {r.message}")
+        # 非 skipped：standardsRef 真实执行并命中 1 类（证明走的是阈值=1 而非豁免）
+        self.assertFalse(r.details.get("skipped"),
+                         msg="small scale no longer exempt; should run the gate, not skip")
+        self.assertIn("standardsRef", r.details.get("status", {}))
+        self.assertTrue(r.details["status"]["standardsRef"])
 
     def test_passed_phase_skipped(self):
         """phase=task-generated（已过 story 阶段）→ skipped。"""

@@ -108,12 +108,21 @@ class RuntimeStatsTests(unittest.TestCase):
         self.assertGreaterEqual(summary["scaleRatios"]["微/大"], 0.8)
 
     def test_detect_scale_reads_state_json(self):
-        """🆕 2026-07-03(B3): _detect_scale 从项目 state.json 读 scale"""
+        """🆕 2026-07-03(B3): _detect_scale 从项目 state.json 读 scale
+
+        v3.9.13 起 state 源从项目级 .ae-sdd/state.json 改为 task-scoped
+        .auto-engineering/<work-item>/state.json（resolve_default_state 扫描
+        .auto-engineering/*/state.json，恰好 1 个未 completed 的 work-item 命中）。
+        故 fixture 落到 work-item state，scale 字段保持原值"微"。
+        """
         import json as _json
         project_root = Path(self.tmp.name) / "proj"
         ae_sdd_dir = project_root / ".ae-sdd"
         ae_sdd_dir.mkdir(parents=True)
-        (ae_sdd_dir / "state.json").write_text(
+        # work-item state：落在 .auto-engineering/<work-item>/state.json
+        work_item_dir = project_root / ".auto-engineering" / "Story-001"
+        work_item_dir.mkdir(parents=True)
+        (work_item_dir / "state.json").write_text(
             _json.dumps({"scale": "微", "phase": "coding"}), encoding="utf-8"
         )
         scale = runtime_stats._detect_scale(project_root)

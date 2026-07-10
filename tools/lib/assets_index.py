@@ -621,12 +621,20 @@ class AssetsIndex:
     # ── 统计 ────────────────────────────────────────────────────────────
     def stats(self) -> dict:
         """索引统计（供 `ae-sdd assets stats` 与缓存校验用）。"""
+        # 多文件模式下 self.sections 是 {file_id: [(line_no, anchor), ...]}，
+        # 需展平为统一列表，避免对 dict 做 `[a for _, a in ...]` 解包 int 崩溃（A3 修复）。
+        if isinstance(self.sections, dict):
+            all_sections = [a for sec_list in self.sections.values() for _, a in sec_list]
+            n_sections = sum(len(v) for v in self.sections.values())
+        else:
+            all_sections = [a for _, a in self.sections]
+            n_sections = len(self.sections)
         return {
             "n_docs": self._n_docs,
             "n_tokens": len(self._postings),
             "avg_doc_len": round(self._avg_doc_len, 2),
-            "n_sections": len(self.sections),
-            "sections": [a for _, a in self.sections],
+            "n_sections": n_sections,
+            "sections": all_sections,
         }
 
 

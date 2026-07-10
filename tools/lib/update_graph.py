@@ -1455,13 +1455,16 @@ def check_sync_drift(repo_root: Path) -> dict:
     drifted_rules = []
     for rule in manifest.get("rules", []):
         drifted_files = []
-        for entry in rule.get("trigger_files", []) + rule.get("affected_files", []):
+        # 拆成两个显式循环追踪来源，避免合并列表后用 `in` 判成员导致
+        # 同内容 dict 被误标为 trigger（B2 修复：kind 必须反映真实来源）。
+        for entry in rule.get("trigger_files", []):
             cur_sha = _sha256_of_file(repo_root / entry["path"])
             if cur_sha != entry.get("sha256"):
-                drifted_files.append({
-                    "path": entry["path"],
-                    "kind": "trigger" if entry in rule.get("trigger_files", []) else "affected",
-                })
+                drifted_files.append({"path": entry["path"], "kind": "trigger"})
+        for entry in rule.get("affected_files", []):
+            cur_sha = _sha256_of_file(repo_root / entry["path"])
+            if cur_sha != entry.get("sha256"):
+                drifted_files.append({"path": entry["path"], "kind": "affected"})
         if drifted_files:
             drifted_rules.append({
                 "id": rule.get("id", ""),

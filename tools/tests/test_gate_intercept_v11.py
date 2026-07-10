@@ -26,6 +26,27 @@ from lib.gate_intercept import (
 )
 
 
+def _make_work_item_state(tmp_path: Path, work_item: str, story: str,
+                          phase: str) -> Path:
+    """建 task-scoped work-item state（.auto-engineering/<id>/state.json）。
+
+    v3.9.13 起 state 源从项目级 .ae-sdd/state.json 改为
+    .auto-engineering/<work-item>/state.json。check_intercept / prompt_inject
+    均经 resolve_default_state() 扫描 .auto-engineering/*/state.json，恰好 1 个
+    未 completed 的 work-item 即命中。本 helper 写 nested state（stateModel=nested），
+    兼容 get_active_phase/get_active_story。
+    """
+    wi_dir = tmp_path / ".auto-engineering" / work_item
+    wi_dir.mkdir(parents=True, exist_ok=True)
+    sp = wi_dir / "state.json"
+    sp.write_text(json.dumps({
+        "stateModel": "nested",
+        "activeStory": story,
+        "storyStates": {story: {"phase": phase}},
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    return sp
+
+
 # ─── 状态机自保护 ─────────────────────────────────────────────────────────────
 
 class TestStateMachineProtection:
@@ -115,15 +136,8 @@ class TestStateMachineProtection:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        state_json = ae_sdd / "state.json"
-        state_json.write_text(json.dumps({
-            "version": "1",
-            "projectKey": "test",
-            "phase": "initialized",
-            "currentStory": None,
-            "currentTask": None,
-            "history": [],
-        }))
+        # state 源为 task-scoped work-item state（v3.9.13），phase=initialized
+        _make_work_item_state(tmp_path, "Story-001", "STORY-001", "initialized")
 
         allowed, reason = check_intercept(
             "Bash",
@@ -216,11 +230,8 @@ class TestPathAwareness:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "initialized", "currentStory": None,
-            "currentTask": None, "history": [],
-        }))
+        # state 源为 task-scoped work-item state（v3.9.13），phase=initialized
+        _make_work_item_state(tmp_path, "Story-001", "STORY-001", "initialized")
         allowed, reason = check_intercept(
             "Write",
             file_path="src/main/java/Service.java",
@@ -258,11 +269,8 @@ class TestPromptInject:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "coding", "currentStory": "STORY-001",
-            "currentTask": None, "history": [],
-        }))
+        # state 源为 task-scoped work-item state（v3.9.13），phase=coding, STORY-001
+        _make_work_item_state(tmp_path, "Story-001", "STORY-001", "coding")
         (ae_sdd / "assets").mkdir()
 
         result = inject(project_dir=tmp_path)
@@ -277,11 +285,9 @@ class TestPromptInject:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "initialized", "currentStory": None,
-            "currentTask": None, "history": [],
-        }))
+        # state 源为 task-scoped work-item state（v3.9.13），phase=initialized
+        # 无 assets/ 目录 → G-00 失败 → 注入 ⛔ 警告
+        _make_work_item_state(tmp_path, "Story-001", "STORY-001", "initialized")
 
         result = inject(project_dir=tmp_path)
         msg = _additional_context(result)

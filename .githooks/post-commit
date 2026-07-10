@@ -56,7 +56,11 @@ fi
 # --from-commit：标记由 hook 触发（影响日志详尽度）
 # 各分发器独立 try/except，单步失败不阻断其他分发器（保持"失败不阻断 git"语义）
 if [ -f "$AE_SDD/scripts/distribute.py" ]; then
-    if "$PYTHON" "$AE_SDD/scripts/distribute.py" --quiet --from-commit 2>&1 | tail -30; then
+    "$PYTHON" "$AE_SDD/scripts/distribute.py" --quiet --from-commit 2>&1 | tail -30
+    # B4 修复：无 pipefail 时管道退出码取最右（tail，几乎恒成功），
+    # 会把 distribute.py 的失败掩盖成成功。改用 PIPESTATUS[0] 取真实退出码。
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -eq 0 ]; then
         echo "✅ ae-sdd post-commit: 分发闭环结束"
     else
         echo "⚠️  ae-sdd post-commit: distribute.py 返回非零（commit 已落库，未回滚）"

@@ -54,11 +54,16 @@ class TestMultiEditInterception:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "initialized", "currentStory": None,
-            "currentTask": None, "history": [],
-        }))
+        # 🆕 v3.9.13：state 源从项目级 .ae-sdd/state.json 改为 task-scoped
+        # .auto-engineering/<work-item>/state.json。resolve_default_state 扫描该目录，
+        # 恰好 1 个未 completed 的 work-item 就命中（见 work_item_context.py:349）。
+        wi_dir = tmp_path / ".auto-engineering" / "Story-001"
+        wi_dir.mkdir(parents=True, exist_ok=True)
+        (wi_dir / "state.json").write_text(json.dumps({
+            "stateModel": "nested",
+            "activeStory": "STORY-001",
+            "storyStates": {"STORY-001": {"phase": "initialized"}},
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         allowed, reason = check_intercept(
             "MultiEdit",
             file_path="src/main/java/Service.java",
@@ -72,11 +77,16 @@ class TestMultiEditInterception:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "coding", "currentStory": "STORY-001",
-            "currentTask": None, "history": [],
-        }))
+        # 🆕 v3.9.13：state 源改为 task-scoped .auto-engineering/<work-item>/state.json。
+        # session_mod.enter(story_id="STORY-001") 会写 .auto-engineering/Story-001/session.json，
+        # 故 state 必须放同一目录，让 resolve_default_state + is_phase_confirmed 同步命中。
+        wi_dir = tmp_path / ".auto-engineering" / "Story-001"
+        wi_dir.mkdir(parents=True, exist_ok=True)
+        (wi_dir / "state.json").write_text(json.dumps({
+            "stateModel": "nested",
+            "activeStory": "STORY-001",
+            "storyStates": {"STORY-001": {"phase": "coding"}},
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         # 🆕 v3.4.0 关卡3：coding phase 写 src/ 须有 task-reviewed 审核点确认 token
         from lib import session as session_mod
         session_mod.enter("test", story_id="STORY-001", ade_sdd=ae_sdd)

@@ -11,20 +11,25 @@
 
 set -e
 
-PYTHON="${PYTHON:-}"
-if [[ -z "$PYTHON" ]]; then
+# PYTHON 探测结果存数组，避免 "py -3" 这类含空格的回退值被 "$PYTHON" 当成单个命令名（见 A2 修复）。
+PYTHON_CMD=()
+if [[ -n "${PYTHON:-}" ]]; then
+  # 用户通过环境变量传入时，按空白拆成数组（兼容 PYTHON="py -3"）。
+  read -r -a PYTHON_CMD <<< "$PYTHON"
+fi
+if [[ ${#PYTHON_CMD[@]} -eq 0 ]]; then
   for cmd in "python" "python3"; do
     if command -v "$cmd" >/dev/null 2>&1; then
       if "$cmd" --version >/dev/null 2>&1; then
-        PYTHON="$cmd"
+        PYTHON_CMD=("$cmd")
         break
       fi
     fi
   done
-  if [[ -z "$PYTHON" ]] && command -v py >/dev/null 2>&1; then
-    PYTHON="py -3"
+  if [[ ${#PYTHON_CMD[@]} -eq 0 ]] && command -v py >/dev/null 2>&1; then
+    PYTHON_CMD=(py -3)
   fi
-  if [[ -z "$PYTHON" ]]; then
+  if [[ ${#PYTHON_CMD[@]} -eq 0 ]]; then
     echo "❌ 致命：未找到 python / python3 / py，请先安装 Python 3.8+" >&2
     exit 1
   fi
@@ -40,4 +45,4 @@ if [[ ! -f "$AE_SDD_BIN" ]]; then
   exit 1
 fi
 
-exec "$PYTHON" "$AE_SDD_BIN" "$@"
+exec "${PYTHON_CMD[@]}" "$AE_SDD_BIN" "$@"

@@ -35,7 +35,16 @@ def _make_ae_sdd_project(tmp_path: Path, config_text: str | None = None) -> Path
 
 
 def _write_state(ade_sdd: Path, phase: str, story: str = "STORY-001") -> None:
-    (ade_sdd / "state.json").write_text(
+    """🆕 v3.9.13：state 源改为 task-scoped .auto-engineering/<work-item>/state.json。
+
+    resolve_default_state（work_item_context.py:349）扫描该目录，恰好 1 个未 completed
+    的 work-item 就命中。本 helper 用扁平 dict（_detect_review_point_context 直接读
+    st.get("phase")），phase 非 completed 即保留在 active 池，被 default 解析拾取。
+    """
+    project_root = ade_sdd.parent
+    wi_dir = project_root / ".auto-engineering" / "Story-001"
+    wi_dir.mkdir(parents=True, exist_ok=True)
+    (wi_dir / "state.json").write_text(
         json.dumps({
             "version": "1",
             "projectKey": "test-proj",

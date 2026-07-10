@@ -132,11 +132,14 @@ class TestChainedBashFix:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "coding", "currentStory": "STORY-001",
-            "currentTask": None, "history": [],
-        }))
+        # 🆕 v3.9.13：state 源改为 task-scoped .auto-engineering/<work-item>/state.json
+        wi_dir = tmp_path / ".auto-engineering" / "Story-001"
+        wi_dir.mkdir(parents=True, exist_ok=True)
+        (wi_dir / "state.json").write_text(json.dumps({
+            "stateModel": "nested",
+            "activeStory": "STORY-001",
+            "storyStates": {"STORY-001": {"phase": "coding"}},
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         allowed, _ = check_intercept(
             "Bash",
             bash_command="mvn test && git add .",
@@ -177,11 +180,14 @@ class TestCodeReviewedSourceProtection:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "code-reviewed", "currentStory": "STORY-001",
-            "currentTask": None, "history": [],
-        }))
+        # 🆕 v3.9.13：state 源改为 task-scoped .auto-engineering/<work-item>/state.json
+        wi_dir = tmp_path / ".auto-engineering" / "Story-001"
+        wi_dir.mkdir(parents=True, exist_ok=True)
+        (wi_dir / "state.json").write_text(json.dumps({
+            "stateModel": "nested",
+            "activeStory": "STORY-001",
+            "storyStates": {"STORY-001": {"phase": "code-reviewed"}},
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         allowed, reason = check_intercept(
             "Write",
             file_path="src/main/java/Foo.java",
@@ -215,11 +221,14 @@ class TestCodeReviewedSourceProtection:
         ae_sdd = tmp_path / ".ae-sdd"
         ae_sdd.mkdir()
         (ae_sdd / "config.yaml").write_text("projectKey: test\n")
-        (ae_sdd / "state.json").write_text(json.dumps({
-            "version": "1", "projectKey": "test",
-            "phase": "code-reviewed", "currentStory": "STORY-001",
-            "currentTask": None, "history": [],
-        }))
+        # 🆕 v3.9.13：state 源改为 task-scoped .auto-engineering/<work-item>/state.json
+        wi_dir = tmp_path / ".auto-engineering" / "Story-001"
+        wi_dir.mkdir(parents=True, exist_ok=True)
+        (wi_dir / "state.json").write_text(json.dumps({
+            "stateModel": "nested",
+            "activeStory": "STORY-001",
+            "storyStates": {"STORY-001": {"phase": "code-reviewed"}},
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         # 🆕 v3.8.2：code-reviewed 属关联 phase，写文件前须 memory enter
         from lib import memory_store
         scope = memory_store.locate_scope(project=str(tmp_path), phase="review", story="STORY-001")
