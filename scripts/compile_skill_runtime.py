@@ -36,10 +36,10 @@ LOAD_ORDER = [
 ROUTE_ROWS = [
     ("self-update", "modify/optimize/update ae-sdd or SKILL", "skills/orchestration/ae-sdd-update-skill.md"),
     ("resume", "continue/resume/previous flow", "read state, report phase, load next slice"),
-    ("large", "has PRD", "RA -> DR -> Story -> TestCase -> Task -> Coding -> Test -> Review"),
-    ("medium", "has DR, no PRD path needed", "DR -> Story -> TestCase -> Task -> Coding -> Test -> Review"),
-    ("small", "has Story", "Story -> TestCase -> Task -> Coding -> Test -> Review"),
-    ("micro", "BUG/config/code adjustment", "Task -> CodingPlan -> Coding -> Test"),
+    ("large", "has DR", "DR -> Story -> TestCase -> CodingPlan -> Coding -> Test -> Review"),
+    ("medium", "has Story", "Story -> TestCase -> CodingPlan -> Coding -> Test -> Review"),
+    ("small", "has Story+TestCase, enter at CodingPlan", "CodingPlan -> Coding -> Test -> Review"),
+    ("micro", "BUG/config, no docs", "CodingPlan -> Coding -> Test -> Review"),
     ("doc-storage", "where to write/read generated docs", "skills/cross-cutting/document-storage-skill.md"),
     ("plugin", "load/override coding skill", "skills/cross-cutting/ae-sdd-plugin-loader-skill.md"),
 ]

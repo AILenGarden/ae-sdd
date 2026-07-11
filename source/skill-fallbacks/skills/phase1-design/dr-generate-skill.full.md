@@ -23,7 +23,7 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 DR 文档在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 确定：
-> 1. **存文档**：`ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md`（路径/ChangeLog 全由代码负责，原地更新）
+> 1. **存文档**：`ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md`（路径全由代码负责，原地更新）
 > 2. **命名**（§3.1/3.2 命名规则）：**设计类文档带 v{major}.{minor}**（重入时 v 递增，旧版本保留）
 > 3. **重入判定**（§4 重入 SOP）：DR 重入时**新增版本**（v{major}.{minor} 递增，旧版保留）
 > 4. **关联性分析**：由 `ae-sdd doc save` 内部 `choose_iteration` 自动判定（业务+逻辑双轨）
@@ -612,13 +612,13 @@ flowchart TD
 ## 第四步：写入 DR 文档
 
 > **🔴 强制：** 写入磁盘前**必须先调用** `document-storage-skill.md` 的 API：
-> **🔴 强制：** 写入磁盘必须通过 `ae-sdd doc save`，代码自动完成迭代判定 + ChangeLog + 目录创建。
+> **🔴 强制：** 写入磁盘必须通过 `ae-sdd doc save`，代码自动完成迭代判定 + 目录创建。
 
 ### 4.1 调用 save_doc 的参数
 
 ```python
 # 旧式伪代码已废弃，改用 CLI：
-# ae-sdd doc save --intent DR --doc-id DR-001 --content-file 草稿.md --changelog-note "首次创建"
+# ae-sdd doc save --intent DR --doc-id DR-001 --content-file 草稿.md
 result_skip = save_doc(doc={  # noqa: 保留结构示例，实际用上面 CLI
     "doc_id": "DR-001",
     "doc_type": "DR",

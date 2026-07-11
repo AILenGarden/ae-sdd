@@ -247,58 +247,50 @@ class TestNextStepSuggestion(unittest.TestCase):
     """next_step_suggestion 测试 — 🆕 v3.5.15 按 scale 选子链"""
 
     def test_initialized_to_ra_generate_large(self):
-        """大链 initialized → ra-generated"""
+        """🆕 v3.10.2 大链 initialized -> ra-generated（4 loop 从 RA 起）"""
         s = {"phase": "initialized", "scale": "大"}
         sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "ra-generated")
 
-    def test_micro_initialized_to_task_generated(self):
-        """微链 initialized → task-generated（BUG/调整从 Task 系列入）"""
+    def test_micro_initialized_to_coding_process(self):
+        """🆕 v3.10.0 微链 initialized -> coding-process（无文档直出 CodingPlan）"""
         s = {"phase": "initialized", "scale": "微"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "task-generated")
-        self.assertIn("task-generate-skill.md", sug["skill"])
+        self.assertEqual(sug["next"], "coding-process")
+        self.assertIn("coding-process-skill.md", sug["skill"])
 
-    def test_small_initialized_to_story_generated(self):
-        """小链 initialized → story-generated（已有Story，从Story系列入）"""
+    def test_small_initialized_to_coding_process(self):
+        """🆕 v3.10.0 小链 initialized -> coding-process（CodingPlan 入口，已有 Story+TestCase）"""
         s = {"phase": "initialized", "scale": "小"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "story-generated")
+        self.assertEqual(sug["next"], "coding-process")
 
-    def test_story_reviewed_to_testcase_generated(self):
-        """🆕 v3.7.0 大/中/小链 story-reviewed → testcase-generated（TestCase 独立系列）"""
-        for scale in ("大", "中", "小"):
-            s = {"phase": "story-reviewed", "scale": scale}
+    def test_story_generated_to_testcase_generated(self):
+        """🆕 v3.10.1 子系列合并：story-generated（=generate+review loop 完成）-> testcase-generated。
+        大/中链有效；小链从 coding-process 起，不含 story 系列。"""
+        for scale in ("大", "中"):
+            s = {"phase": "story-generated", "scale": scale}
             sug = state_mod.next_step_suggestion(s)
             self.assertEqual(sug["next"], "testcase-generated", f"scale={scale}")
-            self.assertIn("testcase-generate-skill.md", sug["skill"])
 
-    def test_testcase_generated_to_testcase_reviewed(self):
-        """🆕 v3.7.0 testcase-generated → testcase-reviewed"""
-        for scale in ("大", "中", "小"):
+    def test_testcase_generated_to_coding_process(self):
+        """🆕 v3.10.1 子系列合并：testcase-generated（=generate+review loop 完成）-> coding-process"""
+        for scale in ("大", "中"):
             s = {"phase": "testcase-generated", "scale": scale}
             sug = state_mod.next_step_suggestion(s)
-            self.assertEqual(sug["next"], "testcase-reviewed", f"scale={scale}")
-            self.assertIn("testcase-review-skill.md", sug["skill"])
-
-    def test_testcase_reviewed_to_task_generated(self):
-        """🆕 v3.7.0 testcase-reviewed → task-generated"""
-        for scale in ("大", "中", "小"):
-            s = {"phase": "testcase-reviewed", "scale": scale}
-            sug = state_mod.next_step_suggestion(s)
-            self.assertEqual(sug["next"], "task-generated", f"scale={scale}")
+            self.assertEqual(sug["next"], "coding-process", f"scale={scale}")
 
     def test_medium_initialized_to_dr_generated(self):
-        """中链 initialized → dr-generated（已有DR，从DR系列入，跳RA）"""
+        """🆕 v3.10.2 中链 initialized -> dr-generated（3 loop 从 DR 起，跳 RA）"""
         s = {"phase": "initialized", "scale": "中"}
         sug = state_mod.next_step_suggestion(s)
         self.assertEqual(sug["next"], "dr-generated")
 
-    def test_large_ra_to_dr(self):
-        """大链 ra-generated → dr-generated"""
-        s = {"phase": "ra-generated", "scale": "大"}
+    def test_large_dr_to_story(self):
+        """🆕 v3.10.0 大链 dr-generated -> story-generated"""
+        s = {"phase": "dr-generated", "scale": "大"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "dr-generated")
+        self.assertEqual(sug["next"], "story-generated")
 
     def test_completed_terminates(self):
         s = {"phase": "completed", "scale": "大"}
@@ -339,20 +331,21 @@ class TestPhaseFlowCoverage(unittest.TestCase):
         self.assertEqual(set(state_mod.PHASE_FLOWS.keys()),
                          {"大", "中", "小", "微"})
 
-    def test_large_chain_has_14_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 14)
+    def test_large_chain_has_10_phases(self):
+        # 🆕 v3.10.2：4 loop（RA-DR-Story-TestCase）+ Coding/Testing 2 phase
+        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 10)
 
-    def test_medium_chain_has_13_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 13)
+    def test_medium_chain_has_9_phases(self):
+        # 🆕 v3.10.2：3 loop（DR-Story-TestCase）+ Coding/Testing 2 phase，跳 RA
+        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 9)
 
-    def test_small_chain_has_12_phases(self):
-        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 12)
+    def test_small_chain_has_6_phases(self):
+        # 🆕 v3.10.0：小=CodingPlan 入口，直出 coding-process
+        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 6)
 
-    def test_micro_chain_has_8_phases(self):
-        # 🆕 2026-07-03(B1): 微链从 7 phase → 8 phase，加回 code-reviewed。
-        # 设计文档 conventions.md §3.1 明确"出 CodeReview 报告 ❌不豁免"，
-        # 此前微链物理跳过 code-reviewed 导致 gate_intercept 门禁不可达。
-        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 8)
+    def test_micro_chain_has_6_phases(self):
+        # 🆕 v3.10.0：微=无文档直出 coding-process，移除 task-generated/task-reviewed
+        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 6)
 
     def test_micro_chain_includes_code_reviewed(self):
         """🆕 2026-07-03(B1): 微链必须含 code-reviewed（CodeReview 报告不豁免）"""
@@ -410,8 +403,9 @@ class TestInferScale(unittest.TestCase):
         scale, conf, _ = state_mod._infer_scale(s)
         self.assertEqual(scale, "中")
 
-    def test_infer_small_from_task_step(self):
-        s = {"completedSteps": ["step-1-task"], "phase": "task-reviewed"}
+    def test_infer_small_from_coding_step(self):
+        """🆕 v3.10.0：砍 Task 后，completedSteps 含 coding（无 story）-> 小（CodingPlan 入口）"""
+        s = {"completedSteps": ["step-1-coding"], "phase": "coding"}
         scale, conf, _ = state_mod._infer_scale(s)
         self.assertEqual(scale, "小")
 
@@ -462,12 +456,13 @@ class TestSetPhasePerScale(unittest.TestCase):
             state_mod.set_phase(s, "totally-bogus-phase")
 
     def test_legacy_state_no_scale_infers_and_allows(self):
-        """旧 state 无 scale → _resolve_scale 反推后 set_phase 正常工作"""
+        """旧 state 无 scale -> _resolve_scale 反推后 set_phase 正常工作。
+        🆕 v3.10.0：大链从 dr-generated 起（ra-generated 已移除）。"""
         s = {"phase": "initialized", "history": []}  # 无 scale 字段
-        # 反推：无 completedSteps + initialized → 默认大链
-        # initialized 在大链内，合法
-        state_mod.set_phase(s, "ra-generated")
-        self.assertEqual(s["phase"], "ra-generated")
+        # 反推：无 completedSteps + initialized -> 默认大链
+        # dr-generated 在大链内，合法
+        state_mod.set_phase(s, "dr-generated")
+        self.assertEqual(s["phase"], "dr-generated")
         # 反推结果应回写
         self.assertEqual(s["scale"], "大")
 
@@ -794,6 +789,55 @@ class TestIsWorkItemCompleted(unittest.TestCase):
             "prdState": {"phase": "completed"},
         }
         self.assertTrue(state_mod.is_work_item_completed(st))
+
+
+class TestInitNestedStateWithUuid(unittest.TestCase):
+    """🆕 v3.10.1 init_nested_state(state_uuid=...) 生成带 UUID 前缀的 stateMachineId。"""
+
+    def test_state_uuid_prefixes_state_machine_id(self):
+        """传 state_uuid 时 stateMachineId = {uuid}-{业务名}，另写 stateMachineName + stateUuid。"""
+        uuid_str = "550e8400-e29b-41d4-a716-446655440000"
+        st = state_mod.init_nested_state(
+            project_key="life",
+            entry_node="PRD",
+            state_machine_id="PRD-IM-CS",
+            state_machine_name="PRD-IM-CS",
+            prd_id="PRD-001",
+            state_uuid=uuid_str,
+        )
+        self.assertEqual(st["stateMachineId"], f"{uuid_str}-PRD-IM-CS")
+        self.assertEqual(st["stateMachineName"], "PRD-IM-CS")
+        self.assertEqual(st["stateUuid"], uuid_str)
+
+    def test_no_state_uuid_backward_compat(self):
+        """不传 state_uuid 时保持旧行为：stateMachineId=业务名，不写 stateUuid。"""
+        st = state_mod.init_nested_state(
+            project_key="life",
+            entry_node="DR",
+            state_machine_id="DR-CS",
+            state_machine_name="DR-CS",
+            dr_id="DR-005",
+        )
+        self.assertEqual(st["stateMachineId"], "DR-CS")
+        # 旧行为：stateMachineName 等于传入的 state_machine_name
+        self.assertEqual(st["stateMachineName"], "DR-CS")
+        # 不写 stateUuid 字段
+        self.assertNotIn("stateUuid", st)
+
+    def test_state_uuid_with_story_entry(self):
+        """STORY 入口带 state_uuid 也正确拼接。"""
+        uuid_str = "abcdef12-3456-7890-abcd-ef1234567890"
+        st = state_mod.init_nested_state(
+            project_key="life",
+            entry_node="STORY",
+            state_machine_id="Story-003-004",
+            state_machine_name="Story-003-004",
+            story_ids=["STORY-003-BE", "STORY-004-BE"],
+            state_uuid=uuid_str,
+        )
+        self.assertEqual(st["stateMachineId"], f"{uuid_str}-Story-003-004")
+        self.assertEqual(st["stateMachineName"], "Story-003-004")
+        self.assertEqual(st["stateUuid"], uuid_str)
 
 
 if __name__ == "__main__":

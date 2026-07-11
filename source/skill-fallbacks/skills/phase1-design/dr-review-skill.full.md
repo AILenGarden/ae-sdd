@@ -35,7 +35,7 @@ description: DR Review SKILL — 对 DR 草稿进行 5 阶段评审，输出 DR 
 | 输出文档 | 路径模板 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
 | DR Review 报告 | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
-| DR Review UpdatePlan | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md --changelog-note "UpdatePlan"` | 不带版本号 |
+| DR Review UpdatePlan | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
 | DR Review ChangeLog | `ae-sdd doc save --changelog-note` 追加 | — | 原地累加 |
 | DR Review Supplement | `ae-sdd doc save --intent DR_SUPPLEMENT --doc-id {drId} --content-file 草稿.md` | 不带版本号 |
 

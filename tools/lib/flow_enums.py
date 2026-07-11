@@ -30,22 +30,31 @@ class FlowNode(str, Enum):
     """流程节点原语（入口节点即任务类型）。
 
     节点即任务类型：任务从流水线哪个节点进入，就是哪类任务。
-    流水线从重到轻：PRD → RA → DR → STORY → TASK → PLAN
+    流水线从重到轻：PRD -> RA -> DR -> STORY -> PLAN（v3.10.0 砍 Task）
 
     🆕 v3.9.0 嵌套状态模型：entryNode 升级为"容器选择器"。
-      - entryNode=PRD → state 含 prdState + drState + storyStates
-      - entryNode=DR  → state 含 drState + storyStates（DR 为顶层）
-      - entryNode=STORY → state 含 storyStates（Story 为顶层）
-      - entryNode=TASK/PLAN → flat state（微任务，不嵌套）
+      - entryNode=PRD -> state 含 prdState + drState + storyStates
+      - entryNode=DR  -> state 含 drState + storyStates（DR 为顶层）
+      - entryNode=STORY -> state 含 storyStates（Story 为顶层）
+      - entryNode=PLAN/BUG -> flat state（小/微任务，不嵌套）
     详见 state.py ENTRY_NODE_CONTAINERS 与 init_nested_state()。
+
+    🆕 v3.10.0 Route 下移重分级：
+      - PRD -> 大（兼容，视为 DR 级）
+      - DR  -> 大
+      - STORY -> 中
+      - PLAN -> 小（CodingPlan 入口）
+      - BUG  -> 微（无文档直出 CodingPlan）
+      - TASK -> 🟡 deprecated（骨架分解合并进 CodingProcess）
     """
 
-    PRD   = "PRD"    # PRD 级聚合（需求文档入口，v3.3.0；v3.9.0 嵌套顶层之一）
+    PRD   = "PRD"    # PRD 级聚合（需求文档入口，v3.9.0 嵌套顶层之一；v3.10.0 兼容视为大）
     RA    = "RA"     # 需求分析（Requirement Analysis）
-    DR    = "DR"     # 设计需求（Design Requirement；v3.9.0 嵌套顶层之一）
-    STORY = "STORY"  # Story 级（中大任务；v3.9.0 嵌套顶层之一）
-    TASK  = "TASK"   # 小任务（flat state，不嵌套）
-    PLAN  = "PLAN"   # 微任务 / CodingPlan 直出（flat state，不嵌套）
+    DR    = "DR"     # 设计需求（Design Requirement；v3.9.0 嵌套顶层之一；v3.10.0 大任务入口）
+    STORY = "STORY"  # Story 级（v3.9.0 嵌套顶层之一；v3.10.0 中任务入口）
+    TASK  = "TASK"   # 🟡 v3.10.0 deprecated：Task phase 已移除，保留枚举兼容旧 state
+    PLAN  = "PLAN"   # 小任务 / CodingPlan 直出（flat state；v3.10.0 小任务入口）
+    BUG   = "BUG"    # 微任务 / 无文档直出 CodingPlan（flat state；v3.10.0 微任务入口）
 
     def container_fields(self) -> list[str]:
         """🆕 v3.9.0 返回该入口节点应含的子状态容器名列表。

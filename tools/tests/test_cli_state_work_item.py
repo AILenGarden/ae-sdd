@@ -46,7 +46,8 @@ class TestCmdStateNewV393(unittest.TestCase):
     """🆕 v3.9.3 cmd_state_new 走 R6 顶层名 + R2 向上归入。"""
 
     def test_state_new_story_no_name_uses_r6(self):
-        """v3.9.3 state new --id STORY-006-BE --entry-node STORY → 顶层 Story-006（无 --name）。"""
+        """v3.9.3 state new --id STORY-006-BE --entry-node STORY -> 顶层 Story-006（无 --name）。
+        🆕 v3.10.1 目录名带 UUID 前缀：{uuid}-Story-006。"""
         tmp = _setup_project()
         code, out, err = _run_cli(
             tmp, "state", "new",
@@ -57,14 +58,22 @@ class TestCmdStateNewV393(unittest.TestCase):
         )
         self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
         payload = json.loads(out)
-        # R6 顶层名 = Story-006
+        # R6 业务名 = Story-006（workItemKey 仍返回纯业务名给用户）
         self.assertEqual(payload["workItemKey"], "Story-006")
-        # state.json 落 .auto-engineering/Story-006/state.json
-        sp = tmp / ".auto-engineering" / "Story-006" / "state.json"
+        # 🆕 v3.10.1：statePath 含 UUID 前缀目录名，用后缀匹配验证
+        self.assertTrue(payload["statePath"].endswith("-Story-006" + os.sep + "state.json"),
+                        msg=f"statePath={payload['statePath']}")
+        sp = Path(payload["statePath"])
         self.assertTrue(sp.is_file())
+        # stateMachineId 带 UUID 前缀，stateMachineName 是纯业务名
+        data = json.loads(sp.read_text(encoding="utf-8"))
+        self.assertTrue(data["stateMachineId"].endswith("-Story-006"))
+        self.assertEqual(data["stateMachineName"], "Story-006")
+        self.assertIn("stateUuid", data)
 
     def test_state_new_dr_no_name_uses_r6(self):
-        """v3.9.3 state new --id DR-005 --entry-node DR → 顶层 DR-005。"""
+        """v3.9.3 state new --id DR-005 --entry-node DR -> 顶层 DR-005。
+        🆕 v3.10.1 目录名带 UUID 前缀：{uuid}-DR-005。"""
         tmp = _setup_project()
         code, out, err = _run_cli(
             tmp, "state", "new",
@@ -73,11 +82,17 @@ class TestCmdStateNewV393(unittest.TestCase):
             "--json",
         )
         self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
-        sp = tmp / ".auto-engineering" / "DR-005" / "state.json"
+        payload = json.loads(out)
+        # 🆕 v3.10.1：用后缀匹配验证 statePath 含 -DR-005 目录
+        self.assertTrue(payload["statePath"].endswith("-DR-005" + os.sep + "state.json"),
+                        msg=f"statePath={payload['statePath']}")
+        sp = Path(payload["statePath"])
         self.assertTrue(sp.is_file())
 
-    def test_state_new_task_bug_uses_task_prefix(self):
-        """v3.9.3 state new --id BUG-LIFE-001 → 顶层 Task-BUG-LIFE-001（TASK 顶层名）。"""
+    def test_state_new_task_bug_uses_bug_prefix(self):
+        """🆕 v3.10.0：state new --id BUG-LIFE-001 -> 顶层 Bug-BUG-LIFE-001（微任务无文档）。
+        旧版用 Task- 前缀，v3.10.0 Route 下移后 BUG 走 Bug- 前缀。
+        🆕 v3.10.1 目录名带 UUID 前缀：{uuid}-Bug-BUG-LIFE-001。"""
         tmp = _setup_project()
         code, out, err = _run_cli(
             tmp, "state", "new",
@@ -85,13 +100,18 @@ class TestCmdStateNewV393(unittest.TestCase):
             "--json",
         )
         self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
-        sp = tmp / ".auto-engineering" / "Task-BUG-LIFE-001" / "state.json"
+        payload = json.loads(out)
+        # 🆕 v3.10.1：扁平 state 也带 UUID 前缀，用后缀匹配验证
+        self.assertTrue(payload["statePath"].endswith("-Bug-BUG-LIFE-001" + os.sep + "state.json"),
+                        msg=f"statePath={payload['statePath']}")
+        sp = Path(payload["statePath"])
         self.assertTrue(sp.is_file())
-        payload = json.loads(sp.read_text(encoding="utf-8"))
-        self.assertEqual(payload["scale"], "微", "BUG/OPT/CONFIG 独立任务默认必须走微链")
+        data = json.loads(sp.read_text(encoding="utf-8"))
+        self.assertEqual(data["scale"], "微", "BUG/OPT/CONFIG 独立任务默认必须走微链")
 
-    def test_state_new_story_defaults_to_small_scale(self):
-        """Story 入口是小链，不应缺省成大链。"""
+    def test_state_new_story_defaults_to_medium_scale(self):
+        """🆕 v3.10.0：Story 入口是中链（Route 下移：大=DR、中=Story、小=CodingPlan）。
+        🆕 v3.10.1 目录名带 UUID 前缀。"""
         tmp = _setup_project()
         code, out, err = _run_cli(
             tmp, "state", "new",
@@ -101,12 +121,15 @@ class TestCmdStateNewV393(unittest.TestCase):
             "--json",
         )
         self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
-        sp = tmp / ".auto-engineering" / "Story-006" / "state.json"
-        payload = json.loads(sp.read_text(encoding="utf-8"))
-        self.assertEqual(payload["scale"], "小")
+        payload = json.loads(out)
+        sp = Path(payload["statePath"])
+        self.assertTrue(sp.is_file())
+        data = json.loads(sp.read_text(encoding="utf-8"))
+        self.assertEqual(data["scale"], "中")
 
     def test_state_new_legacy_name_flag_warns_and_ignores(self):
-        """v3.9.3 --name 形参废除（传了被忽略，不报错）。"""
+        """v3.9.3 --name 形参废除（传了被忽略，不报错）。
+        🆕 v3.10.1 目录名带 UUID 前缀。"""
         tmp = _setup_project()
         code, out, err = _run_cli(
             tmp, "state", "new",
@@ -117,12 +140,15 @@ class TestCmdStateNewV393(unittest.TestCase):
             "--json",
         )
         self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
         # 不应创建双段目录
         legacy = tmp / ".auto-engineering" / "STORY-006-BE--应被忽略" / "state.json"
         self.assertFalse(legacy.is_file())
-        # 仍走 R6
-        r6 = tmp / ".auto-engineering" / "Story-006" / "state.json"
-        self.assertTrue(r6.is_file())
+        # 仍走 R6（🆕 v3.10.1 带 UUID 前缀，用后缀匹配验证）
+        sp = Path(payload["statePath"])
+        self.assertTrue(sp.is_file())
+        self.assertTrue(sp.parent.name.endswith("-Story-006"),
+                        msg=f"dir name={sp.parent.name}")
 
     def test_state_new_story_with_parent_dr_doc_absorbs(self):
         """v3.9.3 Story 有父级 DR + DR 文档存在关联性对 → Story 嵌进 DR 嵌套 state。"""
@@ -185,9 +211,15 @@ class TestCmdStateNewV393(unittest.TestCase):
         self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
         payload = json.loads(out)
         self.assertIn("PRD-001", payload["statePath"])
-        self.assertFalse((tmp / ".auto-engineering" / "DR-005" / "state.json").exists())
+        # 🆕 v3.10.1：DR-005 不再独立建顶层目录（嵌进 PRD state 的 drStates）
+        auto_eng = tmp / ".auto-engineering"
+        dr_dirs = [d for d in auto_eng.iterdir() if d.is_dir() and d.name.endswith("-DR-005")]
+        self.assertEqual(len(dr_dirs), 0, msg=f"DR-005 should not have its own dir: {dr_dirs}")
         self.assertFalse((tmp / ".ae-sdd" / "state.json").exists())
-        prd_state = json.loads((tmp / ".auto-engineering" / "PRD-001" / "state.json").read_text(encoding="utf-8"))
+        # PRD state 目录名带 UUID 前缀，用后缀匹配定位
+        prd_dirs = [d for d in auto_eng.iterdir() if d.is_dir() and d.name.endswith("-PRD-001")]
+        self.assertEqual(len(prd_dirs), 1, msg=f"expected 1 PRD-001 dir, got {prd_dirs}")
+        prd_state = json.loads((prd_dirs[0] / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(prd_state["prdState"]["prdId"], "PRD-001")
         self.assertIn("DR-005", prd_state.get("drStates", {}))
         self.assertIn("STORY-006-BE", prd_state["drStates"]["DR-005"].get("storyStates", {}))
@@ -239,7 +271,7 @@ class TestStateActiveMirrorRegression(unittest.TestCase):
             "activeStory": story_id,
             "storyStates": {story_id: {"phase": "story-generated"}},
             "workItemKey": work_item,
-            "scale": "小",
+            "scale": "中",
         }
         state_file.write_text(json.dumps(nested, ensure_ascii=False), encoding="utf-8")
         mirror = dict(nested)
@@ -288,7 +320,7 @@ class TestStateMirrorMissingFallback(unittest.TestCase):
             "activeStory": story_id,
             "workItemKey": work_item_dir,
             "stateMachineId": work_item_dir,
-            "scale": "小",
+            "scale": "中",
             "history": [
                 {"phase": "nested-state-init(entryNode=STORY)",
                  "timestamp": "2026-07-08T00:00:00Z", "by": "ae-sdd"},
@@ -331,7 +363,7 @@ class TestStateMirrorMissingFallback(unittest.TestCase):
         # 不是 'initialized → ra-generated'（default v1 推荐）
         self.assertEqual(payload["current"], "story-generated",
                          "应读 work-item 源的当前 phase 而非 default 'initialized'")
-        self.assertEqual(payload["next"], "story-reviewed")
+        self.assertEqual(payload["next"], "testcase-generated")  # v3.10.1 子系列合并
 
     def test_health_passes_when_mirror_missing_but_source_exists(self):
         """镜像缺失但 work-item 源存在时 'state.json 可定位' 应 pass（即便其他 1 项 fail）"""
@@ -374,7 +406,7 @@ class TestParallelWorkItemIsolation(unittest.TestCase):
             "stateMachineId": name,
             "workItemKey": name,
             "currentWorkItem": name,
-            "scale": "小",
+            "scale": "中",
             "activeStory": story,
             "storyStates": {story: {
                 "phase": phase,
@@ -510,6 +542,95 @@ class TestStateWorkItemIsolationLegacy(unittest.TestCase):
 
     def test_legacy_state_read_work_item(self):
         self.skipTest("v3.9.3 SKIPPED: 旧 v3.8.2 行为已废除")
+
+
+class TestStateNewUuidPrefix(unittest.TestCase):
+    """🆕 v3.10.1 state new 创建的 state 带 UUID 前缀 + 防重复创建。"""
+
+    def test_state_new_produces_uuid_prefixed_fields(self):
+        """state new 创建后 stateMachineId 带 UUID 前缀，stateMachineName 纯业务名。"""
+        tmp = _setup_project()
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", "STORY-007-BE",
+            "--entry-node", "STORY",
+            "--story-ids", "STORY-007-BE",
+            "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        sp = Path(payload["statePath"])
+        data = json.loads(sp.read_text(encoding="utf-8"))
+        # stateMachineId = {uuid}-Story-007
+        self.assertTrue(data["stateMachineId"].endswith("-Story-007"))
+        # stateMachineName = 纯业务名
+        self.assertEqual(data["stateMachineName"], "Story-007")
+        # stateUuid 存在且是 36 字符
+        self.assertEqual(len(data["stateUuid"]), 36)
+        # 目录名 == stateMachineId
+        self.assertEqual(sp.parent.name, data["stateMachineId"])
+
+    def test_state_new_same_business_name_blocked(self):
+        """🆕 v3.10.1 同业务名重复创建被防重复机制拦截（UUID 前缀不影响撞名检测）。"""
+        tmp = _setup_project()
+        # 第一次创建
+        code1, out1, err1 = _run_cli(
+            tmp, "state", "new",
+            "--id", "STORY-008-BE",
+            "--entry-node", "STORY",
+            "--story-ids", "STORY-008-BE",
+            "--json",
+        )
+        self.assertEqual(code1, 0, msg=f"stdout={out1}\nstderr={err1}")
+        # 第二次同业务名创建 -> 应被拦截
+        code2, out2, err2 = _run_cli(
+            tmp, "state", "new",
+            "--id", "STORY-008-BE",
+            "--entry-node", "STORY",
+            "--story-ids", "STORY-008-BE",
+        )
+        self.assertNotEqual(code2, 0, msg=f"应被拦截 stdout={out2}\nstderr={err2}")
+
+    def test_state_new_force_overwrites(self):
+        """🆕 v3.10.1 --force 可覆盖已存在的同业务名 state。"""
+        tmp = _setup_project()
+        _run_cli(tmp, "state", "new",
+                 "--id", "STORY-009-BE",
+                 "--entry-node", "STORY",
+                 "--story-ids", "STORY-009-BE",
+                 "--json")
+        # --force 覆盖
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", "STORY-009-BE",
+            "--entry-node", "STORY",
+            "--story-ids", "STORY-009-BE",
+            "--force",
+            "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+
+    def test_state_read_finds_uuid_prefixed_by_business_name(self):
+        """🆕 v3.10.1 state read 按业务名能找到 UUID 前缀目录的 state。"""
+        tmp = _setup_project()
+        # 创建
+        code1, out1, err1 = _run_cli(
+            tmp, "state", "new",
+            "--id", "STORY-010-BE",
+            "--entry-node", "STORY",
+            "--story-ids", "STORY-010-BE",
+            "--json",
+        )
+        self.assertEqual(code1, 0, msg=f"stdout={out1}\nstderr={err1}")
+        # 按业务名 Story-010 读取
+        code2, out2, err2 = _run_cli(
+            tmp, "state", "read",
+            "--work-item", "Story-010",
+            "--json",
+        )
+        self.assertEqual(code2, 0, msg=f"stdout={out2}\nstderr={err2}")
+        payload = json.loads(out2)
+        self.assertEqual(payload["stateMachineName"], "Story-010")
 
 
 if __name__ == "__main__":

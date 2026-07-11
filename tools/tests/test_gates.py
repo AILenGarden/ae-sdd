@@ -303,7 +303,8 @@ class TestG02(unittest.TestCase):
 class TestG03(unittest.TestCase):
 
     def test_past_phase_passes(self):
-        for phase in ["story-reviewed", "task-generated", "task-reviewed",
+        # 🆕 v3.10.0：task-generated/task-reviewed 已从 PHASE_PAST_STORY_REVIEW 移除，加 coding-process
+        for phase in ["story-reviewed", "coding-process",
                       "coding", "test-running", "code-reviewed", "completed"]:
             with self.subTest(phase=phase):
                 r = gates.check_g03(Path("."), {"phase": phase}, "STORY-001")
@@ -584,7 +585,7 @@ class TestG10(unittest.TestCase):
 
     def test_with_document_storage_test_report_passes(self):
         tmp = _setup_project({
-            "ae-sdd-doc/Test/STORY-001/STORY-001-Report-v1-r1.md": "# TEST_REPORT",
+            "ae-sdd-doc/Test/STORY-001/STORY-001-Report.md": "# TEST_REPORT"  # v3.10.1 原地更新,
         })
         r = gates.check_g10(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
@@ -603,7 +604,7 @@ class TestG11(unittest.TestCase):
 
     def test_with_document_storage_coding_report_passes(self):
         tmp = _setup_project({
-            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport-v1-r1.md": "# Coding",
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport.md": "# Coding"  # v3.10.1 原地更新,
         })
         r = gates.check_g11(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
@@ -618,7 +619,7 @@ class TestG12(unittest.TestCase):
 
     def test_with_document_storage_codereview_passes(self):
         tmp = _setup_project({
-            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview-v1-r1.md": "# CR",
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview.md": "# CR"  # v3.10.1 原地更新,
         })
         r = gates.check_g12(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)

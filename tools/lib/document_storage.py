@@ -52,13 +52,13 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
     "TASK_REVIEW":       ("{docWorkspace}/ae-sdd-doc/Task/{workItem}/{workItem}-TaskReview-r{minor}.md", True, "Task"),
     "TASK_IMPL_PLAN":    ("{docWorkspace}/ae-sdd-doc/Task/{workItem}/{docId}-ImplPlan.md", False, "Task"),
     "CODING_PLAN":       ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-CodingPlan.md", False, "Coding"),
-    "CODING_REPORT":     ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-CodingReport-v{major}-r{minor}.md", True, "Coding"),
+    "CODING_REPORT":     ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-CodingReport.md", False, "Coding"),
     "CODING_ISSUE_LOG":  ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-CodingIssueLog.md", False, "Coding"),
     "TESTCASE":          ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-testcase.md",  False, "Test"),
     "TESTCASE_COMPLIANCE_REPORT": ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-TestCaseCompliance-r{minor}.md", True, "Test"),
     "TESTCASE_REVIEW":   ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-TestCaseReview-r{minor}.md", True, "Test"),
-    "TEST_REPORT":       ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-Report-v{major}-r{minor}.md", True, "Test"),
-    "CODE_REVIEW":       ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-CodeReview-v{major}-r{minor}.md", True, "CR"),
+    "TEST_REPORT":       ("{docWorkspace}/ae-sdd-doc/Test/{workItem}/{workItem}-Report.md", False, "Test"),
+    "CODE_REVIEW":       ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-CodeReview.md", False, "CR"),
     "TRACE_MATRIX":      ("{docWorkspace}/ae-sdd-doc/Coding/{workItem}/{workItem}-追溯矩阵-v{major}-r{minor}.md", True, "Coding"),
     "STORY_REVIEW":      ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-StoryReviewReport-r{minor}.md", True, "CR"),
     "REVIEW_UPDATEPLAN": ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/{workItem}-StoryReviewUpdatePlan-r{minor}.md", True, "CR"),
@@ -530,13 +530,10 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
 
     full_path.write_text(content, encoding="utf-8")
 
+    # 🆕 v3.10.1：禁用 ChangeLog 旁车文件生成。
+    # 用户反馈：生成过程中改动不需要记录，文档原地更新即可，不要 {doc}-changelog.md 旁车文件。
+    # changelog_note 参数保留兼容（CLI/调用方仍可传），但不再写入文件。
     changelog_entry = None
-    if changelog_note:
-        cl_path = Path(resolved.changelog_path)
-        entry = f"- {datetime.now().strftime('%Y-%m-%d %H:%M')} v{new_version or 'N/A'}: {changelog_note}"
-        with cl_path.open("a", encoding="utf-8") as f:
-            f.write(entry + "\n")
-        changelog_entry = entry
 
     # 🆕 2026-07-01 §7.3：首次写入 ae-sdd-doc/ 时维护 .gitignore（幂等）
     git_path = get_git_path(ade_sdd, project_key)
@@ -588,14 +585,8 @@ def finalize_doc(ade_sdd: Path, project_key: str, intent: str, file_path: str,
     # 版本号（从文件名解析，若已带 -v{N}-r{M}）
     new_version = resolved.version_suffix
 
+    # 🆕 v3.10.1：禁用 ChangeLog 旁车文件生成（同 save_doc）
     changelog_entry = None
-    if changelog_note:
-        # ChangeLog 落在已写文件的同级目录（与 save_doc 一致）
-        cl_path = target.parent / f"{_versionless_stem(target.stem)}-changelog.md"
-        entry = f"- {datetime.now().strftime('%Y-%m-%d %H:%M')} v{new_version or 'N/A'}: {changelog_note}"
-        with cl_path.open("a", encoding="utf-8") as f:
-            f.write(entry + "\n")
-        changelog_entry = entry
 
     # 维护 .gitignore（幂等）
     git_path = get_git_path(ade_sdd, project_key)

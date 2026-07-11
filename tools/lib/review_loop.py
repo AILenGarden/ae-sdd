@@ -5,7 +5,7 @@ review_loop.py — review-loop 编排层状态机（🆕 v3.5.12 第 1 波）
 
 背景：
   review-loop 公共协议（source/skills/cross-cutting/review-loop-skill.md）规定
-  「连续 3 轮无新增才退出 + 循环上限 3 轮 + Plan-first」，但 state.py 无 dryCounter
+  「连续 2 轮无新增才退出 + 循环上限 2 轮 + Plan-first」，但 state.py 无 dryCounter
   字段、CLI 无命令、gates 无闸 → root agent 靠心智数轮次，compact/重入后丢失，
   且从不启用多 reviewer（自洽陷阱）。本模块把这套状态机变成可持久化、可机器判定的
   确定性逻辑，root agent 只负责「派活 + 处理存疑」，状态/判定/退出全在 CLI。
@@ -36,8 +36,8 @@ from pathlib import Path
 from typing import Optional
 
 # ─── 常量（与 review-loop-skill.md 协议对齐）─────────────────────────────────
-EXIT_DRY_THRESHOLD = 3   # 连续 3 轮无新增才正常退出（协议 1）
-MAX_ROUNDS = 3           # 循环上限 3 轮（协议 2）
+EXIT_DRY_THRESHOLD = 2   # 连续 2 轮无新增才正常退出（协议 1）
+MAX_ROUNDS = 2           # 循环上限 2 轮（协议 2）
 
 # 关键决策点清单（机械派生 Tier 用，对齐 agent-orchestration §8.4.1）
 # 命中任一 → Tier ≥ 2；命中资金/状态机/权限/全新表/全新 SPI 且大规模 → Tier 3
@@ -234,7 +234,7 @@ def advance_round(review_state: dict,
 
     协议对齐（review-loop-skill.md）：
       协议1：本轮有新确认缺陷 → dryCounter 归零；无新增 → dryCounter+1；累计3 → 退出
-      协议2：round > MAX_ROUNDS(3) 且仍有 🔴 → escalate 用户
+      协议2：round > MAX_ROUNDS(2) 且仍有 🔴 → escalate 用户
 
     Returns:
       RoundResult（含更新后的 round/dryCounter/exit_reason/next_action）
@@ -281,11 +281,11 @@ def verify_exit(review_state: dict) -> tuple[bool, str]:
 
     Returns:
       (passed, reason)
-      passed=True：exitReason ∈ {normal, escalate}，且 normal 要求 dryCounter≥3
+      passed=True：exitReason ∈ {normal, escalate}，且 normal 要求 dryCounter≥2
       passed=False：未达退出条件，阻断节点切相
 
-    正常退出（normal）：dryCounter ≥ 3
-    异常退出（escalate）：round > 3 且有 🔴，已升级用户决策
+    正常退出（normal）：dryCounter ≥ 2
+    异常退出（escalate）：round > 2 且有 🔴，已升级用户决策
     """
     exit_reason = review_state.get("exitReason")
     dry_counter = review_state.get("dryCounter", 0)

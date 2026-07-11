@@ -80,8 +80,8 @@ triggers:
 |------|------|
 | 1 | `/compact`（系列入口，防跨系列上下文污染）；输出 SKILL 调用声明；写 events 日志 `ae-sdd state write --event skill-launched` |
 | 2 | 加载 `{series}-generate-skill.md` → 调 `agent-orchestration-skill`（按任务量分配子 Agent workflow）→ 产物核查 |
-| 3 | 加载 `{series}-review-skill.md` → 调 `agent-orchestration-skill`（分配子 Agent）→ 汇总错误报告给监管器；**Loop**：有错+矫正<3 → 回步骤2；矫正=3 → Level 3 暂停等用户；连续3轮无新错 → 步骤4 |
-| 4 | **默认模式**：人工审核：播报产物摘要；等用户 ✅/⚠️/❌ → ✅推进phase→下一系列；⚠️→重回步骤2+重置计数；❌→paused<br>**🆕 v3.8.0 自动化模式**：联审共识 — 强制 Tier 3 派 3 个独立 session reviewer（视角正交，见 `agent-orchestration-skill §8.4`）→ 跑 §8.4.3 交叉对比 → `ae-sdd state register-review-consensus` 写 `reviewConsensus[point]` → G-09B + G-REVIEW-LOOP + G-AUTO-CONSENSUS 全过即自动推进 phase；3 轮矫正未决 → L3 `state.phase=paused`（按 `automation.onConsensusStall`） |
+| 3 | 加载 `{series}-review-skill.md` → 调 `agent-orchestration-skill`（分配子 Agent）→ 汇总错误报告给监管器；**Loop**：有错+矫正<2 → 回步骤2；矫正=2 → Level 3 暂停等用户；连续2轮无新错 → 步骤4 |
+| 4 | **默认模式**：人工审核：播报产物摘要；等用户 ✅/⚠️/❌ → ✅推进phase→下一系列；⚠️→重回步骤2+重置计数；❌→paused<br>**🆕 v3.8.0 自动化模式**：联审共识 — 强制 Tier 3 派 3 个独立 session reviewer（视角正交，见 `agent-orchestration-skill §8.4`）→ 跑 §8.4.3 交叉对比 → `ae-sdd state register-review-consensus` 写 `reviewConsensus[point]` → G-09B + G-REVIEW-LOOP + G-AUTO-CONSENSUS 全过即自动推进 phase；2 轮矫正未决 → L3 `state.phase=paused`（按 `automation.onConsensusStall`） |
 
 **流程偏移与矫正**（自动执行，AI 无法绕过）：
 
@@ -167,7 +167,7 @@ ae-sdd gates check --only G-00
 | 实现视角七要素完整（数据源/数据流/定义/复用证据/成本反驳/开发疑问/DR交接）| 否 → 🔴 阻断（G-RA-6）|
 | 5问自检阻断项=0 + 所有🔴缺口已解决 | 否 → 🔴 阻断 |
 | RA距今 ≤30天 | 否 → 🟡 警告 |
-| **微任务/BUG/配置类豁免** | 走 task-generate-skill 从 Task 系列入（含轻量 CodingPlan）|
+| **微任务/BUG/配置类豁免** | 走 coding-process-skill 从 CodingPlan 系列入（无文档直出，v3.10.0 砍 Task）|
 
 ```bash
 ae-sdd gate ra-required --project <project-root>
@@ -262,7 +262,7 @@ automation:
 
 ### 阻断出口
 
-联审 3 轮矫正未决 → 按 `onConsensusStall`：
+联审 2 轮矫正未决 → 按 `onConsensusStall`：
 - `pause`：`state.phase=paused`，输出完整问题清单等用户介入（**默认**，避免 AI 带病狂奔）
 - `fail`：标记失败，终止流程
 
@@ -284,7 +284,7 @@ automation:
 |------|---------|
 | AI 自行 `automation enable` | 必须用户显式操作；`enabledAt` 由 CLI 写入 |
 | 自动化模式用逻辑多视角降级 | 必须物理 3 独立 session；环境不支持 → paused（见 `agent-orchestration-skill §8.4.5`）|
-| 联审不通过仍推进 phase | G-AUTO-CONSENSUS 阻断；3 轮未决 → paused |
+| 联审不通过仍推进 phase | G-AUTO-CONSENSUS 阻断；2 轮未决 → paused |
 
 ---
 
@@ -325,10 +325,10 @@ automation:
 
 | 规格 | 已有产物 / 场景 | 入口系列 | G-RA |
 |------|----------------|---------|------|
-| **大** | 已有 PRD | `requirement-analysis-skill.md`（RA 系列）| 不需要（入口本身）|
-| **中** | 已有 DR | `dr-generate-skill.md`（DR 系列）| **必过** |
-| **小** | 已有 Story | `story-generate-skill.md`（Story 系列）| **必过** |
-| **微** | BUG / 改逻辑 / 调整代码 | `task-generate-skill.md`（Task 系列）| 豁免 |
+| **大** | 已有 DR | `dr-generate-skill.md`（DR 系列）| **必过**（RA 为前置）|
+| **中** | 已有 Story | `story-generate-skill.md`（Story 系列）| **必过** |
+| **小** | 已有 Story+TestCase | CodingPlan 系列 |
+| **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| CodingPlan 系列 |
 | — | 新需求无任何产物且非BUG | 🔴 阻断 | — |
 
 **非编码类路由：**
@@ -345,19 +345,19 @@ automation:
 
 | 规格 | 判定依据 | 入口节点 |
 |------|---------|---------|
-| **大** | 已有 PRD | RA 系列 |
-| **中** | 已有 DR（无PRD或PRD已完成）| DR 系列 |
-| **小** | 已有 Story（无DR）| Story 系列 |
-| **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| Task 系列 |
+| **大** | 已有 DR | `dr-generate-skill.md`（DR 系列）| **必过**（RA 为前置）|
+| **中** | 已有 Story（无DR）| Story 系列 |
+| **小** | 已有 Story+TestCase | CodingPlan 系列 |
+| **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| CodingPlan 系列 |
 
 ### 状态机子链（实际 state.json phase 值）
 
 | scale | phase 序列 | 适用 |
 |-------|-----------|------|
-| 大(14) | initialized→ra-generated→dr-generated→story-generated→story-reviewed→testcase-generated→testcase-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有PRD，走全流程 |
-| 中(13) | initialized→dr-generated→story-generated→story-reviewed→testcase-generated→testcase-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有DR，跳RA |
-| 小(12) | initialized→story-generated→story-reviewed→testcase-generated→testcase-reviewed→task-generated→task-reviewed→coding-process→coding→test-running→code-reviewed→completed | 有Story，跳RA+DR |
-| 微(7) | initialized→task-generated→task-reviewed→coding-process→coding→test-running→completed | BUG/调整，跳RA+DR+Story+TestCase |
+| 大(10) | initialized->ra-generated->dr-generated->story-generated->testcase-generated->coding-process->coding->test-running->code-reviewed->completed | 4 loop（RA-DR-Story-TestCase）+ Coding/Testing |
+| 中(9) | initialized->dr-generated->story-generated->testcase-generated->coding-process->coding->test-running->code-reviewed->completed | 3 loop（DR-Story-TestCase）+ Coding/Testing，跳 RA |
+| 小(6) | initialized->coding-process->coding->test-running->code-reviewed->completed | 有Story+TestCase，直出CodingPlan |
+| 微(6) | initialized->coding-process->coding->test-running->code-reviewed->completed | BUG/调整，无文档直出CodingPlan |
 
 ---
 
@@ -368,7 +368,7 @@ automation:
 | 审核节点 | 讲解主体 | 模板位置 |
 |---------|---------|---------|
 | Story Review | 业务设计故事 | `story-review-skill.md §📖` |
-| Task Generate | 实现拆解故事 | `task-generate-skill.md §📖` |
+| CodingProcess | 骨架分解+CodeAnalysis->CodingPlan | `coding-process-skill.md §A1.5` |
 | Code Review | 代码实现故事 | `code-review-skill.md §📖` |
 
 反模式：`❌ "文档已生成请审核"` / `❌ 只讲故事不展示内容` / `❌ 一次抛大坨等整体确认`
@@ -420,16 +420,16 @@ Phase 1 设计阶段
   ①bis 前端视角接口审视（6维度→story-review-skill §①bis）
   ② Story Review（story-review-skill，含F-Stage前端契约）
   ③ 生成测试用例（testcase-generate-skill）
-  ③bis TestCase Review（testcase-review-skill，TC-1~TC-9循环，3轮无新增退出）
+  ③bis TestCase Review（testcase-review-skill，TC-1~TC-9循环，2轮无新增退出）
   ③ter 业务逻辑汇总
   🔍 审核点1：设计完成确认 + context-pressure
 
 Phase 2 实现阶段
   🔍 审核点1.5：实现方案预确认 + context-pressure
-  ④ Task生成（task-generate-skill）+ 全局Task Review（TR-1~TR-7）
+  ④ CodingProcess（coding-process-skill）：骨架分解->CodeAnalysis->CodingPlan（v3.10.0 砍 Task，骨架分解合并进 §A1.5）
   ④bis CodingProcess（coding-skill能力库）：CodeAnalysis→CodingPlan→Execute
         state.phase=coding-process；G-CODEPLAN-SRC + G-14 通过后才能 Execute
-  🔍 审核点2：Task文档逐文件核对 + context-pressure
+  🔍 审核点2.5：CodingPlan评审（14条门禁+CodingModel 11维）+ context-pressure
   🔍 审核点2.5：CodingPlan评审（14条门禁+CodingModel 11维）+ context-pressure
   ⑤ Execute（按确认后的CodingPlan编码）
 
@@ -451,9 +451,9 @@ PRD收尾（可选）：
 
 ## 流程状态与再启动
 
-**state.json** 路径：`.auto-engineering/{WORKITEM-ID}/state.json`
+**state.json** 路径：`.auto-engineering/{WORKITEM-ID}/state.json`（🆕 v3.10.1 WORKITEM-ID 带随机 UUID 前缀，如 `{uuid}-PRD-001`，保证同业务名不撞目录）
 
-关键字段：`scale` / `entryNode` / `phase` / `currentWorkItem` / `currentStory` / `completedSteps` / `correctionCounts`
+关键字段：`scale` / `entryNode` / `phase` / `stateMachineId`（带 UUID 前缀）/ `stateMachineName`（纯业务名）/ `stateUuid` / `currentWorkItem` / `currentStory` / `completedSteps` / `correctionCounts`
 
 **再启动判定**：
 
@@ -479,7 +479,7 @@ PRD收尾（可选）：
 AE编排层门禁：① 完成后必做 ①bis；② Story含"接口契约"章节（v3.9.5 起合并，含 ①bis 6 维度）；③ Story Review含F-Stage
 
 ### ② Story Review
-循环：挖掘→判定→Proposal→按Proposal修复→再挖掘→退出（连续3轮无新增）
+循环：挖掘→判定→Proposal→按Proposal修复→再挖掘→退出（连续2轮无新增）
 
 退出协议 → `review-loop-skill.md`；F-Stage未通过 → Story Review不完整
 
@@ -601,7 +601,7 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | TestCase Generate | `testcase-generate-skill.md` | 测试用例生成 |
 | TestCase Review | `testcase-review-skill.md` | 测试用例缺陷挖掘循环（TC-1~TC-9）|
 | Story Update | `story-update-skill.md` | Story文档更新 |
-| Task Generate | `task-generate-skill.md` | Task生成+全局Review |
+| CodingProcess | `coding-process-skill.md` | 骨架分解+CodeAnalysis+CodingPlan（v3.10.0 砍 Task）|
 | Coding Process | `coding-process-skill.md` | Task→Coding 编排：CodeAnalysis→CodingPlan→Execute |
 | Coding | `coding-skill.md` | CodingSkill.Plan/Execute 能力库 |
 | Coding Report | `coding-report-skill.md` | Coding 报告生成 |
@@ -689,19 +689,19 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 0b | G-00项目资产检查 | 通过才继续 |
 | 1 | 路由判定（1.5自更新→1.6来源→1.7规模→1.8 G-RA）| 路由明确才继续 |
 | 2 | 生成Story（story-generate-skill）| 文件存在 |
+| 2 | Story loop【Generate-Review】（story-generate + story-review 含F-Stage）| 循环退出（3轮无新增）= phase story-generated |
 | 2b | ①bis 前端视角接口审视 | 6维度通过；Story含"接口契约"章节（含①bis 6维度） |
-| 3 | Story Review（含F-Stage）| 循环退出（3轮无新增）|
-| 4 | 生成测试用例（testcase-generate-skill）| 文件已生成+合规校验通过 |
-| 4a | TestCase Review（testcase-review-skill，TC-1~TC-9）| 循环退出（3轮无新增）|
-| 4-📖 | AI主动讲解Story故事 | 5维度讲清才进审核点1 |
+| 3 | （v3.10.1 已合并入步骤2 loop）| - |
+| 4 | TestCase loop【Generate-Review】（testcase-generate + testcase-review TC-1~TC-9）| 循环退出（3轮无新增）= phase testcase-generated |
+| 4a | （v3.10.1 已合并入步骤4 loop）| - |
 | 4b | 审核点1（设计阶段完成确认）| 用户✅；context-pressure |
 | 4c | 审核点1.5（实现方案预确认）| 用户✅；context-pressure |
-| 5 | 生成Task（task-generate-skill）| 全部Task文件已生成 |
-| 5a | 全局Task Review（TR-1~TR-7）| 3轮无新增才退出 |
-| 5b-📖 | AI主动讲解Task故事 | 5维度讲清才进审核点2 |
-| 5b | 审核点2（Task逐文件核对）| 每文件单独✅；context-pressure |
+| 5 | CodingProcess 骨架分解+CodeAnalysis（coding-process-skill §A1.5+§A2）| CodingPlan 骨架已产出 |
+| 5a | 跑门禁 G-CODEPLAN-SRC+G-14+G-08 | 全过才进审核点2.5 |
+| 5b-📖 | AI主动讲解CodingPlan故事 | 5维度讲清才进审核点2.5 |
+| 5b | 审核点2.5（CodingPlan评审）| 14条门禁全过+用户✅；context-pressure |
 | 5c | ④bis CodingProcess（CodeAnalysis→CodingPlan）| G-CODEPLAN-SRC+G-14通过 |
-| 5b.5 | 审核点2.5（CodingPlan评审）| 14条门禁全过+用户✅；context-pressure |
+| 5b.5 | （v3.10.0 已合并入步骤5b）| - |
 | 6 | Execute（coding-skill）| 代码按 CodingPlan 落地，编译预检无阻断 |
 | 7 | Test Generate（test-generate-skill）| TEST_REPORT 已生成，证据链齐 |
 | 7a | Test Review（test-review-skill）| test-verifier 独立复核通过；G-09/G-10 通过 |

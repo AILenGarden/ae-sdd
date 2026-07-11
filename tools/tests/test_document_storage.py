@@ -23,26 +23,26 @@ class TestResolvePathVersion(unittest.TestCase):
     def test_dict_major_minor_version(self):
         tmp = _setup_project()
         r = document_storage.resolve_path(
-            tmp / ".ae-sdd", "test", "TEST_REPORT",
+            tmp / ".ae-sdd", "test", "TRACE_MATRIX",
             story_id="STORY-001", version={"major": 2, "minor": 3},
         )
-        self.assertTrue(r.full_path.endswith("STORY-001-Report-v2-r3.md"))
+        self.assertTrue(r.full_path.endswith("STORY-001-追溯矩阵-v2-r3.md"))
 
     def test_dict_v_r_version(self):
         tmp = _setup_project()
         r = document_storage.resolve_path(
-            tmp / ".ae-sdd", "test", "TEST_REPORT",
+            tmp / ".ae-sdd", "test", "TRACE_MATRIX",
             story_id="STORY-001", version={"v": 2, "r": 4},
         )
-        self.assertTrue(r.full_path.endswith("STORY-001-Report-v2-r4.md"))
+        self.assertTrue(r.full_path.endswith("STORY-001-追溯矩阵-v2-r4.md"))
 
     def test_string_version(self):
         tmp = _setup_project()
         r = document_storage.resolve_path(
-            tmp / ".ae-sdd", "test", "CODING_REPORT",
+            tmp / ".ae-sdd", "test", "TRACE_MATRIX",
             story_id="STORY-001", version="v3-r5",
         )
-        self.assertTrue(r.full_path.endswith("STORY-001-CodingReport-v3-r5.md"))
+        self.assertTrue(r.full_path.endswith("STORY-001-追溯矩阵-v3-r5.md"))
 
     def test_compare_version_string(self):
         tmp = _setup_project()
@@ -70,16 +70,15 @@ class TestSaveDoc(unittest.TestCase):
         # 设计类无版本号
         self.assertIsNone(result.new_version)
 
-    def test_save_doc_appends_changelog(self):
-        """save_doc 追加 ChangeLog 到文档同级目录。"""
+    def test_save_doc_no_changelog(self):
+        """🆕 v3.10.1：save_doc 不再生成 ChangeLog 旁车文件。"""
         tmp = _setup_project()
         document_storage.save_doc(
             tmp / ".ae-sdd", "test", "STORY", "# Story",
             story_id="STORY-001-BE", changelog_note="首次创建",
         )
         cl = tmp / "ae-sdd-doc" / "Story" / "STORY-001-BE-changelog.md"
-        self.assertTrue(cl.is_file())
-        self.assertIn("首次创建", cl.read_text(encoding="utf-8"))
+        self.assertFalse(cl.is_file(), "v3.10.1 不应生成 ChangeLog 旁车文件")
 
     def test_save_doc_updates_storing_index(self):
         """save_doc 更新单一 ae-sdd-doc/STORING.md 索引。"""
@@ -106,17 +105,17 @@ class TestSaveDoc(unittest.TestCase):
         self.assertIn("ae-sdd-doc/", gi.read_text(encoding="utf-8"))
 
     def test_save_doc_version_increment_for_report(self):
-        """事件类报告（CODING_REPORT）未显式传 version 时 r 自增。"""
+        """事件类报告（TRACE_MATRIX）未显式传 version 时 r 自增。"""
         tmp = _setup_project()
         # 第一份：应为 v1-r1
         r1 = document_storage.save_doc(
-            tmp / ".ae-sdd", "test", "CODING_REPORT", "# Coding 报告 r1",
+            tmp / ".ae-sdd", "test", "TRACE_MATRIX", "# 追溯矩阵 r1",
             story_id="STORY-001", changelog_note="首轮",
         )
         self.assertTrue(r1.success, msg=r1.error)
         # 第二份：未传 version，应自增到 r2
         r2 = document_storage.save_doc(
-            tmp / ".ae-sdd", "test", "CODING_REPORT", "# Coding 报告 r2",
+            tmp / ".ae-sdd", "test", "TRACE_MATRIX", "# 追溯矩阵 r2",
             story_id="STORY-001", changelog_note="次轮",
         )
         self.assertTrue(r2.success, msg=r2.error)
@@ -195,8 +194,8 @@ class TestFinalizeDoc(unittest.TestCase):
         # 内容未被覆盖
         self.assertEqual(target.read_text(encoding="utf-8"), original)
 
-    def test_finalize_appends_changelog(self):
-        """finalize 追加 ChangeLog 到文件同级目录。"""
+    def test_finalize_no_changelog(self):
+        """🆕 v3.10.1：finalize 不再生成 ChangeLog 旁车文件。"""
         tmp = _setup_project()
         target = tmp / "ae-sdd-doc" / "Story" / "STORY-003-BE.md"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -207,8 +206,7 @@ class TestFinalizeDoc(unittest.TestCase):
             story_id="STORY-003-BE", changelog_note="补登记",
         )
         cl = target.parent / "STORY-003-BE-changelog.md"
-        self.assertTrue(cl.is_file())
-        self.assertIn("补登记", cl.read_text(encoding="utf-8"))
+        self.assertFalse(cl.is_file(), "v3.10.1 不应生成 ChangeLog 旁车文件")
 
     def test_finalize_updates_storing(self):
         """finalize 更新 STORING.md 索引（用已写文件路径）。"""

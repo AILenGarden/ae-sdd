@@ -148,13 +148,14 @@ def _infer_scale_from_lines(text: str) -> Optional[str]:
 
 def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[tuple[str, float, str]]:
     """🆕 v3.5.10 Gap-014：从项目已有产物推断规模，覆盖行数推断的误判。
+    🆕 v3.10.0 Route 下移重分级：大=DR入口、中=Story入口、小=CodingPlan入口、微=无文档。
 
     优先级（任一命中即覆盖）：
-      1. .auto-engineering/{storyId}/state.json 有 blockingGaps ≥ 5 → 大（0.9）
-      2. 已有 RA 文档且 ≥ 100 行 → 大（0.85）
-      3. 已有 Story 文档 → 小（0.8）（新路由：有Story = 小任务入口）
-      4. 已有 Task 文档但无 Story → 微（0.7）（新路由：有Task/BUG = 微任务入口）
-      5. 无任何产物 → 返回 None（交回行数推断）
+      1. .auto-engineering/{storyId}/state.json 有 blockingGaps ≥ 5 -> 大（0.9）
+      2. 已有 RA 文档且 ≥ 100 行 -> 大（0.85）
+      3. 已有 Story 文档 -> 中（0.8）（v3.10.0：有Story = 中任务入口）
+      4. 已有 TestCase 但无 Story -> 小（0.7）（v3.10.0：有TestCase = 小任务 CodingPlan 入口）
+      5. 无任何产物 -> 返回 None（交回行数推断）
 
     Returns:
         (scale, confidence, reason) 或 None（无项目上下文或无产物）
@@ -230,21 +231,21 @@ def _infer_scale_from_project_context(project_root: Optional[Path]) -> Optional[
         except OSError:
             pass
 
-    # 3c) 已有 Story 文档 → 小（新路由：已有Story = 从Story系列入 = 小任务）
+    # 3c) 已有 Story 文档 -> 中（v3.10.0：已有Story = 从Story系列入 = 中任务）
     if (project_root / "design").is_dir():
         try:
             story_files = list((project_root / "design").rglob("*.md"))
             if story_files and any("story" in f.name.lower() for f in story_files):
-                return ("小", 0.8, "已有 Story 文档 → 小（从 Story 系列入）")
+                return ("中", 0.8, "已有 Story 文档 -> 中（从 Story 系列入）")
         except OSError:
             pass
 
-    # 3d) 已有 Task 文档但无 Story → 微（新路由：已有Task/BUG = 从Task系列入 = 微任务）
-    if (project_root / "task").is_dir():
+    # 3d) 已有 TestCase 但无 Story -> 小（v3.10.0：有TestCase = CodingPlan 入口 = 小任务）
+    if (project_root / "design").is_dir():
         try:
-            task_files = list((project_root / "task").rglob("*.md"))
-            if task_files:
-                return ("微", 0.7, "已有 Task 文档 → 微（从 Task 系列入，BUG/调整类）")
+            tc_files = list((project_root / "design").rglob("*testcase*")) + list((project_root / "design").rglob("*TestCase*"))
+            if tc_files:
+                return ("小", 0.7, "已有 TestCase 文档 -> 小（从 CodingPlan 系列入）")
         except OSError:
             pass
 
@@ -331,11 +332,12 @@ def classify(text: str, *, filename: Optional[str] = None,
     multi_agent = scale in ("中", "大")
 
     # 下一步建议（v1.1：next_action 是工作流步骤名，与 PHASE_FLOW 解耦）
-    # - "微" 规模 → coding（直接干）
-    # - source=PRD/DR + 非微 → dr-generate（已结构化，直接生成 DR）
-    # - source=对话/Issue/未知 + 非微 → requirement-analysis（先分析再生成 DR）
-    if scale == "微":
-        next_action = "coding"
+    # 🆕 v3.10.0 Route 下移重分级：
+    # - "微"/"小" 规模 -> coding-process（直出 CodingPlan；微无文档，小有 Story+TestCase）
+    # - source=DR + 非微小 -> dr-generate（大任务 DR 入口）
+    # - source=对话/Issue/未知 + 非微小 -> requirement-analysis（先分析再生成 DR）
+    if scale in ("微", "小"):
+        next_action = "coding-process"
     elif source in ("PRD", "DR"):
         next_action = "dr-generate"
     else:  # 对话 / Issue

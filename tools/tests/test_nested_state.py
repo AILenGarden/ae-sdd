@@ -385,13 +385,13 @@ class TestNestedNextStepSuggestion(unittest.TestCase):
             state_machine_id="Story-003", state_machine_name="test",
             story_ids=["STORY-003-BE"],
         )
-        state.set_scale(s, "小")
+        state.set_scale(s, "中")  # 🆕 v3.10.0：Story 入口 = 中链
         state.set_story_substate_phase(s, "STORY-003-BE", "story-generated")
 
         suggestion = state.next_step_suggestion(s)
 
         assert suggestion["current"] == "story-generated"
-        assert suggestion["next"] == "story-reviewed"
+        assert suggestion["next"] == "testcase-generated"  # v3.10.1 子系列合并
 
 
 class TestNestedFlowMonitor:

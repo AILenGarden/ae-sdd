@@ -115,15 +115,15 @@ class TestMultiAgent(unittest.TestCase):
 class TestNextAction(unittest.TestCase):
     """next_action 建议测试"""
 
-    def test_micro_goes_to_coding(self):
+    def test_micro_goes_to_coding_process(self):
+        # 🆕 v3.10.0：微链从 coding-process 起（不再直接 coding）
         c = classify.classify("fix typo in README")
-        self.assertEqual(c.next_action, "coding")
+        self.assertEqual(c.next_action, "coding-process")
 
-    def test_small_dialogue_goes_to_requirement_analysis(self):
-        # 小规模对话源 → 先做需求分析
+    def test_small_goes_to_coding_process(self):
+        # 🆕 v3.10.0：小链 = CodingPlan 入口 -> next_action = coding-process
         c = classify.classify("我想要修改用户头像的小任务")
-        # "小任务" 命中 scale=小，source=对话 → next_action = requirement-analysis
-        self.assertEqual(c.next_action, "requirement-analysis")
+        self.assertEqual(c.next_action, "coding-process")
 
     def test_small_dr_keyword_goes_to_dr_generate(self):
         # DR 源 + 中等规模 → dr-generate

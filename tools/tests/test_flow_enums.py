@@ -40,7 +40,8 @@ class TestFlowNodeEnum(unittest.TestCase):
             self.assertIsInstance(node.value, str)
 
     def test_all_nodes_present(self):
-        expected = {"PRD", "RA", "DR", "STORY", "TASK", "PLAN"}
+        # 🆕 v3.10.0：新增 BUG（微任务入口），TASK deprecated 但保留
+        expected = {"PRD", "RA", "DR", "STORY", "TASK", "PLAN", "BUG"}
         actual = {n.value for n in FlowNode}
         self.assertEqual(actual, expected)
 
@@ -240,13 +241,14 @@ class TestAppendEvent(unittest.TestCase):
         self.assertEqual(s["events"][1]["event"], "skill-completed")
 
     def test_append_does_not_affect_history(self):
-        """events 独立，不影响现有 history / phase 字段"""
+        """events 独立，不影响现有 history / phase 字段。
+        🆕 v3.10.0：大链从 dr-generated 起（ra-generated 已移除）。"""
         s = state_mod.read_state(self.state_path)
-        state_mod.set_phase(s, "ra-generated")
+        state_mod.set_phase(s, "dr-generated")
         ev = make_routed_to(1, self.TS, FlowNode.RA, FlowSkill.REQUIREMENT_ANALYSIS)
         state_mod.append_event(s, ev)
         # phase 和 history 不变
-        self.assertEqual(s["phase"], "ra-generated")
+        self.assertEqual(s["phase"], "dr-generated")
         self.assertEqual(len(s["history"]), 1)
         # events 独立增长
         self.assertEqual(len(s["events"]), 1)

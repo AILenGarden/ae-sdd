@@ -18,15 +18,15 @@ description: Coding 报告产出 SKILL — Phase 2 ⑤ Coding 完成后的报告
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
 > **🔴 强制：** 本 SKILL 生成的 Coding 报告在写入磁盘前**必须先调用 [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)** 的 API，**不再手写路径**：
-> 1. **存文档**：`ae-sdd doc save --intent CODING_REPORT --work-item {W} --story-id {S?} --version "v1-r1" --content-file 草稿.md`（路径/版本/ChangeLog 全由代码负责）
-> 2. 事件类文档带 `v{N}-r{M}`（v=Story 版本，r=Coding 轮次）；重入时 r 自增、不修改历史
-> 3. ChangeLog / STORING / .gitignore 由 `ae-sdd doc save` 自动处理
+> 1. **存文档**：`ae-sdd doc save --intent CODING_REPORT --work-item {W} --story-id {S?} --content-file 草稿.md`（路径/版本/ChangeLog 全由代码负责）
+> 2. 报告类文档原地更新（v3.10.1 去版本号，一份最终版，不保留历史版本）
+> 3. STORING / .gitignore 由 `ae-sdd doc save` 自动处理
 
 | 输出文档 | API 调用 | 命名规则 | 重入时动作 |
 |---------|---------|---------|----------|
-| Coding 报告 | `ae-sdd doc save --intent CODING_REPORT --work-item {W} --story-id {S?} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M} | **新增**（r 自增）|
-| Test 报告（由测试 SKILL 产出）| `ae-sdd doc save --intent TEST_REPORT --work-item {W} --story-id {S?} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M} | **新增**（r 自增）|
-| ⑦bis 追溯矩阵 | `ae-sdd doc save --intent TRACE_MATRIX --work-item {W} --story-id {S?} --version "v1-r1" --content-file 草稿.md` | 带 v{N}-r{M} | **新增**（r 自增）|
+| Coding 报告 | `ae-sdd doc save --intent CODING_REPORT --work-item {W} --story-id {S?} --content-file 草稿.md` | 原地更新（不带版本号）|
+| Test 报告（由测试 SKILL 产出）| `ae-sdd doc save --intent TEST_REPORT --work-item {W} --story-id {S?} --content-file 草稿.md` | 原地更新（不带版本号）|
+| ⑦bis 追溯矩阵 | `ae-sdd doc save --intent TRACE_MATRIX --work-item {W} --story-id {S?} --version "v1-r1" --content-file 草稿.md` | 原地更新（不带版本号）|
 
 > 🔴 **关键：** Coding 报告**不修改历史**，每次重入都新增一份（r 递增），保留完整审计轨迹。≥ r4 的旧版本可归档到 `archive/{date}/`。
 

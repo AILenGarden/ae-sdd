@@ -3,6 +3,14 @@ name: task-generate
 description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Task 实现文档。当 Story Update SKILL 修改了 Task 列表时自动触发，或开发者说"生成 Task"、"写 Task 文档"时触发。生成完成后触发 Coding SKILL。
 ---
 
+
+> **🔴 DEPRECATED v3.10.0：** Task phase 已从主流程移除。骨架分解（类名/包路径/方法签名/≤10行伪代码）
+> 已合并进 `coding-process-skill.md §A1.5`。本 SKILL 不再在主流程中触发（PHASE_FLOWS 已移除
+> task-generated/task-reviewed）。文件保留用于：
+> 1. 旧 state.json 兼容（含 task-generated phase 的历史 state 可正常读取）
+> 2. 手动生成 Task 文档作为可选上下文（非主流程）
+> 3. 参考：骨架分解要求已迁移至 coding-process-skill §A1.5
+
 # Task Generate — Task 文档生成 Skill
 
 ## 目标
@@ -40,7 +48,6 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
      --story-id {STORY-ID?} \
      --doc-id {TASK-ID} \
      --content-file .ae-sdd/tmp/{doc-id}-draft.md \
-     --changelog-note "{一句话修改说明}"
    ```
 3. **确认输出**：命令输出最终路径，记录到产出清单
 
@@ -659,7 +666,7 @@ ae-sdd doc save --intent TASK_IMPL_PLAN --work-item {W} --story-id {S?} --doc-id
     - 类骨架不全 = 补
     - DO 字段不一致 / SQL WHERE 不明确 / 测试数据不可追溯 / 核心场景未标真实 DB 或 HTTP / 验证点未覆盖 / 调试回滚 < 5 类 = 修补对应章节
     ↓
-5. 🔴 落地：Write 草稿后调 `ae-sdd doc save --intent CODING_PLAN --work-item {W} --story-id {S?} --content-file 草稿.md --changelog-note "..."`（路径/版本/ChangeLog 全由代码负责）落地存储，确认 G-DOC-STORAGE 通过
+5. 🔴 落地：Write 草稿后调 `ae-sdd doc save --intent CODING_PLAN --work-item {W} --story-id {S?} --content-file 草稿.md`（路径/版本/ChangeLog 全由代码负责）落地存储，确认 G-DOC-STORAGE 通过
 6. 🔴 输出统一版 `{WORKITEM-ID}-CodingPlan.md` 给用户审核
     - 用户必须明确说"确认"/"同意"/"可以开始"才能进入 ⑦ Coding
     - 模糊回复（如"好"/"行"/"看看"）需 AI 追问确认

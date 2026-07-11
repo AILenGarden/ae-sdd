@@ -9,12 +9,54 @@ import json
 import os
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.9.22"
+MASTER_VERSION = "3.10.1"
+
+
+# ─── 🆕 v3.10.1 state UUID 前缀（保证目录名/stateMachineId 全局唯一）─────────
+# 用户要求：创建 state 时最前面带随机 UUID，防止同业务名撞目录互相覆盖。
+# UUID 只在创建时生成一次并持久化，之后所有查找/读取通过已持久化字段定位。
+# build_state_machine_name 保持确定性（纯业务名），UUID 前缀在创建入口拼接。
+
+# 标准 UUID v4 格式：8-4-4-4-12 共 36 字符（含 4 个连字符）
+_UUID_PREFIX_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-"
+)
+
+
+def generate_state_uuid() -> str:
+    """🆕 v3.10.1 生成一个随机 state UUID（标准 v4，36 字符）。
+
+    复用 session.py 的 str(uuid.uuid4()) 惯例，保证与 sessionId 生成方式一致。
+    仅在 state 创建入口调用一次，生成后持久化到 stateUuid 字段 + 目录名前缀。
+    """
+    return str(uuid.uuid4())
+
+
+def strip_uuid_prefix(name: str) -> str:
+    """🆕 v3.10.1 剥离目录名/stateMachineId 的 UUID 前缀，返回纯业务名。
+
+    输入 ``{uuid}-PRD-IM-CS`` -> 返回 ``PRD-IM-CS``；
+    输入无 UUID 前缀（如 ``PRD-IM-CS``）-> 原样返回（向后兼容旧 state）。
+
+    用 _UUID_PREFIX_RE 精确匹配 36 字符 UUID + 连字符，不会误剥业务名。
+    """
+    if not name:
+        return name
+    m = _UUID_PREFIX_RE.match(name)
+    if m:
+        return name[m.end():]
+    return name
+
+
+def has_uuid_prefix(name: str) -> bool:
+    """🆕 v3.10.1 判断目录名/stateMachineId 是否带 UUID 前缀。"""
+    return bool(name and _UUID_PREFIX_RE.match(name))
 
 
 def compare_versions(installed: Optional[str], master: str = MASTER_VERSION) -> Optional[str]:
@@ -204,6 +246,7 @@ def _state_matches_work_item(state_data: dict, token: str) -> bool:
         state_data.get("workItemId"),
         state_data.get("workItemKey"),
         state_data.get("stateMachineId"),
+        state_data.get("stateMachineName"),  # 🆕 v3.10.1 纯业务名（无 UUID 前缀），供按业务名 token 匹配
         state_data.get("currentWorkItem"),
         state_data.get("activeWorkItem"),
         state_data.get("currentStory"),
@@ -223,7 +266,11 @@ def _state_matches_work_item(state_data: dict, token: str) -> bool:
 
 
 def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Optional[Path]:
-    """Find an existing isolated state.json by directory key or recorded id."""
+    """Find an existing isolated state.json by directory key or recorded id.
+
+    🆕 v3.10.1 增加后缀匹配：目录名带 UUID 前缀时（``{uuid}-PRD-IM-CS``），
+    传业务名 token（``PRD-IM-CS``）也能命中。
+    """
     token = (work_item_id_or_key or "").strip()
     if not token:
         return None
@@ -244,6 +291,9 @@ def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Option
     if not base.is_dir():
         return None
 
+    # 🆕 v3.10.1 后缀匹配模式：token 是纯业务名时，匹配 {uuid}-{token} 目录
+    suffix = f"-{normalized}"
+
     matches: list[Path] = []
     prefix = f"{normalized}{_WORK_ITEM_DIR_SEP}"
     for child in sorted(base.iterdir()):
@@ -252,7 +302,9 @@ def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Option
         state_file = child / "state.json"
         if not state_file.is_file():
             continue
-        if child.name == token or child.name == normalized or child.name.startswith(prefix):
+        if (child.name == token or child.name == normalized
+                or child.name.startswith(prefix)
+                or (has_uuid_prefix(child.name) and child.name.endswith(suffix))):
             matches.append(state_file)
             continue
         try:
@@ -267,18 +319,25 @@ def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Option
 
 
 def work_item_state_path(ade_sdd: Path, top_node: str,
-                         features: Optional[dict] = None) -> Path:
+                         features: Optional[dict] = None,
+                         state_uuid: Optional[str] = None) -> Path:
     """🆕 v3.9.3 简化：直接走 R6 顶层名，不再探测旧目录。
+    🆕 v3.10.1 state_uuid 传入时目录名加 UUID 前缀保证唯一性。
 
     Args:
         ade_sdd: 项目 .ae-sdd 目录
         top_node: 顶层节点类型 "PRD" / "DR" / "STORY" / "TASK"
         features: 顶层特征字典（见 work_item_dir_name）
+        state_uuid: 🆕 v3.10.1 随机 UUID（创建时生成）。传入则目录名变
+                    ``{uuid}-{R6业务名}``；不传则纯业务名（查找/向后兼容用）。
 
     Returns:
         {项目根}/.auto-engineering/{R6 顶层名}/state.json
+        state_uuid 非空时顶层名带 UUID 前缀。
     """
-    return work_items_dir(ade_sdd) / work_item_dir_name(top_node, features) / "state.json"
+    biz_name = work_item_dir_name(top_node, features)
+    dir_name = f"{state_uuid}-{biz_name}" if state_uuid else biz_name
+    return work_items_dir(ade_sdd) / dir_name / "state.json"
 
 
 def assets_dir(ade_sdd: Path) -> Path:
@@ -674,7 +733,19 @@ def build_state_machine_name(top_node: str, features: dict) -> str:
         if not task_id:
             raise ValueError("top_node=TASK 必须提供 task_id")
         return "Task-" + task_id
-    raise ValueError(f"未知 top_node: {top_node}（允许: PRD/DR/STORY/TASK）")
+    if top_node == "BUG":
+        # 🆕 v3.10.0 微任务无文档：Bug-{task_id}
+        task_id = (features or {}).get("task_id") or ""
+        if not task_id:
+            raise ValueError("top_node=BUG 必须提供 task_id")
+        return "Bug-" + task_id
+    if top_node == "PLAN":
+        # 🆕 v3.10.0 小任务 CodingPlan 入口：Plan-{plan_id}
+        plan_id = (features or {}).get("plan_id") or ""
+        if not plan_id:
+            raise ValueError("top_node=PLAN 必须提供 plan_id")
+        return "Plan-" + plan_id
+    raise ValueError(f"未知 top_node: {top_node}（允许: PRD/DR/STORY/TASK/BUG/PLAN）")
 
 
 def _scan_nested_states(ade_sdd: Path) -> list[tuple[Path, dict]]:

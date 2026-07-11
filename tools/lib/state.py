@@ -44,14 +44,17 @@ Story/Task/Plan 级（txn 级）：
 }
 
 🆕 v3.5.15 多入口状态机：4 子链 + scale 路由（详见 PHASE_FLOWS 注释）
-  - 大链（14 phase）：已有PRD，走全流程 initialized→ra-generated→dr-generated→...→completed
-  - 中链（13 phase）：已有DR，跳RA，从DR系列入
-  - 小链（12 phase）：已有Story，跳RA+DR，从Story系列入
-  - 微链（8 phase）：BUG/调整，从Task系列入（含轻量CodingPlan），跳RA+DR+Story+TestCase；
-    🆕 2026-07-03(B1)：加回 code-reviewed，与设计文档"CodeReview 报告不豁免"对齐
-  - 🆕 v3.7.0：大/中/小链新增 testcase-generated→testcase-reviewed（TestCase 独立系列，
-    story-reviewed 之后、task-generated 之前；微链不受影响，仍跳过整个 TestCase 系列）
-  - 旧 state 无 scale → _infer_scale 按 completedSteps/phase 反推，默认"大"（最保守）
+🆕 v3.10.0 砍 Task phase + Route 下移重分级：
+  - 移除所有链中的 task-generated/task-reviewed（骨架分解合并进 CodingProcess）
+  - 大=DR 入口（原 PRD 层弃用，RA 降为前置条件不在链内生成）
+  - 中=Story 入口（原 小链）
+  - 小=CodingPlan 入口（新增，直出 CodingPlan）
+  - 微=无文档（BUG/配置，直出 CodingPlan）
+  - 大链（11 phase）：已有DR initialized->dr-generated->...->completed
+  - 中链（10 phase）：已有Story，跳DR，从Story系列入
+  - 小链（6 phase）：已有Story+TestCase，直出CodingPlan
+  - 微链（6 phase）：BUG/调整，无文档直出CodingPlan
+  - 旧 state 无 scale -> _infer_scale 按 completedSteps/phase 反推，默认“大”（最保守）
 
 PRD 级（.auto-engineering/{PRD-ID}/state.json）：
 同上结构，events 中用 txnName 字段区分不同子任务的事件，
@@ -78,29 +81,21 @@ from lib.flow_enums import FlowEvent, FlowEventType, FlowNode, FlowSkill  # noqa
 #   scale 由 classify() 判定，首次 state write --scale 携带写入；旧 state 无 scale → _infer_scale 反推。
 #   BUG/配置类 → scale="微" + entryNode=BUG/CONFIG（复用微链，不单独开链）。
 PHASE_FLOWS: dict[str, list[str]] = {
-    "大": [   # 大任务：已有 PRD，走全流程 RA→DR→Story→TestCase→Task→CodingProcess→Coding
-        "initialized", "ra-generated", "dr-generated", "story-generated", "story-reviewed",
-        "testcase-generated", "testcase-reviewed",
-        "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
+    "大": [   # 大任务：4 loop（RA-DR-Story-TestCase）+ Coding/Testing 2 phase
+        "initialized", "ra-generated", "dr-generated", "story-generated",
+        "testcase-generated",
+        "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "中": [   # 中任务：已有 DR，跳 RA，从 DR 系列入
-        "initialized", "dr-generated", "story-generated", "story-reviewed",
-        "testcase-generated", "testcase-reviewed",
-        "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
+    "中": [   # 中任务：3 loop（DR-Story-TestCase）+ Coding/Testing 2 phase，跳 RA
+        "initialized", "dr-generated", "story-generated",
+        "testcase-generated",
+        "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "小": [   # 小任务：已有 Story，跳 RA+DR，从 Story 系列入
-        "initialized", "story-generated", "story-reviewed",
-        "testcase-generated", "testcase-reviewed",
-        "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
+    "小": [   # 小任务：已有 Story+TestCase，直出 CodingPlan
+        "initialized", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "微": [   # 微任务/BUG/配置类：从 Task 系列入（含轻量 CodingPlan），跳 RA+DR+Story+TestCase
-        # 🆕 2026-07-03 一致性修复（B1）：微链加回 code-reviewed phase。
-        # 设计文档 conventions.md §3.1 明确"出 CodeReview 报告 ❌不豁免"，
-        # 此前微链序列 (...→test-running→completed) 物理跳过 code-reviewed，
-        # 导致 gate_intercept 微链 code-reviewed 门禁(G-09/G-CODE-1)声明却不可达（死代码）。
-        # 现对齐设计：微任务也必须出 CodeReview 报告，与 coding-process-skill.full.md:180
-        # "微任务 CodingPlan 全流程" 一致。
-        "initialized", "task-generated", "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
+    "微": [   # 微任务/BUG/配置类：无文档，直出 CodingPlan
+        "initialized", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
 }
 
@@ -154,13 +149,14 @@ def record_history(state: dict, phase: str, by: str = "ae-sdd") -> None:
 
 def _infer_scale(state: dict) -> tuple[str, float, str]:
     """🆕 v3.5.15 旧 state 兼容：无 scale 字段时按 completedSteps/phase 反推规模。
+    🆕 v3.10.0 Route 下移重分级后更新推断优先级。
 
     推断优先级（任一命中即定）：
-      1. completedSteps 含 dr/story → 大（走完整主干）
-      2. completedSteps 含 story 但无 dr → 中
-      3. completedSteps 含 task 但无 story → 小
-      4. phase ∈ {coding,test-running,code-reviewed,completed} 且 completedSteps 无 ra → 微
-      5. 无法判定 → 默认"大"（最保守，含全主干，避免误放行跳 RA）
+      1. completedSteps 含 dr -> 大（DR 入口，完整主干）
+      2. completedSteps 含 story 但无 dr -> 中（Story 入口）
+      3. completedSteps 含 coding 但无 story -> 小（CodingPlan 入口）
+      4. phase ∈ {coding,test-running,code-reviewed,completed} 且 completedSteps 无 story -> 微
+      5. 无法判定 -> 默认“大”（最保守，含全主干）
 
     Returns:
         (scale, confidence, reason)；confidence<0.5 时调用方应 warn 提示用户显式 --scale
@@ -169,21 +165,19 @@ def _infer_scale(state: dict) -> tuple[str, float, str]:
     completed_text = " ".join(completed)
     phase = state.get("phase", "initialized")
 
+    has_ra = any("ra" in (s or "").lower() for s in completed)
     has_dr = any("dr" in (s or "").lower() for s in completed)
     has_story = any("story" in (s or "").lower() for s in completed)
-    has_task = any("task" in (s or "").lower() for s in completed)
-    has_ra = any("ra" in (s or "").lower() for s in completed) or "ra-generated" == phase
+    has_coding = any("coding" in (s or "").lower() for s in completed)
 
-    if has_dr:
-        return ("大", 0.9, "completedSteps 含 dr → 大（完整主干）")
+    if has_ra or has_dr:
+        return ("大", 0.9, "completedSteps 含 ra/dr -> 大（4 loop 完整主干）")
     if has_story:
-        return ("中", 0.85, "completedSteps 含 story 但无 dr → 中")
-    if has_task:
-        return ("小", 0.8, "completedSteps 含 task 但无 story → 小")
-    # 🟡 v3.5.15 安全策略：phase=task-generated/coding 等阶段无法可靠区分
-    #   微链（BUG/调整，Task系列入）vs 小链（已有Story，Story系列入）——has_task 对两者均命中。
-    #   故 task/coding 阶段反推"小"，置信度 0.8（会告警），要求用户显式 --scale。
-    #   微任务应在首次 state write 时显式带 --scale=微，不靠反推。
+        return ("中", 0.85, "completedSteps 含 story 但无 ra/dr -> 中（Story 入口）")
+    if has_coding:
+        # 🟡 v3.10.0：coding 阶段无法可靠区分小链（CodingPlan 入口）vs 微链（无文档）
+        #   反推“小”置信度 0.8（会告警），要求用户显式 --scale=微。
+        return ("小", 0.8, "completedSteps 含 coding 但无 story -> 小（CodingPlan 入口）")
     # 默认最保守
     return ("大", 0.3, "无法判定规模，默认大（最保守，需用户显式 --scale）")
 
@@ -395,58 +389,43 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
 # key = scale；每条子链独立 mapping，next 与 PHASE_FLOWS[scale] 一致。
 _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
     "大": {
-        "initialized":     ("ra-generated",     "跑需求分析（RA）+ G-RA 门卫",            "requirement-analysis-skill.md"),
-        "ra-generated":    ("dr-generated",     "生成 DR（Design Requirement）",          "dr-generate-skill.md"),
+        "initialized":     ("ra-generated",     "执行 RA generate+review loop【Generate-Review】（8维度需求分析+16道闸，2轮无新缺陷退出）", "requirement-analysis-skill.md"),
+        "ra-generated":    ("dr-generated",     "执行 DR generate+review loop【Generate-Review】（从 RA 生成 DR + DR Review，2轮无新缺陷退出）", "dr-generate-skill.md"),
         "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
-        "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
-        "story-reviewed":  ("testcase-generated", "生成测试用例",                         "testcase-generate-skill.md"),
-        "testcase-generated": ("testcase-reviewed", "执行 TestCase Review（TC-1~TC-9）",  "testcase-review-skill.md"),
-        "testcase-reviewed": ("task-generated", "生成 Task",                              "task-generate-skill.md"),
-        "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
-        "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
+        "story-generated": ("testcase-generated", "Story generate+review loop【Generate-Review】（含 F-Stage 前端契约，2轮无新缺陷退出）", "story-generate-skill.md"),
+        "testcase-generated": ("coding-process",  "TestCase generate+review loop【Generate-Review】（TC-1~TC-9，2轮无新缺陷退出）", "testcase-generate-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
-        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
-        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "中": {
-        "initialized":     ("dr-generated",     "生成 DR（已有 DR，从 DR 系列入，跳 RA）",  "dr-generate-skill.md"),
+        "initialized":     ("dr-generated",     "执行 DR generate+review loop【Generate-Review】（已有 DR 上下文，生成 DR + DR Review，2轮无新缺陷退出）", "dr-generate-skill.md"),
         "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
-        "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
-        "story-reviewed":  ("testcase-generated", "生成测试用例",                         "testcase-generate-skill.md"),
-        "testcase-generated": ("testcase-reviewed", "执行 TestCase Review（TC-1~TC-9）",  "testcase-review-skill.md"),
-        "testcase-reviewed": ("task-generated", "生成 Task",                              "task-generate-skill.md"),
-        "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
-        "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
+        "story-generated": ("testcase-generated", "Story generate+review loop【Generate-Review】（含 F-Stage 前端契约，2轮无新缺陷退出）", "story-generate-skill.md"),
+        "testcase-generated": ("coding-process",  "TestCase generate+review loop【Generate-Review】（TC-1~TC-9，2轮无新缺陷退出）", "testcase-generate-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
-        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
-        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "小": {
-        "initialized":     ("story-generated",  "生成 Story（已有 Story，从 Story 系列入，跳 RA+DR）", "story-generate-skill.md"),
-        "story-generated": ("story-reviewed",   "执行 Story Review（含 F-Stage 前端契约）", "story-review-skill.md"),
-        "story-reviewed":  ("testcase-generated", "生成测试用例",                         "testcase-generate-skill.md"),
-        "testcase-generated": ("testcase-reviewed", "执行 TestCase Review（TC-1~TC-9）",  "testcase-review-skill.md"),
-        "testcase-reviewed": ("task-generated", "生成 Task",                              "task-generate-skill.md"),
-        "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
-        "task-reviewed":   ("coding-process",   "执行 CodingProcess（加载5上下文+调CodingSkill做CodeAnalysis+出CodePlan）", "coding-process-skill.md"),
+        "initialized":     ("coding-process",   "执行 CodingProcess（已有 Story+TestCase，直出 CodingPlan：骨架分解+CodeAnalysis+统一 CodingPlan）", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
-        "code-reviewed":   ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
-        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "微": {
-        "initialized":     ("task-generated",   "生成 Task（BUG/调整，从 Task 系列入，跳 RA+DR+Story）", "task-generate-skill.md"),
-        "task-generated":  ("task-reviewed",    "执行 Task Review",                       "task-generate-skill.md"),
-        "task-reviewed":   ("coding-process",   "执行 CodingProcess（微任务轻量：加载上下文+出CodePlan）", "coding-process-skill.md"),
+        "initialized":     ("coding-process",   "执行 CodingProcess（BUG/调整，无文档直出 CodingPlan：轻量骨架分解+CodeAnalysis+CodePlan）", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate→test-review，出具并复核测试报告）", "test-generate-skill.md"),
-        "test-running":    ("completed",        "等待用户最终确认 → completed",            "（人工审核）"),
-        "completed":       ("（已结束）",        "项目工程已完成",                          "—"),
+        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
+        "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
+        "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
+        "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
 }
 
@@ -769,7 +748,7 @@ def register_review_consensus(state: dict, point: float, tier: int,
         passed: 联审共识是否通过
         rounds: 矫正轮次
         reviewers: reviewer 报告摘要列表 [{agentId, role, verdict, sessionId}...]
-        stall_reason: 未通过时的原因（3 轮未决等）
+        stall_reason: 未通过时的原因（2 轮未决等）
     """
     rc = state.setdefault("reviewConsensus", {})
     rc[str(point)] = {
@@ -1178,19 +1157,24 @@ def init_nested_state(
     dr_id: Optional[str] = None,
     parent_prd_id: Optional[str] = None,
     parent_dr_id: Optional[str] = None,
+    state_uuid: Optional[str] = None,
 ) -> dict:
     """初始化一个 v3.9.0 嵌套 state（不写盘，返回 dict 由调用方 write_state）。
 
     Args:
         project_key:        项目标识（如 "life"）
         entry_node:         顶层节点 PRD/DR/STORY（R2）
-        state_machine_id:   state 标识（R6 只以顶层命名，如 "PRD-IM-CS"）
+        state_machine_id:   state 业务标识（R6 纯业务名，如 "PRD-IM-CS"）
         state_machine_name: 可读名称
         story_ids:          初始 Story 列表（R3，每个建一条子状态记录）
         prd_id:             PRD 标识（entryNode=PRD 时必填）
         dr_id:              DR 标识（entryNode=PRD|DR 时必填）
         parent_prd_id:      溯源父 PRD（entryNode=DR/STORY 且已知上层 PRD）
         parent_dr_id:       溯源父 DR（entryNode=STORY 且已知上层 DR）
+        state_uuid:         🆕 v3.10.1 随机 UUID（创建时生成）。传入则：
+                            stateMachineId 拼为 ``{uuid}-{业务名}``，另写
+                            stateMachineName=业务名、stateUuid=uuid 两个冗余字段，
+                            供按业务名查找匹配。不传则保持旧行为（向后兼容）。
 
     Returns:
         v2 嵌套 state dict（含 version="2" / stateModel="nested" / 按 entry_node 选填容器）
@@ -1204,13 +1188,18 @@ def init_nested_state(
         )
 
     now = _now_ts()
+    # 🆕 v3.10.1：state_uuid 传入时 stateMachineId 带 UUID 前缀，stateMachineName 存纯业务名
+    if state_uuid:
+        full_state_machine_id = f"{state_uuid}-{state_machine_id}"
+    else:
+        full_state_machine_id = state_machine_id
     state: dict = {
         "version": SCHEMA_VERSION_V2,
         "projectKey": project_key,
         "stateModel": STATE_MODEL_NESTED,
         "entryNode": entry_node,
-        "stateMachineId": state_machine_id,
-        "stateMachineName": state_machine_name,
+        "stateMachineId": full_state_machine_id,
+        "stateMachineName": state_machine_id if state_uuid else state_machine_name,
         "parentPrdId": parent_prd_id,
         "parentDrId": parent_dr_id,
         "activeStory": story_ids[0] if story_ids else None,
@@ -1220,6 +1209,8 @@ def init_nested_state(
         "createdAt": now,
         "lastUpdated": now,
     }
+    if state_uuid:
+        state["stateUuid"] = state_uuid
 
     containers = ENTRY_NODE_CONTAINERS[entry_node]
 
@@ -1602,7 +1593,8 @@ def list_story_ids_in_state(state: dict) -> list[str]:
 
 
 def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
-                                design_dir: Path) -> tuple[Optional[Path], Optional[dict]]:
+                                design_dir: Path,
+                                generate_uuid: bool = False) -> tuple[Optional[Path], Optional[dict]]:
     """🆕 v3.9.3 内部辅助：确保父级 state 存在，必要时递归创建。
 
     Args:
@@ -1610,9 +1602,10 @@ def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
         parent_type: "PRD" 或 "DR"
         parent_id: 父级 ID（如 "DR-005" / "PRD-001"）
         design_dir: design/ 目录（用于递归时验证父级的父级）
+        generate_uuid: 🆕 v3.10.1 是否为新建父级 state 生成 UUID 前缀（透传自调用方）
 
     Returns:
-        (state_path, state_data) — 父级 state；或 (None, None) 当无法创建
+        (state_path, state_data) - 父级 state；或 (None, None) 当无法创建
     """
     from lib import paths as paths_mod  # 避免循环
 
@@ -1620,18 +1613,25 @@ def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
         hit = paths_mod.find_nested_state_by_prd_id(ade_sdd, parent_id)
         if hit:
             return hit
-        # 父级 PRD 无 state → 替它创建
+        # 父级 PRD 无 state -> 替它创建（🆕 v3.10.1 带 UUID 前缀）
         try:
-            st = init_nested_state(
+            prd_feature = parent_id.replace("PRD-", "", 1)
+            new_uuid = paths_mod.generate_state_uuid() if generate_uuid else None
+            biz_name = paths_mod.build_state_machine_name("PRD", {"prd_feature": prd_feature})
+            kwargs = dict(
                 project_key="",
                 entry_node="PRD",
-                state_machine_id=f"PRD-{parent_id.replace('PRD-', '', 1)}",
+                state_machine_id=biz_name,
                 state_machine_name=parent_id,
                 story_ids=None,
                 prd_id=parent_id,
             )
+            if new_uuid:
+                kwargs["state_uuid"] = new_uuid
+            st = init_nested_state(**kwargs)
             sp = paths_mod.work_item_state_path(ade_sdd, "PRD",
-                                                {"prd_feature": parent_id.replace("PRD-", "", 1)})
+                                                {"prd_feature": prd_feature},
+                                                state_uuid=new_uuid)
             write_state(sp, st)
             return (sp, st)
         except Exception:
@@ -1640,7 +1640,7 @@ def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
         hit = paths_mod.find_nested_state_by_dr_id(ade_sdd, parent_id)
         if hit:
             return hit
-        # 父级 DR 无 state → 检查 DR 有没有 PRD 父级，递归
+        # 父级 DR 无 state -> 检查 DR 有没有 PRD 父级，递归
         dr_doc = paths_mod._find_design_doc(design_dir, parent_id)
         prd_parent = None
         if dr_doc:
@@ -1649,7 +1649,8 @@ def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
         if prd_parent:
             ok, _ = paths_mod.verify_parent_claim("PRD", prd_parent, design_dir, child_id=parent_id)
             if ok:
-                prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", prd_parent, design_dir)
+                prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", prd_parent, design_dir,
+                                                      generate_uuid=generate_uuid)
                 if prd_hit and prd_hit[0] is not None:
                     prd_sp, prd_st = prd_hit
                     ensure_dr_substate(
@@ -1662,18 +1663,25 @@ def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
                     return (prd_sp, prd_st)
                 # PRD 父级 state 准备好后，回到 DR 创建并嵌进 PRD 的 drState
         # 创建 DR 顶层 state（即使有 PRD 父级，DR 仍可独立创建顶层 state，
-        #   然后下面 R2 吸收逻辑会把它嵌进 PRD）
+        #   然后下面 R2 吸收逻辑会把它嵌进 PRD）（🆕 v3.10.1 带 UUID 前缀）
         try:
-            st = init_nested_state(
+            dr_feature = parent_id.replace("DR-", "", 1)
+            new_uuid = paths_mod.generate_state_uuid() if generate_uuid else None
+            biz_name = paths_mod.build_state_machine_name("DR", {"dr_feature": dr_feature})
+            kwargs = dict(
                 project_key="",
                 entry_node="DR",
-                state_machine_id=f"DR-{parent_id.replace('DR-', '', 1)}",
+                state_machine_id=biz_name,
                 state_machine_name=parent_id,
                 story_ids=None,
                 dr_id=parent_id,
             )
+            if new_uuid:
+                kwargs["state_uuid"] = new_uuid
+            st = init_nested_state(**kwargs)
             sp = paths_mod.work_item_state_path(ade_sdd, "DR",
-                                                {"dr_feature": parent_id.replace("DR-", "", 1)})
+                                                {"dr_feature": dr_feature},
+                                                state_uuid=new_uuid)
             write_state(sp, st)
             return (sp, st)
         except Exception:
@@ -1684,16 +1692,17 @@ def _ensure_parent_nested_state(ade_sdd: Path, parent_type: str, parent_id: str,
 def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
                         design_dir: Path,
                         doc_path: Optional[Path] = None,
-                        child_id: str = "") -> tuple[Path, dict]:
+                        child_id: str = "",
+                        generate_uuid: bool = False) -> tuple[Path, dict]:
     """🆕 v3.9.3 递归向上归入（用户定义的 R2 算法）。
 
-    1. extract_parent_claim 读当前节点文档 → 抽父级声明
+    1. extract_parent_claim 读当前节点文档 -> 抽父级声明
     2. verify_parent_claim 验证父级文档存在 + 关联性
-    3. 无父级 / 父级文档找不到 → 当前层为顶层
+    3. 无父级 / 父级文档找不到 -> 当前层为顶层
     4. 有父级：
-       a) 父级已有 state → 把当前节点加入该 state 的对应容器
-       b) 父级无 state → 递归：先 _ensure_parent_nested_state 替父级建
-          → 把当前节点嵌进新建的父级 state
+       a) 父级已有 state -> 把当前节点加入该 state 的对应容器
+       b) 父级无 state -> 递归：先 _ensure_parent_nested_state 替父级建
+          -> 把当前节点嵌进新建的父级 state
 
     Args:
         ade_sdd: 项目 .ae-sdd 目录
@@ -1702,15 +1711,18 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
         design_dir: design/ 目录
         doc_path: 当前节点文档（Story/DR 文档路径），用于抽父级
         child_id: 当前节点 ID（用于关联性验证）
+        generate_uuid: 🆕 v3.10.1 是否为新建顶层 state 生成 UUID 前缀。
+                       True=cmd_state_new 入口（用户创建），生成 UUID；
+                       False=默认（测试/内部调用），保持旧行为无 UUID。
 
     Returns:
-        (state_path, state_data) — 当前节点最终所属嵌套 state
+        (state_path, state_data) - 当前节点最终所属嵌套 state
     """
     from lib import paths as paths_mod  # 避免循环
 
     top_node = (top_node or "").upper()
     if top_node not in ("PRD", "DR", "STORY", "TASK"):
-        # 非法顶层 → 当作无父级 STORY 处理
+        # 非法顶层 -> 当作无父级 STORY 处理
         top_node = "STORY"
 
     # 1) 读当前节点文档抽父级
@@ -1729,23 +1741,26 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
         ok, reason = paths_mod.verify_parent_claim("DR", parent_dr, design_dir, child_id=child_id)
         if ok:
             valid_parent_dr = parent_dr
-        # reason=doc_not_found / relation_mismatch → 视为无父级（不阻塞）
+        # reason=doc_not_found / relation_mismatch -> 视为无父级（不阻塞）
     if parent_prd:
         ok, reason = paths_mod.verify_parent_claim("PRD", parent_prd, design_dir, child_id=child_id)
         if ok:
             valid_parent_prd = parent_prd
 
-    # 3) 无有效父级 → 当前层为顶层
+    # 3) 无有效父级 -> 当前层为顶层
     if not valid_parent_dr and not valid_parent_prd:
         from lib import paths as _p
-        sp = _p.work_item_state_path(ade_sdd, top_node, features)
+        new_uuid = _p.generate_state_uuid() if generate_uuid else None
+        sp = _p.work_item_state_path(ade_sdd, top_node, features, state_uuid=new_uuid)
+        # 🆕 v3.10.1：state_machine_id 用纯业务名（build_state_machine_name），
+        #   不再用 sp.parent.name（可能含 UUID 前缀）；UUID 由 state_uuid 参数注入
+        biz_name = _p.build_state_machine_name(top_node, features)
         try:
-            # 🆕 v3.9.3 补全 init_nested_state 所需形参
             kwargs = dict(
                 project_key="",
                 entry_node=top_node,
-                state_machine_id=sp.parent.name,
-                state_machine_name=sp.parent.name,
+                state_machine_id=biz_name,
+                state_machine_name=biz_name,
             )
             if top_node == "PRD":
                 kwargs["prd_id"] = features.get("prd_id") or child_id
@@ -1753,11 +1768,13 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
                 kwargs["dr_id"] = features.get("dr_id") or features.get("dr_feature") or child_id
             elif top_node == "STORY":
                 kwargs["story_ids"] = features.get("story_ids")
+            if new_uuid:
+                kwargs["state_uuid"] = new_uuid
             st = init_nested_state(**kwargs)
             write_state(sp, st)
             return (sp, st)
         except Exception:
-            # 已存在 → 直接读
+            # 已存在 -> 直接读
             if sp.is_file():
                 return (sp, read_state(sp))
             raise
@@ -1774,7 +1791,8 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
                 if ok:
                     dr_parent_prd = claimed_prd
         if dr_parent_prd:
-            prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", dr_parent_prd, design_dir)
+            prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", dr_parent_prd, design_dir,
+                                                  generate_uuid=generate_uuid)
             if prd_hit and prd_hit[0] is not None:
                 prd_sp, prd_st = prd_hit
                 ensure_dr_substate(
@@ -1791,7 +1809,8 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
                 )
                 write_state(prd_sp, prd_st)
                 return (prd_sp, prd_st)
-        dr_hit = _ensure_parent_nested_state(ade_sdd, "DR", valid_parent_dr, design_dir)
+        dr_hit = _ensure_parent_nested_state(ade_sdd, "DR", valid_parent_dr, design_dir,
+                                             generate_uuid=generate_uuid)
         if dr_hit and dr_hit[0] is not None:
             dr_sp, dr_st = dr_hit
             # 嵌进 DR state 的 storyStates
@@ -1802,7 +1821,8 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
 
     # 4b) DR → 嵌进父级 PRD
     if top_node == "DR" and valid_parent_prd:
-        prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", valid_parent_prd, design_dir)
+        prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", valid_parent_prd, design_dir,
+                                              generate_uuid=generate_uuid)
         if prd_hit and prd_hit[0] is not None:
             prd_sp, prd_st = prd_hit
             # 嵌进 PRD state 的 drState
@@ -1813,7 +1833,8 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
 
     # 4c) Story 有 PRD 但无 DR → 嵌进 PRD（罕见，PRD 直接管 Story）
     if top_node == "STORY" and valid_parent_prd and not valid_parent_dr:
-        prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", valid_parent_prd, design_dir)
+        prd_hit = _ensure_parent_nested_state(ade_sdd, "PRD", valid_parent_prd, design_dir,
+                                              generate_uuid=generate_uuid)
         if prd_hit and prd_hit[0] is not None:
             prd_sp, prd_st = prd_hit
             story_id = (features.get("story_ids") or [child_id])[0]
@@ -1823,17 +1844,22 @@ def recursive_r2_absorb(ade_sdd: Path, top_node: str, features: dict,
 
     # 5) 兜底：父级 state 创建失败 → 当前层为顶层
     from lib import paths as _p
-    sp = _p.work_item_state_path(ade_sdd, top_node, features)
+    new_uuid = _p.generate_state_uuid() if generate_uuid else None
+    sp = _p.work_item_state_path(ade_sdd, top_node, features, state_uuid=new_uuid)
     if sp.is_file():
         return (sp, read_state(sp))
     try:
-        st = init_nested_state(
+        biz_name = _p.build_state_machine_name(top_node, features)
+        kwargs = dict(
             project_key="",
             entry_node=top_node,
-            state_machine_id=sp.parent.name,
-            state_machine_name=sp.parent.name,
+            state_machine_id=biz_name,
+            state_machine_name=biz_name,
             story_ids=features.get("story_ids") if top_node == "STORY" else None,
         )
+        if new_uuid:
+            kwargs["state_uuid"] = new_uuid
+        st = init_nested_state(**kwargs)
         write_state(sp, st)
         return (sp, st)
     except Exception:

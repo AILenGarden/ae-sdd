@@ -747,56 +747,44 @@ def _check_state_write(
         return False, memory_gate.format_transition_block(memory_result)
 
     # 🆕 v3.5.15：PHASE_ENTRY_GATES 按 scale 路由。
-    #   微链 coding 入口免 G-07/08（微任务无 Task，无 task-reviewed 前置）；
-    #   小链 task-generated 入口含 G-03/G-04（小任务有 Task）；
-    #   中链 story-generated 入口含 G-02（中任务有 Story）。
-    #   旧 state 无 scale → _resolve_scale 已在上方跨步判定时回写，此处读同一 scale。
+    # 🆕 v3.10.0：砍 Task phase + Route 下移重分级。
+    # 🆕 v3.10.1：子系列合并--story-generated/testcase-generated 各自 = generate+review loop 完成。
+    #   大=DR 入口（原 PRD 层弃用，RA 为前置不在链内）；中=Story 入口；
+    #   小=CodingPlan 入口（需 Story+TestCase 存在）；微=无文档直出 CodingPlan。
+    #   所有链的 coding 入口统一 G-00+G-07+G-08（Plan-first 不豁免）。
+    #   旧 state 无 scale -> _resolve_scale 已在上方跨步判定时回写，此处读同一 scale。
     scale_for_gates = scale_state.get("scale") or _resolve_scale(scale_state)
     PHASE_ENTRY_GATES: dict[str, dict[str, list[str]]] = {
-        "大": {
-            "ra-generated":    ["G-00"],
+        "大": {  # RA 入口：4 loop（RA-DR-Story-TestCase）+ Coding/Testing
+            "ra-generated":    ["G-00", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION"],
             "dr-generated":    ["G-00", "G-01", "G-DR-CTX"],
-            "story-generated": ["G-00", "G-01", "G-02", "G-STORY-CTX"],
-            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
-            "testcase-generated": ["G-00", "G-02", "G-TESTCASE-CTX"],
-            "testcase-reviewed":  ["G-00", "G-02", "G-03", "G-TESTCASE-CTX"],
-            "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
-            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
+            "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
+            "testcase-generated": ["G-00", "G-02", "G-03", "G-04", "G-TESTCASE-CTX"],
+            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX", "G-TESTCASE-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "中": {  # 跳过 DR：ra→story，无 dr-generated
-            "ra-generated":    ["G-00"],
-            "story-generated": ["G-00", "G-01", "G-02", "G-STORY-CTX"],
-            "story-reviewed":  ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
-            "testcase-generated": ["G-00", "G-02", "G-TESTCASE-CTX"],
-            "testcase-reviewed":  ["G-00", "G-02", "G-03", "G-TESTCASE-CTX"],
-            "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
-            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
+        "中": {  # DR 入口：3 loop（DR-Story-TestCase）+ Coding/Testing，跳 RA
+            "dr-generated":    ["G-00", "G-01", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION", "G-DR-CTX"],
+            "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
+            "testcase-generated": ["G-00", "G-02", "G-03", "G-04", "G-TESTCASE-CTX"],
+            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX", "G-TESTCASE-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "小": {  # 跳过 DR/Story：ra→task，无 dr/story
-            "ra-generated":    ["G-00"],
-            "task-generated":  ["G-00", "G-03", "G-04", "G-TASK-CTX"],
-            "task-reviewed":   ["G-00", "G-05", "G-06", "G-07", "G-08", "G-TASK-CTX"],
+        "小": {  # CodingPlan 入口：已有 Story+TestCase，直出 coding-process
+            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX", "G-TESTCASE-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "微": {  # 跳过 RA/DR/Story：initialized→task，coding 入口 G-00+G-07+G-08（Plan-first 不豁免）
-            # 🆕 2026-07-03(B1)：coding 入口加 G-07/G-08，与大链对齐（Plan-first 是质量底线，
-            # conventions.md §3.1 明确"Plan-first ❌不豁免"）。code-reviewed 门禁现已可达
-            # （state.py 微链已加回 code-reviewed phase）。
-            # 🆕 v3.9.1：task-generated/task-reviewed 加 G-TASK-CTX（微链 required 仅
-            # constraints+assets，Story/TestCase 项在 _check_context_loaded 内按 scale=微豁免）。
-            "task-generated":  ["G-00", "G-TASK-CTX"],
-            "task-reviewed":   ["G-00", "G-07", "G-08", "G-TASK-CTX"],
+        "微": {  # 无文档：initialized->coding-process，coding 入口 G-00+G-07+G-08（Plan-first 不豁免）
+            "coding-process":  ["G-00"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],

@@ -44,7 +44,8 @@ class TestDocSave(unittest.TestCase):
     """`ae-sdd doc save` 端到端。"""
 
     def test_save_design_doc_end_to_end(self):
-        """建草稿 → doc save STORY → 验证文件落地 + ChangeLog + STORING + 草稿删除。"""
+        """建草稿 -> doc save STORY -> 验证文件落地 + STORING + 草稿删除。
+        🆕 v3.10.1：不再生成 ChangeLog 旁车文件。"""
         tmp = _setup_project()
         draft = tmp / ".ae-sdd" / "tmp" / "STORY-001-BE-draft.md"
         draft.parent.mkdir(parents=True, exist_ok=True)
@@ -62,10 +63,9 @@ class TestDocSave(unittest.TestCase):
         self.assertTrue(final.is_file(), f"最终文件不存在：{final}")
         self.assertEqual(final.read_text(encoding="utf-8"), "# Story 内容")
 
-        # ChangeLog 同级生成
+        # 🆕 v3.10.1：ChangeLog 不再生成
         cl = tmp / "ae-sdd-doc" / "Story" / "STORY-001-BE-changelog.md"
-        self.assertTrue(cl.is_file())
-        self.assertIn("首次创建", cl.read_text(encoding="utf-8"))
+        self.assertFalse(cl.is_file(), "v3.10.1 不应生成 ChangeLog 旁车文件")
 
         # STORING 更新
         storing = tmp / "ae-sdd-doc" / "STORING.md"
@@ -103,8 +103,8 @@ class TestDocSave(unittest.TestCase):
         combined = out + err
         self.assertIn("E000", combined)
 
-    def test_save_report_version_increment(self):
-        """事件类报告（CODING_REPORT）两份 doc save，版本号 r 自增、路径不同。"""
+    def test_save_report_in_place_overwrite(self):
+        """报告类文档（CODING_REPORT）v3.10.1 原地更新：两份 doc save 写同一路径，后者覆盖前者。"""
         tmp = _setup_project()
         results = []
         for i in (1, 2):
@@ -119,9 +119,9 @@ class TestDocSave(unittest.TestCase):
             self.assertEqual(code, 0, msg=f"r{i} stderr={err}")
             # output.ok/info 走 stderr（见 output.py 设计约定）
             results.append(out + err)
-        # 两份路径不同（r1 vs r2）
-        self.assertIn("CodingReport-v1-r1", results[0])
-        self.assertIn("CodingReport-v1-r2", results[1])
+        # 两份路径相同（原地更新，不带版本号）
+        self.assertIn("CodingReport.md", results[0])
+        self.assertIn("CodingReport.md", results[1])
 
     def test_save_task_with_work_item(self):
         """BUG/OPT 独立任务通过 --work-item 分桶，不依赖 --story-id。"""
@@ -174,8 +174,8 @@ class TestDocResolve(unittest.TestCase):
 class TestDocFinalize(unittest.TestCase):
     """`ae-sdd doc finalize` 补登记不覆盖内容。"""
 
-    def test_finalize_appends_changelog_without_overwrite(self):
-        """finalize 补 ChangeLog/STORING，不覆盖已写内容。"""
+    def test_finalize_no_changelog_without_overwrite(self):
+        """🆕 v3.10.1：finalize 补 STORING，不覆盖已写内容，不再生成 ChangeLog。"""
         tmp = _setup_project()
         target = tmp / "ae-sdd-doc" / "Story" / "STORY-FINAL-BE.md"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -191,10 +191,9 @@ class TestDocFinalize(unittest.TestCase):
 
         # 内容未被覆盖
         self.assertEqual(target.read_text(encoding="utf-8"), original)
-        # ChangeLog 已补
+        # 🆕 v3.10.1：ChangeLog 不再生成
         cl = target.parent / "STORY-FINAL-BE-changelog.md"
-        self.assertTrue(cl.is_file())
-        self.assertIn("补登记", cl.read_text(encoding="utf-8"))
+        self.assertFalse(cl.is_file(), "v3.10.1 不应生成 ChangeLog 旁车文件")
 
     def test_finalize_nonexistent_file_exits_1(self):
         """finalize 不存在的文件退出码 1。"""

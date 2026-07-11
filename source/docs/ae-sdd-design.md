@@ -62,7 +62,7 @@
 
 每个新需求必须先创建一个独立状态机，再进入 phase 流转。WorkItem（PRD / BUG / OPT / Story 均可）的执行进度持久化到独立 `state.json`，支持跨 session 中断恢复与多任务并行执行。AI 重入时读对应 WorkItem state 跳过已完成步骤，避免重复执行。
 
-**WorkItem 标识约定（2026-07-09 修正）**：每个状态机必须归属于真实顶层工作项。CLI 入口为 `ae-sdd state new --id <ID> --entry-node <PRD|DR|STORY|TASK>`；物理目录名采用 R6 顶层名（如 `PRD-001` / `DR-005` / `Story-006` / `Task-BUG-LIFE-001`），并写入 `workItemKey`、`stateMachineId`、`currentWorkItem`。`--work-item <ID|WORKITEM-KEY>` 只定位 `.auto-engineering/{WORKITEM-KEY}/state.json`。项目级 `.ae-sdd/state.json` 不允许作为 active state、mirror 或 fallback；未能唯一定位 work-item 时必须拒绝并要求显式选择。
+**WorkItem 标识约定（2026-07-09 修正，🆕 v3.10.1 UUID 前缀）**：每个状态机必须归属于真实顶层工作项。CLI 入口为 `ae-sdd state new --id <ID> --entry-node <PRD|DR|STORY|TASK>`；物理目录名采用 R6 顶层名加随机 UUID 前缀（如 `{uuid}-PRD-001` / `{uuid}-DR-005` / `{uuid}-Story-006`），保证同业务名不撞目录；`stateMachineId` 同目录名（带 UUID 前缀），`stateMachineName` 存纯业务名（如 `PRD-001`）供按业务名查找匹配，`stateUuid` 存 UUID 冗余标识。`--work-item <ID|WORKITEM-KEY>` 定位 `.auto-engineering/{WORKITEM-KEY}/state.json`，`find_work_item_state_path` 支持后缀匹配（传业务名 `PRD-001` 可命中 `{uuid}-PRD-001` 目录）。项目级 `.ae-sdd/state.json` 不允许作为 active state、mirror 或 fallback；未能唯一定位 work-item 时必须拒绝并要求显式选择。
 
 **v3.5.15 多子链状态机**：单条 PHASE_FLOW 拆为 4 条 PHASE_FLOWS（大/中/小/微），按 scale 路由，微链最短单步合法，修复微任务 next-step 误建议跑 RA 的问题。旧 state 无 scale 字段时按 completedSteps 反推，默认"大"（最保守）。
 
@@ -81,7 +81,7 @@
 
 **R5 改已管理 Story 重定位 + 重置子状态**：检测到改 Story 且该 Story 已属某 state 的 `storyStates` → `ae-sdd state relocate --story <ID>` 重定位到该 state + 只重置该 Story 子状态到 `story-generated`（兄弟 Story 不动，resetHistory 保留审计）。
 
-**R6 顶层主体命名**：只以最顶层主体特征命名——`PRD-{特征}` / `DR-{特征}` / `Story-{特征}`（多 Story 合并如 `Story-003-004-005`）。由 `paths.build_state_machine_name()` 生成。
+**R6 顶层主体命名（🆕 v3.10.1 UUID 前缀）**：只以最顶层主体特征命名——`PRD-{特征}` / `DR-{特征}` / `Story-{特征}`（多 Story 合并如 `Story-003-004-005`）。由 `paths.build_state_machine_name()` 生成纯业务名；创建时 `paths.generate_state_uuid()` 生成随机 UUID 并拼为 `{uuid}-{业务名}` 作为目录名和 `stateMachineId`，`stateMachineName` 保留纯业务名。`paths.strip_uuid_prefix()` 用于从带前缀的标识中还原业务名。向后兼容：旧 state 目录无 UUID 前缀仍可读。
 
 **R7 路由自动匹配/新建**：`/ae-sdd` 路由时 `classify.match_state()` 自动分析需求特征（提取 PRD/DR/Story ID + 判定 Bug/改 Story）→ 扫描现有嵌套 state → 命中则 relocate/absorb，未命中则 create_nested。匹配优先级：R4 微任务 → R5 Story 命中 → R2 DR 归入 PRD → R2 Story 归入 DR → R7 新建。
 
@@ -91,7 +91,7 @@
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 存储路径 | `.auto-engineering/{WORKITEM-KEY}/state.json`。`.ae-sdd/state.json` 禁止作为状态源、active mirror 或 fallback；hook/gate/CLI 均必须通过 work-item/session resolver 定位任务级 state |
+| 存储路径 | `.auto-engineering/{WORKITEM-KEY}/state.json`（🆕 v3.10.1 WORKITEM-KEY 带 UUID 前缀如 `{uuid}-PRD-001`）。`.ae-sdd/state.json` 禁止作为状态源、active mirror 或 fallback；hook/gate/CLI 均必须通过 work-item/session resolver 定位任务级 state |
 | 4 条子链定义 | `tools/lib/state.py:PHASE_FLOWS`（行69-92），大链 14 phase / 中链 13 / 小链 12 / 微链 8（🆕 2026-07-03 B1：微链加回 code-reviewed，与"CodeReview 报告不豁免"对齐；含 TestCase 系列后已扩容，🆕 v3.7.x） |
 | 向后兼容别名 | `PHASE_FLOW = PHASE_FLOWS["大"]`（行95，🟡 deprecated） |
 | 合法 scale 枚举 | `VALID_SCALES = ("大", "中", "小", "微")`（行88） |

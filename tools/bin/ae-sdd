@@ -4,9 +4,9 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 门禁检查（pre-flight；v3.8.0 共 30 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
+  - gates    : 门禁检查（pre-flight；v3.10.0 共 35 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
                G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION +
-               G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS）
+               G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + G-REVIEW-DEPTH + G-*-CTX）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
 
 🆕 v3.3.0+ PRD 级状态机与自检（2026-06-25）：
@@ -353,15 +353,19 @@ def _infer_scale_for_work_item(work_item: str, entry_node: str | None) -> tuple[
 
 
 def _default_scale_for_state_new(entry_node: str, work_item_id: str) -> str:
-    """Default new state scale by entry semantics instead of always using the large chain."""
+    """Default new state scale by entry semantics instead of always using the large chain.
+
+    🆕 v3.10.0 Route 下移重分级：大=DR入口、中=Story入口、小=CodingPlan入口、微=无文档。
+    """
     marker = (entry_node or "").strip().upper()
     item = (work_item_id or "").strip().upper()
-    if marker in {"TASK", "BUG", "OPT", "CONFIG"} or item.startswith(("BUG-", "OPT-", "CONFIG-", "TASK-")):
-        return "\u5fae"
+    if marker in {"BUG", "OPT", "CONFIG"} or item.startswith(("BUG-", "OPT-", "CONFIG-")):
+        return "\u5fae"  # 微：无文档直出 CodingPlan
+    if marker == "PLAN" or item.startswith("PLAN-"):
+        return "\u5c0f"  # 小：CodingPlan 入口
     if marker == "STORY":
-        return "\u5c0f"
-    if marker == "DR":
-        return "\u4e2d"
+        return "\u4e2d"  # 中：Story 入口
+    # DR / PRD(兼容) / 默认 -> 大
     return "\u5927"
 
 
@@ -388,9 +392,9 @@ def cmd_state_read(args, parser):
 
 def cmd_state_new(args, parser):
     """🆕 v3.9.3 创建嵌套 state 机 + 强制 R2 向上归入。
+    🆕 v3.10.0 Route 下移重分级：大=DR、中=Story、小=CodingPlan(PLAN)、微=无文档(BUG)。
 
-    BREAKING v3.9.3：废除 --name 形参；目录名统一走 R6 顶层名。
-    新签名：state new --id <ID> --entry-node <PRD|DR|STORY> [--story-ids ...] [--nested]
+    新签名：state new --id <ID> --entry-node <PRD|DR|STORY|PLAN|BUG> [--story-ids ...] [--nested]
     """
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
@@ -413,21 +417,25 @@ def cmd_state_new(args, parser):
     if not requested_entry_node:
         upper = work_item_id.upper()
         if upper.startswith("PRD-"):
-            requested_entry_node = "PRD"
+            requested_entry_node = "PRD"  # 🟡 v3.10.0 兼容：PRD 视为 DR 级（大任务）
         elif upper.startswith("DR-"):
             requested_entry_node = "DR"
-        elif upper.startswith(("BUG-", "OPT-", "CONFIG-", "TASK-")):
-            # 🆕 v3.9.3 BUG/OPT/CONFIG/Task ID 一律走 TASK 顶层名
-            requested_entry_node = "TASK"
+        elif upper.startswith("PLAN-"):
+            # 🆕 v3.10.0：CodingPlan 入口（小任务）
+            requested_entry_node = "PLAN"
+        elif upper.startswith(("BUG-", "OPT-", "CONFIG-")):
+            requested_entry_node = "BUG"  # 微任务无文档
         else:
             requested_entry_node = "STORY"
 
     # 构造 R6 顶层 features
     from lib.flow_enums import FlowNode
     if not FlowNode.is_nested_entry(requested_entry_node):
-        # TASK 是 v3.9.3 新顶层（BUG/OPT/CONFIG/Task 走 TASK 分支）
-        if requested_entry_node in ("TASK", "BUG", "OPT", "CONFIG"):
-            requested_entry_node = "TASK"
+        # 🆕 v3.10.0：BUG/OPT/CONFIG -> 微任务（无文档）；PLAN -> 小任务（CodingPlan 入口）
+        if requested_entry_node in ("BUG", "OPT", "CONFIG"):
+            requested_entry_node = "BUG"  # 微任务无文档，复用 BUG 扁平 state
+        elif requested_entry_node == "PLAN":
+            pass  # 小任务 CodingPlan 入口，扁平 state
         else:
             output.err(f"entry-node={requested_entry_node} 不支持嵌套 state（仅 PRD/DR/STORY）")
             return 1
@@ -440,13 +448,19 @@ def cmd_state_new(args, parser):
         features["dr_id"] = work_item_id
     elif requested_entry_node == "STORY":
         features["story_ids"] = story_ids_list or [work_item_id]
-    elif requested_entry_node == "TASK":
-        features["task_id"] = work_item_id
+    elif requested_entry_node == "BUG":
+        features["task_id"] = work_item_id  # 🟡 v3.10.0 兼容字段名
+    elif requested_entry_node == "PLAN":
+        features["plan_id"] = work_item_id  # 🆕 v3.10.0 小任务 CodingPlan 入口
 
     work_item_key = paths.work_item_dir_name(requested_entry_node, features)
-    sp = paths.work_item_state_path(ade_sdd, requested_entry_node, features)
-    if sp.exists() and not args.force:
-        output.err(f"状态机已存在：{sp.parent.name}")
+    # 🆕 v3.10.1：创建时生成 UUID 前缀保证目录名/stateMachineId 全局唯一
+    new_uuid = paths.generate_state_uuid()
+    sp = paths.work_item_state_path(ade_sdd, requested_entry_node, features, state_uuid=new_uuid)
+    # 防重复：目录名带随机 UUID 后 sp.exists() 永远 False，改用业务名后缀匹配查已存在
+    existing = paths.find_work_item_state_path(ade_sdd, work_item_key)
+    if existing is not None and not args.force:
+        output.err(f"状态机已存在：{existing.parent.name}（业务名 {work_item_key}）")
         output.info("如需重建，请加 --force（会覆盖该 state.json）")
         return 1
 
@@ -465,11 +479,12 @@ def cmd_state_new(args, parser):
         elif requested_entry_node == "PRD":
             doc_path = paths.find_doc(paths.project_root(ade_sdd), work_item_id, "-PRD.md")
 
-        # 跑 R2 递归
+        # 跑 R2 递归（🆕 v3.10.1 generate_uuid=True 为新建顶层 state 加 UUID 前缀）
         try:
             final_sp, final_st = state.recursive_r2_absorb(
                 ade_sdd, requested_entry_node, features, design_dir,
                 doc_path=doc_path, child_id=work_item_id,
+                generate_uuid=True,
             )
         except ValueError as e:
             output.err(str(e))
@@ -489,6 +504,9 @@ def cmd_state_new(args, parser):
             ("workItemKey", final_work_item_key),
             ("currentWorkItem", final_work_item_key),
             ("stateMachineId", final_work_item_key),
+            # 🆕 v3.10.1：stateMachineName 存纯业务名（无 UUID 前缀），供按业务名查找匹配
+            ("stateMachineName", paths.strip_uuid_prefix(final_work_item_key)),
+            ("stateUuid", final_st.get("stateUuid") or new_uuid),
         ):
             if value and not final_st.get(key):
                 final_st[key] = value
@@ -521,6 +539,8 @@ def cmd_state_new(args, parser):
         return 0
 
     # v1 扁平 state 路径（v3.9.3 起基本不再使用，保留兼容）
+    # 🆕 v3.10.1：扁平 state 也带 UUID 前缀目录名（sp 已在上方带 state_uuid 生成）
+    flat_key = sp.parent.name  # 带 UUID 前缀的目录名
     now = _now_iso()
     st = state.read_state(sp)
     st.update({
@@ -529,10 +549,12 @@ def cmd_state_new(args, parser):
         "phase": "initialized",
         "scale": requested_scale,
         "entryNode": requested_entry_node,
-        "stateMachineId": work_item_key,
+        "stateMachineId": flat_key,
+        "stateMachineName": paths.strip_uuid_prefix(flat_key),  # 🆕 v3.10.1 纯业务名
+        "stateUuid": new_uuid,  # 🆕 v3.10.1
         "workItemId": work_item_id,
-        "workItemKey": work_item_key,
-        "currentWorkItem": work_item_key,
+        "workItemKey": flat_key,
+        "currentWorkItem": flat_key,
         "currentStory": work_item_id,
         "currentTask": None,
         "createdAt": now,
@@ -543,11 +565,11 @@ def cmd_state_new(args, parser):
         st["currentTask"] = args.task
     state.write_state(sp, st)
     if args.activate:
-        _write_active_state_mirror(ade_sdd, st, work_item_key, sp)
+        _write_active_state_mirror(ade_sdd, st, flat_key, sp)
     if args.json:
         output.emit({"ok": True, "statePath": str(sp)}, as_json=True)
     else:
-        output.ok(f"新状态机已创建：{work_item_key}")
+        output.ok(f"新状态机已创建：{flat_key}")
         output.info(f"  state: {sp}")
     return 0
 
@@ -2361,8 +2383,10 @@ def _resolve_top_node_from_token(ade_sdd: Path, token: str, args) -> tuple[str, 
             try:
                 data = json.loads(sp.read_text(encoding="utf-8"))
                 top_node = data.get("entryNode", "STORY")
-                # 从 stateMachineId 派生 features
-                sm_id = data.get("stateMachineId", sp.parent.name)
+                # 🆕 v3.10.1：优先用 stateMachineName（纯业务名），缺失则 strip_uuid_prefix
+                # 后再 replace，避免 sm_id 带 UUID 前缀时 replace 错切
+                sm_id = data.get("stateMachineName") or paths.strip_uuid_prefix(
+                    data.get("stateMachineId", sp.parent.name))
                 if top_node == "PRD":
                     return (top_node, {"prd_feature": sm_id.replace("PRD-", "", 1)})
                 if top_node == "DR":
@@ -2390,8 +2414,7 @@ def _resolve_top_node_from_token(ade_sdd: Path, token: str, args) -> tuple[str, 
         # 反查所属 state
         hit = paths.find_nested_state_by_story_id(ade_sdd, upper)
         if hit:
-            sp, data = hit
-            sm_id = data.get("stateMachineId", sp.parent.name)
+            sp, data = hit  # noqa: F841 - sp/data 保留供调试；features 用 upper
             return ("STORY", {"story_ids": [upper]})
         return ("STORY", {"story_ids": [upper]})
     if upper.startswith("DR-"):
@@ -4210,7 +4233,7 @@ def main() -> int:
     p_state_new.add_argument("--story", default="", help="关联 Story ID（可选；未传时 currentStory 回退为 --id）")
     p_state_new.add_argument("--task", default="", help="关联 Task ID（可选）")
     p_state_new.add_argument("--scale", choices=["大", "中", "小", "微"], default=None,
-                             help="任务规模；BUG/OPT/CONFIG 会默认推断为 微，其余默认 大")
+                             help="任务规模（v3.10.0：BUG->微、PLAN->小、STORY->中、DR/PRD->大）")
     p_state_new.add_argument("--entry-node", default=None,
                              help="入口节点语义（BUG/CONFIG/PRD/RA/DR/STORY/TASK/PLAN）")
     p_state_new.add_argument("--force", action="store_true", help="允许覆盖已存在的同名 state.json")
@@ -4393,7 +4416,7 @@ def main() -> int:
     p_pf_collect.set_defaults(func=cmd_preflight_collect)
 
     # gates
-    p_gates = sub.add_parser("gates", help="门禁检查（30 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS）", parents=[common])
+    p_gates = sub.add_parser("gates", help="门禁检查（35 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + G-REVIEW-DEPTH + G-*-CTX）", parents=[common])
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
     p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")

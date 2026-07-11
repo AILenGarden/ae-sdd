@@ -67,10 +67,10 @@ ae-sdd 启动后，**必须按序执行以下 5 步**，禁止跳过任意步。
 
 | 规格 | 判定依据 | 进入节点 |
 |------|---------|---------|
-| **大任务** | 已有 PRD | → RA 系列 |
-| **中任务** | 已有 DR（无 PRD 或 PRD 已完成）| → DR 系列 |
-| **小任务** | 已有 Story（无 DR）| → Story 系列 |
-| **微任务** | BUG / 改逻辑 / 调整代码（无完整产物链）| → Task 系列 |
+| **大任务** | 已有 DR | -> DR 系列 |
+| **中任务** | 已有 Story（无 DR）| -> Story 系列 |
+| **小任务** | 已有 Story+TestCase | -> CodingPlan 系列 |
+| **微任务** | BUG / 改逻辑 / 调整代码（无完整产物链）| -> CodingPlan 系列（无文档）|
 | — | 新需求无任何产物且非 BUG | 🔴 **阻断**：`新功能开发必须以 PRD 为起点` |
 
 ### Step 4 — 执行编码流程
@@ -225,10 +225,10 @@ ae-sdd 启动后，**必须按序执行以下 5 步**，禁止跳过任意步。
 
 | 规格 | Phase 序列 | 适用场景 |
 |------|-----------|---------|
-| **大(14)** | initialized → ra-generated → dr-generated → story-generated → story-reviewed → testcase-generated → testcase-reviewed → task-generated → task-reviewed → coding-process → coding → test-running → code-reviewed → completed | 已有 PRD，走全流程 |
-| **中(13)** | initialized → dr-generated → story-generated → story-reviewed → testcase-generated → testcase-reviewed → task-generated → task-reviewed → coding-process → coding → test-running → code-reviewed → completed | 已有 DR，跳 RA |
-| **小(12)** | initialized → story-generated → story-reviewed → testcase-generated → testcase-reviewed → task-generated → task-reviewed → coding-process → coding → test-running → code-reviewed → completed | 已有 Story，跳 RA+DR |
-| **微(7)** | initialized → task-generated → task-reviewed → coding-process → coding → test-running → completed | BUG/调整，跳 RA+DR+Story+TestCase |
+| **大(11)** | initialized -> dr-generated -> story-generated -> story-reviewed -> testcase-generated -> testcase-reviewed -> coding-process -> coding -> test-running -> code-reviewed -> completed | 已有 DR，走全流程 |
+| **中(10)** | initialized -> story-generated -> story-reviewed -> testcase-generated -> testcase-reviewed -> coding-process -> coding -> test-running -> code-reviewed -> completed | 已有 Story，跳 DR |
+| **小(6)** | initialized -> coding-process -> coding -> test-running -> code-reviewed -> completed | 已有 Story+TestCase，直出 CodingPlan |
+| **微(6)** | initialized -> coding-process -> coding -> test-running -> code-reviewed -> completed | BUG/调整，无文档直出 CodingPlan |
 
 ---
 

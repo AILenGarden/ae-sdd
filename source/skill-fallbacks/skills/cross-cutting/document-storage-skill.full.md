@@ -1,6 +1,6 @@
 ---
 name: document-storage
-description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。提供 ae-sdd-doc/ 统一目录、8 类流程分类、迭代目录、版本号、ChangeLog、关联性分析、gitignore 自动生成、存量迁移能力。当 SKILL 涉及"存放/保存/写入文档"时触发。
+description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。提供 ae-sdd-doc/ 统一目录、8 类流程分类、迭代目录、版本号、关联性分析、gitignore 自动生成、存量迁移能力。当 SKILL 涉及"存放/保存/写入文档"时触发。
 ---
 
 # Document Storage — 文档存放标准 Skill（AE 体系横切依赖）
@@ -10,7 +10,7 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 > 2. 文档怎么命名（命名 + 版本号 §2）
 > 3. 是新建还是修改（重入 SOP §5.1）
 > 4. 属于哪个迭代（关联性分析 §6.3）
-> 5. 是否需要写入 ChangeLog（§6.1）
+> 5. ~~是否需要写入 ChangeLog~~（v3.10.1 已禁用，文档原地更新不记录变更）
 > 6. 是否需要更新 .gitignore（§7）
 >
 > **触发场景：** 任何流程生成/更新/重入文档时**第一步**调用本 SKILL；不知道放哪/怎么命名/是不是新建/属于哪个迭代时也查本 SKILL。
@@ -24,7 +24,7 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 > | 工程解耦定位（五维模型）| §3 |
 > | 动态定位 API 契约（14 个 API 全集 SSOT）| §4 |
 > | 重入流程 + 文档生命周期 | §5 |
-> | ChangeLog + 关联性分析 SSOT | §6 |
+> | 关联性分析 SSOT | §6 |
 > | .gitignore 自动维护 | §7 |
 > | 存量迁移 | §8 |
 > | 横切调用规范（调用矩阵）| §9 |
@@ -37,7 +37,7 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 
 - AE 体系内所有流程产出文档**有明确路径**（按 8 类流程 + 统一目录）
 - 文档**有统一命名规则**（事件类报告强制版本号 v{N}-r{M}）
-- 文档**有 ChangeLog**（每次修改都记录，同级目录）
+- 文档**原地更新**（v3.10.1 起，不再生成 ChangeLog 旁车文件）
 - 文档**有清晰迭代归属**（业务+逻辑关联性分析）
 - 跨流程**有可追溯的引用**（相对路径 + 锚点）
 - **重入流程时**有 SOP（事件类报告 r 递增）
@@ -58,13 +58,13 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 | **Task** | 任务拆分 | `ae-sdd-doc/Task/` | STORY-001-BE Task-1 |
 | **Coding** | 编码计划 + 报告 | `ae-sdd-doc/Coding/` | STORY-001-BE-CodingPlan |
 | **Test** | 测试用例 + 报告 | `ae-sdd-doc/Test/` | STORY-001-BE-testcase |
-| **CR** | Code Review 报告 | `ae-sdd-doc/CR/` | STORY-001-BE-CodeReview-v1-r1 |
+| **CR** | Code Review 报告 | `ae-sdd-doc/CR/` | STORY-001-BE-CodeReview.md |
 
 **两类文档的版本策略（🔴 SSOT，与代码 `_PATH_TEMPLATES` 对齐）：**
 
 | 类别 | 包含 | 版本策略 |
 |------|------|---------|
-| **设计类文档** | PRD / RA / DR / Story / Task / CodingPlan / TestCase / Proposal | **原地更新，不带版本号**，历史追溯靠 ChangeLog（§6.1）|
+| **设计类文档** | PRD / RA / DR / Story / Task / CodingPlan / TestCase / Proposal | **原地更新，不带版本号**（v3.10.1 起不记录 ChangeLog）|
 | **事件类报告** | Coding 报告 / Test 报告 / CR 报告 / Story Review 报告 / 追溯矩阵 | **带 v{N}-r{M} 或 r{N} 版本号**，每轮新增、保留全部历史 |
 
 ### 1.2 统一根目录
@@ -118,14 +118,14 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 | **Task 实现方案** / `TASK_IMPL_PLAN` | `{文档工作区根}/ae-sdd-doc/Task/{WORKITEM-ID}/{TASK-ID}-ImplPlan.md` | `...ImplPlan.md` | 不带版本号 |
 | **小任务旧兼容目录** / `TASK_SMALL` | `{文档工作区根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/Task/{DOC-ID}/` | 目录型兼容 | 不带版本号 |
 | **CodingPlan** / `CODING_PLAN` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingPlan.md` | `BUG-LIFE-001-CodingPlan.md` | 不带版本号 |
-| **Coding 报告** / `CODING_REPORT` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingReport-v{N}-r{M}.md` | `...CodingReport-v1-r1.md` | 带 v{N}-r{M} |
+| **Coding 报告** / `CODING_REPORT` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingReport.md` | `...CodingReport.md` | 原地更新（v3.10.1） |
 | **Coding 问题日志** / `CODING_ISSUE_LOG` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingIssueLog.md` | 原地累加 | 不带版本号 |
 | **微任务旧兼容目录** / `PLAN_MICRO` | `{文档工作区根}/ae-sdd-doc/iterations/{YYYY-MM-DD}/Coding/{DOC-ID}/` | 目录型兼容 | 不带版本号 |
 | **测试用例** / `TESTCASE` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-testcase.md` | `BUG-LIFE-001-testcase.md` | 不带版本号 |
 | **测试用例合规报告** / `TESTCASE_COMPLIANCE_REPORT` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-TestCaseCompliance-r{N}.md` | `...Compliance-r1.md` | 带 r{N} |
 | **TestCase Review** / `TESTCASE_REVIEW` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-TestCaseReview-r{N}.md` | `...TestCaseReview-r1.md` | 带 r{N} |
-| **测试报告** / `TEST_REPORT` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-Report-v{N}-r{M}.md` | `...Report-v1-r1.md` | 带 v{N}-r{M} |
-| **CR 报告** / `CODE_REVIEW` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-CodeReview-v{N}-r{M}.md` | `...CodeReview-v1-r1.md` | 带 v{N}-r{M} |
+| **测试报告** / `TEST_REPORT` | `{文档工作区根}/ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-Report.md` | `...Report.md` | 原地更新（v3.10.1） |
+| **CR 报告** / `CODE_REVIEW` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-CodeReview.md` | `...CodeReview.md` | 原地更新（v3.10.1） |
 | **追溯矩阵** / `TRACE_MATRIX` | `{文档工作区根}/ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-追溯矩阵-v{N}-r{M}.md` | （独立成文件）| 带 v{N}-r{M} |
 | **Story Review** / `STORY_REVIEW` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-StoryReviewReport-r{N}.md` | `...StoryReviewReport-r1.md` | 带 r{N} |
 | **Review UpdatePlan** / `REVIEW_UPDATEPLAN` | `{文档工作区根}/ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-StoryReviewUpdatePlan-r{N}.md` | `...UpdatePlan-r1.md` | 带 r{N} |
@@ -195,8 +195,7 @@ D:\Item\life\.ae-sdd\assets\life\                          ← workspaceKey = li
 └── {YYYY-MM-DD}/
     └── {DocType}/
         ├── {doc-id}-v{N}-r{M}.md        ← 事件类报告（带版本号）
-        └── ChangeLog/
-            └── {doc-id}-changelog.md
+        （v3.10.1 起，不再生成 ChangeLog/ 子目录）
 ```
 
 > **注：** 迭代目录主要承载**事件类报告**（Coding 报告 / Test 报告 / CR 报告等）。设计类文档原地更新，不进迭代目录。
@@ -206,11 +205,11 @@ D:\Item\life\.ae-sdd\assets\life\                          ← workspaceKey = li
 d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 └── 2026-06-17\
     ├── Coding\
-    │   ├── STORY-001-BE-CodingReport-v1-r1.md
+    │   ├── STORY-001-BE-CodingReport.md
     │   └── ChangeLog\
     │       └── STORY-001-BE-CodingReport-changelog.md
     └── CR\
-        ├── STORY-001-BE-CodeReview-v1-r1.md
+        ├── STORY-001-BE-CodeReview.md
         └── ChangeLog\
             └── STORY-001-BE-CodeReview-changelog.md
 ```
@@ -262,8 +261,8 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 
 | 文档类型 | 命名规则 | 例子 | 原因 |
 |---------|---------|------|------|
-| **设计类文档**（PRD / RA / DR / Story / Task / CodingPlan / TestCase / Proposal）| **不带版本号**，原地更新 | `STORY-001-BE.md` | 原地更新，历史追溯靠 ChangeLog（§6.1）|
-| **事件类报告**（Coding 报告 / 测试报告 / CR 报告 / 追溯矩阵）| **带 v{N}-r{M}** | `STORY-001-BE-CodingReport-v1-r1.md` | 报告是"事件"，每轮 Coding 一份，保留全部历史 |
+| **设计类文档**（PRD / RA / DR / Story / Task / CodingPlan / TestCase / Proposal）| **不带版本号**，原地更新 | `STORY-001-BE.md` | 原地更新（v3.10.1 起不记录 ChangeLog）|
+| **事件类报告**（Coding 报告 / 测试报告 / CR 报告 / 追溯矩阵）| **带 v{N}-r{M}** | `STORY-001-BE-CodingReport.md` | 报告是"事件"，每轮 Coding 一份，保留全部历史 |
 | **Story Review 报告** | **带 r{N}** | `STORY-001-BE-StoryReviewReport-r1.md` | 1 个 Story 1 份，1 份 r1 |
 | **Review Proposal** | **带 N** | `STORY-001-BE-Proposal-1.md` | 1 份/轮 Review |
 | **跨轮 Review 对比表** | **带 v1-to-v2** | `STORY-001-BE-ReviewCompare-v1-to-v2.md` | 表示对比的 2 个版本 |
@@ -289,13 +288,13 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 
 | 场景 | 动作 | 命名变化 |
 |------|------|---------|
-| **首次创建**（事件类报告）| v=1, r=1 | `STORY-001-BE-CodingReport-v1-r1.md` |
-| **重入 Coding/Test/CR**（同 Story 版本）| r+1 | `STORY-001-BE-CodingReport-v1-r2.md` |
-| **Story 大改后重入** | v+1, r=1 | `STORY-001-BE-CodingReport-v2-r1.md` |
+| **首次创建**（事件类报告）| v=1, r=1 | `STORY-001-BE-CodingReport.md` |
+| **重入 Coding/Test/CR** | 原地覆盖 | `STORY-001-BE-CodingReport.md`（同一文件） |
+| **Story 大改后重入** | 原地覆盖 | `STORY-001-BE-CodingReport.md`（同一文件） |
 | **旧版本** | **保留不删** | v1-r1 / v1-r2 全部保留 |
 | **ChangeLog** | **追加新行** | 记录 `v1-r1 → v1-r2` 的修改项 |
 
-> **设计类文档（PRD/RA/DR/Story/Task/CodingPlan/TestCase）无版本号递增**：原地更新，每次修改追加 ChangeLog 行追溯历史。
+> **设计类文档原地更新**：v3.10.1 起不再生成 ChangeLog 旁车文件，文档原地覆盖。
 
 **自动版本号：**
 - `save_doc()` API 自动调用 `get_latest_version()` 获取当前最大版本（仅事件类报告）
@@ -348,7 +347,7 @@ document-storage-skill.定位(projectKey, intent)
    │   └─ 未显式 workItemId → 回退 storyId/docId，兼容旧调用
    └─ 工程类操作（代码、构建）→ 路径根 = gitPath
 4. 拼接具体文档路径
-5. 返回：{完整路径, 文件名, 版本号, ChangeLog 路径, STORING 索引待更新项}
+5. 返回：{完整路径, 文件名, 版本号, STORING 索引待更新项}（v3.10.1 ChangeLog 已禁用）
 ```
 
 ### 3.3 项目资产依赖（🔴 资产路径单一权威源 — 🆕 v4.1）
@@ -399,9 +398,9 @@ document-storage-skill.定位(projectKey, intent)
 
 | CLI 命令 | 封装的 API | 用途 |
 |---------|-----------|------|
-| `ae-sdd doc save --intent X --content-file F` | `save_doc()` | 一步到位存文档（resolve+写+版本+ChangeLog+STORING+gitignore+删草稿）|
+| `ae-sdd doc save --intent X --content-file F` | `save_doc()` | 一步到位存文档（resolve+写+版本+STORING+gitignore+删草稿；v3.10.1 ChangeLog 已禁用）|
 | `ae-sdd doc resolve --intent X` | `resolve_path()` | 只推路径不写（查会写到哪）|
-| `ae-sdd doc finalize --path P --intent X` | `finalize_doc()` | 已手写文件补版本号/ChangeLog/STORING（不覆盖内容）|
+| `ae-sdd doc finalize --path P --intent X` | `finalize_doc()` | 已手写文件补版本号/STORING（不覆盖内容；v3.10.1 ChangeLog 已禁用）|
 
 **完整 save 命令：**
 ```bash
@@ -411,8 +410,7 @@ ae-sdd doc save \
   --story-id {STORY-ID} \        # Story 主文档或需保留 Story 语义时填；旧调用会回退为 workItem
   --doc-id {DOC-ID} \            # raId/prdId/drId/taskId 等归一到此
   --content-file .ae-sdd/tmp/{doc-id}-draft.md \  # 必填，存完自动删除
-  --version "v1-r1" \            # 事件类报告填（r 自动自增）；设计类不填
-  --changelog-note "修改说明" \   # 可选，追加到 ChangeLog
+  --version "v1-r1" \            # 事件类报告填（r 自动自增）；设计类不填 \   # 可选，追加到 ChangeLog
   --keep-draft                   # 可选，保留草稿（默认删除）
 ```
 
@@ -475,7 +473,7 @@ interface ResolvedPath {
 
 ### 4.3 统一保存 API：`save_doc()`
 
-> **用途：** 统一文档保存入口（自动版本号 + ChangeLog + 目录创建 + .gitignore 维护）。
+> **用途：** 统一文档保存入口（自动版本号 + 目录创建 + .gitignore 维护；v3.10.1 ChangeLog 已禁用）。
 
 **输入：** `doc`（含 path / content / metadata）
 **输出：** `SaveResult`（含 success / newVersion / changelogEntry）
@@ -485,7 +483,7 @@ interface ResolvedPath {
 2. 🆕 RA 类型强检查（intent=RA 时调用 `check_ra_prerequisites`）— BUG / CONFIG intent 双重豁免
 3. 若带版本号且未显式传 version → get_latest_version 自增（E007：重入必须递增）
 4. 写文件（旧版本保留）
-5. 追加 ChangeLog 行（文档同级目录，仅当传 changelog_note 时）
+5. ~~追加 ChangeLog 行~~（v3.10.1 已禁用）
 6. 首次写入 `ae-sdd-doc/` 时调用 `check_and_update_gitignore()`（§7.3）
 7. 返回 SaveResult
 
@@ -576,7 +574,7 @@ interface ResolvedPath {
 | `PLAN_MICRO` | 微任务旧兼容目录 | task-generate-skill | 不带版本号（目录型兼容）| ✅ |
 | `TEST_REPORT` | 测试报告 | test-generate-skill / test-review-skill | 带 v{N}-r{M} | ✅ |
 | `TRACE_MATRIX` | ⑦bis 全链路追溯矩阵 | coding-report-skill / code-review-skill | 带 v{N}-r{M} | ✅ |
-| `CODE_REVIEW` | CodeReview 报告 | code-review-skill | 带 v{N}-r{M} | ✅ |
+| `CODE_REVIEW` | CodeReview 报告 | code-review-skill | 原地更新（v3.10.1） | ✅ |
 | `PROPOSAL` | Proposal 文档 | proposal-skill | 不带版本号（原地更新）| ✅ |
 | `PROPOSAL_ARCHIVE` | Proposal 归档文档 | proposal-skill | 不带版本号（按 docId）| ✅ |
 | `ASSETS` | 项目资产主体 + 更新日志 | project-assets-update-skill | 不带版本号（原地修改）| ✅ |
@@ -629,9 +627,9 @@ interface ResolvedPath {
 | PRD / RA / DR | 原地更新 + ChangeLog | `PRD-001.md`（不变）|
 | Story / Task / CodingPlan / 测试用例 | 原地更新 + ChangeLog | 同名（不变）|
 | Story Supplement | 原地累加（不删旧的）| 同名 |
-| Coding 报告 | **新增**（r 递增）| `{WORKITEM-ID}-CodingReport-v1-r2.md` |
-| 测试报告 | **新增**（r 递增）| `{WORKITEM-ID}-Report-v1-r2.md` |
-| CR 报告 | **新增**（r 递增）| `{WORKITEM-ID}-CodeReview-v1-r2.md` |
+| Coding 报告 | 原地覆盖 | `{WORKITEM-ID}-CodingReport.md` |
+| 测试报告 | 原地覆盖 | `{WORKITEM-ID}-Report.md` |
+| CR 报告 | 原地覆盖 | `{WORKITEM-ID}-CodeReview.md` |
 | Story Review 报告 | **新增**（r 递增）| `{WORKITEM-ID}-StoryReviewReport-r2.md` |
 | Review Proposal | 原地更新；需要留痕时归档 | `{WORKITEM-ID}-Proposal.md` / `archive/{DOC-ID}.md` |
 | 跨轮 Review 对比表 | **新增**（按 v1-to-v2 命名）| `{WORKITEM-ID}-ReviewCompare-v1-to-v2.md` |
@@ -646,7 +644,7 @@ interface ResolvedPath {
 |------|------|
 | v1-r1, v1-r2, v2-r1 | 保留（不归档）|
 | v1-r1 / v1-r2 / ... v4-r1+ | 可归档到 `archive/{date}/` 子目录 |
-| **归档命令** | `mv ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingReport-v1-r4.md ae-sdd-doc/Coding/{WORKITEM-ID}/archive/2026-07-01/` |
+| **归档命令** | （v3.10.1 报告原地更新，不再需要归档历史版本） |
 
 **步骤 4：更新流程状态**
 
@@ -753,7 +751,7 @@ ChangeLog 追加新行
 d:\Item\icec-cloud-boss\ae-sdd-doc\Story\STORY-001-BE.md
 d:\Item\icec-cloud-boss\ae-sdd-doc\Story\STORY-001-BE-changelog.md      ← 同级目录
 
-d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\2026-06-17\Coding\STORY-001-BE-CodingReport-v1-r1.md
+d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\2026-06-17\Coding\STORY-001-BE-CodingReport.md
 d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\2026-06-17\Coding\STORY-001-BE-CodingReport-changelog.md  ← 同级目录
 ```
 
@@ -1311,14 +1309,17 @@ SKILL 流程
 - v3.9.0 嵌套模型下，`storyStates{}` 是 Story 流程状态的**权威来源**；`storyIds[]` 仍保留供 G-PRD-1~4 闸校验。
 - 详见 `state.py:init_nested_state()` / `reset_story_substate()`。
 
-**🆕 v3.9.0 嵌套 state 命名规则（R6 顶层主体命名）：**
+**🆕 v3.9.0 嵌套 state 命名规则（R6 顶层主体命名，🆕 v3.10.1 UUID 前缀）：**
 
-| entryNode | stateMachineId | 示例 |
-|---|---|---|
-| PRD | `PRD-{PRD特征}` | `PRD-IM-CS` |
-| DR | `DR-{DR特征}` | `DR-CS` |
-| STORY | `Story-{合并编号}` | `Story-003-004-005`（多 Story 合并） |
+| entryNode | stateMachineName（纯业务名） | stateMachineId / 目录名（带 UUID 前缀） | 示例 |
+|---|---|---|---|
+| PRD | `PRD-{PRD特征}` | `{uuid}-PRD-{PRD特征}` | `550e8400-...-PRD-IM-CS` |
+| DR | `DR-{DR特征}` | `{uuid}-DR-{DR特征}` | `550e8400-...-DR-CS` |
+| STORY | `Story-{合并编号}` | `{uuid}-Story-{合并编号}` | `550e8400-...-Story-003-004-005` |
 
 - 只以**最顶层主体**特征命名，不拼接下游层级。
-- 多 Story 合并时取编号去重拼接（如 `STORY-003-BE, STORY-004-BE, STORY-005-BE` → `Story-003-004-005`）。
-- 由 `paths.build_state_machine_name(top_node, features)` 生成。
+- 多 Story 合并时取编号去重拼接（如 `STORY-003-BE, STORY-004-BE, STORY-005-BE` -> `Story-003-004-005`）。
+- 业务名由 `paths.build_state_machine_name(top_node, features)` 生成；创建时 `paths.generate_state_uuid()` 生成随机 UUID 拼为 `{uuid}-{业务名}` 作为 `stateMachineId` 和目录名。
+- `stateMachineName` 保留纯业务名（无 UUID 前缀），供 `find_work_item_state_path` 后缀匹配和 `_state_matches_work_item` 内容匹配。
+- `stateUuid` 字段存 UUID 冗余标识。`paths.strip_uuid_prefix()` 从带前缀标识还原业务名。
+- 向后兼容：旧 state 目录无 UUID 前缀仍可读（精确匹配 + 内容匹配兜底）。

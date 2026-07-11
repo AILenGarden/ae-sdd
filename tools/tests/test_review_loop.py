@@ -99,23 +99,23 @@ def test_session_tier1_single_ok():
 # ─── 推进轮次（dryCounter + 退出判定）────────────────────────────────────────
 
 def test_advance_round_new_resets_dry():
-    rs = {"round": 2, "dryCounter": 2, "findings": []}
+    rs = {"round": 1, "dryCounter": 1, "findings": []}
     current = [{"id": "F1", "anchor": "DR§6.5 New", "severity": "O"}]
     r = rl.advance_round(rs, current)
-    assert r.round == 3
+    assert r.round == 2
     assert r.dry_counter == 0, "有新 finding 应归零"
     assert len(r.new_findings) == 1
 
 def test_advance_round_no_new_increments_dry():
-    rs = {"round": 1, "dryCounter": 1, "findings": [{"anchor": "DR§6.5 R11"}]}
+    rs = {"round": 1, "dryCounter": 0, "findings": [{"anchor": "DR§6.5 R11"}]}
     current = [{"id": "F1", "anchor": "DR§6.5 R11", "severity": "O"}]  # 重复
     r = rl.advance_round(rs, current)
-    assert r.dry_counter == 2, "无新增应 +1"
+    assert r.dry_counter == 1, "无新增应 +1"
 
-def test_advance_round_exit_normal_at_3():
-    rs = {"round": 3, "dryCounter": 2, "findings": []}
+def test_advance_round_exit_normal_at_2():
+    rs = {"round": 1, "dryCounter": 1, "findings": []}
     r = rl.advance_round(rs, [])  # 无新增
-    assert r.dry_counter == 3
+    assert r.dry_counter == 2
     assert r.exit_reason == "normal"
     assert r.next_action == "exit-normal"
 
@@ -131,7 +131,7 @@ def test_advance_round_escalate_on_red_after_max():
 # ─── verify_exit ────────────────────────────────────────────────────────────
 
 def test_verify_exit_normal():
-    passed, _ = rl.verify_exit({"exitReason": "normal", "dryCounter": 3, "round": 5})
+    passed, _ = rl.verify_exit({"exitReason": "normal", "dryCounter": 2, "round": 5})
     assert passed is True
 
 def test_verify_exit_inconsistent():
@@ -185,7 +185,7 @@ def test_e2e_full_loop(tmp_path=None):
             r = rl.collect(s, "story-review", reports_ok, "root-sid")
             st.write_state(sp, s)
 
-        assert r["round"] == 4 and r["dryCounter"] == 3
+        assert r["round"] == 3 and r["dryCounter"] == 2
         assert r["exitReason"] == "normal"
 
         # verify-exit

@@ -27,7 +27,7 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 产出的 CodeReview 报告**必须通过 `ae-sdd doc save` 命令落地**，禁止手拼路径。路径定位、版本号、ChangeLog、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
+> **🔴 强制：** 本 SKILL 产出的 CodeReview 报告**必须通过 `ae-sdd doc save` 命令落地**，禁止手拼路径。路径定位、版本号、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
 
 ### 写入 SOP（3 步）
 
@@ -39,7 +39,6 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
      --story-id {STORY-ID} \
      --version "v1-r1" \
      --content-file .ae-sdd/tmp/{doc-id}-draft.md \
-     --changelog-note "{一句话修改说明}"
    ```
    事件类报告 r 自动自增，旧版本保留不删。
 3. **确认输出**：命令输出最终路径，记录到产出清单
@@ -48,8 +47,8 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 | 输出文档 | intent | 命令示例 | 版本策略 |
 |---------|--------|---------|---------|
-| CodeReview 报告 | `CODE_REVIEW` | `ae-sdd doc save --intent CODE_REVIEW --work-item {W} --story-id {S?} --version "v1-r1" ...` | 带 v{N}-r{M}（r 自增）|
-| ⑦bis 追溯矩阵 | `TRACE_MATRIX` | `ae-sdd doc save --intent TRACE_MATRIX --work-item {W} --story-id {S?} --version "v1-r1" ...` | 带 v{N}-r{M} |
+| CodeReview 报告 | `CODE_REVIEW` | `ae-sdd doc save --intent CODE_REVIEW --work-item {W} --story-id {S?} ...` | 原地更新（不带版本号）|
+| ⑦bis 追溯矩阵 | `TRACE_MATRIX` | `ae-sdd doc save --intent TRACE_MATRIX --work-item {W} --story-id {S?} --version "v1-r1" ...` | 原地更新（不带版本号）|
 | CodeReviewUpdatePlan | 嵌入 CodeReview 报告 §十（**2026-06-06 改造：改为 Proposal 指针 → `proposal-skill.md`）** | 走 Proposal | Proposal 替代 |
 
 > 🔴 **关键：** 评审通过后**触发下游 Proposal 流程**（proposal-skill.md），评审发现的问题统一用 Proposal 描述。

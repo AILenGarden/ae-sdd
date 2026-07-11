@@ -1,9 +1,11 @@
 ---
 name: ae-sdd
-version: 3.9.22
+version: 3.10.1
 description: |
-  端到端自动化工程主入口（v3.9.22）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.10.1）。从 DR 出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。
+  🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。
   🆕 v3.9.22：测试 fixture 全量迁移到 task-scoped work-item state（跟随 v3.9.13 架构决策）+ 修复 6 处确定性 bug（入口脚本 py -3 引号 / assets_index 多文件 stats 崩溃 / gates.py 三元运算符丢行号 / update_graph kind 误标 / post-commit 无 pipefail 掩盖分发失败 / 版本号三处对齐）。
   🆕 v3.9.21：门禁按会话 engage 按需启用——修复"没调 /ae-sdd 的会话/子 Agent 也被全局 hook 锁死"。gate-intercept 增加 engage 短路：未 engage 直接放行；prompt-inject 检测 /ae-sdd 触发词写会话级 engage 标记（.ae-sdd/.session-engaged/），说"退出 ae-sdd"清除。语义从"有 .ae-sdd/ 就锁"改为"调了 ae-sdd 才锁"。
   🆕 v3.9.20：三症同治——(1) manifest 拆双文件（manifest-index.json LLM 用，省 75% tokens）；(2) G-STORY-CTX 升级真"已引用"门禁（查 Story 正文引用约束条目 + 取消小/微豁免）；(3) 新增 G-REVIEW-DEPTH（禁裸✅ + 零发现举证）。统一哲学：查产物证据不查行为。
@@ -57,7 +59,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 - semantic_inventory_sha256: `6a2b9d6d67fa312a5235353512d45599bb9e44fc41421f3e8f81403b0a504de1`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
-- summary: 端到端自动化工程主入口（v3.9.6）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+- summary: 端到端自动化工程主入口（v3.10.0）。从 DR 出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
 🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范。
 🆕 v3.9.5：Story 模板接口契约章节合并——双段合一 + 统一编号锚点。

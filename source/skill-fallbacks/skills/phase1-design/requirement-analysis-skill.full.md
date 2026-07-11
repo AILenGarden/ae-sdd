@@ -38,7 +38,7 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 ## 📦 文档存放前置调用（🔴 横切依赖）
 
-> **🔴 强制：** 本 SKILL 产出的文档**必须通过 `ae-sdd doc save` 命令落地**，禁止手拼路径直接 Write。路径定位、版本号、ChangeLog、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
+> **🔴 强制：** 本 SKILL 产出的文档**必须通过 `ae-sdd doc save` 命令落地**，禁止手拼路径直接 Write。路径定位、版本号、STORING、.gitignore 全由代码负责（对齐 document-storage-skill.md §9 写入 SOP）。
 
 ### 写入 SOP（3 步）
 
@@ -49,7 +49,6 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
      --intent {INTENT} \
      --doc-id {DOC-ID} \
      --content-file .ae-sdd/tmp/{doc-id}-draft.md \
-     --changelog-note "{一句话修改说明}"
    ```
    代码自动完成：resolve 推路径 → 写文件 → 版本号（事件类 r 自增）→ ChangeLog → STORING → .gitignore → 删草稿
 3. **确认输出**：命令输出最终路径，记录到本 SKILL 的产出清单
@@ -1173,7 +1172,6 @@ RA §9-quater.7 必须给 DR 可直接引用的输入：
      --intent RA \
      --doc-id RA-001 \
      --content-file .ae-sdd/tmp/RA-001-draft.md \
-     --changelog-note "首次创建"
    ```
    代码自动完成：resolve 推路径 → 写文件（设计类原地更新）→ 追加 ChangeLog → 更新 STORING → 维护 .gitignore → 删草稿
 3. **确认输出**：命令输出最终路径（如 `ae-sdd-doc/RA/RA-001.md`），记录到产出清单

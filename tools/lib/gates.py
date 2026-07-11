@@ -68,7 +68,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（14 主门禁 G-00~G-13 + 3 中段门禁 G-14/G-CODEPLAN-SRC/G-DOC-STORAGE + 1 G-PATH + G-RA-1~6 + G-RA-FLOW + 1 G-CODE + G-DOC-CONSISTENCY + G-REVIEW-LOOP + G-09B + G-AUTO-CONSENSUS = 30）
+# 门禁元信息（GATE_REGISTRY 实际 35 条；v3.10.0 砍 Task phase 后 G-04/G-05/G-06/G-TASK-CTX 仍注册但不再在 PHASE_ENTRY_GATES 中触发）
 GATE_REGISTRY: list[dict] = [
     {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
     {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
@@ -118,8 +118,8 @@ GATE_REGISTRY: list[dict] = [
     # （实测案例：life 项目 MEMORY 写 D:\Item\doc 与 config 写 D:\Item\life 冲突，RA 落错位置）
     {"id": "G-DOC-CONSISTENCY", "name": "项目侧记忆-配置路径一致性", "severity": "blocker"},
     # 🆕 v3.5.12 review-loop 退出条件门禁：review 节点（story/dr/task/code review）切相前，
-    # 校验 reviewLoop.exitReason 满足协议（normal 需 dryCounter≥3 / escalate 已升级用户）。
-    # 治 P0-1/4：堵 root agent 单轮就自称"连续3轮无新增"退出，无机械反驳。
+    # 校验 reviewLoop.exitReason 满足协议（normal 需 dryCounter≥2 / escalate 已升级用户）。
+    # 治 P0-1/4：堵 root agent 单轮就自称"连续2轮无新增"退出，无机械反驳。
     # 注：本门禁依赖 root agent 跑过 `ae-sdd review-loop collect`（无 reviewLoop 字段时降级 skip）
     {"id": "G-REVIEW-LOOP", "name": "review-loop 退出条件通过", "severity": "blocker"},
     # 🆕 v3.5.13 G-09B reviewer 独立性硬门禁：review 节点切相时机械派生 Tier，
@@ -147,16 +147,20 @@ GATE_REGISTRY: list[dict] = [
 ]
 
 # Story Review 之后允许的 phase
+# 🆕 v3.10.1 子系列合并：story-generated = generate+review loop 已完成（2轮无新缺陷退出）
+# 故 story-generated 本身即代表 Story Review 已通过，加入此集合。
 PHASE_PAST_STORY_REVIEW = {
-    "story-reviewed",
-    "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0 TestCase 独立系列
-    "task-generated", "task-reviewed",
+    "story-generated",  # 🆕 v3.10.1 合并后：进入 story-generated = review 已过
+    "story-reviewed",   # 🟡 兼容旧 state（已拆分的 phase）
+    "testcase-generated", "testcase-reviewed",  # 🟡 兼容旧 state
+    "coding-process",  # 🆕 v3.10.0 砍 Task：testcase 之后直入 coding-process
     "coding", "test-running", "code-reviewed", "completed",
 }
 
-# Task Review 之后允许的 phase
+# Task Review 之后允许的 phase（🟡 v3.10.0：Task phase 已从主流程移除，
+# 此集合仅保留兼容旧 state；G-06 不再在 PHASE_ENTRY_GATES 中触发）
 PHASE_PAST_TASK_REVIEW = {
-    "task-reviewed", "coding", "test-running", "code-reviewed", "completed",
+    "task-reviewed", "coding-process", "coding", "test-running", "code-reviewed", "completed",
 }
 
 # CodingPlan 必含章节（按 coding-skill §5 CodePlan 7 章节，被 coding-process §A 调用）
@@ -438,31 +442,34 @@ def check_g10(project_dir: Path, st: dict, current_story: str) -> GateResult:
     return _check_report(project_dir, st, current_story,
                          gate_id="G-10", name="测试报告存在",
                          category="Test",
-                         patterns=[f"{current_story}-Report-v*-r*.md"],
-                         legacy_suffixes=["-Report.md"],
-                         expected_hint=f"ae-sdd-doc/Test/{current_story}/{current_story}-Report-vN-rM.md",
-                         action=f"跑完 Test 系列后生成 {current_story}-Report-vN-rM.md")
+                         patterns=[f"{current_story}-Report.md",  # 🆕 v3.10.1 原地更新（主）
+                                   f"{current_story}-Report-v*-r*.md"],  # 兼容旧版本化文件
+                         legacy_suffixes=["-Report.md"],  # design/ 兼容
+                         expected_hint=f"ae-sdd-doc/Test/{current_story}/{current_story}-Report.md",
+                         action=f"跑完 Test 系列后生成 {current_story}-Report.md")
 
 
 def check_g11(project_dir: Path, st: dict, current_story: str) -> GateResult:
     return _check_report(project_dir, st, current_story,
                          gate_id="G-11", name="Coding 报告存在",
                          category="Coding",
-                         patterns=[f"{current_story}-CodingReport-v*-r*.md",
+                         patterns=[f"{current_story}-CodingReport.md",  # 🆕 v3.10.1 原地更新（主）
+                                   f"{current_story}-CodingReport-v*-r*.md",  # 兼容旧版本化
                                    f"{current_story}-Coding-Report-v*-r*.md"],
-                         legacy_suffixes=["-Coding-Report.md", "-CodingReport.md"],
-                         expected_hint=f"ae-sdd-doc/Coding/{current_story}/{current_story}-CodingReport-vN-rM.md",
-                         action=f"编码完成后生成 {current_story}-CodingReport-vN-rM.md")
+                         legacy_suffixes=["-CodingReport.md", "-Coding-Report.md"],  # design/ 兼容
+                         expected_hint=f"ae-sdd-doc/Coding/{current_story}/{current_story}-CodingReport.md",
+                         action=f"编码完成后生成 {current_story}-CodingReport.md")
 
 
 def check_g12(project_dir: Path, st: dict, current_story: str) -> GateResult:
     return _check_report(project_dir, st, current_story,
                          gate_id="G-12", name="CodeReview 报告存在",
                          category="CR",
-                         patterns=[f"{current_story}-CodeReview-v*-r*.md"],
-                         legacy_suffixes=["-CodeReview.md"],
-                         expected_hint=f"ae-sdd-doc/CR/{current_story}/{current_story}-CodeReview-vN-rM.md",
-                         action=f"CodeReview 后生成 {current_story}-CodeReview-vN-rM.md")
+                         patterns=[f"{current_story}-CodeReview.md",  # 🆕 v3.10.1 原地更新（主）
+                                   f"{current_story}-CodeReview-v*-r*.md"],  # 兼容旧版本化
+                         legacy_suffixes=["-CodeReview.md"],  # design/ 兼容
+                         expected_hint=f"ae-sdd-doc/CR/{current_story}/{current_story}-CodeReview.md",
+                         action=f"CodeReview 后生成 {current_story}-CodeReview.md")
 
 
 # 🆕 v3.9.20 G-REVIEW-DEPTH：Review 深度门禁——禁裸✅ + 零发现举证。
@@ -2191,7 +2198,7 @@ def check_g_review_loop(project_dir: Path, st: dict, current_story: str) -> Gate
     """G-REVIEW-LOOP review-loop 退出条件通过（🆕 v3.5.12，治 P0-1/4）。
 
     校验 review 节点（story-reviewed/testcase-reviewed/dr-reviewed/task-reviewed/code-reviewed）切相前，
-    reviewLoop 状态满足退出条件（协议1 normal 需 dryCounter≥3 / 协议2 escalate 已升级用户）。
+    reviewLoop 状态满足退出条件（协议1 normal 需 dryCounter≥2 / 协议2 escalate 已升级用户）。
 
     降级策略：若 state 无 reviewLoop 字段（root 未跑过 review-loop CLI）→ skip（warn 不阻断）。
     这是兼容旧 state.json 的策略——本门禁只在 root 主动启用 review-loop CLI 后生效，
@@ -2224,7 +2231,7 @@ def check_g_review_loop(project_dir: Path, st: dict, current_story: str) -> Gate
                                    "round": rl.get("round")})
     return GateResult("G-REVIEW-LOOP", name, "blocker", False,
                       f"review-loop 未达退出条件：{reason}",
-                      "跑 `ae-sdd review-loop collect` 推进轮次直到连续3轮无新增（normal）或升级用户（escalate）",
+                      "跑 `ae-sdd review-loop collect` 推进轮次直到连续2轮无新增（normal）或升级用户（escalate）",
                       details={"exitReason": rl.get("exitReason"),
                                "dryCounter": rl.get("dryCounter"),
                                "round": rl.get("round")})
@@ -2330,7 +2337,7 @@ def check_g09b(project_dir: Path, st: dict, current_story: str) -> GateResult:
                                    "hintsPreview": hints_preview})
 
     # Tier 2/3 还要求 root 跑过 review-loop（堵"派了多 reviewer 但单轮就退"）
-    # G-REVIEW-LOOP 负责"跑满3轮"，G-09B 负责"启动了 review-loop"
+    # G-REVIEW-LOOP 负责"跑满2轮"，G-09B 负责"启动了 review-loop"
     if not st.get("reviewLoop"):
         return GateResult("G-09B", name, "blocker", False,
                           f"Tier {tier} 但未启动 review-loop（无 reviewLoop 字段）",

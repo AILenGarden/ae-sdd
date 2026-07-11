@@ -11,7 +11,7 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 > 1. **读取**：`ae-sdd doc resolve --intent DR --doc-id {drId}` 定位 DR 主文档；`--intent DR_SUPPLEMENT` 定位 Supplement
 > 2. **写入**：`ae-sdd doc save --intent DR --doc-id {drId} --content-file 草稿.md`（DR 原地更新）
 > 3. **命名 + 版本号**（§3.1/3.2）：DR 主文档带 v{major}.{minor}；Supplement 不带版本号
-> 3. ChangeLog / .gitignore 由 `ae-sdd doc save` 自动处理
+> 3. .gitignore 由 `ae-sdd doc save` 自动处理
 
 **本 SKILL 涉及文档类型与 API 调用对应：**
 
@@ -27,10 +27,10 @@ description: 根据 DR 补充说明文档和模板更新 DR 主文档。当 Stor
 >
 > ```bash
 > # DR 主文档修订：原地更新
-> ae-sdd doc save --intent DR --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-draft.md --changelog-note "架构优化"
+> ae-sdd doc save --intent DR --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-draft.md
 >
 > # DR 补充说明
-> ae-sdd doc save --intent DR_SUPPLEMENT --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-supplement.md --changelog-note "Story反馈归档"
+> ae-sdd doc save --intent DR_SUPPLEMENT --doc-id DR-001 --content-file .ae-sdd/tmp/DR-001-supplement.md
 > ```
 
 ---
