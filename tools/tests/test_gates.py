@@ -907,6 +907,109 @@ class TestGDocConsistency(unittest.TestCase):
         self.assertEqual(len(r.details.get("conflicts", [])), 0)
 
 
+# ─── G-PATH canonical document-storage artifacts ─────────────────────────────
+class TestGPath(unittest.TestCase):
+
+    _VIOLATION = "`design/story/be/STORY-001-BE.md`\n"
+
+    def _check(self, master: Path):
+        return gates.check_g_path(master, master, {}, "")
+
+    def _check_project(self, structure: dict):
+        master = _setup_project({"source/clean.md": "no path declarations\n"})
+        project = _setup_project(structure)
+        return gates.check_g_path(master, project, {}, "")
+
+    def test_canonical_source_skill_is_exempt(self):
+        master = _setup_project({
+            "source/skills/cross-cutting/document-storage-skill.md": self._VIOLATION,
+        })
+        self.assertTrue(self._check(master).pass_)
+
+    def test_source_full_fallback_is_exempt(self):
+        master = _setup_project({
+            "source/skill-fallbacks/skills/cross-cutting/"
+            "document-storage-skill.full.md": self._VIOLATION,
+        })
+        self.assertTrue(self._check(master).pass_)
+
+    def test_compiled_runtime_fallback_is_exempt_in_package_layout(self):
+        package = _setup_project({
+            "runtime/skills/cross-cutting/document-storage-skill/"
+            "fallback/SKILL.full.md": self._VIOLATION,
+        })
+        self.assertTrue(self._check(package).pass_)
+
+    def test_other_full_fallback_is_still_scanned(self):
+        package = _setup_project({
+            "runtime/skills/cross-cutting/other-skill/fallback/SKILL.full.md":
+                self._VIOLATION,
+        })
+        result = self._check(package)
+        self.assertFalse(result.pass_)
+        self.assertEqual(len(result.details["violations"]), 1)
+
+    def test_same_basename_in_wrong_parent_is_still_scanned(self):
+        master = _setup_project({
+            "source/skills/other/document-storage-skill.md": self._VIOLATION,
+        })
+        result = self._check(master)
+        self.assertFalse(result.pass_)
+        self.assertEqual(len(result.details["violations"]), 1)
+
+    def test_ordinary_violation_is_still_scanned(self):
+        master = _setup_project({
+            "source/skills/cross-cutting/other-skill.md": self._VIOLATION,
+        })
+        self.assertFalse(self._check(master).pass_)
+
+    def test_no_master_behavior_is_unchanged(self):
+        result = gates.check_g_path(None, Path(tempfile.mkdtemp()), {}, "")
+        self.assertFalse(result.pass_)
+        self.assertEqual(result.details["skipped"], "no_master")
+
+    def test_no_source_behavior_is_unchanged(self):
+        missing = Path(tempfile.mkdtemp()) / "missing"
+        result = gates.check_g_path(missing, missing, {}, "")
+        self.assertFalse(result.pass_)
+        self.assertEqual(result.details["skipped"], "no_source")
+
+    def test_project_memory_same_basename_is_scanned(self):
+        result = self._check_project({
+            ".harness/memory/document-storage-skill.md": self._VIOLATION,
+        })
+        self.assertFalse(result.pass_)
+        self.assertEqual(len(result.details["violations"]), 1)
+
+    def test_project_memory_ordinary_violation_is_scanned(self):
+        result = self._check_project({
+            ".harness/memory/MEMORY.md": self._VIOLATION,
+        })
+        self.assertFalse(result.pass_)
+        self.assertEqual(len(result.details["violations"]), 1)
+
+    def test_project_ae_sdd_memory_violation_is_scanned(self):
+        result = self._check_project({
+            ".ae-sdd/memory/project.md": self._VIOLATION,
+        })
+        self.assertFalse(result.pass_)
+        self.assertEqual(len(result.details["violations"]), 1)
+
+    def test_project_draft_is_process_artifact_and_not_scanned(self):
+        result = self._check_project({
+            ".ae-sdd/drafts/old-review.md": self._VIOLATION,
+        })
+        self.assertTrue(result.pass_)
+        self.assertEqual(result.details["project_scanned"], 0)
+
+    def test_top_level_memory_inputs_are_scanned(self):
+        for name in ("AGENTS.md", "CLAUDE.md", "MEMORY.md"):
+            with self.subTest(name=name):
+                result = self._check_project({name: self._VIOLATION})
+                self.assertFalse(result.pass_)
+                self.assertEqual(len(result.details["violations"]), 1)
+
+
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 

@@ -135,8 +135,8 @@ def test_verify_exit_normal():
     assert passed is True
 
 def test_verify_exit_inconsistent():
-    """exitReason=normal 但 dryCounter<3 → 数据不一致，阻断。"""
-    passed, _ = rl.verify_exit({"exitReason": "normal", "dryCounter": 2, "round": 5})
+    """legacy exitReason=normal 但 dryCounter<2 → 数据不一致，阻断。"""
+    passed, _ = rl.verify_exit({"exitReason": "normal", "dryCounter": 1, "round": 5})
     assert passed is False
 
 def test_verify_exit_escalate():
@@ -151,7 +151,7 @@ def test_verify_exit_not_ready():
 # ─── 端到端状态机（start → collect 多轮 → verify-exit）──────────────────────
 
 def test_e2e_full_loop(tmp_path=None):
-    """完整跑一遍：start → 1轮有新增 → 3轮无新增退出。"""
+    """完整跑一遍：首批有发现，修复后一个有效 clean batch 退出。"""
     import tempfile
     td = tempfile.TemporaryDirectory()
     try:
@@ -175,18 +175,17 @@ def test_e2e_full_loop(tmp_path=None):
         st.write_state(sp, s)
         assert r["round"] == 1 and r["dryCounter"] == 0 and len(r["newFindings"]) == 2
 
-        # r2-4: 无新增，dryCounter 1→2→3 退出
-        for rnd in [2, 3, 4]:
-            s = st.read_state(sp)
-            reports_ok = [
-                {"sessionId": f"sid-A{rnd}", "report": f"r{rnd}.md", "findings": []},
-                {"sessionId": f"sid-B{rnd}", "report": f"r{rnd}b.md", "findings": []},
-            ]
-            r = rl.collect(s, "story-review", reports_ok, "root-sid")
-            st.write_state(sp, s)
+        # r2: 无新增，Tier 2 风险策略达到 1 个 valid clean batch 后退出
+        s = st.read_state(sp)
+        reports_ok = [
+            {"sessionId": "sid-A2", "report": "r2.md", "findings": []},
+            {"sessionId": "sid-B2", "report": "r2b.md", "findings": []},
+        ]
+        r = rl.collect(s, "story-review", reports_ok, "root-sid")
+        st.write_state(sp, s)
 
-        assert r["round"] == 3 and r["dryCounter"] == 2
-        assert r["exitReason"] == "normal"
+        assert r["round"] == 2 and r["dryCounter"] == 1
+        assert r["exitReason"] == "passed"
 
         # verify-exit
         s = st.read_state(sp)

@@ -351,6 +351,76 @@ class TestPathHelpers(unittest.TestCase):
 
         self.assertEqual(paths.find_work_item_state_path(self.ade_sdd, "STORY-004-BE"), state_file)
 
+    # ─── 🆕 v3.10.1 state UUID 前缀测试 ──────────────────────────────────────
+
+    def test_generate_state_uuid_format(self):
+        """🆕 v3.10.1 generate_state_uuid 返回标准 36 字符 UUID v4。"""
+        u = paths.generate_state_uuid()
+        self.assertEqual(len(u), 36)
+        parts = u.split("-")
+        self.assertEqual(len(parts), 5)
+        self.assertEqual(len(parts[0]), 8)
+        self.assertEqual(len(parts[1]), 4)
+        self.assertEqual(len(parts[2]), 4)
+        self.assertEqual(len(parts[3]), 4)
+        self.assertEqual(len(parts[4]), 12)
+        # 两次调用应不同（随机性）
+        self.assertNotEqual(u, paths.generate_state_uuid())
+
+    def test_strip_uuid_prefix_with_uuid(self):
+        """🆕 v3.10.1 strip_uuid_prefix 剥离 {uuid}- 前缀返回纯业务名。"""
+        uuid_str = "550e8400-e29b-41d4-a716-446655440000"
+        self.assertEqual(paths.strip_uuid_prefix(f"{uuid_str}-PRD-IM-CS"), "PRD-IM-CS")
+        self.assertEqual(paths.strip_uuid_prefix(f"{uuid_str}-DR-CS"), "DR-CS")
+        self.assertEqual(paths.strip_uuid_prefix(f"{uuid_str}-Story-003-004"), "Story-003-004")
+
+    def test_strip_uuid_prefix_without_uuid(self):
+        """🆕 v3.10.1 无 UUID 前缀的目录名原样返回（向后兼容旧 state）。"""
+        self.assertEqual(paths.strip_uuid_prefix("PRD-IM-CS"), "PRD-IM-CS")
+        self.assertEqual(paths.strip_uuid_prefix("Story-006"), "Story-006")
+        self.assertEqual(paths.strip_uuid_prefix(""), "")
+
+    def test_has_uuid_prefix(self):
+        """🆕 v3.10.1 has_uuid_prefix 判断目录名是否带 UUID 前缀。"""
+        uuid_str = "550e8400-e29b-41d4-a716-446655440000"
+        self.assertTrue(paths.has_uuid_prefix(f"{uuid_str}-PRD-IM-CS"))
+        self.assertFalse(paths.has_uuid_prefix("PRD-IM-CS"))
+        self.assertFalse(paths.has_uuid_prefix(""))
+
+    def test_work_item_state_path_with_uuid(self):
+        """🆕 v3.10.1 work_item_state_path 传 state_uuid 时目录名带 UUID 前缀。"""
+        uuid_str = "550e8400-e29b-41d4-a716-446655440000"
+        sp = paths.work_item_state_path(self.ade_sdd, "PRD",
+                                        {"prd_feature": "IM-CS"},
+                                        state_uuid=uuid_str)
+        expected = self.tmp / ".auto-engineering" / f"{uuid_str}-PRD-IM-CS" / "state.json"
+        self.assertEqual(sp, expected)
+
+    def test_work_item_state_path_without_uuid_backward_compat(self):
+        """🆕 v3.10.1 不传 state_uuid 时目录名是纯业务名（向后兼容）。"""
+        sp = paths.work_item_state_path(self.ade_sdd, "PRD",
+                                        {"prd_feature": "IM-CS"})
+        expected = self.tmp / ".auto-engineering" / "PRD-IM-CS" / "state.json"
+        self.assertEqual(sp, expected)
+
+    def test_find_work_item_state_path_suffix_match_uuid_prefix(self):
+        """🆕 v3.10.1 目录名带 UUID 前缀时，按业务名 token 后缀匹配命中。"""
+        uuid_str = "550e8400-e29b-41d4-a716-446655440000"
+        state_file = self.tmp / ".auto-engineering" / f"{uuid_str}-PRD-IM-CS" / "state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(
+            '{"stateMachineId":"%s-PRD-IM-CS","stateMachineName":"PRD-IM-CS"}\n'
+            % uuid_str, encoding="utf-8")
+        # 传纯业务名 token，应通过后缀匹配命中
+        self.assertEqual(paths.find_work_item_state_path(self.ade_sdd, "PRD-IM-CS"), state_file)
+
+    def test_find_work_item_state_path_suffix_match_still_finds_legacy(self):
+        """🆕 v3.10.1 后缀匹配不破坏旧无 UUID 目录的精确匹配。"""
+        state_file = self.tmp / ".auto-engineering" / "PRD-IM-CS" / "state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text('{"workItemKey":"PRD-IM-CS"}\n', encoding="utf-8")
+        self.assertEqual(paths.find_work_item_state_path(self.ade_sdd, "PRD-IM-CS"), state_file)
+
     def test_assets_dir(self):
         self.assertEqual(paths.assets_dir(self.ade_sdd), self.ade_sdd / "assets")
 

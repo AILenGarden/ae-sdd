@@ -3,7 +3,7 @@ name: be-codereview-template
 description: BE CodeReview 报告空白模板 — 配合 code-review-skill.md 使用。9 章节空白 + 七道闸汇总 + UpdatePlan 空白。本模板只定通用结构，工程特化（如分层结构、命名约定）从项目资产 §3/§4 读取。
 ---
 
-# {STORY-ID} CodeReview 报告 v{N}-r{M}
+# {STORY-ID} CodeReview 报告
 
 > **配套 SKILL：** [`code-review-skill.md`](../../code-review-skill.md) — 评审流程 / 6 阶段评审 / 7 道闸 / UpdatePlan 详见该 SKILL。
 >
@@ -86,11 +86,17 @@ description: BE CodeReview 报告空白模板 — 配合 code-review-skill.md �
 | --- | --- |
 | **报告时间** | {YYYY-MM-DD HH:mm} |
 | **Story ID / 标题** | {STORY-ID} / {标题} |
-| **报告版本** | v{N}-r{M}（Story 版本-Coding 轮次） |
+| **Review Session** | {sessionId}（schema v2） |
+| **Input Fingerprint** | sha256:{...} |
+| **Ruleset Fingerprint** | sha256:{...} |
+| **聚合批次** | {validBatches} valid / {attempts} attempts；最终 batch={batchId} |
+| **Evidence Manifest** | `.auto-engineering/{WORKITEM-ID}/evidence/manifest.json` |
 | **报告人** | AI（Claude Code） + Reviewer: {name/agent} |
 | **项目分层来源** | `{projectKey}.assets.md §3 抽象分层映射表`（必填） |
 | **项目分层** | 从 §3 抽取：{例：BFF 入口 / 跨模块 SPI / Interfaces / Application / Domain / Infrastructure / 测试 / 文档} |
 | **审核阶段** | Phase 3 ⑦ 节点 |
+
+> 本文件是本 Story 唯一的人读 CodeReview 正文，后续 batch 原地更新。角色报告、平台错误和重试事件只作为 evidence / JSONL ledger 引用，不另建正式 CR 正文。
 
 ---
 
@@ -406,7 +412,7 @@ WHERE id = #{id}
 ```
 工程根路径：{workspace_root}
 Story ID：{STORY-ID}
-报告版本：v{N}-r{M}
+Review Session：{sessionId}；最终 batch：{batchId}
 项目分层来源：{projectKey}.assets.md §3
 合计：X 个（按本项目分层数统计）
 ```
@@ -470,11 +476,11 @@ git commit -m "[ST-{id}] {story_title}"
 | --- | --- | --- | --- |
 | Story 文档 | `resolve_path(intent="STORY", storyId={STORY-ID})` → `ae-sdd-doc/Story/{STORY-ID}.md` | □ | □ |
 | 统一版 CodePlan | `resolve_path(intent="CODING_PLAN", workItemId={WORKITEM-ID}, storyId={STORY-ID})` → `ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingPlan.md` | □ | □ |
-| Coding 报告 | `resolve_path(intent="CODING_REPORT", workItemId={WORKITEM-ID}, storyId={STORY-ID}, version=...)` → `ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingReport-v{N}-r{M}.md` | □ | □ |
+| Coding 报告 | `resolve_path(intent="CODING_REPORT", workItemId={WORKITEM-ID}, storyId={STORY-ID})` → canonical `ae-sdd-doc/Coding/{WORKITEM-ID}/{WORKITEM-ID}-CodingReport.md` | □ | □ |
 | 测试用例 | `resolve_path(intent="TESTCASE", workItemId={WORKITEM-ID}, storyId={STORY-ID})` → `ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-testcase.md` | □ | □ |
-| 测试报告 | `resolve_path(intent="TEST_REPORT", workItemId={WORKITEM-ID}, storyId={STORY-ID}, version=...)` → `ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-Report-v{N}-r{M}.md` | □ | □ |
+| 测试报告 | `resolve_path(intent="TEST_REPORT", workItemId={WORKITEM-ID}, storyId={STORY-ID})` → canonical `ae-sdd-doc/Test/{WORKITEM-ID}/{WORKITEM-ID}-Report.md` | □ | □ |
 | 源代码 | 工作目录对应工程 | □ | □ |
-| **CodeReview 报告** | `resolve_path(intent="CODE_REVIEW", workItemId={WORKITEM-ID}, storyId={STORY-ID}, version=...)` → `ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-CodeReview-v{N}-r{M}.md` | □ | □ |
+| **CodeReview 报告** | `resolve_path(intent="CODE_REVIEW", workItemId={WORKITEM-ID}, storyId={STORY-ID})` → canonical `ae-sdd-doc/CR/{WORKITEM-ID}/{WORKITEM-ID}-CodeReview.md` | □ | □ |
 | 项目资产（如有更新）| `{资产根}/`（见 document-storage §2.3；多业务线含 `{line}/` 分组）| □ | □ |
 
 > 🔴 任何产出物不存在或不一致 → 必须修正报告或补充产出物，不得跳过。

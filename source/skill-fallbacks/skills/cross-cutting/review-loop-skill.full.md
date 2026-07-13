@@ -2,7 +2,7 @@
 name: review-loop
 description: |
   Review Loop 公共协议（🆕 v3.4.3）— 所有 review/循环判定节点的公共骨架。
-  统一三条核心规则：① 退出条件（连续 2 轮无新增确认缺陷）② 循环上限（2 轮仍有 🔴 → 升级用户）③ Plan-first（有确认缺陷必先出 Plan）。
+  统一 Review Batch v2：输入指纹、有效批次、风险策略、失败分类、硬预算和 Plan-first。旧 round/dryCounter 仅作兼容投影。
   各 review SKILL（story-review / dr-review / code-review / task-generate TR / proposal / story-generate）只定义自己的检查项与 Plan 载体，loop 骨架引用本协议。
   🆕 v3.4.3 废弃"每 N 轮暂停问人"——与退出条件矛盾，且把退出权交给人违反 Loop Engineering 自评估原则。
 ---
@@ -18,36 +18,44 @@ description: |
 
 ---
 
-## 📋 核心协议（三条，所有 review 节点必须遵守）
+## 📋 核心协议（Review Batch v2，所有 review 节点必须遵守）
+
+### 协议 0：Review Batch 是权威对象
+
+Review 状态使用 `reviewSession`（`schemaVersion: 2`）持久化；`reviewLoop.round` / `dryCounter` 只用于兼容旧 state。每个 session 必须绑定：
+
+| 字段 | 约束 |
+| --- | --- |
+| `inputFingerprint` | Story/Plan/生产代码/测试/关键报告的 canonical manifest SHA-256；输入变更使旧 clean streak 失效。 |
+| `rulesetFingerprint` | reviewer 与 gate 规则版本；规则变化不得静默复用旧结论。 |
+| `batches[]` | 每次派发尝试一条记录，状态只能是 `VALID_CLEAN` / `VALID_FINDINGS` / `INVALID_INFRA` / `INVALID_PROTOCOL` / `INVALID_INPUT_DRIFT` / `CANCELLED`。 |
+| `counters` | 分开统计 `attempts`、`validBatches`、`cleanStreak`、`remediations`、平台/协议失败。 |
+| `budgets` | `maxAttempts`、`maxValidBatches`、`maxRemediations`、`maxWallClockMinutes`，任一耗尽进入 `STALLED`，不得转为通过。 |
+
+有效批次必须满足：required reviewer 集完整、session 独立、input/ruleset fingerprint 一致、报告格式有效。平台错误只重试失败角色，不重跑已完成角色；输入漂移必须创建新 fingerprint session。
 
 ### 协议 1：退出条件
 
-**连续 2 轮无新增确认缺陷**才退出循环。
+按风险策略退出，不再对所有 Tier 固定连续 N 轮：
 
-| 规则 | 说明 |
-|---|---|
-| 计数器规则 | 本轮发现新确认缺陷 → 计数器归零；本轮无新增 → 计数器 +1 |
-| 退出阈值 | 计数器累计到 **2**（即连续 2 轮无新增）→ 满足退出条件 |
-| 缺陷定义 | "确认缺陷"= 经判定为 🔴 阻断型 / 🟠 严重型 / 🟡 一般型的缺陷（🟢 建议型不计入计数器归零，但需记录）|
-| 节点专属硬门禁 | 各 review 节点可在退出条件上叠加**专属硬门禁**（如 story-review 的 C8 数据视角总览），未满足硬门禁不得退出 |
+| Tier | 首批无缺陷 | P0/P1 修复后 |
+| --- | --- | --- |
+| Tier 1 | 1 个 `VALID_CLEAN` | 1 个新 fingerprint `VALID_CLEAN` |
+| Tier 2 | 1 个 `VALID_CLEAN` + deterministic gates | 1 个新 fingerprint `VALID_CLEAN`；关键契约变更可提高为 2 |
+| Tier 3 | 1 个 `VALID_CLEAN` + 全量最终验证 | 2 个连续 `VALID_CLEAN`，fingerprint 不变 |
 
-> **为什么是 2 轮？** 1 轮太容易审漏（AI 偶然一次没发现问题就退出）；2 轮在审漏风险与流程效率间取得平衡，给 AI 一次自纠错机会后再确认一轮。v3.10.1 从 3 轮降为 2 轮--实测 3 轮在 ClaudeCode/Codex 单 Story 实现 8 小时场景下过度冗余，2 轮已足够收敛缺陷且显著缩短流程。
+`VALID_CLEAN` 只在 required reviewer 集完整时增加 `validBatches`/`cleanStreak`；`INVALID_*` 不改变 clean 结论。
 
 ### 协议 2：循环上限
 
-**2 轮循环上限**。2 轮后仍有 🔴 阻断型缺陷未解决 → **升级用户决策**，不无限循环。
+所有自动循环都有 attempts、valid batches、remediations 和 wall-clock 硬预算。任一预算耗尽进入 `STALLED`，输出阻塞证据并升级用户；预算耗尽不得自动放行 P0/P1。
 
 | 规则 | 说明 |
 |---|---|
-| 上限值 | **2** 轮（与退出阈值对齐）|
-| 触发升级 | 第 3 轮结束仍有 🔴 阻断型缺陷 → 升级用户 |
-| 升级动作 | 暂停循环，向用户输出"2 轮循环仍有 🔴：{缺陷清单}，请决策（人工介入 / 调整需求 / 放弃）" |
-| 禁止 | 禁止无限循环（无上限的 review 是安全漏洞，v3.4.3 修复 task-generate TR 的此问题）|
-
-> **退出条件 vs 循环上限的关系：**
-> - 退出条件（连续 2 轮无新增）= **正常退出**，AI 自评估达标
-> - 循环上限（2 轮仍有 🔴）= **异常退出**，AI 自评估不达标，交人决策
-> - 两者不矛盾：正常路径走退出条件，异常路径走循环上限
+| 平台失败 | 429/超时/crash：指数退避，只重试失败角色，最多 2 次；已成功角色 verdict 可复用。 |
+| 协议失败 | 报告格式错误、角色缺失、session 重复：`INVALID_PROTOCOL`，修复输入后重试。 |
+| 用户中断 | `CANCELLED`；恢复时继续同一 batch，不增加 valid count。 |
+| 禁止 | 禁止无限循环、把 `STALLED` 判成 PASS、把平台失败计入 clean。 |
 
 ### 协议 3：Plan-first（有确认缺陷必先出 Plan）
 
@@ -75,9 +83,9 @@ description: |
 
 **替代方案：** 退出条件（协议 1）+ 循环上限（协议 2）已足够。AI 自评估达标即退出；3 轮仍有 🔴 才升级用户。人不在循环中间介入，只在异常退出（升级用户）或节点结束处的人工审核点介入。
 
-### 禁止 2：禁止无循环上限
+### 禁止 2：禁止无预算循环
 
-所有 review 节点必须有循环上限（3 轮）。无上限 = AI 可无限"自评通过"，是安全漏洞。v3.4.3 修复 task-generate TR 的此问题。
+所有 review 节点必须同时有 attempts、valid batches、remediations 和 wall-clock 上限。无预算 = AI 可无限重试或把平台错误伪装成质量结论，是安全漏洞。
 
 ---
 
@@ -110,6 +118,7 @@ description: |
 
 ## 📖 实施历史
 
-- **v3.4.3（2026-06-26）**：新建本协议。统一退出阈值 3 轮 + 全仓加 3 轮循环上限 + 废弃"每 3 轮暂停问人"。修复 task-generate TR 无上限漏洞。
-- **v3.5.8（2026-06-27）**：覆盖范围向上游延伸到 RA。requirement-analysis-skill 第七步从"16 道闸一次性终检"重构为引用本协议（反复挖掘 + 连续 3 轮无新增确认缺陷才退出 + 3 轮仍有 🔴 升级用户 + 漏报升级）。补齐"RA 是全链路事实源头却无 review 闭环"的体系性缺口。
+- **v3.4.3（2026-06-26）**：新建本协议。统一 review loop 骨架、循环预算和 Plan-first，废弃"每 N 轮暂停问人"。修复 task-generate TR 无上限漏洞。
+- **v3.5.8（2026-06-27）**：覆盖范围向上游延伸到 RA。requirement-analysis-skill 第七步从"16 道闸一次性终检"重构为引用本协议（反复挖掘 + 风险策略收敛 + 预算耗尽升级用户 + 漏报升级）。补齐"RA 是全链路事实源头却无 review 闭环"的体系性缺口。
+- **v3.10.1（2026-07-11）**：Review Batch v2 取代固定 round/dryCounter 作为运行时权威；新增 input/ruleset fingerprint、有效性状态、失败角色定向重试、风险策略和硬预算，旧字段只作兼容投影。
 - **v3.4.3 已知缺口（留待下个 PR）**：story-review L1213 vs L1225 的 Plan-first 内部矛盾（2026-06-06 重构未清干净的遗留），本 PR 不处理。

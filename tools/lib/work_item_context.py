@@ -242,6 +242,39 @@ def disengage_session(ade_sdd: Path, session_key: str) -> None:
         pass
 
 
+def artifact_fingerprint(path: str | Path) -> str:
+    """Content fingerprint used by precise artifact invalidation."""
+    value = Path(path)
+    try:
+        digest = hashlib.sha256(value.read_bytes()).hexdigest()
+    except OSError:
+        digest = "missing"
+    return "sha256:" + digest
+
+
+def make_provenance(artifact: str, path: str | Path, input_artifacts: list[dict] | None = None) -> dict:
+    """Create a compact provenance record without relying on Git or mtime."""
+    return {
+        "artifact": artifact,
+        "path": str(path),
+        "inputArtifacts": input_artifacts or [],
+        "outputFingerprint": artifact_fingerprint(path),
+        "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+def invalidation_plan(changed_artifacts: list[dict], known_artifacts: list[dict]) -> dict:
+    """Compute affected outputs from input fingerprint edges."""
+    changed = {str(item.get("fingerprint") or item.get("outputFingerprint")) for item in changed_artifacts}
+    invalidated, retained = [], []
+    for artifact in known_artifacts:
+        inputs = artifact.get("inputArtifacts") or []
+        affected = any(str(item.get("fingerprint")) in changed for item in inputs)
+        (invalidated if affected else retained).append(artifact)
+    return {"invalidated": invalidated, "retained": retained,
+            "changed": list(changed), "reason": "input fingerprint dependency"}
+
+
 _STORY_RE = re.compile(
     r"\bSTORY-[A-Za-z0-9][A-Za-z0-9_-]*(?:-[A-Za-z0-9][A-Za-z0-9_-]*)*\b",
     re.IGNORECASE,
@@ -265,6 +298,7 @@ def _state_identifier_values(item: WorkItemState) -> list[str]:
         "workItemId",
         "workItemKey",
         "stateMachineId",
+        "stateMachineName",  # 🆕 v3.10.1 纯业务名（无 UUID 前缀），供按业务名匹配
         "currentWorkItem",
         "activeWorkItem",
         "currentStory",

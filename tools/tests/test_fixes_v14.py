@@ -229,10 +229,10 @@ class TestCodeReviewedSourceProtection:
             "activeStory": "STORY-001",
             "storyStates": {"STORY-001": {"phase": "code-reviewed"}},
         }, ensure_ascii=False, indent=2), encoding="utf-8")
-        # 🆕 v3.8.2：code-reviewed 属关联 phase，写文件前须 memory enter
+        # 🆕 v3.10.3：code-reviewed 属关联 phase，写文件前须 memory 存在（create_memory 替代 enter）
         from lib import memory_store
-        scope = memory_store.locate_scope(project=str(tmp_path), phase="review", story="STORY-001")
-        memory_store.enter(scope, actor="test")
+        scope = memory_store.locate_scope(project=str(tmp_path), entity_type="coding", entity_id="STORY-001")
+        memory_store.create_memory(scope, source_contexts={})
         allowed, _ = check_intercept(
             "Write",
             file_path="design/cr-report.md",

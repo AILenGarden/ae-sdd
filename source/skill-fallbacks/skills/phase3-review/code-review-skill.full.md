@@ -173,6 +173,7 @@ Code Review 结论：{STORY-ID}
 |---------|---------|
 | Phase 3 ⑦ 节点 | auto-engineering-skill 编排层自动触发 |
 | 用户手动 | "出 CR 报告" / "Code Review 报告" / "评审代码" / "审核 Story" |
+| 🆕 v3.10.2 micro-review 子路径 | `/ae-sdd 帮我 CodeReview 这段` → classify 判 entryNode=CODE_REVIEW + scale=微 → 走下方「无文档轻量准入分支」 |
 
 ---
 
@@ -191,7 +192,35 @@ Code Review 结论：{STORY-ID}
 
 ---
 
+## 🆕 v3.10.2 无文档轻量准入分支（micro-review 子路径）
+
+> **适用场景：** `/ae-sdd 帮我 CodeReview 这段` / `/ae-sdd 审查这部分实现` —— 用户只想对**给定代码**做只读审查并拿结论，无 Story/CodingPlan/测试报告等完整产物链。classify 判 `entryNode=CODE_REVIEW` + `scale=微`。
+
+**准入要求降级（与下方第零步硬准入二选一）：**
+
+| 项 | 完整流程第零步 | 🆕 轻量准入 |
+|---|---|---|
+| Story 主文档 | 必读 | 不要求 |
+| CodingPlan | 必读 | 不要求 |
+| Coding 报告 | 必读 | 不要求 |
+| 测试报告 | 必读 | 不要求 |
+| 项目资产 | 必读 | 可选（有则用于命名/分层参照） |
+| **用户指定代码范围** | — | **必读**（用户指明的文件/类/方法/代码段） |
+
+**轻量准入执行流程：**
+1. 读取用户指定代码范围（文件路径 / 类名 / 方法名 / 粘贴代码段）。
+2. 若有项目资产 → 调 `ae-sdd assets read code-review --project <projectKey>` 取 §5 命名 + §4 分层作参照（可选）。
+3. 执行第二步「多维评审」中**适用的维度**（业务逻辑/分层/DB/资产合规按代码内容判断；Test Review 引用核查在无文档场景跳过）。
+4. **输出形式：对话内直接给结论**——🔴/🟠/🟡/🟢 分级 + `file:line` 证据 + 修改建议（遵循标尺1证据标准、标尺4语言精确性，禁裸结论）。
+5. **落文档选项：** 用户要求落正式 CodeReview 报告时，state 须先到 `code-reviewed` phase（gate 跨步跳跃已对 CODE_REVIEW+微 放行），再走本 SKILL「📦 文档存放前置调用」的 `ae-sdd doc save --intent CODE_REVIEW`；否则仅对话输出，不强制落文档。
+
+> **与完整流程的边界：** 轻量准入**不走 Plan-first 更新原则**（无下游多文档同步诉求）；若审查结论触发改代码，用户可另起「微-优化」子路径处理。轻量准入**不产出 §第八步 CodeReviewUpdatePlan**，问题清单直接在对话结论里给。
+
+---
+
 ## 第零步：CodeReview 准入检查（🔴 硬门禁，未通过禁止进入 Review）
+
+> **🆕 v3.10.2 分流：** 若 `state.entryNode == "CODE_REVIEW"` 且 `scale == "微"`，跳过本第零步，改走上文「无文档轻量准入分支」。本第零步仅适用于完整 Coding 流程后的 Review。
 
 **🔴 必读清单（4 个文件）：**
 
@@ -199,8 +228,8 @@ Code Review 结论：{STORY-ID}
 |---|------|---------|
 | 1 | Story 主文档 | 全部章节（含 AC / 接口契约 / 数据模型 / 异常流程 / 验收标准） |
 | 2 | 统一版 `{STORY-ID}-CodingPlan.md` | 全部 16 节（用户已确认） |
-| 3 | Coding 报告 | `{STORY-ID}-CodingReport-v{N}-r{M}.md`（本轮变更文件清单 + 编译/测试结果） |
-| 4 | 测试报告 | `{STORY-ID}-Report-v{N}-r{M}.md`（含 L1/L2/L3/L4 用例结果） |
+| 3 | Coding 报告 | canonical `{STORY-ID}-CodingReport.md`（本轮变更文件清单 + 编译/测试结果） |
+| 4 | 测试报告 | canonical `{STORY-ID}-Report.md`（含 L1/L2/L3/L4 用例结果 + evidence manifest） |
 | 5 | 项目资产 | 调用 `ae-sdd assets read code-review --project <projectKey>` 返回 §6 + §C（字段索引）+ §D（组件索引）+ §3 + §4 + §5（**禁止**直接全文读取 assets.md）|
 
 **门禁判定：**
@@ -647,11 +676,11 @@ Code Review 发现问题
     └─ 有新增问题 → 回到 §第四步 bis 生成新 Plan → 循环
 ```
 
-> **📍 Review Loop 公共协议：** 本节退出条件/循环上限/Plan-first 遵守 [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md) 公共协议（v3.4.3），本节只列 code-review 专属配置。
+> **📍 Review Batch 公共协议：** 本节遵守 [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md) 的 Review Batch v2；本节只列 Code Review 专属检查项和 7 道闸。
 
-**退出条件：** 连续 3 轮无新增问题。
+**退出条件：** 首批无缺陷时，Tier 1/2 一个 `VALID_CLEAN` batch 即可退出；Tier 3 在 P0/P1 修复后需要两个连续 `VALID_CLEAN` batch。只有 required reviewer 完整、session 独立、input/ruleset fingerprint 一致的 batch 才计入。
 
-**循环上限：** 3 轮。3 轮仍有 🔴 阻断型 → 升级用户决策。
+**失败与预算：** 429/超时/缺角色/输入漂移分别记为 `INVALID_INFRA` / `INVALID_PROTOCOL` / `INVALID_INPUT_DRIFT`，不增加 clean streak；只重试失败角色。attempt、valid batch、remediation 或 wall-clock 预算耗尽进入 `STALLED`，不得自动通过。
 
 ---
 
@@ -1018,7 +1047,7 @@ CodeReview 只核验 `TEST_REPORT` 已经由 `test-review-skill.md` 独立复核
 | 输入 | Coding 报告 + 测试报告 + Story + 实际代码 + 项目资产 |
 | 输出 | CodeReview 报告（含 §2 六阶段评审 + §3 合理性判定 + §第四步 bis UpdatePlan + §第七步 7 道闸） |
 | 标准 | 见本 SKILL §第二/三/四/六/七步 |
-| 报告格式 | `{STORY-ID}-CodeReview-v{N}-r{M}.md` |
+| 报告格式 | canonical `{STORY-ID}-CodeReview.md`（同一 review session 原地更新） |
 | 适用阶段 | Phase 3 ⑦ |
 | 数量建议 | 按 [`agent-orchestration-skill.md §8.4.1`](../cross-cutting/agent-orchestration-skill.md) Tier 判定选 1/2/3 个；本节点 A/B/C 模式即 Tier 1/2/3 的实例化 |
 
@@ -1070,9 +1099,9 @@ CodeReview 只核验 `TEST_REPORT` 已经由 `test-review-skill.md` 独立复核
 
 | reviewer | §2 阶段侧重 | 7 道闸侧重 | 输出文件名 |
 |----------|------------|----------|----------|
-| `reviewer-BE` | A（业务逻辑）+ B（分层职责红线）+ F（跨文档） | ①-④ | `{STORY-ID}-CodeReview-BE-r{M}.md` |
-| `reviewer-AR` | C（数据库逻辑链）+ E（项目资产合规性）+ F（跨文档） | ⑤-⑥ | `{STORY-ID}-CodeReview-AR-r{M}.md` |
-| `reviewer-QA` | D（测试真实性）+ C（数据库逻辑链） | ⑦ | `{STORY-ID}-CodeReview-QA-r{M}.md` |
+| `reviewer-BE` | A（业务逻辑）+ B（分层职责红线）+ F（跨文档） | ①-④ | batch evidence（不另建正式 CR 正文） |
+| `reviewer-AR` | C（数据库逻辑链）+ E（项目资产合规性）+ F（跨文档） | ⑤-⑥ | batch evidence（不另建正式 CR 正文） |
+| `reviewer-QA` | D（测试真实性）+ C（数据库逻辑链） | ⑦ | batch evidence（不另建正式 CR 正文） |
 
 各 reviewer 的输入清单（Coding 报告 + 测试报告 + Story + 项目资产 + 实际代码）、deadline 字段、report_back 协议
 → 按 [`agent-orchestration-skill.md §任务分配协议`](../cross-cutting/agent-orchestration-skill.md) 中派活卡模板填写，此处不再重复。

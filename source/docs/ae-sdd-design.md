@@ -165,7 +165,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | G-RA-FLOW-VIOLATION | `gates.py` 行1208起，调 `scripts/flow_violation_scan.py`（R1~R3规则） |
 | G-CODE-1 Coding 真实性 | `gates.py` 行697起，调 `scripts/coding_authenticity_scan.py`（AP-1~AP-6反模式） |
 | G-09 测试真实性 | `gates.py` 行578起，调 `scripts/test_authenticity_scan.py`（8类禁止手段） |
-| G-CODEPLAN-SRC / G-DOC-STORAGE / G-DOC-CONSISTENCY / G-PATH | `gates.py` 对应 check 函数，中段门禁补齐 |
+| G-CODEPLAN-SRC / G-DOC-STORAGE / G-DOC-CONSISTENCY / G-PATH | `gates.py` 对应 check 函数；G-PATH 仅豁免 canonical document-storage source entry 及其 source/runtime full fallback，其他同名或 `SKILL.full.md` 文件仍受扫描 |
 | 🆕 v3.9.1 G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX | `gates.py` 注册表 `CONTEXT_GATE_REGISTRY` + 统一 `_check_context_loaded` 实现 + 4 个薄封装；`gate_intercept.py:PHASE_ENTRY_GATES` 大/中/小/微链各 phase 入口挂载；复用 `get_constraints/get_assets` + `_iter_ra_files/_find_prd_files/paths.find_doc` |
 | G-REVIEW-LOOP | `gates.py` + `tools/lib/review_loop.py`，`ae-sdd review-loop` 子命令 |
 | 入口关卡1（entry token） | `ae-sdd enter <projectKey> [--story <ID>]`（`tools/bin/ae-sdd`），UserPromptSubmit hook 检测 `/ae-sdd` 触发词强提醒 |
@@ -173,7 +173,25 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | 入口关卡3（代码改动准入） | `gate_intercept.py:PHASE_PERMIT`，非 coding phase 或无审核点 2.5 确认 → 禁写 src/ |
 | 设计-实现对齐反查 | `tools/lib/alignment_audit.py`（UC-08~UC-13，6个 check_* 函数），CLI `ae-sdd update-check`；见 §9 真实性扫描后段 |
 
+**G-PATH 项目侧输入边界（v3.10.2）**：项目侧扫描只读取声明为记忆/约束输入的 `.ae-sdd/memory/**/*.md`、顶层 `AGENTS.md`/`CLAUDE.md`/`MEMORY.md` 和 `.harness/memory/**/*.md`。`.ae-sdd/drafts/**/*.md` 是 Review/生成过程产物，不是 canonical 正文或项目记忆，不进入 G-PATH；其流程真实性仍由对应 Review/上下文门禁负责。`current_story` 不用于静默过滤路径，避免通过伪造 Story ID 绕过项目级记忆扫描。
+
 **颗粒度与边界**：G-00 每次 SKILL 调用前必跑；G-RA 豁免场景（微任务、BUG/配置类、重入已完成步骤）；改门禁强度必须改 `gates.py`，不能只改 SKILL.md 文字；`ae-sdd update-check` 自动检测文档-实现一致性，防文档撒谎复发。
+
+### Review Batch v2 与增量验证
+
+Review 的质量对象是带 `inputFingerprint` / `rulesetFingerprint` 的 `reviewSession`，不是模糊的 round 计数器。每次尝试落入 `VALID_CLEAN`、`VALID_FINDINGS`、`INVALID_INFRA`、`INVALID_PROTOCOL`、`INVALID_INPUT_DRIFT` 或 `CANCELLED`；平台失败不增加 clean streak，输入漂移必须新建 session。Tier 1/2 首批 clean 默认一次，Tier 3 在 P0/P1 修复后需要两个连续 clean batch；attempt、valid batch、remediation 和 wall-clock 任一预算耗尽进入 `STALLED`，不得当作通过。
+
+G-CODE-1 默认阻断新增 blocker，不重复阻断显式登记的历史 debt。baseline 位于项目 `.ae-sdd/baselines/G-CODE-1.json`，必须用户明确批准创建，并记录规则指纹、项目指纹和完整性 hash；被 Story 修改的 baseline 文件/symbol 进入 `touchedDebt`，不能无条件继承。
+
+验证动作先生成 `VerificationPlan`，再按生产代码、测试代码、配置、文档分类决定最小验证集。成功证据写入 `.auto-engineering/<story>/evidence/manifest.json`，复用必须同时满足 input/command/toolchain fingerprint 一致、退出码为 0、freshness window 未过期且 artifact hash 未变化。implementation/documentation/review 三类 fingerprint 分离，文档或审查措辞变化不得使 Maven 证据失效。文档使用单一 canonical 正文，旧路径只通过 `.ae-sdd/doc-aliases.json` 指向 canonical，不允许第二份完整正文；多个候选正文必须显式报歧义，不按 mtime 猜测。
+
+| 设计点 | 实现 |
+| --- | --- |
+| Review Batch 状态机 | `tools/lib/review_batch.py` + `tools/lib/review_loop.py`；旧 `reviewLoop` 字段仅作兼容投影 |
+| 增量 baseline | `tools/lib/baseline.py` + `ae-sdd baseline inspect/create/diff` + G-CODE-1 delta 分支 |
+| 变更感知验证 | `tools/lib/verification_plan.py` + `ae-sdd verify plan` |
+| 证据复用 | `tools/lib/evidence.py` + `ae-sdd evidence record/lookup` |
+| canonical 文档 | `tools/lib/document_storage.py` alias registry/resolver/duplicate-body check |
 
 ---
 
@@ -279,29 +297,31 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 ---
 
-## 10. 记忆层（5 层分级 + 阶段强制门禁）
+## 10. 记忆层（🆕 v3.10.3 业务实体树 + 编译文档容器）
 
 ### 设计
 
-phase-aware 的分区持久化记忆，在关联节点（RA/design/coding-plan/coding/review）强制执行 enter→write→exit 生命周期，提供跨 session 上下文连续性。Agent-facing 主分区只有两个：`task`（任务级，默认写入，映射 L1）与 `project`（项目级，跨任务复用，映射 L2）。记忆是 compact context index，不是日志/报告；写入质量门禁防止 LLM 把猜测或长段过程写成记忆——task/project 每条记忆必须有证据（文件路径:行号/报告路径/用户确认/工具结果），无证据只能留 scratch。
+memory 存储编译后的 compact 文档，按业务实体树平级分层（prd/dr/story/testcase/coding/common）。子流程Agent 首次进入时主动读源上下文（从 document-storage）-> 编译成 compact -> 写 memory；后续读上下文 = 读 memory；子流程结束删自己的 memory，common 保留。
 
-底层仍保留 5 层存储：scratch/L0 会话草稿（session 后可删）/ task/L1 Story 级记忆 / project/L2 项目级记忆 / pattern/L3 跨项目 pattern / archive/L4 冷归档（postmortem/ADR）。冲突处理：新证据与记忆冲突时写 `kind=conflict`，禁止静默覆盖。
+**v3.10.3 核心变化**：废弃 5 层原文索引 + enter/exit 生命周期门禁，改为业务实体树 + 编译文档容器。memory 不再是"compact context index"（原文短索引），而是"编译后的工作上下文"（高密度 compact.md 文档）。
+
+common 层只存项目级可复用约束（BigDecimal/幂等/禁大事务/架构规范），必须轻（`COMMON_MAX_CHARS = 2048` 字符硬限制），跨子流程保留。严禁存任何特定 PRD/DR/Story 的细节。
 
 ### 实现
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 生命周期 API | `tools/lib/memory_store.py:enter()`（行164）/ `write()`（行193）/ `exit_phase()`（行286） |
-| exit 前置校验 | `memory_store.py:check_exit_ready()`（行236），exit 无 write 则失败 |
-| phase→memory 映射 | `tools/lib/memory_gate.py:memory_phase_for_state_phase()`（行29） |
-| state 切相前自动校验 | `memory_gate.py:check_state_transition()`（行51），`ae-sdd state write --phase` 调用，未完成 enter→write 则阻断 |
-| 校验结果格式化 | `memory_gate.py:format_transition_block()`（行107） |
-| 存储格式 | JSONL，`memory_store.py:_jsonl_path()`（行109）/ `_append_jsonl()`（行131） |
-| scope→layer 映射 | `memory_store.py:MEMORY_SCOPE_TO_LAYER`：scratch→L0、task→L1、project→L2、pattern→L3、archive→L4；`--layer` 仅作兼容参数 |
-| compact 写入校验 | `memory_store.py:_validate_compact_memory()`：task<=180 字符、project<=140、pattern<=120；task/project 强制 evidence；project/pattern 禁 `kind=observation`；拒绝多行/代码块/长证据 |
-| CLI 入口 | `ae-sdd memory write/read/search --scope task|project`；`memory promote --from-scope task --to-scope project`；兼容 `--layer L1/L2` |
+| 业务实体树存储 | `tools/lib/memory_store.py`：`memory/{entity_type}/{entity_id}/` 目录，每实体含 boot/context/pending 3 个 compact.md + manifest.json |
+| 编译器 | `tools/lib/memory_compiler.py:compile_source_to_memory()`：读源上下文 -> 编译 3 个 compact slice + manifest |
+| common 提取 | `memory_compiler.py:extract_common()`：从源上下文提取项目级可复用约束，自动去重，大小限 2048 字符 |
+| 生命周期 API | `memory_store.py:create_memory()`（创建=编译）/ `read_memory()`（读 compact）/ `update_memory()`（增量更新 slice）/ `clean_memory()`（删单实体）/ `clean_all_memory()`（删所有，保留 common） |
+| compact snapshot | `memory_store.py:pre_compact_snapshot()` / `post_compact_reload()`（compact 前/后上下文保存与重载） |
+| state->entity 映射 | `memory_store.py:STATE_PHASE_TO_ENTITY_TYPE` + `entity_type_for_state_phase()` |
+| 存储格式 | compact.md（Markdown 表格/列表）+ manifest.json（source hash + slice hash + fingerprint） |
+| CLI 入口 | `ae-sdd memory create/read/update/clean/clean-all/common/search/summarize` |
+| memory_gate（废弃） | `tools/lib/memory_gate.py` 改为 passthrough（check_state_transition 永远 pass），批 3 删除 |
 
-**颗粒度与边界**：仅 5 个关联节点强制触发；kind 字段：decision/constraint/finding/issue/risk/fix/conflict/observation；任务之间不互读 task memory，跨任务复用必须进入 project memory；archive 只读为主，禁止整体注入上下文。UserPromptSubmit 仅注入 active scope 下的 task/project compact memory，且 task 优先、project 只补充剩余预算。
+**颗粒度与边界**：5 大子流程（RA/DR/Story/TestCase/Coding）各有独立 memory 实体；子流程结束删自己的 memory，common 保留；从0重建 = clean-all（保留 common）；回归流程 = 先读无则建（不 clean-all）。UserPromptSubmit 从对应实体的 memory 读 compact 文档注入（boot+context+pending 全文 + common 约束）。
 
 ---
 

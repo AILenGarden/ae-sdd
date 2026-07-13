@@ -1014,6 +1014,128 @@ def _build_prd_summary(state: dict, prd_id: str, runtime: str) -> str:
     )
 
 
+# ─── 🆕 v3.10.3 subprocessAgent 管理（3层Agent模型）─────────────────────────
+# 主流程会话委托子流程Agent（物理独立 session）接管单个系列（RA/DR/Story/TestCase/Coding）。
+# subprocessAgents[] 记录在 state.json 中，供主流程监管 + prompt_inject 角色感知注入。
+
+import uuid as _uuid
+
+
+def register_subprocess_agent(
+    state: dict,
+    *,
+    series_type: str,
+    entity_id: str,
+    memory_entity_type: str = "",
+    session_id: str = "",
+    deadline: str = "",
+) -> dict:
+    """注册子流程Agent，返回新 agent 记录。
+
+    Args:
+        state: state.json dict（原地修改）
+        series_type: ra/dr/story/testcase/coding
+        entity_id: 业务实体 ID（如 STORY-001-BE）
+        memory_entity_type: memory 实体类型（默认 = series_type）
+        session_id: 物理独立 session ID
+        deadline: 截止时间 ISO8601
+    """
+    if series_type not in ("ra", "dr", "story", "testcase", "coding"):
+        raise ValueError(f"unknown series_type: {series_type}")
+    agents = state.setdefault("subprocessAgents", [])
+    agent_id = f"spa-{_uuid.uuid4().hex[:8]}"
+    record = {
+        "agentId": agent_id,
+        "seriesType": series_type,
+        "entityId": entity_id,
+        "memoryEntityType": memory_entity_type or series_type,
+        "memoryPath": f".ae-sdd/memory/{memory_entity_type or series_type}/{entity_id}/",
+        "status": "running",
+        "startedAt": _now_ts(),
+        "deadline": deadline,
+        "sessionId": session_id,
+        "deliverables": [],
+    }
+    agents.append(record)
+    state["lastUpdated"] = _now_ts()
+    return record
+
+
+def update_subprocess_agent(state: dict, agent_id: str, **updates) -> dict:
+    """更新子流程Agent状态（如 status/deliverables/currentSeries）。
+
+    返回更新后的 agent 记录。找不到则 raise KeyError。
+    """
+    agents = state.get("subprocessAgents", [])
+    for agent in agents:
+        if agent.get("agentId") == agent_id:
+            agent.update(updates)
+            agent["lastUpdated"] = _now_ts()
+            state["lastUpdated"] = _now_ts()
+            return agent
+    raise KeyError(f"subprocessAgent not found: {agent_id}")
+
+
+def collect_subprocess_agent(state: dict, agent_id: str, *, deliverables: list | None = None) -> dict:
+    """子流程Agent完成回传：标记 completed + 记录交付物。
+
+    返回更新后的 agent 记录。找不到则 raise KeyError。
+    """
+    agents = state.get("subprocessAgents", [])
+    for agent in agents:
+        if agent.get("agentId") == agent_id:
+            agent["status"] = "completed"
+            agent["completedAt"] = _now_ts()
+            if deliverables:
+                agent["deliverables"] = deliverables
+            state["lastUpdated"] = _now_ts()
+            return agent
+    raise KeyError(f"subprocessAgent not found: {agent_id}")
+
+
+def list_subprocess_agents(state: dict, *, status: str = "") -> list[dict]:
+    """列出子流程Agent。status 非空时按状态过滤。"""
+    agents = state.get("subprocessAgents", [])
+    if status:
+        return [a for a in agents if a.get("status") == status]
+    return list(agents)
+
+
+def get_active_subprocess_agent(state: dict) -> dict | None:
+    """获取当前活跃（running）的子流程Agent。无则返回 None。"""
+    for agent in state.get("subprocessAgents", []):
+        if agent.get("status") == "running":
+            return agent
+    return None
+
+
+# ─── 🆕 v3.10.3 compact-trigger 读端（补齐 state.py:974 写端）──────────────
+
+
+def read_compact_trigger(project_root: Path) -> dict | None:
+    """读 .ae-sdd/compact-trigger 文件。
+
+    返回 {"prdId":..., "summaryPath":..., "triggeredAt":...} 或 None（不存在）。
+    🆕 v3.10.3: 补齐 prd_complete() 写端的读端（之前只写不读）。
+    """
+    trigger_file = project_root / ".ae-sdd" / "compact-trigger"
+    if not trigger_file.is_file():
+        return None
+    try:
+        return json.loads(trigger_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def clear_compact_trigger(project_root: Path) -> bool:
+    """清除 compact-trigger 文件（防重复触发）。返回是否清除成功。"""
+    trigger_file = project_root / ".ae-sdd" / "compact-trigger"
+    if trigger_file.is_file():
+        trigger_file.unlink()
+        return True
+    return False
+
+
 # ─── 🆕 v3.6 主流程监管器：paused 状态 + 矫正计数 API ─────────────────────────
 # 配合 flow_monitor.py（偏移检测）和 prompt_inject.py（监管器主逻辑）使用。
 # 设计：本节只提供状态读写 API，偏移判定逻辑在 flow_monitor.py（职责分离）。

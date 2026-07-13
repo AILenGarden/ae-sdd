@@ -93,10 +93,10 @@ class TestMultiEditInterception:
         session_mod.confirm_phase(ae_sdd, "task-reviewed", story_id="STORY-001")
         # 🆕 v3.5.16 C1 硬层：coding phase 写 src/ 还须 coding-process confirm
         session_mod.confirm_phase(ae_sdd, "coding-process", story_id="STORY-001")
-        # 🆕 v3.8.2 存端兜底：coding 属关联 phase，写 src/ 须 memory enter
+        # 🆕 v3.10.3 存端兜底：coding 属关联 phase，写 src/ 须 memory 存在（create_memory 替代 enter）
         from lib import memory_store
-        scope = memory_store.locate_scope(project=str(tmp_path), phase="coding", story="STORY-001")
-        memory_store.enter(scope, actor="test")
+        scope = memory_store.locate_scope(project=str(tmp_path), entity_type="coding", entity_id="STORY-001")
+        memory_store.create_memory(scope, source_contexts={})
         allowed, _ = check_intercept(
             "MultiEdit",
             file_path="src/main/java/Service.java",

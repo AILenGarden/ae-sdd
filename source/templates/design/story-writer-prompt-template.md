@@ -29,6 +29,12 @@ standards:
   - 每个关键结论必须附证据
   - 阻断型问题必须返回 0 结果，不得带病输出
 
+output_boundary:
+  - 只生成当前生效的 Story 内容；不写过程记录、Agent 对话、门禁日志、Review 循环或生成总结
+  - 不创建或更新 CHANGELOG、DR、DR_SUPPLEMENT、DR Review 或 DR 草稿
+  - DR 仅作为只读输入；缺失时返回 BLOCK，不得改走 DR 生成
+  - Plan / SourceTrace / WriterReport 如被系统要求落盘，仅作内部机器产物，不回写 Story
+
 context:
   - Story 焦点: 业务背景 / 主流程 / AC / 接口 / 数据 / Task
   - ①bis: 前端契约六维度

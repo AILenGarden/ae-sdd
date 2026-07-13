@@ -353,6 +353,10 @@ def classify(text: str, *, filename: Optional[str] = None,
     # 🆕 v3.5.15 入口节点语义推断（entry_node，FlowNode.value）
     # BUG/配置类 → scale="微" + entry_node=BUG/CONFIG（复用微链，不单独开链）
     # PRD/DR/Issue/对话 → 按 source 映射 FlowNode
+    # 🆕 v3.10.2 micro 意图分流：优化/审查类 → scale="微" + entry_node=OPTIMIZE/CODE_REVIEW
+    #   消歧优先级：self-update 上下文（ae-sdd/SKILL/流程）> 代码上下文。
+    #   "优化 ae-sdd" → 不进 micro（self-update 由 SKILL.md 路由表第①步接管）
+    #   "优化这部分实现" + 代码上下文 → OPTIMIZE 微链
     entry_node: Optional[str] = None
     text_lower = text.lower()
     if any(kw in text_lower for kw in ("bug", "缺陷", "故障", "修复", "fix")):
@@ -361,6 +365,22 @@ def classify(text: str, *, filename: Optional[str] = None,
             scale = "微"  # BUG 修复强制微链
     elif any(kw in text_lower for kw in ("配置", "config", "改个常量", "改个枚举")):
         entry_node = "CONFIG"
+        if scale != "微":
+            scale = "微"
+    elif (any(kw in text_lower for kw in _OPTIMIZE_KEYWORDS)
+          and _is_code_context(text_lower)
+          and not _has_selfupdate_context(text_lower)):
+        # 优化/重构/改进 + 代码上下文 + 非self-update上下文 → micro-optimize
+        # 要求代码上下文：避免"大重构整个架构"被误降为微（重构同时是大规模关键词）。
+        # "优化这部分实现"命中"实现"，"重构这个方法"命中"方法"。
+        entry_node = "OPTIMIZE"
+        if scale != "微":
+            scale = "微"
+    elif (any(kw in text_lower for kw in _REVIEW_KEYWORDS)
+          and not _has_selfupdate_context(text_lower)):
+        # 审查/CodeReview/评审代码 → micro-review
+        # 审查天然是代码语境，不额外要求代码上下文词
+        entry_node = "CODE_REVIEW"
         if scale != "微":
             scale = "微"
     elif source == "PRD":
@@ -427,6 +447,42 @@ _PRD_ID_RE = re.compile(r"\bPRD[-_]?([A-Za-z0-9-]+)", re.IGNORECASE)
 
 # Bug/微任务关键词（与 classify() 主逻辑一致）
 _BUG_KEYWORDS = ("bug", "缺陷", "故障", "修复", "fix", "typo", "配置", "config", "改个常量", "改个枚举")
+
+# 🆕 v3.10.2 micro 意图分流：优化/审查关键词与上下文消歧
+# 消歧优先级：self-update 上下文 > 代码上下文（"优化 ae-sdd 的代码"应判 self-update）
+# 注意："重构" 同时在 SCALE_KEYWORDS["大"]，必须搭配代码上下文才进 micro-optimize，
+#   否则"大重构整个架构"会被误降为微（与 test_classify 回归冲突）。
+_OPTIMIZE_KEYWORDS = ("优化", "重构", "改进")
+_REVIEW_KEYWORDS = ("codereview", "code review", "cr报告", "cr 报告", "审查", "评审代码", "代码审查")
+# self-update 上下文词：命中则"优化"指向 ae-sdd 自身，不进 micro-optimize
+_SELFUPDATE_CONTEXT_KEYWORDS = ("ae-sdd", "ae_sdd", "auto-engineering", "skill", "流程", "门禁", "runtime", "compile_skill", "dist/", "tools/lib")
+# 代码上下文词：表明"优化/改进"的对象是具体项目代码而非 ae-sdd 自身/系统架构。
+# 刻意排除"模块/架构/逻辑"等宏观词——这些词同时出现在大规模重构语境，
+# 避免误把"大重构整个模块"降为微。只收"指向具体代码片段"的词。
+_CODE_CONTEXT_KEYWORDS = (
+    "代码", "实现", "这段", "这部分", "这个文件", "该方法", "这个方法", "这个类", "函数",
+    "源码", "service", "controller", "mapper", "entity", "bean", "repository",
+    ".java", ".py", ".ts", ".js", ".go", ".cpp", ".c", ".rs",
+)
+
+
+def _has_selfupdate_context(text_lower: str) -> bool:
+    """🆕 v3.10.2 检测文本是否指向 ae-sdd/SKILL/流程（self-update 上下文）。
+
+    消歧关键：`优化` 同时能匹配 micro-optimize 和 self-update。当文本含
+    ae-sdd/SKILL/流程 等词时，"优化"指向 ae-sdd 自身，应走 self-update 路由，
+    不进 micro-optimize。
+    """
+    return any(kw in text_lower for kw in _SELFUPDATE_CONTEXT_KEYWORDS)
+
+
+def _is_code_context(text_lower: str) -> bool:
+    """🆕 v3.10.2 检测文本是否指向项目代码（代码上下文）。
+
+    用于区分"优化代码"（micro-optimize）vs"优化 ae-sdd"（self-update）。
+    命中代码/实现/这段代码/service/mapper 等词 → 代码上下文。
+    """
+    return any(kw in text_lower for kw in _CODE_CONTEXT_KEYWORDS)
 
 
 @dataclass

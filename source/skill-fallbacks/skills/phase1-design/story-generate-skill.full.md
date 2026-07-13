@@ -16,6 +16,16 @@ description: Story 生成 SKILL - Phase 1 ① 节点的环节内具体规则。�
 
 从 DR、PRD、产品原型和项目资产生成完整 Story，要求内容可执行、可评审、与 DR 一致。
 
+## 输出边界（最高优先级）
+
+Story 生成的用户可见产出只有 Story 主文档。Story 正文只写当前生效的需求、验收、接口、数据、实现任务和风险约束，不写生成过程。
+
+- 禁止把输入读取清单、方案比较过程、门禁日志、Review 循环、来源追溯过程、Agent 对话、执行流水或“本次生成说明”写入 Story 正文。
+- 禁止在 Story 正文或本次 Story 任务中创建、更新或附带 CHANGELOG / 变更历史文档。
+- DR 是只读上游输入；Story 任务不得创建或更新 DR、DR_SUPPLEMENT、DR Review 或任何 DR 草稿。缺少 DR 时停止并报告阻断原因，不得转而生成 DR。
+- `StoryGeneratePlan`、`STORY_SOURCE_TRACE`、`STORY_WRITER_REPORT` 和 Review 对比表若因系统门禁必须落盘，只能作为内部机器产物，不能回写 Story、不能在最终答复展开，也不能替代 Story 主文档。
+- 除非用户明确点名，默认不生成 Story Supplement、Proposal、Report 或其他过程文档。
+
 ## 依赖标准
 
 - [Story 输入清单 SSOT（v3.9.3 新增）](../../standards/story/story-input-checklist.md) **← 单一权威源**
@@ -191,6 +201,8 @@ ae-sdd gates check --only G-STORY-CTX
 
 按 `story-template.md` 写入 Story 正文。
 
+写入前执行输出边界检查：正文不得包含过程叙述、变更历史、CHANGELOG、DR 正文/草稿或任何“详见本次生成过程”的段落；发现即删除后再保存。
+
 ## 第四步 bis：生成 StoryGeneratePlan
 
 按 `story-generate-plan-template.md` 写入 Plan。
@@ -232,3 +244,4 @@ Story 生成必须通过 `story-generation-standard.md §4` 的 **10 道闸**：
 - **🆕 v3.9.3：** 禁止在 Story 中填写"无来源"或"详见 PRD"等模糊来源标注
 - **🆕 v3.9.3：** 禁止在依赖 Story 字段未对齐前进入下一阶段
 - **🆕 v3.9.3：** 禁止跳过 §三步 bis 来源追溯与验证步骤
+- **输出边界：** 禁止在 Story 任务中生成 CHANGELOG 或任何 DR 文档；禁止把过程内容写入 Story 正文。

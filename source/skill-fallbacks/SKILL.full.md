@@ -1,14 +1,28 @@
 ---
 name: ae-sdd
-version: 3.9.6
+version: 3.10.2
 description: |
-  端到端自动化工程主入口（v3.9.6）。从 DR/PRD 出发，经 RA→DR→Story→TestCase→Task→Coding→Test，直到全部通过。
+  端到端自动化工程主入口（v3.10.2）。从 DR 出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
-  🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范。
-  🆕 v3.9.5：Story 模板接口契约章节合并——双段合一 + 统一编号锚点。
-  🆕 v3.9.4：Story 流程根治——SSOT 输入清单 + 来源追溯 + 字段对齐。
-  🆕 v3.9.3：禁止文档承载 changelog。
-  🆕 v3.9.1：gate_intercept 嵌套 state 修复。
+  🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
+  🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。
+  🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。
+  🆕 v3.9.22：测试 fixture 全量迁移到 task-scoped work-item state（跟随 v3.9.13 架构决策）+ 修复 6 处确定性 bug（入口脚本 py -3 引号 / assets_index 多文件 stats 崩溃 / gates.py 三元运算符丢行号 / update_graph kind 误标 / post-commit 无 pipefail 掩盖分发失败 / 版本号三处对齐）。
+  🆕 v3.9.21：门禁按会话 engage 按需启用——修复"没调 /ae-sdd 的会话/子 Agent 也被全局 hook 锁死"。gate-intercept 增加 engage 短路：未 engage 直接放行；prompt-inject 检测 /ae-sdd 触发词写会话级 engage 标记（.ae-sdd/.session-engaged/），说"退出 ae-sdd"清除。语义从"有 .ae-sdd/ 就锁"改为"调了 ae-sdd 才锁"。
+  🆕 v3.9.20：三症同治——(1) manifest 拆双文件（manifest-index.json LLM 用，省 75% tokens）；(2) G-STORY-CTX 升级真"已引用"门禁（查 Story 正文引用约束条目 + 取消小/微豁免）；(3) 新增 G-REVIEW-DEPTH（禁裸✅ + 零发现举证）。统一哲学：查产物证据不查行为。
+  🆕 v3.9.19：顶层结构整理——清 scratch + README 仓库结构树补齐 + RELEASING.md 发版包指南 + UC-17 仓库顶层结构契约守门。
+  🆕 v3.9.12：Story 模板新增「## 人工任务」章节——修复"人工任务"语义分裂（声明源在 StoryGeneratePlan §1.6 临时计划产物里、登记处在 Story 验收记录尾巴、Story 正文无声明源）的设计断裂。新增 `## 人工任务 \`选填\`` 章节（位于实现任务映射之后、偏离声明之前）作为非编码人工处理项的长期声明源（含类型枚举 8 类）；StoryGeneratePlan §1.6 加落位指引；story-template 验收记录下「人工任务完成」改为引用本章节（DRY）；story-generation-standard §2.5 F 阶段映射新增「§人工任务」。
+  🆕 v3.9.11：镜像反模式根除 + 5 层防复发护城河——life 项目 STORY-003 卡死事故复盘，5 个独立缺口叠加（镜像冻结/phase 缺失/G-00 未同步/cmd_state_write 无冻结检测/缺维护脚本）。5 层防御：G-00 二段校验（镜像可缺 + 镜像-源一致性）+ 5 单测 + cmd_state_write 镜像冻结自动恢复 + prompt-inject step-X- 反模式检测 + check_mirror_health.py 维护脚本。
+  🆕 v3.9.10：门禁路径 bug 修复--`paths.find_doc` / `paths.list_docs` 原只搜 `design/` + 项目根（deprecated 旧路径），未覆盖 document-storage 新布局 `ae-sdd-doc/{Category}/`；G-02/G-04/G-05/G-07 + 上下文准入门禁（G-STORY-CTX 等）在项目用新布局存文档时误判 block 失败。新增 `paths.doc_search_roots`（多根：项目根 + docWorkspace），find_doc/list_docs 内部同时搜旧路径 + `ae-sdd-doc/`（rglob 兜底），签名向后兼容；`gates._doc_search_roots` 委托 paths 统一入口（DRY）。
+  🆕 v3.9.9：harness 回滚补全 README.md + identity sanity check 单测覆盖——mount 失败回滚三件套（agent.md/README.md/.adapter.lock）；`_IDENTITY_ATTRIBUTION_PATTERNS` Pattern 1 正则收窄（加归属动词限定，消除合法提及误报）；新增 `TestIdentitySanityCheck` 14 用例（11 命中 + 3 误报防护）。
+  🆕 v3.9.8：mirror-fallback trap fix——`_active_state_from_mirror` + `_main_state_path_for_args` 第 213-235 行在 `.ae-sdd/state.json` 镜像缺失时主动扫描 `.auto-engineering/*/state.json` 按 mtime 选最近活跃为 source；`health` 检查项 `state.json 可读` → `state.json 可定位`（镜像 + 源任一可定位即 pass）。允许 life 等项目把镜像当反模式删除，仅留 work-item 源为唯一真值。
+  支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.9.7：gate_intercept `_check_memory_entered` 入口惰性创建 `.ae-sdd/memory/` 根目录（best-effort），修复"全新项目从未跑 memory enter 时，目录缺失 = stage 永假"导致的设计阶段死环（life 项目实测触发）；不改变活跃态判定语义。
+  🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范（必填/选填标记、表格分隔符、章节编号、示例引导、强制规则锚点、emoji 语义、文档头部声明、末尾收尾）；新建 `template-layout-standard.md` SSOT。
+  🆕 v3.9.5：Story 模板接口契约章节合并——原「接口契约-SPI/API」+「🔴 前端接口契约」两段合并为单一 `## 接口契约` 章节；每个接口用 `### 接口 N：{签名}（REST|SPI）` 统一编号锚点 + `---` 强制分隔，解决多接口渲染黏连；接口块内融合后端契约（Request/VO 四维）与前端视角（JSON 示例/调用流程/状态展示/边界处理）；6 个引用文件同步锚点名；`gates.py:_check_source_trace` 兼容性验证通过。
+  🆕 v3.9.4：Story 流程根治——新增 `story-input-checklist.md` SSOT 输入清单（13 项 4 类）；`G-STORY-CTX` 扩展为 6 类（新增 dependsStory + sourceTrace）；`story-generation-standard.md` §2.5 新增 7 阶段→模板章节映射表，§4 自检闸门 8→10（新增来源追溯闸 + 章节映射闸）；Story generate/review/update 三件套 SSOT 化 + 来源追溯步骤。
+  🆕 v3.9.3：新增「输出核心原则」第 4 条——禁止文档承载 changelog（设计/架构/模板/标准类文档只写当前生效内容，历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`）。
+  🆕 v3.9.1：修复 gate_intercept 对嵌套 state 不感知——4 处顶层 phase/currentStory 读取改用 get_active_phase/get_active_story 统一接口，消除嵌套 state 项目 src/ 写入被误拦为"设计阶段禁止写入源码目录"的回归。
   🆕 v3.9.0：嵌套状态模型——单文件嵌套 state（prdState/drState/storyStates{N}），任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。
   🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。
   🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。
@@ -72,16 +86,20 @@ triggers:
 
 ---
 
-## 🎛️ 主流程监管器执行协议
+## 🎛️ 主流程监管器执行协议（🆕 v3.10.3 3层Agent模型）
 
-每系列标准 4 步。**监管器只编排+校验，不执行具体业务。**
+每系列标准 4 步。**主流程会话只编排+监管，不执行具体业务--委托子流程Agent接管。**
+
+> **🆕 v3.10.3 3层Agent模型**：主流程会话 -> 子流程Agent（物理独立 session）-> sub-subAgent。
+> 5大子流程（RA/DR/Story/TestCase/Coding）各委托1个子流程Agent，串行推进。
+> 详见 §🤖 3层Agent模型。
 
 | 步骤 | 动作 |
 |------|------|
-| 1 | `/compact`（系列入口，防跨系列上下文污染）；输出 SKILL 调用声明；写 events 日志 `ae-sdd state write --event skill-launched` |
-| 2 | 加载 `{series}-generate-skill.md` → 调 `agent-orchestration-skill`（按任务量分配子 Agent workflow）→ 产物核查 |
-| 3 | 加载 `{series}-review-skill.md` → 调 `agent-orchestration-skill`（分配子 Agent）→ 汇总错误报告给监管器；**Loop**：有错+矫正<2 → 回步骤2；矫正=2 → Level 3 暂停等用户；连续2轮无新错 → 步骤4 |
-| 4 | **默认模式**：人工审核：播报产物摘要；等用户 ✅/⚠️/❌ → ✅推进phase→下一系列；⚠️→重回步骤2+重置计数；❌→paused<br>**🆕 v3.8.0 自动化模式**：联审共识 — 强制 Tier 3 派 3 个独立 session reviewer（视角正交，见 `agent-orchestration-skill §8.4`）→ 跑 §8.4.3 交叉对比 → `ae-sdd state register-review-consensus` 写 `reviewConsensus[point]` → G-09B + G-REVIEW-LOOP + G-AUTO-CONSENSUS 全过即自动推进 phase；2 轮矫正未决 → L3 `state.phase=paused`（按 `automation.onConsensusStall`） |
+| 1 | `/compact`（系列入口，防跨系列上下文污染）；主流程判定子流程范围 + **委托子流程Agent**（`ae-sdd subprocess spawn --series <type> --entity-id <ID>`）；子流程Agent 创建对应实体 memory（`ae-sdd memory create`） |
+| 2 | 子流程Agent 接管 -> 加载 `{series}-generate-skill.md` -> **起 sub-subAgent** 执行 generate -> 产物核查 |
+| 3 | 子流程Agent 加载 `{series}-review-skill.md` -> **起 sub-subAgent** 执行 review -> **Loop**：有错+矫正<2 -> 回步骤2；矫正=2 -> Level 3 暂停等用户；连续2轮无新错 -> 步骤4 |
+| 4 | 子流程Agent 汇总交付物 -> 回传主流程（`ae-sdd subprocess collect --agent-id <ID>`）-> **删自己的 memory** -> 人工审核：✅推进phase->下一系列；⚠️->重回步骤2；❌->paused<br>**🆕 v3.8.0 自动化模式**：联审共识 - 强制 Tier 3 派 3 个独立 session reviewer -> G-09B + G-REVIEW-LOOP + G-AUTO-CONSENSUS 全过即自动推进 |
 
 **流程偏移与矫正**（自动执行，AI 无法绕过）：
 
@@ -94,6 +112,67 @@ triggers:
 
 - **L1** 静默注入；**L2** 输出 `【主流程监管器 🔴 矫正】`；**L3** `state.phase=paused`
 - 恢复：`ae-sdd state write --resume`
+
+---
+
+## 🤖 3层Agent模型（🆕 v3.10.3）
+
+### 层级职责
+
+| 层级 | 角色 | 读什么 | 写什么 | 不做什么 |
+|------|------|--------|--------|----------|
+| **主流程会话** | 编排+监管+用户对话 | SKILL.md 编排层 + 主 state + subprocessAgents 状态 | 主 state.json + 委托契约 | 不读子SKILL正文、不读源码、不写流程文档 |
+| **子流程Agent** | 接管1个系列 | 子流程所需 SKILL + 对应实体 memory | memory compact + 派 sub-subAgent + 交付物汇总 | 不直接写 state.json（回传主流程写） |
+| **sub-subAgent** | 执行单系列内子任务 | 单系列子 SKILL + 任务卡 | 产出文档/代码/报告 | 不直接对话用户 |
+
+### 隔离方式
+
+子流程Agent = **物理独立 session**（mavis spawn / 新 workflow）。
+- 复用 agent-orchestration-skill §8.4.5 自动化模式的物理独立要求。
+- 环境不支持物理 spawn 时降级为逻辑隔离，标注 `agentMode: "logical-isolated"`。
+- 自动化模式（`automation.enabled=true`）禁止降级，必须物理独立。
+
+### 5大子流程串行委托
+
+主流程按 RA -> DR -> Story -> TestCase -> Coding 依次委托子流程Agent。每个子流程Agent 完成交回主流程后，主流程再委托下一个。
+
+### 通信协议
+
+| 方向 | 内容 | 命令 |
+|------|------|------|
+| 主->子 | 委托契约（系列类型+实体ID+输入文档+交付物要求+deadline） | `ae-sdd subprocess spawn --series <type> --entity-id <ID>` |
+| 子->主 | 交付物回传（汇总报告+产物路径+memory清理确认） | `ae-sdd subprocess collect --agent-id <ID> --deliverables '[...]'` |
+| 主->主 | 监管（查询子流程状态） | `ae-sdd subprocess list` / `status --agent-id <ID>` |
+| 子->主 | 故障升级（超时/产物缺失/门禁未过） | 主流程重派或升级用户 |
+
+### 子流程Agent memory 管理
+
+子流程Agent 启动时创建对应实体 memory（`ae-sdd memory create`），结束时删除（`ae-sdd subprocess collect` 自动清理）。common memory 跨子流程保留。详见 memory-management-skill.full.md。
+
+---
+
+## 🔄 compact 后重载协议（🆕 v3.10.3）
+
+### 系列入口 compact（4步协议 step 1）
+
+compact 后 -> 从 memory 重载完整上下文（boot+context+pending）-> 恢复子流程范围+当前系列+待决项。
+
+### 中途 compact（子流程执行中上下文压力触发）
+
+| 时机 | 动作 |
+|------|------|
+| compact 前 | `pre_compact_snapshot` 把当前系列进度/待决项写入 memory |
+| compact 后 | `post_compact_reload` 从 memory 重载 -> 续接当前步骤（不跳步） |
+
+### compact-trigger 读端（补齐 v3.10.3）
+
+`state.prd_complete()` 写 `.ae-sdd/compact-trigger` 文件（claude-code runtime）。
+`prompt_inject._check_compact_trigger()` 读 trigger -> 从 memory 重载 -> 清除 trigger。
+主流程/无 memory 时走原逻辑（state.json 重建），向后兼容。
+
+### PRD 收尾 compact
+
+`prd_complete` -> `ae-sdd runtime compact`（含子流程 snapshot）-> summary.md + compact-trigger + prdStatus=compacted。
 
 ---
 
@@ -296,6 +375,7 @@ automation:
 | 禁止猜测 | 不确定 → 标 `{待确认}` 并主动询问；禁止推断后输出 |
 | 禁止杜撰 | 不得编造不存在于输入材料中的规则/字段/类名/配置项 |
 | 🆕 禁止文档承载 changelog | 设计/架构/模板/标准类文档只写**当前生效内容**；历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`，文档内仅用一句引用（如「详见 CHANGELOG/...」）指向。混写会破坏主题连续性、加剧检索劣化、让 git blame 失真——属于坏习惯，不是细节。 |
+| 🆕 Story 输出边界 | Story 只写当前生效的需求与实现契约；不得写生成过程、CHANGELOG 或 DR 文档。DR 在 Story 链路中仅作只读输入，缺失时阻断，不得自动生成。 |
 
 ---
 
@@ -312,7 +392,9 @@ automation:
 
 ## 🎯 智能路由
 
-**调用顺序：** ① 自更新识别 → ② 任务类型（编码） → ③ 规格裁定 → ④ G-RA 门禁（大任务时）
+**调用顺序：** ① 自更新识别（🆕 v3.10.2 含消歧：代码上下文 → 不进自更新） → ② 任务类型（编码） → ③ 规格裁定 → ④ G-RA 门禁（大任务时）
+
+> 🆕 v3.10.2 **micro 意图分流**：`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。进微链后按 `entry_node`（OPTIMIZE/CODE_REVIEW）只调相应能力。消歧优先级：**self-update 上下文（ae-sdd/SKILL/流程）> 代码上下文**——`优化 ae-sdd` 走自更新，`优化这段实现` 走 micro-optimize。详见下方路由表「微-优化 / 微-审查」两行 + code-review-skill §无文档轻量准入。
 
 > 🆕 v3.9.0 **路由自动 state 匹配**：路由时 `classify.match_state()` 自动分析需求特征（提取 PRD/DR/Story ID + 判定 Bug/改 Story）→ 扫描现有嵌套 state → 命中则 relocate/absorb，未命中则 create_nested。匹配优先级：
 > 1. R4 Bug/微任务不改 Story → `create_flat`
@@ -329,13 +411,20 @@ automation:
 | **中** | 已有 Story | `story-generate-skill.md`（Story 系列）| **必过** |
 | **小** | 已有 Story+TestCase | CodingPlan 系列 |
 | **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| CodingPlan 系列 |
+| **🆕 微-优化** | 优化/重构/改进代码（无文档，entryNode=OPTIMIZE）| coding-process（轻量：跳骨架分解，直 CodeAnalysis→Coding）| — |
+| **🆕 微-审查** | 审查/CodeReview/评审代码（无文档，entryNode=CODE_REVIEW）| code-review（无文档轻量准入，对话内出结论）| — |
 | — | 新需求无任何产物且非BUG | 🔴 阻断 | — |
+
+> 🆕 v3.10.2 **微-优化 / 微-审查 意图分流**：进微链后按 `state.entryNode` 只调单个能力，跳过无关步骤。
+> - 微-优化：`initialized → coding-process（轻量）→ coding → completed`，跳 test-running/code-reviewed。
+> - 微-审查：`initialized → code-reviewed → completed`，跳 coding-process/coding/test-running；gate 跨步跳跃对 OPTIMIZE/CODE_REVIEW + scale=微 放行（复用 v3.5.15 BUG 豁免范式）。
+> - 消歧（classify.py）：`优化/重构/改进` + 代码上下文 + 非 self-update 上下文 → OPTIMIZE；含 ae-sdd/SKILL/流程 词 → 仍走自更新。
 
 **非编码类路由：**
 
 | 输入/场景 | 路由 |
 |----------|------|
-| 修改SKILL / 优化ae-sdd | `ae-sdd-update-skill.md`（监管器全权交接）|
+| 修改SKILL / 优化ae-sdd | `ae-sdd-update-skill.md`（监管器全权交接）。🆕 v3.10.2 消歧：仅当含 ae-sdd/SKILL/流程 上下文词时进本路由；`优化这部分实现` 等代码上下文 → 微-优化（见上表）|
 | 安装/升级ae-sdd | `ae-sdd-install-skill.md` |
 | 修改/BUG/生产故障 proposal | `proposal-skill.md` |
 | 放文档哪里 / 命名 | `document-storage-skill.md` + G-DOC-STORAGE |
@@ -349,6 +438,8 @@ automation:
 | **中** | 已有 Story（无DR）| Story 系列 |
 | **小** | 已有 Story+TestCase | CodingPlan 系列 |
 | **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| CodingPlan 系列 |
+| **🆕 微-优化** | 优化/重构/改进 + 代码上下文（非 ae-sdd）+ 无文档 | coding-process 轻量→coding |
+| **🆕 微-审查** | 审查/CodeReview/评审代码（非 ae-sdd）+ 无文档 | code-review 轻量准入→对话结论 |
 
 ### 状态机子链（实际 state.json phase 值）
 
@@ -358,6 +449,8 @@ automation:
 | 中(9) | initialized->dr-generated->story-generated->testcase-generated->coding-process->coding->test-running->code-reviewed->completed | 3 loop（DR-Story-TestCase）+ Coding/Testing，跳 RA |
 | 小(6) | initialized->coding-process->coding->test-running->code-reviewed->completed | 有Story+TestCase，直出CodingPlan |
 | 微(6) | initialized->coding-process->coding->test-running->code-reviewed->completed | BUG/调整，无文档直出CodingPlan |
+| 🆕 微-优化 | initialized->coding-process（轻量）->coding->completed | OPTIMIZE entryNode；跳 test-running/code-reviewed；gate 跨步放行 |
+| 🆕 微-审查 | initialized->code-reviewed->completed | CODE_REVIEW entryNode；跳 coding-process/coding/test-running；gate 跨步放行 |
 
 ---
 
@@ -649,6 +742,10 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | | `ae-sdd version/bump/init` | 版本/初始化 |
 | | `ae-sdd plugin list/validate/trace/init` | 三层SKILL注册表 |
 | | `ae-sdd runtime compact` | compact适配层 |
+| **增量质量** | `ae-sdd baseline inspect/create/diff` | G-CODE-1 历史 debt baseline 与 Story delta；创建必须显式批准 |
+| | `ae-sdd verify plan` | 按变更类别生成最小验证计划 |
+| | `ae-sdd evidence record/lookup` | 写入/查询 input-command-toolchain-artifact fingerprint 对齐的成功证据 |
+| **Review Batch** | `ae-sdd review start/collect/status/verify-exit/abort/retry-role` | Review Batch v2；`review-loop` 保留为兼容入口 |
 
 ---
 

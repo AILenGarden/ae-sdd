@@ -11,6 +11,7 @@ from lib import db_tool, git_insight, memory_store  # noqa: E402
 
 
 class TestMemoryStore(unittest.TestCase):
+    """🆕 v3.10.3: entity-tree memory store tests (compiled compact docs)."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -19,142 +20,149 @@ class TestMemoryStore(unittest.TestCase):
         import shutil
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_exit_blocks_without_write_after_enter(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        memory_store.enter(scope, actor="test")
-        result = memory_store.exit_phase(scope, actor="test")
-        self.assertFalse(result["pass"])
-        self.assertTrue(result["blocked"])
-
-    def test_exit_blocks_without_enter_even_if_written(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        memory_store.write(scope, summary="RA note without enter", evidence=["ra.md:1"], actor="test")
-        result = memory_store.exit_phase(scope, actor="test")
-        self.assertFalse(result["pass"])
-        self.assertTrue(result["blocked"])
-        self.assertIn("enter", result["reason"])
-
-    def test_check_exit_ready_does_not_append_exit_event(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        memory_store.enter(scope, actor="test")
-        memory_store.write(scope, summary="RA confirmed user roles", evidence=["ra.md:10"], actor="test")
-        before = memory_store.read(scope, include_project=False, limit=100)
-        result = memory_store.check_exit_ready(scope)
-        after = memory_store.read(scope, include_project=False, limit=100)
-        self.assertTrue(result["pass"])
-        self.assertEqual(len(before), len(after))
-        self.assertFalse(any(e.get("type") == "exit" for e in after))
-
-    def test_exit_passes_after_write(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        memory_store.enter(scope, actor="test")
-        memory_store.write(scope, summary="RA confirmed user roles", evidence=["ra.md:10"], actor="test")
-        result = memory_store.exit_phase(scope, actor="test")
-        self.assertTrue(result["pass"])
-        entries = memory_store.read(scope)
-        self.assertTrue(any(e.get("summary") == "RA confirmed user roles" for e in entries))
-
-    def test_exit_writes_last_exit_at_to_stage(self):
-        """🆕 v3.8.2 exit_phase 成功后 .stage 含 last_exit_at，且 scope 变为非活跃。"""
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        memory_store.enter(scope, actor="test")
-        memory_store.write(scope, summary="RA done", evidence=["ra.md:1"], actor="test")
-        result = memory_store.exit_phase(scope, actor="test")
-        self.assertTrue(result["pass"])
-        self.assertIsNotNone(result["stage"].get("last_exit_at"))
-        self.assertFalse(memory_store.is_scope_active(scope))
-
-    def test_enter_clears_last_exit_at(self):
-        """🆕 v3.8.2 重新 enter 清除 last_exit_at，scope 重新变为活跃。"""
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        memory_store.enter(scope, actor="test")
-        memory_store.write(scope, summary="RA done", evidence=["ra.md:1"], actor="test")
-        memory_store.exit_phase(scope, actor="test")
-        self.assertFalse(memory_store.is_scope_active(scope))
-        memory_store.enter(scope, actor="test")
-        self.assertTrue(memory_store.is_scope_active(scope))
-
-    def test_promote_l1_to_l2(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="coding-plan", story="STORY-001")
-        memory_store.write(
-            scope,
-            summary="Use existing repository pattern",
-            memory_scope="task",
-            kind="decision",
-            evidence=["plan.md:12"],
-            actor="test",
-        )
-        result = memory_store.promote(scope, from_memory_scope="task", to_memory_scope="project", actor="test")
-        self.assertEqual(result["promoted"], 1)
-        self.assertEqual(result["fromScope"], "task")
-        self.assertEqual(result["toScope"], "project")
-
-    def test_l1_memory_requires_evidence(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        with self.assertRaisesRegex(ValueError, "requires --evidence"):
-            memory_store.write(scope, summary="Decision without evidence", layer="L1", actor="test")
-
-    def test_l0_memory_allows_scratch_without_evidence(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        result = memory_store.write(scope, summary="Scratch note", memory_scope="scratch", actor="test")
-        self.assertTrue(result["written"])
-
-    def test_memory_summary_length_is_enforced(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="ra", story="STORY-001")
-        with self.assertRaisesRegex(ValueError, "summary too long"):
-            memory_store.write(
-                scope,
-                summary="x" * 181,
-                layer="L1",
-                kind="decision",
-                evidence=["ra.md:1"],
-                actor="test",
-            )
-
-    def test_l2_observation_is_rejected(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="coding", story="STORY-001")
-        with self.assertRaisesRegex(ValueError, "kind=observation"):
-            memory_store.write(
-                scope,
-                summary="Project reusable fact",
-                memory_scope="project",
-                kind="observation",
-                evidence=["coding.md:1"],
-                actor="test",
-            )
-
-    def test_task_and_project_scope_are_independent_partitions(self):
-        scope = memory_store.locate_scope(project=str(self.tmp), phase="coding", story="STORY-001")
-        task_result = memory_store.write(
-            scope,
-            summary="Task-level fix stays isolated",
-            memory_scope="task",
-            kind="fix",
-            evidence=["src/Foo.java:1"],
-            actor="test",
-        )
-        project_result = memory_store.write(
-            scope,
-            summary="Project-wide rule uses BigDecimal",
-            memory_scope="project",
-            kind="constraint",
-            evidence=["standards.md:2"],
-            actor="test",
+    def _make_scope(self, entity_type="story", entity_id="STORY-001-BE"):
+        return memory_store.locate_scope(
+            project=str(self.tmp), entity_type=entity_type, entity_id=entity_id,
         )
 
-        self.assertEqual(task_result["record"]["layer"], "L1")
-        self.assertEqual(task_result["record"]["memoryScope"], "task")
-        self.assertIn("story", task_result["path"])
-        self.assertEqual(project_result["record"]["layer"], "L2")
-        self.assertEqual(project_result["record"]["memoryScope"], "project")
-        self.assertIn("project", project_result["path"])
+    def test_create_writes_compact_slices_and_manifest(self):
+        scope = self._make_scope()
+        result = memory_store.create_memory(
+            scope,
+            source_contexts={"constraints": "Use BigDecimal for money. 禁止大事务."},
+            series_chain=["story-generate", "story-review"],
+            current_series="story-generate",
+            next_step="generate story doc",
+            constraints=["BigDecimal", "幂等"],
+            story_acs=[{"id": "AC-1", "description": "user can login", "status": "pending"}],
+        )
+        self.assertTrue(result["created"])
+        self.assertTrue((scope.entity_dir / "boot.compact.md").is_file())
+        self.assertTrue((scope.entity_dir / "context.compact.md").is_file())
+        self.assertTrue((scope.entity_dir / "pending.compact.md").is_file())
+        self.assertTrue((scope.entity_dir / "manifest.json").is_file())
 
-        task_entries = memory_store.read(scope, memory_scope="task", limit=0)
-        project_entries = memory_store.read(scope, memory_scope="project", limit=0)
-        self.assertTrue(any(e.get("summary") == "Task-level fix stays isolated" for e in task_entries))
-        self.assertFalse(any(e.get("summary") == "Project-wide rule uses BigDecimal" for e in task_entries))
-        self.assertTrue(any(e.get("summary") == "Project-wide rule uses BigDecimal" for e in project_entries))
-        self.assertFalse(any(e.get("summary") == "Task-level fix stays isolated" for e in project_entries))
+    def test_read_returns_compact_content(self):
+        scope = self._make_scope()
+        memory_store.create_memory(
+            scope,
+            source_contexts={},
+            current_series="story-generate",
+            next_step="generate",
+            constraints=["BigDecimal"],
+        )
+        mem = memory_store.read_memory(scope)
+        self.assertIn("story-generate", mem["boot"])
+        self.assertIn("BigDecimal", mem["context"])
+
+    def test_read_nonexistent_returns_empty(self):
+        scope = self._make_scope()
+        self.assertEqual(memory_store.read_memory(scope), {})
+
+    def test_exists_memory(self):
+        scope = self._make_scope()
+        self.assertFalse(memory_store.exists_memory(scope))
+        memory_store.create_memory(scope, source_contexts={})
+        self.assertTrue(memory_store.exists_memory(scope))
+
+    def test_update_memory_slice(self):
+        scope = self._make_scope()
+        memory_store.create_memory(scope, source_contexts={})
+        result = memory_store.update_memory(scope, slice_name="pending", content="# Updated Pending\n")
+        self.assertTrue(result["updated"])
+        mem = memory_store.read_memory(scope)
+        self.assertIn("Updated Pending", mem["pending"])
+
+    def test_update_invalid_slice_raises(self):
+        scope = self._make_scope()
+        memory_store.create_memory(scope, source_contexts={})
+        with self.assertRaises(ValueError):
+            memory_store.update_memory(scope, slice_name="invalid", content="x")
+
+    def test_update_without_create_raises(self):
+        scope = self._make_scope()
+        with self.assertRaises(FileNotFoundError):
+            memory_store.update_memory(scope, slice_name="pending", content="x")
+
+    def test_clean_memory_deletes_entity_dir(self):
+        scope = self._make_scope()
+        memory_store.create_memory(scope, source_contexts={})
+        result = memory_store.clean_memory(scope)
+        self.assertTrue(result["cleaned"])
+        self.assertFalse(scope.entity_dir.exists())
+
+    def test_clean_memory_preserves_common(self):
+        scope = self._make_scope()
+        memory_store.create_memory(scope, source_contexts={"constraints": "Use BigDecimal."})
+        common_scope = memory_store.locate_scope(
+            project=str(self.tmp), entity_type="common", entity_id="default",
+        )
+        self.assertTrue(memory_store.exists_memory(common_scope))
+        memory_store.clean_memory(scope)
+        # common should still exist after cleaning story
+        self.assertTrue(memory_store.exists_memory(common_scope))
+
+    def test_clean_memory_refuses_common(self):
+        scope = memory_store.locate_scope(
+            project=str(self.tmp), entity_type="common", entity_id="default",
+        )
+        memory_store.create_memory(scope, source_contexts={})
+        result = memory_store.clean_memory(scope)
+        self.assertFalse(result["cleaned"])
+
+    def test_clean_all_removes_entities_preserves_common(self):
+        story_scope = self._make_scope("story", "STORY-001")
+        coding_scope = self._make_scope("coding", "STORY-001")
+        memory_store.create_memory(story_scope, source_contexts={"constraints": "BigDecimal."})
+        memory_store.create_memory(coding_scope, source_contexts={})
+        result = memory_store.clean_all_memory(story_scope)
+        self.assertTrue(result["cleaned"])
+        self.assertIn("story", result["removed_types"])
+        self.assertIn("coding", result["removed_types"])
+        self.assertIn("common", result["preserved"])
+        # common should survive clean-all
+        common = memory_store.read_common(story_scope)
+        self.assertTrue(common)
+
+    def test_common_extraction_from_source_contexts(self):
+        scope = self._make_scope()
+        memory_store.create_memory(
+            scope,
+            source_contexts={
+                "constraints": "金额字段必须用 BigDecimal，禁止 Double。禁止大事务。分布式操作必须幂等。",
+            },
+        )
+        common = memory_store.read_common(scope)
+        self.assertIn("BigDecimal", common["context"])
+        self.assertIn("禁止大事务", common["context"])
+
+    def test_pre_compact_snapshot_and_post_compact_reload(self):
+        scope = self._make_scope()
+        memory_store.create_memory(scope, source_contexts={}, current_series="story-generate", next_step="gen")
+        memory_store.pre_compact_snapshot(
+            scope,
+            current_series="story-review",
+            next_step="review story",
+            pending_items=[{"id": "D-001", "description": "AC-2 needs clarification", "owner": "root", "status": "open"}],
+            review_loop_status="round 1, 2 findings",
+        )
+        mem = memory_store.post_compact_reload(scope)
+        self.assertIn("story-review", mem["boot"])
+        self.assertIn("D-001", mem["pending"])
+        self.assertIn("round 1", mem["pending"])
+
+    def test_legacy_phase_story_args_compat(self):
+        """过渡期：旧 --phase/--story 参数兼容，内部转换为 entity_type/entity_id。"""
+        scope = memory_store.locate_scope(
+            project=str(self.tmp), phase="coding", story="STORY-001-BE",
+        )
+        self.assertEqual(scope.entity_type, "coding")
+        self.assertEqual(scope.entity_id, "STORY-001-BE")
+
+    def test_entity_type_for_state_phase(self):
+        self.assertEqual(memory_store.entity_type_for_state_phase("coding"), "coding")
+        self.assertEqual(memory_store.entity_type_for_state_phase("ra-generated"), "prd")
+        self.assertIsNone(memory_store.entity_type_for_state_phase("initialized"))
 
 
 class TestDbTool(unittest.TestCase):

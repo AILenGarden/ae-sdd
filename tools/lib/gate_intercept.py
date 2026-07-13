@@ -517,24 +517,25 @@ def _check_memory_entered(
         memory_phase = memory_gate.memory_phase_for_state_phase(phase)
         if not memory_phase:
             return True, ""  # 非关联 phase（如 initialized/completed），跳过
-        # 🆕 v3.9.1 嵌套 state 兼容：用统一接口读 activeStory（nested → activeStory）
+        # 🆕 v3.9.1 嵌套 state 兼容：用统一接口读 activeStory（nested -> activeStory）
         story = state_mod.get_active_story(state_data or {}) or None
+        # 🆕 v3.10.3: 用 state phase（而非 memory phase）查 entity_type，因为
+        # STATE_PHASE_TO_ENTITY_TYPE 的 key 是 state phase（如 code-reviewed）。
+        entity_type = memory_store.entity_type_for_state_phase(phase) or "common"
         scope = memory_store.locate_scope(
-            project=str(ade_sdd.parent), phase=memory_phase, story=story,
+            project=str(ade_sdd.parent), entity_type=entity_type, entity_id=story or "default",
         )
         if memory_store.is_scope_active(scope):
-            return True, ""  # 已 enter 未 exit，放行
+            return True, ""  # memory 存在（新语义：exists = active），放行
         story_arg = f" --story {story}" if story else ""
         return False, (
-            f"存端记忆门禁：当前 phase={phase}（memory phase={memory_phase}）"
-            f"尚未执行 memory enter，禁止写操作。\n"
-            f"memory 是关联节点的强制工具集，不写记忆不得推进工作。\n"
+            f"存端记忆门禁：当前 phase={phase}（entity={entity_type}/{story or 'default'}）"
+            f"尚未创建 memory，禁止写操作。\n"
+            f"memory 是关联节点的强制工具集，无 memory 不得推进工作。\n"
             f"请先执行:\n"
-            f"  ae-sdd memory enter --phase {memory_phase}{story_arg}\n"
-            f"  ae-sdd memory write --phase {memory_phase}{story_arg}"
-            f" --summary \"...\" --evidence <file:line>\n"
-            f"  ae-sdd memory exit --phase {memory_phase}{story_arg}\n"
-            f"（🆕 v3.8.2 存端兜底，堵 PHASE_PERMIT 放行绕过 memory gate 漏洞）"
+            f"  ae-sdd memory create --entity-type {entity_type} --entity-id {story or 'default'}"
+            f" --sources ...\n"
+            f"（🆕 v3.10.3 存端兜底，entity-tree memory 替代 enter/exit 生命周期）"
         )
     except Exception as e:
         return False, (
@@ -725,10 +726,20 @@ def _check_state_write(
 
     if target_idx > current_idx + 1:
         steps = target_idx - current_idx
-        return False, (
-            f"禁止跨步跳跃（scale={scale}，当前 {current_phase} → 目标 {target_phase}，跳了 {steps} 步）。\n"
-            f"必须按顺序切换: {' → '.join(chain[current_idx:target_idx + 1])}\n"
-        )
+        # 🆕 v3.10.2 micro 意图分流豁免：OPTIMIZE/CODE_REVIEW entry_node 允许跨步直达
+        #   micro-optimize: initialized → coding（跳过 coding-process 由意图分流前置门接管）
+        #   micro-review:   initialized → code-reviewed（跳过 coding-process/coding/test-running，
+        #                   由 code-review 无文档轻量准入分支接管）
+        #   复用 v3.5.15 微链 BUG 范式：仅 scale="微" + 指定 entry_node 放行，其余照拦。
+        entry_node = (state_data or {}).get("entryNode") if state_data else None
+        if scale == "微" and entry_node in ("OPTIMIZE", "CODE_REVIEW"):
+            # 允许跨步；具体进入条件由下游 PHASE_ENTRY_GATES + 意图分流前置门把关
+            pass
+        else:
+            return False, (
+                f"禁止跨步跳跃（scale={scale}，当前 {current_phase} → 目标 {target_phase}，跳了 {steps} 步）。\n"
+                f"必须按顺序切换: {' → '.join(chain[current_idx:target_idx + 1])}\n"
+            )
 
     # 向前跳 1 步：验证进入条件
     effective_state = dict(state_data or {"phase": current_phase})
@@ -848,13 +859,24 @@ def _is_readonly_bash(command: Optional[str]) -> bool:
 
 
 # ─── 拒绝响应构造 ─────────────────────────────────────────────────────────────
+# pending-init 拦截的 reason 有唯一前缀（见 _check_pending_init_intercept），用它
+# 识别该场景，跳过下方通用的"走快速通道"尾巴——_update_quick_channel 同样要求先
+# 定位到 .ae-sdd/ 才生效，对这个场景是死路（v3.10.2 修复：之前 reason 本身已经
+# 改指向 disengage 词，但 _deny_response 仍无条件在其后追加误导性的快速通道提示，
+# 用户看到的完整消息里旧建议其实还在）。
+_PENDING_INIT_REASON_PREFIX = "ae-sdd 项目尚未初始化"
+
+
 def _deny_response(tool_name: str, reason: str) -> dict:
     """构造 Claude Code PreToolUse 拒绝响应（JSON 格式）"""
-    full_reason = (
-        f"[ae-sdd gate-intercept] {tool_name} 被拒绝\n\n"
-        f"{reason}\n"
-        f"如需紧急绕过，请说：/ae-sdd-quick 或 '走快速通道'（仍需落档）"
-    )
+    if reason.startswith(_PENDING_INIT_REASON_PREFIX):
+        full_reason = f"[ae-sdd gate-intercept] {tool_name} 被拒绝\n\n{reason}"
+    else:
+        full_reason = (
+            f"[ae-sdd gate-intercept] {tool_name} 被拒绝\n\n"
+            f"{reason}\n"
+            f"如需紧急绕过，请说：/ae-sdd-quick 或 '走快速通道'（仍需落档）"
+        )
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -892,6 +914,10 @@ def _check_pending_init_intercept(
             return True, ""
 
     # 其余全部拦截
+    # 🆕 v3.10.2 修复误导提示：待初始化拦截场景下 .ae-sdd/ 还不存在，
+    # "走快速通道"（_update_quick_channel）本身要求先定位到 .ae-sdd/ 才会
+    # 生效，对这里毫无作用——之前的提示是一条死路。改为指向真正独立于
+    # .ae-sdd/ 是否存在都能清除标记的 disengage 词（见 prompt_inject.inject）。
     return False, (
         f"ae-sdd 项目尚未初始化（未找到 .ae-sdd/config.yaml）。\n"
         f"当前 {tool_name} 操作已被拦截。\n\n"
@@ -899,7 +925,8 @@ def _check_pending_init_intercept(
         f"  ae-sdd init . <projectKey>\n"
         f"  # init 会自动生成 baseline 项目资产\n"
         f"然后重新触发 /ae-sdd。\n\n"
-        f"如需紧急绕过，请说：/ae-sdd-quick 或 '走快速通道'"
+        f"如果本项目本来就不打算走 ae-sdd（如纯工具源码仓），说 '退出 ae-sdd' 或 "
+        f"'不锁了' 即可清除此拦截。"
     )
 
 

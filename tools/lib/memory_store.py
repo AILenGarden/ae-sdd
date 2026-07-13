@@ -1,269 +1,202 @@
 """
-Phase-aware memory store for ae-sdd.
+Entity-tree memory store for ae-sdd.
 
-This module is intentionally small and dependency-free. It stores auditable
-JSONL records under the current project's .ae-sdd/memory directory and supports
-mandatory phase hooks:
+🆕 v3.10.3: memory 从"5层原文索引"重构为"业务实体树+编译文档容器"。
 
-  memory enter -> phase work -> memory write -> memory exit
+核心变化：
+  - 废弃 5 层（L0-L4）+ JSONL 原文索引 + enter/exit 生命周期门禁。
+  - 新增业务实体树：prd/dr/story/testcase/coding/common 平级分层。
+  - 存储格式：compact.md 文件（编译后的高密度文档）+ manifest.json 校验。
+  - 生命周期：子流程启动=创建(编译)，结束=删除；从0重建=clean_all；回归=先读无则建。
+  - common 层：只存项目级可复用约束，跨子流程保留，必须轻。
 
-`exit` fails when no write happened after the latest `enter` for the same
-phase/story/task scope.
+目录结构：
+  .ae-sdd/memory/
+  ├── common/                  # 项目级可复用约束(必须轻)，跨子流程保留
+  │   └── context.compact.md
+  ├── prd/{PRD-ID}/            # RA/PRD子流程的工作上下文
+  │   ├── boot.compact.md
+  │   ├── context.compact.md
+  │   ├── pending.compact.md
+  │   └── manifest.json
+  ├── dr/{DR-ID}/              # DR子流程的工作上下文
+  ├── story/{Story-ID}/        # Story子流程的工作上下文
+  ├── testcase/{Story-ID}/     # TestCase子流程的工作上下文
+  └── coding/{Story-ID}/       # Coding子流程的工作上下文
+
+兼容层：
+  - locate_scope() 保留但语义简化为定位 memory_root（过渡期供旧调用方使用）。
+  - memory_phase_for_state_phase() 从 memory_gate 迁入本模块（过渡期供 prompt_inject/gate_intercept 使用）。
 """
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Optional
 
-from lib import paths
+from lib import memory_compiler, paths
 
 
-PHASE_ALIASES = {
-    "requirement-analysis": "ra",
-    "requirements": "ra",
-    "ra": "ra",
-    "design": "design",
-    "story": "design",
-    "task": "coding-plan",
-    "task-generate": "coding-plan",
-    "coding-plan": "coding-plan",
-    "plan": "coding-plan",
+# --- entity types ---
+
+VALID_ENTITY_TYPES = {"prd", "dr", "story", "testcase", "coding", "common"}
+
+# state phase -> memory entity type 映射（过渡期，供 prompt_inject/gate_intercept 判定当前阶段对应哪个实体）。
+# 🆕 v3.10.3: 从 memory_gate.py 迁入（memory_gate 废弃）。
+STATE_PHASE_TO_ENTITY_TYPE: dict[str, str] = {
+    "ra-generated": "prd",
+    "dr-generated": "dr",
+    "story-generated": "story",
+    "story-reviewed": "story",
+    "testcase-generated": "testcase",
+    "testcase-reviewed": "testcase",
+    "coding-process": "coding",
     "coding": "coding",
-    "execute": "coding",
-    "review": "review",
-    "code-review": "review",
-    "postmortem": "review",
+    "test-running": "coding",
+    "code-reviewed": "coding",
 }
 
-VALID_PHASES = {"ra", "design", "coding-plan", "coding", "review"}
-VALID_LAYERS = {"L0", "L1", "L2", "L3", "L4"}
-MEMORY_SCOPE_TO_LAYER = {
-    "scratch": "L0",
-    "task": "L1",
-    "project": "L2",
-    "pattern": "L3",
-    "archive": "L4",
-}
-LAYER_TO_MEMORY_SCOPE = {layer: scope for scope, layer in MEMORY_SCOPE_TO_LAYER.items()}
-VALID_KINDS = {
-    "decision",
-    "constraint",
-    "finding",
-    "issue",
-    "risk",
-    "fix",
-    "conflict",
-    "observation",
-}
-PROMOTABLE_KINDS = {"decision", "constraint", "finding", "issue", "risk", "fix", "conflict"}
-COMPACT_SUMMARY_LIMITS = {
-    "L0": 240,
-    "L1": 180,
-    "L2": 140,
-    "L3": 120,
-    "L4": 180,
-}
-COMPACT_EVIDENCE_LIMITS = {
-    "L0": 5,
-    "L1": 3,
-    "L2": 3,
-    "L3": 3,
-    "L4": 5,
-}
-MAX_EVIDENCE_CHARS = 160
-MAX_TAGS = 5
-MAX_TAG_CHARS = 40
 
+def entity_type_for_state_phase(phase: str) -> Optional[str]:
+    """state phase -> memory entity type 映射（None 表示该阶段无关联实体）。"""
+    return STATE_PHASE_TO_ENTITY_TYPE.get(phase)
+
+
+# 旧 memory_gate.STATE_PHASE_TO_MEMORY_PHASE 的兼容别名（过渡期）。
+# 5 个 memory phase: ra/design/coding-plan/coding/review。
+# 🆕 v3.10.3: 保留供 prompt_inject/gate_intercept 过渡期使用，后续批 3 重写后可移除。
+_STATE_PHASE_TO_MEMORY_PHASE: dict[str, str] = {
+    "ra-generated": "ra",
+    "dr-generated": "design",
+    "story-generated": "design",
+    "story-reviewed": "design",
+    "task-generated": "coding-plan",
+    "task-reviewed": "coding-plan",
+    "coding-process": "coding-plan",
+    "coding": "coding",
+    "test-running": "coding",
+    "code-reviewed": "review",
+}
+
+_VALID_MEMORY_PHASES = {"ra", "design", "coding-plan", "coding", "review"}
+
+
+def memory_phase_for_state_phase(phase: str) -> Optional[str]:
+    """state phase -> memory phase 映射（过渡期兼容，供 prompt_inject/gate_intercept 使用）。
+
+    🆕 v3.10.3: 从 memory_gate.py 迁入。批 3 重写 prompt_inject/gate_intercept 后可移除。
+    """
+    return _STATE_PHASE_TO_MEMORY_PHASE.get(phase)
+
+
+# --- scope ---
 
 @dataclass
 class MemoryScope:
+    """业务实体 scope（🆕 v3.10.3 替代旧 phase-based MemoryScope）。
+
+    entity_type: prd/dr/story/testcase/coding/common
+    entity_id: 业务实体 ID（如 STORY-001-BE、DR-001、PRD-CS-001）
+    """
     project_root: Path
     memory_root: Path
-    phase: str
-    story: Optional[str] = None
-    task: Optional[str] = None
+    entity_type: str
+    entity_id: str
 
     @property
     def scope_key(self) -> str:
-        parts = [self.phase]
-        if self.story:
-            parts.append(self.story)
-        if self.task:
-            parts.append(self.task)
-        return "__".join(_safe_part(p) for p in parts)
+        """兼容 property：供过渡期旧调用方（memory_gate 等）读取。"""
+        return f"{self.entity_type}__{self.entity_id}"
+
+    @property
+    def entity_dir(self) -> Path:
+        return self.memory_root / self.entity_type / _safe_part(self.entity_id)
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def normalize_phase(phase: str) -> str:
-    p = (phase or "").strip().lower()
-    p = PHASE_ALIASES.get(p, p)
-    if p not in VALID_PHASES:
-        raise ValueError(f"unknown memory phase: {phase} (allowed: {sorted(VALID_PHASES)})")
-    return p
-
-
-def normalize_layer(layer: str) -> str:
-    l = (layer or "L1").strip().upper()
-    if l not in VALID_LAYERS:
-        raise ValueError(f"unknown memory layer: {layer} (allowed: {sorted(VALID_LAYERS)})")
-    return l
-
-
-def normalize_memory_scope(memory_scope: str) -> str:
-    s = (memory_scope or "task").strip().lower()
-    aliases = {
-        "l0": "scratch",
-        "session": "scratch",
-        "story": "task",
-        "story-task": "task",
-        "task-memory": "task",
-        "l1": "task",
-        "project-memory": "project",
-        "l2": "project",
-        "global": "pattern",
-        "global-pattern": "pattern",
-        "l3": "pattern",
-        "cold": "archive",
-        "l4": "archive",
-    }
-    s = aliases.get(s, s)
-    if s not in MEMORY_SCOPE_TO_LAYER:
-        raise ValueError(f"unknown memory scope: {memory_scope} (allowed: {sorted(MEMORY_SCOPE_TO_LAYER)})")
-    return s
-
-
-def layer_for_memory_scope(memory_scope: str) -> str:
-    return MEMORY_SCOPE_TO_LAYER[normalize_memory_scope(memory_scope)]
-
-
-def memory_scope_for_layer(layer: str) -> str:
-    return LAYER_TO_MEMORY_SCOPE[normalize_layer(layer)]
-
-
-def resolve_layer(
-    *,
-    layer: Optional[str] = None,
-    memory_scope: Optional[str] = None,
-    default_scope: str = "task",
-) -> str:
-    if memory_scope:
-        scoped_layer = layer_for_memory_scope(memory_scope)
-        if layer and normalize_layer(layer) != scoped_layer:
-            raise ValueError(
-                f"memory --scope {normalize_memory_scope(memory_scope)} maps to {scoped_layer}, "
-                f"but --layer {normalize_layer(layer)} was also provided"
-            )
-        return scoped_layer
-    if layer:
-        return normalize_layer(layer)
-    return layer_for_memory_scope(default_scope)
-
-
-def normalize_kind(kind: str) -> str:
-    k = (kind or "observation").strip().lower()
-    if k not in VALID_KINDS:
-        raise ValueError(f"unknown memory kind: {kind} (allowed: {sorted(VALID_KINDS)})")
-    return k
-
-
-def _validate_compact_memory(
-    *,
-    layer: str,
-    kind: str,
-    summary: str,
-    evidence: list[str],
-    tags: list[str],
-) -> None:
-    """Enforce write-time compact memory instead of storing longform notes."""
-    limit = COMPACT_SUMMARY_LIMITS[layer]
-    if len(summary) > limit:
-        raise ValueError(
-            f"memory summary too long for {layer}: {len(summary)} chars > {limit}. "
-            "Rewrite as one compact atomic fact with evidence."
-        )
-    if "\n" in summary or "```" in summary or summary.lstrip().startswith("#"):
-        raise ValueError("memory summary must be one compact line; store longform detail in a report/archive")
-
-    if layer != "L0" and not evidence:
-        raise ValueError("task/project compact memory requires --evidence <file:line>; use --scope scratch for scratch")
-    if layer in {"L2", "L3"} and kind == "observation":
-        raise ValueError(f"{layer} compact memory cannot use kind=observation; choose a reusable kind")
-
-    evidence_limit = COMPACT_EVIDENCE_LIMITS[layer]
-    if len(evidence) > evidence_limit:
-        raise ValueError(f"{layer} compact memory allows at most {evidence_limit} evidence references")
-    for item in evidence:
-        if "\n" in item or len(item) > MAX_EVIDENCE_CHARS:
-            raise ValueError(
-                f"memory evidence must be a short reference <= {MAX_EVIDENCE_CHARS} chars, not copied output"
-            )
-
-    if len(tags) > MAX_TAGS:
-        raise ValueError(f"memory tags must be compact: at most {MAX_TAGS} tags")
-    for tag in tags:
-        if "\n" in tag or len(tag) > MAX_TAG_CHARS:
-            raise ValueError(f"memory tag must be one short token <= {MAX_TAG_CHARS} chars")
+def _safe_part(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in value)
 
 
 def locate_scope(
     *,
     project: Optional[str] = None,
-    phase: str,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    # 过渡期兼容旧参数（phase/story/task），内部转换为 entity_type/entity_id
+    phase: Optional[str] = None,
     story: Optional[str] = None,
     task: Optional[str] = None,
 ) -> MemoryScope:
+    """定位 memory scope。
+
+    🆕 v3.10.3: 新参数 entity_type/entity_id。旧参数 phase/story/task 过渡期兼容，
+    内部转换为 entity_type/entity_id（phase->entity_type 映射 + story->entity_id）。
+    """
     project_dir = Path(project).resolve() if project else Path.cwd()
     ade_sdd = paths.locate_project_ae_sdd(project_dir)
     if ade_sdd is None:
-        # For early project setup and tests, create a local .ae-sdd directory.
         ade_sdd = project_dir / ".ae-sdd"
     project_root = ade_sdd.parent
     memory_root = ade_sdd / "memory"
+
+    # 过渡期：旧参数 phase/story/task -> entity_type/entity_id
+    # 优先级：显式 entity_type/entity_id > 旧 phase/story/task > 默认 common/default
+    if not entity_type and phase:
+        entity_type = entity_type_for_state_phase(phase) or "common"
+    if not entity_id and story:
+        entity_id = story
+    if not entity_type and task:
+        # 旧 task 维度映射到 coding 实体
+        entity_type = "coding"
+    if not entity_id and task:
+        entity_id = task
+
+    # 默认值
+    entity_type = entity_type or "common"
+    entity_id = entity_id or "default"
+
+    if entity_type not in VALID_ENTITY_TYPES:
+        raise ValueError(
+            f"unknown entity type: {entity_type} (allowed: {sorted(VALID_ENTITY_TYPES)})"
+        )
+
     return MemoryScope(
         project_root=project_root,
         memory_root=memory_root,
-        phase=normalize_phase(phase),
-        story=story,
-        task=task,
+        entity_type=entity_type,
+        entity_id=entity_id,
     )
 
 
-def _safe_part(value: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in value)
+# --- path helpers ---
+
+def _compact_path(scope: MemoryScope, slice_name: str) -> Path:
+    """memory/{entity_type}/{entity_id}/{slice_name}.compact.md"""
+    return scope.entity_dir / f"{slice_name}.compact.md"
 
 
-def _jsonl_path(scope: MemoryScope, layer: str) -> Path:
-    layer = normalize_layer(layer)
-    if layer == "L0":
-        return scope.memory_root / "session" / f"{scope.scope_key}.jsonl"
-    if layer == "L1":
-        if scope.story:
-            base = scope.memory_root / "story" / _safe_part(scope.story)
-            if scope.task:
-                base = base / "task" / _safe_part(scope.task)
-            return base / f"{scope.phase}.jsonl"
-        return scope.memory_root / "phase" / f"{scope.phase}.jsonl"
-    if layer == "L2":
-        return scope.memory_root / "project" / f"{scope.phase}.jsonl"
-    if layer == "L3":
-        return scope.memory_root / "global-patterns" / f"{scope.phase}.jsonl"
-    return scope.memory_root / "archive" / f"{scope.phase}.jsonl"
+def _manifest_path(scope: MemoryScope) -> Path:
+    return scope.entity_dir / "manifest.json"
 
 
-def _stage_path(scope: MemoryScope) -> Path:
-    return scope.memory_root / ".stage" / f"{scope.scope_key}.json"
+# --- read/write helpers ---
 
-
-def _append_jsonl(path: Path, record: dict) -> None:
+def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def _read_text(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8")
 
 
 def _read_json(path: Path) -> dict:
@@ -271,221 +204,379 @@ def _read_json(path: Path) -> dict:
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, OSError):
         return {}
 
 
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
-def _iter_jsonl(path: Path) -> Iterable[dict]:
-    if not path.is_file():
-        return
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            yield json.loads(line)
-        except json.JSONDecodeError:
-            yield {"type": "corrupt", "raw": line, "path": str(path)}
+# --- core API: create/read/update/clean ---
 
-
-def enter(scope: MemoryScope, *, actor: str = "ae-sdd", note: str = "") -> dict:
-    """Record that a phase has loaded memory before work starts."""
-    now = utc_now()
-    existing = read(scope, include_project=True, limit=50)
-    stage = _read_json(_stage_path(scope))
-    stage.update({
-        "phase": scope.phase,
-        "story": scope.story,
-        "task": scope.task,
-        "last_enter_at": now,
-        "last_enter_by": actor,
-        "last_enter_note": note,
-        "last_exit_at": None,  # 🆕 v3.8.2：重新 enter 清除 exit 时间，标记新工作周期开始
-    })
-    _write_json(_stage_path(scope), stage)
-
-    event = {
-        "type": "enter",
-        "phase": scope.phase,
-        "story": scope.story,
-        "task": scope.task,
-        "timestamp": now,
-        "actor": actor,
-        "note": note,
-        "loaded_entries": len(existing),
-    }
-    _append_jsonl(_jsonl_path(scope, "L0"), event)
-    return {"entered": True, "scope": scope.scope_key, "loaded_entries": len(existing), "entries": existing}
-
-
-def write(
+def create_memory(
     scope: MemoryScope,
     *,
-    summary: str,
-    layer: Optional[str] = None,
-    memory_scope: Optional[str] = None,
-    kind: str = "observation",
-    evidence: Optional[list[str]] = None,
-    actor: str = "ae-sdd",
-    tags: Optional[list[str]] = None,
+    source_contexts: dict[str, str],
+    series_chain: list[str] | None = None,
+    current_series: str = "",
+    next_step: str = "",
+    deliverables: list[dict[str, str]] | None = None,
+    dr_anchors: list[dict[str, str]] | None = None,
+    story_acs: list[dict[str, str]] | None = None,
+    constraints: list[str] | None = None,
+    api_contracts: list[dict[str, str]] | None = None,
+    data_models: list[dict[str, str]] | None = None,
+    asset_refs: list[str] | None = None,
+    pending_items: list[dict[str, str]] | None = None,
+    failure_history: list[dict[str, str]] | None = None,
+    correction_counts: dict[str, int] | None = None,
+    review_loop_status: str = "",
 ) -> dict:
-    if not summary or not summary.strip():
-        raise ValueError("memory summary is required")
-    layer = resolve_layer(layer=layer, memory_scope=memory_scope, default_scope="task")
-    memory_scope_name = memory_scope_for_layer(layer)
-    kind = normalize_kind(kind)
-    summary = summary.strip()
-    evidence = [str(item).strip() for item in (evidence or []) if str(item).strip()]
-    tags = [str(item).strip() for item in (tags or []) if str(item).strip()]
-    _validate_compact_memory(
-        layer=layer,
-        kind=kind,
-        summary=summary,
-        evidence=evidence,
-        tags=tags,
+    """读源上下文 -> 编译 compact -> 写 4 文件 -> 返回路径信息。
+
+    这是子流程Agent首次进入时调用的主入口。编译由 memory_compiler 完成。
+    """
+    compiled = memory_compiler.compile_source_to_memory(
+        entity_type=scope.entity_type,
+        entity_id=scope.entity_id,
+        source_contexts=source_contexts,
+        series_chain=series_chain,
+        current_series=current_series,
+        next_step=next_step,
+        deliverables=deliverables,
+        dr_anchors=dr_anchors,
+        story_acs=story_acs,
+        constraints=constraints,
+        api_contracts=api_contracts,
+        data_models=data_models,
+        asset_refs=asset_refs,
+        pending_items=pending_items,
+        failure_history=failure_history,
+        correction_counts=correction_counts,
+        review_loop_status=review_loop_status,
     )
-    now = utc_now()
-    record = {
-        "type": "memory",
-        "phase": scope.phase,
-        "story": scope.story,
-        "task": scope.task,
-        "layer": layer,
-        "memoryScope": memory_scope_name,
-        "kind": kind,
-        "summary": summary,
-        "evidence": evidence,
-        "tags": tags,
-        "timestamp": now,
-        "actor": actor,
-    }
-    target = _jsonl_path(scope, layer)
-    _append_jsonl(target, record)
 
-    stage = _read_json(_stage_path(scope))
-    stage.update({
-        "phase": scope.phase,
-        "story": scope.story,
-        "task": scope.task,
-        "last_write_at": now,
-        "last_write_by": actor,
-        "last_write_path": str(target),
-    })
-    _write_json(_stage_path(scope), stage)
-    return {"written": True, "path": str(target), "record": record}
+    for filename, content in compiled.items():
+        _write_text(scope.entity_dir / filename, content)
 
-
-def check_exit_ready(scope: MemoryScope, *, allow_empty: bool = False) -> dict:
-    """Check whether a phase scope can be left without writing an exit event."""
-    stage = _read_json(_stage_path(scope))
-    enter_at = stage.get("last_enter_at")
-    write_at = stage.get("last_write_at")
-
-    if allow_empty:
-        return {
-            "pass": True,
-            "blocked": False,
-            "reason": "",
-            "scope": scope.scope_key,
-            "stage": stage,
-            "allow_empty": True,
-        }
-
-    if not enter_at:
-        return {
-            "pass": False,
-            "blocked": True,
-            "reason": "memory enter is required before leaving this node",
-            "scope": scope.scope_key,
-            "stage": stage,
-        }
-    if not write_at:
-        return {
-            "pass": False,
-            "blocked": True,
-            "reason": "memory write is required after the latest memory enter",
-            "scope": scope.scope_key,
-            "stage": stage,
-        }
-    if write_at < enter_at:
-        return {
-            "pass": False,
-            "blocked": True,
-            "reason": "memory write must happen after the latest memory enter",
-            "scope": scope.scope_key,
-            "stage": stage,
-        }
+    # 提取 common（若当前实体不是 common 本身）
+    if scope.entity_type != "common":
+        _maybe_update_common(scope, source_contexts)
 
     return {
-        "pass": True,
-        "blocked": False,
-        "reason": "",
-        "scope": scope.scope_key,
-        "stage": stage,
+        "created": True,
+        "entity_type": scope.entity_type,
+        "entity_id": scope.entity_id,
+        "path": str(scope.entity_dir),
+        "slices": list(compiled.keys()),
     }
 
 
-def exit_phase(scope: MemoryScope, *, actor: str = "ae-sdd", allow_empty: bool = False) -> dict:
-    check = check_exit_ready(scope, allow_empty=allow_empty)
-    stage = check["stage"]
-    enter_at = stage.get("last_enter_at")
-    write_at = stage.get("last_write_at")
-    ok = bool(check["pass"])
-    now = utc_now()
-    event = {
-        "type": "exit",
-        "phase": scope.phase,
-        "story": scope.story,
-        "task": scope.task,
-        "timestamp": now,
-        "actor": actor,
-        "pass": ok,
-        "last_enter_at": enter_at,
-        "last_write_at": write_at,
+def _maybe_update_common(scope: MemoryScope, source_contexts: dict[str, str]) -> None:
+    """从源上下文提取可复用约束，更新 common（若 common 不存在则创建）。"""
+    common_scope = MemoryScope(
+        project_root=scope.project_root,
+        memory_root=scope.memory_root,
+        entity_type="common",
+        entity_id="default",
+    )
+    common_context = memory_compiler.extract_common(source_contexts)
+    common_context_path = _compact_path(common_scope, "context")
+
+    if not common_context_path.is_file():
+        # common 不存在，创建
+        _write_text(common_context_path, common_context)
+    # 若已存在，不覆盖（common 由首次编译创建，后续保留跨子流程复用）
+
+
+def read_memory(scope: MemoryScope) -> dict:
+    """读 compact 文档（boot + context + pending + manifest）。
+
+    返回 dict 含各 slice 的文本内容。若 memory 不存在返回空 dict。
+    """
+    if not scope.entity_dir.is_dir():
+        return {}
+
+    return {
+        "boot": _read_text(_compact_path(scope, "boot")),
+        "context": _read_text(_compact_path(scope, "context")),
+        "pending": _read_text(_compact_path(scope, "pending")),
+        "manifest": _read_json(_manifest_path(scope)),
+        "path": str(scope.entity_dir),
     }
-    _append_jsonl(_jsonl_path(scope, "L0"), event)
-    if not ok:
+
+
+def update_memory(
+    scope: MemoryScope,
+    *,
+    slice_name: str,
+    content: str,
+) -> dict:
+    """增量更新某个 slice（如更新 pending.compact.md 的待决项）。
+
+    slice_name: boot/context/pending（不含 .compact.md 后缀）。
+    """
+    if slice_name not in ("boot", "context", "pending"):
+        raise ValueError(f"slice_name must be boot/context/pending, got: {slice_name}")
+    if not scope.entity_dir.is_dir():
+        raise FileNotFoundError(
+            f"memory not found for {scope.entity_type}/{scope.entity_id}; "
+            "call create_memory first"
+        )
+    path = _compact_path(scope, slice_name)
+    _write_text(path, content)
+
+    # 更新 manifest 的 slice hash
+    manifest = _read_json(_manifest_path(scope))
+    if manifest and "slices" in manifest:
+        slice_key = slice_name
+        if slice_key in manifest["slices"]:
+            import hashlib
+            manifest["slices"][slice_key]["sha256"] = hashlib.sha256(
+                content.encode("utf-8")
+            ).hexdigest()
+            # 重算 fingerprint
+            fingerprint_payload = {
+                "entity_type": scope.entity_type,
+                "entity_id": scope.entity_id,
+                "source_hashes": manifest.get("source_hashes", {}),
+                "boot_sha256": manifest["slices"].get("boot", {}).get("sha256", ""),
+                "context_sha256": manifest["slices"].get("context", {}).get("sha256", ""),
+                "pending_sha256": manifest["slices"].get("pending", {}).get("sha256", ""),
+            }
+            import json as _json
+            fingerprint_input = _json.dumps(
+                fingerprint_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            manifest["fingerprint"] = hashlib.sha256(
+                fingerprint_input.encode("utf-8")
+            ).hexdigest()
+            _write_json(_manifest_path(scope), manifest)
+
+    return {
+        "updated": True,
+        "slice": slice_name,
+        "path": str(path),
+    }
+
+
+def clean_memory(scope: MemoryScope) -> dict:
+    """删单个实体的 memory（子流程结束时调用）。
+
+    删除 entity_dir 下所有文件。common 不在此删除（跨子流程保留）。
+    """
+    if scope.entity_type == "common":
         return {
-            "pass": False,
-            "blocked": True,
-            "reason": check["reason"],
-            "stage": stage,
+            "cleaned": False,
+            "reason": "common memory is preserved across subprocesses; use clean_common() to force remove",
         }
-    # 🆕 v3.8.2：成功 exit 时写 last_exit_at，供 is_scope_active 判断活跃态。
-    # exit_phase 不清除 last_enter_at（保留审计轨迹），仅追加 last_exit_at 时间戳。
-    stage["last_exit_at"] = now
-    _write_json(_stage_path(scope), stage)
-    return {"pass": True, "blocked": False, "stage": stage}
+    if not scope.entity_dir.is_dir():
+        return {"cleaned": False, "reason": "memory dir not found", "path": str(scope.entity_dir)}
+    shutil.rmtree(scope.entity_dir)
+    return {"cleaned": True, "path": str(scope.entity_dir)}
 
+
+def clean_all_memory(scope: MemoryScope) -> dict:
+    """删所有实体的 memory（从0重新开始时调用）。
+
+    删除 memory_root 下所有实体目录（prd/dr/story/testcase/coding），
+    但保留 common（跨子流程复用的项目级约束）。
+    """
+    cleaned: list[str] = []
+    if not scope.memory_root.is_dir():
+        return {"cleaned": False, "reason": "memory_root not found"}
+
+    for entity_type in ("prd", "dr", "story", "testcase", "coding"):
+        entity_type_dir = scope.memory_root / entity_type
+        if entity_type_dir.is_dir():
+            shutil.rmtree(entity_type_dir)
+            cleaned.append(entity_type)
+
+    return {
+        "cleaned": True,
+        "removed_types": cleaned,
+        "preserved": ["common"],
+        "path": str(scope.memory_root),
+    }
+
+
+def clean_common(scope: MemoryScope) -> dict:
+    """强制删除 common memory（仅在显式重置项目级约束时使用）。"""
+    common_dir = scope.memory_root / "common"
+    if not common_dir.is_dir():
+        return {"cleaned": False, "reason": "common dir not found"}
+    shutil.rmtree(common_dir)
+    return {"cleaned": True, "path": str(common_dir)}
+
+
+def exists_memory(scope: MemoryScope) -> bool:
+    """检查 memory 是否存在（回归流程时先检查，有则读无则建）。
+
+    普通实体：检查 entity_dir + manifest.json。
+    common：只有 context.compact.md（无 manifest），检查 entity_dir + context.compact.md。
+    """
+    if not scope.entity_dir.is_dir():
+        return False
+    if scope.entity_type == "common":
+        return _compact_path(scope, "context").is_file()
+    return _manifest_path(scope).is_file()
+
+
+# --- common API ---
+
+def read_common(scope: MemoryScope) -> dict:
+    """读 common memory（跨子流程复用的项目级约束）。"""
+    common_scope = MemoryScope(
+        project_root=scope.project_root,
+        memory_root=scope.memory_root,
+        entity_type="common",
+        entity_id="default",
+    )
+    return read_memory(common_scope)
+
+
+def update_common(scope: MemoryScope, *, content: str) -> dict:
+    """更新 common memory 的 context.compact.md。"""
+    common_scope = MemoryScope(
+        project_root=scope.project_root,
+        memory_root=scope.memory_root,
+        entity_type="common",
+        entity_id="default",
+    )
+    common_scope.entity_dir.mkdir(parents=True, exist_ok=True)
+    _write_text(_compact_path(common_scope, "context"), content)
+    return {"updated": True, "path": str(_compact_path(common_scope, "context"))}
+
+
+# --- compact snapshot (for Task 1: compact reload) ---
+
+def pre_compact_snapshot(
+    scope: MemoryScope,
+    *,
+    current_series: str,
+    next_step: str,
+    pending_items: list[dict[str, str]],
+    failure_history: list[dict[str, str]] | None = None,
+    correction_counts: dict[str, int] | None = None,
+    review_loop_status: str = "",
+) -> dict:
+    """compact 前调用：把当前系列进度/待决项写入 memory。
+
+    更新 boot.compact.md（current_series/next_step）+ pending.compact.md（进度/待决项）。
+    """
+    if not scope.entity_dir.is_dir():
+        raise FileNotFoundError(
+            f"memory not found for {scope.entity_type}/{scope.entity_id}; "
+            "call create_memory first"
+        )
+
+    # 更新 boot（current_series/next_step）
+    manifest = _read_json(_manifest_path(scope))
+    boot_text = _read_text(_compact_path(scope, "boot"))
+    # 简单更新：重写 boot 的 current_series/next_step 行
+    import re
+    boot_text = re.sub(
+        r"- current_series:.*",
+        f"- current_series: {current_series}",
+        boot_text,
+    )
+    boot_text = re.sub(
+        r"- next_step:.*",
+        f"- next_step: {next_step}",
+        boot_text,
+    )
+    _write_text(_compact_path(scope, "boot"), boot_text)
+
+    # 重写 pending
+    pending_text = memory_compiler.render_pending_compact(
+        pending_items=pending_items,
+        failure_history=failure_history or [],
+        correction_counts=correction_counts or {},
+        review_loop_status=review_loop_status,
+    )
+    _write_text(_compact_path(scope, "pending"), pending_text)
+
+    return {
+        "snapshotted": True,
+        "current_series": current_series,
+        "next_step": next_step,
+        "pending_count": len(pending_items),
+    }
+
+
+def post_compact_reload(scope: MemoryScope) -> dict:
+    """compact 后调用：从 memory 重载完整上下文。
+
+    返回 read_memory() 的结果（boot + context + pending + manifest）。
+    """
+    return read_memory(scope)
+
+
+# --- search/summarize (adapted for new structure) ---
+
+def search_memory(
+    scope: MemoryScope,
+    *,
+    query: str,
+    limit: int = 20,
+) -> list[dict]:
+    """跨 memory 实体搜索（子串匹配 compact.md 内容）。"""
+    q = (query or "").lower()
+    if not q:
+        return []
+    results: list[dict] = []
+    if not scope.memory_root.is_dir():
+        return []
+    for md_path in scope.memory_root.rglob("*.compact.md"):
+        content = md_path.read_text(encoding="utf-8", errors="replace")
+        if q in content.lower():
+            results.append({
+                "path": str(md_path),
+                "entity": md_path.parent.name,
+                "slice": md_path.stem,
+                "snippet": content[:200],
+            })
+        if len(results) >= limit:
+            break
+    return results
+
+
+def summarize_memory(scope: MemoryScope) -> dict:
+    """统计 memory 目录下各实体的文件数。"""
+    counts: dict[str, int] = {}
+    total = 0
+    if scope.memory_root.is_dir():
+        for entity_type_dir in scope.memory_root.iterdir():
+            if not entity_type_dir.is_dir():
+                continue
+            entity_count = 0
+            for md_path in entity_type_dir.rglob("*.compact.md"):
+                entity_count += 1
+                total += 1
+            counts[entity_type_dir.name] = entity_count
+    return {
+        "total_slices": total,
+        "by_entity_type": counts,
+        "root": str(scope.memory_root),
+    }
+
+
+# --- 过渡期兼容 API（供旧调用方逐步迁移） ---
+# 以下函数保留旧签名但行为适配新结构，供 prompt_inject/gate_intercept/CLI 过渡期使用。
+# 批 3 重写 prompt_inject/gate_intercept 后可移除。
 
 def is_scope_active(scope: MemoryScope) -> bool:
-    """判断 scope 是否处于 enter 后未 exit 的活跃状态。
+    """过渡期兼容：检查 memory 是否存在（存在=活跃）。
 
-    依据 .stage 的 last_enter_at 与 last_exit_at 判断：
-      - 无 last_enter_at → 从未 enter，非活跃
-      - 有 last_enter_at 但无 last_exit_at → 已 enter 未 exit，活跃
-      - last_enter_at > last_exit_at → exit 后重新 enter，活跃
-      - last_enter_at <= last_exit_at → 已 exit，非活跃
-
-    注：enter() 会清除 last_exit_at（标记新工作周期开始），故重新 enter 后
-    last_exit_at 为 None，直接命中第二条规则返回活跃。
-
-    用于 prompt_inject 取端注入：仅在活跃 scope 下注入历史记忆，
-    避免未 enter 或已 exit 时注入噪声上下文。
+    🆕 v3.10.3: 新语义下"活跃"="memory 存在"（子流程启动创建，结束删除）。
+    旧语义是 enter/exit 状态机，新语义简化为存在性检查。
     """
-    stage = _read_json(_stage_path(scope))
-    enter_at = stage.get("last_enter_at")
-    if not enter_at:
-        return False
-    exit_at = stage.get("last_exit_at")
-    if not exit_at:
-        return True
-    return enter_at > exit_at
+    return exists_memory(scope)
 
 
 def read(
@@ -495,117 +586,28 @@ def read(
     limit: int = 20,
     memory_scope: Optional[str] = None,
 ) -> list[dict]:
-    if memory_scope:
-        paths_to_read = [_jsonl_path(scope, layer_for_memory_scope(memory_scope))]
-    else:
-        paths_to_read = []
+    """过渡期兼容：读 memory 内容作为 list[dict]（旧 read() 返回格式）。
+
+    新代码应直接用 read_memory() 获取 compact 文档。
+    """
+    mem = read_memory(scope)
+    if not mem:
+        # 若 include_project，也读 common
         if include_project:
-            paths_to_read.append(_jsonl_path(scope, "L2"))
-        paths_to_read.append(_jsonl_path(scope, "L1"))
-        paths_to_read.append(_jsonl_path(scope, "L0"))
-    entries: list[dict] = []
-    for p in paths_to_read:
-        entries.extend(_iter_jsonl(p) or [])
-    entries.sort(key=lambda item: item.get("timestamp", ""))
-    return entries[-limit:] if limit > 0 else entries
-
-
-def search(
-    scope: MemoryScope,
-    *,
-    query: str,
-    limit: int = 20,
-    memory_scope: Optional[str] = None,
-) -> list[dict]:
-    q = (query or "").lower()
-    if not q:
+            common = read_common(scope)
+            if common.get("context"):
+                return [{"type": "memory", "summary": common["context"][:500], "layer": "common"}]
         return []
+    # 把 compact 内容包装成旧格式（简化）
     entries: list[dict] = []
-    if memory_scope:
-        paths_to_search = [_jsonl_path(scope, layer_for_memory_scope(memory_scope))]
-    else:
-        paths_to_search = list(scope.memory_root.rglob("*.jsonl")) if scope.memory_root.is_dir() else []
-    if paths_to_search:
-        for p in paths_to_search:
-            for item in _iter_jsonl(p) or []:
-                haystack = json.dumps(item, ensure_ascii=False).lower()
-                if q in haystack:
-                    item = dict(item)
-                    item["_path"] = str(p)
-                    entries.append(item)
-    entries.sort(key=lambda item: item.get("timestamp", ""))
-    return entries[-limit:] if limit > 0 else entries
-
-
-def summarize(scope: MemoryScope) -> dict:
-    counts: dict[str, int] = {}
-    scope_counts: dict[str, int] = {}
-    phases: dict[str, int] = {}
-    total = 0
-    if scope.memory_root.is_dir():
-        for p in scope.memory_root.rglob("*.jsonl"):
-            for item in _iter_jsonl(p) or []:
-                total += 1
-                layer = item.get("layer", "event")
-                if layer in VALID_LAYERS:
-                    scope_name = item.get("memoryScope") or memory_scope_for_layer(layer)
-                else:
-                    scope_name = "event"
-                phase = item.get("phase", "unknown")
-                counts[layer] = counts.get(layer, 0) + 1
-                scope_counts[scope_name] = scope_counts.get(scope_name, 0) + 1
-                phases[phase] = phases.get(phase, 0) + 1
-    return {
-        "total": total,
-        "by_layer": counts,
-        "byScope": scope_counts,
-        "by_phase": phases,
-        "root": str(scope.memory_root),
-    }
-
-
-def promote(
-    scope: MemoryScope,
-    *,
-    from_layer: Optional[str] = None,
-    to_layer: Optional[str] = None,
-    from_memory_scope: Optional[str] = None,
-    to_memory_scope: Optional[str] = None,
-    actor: str = "ae-sdd",
-) -> dict:
-    from_layer = resolve_layer(layer=from_layer, memory_scope=from_memory_scope, default_scope="task")
-    to_layer = resolve_layer(layer=to_layer, memory_scope=to_memory_scope, default_scope="project")
-    from_scope_name = memory_scope_for_layer(from_layer)
-    to_scope_name = memory_scope_for_layer(to_layer)
-    source_path = _jsonl_path(scope, from_layer)
-    target_path = _jsonl_path(scope, to_layer)
-    promoted = 0
-    now = utc_now()
-    for item in _iter_jsonl(source_path) or []:
-        if item.get("type") != "memory":
-            continue
-        kind = normalize_kind(str(item.get("kind", "observation")))
-        if to_layer in {"L2", "L3"} and kind not in PROMOTABLE_KINDS:
-            continue
-        _validate_compact_memory(
-            layer=to_layer,
-            kind=kind,
-            summary=str(item.get("summary", "")).strip(),
-            evidence=[str(e).strip() for e in (item.get("evidence") or []) if str(e).strip()],
-            tags=[str(t).strip() for t in (item.get("tags") or []) if str(t).strip()],
-        )
-        promoted_item = dict(item)
-        promoted_item["layer"] = to_layer
-        promoted_item["memoryScope"] = to_scope_name
-        promoted_item["promoted_from"] = str(source_path)
-        promoted_item["promoted_at"] = now
-        promoted_item["promoted_by"] = actor
-        _append_jsonl(target_path, promoted_item)
-        promoted += 1
-    return {
-        "promoted": promoted,
-        "from": str(source_path),
-        "to": str(target_path),
-        "fromScope": from_scope_name,
-        "toScope": to_scope_name,
-    }
+    for slice_name in ("boot", "context", "pending"):
+        text = mem.get(slice_name, "")
+        if text:
+            entries.append({
+                "type": "memory",
+                "layer": slice_name,
+                "summary": text[:500],
+                "entity_type": scope.entity_type,
+                "entity_id": scope.entity_id,
+            })
+    return entries

@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.10.1（🆕 2026-07-11：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一，新增 stateMachineName/stateUuid 字段，find_work_item_state_path 增后缀匹配。v3.10.0：砍 Task phase + Route 下移重分级。🆕 2026-07-10：测试 fixture 全量迁移 task-scoped work-item state + 6 处确定性 bug 修复。v3.9.20：三症同治——manifest 拆双文件省 75% tokens + G-STORY-CTX 升级真"已引用"门禁 + G-REVIEW-DEPTH。v3.9.19：顶层结构整理 + RELEASING.md + UC-17。v3.9.12：Story 模板「人工任务」章节。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.10.3（🆕 2026-07-13：G-PATH 精确识别 canonical document-storage source/runtime fallback，避免 SSOT 迁移示例被误报，其他同名或 `SKILL.full.md` 文件仍受扫描。🆕 2026-07-11：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链；classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧，gate 跨步跳跃对微链意图放行，code-review 新增无文档轻量准入分支。v3.10.1：Review Batch v2、G-CODE-1 增量 baseline、VerificationPlan/evidence、canonical 文档 alias、Story 模板撰写原则、state UUID 前缀唯一性。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -129,6 +129,8 @@ bash scripts/dev-sync.sh --watch
 | `bash scripts/dev-sync.sh` | build + install 组合，开发者用；默认同步 Claude + 已存在/可用 Codex |
 | `bash scripts/install.sh` | 从 `dist/ae-sdd/` 装到本地 Agent skills（Claude/Codex，用户/测试用）|
 | `bash scripts/dev-sync.sh --uninstall` | 卸载本地安装（带备份）|
+| `ae-sdd baseline inspect/create/diff` | G-CODE-1 历史 debt baseline 与 Story 增量对账（创建必须显式批准）|
+| `ae-sdd verify plan` / `ae-sdd evidence record/lookup` | 变更感知验证计划与成功证据安全复用|
 
 ### 修改 SKILL 自身的 SOP
 

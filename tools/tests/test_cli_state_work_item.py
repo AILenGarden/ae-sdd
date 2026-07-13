@@ -633,5 +633,84 @@ class TestStateNewUuidPrefix(unittest.TestCase):
         self.assertEqual(payload["stateMachineName"], "Story-010")
 
 
+class TestEnterResolvesBugAndPlanTopNode(unittest.TestCase):
+    """🆕 v3.10.2 回归：`ae-sdd enter` 须能识别 BUG/PLAN 顶层 token。
+
+    背景：_resolve_top_node_from_token 此前只认 PRD-/DR-/Story-/Task- 四种前缀，
+    微任务（BUG-xxx）/小任务（PLAN-xxx）token 一律解析失败，报"未提供 work item"，
+    即便 `state new` 已用同类 token 建出了 Bug-/Plan- 顶层 state。
+    """
+
+    def test_enter_with_raw_bug_id_succeeds(self):
+        """enter --work-item <raw BUG- ID> 应解析出 BUG 顶层并领到 entry token。"""
+        tmp = _setup_project()
+        code, out, err = _run_cli(
+            tmp, "state", "new", "--id", "BUG-APPOINTMENT-LAYER-001", "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+
+        code, out, err = _run_cli(
+            tmp, "enter", "--work-item", "BUG-APPOINTMENT-LAYER-001", "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["topNode"], "BUG")
+        self.assertEqual(payload["workItemKey"], "Bug-BUG-APPOINTMENT-LAYER-001")
+
+    def test_enter_with_business_name_bug_prefix_succeeds(self):
+        """enter --work-item <Bug- 业务名前缀> 同样应解析成功（与 raw ID 幂等一致）。"""
+        tmp = _setup_project()
+        _run_cli(tmp, "state", "new", "--id", "BUG-APPOINTMENT-LAYER-002", "--json")
+
+        code, out, err = _run_cli(
+            tmp, "enter", "--work-item", "Bug-BUG-APPOINTMENT-LAYER-002", "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["topNode"], "BUG")
+
+    def test_enter_with_uuid_prefixed_directory_name_succeeds(self):
+        """enter --work-item <带 UUID 前缀的完整目录名> 应先剥离 UUID 前缀再解析。"""
+        tmp = _setup_project()
+        code, out, err = _run_cli(
+            tmp, "state", "new", "--id", "BUG-APPOINTMENT-LAYER-003", "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        dir_name = Path(json.loads(out)["statePath"]).parent.name  # {uuid}-Bug-BUG-...
+
+        code, out, err = _run_cli(tmp, "enter", "--work-item", dir_name, "--json")
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["topNode"], "BUG")
+
+    def test_enter_idempotent_across_bug_token_variants(self):
+        """三种 token 变体（raw ID / 业务名前缀 / UUID 前缀目录名）应领到同一个 sessionId。"""
+        tmp = _setup_project()
+        code, out, _ = _run_cli(
+            tmp, "state", "new", "--id", "BUG-APPOINTMENT-LAYER-004", "--json",
+        )
+        dir_name = Path(json.loads(out)["statePath"]).parent.name
+
+        _, out1, _ = _run_cli(tmp, "enter", "--work-item", "BUG-APPOINTMENT-LAYER-004", "--json")
+        _, out2, _ = _run_cli(tmp, "enter", "--work-item", "Bug-BUG-APPOINTMENT-LAYER-004", "--json")
+        _, out3, _ = _run_cli(tmp, "enter", "--work-item", dir_name, "--json")
+
+        sids = {json.loads(o)["sessionId"] for o in (out1, out2, out3)}
+        self.assertEqual(len(sids), 1, msg=f"三种 token 变体应幂等归一到同一 sessionId: {sids}")
+
+    def test_enter_with_raw_plan_id_succeeds(self):
+        """enter --work-item <raw PLAN- ID> 应解析出 PLAN 顶层（小任务 CodingPlan 入口）。"""
+        tmp = _setup_project()
+        code, out, err = _run_cli(
+            tmp, "state", "new", "--id", "PLAN-001", "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+
+        code, out, err = _run_cli(tmp, "enter", "--work-item", "PLAN-001", "--json")
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["topNode"], "PLAN")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

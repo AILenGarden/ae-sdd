@@ -370,6 +370,21 @@ root agent 收集所有产出物
 > - 各节点 SKILL = **节点专属配置**：本节点的 reviewer 视角分工（如 Story Review = 设计实现视角 + 前端契约视角）
 > - `code-review-skill.md §多 Agent 评审编排` = Code Review 节点对本节的应用范例（A/B/C 模式 = 本节 Tier 1/2/3 的实例化，已在 Code Review 落地验证）
 
+### 8.4.0 Review Batch v2 执行约束
+
+多 reviewer 的一次派发是一个 batch，不是可随意累加的 round。root agent 必须把 Story/Plan/代码/测试/关键报告的 canonical manifest 计算为 `inputFingerprint`，并记录 `rulesetFingerprint`。required reviewer 集完整、session 独立、两个 fingerprint 一致且报告格式有效时，batch 才能计入 `validBatches`。
+
+| 结果 | 计入 clean | 后续动作 |
+| --- | --- | --- |
+| `VALID_CLEAN` | 是 | 按 Tier policy 判断退出 |
+| `VALID_FINDINGS` | 否，清零 clean streak | Plan-first 修复，创建新 fingerprint batch |
+| `INVALID_INFRA` | 否 | 只重试失败角色，复用已成功 verdict |
+| `INVALID_PROTOCOL` | 否 | 修复角色/session/报告格式后重试 |
+| `INVALID_INPUT_DRIFT` | 否，旧 streak 作废 | 创建新 session，不拼接不同版本 verdict |
+| `CANCELLED` | 否 | 恢复同一 batch |
+
+所有 batch 受 `maxAttempts`、`maxValidBatches`、`maxRemediations` 和 `maxWallClockMinutes` 约束。预算耗尽状态是 `STALLED`，不能转写为通过；平台 429/超时不能迫使已完成 reviewer 重跑。
+
 ### 8.4.1 何时启用多 reviewer（Tier 判定 — 默认启用，按复杂度分级）
 
 > **🔴 核心立场：多 reviewer 是默认能力，不是反应式兜底。** 旧版"准确率 < 70% 才升级交叉验证"是**事后补救**，违反"缺陷越早发现代价越低"原则。本节改为**按 Tier 默认分级启用**。
@@ -573,7 +588,7 @@ reviewer-数据模型视角 ──┘
 
 ---
 
-## 8.5 🆕 v3.5.5 默认单 sub-agent 模式（单 Story 也派活）
+## 8.5 🆕 v3.10.3 3层 Agent 模型（主流程 -> 子流程Agent -> sub-subAgent）
 
 > **🔴 背景：** v3.5.4 及之前的默认是"单 Agent 串行做所有事"，主会话被迫读全部子 SKILL、读源码、写文档、做 walkthrough、跑测试 → 上下文爆炸。v3.5.5 起主会话职责收口（详见 SKILL.md §🤖 主会话职责边界），**默认单 Story 也派 1 个 sub-agent**，主会话只承担编排层职责。
 >
@@ -639,6 +654,62 @@ report_back:
 - 单 Story 默认派 1 个 sub-agent（§8.5）
 - Review 节点默认派 1/2/3 个 reviewer（§8.4，按 Tier 判定）
 - 两者独立，**总 sub-agent 数 = 单 Story 数 + Review reviewer 数**，需 ≤ §2.2 上限 5
+
+---
+
+## 8.7 🆕 v3.10.3 子流程Agent协议
+
+> **📍 定位：** 3层Agent模型的中间层。主流程会话委托子流程Agent接管1个系列（RA/DR/Story/TestCase/Coding），子流程Agent自己起 sub-subAgent 执行 generate/review。
+
+### 8.7.1 委托契约（主流程 -> 子流程Agent）
+
+```yaml
+# 委托契约
+agent_id: spa-{uuid}
+series_type: ra|dr|story|testcase|coding
+entity_id: STORY-001-BE
+memory_entity_type: story  # 默认 = series_type
+input:
+  - 上游产物路径（DR/Story/约束/模板）
+  - common memory 路径（跨子流程复用约束）
+output:
+  deliverables: [产物路径列表]
+  report: 汇总报告路径
+deadline: {ISO8601}
+session_id: {物理独立 session id}
+```
+
+CLI: `ae-sdd subprocess spawn --series <type> --entity-id <ID>`
+
+### 8.7.2 sub-subAgent 派活（子流程Agent -> sub-subAgent）
+
+复用 §4 任务分配卡。总 sub-subAgent 数受 §2.2 硬上限 5 约束。
+子流程Agent 负责：
+- 派 sub-subAgent 执行 generate/review
+- 跑 §8.4.3 交叉对比（若启用多 reviewer）
+- 汇总交付物
+
+### 8.7.3 交付物回传（子流程Agent -> 主流程）
+
+```yaml
+agent_id: spa-{uuid}
+status: completed
+deliverables:
+  - {name: Story文档, path: ...}
+  - {name: CodeReview报告, path: ...}
+memory_cleaned: true  # 子流程结束已删自己的 memory
+```
+
+CLI: `ae-sdd subprocess collect --agent-id <ID> --deliverables '[...]'`
+collect 自动清理对应实体 memory（删临时上下文，留业务成果），common 保留。
+
+### 8.7.4 故障处理
+
+| 故障 | 处理 |
+|------|------|
+| 子流程Agent 超时 | 主流程重派（新 session_id）或升级用户 |
+| 产物缺失/门禁未过 | 主流程重派或升级用户 |
+| 子流程Agent 崩溃 | 主流程查 `ae-sdd subprocess status` -> 重派 |
 
 ---
 

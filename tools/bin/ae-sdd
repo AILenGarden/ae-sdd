@@ -78,6 +78,8 @@ del _boot_os, _boot_time
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -90,7 +92,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, classify, config, db_tool, document_storage, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, project_assets, prompt_inject, runtime_exec, runtime_stats, runtime_verify, session, state, stop_check, update_graph, work_item_context  # noqa: E402
+from lib import assets_index, baseline, classify, config, db_tool, document_storage, evidence, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, project_assets, prompt_inject, review_batch, runtime_exec, runtime_stats, runtime_verify, session, state, stop_check, update_graph, verification_plan, work_item_context  # noqa: E402
 
 
 def _read_stdin_json() -> dict:
@@ -939,45 +941,76 @@ def _now_iso() -> str:
 
 
 def cmd_runtime_compact(args, parser):
-    """🆕 v3.3.0 — runtime-specific compact 适配层.
+    """🆕 v3.3.0 - runtime-specific compact 适配层. 🆕 v3.10.3 升级为实际触发 snapshot。
 
-    实际 compact 由对应 runtime 执行：
+    两层 compact：
+    1. 子流程级（v3.10.3 新增）：若有活跃子流程Agent，先 pre_compact_snapshot 写 memory。
+    2. PRD 级（v3.3.0 原有）：summary.md + compact-trigger + prdStatus=compacted。
+
+    实际 compact 对话清理由对应 runtime 执行：
     - mavis: `mavis session rotate --handoff-file <summary.md>`
-    - claude-code: UserPromptSubmit hook 注入 state.md 路径
-    - codex: `codex plugin add ae-sdd-prd-state` + `codex exec --json --output-last-message`
+    - claude-code: UserPromptSubmit hook 读 compact-trigger 注入 /compact
+    - codex: `codex exec --json --output-last-message`
     """
     runtime = args.runtime
     prd_id = args.prd
 
     output.info(f"runtime compact: runtime={runtime}, prd={prd_id}")
 
+    # 🆕 v3.10.3 子流程级 compact：若有活跃子流程Agent，snapshot 它的 memory
+    from lib import state as state_mod
+    from lib import memory_store
+    project_root = Path.cwd()
+
+    # 查找项目级 state（非 PRD 级）-- 用 work_item_context 解析活跃 work-item
+    main_state_path = None
+    try:
+        from lib import work_item_context
+        resolved = work_item_context.resolve_default_state(project_dir=project_root, prompt="", session_key="")
+        if resolved and resolved.get("statePath"):
+            main_state_path = Path(resolved["statePath"])
+    except Exception:
+        pass
+    if main_state_path and main_state_path.is_file():
+        ms = state_mod.read_state(main_state_path)
+        active_agent = state_mod.get_active_subprocess_agent(ms)
+        if active_agent:
+            output.info(f"活跃子流程Agent: {active_agent['agentId']} ({active_agent.get('seriesType')}/{active_agent.get('entityId')})")
+            try:
+                scope = memory_store.locate_scope(
+                    project=str(project_root),
+                    entity_type=active_agent.get("memoryEntityType", active_agent.get("seriesType", "story")),
+                    entity_id=active_agent.get("entityId", "default"),
+                )
+                if memory_store.exists_memory(scope):
+                    memory_store.pre_compact_snapshot(
+                        scope,
+                        current_series=active_agent.get("seriesType", ""),
+                        next_step="compact 后续接",
+                        pending_items=[],
+                        review_loop_status="compact snapshot",
+                    )
+                    output.ok(f"子流程 memory snapshot 已写入: {scope.entity_dir}")
+                else:
+                    output.warn(f"子流程 memory 不存在，跳过 snapshot: {scope.entity_dir}")
+            except Exception as e:
+                output.warn(f"子流程 memory snapshot 失败（不阻断 PRD compact）: {e}")
+
     if runtime == "mavis":
         summary_path = f".auto-engineering/{prd_id}/summary.md"
         output.info(f"将执行：mavis session rotate --handoff-file {summary_path}")
         output.info("提示：summary.md 必须先由 `ae-sdd state prd-complete` 生成；如需自动触发，加 shell hook")
     elif runtime == "claude-code":
-        output.info("将执行：UserPromptSubmit hook 注入 state.md 路径 + prdStatus")
-        output.info("提示：参考 HARNESS.md §🪝 三 Hook 配置 + HARNESS.md §UserPromptSubmit v3.3.0 payload")
+        output.info("将执行：UserPromptSubmit hook 读 compact-trigger 注入 /compact + memory 重载")
     elif runtime == "codex":
         output.info("将执行：")
         output.info("  1. codex plugin add ae-sdd-prd-state")
         output.info("  2. codex exec --json --output-last-message .auto-engineering/{prd_id}/summary.md")
-        output.info("提示：详见 docs/plans/2026-06-25-codex-poc-result.md")
     else:
         output.err(f"未知 runtime：{runtime}（仅支持 mavis / claude-code / codex）")
         return 1
 
-    output.info("")
-    output.info("⚠️  本子命令当前为**协议级骨架**，不直接执行 shell 命令；")
-    output.info("    实际触发由各 runtime 的 hook / session protocol 完成。")
-    output.info("    实施完会标记 prdStatus → compacted 并写 summary.md")
-
-    # 🆕 v3.5.12：补真实 prdStatus 写入（闭环 5 态，治 P1-4 状态机残缺）
-    # 🆕 v3.8.1 S-5：复用 state.prd_complete 的 summary.md 生成 + runtime 差异化提示
-    # 协议骨架不变（实际 compact 由 runtime hook 执行），但状态写入要真实，
-    # 否则 prdStatus 永远卡 awaiting_compact，stop_check HS-8 误报。
-    from lib import state as state_mod
-    project_root = Path.cwd()
+    # 🆕 v3.5.12：补真实 prdStatus 写入（闭环 5 态）
     prd_state_path = project_root / ".auto-engineering" / prd_id / "state.json"
     if prd_state_path.is_file():
         ps = state_mod.read_state(prd_state_path)
@@ -987,7 +1020,7 @@ def cmd_runtime_compact(args, parser):
             state_mod.prd_complete(ps, prd_id, runtime, project_root)
         state_mod.set_prd_status(ps, "compacted")
         state_mod.write_state(prd_state_path, ps)
-        output.ok(f"prdStatus → compacted（v3.5.12 闭环写入）")
+        output.ok(f"prdStatus -> compacted（v3.5.12 闭环写入）")
         output.info(f"summary.md: {summary_path}")
     else:
         output.warn(f"PRD state.json 不存在（{prd_state_path}），跳过 prdStatus 写入")
@@ -1352,6 +1385,152 @@ def cmd_doc_finalize(args, parser):
         output.emit({"success": result.success, "fullPath": result.full_path,
                      "newVersion": result.new_version, "changelogEntry": result.changelog_entry},
                     as_json=True)
+    return 0
+
+
+def _project_dir_from_args(args) -> Path:
+    if getattr(args, "project", ""):
+        return Path(args.project).resolve()
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is not None:
+        return paths.project_root(ade_sdd).resolve()
+    return Path.cwd().resolve()
+
+
+def _read_json_file(path_text: str) -> dict:
+    path = Path(path_text)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def cmd_baseline_inspect(args, parser):
+    project_dir = _project_dir_from_args(args)
+    payload, error = baseline.load(project_dir, args.gate)
+    result = {
+        "path": str(baseline.baseline_path(project_dir, args.gate)),
+        "exists": payload is not None,
+        "integrity": "valid" if payload is not None and error is None else error,
+        "gateId": args.gate,
+        "findingCount": len((payload or {}).get("findings", [])),
+    }
+    if args.json:
+        output.emit({**result, "baseline": payload}, as_json=True)
+    else:
+        mark = "✅" if result["integrity"] == "valid" else "❌"
+        output.info(f"{mark} baseline {args.gate}: {result['integrity']} ({result['findingCount']} findings)")
+        output.info(f"   path: {result['path']}")
+    return 0 if result["integrity"] == "valid" else 1
+
+
+def cmd_baseline_create(args, parser):
+    project_dir = _project_dir_from_args(args)
+    if not args.approve:
+        output.err("baseline create requires --approve; first-time debt acceptance is explicit")
+        return 1
+    try:
+        report = _read_json_file(args.report_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        output.err(f"cannot read scan report: {exc}")
+        return 1
+    payload = baseline.create(
+        project_dir,
+        args.gate,
+        report.get("findings", []),
+        created_by=args.created_by,
+        scanner_version=args.scanner_version,
+        ruleset_fingerprint=args.ruleset_fingerprint,
+        project_fingerprint=args.project_fingerprint,
+        require_user_approval=True,
+    )
+    result = {"path": str(baseline.baseline_path(project_dir, args.gate)), "findingCount": len(payload["findings"]), "baseline": payload}
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        output.ok(f"✅ baseline created: {result['path']} ({result['findingCount']} findings)")
+    return 0
+
+
+def cmd_baseline_diff(args, parser):
+    project_dir = _project_dir_from_args(args)
+    payload, error = baseline.load(project_dir, args.gate)
+    if error:
+        output.err(f"baseline unavailable: {error}")
+        return 1
+    try:
+        report = _read_json_file(args.report_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        output.err(f"cannot read scan report: {exc}")
+        return 1
+    touched = [p.strip() for p in (args.touched or "").split(",") if p.strip()]
+    result = baseline.compare(payload, report.get("findings", []),
+                              ruleset_fingerprint=args.ruleset_fingerprint,
+                              touched_paths=touched)
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        mark = "✅" if result["status"] == "PASS_WITH_BASELINE_DEBT" else "❌"
+        output.info(f"{mark} {result['status']}: new={len(result['new'])} touchedDebt={len(result['touchedDebt'])} resolved={len(result['resolved'])}")
+    return 0 if result["status"] == "PASS_WITH_BASELINE_DEBT" else 1
+
+
+def cmd_verify_plan(args, parser):
+    project_dir = _project_dir_from_args(args)
+    changed = [p.strip() for p in (args.changed or "").split(",") if p.strip()]
+    if not changed:
+        try:
+            proc = subprocess.run(["git", "-C", str(project_dir), "diff", "--name-only"], capture_output=True, text=True, check=False)
+            changed = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        except OSError:
+            changed = []
+    result = verification_plan.build_plan(project_dir, args.story, changed, args.since_fingerprint)
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        output.info(f"VerificationPlan {args.story}: {', '.join(result['changeClass']) or 'none'}")
+        output.info(f"   required: {', '.join(result['required'])}")
+        if result["deferredUntilFinal"]:
+            output.info(f"   deferred: {', '.join(result['deferredUntilFinal'])}")
+    return 0
+
+
+def cmd_evidence_record(args, parser):
+    project_dir = _project_dir_from_args(args)
+    artifacts = _read_json_file(args.artifacts_file).get("artifacts", []) if args.artifacts_file else []
+    entry = evidence.record(
+        project_dir,
+        args.story,
+        kind=args.kind,
+        command=args.command,
+        input_fingerprint=args.input_fingerprint,
+        toolchain_fingerprint=args.toolchain_fingerprint,
+        exit_code=args.exit_code,
+        artifacts=artifacts,
+        summary=_read_json_file(args.summary_file) if args.summary_file else {},
+        duration_ms=args.duration_ms,
+        freshness_window_seconds=args.freshness_window_seconds,
+    )
+    if args.json:
+        output.emit({"manifestPath": str(evidence.manifest_path(project_dir, args.story)), "entry": entry}, as_json=True)
+    else:
+        output.ok(f"✅ evidence recorded: {entry['evidenceId']}")
+    return 0
+
+
+def cmd_evidence_lookup(args, parser):
+    project_dir = _project_dir_from_args(args)
+    entry = evidence.find_reusable(
+        project_dir,
+        args.story,
+        input_fingerprint=args.input_fingerprint,
+        command=args.command,
+        toolchain_fingerprint=args.toolchain_fingerprint,
+    )
+    result = {"reusable": entry is not None, "entry": entry, "manifestPath": str(evidence.manifest_path(project_dir, args.story))}
+    if args.json:
+        output.emit(result, as_json=True)
+    elif entry:
+        output.ok(f"✅ reusable evidence: {entry['evidenceId']}")
+    else:
+        output.info("⚪ no reusable evidence")
     return 0
 
 
@@ -1861,7 +2040,25 @@ def cmd_review_loop_start(args, parser):
         return 1
     ade_sdd, story_id, sp = resolved
     st = state_mod.read_state(sp)
-    result = rl_mod.start(st, args.node, args.ra_size, args.decision_hints or "")
+    legacy_review = st.get("reviewLoop") or {}
+    if legacy_review and int(legacy_review.get("schemaVersion", 0) or 0) < review_batch.SCHEMA_VERSION and sp.is_file():
+        backup = sp.with_name("state.review-v1.backup.json")
+        if not backup.exists():
+            shutil.copy2(sp, backup)
+    budgets = {
+        "maxAttempts": args.max_attempts,
+        "maxValidBatches": args.max_valid_batches,
+        "maxRemediations": args.max_remediations,
+        "maxWallClockMinutes": args.max_wall_clock_minutes,
+    }
+    result = rl_mod.start(
+        st,
+        args.node,
+        args.ra_size,
+        args.decision_hints or "",
+        input_fingerprint=args.input_fingerprint or "",
+        budgets={k: v for k, v in budgets.items() if v is not None},
+    )
     state_mod.write_state(sp, st)
 
     if args.json:
@@ -1893,16 +2090,26 @@ def cmd_review_loop_collect(args, parser):
     # 解析 reports（JSON 字符串或文件路径列表）
     import json as _json
     reports = []
-    for r in args.reports.split(","):
+    role_names = [s.strip().upper() for s in (args.roles or "").split(",") if s.strip()]
+    status_names = [s.strip().upper() for s in (args.statuses or "").split(",") if s.strip()]
+    for idx, r in enumerate(args.reports.split(",")):
         r = r.strip()
         if not r:
             continue
-        # 支持 path|sessionId 或 JSON
-        if "|" in r:
+        # 支持 path|sessionId、report JSON 或 report 文件路径。
+        if r.startswith("{"):
+            try:
+                parsed = _json.loads(r)
+                reports.append(parsed if isinstance(parsed, dict) else {"findings": []})
+            except _json.JSONDecodeError:
+                reports.append({"report": r, "sessionId": "", "findings": []})
+        elif "|" in r:
             path, sid = r.split("|", 1)
             reports.append({"report": path.strip(), "sessionId": sid.strip(), "findings": []})
         else:
             reports.append({"report": r, "sessionId": "", "findings": []})
+        reports[-1].setdefault("role", role_names[idx] if idx < len(role_names) else "")
+        reports[-1].setdefault("status", status_names[idx] if idx < len(status_names) else "PASS")
 
     # session-ids 参数（与 reports 对齐）
     sids = [s.strip() for s in (args.session_ids or "").split(",") if s.strip()]
@@ -1915,13 +2122,24 @@ def cmd_review_loop_collect(args, parser):
         try:
             findings_data = _json.loads(args.findings_json)
             if isinstance(findings_data, list) and findings_data:
+                if not reports:
+                    reports.append({"report": "", "sessionId": "", "role": "", "status": "PASS", "findings": []})
                 # 平均分配给各 reviewer（简化）或全部给第一个
                 reports[0]["findings"] = findings_data if len(reports) == 1 else findings_data
         except _json.JSONDecodeError:
             pass
 
-    result = rl_mod.collect(st, args.node, reports, root_sid,
-                             has_red_blocker=args.has_red_blocker)
+    result = rl_mod.collect(
+        st,
+        args.node,
+        reports,
+        root_sid,
+        has_red_blocker=args.has_red_blocker,
+        input_fingerprint=args.input_fingerprint or "",
+        ruleset_fingerprint=args.ruleset_fingerprint or "",
+        batch_id=args.batch_id or "",
+        strict_roles=True,
+    )
     state_mod.write_state(sp, st)
 
     if args.json:
@@ -1939,10 +2157,16 @@ def cmd_review_loop_collect(args, parser):
         if result.get("rejected"):
             output.warn(f"   拒收 {len(result['rejected'])} 条（锚点格式非法）")
         action = result.get("nextAction")
-        if action == "exit-normal":
-            output.info(f"   → ✅ 正常退出（连续 {result['dryCounter']} 轮无新增），可切相")
+        if action in {"exit-normal", "exit-passed"}:
+            output.info(f"   → ✅ Review Batch 通过（cleanStreak={result.get('cleanStreak', result['dryCounter'])}），可切相")
+        elif action == "escalate-user" and result.get("exitReason") == "stalled":
+            output.warn(f"   → ⏹️ 预算耗尽，进入 STALLED（{result.get('budgetReason') or 'budget'}），不得视为通过")
         elif action == "escalate-user":
             output.warn(f"   → ⚠️ 超过循环上限仍有 🔴，升级用户决策")
+        elif action == "retry-failed-roles":
+            output.warn(f"   → 仅重试失败角色：{', '.join(result.get('retryRoles') or [])}")
+        elif action == "start-new-fingerprint-session":
+            output.warn("   → 输入指纹漂移，必须创建新 fingerprint session")
         else:
             output.info(f"   → 继续派 reviewer（下一轮）")
     return 0 if result.get("sessionCheck", {}).get("passed", True) else 1
@@ -1984,6 +2208,39 @@ def cmd_review_loop_verify_exit(args, parser):
         mark = "✅" if passed else "❌"
         output.info(f"{mark} review-loop verify-exit: {reason}")
     return 0 if passed else 1
+
+
+def cmd_review_abort(args, parser):
+    """review abort -- mark a session stalled/cancelled without pretending success."""
+    from lib import state as state_mod
+    resolved = _resolve_state_path_or_error(args)
+    if resolved is None:
+        return 1
+    _ade_sdd, _story_id, sp = resolved
+    st = state_mod.read_state(sp)
+    session_state = st.get("reviewSession") or st.get("reviewLoop") or {}
+    reason = args.reason or "user-abort"
+    session_state["exit"] = {"reason": "stalled" if reason == "budget-exhausted" else "cancelled", "abortReason": reason}
+    session_state["exitReason"] = session_state["exit"]["reason"]
+    session_state["exitedAt"] = review_batch._iso()
+    st["reviewLoop"] = session_state
+    st["reviewSession"] = session_state
+    state_mod.write_state(sp, st)
+    payload = {"exitReason": session_state["exit"]["reason"], "abortReason": reason}
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.info(f"review aborted: {payload['exitReason']} ({reason})")
+    return 0
+
+
+def cmd_review_retry_role(args, parser):
+    payload = {"action": "retry-role", "role": args.role, "reason": args.reason or "platform-failure"}
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.info(f"retry only reviewer role: {args.role} ({payload['reason']})")
+    return 0
 
 
 # ─── 🆕 v3.8.0 自动化开关 / 预收集 / 联审共识 ────────────────────────────────
@@ -2368,13 +2625,22 @@ def cmd_enter(args, parser):
 
 def _resolve_top_node_from_token(ade_sdd: Path, token: str, args) -> tuple[str, dict]:
     """🆕 v3.9.3 内部辅助：从 token（work-item / story ID）反推 (top_node, features)。
+    🆕 v3.10.2 补齐 BUG/PLAN 顶层分支：此前只认 PRD/DR/Story/Task 四种前缀，
+    微任务（BUG-xxx）/小任务（PLAN-xxx）token 一律解析失败，导致
+    `ae-sdd enter --work-item BUG-xxx` 报"未提供 work item"——即便 `state new`
+    已用同类 token 建出了 Bug-/Plan- 顶层 state（build_state_machine_name 早支持）。
+    同时先剥离可能的 UUID 前缀（完整目录名场景），保证前缀判断不受影响。
 
     优先级：
-      1. token 是 R6 顶层名（如 Story-003 / DR-CS）→ 直接用
-      2. token 是 Story ID（STORY-006-BE）→ 反查所属嵌套 state，找不到则 STORY 顶层
-      3. args.top_node / args.entry_node 显式传 → 用之
-      4. 都无 → 读 active mirror
+      1. token 是 R6 顶层名（如 Story-003 / DR-CS / Bug-BUG-LIFE-001 / Plan-xxx，
+         可带 UUID 前缀）→ 直接用
+      2. token 是 Story/DR/PRD ID（STORY-006-BE）→ 反查所属嵌套 state，找不到则对应顶层
+      3. token 是 BUG/OPT/CONFIG/PLAN 微任务/小任务 raw ID → 对应 BUG/PLAN 顶层
+      4. args.top_node / args.entry_node 显式传 → 用之
+      5. 都无 → 读 active mirror
     """
+    if token:
+        token = paths.strip_uuid_prefix(token)
     if not token:
         # 尝试从 active mirror
         active = None
@@ -2407,9 +2673,19 @@ def _resolve_top_node_from_token(ade_sdd: Path, token: str, args) -> tuple[str, 
         return ("STORY", {"story_ids": [token]})
     if token.startswith("Task-"):
         return ("TASK", {"task_id": token.replace("Task-", "", 1)})
+    if token.startswith("Bug-"):
+        return ("BUG", {"task_id": token.replace("Bug-", "", 1)})
+    if token.startswith("Plan-"):
+        return ("PLAN", {"plan_id": token.replace("Plan-", "", 1)})
 
     # token 是 Story/DR/PRD ID
     upper = token.upper()
+    if upper.startswith(("BUG-", "OPT-", "CONFIG-")):
+        # 微任务无文档：raw ID 本身即 task_id，顶层统一走 BUG（复用扁平 state，
+        # 与 cmd_state_new 的 requested_entry_node in ("BUG","OPT","CONFIG") 分支一致）
+        return ("BUG", {"task_id": upper})
+    if upper.startswith("PLAN-"):
+        return ("PLAN", {"plan_id": upper})
     if upper.startswith("STORY-"):
         # 反查所属 state
         hit = paths.find_nested_state_by_story_id(ade_sdd, upper)
@@ -2622,94 +2898,151 @@ def cmd_state_confirm(args, parser):
 
 
 def _memory_scope_from_args(args):
+    """🆕 v3.10.3: 从 --entity-type/--entity-id 构造 scope（过渡期兼容旧 --phase/--story/--task）。"""
+    entity_type = getattr(args, "entity_type", "") or ""
+    entity_id = getattr(args, "entity_id", "") or ""
+    # 过渡期：旧 --phase/--story/--task 参数兼容
+    phase = getattr(args, "phase", "") or ""
+    story = getattr(args, "story", "") or ""
+    task = getattr(args, "task", "") or ""
     return memory_store.locate_scope(
         project=getattr(args, "project", "") or None,
-        phase=args.phase,
-        story=getattr(args, "story", None),
-        task=getattr(args, "task", None),
+        entity_type=entity_type,
+        entity_id=entity_id,
+        phase=phase or None,
+        story=story or None,
+        task=task or None,
     )
 
 
-def cmd_memory_enter(args, parser):
+def cmd_memory_create(args, parser):
+    """🆕 v3.10.3: 读源上下文 -> 编译 compact -> 写 memory。"""
     try:
         scope = _memory_scope_from_args(args)
-        result = memory_store.enter(scope, actor=args.actor, note=args.note or "")
-    except Exception as e:
-        output.err(str(e))
-        return 1
-    output.emit(result, as_json=args.json)
-    return 0
-
-
-def cmd_memory_write(args, parser):
-    evidence = getattr(args, "evidence", None) or []
-    tags = getattr(args, "tag", None) or []
-    try:
-        scope = _memory_scope_from_args(args)
-        result = memory_store.write(
+        # 从 --sources 读取源上下文文件内容
+        source_contexts: dict[str, str] = {}
+        for src_arg in (args.sources or []):
+            if "=" in src_arg:
+                name, path = src_arg.split("=", 1)
+                from pathlib import Path as _P
+                p = _P(path)
+                if p.is_file():
+                    source_contexts[name] = p.read_text(encoding="utf-8")
+            elif src_arg:
+                source_contexts[src_arg] = ""
+        # 从 --context-json 读取结构化上下文（可选）
+        context_data = {}
+        if args.context_json:
+            import json as _json
+            context_data = _json.loads(args.context_json)
+        result = memory_store.create_memory(
             scope,
-            summary=args.summary,
-            layer=args.layer or None,
-            memory_scope=args.scope or None,
-            kind=args.kind,
-            evidence=evidence,
-            actor=args.actor,
-            tags=tags,
+            source_contexts=source_contexts,
+            series_chain=context_data.get("series_chain", []),
+            current_series=context_data.get("current_series", ""),
+            next_step=context_data.get("next_step", ""),
+            deliverables=context_data.get("deliverables", []),
+            dr_anchors=context_data.get("dr_anchors", []),
+            story_acs=context_data.get("story_acs", []),
+            constraints=context_data.get("constraints", []),
+            api_contracts=context_data.get("api_contracts", []),
+            data_models=context_data.get("data_models", []),
+            asset_refs=context_data.get("asset_refs", []),
+            pending_items=context_data.get("pending_items", []),
+            failure_history=context_data.get("failure_history", []),
+            correction_counts=context_data.get("correction_counts", {}),
+            review_loop_status=context_data.get("review_loop_status", ""),
         )
     except Exception as e:
         output.err(str(e))
         return 1
     output.emit(result, as_json=args.json)
-    return 0
-
-
-def cmd_memory_exit(args, parser):
-    try:
-        scope = _memory_scope_from_args(args)
-        result = memory_store.exit_phase(scope, actor=args.actor, allow_empty=args.allow_empty)
-    except Exception as e:
-        output.err(str(e))
-        return 1
-    output.emit(result, as_json=args.json)
-    if result.get("blocked"):
-        output.err("memory exit blocked: phase memory must be written before leaving this node")
-        return 1
     return 0
 
 
 def cmd_memory_read(args, parser):
+    """🆕 v3.10.3: 读 memory compact 文档。"""
     try:
         scope = _memory_scope_from_args(args)
-        memory_scope = getattr(args, "scope", "") or ""
-        if memory_scope == "all":
-            memory_scope = ""
-        if memory_scope == "project" and args.no_project:
-            raise ValueError("--scope project conflicts with --no-project")
-        result = memory_store.read(
-            scope,
-            include_project=not args.no_project,
-            limit=args.limit,
-            memory_scope=memory_scope or None,
-        )
+        result = memory_store.read_memory(scope)
+        if not result:
+            output.info(f"memory not found for {scope.entity_type}/{scope.entity_id}")
     except Exception as e:
         output.err(str(e))
         return 1
-    output.emit({"entries": result, "count": len(result)}, as_json=args.json)
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_memory_update(args, parser):
+    """🆕 v3.10.3: 增量更新某个 slice。"""
+    try:
+        scope = _memory_scope_from_args(args)
+        content = args.content
+        if args.content_file:
+            from pathlib import Path as _P
+            content = _P(args.content_file).read_text(encoding="utf-8")
+        result = memory_store.update_memory(scope, slice_name=args.slice, content=content)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_memory_clean(args, parser):
+    """🆕 v3.10.3: 删单个实体 memory（子流程结束）。"""
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.clean_memory(scope)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_memory_clean_all(args, parser):
+    """🆕 v3.10.3: 删所有实体 memory（从0重新开始），保留 common。"""
+    try:
+        scope = _memory_scope_from_args(args)
+        result = memory_store.clean_all_memory(scope)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
+    return 0
+
+
+def cmd_memory_common(args, parser):
+    """🆕 v3.10.3: 读/更新 common memory。"""
+    try:
+        scope = _memory_scope_from_args(args)
+        if args.common_action == "read":
+            result = memory_store.read_common(scope)
+        elif args.common_action == "update":
+            content = args.content
+            if args.content_file:
+                from pathlib import Path as _P
+                content = _P(args.content_file).read_text(encoding="utf-8")
+            result = memory_store.update_common(scope, content=content)
+        elif args.common_action == "clean":
+            result = memory_store.clean_common(scope)
+        else:
+            output.err(f"unknown common action: {args.common_action}")
+            return 1
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(result, as_json=args.json)
     return 0
 
 
 def cmd_memory_search(args, parser):
+    """🆕 v3.10.3: 跨 memory 实体搜索。"""
     try:
         scope = _memory_scope_from_args(args)
-        memory_scope = getattr(args, "scope", "") or ""
-        if memory_scope == "all":
-            memory_scope = ""
-        result = memory_store.search(
-            scope,
-            query=args.query,
-            limit=args.limit,
-            memory_scope=memory_scope or None,
-        )
+        result = memory_store.search_memory(scope, query=args.query, limit=args.limit)
     except Exception as e:
         output.err(str(e))
         return 1
@@ -2717,17 +3050,11 @@ def cmd_memory_search(args, parser):
     return 0
 
 
-def cmd_memory_promote(args, parser):
+def cmd_memory_summarize(args, parser):
+    """🆕 v3.10.3: 统计 memory 目录。"""
     try:
         scope = _memory_scope_from_args(args)
-        result = memory_store.promote(
-            scope,
-            from_layer=args.from_layer or None,
-            to_layer=args.to_layer or None,
-            from_memory_scope=args.from_scope or None,
-            to_memory_scope=args.to_scope or None,
-            actor=args.actor,
-        )
+        result = memory_store.summarize_memory(scope)
     except Exception as e:
         output.err(str(e))
         return 1
@@ -2735,14 +3062,88 @@ def cmd_memory_promote(args, parser):
     return 0
 
 
-def cmd_memory_summarize(args, parser):
+# ─── 🆕 v3.10.3 subprocess 命令族（3层Agent模型）────────────────────────────
+
+
+def cmd_subprocess_spawn(args, parser):
+    """注册子流程Agent（物理独立 session 接管单个系列）。"""
     try:
-        scope = _memory_scope_from_args(args)
-        result = memory_store.summarize(scope)
+        sp = _resolve_state_path_for_args(args)
+        st = state.read_state(sp)
+        record = state.register_subprocess_agent(
+            st,
+            series_type=args.series,
+            entity_id=args.entity_id,
+            memory_entity_type=args.memory_entity_type or "",
+            session_id=args.session_id or "",
+            deadline=args.deadline or "",
+        )
+        state.write_state(sp, st)
     except Exception as e:
         output.err(str(e))
         return 1
-    output.emit(result, as_json=args.json)
+    output.ok(f"✅ 子流程Agent已注册：{record['agentId']} ({args.series}/{args.entity_id})")
+    output.emit(record, as_json=args.json)
+    return 0
+
+
+def cmd_subprocess_list(args, parser):
+    """列出子流程Agent。"""
+    try:
+        sp = _resolve_state_path_for_args(args)
+        st = state.read_state(sp)
+        agents = state.list_subprocess_agents(st, status=args.status or "")
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit({"agents": agents, "count": len(agents)}, as_json=args.json)
+    return 0
+
+
+def cmd_subprocess_status(args, parser):
+    """查询单个子流程Agent状态。"""
+    try:
+        sp = _resolve_state_path_for_args(args)
+        st = state.read_state(sp)
+        agents = state.list_subprocess_agents(st)
+        match = [a for a in agents if a.get("agentId") == args.agent_id]
+        if not match:
+            output.err(f"subprocessAgent not found: {args.agent_id}")
+            return 1
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.emit(match[0], as_json=args.json)
+    return 0
+
+
+def cmd_subprocess_collect(args, parser):
+    """子流程Agent完成回传：标记 completed + 记录交付物 + 清理 memory。"""
+    try:
+        sp = _resolve_state_path_for_args(args)
+        st = state.read_state(sp)
+        deliverables = []
+        if args.deliverables:
+            import json as _json
+            deliverables = _json.loads(args.deliverables)
+        record = state.collect_subprocess_agent(st, args.agent_id, deliverables=deliverables)
+        state.write_state(sp, st)
+        # 清理对应实体的 memory（子流程结束删临时上下文，留业务成果）
+        if args.skip_clean_memory:
+            clean_result = {"skipped": True}
+        else:
+            from lib import memory_store
+            scope = memory_store.locate_scope(
+                project=str(sp.parent.parent),
+                entity_type=record.get("memoryEntityType", record.get("seriesType", "story")),
+                entity_id=record.get("entityId", "default"),
+            )
+            clean_result = memory_store.clean_memory(scope)
+    except Exception as e:
+        output.err(str(e))
+        return 1
+    output.ok(f"✅ 子流程Agent已收集：{args.agent_id} (deliverables={len(deliverables)})")
+    output.emit({"agent": record, "memoryClean": clean_result}, as_json=args.json)
     return 0
 
 
@@ -4495,6 +4896,63 @@ def main() -> int:
     p_doc_finalize.add_argument("--project", default="", help="项目根目录（默认 cwd）")
     p_doc_finalize.set_defaults(func=cmd_doc_finalize)
 
+    # baseline / verification / evidence (P1 incremental quality contracts)
+    p_baseline = sub.add_parser("baseline", help="G-CODE-1 explicit baseline and delta", parents=[common])
+    baseline_sub = p_baseline.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_bi = baseline_sub.add_parser("inspect", help="inspect baseline integrity", parents=[common])
+    p_bi.add_argument("--gate", default="G-CODE-1")
+    p_bi.add_argument("--project", default="")
+    p_bi.set_defaults(func=cmd_baseline_inspect)
+    p_bc = baseline_sub.add_parser("create", help="create baseline (requires explicit approval)", parents=[common])
+    p_bc.add_argument("--gate", default="G-CODE-1")
+    p_bc.add_argument("--project", default="")
+    p_bc.add_argument("--report-file", required=True, help="coding_authenticity_scan JSON report")
+    p_bc.add_argument("--approve", action="store_true")
+    p_bc.add_argument("--created-by", default="user")
+    p_bc.add_argument("--scanner-version", default="unknown")
+    p_bc.add_argument("--ruleset-fingerprint", default="unknown")
+    p_bc.add_argument("--project-fingerprint", default="unknown")
+    p_bc.set_defaults(func=cmd_baseline_create)
+    p_bd = baseline_sub.add_parser("diff", help="compare current findings to baseline", parents=[common])
+    p_bd.add_argument("--gate", default="G-CODE-1")
+    p_bd.add_argument("--project", default="")
+    p_bd.add_argument("--report-file", required=True)
+    p_bd.add_argument("--ruleset-fingerprint", default="")
+    p_bd.add_argument("--touched", default="", help="comma-separated touched paths")
+    p_bd.set_defaults(func=cmd_baseline_diff)
+
+    p_verify = sub.add_parser("verify", help="change-aware verification planning", parents=[common])
+    verify_sub = p_verify.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_vp = verify_sub.add_parser("plan", help="generate VerificationPlan", parents=[common])
+    p_vp.add_argument("--story", required=True)
+    p_vp.add_argument("--project", default="")
+    p_vp.add_argument("--changed", default="", help="comma-separated changed paths; default git diff")
+    p_vp.add_argument("--since-fingerprint", default="")
+    p_vp.set_defaults(func=cmd_verify_plan)
+
+    p_evidence = sub.add_parser("evidence", help="evidence manifest and cache", parents=[common])
+    evidence_sub = p_evidence.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_er = evidence_sub.add_parser("record", help="record a verification result", parents=[common])
+    p_er.add_argument("--story", required=True)
+    p_er.add_argument("--project", default="")
+    p_er.add_argument("--kind", required=True)
+    p_er.add_argument("--command", required=True)
+    p_er.add_argument("--input-fingerprint", required=True)
+    p_er.add_argument("--toolchain-fingerprint", required=True)
+    p_er.add_argument("--exit-code", type=int, default=0)
+    p_er.add_argument("--duration-ms", type=int, default=0)
+    p_er.add_argument("--freshness-window-seconds", type=int, default=None)
+    p_er.add_argument("--artifacts-file", default="")
+    p_er.add_argument("--summary-file", default="")
+    p_er.set_defaults(func=cmd_evidence_record)
+    p_el = evidence_sub.add_parser("lookup", help="find reusable successful evidence", parents=[common])
+    p_el.add_argument("--story", required=True)
+    p_el.add_argument("--project", default="")
+    p_el.add_argument("--command", required=True)
+    p_el.add_argument("--input-fingerprint", required=True)
+    p_el.add_argument("--toolchain-fingerprint", required=True)
+    p_el.set_defaults(func=cmd_evidence_lookup)
+
     # iteration-check（🆕 v3.5.4 — 设计-实现一致性迭代检查，补 UC 盲区，report-only）
     p_ic = sub.add_parser("iteration-check", help="设计-实现一致性迭代检查（补UC盲区，report-only）",
                           parents=[common])
@@ -4560,6 +5018,11 @@ def main() -> int:
                              help="review 节点（story-review/dr-review/code-review/ra-review）")
     p_rl_start.add_argument("--ra-size", default="中", help="RA 规模（微/小/中/大）")
     p_rl_start.add_argument("--decision-hints", default="", help="决策线索文本（机械匹配关键决策点）")
+    p_rl_start.add_argument("--input-fingerprint", default="", help="canonical input manifest fingerprint")
+    p_rl_start.add_argument("--max-attempts", type=int, default=None, help="hard cap for reviewer attempts")
+    p_rl_start.add_argument("--max-valid-batches", type=int, default=None, help="hard cap for valid batches")
+    p_rl_start.add_argument("--max-remediations", type=int, default=None, help="hard cap for remediation cycles")
+    p_rl_start.add_argument("--max-wall-clock-minutes", type=int, default=None, help="wall-clock budget")
     p_rl_start.set_defaults(func=cmd_review_loop_start)
 
     p_rl_collect = rl_sub.add_parser("collect", help="收报告：验session+算新增+推进轮次",
@@ -4571,7 +5034,12 @@ def main() -> int:
     p_rl_collect.add_argument("--node", required=True, help="review 节点")
     p_rl_collect.add_argument("--reports", default="", help="报告列表（path|sessionId 或 path，逗号分隔）")
     p_rl_collect.add_argument("--session-ids", default="", help="sessionId 列表（逗号分隔，与 reports 对齐）")
+    p_rl_collect.add_argument("--roles", default="", help="reviewer roles aligned with reports (BE,AR,QA)")
+    p_rl_collect.add_argument("--statuses", default="", help="reviewer statuses aligned with reports")
     p_rl_collect.add_argument("--findings-json", default="", help="findings JSON 字符串（含 anchor+severity）")
+    p_rl_collect.add_argument("--input-fingerprint", default="", help="canonical input manifest fingerprint")
+    p_rl_collect.add_argument("--ruleset-fingerprint", default="", help="review ruleset fingerprint")
+    p_rl_collect.add_argument("--batch-id", default="", help="stable batch identifier")
     p_rl_collect.add_argument("--has-red-blocker", action="store_true", help="本轮是否仍有 🔴 阻断型")
     p_rl_collect.set_defaults(func=cmd_review_loop_collect)
 
@@ -4589,100 +5057,153 @@ def main() -> int:
                              help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_rl_verify.set_defaults(func=cmd_review_loop_verify_exit)
 
-    # memory toolset (P0): mandatory phase-aware memory hooks
-    p_mem = sub.add_parser("memory", help="phase-aware memory toolset", parents=[common])
+    # review（v2 public alias; review-loop remains for one compatibility cycle）
+    p_review = sub.add_parser("review", help="Review Batch v2 public CLI", parents=[common])
+    review_sub = p_review.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    def _review_state_args(p):
+        p.add_argument("--story", default="")
+        p.add_argument("--work-item", default="")
+        p.add_argument("--project-state", action="store_true")
+    p_review_start = review_sub.add_parser("start", help="start a fingerprint-bound review session", parents=[common])
+    _review_state_args(p_review_start)
+    p_review_start.add_argument("--node", required=True)
+    p_review_start.add_argument("--ra-size", default="中")
+    p_review_start.add_argument("--decision-hints", default="")
+    p_review_start.add_argument("--input-fingerprint", default="")
+    p_review_start.add_argument("--max-attempts", type=int, default=None)
+    p_review_start.add_argument("--max-valid-batches", type=int, default=None)
+    p_review_start.add_argument("--max-remediations", type=int, default=None)
+    p_review_start.add_argument("--max-wall-clock-minutes", type=int, default=None)
+    p_review_start.set_defaults(func=cmd_review_loop_start)
+    p_review_collect = review_sub.add_parser("collect", help="aggregate one review batch", parents=[common])
+    _review_state_args(p_review_collect)
+    p_review_collect.add_argument("--node", required=True)
+    p_review_collect.add_argument("--reports", default="")
+    p_review_collect.add_argument("--session-ids", default="")
+    p_review_collect.add_argument("--roles", default="")
+    p_review_collect.add_argument("--statuses", default="")
+    p_review_collect.add_argument("--findings-json", default="")
+    p_review_collect.add_argument("--has-red-blocker", action="store_true")
+    p_review_collect.add_argument("--input-fingerprint", default="")
+    p_review_collect.add_argument("--ruleset-fingerprint", default="")
+    p_review_collect.add_argument("--batch-id", default="")
+    p_review_collect.set_defaults(func=cmd_review_loop_collect)
+    p_review_status = review_sub.add_parser("status", help="show review session", parents=[common])
+    _review_state_args(p_review_status)
+    p_review_status.set_defaults(func=cmd_review_loop_status)
+    p_review_verify = review_sub.add_parser("verify-exit", help="verify passed exit", parents=[common])
+    _review_state_args(p_review_verify)
+    p_review_verify.set_defaults(func=cmd_review_loop_verify_exit)
+    p_review_abort = review_sub.add_parser("abort", help="stop without converting budget failure to PASS", parents=[common])
+    _review_state_args(p_review_abort)
+    p_review_abort.add_argument("--reason", default="user-abort")
+    p_review_abort.set_defaults(func=cmd_review_abort)
+    p_review_retry = review_sub.add_parser("retry-role", help="retry only one failed reviewer role", parents=[common])
+    p_review_retry.add_argument("--role", required=True)
+    p_review_retry.add_argument("--reason", default="platform-failure")
+    p_review_retry.set_defaults(func=cmd_review_retry_role)
+    p_review_retry_alias = review_sub.add_parser("retry", help="retry only one failed reviewer role (alias)", parents=[common])
+    _review_state_args(p_review_retry_alias)
+    p_review_retry_alias.add_argument("--role", required=True)
+    p_review_retry_alias.add_argument("--reason", default="platform-failure")
+    p_review_retry_alias.set_defaults(func=cmd_review_retry_role)
+
+    # memory toolset (🆕 v3.10.3: entity-tree + compiled compact docs)
+    p_mem = sub.add_parser("memory", help="entity-tree memory toolset (compiled compact docs)", parents=[common])
     mem_sub = p_mem.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
 
     def _memory_common(p):
         p.add_argument("--project", default="", help="project root (default cwd)")
-        p.add_argument("--phase", required=True, help="ra / design / coding-plan / coding / review")
-        p.add_argument("--story", default="", help="Story ID")
-        p.add_argument("--task", default="", help="Task ID")
-        p.add_argument("--actor", default="ae-sdd", help="actor name")
+        p.add_argument("--entity-type", default="", help="prd / dr / story / testcase / coding / common")
+        p.add_argument("--entity-id", default="", help="entity ID (e.g. STORY-001-BE, DR-001)")
+        # 过渡期兼容旧参数
+        p.add_argument("--phase", default="", help="(legacy compat) ra / design / coding-plan / coding / review")
+        p.add_argument("--story", default="", help="(legacy compat) Story ID")
+        p.add_argument("--task", default="", help="(legacy compat) Task ID")
 
-    p_mem_enter = mem_sub.add_parser("enter", help="mandatory memory pre-read marker", parents=[common])
-    _memory_common(p_mem_enter)
-    p_mem_enter.add_argument("--note", default="", help="enter note")
-    p_mem_enter.set_defaults(func=cmd_memory_enter)
-
-    p_mem_write = mem_sub.add_parser("write", help="write phase memory", parents=[common])
-    _memory_common(p_mem_write)
-    p_mem_write.add_argument(
-        "--summary",
-        required=True,
-        help="compact atomic memory summary (task<=180 chars, project<=140, pattern<=120)",
-    )
-    p_mem_write.add_argument(
-        "--scope",
-        default="",
-        choices=["scratch", "task", "project", "pattern", "archive"],
-        help="memory partition: task (default) or project; maps to legacy L1/L2",
-    )
-    p_mem_write.add_argument("--layer", default="", help="compat: L0/L1/L2/L3/L4; prefer --scope")
-    p_mem_write.add_argument(
-        "--kind",
-        default="observation",
-        help="decision / constraint / finding / issue / risk / fix / conflict / observation",
-    )
-    p_mem_write.add_argument(
-        "--evidence",
-        action="append",
+    p_mem_create = mem_sub.add_parser("create", help="compile source contexts into memory compact docs", parents=[common])
+    _memory_common(p_mem_create)
+    p_mem_create.add_argument(
+        "--sources",
+        nargs="*",
         default=[],
-        help="short evidence reference; required for L1+; max 3 refs for L1-L3",
+        help="source contexts as name=path pairs (e.g. constraints=assets/constraints.md DR=doc.md)",
     )
-    p_mem_write.add_argument("--tag", action="append", default=[], help="tag")
-    p_mem_write.set_defaults(func=cmd_memory_write)
+    p_mem_create.add_argument(
+        "--context-json",
+        default="",
+        help="structured context data as JSON (series_chain/current_series/next_step/deliverables/...)",
+    )
+    p_mem_create.set_defaults(func=cmd_memory_create)
 
-    p_mem_exit = mem_sub.add_parser("exit", help="mandatory memory post-write gate", parents=[common])
-    _memory_common(p_mem_exit)
-    p_mem_exit.add_argument("--allow-empty", action="store_true", help="allow no write (explicit exception)")
-    p_mem_exit.set_defaults(func=cmd_memory_exit)
-
-    p_mem_read = mem_sub.add_parser("read", help="read phase memory", parents=[common])
+    p_mem_read = mem_sub.add_parser("read", help="read memory compact docs", parents=[common])
     _memory_common(p_mem_read)
-    p_mem_read.add_argument("--limit", type=int, default=20, help="max entries")
-    p_mem_read.add_argument(
-        "--scope",
-        default="all",
-        choices=["all", "scratch", "task", "project", "pattern", "archive"],
-        help="memory partition to read; default all reads project + task + scratch",
-    )
-    p_mem_read.add_argument("--no-project", action="store_true", help="do not include L2 project memory")
     p_mem_read.set_defaults(func=cmd_memory_read)
 
-    p_mem_search = mem_sub.add_parser("search", help="search memory", parents=[common])
+    p_mem_update = mem_sub.add_parser("update", help="incrementally update a memory slice", parents=[common])
+    _memory_common(p_mem_update)
+    p_mem_update.add_argument("--slice", required=True, choices=["boot", "context", "pending"], help="slice to update")
+    p_mem_update.add_argument("--content", default="", help="new content (inline)")
+    p_mem_update.add_argument("--content-file", default="", help="new content (from file)")
+    p_mem_update.set_defaults(func=cmd_memory_update)
+
+    p_mem_clean = mem_sub.add_parser("clean", help="delete a single entity memory (subprocess end)", parents=[common])
+    _memory_common(p_mem_clean)
+    p_mem_clean.set_defaults(func=cmd_memory_clean)
+
+    p_mem_clean_all = mem_sub.add_parser("clean-all", help="delete all entity memories (reset), preserve common", parents=[common])
+    _memory_common(p_mem_clean_all)
+    p_mem_clean_all.set_defaults(func=cmd_memory_clean_all)
+
+    p_mem_common = mem_sub.add_parser("common", help="read/update/clean common memory", parents=[common])
+    _memory_common(p_mem_common)
+    p_mem_common.add_argument("common_action", choices=["read", "update", "clean"], help="action")
+    p_mem_common.add_argument("--content", default="", help="new content (for update)")
+    p_mem_common.add_argument("--content-file", default="", help="new content from file (for update)")
+    p_mem_common.set_defaults(func=cmd_memory_common)
+
+    p_mem_search = mem_sub.add_parser("search", help="search across memory entities", parents=[common])
     _memory_common(p_mem_search)
     p_mem_search.add_argument("--query", required=True, help="search query")
-    p_mem_search.add_argument("--limit", type=int, default=20, help="max entries")
-    p_mem_search.add_argument(
-        "--scope",
-        default="all",
-        choices=["all", "scratch", "task", "project", "pattern", "archive"],
-        help="memory partition to search; default all",
-    )
+    p_mem_search.add_argument("--limit", type=int, default=20, help="max results")
     p_mem_search.set_defaults(func=cmd_memory_search)
-
-    p_mem_promote = mem_sub.add_parser("promote", help="promote memories across memory partitions", parents=[common])
-    _memory_common(p_mem_promote)
-    p_mem_promote.add_argument(
-        "--from-scope",
-        default="",
-        choices=["scratch", "task", "project", "pattern", "archive"],
-        help="source partition; default task",
-    )
-    p_mem_promote.add_argument(
-        "--to-scope",
-        default="",
-        choices=["scratch", "task", "project", "pattern", "archive"],
-        help="target partition; default project",
-    )
-    p_mem_promote.add_argument("--from-layer", default="", help="compat: source L0/L1/L2/L3/L4")
-    p_mem_promote.add_argument("--to-layer", default="", help="compat: target L0/L1/L2/L3/L4")
-    p_mem_promote.set_defaults(func=cmd_memory_promote)
 
     p_mem_sum = mem_sub.add_parser("summarize", help="summarize memory store", parents=[common])
     _memory_common(p_mem_sum)
     p_mem_sum.set_defaults(func=cmd_memory_summarize)
+
+    # subprocess toolset (🆕 v3.10.3: 3层Agent模型 - 子流程Agent管理)
+    p_sp = sub.add_parser("subprocess", help="subprocess agent management (3-layer model)", parents=[common])
+    sp_sub = p_sp.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    def _subprocess_common(p):
+        p.add_argument("--project", default="", help="project root (default cwd)")
+
+    p_sp_spawn = sp_sub.add_parser("spawn", help="register a subprocess agent", parents=[common])
+    _subprocess_common(p_sp_spawn)
+    p_sp_spawn.add_argument("--series", required=True, choices=["ra", "dr", "story", "testcase", "coding"], help="series type")
+    p_sp_spawn.add_argument("--entity-id", required=True, help="entity ID (e.g. STORY-001-BE)")
+    p_sp_spawn.add_argument("--memory-entity-type", default="", help="memory entity type (default = series)")
+    p_sp_spawn.add_argument("--session-id", default="", help="physical session ID")
+    p_sp_spawn.add_argument("--deadline", default="", help="deadline ISO8601")
+    p_sp_spawn.set_defaults(func=cmd_subprocess_spawn)
+
+    p_sp_list = sp_sub.add_parser("list", help="list subprocess agents", parents=[common])
+    _subprocess_common(p_sp_list)
+    p_sp_list.add_argument("--status", default="", help="filter by status (running/completed/failed/escalated)")
+    p_sp_list.set_defaults(func=cmd_subprocess_list)
+
+    p_sp_status = sp_sub.add_parser("status", help="query a single subprocess agent", parents=[common])
+    _subprocess_common(p_sp_status)
+    p_sp_status.add_argument("--agent-id", required=True, help="agent ID (spa-xxxxxxxx)")
+    p_sp_status.set_defaults(func=cmd_subprocess_status)
+
+    p_sp_collect = sp_sub.add_parser("collect", help="collect subprocess agent deliverables + clean memory", parents=[common])
+    _subprocess_common(p_sp_collect)
+    p_sp_collect.add_argument("--agent-id", required=True, help="agent ID (spa-xxxxxxxx)")
+    p_sp_collect.add_argument("--deliverables", default="", help="deliverables JSON array")
+    p_sp_collect.add_argument("--skip-clean-memory", action="store_true", help="skip memory cleanup")
+    p_sp_collect.set_defaults(func=cmd_subprocess_collect)
 
     # db toolset (P0): local-profile, read-first database access
     p_db = sub.add_parser("db", help="database toolset", parents=[common])

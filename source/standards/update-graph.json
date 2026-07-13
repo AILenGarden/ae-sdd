@@ -480,6 +480,33 @@
         {"path": "source/CHANGELOG/", "action": "记录门禁升级变更", "auto_checkable": false}
       ],
       "checks": ["UC-02", "UC-14"]
+    },
+    {
+      "id": "UG-26",
+      "name": "Review Batch 与增量质量契约",
+      "trigger": [
+        "tools/lib/review_batch.py",
+        "tools/lib/review_loop.py",
+        "tools/lib/baseline.py",
+        "tools/lib/evidence.py",
+        "tools/lib/verification_plan.py",
+        "tools/lib/document_storage.py",
+        "tools/lib/work_item_context.py",
+        "tools/bin/ae-sdd",
+        "source/templates/design/story-template.md",
+        "source/templates/coding/be-codereview-template.md"
+      ],
+      "trigger_condition": "Review Batch 状态、G-CODE-1 baseline、验证计划/证据缓存、canonical 文档 resolver 或 Story/CodeReview 模板发生变化",
+      "affected": [
+        {"path": "tools/lib/gates.py", "action": "同步 G-REVIEW-LOOP/G-CODE-1 policy outcome；STALLED、tampered、touched debt 不得伪装 PASS", "auto_checkable": true},
+        {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "同步 batch schema、风险退出、失败角色重试和预算语义", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase3-review/code-review-skill.full.md", "action": "同步 canonical 聚合报告和 evidence manifest 引用", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "同步 VerificationPlan、evidence lookup 和最终全量只跑一次规则", "auto_checkable": false},
+        {"path": "tools/tests/test_review_batch.py", "action": "覆盖状态转移、retry merge、fingerprint drift、budget 和 disposition", "auto_checkable": false},
+        {"path": "tools/tests/test_incremental_quality.py", "action": "覆盖 baseline integrity/touched debt、evidence freshness、alias ambiguity 和 provenance", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录 Review Batch/增量质量/模板契约变更", "auto_checkable": false}
+      ],
+      "checks": ["UC-02", "UC-06", "UC-14"]
     }
   ]
 }

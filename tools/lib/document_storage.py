@@ -20,6 +20,7 @@ document_storage.py - 文档存放 API 代码层实现（document-storage-skill 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -619,6 +620,106 @@ def update_storing_index(ade_sdd: Path, project_key: str, scope: str, entry: dic
         storing.parent.mkdir(parents=True, exist_ok=True)
         with storing.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+
+# ─── P1 canonical document resolver ─────────────────────────────────────────
+def _alias_registry_path(ade_sdd: Path) -> Path:
+    return ade_sdd / "doc-aliases.json"
+
+
+def load_aliases(ade_sdd: Path) -> dict:
+    path = _alias_registry_path(ade_sdd)
+    if not path.is_file():
+        return {"schemaVersion": 1, "aliases": {}}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"schemaVersion": 1, "aliases": {}, "corrupt": True}
+    value.setdefault("schemaVersion", 1)
+    value.setdefault("aliases", {})
+    return value
+
+
+def register_alias(ade_sdd: Path, alias_path: str, canonical_path: str,
+                   *, reason: str = "compatibility") -> dict:
+    """Register an old path as a pointer; never copies canonical document text."""
+    registry = load_aliases(ade_sdd)
+    alias = str(Path(alias_path)).replace("\\", "/")
+    canonical = str(Path(canonical_path)).replace("\\", "/")
+    if alias == canonical:
+        raise DocStorageError("E010", "alias path must differ from canonical path")
+    registry["aliases"][alias] = {
+        "canonical": canonical,
+        "reason": reason,
+        "updatedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    _alias_registry_path(ade_sdd).parent.mkdir(parents=True, exist_ok=True)
+    _alias_registry_path(ade_sdd).write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return registry["aliases"][alias]
+
+
+def resolve_alias(ade_sdd: Path, path: str) -> Path:
+    """Resolve at most one alias hop and reject alias cycles."""
+    registry = load_aliases(ade_sdd)
+    current = str(Path(path)).replace("\\", "/")
+    seen = set()
+    while current in registry.get("aliases", {}):
+        if current in seen:
+            raise DocStorageError("E011", f"document alias cycle detected at {current}")
+        seen.add(current)
+        current = str(registry["aliases"][current].get("canonical") or "")
+        if not current:
+            raise DocStorageError("E011", "document alias has empty canonical target")
+    return Path(current)
+
+
+def assert_no_duplicate_canonical(ade_sdd: Path, alias_path: str, canonical_path: str) -> None:
+    """Reject a compatibility path that contains a second complete正文."""
+    alias = Path(alias_path)
+    canonical = Path(canonical_path)
+    if not alias.is_file() or not canonical.is_file():
+        return
+    alias_text = alias.read_text(encoding="utf-8", errors="replace")
+    canonical_text = canonical.read_text(encoding="utf-8", errors="replace")
+    if alias_text.strip() == canonical_text.strip():
+        raise DocStorageError("E012", "alias path contains a duplicate canonical document body")
+    if "canonical" not in alias_text.lower() and "redirect" not in alias_text.lower():
+        raise DocStorageError("E012", "compatibility document must be a canonical pointer, not a second正文")
+
+
+def resolve_candidates(candidates: list[str | Path], *, require_existing: bool = True) -> Path:
+    """Resolve one document candidate; never choose by mtime when ambiguous."""
+    paths = [Path(p) for p in candidates if (not require_existing or Path(p).is_file())]
+    unique = []
+    seen = set()
+    for path in paths:
+        key = str(path.resolve()).lower()
+        if key not in seen:
+            unique.append(path)
+            seen.add(key)
+    if not unique:
+        raise DocStorageError("E013", "no canonical document candidate exists")
+    if len(unique) > 1:
+        raise DocStorageError("E013", "multiple canonical document candidates; explicit migration is required")
+    return unique[0]
+
+
+def migration_dry_run(alias_pairs: list[tuple[str | Path, str | Path]]) -> dict:
+    """Return an auditable move/alias/conflict plan without changing files."""
+    moves, aliases, conflicts = [], [], []
+    for alias, canonical in alias_pairs:
+        alias_path, canonical_path = Path(alias), Path(canonical)
+        if alias_path.is_file() and canonical_path.is_file():
+            try:
+                assert_no_duplicate_canonical(Path("."), str(alias_path), str(canonical_path))
+            except DocStorageError as exc:
+                conflicts.append({"alias": str(alias_path), "canonical": str(canonical_path), "error": str(exc)})
+        elif alias_path.is_file() and not canonical_path.exists():
+            moves.append({"from": str(alias_path), "to": str(canonical_path)})
+        aliases.append({"alias": str(alias_path), "canonical": str(canonical_path)})
+    return {"dryRun": True, "moves": moves, "aliases": aliases, "conflicts": conflicts}
 
 
 def check_and_update_gitignore(project_dir: Path, pattern: str) -> bool:

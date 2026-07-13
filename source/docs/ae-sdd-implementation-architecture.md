@@ -66,6 +66,8 @@ harness/                        派生适配层，不手工改生成物
 | 对齐审计 | `tools/lib/alignment_audit.py` | UC-08~13 深度对齐验证 | report-only 与阻断语义需明确 |
 | 迭代检查 | `tools/lib/iteration_check.py` | IC-1~4 设计-实现一致性粗筛 | 不替代人工语义复核 |
 | 文档存取 | `tools/lib/document_storage.py` | intent 驱动的文档定位、保存、finalize | SKILL 不应自行拼接产物路径 |
+| Review Batch | `tools/lib/review_batch.py` / `review_loop.py` | session/batch 状态、fingerprint、失败分类、预算、retry merge、legacy projection | 新状态字段需同步 state/gates/tests；`STALLED` 不得映射为 PASS；平台失败只重试缺失角色 |
+| 增量质量 | `tools/lib/baseline.py` / `verification_plan.py` / `evidence.py` | baseline delta、最小验证计划、成功证据 manifest 与安全复用 | baseline 创建必须显式批准；tampered/touched debt 阻断；缓存命中必须验证 artifact/freshness hash |
 | 资产索引 | `tools/lib/assets_index.py` | assets 读取、outline、section、query、stats | 缓存变更需测试缓存失效 |
 | Hook 层 | `gate_intercept.py` / `prompt_inject.py` / `stop_check.py` | 工具调用前、提示注入、响应后校验 | HARNESS 声明必须能追到实现 |
 | 源 SKILL 瘦身 | `scripts/slim_source_skills.py` / `source/skill-fallbacks/**` | 按标准识别源 SKILL 语义、渲染 slim entry、保留完整 fallback、校验模板一致性 | 已瘦身文件默认跳过；schema 升级必须从 fallback 重渲染，禁止二次摘要 |
@@ -98,9 +100,12 @@ harness/                        派生适配层，不手工改生成物
 
 - `GATE_REGISTRY` 是门禁列表的代码权威。
 - `check_all()` 必须覆盖每个 gate，不能 stub-pass 掩盖缺口。
+- G-PATH 的 SSOT 豁免按 scan root 下的严格相对路径识别，仅覆盖 canonical document-storage source entry、source full fallback 和 compiled runtime fallback；basename 相同但父目录错误的文件不得豁免。
+- G-PATH 项目侧只扫描 `.ae-sdd/memory/**/*.md`、顶层 `AGENTS.md`/`CLAUDE.md`/`MEMORY.md` 与 `.harness/memory/**/*.md`；`.ae-sdd/drafts/**/*.md` 属于过程产物，不纳入该 gate。`current_story` 不作为项目路径静默过滤条件。
 - scanner 输出 JSON 必须包含 `status`、统计字段和 `findings[]`。
 - 新增 `scripts/*_scan.py` 必须加入 `scripts/build_dist.py` runtime_scripts 白名单。
 - 高频 scanner 应优先支持进程内调用，子进程 CLI 仅作为兼容入口。
+- Review Batch、baseline、VerificationPlan 和 evidence 均通过 `tools/lib/` 提供纯 Python API，CLI 只做参数适配；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。
 - 🆕 v3.9.1 注册表模式：同族门禁（如 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX 四个上下文加载准入门禁）用 `CONTEXT_GATE_REGISTRY` 注册表 + 单个 `_check_context_loaded` 函数服务多个 gate_id，避免每门禁重复写 scale 豁免/phase 感知/逐项校验逻辑；4 个薄封装 `check_g_*_ctx` 对齐 `CHECK_FUNCS` 的 `(project_dir, st, current_story)` 签名，内部转发到统一实现。
 
 ## 7. 项目侧状态与缓存
@@ -112,11 +117,14 @@ harness/                        派生适配层，不手工改生成物
 | `.ae-sdd/config.yaml` | 项目配置 |
 | `.ae-sdd/state.json` | 不再作为 active state、mirror 或 fallback；旧项目残留文件只能视为历史数据，不得参与新状态解析 |
 | `.ae-sdd/session-context/` | 会话级 work-item 绑定缓存；`UserPromptSubmit` 从当前 prompt/cwd 解析真实 work-item 并写入，`PreToolUse` 只用同一 session key 读取，禁止跨会话共享 |
-| `.auto-engineering/{workItemKey}/state.json` | work item 独立状态机；新建入口为 `ae-sdd state new --id <ID> --name "<需求名>"`，目录名为 `{ID}--{name}` |
+| `.auto-engineering/{workItemKey}/state.json` | work item 独立状态机；新建入口为 `ae-sdd state new --id <ID> --entry-node <PRD\|DR\|STORY\|TASK>`，目录名为 R6 顶层名（🆕 v3.10.1 带随机 UUID 前缀，如 `{uuid}-PRD-001`） |
 | `.ae-sdd/memory/` | 分区 compact 记忆；task(L1) 默认任务级、project(L2) 跨任务复用，UserPromptSubmit 任务优先注入并只用 project 补充 |
 | `.ae-sdd/plugins/` | 项目层插件注册 |
 | `.ae-sdd/cache/` | 工具链缓存，新增缓存优先放这里 |
 | `.ae-sdd/runtime-stats/` | Runtime Stats JSONL，本地观测数据，可清理，不进入版本控制 |
+| `.ae-sdd/baselines/` | 用户批准的 gate baseline（默认 G-CODE-1），带 ruleset/content hash | 不自动创建；规则或触碰文件时重新确认 |
+| `.ae-sdd/doc-aliases.json` | 旧文档路径到 canonical 正文的 alias registry | 只存指针，不存第二份正文 |
+| `.auto-engineering/{story}/evidence/manifest.json` | Story 验证证据索引与复用条件 | 失败证据不可复用；artifact hash 不一致即失效 |
 
 `tools/lib/state.py` 是状态写入与终态一致性的代码权威。`phase`/`history` 表示生命周期主状态；`currentPhase`、`currentStep`、`completedSteps`、`pendingOutputs`、`codingRound` 是工作流投影字段，不能独立滞留在旧步骤。`set_phase()` 和 `set_story_substate_phase()` 写入生命周期 phase 时必须级联同步投影；`write_state()` 落盘前执行终态不变量校验：`phase=completed` 必须满足 `currentPhase=completed`、`currentStep=completed`、`pendingOutputs` 为空、`codingRound>=r1`。嵌套 state 中该规则作用于 `storyStates{}` 与 `drStates[*].storyStates{}`，不强加给 PRD/DR 容器子记录。
 

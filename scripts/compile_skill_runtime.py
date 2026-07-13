@@ -34,12 +34,14 @@ LOAD_ORDER = [
 
 
 ROUTE_ROWS = [
-    ("self-update", "modify/optimize/update ae-sdd or SKILL", "skills/orchestration/ae-sdd-update-skill.md"),
+    ("self-update", "modify/optimize/update ae-sdd or SKILL (ae-sdd/SKILL/flow context)", "skills/orchestration/ae-sdd-update-skill.md"),
     ("resume", "continue/resume/previous flow", "read state, report phase, load next slice"),
     ("large", "has DR", "DR -> Story -> TestCase -> CodingPlan -> Coding -> Test -> Review"),
     ("medium", "has Story", "Story -> TestCase -> CodingPlan -> Coding -> Test -> Review"),
     ("small", "has Story+TestCase, enter at CodingPlan", "CodingPlan -> Coding -> Test -> Review"),
     ("micro", "BUG/config, no docs", "CodingPlan -> Coding -> Test -> Review"),
+    ("micro-optimize", "optimize/refactor/improve code + code context (no docs, entryNode=OPTIMIZE)", "coding-process(light) -> Coding (skip test/review)"),
+    ("micro-review", "review/CodeReview code (no docs, entryNode=CODE_REVIEW)", "code-review light-admit -> in-chat conclusion (skip coding/test)"),
     ("doc-storage", "where to write/read generated docs", "skills/cross-cutting/document-storage-skill.md"),
     ("plugin", "load/override coding skill", "skills/cross-cutting/ae-sdd-plugin-loader-skill.md"),
 ]
@@ -60,26 +62,8 @@ MACROS = [
 SCALE_ORDER = ["大", "中", "小", "微"]
 
 
-GATE_HINTS = {
-    "G-00": ("entry", "project assets exist and 7-layer index is complete", "BLOCK -> project-assets-update"),
-    "G-RA-1": ("before DR/Story/Task generation", "RA document exists or route is exempt", "BLOCK"),
-    "G-RA-2": ("before DR/Story/Task generation", "RA dimensions and RAModel are complete", "BLOCK"),
-    "G-RA-3": ("before DR/Story/Task generation", "RA derivative sections are complete", "BLOCK"),
-    "G-RA-4": ("before DR/Story/Task generation", "RA authenticity scanner passes", "BLOCK"),
-    "G-RA-5": ("before DR/Story/Task generation", "RA mechanical derivation scanner passes", "BLOCK"),
-    "G-RA-6": ("before DR/Story/Task generation", "RA implementation-view scanner passes", "BLOCK"),
-    "G-RA-FLOW-VIOLATION": ("before downstream generation", "RA flow violation scanner passes", "BLOCK"),
-    "G-DOC-STORAGE": ("before doc write", "path/name resolved by document-storage", "BLOCK"),
-    "G-DOC-CONSISTENCY": ("entry/doc workspace check", "project memory path agrees with config", "BLOCK"),
-    "G-CODEPLAN-SRC": ("before coding execute", "CodingPlan class skeleton has source-read evidence", "BLOCK"),
-    "G-14": ("before coding execute", "CodingPlan references Story and aligns with AC", "BLOCK"),
-    "G-08": ("before coding execute", "CodingPlan 14 gates are present", "BLOCK"),
-    "G-09": ("test review", "test authenticity scanner passes", "BLOCK"),
-    "G-09B": ("review phase transition", "reviewer independence requirement passes", "BLOCK"),
-    "G-CODE-1": ("coding/code review", "coding authenticity scanner passes", "BLOCK"),
-    "G-REVIEW-LOOP": ("review phase transition", "review-loop exit condition is satisfied", "BLOCK"),
-    "G-PATH": ("build/update check", "source docs do not hardcode output paths", "BLOCK"),
-}
+# 🆕 v3.10.3 GATE_HINTS 已迁入 tools/lib/gates.py:GATE_REGISTRY 的 hint 字段（单一权威源）。
+# render_gates_compact 直接从 gate["hint"] 读取 scope/pass/fail，不再维护独立字典。
 
 
 def parse_version(text: str) -> str:
@@ -195,7 +179,7 @@ def _read_source_fallback_text(
     return fallback_path.read_text(encoding="utf-8")
 
 
-def extract_headings(text: str, limit: int = 80) -> list[dict[str, Any]]:
+def extract_headings(text: str, limit: int = 120) -> list[dict[str, Any]]:
     headings: list[dict[str, Any]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
@@ -208,7 +192,7 @@ def extract_headings(text: str, limit: int = 80) -> list[dict[str, Any]]:
     return headings
 
 
-def extract_inline_refs(text: str, limit: int = 80) -> list[str]:
+def extract_inline_refs(text: str, limit: int = 120) -> list[str]:
     refs: set[str] = set()
     for match in re.finditer(r"`([^`\n]+)`", text):
         value = match.group(1).strip()
@@ -240,13 +224,15 @@ def render_subskill_boot_compact(record: dict[str, Any]) -> str:
 
 1. `{record["manifest"]}`
 2. `{record["boot"]}`
-3. `{record["outline"]}`
+3. `{record["core"]}` (executable fast-path)
+4. `{record["outline"]}` (navigation index)
 
 ## Runtime Contract
 
-- Use this compact entry before reading the full source fallback.
+- Read `core.compact.md` for executable fast-path semantics before reading the full fallback.
+- Use `outline.compact.md` only for navigation/heading lookup.
 - Keep the public entry path stable: `{record["entry"]}`.
-- Load fallback only when outline and compact route do not contain enough detail.
+- Load fallback only when core and outline do not contain enough detail.
 - Fallback source: `{record["fallback"]}`.
 """
 
@@ -275,11 +261,142 @@ def render_subskill_outline_compact(
     )
 
 
+# --- core.compact.md: executable fast-path extraction (🆕 v3.10.3) ---
+# Borrowed from the generic compiler's _generic_semantic_core idea:
+# sectionize -> score -> keep structural lines -> drop prose filler.
+
+_CORE_KEYWORDS = (
+    "禁止", "block", "必须", "门禁", "步骤", "强制", "🔴", "❌", "✅",
+    "ae-sdd", "gates", "state", "doc ", "review-loop", "context-pressure",
+)
+
+_CORE_MAX_LINES = 120
+_CORE_TINY_MAX_LINES = 40
+_CORE_TINY_THRESHOLD = 80  # source fallback <= this line count -> tiny core
+
+
+def _sectionize_body(text: str) -> list[list[str]]:
+    """Split body into sections; each section starts at a heading line."""
+    sections: list[list[str]] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if re.match(r"^#{1,6}\s+", line) and current:
+            sections.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        sections.append(current)
+    return sections
+
+
+def _is_core_structural(line: str) -> bool:
+    """True for lines worth keeping in an executable core (headings, lists, commands, gates, numbered steps)."""
+    s = line.strip()
+    if not s:
+        return True
+    if s.startswith(("#", "-", "*", ">", "|", "```")):
+        return True
+    if re.match(r"^\d+\.\s", s):
+        return True
+    if re.search(r"\b(G-[A-Z0-9-]+|RA-G\d+|TR-\d+|TC-\d+|TV-\d+)\b", s):
+        return True
+    if "ae-sdd" in s or "python " in s or "bash " in s:
+        return True
+    if any(kw in s.lower() for kw in ("block", "禁止", "必须", "强制", "门禁")):
+        return True
+    return False
+
+
+def _close_code_fence(lines: list[str]) -> list[str]:
+    in_code = False
+    for line in lines:
+        if line.strip().startswith("```"):
+            in_code = not in_code
+    if in_code:
+        return [*lines, "```"]
+    return lines
+
+
+def _dedupe_blank(lines: list[str]) -> list[str]:
+    result: list[str] = []
+    prev_blank = False
+    for line in lines:
+        is_blank = not line.strip()
+        if is_blank and prev_blank:
+            continue
+        result.append(line)
+        prev_blank = is_blank
+    return result
+
+
+def render_core_compact(rel: str, metadata: dict[str, str], fallback_text: str) -> str:
+    """Extract executable fast-path from full fallback into a compact core slice.
+
+    Strategy: sectionize -> keep sections whose first ~30 lines score on keywords
+    or start with a heading -> within kept sections drop pure-prose paragraphs
+    (keep only structural lines) -> cap at _CORE_MAX_LINES.
+    """
+    name = metadata.get("name") or Path(rel).stem
+    source_lines = fallback_text.count("\n") + 1
+    max_lines = _CORE_TINY_MAX_LINES if source_lines <= _CORE_TINY_THRESHOLD else _CORE_MAX_LINES
+
+    header = [
+        f"# {name} Executable Core Compact",
+        "",
+        f"- source: `{rel}`",
+        f"- source_lines: {source_lines}",
+        "- executable: true (fast-path; load fallback when exact detail is absent)",
+        "",
+    ]
+    tail = [
+        "",
+        "## Fallback Guard",
+        "",
+        "- This core is a fast-path extract; load `fallback/SKILL.full.md` for exact templates, full checklists, examples, or conflict resolution.",
+    ]
+    body_budget = max(8, max_lines - len(header) - len(tail))
+
+    # Strip frontmatter before sectionizing.
+    body = fallback_text
+    if body.startswith("---"):
+        end = body.find("\n---", 3)
+        if end != -1:
+            body = body[end + 4 :]
+
+    body_lines: list[str] = []
+    in_code = False
+    for section in _sectionize_body(body):
+        if not section:
+            continue
+        is_heading_section = section[0].lstrip().startswith("#")
+        section_text = "\n".join(section[:30]).lower()
+        scores = sum(1 for kw in _CORE_KEYWORDS if kw in section_text)
+        if not is_heading_section and scores == 0:
+            continue  # skip pure-prose non-heading sections
+        for line in section:
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_code = not in_code
+                body_lines.append(line)
+            elif in_code or _is_core_structural(line):
+                body_lines.append(line)
+            # Non-structural prose lines are dropped from the executable core.
+            if len(body_lines) >= body_budget:
+                break
+        if len(body_lines) >= body_budget:
+            break
+
+    body_lines = _dedupe_blank(_close_code_fence(body_lines[:body_budget]))
+    return "\n".join([*header, *body_lines, *tail]) + "\n"
+
+
 def render_subskill_entry(
     rel: str,
     metadata: dict[str, str],
     manifest_rel: str,
     boot_rel: str,
+    core_rel: str,
     outline_rel: str,
     fallback_rel: str,
     runtime_fingerprint: str,
@@ -303,8 +420,9 @@ This is a generated compact entry for an ae-sdd child SKILL. Do not hand-edit it
 
 1. Read `{manifest_rel}`.
 2. Read `{boot_rel}`.
-3. Read `{outline_rel}`.
-4. Use fallback only when compact runtime is insufficient: `{fallback_rel}`.
+3. Read `{core_rel}` (executable fast-path).
+4. Read `{outline_rel}` (navigation index).
+5. Use fallback only when compact runtime is insufficient: `{fallback_rel}`.
 
 runtime_fingerprint: {runtime_fingerprint}
 """
@@ -320,19 +438,24 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
     for source_skill in sorted(skills_root.rglob("*.md")):
         rel_path = source_skill.relative_to(source)
         rel = rel_path.as_posix()
-        text = source_skill.read_text(encoding="utf-8")
+        source_bytes = source_skill.read_bytes()
+        text = source_bytes.decode("utf-8")
         metadata = read_frontmatter(text)
         fallback_text = _read_source_fallback_text(source, source_skill, metadata, text)
         headings = extract_headings(fallback_text)
         refs = extract_inline_refs(fallback_text)
-        source_sha = sha256_file(source_skill)
+        source_sha = hashlib.sha256(source_bytes).hexdigest()
         fallback_sha = _sha256_text(fallback_text)
 
         base_rel = subskill_runtime_base(rel_path)
         manifest_rel = (base_rel / "manifest.json").as_posix()
         boot_rel = (base_rel / "boot.compact.md").as_posix()
         outline_rel = (base_rel / "outline.compact.md").as_posix()
+        core_rel = (base_rel / "core.compact.md").as_posix()
         fallback_rel = (base_rel / "fallback" / "SKILL.full.md").as_posix()
+
+        core_text = render_core_compact(rel, metadata, fallback_text)
+        core_sha = _sha256_text(core_text)
 
         fingerprint_payload = {
             "schema": SUBSKILL_SCHEMA,
@@ -340,10 +463,11 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
             "entry": rel,
             "source_sha256": source_sha,
             "fallback_sha256": fallback_sha,
+            "core_sha256": core_sha,
             "metadata": metadata,
             "headings": headings,
             "refs": refs,
-            "contract": ["manifest", "boot.compact.md", "outline.compact.md", "fallback/SKILL.full.md"],
+            "contract": ["manifest", "boot.compact.md", "core.compact.md", "outline.compact.md", "fallback/SKILL.full.md"],
         }
         runtime_fingerprint = _sha256_text(_stable_json(fingerprint_payload))
 
@@ -352,10 +476,12 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
             "source_path": f"source/{rel}",
             "manifest": manifest_rel,
             "boot": boot_rel,
+            "core": core_rel,
             "outline": outline_rel,
             "fallback": fallback_rel,
             "source_sha256": source_sha,
             "fallback_sha256": fallback_sha,
+            "core_sha256": core_sha,
             "runtime_fingerprint": runtime_fingerprint,
             "heading_count": len(headings),
             "ref_count": len(refs),
@@ -370,11 +496,12 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
             "entry": rel,
             "source_path": f"source/{rel}",
             "runtime_fingerprint": runtime_fingerprint,
-            "load_order": [boot_rel, outline_rel],
-            "generated_files": [manifest_rel, boot_rel, outline_rel, fallback_rel, rel],
+            "load_order": [boot_rel, core_rel, outline_rel],
+            "generated_files": [manifest_rel, boot_rel, core_rel, outline_rel, fallback_rel, rel],
             "source": {
                 "sha256": source_sha,
                 "fallback_sha256": fallback_sha,
+                "core_sha256": core_sha,
                 "source_slimmed": _is_true(metadata.get("source_slimmed")),
                 "source_fallback": metadata.get("source_fallback", ""),
             },
@@ -386,6 +513,7 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
 
         _write_text(dist / fallback_rel, fallback_text)
         _write_text(dist / boot_rel, render_subskill_boot_compact(record))
+        _write_text(dist / core_rel, core_text)
         _write_text(dist / outline_rel, render_subskill_outline_compact(rel, metadata, headings, refs))
         _write_text(dist / manifest_rel, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
         _write_text(
@@ -395,6 +523,7 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
                 metadata,
                 manifest_rel,
                 boot_rel,
+                core_rel,
                 outline_rel,
                 fallback_rel,
                 runtime_fingerprint,
@@ -402,7 +531,7 @@ def compile_subskills(source: Path, dist: Path) -> tuple[list[dict[str, Any]], l
         )
 
         records.append(record)
-        generated_files.extend([manifest_rel, boot_rel, outline_rel, fallback_rel, rel])
+        generated_files.extend([manifest_rel, boot_rel, core_rel, outline_rel, fallback_rel, rel])
 
     return records, sorted(generated_files)
 
@@ -412,6 +541,7 @@ def render_subskills_compact(subskills: list[dict[str, Any]]) -> str:
         (
             item["entry"],
             item["manifest"],
+            item["core"],
             item["outline"],
             item["fallback"],
             item["heading_count"],
@@ -422,8 +552,9 @@ def render_subskills_compact(subskills: list[dict[str, Any]]) -> str:
         "# ae-sdd Sub-SKILL Index Compact\n\n"
         f"- subskill_count: {len(subskills)}\n"
         "- entry files under `skills/` are compiled bootloaders.\n"
+        "- each subskill has: boot + core (executable fast-path) + outline (nav) + fallback (full source).\n"
         "- full source fallbacks live under `runtime/skills/**/fallback/SKILL.full.md`.\n\n"
-        + _table(["entry", "manifest", "outline", "fallback", "headings"], rows)
+        + _table(["entry", "manifest", "core", "outline", "fallback", "headings"], rows)
         + "\n"
     )
 
@@ -482,7 +613,6 @@ def compute_runtime_fingerprint(
         "load_order": LOAD_ORDER,
         "route_rows": ROUTE_ROWS,
         "macros": MACROS,
-        "gate_hints": GATE_HINTS,
         "source_checksums": source_checksums,
         "fallback_sha256": fallback_hash,
         "gates": gates,
@@ -504,6 +634,7 @@ def render_boot_compact(version: str, source_hash: str, runtime_fingerprint: str
 
 ## Load Order
 
+0. `runtime/manifest-index.json` (slim routing index; the full `runtime/manifest.json` is for verification only)
 {load}
 
 ## Runtime Contract
@@ -535,10 +666,10 @@ def render_gates_compact(gates: list[dict[str, Any]]) -> str:
     rows: list[tuple[Any, ...]] = []
     for gate in gates:
         gate_id = str(gate.get("id", ""))
-        scope, pass_rule, fail_rule = GATE_HINTS.get(
-            gate_id,
-            ("see CLI", f"ae-sdd gates check --only {gate_id}", "follow GateResult action"),
-        )
+        hint = gate.get("hint") or {}
+        scope = hint.get("scope", "see CLI")
+        pass_rule = hint.get("pass", f"ae-sdd gates check --only {gate_id}")
+        fail_rule = hint.get("fail", "follow GateResult action")
         rows.append((
             gate_id,
             gate.get("name", ""),
@@ -660,12 +791,24 @@ def compile_runtime_package(
 
     dist_skill = dist / "SKILL.md"
     fallback_path = fallback_dir / "SKILL.full.md"
-    fallback_text = _read_source_fallback_text(
-        source,
-        source_skill,
-        source_metadata,
-        _read_fallback_text(dist_skill, fallback_path, source_text),
-    )
+    # 🆕 v3.10.3 首次编译短路：source_slimmed 时 source_fallback 是唯一权威 fallback 源，
+    # 跳过 _read_fallback_text 的 dist fallback / dist SKILL.md 三路查找（首次编译必 miss）。
+    # 非 slimmed 时保留原逻辑（dist 旧 fallback 优先，保证二次编译保留上轮 fallback）。
+    if _is_true(source_metadata.get("source_slimmed")):
+        sf_path = _source_fallback_path(source, source_metadata)
+        if sf_path is None:
+            fallback_text = source_text
+        elif not sf_path.is_file():
+            raise FileNotFoundError(f"source fallback missing for {source_skill}: {sf_path}")
+        else:
+            fallback_text = sf_path.read_text(encoding="utf-8")
+    else:
+        fallback_text = _read_source_fallback_text(
+            source,
+            source_skill,
+            source_metadata,
+            _read_fallback_text(dist_skill, fallback_path, source_text),
+        )
     _write_text(fallback_path, fallback_text)
     fallback_hash = _sha256_text(fallback_text)
 
@@ -734,6 +877,7 @@ def compile_runtime_package(
                 "entry": rec.get("entry", ""),
                 "manifest": rec.get("manifest", ""),
                 "boot": rec.get("boot", ""),
+                "core": rec.get("core", ""),
                 "outline": rec.get("outline", ""),
                 "fallback": rec.get("fallback", ""),
             }

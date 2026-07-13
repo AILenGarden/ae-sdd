@@ -152,6 +152,36 @@ class TestGStoryCtx(unittest.TestCase):
         r = gates.check_g_story_ctx(tmp, _make_state("story-generated", "大", "STORY-001"), "STORY-001")
         self.assertFalse(r.pass_)
         self.assertIn("DR", r.message)
+        self.assertIn("不得在 Story 任务中运行 dr-generate-skill", r.action)
+
+    def test_process_heading_blocks(self):
+        """Story 正文出现过程型章节 → outputBoundary 阻断。"""
+        tmp = _full_context_project(phase="story-generated", scale="大")
+        story = tmp / "design" / "STORY-001.md"
+        story.write_text(
+            story.read_text(encoding="utf-8") + "\n## 生成过程\n已完成门禁检查。\n",
+            encoding="utf-8",
+        )
+        r = gates.check_g_story_ctx(
+            tmp, _make_state("story-generated", "大", "STORY-001"), "STORY-001"
+        )
+        self.assertFalse(r.pass_)
+        self.assertIn("Story 输出边界", r.message)
+        self.assertIn("生成过程", r.message)
+
+    def test_process_artifact_reference_blocks(self):
+        """Story 正文引用内部 Plan/Report → outputBoundary 阻断。"""
+        tmp = _full_context_project(phase="story-generated", scale="大")
+        story = tmp / "design" / "STORY-001.md"
+        story.write_text(
+            story.read_text(encoding="utf-8") + "\n详见 StoryGeneratePlan。\n",
+            encoding="utf-8",
+        )
+        r = gates.check_g_story_ctx(
+            tmp, _make_state("story-generated", "大", "STORY-001"), "STORY-001"
+        )
+        self.assertFalse(r.pass_)
+        self.assertIn("STORYGENERATEPLAN", r.message)
 
     def test_small_scale_exempt(self):
         """🆕 v3.9.20：小/微链豁免已取消，改走 standardsRef 轻量阈值（≥1 类别）。

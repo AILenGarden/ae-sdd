@@ -162,10 +162,29 @@ dist/ae-sdd/SKILL.md、dist/ae-sdd/runtime/** 与 dist/ae-sdd/skills/**/*.md 字
 | --- | --- | --- |
 | `boot.compact.md` | 固定契约 + manifest | 加载顺序、冲突优先级、fallback 规则 |
 | `route.compact.md` | `source/SKILL.md` 规则摘要 | 自更新、大/中/小/微任务、继续流程、文档定位等路由 |
-| `subskills.compact.md` | `source/skills/**/*.md` | 子 SKILL compiled bootloader 索引、局部 manifest/outline/fallback 路径 |
-| `gates.compact.md` | `tools/lib/gates.py:GATE_REGISTRY` | Gate ID、名称、强度、运行命令、关键触发点 |
+| `subskills.compact.md` | `source/skills/**/*.md` | 子 SKILL compiled bootloader 索引、局部 manifest/core/outline/fallback 路径 |
+| `gates.compact.md` | `tools/lib/gates.py:GATE_REGISTRY`（含 `hint` 字段） | Gate ID、名称、强度、scope/pass/fail hint、运行命令 |
 | `flow.compact.md` | `tools/lib/state.py:PHASE_FLOWS` | 大/中/小/微四条状态链 |
 | `macros.compact.md` | 固定宏表 | BLOCK、WARN、ASK_USER、LOOP3、EVIDENCE、STATE_WRITE 等 |
+
+子 SKILL 局部 runtime（`runtime/skills/**/`）：
+
+| 局部 slice | 来源 | 内容 |
+| --- | --- | --- |
+| `boot.compact.md` | 固定契约 | 加载顺序（boot -> core -> outline -> fallback） |
+| `core.compact.md` 🆕 v3.10.3 | `source/skill-fallbacks/**/*.full.md` | 可执行快路径：从 full fallback 抽取结构性行（标题/列表/表格/代码块/门禁/命令/编号步骤），丢弃 prose 水词。比 outline（纯导航索引）更细，比 fallback（完整原文）更紧凑 |
+| `outline.compact.md` | full fallback 标题+引用 | 导航索引（heading 表 + inline ref 表），不可单独执行 |
+| `fallback/SKILL.full.md` | full fallback 原文 | 完整源语义，core 不足时延迟加载 |
+
+> **🆕 v3.10.3 core.compact.md 设计原则：**
+> - 借鉴通用编译器 `compile_skill_package.py` 的 `_generic_semantic_core` 思路：sectionize -> 评分 -> 保留结构性行 -> 丢弃 prose。
+> - 遵循"不做密文"原则：core 仍是可读 Markdown（标题/列表/表格/代码块），不是私有短码。
+> - 加载层级：boot（契约）-> **core（可执行快路径）** -> outline（导航）-> fallback（完整）。命中子 skill 后优先读 core，仅当 core 不足时读 fallback。
+>
+> **🆕 v3.10.3 GATE_HINTS 迁移：**
+> - 门禁的 scope/pass/fail hint 从编译器独立字典 `GATE_HINTS` 迁入 `GATE_REGISTRY` 的 `hint` 字段（单一权威源）。
+> - `render_gates_compact` 直接从 `gate["hint"]` 读取，新增门禁只需更新 `GATE_REGISTRY`，不再需要同步编译器字典。
+> - `runtime_fingerprint` 计算移除 `gate_hints`（已包含在 `gates` payload 中）。
 
 暂不编译的内容：
 

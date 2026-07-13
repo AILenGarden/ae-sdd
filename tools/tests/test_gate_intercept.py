@@ -787,11 +787,11 @@ class TestCodingProcessHardGuard:
             tmp_path, phase="coding",
             confirmed_phases=[{"phase": "task-reviewed"}, {"phase": "coding-process"}]  # 齐全
         )
-        # 🆕 v3.8.2：coding 属关联 phase，写 src/ 前须 memory enter
+        # 🆕 v3.10.3：coding 属关联 phase，写 src/ 前须 memory 存在（新语义：create_memory 替代 enter）
         from lib import memory_store
         scope = memory_store.locate_scope(
-            project=str(tmp_path), phase="coding", story="STORY-001")
-        memory_store.enter(scope, actor="test")
+            project=str(tmp_path), entity_type="coding", entity_id="STORY-001")
+        memory_store.create_memory(scope, source_contexts={})
         allowed, reason = check_intercept(
             "Write",
             file_path=str(tmp_path / "src/main/java/Foo.java"),
@@ -927,7 +927,7 @@ class TestMemoryDirLazyInit:
         assert not allowed, (
             "无 stage token 时仍应拒绝写操作，fix 只补目录不复活化门禁: " + reason
         )
-        assert "memory enter" in reason
+        assert "memory create" in reason or "memory" in reason  # 🆕 v3.10.3: 消息改为 memory create
 
     def test_memory_dir_existing_no_op(self, tmp_path):
         """幂等：memory 目录已存在时，进 _check_memory_entered 不应报错或重建。"""
@@ -962,7 +962,7 @@ class TestMemoryDirLazyInit:
         assert not allowed, (
             "无 stage token 时仍应拦截写操作（防 fix 削弱门禁语义）: " + reason
         )
-        assert "memory enter" in reason
+        assert "memory create" in reason or "memory" in reason  # 🆕 v3.10.3: 消息改为 memory create
 
 
 # ─── 🆕 v3.9.21 engage 按需启用门禁 ────────────────────────────────────────────

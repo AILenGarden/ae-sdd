@@ -181,13 +181,10 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | test-review-skill.md |
 | testcase-generate-skill.md |
 | tools/lib/gates.py |
-| {STORY-ID}-CodeReview-AR-r{M}.md |
-| {STORY-ID}-CodeReview-BE-r{M}.md |
-| {STORY-ID}-CodeReview-QA-r{M}.md |
-| {STORY-ID}-CodeReview-v{N}-r{M}.md |
+| {STORY-ID}-CodeReview.md |
 | {STORY-ID}-CodingPlan.md |
-| {STORY-ID}-CodingReport-v{N}-r{M}.md |
-| {STORY-ID}-Report-v{N}-r{M}.md |
+| {STORY-ID}-CodingReport.md |
+| {STORY-ID}-Report.md |
 | {STORY-ID}-追溯矩阵.md |
 | {projectKey}.assets.md |
 | {story-prefix}-Supplement.md |

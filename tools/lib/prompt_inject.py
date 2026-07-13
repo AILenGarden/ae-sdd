@@ -127,50 +127,104 @@ def _update_quick_channel(ade_sdd: Path, user_prompt: str) -> None:
 
 
 # 🆕 v3.8.2：取端注入——memory enter 后的活跃 scope 下注入历史记忆。
-# 解决 memory 只写不读的黑洞问题：LLM 每次对话能看到当前 phase+story 的历史决策。
-# 注入 task/project compact memory，task 优先、project 只补剩余预算；scratch/事件流不注入。
-_MEMORY_INJECT_LIMIT = 8
+# 🆕 v3.10.3: memory 从"5层原文索引"重构为"业务实体树+编译文档容器"。
+# 注入逻辑改为：从对应实体的 memory 读 compact 文档（boot+context+pending）注入。
+# 不再注入 8 条原文索引，而是注入编译后的高密度 compact 全文（远小于重读源上下文）。
+# 过渡期：若 memory 不存在，回退到旧行为（不注入），避免新项目无 memory 时报错。
 
 
 def _inject_memory_block(ade_sdd: Path, phase: str, current_story: str) -> Optional[str]:
-    """构建 ◆ MEMORY 注入块。活跃 scope 返回文本，否则返回 None。
+    """构建 ◆ MEMORY 注入块。
 
-    仅在 memory enter 后未 exit 的活跃 scope 下注入，避免未 enter 时噪声。
-    容错：任何异常静默降级返回 None（与 plugin_loader/drift 探测同模式）。
+    🆕 v3.10.3: 从对应实体的 memory 读 compact 文档注入（boot+context+pending）。
+    若 memory 不存在则返回 None（子流程Agent 首次进入时会 create_memory）。
+
+    容错：任何异常静默降级返回 None。
     """
     try:
-        from lib import memory_gate, memory_store
-        memory_phase = memory_gate.memory_phase_for_state_phase(phase)
-        if not memory_phase:
+        from lib import memory_store
+        entity_type = memory_store.entity_type_for_state_phase(phase)
+        if not entity_type:
             return None
         story = current_story if current_story and current_story != "（未设定）" else None
+        # 确定实体 ID：coding/testcase/story 用 story ID；prd/dr 用 story 的父级（过渡期用 story 兜底）
+        entity_id = story or "default"
         scope = memory_store.locate_scope(
-            project=str(ade_sdd.parent), phase=memory_phase, story=story,
+            project=str(ade_sdd.parent),
+            entity_type=entity_type,
+            entity_id=entity_id,
         )
-        if not memory_store.is_scope_active(scope):
+        if not memory_store.exists_memory(scope):
             return None
-        task_entries = [
-            e for e in memory_store.read(scope, memory_scope="task", limit=0)
-            if e.get("type") == "memory"
-        ]
-        project_entries = [
-            e for e in memory_store.read(scope, memory_scope="project", limit=0)
-            if e.get("type") == "memory"
-        ]
-        task_selected = task_entries[-_MEMORY_INJECT_LIMIT:]
-        project_slots = max(_MEMORY_INJECT_LIMIT - len(task_selected), 0)
-        memory_entries = task_selected + (project_entries[-project_slots:] if project_slots else [])
-        if not memory_entries:
+        mem = memory_store.read_memory(scope)
+        if not mem:
             return None
-        lines = [f"MEMORY compact task-first phase={memory_phase} story={story or '<project>'}"]
-        for e in memory_entries:
-            layer = e.get("layer", "L1")
-            scope_name = e.get("memoryScope") or memory_store.memory_scope_for_layer(layer)
-            kind = e.get("kind", "observation")
-            summary = e.get("summary", "")
-            evidence = e.get("evidence") or []
-            ev_str = ", ".join(evidence) if evidence else "-"
-            lines.append(f"- [{scope_name} {kind}] {summary} ev: {ev_str}")
+        lines = [
+            f"MEMORY compact entity={entity_type}/{entity_id} phase={phase}",
+            "",
+            "## Boot",
+            mem.get("boot", "(empty)"),
+            "",
+            "## Context",
+            mem.get("context", "(empty)"),
+            "",
+            "## Pending",
+            mem.get("pending", "(empty)"),
+        ]
+        # 追加 common（若有）
+        common = memory_store.read_common(scope)
+        if common and common.get("context"):
+            lines.extend(["", "## Common Constraints", common["context"]])
+        return "\n".join(lines)
+    except Exception:
+        return None
+
+
+def _check_compact_trigger(ade_sdd: Path, phase: str, current_story: str) -> Optional[str]:
+    """🆕 v3.10.3: 读 compact-trigger，若存在则从 memory 重载上下文。
+
+    compact-trigger 由 state.prd_complete() 写（claude-code runtime）。
+    本函数补齐读端：读 trigger -> 从 memory 重载 -> 清除 trigger -> 返回重载提示。
+
+    若当前 session 是子流程Agent + memory 存在 -> 调 post_compact_reload 重载完整上下文。
+    否则返回简短重载提示（主流程走 state.json 重建）。
+
+    容错：任何异常静默降级返回 None。
+    """
+    try:
+        from lib import memory_store, state as state_mod
+        trigger = state_mod.read_compact_trigger(ade_sdd.parent)
+        if not trigger:
+            return None
+        # 清除 trigger（防重复触发）
+        state_mod.clear_compact_trigger(ade_sdd.parent)
+
+        # 尝试从 memory 重载（子流程Agent 场景）
+        entity_type = memory_store.entity_type_for_state_phase(phase)
+        story = current_story if current_story and current_story != "（未设定）" else None
+        entity_id = story or "default"
+        reload_msg = ""
+        if entity_type:
+            scope = memory_store.locate_scope(
+                project=str(ade_sdd.parent), entity_type=entity_type, entity_id=entity_id,
+            )
+            if memory_store.exists_memory(scope):
+                mem = memory_store.post_compact_reload(scope)
+                reload_msg = (
+                    f"MEMORY RELOADED from compact (entity={entity_type}/{entity_id})\n"
+                    f"boot/current_series: see memory block above\n"
+                    f"pending items: see memory block above\n"
+                )
+
+        lines = [
+            "COMPACT RELOAD",
+            f"trigger: prdId={trigger.get('prdId', '?')}, triggeredAt={trigger.get('triggeredAt', '?')}",
+        ]
+        if reload_msg:
+            lines.append(reload_msg.rstrip())
+        else:
+            lines.append("(no subprocess memory to reload; main flow resumes from state.json)")
+        lines.append("→ 续接当前步骤，不跳步。")
         return "\n".join(lines)
     except Exception:
         return None
@@ -195,6 +249,17 @@ def inject(
 
     ade_sdd = paths.locate_project_ae_sdd(project_dir)
     if ade_sdd is None:
+        # 🆕 v3.10.2 修复死锁：pending-init 标记原本只在"后来找到了 .ae-sdd/"
+        # 分支里才会被清除（见下方 _clear_pending_init 调用）。但对永远不会
+        # 存在 .ae-sdd/ 的仓库（如本仓库自身，纯工具源码，不是 ae-sdd 落地目标
+        # 项目），标记一旦写入就没有任何自救路径——快速通道同样要求先定位到
+        # .ae-sdd/ 才生效，_deny_response 里"说'走快速通道'"的提示因此指向
+        # 死路。这里让 disengage 词（"退出 ae-sdd"/"不锁了" 等）独立于
+        # .ae-sdd/ 是否存在都能清除标记，与 mark_session_engaged 的触发词
+        # 对称，不依赖项目已初始化。
+        if any(m in user_prompt for m in AE_SDD_DISENGAGE_MARKERS):
+            _clear_pending_init(project_dir)
+            return {}
         if _is_ae_sdd_triggered:
             return _inject_uninitialized_block(project_dir)
         return {}
@@ -338,12 +403,15 @@ def inject(
                 if hit:
                     sp_t, _ = hit
                     top_node = sp_t.parent.name
+                    # 🆕 v3.10.1：目录名可能带 UUID 前缀（{uuid}-PRD-IM-CS），
+                    # 剥离后得到纯业务名再切片取 feature，避免切到 UUID 部分
+                    biz_node = paths.strip_uuid_prefix(top_node)
                     # 简化：用顶层目录名作为 features key
-                    if top_node.startswith("PRD-"):
-                        has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="PRD", features={"prd_feature": top_node[4:]})
-                    elif top_node.startswith("DR-"):
-                        has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="DR", features={"dr_feature": top_node[3:]})
-                    elif top_node.startswith("Story-"):
+                    if biz_node.startswith("PRD-"):
+                        has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="PRD", features={"prd_feature": biz_node[4:]})
+                    elif biz_node.startswith("DR-"):
+                        has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="DR", features={"dr_feature": biz_node[3:]})
+                    elif biz_node.startswith("Story-"):
                         has_token = session_mod.has_valid_entry_token(ade_sdd, top_node="STORY", features={"story_ids": [cur_story]})
                     else:
                         has_token = session_mod.has_valid_entry_token(ade_sdd, cur_story)
@@ -448,6 +516,12 @@ def inject(
     memory_block = _inject_memory_block(ade_sdd, phase, current_story)
     if memory_block:
         lines.append(memory_block)
+
+    # 🆕 v3.10.3: compact-trigger 读端--compact 后从 memory 重载上下文。
+    # 补齐 state.py:974 写端的读端（之前只写不读）。
+    compact_reload = _check_compact_trigger(ade_sdd, phase, current_story)
+    if compact_reload:
+        lines.append(compact_reload)
 
     return {
         "hookSpecificOutput": {

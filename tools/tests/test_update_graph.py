@@ -561,12 +561,12 @@ class TestSyncManifest(unittest.TestCase):
     """S-4 sync manifest：生成 / 漂移检测 / 缺失兜底。"""
 
     def test_generate_manifest_structure(self):
-        """生成的 manifest 含 24 条 UG 规则 + trigger/affected sha256"""
+        """生成的 manifest 含 25 条 UG 规则 + trigger/affected sha256"""
         manifest = ug.generate_sync_manifest(REPO_ROOT)
         self.assertNotIn("error", manifest)
         self.assertEqual(manifest["generatorVersion"], "1.0")
         self.assertIn("generatedAt", manifest)
-        self.assertEqual(len(manifest["rules"]), 24)
+        self.assertEqual(len(manifest["rules"]), 25)
         # 每条规则有 id/name/trigger_files/affected_files
         for rule in manifest["rules"]:
             self.assertIn("id", rule)

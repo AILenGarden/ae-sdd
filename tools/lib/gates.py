@@ -69,81 +69,118 @@ class GateResult:
 
 
 # 门禁元信息（GATE_REGISTRY 实际 35 条；v3.10.0 砍 Task phase 后 G-04/G-05/G-06/G-TASK-CTX 仍注册但不再在 PHASE_ENTRY_GATES 中触发）
+# 🆕 v3.10.3 hint 字段迁入本注册表（单一权威源）：每个 gate 自带 scope/pass/fail 三元组，
+# 编译器 render_gates_compact 直接从 gate["hint"] 读取，不再维护独立的 GATE_HINTS 字典。
 GATE_REGISTRY: list[dict] = [
-    {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker"},
-    {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker"},
-    {"id": "G-02", "name": "Story 文档存在",       "severity": "blocker"},
-    {"id": "G-03", "name": "Story Review 通过",    "severity": "blocker"},
-    {"id": "G-04", "name": "TestCase 文档存在",    "severity": "blocker"},
-    {"id": "G-05", "name": "Task 文档存在",        "severity": "blocker"},
-    {"id": "G-06", "name": "Task Review 通过",     "severity": "blocker"},
-    {"id": "G-07", "name": "CodingPlan 存在",      "severity": "blocker"},
-    {"id": "G-08", "name": "CodingPlan 14 门禁通过", "severity": "blocker"},
-    {"id": "G-09", "name": "测试真实性扫描通过",   "severity": "blocker"},
-    {"id": "G-10", "name": "测试报告存在",         "severity": "blocker"},
-    {"id": "G-11", "name": "Coding 报告存在",      "severity": "blocker"},
-    {"id": "G-12", "name": "CodeReview 报告存在",  "severity": "blocker"},
-    {"id": "G-13", "name": "全链路对称性核查通过", "severity": "blocker"},
-    # 🆕 v3.4.0 中段门禁（对标建议书1/2/4 — 补齐"两头强中间空"的中段强制力）
+    {"id": "G-00", "name": "项目资产完整性",       "severity": "blocker",
+     "hint": {"scope": "entry", "pass": "project assets exist and 7-layer index is complete", "fail": "BLOCK -> project-assets-update"}},
+    {"id": "G-01", "name": "DR 文档存在",          "severity": "blocker",
+     "hint": {"scope": "before Story/Task generation", "pass": "DR document exists (large route)", "fail": "BLOCK"}},
+    {"id": "G-02", "name": "Story 文档存在",       "severity": "blocker",
+     "hint": {"scope": "before TestCase/Coding generation", "pass": "Story document exists", "fail": "BLOCK"}},
+    {"id": "G-03", "name": "Story Review 通过",    "severity": "blocker",
+     "hint": {"scope": "before TestCase generation", "pass": "Story review loop exited normally", "fail": "BLOCK -> re-review"}},
+    {"id": "G-04", "name": "TestCase 文档存在",    "severity": "blocker",
+     "hint": {"scope": "before Coding generation", "pass": "TestCase document exists", "fail": "BLOCK"}},
+    {"id": "G-05", "name": "Task 文档存在",        "severity": "blocker",
+     "hint": {"scope": "before Coding execute (legacy)", "pass": "Task document exists (v3.10 skeleton merged into coding-process)", "fail": "BLOCK"}},
+    {"id": "G-06", "name": "Task Review 通过",     "severity": "blocker",
+     "hint": {"scope": "before Coding execute (legacy)", "pass": "Task review passed (v3.10 merged into coding-process)", "fail": "BLOCK"}},
+    {"id": "G-07", "name": "CodingPlan 存在",      "severity": "blocker",
+     "hint": {"scope": "before coding execute", "pass": "CodingPlan document exists", "fail": "BLOCK"}},
+    {"id": "G-08", "name": "CodingPlan 14 门禁通过", "severity": "blocker",
+     "hint": {"scope": "before coding execute", "pass": "CodingPlan 14 gates are present", "fail": "BLOCK"}},
+    {"id": "G-09", "name": "测试真实性扫描通过",   "severity": "blocker",
+     "hint": {"scope": "test review", "pass": "test authenticity scanner passes", "fail": "BLOCK"}},
+    {"id": "G-10", "name": "测试报告存在",         "severity": "blocker",
+     "hint": {"scope": "after test run", "pass": "test report document exists", "fail": "BLOCK -> run test"}},
+    {"id": "G-11", "name": "Coding 报告存在",      "severity": "blocker",
+     "hint": {"scope": "after coding", "pass": "coding report document exists", "fail": "BLOCK"}},
+    {"id": "G-12", "name": "CodeReview 报告存在",  "severity": "blocker",
+     "hint": {"scope": "after code review", "pass": "CodeReview report document exists", "fail": "BLOCK"}},
+    {"id": "G-13", "name": "全链路对称性核查通过", "severity": "blocker",
+     "hint": {"scope": "delivery check", "pass": "full-chain symmetry check passes", "fail": "BLOCK -> fix gaps"}},
+    # 🆕 v3.4.0 中段门禁（对标建议书1/2/4 - 补齐"两头强中间空"的中段强制力）
     # G-14 CodingPlan-Story 一致性：Plan 涉及接口/DO/AC 与 Story 可对应（建议书4 G-08-15）
-    {"id": "G-14", "name": "CodingPlan-Story 一致性", "severity": "blocker"},
+    {"id": "G-14", "name": "CodingPlan-Story 一致性", "severity": "blocker",
+     "hint": {"scope": "before coding execute", "pass": "CodingPlan references Story and aligns with AC", "fail": "BLOCK"}},
     # G-CODEPLAN-SRC CodingPlan 源码核对：新增/修改类建模范式须附已读源码标记（建议书1）
-    {"id": "G-CODEPLAN-SRC", "name": "CodingPlan 源码核对", "severity": "blocker"},
+    {"id": "G-CODEPLAN-SRC", "name": "CodingPlan 源码核对", "severity": "blocker",
+     "hint": {"scope": "before coding execute", "pass": "CodingPlan class skeleton has source-read evidence", "fail": "BLOCK"}},
     # G-DOC-STORAGE 文档落地存放合规：产物路径/命名须经 resolve_path 推导（建议书2）
-    {"id": "G-DOC-STORAGE", "name": "文档落地存放合规", "severity": "blocker"},
+    {"id": "G-DOC-STORAGE", "name": "文档落地存放合规", "severity": "blocker",
+     "hint": {"scope": "before doc write", "pass": "path/name resolved by document-storage", "fail": "BLOCK"}},
     # 🆕 v4.1 G-PATH 路径越界检测：母版 source/ 下 SKILL/template 文档不得硬编码产出路径，
     # 须声明调用 document-storage（防自身路径规则漂移，与 plugin_content_scan PC-009/010 分层防护）
-    {"id": "G-PATH", "name": "路径越界检测", "severity": "blocker"},
-    # 🆕 v3.2 G-RA 需求分析准入门卫（对标 SKILL.md §🛡️ G-RA）— 把 RA 16 道闸
+    {"id": "G-PATH", "name": "路径越界检测", "severity": "blocker",
+     "hint": {"scope": "build/update check", "pass": "source docs do not hardcode output paths", "fail": "BLOCK"}},
+    # 🆕 v3.2 G-RA 需求分析准入门卫（对标 SKILL.md §🛡️ G-RA）- 把 RA 16 道闸
     # 的核心条款从"纸面规则"变成"可执行门禁"，与 Coding G-08/G-09 对等。
-    {"id": "G-RA-1", "name": "RA 文档存在",          "severity": "blocker"},
-    {"id": "G-RA-2", "name": "RA 8 维度完整",        "severity": "blocker"},
-    {"id": "G-RA-3", "name": "RA 衍生章节完整",      "severity": "blocker"},
-    {"id": "G-RA-4", "name": "RA 真实性扫描通过",    "severity": "blocker"},
-    # 🆕 2026-06-27 RA 流程违规审计（建议书 §3.4）— 扫 RA 文档是否走完 RAModel 12 维 +
+    {"id": "G-RA-1", "name": "RA 文档存在",          "severity": "blocker",
+     "hint": {"scope": "before DR/Story/Task generation", "pass": "RA document exists or route is exempt", "fail": "BLOCK"}},
+    {"id": "G-RA-2", "name": "RA 8 维度完整",        "severity": "blocker",
+     "hint": {"scope": "before DR/Story/Task generation", "pass": "RA dimensions and RAModel are complete", "fail": "BLOCK"}},
+    {"id": "G-RA-3", "name": "RA 衍生章节完整",      "severity": "blocker",
+     "hint": {"scope": "before DR/Story/Task generation", "pass": "RA derivative sections are complete", "fail": "BLOCK"}},
+    {"id": "G-RA-4", "name": "RA 真实性扫描通过",    "severity": "blocker",
+     "hint": {"scope": "before DR/Story/Task generation", "pass": "RA authenticity scanner passes", "fail": "BLOCK"}},
+    # 🆕 2026-06-27 RA 流程违规审计（建议书 §3.4）- 扫 RA 文档是否走完 RAModel 12 维 +
     # 8 维度 + 5 问自检 + 缺口管理 + 规模裁定 + RA-G01~16 闸判定，堵"AI 跳过 RA 完整流程直接出 RA 文档"
-    {"id": "G-RA-FLOW-VIOLATION", "name": "RA 流程违规审计", "severity": "blocker"},
+    {"id": "G-RA-FLOW-VIOLATION", "name": "RA 流程违规审计", "severity": "blocker",
+     "hint": {"scope": "before downstream generation", "pass": "RA flow violation scanner passes", "fail": "BLOCK"}},
     # 🆕 v3.5.9 RA 机械派生深度通过（防「形式通过、内容空转」）
     # 与 G-RA-3（章节锚点存在）/G-RA-4（无 fabricate/vague）/G-RA-FLOW-VIOLATION（流程完整性）
-    # 正交：本门禁验证 E.5/G.5/H.6/H.5 规定的「每行 R→R′→AC 机械追问」是否真做了。
-    # 5 条规则：D1 §6.5 主规则机械派生 + D2 R′→AC 链接 + D3 §8.6 覆盖率真实重算
+    # 正交：本门禁验证 E.5/G.5/H.6/H.5 规定的「每行 R->R′->AC 机械追问」是否真做了。
+    # 5 条规则：D1 §6.5 主规则机械派生 + D2 R′->AC 链接 + D3 §8.6 覆盖率真实重算
     #        + D4 §9-ter 五问机械覆盖 + D5 §9-bis 业务模式六选一
-    {"id": "G-RA-5", "name": "RA 机械派生深度通过",  "severity": "blocker"},
+    {"id": "G-RA-5", "name": "RA 机械派生深度通过",  "severity": "blocker",
+     "hint": {"scope": "before DR/Story/Task generation", "pass": "RA mechanical derivation scanner passes", "fail": "BLOCK"}},
     # 🆕 v3.5.18 RA 实现视角完整性：挖出数据源、数据流、定义/不变量、复用证据、
     # 高成本/难实现设计反驳、开发者疑问答复、DR 交接包，防 RA 只能写产品话术而无法支撑实现。
-    {"id": "G-RA-6", "name": "RA 实现视角完整性通过",  "severity": "blocker"},
-    {"id": "G-CODE-1", "name": "Coding 真实性扫描通过", "severity": "blocker"},
+    {"id": "G-RA-6", "name": "RA 实现视角完整性通过",  "severity": "blocker",
+     "hint": {"scope": "before DR/Story/Task generation", "pass": "RA implementation-view scanner passes", "fail": "BLOCK"}},
+    {"id": "G-CODE-1", "name": "Coding 真实性扫描通过", "severity": "blocker",
+     "hint": {"scope": "coding/code review", "pass": "coding authenticity scanner passes", "fail": "BLOCK"}},
     # 🆕 v3.5.7 项目侧记忆-配置路径一致性：项目 AGENTS.md/.harness/memory/MEMORY.md 等
     # "文档工作区"表述须与 .ae-sdd/config.yaml 的 docWorkspacePath 一致，防旧记忆劫持新配置
     # （实测案例：life 项目 MEMORY 写 D:\Item\doc 与 config 写 D:\Item\life 冲突，RA 落错位置）
-    {"id": "G-DOC-CONSISTENCY", "name": "项目侧记忆-配置路径一致性", "severity": "blocker"},
+    {"id": "G-DOC-CONSISTENCY", "name": "项目侧记忆-配置路径一致性", "severity": "blocker",
+     "hint": {"scope": "entry/doc workspace check", "pass": "project memory path agrees with config", "fail": "BLOCK"}},
     # 🆕 v3.5.12 review-loop 退出条件门禁：review 节点（story/dr/task/code review）切相前，
     # 校验 reviewLoop.exitReason 满足协议（normal 需 dryCounter≥2 / escalate 已升级用户）。
     # 治 P0-1/4：堵 root agent 单轮就自称"连续2轮无新增"退出，无机械反驳。
     # 注：本门禁依赖 root agent 跑过 `ae-sdd review-loop collect`（无 reviewLoop 字段时降级 skip）
-    {"id": "G-REVIEW-LOOP", "name": "review-loop 退出条件通过", "severity": "blocker"},
+    {"id": "G-REVIEW-LOOP", "name": "review-loop 退出条件通过", "severity": "blocker",
+     "hint": {"scope": "review phase transition", "pass": "review-loop exit condition is satisfied", "fail": "BLOCK"}},
     # 🆕 v3.5.13 G-09B reviewer 独立性硬门禁：review 节点切相时机械派生 Tier，
     # 校验 state.activeAgents 有 ≥Tier 个 sessionId≠root 的 reviewer。
-    # 独立于 review-loop CLI——root 不调 collect 也会跑（堵"root 总派给自己"）。
+    # 独立于 review-loop CLI--root 不调 collect 也会跑（堵"root 总派给自己"）。
     # Tier 1（微/小任务 + 无关键决策）豁免；Tier 2/3 无豁免。
-    {"id": "G-09B", "name": "reviewer 独立性通过（多 reviewer 机械强制）", "severity": "blocker"},
+    {"id": "G-09B", "name": "reviewer 独立性通过（多 reviewer 机械强制）", "severity": "blocker",
+     "hint": {"scope": "review phase transition", "pass": "reviewer independence requirement passes", "fail": "BLOCK"}},
     # 🆕 v3.9.20 G-REVIEW-DEPTH Review 深度门禁：禁裸✅ + 零发现举证。
     # 治根因：Review 无深度门禁，reviewer 可把所有维度标"无缺陷"而所有门禁照过
     # （code-review-skill L21-24 坦承"当前为软门禁 report-only"）。本门禁查报告内容证据。
-    {"id": "G-REVIEW-DEPTH", "name": "Review 深度（禁裸✅ + 零发现举证）", "severity": "blocker"},
+    {"id": "G-REVIEW-DEPTH", "name": "Review 深度（禁裸✅ + 零发现举证）", "severity": "blocker",
+     "hint": {"scope": "review phase transition", "pass": "review report has depth evidence (no bare ✅, zero-finding justified)", "fail": "BLOCK -> add evidence or findings"}},
     # 🆕 v3.8.0 G-AUTO-CONSENSUS 自动化联审共识门禁：自动化模式下审核点切相前
     # 校验 state.reviewConsensus[point].passed=true + reviewer 独立性（复用 G-09B 逻辑）。
-    # 非自动化模式 / 审核点不在白名单 → skipped（回退人工审核）。
+    # 非自动化模式 / 审核点不在白名单 -> skipped（回退人工审核）。
     # 注：本门禁需读 config.yaml 判自动化模式，走 check_all 特判传 master_source。
-    {"id": "G-AUTO-CONSENSUS", "name": "自动化联审共识通过", "severity": "blocker"},
-    # 🆕 v3.9.1 上下文加载准入门禁（注册表模式）— 对齐 RA/Coding 的「prose+CLI+门禁」三合一，
+    {"id": "G-AUTO-CONSENSUS", "name": "自动化联审共识通过", "severity": "blocker",
+     "hint": {"scope": "automation mode review transition", "pass": "state.reviewConsensus[point].passed=true + reviewer independence", "fail": "BLOCK (non-automation or off-whitelist -> skipped)"}},
+    # 🆕 v3.9.1 上下文加载准入门禁（注册表模式）- 对齐 RA/Coding 的「prose+CLI+门禁」三合一，
     # 把 DR/Story/TestCase/Task 四组的「第零步准入检查」从 prose 变成机械阻断。
     # 治「AI 不读 PRD/DR/项目资产/约束就过门禁切相」的真空带。
     # 注册表 CONTEXT_GATE_REGISTRY 定义各 gate 的 scale 适用范围 + required 上下文清单。
-    {"id": "G-DR-CTX", "name": "DR 上下文加载", "severity": "blocker"},
-    {"id": "G-STORY-CTX", "name": "Story 上下文加载", "severity": "blocker"},
-    {"id": "G-TESTCASE-CTX", "name": "TestCase 上下文加载", "severity": "blocker"},
-    {"id": "G-TASK-CTX", "name": "Task 上下文加载", "severity": "blocker"},
+    {"id": "G-DR-CTX", "name": "DR 上下文加载", "severity": "blocker",
+     "hint": {"scope": "before DR generation", "pass": "required DR contexts loaded (PRD/assets/constraints/standards)", "fail": "BLOCK -> load CONTEXT_GATE_REGISTRY[G-DR-CTX].required"}},
+    {"id": "G-STORY-CTX", "name": "Story 上下文加载", "severity": "blocker",
+     "hint": {"scope": "before Story generation", "pass": "required Story contexts loaded (constraints/assets/DR/PRD/dependsStory/sourceTrace/standardsRef/outputBoundary)", "fail": "BLOCK -> load CONTEXT_GATE_REGISTRY[G-STORY-CTX].required"}},
+    {"id": "G-TESTCASE-CTX", "name": "TestCase 上下文加载", "severity": "blocker",
+     "hint": {"scope": "before TestCase generation", "pass": "required TestCase contexts loaded", "fail": "BLOCK -> load CONTEXT_GATE_REGISTRY[G-TESTCASE-CTX].required"}},
+    {"id": "G-TASK-CTX", "name": "Task 上下文加载", "severity": "blocker",
+     "hint": {"scope": "before Task generation (legacy)", "pass": "required Task contexts loaded (v3.10 merged into coding-process)", "fail": "BLOCK -> load CONTEXT_GATE_REGISTRY[G-TASK-CTX].required"}},
 ]
 
 # Story Review 之后允许的 phase
@@ -729,6 +766,23 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                           f"扫描器 JSON 输出无法解析: {e}",
                           f"stdout 前 200 字符: {result.stdout[:200]}")
 
+    # An existing baseline is an auditable quality input.  A tampered file is
+    # an integrity failure, even when the current scan happens to be clean.
+    baseline_payload = None
+    baseline_error = None
+    try:
+        from lib import baseline as baseline_mod
+        baseline_payload, baseline_error = baseline_mod.load(project_dir, "G-CODE-1")
+    except Exception as exc:
+        baseline_error = f"baseline-error: {exc}"
+    if baseline_error == "tampered":
+        return GateResult(
+            "G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+            "G-CODE-1 baseline 完整性校验失败（文件可能被篡改）",
+            "恢复 baseline 或显式重新创建并记录用户批准",
+            details={"scanned": True, "baselineStatus": "BLOCK_BASELINE_INVALID"},
+        )
+
     status = report.get("status", "UNKNOWN")
     java_test_files = report.get("javaTestFiles", 0)
     blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
@@ -854,6 +908,40 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
     n_total = len(report.get("findings", []))
 
     if status != "PASS" or blockers > 0:
+        # P1: an explicit, integrity-checked baseline can separate repository
+        # debt from Story delta. Missing/tampered baselines retain legacy full
+        # blocking behavior; baseline creation is never automatic here.
+        try:
+            if baseline_payload is not None and baseline_error is None:
+                touched = st.get("changedPaths") or st.get("changedFiles") or []
+                delta = baseline_mod.compare(
+                    baseline_payload,
+                    report.get("findings", []),
+                    ruleset_fingerprint=baseline_payload.get("rulesetFingerprint", ""),
+                    touched_paths=touched,
+                )
+                if delta["status"] == "PASS_WITH_BASELINE_DEBT" and not delta["touchedDebt"]:
+                    return GateResult(
+                        "G-CODE-1", "Coding 真实性扫描通过", "warn", True,
+                        f"增量扫描通过，保留 {delta['baseline']} 项 baseline debt（新增 blocker=0）",
+                        "继续治理 baseline debt；本 Story 不因历史债务阻断",
+                        details={"scanned": True, "baselineStatus": delta["status"],
+                                 "baselineFindings": delta["baseline"], "currentFindings": delta["current"],
+                                 "newFindings": len(delta["new"]), "touchedDebt": 0},
+                    )
+                if delta["status"] == "BLOCK_TOUCHED_DEBT":
+                    return GateResult(
+                        "G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                        f"Story 修改触及 {len(delta['touchedDebt'])} 项 baseline debt",
+                        "修复被触及的历史债务，或提交有证据的用户授权",
+                        details={"scanned": True, "baselineStatus": delta["status"],
+                                 "baselineFindings": delta["baseline"], "currentFindings": delta["current"],
+                                 "newFindings": len(delta["new"]), "touchedDebt": len(delta["touchedDebt"])},
+                    )
+        except Exception:
+            # Baseline support is additive; a malformed optional baseline must
+            # fall back to the legacy full-scan blocker path.
+            pass
         blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
                                 if f.get("severity") == "BLOCKER"})
         return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
@@ -1946,6 +2034,27 @@ _PATH_DECLARATION_RE = re.compile(
 # docs/ 整体跳过（迁移指南/约定文档会引用旧路径作"迁移说明"，非 SKILL 路径定义）
 _PATH_SCAN_SKIP_DIRS = ("node_modules/", ".git/", "dist/", "CHANGELOG/", "docs/")
 
+_DOCUMENT_STORAGE_SOURCE_ARTIFACTS = frozenset({
+    "skills/cross-cutting/document-storage-skill.md",
+    "skill-fallbacks/skills/cross-cutting/document-storage-skill.full.md",
+})
+_DOCUMENT_STORAGE_RUNTIME_ARTIFACTS = frozenset({
+    "runtime/skills/cross-cutting/document-storage-skill/fallback/skill.full.md",
+})
+
+
+def _is_document_storage_skill_artifact(md_path: Path, scan_root: Path) -> bool:
+    """Return true only for canonical document-storage source/runtime artifacts."""
+    try:
+        rel = md_path.relative_to(scan_root).as_posix().casefold()
+    except ValueError:
+        return False
+
+    allowed = _DOCUMENT_STORAGE_SOURCE_ARTIFACTS
+    if scan_root.name.casefold() != "source":
+        allowed = allowed | _DOCUMENT_STORAGE_RUNTIME_ARTIFACTS
+    return rel in allowed
+
 
 def check_g_path(master_source: Optional[Path], project_dir: Path,
                  st: dict, current_story: str) -> GateResult:
@@ -1973,10 +2082,6 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
                           "确认 master_source 定位正确",
                           details={"scanned": 0, "violations": [], "skipped": "no_source"})
 
-    # document-storage-skill.md 是路径 SSOT 持有者，其所有路径引用（定义/deprecation 说明）均合法，
-    # 整体豁免（否则 §0.5.3/§2.5 兼容层的迁移说明会被误报为越界）
-    DOC_STORAGE_SKILL = "document-storage-skill.md"
-
     violations: list[dict] = []
     scanned = 0
     for md_path in source_dir.rglob("*.md"):
@@ -1987,8 +2092,8 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
         rel_str = str(rel).replace("\\", "/")
         if any(seg in rel_str for seg in _PATH_SCAN_SKIP_DIRS):
             continue
-        if md_path.name == DOC_STORAGE_SKILL:
-            continue  # SSOT 持有者豁免
+        if _is_document_storage_skill_artifact(md_path, source_dir):
+            continue  # SSOT source and compiler-derived fallbacks are equivalent artifacts
         scanned += 1
         if scanned > 500:  # 性能护栏
             break
@@ -2022,8 +2127,11 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
     project_scanned = 0
     project_scan_targets: list[Path] = []
     ae_sdd_dir = project_dir / ".ae-sdd"
-    if ae_sdd_dir.is_dir():
-        project_scan_targets.extend(ae_sdd_dir.rglob("*.md"))
+    # Project-side G-PATH scope is limited to declared memory inputs.  Drafts
+    # are review/process artifacts, not canonical project memory documents.
+    memory_dir = ae_sdd_dir / "memory"
+    if memory_dir.is_dir():
+        project_scan_targets.extend(memory_dir.rglob("*.md"))
     for mem_name in ("AGENTS.md", "CLAUDE.md", "MEMORY.md"):
         mem = project_dir / mem_name
         if mem.is_file():
@@ -2038,7 +2146,10 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
         except ValueError:
             continue
         rel_str = str(rel).replace("\\", "/")
-        if md_path.name == DOC_STORAGE_SKILL:
+        # Project-side memory is outside the master source scan root.  Apply
+        # the same strict layout matcher without restoring the old basename
+        # exemption; project copies must still be scanned.
+        if _is_document_storage_skill_artifact(md_path, project_dir):
             continue
         project_scanned += 1
         if project_scanned > 200:
@@ -2197,8 +2308,7 @@ def check_g_doc_consistency(project_dir: Path, st: dict, current_story: str) -> 
 def check_g_review_loop(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-REVIEW-LOOP review-loop 退出条件通过（🆕 v3.5.12，治 P0-1/4）。
 
-    校验 review 节点（story-reviewed/testcase-reviewed/dr-reviewed/task-reviewed/code-reviewed）切相前，
-    reviewLoop 状态满足退出条件（协议1 normal 需 dryCounter≥2 / 协议2 escalate 已升级用户）。
+    校验 review 节点切相前，Review Batch v2 已达到风险策略退出条件；旧 state 走兼容校验。
 
     降级策略：若 state 无 reviewLoop 字段（root 未跑过 review-loop CLI）→ skip（warn 不阻断）。
     这是兼容旧 state.json 的策略——本门禁只在 root 主动启用 review-loop CLI 后生效，
@@ -2231,7 +2341,7 @@ def check_g_review_loop(project_dir: Path, st: dict, current_story: str) -> Gate
                                    "round": rl.get("round")})
     return GateResult("G-REVIEW-LOOP", name, "blocker", False,
                       f"review-loop 未达退出条件：{reason}",
-                      "跑 `ae-sdd review-loop collect` 推进轮次直到连续2轮无新增（normal）或升级用户（escalate）",
+                      "跑 `ae-sdd review-loop collect` 推进有效 batch；平台失败只重试失败角色，预算耗尽进入 STALLED",
                       details={"exitReason": rl.get("exitReason"),
                                "dryCounter": rl.get("dryCounter"),
                                "round": rl.get("round")})
@@ -2337,7 +2447,7 @@ def check_g09b(project_dir: Path, st: dict, current_story: str) -> GateResult:
                                    "hintsPreview": hints_preview})
 
     # Tier 2/3 还要求 root 跑过 review-loop（堵"派了多 reviewer 但单轮就退"）
-    # G-REVIEW-LOOP 负责"跑满2轮"，G-09B 负责"启动了 review-loop"
+    # G-REVIEW-LOOP 负责 Review Batch 风险策略退出，G-09B 负责启动与独立 session
     if not st.get("reviewLoop"):
         return GateResult("G-09B", name, "blocker", False,
                           f"Tier {tier} 但未启动 review-loop（无 reviewLoop 字段）",
@@ -2528,7 +2638,8 @@ CONTEXT_GATE_REGISTRY: dict[str, dict] = {
         # 🆕 v3.9.20: standardsRef 升级为真"已引用"门禁（查产物证据，不查行为）
         #              + scales 扩到 {大,中,小,微}，取消小/微豁免（小/微走轻量阈值）
         "required": ["constraints", "assets", "DR", "PRD",
-                     "dependsStory", "sourceTrace", "standardsRef"],
+                     "dependsStory", "sourceTrace", "standardsRef",
+                     "outputBoundary"],
     },
     "G-TESTCASE-CTX": {
         "name": "TestCase 上下文加载",
@@ -2703,6 +2814,50 @@ def _check_standards_referenced(project_dir: Path, current_story: str,
     return True, "", hit_categories
 
 
+_STORY_FORBIDDEN_HEADINGS = (
+    "变更历史", "CHANGELOG", "生成过程", "撰写过程", "执行过程",
+    "门禁记录", "门禁结果", "REVIEW 记录", "REVIEW 过程", "评审过程",
+    "来源追溯报告", "AGENT 执行记录", "DR 文档", "DR 正文", "DR 草稿",
+)
+_STORY_FORBIDDEN_ARTIFACT_REFS = (
+    "STORYGENERATEPLAN", "STORY_SOURCE_TRACE", "STORY_WRITER_REPORT",
+    "DR_SUPPLEMENT",
+)
+
+
+def _check_story_output_boundary(project_dir: Path, current_story: str) -> tuple[bool, str]:
+    """Story 正文只承载当前契约，不承载生成过程或旁路文档。"""
+    if not current_story:
+        return False, "state.currentStory 为空"
+
+    story_doc = paths.find_doc(project_dir, current_story, ".md")
+    if story_doc is None:
+        return False, f"未找到 Story 文档 {current_story}"
+
+    try:
+        content = story_doc.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return False, f"Story 文档不可读：{exc}"
+
+    violations: list[str] = []
+    for line in content.splitlines():
+        heading = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
+        if not heading:
+            continue
+        normalized = heading.group(1).upper()
+        if any(keyword.upper() in normalized for keyword in _STORY_FORBIDDEN_HEADINGS):
+            violations.append(f"过程型章节：{heading.group(1)}")
+
+    upper_content = content.upper()
+    for artifact in _STORY_FORBIDDEN_ARTIFACT_REFS:
+        if artifact in upper_content:
+            violations.append(f"过程/旁路产物引用：{artifact}")
+
+    if violations:
+        return False, "；".join(dict.fromkeys(violations))
+    return True, ""
+
+
 def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
                           gate_id: str) -> GateResult:
     """上下文加载准入门禁统一实现（注册表驱动）。
@@ -2805,7 +2960,10 @@ def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
             status["DR"] = ok
             if not ok:
                 missing.append("DR 文档")
-                missing_hints.append("跑 dr-generate-skill 生成 DR")
+                missing_hints.append(
+                    "Story 链路只读 DR；停止并向用户报告缺少 DR，"
+                    "不得在 Story 任务中运行 dr-generate-skill"
+                )
         elif key == "Story":
             if not current_story:
                 status["Story"] = False
@@ -2860,6 +3018,15 @@ def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
                     "在 Story 正文引用所遵循的约束文档标准（如分层架构/参数化查询/DDL 约束/"
                     "单元测试覆盖率等具体条目），证明已加载并遵循项目标准。"
                     f"大/中链需 ≥3 个约束类别，小/微链需 ≥1 个。当前命中：{hit or '无'}"
+                )
+        elif key == "outputBoundary":
+            ok, detail = _check_story_output_boundary(project_dir, current_story)
+            status["outputBoundary"] = ok
+            if not ok:
+                missing.append(f"Story 输出边界：{detail}")
+                missing_hints.append(
+                    "删除 Story 中的生成/评审/门禁过程、CHANGELOG/变更历史、"
+                    "DR 正文/草稿及 Plan/SourceTrace/WriterReport 引用后重跑门禁"
                 )
 
     if missing:

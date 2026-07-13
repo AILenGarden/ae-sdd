@@ -88,13 +88,29 @@ class TestSkillRuntimeCompiler(unittest.TestCase):
         child_fallback = self.dist / "runtime" / "skills" / "child-skill" / "fallback" / "SKILL.full.md"
         child_manifest = self.dist / "runtime" / "skills" / "child-skill" / "manifest.json"
         child_outline = self.dist / "runtime" / "skills" / "child-skill" / "outline.compact.md"
+        child_core = self.dist / "runtime" / "skills" / "child-skill" / "core.compact.md"
         self.assertTrue(child_entry.is_file())
         self.assertTrue(child_fallback.is_file())
         self.assertTrue(child_manifest.is_file())
         self.assertTrue(child_outline.is_file())
+        self.assertTrue(child_core.is_file(), "core.compact.md must be generated for each subskill")
         self.assertIn("compiled: true", child_entry.read_text(encoding="utf-8"))
         self.assertIn("Compiled Sub-SKILL Entry", child_entry.read_text(encoding="utf-8"))
         self.assertEqual(child_fallback.read_text(encoding="utf-8"), "# Child\n")
+
+        # core.compact.md must have the executable-core header + fallback guard.
+        core_text = child_core.read_text(encoding="utf-8")
+        self.assertIn("Executable Core Compact", core_text)
+        self.assertIn("Fallback Guard", core_text)
+
+        # child manifest load_order must include core.compact.md between boot and outline.
+        child_manifest_parsed = json.loads(child_manifest.read_text(encoding="utf-8"))
+        self.assertIn("runtime/skills/child-skill/core.compact.md", child_manifest_parsed["load_order"])
+        boot_idx = child_manifest_parsed["load_order"].index("runtime/skills/child-skill/boot.compact.md")
+        core_idx = child_manifest_parsed["load_order"].index("runtime/skills/child-skill/core.compact.md")
+        outline_idx = child_manifest_parsed["load_order"].index("runtime/skills/child-skill/outline.compact.md")
+        self.assertLess(boot_idx, core_idx)
+        self.assertLess(core_idx, outline_idx)
 
     def test_compile_is_byte_idempotent(self):
         compile_runtime_package(
@@ -195,6 +211,85 @@ class TestSkillRuntimeCompiler(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("Original Child Detail", child_outline)
+
+
+    def test_gates_compact_uses_hint_from_registry(self):
+        """🆕 v3.10.3: gates.compact.md must read hint from GATE_REGISTRY, not GATE_HINTS."""
+        compile_runtime_package(
+            REPO_ROOT,
+            self.source,
+            self.dist,
+            build_date="2026-07-02T00:00:00Z",
+        )
+        gates_text = (self.dist / "runtime" / "gates.compact.md").read_text(encoding="utf-8")
+        # Every gate in the real registry must appear with its hint scope (no "see CLI" fallback
+        # for gates that now carry a hint field).
+        for gate in GATE_REGISTRY:
+            self.assertIn(gate["id"], gates_text, f"gate {gate['id']} missing from gates.compact.md")
+            hint = gate.get("hint") or {}
+            if hint.get("scope"):
+                self.assertIn(hint["scope"], gates_text, f"hint scope for {gate['id']} missing")
+
+    def test_manifest_index_includes_core_path(self):
+        """🆕 v3.10.3: manifest-index.json subskills must include core path."""
+        compile_runtime_package(
+            REPO_ROOT,
+            self.source,
+            self.dist,
+            build_date="2026-07-02T00:00:00Z",
+        )
+        index = json.loads((self.dist / "runtime" / "manifest-index.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(index["subskills"]), 1)
+        sub = index["subskills"][0]
+        self.assertIn("core", sub)
+        self.assertEqual(sub["core"], "runtime/skills/child-skill/core.compact.md")
+
+    def test_core_compact_extracts_structural_lines(self):
+        """🆕 v3.10.3: core.compact.md must keep structural lines (headings, lists, commands) and drop prose."""
+        # Build a skill with mixed structural + prose content.
+        rich_skill = self.source / "skills" / "rich-skill.md"
+        rich_skill.write_text(
+            "---\nname: rich\n---\n\n"
+            "# Rich Skill\n\n"
+            "This is a long prose paragraph that explains the background and motivation "
+            "of this skill in great detail. It should be dropped from the core because "
+            "it is pure prose without any structural or executable value.\n\n"
+            "## 步骤\n\n"
+            "1. 第一步：读取输入\n"
+            "2. 第二步：生成内容\n"
+            "3. 第三步：自检\n\n"
+            "## 门禁\n\n"
+            "- 🔴 禁止跳过步骤\n"
+            "- ae-sdd gates check --only G-XX\n"
+            "- BLOCK if gate fails\n",
+            encoding="utf-8",
+        )
+        compile_runtime_package(
+            REPO_ROOT,
+            self.source,
+            self.dist,
+            build_date="2026-07-02T00:00:00Z",
+        )
+        core = (self.dist / "runtime" / "skills" / "rich-skill" / "core.compact.md").read_text(encoding="utf-8")
+        # Structural lines must survive.
+        self.assertIn("Rich Skill", core)
+        self.assertIn("步骤", core)
+        self.assertIn("第一步", core)
+        self.assertIn("禁止跳过步骤", core)
+        self.assertIn("ae-sdd gates check", core)
+        # Pure prose paragraph must be dropped.
+        self.assertNotIn("long prose paragraph that explains the background", core)
+
+    def test_boot_compact_load_order_includes_manifest_index(self):
+        """🆕 v3.10.3: boot.compact.md Load Order must mention manifest-index.json (sync with bootloader)."""
+        compile_runtime_package(
+            REPO_ROOT,
+            self.source,
+            self.dist,
+            build_date="2026-07-02T00:00:00Z",
+        )
+        boot = (self.dist / "runtime" / "boot.compact.md").read_text(encoding="utf-8")
+        self.assertIn("manifest-index.json", boot)
 
 
 if __name__ == "__main__":

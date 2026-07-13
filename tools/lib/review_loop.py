@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from lib import review_batch
+
 # ─── 常量（与 review-loop-skill.md 协议对齐）─────────────────────────────────
 EXIT_DRY_THRESHOLD = 2   # 连续 2 轮无新增才正常退出（协议 1）
 MAX_ROUNDS = 2           # 循环上限 2 轮（协议 2）
@@ -287,6 +289,9 @@ def verify_exit(review_state: dict) -> tuple[bool, str]:
     正常退出（normal）：dryCounter ≥ 2
     异常退出（escalate）：round > 2 且有 🔴，已升级用户决策
     """
+    if int(review_state.get("schemaVersion", 0) or 0) >= review_batch.SCHEMA_VERSION:
+        return review_batch.verify_exit(review_state)
+
     exit_reason = review_state.get("exitReason")
     dry_counter = review_state.get("dryCounter", 0)
     round_ = review_state.get("round", 0)
@@ -313,27 +318,23 @@ def _ensure_review_state(state: dict, node: str, ra_size: str,
     if rl and rl.get("node") == node:
         return rl
     tier = derive_tier(ra_size, decision_hints)
-    rl = {
-        "node": node,
-        "tier": tier.tier,
-        "tierBasis": {
+    rl = review_batch.create_session(
+        node=node,
+        tier=tier.tier,
+        tier_basis={
             "raSize": tier.ra_size,
             "keyDecisions": tier.key_decisions,
             "rule": tier.rule,
         },
-        "round": 0,
-        "dryCounter": 0,
-        "findings": [],
-        "exitReason": None,
-        "exitedAt": None,
-        "reviewers": [],
-    }
+    )
     state["reviewLoop"] = rl
+    state["reviewSession"] = rl
     return rl
 
 
 def start(state: dict, node: str, ra_size: str = "中",
-          decision_hints: str = "") -> dict:
+          decision_hints: str = "", input_fingerprint: str = "",
+          budgets: Optional[dict] = None) -> dict:
     """初始化/读 reviewState，机械派生 Tier，输出本轮派活指令。
 
     Args:
@@ -347,13 +348,37 @@ def start(state: dict, node: str, ra_size: str = "中",
       action="dispatch-reviewers" → root agent 按 dispatchHint 派 N 个 reviewer
     """
     rl = _ensure_review_state(state, node, ra_size, decision_hints)
+    if int(rl.get("schemaVersion", 0) or 0) < review_batch.SCHEMA_VERSION:
+        rl = review_batch.upgrade_legacy(rl, node=node)
+        state["reviewLoop"] = rl
+        state["reviewSession"] = rl
+    if input_fingerprint and rl.get("inputFingerprint") and input_fingerprint != rl.get("inputFingerprint"):
+        rl = review_batch.restart_for_fingerprint(
+            rl, input_fingerprint, ruleset_fingerprint=rl.get("rulesetFingerprint", "")
+        )
+        state["reviewLoop"] = rl
+        state["reviewSession"] = rl
+    elif input_fingerprint:
+        rl["inputFingerprint"] = input_fingerprint
+    if budgets:
+        rl["budgets"].update({k: int(v) for k, v in budgets.items() if v is not None})
+        deadline = review_batch._parse_iso(rl.get("startedAt"))
+        if deadline:
+            from datetime import timedelta
+            rl["deadlineAt"] = review_batch._iso(
+                deadline + timedelta(minutes=int(rl["budgets"]["maxWallClockMinutes"]))
+            )
     return {
+        "schemaVersion": rl.get("schemaVersion", 1),
+        "engine": rl.get("engine", "legacy-round-v1"),
         "tier": rl["tier"],
         "reviewersNeeded": rl["tier"],
         "lens": _lens_for_tier(node, rl["tier"]),
         "dryCounter": rl["dryCounter"],
         "round": rl["round"],
         "exitReason": rl["exitReason"],
+        "budgets": rl.get("budgets", {}),
+        "inputFingerprint": rl.get("inputFingerprint", ""),
         "action": "dispatch-reviewers",
         "dispatchHint": (
             f"派 {rl['tier']} 个 reviewer（视角：{_lens_for_tier(node, rl['tier'])}），"
@@ -377,7 +402,11 @@ def _lens_for_tier(node: str, tier: int) -> list[str]:
 def collect(state: dict, node: str,
              reviewer_reports: list[dict],
              root_session_id: str,
-             has_red_blocker: bool = False) -> dict:
+             has_red_blocker: bool = False,
+             input_fingerprint: str = "",
+             ruleset_fingerprint: str = "",
+             batch_id: str = "",
+             strict_roles: bool = False) -> dict:
     """收 reviewer 报告：验 session 独立 → 算新增 dryCounter → 推进轮次 → 持久化。
 
     Args:
@@ -394,7 +423,69 @@ def collect(state: dict, node: str,
       nextAction="exit-normal" → 正常退出，可切相
       nextAction="escalate-user" → 升级用户
     """
-    rl = state.get("reviewLoop") or {}
+    rl = state.get("reviewSession") or state.get("reviewLoop") or {}
+    if int(rl.get("schemaVersion", 0) or 0) >= review_batch.SCHEMA_VERSION:
+        tier = int(rl.get("tier") or 1)
+        reports_for_check = reviewer_reports
+        if batch_id:
+            previous = next((b for b in rl.get("batches", []) if b.get("batchId") == batch_id), None)
+            if previous:
+                existing = {str(r.get("role") or "").upper(): r for r in previous.get("reviewers", []) if r.get("role")}
+                for report in reviewer_reports:
+                    role = str(report.get("role") or "").upper()
+                    if role:
+                        existing[role] = report
+                role_order = {1: ["GENERAL"], 2: ["BE", "AR"], 3: ["BE", "AR", "QA"]}.get(tier, [])
+                reports_for_check = [existing[r] for r in role_order if r in existing]
+        session_chk = check_session_independence(
+            [r.get("sessionId", "") for r in reports_for_check], root_session_id, tier
+        )
+        if not session_chk.passed:
+            return {
+                "schemaVersion": review_batch.SCHEMA_VERSION,
+                "round": rl.get("round", 0),
+                "dryCounter": rl.get("dryCounter", 0),
+                "newFindings": [],
+                "nextAction": "blocked-session-not-independent",
+                "exitReason": rl.get("exitReason"),
+                "sessionCheck": {
+                    "passed": False,
+                    "reason": session_chk.reason,
+                    "violations": session_chk.violations,
+                },
+                "rejected": [],
+            }
+        if not strict_roles and reviewer_reports and not any(r.get("role") for r in reviewer_reports):
+            role_sets = {1: ["GENERAL"], 2: ["BE", "AR"], 3: ["BE", "AR", "QA"]}
+            for report, role in zip(reviewer_reports, role_sets.get(tier, ["GENERAL"])):
+                report["role"] = role
+        result = review_batch.collect_batch(
+            rl,
+            reviewer_reports,
+            root_session_id,
+            input_fingerprint=input_fingerprint,
+            ruleset_fingerprint=ruleset_fingerprint,
+            batch_id=batch_id,
+            has_red_blocker=has_red_blocker,
+        )
+        state["reviewLoop"] = rl
+        state["reviewSession"] = rl
+        return result
+    if rl:
+        rl = review_batch.upgrade_legacy(rl, node=node)
+        state["reviewLoop"] = rl
+        state["reviewSession"] = rl
+        return collect(
+            state,
+            node,
+            reviewer_reports,
+            root_session_id,
+            has_red_blocker=has_red_blocker,
+            input_fingerprint=input_fingerprint,
+            ruleset_fingerprint=ruleset_fingerprint,
+            batch_id=batch_id,
+            strict_roles=strict_roles,
+        )
     tier = rl.get("tier", 1)
 
     # 1. session 独立性校验
@@ -460,7 +551,9 @@ def collect(state: dict, node: str,
 
 def status(state: dict) -> dict:
     """读 reviewLoop 进度（report-only，重入用）。"""
-    rl = state.get("reviewLoop") or {}
+    rl = state.get("reviewSession") or state.get("reviewLoop") or {}
+    if int(rl.get("schemaVersion", 0) or 0) >= review_batch.SCHEMA_VERSION:
+        return review_batch.status(rl)
     return {
         "node": rl.get("node"),
         "tier": rl.get("tier"),

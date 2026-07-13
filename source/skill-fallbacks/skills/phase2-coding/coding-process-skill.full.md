@@ -105,6 +105,22 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 > 项目资产读取已下沉到 §A2 调用 coding-skill 能力的内部步骤（要素1），不在本表重复列为独立上下文。
 
+### §A1.4 🆕 v3.10.2 micro 意图分流前置门（OPTIMIZE/CODE_REVIEW entry_node）
+
+> **适用场景：** `/ae-sdd 优化这部分实现`（entryNode=OPTIMIZE）或误入本 SKILL 的 CODE_REVIEW。本门在 §A1.5 骨架分解之前判定，按意图裁剪流程深度。
+
+| entry_node | 流程裁剪 | 说明 |
+|-----------|---------|------|
+| **OPTIMIZE** | §A1 仅加载 ①②项目约束 + 用户指定代码（免 Story/TestCase）；**跳过 §A1.5 骨架分解**；直 §A2 CodeAnalysis（基于给定代码）→ §A3 轻量 CodePlan → §A4 审核 → §B Execute | 微-优化：目标是对**已有代码**做优化/重构，无需从 Story 派生骨架 |
+| **CODE_REVIEW** | **交棒 code-review-skill**，本 SKILL 不接管 | 微-审查：审查是只读出结论，不进 CodingProcess |
+| 其他（BUG/CONFIG/PRD/RA/None） | 走完整 §A1.5→§A2→§A3→§A4 | 原行为不变 |
+
+**OPTIMIZE 路径 §A1 加载调整：** 上下文表 ③ Story / ④ TestCase 标"无 Story 上下文，独立决策"（与微任务一致），新增**⑤ 用户指定代码范围**（必读：用户指明的文件/类/方法）。
+
+**OPTIMIZE 路径 §A2 调整：** CodeAnalysis 输入从"§A1.5 骨架"改为"用户指定代码现状"，输出"优化后骨架 + 改动点清单"。
+
+> **gate 协同：** OPTIMIZE/CODE_REVIEW + scale=微 时，gate_intercept 跨步跳跃已放行（initialized→coding / initialized→code-reviewed）。本门只管"流程深度裁剪"，state 流转仍由 SKILL.md 状态机子链表定义。
+
 ### §A1.5 骨架分解（🆕 v3.10.0 从 task-generate-skill 合并）
 
 > **🔴 v3.10.0：** 原 task-generate-skill 的骨架生成职责已合并到本节。CodingProcess 不再依赖 Task 文档作为输入，而是直接从 Story+TestCase 派生实现骨架。

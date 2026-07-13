@@ -27,6 +27,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 | 输入 | 必读 |
 |---|---|
 | `TEST_REPORT` 最新版 | 是 |
+| `.auto-engineering/{WORKITEM-ID}/evidence/manifest.json` | 是；按 fingerprint/hash 复核，不按 evidence 文件数量判断真实性 |
 | 原始 stdout/stderr 日志 | 是 |
 | Surefire/Failsafe XML | 是 |
 | `test_authenticity_scan` 报告 | 是 |
@@ -38,7 +39,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 
 | # | 检查项 | 通过标准 |
 |---|---|---|
-| TV-1 | 证据链存在 | 报告引用的日志/XML/扫描报告路径真实存在 |
+| TV-1 | 证据链存在 | manifest 中 input/command/toolchain/artifact hash 完整，引用路径真实且 SHA-256 匹配 |
 | TV-2 | 命令真实性 | 无 skipTests / testFailureIgnore / 未解释 excludes |
 | TV-3 | XML 对账 | 报告统计与 XML 完全一致，skipped=0 或有 Story 豁免 |
 | TV-4 | AC 覆盖 | 每个 AC 至少有实际执行方法 |
@@ -51,7 +52,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 
 ## 输出
 
-复核不新增独立流程产物，默认在新版 `TEST_REPORT` 中追加“独立复核”章节并 `ae-sdd doc save --intent TEST_REPORT --work-item {W} --story-id {S?} --version "v1-r2" --content-file 草稿.md`。
+复核不新增独立流程产物，默认在 canonical `TEST_REPORT` 中原地更新“独立复核”章节；历史审计写入事件 ledger，不通过 `vN-rM` 文件名复制正文。
 
 章节必须包含：
 
@@ -61,6 +62,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 | reviewerMode | `physical-sub-agent` / `logical-multi-perspective` |
 | TV-1~TV-10 | 每项 PASS / FAIL / N/A + 证据 |
 | 抽样重跑 | 命令、结果、日志路径 |
+| Evidence fingerprint | implementation/toolchain/command/artifact hash 对账结果 |
 | 结论 | PASS / BLOCKED / NEEDS-RERUN |
 | 回退建议 | 回 `test-generate` / 回 Coding / 回 Story/Task / 用户决策 |
 
@@ -80,6 +82,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 |---|---|
 | 主 agent 自称 test-verifier | 必须独立 session_id 或降级标注 |
 | 只读摘要不读证据 | 逐项读取报告、日志、XML、代码 |
+| 按 evidence 文件数量判断充分性 | 复核 manifest、fingerprint 与 artifact SHA-256 |
 | 把 warn 当 pass | warn 必须有解释和残留风险 |
 | 复核阶段直接修代码/测试 | 只出结论和回退建议 |
 

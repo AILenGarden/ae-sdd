@@ -32,7 +32,7 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 
 ### 1. 制定执行矩阵
 
-从 TestCase 文档提取应跑用例，形成矩阵：
+先运行 `ae-sdd verify plan --story {STORY-ID} --changed <paths>`，再从 TestCase 文档提取应跑用例。仅 Markdown 变化不得安排 Maven；生产代码变化先跑 focused/module 验证，稳定 implementation fingerprint 后只跑一次最终全量回归。
 
 | 层级 | 必跑对象 | 证据 |
 |---|---|---|
@@ -43,7 +43,7 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 
 ### 2. 执行验证命令
 
-命令必须可复现，并写入测试报告：
+每条命令执行前先用 `ae-sdd evidence lookup` 按 implementation fingerprint、command hash、toolchain fingerprint 和 artifact SHA-256 查成功证据。完整命中且未超过 freshness window 时复用；失败、篡改、过期或任一 fingerprint 不同必须重跑。命令必须可复现，并写入测试报告：
 
 | 目标 | 命令要求 |
 |---|---|
@@ -52,7 +52,7 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 测试 | 禁止 `-DskipTests`、`maven.test.skip=true`、`testFailureIgnore=true` |
 | 扫描 | 运行 `scripts/test_authenticity_scan.py` 或 `ae-sdd gates check --only G-09` |
 
-所有 stdout/stderr、Surefire/Failsafe XML、扫描报告必须归档到 `.auto-engineering/{WORKITEM-ID}/evidence/` 或测试报告可引用路径。
+所有 stdout/stderr、Surefire/Failsafe XML、扫描报告必须归档到 `.auto-engineering/{WORKITEM-ID}/evidence/`，并由单一 `manifest.json` 登记。documentation/review fingerprint 变化不得使只绑定 implementation fingerprint 的 Maven 证据失效。
 
 ### 3. 生成测试报告
 
@@ -83,13 +83,14 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 人工估算测试数量 | 从 Surefire/Failsafe XML 解析 |
 | 修测试代替修代码 | 先判根因；修测试须记录原因并获用户确认 |
 | Mock 核心 HTTP/DB 路径 | L2 真实 HTTP，L3 真实 DB；只能解释性降级 |
+| 代码未变却重复跑 Maven | 先查 evidence manifest；命中可复用证据时禁止重跑 |
 
 ## 执行清单
 
 | # | 动作 | 产出 | 门禁 |
 |---|---|---|---|
-| 1 | 读取输入 | 测试执行矩阵 | TestCase/AC/方法映射齐 |
+| 1 | 生成 VerificationPlan + 读取输入 | 测试执行矩阵 | 变更分类与 TestCase/AC/方法映射齐 |
 | 2 | 运行编译/启动/测试 | 原始证据 | 无跳测、无忽略失败 |
 | 3 | 运行真实性扫描 | 扫描报告 | BLOCKER=0 或报告不通过 |
 | 4 | 生成测试报告 | `TEST_REPORT` | XML 与报告对账一致 |
-| 5 | 交接复核 | 复核输入清单 | 可由 `test-review-skill.md` 独立验证 |
+| 5 | 写 evidence manifest 并交接复核 | 复核输入清单 | 可由 `test-review-skill.md` 按 fingerprint 独立验证 |

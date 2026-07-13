@@ -1106,7 +1106,7 @@ def check_uc18_manifest_index_contract(repo_root: Path) -> UpdateCheckResult:
     token 膨胀会复发）。两项校验：
 
       1. dist/ae-sdd/runtime/manifest-index.json 存在 + schema = ae-sdd-runtime-index/v1
-      2. index 的 subskills 每条只含白名单字段（entry/manifest/boot/outline/fallback），
+      2. index 的 subskills 每条只含白名单字段（entry/manifest/boot/core/outline/fallback），
          不得出现 sha256/fingerprint/checksums 等机器字段
     """
     name = "manifest-index 契约"
@@ -1131,7 +1131,8 @@ def check_uc18_manifest_index_contract(repo_root: Path) -> UpdateCheckResult:
         issues.append(f"schema 应为 ae-sdd-runtime-index/v1，实为 {idx.get('schema')!r}")
 
     # 2. subskills 字段白名单（防回归塞回哈希）
-    allowed_subskill_keys = {"entry", "manifest", "boot", "outline", "fallback"}
+    # 🆕 v3.10.3: 新增 core（可执行快路径路由字段，非哈希/校验字段）
+    allowed_subskill_keys = {"entry", "manifest", "boot", "core", "outline", "fallback"}
     subskills = idx.get("subskills", [])
     if not isinstance(subskills, list) or not subskills:
         issues.append("subskills 为空或非 list")
