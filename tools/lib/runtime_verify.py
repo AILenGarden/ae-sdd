@@ -17,6 +17,16 @@ from typing import Any
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SUBSKILL_SCHEMA = "ae-sdd-subskill-runtime/v1"
 
+# Anchor regex aligned with compile_skill_runtime.py:_is_core_structural (the
+# single source of truth for which tokens are "structural anchors" that a
+# core.compact.md fast-path must not silently drop via max_lines truncation).
+_CORE_ANCHOR_RE = re.compile(r"\b(G-[A-Z0-9-]+|RA-G\d+|TR-\d+|TC-\d+|TV-\d+)\b")
+
+
+def _extract_anchors(text: str) -> set[str]:
+    """Return the set of structural anchor tokens present in *text*."""
+    return set(_CORE_ANCHOR_RE.findall(text))
+
 
 @dataclass
 class RuntimeVerifyResult:
@@ -264,7 +274,7 @@ def verify_runtime_package(package_path: str | Path) -> RuntimeVerifyResult:
             if "# " in entry_text and "Compiled Sub-SKILL Entry" not in entry_text[:800]:
                 issue(f"child SKILL entry appears to contain uncompiled source: {entry}")
 
-            for key in ("manifest", "boot", "outline", "fallback"):
+            for key in ("manifest", "boot", "outline", "core", "fallback"):
                 rel = record.get(key)
                 if not isinstance(rel, str):
                     issue(f"manifest.subskills[{entry}].{key} must be a path string")
@@ -298,6 +308,7 @@ def verify_runtime_package(package_path: str | Path) -> RuntimeVerifyResult:
                         issue(f"child SKILL load_order file missing: {rel!r}")
 
             fallback_rel = record.get("fallback")
+            child_fallback_text = ""
             if isinstance(fallback_rel, str) and (package / fallback_rel).is_file():
                 try:
                     child_fallback_text = (package / fallback_rel).read_text(encoding="utf-8", errors="replace")
@@ -310,5 +321,37 @@ def verify_runtime_package(package_path: str | Path) -> RuntimeVerifyResult:
                         issue(f"child SKILL fallback hash mismatch: {entry}")
                     if "Compiled Sub-SKILL Entry" in child_fallback_text[:800] and "compiled: true" in child_fallback_text[:400]:
                         issue(f"child SKILL fallback appears to contain generated entry: {fallback_rel}")
+
+            # core.compact.md: existence + sha256 (issue) + anchor coverage (warning).
+            # The core is the executable fast-path extracted by render_core_compact
+            # via sectionize/score/max_lines truncation; anchors dropped by that
+            # truncation are surfaced here as warnings so the loss stays visible.
+            core_rel = record.get("core")
+            if isinstance(core_rel, str):
+                core_path = package / core_rel
+                if not core_path.is_file():
+                    issue(f"child SKILL core.compact.md missing: {core_rel}")
+                else:
+                    try:
+                        core_text = core_path.read_text(encoding="utf-8", errors="replace")
+                    except OSError as exc:
+                        issue(f"child SKILL core unreadable: {core_rel}: {exc}")
+                    else:
+                        expected_core_hash = record.get("core_sha256")
+                        if expected_core_hash:
+                            actual_core_hash = _sha256_text(core_text)
+                            if expected_core_hash != actual_core_hash:
+                                issue(f"child SKILL core hash mismatch: {entry}")
+                        if child_fallback_text:
+                            fb_anchors = _extract_anchors(child_fallback_text)
+                            core_anchors = _extract_anchors(core_text)
+                            lost = fb_anchors - core_anchors
+                            if lost:
+                                preview = sorted(lost)[:10]
+                                suffix = " ..." if len(lost) > 10 else ""
+                                warn(
+                                    f"core lost {len(lost)} anchors vs fallback: "
+                                    f"{entry}: {preview}{suffix}"
+                                )
 
     return RuntimeVerifyResult(str(package), not issues, issues, warnings, manifest)

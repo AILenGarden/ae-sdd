@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.10.4（🆕 2026-07-13：G-PATH 精确识别 canonical document-storage source/runtime fallback，避免 SSOT 迁移示例被误报，其他同名或 `SKILL.full.md` 文件仍受扫描。🆕 2026-07-11：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链；classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧，gate 跨步跳跃对微链意图放行，code-review 新增无文档轻量准入分支。v3.10.1：Review Batch v2、G-CODE-1 增量 baseline、VerificationPlan/evidence、canonical 文档 alias、Story 模板撰写原则、state UUID 前缀唯一性。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.10.5（🆕 2026-07-13：runtime_verify 新增 compact↔fallback 语义锚点比对（warning 不阻断）+ 修复 core 四件套遗漏 bug。🆕 2026-07-13：G-PATH 精确识别 canonical document-storage source/runtime fallback，避免 SSOT 迁移示例被误报，其他同名或 `SKILL.full.md` 文件仍受扫描。🆕 2026-07-11：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链；classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧，gate 跨步跳跃对微链意图放行，code-review 新增无文档轻量准入分支。v3.10.1：Review Batch v2、G-CODE-1 增量 baseline、VerificationPlan/evidence、canonical 文档 alias、Story 模板撰写原则、state UUID 前缀唯一性。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 

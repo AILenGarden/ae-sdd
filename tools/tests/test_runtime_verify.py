@@ -88,6 +88,7 @@ def _add_compiled_child(package: Path, manifest: dict) -> None:
     (package / child_base / "fallback").mkdir(parents=True, exist_ok=True)
     (package / child_base / "boot.compact.md").write_text("# boot child\n", encoding="utf-8")
     (package / child_base / "outline.compact.md").write_text("# outline child\n", encoding="utf-8")
+    (package / child_base / "core.compact.md").write_text("# core child\n\nFast-path content.\n", encoding="utf-8")
     (package / child_base / "fallback" / "SKILL.full.md").write_text(child_source, encoding="utf-8")
     child_manifest = {
         "schema": "ae-sdd-subskill-runtime/v1",
@@ -110,18 +111,22 @@ def _add_compiled_child(package: Path, manifest: dict) -> None:
         f"{child_base}/manifest.json",
         f"{child_base}/boot.compact.md",
         f"{child_base}/outline.compact.md",
+        f"{child_base}/core.compact.md",
         f"{child_base}/fallback/SKILL.full.md",
     ])
     manifest["source"]["checksums"][child_entry] = "f" * 64
+    child_core_text = "# core child\n\nFast-path content.\n"
     manifest["subskills"] = [{
         "entry": child_entry,
         "source_path": f"source/{child_entry}",
         "manifest": f"{child_base}/manifest.json",
         "boot": f"{child_base}/boot.compact.md",
         "outline": f"{child_base}/outline.compact.md",
+        "core": f"{child_base}/core.compact.md",
         "fallback": f"{child_base}/fallback/SKILL.full.md",
         "source_sha256": "f" * 64,
         "fallback_sha256": hashlib.sha256(child_source.encode("utf-8")).hexdigest(),
+        "core_sha256": hashlib.sha256(child_core_text.encode("utf-8")).hexdigest(),
         "runtime_fingerprint": child_fp,
         "heading_count": 1,
         "ref_count": 0,
@@ -205,6 +210,53 @@ class TestRuntimeVerify(unittest.TestCase):
             result = verify_runtime_package(package)
             self.assertFalse(result.ok)
             self.assertTrue(any("compiled: true" in item or "uncompiled source" in item for item in result.issues))
+
+    def test_core_anchor_loss_warns_without_failing(self):
+        """Anchors present in fallback but dropped from core surface as warnings (non-blocking)."""
+        with tempfile.TemporaryDirectory() as td:
+            package = _write_package(Path(td))
+            manifest = _read_manifest(package)
+            _add_compiled_child(package, manifest)
+            # Inject anchors into fallback, keep core anchor-free.
+            fb_path = package / "runtime/skills/phase/child-skill/fallback/SKILL.full.md"
+            fb_text = "# Child source\n\nUse G-DOC-STORAGE before save. See TC-2 for details.\n"
+            fb_path.write_text(fb_text, encoding="utf-8")
+            manifest = _read_manifest(package)
+            manifest["subskills"][0]["fallback_sha256"] = hashlib.sha256(fb_text.encode("utf-8")).hexdigest()
+            _write_manifest(package, manifest)
+            result = verify_runtime_package(package)
+            self.assertTrue(result.ok, result.issues)
+            self.assertTrue(any("lost" in w and "G-DOC-STORAGE" in w for w in result.warnings))
+
+    def test_core_missing_fails(self):
+        """A missing core.compact.md is an issue (regression guard for the four-tuple core fix)."""
+        with tempfile.TemporaryDirectory() as td:
+            package = _write_package(Path(td))
+            manifest = _read_manifest(package)
+            _add_compiled_child(package, manifest)
+            (package / "runtime/skills/phase/child-skill/core.compact.md").unlink()
+            result = verify_runtime_package(package)
+            self.assertFalse(result.ok)
+            self.assertTrue(any("core" in i for i in result.issues))
+
+    def test_core_with_all_anchors_passes_silently(self):
+        """When core preserves every fallback anchor, no 'lost' warning is emitted."""
+        with tempfile.TemporaryDirectory() as td:
+            package = _write_package(Path(td))
+            manifest = _read_manifest(package)
+            _add_compiled_child(package, manifest)
+            shared = "# child\n\nG-DOC-STORAGE gate and TC-2 check apply here.\n"
+            fb_path = package / "runtime/skills/phase/child-skill/fallback/SKILL.full.md"
+            core_path = package / "runtime/skills/phase/child-skill/core.compact.md"
+            fb_path.write_text(shared, encoding="utf-8")
+            core_path.write_text(shared, encoding="utf-8")
+            manifest = _read_manifest(package)
+            manifest["subskills"][0]["fallback_sha256"] = hashlib.sha256(shared.encode("utf-8")).hexdigest()
+            manifest["subskills"][0]["core_sha256"] = hashlib.sha256(shared.encode("utf-8")).hexdigest()
+            _write_manifest(package, manifest)
+            result = verify_runtime_package(package)
+            self.assertTrue(result.ok, result.issues)
+            self.assertFalse(any("lost" in w for w in result.warnings))
 
 
 if __name__ == "__main__":
