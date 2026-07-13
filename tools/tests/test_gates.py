@@ -940,6 +940,27 @@ class TestGPath(unittest.TestCase):
         })
         self.assertTrue(self._check(package).pass_)
 
+    def test_compiled_runtime_generated_views_are_not_scanned(self):
+        package = _setup_project({
+            "runtime/manifest.json": '{"compiled": true}\n',
+            "runtime/skills/cross-cutting/document-storage-skill/"
+            "outline.compact.md": self._VIOLATION,
+            "skills/cross-cutting/clean-skill.md": "no path declarations\n",
+        })
+        result = self._check(package)
+        self.assertTrue(result.pass_)
+        self.assertEqual(result.details["scanned"], 1)
+
+    def test_compiled_package_source_fallback_is_still_scanned(self):
+        package = _setup_project({
+            "runtime/manifest.json": '{"compiled": true}\n',
+            "skill-fallbacks/skills/cross-cutting/other-skill.full.md":
+                self._VIOLATION,
+        })
+        result = self._check(package)
+        self.assertFalse(result.pass_)
+        self.assertEqual(len(result.details["violations"]), 1)
+
     def test_other_full_fallback_is_still_scanned(self):
         package = _setup_project({
             "runtime/skills/cross-cutting/other-skill/fallback/SKILL.full.md":

@@ -2082,6 +2082,15 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
                           "确认 master_source 定位正确",
                           details={"scanned": 0, "violations": [], "skipped": "no_source"})
 
+    # Installed/compiled packages contain generated runtime compact views. They
+    # repeat source text for routing/navigation and are not authoritative input
+    # documents. Exclude only that generated subtree; keep scanning the package
+    # skills/, skill-fallbacks/, standards/, templates/, and other real inputs.
+    is_compiled_package = (
+        source_dir == master_source
+        and (master_source / "runtime" / "manifest.json").is_file()
+    )
+
     violations: list[dict] = []
     scanned = 0
     for md_path in source_dir.rglob("*.md"):
@@ -2091,6 +2100,8 @@ def check_g_path(master_source: Optional[Path], project_dir: Path,
             continue
         rel_str = str(rel).replace("\\", "/")
         if any(seg in rel_str for seg in _PATH_SCAN_SKIP_DIRS):
+            continue
+        if is_compiled_package and rel_str.startswith("runtime/"):
             continue
         if _is_document_storage_skill_artifact(md_path, source_dir):
             continue  # SSOT source and compiler-derived fallbacks are equivalent artifacts
