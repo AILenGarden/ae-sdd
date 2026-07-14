@@ -376,6 +376,55 @@ class TestG05(unittest.TestCase):
         r = gates.check_g05(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
+    def test_new_layout_primary_task_doc_passes(self):
+        """🆕 v3.10.4：与 TASK 模板对齐的主文档 {story_id}.md 应命中（Pbl 问题1 核心修复）。
+
+        document_storage._PATH_TEMPLATES["TASK"] 产出 ``Task/{story_id}/{story_id}.md``，
+        G-05 原 glob ``-task-*.md`` 永远匹配不上这个文件名，导致假阴性。
+        """
+        tmp = _setup_project({
+            "ae-sdd-doc/Task/STORY-001/STORY-001.md": "# Task main",
+        })
+        r = gates.check_g05(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_, "与 TASK 模板对齐的主文档应被 G-05 命中")
+
+    def test_blocks_when_only_unrelated_md_exists(self):
+        """新布局下只有 Supplement 等附属文档、无主文档时应拦截。"""
+        tmp = _setup_project({
+            "ae-sdd-doc/Task/STORY-001/STORY-001-Supplement.md": "# supp",
+        })
+        r = gates.check_g05(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_, "无主 Task 文档 {story_id}.md 时应拦截")
+
+
+class TestG05IntentGateConsistency(unittest.TestCase):
+    """🆕 v3.10.4：intent 模板产出与 G-05 glob 一致性回归。
+
+    防止 document_storage 的 TASK intent 路径模板与 gates.check_g05 的 glob
+    再次分叉（Pbl.md 问题1 根因：模板产出 {story_id}.md，glob 找 {story_id}-task-*.md）。
+    """
+
+    def test_task_intent_path_matches_g05_glob(self):
+        """用 TASK 模板生成路径落文件，G-05 必须能命中。"""
+        from lib import document_storage
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / ".ae-sdd" / "assets").mkdir(parents=True, exist_ok=True)
+        (tmp / ".ae-sdd" / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (tmp / ".ae-sdd" / "assets" / "test.assets.md").write_text(
+            f"# §A §B §C §D §E §F §G\n\n| gitPath | `{tmp}` |\n| docWorkspacePath | `{tmp}` |\n",
+            encoding="utf-8",
+        )
+        # 用 TASK intent 的路径模板定位（doc_id 缺省 = story_id）
+        resolved = document_storage.resolve_path(
+            tmp / ".ae-sdd", "test", "TASK", story_id="STORY-001",
+        )
+        # 落一个空文件到模板算出的路径
+        Path(resolved.full_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(resolved.full_path).write_text("# Task", encoding="utf-8")
+
+        r = gates.check_g05(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_, f"G-05 应命中 TASK 模板产出的文件: {resolved.full_path}")
+
 
 class TestG06(unittest.TestCase):
 

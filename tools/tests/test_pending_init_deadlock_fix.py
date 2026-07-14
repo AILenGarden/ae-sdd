@@ -42,6 +42,7 @@ from lib import paths as paths_mod  # noqa: E402
 from lib.gate_intercept import (  # noqa: E402
     _check_pending_init_intercept,
     _deny_response,
+    _is_ae_sdd_self_repo,
     check_intercept,
 )
 from lib.prompt_inject import inject  # noqa: E402
@@ -135,6 +136,88 @@ class TestPendingInitDeadlockFix:
         assert allowed is False
         wrapped = _deny_response("Write", reason)
         assert "快速通道" in wrapped["systemMessage"]
+
+
+class TestSelfRepoExemption:
+    """🆕 v3.10.4：ae-sdd 工具自身仓库豁免测试。
+
+    背景：ae-sdd 工具本体源码仓永远不会有 .ae-sdd/，但用户在此仓内发 /ae-sdd
+    触发词会写 .ae-sdd-pending-init 标记，随后 gate_intercept 无差别拦截所有
+    Write/Edit/Bash，连"修 hook 自己"都拦，形成死锁。修复从根上识别工具仓
+    并放行，不进 pending-init 拦截分支。
+    """
+
+    @staticmethod
+    def _make_self_repo_layout(root: Path) -> Path:
+        """在 root 下造出 ae-sdd 工具仓的标志文件结构，返回工作子目录。"""
+        (root / "tools" / "bin").mkdir(parents=True)
+        (root / "tools" / "lib").mkdir(parents=True)
+        (root / "tools" / "bin" / "ae-sdd").write_text("#!/bin/sh\n", encoding="utf-8")
+        (root / "tools" / "lib" / "gate_intercept.py").write_text("# stub\n", encoding="utf-8")
+        # 工作子目录（模拟在工具仓内的子路径干活）
+        work_dir = root / "tools" / "lib"
+        return work_dir
+
+    def test_is_ae_sdd_self_repo_detects_tool_layout(self, tmp_path):
+        """含 tools/bin/ae-sdd + tools/lib/gate_intercept.py 双文件的目录应被识别为工具仓。"""
+        work_dir = self._make_self_repo_layout(tmp_path)
+        assert _is_ae_sdd_self_repo(work_dir) is True
+        # 仓根本身也应命中
+        assert _is_ae_sdd_self_repo(tmp_path) is True
+
+    def test_is_ae_sdd_self_repo_rejects_plain_project(self, tmp_path):
+        """普通项目目录（无标志文件）不应被误判为工具仓。"""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "App.java").write_text("class App {}", encoding="utf-8")
+        assert _is_ae_sdd_self_repo(tmp_path) is False
+        assert _is_ae_sdd_self_repo(None) is False
+
+    def test_is_ae_sdd_self_repo_needs_both_marker_files(self, tmp_path):
+        """只有单个标志文件（如只有 tools/bin/ae-sdd）不应判定为工具仓。"""
+        (tmp_path / "tools" / "bin").mkdir(parents=True)
+        (tmp_path / "tools" / "bin" / "ae-sdd").write_text("#!/bin/sh\n", encoding="utf-8")
+        # 缺 tools/lib/gate_intercept.py
+        assert _is_ae_sdd_self_repo(tmp_path) is False
+
+    def test_self_repo_exempt_even_with_pending_init_marker(self, tmp_path):
+        """核心：工具仓内即便存在 .ae-sdd-pending-init 标记，Write 也不应被拦截。"""
+        work_dir = self._make_self_repo_layout(tmp_path)
+        # 模拟用户在工具仓内发过 /ae-sdd 触发词，标记已写入
+        marker = paths_mod.pending_init_marker(work_dir)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("ae-sdd pending init", encoding="utf-8")
+        assert marker.is_file(), "前置：标记应已存在"
+
+        allowed, reason = check_intercept(
+            "Write", file_path="tools/lib/gate_intercept.py", project_dir=work_dir,
+        )
+        assert allowed is True, "ae-sdd 工具自身仓库应豁免 pending-init 拦截，不形成死锁"
+        assert reason == ""
+
+    def test_self_repo_exempt_for_bash_and_edit_too(self, tmp_path):
+        """豁免覆盖 Write/Edit/MultiEdit/Bash 全部受拦工具，不留死角。"""
+        work_dir = self._make_self_repo_layout(tmp_path)
+        marker = paths_mod.pending_init_marker(work_dir)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("ae-sdd pending init", encoding="utf-8")
+
+        for tool, extra in [
+            ("Edit", {"file_path": "tools/lib/gate_intercept.py"}),
+            ("MultiEdit", {"file_path": "tools/lib/gate_intercept.py"}),
+            ("Bash", {"bash_command": "python -m pytest tools/tests/"}),
+        ]:
+            allowed, _ = check_intercept(tool, project_dir=work_dir, **extra)
+            assert allowed is True, f"{tool} 在工具仓内应被豁免"
+
+    def test_non_self_repo_still_blocked_with_marker(self, tmp_path):
+        """回归：普通项目（无标志文件）有标记时仍应被拦截，豁免不能误放。"""
+        marker = paths_mod.pending_init_marker(tmp_path)
+        marker.write_text("ae-sdd pending init", encoding="utf-8")
+        allowed, reason = check_intercept(
+            "Write", file_path="src/Foo.java", project_dir=tmp_path,
+        )
+        assert allowed is False, "普通项目不应被豁免"
+        assert "尚未初始化" in reason
 
 
 if __name__ == "__main__":

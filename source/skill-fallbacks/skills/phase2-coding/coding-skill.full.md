@@ -5,6 +5,8 @@ description: 代码生成能力库（v3.6.1 适配器注册加载）。提供"�
 
 # CodingSKILL — 代码生成能力库（被调用，非流程节点）
 
+> G-CODE-1 work-item 扫描只接受与当前 Story 绑定、经 plan/evidence/artifact hash 校验的 `VerificationPlan.changedPaths`；只扫描其中生产代码。缺失或空 scope 保持全仓严格扫描，测试/文档-only scope 阻断，scoped 路径不读取或创建 baseline。
+
 > **🔴 v3.5.17 定位（能力库化）：** 本文件是**纯能力库**，提供"如何写对代码"的知识：
 > - **决策方法**：11维 CodingModel、骨架展开规则、分层职责红线、复用判断
 > - **CodeAnalysis 方法论**：④bis SOP（分层归类/骨架输出）、CodePlan 模板/门禁定义、G-CODEPLAN-SRC 判定

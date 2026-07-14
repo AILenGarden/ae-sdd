@@ -173,6 +173,69 @@ class TestSaveDoc(unittest.TestCase):
         self.assertTrue(r1.full_path.endswith("TestCaseReview-r1.md"))
         self.assertTrue(r2.full_path.endswith("TestCaseReview-r2.md"))
 
+    def test_story_scoped_intent_uses_story_id_as_dir(self):
+        """🆕 v3.10.4：Story-scoped intent 当 story_id 非空时，目录名优先用 story_id。
+
+        Pbl.md 问题2 核心修复：doc save --work-item Story-004 --story-id STORY-004-BE
+        应落到 Coding/STORY-004-BE/（与既有文档树一致），而非 Coding/Story-004/。
+        """
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "CODING_PLAN", "# Plan",
+            work_item_id="Story-004", story_id="STORY-004-BE",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        normalized = result.full_path.replace("\\", "/")
+        self.assertTrue(
+            normalized.endswith("ae-sdd-doc/Coding/STORY-004-BE/STORY-004-BE-CodingPlan.md"),
+            f"Story-scoped intent 目录名应为 story_id，实际: {normalized}",
+        )
+
+    def test_story_scoped_intent_priority_across_intents(self):
+        """覆盖多个 Story-scoped intent，确认 story_id 分桶统一生效。"""
+        tmp = _setup_project()
+        for intent, suffix in [
+            ("CODE_REVIEW", "STORY-004-BE-CodeReview.md"),
+            ("TESTCASE", "STORY-004-BE-testcase.md"),
+            ("TASK", "STORY-004-BE.md"),
+        ]:
+            result = document_storage.save_doc(
+                tmp / ".ae-sdd", "test", intent, "# doc",
+                work_item_id="Story-004", story_id="STORY-004-BE",
+            )
+            self.assertTrue(result.success, msg=result.error)
+            normalized = result.full_path.replace("\\", "/")
+            self.assertIn(
+                "/STORY-004-BE/", normalized,
+                f"{intent} 目录名应为 story_id=STORY-004-BE，实际: {normalized}",
+            )
+
+    def test_bug_task_keeps_work_item_bucketing(self):
+        """🆕 v3.10.4 回归：无 story_id 的 BUG/OPT 任务仍用 work_item_id 分桶。"""
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "TASK", "# Task",
+            work_item_id="BUG-LIFE-001", doc_id="TASK-001",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        normalized = result.full_path.replace("\\", "/")
+        self.assertTrue(
+            normalized.endswith("ae-sdd-doc/Task/BUG-LIFE-001/TASK-001.md"),
+            f"无 story_id 时应回退 work_item_id 分桶，实际: {normalized}",
+        )
+
+    def test_non_story_scoped_intent_unaffected(self):
+        """🆕 v3.10.4 回归：非 Story-scoped intent（如 PRD）不受 story_id 分桶影响。"""
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "PRD", "# PRD",
+            work_item_id="Story-004", story_id="STORY-004-BE", doc_id="PRD-001",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        normalized = result.full_path.replace("\\", "/")
+        # PRD 用 {docId} 不用 {workItem}，路径不受分桶逻辑影响
+        self.assertTrue(normalized.endswith("ae-sdd-doc/PRD/PRD-001.md"))
+
 
 class TestFinalizeDoc(unittest.TestCase):
     """finalize_doc：对已手写文件补 ChangeLog/STORING，不覆盖内容。"""

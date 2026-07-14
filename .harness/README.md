@@ -47,7 +47,7 @@ mavis harness unmount ae-sdd
 
 ## 元数据
 
-- 生成时间：2026-07-13T09:03:03Z
-- ae-sdd 版本：3.10.4
-- ae-sdd input hash：38a0c7d9838ca41031dcda7492754a855d0e651035a69170752806d448217943
+- 生成时间：2026-07-14T03:42:11Z
+- ae-sdd 版本：3.10.7
+- ae-sdd input hash：66d1911ebd230195f99d373b8ce0a8e03681742a7fb5a2352d1dc3ce0d7ec85c
 - 适配器：v0.3.0

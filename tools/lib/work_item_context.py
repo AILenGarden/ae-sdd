@@ -91,6 +91,14 @@ def list_work_item_states(ade_sdd: Path) -> list[WorkItemState]:
     return items
 
 
+def _safe_mtime(path: Path) -> float:
+    """安全读取 mtime，文件不可达时返回 0（排末位）。供 prefer_recent 排序用。"""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def format_ambiguity_message(candidates: list[WorkItemState]) -> str:
     keys = [c.key for c in candidates]
     lines = [
@@ -386,7 +394,15 @@ def resolve_default_state(
     session_key: str = "",
     prompt_text: str = "",
     bind_session: bool = False,
+    prefer_recent: bool = False,
 ) -> ResolvedWorkItemState:
+    """Resolve the implicit work-item state.
+
+    🆕 v3.10.4 prefer_recent（Pbl.md 问题4）：
+    只读命令（state read / next-step）传 prefer_recent=True 时，歧义场景
+    （多个活跃 work-item）按 state.json 的 mtime 降序取最近活跃的一个返回，
+    而非抛 AmbiguousWorkItemError。写门禁不传（默认 False），保持硬拒绝。
+    """
     mentioned = resolve_mentioned_state(ade_sdd, prompt_text)
     if mentioned is not None:
         if bind_session:
@@ -408,6 +424,14 @@ def resolve_default_state(
         only = active_candidates[0]
         return ResolvedWorkItemState(path=only.path, key=only.key, data=only.data, source="single-work-item")
     if len(active_candidates) > 1:
+        # 🆕 v3.10.4：只读命令按 mtime 自动推断最近活跃 work-item（Pbl.md 问题4）。
+        # 写门禁 prefer_recent=False 保持硬拒绝，不放松安全约束。
+        if prefer_recent:
+            recent = max(active_candidates, key=lambda c: _safe_mtime(c.path))
+            return ResolvedWorkItemState(
+                path=recent.path, key=recent.key, data=recent.data,
+                source="recent-by-mtime",
+            )
         raise AmbiguousWorkItemError(active_candidates)
 
     raise NoWorkItemStateError()

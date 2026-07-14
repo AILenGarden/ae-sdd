@@ -164,7 +164,8 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | G-RA-6 实现视角完整性 | `gates.py` 行1378起，调 `scripts/ra_implementation_scan.py`（I1~I7） |
 | G-RA-FLOW-VIOLATION | `gates.py` 行1208起，调 `scripts/flow_violation_scan.py`（R1~R3规则） |
 | G-CODE-1 Coding 真实性 | `gates.py` 行697起，调 `scripts/coding_authenticity_scan.py`（AP-1~AP-6反模式） |
-| G-09 测试真实性 | `gates.py` 行578起，调 `scripts/test_authenticity_scan.py`（8类禁止手段） |
+| G-09 测试真实性 | `gates.py` 调 `scripts/test_authenticity_scan.py`（8类禁止手段）；可信 work-item scope 优先取 `VerificationPlan.changedPaths`，兼容 state changed paths，无 scope 时全仓严格扫描 |
+| G-13 全链路对称性 | `entryNode=STORY` 且 `scale=中` 时仅豁免 DR 依赖并显式返回 exemption；其他入口仍要求 DR，Story/Task/CodingReport/CodeReview 下游链按阶段保持严格 |
 | G-CODEPLAN-SRC / G-DOC-STORAGE / G-DOC-CONSISTENCY / G-PATH | `gates.py` 对应 check 函数；G-PATH 仅豁免 canonical document-storage source entry 及其 source/runtime full fallback，其他同名或 `SKILL.full.md` 文件仍受扫描 |
 | 🆕 v3.9.1 G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX | `gates.py` 注册表 `CONTEXT_GATE_REGISTRY` + 统一 `_check_context_loaded` 实现 + 4 个薄封装；`gate_intercept.py:PHASE_ENTRY_GATES` 大/中/小/微链各 phase 入口挂载；复用 `get_constraints/get_assets` + `_iter_ra_files/_find_prd_files/paths.find_doc` |
 | G-REVIEW-LOOP | `gates.py` + `tools/lib/review_loop.py`，`ae-sdd review-loop` 子命令 |
@@ -181,15 +182,15 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 Review 的质量对象是带 `inputFingerprint` / `rulesetFingerprint` 的 `reviewSession`，不是模糊的 round 计数器。每次尝试落入 `VALID_CLEAN`、`VALID_FINDINGS`、`INVALID_INFRA`、`INVALID_PROTOCOL`、`INVALID_INPUT_DRIFT` 或 `CANCELLED`；平台失败不增加 clean streak，输入漂移必须新建 session。Tier 1/2 首批 clean 默认一次，Tier 3 在 P0/P1 修复后需要两个连续 clean batch；attempt、valid batch、remediation 和 wall-clock 任一预算耗尽进入 `STALLED`，不得当作通过。
 
-G-CODE-1 默认阻断新增 blocker，不重复阻断显式登记的历史 debt。baseline 位于项目 `.ae-sdd/baselines/G-CODE-1.json`，必须用户明确批准创建，并记录规则指纹、项目指纹和完整性 hash；被 Story 修改的 baseline 文件/symbol 进入 `touchedDebt`，不能无条件继承。
+G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存在时，仅检查当前 work-item 的生产代码；scope 内 blocker（含触及历史债）阻断，scope 外历史债不阻断。scope 缺失或为空时保持全仓严格扫描，测试/文档-only scope fail-closed。scoped 路径不读取或创建 baseline；全仓模式的显式 baseline 仍必须经用户批准并校验完整性。
 
-验证动作先生成 `VerificationPlan`，再按生产代码、测试代码、配置、文档分类决定最小验证集。成功证据写入 `.auto-engineering/<story>/evidence/manifest.json`，复用必须同时满足 input/command/toolchain fingerprint 一致、退出码为 0、freshness window 未过期且 artifact hash 未变化。implementation/documentation/review 三类 fingerprint 分离，文档或审查措辞变化不得使 Maven 证据失效。文档使用单一 canonical 正文，旧路径只通过 `.ae-sdd/doc-aliases.json` 指向 canonical，不允许第二份完整正文；多个候选正文必须显式报歧义，不按 mtime 猜测。
+验证动作先生成 `VerificationPlan`，再按生产代码、测试代码、配置、文档分类决定最小验证集。G-09 只接受 plan 指纹匹配、路径未越界且真实存在的 work-item scope；scope 内 blocker（含触及的历史债）阻断，scope 外历史债不阻断，无可信 scope 则全仓扫描。成功证据写入 `.auto-engineering/<story>/evidence/manifest.json`，复用必须同时满足 manifest 内容 hash、Story、input/command/toolchain fingerprint、退出码、freshness window 与 artifact hash；evidence 不能定义 scope 或充当 waiver。implementation/documentation/review 三类 fingerprint 分离，文档或审查措辞变化不得使 Maven 证据失效。文档使用单一 canonical 正文，旧路径只通过 `.ae-sdd/doc-aliases.json` 指向 canonical，不允许第二份完整正文；多个候选正文必须显式报歧义，不按 mtime 猜测。
 
 | 设计点 | 实现 |
 | --- | --- |
 | Review Batch 状态机 | `tools/lib/review_batch.py` + `tools/lib/review_loop.py`；旧 `reviewLoop` 字段仅作兼容投影 |
 | 增量 baseline | `tools/lib/baseline.py` + `ae-sdd baseline inspect/create/diff` + G-CODE-1 delta 分支 |
-| 变更感知验证 | `tools/lib/verification_plan.py` + `ae-sdd verify plan` |
+| 变更感知验证 | `tools/lib/verification_plan.py` + `ae-sdd verify plan --work-item <ID> --persist`；inputFingerprint 绑定 Story/work-item/changedPaths |
 | 证据复用 | `tools/lib/evidence.py` + `ae-sdd evidence record/lookup` |
 | canonical 文档 | `tools/lib/document_storage.py` alias registry/resolver/duplicate-body check |
 

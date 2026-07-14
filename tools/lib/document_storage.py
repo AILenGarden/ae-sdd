@@ -72,6 +72,25 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
 }
 
 
+# ─── 🆕 v3.10.4：Story-scoped intent 集合 ─────────────────────────────────────
+# 这些 intent 的路径模板用 {workItem} 作目录分桶键（Task/Coding/Test/CR/Story 子目录）。
+# 当 story_id 非空时，目录名应优先用 story_id 而非 work_item_id，与读取侧
+# paths.list_docs（硬编码 Task/{story_id} 目录）及既有文档树命名规范对齐。
+# 根因（Pbl.md 问题2）：v3.7.4 "升级为 WorkItem 分桶"只改了写入侧，读取侧
+# 仍用 story_id 分桶，导致 doc save --work-item Story-004 --story-id STORY-004-BE
+# 落到 Coding/Story-004/ 而既有文档树是 Coding/STORY-004-BE/，写读分桶键不一致。
+# story_id 为空时（BUG/OPT 无 story）回退 work_item_id，保持 WorkItem 分桶兼容。
+_STORY_SCOPED_INTENTS: frozenset[str] = frozenset({
+    "STORY_SUPPLEMENT", "STORY_GENERATE_PLAN", "STORY_WRITER_REPORT",
+    "TASK", "TASK_SUPPLEMENT", "TASK_WRITER_REPORT", "TASK_REVIEW", "TASK_IMPL_PLAN",
+    "CODING_PLAN", "CODING_REPORT", "CODING_ISSUE_LOG",
+    "TESTCASE", "TESTCASE_COMPLIANCE_REPORT", "TESTCASE_REVIEW", "TEST_REPORT",
+    "CODE_REVIEW", "TRACE_MATRIX",
+    "STORY_REVIEW", "REVIEW_UPDATEPLAN", "REVIEW_COMPARE",
+    "PROPOSAL", "PROPOSAL_ARCHIVE",
+})
+
+
 _VERSION_SUFFIX_RE = re.compile(
     r"(?:-v(?P<dash_v>\d+)-r(?P<dash_r>\d+)"
     r"|-v(?P<dot_v>\d+)\.(?P<dot_m>\d+)(?:-r(?P<dot_r>\d+))?"
@@ -293,7 +312,16 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
     # 4. 替换占位符
     # workItem 是独立编码任务隔离键：PRD / BUG / OPT / Story 均可。
     # 旧调用只传 story_id 时，workItem 回退到 story_id，保持路径兼容。
-    effective_work_item = work_item_id or story_id or doc_id or task_name or ""
+    #
+    # 🆕 v3.10.4 修复写读分桶不一致（Pbl.md 问题2）：
+    # Story-scoped intent（Task/Coding/Test/CR/Story 子目录）当 story_id 非空时，
+    # 目录名优先用 story_id 而非 work_item_id，与读取侧 paths.list_docs
+    # （硬编码 Task/{story_id} 目录）及既有文档树命名规范对齐。
+    # story_id 为空时（BUG/OPT 无 story）回退 work_item_id，保持 WorkItem 分桶兼容。
+    if intent in _STORY_SCOPED_INTENTS and story_id:
+        effective_work_item = story_id
+    else:
+        effective_work_item = work_item_id or story_id or doc_id or task_name or ""
 
     # docId 回退链：显式 doc_id > task_name > workItem > story_id（Story/PRD/RA/DR 等单标识文档，
     # 其 doc-id 语义上 = story-id/prd-id/issue-id 等，调用方常只传 story_id/work_item_id）

@@ -6,10 +6,10 @@ source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/skills/phase3-review/test-review-skill.full.md
-source_fallback_sha256: 7e404c057d6c27aa814e8fcc662e0fc07e2e2d7085f52b6568e4c042eb23e064
-source_original_bytes: 4024
-source_original_lines: 95
-source_semantic_inventory_sha256: 5d7e39d461f6fb1580c372a1ba183562f5efd6647dc3d7e4e4049369cdecf698
+source_fallback_sha256: 4b02751a12be713ea055647788eaf2ca917c2e2d36f93c1ebeb4b39e476342f4
+source_original_bytes: 5114
+source_original_lines: 106
+source_semantic_inventory_sha256: 7c455026906c24cc3593ac56a1a0bd569aaec49005d1a83c8a75f2bbb09aad47
 source_slimmer: slim_source_skills.py@2
 ---
 
@@ -28,10 +28,10 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `skills/phase3-review/test-review-skill.md`
 - fallback: `skill-fallbacks/skills/phase3-review/test-review-skill.full.md`
-- fallback_sha256: `7e404c057d6c27aa814e8fcc662e0fc07e2e2d7085f52b6568e4c042eb23e064`
-- original_lines: 95
-- original_bytes: 4024
-- semantic_inventory_sha256: `5d7e39d461f6fb1580c372a1ba183562f5efd6647dc3d7e4e4049369cdecf698`
+- fallback_sha256: `4b02751a12be713ea055647788eaf2ca917c2e2d36f93c1ebeb4b39e476342f4`
+- original_lines: 106
+- original_bytes: 5114
+- semantic_inventory_sha256: `7c455026906c24cc3593ac56a1a0bd569aaec49005d1a83c8a75f2bbb09aad47`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
 - summary: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测试报告、原始证据、真实性扫描与 AC 覆盖，决定是否回到 test-generate。
@@ -42,13 +42,13 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; keyword_hits: 1 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | keyword_hits: 5 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:77 禁止事项; keyword_hits: 24 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
-| tool_command | keyword_hits: 7 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 1 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
-| output_doc_contract | headings: L2:52 输出; keyword_hits: 8 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
-| resource_reference | inline_refs: 5; refs: ae-sdd doc save --intent TEST_REPORT --work-item {W} --story-id {S?} --version "v1-r2" --content-file 草稿.md; ae-sdd gates check --only G-09,G-10; agent-orchestration-skill.md; +2 more; keyword_hits: 4 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| gate_constraint | headings: L3:53 G-09 work-item scope 规则; L2:87 禁止事项; keyword_hits: 33 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | keyword_hits: 6 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | keyword_hits: 6 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | headings: L2:61 输出; keyword_hits: 11 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 5; refs: .auto-engineering/{WORKITEM-ID}/evidence/manifest.json; ae-sdd gates check --only G-09,G-10; agent-orchestration-skill.md; +2 more; keyword_hits: 3 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | keyword_hits: 2 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
-| fallback_only_detail | keyword_hits: 2 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
+| fallback_only_detail | keyword_hits: 5 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
 ## Source Slimming SOP
 
@@ -66,17 +66,18 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | 2 | 8 | 与监管器 4 步的关系 |
 | 2 | 12 | 强制独立性 |
 | 2 | 25 | 输入 |
-| 2 | 37 | 检查口径（TV-1~TV-10） |
-| 2 | 52 | 输出 |
-| 2 | 67 | 缺陷处理 |
-| 2 | 77 | 禁止事项 |
-| 2 | 86 | 执行清单 |
+| 2 | 38 | 检查口径（TV-1~TV-10） |
+| 3 | 53 | G-09 work-item scope 规则 |
+| 2 | 61 | 输出 |
+| 2 | 77 | 缺陷处理 |
+| 2 | 87 | 禁止事项 |
+| 2 | 97 | 执行清单 |
 
 ## Inline References
 
 | ref |
 | --- |
-| ae-sdd doc save --intent TEST_REPORT --work-item {W} --story-id {S?} --version "v1-r2" --content-file 草稿.md |
+| .auto-engineering/{WORKITEM-ID}/evidence/manifest.json |
 | ae-sdd gates check --only G-09,G-10 |
 | agent-orchestration-skill.md |
 | review-loop-skill.md |

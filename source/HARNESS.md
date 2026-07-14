@@ -1,7 +1,7 @@
-# ae-sdd Agent Harness v1.4
+# ae-sdd Agent Harness v1.5
 
 <!-- 注入到 Agent system prompt 的顶部。本文件是 SKILL.md 的实例化产物，面向 Agent 执行，不面向人阅读。 -->
-<!-- DO NOT SUMMARIZE. DO NOT SKIP. 每次对话必须完整读取本文件前 3 个 SECTION。 -->
+<!-- DO NOT SUMMARIZE. DO NOT SKIP. 每次对话必须完整读取本文件前 4 个 SECTION。 -->
 
 ---
 
@@ -10,7 +10,7 @@
 > **v1.1 起：** 状态信息由 `UserPromptSubmit` hook 自动注入到 context（见 `◆ HARNESS STATE` 块）。
 > AI 不需要手动执行 STEP 1-3，只需读取已注入的状态块。
 
-收到 `/ae-sdd` 或任何关联触发词后：
+收到 `/ae-sdd`、任何关联触发词或下述 Coding 写入意图后：
 
 **STEP 1** — 读取系统上下文中的 `◆ HARNESS STATE` 块（由 hook 自动注入）
 
@@ -22,6 +22,28 @@
 **STEP 3** — 输出状态头（见下方 RESPONSE FORMAT）
 
 > **快速通道：** 用户显式说 `/ae-sdd-quick` 或 `走快速通道` 时，跳过 STEP 1，直接落档。
+
+---
+
+## 🔒 CODING ENTRY CONTRACT（所有仓库写入型 Coding 请求强制进入 ae-sdd）
+
+凡请求可能新增、修改、删除、重构、优化或生成生产代码、测试代码、配置、Schema、Migration、构建脚本或其他实现制品，Agent 必须：
+
+1. 在制定实现计划或首次写入前加载并调用 `ae-sdd`；先判定任务规模、入口节点和执行路由，再开始实现。
+2. 严格执行所选路由规定的上下文加载、阶段转换、审核点、阶段记忆、文档产物、测试、Review 和门禁；只有该路由明确豁免的步骤才可跳过。
+3. 以 `ae-sdd` CLI 返回的 state、next-step 和 gate 结果为事实来源；CLI 与对话推断或提示词摘要冲突时，以 CLI 为准。
+4. 任一 blocker gate 失败时立即停止后续写入，报告 gate ID 和失败原因，并执行规定的修复路径；禁止猜测、伪造或口头声明通过。
+5. 在所选路由到达合法终态且所需验证证据落地前，禁止声称任务完成。
+
+**禁止自行豁免：** “改动很小”“只有一行”“很紧急”“方案显而易见”均不是绕过理由；应进入对应的大/中/小/微、OPTIMIZE 或 CODE_REVIEW 路由。
+
+**只读边界：** 纯解释、代码查询、状态报告和不修改工作区的审查不进入 Coding 流程；一旦请求转为实施或写入，必须在第一次编辑前进入 `ae-sdd`。
+
+**失败关闭：** `ae-sdd` 未安装、状态不可定位或 CLI 无法运行时，不得降级为自由编码；应报告阻塞并先修复运行环境。
+
+**唯一显式旁路：** 仅用户主动指定 `/ae-sdd-quick` 或“走快速通道”时按快速通道执行；Agent 不得自行选择该旁路，且快速通道不免除落档义务。
+
+> **L2 会话级纪律**：本契约（L1）的会话级展开版见 `source/L2-DISCIPLINE.md`（SSOT 单点）。各 agent 全局指令文件（ZCode AGENTS.md / Codex AGENTS.md / Claude CLAUDE.md）的 ae-sdd 锚点区间由 `scripts/l2_inject.py` 从该 SSOT 派生注入，三家措辞同源、触发语义一致（改动级加载）。
 
 ---
 

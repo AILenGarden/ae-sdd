@@ -178,6 +178,41 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 
 > **复核（不重新产出）：** 11 维 CodingModel 决策由 Phase A 产出（[`coding-skill.md` §1](coding-skill.md)），Execute 阶段只验证与 CodePlan 一致。任一冲突立即停止追溯。
 
+### §B0.5 Spec 变更确认（🔴 强制，先于工程预检）
+
+> **核心原则：「先改 spec 再改代码」。** Execute 入口第一道门——开始写任何代码前，必须向用户确认"本次编码是否需要先修改任何上游 spec"。这是**时序约束门禁**，非产物门禁，无法由 gates 系统自动覆盖，只能靠此强制交互点保障。
+
+**必须向用户呈现并等待确认：**
+
+```
+【§B0.5 Spec 变更确认 — Execute 入口】
+
+本次编码是否需要修改以下任何上游 spec？
+  □ Story 正文 / AC / 验收条件
+  □ 接口契约（Request / Response / 错误码）
+  □ 数据模型（表结构 / 字段类型 / DO/PO 定义）
+  □ DR 业务规则 / 边界条件
+  □ TestCase 场景 / 预期值
+
+选择：
+  ✅ 无需修改任何 spec，可直接进入 Execute
+  🔴 需要修改（请说明哪份文档 / 哪个章节需变更）
+```
+
+**处置规则：**
+
+| 用户选择 | 处置 |
+|---------|------|
+| ✅ 无需修改 | 运行 `ae-sdd state confirm --phase spec-change --story {STORY-ID}` 写入物理 token → 进入 §B1 工程预检 |
+| 🔴 需要修改 | **立即停止 Execute**，先走对应 Update 路径（Story Update / DR Update / TestCase Update），完成后重新过 G-14 门禁，再重新进入 §B0.5，用户再次确认无需修改后再运行 confirm 命令 |
+
+> **物理门禁说明：** `gate_intercept.py` 关卡3 会在 `coding` phase 写 `src/` 前检查 `spec-change` confirm token。未写 token 直接写源码 → `PreToolUse` hook 物理拒绝，报错提示运行上述 confirm 命令。（🆕 v3.10.6 §B0.5 物理实现）
+
+**🔴 强制约束：**
+- 用户未明确选择前，**禁止写任何 src/ 源码**（有物理门禁兜底）
+- 模糊回复（"应该不用"/"差不多"/"可能需要"）→ 按🔴需要修改处理，追问具体变更范围
+- 微任务（无 Story/TestCase 上下文）：仅询问"CodingPlan 骨架是否已是最新 spec"；用户确认后**同样须运行 confirm 命令**（微任务豁免说明：`gate_intercept.py` 对 scale=微 不做 spec-change 检查，但流程规范仍要求确认）
+
 ### §B1 工程预检（第一~五步合并）
 
 **收集输入：** 复核 §A1 已加载的 4 上下文（不重新加载，已在 CodeAnalysis 阶段通过 `document-storage-skill` 定位）：
@@ -453,6 +488,7 @@ Test 系列未通过时，按 `test-review-skill.md` 的缺陷分类回到 Test 
 | A4 | 用户审核点 2.5 确认 | 用户确认记录 | 用户明确"确认/同意/可以开始" |
 | **Phase B：Execute** | | | |
 | B0 | 复核 CodingModel（不重新产出） | — | 与 CodePlan 一致 |
+| B0.5 | **Spec 变更确认**（🔴 强制交互，先于工程预检） | 用户确认记录 | 用户明确"无需修改 spec" 或 spec 已先行更新完毕 |
 | B1 | 工程预检（4 项） | — | 工程/依赖/SDK/代码模式确认 |
 | B2 | 按 Task 顺序生成代码 | 源代码文件 | 每个 Task 检查项通过 |
 | B3 | 每个 Task 实现方案确认（强制节点） | 用户确认记录 | 用户已确认本 Task 方案 |

@@ -50,6 +50,15 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 | TV-9 | 禁假修复 | 无未授权修改测试、无全 Mock 核心路径、无空断言 |
 | TV-10 | G-09/G-10 | `ae-sdd gates check --only G-09,G-10` 或等价检查通过 |
 
+### G-09 work-item scope 规则
+
+- 先执行 `ae-sdd verify plan --story {STORY-ID} --work-item {WORK-ITEM} --changed <paths> --persist`；G-09 优先读取其 `verificationPlan.changedPaths`，仅在无 VerificationPlan 时兼容旧 state 字段。
+- evidence 通过 `ae-sdd evidence record` 写入后，用 `ae-sdd evidence finalize --story {STORY-ID}` 核验 artifact hash 并封存 contentHash，禁止手改 state/manifest。
+- scope 路径必须存在、位于项目根内且 plan fingerprint 匹配；非法 scope fail closed。无 work-item scope 时保持全仓严格扫描。
+- scope 内新增 blocker 与被触及的历史 blocker 均阻断；scope 外历史债不阻断当前 work item。
+- evidence manifest 仅作可验证 provenance/cache：存在时必须匹配 Story、input fingerprint 与 artifact SHA-256，不能定义 scope 或豁免源码扫描。
+- G-09 不读取、不创建、也不使用 G-CODE-1 baseline；Coding baseline 只归 G-CODE-1 管理。
+
 ## 输出
 
 复核不新增独立流程产物，默认在 canonical `TEST_REPORT` 中原地更新“独立复核”章节；历史审计写入事件 ledger，不通过 `vN-rM` 文件名复制正文。

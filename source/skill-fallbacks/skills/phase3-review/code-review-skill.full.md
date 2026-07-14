@@ -5,6 +5,8 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 # Code Review — 端到端代码评审 Skill
 
+> CodeReview 准入中的 G-CODE-1：可信 work-item scope 仅检查当前 Story 生产代码；scope 内 blocker（含触及历史债）仍阻断。无可信 scope 时严格全仓扫描，不得用 baseline/waiver 伪造通过。
+
 > **核心定位：** 与 `story-review-skill.md` 同等地位 — Story Review 是设计阶段的评审，**Code Review 是实现阶段的评审**。两者结构对齐（目标/总则/整体流程/触发条件/Plan-first/第零步准入/第一步输入/第二步挖掘/结论/判定/补充说明/UpdatePlan/触发/循环/禁止/执行清单/讲解）。
 >
 > **与现有 SKILL 的分工：**

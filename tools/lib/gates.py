@@ -351,20 +351,37 @@ def check_g04(project_dir: Path, st: dict, current_story: str) -> GateResult:
 
 # ─── G-05 ───────────────────────────────────────────────────────────────────
 def check_g05(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    """G-05 Task 文档存在"""
+    """G-05 Task 文档存在
+
+    🆕 v3.10.4 修复 glob 与 TASK 模板不一致：
+    document_storage._PATH_TEMPLATES["TASK"] 产出 ``{docId}.md``（doc_id 缺省 =
+    story_id），即 ``STORY-001.md``。原 glob ``-task-*.md`` 拼成
+    ``STORY-001-task-*.md`` 永远匹配不上，导致 G-05 假阴性（Pbl.md 问题1）。
+    现优先检查与模板对齐的 ``{story_id}.md``，同时保留对旧布局
+    ``{story_id}-task-*.md`` 的兼容（旧 task/ 目录或历史归档）。
+    """
     if not current_story:
         return GateResult("G-05", "Task 文档存在", "blocker", False,
                           "state.currentStory 为空")
 
-    tasks = paths.list_docs(project_dir, current_story, "-task-*.md")
-    if not tasks:
-        return GateResult("G-05", "Task 文档存在", "blocker", False,
-                          f"task/ 目录无 {current_story}-task-*.md",
-                          f"跑 task-generate-skill 生成 Task 文档",
-                          details={"task_dir": str(paths.project_task_dir(project_dir))})
-    return GateResult("G-05", "Task 文档存在", "blocker", True,
-                      f"找到 {len(tasks)} 个 Task 文档",
-                      details={"files": [t.name for t in tasks]})
+    # 主检查：与 TASK 模板产出对齐的 {story_id}.md（v3.10 砍 Task 后的实际产物）
+    primary = paths.list_docs(project_dir, current_story, ".md")
+    if primary:
+        return GateResult("G-05", "Task 文档存在", "blocker", True,
+                          f"找到 {len(primary)} 个 Task 文档",
+                          details={"files": [t.name for t in primary]})
+
+    # 兼容旧布局：{story_id}-task-*.md（历史 task/ 目录或 v3.7 前归档）
+    legacy = paths.list_docs(project_dir, current_story, "-task-*.md")
+    if legacy:
+        return GateResult("G-05", "Task 文档存在", "blocker", True,
+                          f"找到 {len(legacy)} 个 Task 文档（旧布局）",
+                          details={"files": [t.name for t in legacy]})
+
+    return GateResult("G-05", "Task 文档存在", "blocker", False,
+                      f"task/ 目录无 {current_story}.md 或 {current_story}-task-*.md",
+                      f"跑 task-generate-skill 生成 Task 文档",
+                      details={"task_dir": str(paths.project_task_dir(project_dir))})
 
 
 # ─── G-06 ───────────────────────────────────────────────────────────────────
@@ -720,6 +737,88 @@ def _locate_coding_scanner(master_source: Optional[Path]) -> Optional[Path]:
     return _locate_runtime_script(master_source, "coding_authenticity_scan.py")
 
 
+def _resolve_g09_scope(project_dir: Path, st: dict, current_story: str):
+    """Resolve a trustworthy work-item scope without consulting transient Git state."""
+    from lib import verification_plan
+
+    plan = st.get("verificationPlan")
+    source = ""
+    raw_paths = None
+    since_fingerprint = ""
+    expected_fingerprint = ""
+    if isinstance(plan, dict):
+        source = "verificationPlan.changedPaths"
+        raw_paths = plan.get("changedPaths")
+        since_fingerprint = str(plan.get("sinceFingerprint") or "")
+        if str(plan.get("storyId") or "") != current_story:
+            return None, source, "", "verification-plan storyId mismatch"
+        if not isinstance(raw_paths, list) or not raw_paths:
+            return None, source, "", "verification-plan changedPaths is empty or invalid"
+        rebuilt = verification_plan.build_plan(
+            project_dir, current_story, raw_paths, since_fingerprint
+        )
+        expected_fingerprint = rebuilt["planFingerprint"]
+        if plan.get("planFingerprint") != expected_fingerprint:
+            return None, source, expected_fingerprint, "verification-plan fingerprint mismatch"
+    else:
+        for field in ("changedPaths", "changedFiles"):
+            value = st.get(field)
+            if isinstance(value, list) and value:
+                source = f"state.{field}"
+                raw_paths = value
+                break
+        if raw_paths is None:
+            return [], "full-repository", "", ""
+        expected_fingerprint = verification_plan.build_plan(
+            project_dir, current_story, raw_paths
+        )["planFingerprint"]
+
+    root = project_dir.resolve()
+    normalized = []
+    for raw in raw_paths:
+        value = str(raw or "").strip().replace("\\", "/")
+        relative = Path(value)
+        if not value or relative.is_absolute() or ".." in relative.parts:
+            return None, source, expected_fingerprint, f"unsafe scope path: {value or '<empty>'}"
+        try:
+            resolved = (root / relative).resolve(strict=True)
+            normalized_path = resolved.relative_to(root)
+        except (OSError, ValueError):
+            return None, source, expected_fingerprint, f"scope path is missing or outside project: {value}"
+        if not resolved.is_file():
+            return None, source, expected_fingerprint, f"scope path is not a file: {value}"
+        normalized.append(normalized_path.as_posix())
+    normalized = sorted(set(normalized))
+    if not normalized:
+        return None, source, expected_fingerprint, "scope is empty after normalization"
+    return normalized, source, expected_fingerprint, ""
+
+
+def _finding_in_g09_scope(finding: dict, scope_paths: list[str]) -> bool:
+    finding_path = str(finding.get("path") or "").replace("\\", "/").lstrip("./")
+    return any(
+        finding_path == scope or finding_path.startswith(scope.rstrip("/") + "/")
+        for scope in scope_paths
+    )
+
+
+_GCODE1_EXTENSIONS = {".java", ".kt", ".kts", ".xml", ".yaml", ".yml", ".properties"}
+
+
+def _gcode1_production_scope(scope_paths: list[str]) -> list[str]:
+    """Keep only production inputs understood by coding_authenticity_scan.py."""
+    production = []
+    for value in scope_paths:
+        path = Path(value)
+        normalized = "/" + value.lower().replace("\\", "/")
+        if path.suffix.lower() not in _GCODE1_EXTENSIONS:
+            continue
+        if "/src/test/" in normalized or "/test/" in normalized or path.name.lower().endswith("test.java"):
+            continue
+        production.append(value)
+    return production
+
+
 def check_g09(project_dir: Path, st: dict, current_story: str,
               master_source: Optional[Path] = None) -> GateResult:
     """G-09 测试真实性扫描通过 — 调 test_authenticity_scan.py 跑 8 类禁止检查
@@ -733,6 +832,34 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
     PRE_CODING_PHASES = {"initialized", "ra-generated", "dr-generated", "story-generated",
                          "story-reviewed", "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0
                          "task-generated", "task-reviewed"}
+
+    scope_paths, scope_source, scope_fingerprint, scope_error = _resolve_g09_scope(
+        project_dir, st, current_story
+    )
+    if scope_error:
+        return GateResult(
+            "G-09", "测试真实性扫描通过", "blocker", False,
+            f"work-item scope 无效: {scope_error}",
+            "重新生成 VerificationPlan 并核对 changedPaths",
+            details={"scanned": False, "scopeMode": "work-item",
+                     "scopeSource": scope_source, "scopeStatus": "BLOCK_SCOPE_INVALID"},
+        )
+    scope_mode = "work-item" if scope_paths else "full-repository"
+    if scope_paths:
+        from lib import evidence
+        evidence_ok, evidence_reason = evidence.validate_g09_manifest(
+            project_dir, current_story, scope_fingerprint
+        )
+        if not evidence_ok:
+            return GateResult(
+                "G-09", "测试真实性扫描通过", "blocker", False,
+                f"G-09 evidence 完整性校验失败: {evidence_reason}",
+                "重跑当前 work-item 测试并重新记录 evidence",
+                details={"scanned": False, "scopeMode": scope_mode,
+                         "scopeSource": scope_source, "scopePaths": scope_paths,
+                         "scopeStatus": "BLOCK_EVIDENCE_INVALID",
+                         "evidenceReason": evidence_reason},
+            )
 
     scanner = _locate_authenticity_scanner(master_source)
     if scanner is None:
@@ -766,27 +893,23 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                           f"扫描器 JSON 输出无法解析: {e}",
                           f"stdout 前 200 字符: {result.stdout[:200]}")
 
-    # An existing baseline is an auditable quality input.  A tampered file is
-    # an integrity failure, even when the current scan happens to be clean.
-    baseline_payload = None
-    baseline_error = None
-    try:
-        from lib import baseline as baseline_mod
-        baseline_payload, baseline_error = baseline_mod.load(project_dir, "G-CODE-1")
-    except Exception as exc:
-        baseline_error = f"baseline-error: {exc}"
-    if baseline_error == "tampered":
-        return GateResult(
-            "G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
-            "G-CODE-1 baseline 完整性校验失败（文件可能被篡改）",
-            "恢复 baseline 或显式重新创建并记录用户批准",
-            details={"scanned": True, "baselineStatus": "BLOCK_BASELINE_INVALID"},
+    findings = report.get("findings", [])
+    if scope_paths:
+        findings = [finding for finding in findings
+                    if _finding_in_g09_scope(finding, scope_paths)]
+        blockers = sum(1 for finding in findings if finding.get("severity") == "BLOCKER")
+        status = "PASS" if blockers == 0 else "FAIL"
+        java_test_files = sum(
+            1 for value in scope_paths
+            if value.lower().endswith(".java") and "/test/" in f"/{value.lower()}"
         )
-
-    status = report.get("status", "UNKNOWN")
-    java_test_files = report.get("javaTestFiles", 0)
-    blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
-    n_total = len(report.get("findings", []))
+    else:
+        status = report.get("status", "UNKNOWN")
+        java_test_files = report.get("javaTestFiles", 0)
+        blockers = sum(1 for finding in findings if finding.get("severity") == "BLOCKER")
+    n_total = len(findings)
+    scope_details = {"scopeMode": scope_mode, "scopeSource": scope_source,
+                     "scopePaths": scope_paths, "scopeStatus": "VERIFIED"}
 
     # 有 findings / BLOCKER → 直接 fail（无论 phase）
     if status != "PASS" or blockers > 0:
@@ -794,7 +917,8 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                           f"扫描失败：{n_total} findings / {blockers} BLOCKER",
                           f"修复测试代码中的 8 类禁止（{scanner.name}）",
                           details={"scanned": True, "n_findings": n_total, "n_blockers": blockers,
-                                   "status": status, "n_test_files": java_test_files})
+                                   "status": status, "n_test_files": java_test_files,
+                                   **scope_details})
 
     # 0 测试文件：
     # - pre-coding → stub（还没到写测试的阶段，扫描无对象不算 pass）
@@ -805,13 +929,15 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                               f"phase = {phase}（pre-coding，扫描无对象，按 stub 算）",
                               action="进入 coding 阶段后此门禁生效",
                               details={"scanned": True, "skipped": True, "stub": True,
-                                       "current_phase": phase, "n_test_files": 0})
+                                       "current_phase": phase, "n_test_files": 0,
+                                       **scope_details})
         else:
             return GateResult("G-09", "测试真实性扫描通过", "warn", True,
                               f"phase = {phase} 但 0 测试文件（应编写测试）",
                               action="确认是否漏写测试代码",
                               details={"scanned": True, "n_findings": 0, "n_test_files": 0,
-                                       "current_phase": phase, "stub": False})
+                                       "current_phase": phase, "stub": False,
+                                       **scope_details})
 
     # 有测试文件 + 0 BLOCKER → 真 pass
     # 🆕 v3.4.0 test-verifier 独立性校验（建议书3 B2-7）：测试真实性报告应带独立 session_id
@@ -823,12 +949,13 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                           action="test-verifier sub-agent 报告须带独立 session_id（≠ 主 agent）",
                           details={"scanned": True, "n_findings": n_total, "n_blockers": 0,
                                    "n_test_files": java_test_files,
-                                   "verifier_warning": verifier_warning})
+                                   "verifier_warning": verifier_warning,
+                                   **scope_details})
 
     return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
                       f"扫描通过：{n_total} findings / 0 BLOCKER（{java_test_files} 测试文件）",
                       details={"scanned": True, "n_findings": n_total, "n_blockers": 0,
-                               "n_test_files": java_test_files})
+                               "n_test_files": java_test_files, **scope_details})
 
 
 def _check_test_verifier_independence(project_dir: Path, current_story: str) -> Optional[str]:
@@ -871,6 +998,54 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
                          "story-reviewed", "testcase-generated", "testcase-reviewed",  # 🆕 v3.7.0
                          "task-generated", "task-reviewed"}
 
+    # Scoped Coding authenticity reuses G-09's persisted plan and evidence
+    # chain. Missing or empty scope retains the legacy full-repository scan.
+    scope_paths: list[str] = []
+    scope_source = "full-repository"
+    scope_fingerprint = ""
+    plan = st.get("verificationPlan")
+    if isinstance(plan, dict) and plan.get("changedPaths"):
+        scope_paths, scope_source, scope_fingerprint, scope_error = _resolve_g09_scope(
+            project_dir, st, current_story
+        )
+        if scope_error:
+            return GateResult(
+                "G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                f"work-item scope 无效: {scope_error}",
+                "重新生成 VerificationPlan 并核对 changedPaths",
+                details={"scanned": False, "scopeMode": "work-item",
+                         "scopeSource": scope_source, "scopeStatus": "BLOCK_SCOPE_INVALID"},
+            )
+        from lib import evidence
+        evidence_ok, evidence_reason = evidence.validate_g09_manifest(
+            project_dir, current_story, scope_fingerprint
+        )
+        if not evidence_ok:
+            return GateResult(
+                "G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                f"G-CODE-1 evidence 完整性校验失败: {evidence_reason}",
+                "重跑当前 work-item 测试并重新记录 evidence",
+                details={"scanned": False, "scopeMode": "work-item",
+                         "scopeSource": scope_source, "scopePaths": scope_paths,
+                         "scopeStatus": "BLOCK_EVIDENCE_INVALID",
+                         "evidenceReason": evidence_reason},
+            )
+        production_scope = _gcode1_production_scope(scope_paths)
+        if not production_scope:
+            return GateResult(
+                "G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+                "work-item scope 不含可扫描的生产代码",
+                "核对 VerificationPlan changedPaths 或使用全仓扫描",
+                details={"scanned": False, "scopeMode": "work-item",
+                         "scopeSource": scope_source, "scopePaths": scope_paths,
+                         "scopeStatus": "BLOCK_NO_PRODUCTION_SCOPE"},
+            )
+        scope_paths = production_scope
+    scope_mode = "work-item" if scope_paths else "full-repository"
+    scope_details = {"scopeMode": scope_mode, "scopeSource": scope_source,
+                     "scopePaths": scope_paths,
+                     "scopeStatus": "VERIFIED" if scope_paths else "FULL_REPOSITORY"}
+
     scanner = _locate_coding_scanner(master_source)
     if scanner is None:
         return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", True,
@@ -901,22 +1076,50 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
                           f"扫描器 JSON 输出无法解析: {e}",
                           f"stdout 前 200 字符: {result.stdout[:200]}")
 
-    status = report.get("status", "UNKNOWN")
-    code_files = report.get("codeFiles", 0)
-    coding_reports = report.get("codingReports", 0)
-    blockers = sum(1 for f in report.get("findings", []) if f.get("severity") == "BLOCKER")
-    n_total = len(report.get("findings", []))
+    findings = report.get("findings", [])
+    if scope_paths:
+        findings = [finding for finding in findings
+                    if _finding_in_g09_scope(finding, scope_paths)]
+        status = "PASS" if not any(
+            finding.get("severity") == "BLOCKER" for finding in findings
+        ) else "FAIL"
+        code_files = len(scope_paths)
+        coding_reports = 0
+    else:
+        status = report.get("status", "UNKNOWN")
+        code_files = report.get("codeFiles", 0)
+        coding_reports = report.get("codingReports", 0)
+
+    baseline_payload = None
+    baseline_error = None
+    baseline_mod = None
+    if not scope_paths:
+        try:
+            from lib import baseline as baseline_mod
+            baseline_payload, baseline_error = baseline_mod.load(project_dir, "G-CODE-1")
+        except Exception as exc:
+            baseline_error = f"baseline-error: {exc}"
+    if baseline_error == "tampered":
+        return GateResult(
+            "G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
+            "G-CODE-1 baseline 完整性校验失败（文件可能被篡改）",
+            "恢复 baseline 或显式重新创建并记录用户批准",
+            details={"scanned": True, "baselineStatus": "BLOCK_BASELINE_INVALID"},
+        )
+
+    blockers = sum(1 for f in findings if f.get("severity") == "BLOCKER")
+    n_total = len(findings)
 
     if status != "PASS" or blockers > 0:
         # P1: an explicit, integrity-checked baseline can separate repository
         # debt from Story delta. Missing/tampered baselines retain legacy full
         # blocking behavior; baseline creation is never automatic here.
         try:
-            if baseline_payload is not None and baseline_error is None:
+            if baseline_mod is not None and baseline_payload is not None and baseline_error is None:
                 touched = st.get("changedPaths") or st.get("changedFiles") or []
                 delta = baseline_mod.compare(
                     baseline_payload,
-                    report.get("findings", []),
+                    findings,
                     ruleset_fingerprint=baseline_payload.get("rulesetFingerprint", ""),
                     touched_paths=touched,
                 )
@@ -942,7 +1145,7 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
             # Baseline support is additive; a malformed optional baseline must
             # fall back to the legacy full-scan blocker path.
             pass
-        blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
+        blocker_rules = sorted({f.get("rule") for f in findings
                                 if f.get("severity") == "BLOCKER"})
         return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", False,
                           f"Coding 真实性扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}",
@@ -951,7 +1154,7 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
                                    "n_blockers": blockers, "status": status,
                                    "n_code_files": code_files,
                                    "n_coding_reports": coding_reports,
-                                   "blocker_rules": blocker_rules})
+                                   "blocker_rules": blocker_rules, **scope_details})
 
     if code_files == 0:
         if phase in PRE_CODING_PHASES:
@@ -960,19 +1163,19 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
                               action="进入 coding 阶段后此门禁生效",
                               details={"scanned": True, "skipped": True, "stub": True,
                                        "current_phase": phase, "n_code_files": 0,
-                                       "n_coding_reports": coding_reports})
+                                       "n_coding_reports": coding_reports, **scope_details})
         return GateResult("G-CODE-1", "Coding 真实性扫描通过", "warn", True,
                           f"phase = {phase} 但 0 个生产代码文件（请确认是否漏扫项目根）",
                           action="确认 --project / cwd 是否指向服务根或仓库根",
                           details={"scanned": True, "n_findings": n_total,
                                    "n_code_files": 0, "n_coding_reports": coding_reports,
-                                   "current_phase": phase, "stub": False})
+                                   "current_phase": phase, "stub": False, **scope_details})
 
     return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", True,
                       f"Coding 真实性扫描通过（{code_files} 个代码文件，{coding_reports} 份 Coding 报告，0 BLOCKER，{n_total} WARN）",
                       details={"scanned": True, "n_findings": n_total,
                                "n_blockers": 0, "n_code_files": code_files,
-                               "n_coding_reports": coding_reports})
+                               "n_coding_reports": coding_reports, **scope_details})
 
 
 # ─── G-13：RA ↔ DR ↔ Story ↔ Task ↔ Coding 六层引用追溯 ──────────────────────
@@ -1003,6 +1206,14 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
 
     issues: list[str] = []
     ra_layer_detail: dict = {"present": False, "files": 0}
+    story_entry_dr_exempt = (
+        str(st.get("entryNode") or "").upper() == "STORY"
+        and st.get("scale") == "中"
+    )
+    dr_layer_detail = {
+        "status": "EXEMPT_STORY_ENTRY" if story_entry_dr_exempt else "REQUIRED",
+        "exempt": story_entry_dr_exempt,
+    }
 
     # 0. RA → DR 引用追溯（v3.2 新增，链路最前端）
     ra_files = _iter_ra_files(project_dir)
@@ -1034,9 +1245,9 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
     if story is not None:
         # 找 design/ 下的所有 DR
         drs = sorted(set(design.glob("*DR*.md")) | set(design.glob("*dr*.md")))
-        if not drs:
+        if not drs and not story_entry_dr_exempt:
             issues.append("无 DR 文档可追溯（design/ 目录无 *DR*.md）")
-        else:
+        elif drs:
             # 至少一个 DR ID 在 Story 文档里被引用
             story_content = story.read_text(encoding="utf-8")
             dr_refs = [d.stem for d in drs if d.stem in story_content]
@@ -1057,6 +1268,9 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
 
     # 2. Task → Story 引用追溯
     tasks = paths.list_docs(project_dir, current_story, "-task-*.md")
+    phase_requires_completed_chain = st.get("phase") in {"code-reviewed", "completed"}
+    if phase_requires_completed_chain and not tasks:
+        issues.append(f"code-reviewed 链路缺少 Task 文档：{current_story}-task-*.md")
     for t in tasks:
         task_content = t.read_text(encoding="utf-8")
         if current_story not in task_content:
@@ -1076,6 +1290,8 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
             # 引用判定：Task 的 stem（如 STORY-001-task-001）在 Coding Report 里出现
             if t.stem not in cr_content:
                 issues.append(f"Coding Report 未引用 Task：{t.stem}")
+    elif phase_requires_completed_chain:
+        issues.append(f"code-reviewed 链路缺少 Coding Report：{current_story}")
 
     # 4. CodeReview → Story 引用追溯（如果存在）
     code_review = _find_report_doc(
@@ -1088,13 +1304,17 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
         cv_content = code_review.read_text(encoding="utf-8")
         if current_story not in cv_content:
             issues.append(f"CodeReview 报告未引用 Story ID {current_story}")
+    elif phase_requires_completed_chain:
+        issues.append(f"code-reviewed 链路缺少 CodeReview：{current_story}")
 
     if issues:
         return GateResult("G-13", "全链路对称性核查通过", "blocker", False,
                           f"链路追溯发现 {len(issues)} 个问题：{issues[0]}" + ("..." if len(issues) > 1 else ""),
                           "修复文档间的引用关系",
                           details={"issues": issues, "n_issues": len(issues),
-                                   "ra_layer": ra_layer_detail})
+                                   "ra_layer": ra_layer_detail,
+                                   "entryNode": st.get("entryNode"),
+                                   "dr_layer": dr_layer_detail})
 
     n_drs = len(list(design.glob("*DR*.md")) + list(design.glob("*dr*.md")))
     layer_note = "六层追溯完整（RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview）" \
@@ -1105,7 +1325,9 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
                       details={"current_story": current_story,
                                "n_tasks": len(tasks),
                                "n_drs": n_drs,
-                               "ra_layer": ra_layer_detail})
+                               "ra_layer": ra_layer_detail,
+                               "entryNode": st.get("entryNode"),
+                               "dr_layer": dr_layer_detail})
 
 
 # ─── G-RA：需求分析准入门卫（v3.2 — 对标 SKILL.md §🛡️ G-RA 7 条规则）─────────

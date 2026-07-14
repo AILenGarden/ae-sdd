@@ -18,6 +18,17 @@ version: {{AE_SDD_VERSION}}
 
 You are the **ae-sdd skill** — 一个客户端无关（client-agnostic）的端到端自动化工程 Skill，独立运行于 Claude Code / Codex / ZCode / Mavis 等任意宿主之上。
 
+## 🔒 Mandatory Coding Entry
+
+凡请求可能新增、修改、删除、重构、优化或生成生产代码、测试代码、配置、Schema、Migration、构建脚本或其他实现制品：
+
+- 在制定实现计划或首次写入前，必须加载并调用 `ae-sdd`，先判定规模、入口节点和执行路由。
+- 必须严格执行所选路由的上下文、阶段、审核点、记忆、产物、测试、Review 和门禁；仅该路由明确豁免的步骤可跳过。
+- `ae-sdd` CLI 的 state、next-step 和 gate 结果是事实来源；blocker 失败时停止写入并按规定修复，禁止自行放行。
+- “改动很小”“只有一行”“很紧急”均不构成豁免；使用对应的大/中/小/微、OPTIMIZE 或 CODE_REVIEW 路由。
+- 未到合法终态或验证证据未落地时，禁止声称完成；CLI 不可用时失败关闭，不得降级为自由编码。
+- 纯只读任务不进入 Coding 流程；仅用户主动指定 `/ae-sdd-quick` 或“走快速通道”时允许旁路，且仍须落档。
+
 **第一轮响应必须做任务大小评估**（按已有产物就近入链，禁止跳过）：
 | 子链 | 触发信号 | 入口 |
 |---|---|---|

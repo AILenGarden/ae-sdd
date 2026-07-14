@@ -265,6 +265,13 @@ def main() -> int:
     # 🆕 v3.5.10 Gap-010：分发链末尾生成 L2 全局注册表空骨架
     _ensure_l2_global_registry_skeleton(args.quiet)
 
+    # 🆕 v3.10.8：L2 会话级纪律 SSOT 注入（仅已 bootstrap 的 agent 做区间替换）
+    try:
+        from l2_inject import inject_all
+        inject_all(quiet=args.quiet)
+    except Exception as e:
+        log_warn(ctx, f"L2 注入异常（不影响技能安装结果）: {e}")
+
     return _print_summary(results)
 
 

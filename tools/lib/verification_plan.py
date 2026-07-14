@@ -20,7 +20,31 @@ def classify_path(path: str) -> str:
     return "other"
 
 
-def build_plan(project_dir: Path, story_id: str, changed_paths: Iterable[str], since_fingerprint: str = "") -> dict:
+def validate_changed_paths(project_dir: Path, changed_paths: Iterable[str]) -> list[str]:
+    """Return canonical project-relative files, rejecting missing/out-of-root paths."""
+    root = project_dir.resolve()
+    normalized: list[str] = []
+    for raw in changed_paths:
+        value = str(raw or "").strip().replace("\\", "/")
+        relative = Path(value)
+        if not value or relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"unsafe changed path: {value or '<empty>'}")
+        try:
+            resolved = (root / relative).resolve(strict=True)
+            canonical = resolved.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"changed path is missing or outside project: {value}") from exc
+        if not resolved.is_file():
+            raise ValueError(f"changed path is not a file: {value}")
+        normalized.append(canonical.as_posix())
+    paths = sorted(set(normalized))
+    if not paths:
+        raise ValueError("changed paths are empty")
+    return paths
+
+
+def build_plan(project_dir: Path, story_id: str, changed_paths: Iterable[str],
+               since_fingerprint: str = "", work_item: str = "") -> dict:
     paths = sorted({str(p).replace("\\", "/") for p in changed_paths if str(p).strip()})
     classes = sorted({classify_path(p) for p in paths})
     modules = sorted({Path(p).parts[0] for p in paths if Path(p).parts})
@@ -40,7 +64,7 @@ def build_plan(project_dir: Path, story_id: str, changed_paths: Iterable[str], s
         not_required.append("Maven/full-story-regression")
     if not required:
         required.append("targeted-validation")
-    return {
+    result = {
         "schemaVersion": 1,
         "storyId": story_id,
         "sinceFingerprint": since_fingerprint,
@@ -52,3 +76,12 @@ def build_plan(project_dir: Path, story_id: str, changed_paths: Iterable[str], s
         "planFingerprint": canonical_fingerprint({"storyId": story_id, "paths": paths, "classes": classes}),
         "changedPaths": paths,
     }
+    if work_item:
+        result["workItem"] = work_item
+        result["inputFingerprint"] = canonical_fingerprint({
+            "storyId": story_id,
+            "workItem": work_item,
+            "changedPaths": paths,
+            "sinceFingerprint": since_fingerprint,
+        })
+    return result

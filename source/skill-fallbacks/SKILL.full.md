@@ -1,9 +1,10 @@
 ---
 name: ae-sdd
-version: 3.10.2
+version: 3.10.7
 description: |
-  端到端自动化工程主入口（v3.10.2）。从 DR 出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
+  端到端自动化工程主入口（v3.10.7）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.10.7：G-CODE-1 复用经 plan/evidence/hash 校验的 work-item scope，仅扫描 scope 内生产代码；无可信 scope 时仍严格全仓扫描，且 scoped 路径不读取或创建 baseline。
   🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
   🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。
   🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。
@@ -743,7 +744,8 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | | `ae-sdd plugin list/validate/trace/init` | 三层SKILL注册表 |
 | | `ae-sdd runtime compact` | compact适配层 |
 | **增量质量** | `ae-sdd baseline inspect/create/diff` | G-CODE-1 历史 debt baseline 与 Story delta；创建必须显式批准 |
-| | `ae-sdd verify plan` | 按变更类别生成最小验证计划 |
+| | `ae-sdd verify plan --work-item <ID> --persist` | 生成并原子写入 work-item 绑定的 VerificationPlan |
+| | `ae-sdd evidence finalize --story <ID>` | 核验 artifact SHA-256 并封存 manifest contentHash |
 | | `ae-sdd evidence record/lookup` | 写入/查询 input-command-toolchain-artifact fingerprint 对齐的成功证据 |
 | **Review Batch** | `ae-sdd review start/collect/status/verify-exit/abort/retry-role` | Review Batch v2；`review-loop` 保留为兼容入口 |
 

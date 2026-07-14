@@ -459,8 +459,26 @@ class TestParallelWorkItemIsolation(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(payload["stateMachineId"], "Story-004")
 
-    def test_state_read_without_work_item_blocks_when_multiple_active_sources_exist(self):
-        """两个都还在跑（非 completed）的 work-item 仍应保持歧义拒绝，不允许隐式猜测。"""
+    def test_state_read_auto_picks_recent_by_mtime_on_ambiguity(self):
+        """🆕 v3.10.4（Pbl.md 问题4）：两个活跃 work-item 时，state read 应按 mtime
+        自动推断最近活跃的那个，而非硬拒绝。写命令仍硬拒绝（见下个测试）。"""
+        tmp = _setup_project()
+        sp_a = self._write_work_item(tmp, "Story-004", "STORY-004-BE", "testcase-generated")
+        sp_b = self._write_work_item(tmp, "Story-005", "STORY-005-BE", "story-generated")
+        # 让 sp_b 的 mtime 比 sp_a 新（Story-005 是最近活跃的）
+        import time as _time
+        _time.sleep(0.05)
+        sp_b.touch()
+
+        code, out, err = _run_cli(tmp, "state", "read", "--json")
+
+        self.assertEqual(code, 0, msg=f"只读命令应自动推断而非硬拒绝。stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        self.assertEqual(payload["stateMachineId"], "Story-005",
+                         "应自动选中 mtime 最近的 work-item")
+
+    def test_state_write_still_blocks_on_ambiguity(self):
+        """🆕 v3.10.4 回归：写命令（state write）在歧义时仍硬拒绝，不放松安全约束。"""
         tmp = _setup_project()
         sp_a = self._write_work_item(tmp, "Story-004", "STORY-004-BE", "testcase-generated")
         self._write_work_item(tmp, "Story-005", "STORY-005-BE", "story-generated")
@@ -469,12 +487,10 @@ class TestParallelWorkItemIsolation(unittest.TestCase):
         mirror["activeStatePath"] = str(sp_a)
         (tmp / ".ae-sdd" / "state.json").write_text(json.dumps(mirror, ensure_ascii=False), encoding="utf-8")
 
-        code, out, err = _run_cli(tmp, "state", "read", "--json")
+        code, out, err = _run_cli(tmp, "state", "write", "--phase", "coding", "--json")
 
-        self.assertNotEqual(code, 0, msg="多个活跃 work-item 时不应静默读取全局 active mirror")
+        self.assertNotEqual(code, 0, "写命令在歧义时必须硬拒绝，不可自动推断")
         self.assertIn("--work-item", err + out)
-        self.assertIn("Story-004", err + out)
-        self.assertIn("Story-005", err + out)
 
     def test_state_read_explicit_work_item_reads_target_not_mirror(self):
         tmp = _setup_project()

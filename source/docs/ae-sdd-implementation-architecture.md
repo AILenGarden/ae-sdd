@@ -106,6 +106,8 @@ harness/                        派生适配层，不手工改生成物
 - 新增 `scripts/*_scan.py` 必须加入 `scripts/build_dist.py` runtime_scripts 白名单。
 - 高频 scanner 应优先支持进程内调用，子进程 CLI 仅作为兼容入口。
 - Review Batch、baseline、VerificationPlan 和 evidence 均通过 `tools/lib/` 提供纯 Python API，CLI 只做参数适配；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。
+- `ae-sdd verify plan --persist` 先规范化项目内真实文件，再用 `state.write_state()` 原子写入 work-item 绑定 plan；dry 模式不写。G-09 与 G-CODE-1 共用 changedPaths containment、plan fingerprint 和 evidence/artifact hash 校验；G-CODE-1 再过滤测试/文档，只保留生产代码，空生产 scope 阻断，无 scope 保持全仓结果。`ae-sdd evidence finalize` 只升级无 contentHash 清单并核验 artifact SHA-256，已篡改 hash 必须失败。
+- G-13 的 DR exemption 只由 `entryNode=STORY && scale=中` 触发；实现继续校验 Story 本体与成熟阶段的 Task/CodingReport/CodeReview 存在及引用关系。
 - 🆕 v3.9.1 注册表模式：同族门禁（如 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX 四个上下文加载准入门禁）用 `CONTEXT_GATE_REGISTRY` 注册表 + 单个 `_check_context_loaded` 函数服务多个 gate_id，避免每门禁重复写 scale 豁免/phase 感知/逐项校验逻辑；4 个薄封装 `check_g_*_ctx` 对齐 `CHECK_FUNCS` 的 `(project_dir, st, current_story)` 签名，内部转发到统一实现。
 
 ## 7. 项目侧状态与缓存
@@ -124,7 +126,7 @@ harness/                        派生适配层，不手工改生成物
 | `.ae-sdd/runtime-stats/` | Runtime Stats JSONL，本地观测数据，可清理，不进入版本控制 |
 | `.ae-sdd/baselines/` | 用户批准的 gate baseline（默认 G-CODE-1），带 ruleset/content hash | 不自动创建；规则或触碰文件时重新确认 |
 | `.ae-sdd/doc-aliases.json` | 旧文档路径到 canonical 正文的 alias registry | 只存指针，不存第二份正文 |
-| `.auto-engineering/{story}/evidence/manifest.json` | Story 验证证据索引与复用条件 | 失败证据不可复用；artifact hash 不一致即失效 |
+| `.auto-engineering/{story}/evidence/manifest.json` | Story 验证证据索引与复用条件 | 保存 canonical content hash；失败证据、manifest/input/artifact hash 不一致均不可复用 |
 
 `tools/lib/state.py` 是状态写入与终态一致性的代码权威。`phase`/`history` 表示生命周期主状态；`currentPhase`、`currentStep`、`completedSteps`、`pendingOutputs`、`codingRound` 是工作流投影字段，不能独立滞留在旧步骤。`set_phase()` 和 `set_story_substate_phase()` 写入生命周期 phase 时必须级联同步投影；`write_state()` 落盘前执行终态不变量校验：`phase=completed` 必须满足 `currentPhase=completed`、`currentStep=completed`、`pendingOutputs` 为空、`codingRound>=r1`。嵌套 state 中该规则作用于 `storyStates{}` 与 `drStates[*].storyStates{}`，不强加给 PRD/DR 容器子记录。
 

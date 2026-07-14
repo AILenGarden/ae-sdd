@@ -59,6 +59,8 @@ ae-sdd — ae-sdd CLI 入口
     ae-sdd classify --text "..."
     ae-sdd classify --file <path>
     ae-sdd health
+    ae-sdd verify plan --story <ID> --work-item <ID> --changed <paths> --persist
+    ae-sdd evidence finalize --story <ID>
     ae-sdd automation status                       # 自动化开关配置（v3.8.0）
     ae-sdd automation enable                       # 开启全自动化（v3.8.0）
     ae-sdd automation disable                      # 关闭自动化（v3.8.0）
@@ -235,15 +237,18 @@ def _active_state_from_mirror(ade_sdd: Path) -> tuple[Path, str] | None:
     return None
 
 
-def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
+def _main_state_path_for_args(ade_sdd: Path, args, prefer_recent: bool = False) -> tuple[Path, str]:
     """🆕 v3.9.3 解析 state 路径：接受 R6 顶层名 或 raw ID 派生顶层名。
 
     优先级：
-      1. --project-state → 项目级 state.json
+      1. --project-state -> 项目级 state.json
       2. --work-item / --story（token）：
-         a) token 是 R6 顶层名（PRD-/DR-/Story-/Task-）→ 直接用
-         b) token 是 raw ID（STORY-006-BE / BUG-LIFE-001）→ 用 _resolve_top_node_from_token 派生
+         a) token 是 R6 顶层名（PRD-/DR-/Story-/Task-）-> 直接用
+         b) token 是 raw ID（STORY-006-BE / BUG-LIFE-001）-> 用 _resolve_top_node_from_token 派生
       3. activeStatePath 镜像
+
+    🆕 v3.10.4 prefer_recent：只读命令传 True，歧义时按 mtime 自动推断最近活跃
+    work-item（Pbl.md 问题4）；写命令默认 False，保持硬拒绝。
     """
     if getattr(args, "project_state", False):
         raise ValueError("project-level .ae-sdd/state.json is not supported; use --work-item with a task-scoped state")
@@ -256,13 +261,13 @@ def _main_state_path_for_args(ade_sdd: Path, args) -> tuple[Path, str]:
         if top_node:
             sp = paths.work_item_state_path(ade_sdd, top_node, features)
             return sp, _state_path_work_item_key(sp, sp.parent.name)
-        # 解析不出顶层节点 → 尝试当作顶层名（R6 形式）
+        # 解析不出顶层节点 -> 尝试当作顶层名（R6 形式）
         if work_item.startswith(("PRD-", "DR-", "Story-", "Task-")):
             # 用顶层名本身当 work_item_key 走 legacy 单段兼容
             sp = paths.work_items_dir(ade_sdd) / work_item / "state.json"
             return sp, work_item
         raise ValueError(f"cannot resolve work item: {work_item}")
-    resolved = work_item_context.resolve_default_state(ade_sdd)
+    resolved = work_item_context.resolve_default_state(ade_sdd, prefer_recent=prefer_recent)
     return resolved.path, resolved.key
 
 
@@ -377,7 +382,7 @@ def cmd_state_read(args, parser):
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
     try:
-        sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+        sp, _work_item = _main_state_path_for_args(ade_sdd, args, prefer_recent=True)
     except work_item_context.AmbiguousWorkItemError as e:
         _emit_work_item_ambiguity(e, args)
         return 1
@@ -754,7 +759,7 @@ def cmd_state_next_step(args, parser):
         output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
         return 1
     try:
-        sp, _work_item = _main_state_path_for_args(ade_sdd, args)
+        sp, _work_item = _main_state_path_for_args(ade_sdd, args, prefer_recent=True)
     except work_item_context.AmbiguousWorkItemError as e:
         _emit_work_item_ambiguity(e, args)
         return 1
@@ -1481,7 +1486,32 @@ def cmd_verify_plan(args, parser):
             changed = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
         except OSError:
             changed = []
-    result = verification_plan.build_plan(project_dir, args.story, changed, args.since_fingerprint)
+    try:
+        changed = verification_plan.validate_changed_paths(project_dir, changed)
+        work_item = (args.work_item or "").strip()
+        result = verification_plan.build_plan(
+            project_dir, args.story, changed, args.since_fingerprint, work_item
+        )
+        if args.persist:
+            ade_sdd = project_dir / ".ae-sdd"
+            if not ade_sdd.is_dir():
+                raise ValueError(f"project has no .ae-sdd directory: {project_dir}")
+            if not work_item:
+                raise ValueError("--persist requires --work-item")
+            state_path = paths.find_work_item_state_path(ade_sdd, work_item)
+            if state_path is None:
+                raise ValueError(f"cannot resolve existing work item: {work_item}")
+            state_data = state.read_state(state_path)
+            recorded_story = str(state_data.get("currentStory") or state_data.get("activeStory") or "")
+            if recorded_story and recorded_story != args.story:
+                raise ValueError(
+                    f"work item story mismatch: state={recorded_story}, requested={args.story}"
+                )
+            state_data["verificationPlan"] = result
+            state.write_state(state_path, state_data)
+    except ValueError as exc:
+        output.err(str(exc))
+        return 1
     if args.json:
         output.emit(result, as_json=True)
     else:
@@ -1489,6 +1519,25 @@ def cmd_verify_plan(args, parser):
         output.info(f"   required: {', '.join(result['required'])}")
         if result["deferredUntilFinal"]:
             output.info(f"   deferred: {', '.join(result['deferredUntilFinal'])}")
+    return 0
+
+
+def cmd_evidence_finalize(args, parser):
+    project_dir = _project_dir_from_args(args)
+    try:
+        manifest_path, manifest = evidence.finalize_manifest(project_dir, args.story)
+    except ValueError as exc:
+        output.err(str(exc))
+        return 1
+    result = {
+        "manifestPath": str(manifest_path),
+        "contentHash": manifest.get("contentHash"),
+        "integrityStatus": manifest.get("_integrityStatus"),
+    }
+    if args.json:
+        output.emit(result, as_json=True)
+    else:
+        output.ok(f"evidence manifest finalized: {manifest_path}")
     return 0
 
 
@@ -4928,6 +4977,8 @@ def main() -> int:
     p_vp.add_argument("--project", default="")
     p_vp.add_argument("--changed", default="", help="comma-separated changed paths; default git diff")
     p_vp.add_argument("--since-fingerprint", default="")
+    p_vp.add_argument("--work-item", default="", help="existing isolated work item to bind")
+    p_vp.add_argument("--persist", action="store_true", help="atomically write plan to work-item state")
     p_vp.set_defaults(func=cmd_verify_plan)
 
     p_evidence = sub.add_parser("evidence", help="evidence manifest and cache", parents=[common])
@@ -4952,6 +5003,10 @@ def main() -> int:
     p_el.add_argument("--input-fingerprint", required=True)
     p_el.add_argument("--toolchain-fingerprint", required=True)
     p_el.set_defaults(func=cmd_evidence_lookup)
+    p_ef = evidence_sub.add_parser("finalize", help="verify artifacts and seal manifest", parents=[common])
+    p_ef.add_argument("--story", required=True)
+    p_ef.add_argument("--project", default="")
+    p_ef.set_defaults(func=cmd_evidence_finalize)
 
     # iteration-check（🆕 v3.5.4 — 设计-实现一致性迭代检查，补 UC 盲区，report-only）
     p_ic = sub.add_parser("iteration-check", help="设计-实现一致性迭代检查（补UC盲区，report-only）",

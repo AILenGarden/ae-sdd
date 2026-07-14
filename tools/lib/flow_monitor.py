@@ -70,24 +70,35 @@ class DriftResult:
 # ─── phase → gate_id 映射 ────────────────────────────────────────────────────
 
 def get_phase_gate_map() -> dict[str, list[str]]:
-    """返回 phase → 应检查的 gate_id 列表映射。
+    """返回 phase -> 应检查的 gate_id 列表映射。
 
     每轮 UserPromptSubmit 时依据当前 phase 确定要校验哪些门禁，
     以产物是否合规作为"本阶段是否真正完成"的唯一判据（决策 1B）。
 
     未列出的 phase（initialized / paused / completed）不做产物核查。
+
+    🆕 v3.10.4 双源对齐：本映射是漂移检测用的轻量代表 gate（每 phase 1 个），
+    不是切相门禁全量表（那是 gate_intercept.PHASE_ENTRY_GATES）。两者必须不矛盾：
+    本表选取的 gate 必须是 PHASE_ENTRY_GATES 对应 phase 的子集，否则会与切相
+    门禁判定冲突（如旧 code-reviewed->G-05 在 PHASE_ENTRY_GATES 里已摘除，但本表
+    仍残留，导致漂移检测每轮误报 G-05 失败 -- Pbl.md 问题1 根因）。
+    v3.10 砍 Task 后：task-generated/task-reviewed 已废弃，改为 testcase 系列；
+    code-reviewed 代表 gate 从 G-05 改为 G-09（与 PHASE_ENTRY_GATES 对齐）。
     """
     return {
-        "ra-generated":    ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"],
-        "dr-generated":    ["G-01"],
-        "story-generated": ["G-02"],
-        "story-reviewed":  ["G-03"],
-        "task-generated":  ["G-04"],
-        "task-reviewed":   ["G-04"],   # Task Review 完成标准：G-04 产物合规
-        "coding-process":  ["G-08"],   # CodingPlan 文档存在且 14 门禁全过
-        "coding":          ["G-CODEPLAN-SRC"],
-        "code-reviewed":   ["G-05"],
-        "test-running":    ["G-09"],
+        "ra-generated":        ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"],
+        "dr-generated":        ["G-01"],
+        "story-generated":     ["G-02"],
+        "story-reviewed":      ["G-03"],
+        # 🆕 v3.10：testcase 系列替代 task 系列（砍 Task）
+        "testcase-generated":  ["G-04"],
+        "testcase-reviewed":   ["G-04"],
+        "coding-process":      ["G-08"],   # CodingPlan 文档存在且 14 门禁全过
+        "coding":              ["G-CODEPLAN-SRC"],
+        # 🆕 v3.10.4：G-05（Task 文档存在）已从 PHASE_ENTRY_GATES 摘除，改用 G-09
+        # （测试通过）作为 code-reviewed 的漂移检测代表，消除双源不一致。
+        "code-reviewed":       ["G-09"],
+        "test-running":        ["G-09"],
     }
 
 

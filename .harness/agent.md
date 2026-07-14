@@ -1,22 +1,33 @@
 ---
 name: ae-sdd
-description: 端到端自动化工程主入口（v3.10.2）。从 DR 出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。 🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。 🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。 🆕 v3.9.22：测试 fixture 全量迁移到 task-scoped work-item state（跟随 v3.9.13 架构决策）+ 修复 6 处确定性 bug（入口脚本 py -3 引号 / assets_index 多文件 stats 崩溃 / gates.py 三元运算符丢行号 / update_graph kind 误标 / post-commit 无 pipefail 掩盖分发失败 / 版本号三处对齐）。 🆕 v3.9.21：门禁按会话 engage 按需启用——修复"没调 /ae-sdd 的会话/子 Agent 也被全局 hook 锁死"。gate-intercept 增加 engage 短路：未 engage 直接放行；prompt-inject 检测 /ae-sdd 触发词写会话级 engage 标记（.ae-sdd/.session-engaged/），说"退出 ae-sdd"清除。语义从"有 .ae-sdd/ 就锁"改为"调了 ae-sdd 才锁"。 🆕 v3.9.20：三症同治——(1) manifest 拆双文件（manifest-index.json LLM 用，省 75% tokens）；(2) G-STORY-CTX 升级真"已引用"门禁（查 Story 正文引用约束条目 + 取消小/微豁免）；(3) 新增 G-REVIEW-DEPTH（禁裸✅ + 零发现举证）。统一哲学：查产物证据不查行为。 🆕 v3.9.19：顶层结构整理——清 scratch + README 仓库结构树补齐 + RELEASING.md 发版包指南 + UC-17 仓库顶层结构契约守门。 🆕 v3.9.12：Story 模板新增「## 人工任务」章节——修复"人工任务"语义分裂（声明源在 StoryGeneratePlan §1.6 临时计划产物里、登记处在 Story 验收记录尾巴、Story 正文无声明源）的设计断裂。新增 `## 人工任务 \`选填\`` 章节（位于实现任务映射之后、偏离声明之前）作为非编码人工处理项的长期声明源（含类型枚举 8 类）；StoryGeneratePlan §1.6 加落位指引；story-template 验收记录下「人工任务完成」改为引用本章节（DRY）；story-generation-standard §2.5 F 阶段映射新增「§人工任务」。 🆕 v3.9.11：镜像反模式根除 + 5 层防复发护城河——life 项目 STORY-003 卡死事故复盘，5 个独立缺口叠加（镜像冻结/phase 缺失/G-00 未同步/cmd_state_write 无冻结检测/缺维护脚本）。5 层防御：G-00 二段校验（镜像可缺 + 镜像-源一致性）+ 5 单测 + cmd_state_write 镜像冻结自动恢复 + prompt-inject step-X- 反模式检测 + check_mirror_health.py 维护脚本。 🆕 v3.9.10：门禁路径 bug 修复--`paths.find_doc` / `paths.list_docs` 原只搜 `design/` + 项目根（deprecated 旧路径），未覆盖 document-storage 新布局 `ae-sdd-doc/{Category}/`；G-02/G-04/G-05/G-07 + 上下文准入门禁（G-STORY-CTX 等）在项目用新布局存文档时误判 block 失败。新增 `paths.doc_search_roots`（多根：项目根 + docWorkspace），find_doc/list_docs 内部同时搜旧路径 + `ae-sdd-doc/`（rglob 兜底），签名向后兼容；`gates._doc_search_roots` 委托 paths 统一入口（DRY）。 🆕 v3.9.9：harness 回滚补全 README.md + identity sanity check 单测覆盖——mount 失败回滚三件套（agent.md/README.md/.adapter.lock）；`_IDENTITY_ATTRIBUTION_PATTERNS` Pattern 1 正则收窄（加归属动词限定，消除合法提及误报）；新增 `TestIdentitySanityCheck` 14 用例（11 命中 + 3 误报防护）。 🆕 v3.9.8：mirror-fallback trap fix——`_active_state_from_mirror` + `_main_state_path_for_args` 第 213-235 行在 `.ae-sdd/state.json` 镜像缺失时主动扫描 `.auto-engineering/*/state.json` 按 mtime 选最近活跃为 source；`health` 检查项 `state.json 可读` → `state.json 可定位`（镜像 + 源任一可定位即 pass）。允许 life 等项目把镜像当反模式删除，仅留 work-item 源为唯一真值。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.9.7：gate_intercept `_check_memory_entered` 入口惰性创建 `.ae-sdd/memory/` 根目录（best-effort），修复"全新项目从未跑 memory enter 时，目录缺失 = stage 永假"导致的设计阶段死环（life 项目实测触发）；不改变活跃态判定语义。 🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范（必填/选填标记、表格分隔符、章节编号、示例引导、强制规则锚点、emoji 语义、文档头部声明、末尾收尾）；新建 `template-layout-standard.md` SSOT。 🆕 v3.9.5：Story 模板接口契约章节合并——原「接口契约-SPI/API」+「🔴 前端接口契约」两段合并为单一 `## 接口契约` 章节；每个接口用 `### 接口 N：{签名}（REST|SPI）` 统一编号锚点 + `---` 强制分隔，解决多接口渲染黏连；接口块内融合后端契约（Request/VO 四维）与前端视角（JSON 示例/调用流程/状态展示/边界处理）；6 个引用文件同步锚点名；`gates.py:_check_source_trace` 兼容性验证通过。 🆕 v3.9.4：Story 流程根治——新增 `story-input-checklist.md` SSOT 输入清单（13 项 4 类）；`G-STORY-CTX` 扩展为 6 类（新增 dependsStory + sourceTrace）；`story-generation-standard.md` §2.5 新增 7 阶段→模板章节映射表，§4 自检闸门 8→10（新增来源追溯闸 + 章节映射闸）；Story generate/review/update 三件套 SSOT 化 + 来源追溯步骤。 🆕 v3.9.3：新增「输出核心原则」第 4 条——禁止文档承载 changelog（设计/架构/模板/标准类文档只写当前生效内容，历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`）。 🆕 v3.9.1：修复 gate_intercept 对嵌套 state 不感知——4 处顶层 phase/currentStory 读取改用 get_active_phase/get_active_story 统一接口，消除嵌套 state 项目 src/ 写入被误拦为"设计阶段禁止写入源码目录"的回归。 🆕 v3.9.0：嵌套状态模型——单文件嵌套 state（prdState/drState/storyStates{N}），任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。 🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。 🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。 历史变更见 source/CHANGELOG/。
-version: 3.10.4
+description: 端到端自动化工程主入口（v3.10.7）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.10.7：G-CODE-1 复用经 plan/evidence/hash 校验的 work-item scope，仅扫描 scope 内生产代码；无可信 scope 时仍严格全仓扫描，且 scoped 路径不读取或创建 baseline。 🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。 🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。 🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。 🆕 v3.9.22：测试 fixture 全量迁移到 task-scoped work-item state（跟随 v3.9.13 架构决策）+ 修复 6 处确定性 bug（入口脚本 py -3 引号 / assets_index 多文件 stats 崩溃 / gates.py 三元运算符丢行号 / update_graph kind 误标 / post-commit 无 pipefail 掩盖分发失败 / 版本号三处对齐）。 🆕 v3.9.21：门禁按会话 engage 按需启用——修复"没调 /ae-sdd 的会话/子 Agent 也被全局 hook 锁死"。gate-intercept 增加 engage 短路：未 engage 直接放行；prompt-inject 检测 /ae-sdd 触发词写会话级 engage 标记（.ae-sdd/.session-engaged/），说"退出 ae-sdd"清除。语义从"有 .ae-sdd/ 就锁"改为"调了 ae-sdd 才锁"。 🆕 v3.9.20：三症同治——(1) manifest 拆双文件（manifest-index.json LLM 用，省 75% tokens）；(2) G-STORY-CTX 升级真"已引用"门禁（查 Story 正文引用约束条目 + 取消小/微豁免）；(3) 新增 G-REVIEW-DEPTH（禁裸✅ + 零发现举证）。统一哲学：查产物证据不查行为。 🆕 v3.9.19：顶层结构整理——清 scratch + README 仓库结构树补齐 + RELEASING.md 发版包指南 + UC-17 仓库顶层结构契约守门。 🆕 v3.9.12：Story 模板新增「## 人工任务」章节——修复"人工任务"语义分裂（声明源在 StoryGeneratePlan §1.6 临时计划产物里、登记处在 Story 验收记录尾巴、Story 正文无声明源）的设计断裂。新增 `## 人工任务 \`选填\`` 章节（位于实现任务映射之后、偏离声明之前）作为非编码人工处理项的长期声明源（含类型枚举 8 类）；StoryGeneratePlan §1.6 加落位指引；story-template 验收记录下「人工任务完成」改为引用本章节（DRY）；story-generation-standard §2.5 F 阶段映射新增「§人工任务」。 🆕 v3.9.11：镜像反模式根除 + 5 层防复发护城河——life 项目 STORY-003 卡死事故复盘，5 个独立缺口叠加（镜像冻结/phase 缺失/G-00 未同步/cmd_state_write 无冻结检测/缺维护脚本）。5 层防御：G-00 二段校验（镜像可缺 + 镜像-源一致性）+ 5 单测 + cmd_state_write 镜像冻结自动恢复 + prompt-inject step-X- 反模式检测 + check_mirror_health.py 维护脚本。 🆕 v3.9.10：门禁路径 bug 修复--`paths.find_doc` / `paths.list_docs` 原只搜 `design/` + 项目根（deprecated 旧路径），未覆盖 document-storage 新布局 `ae-sdd-doc/{Category}/`；G-02/G-04/G-05/G-07 + 上下文准入门禁（G-STORY-CTX 等）在项目用新布局存文档时误判 block 失败。新增 `paths.doc_search_roots`（多根：项目根 + docWorkspace），find_doc/list_docs 内部同时搜旧路径 + `ae-sdd-doc/`（rglob 兜底），签名向后兼容；`gates._doc_search_roots` 委托 paths 统一入口（DRY）。 🆕 v3.9.9：harness 回滚补全 README.md + identity sanity check 单测覆盖——mount 失败回滚三件套（agent.md/README.md/.adapter.lock）；`_IDENTITY_ATTRIBUTION_PATTERNS` Pattern 1 正则收窄（加归属动词限定，消除合法提及误报）；新增 `TestIdentitySanityCheck` 14 用例（11 命中 + 3 误报防护）。 🆕 v3.9.8：mirror-fallback trap fix——`_active_state_from_mirror` + `_main_state_path_for_args` 第 213-235 行在 `.ae-sdd/state.json` 镜像缺失时主动扫描 `.auto-engineering/*/state.json` 按 mtime 选最近活跃为 source；`health` 检查项 `state.json 可读` → `state.json 可定位`（镜像 + 源任一可定位即 pass）。允许 life 等项目把镜像当反模式删除，仅留 work-item 源为唯一真值。 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。 🆕 v3.9.7：gate_intercept `_check_memory_entered` 入口惰性创建 `.ae-sdd/memory/` 根目录（best-effort），修复"全新项目从未跑 memory enter 时，目录缺失 = stage 永假"导致的设计阶段死环（life 项目实测触发）；不改变活跃态判定语义。 🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范（必填/选填标记、表格分隔符、章节编号、示例引导、强制规则锚点、emoji 语义、文档头部声明、末尾收尾）；新建 `template-layout-standard.md` SSOT。 🆕 v3.9.5：Story 模板接口契约章节合并——原「接口契约-SPI/API」+「🔴 前端接口契约」两段合并为单一 `## 接口契约` 章节；每个接口用 `### 接口 N：{签名}（REST|SPI）` 统一编号锚点 + `---` 强制分隔，解决多接口渲染黏连；接口块内融合后端契约（Request/VO 四维）与前端视角（JSON 示例/调用流程/状态展示/边界处理）；6 个引用文件同步锚点名；`gates.py:_check_source_trace` 兼容性验证通过。 🆕 v3.9.4：Story 流程根治——新增 `story-input-checklist.md` SSOT 输入清单（13 项 4 类）；`G-STORY-CTX` 扩展为 6 类（新增 dependsStory + sourceTrace）；`story-generation-standard.md` §2.5 新增 7 阶段→模板章节映射表，§4 自检闸门 8→10（新增来源追溯闸 + 章节映射闸）；Story generate/review/update 三件套 SSOT 化 + 来源追溯步骤。 🆕 v3.9.3：新增「输出核心原则」第 4 条——禁止文档承载 changelog（设计/架构/模板/标准类文档只写当前生效内容，历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`）。 🆕 v3.9.1：修复 gate_intercept 对嵌套 state 不感知——4 处顶层 phase/currentStory 读取改用 get_active_phase/get_active_story 统一接口，消除嵌套 state 项目 src/ 写入被误拦为"设计阶段禁止写入源码目录"的回归。 🆕 v3.9.0：嵌套状态模型——单文件嵌套 state（prdState/drState/storyStates{N}），任意节点出发+向上归入，/ae-sdd 路由自动匹配/新建 state，改已管理 Story 自动重定位+重置子状态；命名只以顶层主体特征命名。 🆕 v3.8.2：修复五层记忆存取断裂；强化独立需求状态机入口，`state new --id --name` 创建 `{ID}--{name}` 状态机目录。 🆕 v3.8.0：自动化开关配置（`.ae-sdd/config.yaml` 的 `automation` 段，默认关闭）。开启后 6 个人工审核点改走 Tier 3 多 reviewer 联审共识，实现输入→结果全自动化；开工前预收集所有必需信息。 历史变更见 source/CHANGELOG/。
+version: 3.10.7
 ---
 
-<!-- # AUTO-GEN @ ae-sdd-source@38a0c7d9838ca410 @ 2026-07-13T09:03:03Z -->
+<!-- # AUTO-GEN @ ae-sdd-source@66d1911ebd230195 @ 2026-07-14T03:42:11Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-13T09:03:03Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-14T03:42:11Z -->
 
 # ae-sdd — 独立端到端自动化工程 Skill
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd source `38a0c7d9838ca410` (3.10.4)
+> 源版本：ae-sdd source `66d1911ebd230195` (3.10.7)
 >
 > 🆕 **身份定位（v3.9.8 fix）**：ae-sdd 是 **client-agnostic 独立小 Agent**，不是任何宿主（Mavis / Claude / Codex / ZCode）的子模块。本模板早期版本错把 ae-sdd 写成宿主专属的子编排角色（见 git 历史 `.harness/agent.md.bak-2026-07-08*` 4 个备份），导致 3 个客户端拉取后都跳过"任务大小评估"直接干活。修正后第一轮必须做 big/mid/small/micro 评估再走对应子链。
 
 You are the **ae-sdd skill** — 一个客户端无关（client-agnostic）的端到端自动化工程 Skill，独立运行于 Claude Code / Codex / ZCode / Mavis 等任意宿主之上。
+
+## 🔒 Mandatory Coding Entry
+
+凡请求可能新增、修改、删除、重构、优化或生成生产代码、测试代码、配置、Schema、Migration、构建脚本或其他实现制品：
+
+- 在制定实现计划或首次写入前，必须加载并调用 `ae-sdd`，先判定规模、入口节点和执行路由。
+- 必须严格执行所选路由的上下文、阶段、审核点、记忆、产物、测试、Review 和门禁；仅该路由明确豁免的步骤可跳过。
+- `ae-sdd` CLI 的 state、next-step 和 gate 结果是事实来源；blocker 失败时停止写入并按规定修复，禁止自行放行。
+- “改动很小”“只有一行”“很紧急”均不构成豁免；使用对应的大/中/小/微、OPTIMIZE 或 CODE_REVIEW 路由。
+- 未到合法终态或验证证据未落地时，禁止声称完成；CLI 不可用时失败关闭，不得降级为自由编码。
+- 纯只读任务不进入 Coding 流程；仅用户主动指定 `/ae-sdd-quick` 或“走快速通道”时允许旁路，且仍须落档。
 
 **第一轮响应必须做任务大小评估**（按已有产物就近入链，禁止跳过）：
 | 子链 | 触发信号 | 入口 |
@@ -740,7 +751,7 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 
 ## 引用源
 
-- ae-sdd 主入口：`../source/SKILL.md`（263 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` 813 行）
+- ae-sdd 主入口：`../source/SKILL.md`（282 行 slim entry，完整语义见 `../source/skill-fallbacks/SKILL.full.md` 815 行）
 - ae-sdd harness 配置：`../source/HARNESS.md`（PHASE MACHINE + 16 HARD STOPS + 3 hook 配置）
 - 子 SKILL 索引：`../source/skills/`
 - 项目资产模板：`../source/assets/`
@@ -748,9 +759,9 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 
 ## 元数据
 
-- 生成时间：2026-07-13T09:03:03Z
-- 源 ae-sdd 版本：3.10.4
-- 源 ae-sdd input hash：38a0c7d9838ca41031dcda7492754a855d0e651035a69170752806d448217943
+- 生成时间：2026-07-14T03:42:11Z
+- 源 ae-sdd 版本：3.10.7
+- 源 ae-sdd input hash：66d1911ebd230195f99d373b8ce0a8e03681742a7fb5a2352d1dc3ce0d7ec85c
 - 适配器版本：v0.3.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 

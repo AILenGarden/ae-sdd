@@ -463,6 +463,19 @@ def _check_path_permission(
                         f"ae-sdd state confirm --phase coding-process --story {current_story or '<STORY-ID>'}\n"
                         f"（🆕 v3.5.16 Task→Coding 解耦，硬层产物校验，防 AI 凭记忆绕过 CodingProcess）"
                     )
+                # 🆕 v3.10.6 §B0.5 Spec 变更确认门禁（物理实现）
+                # 「先改 spec 再改代码」时序约束：Execute 前必须用户明确确认 spec 无需变更（或已先行更新）。
+                # 这是纯时序门禁，无法由产物检查覆盖，只能靠此 confirm token 机制保障。
+                # 微任务（scale==微）共用 coding confirm，不额外要求（无 Story/TestCase 上游 spec）。
+                if scale != "微" and not session_mod.is_phase_confirmed(ade_sdd, "spec-change", current_story):
+                    return False, (
+                        f"代码改动准入未通过：§B0.5 Spec 变更确认 token 缺失。\n"
+                        f"目标文件: {file_path}\n"
+                        f"Execute 前必须向用户确认「Story/接口契约/数据模型/DR/TestCase 是否需要先修改」。\n"
+                        f"用户确认无需修改后运行: ae-sdd state confirm --phase spec-change --story {current_story or '<STORY-ID>'}\n"
+                        f"若需要修改 spec，先走对应 Update 路径，完成后再运行上述命令。\n"
+                        f"（🆕 v3.10.6 §B0.5 先改 spec 再改代码，时序约束物理门禁）"
+                    )
         except Exception as e:
             return False, (
                 f"代码改动准入门禁自检异常，禁止放行。\n"
@@ -888,6 +901,36 @@ def _deny_response(tool_name: str, reason: str) -> dict:
 
 # ─── 🆕 v3.9.3：待初始化项目拦截 ────────────────────────────────────────────────
 
+# 🆕 v3.10.4：ae-sdd 工具自身仓库豁免。
+# 根因：ae-sdd 工具本体源码仓（如 D:\Item\ae-sdd）永远不会有 .ae-sdd/，但用户在此仓内
+# 发 /ae-sdd 触发词会写 .ae-sdd-pending-init 标记，随后本模块无差别拦截所有 Write/Edit/Bash，
+# 连"修 hook 自己"都拦，形成死锁（详见 test_pending_init_deadlock_fix.Pbl.md）。
+# v3.10.2 只补了 disengage 暗号当逃生口，但每次都要用户手动说"不锁了"才能干活，体验极差。
+# 本豁免从根上识别"这个仓库就是 ae-sdd 工具本身"，直接放行，不进 pending-init 拦截。
+# 判定标志：cwd 上溯 5 层内存在 tools/bin/ae-sdd + tools/lib/gate_intercept.py 双文件，
+# 双特定文件名避免误判普通项目。
+_SELF_REPO_MARKER_FILES = ("tools/bin/ae-sdd", "tools/lib/gate_intercept.py")
+
+
+def _is_ae_sdd_self_repo(cwd: Optional[Path]) -> bool:
+    """判断 cwd 是否落在 ae-sdd 工具自身源码仓内。
+
+    从 cwd 上溯最多 5 层父目录，若某层同时含 tools/bin/ae-sdd 与
+    tools/lib/gate_intercept.py，判定为 ae-sdd 工具自身仓库。双文件标志
+    保证不会把普通项目误判为工具仓。
+    """
+    if cwd is None:
+        return False
+    cur = Path(cwd).resolve()
+    for _ in range(5):
+        if all((cur / marker).is_file() for marker in _SELF_REPO_MARKER_FILES):
+            return True
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return False
+
+
 def _check_pending_init_intercept(
     tool_name: str,
     bash_command: Optional[str],
@@ -984,7 +1027,13 @@ def check_intercept(
     if phase is None:
         ade_sdd = paths.locate_project_ae_sdd(project_dir)
         if ade_sdd is None:
-            # 🆕 v3.9.3：用户触发 /ae-sdd 但项目未 init → 检查待初始化标记
+            # 🆕 v3.10.4：ae-sdd 工具自身仓库豁免。
+            # 工具本体源码仓永远不会有 .ae-sdd/，但触发词会写 pending-init 标记
+            # 导致死锁（连修 hook 自己都被拦）。从根上识别工具仓并放行，
+            # 不进 pending-init 拦截分支。豁免只跳过本分支，不影响已 init 项目。
+            if _is_ae_sdd_self_repo(project_dir):
+                return True, ""
+            # 🆕 v3.9.3：用户触发 /ae-sdd 但项目未 init -> 检查待初始化标记
             pending = paths.pending_init_marker(project_dir)
             if pending.exists():
                 return _check_pending_init_intercept(tool_name, bash_command, file_path, allow_readonly)

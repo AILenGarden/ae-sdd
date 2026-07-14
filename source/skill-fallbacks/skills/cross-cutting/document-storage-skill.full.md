@@ -96,6 +96,8 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 ### 1.3 路径模板总表
 
 > **🔴 SSOT：** 下表合并了原路径模板表与命名规则。**Task/Coding/Test/CR 使用 `{WORKITEM-ID}` 分桶**，它代表一次独立编码任务（PRD / BUG / OPT / Story 均可），而不是只能代表 Story。**设计类不带版本号（原地更新），事件类带版本号（保留历史）**——与 `document_storage.py` `_PATH_TEMPLATES` 一致。
+>
+> **🆕 v3.10.4 分桶键优先级（修复写读不一致）：** 当 `story_id` 非空时，Task/Coding/Test/CR/Story 子目录的分桶键优先取 `story_id`（与读取侧 `paths.list_docs` 硬编码的 `Task/{story_id}` 目录及既有文档树命名规范对齐）；`story_id` 为空时（BUG/OPT 无 Story）回退 `work_item_id`，保持 WorkItem 分桶兼容。即：`doc save --work-item Story-004 --story-id STORY-004-BE` 落到 `Coding/STORY-004-BE/`（非 `Coding/Story-004/`）。
 
 | 文档类型 / intent | 路径模板 | 例子 | 版本策略 |
 |---------|---------|------|---------|

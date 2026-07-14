@@ -28,6 +28,8 @@ _KNOWN_AGENTS: dict[str, dict[str, Any]] = {
         "detect": "always",
         "detect_cli": None,
         "notes": "Claude Code",
+        "l2_global_file": "~/.claude/CLAUDE.md",
+        "l2_language": "zh",
     },
     "codex": {
         "protocol": "copytree",
@@ -35,6 +37,8 @@ _KNOWN_AGENTS: dict[str, dict[str, Any]] = {
         "detect": "path_exists",
         "detect_cli": None,
         "notes": "OpenAI Codex",
+        "l2_global_file": "~/.codex/AGENTS.md",
+        "l2_language": "en",
     },
     "zcode": {
         "protocol": "copytree",
@@ -42,6 +46,8 @@ _KNOWN_AGENTS: dict[str, dict[str, Any]] = {
         "detect": "path_exists",
         "detect_cli": None,
         "notes": "ZCode",
+        "l2_global_file": "~/.zcode/AGENTS.md",
+        "l2_language": "zh",
     },
     "hermes": {
         "protocol": "copytree",
@@ -49,6 +55,8 @@ _KNOWN_AGENTS: dict[str, dict[str, Any]] = {
         "detect": "path_exists",
         "detect_cli": None,
         "notes": "Hermes",
+        "l2_global_file": None,
+        "l2_language": None,
     },
     "mavis": {
         "protocol": "harness_mount",
@@ -56,6 +64,8 @@ _KNOWN_AGENTS: dict[str, dict[str, Any]] = {
         "detect": "cli_exists",
         "detect_cli": "mavis",
         "notes": "Mavis harness mount",
+        "l2_global_file": None,
+        "l2_language": None,
     },
 }
 
@@ -71,6 +81,8 @@ class DistributorEntry:
     enabled: bool = True
     registered_at: str = ""
     notes: str = ""
+    l2_global_file: Optional[str] = None   # 🆕 L2 会话级纪律注入目标（None=跳过）
+    l2_language: Optional[str] = None      # 🆕 L2 渲染语言 zh|en（None=跳过）
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -90,6 +102,8 @@ class DistributorEntry:
             enabled=bool(d.get("enabled", True)),
             registered_at=str(d.get("registered_at", "")),
             notes=str(d.get("notes", "")),
+            l2_global_file=d.get("l2_global_file"),
+            l2_language=d.get("l2_language"),
         )
 
     def resolved_target(self) -> Path:
@@ -122,6 +136,8 @@ def _default_distributors() -> list[DistributorEntry]:
             enabled=name != "mavis",  # mavis 默认禁用
             registered_at=_utc_now(),
             notes=cfg["notes"],
+            l2_global_file=cfg.get("l2_global_file"),
+            l2_language=cfg.get("l2_language"),
         ))
     return entries
 
@@ -141,7 +157,20 @@ def load_registry() -> list[DistributorEntry]:
     raw = data.get("distributors") if isinstance(data, dict) else None
     if not isinstance(raw, list):
         return _default_distributors()
-    return [DistributorEntry.from_dict(item) for item in raw]
+    entries = [DistributorEntry.from_dict(item) for item in raw]
+    # 🆕 v3.10.8 迁移：旧注册表条目缺少 l2_global_file/l2_language 字段时，
+    # 从 _KNOWN_AGENTS 回填（已知 agent 才回填；自定义 agent 保持 None）。
+    migrated = False
+    for e in entries:
+        if e.l2_global_file is None and e.l2_language is None:
+            cfg = _KNOWN_AGENTS.get(e.name)
+            if cfg and cfg.get("l2_global_file"):
+                e.l2_global_file = cfg["l2_global_file"]
+                e.l2_language = cfg["l2_language"]
+                migrated = True
+    if migrated:
+        save_registry(entries)
+    return entries
 
 
 def save_registry(entries: list[DistributorEntry]) -> None:
