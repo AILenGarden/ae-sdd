@@ -274,6 +274,36 @@ def _discover_module_assets(ade_sdd: Path, project_key: str) -> list:
         return []
 
 
+# DR 文档排除关键词（非 DR 的报告类产物，G-01/G-13/G-DR-CTX 共用）
+_DR_EXCLUDE_KEYWORDS = ("CodeReview", "CodingReport", "TestReport", "-Report")
+
+
+def _iter_dr_docs(design_dir: Path) -> list[Path]:
+    """枚举 design/ 下的 DR 文档（rglob 递归子目录 + 排除报告类产物）。
+
+    G-01 / G-13 / G-DR-CTX 三处枚举 DR 的共用 helper（DRY）。
+    v3.10.5 修复 G-13 漏 rglob：原 design.glob('*DR*.md') 只看根一层，
+    漏判 design/story/be/DR-001.md 等子目录产物，与 G-01 行为不一致。
+    """
+    if not design_dir.is_dir():
+        return []
+    drs = sorted(set(design_dir.rglob("*DR*.md")) | set(design_dir.rglob("*dr*.md")))
+    return [d for d in drs if not any(kw in d.name for kw in _DR_EXCLUDE_KEYWORDS)]
+
+
+def _find_task_docs(project_dir: Path, current_story: str) -> list[Path]:
+    """枚举本 Story 的 Task 文档（G-05 / G-13 共用，DRY）。
+
+    v3.10.0 砍 Task 后主产物为 {story}.md（document_storage TASK 模板产出
+    Task/{story_id}/{story_id}.md）；旧布局为 {story}-task-*.md。
+    优先主产物，回退旧布局，与 check_g05 行为一致。
+    """
+    primary = paths.list_docs(project_dir, current_story, ".md")
+    if primary:
+        return primary
+    return paths.list_docs(project_dir, current_story, "-task-*.md")
+
+
 # ─── G-01 ───────────────────────────────────────────────────────────────────
 def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-01 DR 文档存在"""
@@ -286,11 +316,7 @@ def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
     # 🆕 v3.5.10 Gap-004：原用 design.glob("*DR*.md") 只看根一层，不递归子目录，
     # 漏判 design/story/be/STORY-001-BE-CodingReport.md 等子目录产物。
     # 改为 rglob + 排除 -CodeReview / -Report 等非 DR 文档，避免误判。
-    drs = sorted(set(design.rglob("*DR*.md")) | set(design.rglob("*dr*.md")))
-    # 排除明显不是 DR 的报告类文档（CodeReview/CodingReport 等是产物而非 DR）
-    drs = [d for d in drs if not any(
-        kw in d.name for kw in ("CodeReview", "CodingReport", "TestReport", "-Report")
-    )]
+    drs = _iter_dr_docs(design)
     if not drs:
         return GateResult("G-01", "DR 文档存在", "blocker", False,
                           f"design/ 目录无 DR 文档（rglob *DR*.md / *dr*.md，已排除报告类）",
@@ -567,7 +593,8 @@ def check_g_review_depth(project_dir: Path, st: dict, current_story: str) -> Gat
                           details={"skipped": True})
     doc = _find_report_doc(project_dir, current_story,
                            category="CR",
-                           patterns=[f"{current_story}-CodeReview-v*-r*.md"],
+                           patterns=[f"{current_story}-CodeReview.md",  # 🆕 v3.10.1 原地更新（主），与 G-12 对齐
+                                     f"{current_story}-CodeReview-v*-r*.md"],  # 兼容旧版本化
                            legacy_suffixes=["-CodeReview.md"])
     if doc is None:
         return GateResult(gate_id, name, "blocker", True,
@@ -803,6 +830,20 @@ def _finding_in_g09_scope(finding: dict, scope_paths: list[str]) -> bool:
 
 
 _GCODE1_EXTENSIONS = {".java", ".kt", ".kts", ".xml", ".yaml", ".yml", ".properties"}
+_GCODE1_EXCLUDED_DIRS = {
+    ".git", ".idea", ".gradle", ".ae-sdd", ".auto-engineering", "ae-sdd-doc",
+    "node_modules", "target", "build", "dist", "__pycache__",
+}
+
+
+def _is_gcode1_test_path(value: str) -> bool:
+    normalized = "/" + value.replace("\\", "/").lower().lstrip("/")
+    if any(marker in normalized for marker in (
+        "/src/test/", "/src/integrationtest/", "/src/testfixtures/", "/test/", "/tests/",
+    )):
+        return True
+    stem = Path(value).stem
+    return stem.lower().endswith(("test", "tests", "spec")) or stem.endswith("IT")
 
 
 def _gcode1_production_scope(scope_paths: list[str]) -> list[str]:
@@ -810,13 +851,117 @@ def _gcode1_production_scope(scope_paths: list[str]) -> list[str]:
     production = []
     for value in scope_paths:
         path = Path(value)
-        normalized = "/" + value.lower().replace("\\", "/")
         if path.suffix.lower() not in _GCODE1_EXTENSIONS:
             continue
-        if "/src/test/" in normalized or "/test/" in normalized or path.name.lower().endswith("test.java"):
+        if any(part.lower() in _GCODE1_EXCLUDED_DIRS for part in path.parts):
+            continue
+        if _is_gcode1_test_path(value):
             continue
         production.append(value)
     return production
+
+
+def _validate_scanner_findings(project_dir: Path, findings) -> tuple[bool, list[dict], str]:
+    """Reject malformed/unrooted finding paths before any scope filtering."""
+    if not isinstance(findings, list):
+        return False, [], "findings is not a list"
+    root = project_dir.resolve()
+    validated = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            return False, [], "finding is not an object"
+        severity = finding.get("severity")
+        if severity not in {"BLOCKER", "WARN"}:
+            return False, [], f"unsupported finding severity: {severity!r}"
+        raw = str(finding.get("path") or "").strip().replace("\\", "/")
+        relative = Path(raw)
+        if not raw or relative.is_absolute() or ".." in relative.parts:
+            return False, [], f"unsafe finding path: {raw or '<empty>'}"
+        try:
+            resolved = (root / relative).resolve(strict=True)
+            normalized = resolved.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            return False, [], f"finding path is missing or outside project: {raw}"
+        if not resolved.is_file():
+            return False, [], f"finding path is not a regular file: {raw}"
+        item = dict(finding)
+        item["path"] = normalized
+        validated.append(item)
+    return True, validated, ""
+
+
+def _validate_scanned_paths(project_dir: Path, values) -> tuple[bool, list[str], str]:
+    """Validate scanner coverage attestation as unique project-relative files."""
+    if not isinstance(values, list):
+        return False, [], "scannedPaths is not a list"
+    root = project_dir.resolve()
+    normalized_paths = []
+    seen = set()
+    for value in values:
+        if not isinstance(value, str):
+            return False, [], "scannedPaths entry is not a string"
+        raw = value.strip().replace("\\", "/")
+        relative = Path(raw)
+        if not raw or relative.is_absolute() or ".." in relative.parts:
+            return False, [], f"unsafe scanned path: {raw or '<empty>'}"
+        try:
+            resolved = (root / relative).resolve(strict=True)
+            normalized = resolved.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            return False, [], f"scanned path is missing or outside project: {raw}"
+        if not resolved.is_file():
+            return False, [], f"scanned path is not a regular file: {raw}"
+        if _gcode1_production_scope([normalized]) != [normalized]:
+            return False, [], f"scanned path is not eligible production code: {raw}"
+        identity = normalized.casefold() if sys.platform == "win32" else normalized
+        if identity in seen:
+            return False, [], f"duplicate scanned path: {raw}"
+        seen.add(identity)
+        normalized_paths.append(normalized)
+    return True, sorted(normalized_paths), ""
+
+
+def _validate_scanner_report_schema(project_dir: Path, report: dict,
+                                    scanned_paths: list[str],
+                                    findings: list[dict]) -> tuple[bool, str]:
+    root_value = report.get("root")
+    if not isinstance(root_value, str) or not root_value.strip():
+        return False, "root is missing or not a string"
+    try:
+        if Path(root_value).resolve() != project_dir.resolve():
+            return False, "root does not match project root"
+    except OSError:
+        return False, "root cannot be resolved"
+
+    code_files = report.get("codeFiles")
+    coding_reports = report.get("codingReports")
+    if type(code_files) is not int or code_files < 0:
+        return False, "codeFiles must be a non-negative integer"
+    if code_files != len(scanned_paths):
+        return False, "codeFiles does not match scannedPaths"
+    if type(coding_reports) is not int or coding_reports < 0:
+        return False, "codingReports must be a non-negative integer"
+
+    stats = report.get("reportStats")
+    if not isinstance(stats, dict):
+        return False, "reportStats is missing or not an object"
+    expected = {
+        "codeFiles": code_files,
+        "codingReports": coding_reports,
+        "blockerFindings": sum(
+            1 for finding in findings if finding.get("severity") == "BLOCKER"
+        ),
+        "warnFindings": sum(
+            1 for finding in findings if finding.get("severity") == "WARN"
+        ),
+    }
+    for field, value in expected.items():
+        actual = stats.get(field)
+        if type(actual) is not int or actual < 0:
+            return False, f"reportStats.{field} must be a non-negative integer"
+        if actual != value:
+            return False, f"reportStats.{field} is inconsistent"
+    return True, ""
 
 
 def check_g09(project_dir: Path, st: dict, current_story: str,
@@ -845,10 +990,10 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                      "scopeSource": scope_source, "scopeStatus": "BLOCK_SCOPE_INVALID"},
         )
     scope_mode = "work-item" if scope_paths else "full-repository"
-    if scope_paths:
+    if scope_paths and isinstance(st.get("verificationPlan"), dict):
         from lib import evidence
         evidence_ok, evidence_reason = evidence.validate_g09_manifest(
-            project_dir, current_story, scope_fingerprint
+            project_dir, current_story, scope_fingerprint, scope_paths
         )
         if not evidence_ok:
             return GateResult(
@@ -1018,7 +1163,7 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
             )
         from lib import evidence
         evidence_ok, evidence_reason = evidence.validate_g09_manifest(
-            project_dir, current_story, scope_fingerprint
+            project_dir, current_story, scope_fingerprint, scope_paths
         )
         if not evidence_ok:
             return GateResult(
@@ -1048,10 +1193,13 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
 
     scanner = _locate_coding_scanner(master_source)
     if scanner is None:
-        return GateResult("G-CODE-1", "Coding 真实性扫描通过", "blocker", True,
-                          "未找到母版 coding_authenticity_scan.py（跳过）",
-                          action="确认母版路径",
-                          details={"scanned": False, "skipped": True, "stub": True})
+        return GateResult(
+            "G-CODE-1", "Coding authenticity scan", "blocker", False,
+            "coding_authenticity_scan.py is unavailable",
+            "Restore the distributed scanner and rerun G-CODE-1",
+            details={"scanned": False, **scope_details,
+                     "scopeStatus": "BLOCK_SCAN_INVALID"},
+        )
 
     try:
         result = runtime_exec.run_command(
@@ -1076,18 +1224,87 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
                           f"扫描器 JSON 输出无法解析: {e}",
                           f"stdout 前 200 字符: {result.stdout[:200]}")
 
-    findings = report.get("findings", [])
+    report_status = report.get("status") if isinstance(report, dict) else None
+    valid_status_exit = (
+        (report_status == "PASS" and result.returncode == 0)
+        or (report_status == "FAIL" and result.returncode == 1)
+    )
+    if not valid_status_exit:
+        return GateResult(
+            "G-CODE-1", "Coding authenticity scan", "blocker", False,
+            f"scanner result invalid: exit={result.returncode}, status={report_status}",
+            "Check coding_authenticity_scan.py exit code and JSON status",
+            details={"scanned": False, **scope_details,
+                     "scopeStatus": "BLOCK_SCAN_INVALID"},
+        )
+    findings_ok, findings, findings_error = _validate_scanner_findings(
+        project_dir, report.get("findings")
+    )
+    if not findings_ok:
+        return GateResult(
+            "G-CODE-1", "Coding authenticity scan", "blocker", False,
+            f"scanner findings invalid: {findings_error}",
+            "Check coding_authenticity_scan.py finding paths",
+            details={"scanned": False, **scope_details,
+                     "scopeStatus": "BLOCK_SCAN_INVALID"},
+        )
+    report_blockers = sum(
+        1 for finding in findings if finding.get("severity") == "BLOCKER"
+    )
+    if (report_status == "PASS" and report_blockers) or (
+        report_status == "FAIL" and not report_blockers
+    ):
+        return GateResult(
+            "G-CODE-1", "Coding authenticity scan", "blocker", False,
+            f"scanner status/findings mismatch: status={report_status}, blockers={report_blockers}",
+            "Check coding_authenticity_scan.py report consistency",
+            details={"scanned": False, **scope_details,
+                     "scopeStatus": "BLOCK_SCAN_INVALID"},
+        )
+    scanned_ok, scanned_paths, scanned_error = _validate_scanned_paths(
+        project_dir, report.get("scannedPaths")
+    )
+    if not scanned_ok:
+        return GateResult(
+            "G-CODE-1", "Coding authenticity scan", "blocker", False,
+            f"scanner coverage invalid: {scanned_error}",
+            "Check coding_authenticity_scan.py scannedPaths attestation",
+            details={"scanned": False, **scope_details,
+                     "scopeStatus": "BLOCK_SCAN_INVALID"},
+        )
+    schema_ok, schema_error = _validate_scanner_report_schema(
+        project_dir, report, scanned_paths, findings
+    )
+    if not schema_ok:
+        return GateResult(
+            "G-CODE-1", "Coding authenticity scan", "blocker", False,
+            f"scanner report schema invalid: {schema_error}",
+            "Check coding_authenticity_scan.py report attestation",
+            details={"scanned": False, **scope_details,
+                     "scopeStatus": "BLOCK_SCAN_INVALID"},
+        )
+    if scope_paths:
+        missing_scope = sorted(set(scope_paths) - set(scanned_paths))
+        if missing_scope:
+            return GateResult(
+                "G-CODE-1", "Coding authenticity scan", "blocker", False,
+                f"scanner coverage incomplete: {missing_scope}",
+                "Rerun coding_authenticity_scan.py for the complete production scope",
+                details={"scanned": False, **scope_details,
+                         "scannedPaths": scanned_paths,
+                         "scopeStatus": "BLOCK_SCAN_INVALID"},
+            )
     if scope_paths:
         findings = [finding for finding in findings
                     if _finding_in_g09_scope(finding, scope_paths)]
         status = "PASS" if not any(
             finding.get("severity") == "BLOCKER" for finding in findings
         ) else "FAIL"
-        code_files = len(scope_paths)
+        code_files = len(set(scope_paths) & set(scanned_paths))
         coding_reports = 0
     else:
-        status = report.get("status", "UNKNOWN")
-        code_files = report.get("codeFiles", 0)
+        status = report_status
+        code_files = len(scanned_paths)
         coding_reports = report.get("codingReports", 0)
 
     baseline_payload = None
@@ -1227,7 +1444,7 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
             ra_ids.update(ra_id_pattern.findall(f.stem))
         ra_layer_detail["ra_ids"] = sorted(ra_ids)
 
-        drs = sorted(set(design.glob("*DR*.md")) | set(design.glob("*dr*.md")))
+        drs = _iter_dr_docs(design)
         if drs:
             # 至少一个 DR 文档引用了某个 RA-ID
             dr_refs_ra = False
@@ -1243,8 +1460,8 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
     # 1. Story → DR 引用追溯
     story = paths.find_doc(project_dir, current_story, ".md")
     if story is not None:
-        # 找 design/ 下的所有 DR
-        drs = sorted(set(design.glob("*DR*.md")) | set(design.glob("*dr*.md")))
+        # 找 design/ 下的所有 DR（rglob 递归子目录，与 G-01 一致）
+        drs = _iter_dr_docs(design)
         if not drs and not story_entry_dr_exempt:
             issues.append("无 DR 文档可追溯（design/ 目录无 *DR*.md）")
         elif drs:
@@ -1267,10 +1484,10 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
         issues.append(f"Story 文档不存在：{current_story}.md（无法建立追溯）")
 
     # 2. Task → Story 引用追溯
-    tasks = paths.list_docs(project_dir, current_story, "-task-*.md")
+    tasks = _find_task_docs(project_dir, current_story)
     phase_requires_completed_chain = st.get("phase") in {"code-reviewed", "completed"}
     if phase_requires_completed_chain and not tasks:
-        issues.append(f"code-reviewed 链路缺少 Task 文档：{current_story}-task-*.md")
+        issues.append(f"code-reviewed 链路缺少 Task 文档：{current_story}.md 或 {current_story}-task-*.md")
     for t in tasks:
         task_content = t.read_text(encoding="utf-8")
         if current_story not in task_content:
@@ -1280,16 +1497,28 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
     coding_report = _find_report_doc(
         project_dir, current_story,
         category="Coding",
-        patterns=[f"{current_story}-CodingReport-v*-r*.md",
+        patterns=[f"{current_story}-CodingReport.md",  # 🆕 v3.10.1 原地更新（主）
+                  f"{current_story}-CodingReport-v*-r*.md",  # 兼容旧版本化
                   f"{current_story}-Coding-Report-v*-r*.md"],
-        legacy_suffixes=["-Coding-Report.md", "-CodingReport.md"],
+        legacy_suffixes=["-CodingReport.md", "-Coding-Report.md"],  # design/ 兼容
     )
     if coding_report is not None:
         cr_content = coding_report.read_text(encoding="utf-8")
         for t in tasks:
-            # 引用判定：Task 的 stem（如 STORY-001-task-001）在 Coding Report 里出现
-            if t.stem not in cr_content:
-                issues.append(f"Coding Report 未引用 Task：{t.stem}")
+            # 🆕 v3.10.5 BUG5：v3.10 砍 Task 后主产物 {story}.md，其 stem==current_story，
+            # 原 t.stem in cr_content 校验永真（cr 必然含 story id）。改为：主布局（stem==story）
+            # 时校验 cr 是否含 task 文件名 t.name 或显式 task 段落标记；旧布局（-task-*，stem≠story）
+            # 保持 t.stem in cr_content 逻辑。
+            if t.stem == current_story:
+                # v3.10 主布局：校验文件名或 task 段落标记（避免 story id 永真）
+                linked = (t.name in cr_content
+                          or f"Task：{t.stem}" in cr_content
+                          or f"Task:{t.stem}" in cr_content)
+            else:
+                # 旧布局 -task-*.md：stem 形如 STORY-001-task-001
+                linked = t.stem in cr_content
+            if not linked:
+                issues.append(f"Coding Report 未引用 Task：{t.name}")
     elif phase_requires_completed_chain:
         issues.append(f"code-reviewed 链路缺少 Coding Report：{current_story}")
 
@@ -1297,7 +1526,8 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
     code_review = _find_report_doc(
         project_dir, current_story,
         category="CR",
-        patterns=[f"{current_story}-CodeReview-v*-r*.md"],
+        patterns=[f"{current_story}-CodeReview.md",  # 🆕 v3.10.1 原地更新（主），与 G-12 对齐
+                  f"{current_story}-CodeReview-v*-r*.md"],  # 兼容旧版本化
         legacy_suffixes=["-CodeReview.md"],
     )
     if code_review is not None:
@@ -1316,7 +1546,7 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
                                    "entryNode": st.get("entryNode"),
                                    "dr_layer": dr_layer_detail})
 
-    n_drs = len(list(design.glob("*DR*.md")) + list(design.glob("*dr*.md")))
+    n_drs = len(_iter_dr_docs(design))
     layer_note = "六层追溯完整（RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview）" \
         if ra_layer_detail["present"] else \
         "五层追溯完整（DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview，RA 层未生成/豁免）"
@@ -1911,9 +2141,16 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
 
 # ─── G-14：CodingPlan-Story 一致性（建议书4 G-08-15）─────────────────────────
 # CodingPlan 涉及的接口/DO/AC 必须与 Story 可对应；偏离项须有 Proposal 引用。
-# 设计在 ④bis（CodingPlan 生成）→ ⑤ Coding 之间硬拦截。
+# 设计在 ④bis（CodingPlan 生成）-> ⑤ Coding 之间硬拦截。
+# 🆕 v3.10.5 BUG6：AC ID 正则加负向边界 (?<![A-Za-z0-9])，防 MAC1 被子串匹配为 AC1。
+# 保留无分隔 AC1 / 带分隔 AC-1 / AC_1 / AC100 全部匹配。
+_AC_ID_RE = re.compile(r"(?<![A-Za-z0-9])AC[-_]?\d+")
+# 🆕 v3.10.5 BUG5(G-14)：Story ID 模式，用于判定 CodingPlan 是否含任何 STORY-xxx ID。
+_STORY_ID_RE = re.compile(r"STORY[-_]?\d+", re.IGNORECASE)
+
+
 def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    """G-14 CodingPlan-Story 一致性 — Plan 须引用 Story 且关键设计可对应"""
+    """G-14 CodingPlan-Story 一致性 - Plan 须引用 Story 且关键设计可对应"""
     name = "CodingPlan-Story 一致性"
     if not current_story:
         return GateResult("G-14", name, "blocker", False, "state.currentStory 为空")
@@ -1931,19 +2168,24 @@ def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
     issues: list[str] = []
 
     # 1. CodingPlan 须含 Story 文档引用（路径或 STORY-ID），且引用文件存在
-    has_story_ref = (current_story in cp_content) or ("Story" in cp_content)
+    # 🆕 v3.10.5 BUG5(G-14)：原 current_story in cp or "Story" in cp，通用词 "Story"
+    # 子串即可绕过 Story ID 引用检查。改为：含任何 STORY-xxx ID 时必须命中 current_story；
+    # 完全无 ID 时才允许边界词 \bStory\b 通过（兼容早期草稿）。
+    has_real_story_id = bool(_STORY_ID_RE.search(cp_content))
+    has_story_ref = (current_story in cp_content) or (
+        not has_real_story_id and re.search(r"\bStory\b", cp_content) is not None)
     if not has_story_ref:
         issues.append(f"CodingPlan 未引用 Story 文档（无 '{current_story}' 或 'Story' 字样）")
     elif story_doc is None:
         issues.append(f"CodingPlan 引用的 Story 文档不存在：{current_story}.md")
 
     # 2. AC ID 对齐：CodingPlan 测试章节须覆盖 Story 的 AC（至少出现 AC 编号）
-    ac_ids_in_cp = set(re.findall(r"AC[-_]?\d+", cp_content))
+    ac_ids_in_cp = set(_AC_ID_RE.findall(cp_content))
     if not ac_ids_in_cp:
-        # 无 AC 引用可能是微任务场景；仅当 Story 文档含 AC 而 CodingPlan 无 → issue
+        # 无 AC 引用可能是微任务场景；仅当 Story 文档含 AC 而 CodingPlan 无 -> issue
         if story_doc is not None:
             story_content = story_doc.read_text(encoding="utf-8")
-            story_acs = set(re.findall(r"AC[-_]?\d+", story_content))
+            story_acs = set(_AC_ID_RE.findall(story_content))
             if story_acs and not (story_acs & ac_ids_in_cp):
                 issues.append(f"Story 含 AC {sorted(story_acs)} 但 CodingPlan 测试章节未对齐任何 AC ID")
 
@@ -3184,11 +3426,7 @@ def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
                 missing_hints.append("向用户索取 PRD，或在 RA 中显式标注豁免理由")
         elif key == "DR":
             design = paths.project_design_dir(project_dir)
-            drs = []
-            if design.is_dir():
-                drs = sorted(set(design.rglob("*DR*.md")) | set(design.rglob("*dr*.md")))
-                drs = [d for d in drs if not any(kw in d.name for kw in
-                        ("CodeReview", "CodingReport", "TestReport", "-Report"))]
+            drs = _iter_dr_docs(design)
             ok = bool(drs)
             status["DR"] = ok
             if not ok:

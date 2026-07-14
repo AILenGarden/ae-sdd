@@ -1,10 +1,10 @@
 ---
 name: ae-sdd
-version: 3.10.7
+version: 3.10.9
 description: |
-  端到端自动化工程主入口（v3.10.7）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
+  端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
-  🆕 v3.10.7：G-CODE-1 复用经 plan/evidence/hash 校验的 work-item scope，仅扫描 scope 内生产代码；无可信 scope 时仍严格全仓扫描，且 scoped 路径不读取或创建 baseline。
+  🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
   🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
   🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。
   🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。
@@ -20,6 +20,7 @@ description: |
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
   🆕 v3.9.7：gate_intercept `_check_memory_entered` 入口惰性创建 `.ae-sdd/memory/` 根目录（best-effort），修复"全新项目从未跑 memory enter 时，目录缺失 = stage 永假"导致的设计阶段死环（life 项目实测触发）；不改变活跃态判定语义。
   🆕 v3.9.6：模板排版规范化——22 个模板统一 10 类排版规范（必填/选填标记、表格分隔符、章节编号、示例引导、强制规则锚点、emoji 语义、文档头部声明、末尾收尾）；新建 `template-layout-standard.md` SSOT。
+  🆕 v3.10.9：Story 模板接口契约按 SPI / REST 分类拆分--原单一 `## 接口契约` 章节拆为 `## 接口契约-SPI` + `## 接口契约-REST` 两个独立二级章节，编号各自独立（SPI-N / REST-N，不再全局连续）；接口清单拆两份（SPI 接口清单 / REST 接口清单）；联调信息 + ①bis 6 维度自检归 REST 章节，状态流转总览独立成节（跨 SPI/REST 共享）；两类都非必填，有哪个写哪个。7 个引用文件同步锚点名；`gates.py:_check_source_trace` 子串匹配天然兼容（两章节相邻排列）。详见 `CHANGELOG/2026-07-14-v3.10.9-story-contract-split.md`。
   🆕 v3.9.5：Story 模板接口契约章节合并——原「接口契约-SPI/API」+「🔴 前端接口契约」两段合并为单一 `## 接口契约` 章节；每个接口用 `### 接口 N：{签名}（REST|SPI）` 统一编号锚点 + `---` 强制分隔，解决多接口渲染黏连；接口块内融合后端契约（Request/VO 四维）与前端视角（JSON 示例/调用流程/状态展示/边界处理）；6 个引用文件同步锚点名；`gates.py:_check_source_trace` 兼容性验证通过。
   🆕 v3.9.4：Story 流程根治——新增 `story-input-checklist.md` SSOT 输入清单（13 项 4 类）；`G-STORY-CTX` 扩展为 6 类（新增 dependsStory + sourceTrace）；`story-generation-standard.md` §2.5 新增 7 阶段→模板章节映射表，§4 自检闸门 8→10（新增来源追溯闸 + 章节映射闸）；Story generate/review/update 三件套 SSOT 化 + 来源追溯步骤。
   🆕 v3.9.3：新增「输出核心原则」第 4 条——禁止文档承载 changelog（设计/架构/模板/标准类文档只写当前生效内容，历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`）。
@@ -570,7 +571,7 @@ PRD收尾（可选）：
 ### ①bis 前端视角接口审视
 6维度（契约完整性/调用流程/状态展示/错误码/边界场景/联调支持）→ 详细清单见 `story-review-skill.md §📋 ①bis`
 
-AE编排层门禁：① 完成后必做 ①bis；② Story含"接口契约"章节（v3.9.5 起合并，含 ①bis 6 维度）；③ Story Review含F-Stage
+AE编排层门禁：① 完成后必做 ①bis；② Story含"接口契约"章节（v3.10.9 起拆为 SPI/REST 两章节，REST 章节含 ①bis 6 维度）；③ Story Review含F-Stage
 
 ### ② Story Review
 循环：挖掘→判定→Proposal→按Proposal修复→再挖掘→退出（连续2轮无新增）
@@ -702,6 +703,7 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | Test Generate | `test-generate-skill.md` | 运行编译/启动/L1-L4 测试并生成测试报告 |
 | Test Review | `test-review-skill.md` | test-verifier 独立复核测试真实性与证据链 |
 | Code Review | `code-review-skill.md` | Phase 3 代码评审与一致性/对称性核查 |
+| Sonar Issue Fix | `sonar-issue-fix-skill.md` | CodeReview 收尾前的 Sonar issue 唯一分类、安全修复与复扫闭环 |
 | DR Update | `dr-update-skill.md` | DR文档更新 |
 | Project Assets Update | `project-assets-update-skill.md` | G-00门卫SOP |
 | Document Storage | `document-storage-skill.md` | 路径解析/命名/重入判定 |
@@ -789,7 +791,7 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 1 | 路由判定（1.5自更新→1.6来源→1.7规模→1.8 G-RA）| 路由明确才继续 |
 | 2 | 生成Story（story-generate-skill）| 文件存在 |
 | 2 | Story loop【Generate-Review】（story-generate + story-review 含F-Stage）| 循环退出（3轮无新增）= phase story-generated |
-| 2b | ①bis 前端视角接口审视 | 6维度通过；Story含"接口契约"章节（含①bis 6维度） |
+| 2b | ①bis 前端视角接口审视 | 6维度通过；Story含"接口契约-SPI"+"接口契约-REST"章节（REST 章节含①bis 6维度） |
 | 3 | （v3.10.1 已合并入步骤2 loop）| - |
 | 4 | TestCase loop【Generate-Review】（testcase-generate + testcase-review TC-1~TC-9）| 循环退出（3轮无新增）= phase testcase-generated |
 | 4a | （v3.10.1 已合并入步骤4 loop）| - |
@@ -813,3 +815,17 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 10 | 审核点4（CodeReview完成确认）| 用户✅；context-pressure |
 | 10a | ⑦ter 流程收尾合规自检 | 5维度全✅或自愈完毕才进⑧ |
 | 11 | ⑧ 完成输出 | state.phase=completed |
+## Delivery priority and stop-loss policy (v3.10.9)
+
+This is the canonical policy for the main-flow supervisor; the agent-orchestration fallback carries the same execution limits for delegated work.
+
+- Story-first: finish feature code and focused tests before changing ae-sdd/framework code.
+- A framework defect taking more than 15 minutes or two repair/review rounds becomes an independent work item and must not block Story delivery.
+- Freeze code, tests, and delivery documents before creating VerificationPlan/evidence.
+- Do not rerun a test set without a relevant file-hash change or a recorded concrete risk reason.
+- Run focused tests first, then at most one affected-module regression; run the full suite only when shared infrastructure changed.
+- Every agent must produce a file, command, exit code, test statistic, or concrete blocker within two minutes; retry an unproductive agent at most once.
+- Limit review to two rounds and fix reproducible P0/P1 findings only.
+- An explicit user rule overrides conflicting legacy documentation.
+- Status updates must cite absolute paths, file changes, commands, exit codes, test statistics, or blockers; intent is not progress evidence.
+- Never change business code or POMs merely to satisfy a gate; never create or alter a baseline to hide findings.

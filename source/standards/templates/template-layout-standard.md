@@ -42,7 +42,10 @@
 正文章节标题保持干净：
 
 ```markdown
-## 接口契约
+## 接口契约-SPI
+### SPI 接口清单
+## 接口契约-REST
+### REST 接口清单
 ### 联调信息
 ### ①bis 6 维度自检
 ```
@@ -346,5 +349,5 @@ grep -rnE "^#{1,4} .*(\`必填|\`选填|\`🔴)" source/templates/
 |---------|------|
 | `story-generation-standard.md` §2.5 章节映射表 | 引用模板章节名，不依赖编号——编号变更不影响 |
 | `story-frontend-contract-standard.md` | 建议模板格式已对齐本规范 §5/§6 |
-| `gates.py:_check_source_trace()` | 依赖"标题含'接口契约'字样"，不依赖编号——安全 |
+| `gates.py:_check_source_trace()` | 依赖“标题含‘接口契约’字样”（子串匹配），不依赖编号——安全。v3.10.9 拆为 `## 接口契约-SPI` + `## 接口契约-REST` 后，两标题均含子串 `## 接口契约`，扫描天然兼容（两章节相邻排列时连续不中断） |
 | `review_loop.py` Tier 维度名 | 用维度名（如"接口契约"），不依赖编号——安全 |

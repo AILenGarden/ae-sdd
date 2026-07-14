@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field

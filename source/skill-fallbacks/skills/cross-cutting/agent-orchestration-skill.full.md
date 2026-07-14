@@ -892,3 +892,14 @@ ae-sdd context-pressure --story {STORY-ID}
   - 🆕 §1.2 拆法表标注与多 reviewer 的正交叠加关系
   - 🆕 §12 执行清单新增 9b 步（多 reviewer 交叉对比）
   - 🔴 设计哲学升级：多 reviewer 从"反应式兜底"（准确率<70% 才升级）改为"按 Tier 默认启用"，对抗 AI 逻辑自洽陷阱
+## Delivery priority and stop-loss policy (v3.10.9)
+
+Delegated execution follows the main-flow policy; these limits are hard constraints, not status-message suggestions.
+
+- Story-first: feature code and focused tests take priority over framework/tool repair.
+- If framework repair exceeds 15 minutes or two repair/review rounds, stop and create an independent work item.
+- Freeze code, tests, and delivery documents before VerificationPlan/evidence; rerun tests only after relevant hash changes or with a recorded risk reason.
+- Focused tests precede at most one affected-module regression; full-suite runs require shared-infrastructure changes.
+- An agent must return a file, command, exit code, test statistic, or blocker within two minutes; reassign at most once.
+- Review has at most two rounds; delegated agents fix only reproducible P0/P1 findings, while P2/P3 findings are recorded and deferred without blocking Story delivery; explicit user rules override legacy docs.
+- Report only absolute paths, changes, commands, exits, statistics, or blockers. Never modify business code/POMs or create a baseline just to pass a gate.

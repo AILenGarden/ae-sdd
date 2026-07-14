@@ -61,6 +61,7 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 | `testcase-review-skill.md` | TestCase 缺陷挖掘 / TC-1~TC-9 复核 | 流程编排、测试执行 |
 | `test-generate-skill.md` | 编译、启动、L1-L4 测试运行 / TEST_REPORT 生成 | Coding 执行、CodeReview 规则 |
 | `test-review-skill.md` | test-verifier 独立复核 / G-09/G-10 / 测试证据链判定 | 测试执行、Coding 修复 |
+| `sonar-issue-fix-skill.md` | Sonar issue 分类 / 安全 EditPlan / 保守规则配方 / compile-test-rescan 闭环 | Sonar 分析器实现、CodeReview 主流程编排、安全类问题盲改 |
 | `dr-update-skill.md` | DR 文档更新 / DR 缺陷修复 | 流程编排、其他文档规则 |
 | `story-update-skill.md` | Story 文档更新 / Story 缺陷修复 | 流程编排、Task 规则 |
 | `templates/coding/be-codereview-template.md` | CodeReview 报告 9 章节空白模板 | 具体 Story 的填充内容 |
@@ -82,7 +83,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 | # | 子系统 | 物理位置 | 职责一句话 | 维护方式 |
 |---|--------|---------|-----------|---------|
-| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(28 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
+| ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(29 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
 | ② | **实例化体系（4 层架构）** | `dist/ae-sdd/`(Layer2) + `~/.claude/skills/ae-sdd/`(Layer3) + `<project>/.ae-sdd/`(Layer4) | 母版→分发包→用户安装→项目实例，引用+override 模式 | 不手工改 Layer2/3/4；由 build/install/init 生成 |
 | ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
 | ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |

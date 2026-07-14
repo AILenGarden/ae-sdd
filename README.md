@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.10.7（🆕 2026-07-14：G-CODE-1 复用可信 plan/evidence/hash work-item scope，仅扫描 scope 内生产代码；无可信 scope 仍严格全仓扫描。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.10.9（🆕 2026-07-14：Story 模板接口契约按 SPI / REST 分类拆为两个独立二级章节，编号各自独立 SPI-N/REST-N；联调信息 + ①bis 自检归 REST 章节，状态流转总览独立成节。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -16,9 +16,9 @@ ae-sdd v3.0 引入**母版 vs 分发**双目录分层，**用户拿分发包，�
 ae-sdd/                                # 仓库根（GitHub 直发）
 ├── source/                            # 🟢 母版 SSOT（开发者编辑这里）
 │   ├── SKILL.md                       #    ae-sdd 唯一主入口
-│   ├── skills/                        #    28 个子 SKILL（phase1/phase2/phase3/cross-cutting/orchestration）
+│   ├── skills/                        #    29 个子 SKILL（phase1/phase2/phase3/cross-cutting/orchestration）
 │   ├── assets/                        #    项目资产（icec-cloud-boss / icec-cloud-life）
-│   ├── standards/                     #    约束 + 思维引擎 + 测试策略 + 资产标准 + toolset 标准（20 份）
+│   ├── standards/                     #    约束 + 思维引擎 + 测试/Review 策略 + 资产标准 + toolset 标准（21 份）
 │   ├── templates/                     #    模板（21 份：Story/Task/DR/Report/...）
 │   ├── .claude-plugin/                #    marketplace 注册表
 │   ├── CHANGELOG/                     #    发版历史
@@ -143,9 +143,10 @@ bash scripts/dev-sync.sh --watch
 完整的使用指导书、功能说明、SKILL 间调用关系，见：
 
 - **[`source/SKILL.md`](source/SKILL.md)** — ae-sdd 主入口（智能路由 / 4 维判定 / 9 步流程 / 34 门禁 / TR-1~TR-7 / 多 Agent / 测试真实性 / 🆕 v3.8.0 自动化模式 / 🆕 v3.9.1 上下文加载准入门禁）
-- **[`source/skills/`](source/skills/)** — 28 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
+- **[`source/skills/`](source/skills/)** — 29 个子 SKILL（按 phase1/phase2/phase3/cross-cutting/orchestration 分类）
+- **[`sonar-issue-fix-skill`](source/skills/phase3-review/sonar-issue-fix-skill.md)** — CodeReview 收尾前的 Sonar issue 分类、安全 EditPlan、保守硬编码修复与复扫闭环
 - **[`source/templates/`](source/templates/)** — 21 份模板（Story/Task/DR/Report/...）
-- **[`source/standards/`](source/standards/)** — 20 份标准（constraints 11 + thinking 2 + testing 1 + project-assets 2 + toolsets 4）
+- **[`source/standards/`](source/standards/)** — 21 份标准（constraints 11 + thinking 2 + testing 1 + review 1 + project-assets 2 + toolsets 4）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
 - **[`source/docs/ae-sdd-design.md`](source/docs/ae-sdd-design.md)** — 系统能力说明书（能力语义、边界、当前实现状态）
 - **[`source/docs/ae-sdd-implementation-architecture.md`](source/docs/ae-sdd-implementation-architecture.md)** — 实现架构说明书（CLI / tools/lib / scripts / state/cache/runtime-stats / build/distribution / gate/scanner 边界）

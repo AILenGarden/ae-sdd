@@ -24,6 +24,7 @@ import html
 import json
 import re
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -44,6 +45,10 @@ EXCLUDED_DIRS = {
     "dist",
     "__pycache__",
 }
+
+MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0"
+XML_SCHEMA_INSTANCE_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"
+MAVEN_POM_SCHEMA = "http://maven.apache.org/xsd/maven-4.0.0.xsd"
 
 
 @dataclass
@@ -180,8 +185,13 @@ def _is_excluded(path: Path) -> bool:
 
 
 def _is_test_path(path: Path) -> bool:
-    norm = path.as_posix().lower()
-    return "/src/test/" in norm or "/test/" in norm or path.name.lower().endswith("test.java")
+    norm = "/" + path.as_posix().lower().lstrip("/")
+    if any(marker in norm for marker in (
+        "/src/test/", "/src/integrationtest/", "/src/testfixtures/", "/test/", "/tests/",
+    )):
+        return True
+    stem = path.stem
+    return stem.lower().endswith(("test", "tests", "spec")) or stem.endswith("IT")
 
 
 def iter_code_files(root: Path) -> Iterable[Path]:
@@ -190,7 +200,7 @@ def iter_code_files(root: Path) -> Iterable[Path]:
             continue
         if _is_excluded(path):
             continue
-        if path.suffix not in CODE_EXTENSIONS:
+        if path.suffix.lower() not in CODE_EXTENSIONS:
             continue
         if _is_test_path(path):
             continue
@@ -218,14 +228,51 @@ def iter_coding_reports(root: Path) -> Iterable[Path]:
             yield path
 
 
+def _standard_maven_pom_metadata_urls(path: Path) -> frozenset[str]:
+    if path.name.lower() != "pom.xml":
+        return frozenset()
+    try:
+        namespaces: dict[str, str] = {}
+        root_element = None
+        for event, value in ET.iterparse(path, events=("start", "start-ns")):
+            if event == "start-ns":
+                prefix, namespace = value
+                namespaces[prefix] = namespace
+            elif root_element is None:
+                root_element = value
+    except (OSError, ET.ParseError):
+        return frozenset()
+
+    if root_element is None or root_element.tag != f"{{{MAVEN_POM_NAMESPACE}}}project":
+        return frozenset()
+
+    allowed = {MAVEN_POM_NAMESPACE}
+    if namespaces.get("xsi") == XML_SCHEMA_INSTANCE_NAMESPACE:
+        allowed.add(XML_SCHEMA_INSTANCE_NAMESPACE)
+    schema_location = root_element.attrib.get(
+        f"{{{XML_SCHEMA_INSTANCE_NAMESPACE}}}schemaLocation"
+    )
+    expected_schema_location = f"{MAVEN_POM_NAMESPACE} {MAVEN_POM_SCHEMA}"
+    if schema_location == expected_schema_location:
+        allowed.add(expected_schema_location)
+    return frozenset(allowed)
+
+
 def scan_code_file(path: Path, root: Path, findings: list[Finding]) -> None:
     text = read_text(path)
     lines = text.splitlines()
+    standard_maven_urls = _standard_maven_pom_metadata_urls(path)
 
     for idx, source_line in enumerate(lines, start=1):
         for severity, rule, pattern, message in LINE_RULES:
-            if pattern.search(source_line):
-                add_finding(findings, severity, rule, path, root, idx, message, source_line)
+            matches = list(pattern.finditer(source_line))
+            if not matches:
+                continue
+            if rule == "hardcoded-external-url" and standard_maven_urls:
+                external_values = {match.group(0)[1:-1] for match in matches}
+                if external_values.issubset(standard_maven_urls):
+                    continue
+            add_finding(findings, severity, rule, path, root, idx, message, source_line)
 
         if OVER_ABSTRACTION_NAME.search(source_line):
             add_finding(
@@ -292,12 +339,14 @@ def scan_coding_report(path: Path, root: Path, findings: list[Finding]) -> None:
             )
 
 
-def scan(root: Path) -> tuple[list[Finding], CodeStats]:
+def scan(root: Path) -> tuple[list[Finding], CodeStats, list[str]]:
     findings: list[Finding] = []
     stats = CodeStats()
+    scanned_paths: list[str] = []
 
     for path in iter_code_files(root):
         stats.codeFiles += 1
+        scanned_paths.append(rel(path, root))
         scan_code_file(path, root, findings)
 
     for path in iter_coding_reports(root):
@@ -307,7 +356,7 @@ def scan(root: Path) -> tuple[list[Finding], CodeStats]:
     findings.sort(key=lambda f: (0 if f.severity == "BLOCKER" else 1, f.path, f.line, f.rule))
     stats.blockerFindings = sum(1 for f in findings if f.severity == "BLOCKER")
     stats.warnFindings = sum(1 for f in findings if f.severity == "WARN")
-    return findings, stats
+    return findings, stats, sorted(scanned_paths)
 
 
 def render_markdown(root: Path, findings: list[Finding], stats: CodeStats) -> str:
@@ -350,13 +399,14 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
-    findings, stats = scan(root)
+    findings, stats, scanned_paths = scan(root)
 
     if args.format == "json":
         payload = {
             "root": str(root),
             "status": "PASS" if stats.blockerFindings == 0 else "FAIL",
             "codeFiles": stats.codeFiles,
+            "scannedPaths": scanned_paths,
             "codingReports": stats.codingReports,
             "reportStats": asdict(stats),
             "findings": [asdict(f) for f in findings],

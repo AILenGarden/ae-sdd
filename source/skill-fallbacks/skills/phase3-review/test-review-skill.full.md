@@ -39,7 +39,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 
 | # | 检查项 | 通过标准 |
 |---|---|---|
-| TV-1 | 证据链存在 | manifest 中 input/command/toolchain/artifact hash 完整，引用路径真实且 SHA-256 匹配 |
+| TV-1 | 证据链存在 | manifest 中 input/command/toolchain/artifact hash 完整；artifact 为项目内相对路径，entry/summary/report 三方语义一致且 SHA-256 匹配 |
 | TV-2 | 命令真实性 | 无 skipTests / testFailureIgnore / 未解释 excludes |
 | TV-3 | XML 对账 | 报告统计与 XML 完全一致，skipped=0 或有 Story 豁免 |
 | TV-4 | AC 覆盖 | 每个 AC 至少有实际执行方法 |
@@ -58,6 +58,7 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 - scope 内新增 blocker 与被触及的历史 blocker 均阻断；scope 外历史债不阻断当前 work item。
 - evidence manifest 仅作可验证 provenance/cache：存在时必须匹配 Story、input fingerprint 与 artifact SHA-256，不能定义 scope 或豁免源码扫描。
 - G-09 不读取、不创建、也不使用 G-CODE-1 baseline；Coding baseline 只归 G-CODE-1 管理。
+- G-CODE-1 scoped 扫描必须校验 scanner exit/status、finding schema/path、`scannedPaths` 完整覆盖 production scope，以及 root/顶层计数/`reportStats` 自洽；任一缺失、越界、类型或计数不一致均 fail closed。
 
 ## 输出
 

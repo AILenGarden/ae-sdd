@@ -52,19 +52,29 @@ def _bad_test(class_name: str = "BadTest") -> str:
 
 def _state_with_verified_scope(project: Path, changed_paths: list[str]) -> tuple[dict, Path]:
     plan = verification_plan.build_plan(project, STORY_ID, changed_paths)
+    command = "test_authenticity_scan.py"
+    toolchain = "test-authenticity:v1"
     report = project / ".auto-engineering" / STORY_ID / "evidence" / "g09-report.json"
     report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(json.dumps({"status": "PASS", "storyId": STORY_ID}), encoding="utf-8")
+    report.write_text(json.dumps({"status": "PASS", "storyId": STORY_ID,
+                                  "scope": sorted(changed_paths),
+                                  "commandHash": evidence.command_hash(command),
+                                  "toolchainFingerprint": toolchain}), encoding="utf-8")
     evidence.record(
         project,
         STORY_ID,
         kind="test-authenticity",
-        command="test_authenticity_scan.py",
+        command=command,
         input_fingerprint=plan["planFingerprint"],
-        toolchain_fingerprint="test-authenticity:v1",
+        toolchain_fingerprint=toolchain,
         exit_code=0,
-        artifacts=[{"path": str(report), "sha256": evidence.artifact_hash(report)}],
-        summary={"gate": "G-09", "changedPaths": changed_paths},
+        artifacts=[{"path": report.relative_to(project).as_posix(),
+                    "sha256": evidence.artifact_hash(report)}],
+        summary={"gate": "G-09", "storyId": STORY_ID, "status": "PASS",
+                 "changedPaths": sorted(changed_paths), "scope": sorted(changed_paths),
+                 "commandHash": evidence.command_hash(command),
+                 "toolchainFingerprint": toolchain,
+                 "report": report.relative_to(project).as_posix()},
     )
     return {"phase": "test-running", "entryNode": "STORY", "verificationPlan": plan}, report
 

@@ -618,10 +618,11 @@ class TestGCode1(unittest.TestCase):
         self.assertFalse(r.pass_)
         self.assertIn("coding-report-missing-code-file", r.details.get("blocker_rules", []))
 
-    def test_no_master_source_skips(self):
+    def test_no_master_source_fails_closed(self):
         tmp = _setup_project({})
         r = gates.check_gcode1(tmp, {"phase": "coding"}, "STORY-001", master_source=None)
-        self.assertTrue(r.details.get("skipped", False))
+        self.assertFalse(r.pass_)
+        self.assertEqual(r.details.get("scopeStatus"), "BLOCK_SCAN_INVALID")
 
 
 # ─── G-10 / G-11 / G-12 ─────────────────────────────────────────────────────
@@ -708,6 +709,77 @@ class TestG13(unittest.TestCase):
         r = gates.check_g13(tmp, {}, "STORY-001")
         self.assertFalse(r.pass_)
 
+    def test_v3101_main_layout_reports_traced(self):
+        """🆕 v3.10.5 BUG1: G-13 报告 patterns 漏 v3.10.1 非版本化主文件修复回归。
+
+        code-reviewed + 新布局非版本化主文件 CodingReport.md/CodeReview.md
+        -> G-13 应找到并追溯（原仅 -v*-r* 版本化 -> 误报缺报告）。
+        """
+        tmp = _setup_project({
+            "design/DR-001.md": "# DR-001",
+            "design/STORY-001.md": "# STORY-001 (引用 DR-001)",
+            "task/STORY-001-task-001.md": "# Task (实现 STORY-001-task-001 ... STORY-001)",
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport.md": "# CR (STORY-001-task-001)",
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview.md": "# CV (STORY-001)",
+        })
+        r = gates.check_g13(tmp, {"phase": "code-reviewed"}, "STORY-001")
+        self.assertTrue(r.pass_, f"v3.10.1 主布局报告应被追溯，实: {r.message}")
+        self.assertNotIn("缺少 Coding Report", r.message)
+        self.assertNotIn("缺少 CodeReview", r.message)
+
+    def test_v310_main_layout_task_traced(self):
+        """🆕 v3.10.5 BUG3: G-13 Task 追溯漏 v3.10 砍 Task 后主产物 {story}.md 修复回归。
+
+        code-reviewed + task/STORY-001.md（v3.10 主产物，stem==story_id）
+        -> G-13 不再误报"缺少 Task 文档"。
+        """
+        tmp = _setup_project({
+            "design/DR-001.md": "# DR-001",
+            "design/STORY-001.md": "# STORY-001 (引用 DR-001)",
+            "task/STORY-001.md": "# Task (STORY-001)",
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport.md": "# CR 引用 STORY-001.md",
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview.md": "# CV (STORY-001)",
+        })
+        r = gates.check_g13(tmp, {"phase": "code-reviewed"}, "STORY-001")
+        self.assertTrue(r.pass_, f"v3.10 主布局 Task 应被追溯，实: {r.message}")
+        self.assertNotIn("缺少 Task 文档", r.message)
+
+    def test_v310_main_layout_codingreport_unlinked_blocks(self):
+        """🆕 v3.10.5 BUG5: G-13 v3.10 主布局 CodingReport 引用永真修复回归。
+
+        v3.10 主布局 task.stem==story_id，原 t.stem in cr 永真（cr 必含 story id）。
+        修复后改校验 task 文件名/段落标记 -> CodingReport 不引用 task 文件名应 FAIL。
+        """
+        tmp = _setup_project({
+            "design/DR-001.md": "# DR-001",
+            "design/STORY-001.md": "# STORY-001 (引用 DR-001)",
+            "task/STORY-001.md": "# Task (STORY-001)",
+            # CodingReport 含 story id 但不含 task 文件名 STORY-001.md
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport.md": "# CR 仅提 STORY-001 不提 task 文件名",
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview.md": "# CV (STORY-001)",
+        })
+        r = gates.check_g13(tmp, {"phase": "code-reviewed"}, "STORY-001")
+        self.assertFalse(r.pass_, "v3.10 主布局 CodingReport 不引用 task 文件名应阻断")
+        self.assertTrue(any("Coding Report 未引用 Task" in i for i in r.details.get("issues", [])),
+                        f"应报 CodingReport 未引用 Task，实 issues: {r.details.get('issues')}")
+
+    def test_dr_in_subdir_traced(self):
+        """🆕 v3.10.5 BUG4: G-13 RA->DR/Story->DR 用 glob 不递归子目录修复回归。
+
+        design/story/be/DR-001.md 子目录 DR -> G-13 不再误报"无 DR 文档"
+        （与 G-01 的 rglob 行为一致）。
+        """
+        tmp = _setup_project({
+            "design/story/be/DR-001.md": "# DR-001",
+            "design/STORY-001.md": "# STORY-001 (引用 DR-001)",
+            "task/STORY-001-task-001.md": "# Task (STORY-001-task-001 STORY-001)",
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingReport-v1-r1.md": "# CR (STORY-001-task-001)",
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview-v1-r1.md": "# CV (STORY-001)",
+        })
+        r = gates.check_g13(tmp, {"phase": "code-reviewed"}, "STORY-001")
+        self.assertTrue(r.pass_, f"子目录 DR 应被追溯，实: {r.message}")
+        self.assertNotIn("无 DR 文档", r.message)
+
 
 # ─── G-14 CodingPlan-Story 一致性（v3.4.0）──────────────────────────────────
 class TestG14(unittest.TestCase):
@@ -751,6 +823,35 @@ class TestG14(unittest.TestCase):
         })
         r = gates.check_g14(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
+
+    def test_ac_substring_not_matched(self):
+        """🆕 v3.10.5 BUG6: AC 正则无词边界，MAC1 被子串匹配为 AC1 修复回归。
+
+        CodingPlan 含 MAC1（非 AC ID）不应被误判为 AC 对齐；
+        真实 AC-1 才算对齐。
+        """
+        # Story 含 AC-1，CodingPlan 含 MAC1（应不匹配）+ 真实 AC-1
+        tmp = _setup_project({
+            "design/STORY-001.md": "# STORY-001\n## AC\nAC-1 登录\n",
+            "design/STORY-001-CodingPlan.md": "# Plan STORY-001\n## 测试对应\nMAC1 模块 + AC-1 覆盖\n",
+        })
+        r = gates.check_g14(tmp, {}, "STORY-001")
+        self.assertTrue(r.pass_, "含真实 AC-1 应通过；MAC1 不应污染 AC 对齐")
+        self.assertNotIn("MAC1", r.details.get("ac_ids_in_cp", []))
+
+    def test_generic_story_word_with_other_story_id_blocks(self):
+        """🆕 v3.10.5 BUG5(G-14): 通用词 Story 绕过 Story ID 引用检查修复回归。
+
+        CodingPlan 含其他 STORY ID（STORY-002）但不含 current_story(STORY-001)，
+        仅含通用词 Story -> 应 FAIL（含任何 STORY ID 时必须命中 current_story）。
+        """
+        tmp = _setup_project({
+            "design/STORY-001.md": "# STORY-001\n## AC\nAC-1\n",
+            "design/STORY-001-CodingPlan.md": "# Plan\n## 类骨架\n这是 Story 实现，关联 STORY-002\n## 测试对应\nAC-1\n",
+        })
+        r = gates.check_g14(tmp, {}, "STORY-001")
+        self.assertFalse(r.pass_, "含其他 STORY ID 时通用词 Story 不应绕过 current_story 引用检查")
+        self.assertTrue(any("未引用 Story" in i for i in r.details.get("issues", [])))
 
 
 # ─── G-CODEPLAN-SRC CodingPlan 源码核对（v3.4.0）─────────────────────────────
@@ -1606,6 +1707,36 @@ class TestG13RaLayer(unittest.TestCase):
         r = gates.check_g13(tmp, {"phase": "story-generated"}, "STORY-001")
         self.assertTrue(r.pass_)
         self.assertTrue(r.details.get("ra_layer", {}).get("present"))
+
+
+# ─── G-REVIEW-DEPTH Review 深度门禁（v3.9.20）─────────────────────────────────
+class TestGReviewDepth(unittest.TestCase):
+    """G-REVIEW-DEPTH 禁裸✅ + 零发现举证；缺报告降级 skip 由 G-12 兜底。"""
+
+    def test_v3101_main_layout_report_scanned(self):
+        """🆕 v3.10.5 BUG2: G-REVIEW-DEPTH patterns 漏 v3.10.1 主文件修复回归。
+
+        新布局非版本化主文件 CodeReview.md + 零发现无排查证据
+        -> G-REVIEW-DEPTH 应 FAIL（原 patterns 仅 -v*-r* -> 找不到 -> skip 失效）。
+        """
+        tmp = _setup_project({
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview.md": (
+                "# CodeReview\n## 结论\n所有维度通过\n"
+                "✅ 命名规范\n✅ 异常处理\n✅ 事务边界\n"),
+        })
+        r = gates.check_g_review_depth(tmp, {"phase": "code-reviewed"}, "STORY-001")
+        self.assertFalse(r.pass_, "v3.10.1 主布局零发现无排查证据应阻断（不应 skip）")
+        self.assertNotIn("skipped", r.details)
+
+    def test_v3101_main_layout_report_with_evidence_passes(self):
+        """🆕 v3.10.5 BUG2 正例：v3.10.1 主文件 + 含排查证据 -> 通过。"""
+        tmp = _setup_project({
+            "ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview.md": (
+                "# CodeReview\n## 排查范围\n已排查 Controller/Service/Mapper/SQL 落库路径\n"
+                "✅ 命名规范 (.java:12)\n✅ 异常处理\n"),
+        })
+        r = gates.check_g_review_depth(tmp, {"phase": "code-reviewed"}, "STORY-001")
+        self.assertTrue(r.pass_, f"含排查证据应通过，实: {r.message}")
 
 
 # ─── G-AUTO-CONSENSUS 自动化联审共识门禁（v3.8.0）─────────────────────────────

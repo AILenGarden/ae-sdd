@@ -102,11 +102,12 @@ harness/                        派生适配层，不手工改生成物
 - `check_all()` 必须覆盖每个 gate，不能 stub-pass 掩盖缺口。
 - G-PATH 的 SSOT 豁免按 scan root 下的严格相对路径识别，仅覆盖 canonical document-storage source entry、source full fallback 和 compiled runtime fallback；basename 相同但父目录错误的文件不得豁免。
 - G-PATH 项目侧只扫描 `.ae-sdd/memory/**/*.md`、顶层 `AGENTS.md`/`CLAUDE.md`/`MEMORY.md` 与 `.harness/memory/**/*.md`；`.ae-sdd/drafts/**/*.md` 属于过程产物，不纳入该 gate。`current_story` 不作为项目路径静默过滤条件。
-- scanner 输出 JSON 必须包含 `status`、统计字段和 `findings[]`。
+- scanner 输出 JSON 必须包含项目根 `root`、`status`、`scannedPaths`、顶层统计、同值 `reportStats` 和 `findings[]`；G-CODE-1 对路径安全/唯一性/scope 覆盖、exit/status、finding schema 及全部计数执行 fail-closed attestation。
+- Coding scanner 仅在 XML 解析确认真实 Maven POM 根元素后豁免标准 `xmlns`/`xsi`/`schemaLocation` 元数据 URL；Java 或 XML 中的实际外部 endpoint 仍按 `hardcoded-external-url` 阻断。
 - 新增 `scripts/*_scan.py` 必须加入 `scripts/build_dist.py` runtime_scripts 白名单。
 - 高频 scanner 应优先支持进程内调用，子进程 CLI 仅作为兼容入口。
 - Review Batch、baseline、VerificationPlan 和 evidence 均通过 `tools/lib/` 提供纯 Python API，CLI 只做参数适配；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。
-- `ae-sdd verify plan --persist` 先规范化项目内真实文件，再用 `state.write_state()` 原子写入 work-item 绑定 plan；dry 模式不写。G-09 与 G-CODE-1 共用 changedPaths containment、plan fingerprint 和 evidence/artifact hash 校验；G-CODE-1 再过滤测试/文档，只保留生产代码，空生产 scope 阻断，无 scope 保持全仓结果。`ae-sdd evidence finalize` 只升级无 contentHash 清单并核验 artifact SHA-256，已篡改 hash 必须失败。
+- `ae-sdd verify plan --persist` 先规范化项目内真实文件，再用 `state.write_state()` 原子写入 work-item 绑定 plan；dry 模式不写。G-09 与 G-CODE-1 共用 changedPaths containment、plan fingerprint 和 evidence/artifact hash 校验；G-CODE-1 再过滤测试/文档，只保留生产代码，要求 scanner `scannedPaths` 完整覆盖该 scope，空生产 scope 阻断，无 scope 保持全仓结果。evidence artifact 必须是项目内相对普通文件，entry/summary/report 的 Story、scope、command、toolchain、status 三方绑定；`ae-sdd evidence finalize` 只升级无 contentHash 清单并核验 artifact SHA-256，已篡改 hash 必须失败。
 - G-13 的 DR exemption 只由 `entryNode=STORY && scale=中` 触发；实现继续校验 Story 本体与成熟阶段的 Task/CodingReport/CodeReview 存在及引用关系。
 - 🆕 v3.9.1 注册表模式：同族门禁（如 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX 四个上下文加载准入门禁）用 `CONTEXT_GATE_REGISTRY` 注册表 + 单个 `_check_context_loaded` 函数服务多个 gate_id，避免每门禁重复写 scale 豁免/phase 感知/逐项校验逻辑；4 个薄封装 `check_g_*_ctx` 对齐 `CHECK_FUNCS` 的 `(project_dir, st, current_story)` 签名，内部转发到统一实现。
 

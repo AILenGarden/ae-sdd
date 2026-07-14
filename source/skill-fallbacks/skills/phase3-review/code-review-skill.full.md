@@ -151,6 +151,8 @@ Code Review 结论：{STORY-ID}
     ↓
 第六步：循环判定（连续 3 轮无新增问题才退出）
     ↓
+第六步 bis：Sonar 专项收尾（每个评审会话恰好调用一次 sonar-issue-fix-skill）
+    ↓
 第七步：CodeReview 闸门全集（7 道闸）
     ├─ 7.1 ⑥bis 一致性闸
     ├─ 7.2 ⑦bis 对称性闸
@@ -265,12 +267,12 @@ Code Review 结论：{STORY-ID}
 |--------|------|---------|
 | Story ID / 标题 | Story 元信息 | — |
 | 验收标准 AC | Story §AC 章节 | AC_ID + 描述 |
-| 接口契约 | Story §接口契约 | URL / 方法 / Request / Response / 错误码 |
+| 接口契约 | Story §接口契约-SPI / §接口契约-REST | URL / 方法 / Request / Response / 错误码 |
 | 数据模型 | Story §数据模型 | 表名 / 字段 / 类型 / 索引 |
 | 异常流程 | Story §异常流程 | 错误码 / 异常路径 |
 | 主流程步骤 | Story §主流程 | 业务步骤 |
 | 实现任务映射 | Story §Task 列表 | Task_ID / 名称 / 涉及工程层 |
-| 前端契约 | Story §接口契约（①bis 6 维度，v3.9.5 起内聚） | URL / 错误码 / 边界场景（①bis 已审过） |
+| 前端契约 | Story §接口契约-REST（①bis 6 维度，v3.10.9 起归 REST 章节） | URL / 错误码 / 边界场景（①bis 已审过） |
 
 ### 1.2 提取统一版 CodePlan 信息
 
@@ -686,6 +688,23 @@ Code Review 发现问题
 
 ---
 
+## 第六步 bis：Sonar 专项收尾（每会话一次）
+
+<!-- SONAR_CLOSEOUT_CALL -->
+
+第六步达到退出条件后、进入第七步最终闸门前，必须加载并执行 [`sonar-issue-fix-skill.md`](sonar-issue-fix-skill.md)，每个 CodeReview 评审会话恰好一次调用。
+
+1. 写入 `reviewSessionId` 和 `sonarInvocationCount=1` 后再调用；同一评审会话发现计数已为 1 时复用已有 Sonar 结果，不得再次进入子 SKILL。
+2. Sonar/MCP/scanner 可用时，处理当前 review scope 内的 issue，并把逐 issue 状态、diff hash、compile/test/复扫证据写入 CodeReview 结果。
+3. 项目无 Sonar 配置、服务不可达或当前 scope 没有 Sonar 数据时，记录 `N/A` 与原因；这仍算完成本会话的一次必调，不得跳过本节。
+4. 子 SKILL 如果改动源码，立即作废受影响的旧 compile/test/review 证据，重新执行受影响测试和 §2 对应评审维度。重开验证不会清除调用令牌；回到本节时只核对已有结果，同一 CodeReview 评审会话不得调用第二次 Sonar。
+5. 重开后又发生代码修改时，在当前会话记录 residual risk；需要再次 Sonar 修复时开启新的 CodeReview 评审会话，每个新会话仍只调用一次。
+6. Sonar 结果为 `failed` 或 `unverified`，或引入 Blocker/Critical 回归时，禁止进入第七步通过判定；按 CodeReviewUpdatePlan 异常路径处理。
+
+本节是收尾依赖，不增加第七步闸门数量，也不取代六阶段人工/多 Agent 评审。
+
+---
+
 ## 第七步：CodeReview 闸门全集（7 道闸，从 coding-skill 迁出）
 
 > **🔴 来源（2026-06-05 重大重构）：** 原 `coding-skill.md` §实战闸沉淀 + §📋 ⑥bis/⑦bis + §📋 Coding 问题分层排查迁出到本 SKILL §7。
@@ -942,20 +961,21 @@ CodeReview 只核验 `TEST_REPORT` 已经由 `test-review-skill.md` 独立复核
 | 6 | §2 阶段 D：Test Review 结果引用核查 | Test Review 引用表 | 独立复核通过 + 证据路径齐 |
 | 7 | §2 阶段 E：项目资产合规性核查 | 合规核查表 | §3/§4/§5/§6 0 🔴 |
 | 8 | §2 阶段 F：跨文档引用核查 | 5 方对照表 | 5 方一致 0 🔴 |
-| 9 | §闸 1：⑥bis 一致性闸 | 一致性核查表 | 0 🔴 漂移 |
-| 10 | §闸 2：⑦bis 对称性闸 | 追溯矩阵 | 全量覆盖 DR 业务规则 |
-| 11 | §闸 3：全文档回扫闸 | 回扫关键字清单 | 0 残留 |
-| 12 | §闸 4：禁裸 ✅ 闸 | 证据清单 | 每个 ✅ 附证据 |
-| 13 | §闸 5：报告-代码对账闸 | 对账清单 | 0 不一致 |
-| 14 | §闸 6：产出物对账闸 | 产出物清单 | 7 个产出物全 ✅ |
-| 15 | §闸 7：Test Review 通过引用核查闸 | TEST_REPORT 引用清单 | test-verifier 通过 |
-| 16 | §第三步 合理性判定 | 缺陷分级表 | 🔴 阻断型必须 0 |
-| 17 | §第四步 记入补充说明 | Supplement.md | 写入成功 |
-| 18 | §第四步 bis 生成 CodeReviewUpdatePlan | UpdatePlan | 用户确认 |
-| 19 | §第五步 触发下游 SKILL | 各 SKILL 触发 | 按 Plan 执行 |
-| 20 | §第六步 循环判定 | 循环结论 | 连续 3 轮无新增 → 退出 |
-| 21 | §第七步 bis 报告合规性校验 | 校验报告 | 10 项全 ✅ |
-| 22 | 进入人工审核点 4 | — | 用户确认 |
+| 9 | §第三步 合理性判定 | 缺陷分级表 | 🔴 阻断型必须 0 |
+| 10 | §第四步 记入补充说明 | Supplement.md | 写入成功 |
+| 11 | §第四步 bis 生成 CodeReviewUpdatePlan | UpdatePlan | 用户确认 |
+| 12 | §第五步 触发下游 SKILL | 各 SKILL 触发 | 按 Plan 执行 |
+| 13 | §第六步 循环判定 | 循环结论 | 连续 3 轮无新增 → 退出 |
+| 14 | §第六步 bis 调用 Sonar Issue Fix | Sonar 结果或 N/A | 本评审会话恰好调用一次；源码变化重开受影响验证但不二次调用 |
+| 15 | §闸 1：⑥bis 一致性闸 | 一致性核查表 | 0 🔴 漂移 |
+| 16 | §闸 2：⑦bis 对称性闸 | 追溯矩阵 | 全量覆盖 DR 业务规则 |
+| 17 | §闸 3：全文档回扫闸 | 回扫关键字清单 | 0 残留 |
+| 18 | §闸 4：禁裸 ✅ 闸 | 证据清单 | 每个 ✅ 附证据 |
+| 19 | §闸 5：报告-代码对账闸 | 对账清单 | 0 不一致 |
+| 20 | §闸 6：产出物对账闸 | 产出物清单 | 7 个产出物全 ✅ |
+| 21 | §闸 7：Test Review 通过引用核查闸 | TEST_REPORT 引用清单 | test-verifier 通过 |
+| 22 | §第七步 bis 报告合规性校验 | 校验报告 | 10 项全 ✅ |
+| 23 | 进入人工审核点 4 | — | 用户确认 |
 
 ---
 

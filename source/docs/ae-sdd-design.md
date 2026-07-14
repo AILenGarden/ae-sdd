@@ -182,7 +182,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 Review 的质量对象是带 `inputFingerprint` / `rulesetFingerprint` 的 `reviewSession`，不是模糊的 round 计数器。每次尝试落入 `VALID_CLEAN`、`VALID_FINDINGS`、`INVALID_INFRA`、`INVALID_PROTOCOL`、`INVALID_INPUT_DRIFT` 或 `CANCELLED`；平台失败不增加 clean streak，输入漂移必须新建 session。Tier 1/2 首批 clean 默认一次，Tier 3 在 P0/P1 修复后需要两个连续 clean batch；attempt、valid batch、remediation 和 wall-clock 任一预算耗尽进入 `STALLED`，不得当作通过。
 
-G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存在时，仅检查当前 work-item 的生产代码；scope 内 blocker（含触及历史债）阻断，scope 外历史债不阻断。scope 缺失或为空时保持全仓严格扫描，测试/文档-only scope fail-closed。scoped 路径不读取或创建 baseline；全仓模式的显式 baseline 仍必须经用户批准并校验完整性。
+G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存在时，仅检查当前 work-item 的生产代码；evidence 必须绑定 Story、scope、command、toolchain 与 report，artifact 只能是项目内相对路径。scanner 必须用安全、唯一的 `scannedPaths` 证明完整覆盖 production scope，并保证 root、exit/status、finding severity/path、顶层计数与 `reportStats` 自洽；任一缺失、越界、未知 schema 或计数漂移均 fail closed。scope 内 blocker（含触及历史债）阻断，scope 外历史债不阻断；scope 缺失或为空时保持全仓严格扫描，测试/文档-only scope 阻断。scoped 路径不读取或创建 baseline；全仓模式的显式 baseline 仍必须经用户批准并校验完整性。
 
 验证动作先生成 `VerificationPlan`，再按生产代码、测试代码、配置、文档分类决定最小验证集。G-09 只接受 plan 指纹匹配、路径未越界且真实存在的 work-item scope；scope 内 blocker（含触及的历史债）阻断，scope 外历史债不阻断，无可信 scope 则全仓扫描。成功证据写入 `.auto-engineering/<story>/evidence/manifest.json`，复用必须同时满足 manifest 内容 hash、Story、input/command/toolchain fingerprint、退出码、freshness window 与 artifact hash；evidence 不能定义 scope 或充当 waiver。implementation/documentation/review 三类 fingerprint 分离，文档或审查措辞变化不得使 Maven 证据失效。文档使用单一 canonical 正文，旧路径只通过 `.ae-sdd/doc-aliases.json` 指向 canonical，不允许第二份完整正文；多个候选正文必须显式报歧义，不按 mtime 猜测。
 
@@ -668,3 +668,28 @@ ae-sdd Monitor 是 ae-sdd 的本地桌面可视化投影层，用于在一个父
 | 同步闭环 | `source/standards/update-graph.json:UG-22` |
 
 **颗粒度与边界**：Monitor 是伴随工具，不是 ae-sdd runtime 的一部分；它可以把文件状态可视化，但不能成为 gate、state 或 Runtime Stats 的权威源。任何涉及状态 schema、阶段链、Runtime Stats JSONL 字段或项目侧路径的变化，必须同步 Monitor 独立设计文档、解析代码、测试和 README。
+
+---
+
+## 21. Sonar Issue 修复与 CodeReview 收尾
+
+### 设计
+
+Sonar 修复是 CodeReview 的节点内收尾能力，而不是新的主流程 phase。每条 issue 必须唯一归入 `upstream-edit`、`registry`、`reasoned`、`manual` 四种模式之一；只有完整上游 `TextEdit(range, newText)` 或独立维护的低风险注册表配方可以在防陈旧、防越界、防重叠和原子性校验后自动应用。
+
+CodeReview 在第六步循环收敛之后、第七步最终闸门之前调用 Sonar Issue Fix，每个评审会话恰好一次。没有 Sonar 配置或数据时也必须产生 `N/A` 结果并占用本会话调用令牌。Sonar 如果修改源码，重开受影响的 compile、测试和评审证据，但同一会话不第二次调用；再次复扫需求留给新的 CodeReview 会话，避免递归。
+
+复用边界：采用 SonarLint/IntelliJ 公布的 `TextEdit` 协议形状和官方 issue/rule/quality gate 输入，不自动操纵 IDEA 灯泡，也不假设 MCP 提供 quick-fix payload。首版注册表仅启用有严格前置条件和负例的 `java:S1128` unused import 删除。SonarJava 的 `Sonar Source-Available License v1.0` 不允许被当作可复制的 analyzer 实现来源；规则配方必须独立撰写，安全/taint/hotspot、认证、密码学、并发、事务和公共 API 问题保持人工处理。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 节点内工作流 | `source/skills/phase3-review/sonar-issue-fix-skill.md`，完整语义保存在对应 `source/skill-fallbacks/**.full.md` |
+| CodeReview 挂靠 | `code-review-skill.md` 第六步 bis；会话调用计数、N/A、源码变化后的验证重开均由 SKILL 协议约束 |
+| 规则注册表 | `source/standards/review/sonar-issue-fix-rules.md`；当前仅 `java:S1128` 为 enabled |
+| 数据协议 | issue 归一化 + `baseSha256` + 有序非重叠 `TextEdit` + provenance + 验证证据 |
+| 验证 | compile、受影响测试、Sonar 复扫、原 issue 消失、Blocker/Critical 零回归和 quality gate 对比 |
+| 契约测试 | `tools/tests/test_sonar_issue_fix_skill.py`，覆盖模式、安全边界、许可证、索引和 exactly-once 调用位置 |
+
+**颗粒度与边界**：这是 Markdown SKILL/规则层能力，不新增 CLI、gate、state schema、scanner 或后台服务；现有实现架构边界不变。若未来增加可执行补丁引擎或 MCP adapter，必须另行更新实现架构文档、威胁模型和工具级测试，不能在本注册表中暗增代码执行能力。

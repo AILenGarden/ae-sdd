@@ -94,12 +94,53 @@ def finalize_manifest(project_dir: Path, story_id: str) -> tuple[Path, dict]:
     return path, load_manifest(project_dir, story_id)
 
 
+def _project_artifact_matches(project_dir: Path, artifact: dict) -> tuple[bool, Optional[Path]]:
+    """Validate a content-addressed artifact rooted inside ``project_dir``.
+
+    Evidence manifests are portable project assets.  Absolute paths (even when
+    they currently point inside the project) and parent traversal would make
+    the same manifest mean something different on another machine, so both are
+    rejected instead of normalized permissively.
+    """
+    raw = str(artifact.get("path") or "").strip().replace("\\", "/")
+    relative = Path(raw)
+    if not raw or relative.is_absolute() or ".." in relative.parts:
+        return False, None
+    root = project_dir.resolve()
+    try:
+        resolved = (root / relative).resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return False, None
+    expected = str(artifact.get("sha256") or "")
+    try:
+        if not resolved.is_file() or not expected or artifact_hash(resolved) != expected:
+            return False, None
+    except OSError:
+        return False, None
+    return True, resolved
+
+
+def _normalized_scope(values) -> Optional[list[str]]:
+    if not isinstance(values, list) or not values:
+        return None
+    normalized = []
+    for value in values:
+        raw = str(value or "").strip().replace("\\", "/")
+        path = Path(raw)
+        if not raw or path.is_absolute() or ".." in path.parts:
+            return None
+        normalized.append(path.as_posix())
+    return sorted(set(normalized))
+
+
 def validate_g09_manifest(project_dir: Path, story_id: str,
-                          input_fingerprint: str) -> tuple[bool, str]:
-    """Validate present, current G-09 provenance without turning it into a waiver."""
+                          input_fingerprint: str,
+                          expected_scope: Optional[list[str]] = None) -> tuple[bool, str]:
+    """Validate present, current, semantically bound G-09 provenance."""
     path = manifest_path(project_dir, story_id)
     if not path.is_file():
-        return True, "absent"
+        return False, "absent"
     manifest = load_manifest(project_dir, story_id)
     if manifest.get("corrupt") or manifest.get("_integrityStatus") != "VERIFIED":
         return False, "manifest-integrity"
@@ -111,15 +152,68 @@ def validate_g09_manifest(project_dir: Path, story_id: str,
         or (entry.get("kind") == "test" and entry.get("summary", {}).get("gate") == "G-09")
     ]
     if not relevant:
-        return True, "no-current-g09-entry"
+        return False, "no-current-g09-entry"
     entry = relevant[-1]
     if entry.get("inputFingerprint") != input_fingerprint:
         return False, "input-fingerprint"
     if not entry.get("reusable") or int(entry.get("exitCode", 1)) != 0:
         return False, "unsuccessful-entry"
+    summary = entry.get("summary")
+    if not isinstance(summary, dict):
+        return False, "summary"
+    scope = _normalized_scope(expected_scope or summary.get("changedPaths"))
+    if scope is None:
+        return False, "summary-scope"
+    if _normalized_scope(summary.get("changedPaths")) != scope:
+        return False, "summary-changed-paths"
+    if _normalized_scope(summary.get("scope")) != scope:
+        return False, "summary-scope"
+    if str(summary.get("gate") or "") != "G-09":
+        return False, "summary-gate"
+    if str(summary.get("storyId") or "") != story_id:
+        return False, "summary-story"
+    if str(summary.get("status") or "") != "PASS":
+        return False, "summary-status"
+    command = str(entry.get("commandHash") or "")
+    toolchain = str(entry.get("toolchainFingerprint") or "")
+    if not command or str(summary.get("commandHash") or "") != command:
+        return False, "summary-command"
+    if not toolchain or str(summary.get("toolchainFingerprint") or "") != toolchain:
+        return False, "summary-toolchain"
+
     artifacts = entry.get("artifacts") or []
-    if not artifacts or not all(_artifact_matches(artifact) for artifact in artifacts):
+    checked_artifacts = []
+    for artifact in artifacts:
+        ok, resolved = _project_artifact_matches(project_dir, artifact)
+        if not ok or resolved is None:
+            return False, "artifact-integrity"
+        checked_artifacts.append((artifact, resolved))
+    if not checked_artifacts:
         return False, "artifact-integrity"
+    report_ref = str(summary.get("report") or "").strip().replace("\\", "/")
+    if not report_ref or report_ref not in {
+        str(artifact.get("path") or "").strip().replace("\\", "/")
+        for artifact, _ in checked_artifacts
+    }:
+        return False, "summary-report"
+    report_path = next(
+        resolved for artifact, resolved in checked_artifacts
+        if str(artifact.get("path") or "").strip().replace("\\", "/") == report_ref
+    )
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, "report-integrity"
+    if str(report.get("storyId") or "") != story_id:
+        return False, "report-story"
+    if str(report.get("status") or "") != "PASS":
+        return False, "report-status"
+    if _normalized_scope(report.get("scope")) != scope:
+        return False, "report-scope"
+    if str(report.get("commandHash") or "") != command:
+        return False, "report-command"
+    if str(report.get("toolchainFingerprint") or "") != toolchain:
+        return False, "report-toolchain"
     return True, "verified"
 
 
