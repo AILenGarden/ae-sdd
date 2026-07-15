@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import stop_check
+from lib import stop_check, work_item_context
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "tools" / "bin" / "ae-sdd"
@@ -131,6 +131,45 @@ class TestStopCheckCli:
         )
         # 放行 = 空 dict（无 decision 字段）
         assert result == {}
+
+    def test_active_turn_releases_token_after_successful_stop(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "coding")
+        session_id = "stop-success-session"
+        work_item_context.mark_session_engaged(ade_sdd, session_id)
+
+        result = _run_stop_check_cli(
+            tmp_path,
+            {
+                "hook_event_name": "Stop",
+                "session_id": session_id,
+                "cwd": str(tmp_path),
+                "last_assistant_message": "完成当前 ae-sdd turn",
+            },
+        )
+
+        assert result == {}
+        assert not work_item_context.is_session_engaged(ade_sdd, session_id)
+
+    def test_active_turn_keeps_token_when_stop_blocks_for_retry(self, tmp_path):
+        ade_sdd = _make_ae_sdd_project(tmp_path)
+        _write_state(ade_sdd, "coding")
+        _make_prd_state(tmp_path, "PRD-001", "awaiting_compact", with_summary=False)
+        session_id = "stop-retry-session"
+        work_item_context.mark_session_engaged(ade_sdd, session_id)
+
+        result = _run_stop_check_cli(
+            tmp_path,
+            {
+                "hook_event_name": "Stop",
+                "session_id": session_id,
+                "cwd": str(tmp_path),
+                "last_assistant_message": "需要重试",
+            },
+        )
+
+        assert result.get("decision") == "block"
+        assert work_item_context.is_session_engaged(ade_sdd, session_id)
 
 
 class TestHS8CompactFailure:

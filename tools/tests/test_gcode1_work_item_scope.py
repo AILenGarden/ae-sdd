@@ -540,7 +540,9 @@ class TestGCode1WorkItemScope(unittest.TestCase):
         changed = "feature/src/main/java/example/CleanService.java"
         project = _project({changed: _clean_code()})
         state, report = _verified_state(project, [changed])
-        report.write_text("tampered", encoding="utf-8")
+        manifest = evidence.load_manifest(project, STORY_ID)
+        snapshot = project / manifest["entries"][-1]["artifacts"][0]["snapshotPath"]
+        snapshot.write_text("tampered", encoding="utf-8")
 
         result = self._check(project, state)
 
@@ -660,6 +662,130 @@ class TestGCode1WorkItemScope(unittest.TestCase):
             sorted(path.relative_to(project).as_posix() for path in scanner.iter_code_files(project)),
             sorted(production),
         )
+
+    def test_text_code_extensions_are_scanned_in_verified_work_item_scope(self):
+        production = {
+            "tools/lib/clean_module.py": "def value():\n    return 1\n",
+            "web/src/clean.js": "export const value = 1;\n",
+            "web/src/clean.ts": "export const value: number = 1;\n",
+        }
+        project = _project({
+            **production,
+            "tools/tests/test_clean_module.py": "def test_value():\n    assert True\n",
+            "web/tests/clean.spec.ts": "export const testValue = 1;\n",
+        })
+        changed = list(production)
+        state, _ = _verified_state(project, changed)
+
+        result = self._check(project, state)
+
+        self.assertTrue(result.pass_, result.message)
+        self.assertEqual(result.details.get("scopeStatus"), "VERIFIED")
+        self.assertEqual(result.details.get("scopePaths"), sorted(changed))
+        self.assertEqual(result.details.get("scannedPaths"), sorted(changed))
+
+    def test_text_code_scanner_keeps_test_paths_out_of_production(self):
+        scanner = _load_scanner_module()
+        production = (
+            "tools/lib/clean_module.py",
+            "web/src/clean.js",
+            "web/src/clean.ts",
+        )
+        tests = (
+            "tools/tests/test_clean_module.py",
+            "web/tests/clean.spec.ts",
+            "web/src/clean.test.js",
+        )
+        project = _project({path: "value = 1\n" for path in production + tests})
+
+        self.assertEqual(
+            sorted(path.relative_to(project).as_posix() for path in scanner.iter_code_files(project)),
+            sorted(production),
+        )
+        self.assertEqual(gates._gcode1_production_scope(list(tests)), [])
+
+    def test_coding_scanner_self_hosting_has_no_blockers(self):
+        scanner = _load_scanner_module()
+        root = Path(__file__).resolve().parents[2]
+        findings = []
+
+        scanner.scan_code_file(root / "scripts" / "coding_authenticity_scan.py", root, findings)
+        scanner.scan_code_file(root / "tools" / "lib" / "gates.py", root, findings)
+
+        blockers = [
+            (finding.rule, finding.path, finding.line)
+            for finding in findings
+            if finding.severity == "BLOCKER"
+        ]
+        self.assertEqual(blockers, [])
+
+    def test_python_business_antipatterns_remain_blockers(self):
+        scanner = _load_scanner_module()
+        project = _project({
+            "app/service.py": (
+                'endpoint = "https://api.example.com/v1"\n'
+                "timeout = 60\n"
+                'legacy = "WebSecurityConfigurerAdapter"\n'
+            ),
+        })
+        findings = []
+
+        scanner.scan_code_file(project / "app" / "service.py", project, findings)
+
+        blocker_rules = {
+            finding.rule for finding in findings if finding.severity == "BLOCKER"
+        }
+        self.assertTrue({
+            "hardcoded-external-url",
+            "hardcoded-timeout-retry-ttl",
+            "legacy-web-security-configurer-adapter",
+        }.issubset(blocker_rules))
+
+    def test_maven_metadata_uri_in_business_python_remains_blocker(self):
+        scanner = _load_scanner_module()
+        project = _project({
+            "app/service.py": (
+                'endpoint = "http://maven.apache.org/POM/4.0.0"\n'
+                'schema = "http://www.w3.org/2001/XMLSchema-instance"\n'
+            ),
+        })
+        findings = []
+
+        scanner.scan_code_file(project / "app" / "service.py", project, findings)
+
+        self.assertEqual(
+            [f.rule for f in findings if f.severity == "BLOCKER"],
+            ["hardcoded-external-url", "hardcoded-external-url"],
+        )
+
+    def test_virtualenv_dependencies_and_conventional_tests_are_excluded_consistently(self):
+        scanner = _load_scanner_module()
+        excluded = (
+            ".venv/lib/pkg.py",
+            "venv/lib/pkg.py",
+            ".tox/env/pkg.py",
+            "lib/site-packages/pkg.py",
+            "web/__tests__/helper.ts",
+            "app/test_service.py",
+            "app/service_test.py",
+            "web/service.test.ts",
+            "web/service.spec.js",
+        )
+        project = _project({path: "value = 1\n" for path in excluded})
+
+        self.assertEqual(list(scanner.iter_code_files(project)), [])
+        self.assertEqual(gates._gcode1_production_scope(list(excluded)), [])
+
+    def test_audit_and_spec_service_production_names_are_retained(self):
+        scanner = _load_scanner_module()
+        production = ("app/Audit.py", "web/SpecService.js")
+        project = _project({path: "value = 1\n" for path in production})
+
+        self.assertEqual(
+            sorted(path.relative_to(project).as_posix() for path in scanner.iter_code_files(project)),
+            sorted(production),
+        )
+        self.assertEqual(gates._gcode1_production_scope(list(production)), list(production))
 
 
 if __name__ == "__main__":

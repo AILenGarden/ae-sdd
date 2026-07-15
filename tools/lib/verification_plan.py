@@ -64,6 +64,12 @@ def build_plan(project_dir: Path, story_id: str, changed_paths: Iterable[str],
         not_required.append("Maven/full-story-regression")
     if not required:
         required.append("targeted-validation")
+    evidence_input_fingerprint = canonical_fingerprint({
+        "storyId": story_id,
+        "workItem": work_item,
+        "changedPaths": paths,
+        "sinceFingerprint": since_fingerprint,
+    })
     result = {
         "schemaVersion": 1,
         "storyId": story_id,
@@ -74,14 +80,15 @@ def build_plan(project_dir: Path, story_id: str, changed_paths: Iterable[str],
         "deferredUntilFinal": list(dict.fromkeys(deferred)),
         "notRequired": list(dict.fromkeys(not_required)),
         "planFingerprint": canonical_fingerprint({"storyId": story_id, "paths": paths, "classes": classes}),
+        "inputFingerprint": evidence_input_fingerprint,
+        "evidenceInputFingerprint": evidence_input_fingerprint,
         "changedPaths": paths,
+        "nextActions": [{
+            "operation": "evidence.record",
+            "inputFingerprint": evidence_input_fingerprint,
+            "command": "ae-sdd ops execute --request <evidence-record-request.json>",
+        }],
     }
     if work_item:
         result["workItem"] = work_item
-        result["inputFingerprint"] = canonical_fingerprint({
-            "storyId": story_id,
-            "workItem": work_item,
-            "changedPaths": paths,
-            "sinceFingerprint": since_fingerprint,
-        })
     return result

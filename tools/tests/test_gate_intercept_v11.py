@@ -261,7 +261,7 @@ class TestPromptInject:
 
     def test_no_ae_sdd_returns_empty_dict(self, tmp_path):
         from lib.prompt_inject import inject
-        result = inject(project_dir=tmp_path)
+        result = inject(project_dir=tmp_path, user_prompt="普通消息", session_key="prompt-state")
         assert result == {}
 
     def test_with_ae_sdd_injects_state(self, tmp_path):
@@ -273,7 +273,7 @@ class TestPromptInject:
         _make_work_item_state(tmp_path, "Story-001", "STORY-001", "coding")
         (ae_sdd / "assets").mkdir()
 
-        result = inject(project_dir=tmp_path)
+        result = inject(project_dir=tmp_path, user_prompt="/ae-sdd 继续", session_key="prompt-g00")
         msg = _additional_context(result)
         assert msg, "inject 应返回非空 additionalContext"
         assert "◆ HARNESS STATE" in msg
@@ -289,7 +289,7 @@ class TestPromptInject:
         # 无 assets/ 目录 → G-00 失败 → 注入 ⛔ 警告
         _make_work_item_state(tmp_path, "Story-001", "STORY-001", "initialized")
 
-        result = inject(project_dir=tmp_path)
+        result = inject(project_dir=tmp_path, user_prompt="/ae-sdd 继续", session_key="prompt-g00")
         msg = _additional_context(result)
         assert "G-00" in msg or "⛔" in msg
 
@@ -313,7 +313,7 @@ class TestPromptInject:
         assert get_retry_count(ae_sdd) == 2
 
         # inject 后计数应归零
-        inject(project_dir=tmp_path)
+        inject(project_dir=tmp_path, user_prompt="/ae-sdd 继续", session_key="prompt-retry")
         assert get_retry_count(ae_sdd) == 0
 
 

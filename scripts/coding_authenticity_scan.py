@@ -20,6 +20,7 @@ Coding 真实性扫描器 — 对标 test_authenticity_scan.py / ra_authenticity
 from __future__ import annotations
 
 import argparse
+import ast
 import html
 import json
 import re
@@ -44,11 +45,21 @@ EXCLUDED_DIRS = {
     "build",
     "dist",
     "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    "site-packages",
+    "__tests__",
 }
 
 MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0"
 XML_SCHEMA_INSTANCE_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"
 MAVEN_POM_SCHEMA = "http://maven.apache.org/xsd/maven-4.0.0.xsd"
+STANDARD_METADATA_URLS = frozenset({
+    MAVEN_POM_NAMESPACE,
+    XML_SCHEMA_INSTANCE_NAMESPACE,
+    MAVEN_POM_SCHEMA,
+})
 
 
 @dataclass
@@ -143,6 +154,33 @@ PLAIN_CODE_REF = re.compile(
 )
 
 
+def _module_assignment_lines(name: str) -> frozenset[int]:
+    """Locate scanner configuration declarations so rules do not match their own source."""
+    try:
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeError):
+        return frozenset()
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            return frozenset(range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1))
+    return frozenset()
+
+
+SELF_RULE_CONFIGURATION_LINES = _module_assignment_lines("LINE_RULES")
+SELF_METADATA_CONSTANT_LINES = frozenset().union(*(
+    _module_assignment_lines(name)
+    for name in (
+        "MAVEN_POM_NAMESPACE",
+        "XML_SCHEMA_INSTANCE_NAMESPACE",
+        "MAVEN_POM_SCHEMA",
+        "STANDARD_METADATA_URLS",
+    )
+))
+
+
 def rel(path: Path, root: Path) -> str:
     try:
         return str(path.relative_to(root)).replace("\\", "/")
@@ -181,17 +219,26 @@ def add_finding(
 
 
 def _is_excluded(path: Path) -> bool:
-    return any(part in EXCLUDED_DIRS for part in path.parts)
+    return any(part.lower() in EXCLUDED_DIRS for part in path.parts)
 
 
 def _is_test_path(path: Path) -> bool:
     norm = "/" + path.as_posix().lower().lstrip("/")
     if any(marker in norm for marker in (
         "/src/test/", "/src/integrationtest/", "/src/testfixtures/", "/test/", "/tests/",
+        "/__tests__/",
     )):
         return True
     stem = path.stem
-    return stem.lower().endswith(("test", "tests", "spec")) or stem.endswith("IT")
+    stem_lower = stem.lower()
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        return stem_lower == "test" or stem_lower.startswith("test_") or stem_lower.endswith("_test")
+    if suffix in {".js", ".ts"}:
+        return stem_lower.endswith((".test", ".spec"))
+    if suffix in {".java", ".kt", ".kts"}:
+        return stem_lower.endswith(("test", "tests", "spec")) or stem.endswith("IT")
+    return False
 
 
 def iter_code_files(root: Path) -> Iterable[Path]:
@@ -200,7 +247,7 @@ def iter_code_files(root: Path) -> Iterable[Path]:
             continue
         if _is_excluded(path):
             continue
-        if path.suffix.lower() not in CODE_EXTENSIONS:
+        if path.suffix.lower() not in TEXT_CODE_EXTENSIONS:
             continue
         if _is_test_path(path):
             continue
@@ -262,15 +309,27 @@ def scan_code_file(path: Path, root: Path, findings: list[Finding]) -> None:
     text = read_text(path)
     lines = text.splitlines()
     standard_maven_urls = _standard_maven_pom_metadata_urls(path)
+    scanner_source = path.resolve() == Path(__file__).resolve()
 
     for idx, source_line in enumerate(lines, start=1):
         for severity, rule, pattern, message in LINE_RULES:
+            if scanner_source and idx in SELF_RULE_CONFIGURATION_LINES:
+                continue
             matches = list(pattern.finditer(source_line))
             if not matches:
                 continue
-            if rule == "hardcoded-external-url" and standard_maven_urls:
+            if rule == "hardcoded-external-url":
                 external_values = {match.group(0)[1:-1] for match in matches}
-                if external_values.issubset(standard_maven_urls):
+                scanner_metadata_line = (
+                    scanner_source
+                    and idx in SELF_METADATA_CONSTANT_LINES
+                    and external_values.issubset(STANDARD_METADATA_URLS)
+                )
+                valid_pom_metadata = (
+                    bool(standard_maven_urls)
+                    and external_values.issubset(standard_maven_urls)
+                )
+                if scanner_metadata_line or valid_pom_metadata:
                     continue
             add_finding(findings, severity, rule, path, root, idx, message, source_line)
 

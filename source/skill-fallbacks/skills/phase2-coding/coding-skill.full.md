@@ -135,13 +135,13 @@ Step 6：看测试映射 → 确认异常分支覆盖了所有 TestCase 场景
 
 ## §5 CodeAnalysis ④bis：CodePlan 输出（CodeAnalysis 能力本体）
 
-> **能力定位：** CodeAnalysis 阶段产出 CodePlan 的方法论。CodingProcess 调用本能力产出 `{STORY-ID}-CodingPlan.md`。
+> **能力定位：** CodeAnalysis 阶段产出 CodePlan 的方法论。CodingProcess 调用本能力产出 `{WORKITEM-ID}-CodingPlan.md`，Story 仅是可选上游设计关系。
 
 ### §5.0 风险预判（必须先于 7 章节执行）
 
 > **为什么前置：** 7 章节是"怎么写"，但动笔前必须先想清楚"这个 Story 有哪些风险，方案是否已覆盖"。漏掉风险预判，章节4的 SQL 可能缺乐观锁，章节2的类骨架可能缺幂等设计。
 
-按 `../../standards/thinking/be-coding-thinking-engine.md §1.4 风险预判·11维度` 逐维过一遍。
+完整任务按 `../../standards/thinking/be-coding-thinking-engine.md §1.4 风险预判·11维度` 逐维过一遍。微任务按同文档 §0.5 裁剪为原子性、并发安全、幂等性、外部依赖容错、安全 5 维；发现架构/契约/数据模型/跨服务影响时立即升级完整 profile。
 
 > **📍 维度清单与 §1 CodingModel 决策表的 11 维完全一致**（① 原子性 … ⑪ 可运维性），第4维统一命名"同步/异步解耦"。
 
@@ -162,6 +162,8 @@ Step 6：看测试映射 → 确认异常分支覆盖了所有 TestCase 场景
 **判定标准：** 风险预判表未完成 → 禁止进入 7 章节。每个「是」必须在对应章节中体现（如：①原子性=是 → 章节4 SQL 必须写事务边界）。每个「否」必须写明理由，不允许空列。
 
 ### §5.1 CodePlan 必须包含的 7 个章节
+
+**规模分支：** 大/中/小任务执行下列 7 章节。微任务使用 Tier 1 轻量 profile，只要求：①变更范围与文件级实现顺序；②风险、停止条件与回滚；③编译/测试验证点；④需要新增或重塑类骨架时才填写类骨架并触发 G-CODEPLAN-SRC。禁止为了过门禁伪造 Story、AC、Mapper SQL 或混合压测章节。
 
 #### 章节 1：文件级实现顺序
 
@@ -254,6 +256,9 @@ public class Ticket {
 | 性能问题 | JProfiler / Arthas | 先定位慢 SQL（EXPLAIN）→ 再定位慢方法 |
 
 ### §5.2 CodePlan 门禁（未通过禁止进入 Execute）
+
+- **完整 profile（大/中/小）**：执行下列门禁及模板 §15 自检。
+- **微任务 profile**：G-07 确认 Work Item Plan 存在；G-08 校验范围/实现顺序/风险回滚/验证四维且无 `TODO/TBD/待确认/❌`；无 Story 时 G-14 记录 N/A；无类骨架时 G-CODEPLAN-SRC 显式跳过。
 
 - [ ] 7 个章节全部填写
 - [ ] 文件级实现顺序满足"每步可独立编译"

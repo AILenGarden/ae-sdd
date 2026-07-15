@@ -53,7 +53,11 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import paths, runtime_exec, runtime_stats, state as state_mod, work_item_context  # noqa: E402
+from lib import document_storage, paths, runtime_exec, runtime_stats, state as state_mod, work_item_context  # noqa: E402
+
+
+_GATE_SUBPROCESS_LIMIT_SECONDS = 60
+_GIT_INSPECTION_LIMIT_SECONDS = 10
 
 
 @dataclass
@@ -205,6 +209,13 @@ CODINGPLAN_REQUIRED_SECTIONS = [
     "文件顺序", "类骨架", "数据", "Mapper SQL", "测试对应", "验证点", "调试回滚",
 ]
 
+MICRO_CODINGPLAN_DIMENSIONS: dict[str, tuple[str, ...]] = {
+    "scope": ("change scope", "implementation scope", "planned files", "变更范围", "改动范围", "文件清单", "文件级实现顺序"),
+    "implementation": ("implementation sequence", "implementation steps", "执行顺序", "实现顺序", "实施步骤", "改动清单"),
+    "risk_rollback": ("risks and rollback", "risk", "rollback", "风险", "回滚", "停止条件", "升级条件"),
+    "verification": ("verification", "test plan", "tests", "验证", "测试"),
+}
+
 
 # ─── G-00 ───────────────────────────────────────────────────────────────────
 def check_g00(master_source: Optional[Path], ade_sdd: Optional[Path], project_key: str) -> GateResult:
@@ -304,6 +315,18 @@ def _find_task_docs(project_dir: Path, current_story: str) -> list[Path]:
     return paths.list_docs(project_dir, current_story, "-task-*.md")
 
 
+def _g13_design_root(project_dir: Path) -> Path:
+    """Return the trace document root, preferring legacy design when present."""
+    legacy = paths.project_design_dir(project_dir)
+    if legacy.is_dir():
+        return legacy
+    for root in paths.doc_search_roots(project_dir):
+        canonical = root / "ae-sdd-doc"
+        if canonical.is_dir():
+            return canonical
+    return legacy
+
+
 # ─── G-01 ───────────────────────────────────────────────────────────────────
 def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-01 DR 文档存在"""
@@ -326,6 +349,54 @@ def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
                       details={"files": [str(d.relative_to(project_dir)) for d in drs]})
 
 
+# ─── Story document resolution shared by G-02 / G-14 ───────────────────────
+def _resolve_story_doc(project_dir: Path, st: dict,
+                       current_story: str) -> tuple[Optional[Path], dict]:
+    binding = state_mod.get_story_document_binding(st, current_story)
+    details = {
+        "storyId": current_story,
+        "storyName": binding.get("storyName") or "",
+        "storyDocSource": "none",
+        "storyDocCandidates": [],
+        "storyDocRejected": [],
+    }
+    try:
+        resolution = document_storage.resolve_story_document(
+            project_dir,
+            story_id=current_story,
+            story_name=binding.get("storyName") or "",
+            bound_path=binding.get("docPath") or None,
+        )
+    except document_storage.StoryDocumentAmbiguousError as exc:
+        return None, {
+            **details,
+            "errorCode": exc.code,
+            "storyDocCandidates": list(exc.candidates),
+        }
+    except document_storage.DocStorageError as exc:
+        return None, {**details, "errorCode": exc.code, "error": str(exc)}
+
+    resolved_details = {
+        **details,
+        "storyName": resolution.story_name,
+        "storyDocSource": resolution.source,
+        "storyDocCandidates": [str(path) for path in resolution.candidates],
+        "storyDocRejected": list(resolution.rejected),
+    }
+    if resolution.path is None and resolution.rejected:
+        resolved_details["errorCode"] = resolution.rejected[0]["code"]
+    return resolution.path, resolved_details
+
+
+def _story_binding_action(st: dict, current_story: str) -> str:
+    work_item = (_work_item_from_state(st) or "<WorkItem>")
+    return (
+        "运行 ae-sdd state bind-story-doc "
+        f"--work-item {work_item} --story {current_story} "
+        "--story-name <正式Story文件名>"
+    )
+
+
 # ─── G-02 ───────────────────────────────────────────────────────────────────
 def check_g02(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-02 Story 文档存在"""
@@ -334,15 +405,23 @@ def check_g02(project_dir: Path, st: dict, current_story: str) -> GateResult:
                           "state.currentStory 为空",
                           "跑 ae-sdd state write --phase story-generated --story STORY-XXX")
 
-    story = paths.find_doc(project_dir, current_story, ".md")
+    story, resolution = _resolve_story_doc(project_dir, st, current_story)
     if story is None:
+        error_code = resolution.get("errorCode")
+        if error_code:
+            message = f"Story 文档绑定无效: {error_code}"
+        else:
+            message = f"Story 文档不存在或未绑定: {current_story}"
         return GateResult("G-02", "Story 文档存在", "blocker", False,
-                          f"Story 文档不存在: design/{current_story}.md",
-                          f"跑 story-generate-skill 生成 {current_story}",
-                          details={"expected": str(paths.project_design_dir(project_dir) / f"{current_story}.md")})
+                          message,
+                          _story_binding_action(st, current_story),
+                          details={
+                              **resolution,
+                              "expected": str(paths.project_design_dir(project_dir) / f"{current_story}.md"),
+                          })
     return GateResult("G-02", "Story 文档存在", "blocker", True,
                       f"找到 {story.name}",
-                      details={"file": str(story)})
+                      details={**resolution, "file": str(story)})
 
 
 # ─── G-03 ───────────────────────────────────────────────────────────────────
@@ -425,17 +504,29 @@ def check_g06(project_dir: Path, st: dict, current_story: str) -> GateResult:
 # ─── G-07 ───────────────────────────────────────────────────────────────────
 def check_g07(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-07 CodingPlan 存在 + 7 章节齐全"""
-    if not current_story:
+    cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
+    if resolution.get("errorCode"):
         return GateResult("G-07", "CodingPlan 存在", "blocker", False,
-                          "state.currentStory 为空")
-
-    cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+                          "CodingPlan legacy Story 候选不唯一，拒绝猜测",
+                          "显式传入当前 Work Item 或清理重复 CodingPlan",
+                          details=resolution)
     if cp is None:
         return GateResult("G-07", "CodingPlan 存在", "blocker", False,
-                          f"CodingPlan 文档不存在: design/{current_story}-CodingPlan.md",
-                          f"跑 CodingPlan 生成（CodingProcess §A 调 coding-skill §5）")
+                          "CodingPlan 文档不存在",
+                          "跑 CodingPlan 生成（CodingProcess §A 调 coding-skill §5）",
+                          details=resolution)
 
     content = cp.read_text(encoding="utf-8")
+    if st.get("scale") == "微":
+        if not content.strip():
+            return GateResult("G-07", "CodingPlan 存在", "blocker", False,
+                              "微任务 CodingPlan 为空",
+                              "补充变更范围、实现顺序、风险/回滚与验证计划",
+                              details={**resolution, "profile": "micro"})
+        return GateResult("G-07", "CodingPlan 存在", "blocker", True,
+                          f"{cp.name} 微任务 CodingPlan 已存在（结构质量由 G-08 校验）",
+                          details={**resolution, "profile": "micro", "file": str(cp)})
+
     missing = [s for s in CODINGPLAN_REQUIRED_SECTIONS if s not in content]
     if missing:
         return GateResult("G-07", "CodingPlan 存在", "blocker", False,
@@ -444,7 +535,7 @@ def check_g07(project_dir: Path, st: dict, current_story: str) -> GateResult:
                           details={"missing_sections": missing})
     return GateResult("G-07", "CodingPlan 存在", "blocker", True,
                       f"{cp.name} 7 章节齐全",
-                      details={"file": str(cp)})
+                      details={**resolution, "profile": "full", "file": str(cp)})
 
 
 # ─── G-10 / G-11 / G-12：报告存在性 ──────────────────────────────────────────
@@ -471,28 +562,73 @@ def _doc_search_roots(project_dir: Path) -> list[Path]:
 
 def _find_report_doc(project_dir: Path, current_story: str, *,
                      category: str, patterns: list[str],
-                     legacy_suffixes: list[str]) -> Optional[Path]:
-    candidates: list[Path] = []
-    for root in _doc_search_roots(project_dir):
-        for suffix in legacy_suffixes:
-            candidates.extend([
-                paths.project_design_dir(root) / f"{current_story}{suffix}",
-                root / f"{current_story}{suffix}",
-            ])
+                     legacy_suffixes: list[str],
+                     work_item: str = "") -> Optional[Path]:
+    return _resolve_report_doc(
+        project_dir,
+        current_story,
+        category=category,
+        patterns=patterns,
+        legacy_suffixes=legacy_suffixes,
+        work_item=work_item,
+    ).path
 
-        doc_root = root / "ae-sdd-doc"
-        direct_dir = doc_root / category / current_story
-        for pattern in patterns:
-            candidates.extend(sorted(direct_dir.glob(pattern)))
-            candidates.extend(sorted(doc_root.glob(f"iterations/*/{category}/{current_story}/{pattern}")))
-            candidates.extend(sorted(doc_root.glob(f"iterations/*/*/{category}/{current_story}/{pattern}")))
-            if doc_root.is_dir():
-                candidates.extend(sorted(doc_root.rglob(pattern)))
 
-    for cand in _dedupe_paths(candidates):
-        if cand.is_file():
-            return cand
-    return None
+def _work_item_from_state(st: dict) -> str:
+    return str(
+        st.get("_resolvedWorkItem")
+        or st.get("stateMachineName")
+        or st.get("currentWorkItem")
+        or st.get("workItemKey")
+        or ""
+    )
+
+
+def _resolve_report_doc(project_dir: Path, current_story: str, *,
+                        category: str, patterns: list[str],
+                        legacy_suffixes: list[str], work_item: str = ""):
+    suffixes = list(legacy_suffixes)
+    for pattern in patterns:
+        if current_story and pattern.startswith(current_story):
+            suffix = pattern[len(current_story):]
+            if suffix not in suffixes:
+                suffixes.append(suffix)
+    return document_storage.resolve_scoped_artifact(
+        project_dir,
+        category=category,
+        work_item_id=work_item or current_story,
+        story_id=current_story,
+        suffixes=suffixes,
+    )
+
+
+def _resolve_codingplan_doc(project_dir: Path, st: dict,
+                            current_story: str) -> tuple[Optional[Path], dict]:
+    """Resolve a CodingPlan by Work Item first, with unique Story fallback."""
+    work_item = _work_item_from_state(st) or current_story
+    details = {"workItem": work_item, "scopeSource": "none"}
+    if not work_item:
+        return None, details
+    try:
+        resolution = document_storage.resolve_scoped_artifact(
+            project_dir,
+            category="Coding",
+            work_item_id=work_item,
+            story_id=current_story,
+            suffixes=["-CodingPlan.md"],
+        )
+    except document_storage.ScopeAmbiguousError as exc:
+        return None, {
+            **details,
+            "errorCode": exc.code,
+            "scopeSource": "legacy-story",
+            "candidates": [str(path) for path in exc.candidates],
+        }
+    return resolution.path, {
+        **details,
+        "scopeSource": resolution.scope_source,
+        "candidates": [str(path) for path in resolution.candidates],
+    }
 
 
 def _check_report(project_dir: Path, st: dict, current_story: str, *,
@@ -504,18 +640,39 @@ def _check_report(project_dir: Path, st: dict, current_story: str, *,
         return GateResult(gate_id, name, "blocker", False,
                           "state.currentStory 为空")
 
-    doc = _find_report_doc(project_dir, current_story,
-                           category=category,
-                           patterns=patterns,
-                           legacy_suffixes=legacy_suffixes)
+    work_item = _work_item_from_state(st) or current_story
+    try:
+        resolution = _resolve_report_doc(
+            project_dir, current_story,
+            category=category,
+            patterns=patterns,
+            legacy_suffixes=legacy_suffixes,
+            work_item=work_item,
+        )
+    except document_storage.ScopeAmbiguousError as exc:
+        return GateResult(
+            gate_id, name, "blocker", False,
+            "legacy Story 报告候选不唯一，拒绝猜测",
+            "显式生成当前 Work Item 报告或清理重复 legacy 候选",
+            details={
+                "errorCode": exc.code,
+                "scopeSource": "legacy-story",
+                "candidates": [str(path) for path in exc.candidates],
+            },
+        )
+    doc = resolution.path
     if doc is None:
         return GateResult(gate_id, name, "blocker", False,
                           f"报告文档不存在: {expected_hint}",
                           action,
-                          details={"expected": expected_hint})
+                          details={"expected": expected_hint,
+                                   "workItem": work_item,
+                                   "scopeSource": resolution.scope_source})
     return GateResult(gate_id, name, "blocker", True,
                       f"找到 {doc.name}",
-                      details={"file": str(doc)})
+                      details={"file": str(doc),
+                               "workItem": work_item,
+                               "scopeSource": resolution.scope_source})
 
 
 def check_g10(project_dir: Path, st: dict, current_story: str) -> GateResult:
@@ -591,15 +748,31 @@ def check_g_review_depth(project_dir: Path, st: dict, current_story: str) -> Gat
         return GateResult(gate_id, name, "blocker", True,
                           "state.currentStory 为空（skip，由 G-12 兜底）",
                           details={"skipped": True})
-    doc = _find_report_doc(project_dir, current_story,
-                           category="CR",
-                           patterns=[f"{current_story}-CodeReview.md",  # 🆕 v3.10.1 原地更新（主），与 G-12 对齐
-                                     f"{current_story}-CodeReview-v*-r*.md"],  # 兼容旧版本化
-                           legacy_suffixes=["-CodeReview.md"])
+    work_item = _work_item_from_state(st) or current_story
+    try:
+        resolution = _resolve_report_doc(
+            project_dir, current_story,
+            category="CR",
+            patterns=[f"{current_story}-CodeReview.md",
+                      f"{current_story}-CodeReview-v*-r*.md"],
+            legacy_suffixes=["-CodeReview.md"],
+            work_item=work_item,
+        )
+    except document_storage.ScopeAmbiguousError as exc:
+        return GateResult(
+            gate_id, name, "blocker", False,
+            "legacy Story CodeReview 候选不唯一，拒绝执行深度判定",
+            "显式生成当前 Work Item CodeReview 报告",
+            details={"errorCode": exc.code,
+                     "scopeSource": "legacy-story",
+                     "candidates": [str(path) for path in exc.candidates]},
+        )
+    doc = resolution.path
     if doc is None:
         return GateResult(gate_id, name, "blocker", True,
                           "CodeReview 报告不存在（skip，由 G-12 兜底报告存在性）",
-                          details={"skipped": True})
+                          details={"skipped": True,
+                                   "scopeSource": resolution.scope_source})
     try:
         content = doc.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -667,17 +840,72 @@ CODINGPLAN_14GATES_KEYWORDS = [
 
 def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-08 CodingPlan 14 门禁通过 — 解析 CodingPlan 文档 14 门禁表"""
-    if not current_story:
-        return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
-                          "state.currentStory 为空")
-
-    cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+    cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
+    if resolution.get("errorCode"):
+        return GateResult("G-08", "CodingPlan 门禁通过", "blocker", False,
+                          "CodingPlan legacy Story 候选不唯一，拒绝猜测",
+                          "显式传入当前 Work Item 或清理重复 CodingPlan",
+                          details=resolution)
     if cp is None:
-        return GateResult("G-08", "CodingPlan 14 门禁通过", "blocker", False,
-                          f"CodingPlan 文档不存在",
-                          f"先生成 {current_story}-CodingPlan.md（coding-process §A 调 coding-skill §5）")
+        return GateResult("G-08", "CodingPlan 门禁通过", "blocker", False,
+                          "CodingPlan 文档不存在",
+                          "先生成 Work Item CodingPlan（coding-process §A 调 coding-skill §5）",
+                          details=resolution)
 
     content = cp.read_text(encoding="utf-8")
+
+    if st.get("scale") == "微":
+        heading_matches = list(
+            re.finditer(r"^#{1,6}\s+(.+?)\s*$", content, re.MULTILINE)
+        )
+        sections = []
+        for index, match in enumerate(heading_matches):
+            body_end = (
+                heading_matches[index + 1].start()
+                if index + 1 < len(heading_matches)
+                else len(content)
+            )
+            sections.append((
+                match.group(1).strip().casefold(),
+                content[match.end():body_end],
+            ))
+        missing_dimensions = [
+            dimension
+            for dimension, aliases in MICRO_CODINGPLAN_DIMENSIONS.items()
+            if not any(
+                alias.casefold() in heading and any(char.isalnum() for char in body)
+                for alias in aliases
+                for heading, body in sections
+            )
+        ]
+        if missing_dimensions:
+            return GateResult(
+                "G-08", "CodingPlan 微任务门禁通过", "blocker", False,
+                f"微任务 CodingPlan 缺轻量维度: {missing_dimensions}",
+                "补充变更范围、实现顺序、风险/回滚与验证计划，不需要伪造大型 Plan 的 14 项",
+                details={**resolution, "profile": "micro",
+                         "missing_dimensions": missing_dimensions},
+            )
+
+        blocking_tokens = [
+            token for token in ("❌", "TODO", "TBD", "待补充", "待确认")
+            if token.casefold() in content.casefold()
+        ]
+        if blocking_tokens:
+            return GateResult(
+                "G-08", "CodingPlan 微任务门禁通过", "blocker", False,
+                f"微任务 CodingPlan 仍含未闭环项: {blocking_tokens}",
+                "闭环未完成项后重新确认 CodingPlan",
+                details={**resolution, "profile": "micro",
+                         "blocking_tokens": blocking_tokens},
+            )
+        return GateResult(
+            "G-08", "CodingPlan 微任务门禁通过", "blocker", True,
+            "微任务轻量门禁通过（范围/实现/风险回滚/验证齐全）",
+            details={**resolution, "profile": "micro",
+                     "dimensions": list(MICRO_CODINGPLAN_DIMENSIONS),
+                     "file": str(cp)},
+        )
 
     # 1. 14 关键词必须全在文档里
     missing_kw = [k for k in CODINGPLAN_14GATES_KEYWORDS if k not in content]
@@ -782,11 +1010,17 @@ def _resolve_g09_scope(project_dir: Path, st: dict, current_story: str):
         if not isinstance(raw_paths, list) or not raw_paths:
             return None, source, "", "verification-plan changedPaths is empty or invalid"
         rebuilt = verification_plan.build_plan(
-            project_dir, current_story, raw_paths, since_fingerprint
+            project_dir, current_story, raw_paths, since_fingerprint,
+            str(plan.get("workItem") or ""),
         )
-        expected_fingerprint = rebuilt["planFingerprint"]
-        if plan.get("planFingerprint") != expected_fingerprint:
-            return None, source, expected_fingerprint, "verification-plan fingerprint mismatch"
+        if plan.get("planFingerprint") != rebuilt["planFingerprint"]:
+            return None, source, rebuilt["planFingerprint"], "verification-plan fingerprint mismatch"
+        if plan.get("evidenceInputFingerprint") and plan.get("workItem"):
+            expected_fingerprint = rebuilt["evidenceInputFingerprint"]
+            if plan.get("evidenceInputFingerprint") != expected_fingerprint:
+                return None, source, expected_fingerprint, "verification-plan evidence input fingerprint mismatch"
+        else:
+            expected_fingerprint = rebuilt["planFingerprint"]
     else:
         for field in ("changedPaths", "changedFiles"):
             value = st.get(field)
@@ -829,10 +1063,14 @@ def _finding_in_g09_scope(finding: dict, scope_paths: list[str]) -> bool:
     )
 
 
-_GCODE1_EXTENSIONS = {".java", ".kt", ".kts", ".xml", ".yaml", ".yml", ".properties"}
+_GCODE1_EXTENSIONS = {
+    ".java", ".kt", ".kts", ".xml", ".yaml", ".yml", ".properties",
+    ".py", ".js", ".ts",
+}
 _GCODE1_EXCLUDED_DIRS = {
     ".git", ".idea", ".gradle", ".ae-sdd", ".auto-engineering", "ae-sdd-doc",
     "node_modules", "target", "build", "dist", "__pycache__",
+    ".venv", "venv", ".tox", "site-packages", "__tests__",
 }
 
 
@@ -840,10 +1078,20 @@ def _is_gcode1_test_path(value: str) -> bool:
     normalized = "/" + value.replace("\\", "/").lower().lstrip("/")
     if any(marker in normalized for marker in (
         "/src/test/", "/src/integrationtest/", "/src/testfixtures/", "/test/", "/tests/",
+        "/__tests__/",
     )):
         return True
-    stem = Path(value).stem
-    return stem.lower().endswith(("test", "tests", "spec")) or stem.endswith("IT")
+    path = Path(value)
+    stem = path.stem
+    stem_lower = stem.lower()
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        return stem_lower == "test" or stem_lower.startswith("test_") or stem_lower.endswith("_test")
+    if suffix in {".js", ".ts"}:
+        return stem_lower.endswith((".test", ".spec"))
+    if suffix in {".java", ".kt", ".kts"}:
+        return stem_lower.endswith(("test", "tests", "spec")) or stem.endswith("IT")
+    return False
 
 
 def _gcode1_production_scope(scope_paths: list[str]) -> list[str]:
@@ -1017,7 +1265,7 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
     try:
         result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:test_authenticity",
             attrs={"scanRoot": str(project_dir)},
         )
@@ -1204,7 +1452,7 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
     try:
         result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:coding_authenticity",
             attrs={"scanRoot": str(project_dir)},
         )
@@ -1294,6 +1542,9 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
                          "scannedPaths": scanned_paths,
                          "scopeStatus": "BLOCK_SCAN_INVALID"},
             )
+    scope_details["scannedPaths"] = (
+        sorted(set(scope_paths) & set(scanned_paths)) if scope_paths else scanned_paths
+    )
     if scope_paths:
         findings = [finding for finding in findings
                     if _finding_in_g09_scope(finding, scope_paths)]
@@ -1396,6 +1647,22 @@ def check_gcode1(project_dir: Path, st: dict, current_story: str,
 
 
 # ─── G-13：RA ↔ DR ↔ Story ↔ Task ↔ Coding 六层引用追溯 ──────────────────────
+def _g13_trace_mode(st: dict, current_story: str) -> tuple[str, str]:
+    entry_node = str(st.get("entryNode") or "").upper()
+    work_item = _work_item_from_state(st)
+    is_bug = entry_node == "BUG" or work_item.upper().startswith("BUG") \
+        or work_item.upper().startswith("BUG-")
+    if is_bug and st.get("scale") == "微":
+        explicit_parent = str(st.get("parentStory") or "")
+        parent_story = explicit_parent or (
+            current_story if current_story.upper().startswith("STORY-") else ""
+        )
+        if parent_story:
+            return "inherited-parent-story", parent_story
+        return "minimal-bug-trace", ""
+    return "strict-dr", ""
+
+
 def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """
     G-13 全链路对称性核查通过
@@ -1411,15 +1678,33 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
       - RA 文档不存在 → 不阻断，记录 ra_layer={"present": False}
       - RA 存在但 DR 未引用 RA-ID → 记录 issue（仅当 DR 也存在时）
     """
+    trace_mode, parent_story = _g13_trace_mode(st, current_story)
+    if trace_mode == "inherited-parent-story":
+        return GateResult(
+            "G-13", "全链路对称性核查通过", "blocker", True,
+            f"BUG follow-up 继承父 Story 追溯：{parent_story}",
+            details={"traceMode": trace_mode,
+                     "parentStory": parent_story,
+                     "workItem": _work_item_from_state(st)},
+        )
+    if trace_mode == "minimal-bug-trace":
+        return GateResult(
+            "G-13", "全链路对称性核查通过", "blocker", True,
+            "standalone micro BUG 使用最小追溯，不要求虚构 DR/Story",
+            details={"traceMode": trace_mode,
+                     "workItem": _work_item_from_state(st)},
+        )
     if not current_story:
         return GateResult("G-13", "全链路对称性核查通过", "blocker", False,
-                          "state.currentStory 为空")
+                          "state.currentStory 为空",
+                          details={"traceMode": trace_mode})
 
-    design = paths.project_design_dir(project_dir)
+    design = _g13_design_root(project_dir)
     if not design.is_dir():
         return GateResult("G-13", "全链路对称性核查通过", "blocker", False,
-                          f"design/ 目录不存在",
-                          f"先生成设计文档")
+                          f"design/ 与 ae-sdd-doc/ 均不存在",
+                          f"先生成设计文档",
+                          details={"traceMode": trace_mode})
 
     issues: list[str] = []
     ra_layer_detail: dict = {"present": False, "files": 0}
@@ -1494,6 +1779,7 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
             issues.append(f"Task 文档未引用 Story ID {current_story}：{t.name}")
 
     # 3. Coding Report → Task 引用追溯（如果存在）
+    work_item = _work_item_from_state(st) or current_story
     coding_report = _find_report_doc(
         project_dir, current_story,
         category="Coding",
@@ -1501,6 +1787,7 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
                   f"{current_story}-CodingReport-v*-r*.md",  # 兼容旧版本化
                   f"{current_story}-Coding-Report-v*-r*.md"],
         legacy_suffixes=["-CodingReport.md", "-Coding-Report.md"],  # design/ 兼容
+        work_item=work_item,
     )
     if coding_report is not None:
         cr_content = coding_report.read_text(encoding="utf-8")
@@ -1529,6 +1816,7 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
         patterns=[f"{current_story}-CodeReview.md",  # 🆕 v3.10.1 原地更新（主），与 G-12 对齐
                   f"{current_story}-CodeReview-v*-r*.md"],  # 兼容旧版本化
         legacy_suffixes=["-CodeReview.md"],
+        work_item=work_item,
     )
     if code_review is not None:
         cv_content = code_review.read_text(encoding="utf-8")
@@ -1544,7 +1832,8 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
                           details={"issues": issues, "n_issues": len(issues),
                                    "ra_layer": ra_layer_detail,
                                    "entryNode": st.get("entryNode"),
-                                   "dr_layer": dr_layer_detail})
+                                   "dr_layer": dr_layer_detail,
+                                   "traceMode": trace_mode})
 
     n_drs = len(_iter_dr_docs(design))
     layer_note = "六层追溯完整（RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview）" \
@@ -1557,7 +1846,8 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
                                "n_drs": n_drs,
                                "ra_layer": ra_layer_detail,
                                "entryNode": st.get("entryNode"),
-                               "dr_layer": dr_layer_detail})
+                               "dr_layer": dr_layer_detail,
+                               "traceMode": trace_mode})
 
 
 # ─── G-RA：需求分析准入门卫（v3.2 — 对标 SKILL.md §🛡️ G-RA 7 条规则）─────────
@@ -1597,7 +1887,7 @@ STATE_MACHINE_KEYWORDS = ["状态变更", "状态机", "触发", "联动", "禁�
                           "登录", "登出", "失败", "超时", "过期", "状态流转"]
 
 # RA 文档命名约定（与 ra_authenticity_scan.py 一致）
-RA_FILENAME_RE = re.compile(r"RA[-_]", re.IGNORECASE)
+RA_FILENAME_RE = re.compile(r"^RA[-_]", re.IGNORECASE)
 
 
 def _iter_ra_files(project_dir: Path) -> list[Path]:
@@ -1809,7 +2099,7 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
     try:
         result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:ra_authenticity",
             attrs={"scanRoot": str(project_dir)},
         )
@@ -1904,7 +2194,7 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
     try:
         result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS, check=False,
             span_name="scanner:flow_violation",
             attrs={"scanRoot": str(project_dir)},
         )
@@ -1994,7 +2284,7 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
     try:
         result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:ra_depth",
             attrs={"scanRoot": str(project_dir)},
         )
@@ -2083,7 +2373,7 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
     try:
         result = runtime_exec.run_command(
             [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:ra_implementation",
             attrs={"scanRoot": str(project_dir)},
         )
@@ -2152,17 +2442,44 @@ _STORY_ID_RE = re.compile(r"STORY[-_]?\d+", re.IGNORECASE)
 def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-14 CodingPlan-Story 一致性 - Plan 须引用 Story 且关键设计可对应"""
     name = "CodingPlan-Story 一致性"
+    work_item = _work_item_from_state(st)
+    entry_node = str(st.get("entryNode") or "").upper()
+    standalone_micro = (
+        st.get("scale") == "微"
+        and entry_node not in {"STORY", "DR", "PRD"}
+        and (not current_story or current_story == work_item)
+    )
+    if standalone_micro:
+        return GateResult(
+            "G-14", name, "blocker", True,
+            "standalone 微任务无 Story，上游一致性检查不适用",
+            details={"skipped": True, "alignmentMode": "standalone-micro",
+                     "workItem": work_item},
+        )
     if not current_story:
         return GateResult("G-14", name, "blocker", False, "state.currentStory 为空")
 
-    cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+    cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
+    if resolution.get("errorCode"):
+        return GateResult("G-14", name, "blocker", False,
+                          "CodingPlan legacy Story 候选不唯一，拒绝猜测",
+                          "显式传入当前 Work Item 或清理重复 CodingPlan",
+                          details=resolution)
     if cp is None:
         return GateResult("G-14", name, "blocker", False,
                           "CodingPlan 文档不存在，无法核对一致性",
-                          f"先生成 {current_story}-CodingPlan.md")
+                          f"先生成 {current_story}-CodingPlan.md",
+                          details=resolution)
 
-    # Story 文档须存在（G-02 范畴，此处只做引用校验）
-    story_doc = paths.find_doc(project_dir, current_story, ".md")
+    # Story 文档须存在（G-02 范畴，此处复用同一 StoryName/bound-path 解析器）
+    story_doc, story_resolution = _resolve_story_doc(project_dir, st, current_story)
+    if story_resolution.get("errorCode"):
+        return GateResult(
+            "G-14", name, "blocker", False,
+            f"Story 文档绑定无效: {story_resolution['errorCode']}",
+            _story_binding_action(st, current_story),
+            details={**resolution, **story_resolution},
+        )
     cp_content = cp.read_text(encoding="utf-8")
 
     issues: list[str] = []
@@ -2200,12 +2517,14 @@ def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
         return GateResult("G-14", name, "blocker", False,
                           f"CodingPlan-Story 一致性未通过（{len(issues)} 项）：{'; '.join(issues)}",
                           f"修复 {current_story}-CodingPlan.md 使其与 Story 一致，偏离项补 Proposal",
-                          details={"issues": issues, "ac_ids_in_cp": sorted(ac_ids_in_cp),
+                          details={**resolution, **story_resolution,
+                                   "issues": issues, "ac_ids_in_cp": sorted(ac_ids_in_cp),
                                    "story_doc_exists": story_doc is not None})
 
     return GateResult("G-14", name, "blocker", True,
                       f"CodingPlan-Story 一致性通过（AC 对齐 {len(ac_ids_in_cp)} 个，Story 引用存在）",
-                      details={"ac_ids_in_cp": sorted(ac_ids_in_cp),
+                      details={**resolution, **story_resolution,
+                               "ac_ids_in_cp": sorted(ac_ids_in_cp),
                                "story_doc": str(story_doc) if story_doc else None,
                                "file": str(cp)})
 
@@ -2224,14 +2543,17 @@ _SRC_PENDING_RE = re.compile(r"【待核实源码[^】]*】")
 def check_g_codeplan_src(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-CODEPLAN-SRC CodingPlan 源码核对 — 新增/修改类建模范式须附来源标记"""
     name = "CodingPlan 源码核对"
-    if not current_story:
-        return GateResult("G-CODEPLAN-SRC", name, "blocker", False, "state.currentStory 为空")
-
-    cp = paths.find_doc(project_dir, current_story, "-CodingPlan.md")
+    cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
+    if resolution.get("errorCode"):
+        return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
+                          "CodingPlan legacy Story 候选不唯一，拒绝猜测",
+                          "显式传入当前 Work Item 或清理重复 CodingPlan",
+                          details=resolution)
     if cp is None:
         return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
                           "CodingPlan 文档不存在，无法核对源码",
-                          f"先生成 {current_story}-CodingPlan.md")
+                          "先生成 Work Item CodingPlan",
+                          details=resolution)
 
     content = cp.read_text(encoding="utf-8")
 
@@ -2242,7 +2564,9 @@ def check_g_codeplan_src(project_dir: Path, st: dict, current_story: str) -> Gat
         # 无类骨架章节（微任务可能无）→ 跳过（不阻断）
         return GateResult("G-CODEPLAN-SRC", name, "blocker", True,
                           "CodingPlan 无关键类骨架章节（微任务场景，跳过源码核对）",
-                          details={"skipped": True, "reason": "no skeleton section"})
+                          details={**resolution, "skipped": True,
+                                   "profile": "micro" if st.get("scale") == "微" else "full",
+                                   "reason": "no skeleton section", "file": str(cp)})
 
     read_marks = _SRC_READ_RE.findall(skeleton_section)
     pending_marks = _SRC_PENDING_RE.findall(skeleton_section)
@@ -2250,7 +2574,7 @@ def check_g_codeplan_src(project_dir: Path, st: dict, current_story: str) -> Gat
     # 校验已读源码标记的文件是否真实存在（防伪造标记）
     missing_read_files = []
     for ref_path in read_marks:
-        ref_clean = ref_path.strip()
+        ref_clean = ref_path.strip().strip("`").strip()
         # 尝试在 project_dir 下定位该文件
         candidate = project_dir / ref_clean
         if not candidate.is_file():
@@ -2267,25 +2591,25 @@ def check_g_codeplan_src(project_dir: Path, st: dict, current_story: str) -> Gat
         return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
                           "CodingPlan 关键类骨架章节无任何源码核对标记（每个新增/修改类须附【已读源码：】或【待核实源码】）",
                           f"在 {current_story}-CodingPlan.md §2 类骨架章节补来源标记",
-                          details={"n_read": 0, "n_pending": 0})
+                          details={**resolution, "n_read": 0, "n_pending": 0})
 
     if n_pending > 0:
         return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
                           f"CodingPlan 有 {n_pending} 个待核实源码标记未闭环（待核实清单非空禁止进 Coding）：{pending_marks}",
                           f"补读现有同类源码后，把【待核实源码】改为【已读源码：{'}路径{'}】",
-                          details={"n_read": n_read, "n_pending": n_pending,
+                          details={**resolution, "n_read": n_read, "n_pending": n_pending,
                                    "pending": pending_marks})
 
     if missing_read_files:
         return GateResult("G-CODEPLAN-SRC", name, "blocker", False,
                           f"CodingPlan 标注已读但源码文件不存在（{len(missing_read_files)} 个）：{missing_read_files[:5]}",
                           "核对路径或改为【待核实源码】",
-                          details={"n_read": n_read, "n_pending": n_pending,
+                          details={**resolution, "n_read": n_read, "n_pending": n_pending,
                                    "missing_read_files": missing_read_files})
 
     return GateResult("G-CODEPLAN-SRC", name, "blocker", True,
                       f"源码核对通过（{n_read} 个已读标记，0 待核实，文件均存在）",
-                      details={"n_read": n_read, "n_pending": 0,
+                      details={**resolution, "n_read": n_read, "n_pending": 0,
                                "read_files": read_marks, "file": str(cp)})
 
 
@@ -2385,7 +2709,7 @@ def check_g_doc_storage(project_dir: Path, st: dict, current_story: str) -> Gate
     try:
         ls_result = runtime_exec.run_command(
             ["git", "ls-files", "*.md"],
-            cwd=project_dir, capture_output=True, text=True, timeout=10,
+            cwd=project_dir, capture_output=True, text=True, timeout=_GIT_INSPECTION_LIMIT_SECONDS,
             span_name="subprocess:git_ls_files_md",
         )
         for line in ls_result.stdout.splitlines():
@@ -3565,12 +3889,26 @@ CHECK_FUNCS: dict[str, Callable] = {
 
 # ─── 主入口 ─────────────────────────────────────────────────────────────────
 def check_all(master_source: Optional[Path], ade_sdd: Optional[Path],
-              project_key: str, only: Optional[str] = None) -> list[GateResult]:
+              project_key: str, only: Optional[str] = None,
+              work_item: str = "") -> list[GateResult]:
     """跑全部门禁（14 主门禁 + G-RA + G-CODE 等）；only 指定时只跑那一个"""
     results: list[GateResult] = []
 
     # 读 state（如果 .ae-sdd 存在）
-    if ade_sdd:
+    if ade_sdd and work_item:
+        state_path = paths.find_work_item_state_path(ade_sdd, work_item)
+        if state_path is None:
+            return [GateResult(
+                gate_id="G-WORKITEM",
+                name="Work Item state resolution",
+                severity="blocker",
+                pass_=False,
+                message=f"未找到显式 Work Item state: {work_item}",
+            )]
+        st = state_mod.read_state(state_path)
+        st = dict(st)
+        st["_resolvedWorkItem"] = work_item
+    elif ade_sdd:
         try:
             st = work_item_context.resolve_default_state(ade_sdd).data
         except (work_item_context.NoWorkItemStateError, work_item_context.AmbiguousWorkItemError):

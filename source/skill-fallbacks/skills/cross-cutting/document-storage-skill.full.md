@@ -321,7 +321,7 @@ AE 流程涉及 5 类位置维度 + 1 个文档隔离键，必须分别定位：
 | **项目根** | `assets.md` §1 `gitPath` 字段 | 所有"项目级"操作（代码、构建、跑测试）|
 | **微服务根** | `{gitPath} + "/" + {serviceName}`（拼接约定）| 微服务级文档 |
 | **WorkItem 隔离键** | `{文档工作区根}/ae-sdd-doc/{Task|Coding|Test|CR}/{WORKITEM-ID}` | 独立编码任务的 Task/Coding/Test/CR 文档（PRD/BUG/OPT/Story 均可） |
-| **Story 文档** | `{文档工作区根}/ae-sdd-doc/Story/{STORY-ID}.md` | Story 主文档 |
+| **Story 文档** | 逻辑 `STORY-ID` + 可选原生 `StoryName` 精确绑定；无绑定时回退 `{文档工作区根}/ae-sdd-doc/Story/{STORY-ID}.md` | Story 主文档；正式项目命名无需创建 ID 别名文件 |
 | **文档工作区根** | `assets.md` §1 `docWorkspacePath` 字段（可选，缺省=gitPath）| 工程目录与文档目录分离的项目（如 life）—— 设计类文档路径基于此维度 |
 | 🆕 **业务线根** | `{docWorkspacePath}/assets/{workspaceKey}/{line}/` | 多业务线项目（如 life=2c/admin/common）—— 工程级资产子文件按业务线分组就近存放 |
 
@@ -344,7 +344,7 @@ document-storage-skill.定位(projectKey, intent)
 2. 校验 gitPath 存在性（文件系统可达）← 🆕 v3.4.0 落地前强制触发 E003（非仅事后 health）
 3. 根据 intent 选择路径模板 + 路径根：
    ├─ 设计类文档（DR/Story/Task/CodingPlan/测试用例/报告）→ 路径根 = docWorkspacePath（🆕）
-   │   ├─ Story 主文档 → {docWorkspacePath}/ae-sdd-doc/Story/{STORY-ID}.md
+   │   ├─ Story 主文档 → 已绑定 docPath > 精确 StoryName > 无 StoryName 时的 `{STORY-ID}.md` 兼容路径
    │   ├─ 独立编码任务 → Task/Coding/Test/CR/{WORKITEM-ID}/（BUG/OPT 不必伪造成 Story）
    │   └─ 未显式 workItemId → 回退 storyId/docId，兼容旧调用
    └─ 工程类操作（代码、构建）→ 路径根 = gitPath
@@ -392,7 +392,7 @@ document-storage-skill.定位(projectKey, intent)
 
 ## 4. 动态定位 API 契约（🆕 唯一 SSOT）
 
-> 任何 SKILL 落地文档前调用本节 API 获取完整路径+元数据。**本节是 14 个 API 的唯一定义源**；§9 调用矩阵只做 SKILL→API 映射，不重复定义。
+> 任何 SKILL 落地文档前调用本节 API 获取完整路径+元数据。**本节是文档存取 API 的唯一定义源**；§9 调用矩阵只做 SKILL→API 映射，不重复定义。
 
 ### 🆕 4.0 CLI 入口（v3.7.2 激活，推荐 LLM 使用）
 
@@ -403,6 +403,8 @@ document-storage-skill.定位(projectKey, intent)
 | `ae-sdd doc save --intent X --content-file F` | `save_doc()` | 一步到位存文档（resolve+写+版本+STORING+gitignore+删草稿；v3.10.1 ChangeLog 已禁用）|
 | `ae-sdd doc resolve --intent X` | `resolve_path()` | 只推路径不写（查会写到哪）|
 | `ae-sdd doc finalize --path P --intent X` | `finalize_doc()` | 已手写文件补版本号/STORING（不覆盖内容；v3.10.1 ChangeLog 已禁用）|
+| `ae-sdd state new ... --story-name N` | `resolve_story_document()` + state binding | 新建单 Story state 时校验并绑定正式文件名 |
+| `ae-sdd state bind-story-doc --work-item W --story S --story-name N` | `resolve_story_document()` + StateStore mutation | 为存量 state 迁移正式 StoryName；幂等且经 lease/revision CAS |
 
 **完整 save 命令：**
 ```bash
@@ -472,6 +474,21 @@ interface ResolvedPath {
 | `get_constraints()` | `projectKey` | `ConstraintList`（约束文档名 → 完整路径映射）| 取代 SKILL 内写死的 `constraints/` 路径。定位：`{gitPath}/constraints/` 或 `docWorkspace/constraints/`（二者其一）|
 | `get_thinking_engine()` | `projectKey` | `ThinkingEngineRef`（path / source / content / sha256）| 加载 CodingModel / 11 维思维引擎。优先项目覆盖，回退到 ae-sdd 自带 `standards/thinking/be-coding-thinking-engine.md` |
 | `get_assets()` | `projectKey` | `AssetsRef`（项目资产文件路径列表）| 取代 SKILL 内写死的 `assets/{projectKey}/` 路径。复用 `paths.find_module_asset_files`（v4.1 支持 line 分组发现）|
+| `resolve_story_document()` | `projectDir`, `storyId`, `storyName?`, `boundPath?` | `StoryDocumentResolution`（path / storyId / storyName / source / candidates / rejected）| 原生 Story 文件解析；供 G-02/G-14 与 state 绑定共用 |
+
+#### 4.2.1 原生 StoryName 解析与绑定
+
+`storyId` 是状态机、AC、TestCase 和 CodingPlan 使用的逻辑身份；`storyName` 是正式 Story 文件的 basename，两者不得互相替代。`storyName` 可带或不带 `.md`，但必须是非 glob basename；包含 `..`、`/`、`\`、`*`、`?`、`[` 或 `]` 时以 `STORY_DOC_NAME_INVALID` 阻断，且不得进入文件枚举。
+
+解析优先级固定如下：
+
+1. state 已绑定的 `docPath`；文件存在时必须重新校验正文元数据 `Story ID`。
+2. 在 `projectDir` 与 `docWorkspacePath` 根内按 `StoryName + .md` 精确查找；正式文件必须声明与逻辑 ID 相同的 `Story ID`。
+3. 只有未提供 `StoryName` 时，才回退旧布局的精确 `{STORY-ID}.md`，候选仅限 `{root}/design/{ID}.md`、`{root}/{ID}.md`、`{root}/ae-sdd-doc/Story/{ID}.md`；Task/Coding/Test/CR 同名文件不得作为 Story。多个 Story canonical 候选返回 `STORY_DOC_AMBIGUOUS`。
+
+禁止按 `*story-006*`、标题片段、目录最近修改时间或任意别名做模糊选择。同一精确 StoryName 出现多个元数据有效候选时返回 `STORY_DOC_AMBIGUOUS`；元数据缺失或不一致时列入 `rejected`，门禁 fail closed。嵌套 state 写 `storyStates[storyId].storyName/docPath`，扁平兼容 state 写顶层 `storyName/storyDocPath`；不得创建第二份 ID-only 正文或软链接作为修复手段。
+
+G-02 与 G-14 必须调用同一解析器。无绑定且只有正式命名文件时，G-02 的恢复动作是 `ae-sdd state bind-story-doc`，不是要求项目改名或复制文档。
 
 ### 4.3 统一保存 API：`save_doc()`
 
@@ -601,6 +618,12 @@ interface ResolvedPath {
 | `E006` | 旧路径写入尝试 | 提示改用新路径 `ae-sdd-doc/` |
 | `E007` | 版本号未递增 | 重入时必须 r 至少递增 |
 | 🆕 `E008` | `docWorkspacePath` 声明但路径不存在 | 提示检查 assets.md §1 docWorkspacePath 字段（落地前强制触发，同 E003）|
+| `STORY_DOC_NAME_INVALID` | StoryName 不是安全的非 glob basename | 仅传正式文件名，可带或不带 `.md`，不得传路径或 `* ? [ ]` |
+| `STORY_DOC_AMBIGUOUS` | 同一精确 StoryName 有多个元数据有效候选 | 清理重复文件或修正 state 的显式绑定 |
+| `STORY_DOC_ID_MISSING` | 正式 Story 文件缺少 `Story ID` 元数据 | 在正文元信息补逻辑 Story ID 后重试 |
+| `STORY_DOC_ID_MISMATCH` | 正式 Story 文件声明的 ID 与 state 逻辑 ID 不一致 | 修正文档元数据或绑定正确文件，不得猜测 |
+| `STORY_DOC_NAME_MISMATCH` | state 的 StoryName 与 boundPath basename 漂移 | 重新绑定同名正式文件，禁止静默信任冲突指针 |
+| `STORY_DOC_OUTSIDE_ROOTS` | boundPath 解析后位于 project/docWorkspace 根之外 | 修正 state 绑定到声明的文档根内，禁止读取仓外文件 |
 
 ---
 

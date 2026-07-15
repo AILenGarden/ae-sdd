@@ -17,6 +17,20 @@
 
 <本次变更的背景、动机与达成效果的叙述>
 
+## Design ledger impact
+
+<!--
+  每次迭代必须填写：
+  - 设计语义有变化：列出受影响的 D-xxx，例如 `updated: D-007, D-020`。
+  - 没有设计语义变化：明确填写 `N/A: no design semantics changed`。
+  不允许用对话说明、空白或“待补”代替这个结论；设计问题、预期价值和验证证据回到
+  `source/docs/ae-sdd-design.md` §0 Design Ledger 维护，机器校验由 UG-28/UC-20 负责。
+-->
+
+| Design ID | Impact |
+|---|---|
+| `D-xxx` or `N/A` | <设计语义变化、无变化原因和对应验证证据> |
+
 ## Changes
 
 <!--

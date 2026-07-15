@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -76,8 +77,10 @@ def finalize_manifest(project_dir: Path, story_id: str) -> tuple[Path, dict]:
         raise ValueError("evidence manifest storyId mismatch")
     root = project_dir.resolve()
     for entry in manifest.get("entries", []):
+        if entry.get("status") == "superseded":
+            continue
         for artifact in entry.get("artifacts") or []:
-            raw_path = Path(str(artifact.get("path") or ""))
+            raw_path = Path(str(artifact.get("snapshotPath") or artifact.get("path") or ""))
             artifact_path = raw_path if raw_path.is_absolute() else root / raw_path
             try:
                 artifact_path = artifact_path.resolve(strict=True)
@@ -102,7 +105,7 @@ def _project_artifact_matches(project_dir: Path, artifact: dict) -> tuple[bool, 
     the same manifest mean something different on another machine, so both are
     rejected instead of normalized permissively.
     """
-    raw = str(artifact.get("path") or "").strip().replace("\\", "/")
+    raw = str(artifact.get("snapshotPath") or artifact.get("path") or "").strip().replace("\\", "/")
     relative = Path(raw)
     if not raw or relative.is_absolute() or ".." in relative.parts:
         return False, None
@@ -148,6 +151,7 @@ def validate_g09_manifest(project_dir: Path, story_id: str,
         return False, "story-mismatch"
     relevant = [
         entry for entry in manifest.get("entries", [])
+        if entry.get("status") != "superseded"
         if entry.get("kind") == "test-authenticity"
         or (entry.get("kind") == "test" and entry.get("summary", {}).get("gate") == "G-09")
     ]
@@ -220,32 +224,81 @@ def validate_g09_manifest(project_dir: Path, story_id: str,
 def record(project_dir: Path, story_id: str, *, kind: str, command: str | list[str],
            input_fingerprint: str, toolchain_fingerprint: str, exit_code: int,
            artifacts: list[dict], summary: Optional[dict] = None, duration_ms: int = 0,
-           freshness_window_seconds: Optional[int] = None) -> dict:
+           freshness_window_seconds: Optional[int] = None,
+           logical_key: str = "") -> dict:
     manifest = load_manifest(project_dir, story_id)
+    root = project_dir.resolve()
+    normalized_artifacts = []
+    for raw_artifact in artifacts:
+        artifact = dict(raw_artifact or {})
+        raw_path = str(artifact.get("path") or "").strip()
+        source = Path(raw_path)
+        if not raw_path:
+            raise ValueError("evidence artifact path is empty")
+        source = source if source.is_absolute() else root / source
+        try:
+            source = source.resolve(strict=True)
+            source.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"evidence artifact must be a file inside project: {raw_path}") from exc
+        if not source.is_file():
+            raise ValueError(f"evidence artifact is not a file: {raw_path}")
+        digest = artifact_hash(source)
+        expected = str(artifact.get("sha256") or "")
+        if expected and expected != digest:
+            raise ValueError(f"evidence artifact hash mismatch: {raw_path}")
+        relative = source.relative_to(root).as_posix()
+        snapshot_relative = (Path(".auto-engineering") / story_id / "evidence" / "artifacts" /
+                             f"{digest[7:]}-{source.name}").as_posix()
+        snapshot = root / snapshot_relative
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        if not snapshot.is_file() or artifact_hash(snapshot) != digest:
+            shutil.copyfile(source, snapshot)
+        artifact["path"] = relative
+        artifact["sha256"] = digest
+        artifact["snapshotPath"] = snapshot_relative
+        normalized_artifacts.append(artifact)
+    command_digest = command_hash(command)
+    logical_key = str(logical_key or "").strip() or fingerprint({
+        "kind": kind,
+        "commandHash": command_digest,
+        "artifacts": [str(item.get("path") or "") for item in normalized_artifacts],
+    })
     entry = {
         "evidenceId": "ev-" + fingerprint({"kind": kind, "command": command, "input": input_fingerprint})[7:23],
         "kind": kind,
-        "commandHash": command_hash(command),
+        "commandHash": command_digest,
         "inputFingerprint": input_fingerprint,
         "toolchainFingerprint": toolchain_fingerprint,
         "startedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "durationMs": int(duration_ms),
         "exitCode": int(exit_code),
         "summary": summary or {},
-        "artifacts": artifacts,
+        "artifacts": normalized_artifacts,
         "reusable": int(exit_code) == 0,
+        "logicalKey": logical_key,
+        "status": "active",
     }
     if freshness_window_seconds is not None:
         entry["freshnessWindowSeconds"] = int(freshness_window_seconds)
     manifest.setdefault("schemaVersion", 1)
     manifest["storyId"] = story_id
-    manifest.setdefault("entries", []).append(entry)
+    entries = manifest.setdefault("entries", [])
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for previous in entries:
+        if previous.get("status", "active") == "active" and previous.get("logicalKey") == logical_key:
+            previous["status"] = "superseded"
+            previous["supersededAt"] = now
+            previous["supersededBy"] = entry["evidenceId"]
+    entries.append(entry)
     save_manifest(project_dir, story_id, manifest)
     return entry
 
 
-def _artifact_matches(artifact: dict) -> bool:
-    path = Path(str(artifact.get("path") or ""))
+def _artifact_matches(artifact: dict, project_dir: Optional[Path] = None) -> bool:
+    path = Path(str(artifact.get("snapshotPath") or artifact.get("path") or ""))
+    if project_dir is not None and not path.is_absolute():
+        path = project_dir / path
     expected = str(artifact.get("sha256") or "")
     try:
         return bool(path.is_file() and expected and artifact_hash(path) == expected)
@@ -254,7 +307,9 @@ def _artifact_matches(artifact: dict) -> bool:
 
 
 def is_reusable(entry: dict, *, input_fingerprint: str, command: str | list[str],
-                toolchain_fingerprint: str) -> bool:
+                toolchain_fingerprint: str, project_dir: Optional[Path] = None) -> bool:
+    if entry.get("status") == "superseded":
+        return False
     if not entry.get("reusable") or int(entry.get("exitCode", 1)) != 0:
         return False
     if entry.get("inputFingerprint") != input_fingerprint:
@@ -272,7 +327,7 @@ def is_reusable(entry: dict, *, input_fingerprint: str, command: str | list[str]
                 return False
         except (TypeError, ValueError, OverflowError):
             return False
-    return all(_artifact_matches(a) for a in entry.get("artifacts", []))
+    return all(_artifact_matches(a, project_dir) for a in entry.get("artifacts", []))
 
 
 def find_reusable(project_dir: Path, story_id: str, *, input_fingerprint: str,
@@ -282,6 +337,6 @@ def find_reusable(project_dir: Path, story_id: str, *, input_fingerprint: str,
         return None
     for entry in reversed(manifest.get("entries", [])):
         if is_reusable(entry, input_fingerprint=input_fingerprint, command=command,
-                       toolchain_fingerprint=toolchain_fingerprint):
+                       toolchain_fingerprint=toolchain_fingerprint, project_dir=project_dir):
             return entry
     return None

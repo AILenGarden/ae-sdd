@@ -576,8 +576,8 @@ mavis harness remount
 
 > 本小节是 `source/standards/update-graph.json` 的人读锚点索引，不是权威源。新增/删除 UG 规则或 UC 检查时，必须同步本小节；`ae-sdd update-check --only UC-14` 会自动校验 JSON、`CHECK_FUNCS` 与本小节是否一致。
 
-- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`, `UG-22`, `UG-23`, `UG-24`, `UG-25`, `UG-26`
-- 检查器锚点：`UC-01`, `UC-02`, `UC-03`, `UC-04`, `UC-05`, `UC-06`, `UC-07`, `UC-08`, `UC-09`, `UC-10`, `UC-11`, `UC-12`, `UC-13`, `UC-14`, `UC-15`, `UC-16`
+- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`, `UG-22`, `UG-23`, `UG-24`, `UG-25`, `UG-26`, `UG-27`, `UG-28`
+- 检查器锚点：`UC-01`, `UC-02`, `UC-03`, `UC-04`, `UC-05`, `UC-06`, `UC-07`, `UC-08`, `UC-09`, `UC-10`, `UC-11`, `UC-12`, `UC-13`, `UC-14`, `UC-15`, `UC-16`, `UC-17`, `UC-18`, `UC-19`, `UC-20`
 
 ### 🤖 Agent 程序化消费协议（强制 — Agent 改完文件后必做）
 
@@ -600,7 +600,7 @@ Agent 拿到 `affected_items` 后，**逐项确认是否已同步**：
 
 **第 2 步：跑检查验证**（兜底，防漏）
 ```bash
-ae-sdd update-check          # 全量跑 UC-01~UC-16
+ae-sdd update-check          # 全量跑 UC-01~UC-20
 # 或只跑第 1 步返回的 checks_to_run
 ae-sdd update-check --only UC-02
 ```
@@ -608,6 +608,36 @@ ae-sdd update-check --only UC-02
 - 有 ❌ → 按 fix 提示补齐，重跑直到全 ✅
 
 > 🔴 **门禁：** dev-sync 前必须 `ae-sdd update-check` 全绿（error 级 0 failed）。Agent 不得在 update-check 有 failed 时跑 dev-sync。
+
+### Typed Operation Maintenance Entry
+
+修改 `tools/lib/operations.py`、`state_store.py`、ops/lease CLI、Work Item scope、Evidence lifecycle 或 `source/standards/operation-protocol.md` 时，先读取 [`source/standards/operation-protocol.md §9 Maintainer Change Contract`](../../standards/operation-protocol.md)。本 SKILL 只负责把维护者路由到权威契约，不复制整份协议。
+
+强制顺序：
+
+1. 运行 `ae-sdd ops describe --json`，记录当前 `schemaVersion` 与 `registryVersion`。
+2. 按协议 §9.2 判定 patch/minor/major；删除/重命名、字段由可选改必填、类型/默认语义/错误语义变化属于 major。
+3. 按协议 §9.3 逐项满足 operation admission；禁止注册 raw `state.patch`。
+4. 运行 `ae-sdd update-check --affected <changed-files>`，逐项完成 `UG-27` 返回的协议、维护入口、设计/实现架构、测试、版本和 CHANGELOG 连带项。
+5. 运行 `ae-sdd update-check --only UC-19 --json`；失败时按 details 修复，不得用对话说明、README 或 CHANGELOG 代替维护入口和机器检查。
+6. 按协议 §9.5 Definition of Done 完成 focused/full tests、build、runtime verify 和 built-runtime `ops describe` 对账。
+
+版本或契约不确定时 fail closed：先补设计和兼容测试，再改 registry。`dist/` 和已安装 runtime 只由构建/分发生成，不手工修补。
+
+### Design Ledger Maintenance Entry
+
+每次迭代都必须先判断是否改变系统设计语义。设计语义包括能力边界、流程规则、状态模型、LLM/用户可见行为、模块归属、验证方法或运行时数据流。
+
+强制顺序：
+
+1. 读取 `source/docs/ae-sdd-design.md` §0 Design Ledger，定位受影响的 D-xxx；新增设计先分配稳定 ID。
+2. 若设计问题、决策、预期价值、验证证据或版本状态变化，更新对应台账行；历史设计不重复复制到 changelog。
+3. 在 changelog 的 `Design ledger impact` 填写 `updated: D-xxx`；确认没有设计语义变化时填写 `N/A: no design semantics changed`。
+4. 运行 `ae-sdd update-check --affected <changed-files>`，完成 `UG-28` 返回的台账、主设计、实现架构、维护入口、测试和版本连带项。
+5. 运行 `ae-sdd update-check --only UC-20 --json`；缺行、空字段、占位文本、章节漏映射或 changelog 记录缺失时必须按 remediation 修复。
+6. 只有台账、设计/实现文档、CHANGELOG 和机器检查全部完成后，才能进入 build/runtime 分发。
+
+`预期价值`不是已验证收益。没有可重复测试、CLI 输出或运行指标时，必须写明 `待补基线`，不得把设计假设写成性能结论。
 
 ### 人读视图（仅供参考，非权威）
 
@@ -625,6 +655,8 @@ ae-sdd update-check --only UC-02
 | runtime compiler / compiled package | `compile_skill_runtime.py` / `runtime_verify.py` / `build_dist.py` / `distribute.py` / `standalone-skills/skill-runtime-compiler/` / compiled-only guard | UC-15+UC-14 |
 | Runtime Stats / subprocess wrapper | `runtime_stats.py` / `runtime_exec.py` / `perf` CLI / gate duration / UTF-8 子进程 / `.gitignore` / 设计与实现架构文档 | UC-03 |
 | ae-sdd Monitor | `ae-sdd-monitor-design.md` / `apps/ae-sdd-monitor/src/workspace.js` / Monitor tests / README / ae-sdd 设计与实现架构文档 | UC-03+UC-14 |
+| typed operations / Work Item lease | `operation-protocol.md §9` / `ae-sdd-update` / `operations.py` / `state_store.py` / UG-27 / design+implementation docs / tests / changelog | UC-03+UC-14+UC-19 |
+| Design Ledger / 每次迭代问题与价值记录 | `ae-sdd-design.md §0` / `ae-sdd-implementation-architecture.md §12` / CHANGELOG template / UG-28 | UC-20 |
 | 任意 source/tools | CHANGELOG / README:5 / 设计文档 / 实现架构文档 / dev-sync / 级联图谱锚点 | UC-01+03+04+05+14 |
 
 ### 图谱使用 SOP（Agent 流程）
@@ -654,6 +686,7 @@ ae-sdd update-check --only UC-02
 | **UC-04** | 扫描器分发一致性：scripts/*_scan.py 在 build_dist.py 白名单 | error | 全在白名单 |
 | **UC-05** | 健康度清单覆盖：本文件清单含关键组件 | warn | 关键组件齐 |
 | **UC-06** | 文档-实现一致性：SKILL/子 SKILL 命令引用、HARNESS HS 声明定位 | error/warn | 新命令有 CLI；HS 声明有实现线索 |
+| **UC-20** | Design Ledger 契约：D-xxx、§1~§21 覆盖、问题/价值/证据字段、版本和 CHANGELOG impact | error | 真实仓库台账完整，缺失时 fail closed |
 | **UC-07** | 分发闭环：post-commit hook、hooksPath、HARNESS/update-skill 声明一致 | error | hook 与文档闭环齐 |
 | **UC-08~UC-13** | AA 全维对齐验证：门禁承诺、实现真实性、state 字段、状态机、幽灵命令、门禁注册完整性 | error/warn | 无 blocker 级漂移 |
 | **UC-14** | update-skill 级联图谱同步：`update-graph.json`、`CHECK_FUNCS`、本节 UG/UC 锚点一致 | error | 三方集合完全一致 |
@@ -697,7 +730,7 @@ ae-sdd update-check --only UC-02
 #### 步骤 1：跑自动化基线（UC + health + gates）
 
 ```bash
-ae-sdd update-check     # UC-01~15，记录所有 warn（warn 是深挖线索，非直接结论）
+ae-sdd update-check     # UC-01~19，记录所有 warn（warn 是深挖线索，非直接结论）
 ae-sdd health           # 9 项自检，记录 ❌（注意：母版仓库无 .ae-sdd/ 是设计如此，非缺陷）
 ae-sdd gates check      # 28 门禁，确认未被破坏
 ```
@@ -754,7 +787,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 
 ### 与 UC 自动检查的关系（不替代，是补充）
 
-| 维度 | UC-01~15（自动） | 本节迭代检查（人工/Agent） |
+| 维度 | UC-01~19（自动） | 本节迭代检查（人工/Agent） |
 |------|----------------|------------------------|
 | 触发 | dev-sync 前 / 改完文件 | 每月 / 重大变更 / 用户要求 |
 | 深度 | 机器可判定的注册/存在性 | 语义级"声明 vs 实现覆盖面" |
@@ -806,8 +839,8 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2 `scripts/ra_authenticity_scan.py` 存在，8 类禁止规则（vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness）+ JSON 输出契约与 test_authenticity_scan.py 一致
 - [ ] 🆕 v3.2 `tools/lib/gates.py` check_g13 接入 RA 层（六层追溯：RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview），RA 为可选层不阻断
 - [ ] 🆕 v3.2 `SKILL.md` 含 `## 🛡️ G-RA 需求分析准入门卫` 章节 + 智能路由表 G-RA 门禁列
-- [ ] 🆕 v3.2+ `tools/lib/update_graph.py` 存在，含 UC-01~UC-07 + UC-14/UC-15 原生检查、`check_all`/`summarize`；`alignment_audit.py` 注入 UC-08~UC-13
-- [ ] 🆕 v3.2+ `tools/bin/ae-sdd` 含 `update-check` 子命令（跑 UC-01~UC-16）
+- [ ] 🆕 v3.2+ `tools/lib/update_graph.py` 存在，含 UC-01~UC-07 + UC-14~UC-20 原生检查、`check_all`/`summarize`；`alignment_audit.py` 注入 UC-08~UC-13
+- [ ] 🆕 v3.2+ `tools/bin/ae-sdd` 含 `update-check` 子命令（跑 UC-01~UC-20）
 - [ ] 🆕 v3.2+ `tools/tests/test_update_graph.py` 存在，覆盖 UC-01~UC-07 + UC-14 各场景
 - [ ] 🆕 v3.2+ 本文件含 `## 更新依赖图谱` 章节（图谱表 + 使用 SOP + UC-01~15 检查说明 + UG/UC 机器同步锚点）
 - [ ] 🆕 v3.2.1 `tools/lib/gates.py` 含 `G-CODE-1` 门禁（Coding 真实性）+ `scripts/coding_authenticity_scan.py` 存在
@@ -823,7 +856,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
 - [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.8.0：+ G-AUTO-CONSENSUS = 30）
 - [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 23；v3.5.0 加 `ae-sdd-plugin-loader-skill.md`）
-- [ ] 🆕 v3.2.5 `source/docs/ae-sdd-design.md` 存在，包含 19 个能力模块（端到端流程编排 / 智能路由 / 状态持久化 / 多Agent编排 / 门禁体系 / 项目资产 / 实例化体系 / Harness适配 / 记忆层 / Plan-First / 真实性扫描 / 工具链CLI / ... / 🆕 v3.8.0 自动化模式）
+- [ ] 🆕 v3.2.5 `source/docs/ae-sdd-design.md` 存在，包含 21 个系统级设计章节和 D-001~D-024 Design Ledger（D-024 记录台账治理本身）
 - [ ] 🆕 2026-07-03 `source/docs/ae-sdd-implementation-architecture.md` 存在，说明 CLI / tools/lib / scripts / state/cache / build/distribution / gate/scanner / runtime stats 的实现分层；本文件 §步骤1 含"设计/实现架构同步"后置块
 - [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
@@ -849,6 +882,8 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.8.0 `tools/lib/config.py` 存在（`AUTOMATION_DEFAULTS` + `load_automation_config` + `is_automation_enabled`/`get_reviewer_tier`/`get_automated_points`）；`scripts/init.py` CONFIG_TEMPLATE 含 `automation:` 段（默认 `enabled: false`）；`tools/lib/gates.py` GATE_REGISTRY 含 G-AUTO-CONSENSUS（30 门禁）+ CHECK_FUNCS 注册 + `check_g_auto_consensus` 实现；`tools/lib/state.py` 含 `register_review_consensus`/`get_review_consensus` + `reviewConsensus` 字段；`tools/bin/ae-sdd` 含 `automation status/enable/disable` + `preflight collect` + `state register-review-consensus` 子命令；`source/SKILL.md` 含 `## 🚀 自动化模式` 章节 + G-AUTO-CONSENSUS 门禁速查 + Step1 自动化检测 + Step1.5 预收集 + 监管器步骤4 联审共识双模式 + 30门禁；`source/skills/cross-cutting/agent-orchestration-skill.md` §8.4.1 自动化强制 Tier 3 + §8.4.5 禁逻辑多视角降级；`tools/tests/test_gates.py` TestGAutoConsensus ≥3 用例 + 门禁总数断言 30；`tools/tests/test_automation_cli.py` 存在；`source/docs/ae-sdd-design.md` 含 `## 19` 自动化能力模块；`source/standards/update-graph.json` 含 UG-20 规则；`tools/lib/update_graph.py` 含 `check_uc16_automation_cascade` + CHECK_FUNCS 注册 UC-16；`source/CHANGELOG/` 含 `2026-07-02-automation-switch.md`
 - [ ] 🆕 2026-07-03 Runtime Stats P0：`tools/lib/runtime_stats.py` 与 `tools/lib/runtime_exec.py` 存在；`tools/bin/ae-sdd` 含 `perf report/doctor/clear`；`tools/lib/gates.py` `summarize()` 输出 `durationMs/slowest`；`tools/tests/test_runtime_stats.py` 与 `tools/tests/test_cli_perf.py` 存在；`.gitignore` 忽略 `.ae-sdd/runtime-stats/`；`source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/plans/2026-07-02-runtime-stats-performance-plan.md` 已同步；`source/standards/update-graph.json` 含 UG-21；`source/CHANGELOG/` 含 `2026-07-03-runtime-stats-p0.md`
 - [ ] 🆕 2026-07-03 ae-sdd Monitor：`apps/ae-sdd-monitor/` 存在；`source/docs/ae-sdd-monitor-design.md` 独立记录只读投影语义；`source/docs/ae-sdd-design.md` 含 Monitor 入口；`source/docs/ae-sdd-implementation-architecture.md` 含 Monitor 模块/数据流边界；`source/standards/update-graph.json` 含 UG-22；`apps/ae-sdd-monitor/src/workspace.js` 和 `apps/ae-sdd-monitor/test/workspace.test.js` 跟随 state/runtime 投影契约；`apps/ae-sdd-monitor/README.md` 链接设计契约
+- [ ] 🆕 v3.11.0 `tools/lib/state_store.py` 与 `tools/lib/operations.py` 存在；`ae-sdd ops describe/next/execute` 和 `lease acquire/status/renew/release/break` 已注册；`source/standards/operation-protocol.md` 含 §9 `Maintainer Change Contract`；本 SKILL 含 typed operation maintenance entry；UG-27、UC-19、StateStore/operation/scope/evidence/update-graph focused tests 与 changelog 已同步
+- [ ] 🆕 v3.11.1 `source/docs/ae-sdd-design.md` 含 D-001~D-024 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；CHANGELOG 模板、UG-28、UC-20、focused tests 与 runtime 已同步
 
 ### 跨 SKILL 一致性
 

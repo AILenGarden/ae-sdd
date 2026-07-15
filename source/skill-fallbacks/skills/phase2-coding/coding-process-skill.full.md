@@ -140,20 +140,20 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 **CodeAnalysis 调用流程：**
 1. 调用 [`coding-skill.md` §6 ④bis 实战 SOP](coding-skill.md)：读取项目资产 -> 基于 §A1.5 骨架编排执行顺序 -> 按 4 层分层归类 -> 映射包路径 -> 输出完整类骨架
-2. 按 [`coding-skill.md` §5 CodePlan 7 章节](coding-skill.md) 填充：文件级顺序/类骨架/DO字段/SQL/测试映射/验证点/调试回滚
+2. 按任务规模选择 [`coding-skill.md` §5](coding-skill.md) profile：大/中/小填 7 章节；微任务只填变更范围/文件级实现顺序、风险与回滚、验证计划，禁止伪造 Story/AC/SQL 等 N/A 大表
 3. 遵循 [`coding-skill.md` §3 分层职责红线](coding-skill.md) + [§6 的 7 条禁令](coding-skill.md)
 
 ### §A3 产出统一版 CodePlan + 跑门禁
 
-套用 [`be-coding-plan-template.md` §0-§15](../../templates/coding/be-coding-plan-template.md) 16 节模板，Write 草稿后用 `ae-sdd doc save --intent CODING_PLAN --work-item {W} --story-id {S?} --content-file 草稿.md` 落地。
+大/中/小任务套用 [`be-coding-plan-template.md` §0-§15](../../templates/coding/be-coding-plan-template.md) 完整模板；微任务套 Tier 1 轻量 profile。Write 草稿后统一用 `ae-sdd doc save --intent CODING_PLAN --work-item {W} --story-id {S?} --content-file 草稿.md` 落地，Work Item 是执行产物隔离键。
 
 **跑门禁（🔴 全过才进 Execute）：**
 
 | 门禁 | CLI |
 |------|-----|
-| G-CODEPLAN-SRC | `ae-sdd gates check --only G-CODEPLAN-SRC`（判定标准见 [`coding-skill.md` §7](coding-skill.md)）|
-| G-14 | `ae-sdd gates check --only G-14` |
-| G-08 | `ae-sdd gates check --only G-08` |
+| G-CODEPLAN-SRC | 有类骨架时核对来源；微任务无类骨架时显式跳过（判定标准见 [`coding-skill.md` §7](coding-skill.md)）|
+| G-14 | 有 Story 时严格核对；standalone 微任务无 Story 时记录 N/A |
+| G-08 | 完整任务校验 14 门禁；微任务校验范围/实现/风险回滚/验证四维 |
 
 任一未过 → 回 §A2 补充 CodeAnalysis，重跑门禁，直至全过。
 
@@ -238,7 +238,8 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 |---------|---------|---------|
 | **大任务** | Story + TestCase + CodingPlan（含骨架分解）| 全流程 |
 | **中任务** | Story + TestCase + CodingPlan | 全流程 |
-| **小/微任务** | CodingPlan（骨架分解，微任务无 Story/TestCase）| 全流程 |
+| **小任务** | Story + TestCase + 完整 CodingPlan | 全流程 |
+| **微任务** | Work Item 轻量 CodingPlan（无 Story/TestCase；类骨架按需）| 全流程 |
 
 **生成规则：**
 - **骨架填肉，按序展开**：CodingPlan §A1.5 骨架给方法签名+伪代码，按 [`coding-skill.md` §4 骨架展开规则](coding-skill.md) "填肉"，不自行发挥结构

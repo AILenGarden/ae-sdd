@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import document_storage  # noqa: E402
@@ -173,42 +174,51 @@ class TestSaveDoc(unittest.TestCase):
         self.assertTrue(r1.full_path.endswith("TestCaseReview-r1.md"))
         self.assertTrue(r2.full_path.endswith("TestCaseReview-r2.md"))
 
-    def test_story_scoped_intent_uses_story_id_as_dir(self):
-        """🆕 v3.10.4：Story-scoped intent 当 story_id 非空时，目录名优先用 story_id。
-
-        Pbl.md 问题2 核心修复：doc save --work-item Story-004 --story-id STORY-004-BE
-        应落到 Coding/STORY-004-BE/（与既有文档树一致），而非 Coding/Story-004/。
-        """
+    def test_explicit_work_item_is_canonical_even_when_story_is_present(self):
+        """Independent BUG/OPT output must not be silently bucketed under its parent Story."""
         tmp = _setup_project()
         result = document_storage.save_doc(
             tmp / ".ae-sdd", "test", "CODING_PLAN", "# Plan",
-            work_item_id="Story-004", story_id="STORY-004-BE",
+            work_item_id="BUG-LIFE-004", story_id="STORY-004-BE",
         )
         self.assertTrue(result.success, msg=result.error)
         normalized = result.full_path.replace("\\", "/")
         self.assertTrue(
-            normalized.endswith("ae-sdd-doc/Coding/STORY-004-BE/STORY-004-BE-CodingPlan.md"),
-            f"Story-scoped intent 目录名应为 story_id，实际: {normalized}",
+            normalized.endswith("ae-sdd-doc/Coding/BUG-LIFE-004/BUG-LIFE-004-CodingPlan.md"),
+            f"显式 Work Item 应是执行产物 canonical bucket，实际: {normalized}",
         )
 
-    def test_story_scoped_intent_priority_across_intents(self):
-        """覆盖多个 Story-scoped intent，确认 story_id 分桶统一生效。"""
+    def test_explicit_work_item_priority_across_intents(self):
+        """Coding/Test/CR consistently use explicit Work Item identity."""
         tmp = _setup_project()
         for intent, suffix in [
-            ("CODE_REVIEW", "STORY-004-BE-CodeReview.md"),
-            ("TESTCASE", "STORY-004-BE-testcase.md"),
-            ("TASK", "STORY-004-BE.md"),
+            ("CODE_REVIEW", "BUG-LIFE-004-CodeReview.md"),
+            ("TESTCASE", "BUG-LIFE-004-testcase.md"),
+            ("TASK", "BUG-LIFE-004.md"),
         ]:
             result = document_storage.save_doc(
                 tmp / ".ae-sdd", "test", intent, "# doc",
-                work_item_id="Story-004", story_id="STORY-004-BE",
+                work_item_id="BUG-LIFE-004", story_id="STORY-004-BE",
             )
             self.assertTrue(result.success, msg=result.error)
             normalized = result.full_path.replace("\\", "/")
             self.assertIn(
-                "/STORY-004-BE/", normalized,
-                f"{intent} 目录名应为 story_id=STORY-004-BE，实际: {normalized}",
+                "/BUG-LIFE-004/", normalized,
+                f"{intent} 目录名应为 work_item_id=BUG-LIFE-004，实际: {normalized}",
             )
+            self.assertTrue(normalized.endswith(suffix), normalized)
+
+    def test_story_is_legacy_bucket_when_work_item_is_absent(self):
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "CODING_PLAN", "# Plan",
+            story_id="STORY-004-BE",
+        )
+        self.assertTrue(result.success, msg=result.error)
+        normalized = result.full_path.replace("\\", "/")
+        self.assertTrue(
+            normalized.endswith("ae-sdd-doc/Coding/STORY-004-BE/STORY-004-BE-CodingPlan.md")
+        )
 
     def test_bug_task_keeps_work_item_bucketing(self):
         """🆕 v3.10.4 回归：无 story_id 的 BUG/OPT 任务仍用 work_item_id 分桶。"""
@@ -314,6 +324,238 @@ class TestThinkingEngine(unittest.TestCase):
         result = document_storage.get_thinking_engine(tmp / ".ae-sdd", "test")
         self.assertEqual(Path(result["path"]), override.resolve())
         self.assertIn("custom thinking engine", result["content"])
+
+
+class TestStoryDocumentResolution(unittest.TestCase):
+    """Story ID is logical identity; StoryName binds an exact native filename."""
+
+    def _write_story(self, tmp: Path, relative: str, story_id: str) -> Path:
+        target = tmp / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"# {story_id}-title\n\n## 元信息\n\n- Story ID：{story_id}\n",
+            encoding="utf-8",
+        )
+        return target
+
+    def test_exact_formal_story_name_resolves_and_validates_metadata(self):
+        tmp = _setup_project()
+        target = self._write_story(
+            tmp,
+            "document/project/design/story/be/"
+            "cs-ai-story-006-门店推荐对接与列表接口-BE.md",
+            "STORY-006-BE",
+        )
+
+        result = document_storage.resolve_story_document(
+            tmp,
+            story_id="STORY-006-BE",
+            story_name="cs-ai-story-006-门店推荐对接与列表接口-BE.md",
+        )
+
+        self.assertEqual(result.path, target.resolve())
+        self.assertEqual(result.story_name, "cs-ai-story-006-门店推荐对接与列表接口-BE")
+        self.assertEqual(result.source, "story-name")
+        self.assertEqual(result.rejected, ())
+
+    def test_canonical_id_only_filename_remains_backward_compatible(self):
+        tmp = _setup_project()
+        target = tmp / "ae-sdd-doc" / "Story" / "STORY-001.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# legacy story without metadata\n", encoding="utf-8")
+
+        result = document_storage.resolve_story_document(
+            tmp, story_id="STORY-001"
+        )
+
+        self.assertEqual(result.path, target.resolve())
+        self.assertEqual(result.source, "canonical-id")
+
+    def test_formal_name_metadata_mismatch_is_rejected(self):
+        tmp = _setup_project()
+        target = self._write_story(
+            tmp, "design/cs-ai-story-006-title-BE.md", "STORY-007-BE"
+        )
+
+        result = document_storage.resolve_story_document(
+            tmp,
+            story_id="STORY-006-BE",
+            story_name="cs-ai-story-006-title-BE",
+        )
+
+        self.assertIsNone(result.path)
+        self.assertEqual(result.source, "none")
+        self.assertEqual(result.rejected[0]["code"], "STORY_DOC_ID_MISMATCH")
+        self.assertEqual(Path(result.rejected[0]["path"]), target.resolve())
+
+    def test_same_exact_story_name_in_multiple_locations_is_ambiguous(self):
+        tmp = _setup_project()
+        name = "cs-ai-story-006-title-BE.md"
+        first = self._write_story(tmp, f"design/a/{name}", "STORY-006-BE")
+        second = self._write_story(tmp, f"design/b/{name}", "STORY-006-BE")
+
+        with self.assertRaises(document_storage.StoryDocumentAmbiguousError) as ctx:
+            document_storage.resolve_story_document(
+                tmp,
+                story_id="STORY-006-BE",
+                story_name=name,
+            )
+
+        self.assertEqual(ctx.exception.code, "STORY_DOC_AMBIGUOUS")
+        self.assertEqual(
+            {Path(path) for path in ctx.exception.candidates},
+            {first.resolve(), second.resolve()},
+        )
+
+    def test_bound_path_has_priority_and_is_revalidated(self):
+        tmp = _setup_project()
+        bound = self._write_story(
+            tmp, "design/current/cs-ai-story-006-title-BE.md", "STORY-006-BE"
+        )
+        self._write_story(
+            tmp, "design/archive/cs-ai-story-006-title-BE.md", "STORY-006-BE"
+        )
+
+        result = document_storage.resolve_story_document(
+            tmp,
+            story_id="STORY-006-BE",
+            story_name="cs-ai-story-006-title-BE",
+            bound_path=str(bound),
+        )
+
+        self.assertEqual(result.path, bound.resolve())
+        self.assertEqual(result.source, "bound-path")
+
+    def test_bound_path_outside_project_and_doc_workspace_is_rejected(self):
+        tmp = _setup_project()
+        outside = Path(tempfile.mkdtemp()) / "cs-ai-story-006-title-BE.md"
+        outside.write_text(
+            "# story\n\n- Story ID：STORY-006-BE\n", encoding="utf-8"
+        )
+
+        result = document_storage.resolve_story_document(
+            tmp,
+            story_id="STORY-006-BE",
+            story_name="cs-ai-story-006-title-BE",
+            bound_path=str(outside),
+        )
+
+        self.assertIsNone(result.path)
+        self.assertEqual(result.rejected[0]["code"], "STORY_DOC_OUTSIDE_ROOTS")
+
+    def test_story_name_symlink_outside_search_roots_is_rejected(self):
+        tmp = _setup_project()
+        outside = Path(tempfile.mkdtemp()) / "cs-ai-story-006-title-BE.md"
+        outside.write_text(
+            "# story\n\n- Story ID：STORY-006-BE\n", encoding="utf-8"
+        )
+        link = tmp / "design" / outside.name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            # Windows may deny symlink creation. Inject only the enumerated
+            # candidate and prove the resolver rejects it before reading it.
+            with patch.object(
+                document_storage, "_exact_story_name_candidates", return_value=[outside]
+            ), patch.object(
+                document_storage,
+                "_story_candidate_rejection",
+                side_effect=AssertionError("outside candidate was read"),
+            ):
+                result = document_storage.resolve_story_document(
+                    tmp,
+                    story_id="STORY-006-BE",
+                    story_name="cs-ai-story-006-title-BE",
+                )
+        else:
+            result = document_storage.resolve_story_document(
+                tmp,
+                story_id="STORY-006-BE",
+                story_name="cs-ai-story-006-title-BE",
+            )
+
+        self.assertIsNone(result.path)
+        self.assertEqual(result.rejected[0]["code"], "STORY_DOC_OUTSIDE_ROOTS")
+
+    def test_bound_path_basename_drift_is_rejected(self):
+        tmp = _setup_project()
+        bound = self._write_story(
+            tmp, "design/a-different-name.md", "STORY-006-BE"
+        )
+
+        result = document_storage.resolve_story_document(
+            tmp,
+            story_id="STORY-006-BE",
+            story_name="cs-ai-story-006-title-BE",
+            bound_path=str(bound),
+        )
+
+        self.assertIsNone(result.path)
+        self.assertEqual(result.rejected[0]["code"], "STORY_DOC_NAME_MISMATCH")
+
+    def test_story_name_rejects_path_fragments(self):
+        tmp = _setup_project()
+        for invalid in ("../story", "folder/story", r"folder\story"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(document_storage.StoryDocumentNameInvalidError) as ctx:
+                    document_storage.resolve_story_document(
+                        tmp,
+                        story_id="STORY-006-BE",
+                        story_name=invalid,
+                    )
+                self.assertEqual(ctx.exception.code, "STORY_DOC_NAME_INVALID")
+
+    def test_story_name_rejects_glob_metacharacters_before_search(self):
+        tmp = _setup_project()
+        for invalid in ("*", "a?", "[ab]", "x]"):
+            with self.subTest(invalid=invalid), patch.object(
+                document_storage,
+                "_exact_story_name_candidates",
+                side_effect=AssertionError("glob-capable search must not run"),
+            ):
+                with self.assertRaises(document_storage.StoryDocumentNameInvalidError) as ctx:
+                    document_storage.resolve_story_document(
+                        tmp, story_id="STORY-006-BE", story_name=invalid
+                    )
+                self.assertEqual(ctx.exception.code, "STORY_DOC_NAME_INVALID")
+
+    def test_id_only_fallback_never_selects_task_or_coding_artifacts(self):
+        tmp = _setup_project()
+        for relative in (
+            "ae-sdd-doc/Task/STORY-001/STORY-001.md",
+            "ae-sdd-doc/Coding/STORY-001/STORY-001.md",
+        ):
+            target = tmp / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# not a Story document\n", encoding="utf-8")
+
+        result = document_storage.resolve_story_document(tmp, story_id="STORY-001")
+
+        self.assertIsNone(result.path)
+        self.assertEqual(result.source, "none")
+
+    def test_id_only_story_candidates_across_search_roots_are_ambiguous(self):
+        tmp = _setup_project()
+        doc_workspace = Path(tempfile.mkdtemp())
+        (tmp / ".ae-sdd" / "assets" / "test.assets.md").write_text(
+            f"# assets\n\n| gitPath | `{tmp}` |\n"
+            f"| docWorkspacePath | `{doc_workspace}` |\n",
+            encoding="utf-8",
+        )
+        first = tmp / "ae-sdd-doc" / "Story" / "STORY-001.md"
+        second = doc_workspace / "ae-sdd-doc" / "Story" / "STORY-001.md"
+        for target in (first, second):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# legacy Story\n", encoding="utf-8")
+
+        with self.assertRaises(document_storage.StoryDocumentAmbiguousError) as ctx:
+            document_storage.resolve_story_document(tmp, story_id="STORY-001")
+
+        self.assertEqual(
+            {Path(value) for value in ctx.exception.candidates},
+            {first.resolve(), second.resolve()},
+        )
 
 
 class TestRaPrerequisites(unittest.TestCase):

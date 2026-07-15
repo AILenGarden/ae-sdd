@@ -4,6 +4,8 @@ test_gates.py — gates.py 单元测试（34 门禁：14 主 G-00~G-13 + 3 中�
 覆盖每个 check_gXX 函数的核心场景：缺失、通过、反例。
 """
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -298,6 +300,57 @@ class TestG02(unittest.TestCase):
         r = gates.check_g02(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
+    def test_bound_formal_story_name_passes_without_alias_file(self):
+        name = "cs-ai-story-006-门店推荐对接与列表接口-BE"
+        relative = f"document/project/design/story/be/{name}.md"
+        tmp = _setup_project({relative: "# story\n\n- Story ID：STORY-006-BE\n"})
+        target = (tmp / relative).resolve()
+        st = {
+            "stateModel": "nested",
+            "activeStory": "STORY-006-BE",
+            "storyStates": {
+                "STORY-006-BE": {"storyName": name, "docPath": str(target)}
+            },
+        }
+
+        r = gates.check_g02(tmp, st, "STORY-006-BE")
+
+        self.assertTrue(r.pass_, msg=r.message)
+        self.assertEqual(Path(r.details["file"]), target)
+        self.assertEqual(r.details["storyDocSource"], "bound-path")
+        self.assertFalse((tmp / "design" / "STORY-006-BE.md").exists())
+
+    def test_unbound_formal_only_story_blocks_with_binding_remediation(self):
+        name = "cs-ai-story-006-title-BE"
+        tmp = _setup_project({
+            f"design/{name}.md": "# story\n\n- Story ID：STORY-006-BE\n"
+        })
+
+        r = gates.check_g02(tmp, {}, "STORY-006-BE")
+
+        self.assertFalse(r.pass_)
+        self.assertIn("state bind-story-doc", r.action)
+
+    def test_bound_story_metadata_drift_blocks(self):
+        name = "cs-ai-story-006-title-BE"
+        relative = f"design/{name}.md"
+        tmp = _setup_project({relative: "# story\n\n- Story ID：STORY-007-BE\n"})
+        st = {
+            "stateModel": "nested",
+            "activeStory": "STORY-006-BE",
+            "storyStates": {
+                "STORY-006-BE": {
+                    "storyName": name,
+                    "docPath": str((tmp / relative).resolve()),
+                }
+            },
+        }
+
+        r = gates.check_g02(tmp, st, "STORY-006-BE")
+
+        self.assertFalse(r.pass_)
+        self.assertEqual(r.details["errorCode"], "STORY_DOC_ID_MISMATCH")
+
 
 # ─── G-03 ───────────────────────────────────────────────────────────────────
 class TestG03(unittest.TestCase):
@@ -468,6 +521,22 @@ class TestG07(unittest.TestCase):
         r = gates.check_g07(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
+    def test_micro_work_item_plan_does_not_require_story_sections(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": (
+                "# BUG-001 CodingPlan\n"
+                "## Change Scope\n- tools/lib/gates.py\n"
+                "## Implementation Sequence\n- update micro gate routing\n"
+                "## Risks And Rollback\n- revert the focused patch\n"
+                "## Verification\n- run focused gate tests\n"
+            ),
+        })
+        st = {"scale": "微", "entryNode": "BUG", "_resolvedWorkItem": "BUG-001"}
+        r = gates.check_g07(tmp, st, "")
+        self.assertTrue(r.pass_)
+        self.assertEqual(r.details.get("profile"), "micro")
+        self.assertEqual(r.details.get("scopeSource"), "work-item")
+
 
 # ─── G-08 ───────────────────────────────────────────────────────────────────
 class TestG08(unittest.TestCase):
@@ -521,6 +590,65 @@ class TestG08(unittest.TestCase):
         tmp = _setup_project({"design/STORY-001-CodingPlan.md": self._codingplan_md(keywords, marks)})
         r = gates.check_g08(tmp, {}, "STORY-001")
         self.assertFalse(r.pass_)
+
+    def test_micro_work_item_uses_lightweight_plan_profile(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": (
+                "# BUG-001 CodingPlan\n"
+                "## Change Scope\n- modify two files\n"
+                "## Implementation Sequence\n- remove obsolete branch\n"
+                "## Risks And Rollback\n- revert the focused patch\n"
+                "## Verification\n- migrate and run focused tests\n"
+            ),
+        })
+        st = {"scale": "微", "entryNode": "BUG", "_resolvedWorkItem": "BUG-001"}
+        r = gates.check_g08(tmp, st, "")
+        self.assertTrue(r.pass_)
+        self.assertEqual(r.details.get("profile"), "micro")
+        self.assertEqual(r.details.get("scopeSource"), "work-item")
+
+    def test_micro_work_item_missing_verification_blocks(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": (
+                "# BUG-001 CodingPlan\n"
+                "## Change Scope\n- modify two files\n"
+                "## Implementation Sequence\n- remove obsolete branch\n"
+                "## Risks And Rollback\n- revert the focused patch\n"
+            ),
+        })
+        st = {"scale": "微", "entryNode": "BUG", "_resolvedWorkItem": "BUG-001"}
+        r = gates.check_g08(tmp, st, "")
+        self.assertFalse(r.pass_)
+        self.assertIn("verification", r.details.get("missing_dimensions", []))
+
+    def test_micro_work_item_empty_dimension_body_blocks(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": (
+                "# BUG-001 CodingPlan\n"
+                "## Change Scope\n"
+                "## Implementation Sequence\n- remove obsolete branch\n"
+                "## Risks And Rollback\n- revert the focused patch\n"
+                "## Verification\n- run focused tests\n"
+            ),
+        })
+        st = {"scale": "微", "entryNode": "BUG", "_resolvedWorkItem": "BUG-001"}
+        r = gates.check_g08(tmp, st, "")
+        self.assertFalse(r.pass_)
+        self.assertIn("scope", r.details.get("missing_dimensions", []))
+
+    def test_micro_template_headings_pass_without_full_14_keywords(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": (
+                "# BUG-001 CodingPlan\n"
+                "## 4. 文件级实现顺序\n- 修改 tools/lib/gates.py\n"
+                "## 9. 编译与测试验证点\n- 运行 focused tests\n"
+                "## 10. 调试与回滚方案\n- 回滚本次补丁\n"
+            ),
+        })
+        st = {"scale": "微", "entryNode": "BUG", "_resolvedWorkItem": "BUG-001"}
+        r = gates.check_g08(tmp, st, "")
+        self.assertTrue(r.pass_)
+        self.assertEqual(r.details.get("profile"), "micro")
 
 
 # ─── G-09 ───────────────────────────────────────────────────────────────────
@@ -824,6 +952,31 @@ class TestG14(unittest.TestCase):
         r = gates.check_g14(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
 
+    def test_bound_formal_story_uses_same_resolver_as_g02(self):
+        name = "cs-ai-story-006-title-BE"
+        story_rel = f"design/story/be/{name}.md"
+        tmp = _setup_project({
+            story_rel: "# STORY-006-BE\n\n- Story ID：STORY-006-BE\n\nAC-001\n",
+            "ae-sdd-doc/Coding/Story-006/Story-006-CodingPlan.md": (
+                "# CodingPlan\n\nStory: STORY-006-BE\n\nAC-001\n"
+            ),
+        })
+        target = (tmp / story_rel).resolve()
+        st = {
+            "_resolvedWorkItem": "Story-006",
+            "stateModel": "nested",
+            "activeStory": "STORY-006-BE",
+            "storyStates": {
+                "STORY-006-BE": {"storyName": name, "docPath": str(target)}
+            },
+        }
+
+        r = gates.check_g14(tmp, st, "STORY-006-BE")
+
+        self.assertTrue(r.pass_, msg=r.message)
+        self.assertEqual(Path(r.details["story_doc"]), target)
+        self.assertEqual(r.details["storyDocSource"], "bound-path")
+
     def test_ac_substring_not_matched(self):
         """🆕 v3.10.5 BUG6: AC 正则无词边界，MAC1 被子串匹配为 AC1 修复回归。
 
@@ -852,6 +1005,44 @@ class TestG14(unittest.TestCase):
         r = gates.check_g14(tmp, {}, "STORY-001")
         self.assertFalse(r.pass_, "含其他 STORY ID 时通用词 Story 不应绕过 current_story 引用检查")
         self.assertTrue(any("未引用 Story" in i for i in r.details.get("issues", [])))
+
+    def test_standalone_micro_work_item_does_not_require_story(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": "# BUG-001 CodingPlan\n",
+        })
+        st = {"scale": "微", "entryNode": "BUG", "_resolvedWorkItem": "BUG-001"}
+        r = gates.check_g14(tmp, st, "")
+        self.assertTrue(r.pass_)
+        self.assertTrue(r.details.get("skipped"))
+        self.assertEqual(r.details.get("alignmentMode"), "standalone-micro")
+
+    def test_cli_style_micro_work_item_identity_is_not_a_parent_story(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": "# BUG-001 CodingPlan\n",
+        })
+        st = {
+            "scale": "微",
+            "entryNode": "BUG",
+            "_resolvedWorkItem": "BUG-001",
+            "currentStory": "BUG-001",
+        }
+        r = gates.check_g14(tmp, st, "BUG-001")
+        self.assertTrue(r.pass_)
+        self.assertEqual(r.details.get("alignmentMode"), "standalone-micro")
+
+    def test_micro_work_item_with_explicit_parent_story_remains_strict(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": "# BUG-001 CodingPlan\n",
+        })
+        st = {
+            "scale": "微",
+            "entryNode": "BUG",
+            "_resolvedWorkItem": "BUG-001",
+            "currentStory": "STORY-001",
+        }
+        r = gates.check_g14(tmp, st, "STORY-001")
+        self.assertFalse(r.pass_)
+        self.assertIn("Story", r.message)
 
 
 # ─── G-CODEPLAN-SRC CodingPlan 源码核对（v3.4.0）─────────────────────────────
@@ -909,6 +1100,63 @@ class TestGCodeplanSrc(unittest.TestCase):
         r = gates.check_g_codeplan_src(tmp, {}, "STORY-001")
         self.assertTrue(r.pass_)
         self.assertTrue(r.details.get("skipped"))
+
+    def test_micro_work_item_without_skeleton_skips_by_design(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": (
+                "# BUG-001 CodingPlan\n"
+                "## Change Scope\n- tools/lib/gates.py\n"
+                "## Verification\n- run focused tests\n"
+            ),
+        })
+        st = {"scale": "微", "entryNode": "BUG", "_resolvedWorkItem": "BUG-001"}
+        r = gates.check_g_codeplan_src(tmp, st, "")
+        self.assertTrue(r.pass_)
+        self.assertTrue(r.details.get("skipped"))
+        self.assertEqual(r.details.get("scopeSource"), "work-item")
+
+
+class TestCliEncoding(unittest.TestCase):
+
+    def test_gates_output_is_utf8_even_when_parent_requests_gbk(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        cli = repo_root / "tools" / "bin" / "ae-sdd"
+        tmp = _setup_project({
+            ".ae-sdd/config.yaml": "projectKey: demo\n",
+            ".auto-engineering/BUG-001/state.json": json.dumps({
+                "phase": "initialized",
+                "scale": "微",
+                "entryNode": "BUG",
+                "stateMachineName": "BUG-001",
+                "currentWorkItem": "BUG-001",
+                "currentStory": "BUG-001",
+            }, ensure_ascii=False),
+            "ae-sdd-doc/Coding/BUG-001/BUG-001-CodingPlan.md": (
+                "# BUG-001 CodingPlan\n"
+                "## 4. 文件级实现顺序\n- 修改 tools/lib/gates.py\n"
+                "## 9. 编译与测试验证点\n- 运行 focused tests\n"
+                "## 10. 调试与回滚方案\n- 回滚本次补丁\n"
+            ),
+        })
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "gbk"
+        env["AE_SDD_STATS"] = "0"
+        result = subprocess.run(
+            [sys.executable, str(cli), "gates", "check", "--work-item", "BUG-001",
+             "--only", "G-08", "--json"],
+            cwd=tmp,
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        stdout = result.stdout.decode("utf-8", errors="strict")
+        stderr = result.stderr.decode("utf-8", errors="strict")
+        payload = json.loads(stdout)
+        self.assertEqual(result.returncode, 0, stderr)
+        self.assertTrue(payload["all_pass"])
+        self.assertEqual(payload["results"][0]["details"].get("profile"), "micro")
+        self.assertIn("微任务轻量门禁通过", payload["results"][0]["message"])
+        self.assertNotIn("Traceback", stderr)
 
 
 # ─── G-DOC-STORAGE 文档落地存放合规（v3.4.0）─────────────────────────────────

@@ -175,7 +175,7 @@ class TestInjectPluginLine(unittest.TestCase):
         """命中外挂 → additionalContext 含 'plugin:' 行 + 外挂路径。"""
         tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
         _make_project_with_plugin(tmp)
-        payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
+        payload = prompt_inject.inject(project_dir=tmp, user_prompt="/ae-sdd 继续编码")
         msg = _additional_context(payload)
         self.assertIn("plugin:", msg)
         self.assertIn("my-plugin", msg)
@@ -192,7 +192,7 @@ class TestInjectPluginLine(unittest.TestCase):
         _write_nested_work_item(tmp, "Story-001", "STORY-001", "task-reviewed")
         (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
 
-        payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
+        payload = prompt_inject.inject(project_dir=tmp, user_prompt="/ae-sdd 继续编码")
         msg = _additional_context(payload)
         self.assertNotIn("plugin:", msg)
         # 原 skill 行仍在
@@ -259,7 +259,7 @@ class TestPromptInjectParallelWorkItemIsolation(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-"))
         _make_project_with_plugin(tmp)
         with mock.patch("lib.plugin_loader.resolve_skill", side_effect=RuntimeError("boom")):
-            payload = prompt_inject.inject(project_dir=tmp, user_prompt="继续编码")
+            payload = prompt_inject.inject(project_dir=tmp, user_prompt="/ae-sdd 继续编码")
         msg = _additional_context(payload)
         self.assertNotIn("plugin:", msg)
         self.assertIn("skill:", msg)  # 降级为原 skill 裸文件名
@@ -275,11 +275,29 @@ class TestPromptInjectCli(unittest.TestCase):
 
         payload = _run_prompt_inject_cli(tmp, {
             "hook_event_name": "UserPromptSubmit",
-            "user_prompt": "continue DR",
+            "session_id": "prompt-cli-session",
+            "user_prompt": "/ae-sdd continue DR",
         })
         msg = _additional_context(payload)
         self.assertIn("REQ-001", msg)
         self.assertNotIn("systemMessage", payload)
+
+    def test_plain_prompt_does_not_inject_or_keep_stale_activity(self):
+        tmp = Path(tempfile.mkdtemp(prefix="ae-sdd-inj-plain-"))
+        ade_sdd = tmp / ".ae-sdd"
+        ade_sdd.mkdir(parents=True)
+        (ade_sdd / "config.yaml").write_text("projectKey: test-proj\n", encoding="utf-8")
+        _write_nested_work_item(tmp, "Story-001", "STORY-001", "story-generated")
+        work_item_context.mark_session_engaged(ade_sdd, "plain-session")
+
+        payload = prompt_inject.inject(
+            project_dir=tmp,
+            user_prompt="检查 Story-003 和 Story-004 文档对齐",
+            session_key="plain-session",
+        )
+
+        self.assertEqual(payload, {})
+        self.assertFalse(work_item_context.is_session_engaged(ade_sdd, "plain-session"))
 
 
 if __name__ == "__main__":

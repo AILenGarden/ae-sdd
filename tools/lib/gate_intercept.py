@@ -52,6 +52,7 @@ Claude Code PreToolUse hook 数据格式（来源：hookify 官方实现）：
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Optional
@@ -559,16 +560,67 @@ def _check_memory_entered(
         )
 
 
-# ─── ae-sdd state write 保护 ─────────────────────────────────────────────────
-# 只匹配以 ae-sdd 或 python .../ae-sdd 开头的命令，
-# 排除 echo/注释等非执行形式（防止 '# ae-sdd state write' 等误触发 gate check）
-_STATE_WRITE_CMD_RE = re.compile(r"^python\s+\S*ae-sdd\b", re.IGNORECASE)
+def _command_basename(token: str) -> str:
+    """Return a cross-platform executable basename without filesystem access."""
+    return str(token or "").replace("\\", "/").rsplit("/", 1)[-1].casefold()
 
+
+def _parse_ae_sdd_args(bash_command: str) -> Optional[list[str]]:
+    """Parse a real ae-sdd command and return arguments after the executable.
+
+    Claude Code commonly emits quoted Windows paths even when the path has no
+    spaces. Token parsing keeps quoted and unquoted forms equivalent while
+    malformed quoting fails closed. Shell control syntax is intentionally not
+    accepted or rejected here; existing fast-path callers retain their stricter
+    `_CHAIN_RE` / `_REDIRECT_RE` checks.
+    """
+    try:
+        tokens = shlex.split((bash_command or "").strip(), posix=True)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+
+    if tokens[0].casefold() == "ae-sdd":
+        return tokens[1:]
+
+    if len(tokens) < 2:
+        return None
+    python_name = _command_basename(tokens[0])
+    if not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?", python_name):
+        return None
+    script_name = _command_basename(tokens[1])
+    if script_name not in {"ae-sdd", "ae-sdd.py"}:
+        return None
+    return tokens[2:]
+
+
+# ─── ae-sdd state write 保护 ─────────────────────────────────────────────────
 
 def _is_ae_sdd_cmd(bash_command: str) -> bool:
-    """命令是否以 ae-sdd 或 python .../ae-sdd 开头（真实执行形式，排除注释/echo）。"""
-    stripped = (bash_command or "").strip()
-    return stripped.startswith("ae-sdd") or bool(_STATE_WRITE_CMD_RE.match(stripped))
+    """Whether the command has a supported direct or Python ae-sdd prefix."""
+    return _parse_ae_sdd_args(bash_command) is not None
+
+
+def _is_hook_activation_cmd(bash_command: str) -> bool:
+    """Return True only for ae-sdd commands that start a write workflow."""
+    args = _parse_ae_sdd_args(bash_command)
+    if not args:
+        return False
+    head = args[0].casefold()
+    if head == "enter":
+        return True
+    if head == "state" and len(args) >= 2:
+        return args[1].casefold() in {
+            "new", "write", "confirm", "relocate", "bind-story-doc",
+        }
+    if head == "ops" and len(args) >= 2:
+        return args[1].casefold() == "execute"
+    if head == "doc" and len(args) >= 2:
+        return args[1].casefold() in {"save", "finalize"}
+    if head == "lease" and len(args) >= 2:
+        return args[1].casefold() in {"acquire", "renew", "release", "break"}
+    return False
 
 
 # ─── 🆕 v3.9.2 修复：ae-sdd memory 命令放行（设计阶段死锁 bug）──────────────────
@@ -579,13 +631,6 @@ def _is_ae_sdd_cmd(bash_command: str) -> bool:
 # .ae-sdd/memory/ 目录，属流程自管理命令族，独立于 PHASE_PERMIT 放行。
 # 第二个 token 必须是 memory，覆盖全部 8 个子命令
 # （enter/write/exit/read/search/promote/summarize）。
-_MEMORY_CMD_RE = re.compile(r"^(?:ae-sdd|python\s+\S*ae-sdd)\s+memory\b", re.IGNORECASE)
-_ASSETS_GENERATE_CMD_RE = re.compile(
-    r"^(?:ae-sdd|python\S*\s+\S*ae-sdd)\s+assets\s+generate\b",
-    re.IGNORECASE,
-)
-
-
 def _is_ae_sdd_memory_cmd(bash_command: str) -> bool:
     """命令是否为 `ae-sdd memory <subcmd>` 真实执行形式（排除注释/echo）。
 
@@ -593,14 +638,19 @@ def _is_ae_sdd_memory_cmd(bash_command: str) -> bool:
         True 当且仅当命令头匹配 ae-sdd memory / python .../ae-sdd memory。
         不检查子命令是否合法——CLI 自身会校验。
     """
-    stripped = (bash_command or "").strip()
-    return bool(_MEMORY_CMD_RE.match(stripped))
+    args = _parse_ae_sdd_args(bash_command)
+    return bool(args and args[0].casefold() == "memory")
 
 
 def _is_ae_sdd_assets_generate_cmd(bash_command: str) -> bool:
     """命令是否为单条 `ae-sdd assets generate` 维护命令。"""
-    stripped = (bash_command or "").strip()
-    return bool(_ASSETS_GENERATE_CMD_RE.match(stripped))
+    args = _parse_ae_sdd_args(bash_command)
+    return bool(
+        args
+        and len(args) >= 2
+        and args[0].casefold() == "assets"
+        and args[1].casefold() == "generate"
+    )
 
 
 # ─── 🆕 v3.9.17 修复：ae-sdd state new / enter 逃生放行 ────────────────────────
@@ -612,24 +662,32 @@ def _is_ae_sdd_assets_generate_cmd(bash_command: str) -> bool:
 # state new 只在 .auto-engineering/ 下新建一个工作项目录，enter 只写入其
 # session.json 凭证，二者都不读写任何既有 work-item 的 state.json，因此可以
 # 独立于 work-item 解析结果放行（同 memory / assets generate 命令族）。
-_STATE_NEW_OR_ENTER_CMD_RE = re.compile(
-    r"^(?:ae-sdd|python\s+\S*ae-sdd)\s+(?:state\s+new|enter)\b",
-    re.IGNORECASE,
-)
-
-
 def _is_ae_sdd_state_new_or_enter_cmd(bash_command: str) -> bool:
     """命令是否为单条 `ae-sdd state new` / `ae-sdd enter` 自救命令。"""
-    stripped = (bash_command or "").strip()
-    return bool(_STATE_NEW_OR_ENTER_CMD_RE.match(stripped))
+    args = _parse_ae_sdd_args(bash_command)
+    if not args:
+        return False
+    return args[0].casefold() == "enter" or (
+        len(args) >= 2
+        and args[0].casefold() == "state"
+        and args[1].casefold() == "new"
+    )
 
 
 def _extract_option_value(bash_command: str, option: str) -> Optional[str]:
-    stripped = bash_command.strip()
-    if not (stripped.startswith("ae-sdd") or _STATE_WRITE_CMD_RE.match(stripped)):
+    args = _parse_ae_sdd_args(bash_command)
+    if args is None:
         return None
-    m = re.search(rf"{re.escape(option)}\s+(\S+)", stripped, re.IGNORECASE)
-    return m.group(1) if m else None
+    option_lc = option.casefold()
+    for index, token in enumerate(args[:-1]):
+        if token.casefold() == option_lc:
+            return args[index + 1]
+    return None
+
+
+def _extract_work_item(bash_command: str) -> Optional[str]:
+    """Extract an explicit Work Item selector from a real ae-sdd command."""
+    return _extract_option_value(bash_command, "--work-item")
 
 
 def _extract_target_phase(bash_command: str) -> Optional[str]:
@@ -639,9 +697,7 @@ def _extract_target_phase(bash_command: str) -> Optional[str]:
     安全策略：命令必须以 ae-sdd 或 python .../ae-sdd 开头，
     排除注释（# ae-sdd ...）和 echo（echo ae-sdd ...）等非执行形式。
     """
-    stripped = bash_command.strip()
-    # 命令头检查：以 ae-sdd 开头，或以 python .../ae-sdd 开头
-    if not (stripped.startswith("ae-sdd") or _STATE_WRITE_CMD_RE.match(stripped)):
+    if _parse_ae_sdd_args(bash_command) is None:
         return None
     return _extract_option_value(bash_command, "--phase")
 
@@ -868,6 +924,18 @@ def _is_readonly_bash(command: Optional[str]) -> bool:
         return False
     if re.match(r"^(echo|printf)\b", cmd):
         return True
+    ae_sdd_args = _parse_ae_sdd_args(cmd)
+    if ae_sdd_args:
+        normalized = tuple(token.casefold() for token in ae_sdd_args[:2])
+        if normalized[:1] in {("version",), ("health",), ("classify",)}:
+            return True
+        if normalized in {
+            ("state", "read"),
+            ("state", "next-step"),
+            ("gates", "check"),
+            ("assets", "check"),
+        }:
+            return True
     return any(cmd.startswith(p) for p in BASH_READONLY_PREFIXES)
 
 
@@ -950,10 +1018,15 @@ def _check_pending_init_intercept(
     if tool_name == "Bash" and _is_readonly_bash(bash_command):
         return True, ""
 
-    # ae-sdd init 命令放行（含 python -m ae-sdd / 绝对路径等变体）
+    # ae-sdd init 命令放行（含带引号/不带引号的 Python 脚本路径）
     if tool_name == "Bash" and bash_command:
         stripped = bash_command.strip()
-        if re.match(r'^(python\S*\s+)?\S*ae-sdd\s+init\b', stripped) and not _CHAIN_RE.search(stripped):
+        ae_sdd_args = _parse_ae_sdd_args(stripped)
+        if (
+            ae_sdd_args
+            and ae_sdd_args[0].casefold() == "init"
+            and not _CHAIN_RE.search(stripped)
+        ):
             return True, ""
 
     # 其余全部拦截
@@ -997,6 +1070,21 @@ def check_intercept(
         allowed=True  → 允许，reason 为空
         allowed=False → 拒绝，reason 为纯文本（_deny_response 会包装成 JSON）
     """
+    # A real ae-sdd write entry can activate the current turn even when the
+    # user invoked the CLI directly instead of using the slash command.
+    if (
+        tool_name == "Bash"
+        and bash_command
+        and session_key
+        and project_dir is not None
+        and _is_hook_activation_cmd(bash_command)
+        and not _CHAIN_RE.search(bash_command.strip())
+        and not _REDIRECT_RE.search(bash_command.strip())
+    ):
+        ade_sdd_for_activation = paths.locate_project_ae_sdd(project_dir)
+        if ade_sdd_for_activation is not None:
+            work_item_context.mark_session_engaged(ade_sdd_for_activation, session_key)
+
     # 1. 只读工具永远放行
     if allow_readonly and tool_name in READONLY_TOOLS:
         return True, ""
@@ -1023,6 +1111,11 @@ def check_intercept(
     phase = forced_phase
     ade_sdd: Optional[Path] = None
     project_key = "unknown"
+    explicit_work_item = (
+        _extract_work_item(bash_command or "")
+        if tool_name == "Bash" and bash_command
+        else None
+    )
 
     if phase is None:
         ade_sdd = paths.locate_project_ae_sdd(project_dir)
@@ -1045,11 +1138,23 @@ def check_intercept(
         if forced_engaged is None and not work_item_context.is_session_engaged(ade_sdd, session_key):
             return True, ""
         try:
-            resolved_state = work_item_context.resolve_default_state(
-                ade_sdd,
-                session_key=session_key,
-            )
+            if explicit_work_item:
+                # Explicit command targets are the recovery path for multiple
+                # active states; resolve them before implicit ambiguity checks.
+                resolved_state = work_item_context.resolve_explicit_state(
+                    ade_sdd,
+                    explicit_work_item,
+                    session_key=session_key,
+                    bind_session=bool(session_key),
+                )
+            else:
+                resolved_state = work_item_context.resolve_default_state(
+                    ade_sdd,
+                    session_key=session_key,
+                )
         except work_item_context.AmbiguousWorkItemError as e:
+            return False, str(e)
+        except work_item_context.ExplicitWorkItemNotFoundError as e:
             return False, str(e)
         except work_item_context.NoWorkItemStateError as e:
             return False, str(e)

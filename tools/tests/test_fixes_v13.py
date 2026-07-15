@@ -93,6 +93,9 @@ class TestMultiEditInterception:
         session_mod.confirm_phase(ae_sdd, "task-reviewed", story_id="STORY-001")
         # 🆕 v3.5.16 C1 硬层：coding phase 写 src/ 还须 coding-process confirm
         session_mod.confirm_phase(ae_sdd, "coding-process", story_id="STORY-001")
+        # v3.10.6 §B0.5: non-micro source writes also require the explicit
+        # spec-change decision token.
+        session_mod.confirm_phase(ae_sdd, "spec-change", story_id="STORY-001")
         # 🆕 v3.10.3 存端兜底：coding 属关联 phase，写 src/ 须 memory 存在（create_memory 替代 enter）
         from lib import memory_store
         scope = memory_store.locate_scope(project=str(tmp_path), entity_type="coding", entity_id="STORY-001")

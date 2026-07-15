@@ -80,7 +80,9 @@ del _boot_os, _boot_time
 
 import argparse
 import json
+import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -94,7 +96,8 @@ for _stream in (sys.stdout, sys.stderr):
 
 # 让 import lib 找得到
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import assets_index, baseline, classify, config, db_tool, document_storage, evidence, gates, gate_intercept, git_insight, memory_gate, memory_store, output, paths, plugin_loader, project_assets, prompt_inject, review_batch, runtime_exec, runtime_stats, runtime_verify, session, state, stop_check, update_graph, verification_plan, work_item_context  # noqa: E402
+from lib import assets_index, baseline, classify, config, db_tool, document_storage, evidence, gates, gate_intercept, git_insight, memory_gate, memory_store, operations, output, paths, plugin_loader, project_assets, prompt_inject, review_batch, runtime_exec, runtime_stats, runtime_verify, session, state, stop_check, update_graph, verification_plan, work_item_context  # noqa: E402
+from lib.state_store import LeaseOwner, StateStore, StateStoreError  # noqa: E402
 
 
 def _read_stdin_json() -> dict:
@@ -139,6 +142,143 @@ def cmd_scripts_dir(args, parser):
     return 0
 
 
+def _operation_error_payload(exc, operation_name="", work_item=""):
+    return {
+        "ok": False,
+        "changed": False,
+        "operation": operation_name,
+        "workItem": work_item,
+        "revisionBefore": None,
+        "revisionAfter": None,
+        "artifacts": [],
+        "gateResults": [],
+        "nextActions": [],
+        "error": exc.to_dict(),
+    }
+
+
+def _emit_operation_error(args, exc, operation_name="", work_item=""):
+    payload = _operation_error_payload(exc, operation_name, work_item)
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.err(f"{exc.code}: {exc.message}")
+        if exc.remediation:
+            output.info(f"  -> {exc.remediation}")
+    return 1
+
+
+def _operation_project(value=""):
+    return Path(value or Path.cwd()).resolve()
+
+
+def cmd_ops_describe(args, parser):
+    try:
+        registry = operations.OperationRegistry(_operation_project(args.project))
+        payload = registry.describe(args.operation)
+    except operations.OperationError as exc:
+        return _emit_operation_error(args, exc, "ops.describe")
+    output.emit(payload, as_json=args.json)
+    return 0
+
+
+def cmd_ops_next(args, parser):
+    try:
+        registry = operations.OperationRegistry(_operation_project(args.project))
+        payload = registry.next_actions(args.work_item, args.story)
+    except operations.OperationError as exc:
+        return _emit_operation_error(args, exc, "state.next_actions", args.work_item)
+    output.emit(payload, as_json=args.json)
+    return 0
+
+
+def cmd_ops_execute(args, parser):
+    request_path = Path(args.request_file)
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        error = operations.OperationError(
+            "OPERATION_REQUEST_INVALID_JSON",
+            "request-file cannot be read as a JSON object",
+            details={"path": str(request_path.resolve()), "error": str(exc)},
+        )
+        return _emit_operation_error(args, error, "ops.execute")
+    if not isinstance(request, dict):
+        error = operations.OperationError(
+            "OPERATION_REQUEST_INVALID_JSON", "request-file JSON root must be an object"
+        )
+        return _emit_operation_error(args, error, "ops.execute")
+    if args.project and not request.get("project"):
+        request["project"] = str(_operation_project(args.project))
+    operation_name = str(request.get("operation") or "")
+    work_item = str(request.get("workItem") or "")
+    try:
+        registry = operations.OperationRegistry(
+            _operation_project(str(request.get("project") or args.project))
+        )
+        payload = registry.execute(request)
+    except operations.OperationError as exc:
+        return _emit_operation_error(args, exc, operation_name, work_item)
+    output.emit(payload, as_json=args.json)
+    return 0
+
+
+def _lease_owner_from_args(args):
+    return {
+        "agentId": args.agent_id,
+        "sessionId": args.session_id,
+        "host": args.host or socket.gethostname(),
+        "pid": int(args.pid),
+    }
+
+
+def cmd_lease(args, parser):
+    operation_name = f"lease.{args.subcmd}"
+    request = {
+        "schemaVersion": operations.SCHEMA_VERSION,
+        "operation": operation_name,
+        "project": str(_operation_project(args.project)),
+        "workItem": args.work_item,
+        "story": getattr(args, "story", "") or "",
+        "parameters": {},
+    }
+    if args.subcmd == "acquire":
+        request["idempotencyKey"] = args.idempotency_key
+        request["parameters"] = {
+            "owner": _lease_owner_from_args(args),
+            "ttlSeconds": args.ttl_seconds,
+        }
+    elif args.subcmd == "renew":
+        request.update({
+            "lease": {"leaseId": args.lease_id, "fencingToken": args.fencing_token},
+            "expectedRevision": args.expected_revision,
+            "idempotencyKey": args.idempotency_key,
+        })
+        request["parameters"] = {
+            "owner": _lease_owner_from_args(args),
+            "ttlSeconds": args.ttl_seconds,
+        }
+    elif args.subcmd == "release":
+        request.update({
+            "lease": {"leaseId": args.lease_id, "fencingToken": args.fencing_token},
+            "expectedRevision": args.expected_revision,
+            "idempotencyKey": args.idempotency_key,
+        })
+        request["parameters"] = {"owner": _lease_owner_from_args(args)}
+    elif args.subcmd == "break":
+        request["idempotencyKey"] = args.idempotency_key
+        request["parameters"] = {
+            "actor": _lease_owner_from_args(args),
+            "reason": args.reason,
+        }
+    try:
+        payload = operations.OperationRegistry(_operation_project(args.project)).execute(request)
+    except operations.OperationError as exc:
+        return _emit_operation_error(args, exc, operation_name, args.work_item)
+    output.emit(payload, as_json=args.json)
+    return 0
+
+
 def _work_item_arg(args) -> str:
     """Return explicit work item id, falling back to --story for old commands."""
     return (getattr(args, "work_item", "") or getattr(args, "story", "") or "").strip()
@@ -164,8 +304,9 @@ def _emit_work_item_ambiguity(exc: work_item_context.AmbiguousWorkItemError, arg
 
 def _emit_state_resolution_error(exc: Exception, args) -> None:
     message = str(exc)
+    error_code = getattr(exc, "code", "work-item-required")
     if getattr(args, "json", False):
-        output.emit({"ok": False, "error": "work-item-required", "message": message}, as_json=True)
+        output.emit({"ok": False, "error": error_code, "message": message}, as_json=True)
     else:
         output.err(message)
 
@@ -376,6 +517,245 @@ def _default_scale_for_state_new(entry_node: str, work_item_id: str) -> str:
     return "\u5927"
 
 
+def _emit_story_document_resolution_error(args, code: str, message: str,
+                                          details: dict | None = None) -> None:
+    payload = {
+        "ok": False,
+        "errorCode": code,
+        "message": message,
+        "details": details or {},
+    }
+    if getattr(args, "json", False):
+        output.emit(payload, as_json=True)
+    else:
+        output.err(f"{code}: {message}")
+
+
+def _resolve_requested_story_document(args, project_dir: Path, *,
+                                      story_id: str, story_name: str):
+    try:
+        resolution = document_storage.resolve_story_document(
+            project_dir,
+            story_id=story_id,
+            story_name=story_name,
+        )
+    except document_storage.StoryDocumentAmbiguousError as exc:
+        _emit_story_document_resolution_error(
+            args, exc.code, str(exc), {"candidates": list(exc.candidates)}
+        )
+        return None
+    except document_storage.DocStorageError as exc:
+        _emit_story_document_resolution_error(args, exc.code, str(exc))
+        return None
+
+    if resolution.path is None:
+        rejection = resolution.rejected[0] if resolution.rejected else {}
+        code = rejection.get("code") or "STORY_DOC_NOT_FOUND"
+        message = (
+            f"Story document cannot be bound: storyId={story_id}, "
+            f"storyName={resolution.story_name}"
+        )
+        _emit_story_document_resolution_error(
+            args,
+            code,
+            message,
+            {
+                "candidates": [str(path) for path in resolution.candidates],
+                "rejected": list(resolution.rejected),
+            },
+        )
+        return None
+    return resolution
+
+
+def _story_state_target(ade_sdd: Path, project_dir: Path, story_path: Path,
+                        story_id: str) -> dict:
+    """Resolve the R2 parent identity without mutating or creating any state."""
+    design_dir = paths.project_design_dir(project_dir)
+    parent_prd, parent_dr = paths.extract_parent_claim(story_path, doc_kind="story")
+    valid_prd = None
+    valid_dr = None
+    dr_doc = None
+    if parent_dr:
+        ok, _reason = paths.verify_parent_claim(
+            "DR", parent_dr, design_dir, child_id=story_id
+        )
+        if ok:
+            valid_dr = parent_dr
+            dr_doc = paths._find_design_doc(design_dir, parent_dr)
+    if parent_prd:
+        ok, _reason = paths.verify_parent_claim(
+            "PRD", parent_prd, design_dir, child_id=story_id
+        )
+        if ok:
+            valid_prd = parent_prd
+    if valid_dr and dr_doc:
+        claimed_prd, _unused = paths.extract_parent_claim(dr_doc, doc_kind="dr")
+        if claimed_prd:
+            ok, _reason = paths.verify_parent_claim(
+                "PRD", claimed_prd, design_dir, child_id=valid_dr
+            )
+            if ok:
+                valid_prd = claimed_prd
+
+    if valid_prd:
+        existing = paths.find_nested_state_by_prd_id(ade_sdd, valid_prd)
+        return {
+            "entryNode": "PRD", "parentPrdId": valid_prd,
+            "parentDrId": valid_dr, "drDoc": dr_doc,
+            "existingPath": existing[0] if existing else None,
+        }
+    if valid_dr:
+        existing = paths.find_nested_state_by_dr_id(ade_sdd, valid_dr)
+        return {
+            "entryNode": "DR", "parentPrdId": None,
+            "parentDrId": valid_dr, "drDoc": dr_doc,
+            "existingPath": existing[0] if existing else None,
+        }
+    return {
+        "entryNode": "STORY", "parentPrdId": None,
+        "parentDrId": None, "drDoc": None, "existingPath": None,
+    }
+
+
+def _fill_new_state_metadata(value: dict, *, cfg: dict, scale: str,
+                             state_path: Path, new_uuid: str) -> None:
+    final_key = state_path.parent.name
+    if cfg.get("projectKey") and not value.get("projectKey"):
+        value["projectKey"] = cfg.get("projectKey")
+    for key, item in (
+        ("scale", scale),
+        ("workItemKey", final_key),
+        ("currentWorkItem", final_key),
+        ("stateMachineId", final_key),
+        ("stateMachineName", paths.strip_uuid_prefix(final_key)),
+        ("stateUuid", value.get("stateUuid") or new_uuid),
+    ):
+        if item and not value.get(key):
+            value[key] = item
+
+
+def _apply_story_add_and_binding(value: dict, *, story_id: str,
+                                 resolution, parent_dr_id: str | None,
+                                 absorbed: bool) -> dict:
+    added = False
+    if state.get_story_substate(value, story_id) is None:
+        added = state.add_story_to_nested_state(
+            value,
+            story_id,
+            initial_phase="story-generated" if absorbed else "initialized",
+            parent_dr_id=parent_dr_id if value.get("entryNode") == "PRD" else None,
+        )
+    bound = state.bind_story_document(
+        value,
+        story_id,
+        story_name=resolution.story_name,
+        doc_path=str(resolution.path),
+        by="ae-sdd state new --story-name",
+    )
+    return {"storyAdded": added, "bindingChanged": bound}
+
+
+def _persist_story_name_state_new(ade_sdd: Path, cfg: dict, requested_scale: str,
+                                  story_id: str, resolution, new_uuid: str):
+    """Atomically absorb into an existing parent or exclusively create a new state."""
+    project_dir = paths.project_root(ade_sdd)
+    target = _story_state_target(ade_sdd, project_dir, resolution.path, story_id)
+    allowed_root = paths.work_items_dir(ade_sdd)
+    existing_path = target.get("existingPath")
+    if existing_path is not None:
+        store = StateStore(existing_path, allowed_root=allowed_root)
+        snapshot = store.read()
+        owner = LeaseOwner.current(
+            "ae-sdd-cli", f"state-new-story-{os.getpid()}-{os.urandom(4).hex()}"
+        )
+        operation_key = f"state-new-story-{os.getpid()}-{os.urandom(8).hex()}"
+        acquired = None
+        try:
+            acquired = store.acquire_lease(owner, 30, f"{operation_key}-lease")
+
+            def apply(updated):
+                result = _apply_story_add_and_binding(
+                    updated,
+                    story_id=story_id,
+                    resolution=resolution,
+                    parent_dr_id=target.get("parentDrId"),
+                    absorbed=True,
+                )
+                _fill_new_state_metadata(
+                    updated, cfg=cfg, scale=requested_scale,
+                    state_path=existing_path, new_uuid=new_uuid,
+                )
+                return result
+
+            mutation = store.mutate(
+                expected_revision=snapshot.revision,
+                lease_id=acquired.lease_id,
+                fencing_token=acquired.fencing_token,
+                idempotency_key=operation_key,
+                operation="state.new-story-binding",
+                payload={
+                    "storyId": story_id,
+                    "storyName": resolution.story_name,
+                    "storyDocPath": str(resolution.path),
+                },
+                mutate=apply,
+            )
+            return existing_path, mutation.state
+        finally:
+            if acquired is not None:
+                try:
+                    store.release_lease(owner, acquired.lease_id, acquired.fencing_token)
+                except StateStoreError:
+                    pass
+
+    entry_node = target["entryNode"]
+    if entry_node == "PRD":
+        prd_id = target["parentPrdId"]
+        features = {"prd_feature": prd_id.replace("PRD-", "", 1), "prd_id": prd_id}
+        biz_name = paths.build_state_machine_name("PRD", features)
+        state_path = paths.work_item_state_path(ade_sdd, "PRD", features, state_uuid=new_uuid)
+        initial = state.init_nested_state(
+            project_key=cfg.get("projectKey") or "",
+            entry_node="PRD", state_machine_id=biz_name, state_machine_name=biz_name,
+            prd_id=prd_id, state_uuid=new_uuid,
+        )
+        if target.get("parentDrId"):
+            state.ensure_dr_substate(
+                initial, target["parentDrId"], initial_phase="dr-generated",
+                doc_path=str(target["drDoc"]) if target.get("drDoc") else None,
+            )
+    elif entry_node == "DR":
+        dr_id = target["parentDrId"]
+        features = {"dr_feature": dr_id.replace("DR-", "", 1), "dr_id": dr_id}
+        biz_name = paths.build_state_machine_name("DR", features)
+        state_path = paths.work_item_state_path(ade_sdd, "DR", features, state_uuid=new_uuid)
+        initial = state.init_nested_state(
+            project_key=cfg.get("projectKey") or "",
+            entry_node="DR", state_machine_id=biz_name, state_machine_name=biz_name,
+            dr_id=dr_id, state_uuid=new_uuid,
+        )
+    else:
+        features = {"story_ids": [story_id]}
+        biz_name = paths.build_state_machine_name("STORY", features)
+        state_path = paths.work_item_state_path(ade_sdd, "STORY", features, state_uuid=new_uuid)
+        initial = state.init_nested_state(
+            project_key=cfg.get("projectKey") or "",
+            entry_node="STORY", state_machine_id=biz_name, state_machine_name=biz_name,
+            story_ids=[story_id], state_uuid=new_uuid,
+        )
+    _apply_story_add_and_binding(
+        initial, story_id=story_id, resolution=resolution,
+        parent_dr_id=target.get("parentDrId"), absorbed=entry_node != "STORY",
+    )
+    _fill_new_state_metadata(
+        initial, cfg=cfg, scale=requested_scale,
+        state_path=state_path, new_uuid=new_uuid,
+    )
+    snapshot = StateStore(state_path, allowed_root=allowed_root).create(initial)
+    return state_path, snapshot.state
+
+
 def cmd_state_read(args, parser):
     ade_sdd = paths.locate_project_ae_sdd()
     if ade_sdd is None:
@@ -460,6 +840,25 @@ def cmd_state_new(args, parser):
     elif requested_entry_node == "PLAN":
         features["plan_id"] = work_item_id  # 🆕 v3.10.0 小任务 CodingPlan 入口
 
+    story_resolution = None
+    requested_story_name = (getattr(args, "story_name", "") or "").strip()
+    if requested_story_name:
+        if requested_entry_node != "STORY" or len(features.get("story_ids") or []) != 1:
+            _emit_story_document_resolution_error(
+                args,
+                "STORY_DOC_BINDING_SCOPE_INVALID",
+                "--story-name requires entry-node=STORY with exactly one Story ID",
+            )
+            return 1
+        story_resolution = _resolve_requested_story_document(
+            args,
+            paths.project_root(ade_sdd),
+            story_id=features["story_ids"][0],
+            story_name=requested_story_name,
+        )
+        if story_resolution is None:
+            return 1
+
     work_item_key = paths.work_item_dir_name(requested_entry_node, features)
     # 🆕 v3.10.1：创建时生成 UUID 前缀保证目录名/stateMachineId 全局唯一
     new_uuid = paths.generate_state_uuid()
@@ -474,13 +873,58 @@ def cmd_state_new(args, parser):
     cfg = paths.read_config(ade_sdd)
     requested_scale = args.scale or _default_scale_for_state_new(requested_entry_node, work_item_id)
 
+    if story_resolution is not None:
+        try:
+            final_sp, final_st = _persist_story_name_state_new(
+                ade_sdd,
+                cfg,
+                requested_scale,
+                features["story_ids"][0],
+                story_resolution,
+                new_uuid,
+            )
+        except StateStoreError as exc:
+            _emit_story_document_resolution_error(
+                args, exc.code, exc.message, exc.details
+            )
+            return 1
+        except ValueError as exc:
+            _emit_story_document_resolution_error(
+                args, "STORY_DOC_BIND_FAILED", str(exc)
+            )
+            return 1
+        if args.activate:
+            _write_active_state_mirror(ade_sdd, final_st, final_sp.parent.name, final_sp)
+        payload = {
+            "ok": True,
+            "workItemId": work_item_id,
+            "workItemKey": work_item_key,
+            "statePath": str(final_sp),
+            "active": bool(args.activate),
+            "stateModel": "nested",
+            "entryNode": requested_entry_node,
+            "storyIds": features.get("story_ids") or [],
+            "storyName": story_resolution.story_name,
+            "storyDocPath": str(story_resolution.path),
+            "storyDocSource": story_resolution.source,
+        }
+        if args.json:
+            output.emit(payload, as_json=True)
+        else:
+            output.ok(f"新嵌套状态机已创建或原子吸收：{final_sp.parent.name}")
+            output.info(f"  state: {final_sp}")
+        return 0
+
     if use_nested and requested_entry_node in ("PRD", "DR", "STORY"):
         # 🆕 v3.9.3 R2 强制向上归入（递归算法）
         design_dir = paths.project_design_dir(paths.project_root(ade_sdd))
         # 找当前节点文档（如果有）用于抽父级
         doc_path = None
         if requested_entry_node == "STORY" and features.get("story_ids"):
-            doc_path = paths.find_doc(paths.project_root(ade_sdd), features["story_ids"][0], "-Story.md")
+            if story_resolution is not None:
+                doc_path = story_resolution.path
+            else:
+                doc_path = paths.find_doc(paths.project_root(ade_sdd), features["story_ids"][0], "-Story.md")
         elif requested_entry_node == "DR":
             doc_path = paths.find_doc(paths.project_root(ade_sdd), work_item_id, "-DR.md")
         elif requested_entry_node == "PRD":
@@ -518,6 +962,21 @@ def cmd_state_new(args, parser):
             if value and not final_st.get(key):
                 final_st[key] = value
                 metadata_changed = True
+        if story_resolution is not None:
+            try:
+                binding_changed = state.bind_story_document(
+                    final_st,
+                    features["story_ids"][0],
+                    story_name=story_resolution.story_name,
+                    doc_path=str(story_resolution.path),
+                    by="ae-sdd state new --story-name",
+                )
+            except ValueError as exc:
+                _emit_story_document_resolution_error(
+                    args, "STORY_DOC_BIND_FAILED", str(exc)
+                )
+                return 1
+            metadata_changed = metadata_changed or binding_changed
         if metadata_changed:
             state.write_state(final_sp, final_st)
 
@@ -533,6 +992,12 @@ def cmd_state_new(args, parser):
             "entryNode": requested_entry_node,
             "storyIds": features.get("story_ids") or [],
         }
+        if story_resolution is not None:
+            payload.update({
+                "storyName": story_resolution.story_name,
+                "storyDocPath": str(story_resolution.path),
+                "storyDocSource": story_resolution.source,
+            })
         if args.json:
             output.emit(payload, as_json=True)
         else:
@@ -578,6 +1043,129 @@ def cmd_state_new(args, parser):
     else:
         output.ok(f"新状态机已创建：{flat_key}")
         output.info(f"  state: {sp}")
+    return 0
+
+
+def cmd_state_bind_story_doc(args, parser):
+    """Bind an exact native Story filename to an existing Work Item state."""
+    ade_sdd = paths.locate_project_ae_sdd()
+    if ade_sdd is None:
+        output.err("未找到 .ae-sdd/ 目录（请先跑 ae-sdd init）")
+        return 1
+    try:
+        sp, work_item = _main_state_path_for_args(ade_sdd, args)
+    except work_item_context.AmbiguousWorkItemError as exc:
+        _emit_work_item_ambiguity(exc, args)
+        return 1
+    except (work_item_context.NoWorkItemStateError, ValueError) as exc:
+        _emit_state_resolution_error(exc, args)
+        return 1
+    if not sp.is_file():
+        _emit_state_resolution_error(
+            ValueError(f"Work Item state does not exist: {sp}"), args
+        )
+        return 1
+
+    story_id = (args.story or "").strip()
+    story_name = (args.story_name or "").strip()
+    resolution = _resolve_requested_story_document(
+        args,
+        paths.project_root(ade_sdd),
+        story_id=story_id,
+        story_name=story_name,
+    )
+    if resolution is None:
+        return 1
+
+    store = StateStore(sp, allowed_root=paths.work_items_dir(ade_sdd))
+    snapshot = store.read()
+    existing = state.get_story_document_binding(snapshot.state, story_id)
+    try:
+        existing_path = (Path(existing.get("docPath") or "").resolve()
+                         if existing.get("docPath") else None)
+    except OSError:
+        existing_path = Path(existing.get("docPath") or "")
+    if (existing.get("storyName") == resolution.story_name
+            and existing_path == resolution.path):
+        payload = {
+            "ok": True,
+            "changed": False,
+            "workItem": work_item,
+            "storyId": story_id,
+            "storyName": resolution.story_name,
+            "storyDocPath": str(resolution.path),
+            "storyDocSource": resolution.source,
+            "revision": snapshot.revision,
+        }
+        if args.json:
+            output.emit(payload, as_json=True)
+        else:
+            output.info(f"Story 文档绑定未变：{resolution.path}")
+        return 0
+
+    owner = LeaseOwner.current(
+        "ae-sdd-cli", f"bind-story-doc-{os.getpid()}-{os.urandom(4).hex()}"
+    )
+    operation_key = f"bind-story-doc-{os.getpid()}-{os.urandom(8).hex()}"
+    acquired = None
+    try:
+        acquired = store.acquire_lease(owner, 30, f"{operation_key}-lease")
+
+        def apply_binding(updated):
+            changed = state.bind_story_document(
+                updated,
+                story_id,
+                story_name=resolution.story_name,
+                doc_path=str(resolution.path),
+            )
+            return {"changed": changed}
+
+        mutation = store.mutate(
+            expected_revision=snapshot.revision,
+            lease_id=acquired.lease_id,
+            fencing_token=acquired.fencing_token,
+            idempotency_key=operation_key,
+            operation="state.bind-story-doc",
+            payload={
+                "storyId": story_id,
+                "storyName": resolution.story_name,
+                "storyDocPath": str(resolution.path),
+            },
+            mutate=apply_binding,
+        )
+    except (StateStoreError, ValueError) as exc:
+        if isinstance(exc, StateStoreError):
+            _emit_story_document_resolution_error(
+                args, exc.code, exc.message, exc.details
+            )
+        else:
+            _emit_story_document_resolution_error(
+                args, "STORY_DOC_BIND_FAILED", str(exc)
+            )
+        return 1
+    finally:
+        if acquired is not None:
+            try:
+                store.release_lease(
+                    owner, acquired.lease_id, acquired.fencing_token
+                )
+            except StateStoreError as exc:
+                output.warn(f"story document binding lease release failed: {exc.code}")
+
+    payload = {
+        "ok": True,
+        "changed": bool((mutation.result or {}).get("changed")),
+        "workItem": work_item,
+        "storyId": story_id,
+        "storyName": resolution.story_name,
+        "storyDocPath": str(resolution.path),
+        "storyDocSource": resolution.source,
+        "revision": mutation.revision_after,
+    }
+    if args.json:
+        output.emit(payload, as_json=True)
+    else:
+        output.ok(f"Story 文档已绑定：{resolution.path}")
     return 0
 
 
@@ -691,11 +1279,54 @@ def cmd_state_write(args, parser):
     if args.task and not state.is_nested_state(s):
         s["currentTask"] = args.task
     s["lastUpdated"] = _now_iso()
+    store = StateStore(sp, allowed_root=paths.work_items_dir(ade_sdd))
+    owner = LeaseOwner(
+        agent_id="ae-sdd-legacy-cli",
+        session_id=f"state-write-{os.getpid()}",
+        host=socket.gethostname(),
+        pid=os.getpid(),
+    )
+    operation_key = f"legacy-state-write-{os.getpid()}-{os.urandom(8).hex()}"
+    acquired = None
     try:
-        state.write_state(sp, s)
-    except ValueError as e:
-        output.err(str(e))
+        acquired = store.acquire_lease(owner, 30, f"{operation_key}-lease")
+        expected_revision = int(s.get("revision", 0)) if type(s.get("revision", 0)) is int else 0
+
+        def apply_legacy_state(updated):
+            updated.clear()
+            updated.update(s)
+            return {"phase": args.phase, "legacyAdapter": True}
+
+        mutation = store.mutate(
+            expected_revision=expected_revision,
+            lease_id=acquired.lease_id,
+            fencing_token=acquired.fencing_token,
+            idempotency_key=operation_key,
+            operation="legacy.state.write",
+            payload={
+                "phase": args.phase,
+                "story": args.story or "",
+                "task": args.task or "",
+                "scale": args.scale or "",
+                "entryNode": args.entry_node or "",
+            },
+            mutate=apply_legacy_state,
+        )
+        s = mutation.state
+    except (StateStoreError, ValueError) as e:
+        if isinstance(e, StateStoreError):
+            output.err(f"{e.code}: {e.message}")
+            if e.remediation:
+                output.info(f"  -> {e.remediation}")
+        else:
+            output.err(str(e))
         return 1
+    finally:
+        if acquired is not None:
+            try:
+                store.release_lease(owner, acquired.lease_id, acquired.fencing_token)
+            except StateStoreError as release_error:
+                output.warn(f"legacy state write lease release failed: {release_error.code}")
     _write_active_state_mirror(ade_sdd, s, work_item, sp)
     if changed:
         output.ok(f"state 更新：phase={args.phase}")
@@ -1076,8 +1707,13 @@ def cmd_gates_check(args, parser):
     if not project_key:
         project_key = "unknown"
 
-    results = gates.check_all(master, ade_sdd, project_key, only=args.only)
+    work_item = getattr(args, "work_item", "") or ""
+    results = gates.check_all(
+        master, ade_sdd, project_key, only=args.only, work_item=work_item
+    )
     summary = gates.summarize(results)
+    if work_item:
+        summary["workItem"] = work_item
 
     if args.json:
         output.emit(summary, as_json=True)
@@ -3424,7 +4060,7 @@ def cmd_gate_intercept(args, parser):
                 quick_channel_from_file = True
                 try:
                     context = qc_file.read_text(encoding="utf-8").strip()
-                except (OSError, IOError):
+                except (OSError, IOError, UnicodeError):
                     context = "quick_channel_active"  # 读取失败也认为激活
 
     if quick_channel_from_file or gate_intercept.is_quick_channel_active(context):
@@ -3458,7 +4094,9 @@ def cmd_gate_intercept(args, parser):
         return 0
     else:
         deny = gate_intercept._deny_response(tool_name, reason)
-        print(_json.dumps(deny, ensure_ascii=False))
+        # Hook stdout is a protocol stream. Keep it ASCII so a parent process
+        # decoding with the Windows locale cannot lose the JSON envelope.
+        print(_json.dumps(deny, ensure_ascii=True))
         return 0
 
 
@@ -3670,6 +4308,21 @@ def cmd_stop_check(args, parser):
     from lib import paths as paths_mod
 
     input_data: dict = _read_stdin_json()
+    session_key = work_item_context.session_key_from_payload(input_data)
+    project_dir_raw = (
+        args.project
+        or str(input_data.get("cwd") or "")
+        or str(input_data.get("project_dir") or "")
+        or str(input_data.get("projectDir") or "")
+        or str(Path.cwd())
+    ).strip()
+    project_dir = Path(project_dir_raw) if project_dir_raw else None
+    ade_sdd = paths_mod.locate_project_ae_sdd(project_dir)
+
+    # Stop is inert outside an explicitly active ae-sdd turn.
+    if ade_sdd is None or not work_item_context.is_session_engaged(ade_sdd, session_key):
+        print(_json.dumps({}))
+        return 0
 
     # Claude Code v2.1+ Stop 输入直接携带 last_assistant_message。
     # 旧版没有该字段时，再回退到 transcript_path 文件解析。
@@ -3685,11 +4338,9 @@ def cmd_stop_check(args, parser):
             # transcript 文件读取失败 → 放行（无法检查就不阻断）
             transcript_read_failed = True
 
-    project_dir = Path(args.project) if args.project else None
-    ade_sdd = paths_mod.locate_project_ae_sdd(project_dir)
-
     # transcript 读取失败 → 放行
     if transcript_read_failed:
+        work_item_context.disengage_session(ade_sdd, session_key)
         print(_json.dumps({}))
         return 0
 
@@ -3705,10 +4356,12 @@ def cmd_stop_check(args, parser):
             _sc_span.attrs["shouldStop"] = should_stop
     except Exception:
         # stop_check 内部异常 → 放行（不阻断对话）
+        work_item_context.disengage_session(ade_sdd, session_key)
         print(_json.dumps({}))
         return 0
 
     if should_stop:
+        work_item_context.disengage_session(ade_sdd, session_key)
         print(_json.dumps({}))
     else:
         result = {
@@ -4673,6 +5326,75 @@ def main() -> int:
     p_sdir = sub.add_parser("scripts-dir", help="[v4.1] 输出母版 scripts/ 目录路径", parents=[common])
     p_sdir.set_defaults(func=cmd_scripts_dir)
 
+    # Typed operation protocol (LLM-facing control plane)
+    p_ops = sub.add_parser("ops", help="类型化 AE-SDD operation 协议", parents=[common])
+    ops_sub = p_ops.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+    p_ops_describe = ops_sub.add_parser("describe", help="列出 operation schema", parents=[common])
+    p_ops_describe.add_argument("--operation", default="", help="只描述指定 operation")
+    p_ops_describe.add_argument("--project", default="", help="项目根（默认 cwd）")
+    p_ops_describe.set_defaults(func=cmd_ops_describe)
+    p_ops_next = ops_sub.add_parser("next", help="读取合法下一步", parents=[common])
+    p_ops_next.add_argument("--project", default="", help="项目根（默认 cwd）")
+    p_ops_next.add_argument("--work-item", required=True, help="显式 Work Item")
+    p_ops_next.add_argument("--story", default="", help="关联 Story")
+    p_ops_next.set_defaults(func=cmd_ops_next)
+    p_ops_execute = ops_sub.add_parser("execute", help="执行 request-file 中的类型化 operation", parents=[common])
+    p_ops_execute.add_argument("--request-file", required=True, help="UTF-8 JSON request 文件")
+    p_ops_execute.add_argument("--project", default="", help="request 未带 project 时使用")
+    p_ops_execute.set_defaults(func=cmd_ops_execute)
+
+    # Lease convenience adapter. All commands translate to typed operations.
+    p_lease = sub.add_parser("lease", help="Work Item writer lease", parents=[common])
+    lease_sub = p_lease.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
+
+    def add_lease_scope(parser_):
+        parser_.add_argument("--project", default="", help="项目根（默认 cwd）")
+        parser_.add_argument("--work-item", required=True, help="显式 Work Item")
+        parser_.add_argument("--story", default="", help="关联 Story")
+
+    def add_lease_owner(parser_):
+        parser_.add_argument("--agent-id", required=True)
+        parser_.add_argument("--session-id", required=True)
+        parser_.add_argument("--host", default=socket.gethostname())
+        parser_.add_argument("--pid", type=int, default=os.getpid())
+
+    p_lease_acquire = lease_sub.add_parser("acquire", help="获取 writer lease", parents=[common])
+    add_lease_scope(p_lease_acquire)
+    add_lease_owner(p_lease_acquire)
+    p_lease_acquire.add_argument("--ttl-seconds", type=int, default=300)
+    p_lease_acquire.add_argument("--idempotency-key", required=True)
+    p_lease_acquire.set_defaults(func=cmd_lease)
+
+    p_lease_status = lease_sub.add_parser("status", help="读取 writer lease", parents=[common])
+    add_lease_scope(p_lease_status)
+    p_lease_status.set_defaults(func=cmd_lease)
+
+    p_lease_renew = lease_sub.add_parser("renew", help="续租 writer lease", parents=[common])
+    add_lease_scope(p_lease_renew)
+    add_lease_owner(p_lease_renew)
+    p_lease_renew.add_argument("--lease-id", required=True)
+    p_lease_renew.add_argument("--fencing-token", type=int, required=True)
+    p_lease_renew.add_argument("--expected-revision", type=int, required=True)
+    p_lease_renew.add_argument("--ttl-seconds", type=int, default=300)
+    p_lease_renew.add_argument("--idempotency-key", required=True)
+    p_lease_renew.set_defaults(func=cmd_lease)
+
+    p_lease_release = lease_sub.add_parser("release", help="释放 writer lease", parents=[common])
+    add_lease_scope(p_lease_release)
+    add_lease_owner(p_lease_release)
+    p_lease_release.add_argument("--lease-id", required=True)
+    p_lease_release.add_argument("--fencing-token", type=int, required=True)
+    p_lease_release.add_argument("--expected-revision", type=int, required=True)
+    p_lease_release.add_argument("--idempotency-key", required=True)
+    p_lease_release.set_defaults(func=cmd_lease)
+
+    p_lease_break = lease_sub.add_parser("break", help="带原因强制解除 writer lease", parents=[common])
+    add_lease_scope(p_lease_break)
+    add_lease_owner(p_lease_break)
+    p_lease_break.add_argument("--reason", required=True)
+    p_lease_break.add_argument("--idempotency-key", required=True)
+    p_lease_break.set_defaults(func=cmd_lease)
+
     # state
     p_state = sub.add_parser("state", help="项目状态管理", parents=[common])
     state_sub = p_state.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
@@ -4681,6 +5403,10 @@ def main() -> int:
     # 🆕 v3.9.3 废除 --name 形参（v3.8.2 required=True → 改 optional，保留以兼容旧 CLI 调用）
     p_state_new.add_argument("--name", required=False, default="", help="[已废除 v3.9.3] 需求/任务名称；v3.9.3 起目录名走 R6 顶层名，传值被忽略")
     p_state_new.add_argument("--story", default="", help="关联 Story ID（可选；未传时 currentStory 回退为 --id）")
+    p_state_new.add_argument(
+        "--story-name", default="",
+        help="正式 Story 文件名（可带或不带 .md；仅支持单 Story 精确绑定）",
+    )
     p_state_new.add_argument("--task", default="", help="关联 Task ID（可选）")
     p_state_new.add_argument("--scale", choices=["大", "中", "小", "微"], default=None,
                              help="任务规模（v3.10.0：BUG->微、PLAN->小、STORY->中、DR/PRD->大）")
@@ -4703,6 +5429,22 @@ def main() -> int:
     p_state_read.add_argument("--project-state", action="store_true",
                               help="已禁用：项目级 .ae-sdd/state.json 不是有效 state")
     p_state_read.set_defaults(func=cmd_state_read)
+    p_state_bind_story = state_sub.add_parser(
+        "bind-story-doc",
+        help="将正式 StoryName 精确绑定到现有 Work Item state",
+        parents=[common],
+    )
+    p_state_bind_story.add_argument(
+        "--work-item", required=True, help="现有 Work Item（如 Story-006）"
+    )
+    p_state_bind_story.add_argument(
+        "--story", required=True, help="逻辑 Story ID（如 STORY-006-BE）"
+    )
+    p_state_bind_story.add_argument(
+        "--story-name", required=True,
+        help="正式 Story 文件名（可带或不带 .md，只接受 basename）",
+    )
+    p_state_bind_story.set_defaults(func=cmd_state_bind_story_doc)
     p_state_next = state_sub.add_parser("next-step", help="下一步建议", parents=[common])
     p_state_next.add_argument("--work-item", default="", help="独立需求状态机 ID 或目录名（PRD/BUG/OPT/Story 均可）")
     p_state_next.add_argument("--story", default="", help="兼容参数：等价于 --work-item")
@@ -4870,6 +5612,7 @@ def main() -> int:
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
     p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")
+    p_gates_check.add_argument("--work-item", default="", help="显式选择 Work Item state")
     p_gates_check.set_defaults(func=cmd_gates_check)
 
     # gate ra-required（v3.2 — SKILL.md §🛡️ G-RA 准入门卫契约）

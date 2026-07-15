@@ -507,6 +507,85 @@
         {"path": "source/CHANGELOG/", "action": "记录 Review Batch/增量质量/模板契约变更", "auto_checkable": false}
       ],
       "checks": ["UC-02", "UC-06", "UC-14"]
+    },
+    {
+      "id": "UG-27",
+      "name": "Work Item lease 与 typed operation protocol",
+      "trigger": [
+        "tools/lib/state_store.py",
+        "tools/lib/operations.py",
+        "tools/lib/evidence.py",
+        "tools/lib/verification_plan.py",
+        "tools/lib/document_storage.py",
+        "tools/lib/gates.py",
+        "tools/lib/state.py",
+        "tools/bin/ae-sdd",
+        "tools/lib/update_graph.py",
+        "tools/tests/test_state_store*.py",
+        "tools/tests/test_operations.py",
+        "tools/tests/test_cli_operations.py",
+        "source/standards/operation-protocol.md",
+        "source/skill-fallbacks/SKILL.full.md",
+        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
+        "source/skills/orchestration/ae-sdd-update-skill.md",
+        "source/docs/ae-sdd-design.md",
+        "source/docs/ae-sdd-implementation-architecture.md",
+        "source/standards/update-graph.json"
+      ],
+      "trigger_condition": "Work Item lease/fencing/revision CAS、typed operation registry、scope resolver 或 immutable evidence lifecycle 任一实现/协议变化",
+      "affected": [
+        {"path": "tools/lib/state_store.py", "action": "lease TTL、过期接管、fencing token、revision CAS、idempotency 与 atomic persistence 保持 fail-closed", "auto_checkable": true},
+        {"path": "tools/lib/operations.py", "action": "registry schema、nextActions、真实 adapter 与稳定错误码同步", "auto_checkable": true},
+        {"path": "tools/bin/ae-sdd", "action": "ops/lease CLI、legacy state write adapter 与 JSON error envelope 同步", "auto_checkable": true},
+        {"path": "tools/lib/evidence.py", "action": "active/superseded entry、content-addressed snapshot、legacy manifest compatibility 同步", "auto_checkable": true},
+        {"path": "tools/lib/verification_plan.py", "action": "evidenceInputFingerprint 与 nextActions 绑定 changedPaths/workItem", "auto_checkable": true},
+        {"path": "tools/lib/document_storage.py", "action": "Work Item-first resolver、唯一 legacy Story fallback 与 scope ambiguity 同步", "auto_checkable": true},
+        {"path": "tools/lib/gates.py", "action": "G-09/G-13/G-10~12 使用同一 Work Item scope 与 evidence 解析", "auto_checkable": true},
+        {"path": "tools/lib/update_graph.py", "action": "UC-19 校验维护入口、协议锚点、UG-27 级联、设计版本与 registry 版本", "auto_checkable": true},
+        {"path": "tools/tests/", "action": "真实文件系统、subprocess 并发、CLI、schema、scope、evidence lifecycle 回归保持覆盖", "auto_checkable": false},
+        {"path": "tools/tests/test_update_graph.py", "action": "UC-19 正例与缺协议/缺维护入口/缺级联/版本漂移反例保持覆盖", "auto_checkable": true},
+        {"path": "source/standards/operation-protocol.md", "action": "LLM 请求 envelope、租约/CAS、错误码和证据生命周期文档必须与 registry 一致", "auto_checkable": false},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "维护者入口必须指向 operation protocol §9，并列出 UC-19/Definition of Done", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "self-update 完整语义必须包含 typed operation maintenance entry", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-design.md", "action": "能力设计版本和 LLM 操作协议维护入口保持当前状态", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "实现架构版本和 OperationRegistry/StateStore 维护边界保持当前状态", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录 typed operation 与 state lease 发布变更", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-19"]
+    },
+    {
+      "id": "UG-28",
+      "name": "Design Ledger 问题、价值与迭代记录契约",
+      "trigger": [
+        "source/docs/ae-sdd-design.md",
+        "source/docs/ae-sdd-implementation-architecture.md",
+        "source/CHANGELOG/_template.md",
+        "source/CHANGELOG/",
+        "source/standards/update-graph.json",
+        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
+        "source/skills/orchestration/ae-sdd-update-skill.md",
+        "tools/lib/update_graph.py",
+        "tools/tests/test_update_graph.py",
+        "tools/lib/operations.py",
+        "tools/lib/state_store.py",
+        "tools/lib/gates.py",
+        "tools/bin/ae-sdd",
+        "scripts/build_dist.py",
+        "scripts/slim_source_skills.py"
+      ],
+      "trigger_condition": "系统设计语义、模块边界、状态/CLI/运行时数据流或设计价值验证方式发生变化，或者维护设计文档、CHANGELOG 模板、Design Ledger、UC-20 实现",
+      "affected": [
+        {"path": "source/docs/ae-sdd-design.md", "action": "§0 Design Ledger 必须回填 D-xxx、问题、决策、价值、证据、权威入口和版本状态；§1~§21 每个系统级设计必须有映射", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "§12 维护设计台账与实现架构/验证证据的归属规则", "auto_checkable": true},
+        {"path": "source/CHANGELOG/_template.md", "action": "包含 Design ledger impact，设计变化填写 D-xxx，无设计语义填写 N/A", "auto_checkable": true},
+        {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "包含 Design Ledger Maintenance Entry、UG-28、UC-20 和 Definition of Done", "auto_checkable": true},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "slim entry 保留设计台账维护路由", "auto_checkable": true},
+        {"path": "tools/lib/update_graph.py", "action": "UC-20 校验 ID 唯一、§1~§21 覆盖、必填字段、版本和迭代记录", "auto_checkable": true},
+        {"path": "tools/tests/test_update_graph.py", "action": "UC-20 正例、缺行、缺字段、占位、重复 ID、缺维护入口和 N/A 反例", "auto_checkable": true},
+        {"path": "README.md", "action": "公开 Design Ledger、UC-20 和每次迭代记录入口", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录历史设计回填、设计影响、验证命令和待补基线", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-20"]
     }
   ]
 }

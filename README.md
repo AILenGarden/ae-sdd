@@ -2,7 +2,7 @@
 
 > **定位：** ae-sdd（Auto Engineering SKILL-Driven Development）是一个**门卫式**端到端自动化工程方法论 + 配套工具集。从 DR（Design Requirement）出发，经过 Story 生成、Review、Task 生成、Coding、测试，直到全部通过。
 >
-> **版本：** v3.10.9（🆕 2026-07-14：Story 模板接口契约按 SPI / REST 分类拆为两个独立二级章节，编号各自独立 SPI-N/REST-N；联调信息 + ①bis 自检归 REST 章节，状态流转总览独立成节。历史变更见 `source/CHANGELOG/`。）
+> **版本：** v3.11.4（2026-07-15：Hook 改为 turn-scoped activity token；普通 Story 文档检查不再注入或执行 ae-sdd 门禁，显式 `/ae-sdd` turn 结束后自动释放。历史变更见 `source/CHANGELOG/`。）
 >
 > **目标用户：** 架构师 / 项目 owner / 开发者 / AI Agent
 
@@ -129,12 +129,14 @@ bash scripts/dev-sync.sh --watch
 | `bash scripts/dev-sync.sh` | build + install 组合，开发者用；默认同步 Claude + 已存在/可用 Codex |
 | `bash scripts/install.sh` | 从 `dist/ae-sdd/` 装到本地 Agent skills（Claude/Codex，用户/测试用）|
 | `bash scripts/dev-sync.sh --uninstall` | 卸载本地安装（带备份）|
+| `ae-sdd ops describe/next/execute` / `ae-sdd lease acquire/status/renew/release/break` | LLM 类型化操作、Work Item writer lease、fencing 与 revision CAS |
+| `ae-sdd update-check --affected` / `--only UC-19` / `--only UC-20` | 查询 UG-27/UG-28 级联；分别校验 typed operation 维护契约和设计问题/价值台账 |
 | `ae-sdd baseline inspect/create/diff` | G-CODE-1 历史 debt baseline 与 Story 增量对账（创建必须显式批准）|
-| `ae-sdd verify plan --work-item <ID> --persist` / `ae-sdd evidence record/lookup/finalize` | 原子持久化变更计划，核验并封存成功证据 |
+| `ae-sdd verify plan --work-item <ID> --persist` / `ae-sdd evidence record/lookup/finalize` | 生成证据输入指纹，以 immutable snapshot 记录并封存 active 证据 |
 
 ### 修改 SKILL 自身的 SOP
 
-详细见 [`source/skills/orchestration/ae-sdd-update-skill.md`](source/skills/orchestration/ae-sdd-update-skill.md) 的 5 步流程。
+详细见 [`source/skills/orchestration/ae-sdd-update-skill.md`](source/skills/orchestration/ae-sdd-update-skill.md) 的 5 步流程；修改 typed operation、lease、scope 或 evidence 时，必须阅读 [`source/standards/operation-protocol.md`](source/standards/operation-protocol.md) §9 `Maintainer Change Contract` 并运行 `UC-19`；改变系统设计语义或发版迭代时，必须更新 [`source/docs/ae-sdd-design.md`](source/docs/ae-sdd-design.md) §0 Design Ledger、CHANGELOG 的 `Design ledger impact`，并运行 `UC-20`。
 
 ---
 
@@ -149,7 +151,9 @@ bash scripts/dev-sync.sh --watch
 - **[`source/standards/`](source/standards/)** — 21 份标准（constraints 11 + thinking 2 + testing 1 + review 1 + project-assets 2 + toolsets 4）
 - **[`source/assets/`](source/assets/)** — 2 个项目资产实例（icec-cloud-boss / icec-cloud-life）
 - **[`source/docs/ae-sdd-design.md`](source/docs/ae-sdd-design.md)** — 系统能力说明书（能力语义、边界、当前实现状态）
+- **[`source/docs/ae-sdd-design.md` §0 Design Ledger](source/docs/ae-sdd-design.md)** — 全量系统设计、要解决的问题、预期价值、验证证据和版本状态台账
 - **[`source/docs/ae-sdd-implementation-architecture.md`](source/docs/ae-sdd-implementation-architecture.md)** — 实现架构说明书（CLI / tools/lib / scripts / state/cache/runtime-stats / build/distribution / gate/scanner 边界）
+- **[`source/standards/operation-protocol.md`](source/standards/operation-protocol.md)** — LLM typed operation、lease/CAS 与维护者变更契约（§9）
 - **[`source/docs/skill-runtime-compiler.md`](source/docs/skill-runtime-compiler.md)** — compiled runtime 与 compact slices 设计
 - **[`source/docs/`](source/docs/)** — 规划/迁移文档（含 [v3.1 纪律加固建议书](source/docs/plans/2026-06-22-discipline-hardening-plan.md) 和 [runtime stats 性能方案](source/docs/plans/2026-07-02-runtime-stats-performance-plan.md)）
 - **[`source/CHANGELOG/`](source/CHANGELOG/)** — 发版历史（含 [v3.1.2 install-skill + 智能引导](source/CHANGELOG/2026-06-24-ae-sdd-install-skill.md) + [v3.1.1 阶段 H 深度强化](source/CHANGELOG/2026-06-23-requirement-analysis-阶段H深度强化.md) + [v3.1 纪律加固](source/CHANGELOG/2026-06-22-v3.1-discipline-hardening.md)）

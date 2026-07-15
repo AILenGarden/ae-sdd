@@ -37,6 +37,7 @@ nul
 .ae-sdd/runtime-stats/
 # ae-sdd local session engage markers (per-session gate switch, runtime-only)
 .ae-sdd/.session-engaged/
+.ae-sdd/.hook-activity/
 
 # =============================================
 # Python
@@ -104,4 +105,6 @@ tools/.sync-manifest.json
 # =============================================
 .ae-sdd/
 .auto-engineering/
+ae-sdd-doc/
+# ae-sdd generated docs
 ae-sdd-doc/

@@ -840,5 +840,70 @@ class TestInitNestedStateWithUuid(unittest.TestCase):
         self.assertEqual(st["stateUuid"], uuid_str)
 
 
+class TestStoryDocumentBinding(unittest.TestCase):
+    def test_nested_binding_updates_story_substate_and_is_idempotent(self):
+        st = state_mod.init_nested_state(
+            project_key="life",
+            entry_node="STORY",
+            state_machine_id="Story-006",
+            state_machine_name="Story-006",
+            story_ids=["STORY-006-BE"],
+        )
+        name = "cs-ai-story-006-门店推荐对接与列表接口-BE"
+        path = r"D:\Item\life\document\cs-ai-story-006-BE.md"
+
+        changed = state_mod.bind_story_document(
+            st, "STORY-006-BE", story_name=name, doc_path=path
+        )
+        again = state_mod.bind_story_document(
+            st, "STORY-006-BE", story_name=name, doc_path=path
+        )
+
+        self.assertTrue(changed)
+        self.assertFalse(again)
+        sub = st["storyStates"]["STORY-006-BE"]
+        self.assertEqual(sub["storyName"], name)
+        self.assertEqual(sub["docPath"], path)
+        self.assertEqual(
+            state_mod.get_story_document_binding(st, "STORY-006-BE"),
+            {"storyName": name, "docPath": path},
+        )
+
+    def test_flat_binding_uses_compatible_top_level_fields(self):
+        st = {
+            "version": "1",
+            "phase": "initialized",
+            "currentStory": "STORY-006-BE",
+            "history": [],
+        }
+
+        changed = state_mod.bind_story_document(
+            st,
+            "STORY-006-BE",
+            story_name="cs-ai-story-006-title-BE.md",
+            doc_path=r"D:\docs\cs-ai-story-006-title-BE.md",
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(st["storyName"], "cs-ai-story-006-title-BE")
+        self.assertEqual(st["storyDocPath"], r"D:\docs\cs-ai-story-006-title-BE.md")
+
+    def test_nested_binding_rejects_unknown_story(self):
+        st = state_mod.init_nested_state(
+            project_key="life",
+            entry_node="STORY",
+            state_machine_id="Story-006",
+            state_machine_name="Story-006",
+            story_ids=["STORY-006-BE"],
+        )
+        with self.assertRaises(ValueError):
+            state_mod.bind_story_document(
+                st,
+                "STORY-999-BE",
+                story_name="story-999",
+                doc_path=r"D:\docs\story-999.md",
+            )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

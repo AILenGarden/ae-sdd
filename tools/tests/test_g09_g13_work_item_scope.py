@@ -260,7 +260,9 @@ class TestG09WorkItemScope(unittest.TestCase):
         changed = "feature/src/test/java/example/CurrentTest.java"
         project = _project({changed: _clean_test()})
         state, report = _state_with_verified_scope(project, [changed])
-        report.write_text("tampered", encoding="utf-8")
+        manifest = evidence.load_manifest(project, STORY_ID)
+        snapshot = project / manifest["entries"][-1]["artifacts"][0]["snapshotPath"]
+        snapshot.write_text("tampered", encoding="utf-8")
 
         result = self._check(project, state)
 

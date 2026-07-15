@@ -1457,6 +1457,72 @@ def get_story_substate(state: dict, story_id: str) -> Optional[dict]:
     return hits[0] if hits else None
 
 
+def get_story_document_binding(state: dict, story_id: str = "") -> dict[str, str]:
+    """Return the native StoryName/document path binding for one Story."""
+    target_story = (story_id or get_active_story(state)
+                    or state.get("currentStory") or "").strip()
+    if is_nested_state(state):
+        sub = get_story_substate(state, target_story) if target_story else None
+        return {
+            "storyName": str((sub or {}).get("storyName") or ""),
+            "docPath": str((sub or {}).get("docPath") or ""),
+        }
+    return {
+        "storyName": str(state.get("storyName") or ""),
+        "docPath": str(state.get("storyDocPath") or ""),
+    }
+
+
+def bind_story_document(
+    state: dict,
+    story_id: str,
+    *,
+    story_name: str,
+    doc_path: str,
+    by: str = "ae-sdd state bind-story-doc",
+) -> bool:
+    """Persist an exact StoryName/path binding without changing Story identity."""
+    target_story = (story_id or "").strip()
+    normalized_name = (story_name or "").strip()
+    if normalized_name.lower().endswith(".md"):
+        normalized_name = normalized_name[:-3]
+    if (not target_story or not normalized_name or not (doc_path or "").strip()
+            or "/" in normalized_name or "\\" in normalized_name
+            or ".." in normalized_name):
+        raise ValueError("story_id, basename-only story_name and doc_path are required")
+
+    now = _now_ts()
+    if is_nested_state(state):
+        substates = _iter_nested_story_substates(state, target_story)
+        if not substates:
+            raise ValueError(f"Story {target_story} is not managed by this nested state")
+        changed = False
+        for sub in substates:
+            if (sub.get("storyName") != normalized_name
+                    or sub.get("docPath") != doc_path):
+                sub["storyName"] = normalized_name
+                sub["docPath"] = doc_path
+                sub["lastUpdated"] = now
+                changed = True
+    else:
+        current_story = str(state.get("currentStory") or "").strip()
+        if current_story and current_story != target_story:
+            raise ValueError(
+                f"Story {target_story} does not match flat state currentStory {current_story}"
+            )
+        changed = (state.get("storyName") != normalized_name
+                   or state.get("storyDocPath") != doc_path)
+        if changed:
+            state["storyName"] = normalized_name
+            state["storyDocPath"] = doc_path
+            state["lastUpdated"] = now
+
+    if changed:
+        record_history(state, f"story-{target_story}-document-bound", by=by)
+        state["lastUpdated"] = now
+    return changed
+
+
 def set_story_substate_phase(state: dict, story_id: str, phase: str,
                               by: str = "ae-sdd") -> bool:
     """设置嵌套 state 内指定 Story 子状态的 phase（R5 各 Story 独立流转）。

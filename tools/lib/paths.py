@@ -10,12 +10,12 @@ import os
 import re
 import sys
 import uuid
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.10.9"
+MASTER_VERSION = "3.11.4"
 
 
 # ─── 🆕 v3.10.1 state UUID 前缀（保证目录名/stateMachineId 全局唯一）─────────
@@ -202,6 +202,45 @@ _WORK_ITEM_DIR_SEP = "--"
 _WORK_ITEM_DIR_MAX_LEN = 140
 
 
+class WorkItemPathError(ValueError):
+    """Raised when a Work Item token/path escapes the isolated state root."""
+
+    code = "WORK_ITEM_PATH_INVALID"
+
+
+def validate_work_item_token(value: str) -> str:
+    """Accept only one basename component; never normalize traversal input."""
+    token = (value or "").strip()
+    drive, _tail = os.path.splitdrive(token)
+    windows_path = PureWindowsPath(token)
+    if (
+        not token
+        or token in {".", ".."}
+        or drive
+        or windows_path.drive
+        or Path(token).is_absolute()
+        or "/" in token
+        or "\\" in token
+        or "\x00" in token
+    ):
+        raise WorkItemPathError(
+            f"WORK_ITEM_PATH_INVALID: Work Item must be one basename component: {value!r}"
+        )
+    return token
+
+
+def _require_path_within(path: Path, allowed_root: Path) -> Path:
+    try:
+        resolved_root = allowed_root.resolve(strict=False)
+        resolved = path.resolve(strict=False)
+        resolved.relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise WorkItemPathError(
+            f"WORK_ITEM_PATH_INVALID: path escapes .auto-engineering: {path}"
+        ) from exc
+    return resolved
+
+
 def _normalize_work_item_component(value: str) -> str:
     """Normalize a work-item id/name component for a cross-platform directory."""
     text = (value or "").strip()
@@ -271,22 +310,31 @@ def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Option
     🆕 v3.10.1 增加后缀匹配：目录名带 UUID 前缀时（``{uuid}-PRD-IM-CS``），
     传业务名 token（``PRD-IM-CS``）也能命中。
     """
-    token = (work_item_id_or_key or "").strip()
-    if not token:
+    raw_token = (work_item_id_or_key or "").strip()
+    if not raw_token:
         return None
+    token = validate_work_item_token(raw_token)
 
     base = work_items_dir(ade_sdd)
+    try:
+        base.resolve(strict=False).relative_to(project_root(ade_sdd).resolve(strict=False))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise WorkItemPathError(
+            f"WORK_ITEM_PATH_INVALID: .auto-engineering escapes project root: {base}"
+        ) from exc
     exact = base / token / "state.json"
+    _require_path_within(exact, base)
     if exact.is_file():
-        return exact
+        return exact.resolve()
 
     try:
         normalized = work_item_dir_name(token)
     except ValueError:
         normalized = token
     normalized_exact = base / normalized / "state.json"
+    _require_path_within(normalized_exact, base)
     if normalized_exact.is_file():
-        return normalized_exact
+        return normalized_exact.resolve()
 
     if not base.is_dir():
         return None
@@ -299,20 +347,29 @@ def find_work_item_state_path(ade_sdd: Path, work_item_id_or_key: str) -> Option
     for child in sorted(base.iterdir()):
         if not child.is_dir():
             continue
+        name_matches = (
+            child.name == token or child.name == normalized
+            or child.name.startswith(prefix)
+            or (has_uuid_prefix(child.name) and child.name.endswith(suffix))
+        )
+        try:
+            resolved_child = _require_path_within(child, base)
+        except WorkItemPathError:
+            if name_matches:
+                raise
+            continue
         state_file = child / "state.json"
         if not state_file.is_file():
             continue
-        if (child.name == token or child.name == normalized
-                or child.name.startswith(prefix)
-                or (has_uuid_prefix(child.name) and child.name.endswith(suffix))):
-            matches.append(state_file)
+        if name_matches:
+            matches.append(resolved_child / "state.json")
             continue
         try:
             data = json.loads(state_file.read_text(encoding="utf-8"))
         except Exception:
             continue
         if isinstance(data, dict) and _state_matches_work_item(data, token):
-            matches.append(state_file)
+            matches.append(resolved_child / "state.json")
 
     unique = list(dict.fromkeys(matches))
     return unique[0] if len(unique) == 1 else None

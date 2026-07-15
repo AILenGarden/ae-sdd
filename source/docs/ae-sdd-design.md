@@ -1,10 +1,59 @@
 # ae-sdd 系统能力说明书
 
-> v3.7.4 · 面向开发者、LLM Agent 与项目接入方
+> v3.11.4 · 面向开发者、LLM Agent 与项目接入方
 >
 > 本文档是**系统能力设计入口**，说明 ae-sdd 的能力语义、边界和当前实现状态。代码分层、模块职责、运行时数据流和变更闭环统一维护在 [`ae-sdd-implementation-architecture.md`](ae-sdd-implementation-architecture.md)。若本文与代码实现冲突，以 CLI/测试输出为准，并同步修正文档。
 
 ---
+
+## 0. 设计问题与价值总览（Design Ledger）
+
+本表是当前系统级设计的导航和问题台账，覆盖本文件 §1~§21。它回答四个问题：为什么存在、采用什么决策、预期带来什么价值、用什么证据验证。详细设计仍在对应章节，代码职责仍以 `ae-sdd-implementation-architecture.md` 为准。
+
+### 0.1 记录规则
+
+- `预期价值` 是设计假设，不等同于已测收益；只有 `验证证据` 中有命令、测试或运行指标时，才能宣称已验证。
+- 历史设计缺少精确版本时记录 `历史版本（精确版本待补）`，不得凭记忆编造版本号。
+- 每次迭代必须在 changelog 的 `Design ledger impact` 中填写受影响的 D-xxx；没有设计语义变化时填写 `N/A: no design semantics changed`。
+- 设计语义、边界、实现归属或验证方式发生变化时，必须同步本表的“最近变更”和验证证据，并按 `ae-sdd-update` 的 UG-28/UC-20 流程校验。
+
+### 0.2 当前系统级设计台账
+
+| ID | 设计 | 要解决的问题 | 核心决策 | 预期价值 | 验证证据/指标 | 权威入口 | 引入/最近变更/状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| D-001 | 端到端 Phase 编排 | AI 容易跳过设计、审核、测试或收尾节点，产物链断裂 | Phase 1/2/3、节点门禁、人工确认和出口产物组成有序状态机 | 降低流程遗漏和返工，提升交付可追溯性 | `gates check`、state phase、Story/Task/Coding/Review 链路 | §1；`source/SKILL.md` | 历史版本（精确版本待补）/v3.11.0/已实现 |
+| D-002 | 智能路由 | 不同规模和入口的任务被错误地送入同一条流程，LLM 需要临时判断 | 来源、规模、已有产物、项目类型四维分类，映射到子链 | 减少错误入口和不必要上下文，缩短首次决策时间 | `ae-sdd classify`、`PHASE_FLOWS`、路由测试 | §2；`tools/lib/classify.py` | 历史版本（精确版本待补）/v3.11.0/已实现 |
+| D-003 | Work Item state / Nested State | 多任务、跨 session、Story 归入和恢复时状态互相覆盖或丢失；逻辑 Story ID 无法指向项目正式文件名；恶意 Work Item token 可能逃逸隔离根 | 每个 Work Item 独立 state，支持 PRD/DR/Story 嵌套、UUID、revision、恢复和 StoryName/docPath 指针绑定；token 与 resolved path 双重 containment | 避免重复执行、跨任务污染和根外 state/sidecar 写入，让 LLM 可从 state 直接恢复并稳定定位正式 Story 正文 | state store、nested state、Story binding/state transition、path escape tests | §3；`tools/lib/state.py`、`paths.py`、`state_store.py` | v3.3~v3.10.1/v3.11.3/已实现 |
+| D-004 | 多 Agent 编排 | 并行任务缺少角色边界、报告格式和故障升级规则 | 角色库、结构化派活卡、reviewer tier、activeAgents/agentReports | 降低重复劳动和自审偏差，提升并行可见性 | agent state 字段、G-09 session 独立性、编排 SKILL | §4；`agent-orchestration-skill.md` | v3.2.6/v3.11.0/部分软约束 |
+| D-005 | G-XX 门禁体系 | 仅靠 LLM 自律无法稳定阻止越级、假测试和文档漂移；同一 Story 在不同门禁可能被不同路径规则解析 | 软约束、硬门禁、扫描器三层防线，统一 GATE_REGISTRY；Plan 门禁按完整/微任务 profile 校验；G-02/G-14 共用 Story resolver | 把高风险错误提前阻断，减少错误进入后续阶段的返工，同时避免微任务和正式 StoryName 被错误规则误拦 | `gates check`、GATE_REGISTRY、完整/微任务 CodingPlan tests、G-02/G-14 StoryName tests、G-09/UC checks | §5；`tools/lib/gates.py` | v3.2~v3.9.1/v3.11.3/已实现 |
+| D-006 | Review Batch 与增量验证 | 每次变更都全量重跑，成本高；历史证据容易被覆盖 | review batch、baseline、changedPaths、verification plan、evidence fingerprint | 缩短验证时间，减少无效重跑，同时保持证据可追溯 | `verification.plan`、evidence active/superseded、focused tests | §5 Review Batch；`verification_plan.py`、`evidence.py` | v3.10.1/v3.11.0/已实现 |
+| D-007 | Typed operation + state lease | LLM 不知道调用什么、参数怎么写、哪些操作需要锁；并发写会覆盖 state，失败重试会重复推进 | `ops describe/next/execute`、JSON Schema、lease/fencing/revision/idempotency、`nextActions`、短事务锁 | 减少 LLM 理解成本、上下文读取、命令猜测、冲突和失败重试；把自然语言契约变成机器契约 | `ops describe --json`、UC-19、StateStore/operation/concurrency tests、CLI latency baseline（待持续补充） | §5 Review Batch 表、`operation-protocol.md`、`operations.py` | v3.11.0/v3.11.0/已实现 |
+| D-008 | 项目资产七层索引 | LLM 每次从工程源码重新寻找约束、技术栈、模块和接口，容易遗漏上下文 | project assets 分层、生成/审计、倒排/BM25 查询、G-00 | 缩短上下文检索，提升首次回答和路由准确度 | `assets generate/check/query/stats`、G-00、asset index tests | §6；`project_assets.py`、`assets_index.py` | v3.2.4~v3.5.1/v3.11.0/已实现 |
+| D-009 | Document Storage | Story/Work Item/constraints/assets 路径分散，正式 StoryName 与逻辑 ID 不同或 ID 重复时，LLM 和工具容易读错、猜错或要求改名 | intent-based resolve、Work Item-first、非 glob StoryName 精确绑定与元数据反校验、Story-category-only ID fallback、save/finalize | 减少路径猜测、跨类别假命中和文档错写，让项目正式命名可直接使用，同时保留受限旧 ID-only 兼容 | `doc resolve/save/finalize`、`state bind-story-doc`、G-DOC-STORAGE、Story resolver tests、life Story-004/006 验收 | §7；`document_storage.py`、`document-storage-skill.md` | v3.7.2/v3.11.3/已实现 |
+| D-010 | 四层实例化与分发 | source、dist、用户安装、项目实例互相漂移，修复无法传递 | Layer 1 source -> Layer 2 dist -> Layer 3 install -> Layer 4 init/override | 降低升级和环境差异造成的故障，保证 LLM 使用同一版本契约 | `build_dist.py`、install/init、UC-15/runtime verify | §8；`build_dist.py`、`install.py`、`init.py` | v3.4.1/v3.11.0/已实现 |
+| D-011 | Harness 适配层 | 不同 Agent 运行时需要不同入口，手工转译易造成版本和模板漂移 | adapter lock、source hash、tree hash、生成/回滚/备份轮转 | 减少接入和升级的人工操作，避免安装产物陈旧 | `build_harness.py`、adapter lock tests、iteration-check | §9；`.harness/`、`build_harness.py` | v3.5.6/v3.11.0/已实现 |
+| D-012 | Memory 生命周期 | 长会话上下文过大，compact 后关键业务事实丢失或 scope 混用 | 实体树、boot/context/pending compact、manifest hash、生命周期 CLI | 缩短默认上下文，提升跨 session 恢复和业务事实复用 | `memory create/read/update/search/summarize`、memory tests | §10；`memory_store.py`、`memory_compiler.py` | v3.8.2~v3.10.3/v3.11.0/已实现 |
+| D-013 | Plan-First 编排 | LLM 直接编码会漏需求、测试、约束和回滚路径；统一大型 Plan 模板又会误拦微重构 | 编码前始终有 CodingPlan 和用户确认；完整计划走 14 门禁，微任务走范围/实现顺序/风险回滚/验证四维轻量门禁 | 把实现前的未知风险显式化，减少中途返工，并让门禁成本与任务规模匹配 | G-07/G-08、G-CODEPLAN-SRC、G-14、Work Item scope 与 micro/full profile tests | §11；`coding-process-skill.md`、`gates.py` | v3.7.3/v3.11.2/已实现 |
+| D-014 | 真实性扫描与对齐审计 | 文档可以宣称有门禁/测试/命令，但代码实际没有或已失效 | test/coding/RA scanners + UC-08~13 alignment audit + iteration-check；Coding scanner 覆盖 Java/Kotlin/XML/YAML/properties 与 Python/JavaScript/TypeScript 文本生产代码 | 减少“文档看似完整但执行无效”的假闭环，避免 Python/JS/TS work item 被误判为无生产 scope | UC-08~13、G-09、G-CODE-1、RA scans、文本代码 scope regression | §12；`alignment_audit.py`、`scripts/*_scan.py` | v3.5.11~v3.6/v3.11.0/v3.11.3/已实现 |
+| D-015 | 统一 CLI 工具链 | 工具分散且输出不统一，LLM 需要记忆多个脚本和输出格式；存量 state 缺少正式 StoryName 的可审计迁移入口 | `ae-sdd` 统一入口、UTF-8 JSON/stdout/stderr、稳定 exit code；提供 `state new --story-name` 与幂等 `state bind-story-doc` | 减少命令搜索、编码差异、解析和迁移成本，便于 LLM/脚本组合调用 | `ae-sdd --help`、Story binding CLI tests、GBK parent environment 下 UTF-8 gate output regression、update-check | §13；`tools/bin/ae-sdd` | 历史版本（精确版本待补）/v3.11.3/已实现 |
+| D-016 | State events 操作日志 | 只有当前 state 时无法解释谁在何时推进、恢复或覆盖 | append-only events、seq、txn/node 过滤、兼容旧 state | 提升审计和故障定位效率，减少 LLM 盲目重试 | events read/filter tests、state JSON | §14；`tools/lib/state.py` | v3.4.2/v3.11.0/已实现 |
+| D-017 | 三层 Hook 拦截 | 仅在命令执行后发现越级已经太晚，LLM 可能先写错产物或源码 | UserPromptSubmit、PreToolUse、Stop/监控协同；turn-scoped activity token 只在显式 ae-sdd turn 激活 | 将错误拦截前移，减少非法写入和后续修复，同时避免普通 Story 文档检查误触发门禁 | hook tests、gate_intercept、stop_check、harness | §15；`.harness/`、`gate_intercept.py` | v3.4/v3.11.0/v3.11.4/已实现 |
+| D-018 | 主流程监管器 | state、gate、memory、产物和 hook 各自工作，缺少统一运行态视图 | monitor/orchestrator 聚合 phase、activity、work item 和事件 | 降低 LLM/维护者判断当前流程位置的成本 | monitor state projection、runtime stats、监控测试 | §16；`ae-sdd-monitor` 相关设计 | v3.6/v3.11.0/已实现 |
+| D-019 | 流程偏移检测与矫正 | AI 或人工可能跳步、回退或修改错误 Work Item，状态表面仍可继续 | 偏移规则、矫正计数、paused/人工升级、scope 复核 | 尽早发现流程漂移，避免错误积累到交付阶段 | iteration-check、state correction、flow violation scan | §17；`iteration_check.py`、`state.py` | v3.6/v3.11.0/部分 report-only |
+| D-020 | SKILL 编译与 Runtime IR | 完整 SKILL 过长，默认加载浪费上下文；source/dist/runtime 容易不一致 | source slimming、fallback、compact boot/core/outline、manifest fingerprint | 缩短 LLM 默认上下文，保持按需加载和可验证分发 | `slim_source_skills.py`、`build_dist.py`、UC-15、runtime verify | §18；`compile_skill_runtime.py` | v3.8/v3.11.0/已实现 |
+| D-021 | 自动化模式 | 逐个等待人工确认耗时，但直接自动推进又会失去独立审查 | 默认关闭、Tier 3 多 reviewer、reviewConsensus、G-AUTO-CONSENSUS | 在明确开关下减少等待，同时保留高风险审查 | automation CLI、G-AUTO-CONSENSUS、UC-16 | §19；`config.py`、`state.py`、`gates.py` | v3.8.0/v3.11.0/已实现 |
+| D-022 | ae-sdd Monitor | 多工作区、active task、memory、runtime stats 分散在文件中，定位异常慢 | 只读 workspace 扫描、项目/任务双层视图、响应式刷新 | 降低人工监控和 LLM 状态查询成本，不改变权威 state | `apps/ae-sdd-monitor` tests、UG-22、只读边界 | §20；`source/docs/ae-sdd-monitor-design.md` | v3.7.0/v3.11.0/已实现 |
+| D-023 | Sonar Issue 修复收尾 | CodeReview 发现的问题容易重复处理、越界修改或缺少 exactly-once 证据 | issue registry、TextEdit/provenance、compile/test/rescan 闭环 | 减少重复修复和错误补丁，提升 review 收尾效率 | `test_sonar_issue_fix_skill.py`、规则 registry、CodeReview evidence | §21；`sonar-issue-fix-skill.md`、`sonar-issue-fix-rules.md` | v3.11.0/v3.11.0/已实现 |
+| D-024 | Design Ledger 治理 | 设计动机、价值假设和迭代影响容易再次分散或漏记，台账本身也可能失去维护 | §0 台账 + CHANGELOG `Design ledger impact` + UG-28/UC-20 fail-closed | 降低后续 LLM 重新理解和维护者追溯成本，让设计价值记录成为可检查资产 | `UC-20`、`update-check 20/20`、台账字段/章节/版本反例测试 | §0；`update_graph.py`、`ae-sdd-update`、CHANGELOG 模板 | v3.11.1/v3.11.1/已实现 |
+
+### 0.3 台账的证据等级
+
+| 等级 | 含义 |
+| --- | --- |
+| 已测 | 有可重复命令、测试统计或运行指标直接支持 |
+| 已实现 | 代码、CLI 和结构检查已存在，但收益指标仍需长期采集 |
+| 待补基线 | 设计问题和机制已确认，尚未有修改前/后的量化对照 |
+| 部分软约束 | 主要依赖 SKILL/LLM 自律，缺少完整物理拦截 |
 
 ## 1. 端到端流程编排（Phase 1/2/3）
 
@@ -83,6 +132,8 @@
 
 **R6 顶层主体命名（🆕 v3.10.1 UUID 前缀）**：只以最顶层主体特征命名——`PRD-{特征}` / `DR-{特征}` / `Story-{特征}`（多 Story 合并如 `Story-003-004-005`）。由 `paths.build_state_machine_name()` 生成纯业务名；创建时 `paths.generate_state_uuid()` 生成随机 UUID 并拼为 `{uuid}-{业务名}` 作为目录名和 `stateMachineId`，`stateMachineName` 保留纯业务名。`paths.strip_uuid_prefix()` 用于从带前缀的标识中还原业务名。向后兼容：旧 state 目录无 UUID 前缀仍可读。
 
+**Story 文档绑定（v3.11.3）**：`STORY-006-BE` 等 Story ID 始终是逻辑身份，不承担文件命名职责。正式文件名通过嵌套 `storyStates[storyId].storyName/docPath` 或扁平兼容字段 `storyName/storyDocPath` 绑定；`ae-sdd state new --story-name` 用于创建时绑定，`ae-sdd state bind-story-doc` 用于存量迁移。绑定只保存正文指针，不复制正文、不创建 ID-only alias。吸收到既有父 state 时 Story add + binding 是一次 lease/revision CAS；新 state 以内存完整对象经 StateStore exclusive-create 落盘；重复 bind 同一文件不增加 revision。
+
 **R7 路由自动匹配/新建**：`/ae-sdd` 路由时 `classify.match_state()` 自动分析需求特征（提取 PRD/DR/Story ID + 判定 Bug/改 Story）→ 扫描现有嵌套 state → 命中则 relocate/absorb，未命中则 create_nested。匹配优先级：R4 微任务 → R5 Story 命中 → R2 DR 归入 PRD → R2 Story 归入 DR → R7 新建。
 
 **v1 扁平 state 完全兼容**：旧 workitem（`stateModel` 缺省或 `"flat"`）保留可读，所有读取点通过 `state.is_nested_state()` 分流。旧 workitem 不迁移、不动。
@@ -103,6 +154,7 @@
 | 终态投影不变量 | `state.py:set_phase()` / `set_story_substate_phase()` 写 phase 时同步 `currentPhase/currentStep/completedSteps/pendingOutputs/codingRound`；`write_state()` 拒绝 `phase=completed` 但投影仍处于中间态的 state |
 | PRD 4 层 AND 校验 | `state.py:check_prd_4_layers()` |
 | CLI 入口 | `ae-sdd state new / read / write / next-step / confirm / prd-init / prd-check-complete / prd-complete / prd-archive`（`tools/bin/ae-sdd` state 子命令组） |
+| Story 正文绑定 | `state.py:bind_story_document()` / `get_story_document_binding()`；CLI `state new --story-name` / `state bind-story-doc`；嵌套 state 写 `storyStates[storyId].storyName/docPath`，扁平 state 写 `storyName/storyDocPath` |
 | 🆕 v3.9.0 嵌套 state schema | `state.py:init_nested_state()` / `reset_story_substate()` / `set_story_substate_phase()` / `get_active_phase()` / `get_active_story()` / `ENTRY_NODE_CONTAINERS` |
 | 🆕 v3.9.0 嵌套 state 命名 | `paths.build_state_machine_name(top_node, features)`（R6 顶层命名） |
 | 🆕 v3.9.0 向上归入查找 | `paths.find_nested_state_by_story_id/dr_id/prd_id`（R2 归入） |
@@ -149,6 +201,10 @@
 
 G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在需求分析阶段把关；G-CODE-1 在 Coding 完成/CodeReview 前扫描反模式；中段门禁（G-14/G-CODEPLAN-SRC/G-DOC-STORAGE）补"两头强中间空"；入口关卡三道闸（entry token / 产物落地凭证 / 代码改动准入）管住流程入口。
 
+CodingPlan 门禁按 state `scale` 选择 profile。大/中/小任务保持 7 章节、14 关键词、Story/AC 对齐和源码核对；微任务从 Work Item 分桶读取 Plan，只要求变更范围、实现顺序、风险/回滚、验证四维完整且无未闭环项。Standalone 微任务没有 Story 时，G-14 返回带 `alignmentMode=standalone-micro` 的可审计 N/A；一旦存在父 Story，仍执行严格 Story/AC 对齐。
+
+G-02 与 G-14 通过 `document_storage.resolve_story_document()` 共享 Story 正文解析。已绑定 `docPath` 优先，随后是精确非 glob StoryName，只有没有 StoryName 时才兼容 Story 类别的 `{STORY-ID}.md`；Task/Coding/Test/CR 同名文件不参与。正式文件必须由正文 `Story ID` 元数据反校验。多候选、元数据缺失/漂移和非法 basename 全部 fail closed，不做模糊猜测。
+
 🆕 v3.9.1 上下文加载准入门禁（G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX）补齐 DR/Story/TestCase/Task 四组的"第零步准入检查"——此前这四组只有 prose 清单（dr-review/task-generate 还官方自认 report-only），AI 可不读 PRD/DR/项目资产/约束就过门禁切相。采用**注册表模式**：一个 `_check_context_loaded` 函数 + `CONTEXT_GATE_REGISTRY` 注册表服务 4 个门禁，流程一致用单函数封装，上下文差异（DR 查 RA+PRD，Story 查 DR+PRD，TestCase 查 Story，Task 查 Story+TestCase）走注册表 `required` 字段；读文件统一走 `document-storage-skill` 的 `get_constraints/get_assets` API。微链 G-TASK-CTX 用 `required_micro` 豁免 Story/TestCase。
 
 ### 实现
@@ -166,7 +222,9 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 | G-CODE-1 Coding 真实性 | `gates.py` 行697起，调 `scripts/coding_authenticity_scan.py`（AP-1~AP-6反模式） |
 | G-09 测试真实性 | `gates.py` 调 `scripts/test_authenticity_scan.py`（8类禁止手段）；可信 work-item scope 优先取 `VerificationPlan.changedPaths`，兼容 state changed paths，无 scope 时全仓严格扫描 |
 | G-13 全链路对称性 | `entryNode=STORY` 且 `scale=中` 时仅豁免 DR 依赖并显式返回 exemption；其他入口仍要求 DR，Story/Task/CodingReport/CodeReview 下游链按阶段保持严格 |
-| G-CODEPLAN-SRC / G-DOC-STORAGE / G-DOC-CONSISTENCY / G-PATH | `gates.py` 对应 check 函数；G-PATH 仅豁免 canonical document-storage source entry 及其 source/runtime full fallback，其他同名或 `SKILL.full.md` 文件仍受扫描 |
+| G-07 / G-08 / G-14 / G-CODEPLAN-SRC | `gates.py:_resolve_codingplan_doc` 统一按 Work Item-first、唯一 Story fallback 定位；完整 Plan 保持 14 门禁，微任务使用四维轻量 profile；无类骨架时 G-CODEPLAN-SRC 按既有规则跳过 |
+| G-02 / G-14 Story 正文 | `gates.py:_resolve_story_doc` 统一调用 `document_storage.resolve_story_document()`；绑定路径/StoryName 校验失败时返回稳定错误码和 `state bind-story-doc` 恢复动作 |
+| G-DOC-STORAGE / G-DOC-CONSISTENCY / G-PATH | `gates.py` 对应 check 函数；G-PATH 仅豁免 canonical document-storage source entry 及其 source/runtime full fallback，其他同名或 `SKILL.full.md` 文件仍受扫描 |
 | 🆕 v3.9.1 G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX | `gates.py` 注册表 `CONTEXT_GATE_REGISTRY` + 统一 `_check_context_loaded` 实现 + 4 个薄封装；`gate_intercept.py:PHASE_ENTRY_GATES` 大/中/小/微链各 phase 入口挂载；复用 `get_constraints/get_assets` + `_iter_ra_files/_find_prd_files/paths.find_doc` |
 | G-REVIEW-LOOP | `gates.py` + `tools/lib/review_loop.py`，`ae-sdd review-loop` 子命令 |
 | 入口关卡1（entry token） | `ae-sdd enter <projectKey> [--story <ID>]`（`tools/bin/ae-sdd`），UserPromptSubmit hook 检测 `/ae-sdd` 触发词强提醒 |
@@ -182,17 +240,18 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 Review 的质量对象是带 `inputFingerprint` / `rulesetFingerprint` 的 `reviewSession`，不是模糊的 round 计数器。每次尝试落入 `VALID_CLEAN`、`VALID_FINDINGS`、`INVALID_INFRA`、`INVALID_PROTOCOL`、`INVALID_INPUT_DRIFT` 或 `CANCELLED`；平台失败不增加 clean streak，输入漂移必须新建 session。Tier 1/2 首批 clean 默认一次，Tier 3 在 P0/P1 修复后需要两个连续 clean batch；attempt、valid batch、remediation 和 wall-clock 任一预算耗尽进入 `STALLED`，不得当作通过。
 
-G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存在时，仅检查当前 work-item 的生产代码；evidence 必须绑定 Story、scope、command、toolchain 与 report，artifact 只能是项目内相对路径。scanner 必须用安全、唯一的 `scannedPaths` 证明完整覆盖 production scope，并保证 root、exit/status、finding severity/path、顶层计数与 `reportStats` 自洽；任一缺失、越界、未知 schema 或计数漂移均 fail closed。scope 内 blocker（含触及历史债）阻断，scope 外历史债不阻断；scope 缺失或为空时保持全仓严格扫描，测试/文档-only scope 阻断。scoped 路径不读取或创建 baseline；全仓模式的显式 baseline 仍必须经用户批准并校验完整性。
+G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存在时，仅检查当前 work-item 的生产代码；evidence 必须绑定 Story、scope、command、toolchain 与 report，artifact 只能是项目内相对路径。production scope 与 scanner 共同识别 Java/Kotlin/XML/YAML/properties 及 `.py/.js/.ts` 文本代码，并共同排除生成目录、`.venv/venv/.tox/site-packages`、`__tests__` 及 Python/JS/TS 常规测试命名。scanner 必须用安全、唯一的 `scannedPaths` 证明完整覆盖 production scope，并保证 root、exit/status、finding severity/path、顶层计数与 `reportStats` 自洽；任一缺失、越界、未知 schema 或计数漂移均 fail closed。self-hosting 例外只限 scanner 自身 AST `LINE_RULES` 与三个 metadata 常量赋值行；真实 pom metadata 由 XML 解析验证，普通业务文件使用同 URI 仍是 blocker。scope 内 blocker（含触及历史债）阻断，scope 外历史债不阻断；scope 缺失或为空时保持全仓严格扫描，测试/文档-only scope 阻断。scoped 路径不读取或创建 baseline；全仓模式的显式 baseline 仍必须经用户批准并校验完整性。
 
-验证动作先生成 `VerificationPlan`，再按生产代码、测试代码、配置、文档分类决定最小验证集。G-09 只接受 plan 指纹匹配、路径未越界且真实存在的 work-item scope；scope 内 blocker（含触及的历史债）阻断，scope 外历史债不阻断，无可信 scope 则全仓扫描。成功证据写入 `.auto-engineering/<story>/evidence/manifest.json`，复用必须同时满足 manifest 内容 hash、Story、input/command/toolchain fingerprint、退出码、freshness window 与 artifact hash；evidence 不能定义 scope 或充当 waiver。implementation/documentation/review 三类 fingerprint 分离，文档或审查措辞变化不得使 Maven 证据失效。文档使用单一 canonical 正文，旧路径只通过 `.ae-sdd/doc-aliases.json` 指向 canonical，不允许第二份完整正文；多个候选正文必须显式报歧义，不按 mtime 猜测。
+验证动作先生成 `VerificationPlan`，再按生产代码、测试代码、配置、文档分类决定最小验证集。计划分别暴露 `planFingerprint` 与 `evidenceInputFingerprint`，Evidence 命令只能使用后者。G-09 只接受 plan 指纹匹配、路径未越界且真实存在的 work-item scope；scope 内 blocker（含触及的历史债）阻断，scope 外历史债不阻断，无可信 scope 则全仓扫描。成功证据写入 `.auto-engineering/<story>/evidence/manifest.json`；record 先复制内容寻址 immutable snapshot，同 logical key 的旧 active entry 标为 superseded，finalize/gate 只校验 active snapshot。复用必须同时满足 manifest 内容 hash、Story、input/command/toolchain fingerprint、退出码、freshness window 与 snapshot hash；evidence 不能定义 scope 或充当 waiver。implementation/documentation/review 三类 fingerprint 分离，文档或审查措辞变化不得使 Maven 证据失效。文档使用单一 canonical 正文，Work Item scope 优先于 Story 关系；旧 Story 路径只允许唯一候选 fallback，多个候选必须显式报 `SCOPE_AMBIGUOUS`，不按 mtime 猜测。
 
 | 设计点 | 实现 |
 | --- | --- |
 | Review Batch 状态机 | `tools/lib/review_batch.py` + `tools/lib/review_loop.py`；旧 `reviewLoop` 字段仅作兼容投影 |
 | 增量 baseline | `tools/lib/baseline.py` + `ae-sdd baseline inspect/create/diff` + G-CODE-1 delta 分支 |
-| 变更感知验证 | `tools/lib/verification_plan.py` + `ae-sdd verify plan --work-item <ID> --persist`；inputFingerprint 绑定 Story/work-item/changedPaths |
-| 证据复用 | `tools/lib/evidence.py` + `ae-sdd evidence record/lookup` |
-| canonical 文档 | `tools/lib/document_storage.py` alias registry/resolver/duplicate-body check |
+| 变更感知验证 | `tools/lib/verification_plan.py` + typed `verification.plan`；`evidenceInputFingerprint` 绑定 Story/work-item/changedPaths |
+| 证据复用 | `tools/lib/evidence.py` + typed `evidence.record/finalize`；active/superseded + immutable snapshot |
+| canonical 文档 | `tools/lib/document_storage.py` Work Item-first resolver + unique legacy Story fallback |
+| LLM 操作协议 | `tools/lib/operations.py` registry + `source/standards/operation-protocol.md`；维护者变更入口由 `ae-sdd-update` 指向协议 §9，并由 UG-27/UC-19 约束 |
 
 ---
 
@@ -222,16 +281,17 @@ G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存
 
 ### 设计
 
-统一文档落地/读取/归档的横切能力，五维定位模型 + WorkItem 隔离键（projectKey × workItemId × intent × storyId? × 版本号 × ChangeLog）取代散点式手写路径拼接。所有 SKILL 读写 ae-sdd 生成的文档（DR/Story/TestCase/Task/CodingPlan 等）必须通过本层 API，禁止裸拼路径或裸调 `ae-sdd assets read`。
+统一文档落地/读取/归档的横切能力，五维定位模型 + WorkItem 隔离键（projectKey × workItemId × intent × storyId? × 版本号 × ChangeLog）取代散点式手写路径拼接。所有 SKILL 读写 ae-sdd 生成的文档（DR/Story/TestCase/Task/CodingPlan 等）必须通过本层 API，禁止裸拼路径或裸调 `ae-sdd assets read`。Story 的逻辑 ID 与正式文件 basename 分离：项目可保留 `cs-ai-story-006-门店推荐对接与列表接口-BE.md` 等原生命名，由 state 显式绑定。
 
-核心原则：intent 驱动定位（同一 API 按 intent 参数分流到不同文档类型的路径规则），Task/Coding/Test/CR 以 workItemId 作为分桶键，版本号与 ChangeLog 策略集中管理，避免每个 SKILL 各自实现一套路径逻辑导致漂移。
+核心原则：intent 驱动定位（同一 API 按 intent 参数分流到不同文档类型的路径规则），Task/Coding/Test/CR 以 workItemId 作为分桶键，版本号与 ChangeLog 策略集中管理，避免每个 SKILL 各自实现一套路径逻辑导致漂移。StoryName 解析只接受 bound path、精确 basename、无 StoryName 时的 ID-only 兼容路径三层优先级；禁止 fuzzy ID 扫描。
 
 ### 实现
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 动态定位 API 契约 | `source/skills/cross-cutting/document-storage-skill.md` §4（14个API 契约，§4.10 intent 枚举表 34个intent） |
+| 动态定位 API 契约 | `source/skills/cross-cutting/document-storage-skill.md` §4（§4.10 intent 枚举表 34个intent） |
 | 路径解析 | `tools/lib/document_storage.py:resolve_path()`（行149） |
+| 原生 StoryName 解析 | `document_storage.py:resolve_story_document()`；返回 path/source/candidates/rejected，正式文件校验 `Story ID` 元数据 |
 | 文档保存（带版本号+ChangeLog） | `document_storage.py:save_doc()`（行366） |
 | 文档定稿 | `document_storage.py:finalize_doc()`（行444） |
 | 项目约束读取 | `document_storage.py:get_constraints()`（行119） |
@@ -326,11 +386,11 @@ common 层只存项目级可复用约束（BigDecimal/幂等/禁大事务/架构
 
 ---
 
-## 11. Plan-First 编排（CodingPlan 16 章节 + 14 门禁）
+## 11. Plan-First 编排（完整 14 门禁 + 微任务四维门禁）
 
 ### 设计
 
-编码前必须先生成并经用户确认 CodingPlan，将架构决策、实现顺序、类骨架、验证点全部锁定。CodingPlan 是 Coding 阶段的唯一依据，AI 不得自行调整 Plan 内容；14 条门禁全部通过才允许进入 Coding。
+编码前必须先生成并经用户确认 CodingPlan，将变更范围、实现顺序、风险/回滚和验证点锁定。CodingPlan 是 Coding 阶段的唯一依据，AI 不得自行调整 Plan 内容。完整任务必须通过 14 条门禁；微任务不得伪造大型 Story 章节，改走四维轻量门禁，但 Plan-first 和用户确认仍不可跳过。
 
 CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策略/事务边界/缓存策略/错误码/异常处理/状态机实现/外部依赖/数据模型/可观测性/复用能力。实现方案决策基线（最高优先级 4 步强制）：① 现有能力复用扫描 → ② 业内成熟方案参考 → ③ 五维代码质量评估 → ④ 核心能力归属唯一。
 
@@ -339,9 +399,11 @@ CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策�
 | 设计点 | 实现方式 |
 | --- | --- |
 | CodingPlan 生成时机 | Phase 2 ④bis，由 task-writer 汇总，见 `source/skills/phase2-coding/coding-process-skill.md` |
-| 14 条门禁关键词校验 | `tools/lib/gates.py:CODINGPLAN_14GATES_KEYWORDS`（行459-474） |
-| 关键词缺失检测 | `gates.py` 行492：`missing_kw = [k for k in CODINGPLAN_14GATES_KEYWORDS if k not in content]` |
-| G-08 门禁 | `gates.py`，CodingPlan 文档存在且 14 门禁全过才放行 coding-process phase |
+| CodingPlan 定位 | `tools/lib/gates.py:_resolve_codingplan_doc` 复用 document-storage Work Item-first、唯一 Story fallback 语义 |
+| 完整任务 14 门禁 | `tools/lib/gates.py:CODINGPLAN_14GATES_KEYWORDS`；大/中/小任务保持原严格检查 |
+| 微任务四维门禁 | `tools/lib/gates.py:MICRO_CODINGPLAN_DIMENSIONS`；标题支持中英文 alias，检查范围/实现顺序/风险回滚/验证和未闭环标记 |
+| G-14 | 有 Story 时严格核对 Story/AC/Proposal；standalone 微任务无 Story 时返回可审计 N/A |
+| G-CODEPLAN-SRC | 有类骨架时校验源码标记和真实路径；微任务无类骨架时显式跳过 |
 | 5 上下文加载（🆕 v3.7.3） | `coding-process-skill.md`：项目约束/技术约束/Story/Task/TestCase，统一走 `document-storage-skill` API 读取（见 §7） |
 | 人工审核点 2.5 | AI 主动 walkthrough（SKILL 文字流程，非 CLI），逐条等用户确认 |
 
@@ -460,6 +522,8 @@ lib 层 schema 已就绪且测试通过；一旦业务调用方接入，events �
 
 三个 Claude Code hook 实现物理级流程纪律，覆盖工具调用拦截、上下文注入、响应后校验三个时机，不依赖 LLM 自律。
 
+Hook 默认处于 inactive。只有当前用户 turn 显式进入 `/ae-sdd`，或执行明确的 ae-sdd 写流程入口时，才创建 session 级 turn token；普通提示（包括 Story 文档对齐）不会解析或注入 Work Item。Stop 成功、fail-open 或下一条普通提示都会清理 token，Stop 阻断重试时暂时保留 token。token 不等同于 Work Item writer lease，也不读取项目级 state 作为激活信号。
+
 - **PreToolUse**：AI 每次调用工具前触发，按 phase 限定允许工具集
 - **UserPromptSubmit**：用户每次提交消息前触发，注入状态上下文 + 主流程监管器逻辑（见 §16）
 - **Stop**：AI 每次回复结束后触发，防无限循环 + 检测结构性错误
@@ -470,9 +534,9 @@ lib 层 schema 已就绪且测试通过；一旦业务调用方接入，events �
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| PreToolUse hook | `tools/lib/gate_intercept.py`：`PHASE_PERMIT` 字典按 phase 限定工具集；只读工具任何 phase 放行；`paused` phase 禁全部写操作；链式 Bash（含 `&&`/`\|\|`/`;`/`\|`）不认为只读；输出 `permissionDecision: "deny"` + `systemMessage`，exit 始终 0 |
-| UserPromptSubmit hook | `tools/lib/prompt_inject.py`：读 state 注入阶段上下文 + `/ae-sdd` 触发词强提醒（关卡1）+ 快速通道标记 + 重置 Stop hook 重试计数 + 母版版本漂移探测（行198起）+ 主流程监管器调用（`_run_flow_monitor()`，行242，见§16）+ active scope 下 compact memory 注入 |
-| Stop hook | `tools/lib/stop_check.py`：`.stop_retry_count` 持久化计数 MAX_RETRY=2；已废弃 `◆ STATE:`/`◆ LOADED:` 自报标记检测（行5/152注释自述"已由 flow_monitor 产物核查替代"）；补 `_check_compact_failure()` 检测卡住态 |
+| PreToolUse hook | `tools/lib/gate_intercept.py`：先检查当前 session turn token；inactive 时直接放行；active 后由 `PHASE_PERMIT` 按 phase 限定工具集；只读工具任何 phase 放行；`paused` phase 禁全部写操作；链式 Bash（含 `&&`/`\|\|`/`;`/`\|`）不认为只读；输出 `permissionDecision: "deny"` + `systemMessage`，exit 始终 0 |
+| UserPromptSubmit hook | `tools/lib/prompt_inject.py`：只有 `/ae-sdd` 触发词才创建 turn token、读取 state 并注入阶段上下文；普通 prompt 清理残留 token 后返回 `{}`；active turn 再执行快速通道、重置 Stop 重试计数、母版版本漂移探测、主流程监管器和 compact memory 注入 |
+| Stop hook | `tools/bin/ae-sdd` 先检查 turn token；inactive 直接放行；active 时调用 `tools/lib/stop_check.py`，成功或 fail-open 后释放 token，阻断重试保留 token；`.stop_retry_count` 仍为 MAX_RETRY=2，继续检测 PRD compact 卡住态 |
 | Hook 安装 | `ae-sdd init-hooks` 写三段配置到 `.claude/settings.json` |
 | 快速通道 | 用户说 `/ae-sdd-quick` → `.quick_channel` 写入 → PreToolUse 跳过 phase 工具拦截（产物落地关卡仍生效） |
 

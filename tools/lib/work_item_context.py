@@ -50,6 +50,17 @@ class NoWorkItemStateError(RuntimeError):
         )
 
 
+class ExplicitWorkItemNotFoundError(RuntimeError):
+    """Raised when an explicit Work Item selector cannot be resolved."""
+
+    def __init__(self, work_item: str):
+        self.work_item = work_item
+        super().__init__(
+            f"Explicit ae-sdd work-item state not found: {work_item}. "
+            f"Check the Work Item ID or run `ae-sdd state read --work-item {work_item}`."
+        )
+
+
 _SESSION_FIELD_CANDIDATES = (
     "session_id",
     "sessionId",
@@ -89,6 +100,42 @@ def list_work_item_states(ade_sdd: Path) -> list[WorkItemState]:
             data = {}
         items.append(WorkItemState(key=child.name, path=sp, data=data if isinstance(data, dict) else {}))
     return items
+
+
+def resolve_explicit_state(
+    ade_sdd: Path,
+    work_item: str,
+    *,
+    session_key: str = "",
+    bind_session: bool = False,
+) -> ResolvedWorkItemState:
+    """Resolve an explicitly selected Work Item without consulting defaults.
+
+    Explicit selectors are the recovery path for projects with multiple active
+    states. They must therefore bypass implicit ambiguity detection while still
+    using the same path resolver and optional session binding as prompt-based
+    selection.
+    """
+    token = str(work_item or "").strip()
+    if not token:
+        raise ExplicitWorkItemNotFoundError(token or "<empty>")
+
+    state_path = paths.find_work_item_state_path(ade_sdd, token)
+    if state_path is None:
+        raise ExplicitWorkItemNotFoundError(token)
+
+    data = state_mod.read_state(state_path)
+    key = state_path_work_item_key(state_path, token)
+    resolved = ResolvedWorkItemState(
+        path=state_path,
+        key=key,
+        data=data,
+        source="explicit-work-item",
+    )
+    if bind_session:
+        active_story = state_mod.get_active_story(data) or ""
+        bind_session_state(ade_sdd, session_key, state_path, key, active_story)
+    return resolved
 
 
 def _safe_mtime(path: Path) -> float:
@@ -196,58 +243,88 @@ def bind_session_state(
         pass
 
 
-# ─── 🆕 会话 engage 标记（门禁按需启用）───────────────────────────────────────
-# 设计：用户调 /ae-sdd 触发词后，prompt_inject 写入本会话的 engage 标记文件；
-# gate_intercept 在 resolve_default_state 前检查该标记——有则启用门禁，无则放行。
-# 这样"没调 ae-sdd 的会话/子 Agent 不被锁"，实现"按需启用 hook"语义。
-# 标记按 session_key 维度（sha256 hash 文件名），子 Agent 继承父会话 session_id
-# 时自动随主会话 engage。
+# ─── 会话 turn token（门禁按需启用）───────────────────────────────────────────
+# 只有当前用户 turn 显式进入 ae-sdd 时才启用 hook。Stop 成功后释放；普通新
+# prompt 也会清理残留 token，避免旧 session 永久锁住后续无关工作。
+_HOOK_ACTIVITY_DIR_NAME = ".hook-activity"
+_HOOK_ACTIVITY_TTL_SECONDS = 2 * 60 * 60
 
-def _engaged_dir(ade_sdd: Path) -> Path:
-    """engage 标记目录（.ae-sdd/.session-engaged/）。"""
-    return ade_sdd / ".session-engaged"
+
+def _hook_activity_dir(ade_sdd: Path) -> Path:
+    return ade_sdd / _HOOK_ACTIVITY_DIR_NAME
+
+
+def _hook_activity_path(ade_sdd: Path, session_key: str) -> Path:
+    return _hook_activity_dir(ade_sdd) / _safe_session_file_name(session_key)
+
+
+def _activity_timestamp(value: object) -> Optional[datetime]:
+    try:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _activity_is_fresh(payload: dict) -> bool:
+    timestamp = _activity_timestamp(payload.get("lastSeenAt") or payload.get("activatedAt"))
+    if timestamp is None:
+        return False
+    age = (datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()
+    return 0 <= age <= _HOOK_ACTIVITY_TTL_SECONDS
 
 
 def is_session_engaged(ade_sdd: Path, session_key: str) -> bool:
-    """本会话是否已 engage ae-sdd（用户调过 /ae-sdd 触发词）。
-
-    无 session_key → False（无标识的会话视为未 engage，放行）。
-    """
+    """Return whether the current session has a fresh turn token."""
     if not session_key:
         return False
-    return _engaged_dir(ade_sdd).joinpath(
-        _safe_session_file_name(session_key)
-    ).is_file()
+    path = _hook_activity_path(ade_sdd, session_key)
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict) or not _activity_is_fresh(payload):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    return True
 
 
 def mark_session_engaged(ade_sdd: Path, session_key: str) -> None:
-    """记录本会话已 engage。持续态，写入后由 disengage_session 清除。"""
+    """Start a turn-scoped hook token for compatibility with existing callers."""
     if not session_key:
         return
-    p = _engaged_dir(ade_sdd) / _safe_session_file_name(session_key)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    p = _hook_activity_path(ade_sdd, session_key)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
-            json.dumps(
-                {"engagedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
-                ensure_ascii=False,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        p.write_text(json.dumps({
+            "version": 1,
+            "activatedAt": now,
+            "lastSeenAt": now,
+        }, ensure_ascii=False) + "\n", encoding="utf-8")
     except OSError:
         pass
 
 
 def disengage_session(ade_sdd: Path, session_key: str) -> None:
-    """退出 engage，清除本会话标记。"""
+    """Finish the current turn token; cleanup is intentionally idempotent."""
     if not session_key:
         return
-    p = _engaged_dir(ade_sdd) / _safe_session_file_name(session_key)
-    try:
-        p.unlink(missing_ok=True)
-    except OSError:
-        pass
+    for path in (
+        _hook_activity_path(ade_sdd, session_key),
+        ade_sdd / ".session-engaged" / _safe_session_file_name(session_key),
+    ):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def artifact_fingerprint(path: str | Path) -> str:

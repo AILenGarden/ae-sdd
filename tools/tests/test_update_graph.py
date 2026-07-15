@@ -388,18 +388,175 @@ class TestUC14(unittest.TestCase):
         self.assertIn("UC-14", r.details.get("unreferenced_check_funcs", []))
 
 
+# ─── UC-19 typed operation maintainer contract ───────────────────
+class TestUC19(unittest.TestCase):
+
+    def test_real_repo_passes(self):
+        r = ug.check_uc19_operation_maintenance_contract(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+
+    def test_missing_protocol_anchor_blocks(self):
+        tmp = _setup_repo({
+            "source/SKILL.md": "---\nversion: 3.11.0\n---\n",
+            "source/docs/ae-sdd-design.md": "> v3.11.0\n",
+            "source/docs/ae-sdd-implementation-architecture.md": "> v3.11.0\n",
+            "source/standards/operation-protocol.md": "# protocol\n",
+            "source/skills/orchestration/ae-sdd-update-skill.md": (
+                "source/standards/operation-protocol.md UG-27 UC-19 "
+                "ops describe --json registryVersion\n"
+            ),
+            "source/standards/update-graph.json": json.dumps({
+                "rules": [{
+                    "id": "UG-27",
+                    "trigger": [
+                        "tools/lib/state_store.py",
+                        "tools/lib/operations.py",
+                        "source/standards/operation-protocol.md",
+                        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
+                    ],
+                    "affected": [
+                        {"path": "tools/tests/test_update_graph.py"},
+                        {"path": "source/docs/ae-sdd-design.md"},
+                        {"path": "source/docs/ae-sdd-implementation-architecture.md"},
+                        {"path": "source/CHANGELOG/"},
+                    ],
+                }]
+            }, ensure_ascii=False),
+            "tools/lib/operations.py": "SCHEMA_VERSION = '1'\nREGISTRY_VERSION = '1.0.0'\n",
+        })
+        r = ug.check_uc19_operation_maintenance_contract(tmp)
+        self.assertFalse(r.pass_)
+        self.assertTrue(r.details.get("missing_protocol_anchors"))
+
+    def test_missing_ug27_cascade_blocks(self):
+        tmp = _setup_repo({
+            "source/SKILL.md": "---\nversion: 3.11.0\n---\n",
+            "source/docs/ae-sdd-design.md": "> v3.11.0\n",
+            "source/docs/ae-sdd-implementation-architecture.md": "> v3.11.0\n",
+            "source/standards/operation-protocol.md": (
+                "## 9. Maintainer Change Contract\n"
+                "### 9.1 Authority And Truth\n"
+                "### 9.2 Compatibility Classification\n"
+                "### 9.3 Operation Admission\n"
+                "### 9.4 Required Change Set\n"
+                "### 9.5 Definition Of Done\n"
+            ),
+            "source/skills/orchestration/ae-sdd-update-skill.md": (
+                "source/standards/operation-protocol.md UG-27 UC-19 "
+                "ops describe --json registryVersion\n"
+            ),
+            "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md": "maintainer\n",
+            "source/standards/update-graph.json": json.dumps({
+                "rules": [{
+                    "id": "UG-27",
+                    "trigger": [
+                        "tools/lib/state_store.py",
+                        "tools/lib/operations.py",
+                        "source/standards/operation-protocol.md",
+                        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
+                    ],
+                    "affected": [{"path": "source/standards/operation-protocol.md"}],
+                }]
+            }, ensure_ascii=False),
+            "tools/lib/operations.py": "SCHEMA_VERSION = '1'\nREGISTRY_VERSION = '1.0.0'\n",
+        })
+        r = ug.check_uc19_operation_maintenance_contract(tmp)
+        self.assertFalse(r.pass_)
+        self.assertTrue(r.details.get("missing_ug27_paths"))
+
+
+# ─── UC-20 Design Ledger contract ───────────────────────────────────────────
+class TestUC20(unittest.TestCase):
+
+    @staticmethod
+    def _ledger_design(rows=None):
+        ids = rows or [f"D-{i:03d}" for i in range(1, 25)]
+        body = "\n".join(
+            f"| {design_id} | Design {design_id} | problem {design_id} | decision {design_id} | value {design_id} | evidence {design_id} | §{((index % 21) + 1)} | history/v3.11.1/已实现 |"
+            for index, design_id in enumerate(ids)
+        )
+        sections = "\n".join(f"## {index}. Section {index}" for index in range(1, 22))
+        return (
+            "# design\n"
+            "> v3.11.1\n"
+            "## 0. 设计问题与价值总览（Design Ledger）\n"
+            "| ID | 设计 | 要解决的问题 | 核心决策 | 预期价值 | 验证证据/指标 | 权威入口 | 引入/最近变更/状态 |\n"
+            f"{body}\n"
+            "D-007 LLM 上下文 命令猜测 重试\n"
+            f"{sections}\n"
+        )
+
+    @classmethod
+    def _repo(cls, design=None, changelog_template=None, update_skill=None):
+        design = design or cls._ledger_design()
+        changelog_template = changelog_template or "## Design ledger impact\nD-xxx or N/A\n"
+        update_skill = update_skill or (
+            "Design Ledger Maintenance Entry source/docs/ae-sdd-design.md "
+            "Design ledger impact UG-28 UC-20 待补基线\n"
+        )
+        return _setup_repo({
+            "source/SKILL.md": "---\nversion: 3.11.1\n---\n",
+            "source/docs/ae-sdd-design.md": design,
+            "source/docs/ae-sdd-implementation-architecture.md":
+                "v3.11.1 Design Ledger Design ledger impact UC-20\n",
+            "source/CHANGELOG/_template.md": changelog_template,
+            "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md": update_skill,
+            "source/skills/orchestration/ae-sdd-update-skill.md": update_skill,
+            "source/standards/update-graph.json": json.dumps({"rules": [{
+                "id": "UG-28",
+                "trigger": ["source/docs/ae-sdd-design.md",
+                            "source/CHANGELOG/_template.md",
+                            "tools/lib/update_graph.py",
+                            "tools/tests/test_update_graph.py"],
+                "affected": [{"path": "source/docs/ae-sdd-design.md"},
+                             {"path": "source/CHANGELOG/_template.md"},
+                             {"path": "tools/lib/update_graph.py"},
+                             {"path": "tools/tests/test_update_graph.py"}],
+                "checks": ["UC-20"],
+            }]}, ensure_ascii=False),
+        })
+
+    def test_real_repo_passes(self):
+        r = ug.check_uc20_design_ledger(REPO_ROOT)
+        self.assertTrue(r.pass_, r.message)
+
+    def test_missing_design_row_blocks(self):
+        rows = [f"D-{i:03d}" for i in range(1, 24)]
+        r = ug.check_uc20_design_ledger(self._repo(self._ledger_design(rows)))
+        self.assertFalse(r.pass_)
+        self.assertIn("D-024", r.details.get("missing_design_ids", []))
+
+    def test_missing_section_mapping_blocks(self):
+        design = self._ledger_design().replace("## 21. Section 21", "")
+        r = ug.check_uc20_design_ledger(self._repo(design))
+        self.assertFalse(r.pass_)
+        self.assertIn("§21", r.details.get("missing_section_mappings", []))
+
+    def test_missing_changelog_impact_blocks(self):
+        r = ug.check_uc20_design_ledger(self._repo(changelog_template="## Summary\n"))
+        self.assertFalse(r.pass_)
+        self.assertIn("Design ledger impact", r.details.get("missing_terms", []))
+
+    def test_placeholder_row_blocks(self):
+        design = self._ledger_design().replace("problem D-001", "TODO")
+        r = ug.check_uc20_design_ledger(self._repo(design))
+        self.assertFalse(r.pass_)
+        self.assertTrue(r.details.get("invalid_rows"))
+
+
 # ─── check_all / summarize ───────────────────────────────────────────────────
 class TestCheckAll(unittest.TestCase):
 
-    def test_check_all_returns_18(self):
+    def test_check_all_returns_20(self):
         results = ug.check_all(REPO_ROOT)
         # UC-01~07 + UC-14（update_graph 原生 8 项）+ UC-08~13（alignment_audit AA 注入 6 项）
-        # + UC-15~18（runtime 编译一致性 / 自动化级联 / 仓库顶层结构 / manifest-index 契约）= 18。
+        # + UC-15~20（runtime 编译一致性 / 自动化级联 / 仓库顶层结构 / manifest-index /
+        # maintainer contract / Design Ledger）= 20。
         # AA 的 register_to_update_graph() 在 import alignment_audit 时自动把 UC-08~13
         # 注入共享的 ug.CHECK_FUNCS（见 alignment_audit.py:666），故全量 pytest 收集
-        # test_alignment_audit.py 后本测试拿到 18 而非原生 12。这是已知的 import-time
+        # test_alignment_audit.py 后本测试拿到 20 而非原生 12。这是已知的 import-time
         # 副作用耦合；若未来把 AA 注册改为显式调用，需同步回退此断言到 12。
-        self.assertEqual(len(results), 18)
+        self.assertEqual(len(results), 20)
 
     def test_check_all_only_filter(self):
         results = ug.check_all(REPO_ROOT, only="UC-01")
@@ -428,6 +585,16 @@ class TestCheckAll(unittest.TestCase):
         self.assertEqual(results[0].check_id, "UC-16")
         self.assertTrue(results[0].pass_, results[0].message)
 
+    def test_check_all_only_uc19(self):
+        results = ug.check_all(REPO_ROOT, only="UC-19")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].check_id, "UC-19")
+
+    def test_check_all_only_uc20(self):
+        results = ug.check_all(REPO_ROOT, only="UC-20")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].check_id, "UC-20")
+
     def test_check_all_unknown(self):
         results = ug.check_all(REPO_ROOT, only="UC-99")
         self.assertEqual(len(results), 1)
@@ -436,9 +603,9 @@ class TestCheckAll(unittest.TestCase):
     def test_summarize(self):
         results = ug.check_all(REPO_ROOT)
         s = ug.summarize(results)
-        # 18 = UC-01~07 + UC-14 原生 + UC-08~13 AA 注入 + UC-15~18（见 test_check_all_returns_18 注释）
-        self.assertEqual(s["total"], 18)
-        self.assertEqual(s["passed"] + s["failed"], 18)
+        # 20 = UC-01~07 + UC-14 原生 + UC-08~13 AA 注入 + UC-15~20。
+        self.assertEqual(s["total"], 20)
+        self.assertEqual(s["passed"] + s["failed"], 20)
         self.assertIn("checks", s)
 
 
@@ -561,12 +728,12 @@ class TestSyncManifest(unittest.TestCase):
     """S-4 sync manifest：生成 / 漂移检测 / 缺失兜底。"""
 
     def test_generate_manifest_structure(self):
-        """生成的 manifest 含 25 条 UG 规则 + trigger/affected sha256"""
+        """生成的 manifest 含 27 条 UG 规则 + trigger/affected sha256"""
         manifest = ug.generate_sync_manifest(REPO_ROOT)
         self.assertNotIn("error", manifest)
         self.assertEqual(manifest["generatorVersion"], "1.0")
         self.assertIn("generatedAt", manifest)
-        self.assertEqual(len(manifest["rules"]), 25)
+        self.assertEqual(len(manifest["rules"]), 27)
         # 每条规则有 id/name/trigger_files/affected_files
         for rule in manifest["rules"]:
             self.assertIn("id", rule)

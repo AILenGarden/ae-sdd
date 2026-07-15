@@ -60,7 +60,8 @@ def test_evidence_cache_requires_matching_input_command_toolchain_and_artifact()
                                   command="mvn test", toolchain_fingerprint="java8")["evidenceId"] == entry["evidenceId"]
     assert evidence.find_reusable(project, "STORY-001", input_fingerprint="i2",
                                   command="mvn test", toolchain_fingerprint="java8") is None
-    artifact.write_text("tampered", encoding="utf-8")
+    snapshot = project / entry["artifacts"][0]["snapshotPath"]
+    snapshot.write_text("tampered", encoding="utf-8")
     assert evidence.find_reusable(project, "STORY-001", input_fingerprint="i1",
                                   command="mvn test", toolchain_fingerprint="java8") is None
 
@@ -79,10 +80,81 @@ def test_evidence_freshness_window_expires():
     assert evidence.is_reusable(entry, input_fingerprint="i1", command="mvn test", toolchain_fingerprint="java8") is False
 
 
+def test_evidence_record_keeps_immutable_snapshot_and_supersedes_same_logical_key():
+    project = Path(tempfile.mkdtemp())
+    artifact = project / "result.json"
+    artifact.write_text("first", encoding="utf-8")
+    first = evidence.record(
+        project, "STORY-001", kind="test", command="mvn test",
+        input_fingerprint="i1", toolchain_fingerprint="java8", exit_code=0,
+        artifacts=[{"path": "result.json", "sha256": evidence.artifact_hash(artifact)}],
+        logical_key="test:mvn-test",
+    )
+    artifact.write_text("second", encoding="utf-8")
+    second = evidence.record(
+        project, "STORY-001", kind="test", command="mvn test",
+        input_fingerprint="i2", toolchain_fingerprint="java8", exit_code=0,
+        artifacts=[{"path": "result.json", "sha256": evidence.artifact_hash(artifact)}],
+        logical_key="test:mvn-test",
+    )
+
+    manifest = evidence.load_manifest(project, "STORY-001")
+    assert manifest["entries"][0]["status"] == "superseded"
+    assert manifest["entries"][1]["status"] == "active"
+    assert manifest["entries"][0]["artifacts"][0]["snapshotPath"] != manifest["entries"][1]["artifacts"][0]["snapshotPath"]
+    snapshot = project / manifest["entries"][1]["artifacts"][0]["snapshotPath"]
+    assert snapshot.read_text(encoding="utf-8") == "second"
+    assert evidence.finalize_manifest(project, "STORY-001")[1]["entries"][1]["evidenceId"] == second["evidenceId"]
+    assert first["evidenceId"] != second["evidenceId"]
+
+
+def test_evidence_finalize_validates_snapshot_after_source_changes():
+    project = Path(tempfile.mkdtemp())
+    artifact = project / "result.xml"
+    artifact.write_text("stable", encoding="utf-8")
+    evidence.record(
+        project, "STORY-001", kind="test", command="mvn test",
+        input_fingerprint="i1", toolchain_fingerprint="java8", exit_code=0,
+        artifacts=[{"path": "result.xml", "sha256": evidence.artifact_hash(artifact)}],
+    )
+    artifact.write_text("changed-after-record", encoding="utf-8")
+    path, manifest = evidence.finalize_manifest(project, "STORY-001")
+    assert path.is_file()
+    assert manifest["entries"][0]["artifacts"][0]["path"] == "result.xml"
+
+
+def test_legacy_evidence_manifest_remains_readable_without_rewrite_until_finalize():
+    project = Path(tempfile.mkdtemp())
+    artifact = project / "legacy.txt"
+    artifact.write_text("legacy", encoding="utf-8")
+    manifest_path = evidence.manifest_path(project, "STORY-001")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = {"schemaVersion": 1, "storyId": "STORY-001", "entries": [{
+        "evidenceId": "ev-legacy", "kind": "test", "commandHash": evidence.command_hash("mvn test"),
+        "inputFingerprint": "i1", "toolchainFingerprint": "java8", "exitCode": 0,
+        "reusable": True, "artifacts": [{"path": "legacy.txt", "sha256": evidence.artifact_hash(artifact)}],
+    }]}
+    manifest_path.write_text(json.dumps(legacy), encoding="utf-8")
+    assert evidence.load_manifest(project, "STORY-001")["entries"][0].get("status") is None
+    evidence.finalize_manifest(project, "STORY-001")
+    assert evidence.load_manifest(project, "STORY-001")["entries"][0].get("status") is None
+
+
 def test_verification_plan_does_not_schedule_maven_for_docs_only():
     plan = verification_plan.build_plan(Path.cwd(), "STORY-001", ["ae-sdd-doc/Story/STORY-001.md"])
     assert plan["changeClass"] == ["documentation"]
     assert "Maven/full-story-regression" in plan["notRequired"]
+
+
+def test_verification_plan_exposes_evidence_input_and_next_action():
+    project = Path(tempfile.mkdtemp())
+    changed = project / "src" / "A.java"
+    changed.parent.mkdir(parents=True, exist_ok=True)
+    changed.write_text("class A {}", encoding="utf-8")
+    plan = verification_plan.build_plan(project, "STORY-001", ["src/A.java"], work_item="WI-001")
+    assert plan["evidenceInputFingerprint"] == plan["inputFingerprint"]
+    assert plan["nextActions"]
+    assert plan["nextActions"][0]["inputFingerprint"] == plan["evidenceInputFingerprint"]
 
 
 def test_document_alias_is_pointer_registry_not_duplicate_body():

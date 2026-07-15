@@ -1,9 +1,10 @@
 ---
 name: ae-sdd
-version: 3.10.9
+version: 3.11.3
 description: |
   端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.11.3：Story 逻辑 ID 与正式 StoryName 解耦。`state new --story-name` / `state bind-story-doc` 精确绑定原生文件名，G-02/G-14 共用 metadata-validated resolver；禁止模糊猜测或创建 ID-only 别名，旧 `{STORY-ID}.md` 保持兼容。
   🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
   🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
   🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。
@@ -723,6 +724,10 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | | `ae-sdd assets read/outline/section/query/stats` | 资产读取 |
 | **状态机** | `ae-sdd state read/write/next-step/confirm` | phase读写/推进/审核token |
 | | `ae-sdd state prd-check-complete/prd-complete/prd-archive` | PRD级完成判定 |
+| **Typed operations** | `ae-sdd ops describe --json` | 发现可执行 operation 与 JSON Schema |
+| | `ae-sdd ops next --project <ROOT> --work-item <ID> --json` | 返回当前 revision、lease 状态和合法后续动作 |
+| | `ae-sdd ops execute --request-file <REQUEST.json> --json` | 通过 lease/fencing/revision/idempotency 执行类型化操作 |
+| | `ae-sdd lease acquire/status/renew/release/break` | Work Item writer lease 管理与过期接管 |
 | **路由** | `ae-sdd classify` | 4维判定 |
 | **门禁** | `ae-sdd gates check [--only <G-XX>]` | 30门禁扫描（🆕 v3.8.0 +G-AUTO-CONSENSUS） |
 | | `ae-sdd gate ra-required/coding-required/doc-storage` | 单点校验 |
@@ -738,7 +743,8 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | | `ae-sdd state register-review-consensus` | 🆕 v3.8.0 写联审共识结果 |
 | | `ae-sdd state lock/unlock` | 🆕 v3.8.1 文件意图锁（防多 agent 并发写） |
 | **维护** | `ae-sdd health` | 10项健康度自检（🆕 v3.8.1 第10项规则-工具同步状态） |
-| | `ae-sdd update-check` | UC-01~16更新依赖图谱 |
+| | `ae-sdd update-check --affected <files>` | 查询 UG-01~UG-28 级联项 |
+| | `ae-sdd update-check --only UC-20` | 校验 Design Ledger、§1~§21 覆盖和 CHANGELOG 迭代影响记录 |
 | | `ae-sdd iteration-check` | 设计-实现一致性迭代检查 |
 | | `ae-sdd context-pressure [--story <ID>]` | 上下文压力软提示 |
 | | `ae-sdd perf report/doctor/clear` | Runtime Stats 统计、诊断、清理 |
@@ -753,11 +759,23 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 
 ---
 
+## Typed operation protocol（LLM 写操作入口）
+
+涉及 state、文档、门禁、VerificationPlan 或 evidence 的写操作必须通过注册的 typed operation 执行。先读 `source/standards/operation-protocol.md`，运行 `ae-sdd ops describe --json` 获取当前 schema，再用显式 `project` + `workItem` 请求执行；禁止直接改 `state.json`、`state.lease.json` 或 evidence manifest，禁止使用未注册的 `state.patch`。
+
+写操作的 envelope 必须带 `lease.leaseId`、`lease.fencingToken`、`expectedRevision` 和唯一 `idempotencyKey`。租约默认 TTL 300 秒（30--3600 秒），过期后由新 owner 接管并获得更大的 fencing token；revision 冲突、旧 fencing token、同 key 不同 payload 都 fail closed。`dryRun=true` 只返回 projected revision/state，不写任何 state、lease、idempotency、文档或证据文件。
+
+`verification.plan` 同时返回兼容字段 `inputFingerprint` 与专用 `evidenceInputFingerprint`；Evidence 命令只能使用后者，不能把 `planFingerprint` 当作证据输入。`evidence.record` 会将 artifact 复制到内容寻址 snapshot；同一 `logicalKey` 的旧 active entry 标记为 `superseded`，finalize 只校验 active snapshot。旧 schema manifest 可读取，不会在读取时静默改写。
+
+---
+
 ## 🔧 维护工作流
 
 ```
 修改 source/SKILL.md 或子SKILL
-    → ae-sdd update-check（UC-01~16全绿）
+    → 读取 source/docs/ae-sdd-design.md §0 Design Ledger
+    → CHANGELOG 填写 Design ledger impact（D-xxx 或 N/A）
+    → ae-sdd update-check（UC-01~20全绿）
     → scripts/dev-sync.sh（分发到 ~/.claude/skills/）
     → post-commit hook 自动触发
 ```

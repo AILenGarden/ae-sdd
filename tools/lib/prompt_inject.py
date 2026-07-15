@@ -116,7 +116,15 @@ def _update_quick_channel(ade_sdd: Path, user_prompt: str) -> None:
     qc_file = ade_sdd / _QUICK_CHANNEL_FILE
     if any(m in user_prompt for m in QUICK_CHANNEL_MARKERS):
         try:
-            qc_file.write_text(user_prompt[:200], encoding="utf-8")
+            # The file is an activation sentinel, not a prompt transcript. Keep
+            # it ASCII so legacy Windows readers using the system code page can
+            # inspect it without turning a hook into a decode failure.
+            marker = next(
+                (item for item in QUICK_CHANNEL_MARKERS
+                 if item.isascii() and item in user_prompt),
+                "quick_channel_active",
+            )
+            qc_file.write_text(marker, encoding="utf-8")
         except OSError:
             pass  # 写入失败（如目录只读）：降级，快速通道文件未创建
     else:
@@ -266,24 +274,17 @@ def inject(
 
     # 清除待初始化标记（已找到 .ae-sdd/，说明项目已初始化）
 
-    # 每次对话开始：重置 Stop hook 重试计数
-    reset_retry(ade_sdd)
-
     # 更新快速通道状态（让 PreToolUse hook 能读到）
     _update_quick_channel(ade_sdd, user_prompt)
 
-    # 🆕 会话 engage 标记维护（门禁按需启用）
-    # 触发词 → 写入 engage 标记（gate-intercept 据此启用门禁）
-    # 退出词 → 清除 engage 标记（门禁恢复放行）
-    # 两者互斥：同一消息不会既触发又退出；非触发非退出消息不动标记（持续态）
+    # Hook activation is turn-scoped: any ordinary prompt ends a stale token.
     if _is_ae_sdd_triggered:
         work_item_context.mark_session_engaged(ade_sdd, session_key)
-    elif any(m in user_prompt for m in AE_SDD_DISENGAGE_MARKERS):
+        reset_retry(ade_sdd)
+    else:
         work_item_context.disengage_session(ade_sdd, session_key)
-
-    # 🆕 v3.9.3：清理待初始化标记（与 quick_channel 同理，非触发消息时清除）
-    if not _is_ae_sdd_triggered:
         _clear_pending_init(project_dir)
+        return {}
 
     cfg = paths.read_config(ade_sdd)
     project_key = cfg.get("projectKey", "unknown")

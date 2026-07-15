@@ -11,6 +11,7 @@ update_graph.py — ae-sdd 更新依赖图谱检查器（v3.2）
   UC-04 扫描器分发一致性 scripts/*_scan.py 都在 build_dist.py runtime_scripts 白名单
   UC-05 健康度清单覆盖  ae-sdd-update-skill 健康度清单含本仓库关键组件
   UC-14 update-skill 级联图谱同步  update-graph.json / CHECK_FUNCS / 人读视图三方同步
+  UC-20 Design Ledger 契约        系统设计问题/价值/证据/版本与 CHANGELOG impact 可发现且覆盖完整
 
 无第三方依赖，可独立运行。
 """
@@ -1164,6 +1165,314 @@ def check_uc18_manifest_index_contract(repo_root: Path) -> UpdateCheckResult:
 
 
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
+def check_uc19_operation_maintenance_contract(repo_root: Path) -> UpdateCheckResult:
+    """UC-19: keep typed-operation maintenance instructions executable and discoverable."""
+    name = "typed operation maintenance contract"
+    root = Path(repo_root)
+    version = _extract_skill_version(root / "source" / "SKILL.md")
+    protocol_path = root / "source" / "standards" / "operation-protocol.md"
+    update_skill = root / "source" / "skills" / "orchestration" / "ae-sdd-update-skill.md"
+    design_path = root / "source" / "docs" / "ae-sdd-design.md"
+    architecture_path = root / "source" / "docs" / "ae-sdd-implementation-architecture.md"
+    operations_path = root / "tools" / "lib" / "operations.py"
+
+    protocol_text = protocol_path.read_text(encoding="utf-8", errors="replace") if protocol_path.is_file() else ""
+    if update_skill.is_file():
+        update_text, semantic_sources, semantic_warnings = _read_update_skill_semantic_text(root, update_skill)
+    else:
+        update_text, semantic_sources, semantic_warnings = "", [], []
+    design_text = design_path.read_text(encoding="utf-8", errors="replace") if design_path.is_file() else ""
+    architecture_text = architecture_path.read_text(encoding="utf-8", errors="replace") if architecture_path.is_file() else ""
+    operations_text = operations_path.read_text(encoding="utf-8", errors="replace") if operations_path.is_file() else ""
+
+    protocol_anchors = [
+        "## 9. Maintainer Change Contract",
+        "### 9.1 Authority And Truth",
+        "### 9.2 Compatibility Classification",
+        "### 9.3 Operation Admission",
+        "### 9.4 Required Change Set",
+        "### 9.5 Definition Of Done",
+    ]
+    missing_protocol_anchors = [anchor for anchor in protocol_anchors if anchor not in protocol_text]
+    update_terms = [
+        "source/standards/operation-protocol.md",
+        "ops describe --json",
+        "registryVersion",
+        "UG-27",
+        "UC-19",
+        "Maintainer Change Contract",
+    ]
+    missing_update_terms = [term for term in update_terms if term not in update_text]
+
+    graph, graph_error = _read_update_graph_data(root)
+    ug27 = next((rule for rule in (graph or {}).get("rules", []) if rule.get("id") == "UG-27"), None)
+    required_triggers = [
+        "tools/lib/state_store.py",
+        "tools/lib/operations.py",
+        "tools/lib/update_graph.py",
+        "source/standards/operation-protocol.md",
+        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
+        "source/docs/ae-sdd-design.md",
+        "source/docs/ae-sdd-implementation-architecture.md",
+    ]
+    required_affected = [
+        "tools/lib/update_graph.py",
+        "tools/tests/test_update_graph.py",
+        "source/standards/operation-protocol.md",
+        "source/skills/orchestration/ae-sdd-update-skill.md",
+        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
+        "source/docs/ae-sdd-design.md",
+        "source/docs/ae-sdd-implementation-architecture.md",
+        "source/CHANGELOG/",
+    ]
+    graph_triggers = list((ug27 or {}).get("trigger") or [])
+    graph_affected = [str(item.get("path")) for item in ((ug27 or {}).get("affected") or []) if isinstance(item, dict)]
+    missing_ug27_paths = [
+        *[f"trigger:{path}" for path in required_triggers if path not in graph_triggers],
+        *[f"affected:{path}" for path in required_affected if path not in graph_affected],
+    ]
+
+    missing_files = [
+        path for path, present in {
+            "source/SKILL.md": version is not None,
+            "source/standards/operation-protocol.md": protocol_path.is_file(),
+            "source/skills/orchestration/ae-sdd-update-skill.md": update_skill.is_file(),
+            "source/docs/ae-sdd-design.md": design_path.is_file(),
+            "source/docs/ae-sdd-implementation-architecture.md": architecture_path.is_file(),
+            "tools/lib/operations.py": operations_path.is_file(),
+        }.items() if not present
+    ]
+    version_drift = []
+    if version:
+        for path, text in (
+            ("source/docs/ae-sdd-design.md", design_text),
+            ("source/docs/ae-sdd-implementation-architecture.md", architecture_text),
+        ):
+            if f"v{version}" not in "\n".join(text.splitlines()[:10]):
+                version_drift.append(path)
+    missing_registry_symbols = [
+        symbol for symbol in ("SCHEMA_VERSION", "REGISTRY_VERSION") if symbol not in operations_text
+    ]
+
+    issues = []
+    if graph_error:
+        issues.append(graph_error)
+    if missing_files:
+        issues.append(f"missing files/version: {missing_files}")
+    if missing_protocol_anchors:
+        issues.append(f"protocol anchors missing: {missing_protocol_anchors}")
+    if missing_update_terms:
+        issues.append(f"update-skill anchors missing: {missing_update_terms}")
+    if missing_ug27_paths:
+        issues.append(f"UG-27 cascade missing: {missing_ug27_paths}")
+    if version_drift:
+        issues.append(f"design/implementation version drift: {version_drift}")
+    if missing_registry_symbols:
+        issues.append(f"registry version symbols missing: {missing_registry_symbols}")
+    if semantic_warnings:
+        issues.extend(semantic_warnings)
+
+    details = {
+        "version": version,
+        "semantic_sources": semantic_sources,
+        "missing_files": missing_files,
+        "missing_protocol_anchors": missing_protocol_anchors,
+        "missing_update_terms": missing_update_terms,
+        "missing_ug27_paths": missing_ug27_paths,
+        "version_drift": version_drift,
+        "missing_registry_symbols": missing_registry_symbols,
+    }
+    if issues:
+        return UpdateCheckResult(
+            "UC-19", name, "error", False,
+            "; ".join(issues[:4]),
+            "sync operation-protocol, ae-sdd-update, UG-27, design docs and registry version markers",
+            details,
+        )
+    return UpdateCheckResult(
+        "UC-19", name, "error", True,
+        "typed operation maintenance contract is aligned",
+        details=details,
+    )
+
+
+# ─── UC-20 Design Ledger contract ───────────────────────────────────────────
+DESIGN_LEDGER_IDS = tuple(f"D-{index:03d}" for index in range(1, 25))
+
+
+def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
+    """UC-20: keep design problems, value hypotheses and iteration impact discoverable."""
+    name = "Design Ledger 问题、价值与迭代记录契约"
+    root = Path(repo_root)
+    design_path = root / "source" / "docs" / "ae-sdd-design.md"
+    architecture_path = root / "source" / "docs" / "ae-sdd-implementation-architecture.md"
+    changelog_template_path = root / "source" / "CHANGELOG" / "_template.md"
+    fallback_update_path = root / "source" / "skill-fallbacks" / "skills" / "orchestration" / "ae-sdd-update-skill.full.md"
+    slim_update_path = root / "source" / "skills" / "orchestration" / "ae-sdd-update-skill.md"
+    graph_path = root / "source" / "standards" / "update-graph.json"
+
+    def read(path: Path) -> str:
+        return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+
+    design_text = read(design_path)
+    architecture_text = read(architecture_path)
+    changelog_text = read(changelog_template_path)
+    update_text = read(fallback_update_path) + "\n" + read(slim_update_path)
+    version = _extract_skill_version(root / "source" / "SKILL.md")
+
+    required_files = {
+        "source/docs/ae-sdd-design.md": design_path.is_file(),
+        "source/docs/ae-sdd-implementation-architecture.md": architecture_path.is_file(),
+        "source/CHANGELOG/_template.md": changelog_template_path.is_file(),
+        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md": fallback_update_path.is_file(),
+        "source/skills/orchestration/ae-sdd-update-skill.md": slim_update_path.is_file(),
+        "source/standards/update-graph.json": graph_path.is_file(),
+    }
+    missing_files = [path for path, present in required_files.items() if not present]
+
+    ledger_heading = "## 0. 设计问题与价值总览（Design Ledger）"
+    required_columns = [
+        "| ID |", "要解决的问题", "核心决策", "预期价值",
+        "验证证据/指标", "权威入口", "引入/最近变更/状态",
+    ]
+    missing_terms = [term for term in [ledger_heading, *required_columns] if term not in design_text]
+
+    rows: dict[str, str] = {}
+    invalid_rows: list[str] = []
+    for line in design_text.splitlines():
+        match = re.match(r"^\|\s*(D-\d{3})\s*\|", line)
+        if not match:
+            continue
+        design_id = match.group(1)
+        if design_id in rows:
+            invalid_rows.append(f"duplicate:{design_id}")
+        rows[design_id] = line
+        fields = [field.strip() for field in line.strip().strip("|").split("|")]
+        if len(fields) < 8:
+            invalid_rows.append(f"columns:{design_id}")
+            continue
+        if any(not field for field in fields[1:8]):
+            invalid_rows.append(f"empty:{design_id}")
+        if any(token in line for token in ("TODO", "TBD", "<占位>", "<待补>")):
+            invalid_rows.append(f"placeholder:{design_id}")
+
+    missing_design_ids = [design_id for design_id in DESIGN_LEDGER_IDS if design_id not in rows]
+    unknown_design_ids = sorted(set(rows) - set(DESIGN_LEDGER_IDS))
+    section_mappings: set[int] = set()
+    for line in rows.values():
+        section_mappings.update(int(value) for value in re.findall(r"§(\d+)", line))
+    section_headings = {
+        int(value) for value in re.findall(r"^##\s+(\d+)\.\s+", design_text, re.MULTILINE)
+    }
+    missing_section_mappings = [
+        f"§{index}" for index in range(1, 22)
+        if index not in section_mappings or index not in section_headings
+    ]
+
+    typed_operation_terms = ["LLM", "上下文", "命令猜测", "重试"]
+    missing_typed_operation_terms = [term for term in typed_operation_terms if term not in rows.get("D-007", "")]
+    required_update_terms = [
+        "Design Ledger Maintenance Entry",
+        "source/docs/ae-sdd-design.md",
+        "Design ledger impact",
+        "UG-28",
+        "UC-20",
+        "待补基线",
+    ]
+    missing_update_terms = [term for term in required_update_terms if term not in update_text]
+    required_architecture_terms = ["Design Ledger", "Design ledger impact", "UC-20"]
+    missing_architecture_terms = [term for term in required_architecture_terms if term not in architecture_text]
+    required_changelog_terms = ["Design ledger impact", "D-xxx", "N/A: no design semantics changed"]
+    missing_changelog_terms = [term for term in required_changelog_terms if term not in changelog_text]
+
+    graph, graph_error = _read_update_graph_data(root)
+    ug28 = next((rule for rule in (graph or {}).get("rules", []) if rule.get("id") == "UG-28"), None)
+    required_graph_paths = [
+        "source/docs/ae-sdd-design.md",
+        "source/CHANGELOG/_template.md",
+        "tools/lib/update_graph.py",
+        "tools/tests/test_update_graph.py",
+    ]
+    graph_triggers = list((ug28 or {}).get("trigger") or [])
+    graph_affected = [
+        str(item.get("path")) for item in ((ug28 or {}).get("affected") or [])
+        if isinstance(item, dict)
+    ]
+    missing_graph_paths = [
+        *[f"trigger:{path}" for path in required_graph_paths if path not in graph_triggers],
+        *[f"affected:{path}" for path in required_graph_paths if path not in graph_affected],
+    ]
+    if not ug28:
+        missing_graph_paths.append("UG-28")
+    elif "UC-20" not in list(ug28.get("checks") or []):
+        missing_graph_paths.append("checks:UC-20")
+
+    version_drift: list[str] = []
+    if version:
+        for path, text in (
+            ("source/docs/ae-sdd-design.md", design_text),
+            ("source/docs/ae-sdd-implementation-architecture.md", architecture_text),
+        ):
+            if f"v{version}" not in "\n".join(text.splitlines()[:12]):
+                version_drift.append(path)
+
+    issues: list[str] = []
+    if missing_files:
+        issues.append(f"missing files: {missing_files}")
+    if missing_terms:
+        issues.append(f"ledger anchors missing: {missing_terms}")
+    if missing_design_ids:
+        issues.append(f"design IDs missing: {missing_design_ids}")
+    if unknown_design_ids:
+        issues.append(f"unknown design IDs: {unknown_design_ids}")
+    if invalid_rows:
+        issues.append(f"invalid ledger rows: {invalid_rows}")
+    if missing_section_mappings:
+        issues.append(f"section mappings missing: {missing_section_mappings}")
+    if missing_typed_operation_terms:
+        issues.append(f"D-007 terms missing: {missing_typed_operation_terms}")
+    if missing_update_terms:
+        issues.append(f"update-skill terms missing: {missing_update_terms}")
+    if missing_architecture_terms:
+        issues.append(f"architecture terms missing: {missing_architecture_terms}")
+    if missing_changelog_terms:
+        issues.append(f"changelog terms missing: {missing_changelog_terms}")
+    if missing_graph_paths:
+        issues.append(f"UG-28 cascade missing: {missing_graph_paths}")
+    if version_drift:
+        issues.append(f"design/implementation version drift: {version_drift}")
+    if graph_error:
+        issues.append(graph_error)
+
+    details = {
+        "version": version,
+        "design_ids": sorted(rows),
+        "missing_design_ids": missing_design_ids,
+        "unknown_design_ids": unknown_design_ids,
+        "invalid_rows": invalid_rows,
+        "missing_section_mappings": missing_section_mappings,
+        "missing_terms": missing_terms + missing_changelog_terms,
+        "missing_typed_operation_terms": missing_typed_operation_terms,
+        "missing_update_terms": missing_update_terms,
+        "missing_architecture_terms": missing_architecture_terms,
+        "missing_changelog_terms": missing_changelog_terms,
+        "missing_graph_paths": missing_graph_paths,
+        "version_drift": version_drift,
+    }
+    if issues:
+        return UpdateCheckResult(
+            "UC-20", name, "error", False,
+            "; ".join(issues[:4]),
+            "sync the Design Ledger, changelog impact field, ae-sdd-update entry and UG-28/UC-20",
+            details,
+        )
+    return UpdateCheckResult(
+        "UC-20", name, "error", True,
+        f"Design Ledger aligned: {len(rows)} designs cover §1~§21 plus cross-cutting governance",
+        details=details,
+    )
+
+
 CHECK_FUNCS = {
     "UC-01": check_uc01_version,
     "UC-02": check_uc02_gates_registry,
@@ -1177,6 +1486,8 @@ CHECK_FUNCS = {
     "UC-16": check_uc16_automation_cascade,
     "UC-17": check_uc17_repo_layout_contract,
     "UC-18": check_uc18_manifest_index_contract,
+    "UC-19": check_uc19_operation_maintenance_contract,
+    "UC-20": check_uc20_design_ledger,
 }
 
 

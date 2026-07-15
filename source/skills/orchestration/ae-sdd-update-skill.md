@@ -6,10 +6,10 @@ source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md
-source_fallback_sha256: 570014fefb628f033c1611c1479549de21c6702b28d64fe538d6680396d4b55d
-source_original_bytes: 81379
-source_original_lines: 947
-source_semantic_inventory_sha256: e00d10923e7fd471c1c70c5129a4fcf154a866ffd8e957dca16f42fe462aa5f9
+source_fallback_sha256: f654668a0268923267c7d6d66ff5439123325564d402d94c5525be6cfa42c43d
+source_original_bytes: 85118
+source_original_lines: 982
+source_semantic_inventory_sha256: 4c39d7f15a7d0fd85b077745f63427ea573879c8ac6e62e2ea6fb16ee9f8277a
 source_slimmer: slim_source_skills.py@2
 ---
 
@@ -28,10 +28,10 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `skills/orchestration/ae-sdd-update-skill.md`
 - fallback: `skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md`
-- fallback_sha256: `570014fefb628f033c1611c1479549de21c6702b28d64fe538d6680396d4b55d`
-- original_lines: 947
-- original_bytes: 81379
-- semantic_inventory_sha256: `e00d10923e7fd471c1c70c5129a4fcf154a866ffd8e957dca16f42fe462aa5f9`
+- fallback_sha256: `f654668a0268923267c7d6d66ff5439123325564d402d94c5525be6cfa42c43d`
+- original_lines: 982
+- original_bytes: 85118
+- semantic_inventory_sha256: `4c39d7f15a7d0fd85b077745f63427ea573879c8ac6e62e2ea6fb16ee9f8277a`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
 - summary: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退守"流程编排"（流程怎么走、节点间如何流转），各子 SKILL 负责"环节内具体规则"（每一步具体怎么做、出错怎么处理）。当用户新增/修改任何 AE 相关 SKILL 时，先查阅本 SKILL 确认内容应放在哪个文件，避免在错误位置撰写或重复堆积。
@@ -40,15 +40,15 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 | category | evidence | design_refs | fallback_policy |
 | --- | --- | --- | --- |
-| identity_trigger | frontmatter: name, description; headings: L3:408 适用范围; keyword_hits: 40 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| identity_trigger | frontmatter: name, description; headings: L3:408 适用范围; keyword_hits: 44 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L3:14 auto-engineering-skill = 流程编排（不退守就会腐化）; L2:256 内容回写到正确位置的 5 步流程; L3:344 步骤 4.1：PRD 级状态机同步清单扩展（🆕 v3.3.0）; +1 more; keyword_hits: 162 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:14 auto-engineering-skill = 流程编排（不退守就会腐化）; L3:530 禁止; L3:550 📍 权威源（机器可读，Agent 必须从这里消费）; +3 more; keyword_hits: 287 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
-| tool_command | headings: L3:647 检查器（`tools/lib/update_graph.py` + AA 注入）; L4:707 步骤 2 + 3 + 4：跑 `ae-sdd iteration-check`（🆕 v3.5.4 接管步骤 2/3/4 机器粗筛）; keyword_hits: 248 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L3:344 步骤 4.1：PRD 级状态机同步清单扩展（🆕 v3.3.0）; keyword_hits: 96 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
-| output_doc_contract | headings: L3:368 步骤 4.5：写入 CHANGELOG（🆕 2026-06-10 强制）; L3:729 输出物：《设计-实现一致性迭代检查报告》; L3:740 🔴 阻断级（文档撒谎：声明存在但实际无）; keyword_hits: 150 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
-| resource_reference | inline_refs: 120; refs: *-skill.md; *.md; ../../assets/{projectKey}/*.assets.md; +117 more; headings: L3:196 实例化 4 层架构速查（与 SKILL.md §6 互补）; keyword_hits: 561 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
-| design_alignment | headings: L2:12 核心设计哲学; L2:74 项目结构与设计说明（🆕 v3.2.4 — 维护者的项目地图）; L3:196 实例化 4 层架构速查（与 SKILL.md §6 互补）; +5 more; keyword_hits: 308 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
-| fallback_only_detail | headings: L2:74 项目结构与设计说明（🆕 v3.2.4 — 维护者的项目地图）; L3:368 步骤 4.5：写入 CHANGELOG（🆕 2026-06-10 强制）; L3:462 同步脚本说明（🆕 v3.0 三脚本分工）; +2 more; keyword_hits: 96 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
+| gate_constraint | headings: L3:14 auto-engineering-skill = 流程编排（不退守就会腐化）; L3:530 禁止; L3:550 📍 权威源（机器可读，Agent 必须从这里消费）; +3 more; keyword_hits: 300 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | headings: L3:679 检查器（`tools/lib/update_graph.py` + AA 注入）; L4:740 步骤 2 + 3 + 4：跑 `ae-sdd iteration-check`（🆕 v3.5.4 接管步骤 2/3/4 机器粗筛）; keyword_hits: 257 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | headings: L3:344 步骤 4.1：PRD 级状态机同步清单扩展（🆕 v3.3.0）; keyword_hits: 103 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | headings: L3:368 步骤 4.5：写入 CHANGELOG（🆕 2026-06-10 强制）; L3:762 输出物：《设计-实现一致性迭代检查报告》; L3:773 🔴 阻断级（文档撒谎：声明存在但实际无）; keyword_hits: 164 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 120; refs: *-skill.md; *.md; ../../assets/{projectKey}/*.assets.md; +117 more; headings: L3:196 实例化 4 层架构速查（与 SKILL.md §6 互补）; keyword_hits: 579 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | headings: L2:12 核心设计哲学; L2:74 项目结构与设计说明（🆕 v3.2.4 — 维护者的项目地图）; L3:196 实例化 4 层架构速查（与 SKILL.md §6 互补）; +5 more; keyword_hits: 352 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| fallback_only_detail | headings: L2:74 项目结构与设计说明（🆕 v3.2.4 — 维护者的项目地图）; L3:368 步骤 4.5：写入 CHANGELOG（🆕 2026-06-10 强制）; L3:462 同步脚本说明（🆕 v3.0 三脚本分工）; +2 more; keyword_hits: 109 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
 ## Source Slimming SOP
 
@@ -98,36 +98,38 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | 1 | 594 | qr.affected_items → 连带项清单（path/action/auto_checkable） |
 | 1 | 595 | qr.checks_to_run → 该跑的 UC-XX 检查 ID |
 | 1 | 604 | 或只跑第 1 步返回的 checks_to_run |
-| 3 | 612 | 人读视图（仅供参考，非权威） |
-| 3 | 630 | 图谱使用 SOP（Agent 流程） |
-| 3 | 647 | 检查器（`tools/lib/update_graph.py` + AA 注入） |
-| 3 | 665 | 图谱维护规则 |
-| 2 | 676 | 设计-实现一致性迭代检查（🆕 v3.5.3 — 每月/重大变更后跑，补 UC 自动检查的盲区） |
-| 3 | 680 | 为什么需要本节（UC 自动检查够不到的 4 类盲区） |
-| 3 | 689 | 检查时机 |
-| 3 | 695 | 检查 SOP（4 步，强制顺序） |
-| 4 | 697 | 步骤 1：跑自动化基线（UC + health + gates） |
-| 4 | 707 | 步骤 2 + 3 + 4：跑 `ae-sdd iteration-check`（🆕 v3.5.4 接管步骤 2/3/4 机器粗筛） |
-| 3 | 729 | 输出物：《设计-实现一致性迭代检查报告》 |
-| 1 | 732 | ae-sdd 设计-实现一致性迭代检查报告（{日期}） |
-| 2 | 734 | 自动化基线 |
-| 2 | 739 | 不一致清单（按严重度） |
-| 3 | 740 | 🔴 阻断级（文档撒谎：声明存在但实际无） |
-| 3 | 743 | 🟡 一般级（部分一致：实现存在但缩水） |
-| 3 | 745 | ✅ 已诚实自认降级（不算撒谎） |
-| 2 | 748 | 根因分析 |
-| 2 | 751 | 修复建议（按优先级 P0/P1/P2） |
-| 3 | 755 | 与 UC 自动检查的关系（不替代，是补充） |
-| 3 | 767 | 门禁 |
-| 2 | 775 | SKILL 健康度自检清单（每月或重大变更后跑一次） |
-| 3 | 777 | AE-skill 健康度 |
-| 3 | 789 | 子 SKILL 健康度 |
-| 3 | 853 | 跨 SKILL 一致性 |
-| 2 | 864 | 禁止的 6 种反模式 |
-| 2 | 878 | 与其他 SKILL 的关系 |
-| 2 | 887 | 本次重构摘要（2026-06-04） |
-| 2 | 904 | 本次重构摘要（2026-06-10 任务规模分级） |
-| 2 | 924 | 本次重构摘要（2026-06-10 SKILL 母版目录全面重组 + 3 项配套整改） |
+| 3 | 612 | Typed Operation Maintenance Entry |
+| 3 | 627 | Design Ledger Maintenance Entry |
+| 3 | 642 | 人读视图（仅供参考，非权威） |
+| 3 | 662 | 图谱使用 SOP（Agent 流程） |
+| 3 | 679 | 检查器（`tools/lib/update_graph.py` + AA 注入） |
+| 3 | 698 | 图谱维护规则 |
+| 2 | 709 | 设计-实现一致性迭代检查（🆕 v3.5.3 — 每月/重大变更后跑，补 UC 自动检查的盲区） |
+| 3 | 713 | 为什么需要本节（UC 自动检查够不到的 4 类盲区） |
+| 3 | 722 | 检查时机 |
+| 3 | 728 | 检查 SOP（4 步，强制顺序） |
+| 4 | 730 | 步骤 1：跑自动化基线（UC + health + gates） |
+| 4 | 740 | 步骤 2 + 3 + 4：跑 `ae-sdd iteration-check`（🆕 v3.5.4 接管步骤 2/3/4 机器粗筛） |
+| 3 | 762 | 输出物：《设计-实现一致性迭代检查报告》 |
+| 1 | 765 | ae-sdd 设计-实现一致性迭代检查报告（{日期}） |
+| 2 | 767 | 自动化基线 |
+| 2 | 772 | 不一致清单（按严重度） |
+| 3 | 773 | 🔴 阻断级（文档撒谎：声明存在但实际无） |
+| 3 | 776 | 🟡 一般级（部分一致：实现存在但缩水） |
+| 3 | 778 | ✅ 已诚实自认降级（不算撒谎） |
+| 2 | 781 | 根因分析 |
+| 2 | 784 | 修复建议（按优先级 P0/P1/P2） |
+| 3 | 788 | 与 UC 自动检查的关系（不替代，是补充） |
+| 3 | 800 | 门禁 |
+| 2 | 808 | SKILL 健康度自检清单（每月或重大变更后跑一次） |
+| 3 | 810 | AE-skill 健康度 |
+| 3 | 822 | 子 SKILL 健康度 |
+| 3 | 888 | 跨 SKILL 一致性 |
+| 2 | 899 | 禁止的 6 种反模式 |
+| 2 | 913 | 与其他 SKILL 的关系 |
+| 2 | 922 | 本次重构摘要（2026-06-04） |
+| 2 | 939 | 本次重构摘要（2026-06-10 任务规模分级） |
+| 2 | 959 | 本次重构摘要（2026-06-10 SKILL 母版目录全面重组 + 3 项配套整改） |
 
 ## Inline References
 
@@ -178,6 +180,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | CHANGELOG/_template.md |
 | HARNESS.md |
 | N/A |
+| N/A: no design semantics changed |
 | Plan/ |
 | README.md |
 | README.md:5 |
@@ -200,14 +203,21 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | ae-sdd init |
 | ae-sdd init <project-dir> <project-key> |
 | ae-sdd iteration-check |
+| ae-sdd ops describe --json |
+| ae-sdd ops describe/next/execute |
 | ae-sdd state write --phase <next> |
 | ae-sdd update-check |
 | ae-sdd update-check --affected |
+| ae-sdd update-check --affected <changed-files> |
 | ae-sdd update-check --affected <改动的文件> |
 | ae-sdd update-check --only UC-14 |
+| ae-sdd update-check --only UC-19 --json |
+| ae-sdd update-check --only UC-20 --json |
 | ae-sdd-conventions.md §2.3 |
 | ae-sdd-design.md |
+| ae-sdd-design.md §0 |
 | ae-sdd-implementation-architecture.md |
+| ae-sdd-implementation-architecture.md §12 |
 | ae-sdd-monitor-design.md |
 | ae-sdd-plugin-loader-skill.md |
 | ae-sdd-skill.md |
@@ -245,11 +255,3 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | dist/ae-sdd/VERSION |
 | docs/ |
 | document-storage-skill.md |
-| document-storage-skill.md §1.3 路径模板 |
-| document-storage-skill.md §1.6 旧路径兼容层 |
-| document-storage-skill.md 附录 A |
-| dr-update-skill.md |
-| durationMs/slowest |
-| git config --global core.hooksPath /dev/null |
-| git status/diff/log/blame/impact |
-| git-insight-skill.md |

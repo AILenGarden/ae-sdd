@@ -1,15 +1,16 @@
 ---
 name: ae-sdd
-version: 3.10.9
+version: 3.11.4
 description: |
   端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.11.3：Story 逻辑 ID 与正式 StoryName 解耦。`state new --story-name` / `state bind-story-doc` 精确绑定原生文件名，G-02/G-14 共用 metadata-validated resolver；禁止模糊猜测或创建 ID-only 别名，旧 `{STORY-ID}.md` 保持兼容。
   🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
   🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
   🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。
   🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。
   🆕 v3.9.22：测试 fixture 全量迁移到 task-scoped work-item state（跟随 v3.9.13 架构决策）+ 修复 6 处确定性 bug（入口脚本 py -3 引号 / assets_index 多文件 stats 崩溃 / gates.py 三元运算符丢行号 / update_graph kind 误标 / post-commit 无 pipefail 掩盖分发失败 / 版本号三处对齐）。
-  🆕 v3.9.21：门禁按会话 engage 按需启用——修复"没调 /ae-sdd 的会话/子 Agent 也被全局 hook 锁死"。gate-intercept 增加 engage 短路：未 engage 直接放行；prompt-inject 检测 /ae-sdd 触发词写会话级 engage 标记（.ae-sdd/.session-engaged/），说"退出 ae-sdd"清除。语义从"有 .ae-sdd/ 就锁"改为"调了 ae-sdd 才锁"。
+  🆕 v3.11.4：Hook 改为 turn-scoped activity token。普通 prompt（含 Story 文档对齐）默认不注入、不解析 Work Item、不执行 phase/Stop 门禁；显式进入 `/ae-sdd` 或真实写流程时才激活当前 turn，Stop 成功后自动释放，避免历史 session 残留导致误锁。
   🆕 v3.9.20：三症同治——(1) manifest 拆双文件（manifest-index.json LLM 用，省 75% tokens）；(2) G-STORY-CTX 升级真"已引用"门禁（查 Story 正文引用约束条目 + 取消小/微豁免）；(3) 新增 G-REVIEW-DEPTH（禁裸✅ + 零发现举证）。统一哲学：查产物证据不查行为。
   🆕 v3.9.19：顶层结构整理——清 scratch + README 仓库结构树补齐 + RELEASING.md 发版包指南 + UC-17 仓库顶层结构契约守门。
   🆕 v3.9.12：Story 模板新增「## 人工任务」章节——修复"人工任务"语义分裂（声明源在 StoryGeneratePlan §1.6 临时计划产物里、登记处在 Story 验收记录尾巴、Story 正文无声明源）的设计断裂。新增 `## 人工任务 \`选填\`` 章节（位于实现任务映射之后、偏离声明之前）作为非编码人工处理项的长期声明源（含类型枚举 8 类）；StoryGeneratePlan §1.6 加落位指引；story-template 验收记录下「人工任务完成」改为引用本章节（DRY）；story-generation-standard §2.5 F 阶段映射新增「§人工任务」。
@@ -34,10 +35,10 @@ source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/SKILL.full.md
-source_fallback_sha256: 9d0a76110388d88466d124b4505f3908369d5df22ca19545f1c08141acea50f2
-source_original_bytes: 51709
-source_original_lines: 832
-source_semantic_inventory_sha256: 230ff439a1829a89fdf18c3f0eec67cc50df1202560ef29fa754bd1961f2d4fc
+source_fallback_sha256: 1ab691094a59fc7cdef9d734435f9409e3c5497a96d5abb0a4ac3f944a7c1bbd
+source_original_bytes: 54008
+source_original_lines: 850
+source_semantic_inventory_sha256: 0742c4c5989f536c5402d7f12d68d3a5ac01d04d410a8944d11da1295e2f21b1
 source_slimmer: slim_source_skills.py@2
 ---
 
@@ -56,20 +57,21 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `SKILL.md`
 - fallback: `skill-fallbacks/SKILL.full.md`
-- fallback_sha256: `9d0a76110388d88466d124b4505f3908369d5df22ca19545f1c08141acea50f2`
-- original_lines: 832
-- original_bytes: 51709
-- semantic_inventory_sha256: `230ff439a1829a89fdf18c3f0eec67cc50df1202560ef29fa754bd1961f2d4fc`
+- fallback_sha256: `1ab691094a59fc7cdef9d734435f9409e3c5497a96d5abb0a4ac3f944a7c1bbd`
+- original_lines: 850
+- original_bytes: 54008
+- semantic_inventory_sha256: `0742c4c5989f536c5402d7f12d68d3a5ac01d04d410a8944d11da1295e2f21b1`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
 - summary: 端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+🆕 v3.11.3：Story 逻辑 ID 与正式 StoryName 解耦。`state new --story-name` / `state bind-story-doc` 精确绑定原生文件名，G-02/G-14 共用 metadata-validated resolver；禁止模糊猜测或创建 ID-only 别名，旧 `{STORY-ID}.md` 保持兼容。
 🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
 🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
 🆕 v3.10.0：砍 Task phase + Route 下移重分级--Task 骨架分解合并进 CodingProcess §A1.5；大=DR、中=Story、小=CodingPlan、微=无文档。精简流程为 Story->TestCase->CodingPlan->Coding->Test->Review（含实现报告）。
 🆕 v3.10.1：state 创建时带随机 UUID 前缀保证目录名/stateMachineId 全局唯一--目录名从 `PRD-IM-CS` 变为 `{uuid}-PRD-IM-CS`，新增 `stateMachineName`（纯业务名）+ `stateUuid` 字段；`find_work_item_state_path` 增后缀匹配（按业务名可命中 UUID 前缀目录）；防同业务名撞目录互相覆盖。向后兼容旧 state。
 🆕 v3.9.22：测试 fixture 全量迁移到 task-scoped work-item state（跟随 v3.9.13 架构决策）+ 修复 6 处确定性 bug（入口脚本 py -3 引号 / assets_index 多文件 stats 崩溃 / gates.py 三元运算符丢行号 / update_graph kind 误标 / post-commit 无 pipefail 掩盖分发失败 / 版本号三处对齐）。
-🆕 v3.9.21：门禁按会话 engage 按需启用——修复"没调 /ae-sdd 的会话/子 Agent 也被全局 hook 锁死"。gate-intercept 增加 engage 短路：未 engage 直接放行；prompt-inject 检测 /ae-sdd 触发词写会话级 engage 标记（.ae-sdd/.session-engaged/），说"退出 ae-sdd"清除。语义从"有 .ae-sdd/ 就锁"改为"调了 ae-sdd 才锁"。
+🆕 v3.11.4：Hook 改为 turn-scoped activity token。普通 prompt（含 Story 文档对齐）默认不注入、不解析 Work Item、不执行 phase/Stop 门禁；显式进入 `/ae-sdd` 或真实写流程时才激活当前 turn，Stop 成功后自动释放，避免历史 session 残留导致误锁。
 🆕 v3.9.20：三症同治——(1) manifest 拆双文件（manifest-index.json LLM 用，省 75% tokens）；(2) G-STORY-CTX 升级真"已引用"门禁（查 Story 正文引用约束条目 + 取消小/微豁免）；(3) 新增 G-REVIEW-DEPTH（禁裸✅ + 零发现举证）。统一哲学：查产物证据不查行为。
 🆕 v3.9.19：顶层结构整理——清 scratch + README 仓库结构树补齐 + RELEASING.md 发版包指南 + UC-17 仓库顶层结构契约守门。
 🆕 v3.9.12：Story 模板新增「## 人工任务」章节——修复"人工任务"语义分裂（声明源在 StoryGeneratePlan §1.6 临时计划产物里、登记处在 Story 验收记录尾巴、Story 正文无声明源）的设计断裂。新增 `## 人工任务 \`选填\`` 章节（位于实现任务映射之后、偏离声明之前）作为非编码人工处理项的长期声明源（含类型枚举 8 类）；StoryGeneratePlan §1.6 加落位指引；story-template 验收记录下「人工任务完成」改为引用本章节（DRY）；story-generation-standard §2.5 F 阶段映射新增「§人工任务」。
@@ -94,15 +96,15 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 | category | evidence | design_refs | fallback_policy |
 | --- | --- | --- | --- |
-| identity_trigger | frontmatter: name, description, version; headings: L3:158 系列入口 compact（4步协议 step 1）; L3:162 中途 compact（子流程执行中上下文压力触发）; L3:169 compact-trigger 读端（补齐 v3.10.3）; +2 more; keyword_hits: 42 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
-| workflow_route | headings: L2:91 🎛️ 主流程监管器执行协议（🆕 v3.10.3 3层Agent模型）; L3:137 5大子流程串行委托; L3:150 子流程Agent memory 管理; +13 more; keyword_hits: 176 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:229 🛡️ 门禁速查; L3:231 G-00 项目资产（每次调用必过）; L3:242 G-RA 需求分析准入（dr-generate / story-generate / task-generate 前必过）; +11 more; keyword_hits: 202 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
-| tool_command | headings: L3:571 ①bis 前端视角接口审视; L2:718 🛠️ 工具 API 速查; keyword_hits: 112 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L3:324 配置（`.ae-sdd/config.yaml` 的 `automation` 段，SSOT）; L3:446 状态机子链（实际 state.json phase 值）; L2:547 流程状态与再启动; +3 more; keyword_hits: 94 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
-| output_doc_contract | headings: L3:185 暂离声明（AI 主动输出）; L3:272 G-DOC-STORAGE（任何产出文档落地前）; L3:284 G-DOC-CONSISTENCY（文档落地前 + G-00后）; +4 more; keyword_hits: 113 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
-| resource_reference | inline_refs: 103; refs: ## 人工任务 \; .ae-sdd/; .ae-sdd/compact-trigger; +100 more; keyword_hits: 86 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
-| design_alignment | headings: L2:384 🔴 实现方案决策基线（Story→Task→Coding 全链路）; L3:584 🔍 审核点1.5 实现方案预确认（AI先答，用户确认）; keyword_hits: 78 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
-| fallback_only_detail | keyword_hits: 22 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
+| identity_trigger | frontmatter: name, description, version; headings: L3:159 系列入口 compact（4步协议 step 1）; L3:163 中途 compact（子流程执行中上下文压力触发）; L3:170 compact-trigger 读端（补齐 v3.10.3）; +3 more; keyword_hits: 43 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | headings: L2:92 🎛️ 主流程监管器执行协议（🆕 v3.10.3 3层Agent模型）; L3:138 5大子流程串行委托; L3:151 子流程Agent memory 管理; +13 more; keyword_hits: 176 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | headings: L2:230 🛡️ 门禁速查; L3:232 G-00 项目资产（每次调用必过）; L3:243 G-RA 需求分析准入（dr-generate / story-generate / task-generate 前必过）; +11 more; keyword_hits: 212 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | headings: L3:572 ①bis 前端视角接口审视; L2:719 🛠️ 工具 API 速查; keyword_hits: 119 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | headings: L3:325 配置（`.ae-sdd/config.yaml` 的 `automation` 段，SSOT）; L3:447 状态机子链（实际 state.json phase 值）; L2:548 流程状态与再启动; +3 more; keyword_hits: 106 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | headings: L3:186 暂离声明（AI 主动输出）; L3:273 G-DOC-STORAGE（任何产出文档落地前）; L3:285 G-DOC-CONSISTENCY（文档落地前 + G-00后）; +4 more; keyword_hits: 119 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 110; refs: ## 人工任务 \; .ae-sdd/; .ae-sdd/compact-trigger; +107 more; keyword_hits: 92 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | headings: L2:385 🔴 实现方案决策基线（Story→Task→Coding 全链路）; L3:585 🔍 审核点1.5 实现方案预确认（AI先答，用户确认）; keyword_hits: 82 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| fallback_only_detail | keyword_hits: 24 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
 ## Source Slimming SOP
 
@@ -116,67 +118,68 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 | level | line | title |
 | --- | --- | --- |
-| 2 | 91 | 🎛️ 主流程监管器执行协议（🆕 v3.10.3 3层Agent模型） |
-| 2 | 120 | 🤖 3层Agent模型（🆕 v3.10.3） |
-| 3 | 122 | 层级职责 |
-| 3 | 130 | 隔离方式 |
-| 3 | 137 | 5大子流程串行委托 |
-| 3 | 141 | 通信协议 |
-| 3 | 150 | 子流程Agent memory 管理 |
-| 2 | 156 | 🔄 compact 后重载协议（🆕 v3.10.3） |
-| 3 | 158 | 系列入口 compact（4步协议 step 1） |
-| 3 | 162 | 中途 compact（子流程执行中上下文压力触发） |
-| 3 | 169 | compact-trigger 读端（补齐 v3.10.3） |
-| 3 | 175 | PRD 收尾 compact |
-| 2 | 181 | 🔀 暂离与回归协议（流程偏离防护） |
-| 3 | 185 | 暂离声明（AI 主动输出） |
-| 3 | 200 | 编码意图检测（暂离期间触发） |
-| 3 | 212 | 回归门（回归时强制执行） |
-| 2 | 229 | 🛡️ 门禁速查 |
-| 3 | 231 | G-00 项目资产（每次调用必过） |
-| 3 | 242 | G-RA 需求分析准入（dr-generate / story-generate / task-generate 前必过） |
-| 3 | 259 | G-CODEPLAN-SRC（CodingPlan → ⑤Coding 前） |
-| 3 | 272 | G-DOC-STORAGE（任何产出文档落地前） |
-| 3 | 284 | G-DOC-CONSISTENCY（文档落地前 + G-00后） |
-| 3 | 292 | G-14 CodingPlan-Story 一致性（CodingPlan → ⑤Coding 前，与 G-CODEPLAN-SRC 正交） |
-| 3 | 304 | G-AUTO-CONSENSUS 自动化联审共识（🆕 v3.8.0，仅自动化模式启用） |
-| 2 | 320 | 🚀 自动化模式（🆕 v3.8.0 — 输入→结果全自动化） |
-| 3 | 324 | 配置（`.ae-sdd/config.yaml` 的 `automation` 段，SSOT） |
-| 3 | 336 | 行为分叉（每个审核点） |
-| 3 | 344 | 阻断出口 |
-| 3 | 350 | 开工前信息预收集（Step 1.5，仅自动化模式） |
-| 3 | 362 | 禁止事项（自动化模式专属） |
-| 2 | 372 | 🔴 输出核心原则（最高优先级） |
-| 2 | 384 | 🔴 实现方案决策基线（Story→Task→Coding 全链路） |
-| 2 | 395 | 🎯 智能路由 |
-| 3 | 408 | 路由表（编码类） |
-| 3 | 435 | 4类规格判定 |
-| 3 | 446 | 状态机子链（实际 state.json phase 值） |
-| 2 | 459 | 📖 人工审核主动讲解规范 |
-| 2 | 473 | 🤖 多 Agent 机制摘要 |
-| 2 | 493 | ⏱️ 节点级上下文压力（6个审核点边界必调） |
-| 2 | 510 | 整体流程骨架 |
-| 2 | 547 | 流程状态与再启动 |
-| 2 | 569 | Phase 1 关键节点 |
-| 3 | 571 | ①bis 前端视角接口审视 |
-| 3 | 576 | ② Story Review |
-| 3 | 581 | 🔍 审核点1 对话内呈现（必须直接输出） |
-| 3 | 584 | 🔍 审核点1.5 实现方案预确认（AI先答，用户确认） |
-| 2 | 589 | Phase 2 关键节点 |
-| 3 | 591 | ④bis CodingProcess（🆕 v3.5.17） |
-| 3 | 609 | 🔍 审核点2 逐文件核对（强制，禁止一锅端） |
-| 3 | 612 | 🔍 审核点2.5 CodingPlan评审（必须直接输出） |
-| 2 | 617 | Phase 3 关键节点 |
-| 3 | 619 | ⑥ 完成判定（6.1~6.10） |
-| 3 | 634 | ⑦ter 流程收尾合规自检（5维度，禁止裸✅收尾） |
-| 3 | 646 | ⑧ 完成产出物 |
-| 2 | 662 | PRD级完成判定（v3.3.0） |
-| 2 | 687 | 子 SKILL 索引 |
-| 2 | 718 | 🛠️ 工具 API 速查 |
-| 2 | 756 | 🔧 维护工作流 |
-| 2 | 770 | 禁止事项 |
-| 2 | 785 | 执行清单（TodoWrite 1:1 映射） |
-| 2 | 818 | Delivery priority and stop-loss policy (v3.10.9) |
+| 2 | 92 | 🎛️ 主流程监管器执行协议（🆕 v3.10.3 3层Agent模型） |
+| 2 | 121 | 🤖 3层Agent模型（🆕 v3.10.3） |
+| 3 | 123 | 层级职责 |
+| 3 | 131 | 隔离方式 |
+| 3 | 138 | 5大子流程串行委托 |
+| 3 | 142 | 通信协议 |
+| 3 | 151 | 子流程Agent memory 管理 |
+| 2 | 157 | 🔄 compact 后重载协议（🆕 v3.10.3） |
+| 3 | 159 | 系列入口 compact（4步协议 step 1） |
+| 3 | 163 | 中途 compact（子流程执行中上下文压力触发） |
+| 3 | 170 | compact-trigger 读端（补齐 v3.10.3） |
+| 3 | 176 | PRD 收尾 compact |
+| 2 | 182 | 🔀 暂离与回归协议（流程偏离防护） |
+| 3 | 186 | 暂离声明（AI 主动输出） |
+| 3 | 201 | 编码意图检测（暂离期间触发） |
+| 3 | 213 | 回归门（回归时强制执行） |
+| 2 | 230 | 🛡️ 门禁速查 |
+| 3 | 232 | G-00 项目资产（每次调用必过） |
+| 3 | 243 | G-RA 需求分析准入（dr-generate / story-generate / task-generate 前必过） |
+| 3 | 260 | G-CODEPLAN-SRC（CodingPlan → ⑤Coding 前） |
+| 3 | 273 | G-DOC-STORAGE（任何产出文档落地前） |
+| 3 | 285 | G-DOC-CONSISTENCY（文档落地前 + G-00后） |
+| 3 | 293 | G-14 CodingPlan-Story 一致性（CodingPlan → ⑤Coding 前，与 G-CODEPLAN-SRC 正交） |
+| 3 | 305 | G-AUTO-CONSENSUS 自动化联审共识（🆕 v3.8.0，仅自动化模式启用） |
+| 2 | 321 | 🚀 自动化模式（🆕 v3.8.0 — 输入→结果全自动化） |
+| 3 | 325 | 配置（`.ae-sdd/config.yaml` 的 `automation` 段，SSOT） |
+| 3 | 337 | 行为分叉（每个审核点） |
+| 3 | 345 | 阻断出口 |
+| 3 | 351 | 开工前信息预收集（Step 1.5，仅自动化模式） |
+| 3 | 363 | 禁止事项（自动化模式专属） |
+| 2 | 373 | 🔴 输出核心原则（最高优先级） |
+| 2 | 385 | 🔴 实现方案决策基线（Story→Task→Coding 全链路） |
+| 2 | 396 | 🎯 智能路由 |
+| 3 | 409 | 路由表（编码类） |
+| 3 | 436 | 4类规格判定 |
+| 3 | 447 | 状态机子链（实际 state.json phase 值） |
+| 2 | 460 | 📖 人工审核主动讲解规范 |
+| 2 | 474 | 🤖 多 Agent 机制摘要 |
+| 2 | 494 | ⏱️ 节点级上下文压力（6个审核点边界必调） |
+| 2 | 511 | 整体流程骨架 |
+| 2 | 548 | 流程状态与再启动 |
+| 2 | 570 | Phase 1 关键节点 |
+| 3 | 572 | ①bis 前端视角接口审视 |
+| 3 | 577 | ② Story Review |
+| 3 | 582 | 🔍 审核点1 对话内呈现（必须直接输出） |
+| 3 | 585 | 🔍 审核点1.5 实现方案预确认（AI先答，用户确认） |
+| 2 | 590 | Phase 2 关键节点 |
+| 3 | 592 | ④bis CodingProcess（🆕 v3.5.17） |
+| 3 | 610 | 🔍 审核点2 逐文件核对（强制，禁止一锅端） |
+| 3 | 613 | 🔍 审核点2.5 CodingPlan评审（必须直接输出） |
+| 2 | 618 | Phase 3 关键节点 |
+| 3 | 620 | ⑥ 完成判定（6.1~6.10） |
+| 3 | 635 | ⑦ter 流程收尾合规自检（5维度，禁止裸✅收尾） |
+| 3 | 647 | ⑧ 完成产出物 |
+| 2 | 663 | PRD级完成判定（v3.3.0） |
+| 2 | 688 | 子 SKILL 索引 |
+| 2 | 719 | 🛠️ 工具 API 速查 |
+| 2 | 762 | Typed operation protocol（LLM 写操作入口） |
+| 2 | 772 | 🔧 维护工作流 |
+| 2 | 788 | 禁止事项 |
+| 2 | 803 | 执行清单（TodoWrite 1:1 映射） |
+| 2 | 836 | Delivery priority and stop-loss policy (v3.10.9) |
 
 ## Inline References
 
@@ -214,8 +217,12 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | ae-sdd health |
 | ae-sdd init <dir> <projectKey> |
 | ae-sdd iteration-check |
+| ae-sdd lease acquire/status/renew/release/break |
 | ae-sdd memory create |
 | ae-sdd memory enter/write/exit/read/search |
+| ae-sdd ops describe --json |
+| ae-sdd ops execute --request-file <REQUEST.json> --json |
+| ae-sdd ops next --project <ROOT> --work-item <ID> --json |
 | ae-sdd perf report/doctor/clear |
 | ae-sdd plugin list/validate/trace/init |
 | ae-sdd preflight collect |
@@ -238,7 +245,8 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | ae-sdd subprocess collect --agent-id <ID> --deliverables '[...]' |
 | ae-sdd subprocess list |
 | ae-sdd subprocess spawn --series <type> --entity-id <ID> |
-| ae-sdd update-check |
+| ae-sdd update-check --affected <files> |
+| ae-sdd update-check --only UC-20 |
 | ae-sdd verify plan --work-item <ID> --persist |
 | ae-sdd version/bump/init |
 | ae-sdd-doc/ |
@@ -267,6 +275,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | source/CHANGELOG/{YYYY-MM-DD}-{主题}.md |
 | source/SKILL.md |
 | source/standards/ |
+| source/standards/operation-protocol.md |
 | story-generate-skill.md |
 | story-generation-standard.md |
 | story-input-checklist.md |
@@ -281,6 +290,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | testcase-review-skill.md |
 | tools/bin/ae-sdd |
 | tools/lib/*.py |
+| {STORY-ID}.md |
 | {series}-generate-skill.md |
 | {series}-review-skill.md |
 | {story}-Report-v{N}-r{M}.md |

@@ -560,6 +560,212 @@ class TestStateWorkItemIsolationLegacy(unittest.TestCase):
         self.skipTest("v3.9.3 SKIPPED: 旧 v3.8.2 行为已废除")
 
 
+class TestStateStoryDocumentBindingCli(unittest.TestCase):
+    story_id = "STORY-006-BE"
+    story_name = "cs-ai-story-006-门店推荐对接与列表接口-BE"
+
+    def _write_story(self, tmp: Path, story_id: str | None = None) -> Path:
+        target = (tmp / "document" / "project" / "design" / "story" / "be"
+                  / f"{self.story_name}.md")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"# story\n\n- Story ID：{story_id or self.story_id}\n",
+            encoding="utf-8",
+        )
+        return target
+
+    def _new_state(self, tmp: Path) -> Path:
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", self.story_id,
+            "--entry-node", "STORY",
+            "--story-ids", self.story_id,
+            "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        return Path(json.loads(out)["statePath"])
+
+    def test_state_new_accepts_story_name_and_persists_binding(self):
+        tmp = _setup_project()
+        story = self._write_story(tmp)
+
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", self.story_id,
+            "--entry-node", "STORY",
+            "--story-ids", self.story_id,
+            "--story-name", self.story_name,
+            "--json",
+        )
+
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        payload = json.loads(out)
+        state_data = json.loads(Path(payload["statePath"]).read_text(encoding="utf-8"))
+        binding = state_data["storyStates"][self.story_id]
+        self.assertEqual(binding["storyName"], self.story_name)
+        self.assertEqual(Path(binding["docPath"]), story.resolve())
+        self.assertEqual(payload["storyName"], self.story_name)
+
+    def test_bind_story_doc_updates_existing_state_and_is_idempotent(self):
+        tmp = _setup_project()
+        story = self._write_story(tmp)
+        state_path = self._new_state(tmp)
+
+        args = (
+            "state", "bind-story-doc",
+            "--work-item", "Story-006",
+            "--story", self.story_id,
+            "--story-name", self.story_name,
+            "--json",
+        )
+        code1, out1, err1 = _run_cli(tmp, *args)
+        code2, out2, err2 = _run_cli(tmp, *args)
+
+        self.assertEqual(code1, 0, msg=f"stdout={out1}\nstderr={err1}")
+        self.assertEqual(code2, 0, msg=f"stdout={out2}\nstderr={err2}")
+        self.assertTrue(json.loads(out1)["changed"])
+        self.assertFalse(json.loads(out2)["changed"])
+        binding = json.loads(state_path.read_text(encoding="utf-8"))["storyStates"][self.story_id]
+        self.assertEqual(Path(binding["docPath"]), story.resolve())
+
+    def test_bind_story_doc_metadata_mismatch_fails_without_state_change(self):
+        tmp = _setup_project()
+        self._write_story(tmp, story_id="STORY-007-BE")
+        state_path = self._new_state(tmp)
+        before = state_path.read_bytes()
+
+        code, out, err = _run_cli(
+            tmp, "state", "bind-story-doc",
+            "--work-item", "Story-006",
+            "--story", self.story_id,
+            "--story-name", self.story_name,
+            "--json",
+        )
+
+        self.assertNotEqual(code, 0, msg=out)
+        self.assertIn("STORY_DOC_ID_MISMATCH", out + err)
+        self.assertEqual(state_path.read_bytes(), before)
+
+    def test_bind_rejects_unsafe_work_item_tokens_before_external_write(self):
+        for token_kind in ("parent", "absolute", "slash", "backslash"):
+            with self.subTest(token_kind=token_kind):
+                tmp = _setup_project()
+                story = self._write_story(tmp)
+                victim_dir = tmp / "victim"
+                victim_dir.mkdir()
+                victim_state = victim_dir / "state.json"
+                victim_state.write_text(json.dumps({
+                    "version": "2",
+                    "stateModel": "nested",
+                    "entryNode": "STORY",
+                    "activeStory": self.story_id,
+                    "storyStates": {self.story_id: {"phase": "initialized"}},
+                    "history": [],
+                }), encoding="utf-8")
+                tokens = {
+                    "parent": "../victim",
+                    "absolute": str(victim_dir),
+                    "slash": "victim/child",
+                    "backslash": r"victim\child",
+                }
+                before = victim_state.read_bytes()
+                sidecars_before = sorted(p.name for p in victim_dir.iterdir())
+
+                code, out, err = _run_cli(
+                    tmp, "state", "bind-story-doc",
+                    "--work-item", tokens[token_kind],
+                    "--story", self.story_id,
+                    "--story-name", story.stem,
+                    "--json",
+                )
+
+                self.assertNotEqual(code, 0, msg=out)
+                self.assertIn("WORK_ITEM_PATH_INVALID", out + err)
+                self.assertEqual(victim_state.read_bytes(), before)
+                self.assertEqual(sorted(p.name for p in victim_dir.iterdir()), sidecars_before)
+
+    def test_state_new_parent_absorption_honors_active_lease_atomically(self):
+        tmp = _setup_project()
+        story = self._write_story(tmp)
+        story.write_text(
+            story.read_text(encoding="utf-8") + "\n- DR: DR-001\n",
+            encoding="utf-8",
+        )
+        design = tmp / "design"
+        design.mkdir()
+        (design / "DR-001.md").write_text(
+            f"# DR-001\n\n{self.story_id}\n", encoding="utf-8"
+        )
+        parent = tmp / ".auto-engineering" / "parent-DR-001"
+        parent.mkdir(parents=True)
+        parent_state = parent / "state.json"
+        parent_state.write_text(json.dumps({
+            "version": "2",
+            "stateModel": "nested",
+            "entryNode": "DR",
+            "stateMachineId": "parent-DR-001",
+            "stateMachineName": "DR-001",
+            "drState": {"drId": "DR-001", "phase": "dr-generated"},
+            "storyStates": {},
+            "history": [],
+            "revision": 4,
+        }), encoding="utf-8")
+        lease = parent / "state.lease.json"
+        lease.write_text(json.dumps({
+            "schemaVersion": "1",
+            "status": "active",
+            "leaseId": "held-by-other",
+            "owner": {"agentId": "other", "sessionId": "other-session", "host": "test", "pid": 1},
+            "fencingToken": 9,
+            "acquiredAt": "2026-07-15T00:00:00Z",
+            "heartbeatAt": "2026-07-15T00:00:00Z",
+            "expiresAt": "2099-07-15T00:00:00Z",
+            "ttlSeconds": 300,
+            "acquireIdempotencyKey": "other-acquire",
+            "history": [],
+        }), encoding="utf-8")
+        state_before = parent_state.read_bytes()
+        lease_before = lease.read_bytes()
+
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", self.story_id,
+            "--entry-node", "STORY",
+            "--story-ids", self.story_id,
+            "--story-name", self.story_name,
+            "--json",
+        )
+
+        self.assertNotEqual(code, 0, msg=out)
+        self.assertIn("LEASE_CONFLICT", out + err)
+        self.assertEqual(parent_state.read_bytes(), state_before)
+        self.assertEqual(lease.read_bytes(), lease_before)
+
+        released = json.loads(lease.read_text(encoding="utf-8"))
+        released["status"] = "released"
+        lease.write_text(json.dumps(released), encoding="utf-8")
+        code, out, err = _run_cli(
+            tmp, "state", "new",
+            "--id", self.story_id,
+            "--entry-node", "STORY",
+            "--story-ids", self.story_id,
+            "--story-name", self.story_name,
+            "--json",
+        )
+
+        self.assertEqual(code, 0, msg=f"stdout={out}\nstderr={err}")
+        updated = json.loads(parent_state.read_text(encoding="utf-8"))
+        self.assertEqual(updated["revision"], 5)
+        self.assertEqual(updated["lastMutation"]["revisionBefore"], 4)
+        self.assertEqual(updated["lastMutation"]["revisionAfter"], 5)
+        self.assertEqual(
+            updated["storyStates"][self.story_id]["storyName"], self.story_name
+        )
+        self.assertEqual(
+            Path(updated["storyStates"][self.story_id]["docPath"]), story.resolve()
+        )
+
+
 class TestStateNewUuidPrefix(unittest.TestCase):
     """🆕 v3.10.1 state new 创建的 state 带 UUID 前缀 + 防重复创建。"""
 

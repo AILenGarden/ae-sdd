@@ -72,14 +72,9 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
 }
 
 
-# ─── 🆕 v3.10.4：Story-scoped intent 集合 ─────────────────────────────────────
-# 这些 intent 的路径模板用 {workItem} 作目录分桶键（Task/Coding/Test/CR/Story 子目录）。
-# 当 story_id 非空时，目录名应优先用 story_id 而非 work_item_id，与读取侧
-# paths.list_docs（硬编码 Task/{story_id} 目录）及既有文档树命名规范对齐。
-# 根因（Pbl.md 问题2）：v3.7.4 "升级为 WorkItem 分桶"只改了写入侧，读取侧
-# 仍用 story_id 分桶，导致 doc save --work-item Story-004 --story-id STORY-004-BE
-# 落到 Coding/Story-004/ 而既有文档树是 Coding/STORY-004-BE/，写读分桶键不一致。
-# story_id 为空时（BUG/OPT 无 story）回退 work_item_id，保持 WorkItem 分桶兼容。
+# Work Item scoped output intents. Explicit work_item_id is the canonical
+# execution-artifact owner. story_id remains a design/reference relation and is
+# only the legacy bucket when no explicit Work Item was supplied.
 _STORY_SCOPED_INTENTS: frozenset[str] = frozenset({
     "STORY_SUPPLEMENT", "STORY_GENERATE_PLAN", "STORY_WRITER_REPORT",
     "TASK", "TASK_SUPPLEMENT", "TASK_WRITER_REPORT", "TASK_REVIEW", "TASK_IMPL_PLAN",
@@ -112,6 +107,39 @@ class DocStorageError(Exception):
         super().__init__(f"[{code}] {message}")
 
 
+class ScopeAmbiguousError(Exception):
+    """Raised when a legacy Story fallback has more than one valid artifact."""
+
+    code = "SCOPE_AMBIGUOUS"
+
+    def __init__(self, candidates: list[Path]):
+        self.candidates = candidates
+        super().__init__(
+            f"[{self.code}] legacy Story scope has {len(candidates)} candidates"
+        )
+
+
+class StoryDocumentNameInvalidError(DocStorageError):
+    """Raised when StoryName is not a filename basename."""
+
+    def __init__(self, story_name: str):
+        super().__init__(
+            "STORY_DOC_NAME_INVALID",
+            f"StoryName must be a filename basename, got: {story_name!r}",
+        )
+
+
+class StoryDocumentAmbiguousError(DocStorageError):
+    """Raised when one exact StoryName maps to multiple valid documents."""
+
+    def __init__(self, candidates: list[Path]):
+        self.candidates = tuple(str(path) for path in candidates)
+        super().__init__(
+            "STORY_DOC_AMBIGUOUS",
+            f"exact StoryName matched {len(candidates)} valid documents",
+        )
+
+
 # ─── 返回数据类 ────────────────────────────────────────────────────────────────
 @dataclass
 class ResolvedPath:
@@ -142,6 +170,25 @@ class IterationChoice:
     date: str
     strength: str  # 'strong' | 'weak' | 'none'
     reasoning: str
+
+
+@dataclass(frozen=True)
+class ScopedArtifactResolution:
+    path: Optional[Path]
+    scope_source: str
+    candidates: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class StoryDocumentResolution:
+    """A deterministic Story document lookup result."""
+
+    path: Optional[Path]
+    story_id: str
+    story_name: str
+    source: str
+    candidates: tuple[Path, ...] = ()
+    rejected: tuple[dict[str, str], ...] = ()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -313,19 +360,19 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
     # workItem 是独立编码任务隔离键：PRD / BUG / OPT / Story 均可。
     # 旧调用只传 story_id 时，workItem 回退到 story_id，保持路径兼容。
     #
-    # 🆕 v3.10.4 修复写读分桶不一致（Pbl.md 问题2）：
-    # Story-scoped intent（Task/Coding/Test/CR/Story 子目录）当 story_id 非空时，
-    # 目录名优先用 story_id 而非 work_item_id，与读取侧 paths.list_docs
-    # （硬编码 Task/{story_id} 目录）及既有文档树命名规范对齐。
-    # story_id 为空时（BUG/OPT 无 story）回退 work_item_id，保持 WorkItem 分桶兼容。
-    if intent in _STORY_SCOPED_INTENTS and story_id:
-        effective_work_item = story_id
-    else:
-        effective_work_item = work_item_id or story_id or doc_id or task_name or ""
+    # Explicit Work Item identity wins. This prevents an independent BUG/OPT
+    # attached to a Story from overwriting or consuming the Story's main
+    # Coding/Test/Review artifacts. Old callers that only provide story_id keep
+    # the historical Story bucket.
+    effective_work_item = work_item_id or story_id or doc_id or task_name or ""
 
     # docId 回退链：显式 doc_id > task_name > workItem > story_id（Story/PRD/RA/DR 等单标识文档，
     # 其 doc-id 语义上 = story-id/prd-id/issue-id 等，调用方常只传 story_id/work_item_id）
-    effective_doc_id = doc_id or task_name or story_id or ""
+    effective_doc_id = doc_id or task_name or ""
+    if not effective_doc_id and intent in _STORY_SCOPED_INTENTS:
+        effective_doc_id = effective_work_item
+    if not effective_doc_id:
+        effective_doc_id = story_id or ""
     if not effective_doc_id:
         effective_doc_id = effective_work_item
     full = template.format(
@@ -354,6 +401,300 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
         scope=scope,
         storing_index_update={"category": category, "docType": intent, "fullPath": str(full_path_obj)},
     )
+
+
+_STORY_METADATA_ID_RE = re.compile(
+    r"(?im)^\s*(?:[-*+]\s*|\|\s*)"
+    r"(?:\*\*)?Story\s*ID(?:\*\*)?\s*(?:\||[：:])\s*"
+    r"`?([A-Za-z0-9][A-Za-z0-9._-]*)`?"
+)
+
+
+def normalize_story_name(story_name: str) -> str:
+    """Normalize a StoryName to a basename without the optional .md suffix."""
+    raw = (story_name or "").strip()
+    if (not raw or raw in {".", ".."} or ".." in raw
+            or "/" in raw or "\\" in raw or "\x00" in raw
+            or any(char in raw for char in "*?[]")):
+        raise StoryDocumentNameInvalidError(story_name)
+    if raw.lower().endswith(".md"):
+        raw = raw[:-3]
+    if not raw:
+        raise StoryDocumentNameInvalidError(story_name)
+    return raw
+
+
+def _story_metadata_ids(path: Path) -> tuple[str, ...]:
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ()
+    return tuple(dict.fromkeys(match.group(1).strip()
+                               for match in _STORY_METADATA_ID_RE.finditer(content)))
+
+
+def _story_candidate_rejection(path: Path, story_id: str) -> Optional[dict[str, str]]:
+    metadata_ids = _story_metadata_ids(path)
+    if not metadata_ids:
+        return {
+            "code": "STORY_DOC_ID_MISSING",
+            "path": str(path),
+            "expectedStoryId": story_id,
+            "actualStoryId": "",
+        }
+    if story_id.casefold() not in {value.casefold() for value in metadata_ids}:
+        return {
+            "code": "STORY_DOC_ID_MISMATCH",
+            "path": str(path),
+            "expectedStoryId": story_id,
+            "actualStoryId": ",".join(metadata_ids),
+        }
+    return None
+
+
+def _exact_story_name_candidates(project_dir: Path, file_name: str) -> list[Path]:
+    candidates: list[Path] = []
+    for root in paths.doc_search_roots(Path(project_dir)):
+        if not root.is_dir():
+            continue
+        direct = root / file_name
+        if direct.is_file():
+            candidates.append(direct)
+        candidates.extend(candidate for candidate in root.rglob(file_name)
+                          if candidate.is_file())
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _story_path_is_within_search_roots(project_dir: Path, candidate: Path) -> bool:
+    try:
+        resolved_candidate = candidate.resolve()
+    except OSError:
+        resolved_candidate = candidate
+    for root in paths.doc_search_roots(Path(project_dir)):
+        try:
+            resolved_candidate.relative_to(root.resolve())
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def _story_id_only_candidates(project_dir: Path, story_id: str) -> list[Path]:
+    """Return exact Story-category candidates; never scan Task/Coding buckets."""
+    file_name = f"{story_id}.md"
+    candidates: list[Path] = []
+    for root in paths.doc_search_roots(Path(project_dir)):
+        for candidate in (
+            paths.project_design_dir(root) / file_name,
+            root / file_name,
+            root / "ae-sdd-doc" / "Story" / file_name,
+        ):
+            if not candidate.is_file():
+                continue
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                resolved = candidate
+            if _story_path_is_within_search_roots(Path(project_dir), resolved):
+                candidates.append(resolved)
+    return list(dict.fromkeys(candidates))
+
+
+def resolve_story_document(
+    project_dir: Path,
+    *,
+    story_id: str,
+    story_name: str = "",
+    bound_path: Optional[str] = None,
+) -> StoryDocumentResolution:
+    """Resolve one Story document without fuzzy ID matching.
+
+    Priority is an already-bound path, then an exact StoryName basename, then
+    the legacy/canonical ID-only filename when no StoryName was supplied.
+    Formal names are accepted only when document metadata declares story_id.
+    """
+    logical_id = (story_id or "").strip()
+    if not logical_id:
+        raise DocStorageError("STORY_ID_REQUIRED", "story_id is required")
+
+    normalized_name = normalize_story_name(story_name) if story_name else ""
+
+    if bound_path:
+        candidate = Path(bound_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(project_dir) / candidate
+        try:
+            candidate = candidate.resolve()
+        except OSError:
+            pass
+        if candidate.is_file():
+            if not _story_path_is_within_search_roots(Path(project_dir), candidate):
+                rejection = {
+                    "code": "STORY_DOC_OUTSIDE_ROOTS",
+                    "path": str(candidate),
+                    "expectedStoryId": logical_id,
+                    "actualStoryId": "",
+                }
+                return StoryDocumentResolution(
+                    None, logical_id, normalized_name or candidate.stem, "none",
+                    candidates=(candidate,), rejected=(rejection,),
+                )
+            if (normalized_name
+                    and candidate.name.casefold() != f"{normalized_name}.md".casefold()):
+                rejection = {
+                    "code": "STORY_DOC_NAME_MISMATCH",
+                    "path": str(candidate),
+                    "expectedStoryId": logical_id,
+                    "actualStoryId": "",
+                }
+                return StoryDocumentResolution(
+                    None, logical_id, normalized_name, "none",
+                    candidates=(candidate,), rejected=(rejection,),
+                )
+            rejection = _story_candidate_rejection(candidate, logical_id)
+            if rejection:
+                return StoryDocumentResolution(
+                    None, logical_id, normalized_name or candidate.stem, "none",
+                    candidates=(candidate,), rejected=(rejection,),
+                )
+            return StoryDocumentResolution(
+                candidate, logical_id, normalized_name or candidate.stem,
+                "bound-path", candidates=(candidate,),
+            )
+
+    if normalized_name:
+        candidates = _exact_story_name_candidates(
+            Path(project_dir), f"{normalized_name}.md"
+        )
+        valid: list[Path] = []
+        rejected: list[dict[str, str]] = []
+        for candidate in candidates:
+            if not _story_path_is_within_search_roots(Path(project_dir), candidate):
+                rejected.append({
+                    "code": "STORY_DOC_OUTSIDE_ROOTS",
+                    "path": str(candidate),
+                    "expectedStoryId": logical_id,
+                    "actualStoryId": "",
+                })
+                continue
+            rejection = _story_candidate_rejection(candidate, logical_id)
+            if rejection:
+                rejected.append(rejection)
+            else:
+                valid.append(candidate)
+        if len(valid) > 1:
+            raise StoryDocumentAmbiguousError(valid)
+        if valid:
+            return StoryDocumentResolution(
+                valid[0], logical_id, normalized_name, "story-name",
+                candidates=tuple(candidates), rejected=tuple(rejected),
+            )
+        return StoryDocumentResolution(
+            None, logical_id, normalized_name, "none",
+            candidates=tuple(candidates), rejected=tuple(rejected),
+        )
+
+    canonical_candidates = _story_id_only_candidates(Path(project_dir), logical_id)
+    if len(canonical_candidates) > 1:
+        raise StoryDocumentAmbiguousError(canonical_candidates)
+    if canonical_candidates:
+        canonical = canonical_candidates[0]
+        return StoryDocumentResolution(
+            canonical, logical_id, logical_id, "canonical-id",
+            candidates=tuple(canonical_candidates),
+        )
+    return StoryDocumentResolution(None, logical_id, logical_id, "none")
+
+
+def resolve_scoped_artifact(
+    project_dir: Path,
+    *,
+    category: str,
+    work_item_id: str,
+    story_id: str,
+    suffixes: list[str],
+) -> ScopedArtifactResolution:
+    """Resolve a Coding/Test/CR artifact without crossing Work Item identity.
+
+    The explicit Work Item bucket is authoritative. A Story bucket is consulted
+    only when no Work Item artifact exists, and that compatibility fallback must
+    contain exactly one candidate.
+    """
+
+    roots = paths.doc_search_roots(Path(project_dir))
+
+    def collect(identity: str) -> list[Path]:
+        if not identity:
+            return []
+        candidates: list[Path] = []
+        for root in roots:
+            doc_root = root / "ae-sdd-doc"
+            direct_dir = doc_root / category / identity
+            for suffix in suffixes:
+                pattern = f"{identity}{suffix}"
+                candidates.extend(sorted(direct_dir.glob(pattern)))
+                if doc_root.is_dir():
+                    candidates.extend(sorted(doc_root.rglob(pattern)))
+                candidates.extend(
+                    [
+                        paths.project_design_dir(root) / f"{identity}{suffix}",
+                        root / f"{identity}{suffix}",
+                    ]
+                )
+        seen: set[str] = set()
+        result: list[Path] = []
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            key = str(candidate.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(candidate)
+        return result
+
+    canonical = collect(work_item_id)
+    if canonical:
+        # Work Item artifacts are authoritative. Prefer the canonical direct
+        # unversioned path, then deterministic lexical order for older layouts.
+        direct_root_parts = ("ae-sdd-doc", category, work_item_id)
+
+        def canonical_rank(path: Path) -> tuple[int, int, str]:
+            normalized = path.as_posix()
+            is_direct = all(part in path.parts for part in direct_root_parts)
+            is_unversioned = "-v" not in path.stem and "-r" not in path.stem
+            return (0 if is_direct else 1, 0 if is_unversioned else 1, normalized)
+
+        selected = sorted(canonical, key=canonical_rank)[0]
+        return ScopedArtifactResolution(
+            path=selected,
+            scope_source="work-item",
+            candidates=tuple(canonical),
+        )
+
+    if not story_id or story_id == work_item_id:
+        return ScopedArtifactResolution(None, "none")
+    legacy = collect(story_id)
+    if len(legacy) > 1:
+        raise ScopeAmbiguousError(legacy)
+    if legacy:
+        return ScopedArtifactResolution(
+            path=legacy[0],
+            scope_source="legacy-story",
+            candidates=tuple(legacy),
+        )
+    return ScopedArtifactResolution(None, "none")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

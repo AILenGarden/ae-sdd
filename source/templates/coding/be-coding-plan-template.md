@@ -1,6 +1,6 @@
 ---
 name: be-coding-plan-template
-description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项目资产"分层归类 + 编排 Task 执行顺序 + 输出类骨架（不写完整实现）。含 3 个 Tier 分级（Bug 修复/增量开发/全新模块）和 15 条门禁（含判定 SOP，🆕 v3.4.0 G-CODEPLAN-SRC 源码核对）。
+description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。含 Tier 1 微任务轻量 profile 与 Tier 2/3 完整 profile；完整任务保留 15 条自检，微任务只保留范围、实现顺序、风险回滚和验证。
 ---
 
 # BE Code Plan 模板
@@ -11,13 +11,13 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 > 1. 落地路径由 `document-storage.resolve_path(intent="CODING_PLAN", workItemId={WORKITEM-ID}, storyId={STORY-ID})` 推导（见 document-storage §1.3），不硬编码
 > 2. 选 Tier（见 §0.5）
 > 3. 逐节填值（**禁止留空**；无则填 N/A 并说明）
-> 4. 通过 10 条门禁后进入 ⑤ Coding
+> 4. 通过当前 Tier 对应的门禁后进入 ⑤ Coding
 
 ---
 
 ## 填写声明表
 
-> 本模板采用"两大段"结构：本表集中声明所有章节的**填写义务**，正文每章节按"骨架 + 示例"两段组织。
+> 本模板采用"两大段"结构：本表集中声明完整 profile 的**填写义务**，正文每章节按"骨架 + 示例"两段组织。Tier 1 以 §0.5 行为覆盖，未列章节不得为过门禁而伪造。
 > 章节标题不再标注 `必填/选填`；判定依据统一查此表。
 
 | § | 章节 | 填写义务 | 适用条件 |
@@ -49,7 +49,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 | 12 | 与 Story 接口契约一致性确认 | 🟡 选填（条件） | Tier 2/3（Tier 1 免填） |
 | 13 | Task 间依赖与调用关系 | 🟡 选填（条件） | Tier 2/3（Tier 1 免填） |
 | 14 | 实现注意事项 | 🟡 选填（条件） | Tier 2/3（Tier 1 免填） |
-| 15 | 门禁自检（🔴 15 条全部 ✅ 才允许进入 `CodingSkill.Execute`） | 🔴 必填 | 全部 |
+| 15 | 门禁自检（🔴 15 条全部 ✅ 才允许进入 `CodingSkill.Execute`） | 🔴 必填 | Tier 2/3 |
 | — | 维护 | 🟡 选填（条件） | 模板维护时 |
 
 **填写义务图例：**
@@ -74,11 +74,13 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。基于"项
 
 | Tier | 适用场景 | 必填章节 | 必省章节 |
 | --- | --- | --- | --- |
-| **Tier 1** | 5 行 Bug 修复 / 单方法调整 | §0, §1, §2, §5, §9, §10 | §3, §4, §6, §7, §8, §11, §12, §13, §14, §15 |
+| **Tier 1** | 微任务 / Bug 修复 / ≤2 文件重构 | §0, §4, §9, §10；新增/重塑类骨架时加 §5 | §1-§3, §6-§8, §11-§15（除触发升级） |
 | **Tier 2** | 增量功能（单 Task 或 ≤3 Task） | §0-§10, §11, §15 | §12, §13, §14 |
 | **Tier 3** | 全新模块（≥4 Task，含新表/新 SPI/新 BFF） | **全部 16 节** | 无 |
 
 **当前 Plan Tier：** `{Tier 1 / Tier 2 / Tier 3}`
+
+**Tier 1 轻量门禁映射：** §4 同时给出变更范围、文件和实现顺序；§9 给出编译/测试验证；§10 给出风险、停止条件和回滚。Standalone 微任务以 Work Item 为产物分桶，不伪造 Story/AC；G-14 记录 N/A。若出现架构、接口契约、数据模型或跨服务影响，立即升级 Tier 2/3。
 
 ---
 

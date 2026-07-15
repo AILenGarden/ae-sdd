@@ -49,7 +49,9 @@
 
 ## 📋 PHASE MACHINE（工具 PERMIT/DENY 表）
 
-> **三层 hook 强制执行，AI 意愿无关。**
+> **三层 hook 在 ae-sdd turn 内强制执行，AI 意愿无关；普通 turn 默认 inactive。**
+
+`UserPromptSubmit` 只有在当前消息显式进入 `/ae-sdd` 或触发明确 ae-sdd 写流程时才创建 session 级 turn token。普通问题、Story 文档查阅和普通 Bash 不解析 Work Item、不注入状态、不触发 phase 门禁。Stop 成功或下一条普通消息会清理残留 token，Stop 阻断重试时保留 token。
 
 | Phase             | Write/Edit    | Bash | 说明                      |
 | ----------------- | ------------- | ---- | ------------------------- |

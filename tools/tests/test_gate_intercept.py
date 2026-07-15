@@ -244,6 +244,113 @@ class TestParallelWorkItemHookIsolation:
 
         assert allowed, reason
 
+    def test_explicit_work_item_state_write_resolves_before_ambiguity(self, tmp_path):
+        """显式 --work-item 应先定位目标，再执行 state write 校验。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command="ae-sdd state write --work-item Story-005 --phase coding",
+            project_dir=tmp_path,
+            forced_engaged=True,
+        )
+
+        assert allowed, reason
+
+    def test_quoted_python_path_explicit_work_item_resolves_before_ambiguity(self, tmp_path):
+        """带引号脚本路径也必须提取 --work-item，不能退回隐式歧义。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command=(
+                'python "C:/Program Files/ae-sdd/tools/bin/ae-sdd" state write '
+                '--work-item Story-005 --phase coding'
+            ),
+            project_dir=tmp_path,
+            forced_engaged=True,
+        )
+
+        assert allowed, reason
+
+    def test_explicit_work_item_state_write_binds_session(self, tmp_path, monkeypatch):
+        """显式目标在有 session key 时应成为后续 Write/Edit 的会话绑定。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command="ae-sdd state write --work-item Story-005 --phase coding",
+            project_dir=tmp_path,
+            forced_engaged=True,
+            session_key="session-explicit-005",
+        )
+
+        assert allowed, reason
+        binding = work_item_context.read_session_binding(ade_sdd, "session-explicit-005")
+        assert binding is not None
+        assert binding.key == "Story-005"
+
+        monkeypatch.setattr(
+            "lib.gate_intercept._check_memory_entered",
+            lambda phase, ade_sdd, state_data: (True, ""),
+        )
+        followup_allowed, followup_reason = check_intercept(
+            "Write",
+            file_path=str(tmp_path / "README.md"),
+            project_dir=tmp_path,
+            forced_engaged=True,
+            session_key="session-explicit-005",
+        )
+        assert followup_allowed, followup_reason
+
+    def test_explicit_missing_work_item_is_actionable(self, tmp_path):
+        """显式目标不存在时应报告目标，而不是回退到隐式歧义。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "story-generated")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "coding")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command="ae-sdd state write --work-item Story-999 --phase coding",
+            project_dir=tmp_path,
+            forced_engaged=True,
+        )
+
+        assert not allowed
+        assert "Story-999" in reason
+        assert "not found" in reason.lower()
+
+    def test_explicit_completed_work_item_preserves_state_write_policy(self, tmp_path):
+        """显式 completed 目标应沿用幂等 state write 策略，而不是隐式过滤。"""
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        self._write_work_item(tmp_path, "Story-004", "STORY-004-BE", "coding")
+        self._write_work_item(tmp_path, "Story-005", "STORY-005-BE", "completed")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command="ae-sdd state write --work-item Story-005 --phase completed",
+            project_dir=tmp_path,
+            forced_engaged=True,
+        )
+
+        assert allowed, reason
+
     def test_redirected_echo_still_blocked_by_work_item_ambiguity(self, tmp_path):
         ade_sdd = tmp_path / ".ae-sdd"
         ade_sdd.mkdir()
@@ -439,6 +546,138 @@ class TestParallelWorkItemHookIsolation:
         )
 
         assert not allowed, f"smuggled payload should not escape: {smuggled_command!r}"
+
+
+class TestQuotedAeSddCommandPrefixes:
+    """合法 ae-sdd 命令前缀应兼容 Windows 引号，不放松 shell 控制符防护。"""
+
+    @staticmethod
+    def _make_project(tmp_path, phase="completed"):
+        ade_sdd = tmp_path / ".ae-sdd"
+        ade_sdd.mkdir()
+        (ade_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        _write_work_item_state(tmp_path, {
+            "version": "1",
+            "projectKey": "test",
+            "phase": phase,
+            "scale": "微",
+            "entryNode": "BUG",
+            "currentStory": "BUG-001",
+            "history": [],
+        }, key="Bug-BUG-001")
+        return tmp_path
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            "ae-sdd",
+            "python C:/Users/EDY/.claude/skills/ae-sdd/tools/bin/ae-sdd",
+            'python "C:/Users/EDY/.claude/skills/ae-sdd/tools/bin/ae-sdd"',
+            'python "C:/Program Files/ae-sdd/tools/bin/ae-sdd"',
+            (
+                '"C:/Users/EDY/AppData/Local/Programs/Python/Python315/python.exe" '
+                '"C:/Users/EDY/.claude/skills/ae-sdd/tools/bin/ae-sdd"'
+            ),
+        ],
+    )
+    def test_state_new_escape_accepts_supported_prefixes(self, tmp_path, prefix):
+        project_dir = self._make_project(tmp_path)
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command=f"{prefix} state new --id BUG-002 --entry-node BUG",
+            project_dir=project_dir,
+            forced_engaged=True,
+        )
+
+        assert allowed, reason
+
+    def test_quoted_python_path_memory_command_uses_existing_fast_path(self, tmp_path):
+        project_dir = self._make_project(tmp_path, phase="task-generated")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command=(
+                'python "C:/Program Files/ae-sdd/tools/bin/ae-sdd" memory enter '
+                '--phase coding-plan --story BUG-001'
+            ),
+            project_dir=project_dir,
+            forced_engaged=True,
+        )
+
+        assert allowed, reason
+
+    def test_quoted_python_path_assets_generate_uses_existing_fast_path(self, tmp_path):
+        project_dir = self._make_project(tmp_path, phase="initialized")
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command=(
+                'python "C:/Program Files/ae-sdd/tools/bin/ae-sdd" assets generate '
+                '--project test'
+            ),
+            project_dir=project_dir,
+            forced_engaged=True,
+        )
+
+        assert allowed, reason
+
+    @pytest.mark.parametrize("subcommand", ["gates check", "state read"])
+    def test_quoted_python_path_readonly_commands_remain_readonly(self, tmp_path, subcommand):
+        project_dir = self._make_project(tmp_path)
+
+        allowed, reason = check_intercept(
+            "Bash",
+            bash_command=(
+                'python "C:/Program Files/ae-sdd/tools/bin/ae-sdd" '
+                f"{subcommand} --work-item BUG-001"
+            ),
+            project_dir=project_dir,
+            forced_engaged=True,
+        )
+
+        assert allowed, reason
+
+    @pytest.mark.parametrize(
+        "suffix",
+        [
+            "&& rm -rf .ae-sdd/",
+            "; rm -rf .ae-sdd/",
+            "$(touch pwned)",
+            "`touch pwned`",
+            "> out.txt",
+        ],
+    )
+    def test_quoted_state_new_shell_controls_remain_blocked(self, tmp_path, suffix):
+        project_dir = self._make_project(tmp_path)
+        command = (
+            'python "C:/Program Files/ae-sdd/tools/bin/ae-sdd" state new '
+            f"--id BUG-002 --entry-node BUG {suffix}"
+        )
+
+        allowed, _ = check_intercept(
+            "Bash",
+            bash_command=command,
+            project_dir=project_dir,
+            forced_engaged=True,
+        )
+
+        assert not allowed
+
+    def test_malformed_quoted_prefix_fails_closed(self, tmp_path):
+        project_dir = self._make_project(tmp_path)
+
+        allowed, _ = check_intercept(
+            "Bash",
+            bash_command=(
+                'python "C:/Program Files/ae-sdd/tools/bin/ae-sdd state new '
+                '--id BUG-002 --entry-node BUG'
+            ),
+            project_dir=project_dir,
+            forced_engaged=True,
+        )
+
+        assert not allowed
 
 
 class TestHS10DocumentStoragePathGuard:
@@ -713,16 +952,16 @@ class TestScaleRoutedStateWrite:
             )
             assert allowed, f"scale={scale} story-reviewed→testcase-generated 应放行，但被拒: {reason}"
 
-    def test_story_reviewed_to_task_generated_blocked(self, tmp_path, monkeypatch):
-        """🆕 v3.7.0 大/中/小链 story-reviewed→task-generated 应被拦（跳过整个 TestCase 系列）"""
+    def test_story_generated_to_coding_process_blocked(self, tmp_path, monkeypatch):
+        """v3.10.0 大/中链 story-generated→coding-process 应被拦（跳过 TestCase）。"""
         self._bypass_gates_and_memory(monkeypatch)
-        for scale in ("大", "中", "小"):
-            project_dir = self._make_state(tmp_path, scale=scale, phase="story-reviewed")
-            cmd = "ae-sdd state write --phase task-generated --story STORY-001"
+        for scale in ("大", "中"):
+            project_dir = self._make_state(tmp_path, scale=scale, phase="story-generated")
+            cmd = "ae-sdd state write --phase coding-process --story STORY-001"
             allowed, reason = check_intercept(
                 "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True
             )
-            assert not allowed, f"scale={scale} story-reviewed→task-generated 应被拦（跳过 TestCase）"
+            assert not allowed, f"scale={scale} story-generated→coding-process 应被拦（跳过 TestCase）"
             assert "跨步跳跃" in reason
 
     def test_micro_initialized_to_dr_not_blocked_by_jump(self, tmp_path, monkeypatch):
@@ -785,7 +1024,8 @@ class TestCodingProcessHardGuard:
         """
         project_dir = self._make_state_with_session(
             tmp_path, phase="coding",
-            confirmed_phases=[{"phase": "task-reviewed"}, {"phase": "coding-process"}]  # 齐全
+            confirmed_phases=[{"phase": "task-reviewed"}, {"phase": "coding-process"},
+                              {"phase": "spec-change"}]  # 齐全
         )
         # 🆕 v3.10.3：coding 属关联 phase，写 src/ 前须 memory 存在（新语义：create_memory 替代 enter）
         from lib import memory_store
@@ -1056,6 +1296,35 @@ class TestSessionEngageGate:
             project_dir=tmp_path, session_key="",
         )
         assert allowed, "空 session_key 应视为未 engage 放行"
+
+    def test_legacy_engaged_marker_is_not_an_activation_signal(self, tmp_path):
+        ade_sdd = self._make_engaged_project(tmp_path, phase="initialized")
+        legacy = ade_sdd / ".session-engaged"
+        legacy.mkdir(parents=True)
+        (legacy / work_item_context._safe_session_file_name("legacy-session")).write_text(
+            '{"engagedAt":"2026-07-01T00:00:00Z"}', encoding="utf-8"
+        )
+
+        allowed, reason = check_intercept(
+            "Bash", bash_command="mvn compile",
+            project_dir=tmp_path, session_key="legacy-session",
+        )
+
+        assert allowed, reason
+
+    def test_real_ae_sdd_write_command_starts_turn_activity(self, tmp_path):
+        ade_sdd = self._make_engaged_project(tmp_path, phase="initialized")
+        session_id = "direct-ae-sdd-entry"
+
+        check_intercept(
+            "Bash",
+            bash_command="ae-sdd state write --work-item Story-001 --phase initialized",
+            project_dir=tmp_path,
+            session_key=session_id,
+        )
+
+        assert work_item_context.is_session_engaged(ade_sdd, session_id)
+        work_item_context.disengage_session(ade_sdd, session_id)
 
     def test_engage_is_per_session_not_global(self, tmp_path):
         """engage 标记按 session 隔离：A 会话 engage 不影响 B 会话。"""
