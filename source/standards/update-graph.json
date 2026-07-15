@@ -586,6 +586,46 @@
         {"path": "source/CHANGELOG/", "action": "记录历史设计回填、设计影响、验证命令和待补基线", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-20"]
+    },
+    {
+      "id": "UG-29",
+      "name": "RA authoritative scan scope 与 G-RA 单文件一致性",
+      "trigger": [
+        "scripts/ra_scan_scope.py",
+        "scripts/ra_authenticity_scan.py",
+        "scripts/ra_depth_scan.py",
+        "scripts/ra_implementation_scan.py",
+        "scripts/flow_violation_scan.py",
+        "tools/lib/gates.py",
+        "tools/bin/ae-sdd",
+        "scripts/build_dist.py",
+        "tools/tests/test_ra_scan_scope.py",
+        "tools/tests/test_gates.py",
+        "tools/tests/test_cli_doc.py",
+        "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
+        "source/docs/ae-sdd-design.md",
+        "source/docs/ae-sdd-implementation-architecture.md",
+        "source/standards/update-graph.json"
+      ],
+      "trigger_condition": "正式 RA 候选分类、scanner --file/root 契约、G-RA selected RA resolver、CLI 转发、分发清单或 fail-fast 编排说明任一变化",
+      "affected": [
+        {"path": "scripts/ra_scan_scope.py", "action": "formal/event/non-authoritative 分类、explicit file containment、稳定排序与结构化错误契约保持统一", "auto_checkable": true},
+        {"path": "scripts/ra_authenticity_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
+        {"path": "scripts/ra_depth_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
+        {"path": "scripts/ra_implementation_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
+        {"path": "scripts/flow_violation_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
+        {"path": "tools/lib/gates.py", "action": "G-RA-1~6/FLOW 必须共享 state binding/latest formal resolver 并向 scanner 传单一 --file", "auto_checkable": true},
+        {"path": "tools/bin/ae-sdd", "action": "四个 RA scanner 子命令暴露并转发 repeatable --file", "auto_checkable": true},
+        {"path": "scripts/build_dist.py", "action": "runtime_scripts 白名单含 ra_scan_scope.py 与四 scanner", "auto_checkable": true},
+        {"path": "tools/tests/test_ra_scan_scope.py", "action": "覆盖 file/root/noise/error/CLI/build 契约", "auto_checkable": false},
+        {"path": "tools/tests/test_gates.py", "action": "覆盖 binding/latest formal 统一选择与 selected file 负例", "auto_checkable": false},
+        {"path": "tools/tests/test_cli_doc.py", "action": "覆盖 RA prerequisite 非零退出、零写入与草稿保留", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "机器同步锚点包含 UG-29", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-design.md", "action": "记录 Work Item RA scope 与 PowerShell 逐命令 fail-fast 设计", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 resolver→scanner --file→gate details 数据流和 dist 依赖", "auto_checkable": false},
+        {"path": "source/CHANGELOG/", "action": "记录 false blocker 根因、兼容边界、验证命令与 Design Ledger impact", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-06", "UC-14", "UC-20"]
     }
   ]
 }

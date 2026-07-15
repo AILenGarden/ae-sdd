@@ -36,6 +36,12 @@ import sys
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
+from ra_scan_scope import (
+    RAScanScopeError,
+    ra_scan_scope_error_payload,
+    resolve_ra_scan_scope,
+)
+
 
 # ─── 8 条规则定义 ─────────────────────────────────────────────────────────────
 # 每条 = (rule_id, description, check_function_or_pattern, severity)
@@ -152,17 +158,18 @@ def _extract_section(content: str, header: str) -> str:
     return "\n".join(lines[start_idx:end_idx])
 
 
-def scan_ra_docs(root: Path) -> tuple[list[ViolationFinding], int]:
+def scan_ra_docs(
+    root: Path,
+    files: tuple[Path, ...] | None = None,
+) -> tuple[list[ViolationFinding], int]:
     """扫描 root 下所有 *.md（含 RA 字样或 RA 目录下的），返回违规清单 + RA 文件数。"""
     findings: list[ViolationFinding] = []
     ra_files = 0
 
     # 候选 RA 文档：文件名含 RA- 或路径含 /RA/
-    for md in root.rglob("*.md"):
+    candidates = files if files is not None else resolve_ra_scan_scope(root).files
+    for md in candidates:
         rel = str(md.relative_to(root)).replace("\\", "/")
-        is_ra = ("/RA/" in rel) or re.search(r"\bRA[-_]", md.name, re.IGNORECASE)
-        if not is_ra:
-            continue
         ra_files += 1
         try:
             content = md.read_text(encoding="utf-8", errors="replace")
@@ -202,6 +209,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Scan RA documents for flow violations (8 rules from requirement-analysis-skill).")
     parser.add_argument("--root", default=".", help="Project root to scan for RA documents.")
+    parser.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        help="Scan only this authoritative RA Markdown file (repeatable).",
+    )
     parser.add_argument("--output", help="Write the scan report to this file.")
     parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     parser.add_argument("--strict", action="store_true",
@@ -209,7 +222,18 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
-    findings, ra_files = scan_ra_docs(root)
+    try:
+        scope = resolve_ra_scan_scope(root, args.file)
+    except RAScanScopeError as exc:
+        if args.format == "json":
+            sys.stdout.write(json.dumps(
+                ra_scan_scope_error_payload(exc, root, args.file),
+                ensure_ascii=False,
+                indent=2,
+            ))
+            return 2
+        parser.error(str(exc))
+    findings, ra_files = scan_ra_docs(root, scope.files)
 
     blockers = sum(1 for f in findings if f.severity == "BLOCKER")
     warnings = sum(1 for f in findings if f.severity == "WARN")
@@ -221,6 +245,9 @@ def main() -> int:
     if args.format == "json":
         payload = {
             "root": str(root),
+            "scopeMode": scope.mode,
+            "selectedFiles": scope.selected_files,
+            "excludedFiles": scope.excluded_files,
             "status": "PASS" if blockers == 0 else "FAIL",
             "raFiles": ra_files,
             "reportStats": asdict(stats),

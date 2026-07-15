@@ -185,6 +185,7 @@ def _copy_runtime_scripts_to_dist(repo_root: Path, dst: Path) -> None:
 
     runtime_scripts = [
         "test_authenticity_scan.py",
+        "ra_scan_scope.py",
         "ra_authenticity_scan.py",
         "coding_authenticity_scan.py",
         "plugin_content_scan.py",  # 🆕 B4 增强：外挂内容安全扫描器

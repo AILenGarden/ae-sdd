@@ -636,6 +636,15 @@ class TestQueryAffected(unittest.TestCase):
         paths = [a["path"] for a in qr.affected_items]
         self.assertIn("scripts/build_dist.py", paths)
 
+    def test_query_ra_scan_scope_hits_unified_scope_rule(self):
+        qr = ug.query_affected(["scripts/ra_scan_scope.py"], REPO_ROOT)
+        rule_ids = [rule["id"] for rule in qr.matched_rules]
+        self.assertIn("UG-29", rule_ids)
+        paths = [item["path"] for item in qr.affected_items]
+        self.assertIn("tools/lib/gates.py", paths)
+        self.assertIn("tools/tests/test_ra_scan_scope.py", paths)
+        self.assertIn("scripts/build_dist.py", paths)
+
     def test_query_skill_md_hits_version_rule(self):
         # 改 SKILL.md → 命中 UG-01（版本号连带项）
         qr = ug.query_affected(["source/SKILL.md"], REPO_ROOT)
@@ -728,12 +737,12 @@ class TestSyncManifest(unittest.TestCase):
     """S-4 sync manifest：生成 / 漂移检测 / 缺失兜底。"""
 
     def test_generate_manifest_structure(self):
-        """生成的 manifest 含 27 条 UG 规则 + trigger/affected sha256"""
+        """生成的 manifest 含 28 条 UG 规则 + trigger/affected sha256"""
         manifest = ug.generate_sync_manifest(REPO_ROOT)
         self.assertNotIn("error", manifest)
         self.assertEqual(manifest["generatorVersion"], "1.0")
         self.assertIn("generatedAt", manifest)
-        self.assertEqual(len(manifest["rules"]), 27)
+        self.assertEqual(len(manifest["rules"]), 28)
         # 每条规则有 id/name/trigger_files/affected_files
         for rule in manifest["rules"]:
             self.assertIn("id", rule)

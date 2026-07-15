@@ -103,6 +103,26 @@ class TestDocSave(unittest.TestCase):
         combined = out + err
         self.assertIn("E000", combined)
 
+    def test_invalid_ra_prerequisite_exits_one_without_writing_or_deleting_draft(self):
+        """A failed RA prerequisite is fail-closed at the individual CLI command boundary."""
+        tmp = _setup_project()
+        draft = tmp / ".ae-sdd" / "tmp" / "invalid-ra.md"
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text("# Incomplete RA\n", encoding="utf-8")
+
+        code, out, err = _run_cli(
+            tmp,
+            "doc", "save",
+            "--intent", "RA",
+            "--doc-id", "RA-BAD-001",
+            "--content-file", str(draft),
+        )
+
+        self.assertEqual(code, 1, msg=f"stderr={err}\nstdout={out}")
+        self.assertIn("G-RA-PLAN", out + err)
+        self.assertFalse((tmp / "ae-sdd-doc" / "RA" / "RA-BAD-001.md").exists())
+        self.assertTrue(draft.is_file(), "failed doc save must retain its source draft")
+
     def test_save_report_in_place_overwrite(self):
         """报告类文档（CODING_REPORT）v3.10.1 原地更新：两份 doc save 写同一路径，后者覆盖前者。"""
         tmp = _setup_project()

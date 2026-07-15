@@ -46,7 +46,9 @@ harness/                        派生适配层，不手工改生成物
 用户/Agent 调用 ae-sdd
   -> tools/bin/ae-sdd 解析命令
   -> tools/lib/* 执行业务逻辑
-  -> scripts/*_scan.py 提供运行时扫描能力
+  -> G-RA: gates._resolve_selected_ra(state binding/latest formal)
+       -> scripts/ra_scan_scope.py 校验 authoritative file scope
+       -> scripts/*_scan.py --file <selected RA> 提供运行时扫描能力
   -> .ae-sdd/state.json / memory / cache 持久化项目侧状态
   -> output.py 输出结构化结果
 ```
@@ -63,7 +65,7 @@ harness/                        派生适配层，不手工改生成物
 | 状态机 | `tools/lib/state.py` | phase、PRD/work item 状态、事件日志、StoryName/docPath 绑定 | 改状态字段需同步 gates/hook/tests；正文绑定只存指针 |
 | StateStore | `tools/lib/state_store.py` | Work Item allowed-root、exclusive create、lease、fencing、revision CAS、idempotency、atomic persistence | 所有 mutation 必须经 StateStore；state/lock/lease/temp 均做 resolved containment；并发/过期/损坏场景需 subprocess 与 fail-closed 测试 |
 | Typed operations | `tools/lib/operations.py` | LLM 可发现、可校验、可执行的 operation registry 与适配器 | 新 operation 必须有 schema、稳定错误码、CLI/文档和 focused tests |
-| 门禁 | `tools/lib/gates.py` | GATE_REGISTRY、check_all、单 gate 实现、Work Item-scoped CodingPlan profile 选择 | 改门禁需同步 UC-02/UC-03/test_gates |
+| 门禁 | `tools/lib/gates.py` | GATE_REGISTRY、check_all、单 gate 实现、Work Item-scoped CodingPlan profile 与 G-RA selected RA 选择 | 改门禁需同步 UC-02/UC-03/test_gates；G-RA-1~6/FLOW 不得各自猜 RA |
 | update-check | `tools/lib/update_graph.py` | UG/UC 检查、变更影响查询 | 改图谱需同步 JSON、锚点和测试 |
 | 对齐审计 | `tools/lib/alignment_audit.py` | UC-08~13 深度对齐验证 | report-only 与阻断语义需明确 |
 | 迭代检查 | `tools/lib/iteration_check.py` | IC-1~4 设计-实现一致性粗筛 | 不替代人工语义复核 |
@@ -75,7 +77,8 @@ harness/                        派生适配层，不手工改生成物
 | 源 SKILL 瘦身 | `scripts/slim_source_skills.py` / `source/skill-fallbacks/**` | 按标准识别源 SKILL 语义、渲染 slim entry、保留完整 fallback、校验模板一致性 | 已瘦身文件默认跳过；schema 升级必须从 fallback 重渲染，禁止二次摘要 |
 | Runtime 编译 | `scripts/compile_skill_runtime.py` / `tools/lib/runtime_verify.py` | 主入口 compact、全量子 SKILL bootloader、局部 runtime、fallback 原文生成与校验 | `SKILL.md`、`runtime/**`、`skills/**/*.md` 输出必须字节级幂等 |
 | 构建分发 | `scripts/build_dist.py` / `scripts/distribute.py` | source -> dist -> runtime 安装 | 不把手工改动写入 dist |
-| 运行时扫描器 | `scripts/*_scan.py` | 静态扫描，输出 JSON 契约 | 新 scanner 需入 build_dist 白名单 |
+| RA 扫描作用域 | `scripts/ra_scan_scope.py` | formal RA 分类、root discovery、explicit file containment、excluded reason、结构化错误 | 四个 RA scanner 与 gates 必须共享；变更触发 UG-29 |
+| 运行时扫描器 | `scripts/*_scan.py` | 静态扫描，输出 JSON 契约；RA scanner 支持 repeatable `--file` 与 filtered `--root` | 新 scanner/helper 需入 build_dist 白名单 |
 
 ## 5. CLI 入口规则
 
@@ -86,6 +89,7 @@ harness/                        派生适配层，不手工改生成物
 - 业务逻辑下沉到 `tools/lib/`。
 - 新增子命令必须有 `--json` 契约测试。
 - 命令引用必须被 `update-check` 覆盖，避免文档声明幽灵命令。
+- PowerShell 或其他 shell 批量编排必须逐命令检查退出码；最终 process exit 只代表最后一条命令。不得用后续成功覆盖前序 `doc save`/gate 的失败。
 
 当前 `tools/bin/ae-sdd` 已承载较多命令函数，后续新能力应优先新增 `tools/lib/<capability>.py`，入口只做分发。
 
@@ -106,6 +110,8 @@ harness/                        派生适配层，不手工改生成物
 - G-PATH 项目侧只扫描 `.ae-sdd/memory/**/*.md`、顶层 `AGENTS.md`/`CLAUDE.md`/`MEMORY.md` 与 `.harness/memory/**/*.md`；`.ae-sdd/drafts/**/*.md` 属于过程产物，不纳入该 gate。`current_story` 不作为项目路径静默过滤条件。
 - scanner 输出 JSON 必须包含项目根 `root`、`status`、`scannedPaths`、顶层统计、同值 `reportStats` 和 `findings[]`；G-CODE-1 对路径安全/唯一性/scope 覆盖、exit/status、finding schema 及全部计数执行 fail-closed attestation。production eligibility 与 scanner 枚举使用同一文本代码边界：Java/Kotlin/XML/YAML/properties 加 `.py/.js/.ts`，生成目录、虚拟环境/site-packages、`__tests__` 和常规 Python/JS/TS test/spec 命名在两侧均排除。scanner 用 Python AST 只定位自身 `LINE_RULES` 与 metadata 常量赋值范围；业务代码同 URI 不豁免，真实 pom metadata 由 XML 解析确认；不提供通用 inline suppression。
 - Coding scanner 仅在 XML 解析确认真实 Maven POM 根元素后豁免标准 `xmlns`/`xsi`/`schemaLocation` 元数据 URL；Java 或 XML 中的实际外部 endpoint 仍按 `hardcoded-external-url` 阻断。
+- G-RA-1~6/FLOW 共用 `_resolve_selected_ra()`：合法 `state.raDocPath`/active Story `raDocPath` 优先，否则从 `resolve_ra_scan_scope(root).files` 选择统一 latest formal RA。scanner gate 必须传 `--file <selected>`，details 必须包含 `selected_file`、`selection_source`、`scope_mode`；selected RA 自身有 blocker 时仍 fail closed。
+- RA scanner 显式 `--file` 是 caller-authoritative scope，但仍要求项目根 containment、普通 Markdown 文件和存在性；错误以 exit 2 + `INVALID_RA_SCAN_SCOPE` JSON 返回。未传 file 的 root audit 排除 `references/templates/CHANGELOG/dist`、依赖/缓存和 GeneratePlan/Impact/ReverseIssues/Review/Report 等 event sidecar，同时保留 canonical `ae-sdd-doc/RA` 与 legacy `design/**/RA-*`。
 - 新增 `scripts/*_scan.py` 必须加入 `scripts/build_dist.py` runtime_scripts 白名单。
 - 高频 scanner 应优先支持进程内调用，子进程 CLI 仅作为兼容入口。
 - Review Batch、baseline、VerificationPlan 和 evidence 均通过 `tools/lib/` 提供纯 Python API，CLI 只做参数适配；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。
@@ -171,7 +177,7 @@ source/
 - `runtime/manifest.json` 必须记录 `subskills` 与 `extracts.subskill_count`，并与实际 `source/skills/**/*.md` 数量一致。
 - `runtime/subskills.compact.md` 是子 SKILL 入口索引，路由到每个子 SKILL 的局部 `manifest.json`、`boot.compact.md`、`outline.compact.md` 和 fallback。
 - 新增工具链模块放 `tools/lib/`，默认随 tools 复制。
-- 新增独立运行时脚本放 `scripts/` 时，必须更新 `build_dist.py` 白名单。
+- 新增独立运行时脚本或被 scanner import 的共享 helper 放 `scripts/` 时，必须更新 `build_dist.py` 白名单；当前 RA scanner 依赖 `ra_scan_scope.py`，dist 缺失即构建失败。
 - 分发器只能安装编译后 package，不能直接安装 `source/`。
 
 Runtime 编译数据流：

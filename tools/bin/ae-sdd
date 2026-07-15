@@ -2433,6 +2433,175 @@ def cmd_ra_gate(args, parser):
     return 0
 
 
+def _append_ra_scan_files(cmd, args):
+    for file_path in getattr(args, "file", []) or []:
+        cmd.extend(["--file", file_path])
+    return cmd
+
+
+def _validate_ra_scan_finding(finding, index):
+    """Validate the field intersection emitted by all authoritative RA scanners."""
+    prefix = f"findings[{index}]"
+    if not isinstance(finding, dict):
+        return f"{prefix}: expected an object"
+
+    severity = finding.get("severity")
+    if severity not in {"BLOCKER", "WARN"}:
+        return f"{prefix}.severity: expected BLOCKER or WARN, got {severity!r}"
+
+    for field in ("rule", "path", "message"):
+        value = finding.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return f"{prefix}.{field}: expected a non-empty string"
+
+    line = finding.get("line")
+    if isinstance(line, bool) or not isinstance(line, int) or line < 0:
+        return f"{prefix}.line: expected a non-negative integer"
+
+    for field in ("snippet", "file"):
+        if field in finding and not isinstance(finding[field], str):
+            return f"{prefix}.{field}: expected a string when present"
+
+    if "lineno" in finding:
+        lineno = finding["lineno"]
+        if isinstance(lineno, bool) or not isinstance(lineno, int) or lineno < 0:
+            return f"{prefix}.lineno: expected a non-negative integer when present"
+
+    return None
+
+
+def _parse_ra_scan_report(result, scanner_name):
+    """Return a validated scanner report and a normalized contract error code."""
+    stdout = result.stdout or ""
+    error_code = result.returncode or 4
+    if not stdout.strip():
+        output.err(f"{scanner_name} emitted empty JSON output (exit={result.returncode})")
+        return None, error_code
+    try:
+        report = json.loads(stdout)
+    except json.JSONDecodeError:
+        output.err(f"{scanner_name} emitted invalid JSON: {stdout[:200]}")
+        return None, error_code
+    if not isinstance(report, dict):
+        output.err(f"{scanner_name} JSON output must be an object")
+        return None, error_code
+    status = report.get("status")
+    if status not in {"PASS", "FAIL", "ERROR"}:
+        output.err(f"{scanner_name} emitted invalid status: {status!r}")
+        return None, error_code
+    ra_files = report.get("raFiles")
+    if isinstance(ra_files, bool) or not isinstance(ra_files, int) or ra_files < 0:
+        output.err(f"{scanner_name} emitted invalid raFiles: {ra_files!r}")
+        return None, error_code
+
+    if status == "ERROR":
+        if ra_files != 0:
+            output.err(f"{scanner_name} emitted invalid ERROR raFiles: expected 0")
+            return None, error_code
+        error = report.get("error")
+        if not isinstance(error, dict):
+            output.err(f"{scanner_name} emitted invalid error: expected an object")
+            return None, error_code
+        for field in ("code", "message"):
+            value = error.get(field)
+            if not isinstance(value, str) or not value.strip():
+                output.err(
+                    f"{scanner_name} emitted invalid error.{field}: "
+                    "expected a non-empty string"
+                )
+                return None, error_code
+        findings = report.get("findings")
+        if findings is not None:
+            if not isinstance(findings, list):
+                output.err(
+                    f"{scanner_name} emitted invalid findings: "
+                    "expected an array when present"
+                )
+                return None, error_code
+            for index, finding in enumerate(findings):
+                finding_error = _validate_ra_scan_finding(finding, index)
+                if finding_error:
+                    output.err(f"{scanner_name} emitted invalid {finding_error}")
+                    return None, error_code
+        return report, 0
+
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        output.err(f"{scanner_name} emitted invalid findings: expected an array")
+        return None, error_code
+    for index, finding in enumerate(findings):
+        finding_error = _validate_ra_scan_finding(finding, index)
+        if finding_error:
+            output.err(f"{scanner_name} emitted invalid {finding_error}")
+            return None, error_code
+    return report, 0
+
+
+def _ra_scan_execution_error(result, report, fail_returncode=1):
+    status = report.get("status")
+    if status == "ERROR":
+        return result.returncode if result.returncode not in (0, 1) else 2
+    expected_returncode = 0 if status == "PASS" else fail_returncode
+    if result.returncode != expected_returncode:
+        output.err(
+            "RA scanner exit/status mismatch: "
+            f"exit={result.returncode}, status={status}, expected={expected_returncode}"
+        )
+        return result.returncode if result.returncode not in (0, 1) else 2
+    return 0
+
+
+def cmd_ra_authenticity_scan(args, parser):
+    """ra-authenticity-scan — run the RA fabrication/vagueness scanner."""
+    import subprocess
+
+    master = paths.locate_master_source()
+    candidates = []
+    if master:
+        candidates = [master.parent / "scripts" / "ra_authenticity_scan.py",
+                      master / "scripts" / "ra_authenticity_scan.py"]
+    candidates.append(Path("scripts/ra_authenticity_scan.py"))
+    scanner = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if scanner is None:
+        output.err(f"ra_authenticity_scan.py not found (candidates={candidates})")
+        return 2
+
+    root = args.root or str(Path.cwd())
+    cmd = _append_ra_scan_files(
+        [sys.executable, str(scanner), "--root", root, "--format", "json"],
+        args,
+    )
+    try:
+        result = runtime_exec.run_command(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            span_name="scanner:ra_authenticity",
+        )
+    except subprocess.TimeoutExpired:
+        output.err("ra_authenticity_scan.py timed out after 120 seconds")
+        return 3
+
+    report, contract_error = _parse_ra_scan_report(result, "ra_authenticity_scan.py")
+    if contract_error:
+        return contract_error
+
+    if args.json:
+        sys.stdout.write(result.stdout)
+    else:
+        output.info(f"RA authenticity scan root: {report.get('root', root)}")
+        output.info(f"Scope: {report.get('scopeMode', 'root')}")
+        output.info(f"RA files: {report.get('raFiles', 0)}")
+        output.info(f"Status: {report.get('status', 'UNKNOWN')}")
+
+    execution_error = _ra_scan_execution_error(result, report)
+    if execution_error:
+        return execution_error
+    return 1 if report.get("status") == "FAIL" else 0
+
+
 def cmd_flow_violation_scan(args, parser):
     """flow-violation-scan — RA 流程违规审计（🆕 2026-06-27，建议书 §3.4）
 
@@ -2449,11 +2618,16 @@ def cmd_flow_violation_scan(args, parser):
     candidates.append(Path("scripts/flow_violation_scan.py"))
     scanner = next((c for c in candidates if c.is_file()), None)
     if scanner is None:
-        output.error(f"未找到 flow_violation_scan.py（候选：{candidates}）")
+        output.err(f"未找到 flow_violation_scan.py（候选：{candidates}）")
         return 2
 
     root = args.root or str(Path.cwd())
-    cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
+    cmd = _append_ra_scan_files(
+        [sys.executable, str(scanner), "--root", root, "--format", "json"],
+        args,
+    )
+    if args.strict:
+        cmd.append("--strict")
     try:
         result = runtime_exec.run_command(
             cmd,
@@ -2464,22 +2638,15 @@ def cmd_flow_violation_scan(args, parser):
             span_name="scanner:flow_violation",
         )
     except subprocess.TimeoutExpired:
-        output.error("flow_violation_scan.py 跑超过 120 秒")
+        output.err("flow_violation_scan.py 跑超过 120 秒")
         return 3
 
-    report = {}
+    report, contract_error = _parse_ra_scan_report(result, "flow_violation_scan.py")
+    if contract_error:
+        return contract_error
     if args.json:
         sys.stdout.write(result.stdout)
-        try:
-            report = json.loads(result.stdout) if result.stdout else {}
-        except json.JSONDecodeError:
-            pass
     else:
-        try:
-            report = json.loads(result.stdout) if result.stdout else {}
-        except json.JSONDecodeError:
-            output.error(f"扫描器 JSON 输出无法解析：{result.stdout[:200]}")
-            return 4
         stats = report.get("reportStats", {})
         output.info(f"🆕 v3.5.6 RA 流程违规审计（8 条规则）")
         output.info(f"扫描根：{report.get('root', root)}")
@@ -2496,6 +2663,11 @@ def cmd_flow_violation_scan(args, parser):
                 output.info(f"  {icon} [{f.get('rule')}] {f.get('path')}:{f.get('line')}")
                 output.info(f"      {f.get('message')}")
 
+    execution_error = _ra_scan_execution_error(
+        result, report, fail_returncode=1 if args.strict else 0
+    )
+    if execution_error:
+        return execution_error
     return 1 if report.get("status") == "FAIL" and args.strict else 0
 
 
@@ -2515,11 +2687,14 @@ def cmd_ra_depth_scan(args, parser):
     candidates.append(Path("scripts/ra_depth_scan.py"))
     scanner = next((c for c in candidates if c.is_file()), None)
     if scanner is None:
-        output.error(f"未找到 ra_depth_scan.py（候选：{candidates}）")
+        output.err(f"未找到 ra_depth_scan.py（候选：{candidates}）")
         return 2
 
     root = args.root or str(Path.cwd())
-    cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
+    cmd = _append_ra_scan_files(
+        [sys.executable, str(scanner), "--root", root, "--format", "json"],
+        args,
+    )
     try:
         result = runtime_exec.run_command(
             cmd,
@@ -2530,22 +2705,15 @@ def cmd_ra_depth_scan(args, parser):
             span_name="scanner:ra_depth",
         )
     except subprocess.TimeoutExpired:
-        output.error("ra_depth_scan.py 跑超过 120 秒")
+        output.err("ra_depth_scan.py 跑超过 120 秒")
         return 3
 
-    report = {}
+    report, contract_error = _parse_ra_scan_report(result, "ra_depth_scan.py")
+    if contract_error:
+        return contract_error
     if args.json:
         sys.stdout.write(result.stdout)
-        try:
-            report = json.loads(result.stdout) if result.stdout else {}
-        except json.JSONDecodeError:
-            pass
     else:
-        try:
-            report = json.loads(result.stdout) if result.stdout else {}
-        except json.JSONDecodeError:
-            output.error(f"扫描器 JSON 输出无法解析：{result.stdout[:200]}")
-            return 4
         rule_stats = report.get("ruleStats", {})
         output.info(f"🆕 v3.5.9 RA 机械派生深度扫描（D1-D5，5 条规则）")
         output.info(f"扫描根：{report.get('root', root)}")
@@ -2563,6 +2731,9 @@ def cmd_ra_depth_scan(args, parser):
                 output.info(f"  {icon} [{f.get('rule')}] {f.get('path')}:{f.get('line')}")
                 output.info(f"      {f.get('message')}")
 
+    execution_error = _ra_scan_execution_error(result, report)
+    if execution_error:
+        return execution_error
     return 1 if report.get("status") == "FAIL" and args.strict else (1 if report.get("blockers", 0) > 0 else 0)
 
 
@@ -2582,11 +2753,16 @@ def cmd_ra_implementation_scan(args, parser):
     candidates.append(Path("scripts/ra_implementation_scan.py"))
     scanner = next((c for c in candidates if c.is_file()), None)
     if scanner is None:
-        output.error(f"未找到 ra_implementation_scan.py（候选：{candidates}）")
+        output.err(f"未找到 ra_implementation_scan.py（候选：{candidates}）")
         return 2
 
     root = args.root or str(Path.cwd())
-    cmd = [sys.executable, str(scanner), "--root", root, "--format", "json"]
+    cmd = _append_ra_scan_files(
+        [sys.executable, str(scanner), "--root", root, "--format", "json"],
+        args,
+    )
+    if args.strict:
+        cmd.append("--strict")
     try:
         result = runtime_exec.run_command(
             cmd,
@@ -2597,22 +2773,15 @@ def cmd_ra_implementation_scan(args, parser):
             span_name="scanner:ra_implementation",
         )
     except subprocess.TimeoutExpired:
-        output.error("ra_implementation_scan.py 跑超过 120 秒")
+        output.err("ra_implementation_scan.py 跑超过 120 秒")
         return 3
 
-    report = {}
+    report, contract_error = _parse_ra_scan_report(result, "ra_implementation_scan.py")
+    if contract_error:
+        return contract_error
     if args.json:
         sys.stdout.write(result.stdout)
-        try:
-            report = json.loads(result.stdout) if result.stdout else {}
-        except json.JSONDecodeError:
-            pass
     else:
-        try:
-            report = json.loads(result.stdout) if result.stdout else {}
-        except json.JSONDecodeError:
-            output.error(f"扫描器 JSON 输出无法解析：{result.stdout[:200]}")
-            return 4
         rule_stats = report.get("ruleStats", {})
         output.info("🆕 v3.5.18 RA 实现视角完整性扫描（I1-I7，7 条规则）")
         output.info(f"扫描根：{report.get('root', root)}")
@@ -2629,6 +2798,11 @@ def cmd_ra_implementation_scan(args, parser):
                 output.info(f"  {icon} [{f.get('rule')}] {f.get('path')}:{f.get('line')}")
                 output.info(f"      {f.get('message')}")
 
+    execution_error = _ra_scan_execution_error(
+        result, report, fail_returncode=1 if args.strict else 0
+    )
+    if execution_error:
+        return execution_error
     return 1 if report.get("status") == "FAIL" and args.strict else (1 if report.get("blockers", 0) > 0 else 0)
 
 
@@ -5769,10 +5943,26 @@ def main() -> int:
     p_rag.set_defaults(func=cmd_ra_gate)
 
     # flow-violation-scan（🆕 v3.5.6 — RA 流程违规审计，建议书 §3.4）
+    p_ras = sub.add_parser(
+        "ra-authenticity-scan",
+        help="RA authenticity scan (fabrication, vagueness, masked gaps)",
+        parents=[common],
+    )
+    p_ras.add_argument("--root", default="", help="scan root (default cwd)")
+    p_ras.add_argument(
+        "--file", action="append", default=[],
+        help="scan only this authoritative RA Markdown file (repeatable)",
+    )
+    p_ras.set_defaults(func=cmd_ra_authenticity_scan)
+
     p_fvs = sub.add_parser("flow-violation-scan",
                            help="[v3.5.6] RA 流程违规审计（8 条规则扫描 RA 文档合规性）",
                            parents=[common])
     p_fvs.add_argument("--root", default="", help="扫描根目录（默认 cwd）")
+    p_fvs.add_argument(
+        "--file", action="append", default=[],
+        help="scan only this authoritative RA Markdown file (repeatable)",
+    )
     p_fvs.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
     p_fvs.set_defaults(func=cmd_flow_violation_scan)
 
@@ -5781,6 +5971,10 @@ def main() -> int:
                            help="[v3.5.9] RA 机械派生深度扫描（D1-D5，验证 E.5/G.5/H.6/H.5 是否真做了）",
                            parents=[common])
     p_rds.add_argument("--root", default="", help="扫描根目录（默认 cwd）")
+    p_rds.add_argument(
+        "--file", action="append", default=[],
+        help="scan only this authoritative RA Markdown file (repeatable)",
+    )
     p_rds.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
     p_rds.set_defaults(func=cmd_ra_depth_scan)
 
@@ -5789,6 +5983,10 @@ def main() -> int:
                            help="[v3.5.18] RA 实现视角完整性扫描（I1-I7，验证数据源/数据流/定义/复用/成本反驳/开发疑问/DR交接）",
                            parents=[common])
     p_ris.add_argument("--root", default="", help="扫描根目录（默认 cwd）")
+    p_ris.add_argument(
+        "--file", action="append", default=[],
+        help="scan only this authoritative RA Markdown file (repeatable)",
+    )
     p_ris.add_argument("--strict", action="store_true", help="有 BLOCKER 违规时 exit 1")
     p_ris.set_defaults(func=cmd_ra_implementation_scan)
 

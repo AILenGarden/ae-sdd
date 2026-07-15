@@ -53,7 +53,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lib import document_storage, paths, runtime_exec, runtime_stats, state as state_mod, work_item_context  # noqa: E402
+from scripts.ra_scan_scope import classify_formal_ra, resolve_ra_scan_scope  # noqa: E402
 
 
 _GATE_SUBPROCESS_LIMIT_SECONDS = 60
@@ -1887,29 +1889,14 @@ STATE_MACHINE_KEYWORDS = ["状态变更", "状态机", "触发", "联动", "禁�
                           "登录", "登出", "失败", "超时", "过期", "状态流转"]
 
 # RA 文档命名约定（与 ra_authenticity_scan.py 一致）
-RA_FILENAME_RE = re.compile(r"^RA[-_]", re.IGNORECASE)
-
-
 def _iter_ra_files(project_dir: Path) -> list[Path]:
     """枚举项目内 RA 文档（兼容新路径 ae-sdd-doc/ 与旧路径 design/）。"""
-    out: list[Path] = []
     if not project_dir or not Path(project_dir).is_dir():
-        return out
+        return []
     try:
-        paths = list(project_dir.rglob("*.md"))
-    except OSError:
-        return out
-    for path in paths:
-        try:
-            if not RA_FILENAME_RE.search(path.name):
-                continue
-            lower = path.as_posix().lower()
-            if any(seg in lower for seg in ("changelog", "template", "ra-template", "change_log")):
-                continue
-        except OSError:
-            continue
-        out.append(path)
-    return out
+        return list(resolve_ra_scan_scope(Path(project_dir)).files)
+    except (OSError, ValueError):
+        return []
 
 
 # 🆕 v3.5.10 Gap-005：从 RA 文件名提取版本号（如 RA-xxx-v1.2.md → (1, 2)）
@@ -1936,6 +1923,110 @@ def _select_latest_ra(ra_files: list[Path]) -> Path:
     return max(ra_files, key=_version_key)
 
 
+def _relative_ra_path(path: Path, project_dir: Path) -> str:
+    try:
+        return path.resolve().relative_to(project_dir.resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def _ra_binding_candidates(st: dict, current_story: str) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+
+    story_id = current_story or st.get("activeStory") or st.get("currentStory") or ""
+    story_states = st.get("storyStates")
+    if story_id and isinstance(story_states, dict):
+        story_state = story_states.get(story_id)
+        if isinstance(story_state, dict):
+            story_path = story_state.get("raDocPath")
+            if isinstance(story_path, str) and story_path.strip():
+                candidates.append((f"storyStates.{story_id}.raDocPath", story_path.strip()))
+
+    dr_states = st.get("drStates")
+    if story_id and isinstance(dr_states, dict):
+        for dr_id, dr_state in dr_states.items():
+            if not isinstance(dr_state, dict):
+                continue
+            nested_story_states = dr_state.get("storyStates")
+            if not isinstance(nested_story_states, dict):
+                continue
+            story_state = nested_story_states.get(story_id)
+            if not isinstance(story_state, dict):
+                continue
+            story_path = story_state.get("raDocPath")
+            if isinstance(story_path, str) and story_path.strip():
+                candidates.append((
+                    f"drStates.{dr_id}.storyStates.{story_id}.raDocPath",
+                    story_path.strip(),
+                ))
+
+    top_level = st.get("raDocPath")
+    if isinstance(top_level, str) and top_level.strip():
+        candidates.append(("state.raDocPath", top_level.strip()))
+
+    return candidates
+
+
+def _resolve_selected_ra(
+    project_dir: Path,
+    st: dict,
+    current_story: str,
+) -> tuple[Optional[Path], dict]:
+    """Resolve the single authoritative RA shared by all G-RA gates."""
+    project_root = project_dir.resolve()
+    discovered = _iter_ra_files(project_root)
+    invalid_bindings: list[dict[str, str]] = []
+
+    for source, raw_path in _ra_binding_candidates(st, current_story):
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        candidate = candidate.resolve()
+        try:
+            candidate.relative_to(project_root)
+        except ValueError:
+            invalid_bindings.append({"source": source, "path": raw_path, "reason": "outside-project"})
+            continue
+        if not candidate.is_file():
+            invalid_bindings.append({"source": source, "path": raw_path, "reason": "missing-file"})
+            continue
+        if candidate.suffix.casefold() != ".md":
+            invalid_bindings.append({"source": source, "path": raw_path, "reason": "not-markdown"})
+            continue
+        is_formal, reason = classify_formal_ra(candidate, project_root)
+        if not is_formal:
+            invalid_bindings.append({"source": source, "path": raw_path, "reason": reason})
+            continue
+        return candidate, {
+            "selected_file": _relative_ra_path(candidate, project_root),
+            "selection_source": source,
+            "scope_mode": "file",
+            "ra_files": 1,
+            "candidate_count": len(discovered),
+            "invalid_bindings": invalid_bindings,
+        }
+
+    if discovered:
+        selected = _select_latest_ra(discovered)
+        return selected, {
+            "selected_file": _relative_ra_path(selected, project_root),
+            "selection_source": "latest-formal-ra",
+            "scope_mode": "file",
+            "ra_files": 1,
+            "candidate_count": len(discovered),
+            "invalid_bindings": invalid_bindings,
+        }
+
+    return None, {
+        "selected_file": None,
+        "selection_source": "none",
+        "scope_mode": "file",
+        "ra_files": 0,
+        "candidate_count": 0,
+        "invalid_bindings": invalid_bindings,
+    }
+
+
 def check_ra_required(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-RA-1 RA 文档存在（SKILL.md G-RA 规则 1/5/6/7）。
 
@@ -1946,23 +2037,23 @@ def check_ra_required(project_dir: Path, st: dict, current_story: str) -> GateRe
     name = "RA 文档存在"
     phase = st.get("phase", "initialized")
 
-    ra_files = _iter_ra_files(project_dir)
+    selected_ra, ra_resolution = _resolve_selected_ra(project_dir, st, current_story)
 
     # 规则 1：RA 文档存在
-    if not ra_files:
+    if selected_ra is None:
         # pre-RA 阶段（还没开始需求分析）→ stub，不阻断
         pre_ra_phases = {"initialized", "ra-generated"}
         if phase in pre_ra_phases:
             return GateResult("G-RA-1", name, "blocker", True,
                               "pre-RA 阶段，RA 文档尚未生成（stub 通过）",
-                              details={"stub": True, "phase": phase, "ra_files": 0})
+                              details={**ra_resolution, "stub": True, "phase": phase, "ra_files": 0})
         return GateResult("G-RA-1", name, "blocker", False,
                           f"未找到 RA 文档（phase={phase}，已进入下游节点）",
                           "运行 `ae-sdd gate ra-required --fix` 或触发 requirement-analysis-skill 生成 RA",
-                          details={"phase": phase, "ra_files": 0})
+                          details={**ra_resolution, "phase": phase, "ra_files": 0})
 
     # 规则 5：RA 距今 ≤ 30 天（取最新一份的修改时间）
-    latest = _select_latest_ra(ra_files)
+    latest = selected_ra
     mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
     now = datetime.now(tz=timezone.utc)
     age_days = (now - mtime).days
@@ -1971,12 +2062,12 @@ def check_ra_required(project_dir: Path, st: dict, current_story: str) -> GateRe
         return GateResult("G-RA-1", name, "warn", True,
                           f"RA 文档距今 {age_days} 天（超 30 天），建议重审：{latest.name}",
                           "重审 RA 是否仍反映当前需求",
-                          details={"ra_files": len(ra_files), "latest": latest.name,
+                          details={**ra_resolution, "ra_files": 1, "latest": latest.name,
                                    "age_days": age_days, "warn_only": True})
 
     return GateResult("G-RA-1", name, "blocker", True,
-                      f"RA 文档存在（{len(ra_files)} 份，最新 {latest.name}，{age_days} 天前）",
-                      details={"ra_files": len(ra_files), "latest": latest.name,
+                      f"RA 文档存在（1 份，选中 {latest.name}，{age_days} 天前）",
+                      details={**ra_resolution, "ra_files": 1, "latest": latest.name,
                                "age_days": age_days})
 
 
@@ -1986,13 +2077,13 @@ def check_ra_dimensions(project_dir: Path, st: dict, current_story: str) -> Gate
     规则 2：RA 文档必须含 8 个核心维度。同时检查 RAModel 12 维决策记录（RA-G02）。
     """
     name = "RA 8 维度完整"
-    ra_files = _iter_ra_files(project_dir)
-    if not ra_files:
+    selected_ra, ra_resolution = _resolve_selected_ra(project_dir, st, current_story)
+    if selected_ra is None:
         return GateResult("G-RA-2", name, "blocker", True,
                           "无 RA 文档（依赖 G-RA-1 判定）",
-                          details={"stub": True})
+                          details={**ra_resolution, "stub": True})
 
-    latest = _select_latest_ra(ra_files)
+    latest = selected_ra
     content = latest.read_text(encoding="utf-8")
 
     # 8 维度检查
@@ -2005,7 +2096,7 @@ def check_ra_dimensions(project_dir: Path, st: dict, current_story: str) -> Gate
         return GateResult("G-RA-2", name, "blocker", False,
                           f"RA 缺失维度：{missing_dims}",
                           f"补全 RA 文档的 8 维度章节（{missing_dims}）",
-                          details={"missing": missing_dims, "file": latest.name})
+                          details={**ra_resolution, "missing": missing_dims, "file": latest.name})
 
     # RAModel 12 维检查（RA-G02）
     missing_ra = [k for k in RA_RAMODEL_KEYWORDS if k not in content]
@@ -2013,11 +2104,11 @@ def check_ra_dimensions(project_dir: Path, st: dict, current_story: str) -> Gate
         return GateResult("G-RA-2", name, "blocker", False,
                           f"RAModel 12 维决策记录缺失：{missing_ra}",
                           f"补全 RA §0.5 的 RAModel 12 维（{missing_ra}）",
-                          details={"missing_ramodel": missing_ra, "file": latest.name})
+                          details={**ra_resolution, "missing_ramodel": missing_ra, "file": latest.name})
 
     return GateResult("G-RA-2", name, "blocker", True,
                       f"8 维度齐全 + RAModel 12 维完整（{latest.name}）",
-                      details={"file": latest.name, "ramodel_dims": 12})
+                      details={**ra_resolution, "file": latest.name, "ramodel_dims": 12})
 
 
 def check_ra_derivatives(project_dir: Path, st: dict, current_story: str) -> GateResult:
@@ -2027,13 +2118,13 @@ def check_ra_derivatives(project_dir: Path, st: dict, current_story: str) -> Gat
     非状态机类需求允许"不适用 + 理由"。
     """
     name = "RA 衍生章节完整"
-    ra_files = _iter_ra_files(project_dir)
-    if not ra_files:
+    selected_ra, ra_resolution = _resolve_selected_ra(project_dir, st, current_story)
+    if selected_ra is None:
         return GateResult("G-RA-3", name, "blocker", True,
                           "无 RA 文档（依赖 G-RA-1 判定）",
-                          details={"stub": True})
+                          details={**ra_resolution, "stub": True})
 
-    latest = _select_latest_ra(ra_files)
+    latest = selected_ra
     content = latest.read_text(encoding="utf-8")
 
     is_state_machine = any(kw in content for kw in STATE_MACHINE_KEYWORDS)
@@ -2048,7 +2139,7 @@ def check_ra_derivatives(project_dir: Path, st: dict, current_story: str) -> Gat
             return GateResult("G-RA-3", name, "blocker", False,
                               f"状态机类需求缺失衍生章节：{missing_sections}",
                               f"补全 {missing_sections}（状态变更类需求必填，见 E.5/G.5/H.5/H.6）",
-                              details={"missing": missing_sections, "state_machine": True,
+                              details={**ra_resolution, "missing": missing_sections, "state_machine": True,
                                        "file": latest.name})
         # 非状态机：允许缺失，但要求有"不适用"声明
         has_not_applicable = any(kw in content for kw in ["不适用", "不涉及", "无需衍生"])
@@ -2056,18 +2147,117 @@ def check_ra_derivatives(project_dir: Path, st: dict, current_story: str) -> Gat
             return GateResult("G-RA-3", name, "blocker", False,
                               f"非状态机需求缺失衍生章节且无'不适用'声明：{missing_sections}",
                               f"补全章节或显式标注'不适用 + 理由'",
-                              details={"missing": missing_sections, "state_machine": False,
+                              details={**ra_resolution, "missing": missing_sections, "state_machine": False,
                                        "file": latest.name})
 
     return GateResult("G-RA-3", name, "blocker", True,
                       f"衍生章节完整（state_machine={is_state_machine}，{latest.name}）",
-                      details={"file": latest.name, "state_machine": is_state_machine,
+                      details={**ra_resolution, "file": latest.name, "state_machine": is_state_machine,
                                "missing": missing_sections})
 
 
 def _locate_ra_scanner(master_source: Optional[Path]) -> Optional[Path]:
     """在母版找 ra_authenticity_scan.py（对标 _locate_authenticity_scanner）。"""
     return _locate_runtime_script(master_source, "ra_authenticity_scan.py")
+
+
+def _validate_ra_scanner_finding(finding, index: int) -> Optional[str]:
+    """Validate the field intersection emitted by all authoritative RA scanners."""
+    prefix = f"findings[{index}]"
+    if not isinstance(finding, dict):
+        return f"{prefix} must be an object"
+
+    severity = finding.get("severity")
+    if severity not in {"BLOCKER", "WARN"}:
+        return f"{prefix}.severity must be BLOCKER or WARN, got {severity!r}"
+
+    for field in ("rule", "path", "message"):
+        value = finding.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return f"{prefix}.{field} must be a non-empty string"
+
+    line = finding.get("line")
+    if isinstance(line, bool) or not isinstance(line, int) or line < 0:
+        return f"{prefix}.line must be a non-negative integer"
+
+    for field in ("snippet", "file"):
+        if field in finding and not isinstance(finding[field], str):
+            return f"{prefix}.{field} must be a string when present"
+
+    if "lineno" in finding:
+        lineno = finding["lineno"]
+        if isinstance(lineno, bool) or not isinstance(lineno, int) or lineno < 0:
+            return f"{prefix}.lineno must be a non-negative integer when present"
+
+    return None
+
+
+def _validate_ra_scanner_result(result) -> tuple[Optional[dict], Optional[str], dict]:
+    """Validate the scanner JSON and its three-state exit contract."""
+    returncode = getattr(result, "returncode", None)
+    stdout = getattr(result, "stdout", "") or ""
+    stderr = getattr(result, "stderr", "") or ""
+    details = {
+        "scanner_returncode": returncode,
+        "scanner_stderr": stderr[:200],
+    }
+
+    if not stdout.strip():
+        return None, f"扫描器未输出 JSON（exit={returncode}）", details
+    try:
+        report = _json.loads(stdout)
+    except _json.JSONDecodeError as e:
+        return None, f"扫描器 JSON 输出无法解析: {e}", details
+    if not isinstance(report, dict):
+        return None, "扫描器 JSON 输出必须是对象", details
+
+    status = report.get("status")
+    details["scanner_status"] = status
+    if status not in {"PASS", "FAIL", "ERROR"}:
+        return None, f"扫描器 status 契约无效: {status!r}", details
+    ra_files = report.get("raFiles")
+    if isinstance(ra_files, bool) or not isinstance(ra_files, int) or ra_files < 0:
+        return None, f"扫描器 raFiles 契约无效: {ra_files!r}", details
+
+    if status == "ERROR":
+        if ra_files != 0:
+            return None, "扫描器 ERROR 契约无效: raFiles must be 0", details
+        error = report.get("error")
+        if not isinstance(error, dict):
+            return None, "扫描器 ERROR 契约无效: error must be an object", details
+        for field in ("code", "message"):
+            value = error.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return None, (
+                    f"扫描器 ERROR 契约无效: error.{field} must be a non-empty string"
+                ), details
+        findings = report.get("findings")
+        if findings is not None:
+            if not isinstance(findings, list):
+                return None, "扫描器 ERROR 契约无效: findings must be an array when present", details
+            for index, finding in enumerate(findings):
+                finding_error = _validate_ra_scanner_finding(finding, index)
+                if finding_error:
+                    return None, f"扫描器 ERROR 契约无效: {finding_error}", details
+        details["scanner_error_code"] = error["code"]
+        return None, (
+            f"扫描器返回 ERROR 状态: {error['code']}: {error['message']}"
+        ), details
+
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        return None, "扫描器 findings 契约无效（必须是数组）", details
+    for index, finding in enumerate(findings):
+        finding_error = _validate_ra_scanner_finding(finding, index)
+        if finding_error:
+            return None, f"扫描器 findings 契约无效: {finding_error}", details
+    expected_returncode = 0 if status == "PASS" else 1
+    if returncode != expected_returncode:
+        return None, (
+            "扫描器退出码与状态不一致："
+            f"exit={returncode}, status={status}, expected={expected_returncode}"
+        ), details
+    return report, None, details
 
 
 def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
@@ -2079,7 +2269,6 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
     """
     name = "RA 真实性扫描通过"
     phase = st.get("phase", "initialized")
-    pre_ra_phases = {"initialized", "ra-generated"}
 
     scanner = _locate_ra_scanner(master_source)
     if scanner is None:
@@ -2089,16 +2278,17 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
                           details={"scanned": False, "skipped": True, "stub": True})
 
     # 0 RA 文档 + pre-RA phase → stub
-    ra_files = _iter_ra_files(project_dir)
-    if not ra_files and phase in pre_ra_phases:
+    selected_ra, ra_resolution = _resolve_selected_ra(project_dir, st, current_story)
+    if selected_ra is None:
         return GateResult("G-RA-4", name, "blocker", True,
                           "pre-RA 阶段无 RA 文档（stub 通过）",
-                          details={"scanned": False, "stub": True, "phase": phase})
+                          details={**ra_resolution, "scanned": False, "stub": True, "phase": phase})
 
     # 跑扫描
     try:
         result = runtime_exec.run_command(
-            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            [sys.executable, str(scanner), "--root", str(project_dir),
+             "--file", str(selected_ra), "--format", "json"],
             capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:ra_authenticity",
             attrs={"scanRoot": str(project_dir)},
@@ -2112,12 +2302,12 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
                           f"扫描器异常: {e}",
                           "检查 ra_authenticity_scan.py 是否可执行")
 
-    try:
-        report = _json.loads(result.stdout) if result.stdout else {}
-    except _json.JSONDecodeError as e:
+    report, contract_error, contract_details = _validate_ra_scanner_result(result)
+    if contract_error:
         return GateResult("G-RA-4", name, "blocker", False,
-                          f"扫描器 JSON 输出无法解析: {e}",
-                          f"stdout 前 200 字符: {result.stdout[:200]}")
+                          contract_error,
+                          "检查 ra_authenticity_scan.py 的退出码与 JSON 输出契约",
+                          details={**ra_resolution, **contract_details, "scanned": True})
 
     status = report.get("status", "UNKNOWN")
     ra_files_scanned = report.get("raFiles", 0)
@@ -2125,9 +2315,10 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
     n_total = len(report.get("findings", []))
 
     if ra_files_scanned == 0:
-        return GateResult("G-RA-4", name, "blocker", True,
-                          "无 RA 文档可扫描（依赖 G-RA-1 判定）",
-                          details={"scanned": True, "ra_files": 0, "stub": True})
+        return GateResult("G-RA-4", name, "blocker", False,
+                          "已选中权威 RA，但扫描器返回 raFiles=0",
+                          "检查 --file 扫描范围与权威 RA 路径",
+                          details={**ra_resolution, "scanned": True, "ra_files": 0})
 
     if status != "PASS" or blockers > 0:
         blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
@@ -2149,14 +2340,14 @@ def check_ra_authenticity(project_dir: Path, st: dict, current_story: str,
         return GateResult("G-RA-4", name, "blocker", False,
                           msg,
                           "修复 RA 文档中标 BLOCKER 的项（看示例定位），或显式评审通过",
-                          details={"scanned": True, "ra_files": ra_files_scanned,
+                          details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                    "blockers": blockers, "total": n_total,
                                    "blocker_rules": blocker_rules,
                                    "sample_locations": location_hints})
 
     return GateResult("G-RA-4", name, "blocker", True,
                       f"RA 真实性扫描通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
-                      details={"scanned": True, "ra_files": ra_files_scanned,
+                      details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                "blockers": 0, "total": n_total})
 
 
@@ -2191,9 +2382,18 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
                           "未找到母版 flow_violation_scan.py（跳过）",
                           details={"skipped": True, "reason": "scanner-not-found"})
 
+    selected_ra, ra_resolution = _resolve_selected_ra(project_dir, st, current_story)
+    if selected_ra is None:
+        return GateResult(
+            "G-RA-FLOW-VIOLATION", name, "blocker", True,
+            "No authoritative RA is available for flow scan.",
+            details={**ra_resolution, "scanned": False, "ra_files": 0, "stub": True},
+        )
+
     try:
         result = runtime_exec.run_command(
-            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            [sys.executable, str(scanner), "--root", str(project_dir),
+             "--file", str(selected_ra), "--format", "json", "--strict"],
             capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS, check=False,
             span_name="scanner:flow_violation",
             attrs={"scanRoot": str(project_dir)},
@@ -2207,12 +2407,12 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
                           f"扫描器异常: {e}",
                           "检查 flow_violation_scan.py 是否可执行")
 
-    try:
-        report = _json.loads(result.stdout) if result.stdout else {}
-    except _json.JSONDecodeError as e:
+    report, contract_error, contract_details = _validate_ra_scanner_result(result)
+    if contract_error:
         return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
-                          f"扫描器 JSON 输出无法解析: {e}",
-                          f"stdout 前 200 字符: {result.stdout[:200]}")
+                          contract_error,
+                          "检查 flow_violation_scan.py 的退出码与 JSON 输出契约",
+                          details={**ra_resolution, **contract_details, "scanned": True})
 
     status = report.get("status", "UNKNOWN")
     ra_files_scanned = report.get("raFiles", 0)
@@ -2220,9 +2420,10 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
     n_total = len(report.get("findings", []))
 
     if ra_files_scanned == 0:
-        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", True,
-                          "无 RA 文档可扫描（依赖 G-RA-1 判定）",
-                          details={"scanned": True, "ra_files": 0, "stub": True})
+        return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
+                          "已选中权威 RA，但扫描器返回 raFiles=0",
+                          "检查 --file 扫描范围与权威 RA 路径",
+                          details={**ra_resolution, "scanned": True, "ra_files": 0})
 
     if status != "PASS" or blockers > 0:
         blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
@@ -2230,13 +2431,13 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
         return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", False,
                           f"RA 流程违规审计发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}",
                           "修复 RA 文档中标 BLOCKER 的项（补 12 维 / 8 维度 / 5 问 / 缺口 / 规模 / RA-G 闸判定）",
-                          details={"scanned": True, "ra_files": ra_files_scanned,
+                          details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                    "blockers": blockers, "total": n_total,
                                    "blocker_rules": blocker_rules})
 
     return GateResult("G-RA-FLOW-VIOLATION", name, "blocker", True,
                       f"RA 流程违规审计通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
-                      details={"scanned": True, "ra_files": ra_files_scanned,
+                      details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                "blockers": 0, "total": n_total})
 
 
@@ -2265,7 +2466,6 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
     """
     name = "RA 机械派生深度通过"
     phase = st.get("phase", "initialized")
-    pre_ra_phases = {"initialized", "ra-generated"}
 
     scanner = _locate_ra_depth_scanner(master_source)
     if scanner is None:
@@ -2275,15 +2475,16 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
                           details={"scanned": False, "skipped": True, "stub": True})
 
     # pre-RA phase 无 RA 文档 → stub
-    ra_files = _iter_ra_files(project_dir)
-    if not ra_files and phase in pre_ra_phases:
+    selected_ra, ra_resolution = _resolve_selected_ra(project_dir, st, current_story)
+    if selected_ra is None:
         return GateResult("G-RA-5", name, "blocker", True,
                           "pre-RA 阶段无 RA 文档（stub 通过）",
-                          details={"scanned": False, "stub": True, "phase": phase})
+                          details={**ra_resolution, "scanned": False, "stub": True, "phase": phase})
 
     try:
         result = runtime_exec.run_command(
-            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            [sys.executable, str(scanner), "--root", str(project_dir),
+             "--file", str(selected_ra), "--format", "json", "--strict"],
             capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:ra_depth",
             attrs={"scanRoot": str(project_dir)},
@@ -2297,12 +2498,12 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
                           f"扫描器异常: {e}",
                           "检查 ra_depth_scan.py 是否可执行")
 
-    try:
-        report = _json.loads(result.stdout) if result.stdout else {}
-    except _json.JSONDecodeError as e:
+    report, contract_error, contract_details = _validate_ra_scanner_result(result)
+    if contract_error:
         return GateResult("G-RA-5", name, "blocker", False,
-                          f"扫描器 JSON 输出无法解析: {e}",
-                          f"stdout 前 200 字符: {result.stdout[:200]}")
+                          contract_error,
+                          "检查 ra_depth_scan.py 的退出码与 JSON 输出契约",
+                          details={**ra_resolution, **contract_details, "scanned": True})
 
     status = report.get("status", "UNKNOWN")
     ra_files_scanned = report.get("raFiles", 0)
@@ -2310,9 +2511,10 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
     n_total = len(report.get("findings", []))
 
     if ra_files_scanned == 0:
-        return GateResult("G-RA-5", name, "blocker", True,
-                          "无 RA 文档可扫描（依赖 G-RA-1 判定）",
-                          details={"scanned": True, "ra_files": 0, "stub": True})
+        return GateResult("G-RA-5", name, "blocker", False,
+                          "已选中权威 RA，但扫描器返回 raFiles=0",
+                          "检查 --file 扫描范围与权威 RA 路径",
+                          details={**ra_resolution, "scanned": True, "ra_files": 0})
 
     if status != "PASS" or blockers > 0:
         blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
@@ -2320,13 +2522,13 @@ def check_ra_depth(project_dir: Path, st: dict, current_story: str,
         return GateResult("G-RA-5", name, "blocker", False,
                           f"RA 机械派生深度扫描发现 {blockers} 个 BLOCKER（共 {n_total} 项）：{blocker_rules}",
                           "修复 RA 文档中标 BLOCKER 的项（E.5/G.5/H.6/H.5 机械追问逐行可见 + 链接齐全 + 覆盖率真实 + 五问覆盖 + 业务模式六选一）",
-                          details={"scanned": True, "ra_files": ra_files_scanned,
+                          details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                    "blockers": blockers, "total": n_total,
                                    "blocker_rules": blocker_rules})
 
     return GateResult("G-RA-5", name, "blocker", True,
                       f"RA 机械派生深度扫描通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
-                      details={"scanned": True, "ra_files": ra_files_scanned,
+                      details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                "blockers": 0, "total": n_total})
 
 
@@ -2355,7 +2557,6 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
     """
     name = "RA 实现视角完整性通过"
     phase = st.get("phase", "initialized")
-    pre_ra_phases = {"initialized", "ra-generated"}
 
     scanner = _locate_ra_implementation_scanner(master_source)
     if scanner is None:
@@ -2364,15 +2565,16 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
                           action="确认母版路径",
                           details={"scanned": False, "skipped": True, "stub": True})
 
-    ra_files = _iter_ra_files(project_dir)
-    if not ra_files and phase in pre_ra_phases:
+    selected_ra, ra_resolution = _resolve_selected_ra(project_dir, st, current_story)
+    if selected_ra is None:
         return GateResult("G-RA-6", name, "blocker", True,
                           "pre-RA 阶段无 RA 文档（stub 通过）",
-                          details={"scanned": False, "stub": True, "phase": phase})
+                          details={**ra_resolution, "scanned": False, "stub": True, "phase": phase})
 
     try:
         result = runtime_exec.run_command(
-            [sys.executable, str(scanner), "--root", str(project_dir), "--format", "json"],
+            [sys.executable, str(scanner), "--root", str(project_dir),
+             "--file", str(selected_ra), "--format", "json", "--strict"],
             capture_output=True, text=True, timeout=_GATE_SUBPROCESS_LIMIT_SECONDS,
             span_name="scanner:ra_implementation",
             attrs={"scanRoot": str(project_dir)},
@@ -2386,12 +2588,12 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
                           f"扫描器异常: {e}",
                           "检查 ra_implementation_scan.py 是否可执行")
 
-    try:
-        report = _json.loads(result.stdout) if result.stdout else {}
-    except _json.JSONDecodeError as e:
+    report, contract_error, contract_details = _validate_ra_scanner_result(result)
+    if contract_error:
         return GateResult("G-RA-6", name, "blocker", False,
-                          f"扫描器 JSON 输出无法解析: {e}",
-                          f"stdout 前 200 字符: {result.stdout[:200]}")
+                          contract_error,
+                          "检查 ra_implementation_scan.py 的退出码与 JSON 输出契约",
+                          details={**ra_resolution, **contract_details, "scanned": True})
 
     status = report.get("status", "UNKNOWN")
     ra_files_scanned = report.get("raFiles", 0)
@@ -2399,9 +2601,10 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
     n_total = len(report.get("findings", []))
 
     if ra_files_scanned == 0:
-        return GateResult("G-RA-6", name, "blocker", True,
-                          "无 RA 文档可扫描（依赖 G-RA-1 判定）",
-                          details={"scanned": True, "ra_files": 0, "stub": True})
+        return GateResult("G-RA-6", name, "blocker", False,
+                          "已选中权威 RA，但扫描器返回 raFiles=0",
+                          "检查 --file 扫描范围与权威 RA 路径",
+                          details={**ra_resolution, "scanned": True, "ra_files": 0})
 
     if status != "PASS" or blockers > 0:
         blocker_rules = sorted({f.get("rule") for f in report.get("findings", [])
@@ -2418,14 +2621,14 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
         return GateResult("G-RA-6", name, "blocker", False,
                           msg,
                           "补全数据源/数据流/定义/复用证据/成本反驳/开发者疑问/DR 交接包后重跑",
-                          details={"scanned": True, "ra_files": ra_files_scanned,
+                          details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                    "blockers": blockers, "total": n_total,
                                    "blocker_rules": blocker_rules,
                                    "sample_locations": sample_locations})
 
     return GateResult("G-RA-6", name, "blocker", True,
                       f"RA 实现视角扫描通过（{ra_files_scanned} 份 RA，0 BLOCKER，{n_total} WARN）",
-                      details={"scanned": True, "ra_files": ra_files_scanned,
+                      details={**ra_resolution, "scanned": True, "ra_files": ra_files_scanned,
                                "blockers": 0, "total": n_total})
 
 

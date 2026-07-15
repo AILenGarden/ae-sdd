@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import gates, paths  # noqa: E402
@@ -1554,6 +1555,79 @@ class TestGRA1(unittest.TestCase):
         self.assertTrue(r.pass_)
         self.assertGreaterEqual(r.details.get("ra_files", 0), 1)
 
+    def test_ra_like_reference_is_not_an_authoritative_ra(self):
+        tmp = _setup_project({"references/RA-third-party-guide.md": _ra_doc()})
+        r = gates.check_ra_required(tmp, {"phase": "story-generated"}, "STORY-001")
+        self.assertFalse(r.pass_)
+        self.assertEqual(r.details.get("ra_files"), 0)
+
+    def test_state_bound_ra_overrides_a_newer_formal_candidate(self):
+        bound = "ae-sdd-doc/RA/RA-STORY-001-v1.0.md"
+        tmp = _setup_project({
+            bound: _ra_doc(),
+            "design/RA-UNRELATED-v99.0.md": "# unrelated and newer by filename\n",
+        })
+        r = gates.check_ra_required(
+            tmp,
+            {"phase": "story-generated", "raDocPath": bound},
+            "STORY-001",
+        )
+        self.assertTrue(r.pass_, r.message)
+        self.assertEqual(r.details.get("selected_file"), bound)
+        self.assertEqual(r.details.get("selection_source"), "state.raDocPath")
+
+    def test_non_authoritative_state_binding_falls_back_to_formal_ra(self):
+        formal = "design/RA-STORY-001-v1.0.md"
+        invalid_binding = "references/RA-third-party-guide.md"
+        tmp = _setup_project({
+            formal: _ra_doc(),
+            invalid_binding: _ra_doc(),
+        })
+        r = gates.check_ra_required(
+            tmp,
+            {"phase": "story-generated", "raDocPath": invalid_binding},
+            "STORY-001",
+        )
+        self.assertTrue(r.pass_, r.message)
+        self.assertEqual(r.details.get("selected_file"), formal)
+        self.assertEqual(r.details.get("selection_source"), "latest-formal-ra")
+        self.assertEqual(
+            r.details.get("invalid_bindings"),
+            [{
+                "source": "state.raDocPath",
+                "path": invalid_binding,
+                "reason": "excluded-directory:references",
+            }],
+        )
+
+    def test_nested_active_story_ra_binding_is_resolved(self):
+        bound = "ae-sdd-doc/RA/RA-STORY-001-v1.0.md"
+        tmp = _setup_project({
+            bound: _ra_doc(),
+            "design/RA-UNRELATED-v99.0.md": "# unrelated newer RA\n",
+        })
+        state = {
+            "stateModel": "nested",
+            "phase": "story-generated",
+            "activeStory": "STORY-001",
+            "drStates": {
+                "DR-001": {
+                    "storyStates": {
+                        "STORY-001": {"phase": "story-generated", "raDocPath": bound},
+                    },
+                },
+            },
+        }
+
+        r = gates.check_ra_required(tmp, state, "STORY-001")
+
+        self.assertTrue(r.pass_, r.message)
+        self.assertEqual(r.details.get("selected_file"), bound)
+        self.assertEqual(
+            r.details.get("selection_source"),
+            "drStates.DR-001.storyStates.STORY-001.raDocPath",
+        )
+
     def test_stale_ra_warns_but_passes(self):
         import os
         tmp = _setup_project({"design/RA-001-v1.0.md": _ra_doc()})
@@ -1780,6 +1854,24 @@ class TestGRA6(unittest.TestCase):
         self.assertTrue(r.pass_, r.message)
         self.assertEqual(r.details.get("blockers"), 0)
 
+    def test_scanner_gate_uses_only_the_state_bound_ra(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        bound = "ae-sdd-doc/RA/RA-STORY-001-v1.0.md"
+        tmp = _setup_project({
+            bound: _ra_impl_doc(),
+            "design/RA-UNRELATED-v99.0.md": "# incomplete unrelated RA\n",
+        })
+        r = gates.check_ra_implementation(
+            tmp,
+            {"phase": "ra-generated", "raDocPath": bound},
+            "STORY-001",
+            master_source=repo_source,
+        )
+        self.assertTrue(r.pass_, r.message)
+        self.assertEqual(r.details.get("ra_files"), 1)
+        self.assertEqual(r.details.get("selected_file"), bound)
+        self.assertEqual(r.details.get("scope_mode"), "file")
+
     def test_missing_implementation_view_blocks(self):
         repo_source = Path(__file__).resolve().parent.parent.parent / "source"
         tmp = _setup_project({"design/RA-impl-v1.0.md": "# RA\n\n## 数据源清单\n只有 DB 表。\n"})
@@ -1831,6 +1923,106 @@ class TestGRAFlowViolation(unittest.TestCase):
             self.assertIsNotNone(r)
         except NameError as e:
             self.fail(f"G-RA-FLOW-VIOLATION 抛 NameError（_sys 未修复）：{e}")
+
+
+class TestGRAUnifiedSelection(unittest.TestCase):
+    def test_all_gra_gates_report_and_scan_the_same_bound_ra(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        bound = "ae-sdd-doc/RA/RA-STORY-001-v1.0.md"
+        derivative_sections = "\n".join(
+            f"## {anchor}\ncomplete\n"
+            for _name, anchor, _keyword in gates.RA_DERIVATIVE_SECTIONS
+        )
+        tmp = _setup_project({
+            bound: _ra_doc(derivative_sections),
+            "design/RA-UNRELATED-v99.0.md": "# unrelated formal RA\n",
+        })
+        state = {"phase": "story-generated", "raDocPath": bound}
+        scanner_report = mock.Mock(
+            stdout=json.dumps({
+                "status": "PASS",
+                "raFiles": 1,
+                "scopeMode": "file",
+                "selectedFiles": [bound],
+                "findings": [],
+            }),
+            returncode=0,
+            stderr="",
+        )
+
+        direct_results = [
+            gates.check_ra_required(tmp, state, "STORY-001"),
+            gates.check_ra_dimensions(tmp, state, "STORY-001"),
+            gates.check_ra_derivatives(tmp, state, "STORY-001"),
+        ]
+        with mock.patch.object(
+            gates.runtime_exec,
+            "run_command",
+            return_value=scanner_report,
+        ) as run_command:
+            scanner_results = [
+                gates.check_ra_authenticity(tmp, state, "STORY-001", repo_source),
+                gates.check_ra_depth(tmp, state, "STORY-001", repo_source),
+                gates.check_ra_implementation(tmp, state, "STORY-001", repo_source),
+                gates.check_ra_flow_violation(tmp, state, "STORY-001", repo_source),
+            ]
+
+        results = direct_results + scanner_results
+        self.assertTrue(all(result.pass_ for result in results), [result.message for result in results])
+        self.assertEqual(
+            {result.details.get("selected_file") for result in results},
+            {bound},
+        )
+        self.assertEqual(
+            {result.details.get("selection_source") for result in results},
+            {"state.raDocPath"},
+        )
+        self.assertEqual({result.details.get("ra_files") for result in results}, {1})
+        self.assertEqual(run_command.call_count, 4)
+        expected_path = str((tmp / bound).resolve())
+        for call in run_command.call_args_list:
+            command = call.args[0]
+            self.assertIn("--file", command)
+            self.assertEqual(command[command.index("--file") + 1], expected_path)
+
+    def test_all_gra_gates_fall_back_to_the_same_latest_formal_ra(self):
+        repo_source = Path(__file__).resolve().parent.parent.parent / "source"
+        latest = "design/RA-STORY-001-v2.0.md"
+        derivative_sections = "\n".join(
+            f"## {anchor}\ncomplete\n"
+            for _name, anchor, _keyword in gates.RA_DERIVATIVE_SECTIONS
+        )
+        tmp = _setup_project({
+            "ae-sdd-doc/RA/RA-STORY-001-v1.0.md": "# older incomplete RA\n",
+            latest: _ra_doc(derivative_sections),
+        })
+        state = {"phase": "story-generated"}
+        scanner_report = mock.Mock(
+            stdout=json.dumps({"status": "PASS", "raFiles": 1, "findings": []}),
+            returncode=0,
+            stderr="",
+        )
+
+        results = [
+            gates.check_ra_required(tmp, state, "STORY-001"),
+            gates.check_ra_dimensions(tmp, state, "STORY-001"),
+            gates.check_ra_derivatives(tmp, state, "STORY-001"),
+        ]
+        with mock.patch.object(gates.runtime_exec, "run_command", return_value=scanner_report):
+            results.extend([
+                gates.check_ra_authenticity(tmp, state, "STORY-001", repo_source),
+                gates.check_ra_depth(tmp, state, "STORY-001", repo_source),
+                gates.check_ra_implementation(tmp, state, "STORY-001", repo_source),
+                gates.check_ra_flow_violation(tmp, state, "STORY-001", repo_source),
+            ])
+
+        self.assertTrue(all(result.pass_ for result in results), [result.message for result in results])
+        self.assertEqual({result.details.get("selected_file") for result in results}, {latest})
+        self.assertEqual(
+            {result.details.get("selection_source") for result in results},
+            {"latest-formal-ra"},
+        )
+        self.assertEqual({result.details.get("ra_files") for result in results}, {1})
 
 
 # ─── G-09B reviewer 独立性硬门禁（v3.5.13，堵"root 总派给自己"）──────────────
