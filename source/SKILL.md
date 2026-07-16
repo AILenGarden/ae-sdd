@@ -1,6 +1,6 @@
 ---
 name: ae-sdd
-version: 3.11.4
+version: 3.11.5
 description: |
   端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。

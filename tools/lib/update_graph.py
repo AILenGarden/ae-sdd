@@ -1297,7 +1297,7 @@ def check_uc19_operation_maintenance_contract(repo_root: Path) -> UpdateCheckRes
 
 
 # ─── UC-20 Design Ledger contract ───────────────────────────────────────────
-DESIGN_LEDGER_IDS = tuple(f"D-{index:03d}" for index in range(1, 25))
+DESIGN_LEDGER_IDS = tuple(f"D-{index:03d}" for index in range(1, 26))
 
 
 def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
@@ -1365,7 +1365,7 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
         int(value) for value in re.findall(r"^##\s+(\d+)\.\s+", design_text, re.MULTILINE)
     }
     missing_section_mappings = [
-        f"§{index}" for index in range(1, 22)
+        f"§{index}" for index in range(1, 23)
         if index not in section_mappings or index not in section_headings
     ]
 
@@ -1468,7 +1468,7 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
         )
     return UpdateCheckResult(
         "UC-20", name, "error", True,
-        f"Design Ledger aligned: {len(rows)} designs cover §1~§21 plus cross-cutting governance",
+        f"Design Ledger aligned: {len(rows)} designs cover §1~§22 plus cross-cutting governance",
         details=details,
     )
 

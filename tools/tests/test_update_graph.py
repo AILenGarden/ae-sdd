@@ -470,12 +470,12 @@ class TestUC20(unittest.TestCase):
 
     @staticmethod
     def _ledger_design(rows=None):
-        ids = rows or [f"D-{i:03d}" for i in range(1, 25)]
+        ids = rows or [f"D-{i:03d}" for i in range(1, 26)]
         body = "\n".join(
-            f"| {design_id} | Design {design_id} | problem {design_id} | decision {design_id} | value {design_id} | evidence {design_id} | §{((index % 21) + 1)} | history/v3.11.1/已实现 |"
+            f"| {design_id} | Design {design_id} | problem {design_id} | decision {design_id} | value {design_id} | evidence {design_id} | §{((index % 22) + 1)} | history/v3.11.1/已实现 |"
             for index, design_id in enumerate(ids)
         )
-        sections = "\n".join(f"## {index}. Section {index}" for index in range(1, 22))
+        sections = "\n".join(f"## {index}. Section {index}" for index in range(1, 23))
         return (
             "# design\n"
             "> v3.11.1\n"
@@ -521,16 +521,16 @@ class TestUC20(unittest.TestCase):
         self.assertTrue(r.pass_, r.message)
 
     def test_missing_design_row_blocks(self):
-        rows = [f"D-{i:03d}" for i in range(1, 24)]
+        rows = [f"D-{i:03d}" for i in range(1, 25)]
         r = ug.check_uc20_design_ledger(self._repo(self._ledger_design(rows)))
         self.assertFalse(r.pass_)
-        self.assertIn("D-024", r.details.get("missing_design_ids", []))
+        self.assertIn("D-025", r.details.get("missing_design_ids", []))
 
     def test_missing_section_mapping_blocks(self):
-        design = self._ledger_design().replace("## 21. Section 21", "")
+        design = self._ledger_design().replace("## 22. Section 22", "")
         r = ug.check_uc20_design_ledger(self._repo(design))
         self.assertFalse(r.pass_)
-        self.assertIn("§21", r.details.get("missing_section_mappings", []))
+        self.assertIn("§22", r.details.get("missing_section_mappings", []))
 
     def test_missing_changelog_impact_blocks(self):
         r = ug.check_uc20_design_ledger(self._repo(changelog_template="## Summary\n"))

@@ -1,6 +1,6 @@
 # ae-sdd 系统能力说明书
 
-> v3.11.4 · 面向开发者、LLM Agent 与项目接入方
+> v3.11.5 · 面向开发者、LLM Agent 与项目接入方
 >
 > 本文档是**系统能力设计入口**，说明 ae-sdd 的能力语义、边界和当前实现状态。代码分层、模块职责、运行时数据流和变更闭环统一维护在 [`ae-sdd-implementation-architecture.md`](ae-sdd-implementation-architecture.md)。若本文与代码实现冲突，以 CLI/测试输出为准，并同步修正文档。
 
@@ -45,6 +45,7 @@
 | D-022 | ae-sdd Monitor | 多工作区、active task、memory、runtime stats 分散在文件中，定位异常慢 | 只读 workspace 扫描、项目/任务双层视图、响应式刷新 | 降低人工监控和 LLM 状态查询成本，不改变权威 state | `apps/ae-sdd-monitor` tests、UG-22、只读边界 | §20；`source/docs/ae-sdd-monitor-design.md` | v3.7.0/v3.11.0/已实现 |
 | D-023 | Sonar Issue 修复收尾 | CodeReview 发现的问题容易重复处理、越界修改或缺少 exactly-once 证据 | issue registry、TextEdit/provenance、compile/test/rescan 闭环 | 减少重复修复和错误补丁，提升 review 收尾效率 | `test_sonar_issue_fix_skill.py`、规则 registry、CodeReview evidence | §21；`sonar-issue-fix-skill.md`、`sonar-issue-fix-rules.md` | v3.11.0/v3.11.0/已实现 |
 | D-024 | Design Ledger 治理 | 设计动机、价值假设和迭代影响容易再次分散或漏记，台账本身也可能失去维护 | §0 台账 + CHANGELOG `Design ledger impact` + UG-28/UC-20 fail-closed | 降低后续 LLM 重新理解和维护者追溯成本，让设计价值记录成为可检查资产 | `UC-20`、`update-check 20/20`、台账字段/章节/版本反例测试 | §0；`update_graph.py`、`ae-sdd-update`、CHANGELOG 模板 | v3.11.1/v3.11.1/已实现 |
+| D-025 | 风险驱动的有界测试策略 | 全矩阵、逐字段边界、最少用例公式和证伪比例会制造低价值测试，且没有停止条件 | 先建有限风险登记，再按边界准入、行为等价类、最低充分层级和局部数量上限选择；停止后扩展必须走预算例外 | 减少无独立缺陷发现价值的测试执行与维护成本，同时保护显式契约和高影响风险 | `test_bounded_test_strategy.py`、TC-G11/TC-10、后续项目 TestCase 数量与缺陷发现率基线 | §22；`be-testcase-strategy.md`、TestCase generate/review/template、CodingModel | v3.11.5/v3.11.5/已实现，收益待补基线 |
 
 ### 0.3 台账的证据等级
 
@@ -763,3 +764,32 @@ CodeReview 在第六步循环收敛之后、第七步最终闸门之前调用 So
 | 契约测试 | `tools/tests/test_sonar_issue_fix_skill.py`，覆盖模式、安全边界、许可证、索引和 exactly-once 调用位置 |
 
 **颗粒度与边界**：这是 Markdown SKILL/规则层能力，不新增 CLI、gate、state schema、scanner 或后台服务；现有实现架构边界不变。若未来增加可执行补丁引擎或 MCP adapter，必须另行更新实现架构文档、威胁模型和工具级测试，不能在本注册表中暗增代码执行能力。
+
+---
+
+## 22. 风险驱动的有界测试策略
+
+### 设计
+
+TestCase 质量以独立缺陷发现价值和可追溯证据衡量，不以测试总数、字段/状态数量或证伪用例比例衡量。生成阶段先从 AC、契约、不变量、改动分支、历史缺陷、项目坑库和高影响风险建立有限风险登记，再按边界测试准入、行为等价类、最低充分层级和局部数量上限选择最小充分组合。
+
+核心边界：
+
+- 同一 validator、错误分支、失败影响和层级证据默认只保留一个代表。
+- 字段组合只覆盖业务依赖，独立字段不做笛卡尔积；状态转换按 guard、副作用和失败机制分区。
+- 安全、权限、金额、数据丢失、事务、并发、幂等、不可逆状态和显式契约边界命中适用条件时不得因预算静默排除。
+- AC、已准入风险、改动分支和历史回归均有证据，且剩余候选不增加新失败机制、控制流、契约、协议、断言或层级证据时，必须停止。
+- 超出局部数量上限必须记录新增价值、执行/维护成本、不可合并原因和确认人；固定全局用例上限同样禁止，因为它会让复杂高风险 Story 欠测。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 策略 SSOT | `source/standards/testing/be-testcase-strategy.md` |
+| 生成端 | `testcase-generate-skill.full.md` 的有限风险登记、选择决策、TC-G11 |
+| 评审端 | `testcase-review-skill.full.md` 的 TC-1~TC-10，独立复核漏测与无界扩张 |
+| 产物契约 | `source/templates/testcase/be-testcase-template.md` 的风险登记、停止条件证据和预算例外 |
+| CodingModel | `source/standards/thinking/be-coding-thinking-engine.md` 只把六类场景作为候选来源，不设数量配额 |
+| 回归证据 | `tools/tests/test_bounded_test_strategy.py` 阻止旧公式、占比门禁和无条件跨层覆盖回流 |
+
+**颗粒度与边界**：当前能力是 Markdown SKILL/标准层软约束，不新增 CLI、gate、state、scanner、Document Storage 或 Monitor 行为。generate 与 review 双重检查选择证据，但“独立失败机制”的语义判断仍依赖 Agent；长期价值需通过真实项目的 TestCase 数量、维护耗时和缺陷发现率补充基线。

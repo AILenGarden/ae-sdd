@@ -6,8 +6,8 @@ source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md
-source_fallback_sha256: b4ddd216fcca377cc768037842a36c8cd716d44ff93c874a31f6be67ce63eb2f
-source_original_bytes: 85127
+source_fallback_sha256: 72289074065269f6a24248c17a5d8af330c67d5d3f79b76ad87a4c0b318ae6a9
+source_original_bytes: 85129
 source_original_lines: 982
 source_semantic_inventory_sha256: 85658b415f2678db7acba69788014f0de23a884d88fe988665ae80b48332feb1
 source_slimmer: slim_source_skills.py@2
@@ -28,9 +28,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `skills/orchestration/ae-sdd-update-skill.md`
 - fallback: `skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md`
-- fallback_sha256: `b4ddd216fcca377cc768037842a36c8cd716d44ff93c874a31f6be67ce63eb2f`
+- fallback_sha256: `72289074065269f6a24248c17a5d8af330c67d5d3f79b76ad87a4c0b318ae6a9`
 - original_lines: 982
-- original_bytes: 85127
+- original_bytes: 85129
 - semantic_inventory_sha256: `85658b415f2678db7acba69788014f0de23a884d88fe988665ae80b48332feb1`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`

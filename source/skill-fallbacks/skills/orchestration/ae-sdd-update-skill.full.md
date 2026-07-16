@@ -686,7 +686,7 @@ ae-sdd update-check --only UC-02
 | **UC-04** | 扫描器分发一致性：scripts/*_scan.py 在 build_dist.py 白名单 | error | 全在白名单 |
 | **UC-05** | 健康度清单覆盖：本文件清单含关键组件 | warn | 关键组件齐 |
 | **UC-06** | 文档-实现一致性：SKILL/子 SKILL 命令引用、HARNESS HS 声明定位 | error/warn | 新命令有 CLI；HS 声明有实现线索 |
-| **UC-20** | Design Ledger 契约：D-xxx、§1~§21 覆盖、问题/价值/证据字段、版本和 CHANGELOG impact | error | 真实仓库台账完整，缺失时 fail closed |
+| **UC-20** | Design Ledger 契约：D-xxx、§1~§22 覆盖、问题/价值/证据字段、版本和 CHANGELOG impact | error | 真实仓库台账完整，缺失时 fail closed |
 | **UC-07** | 分发闭环：post-commit hook、hooksPath、HARNESS/update-skill 声明一致 | error | hook 与文档闭环齐 |
 | **UC-08~UC-13** | AA 全维对齐验证：门禁承诺、实现真实性、state 字段、状态机、幽灵命令、门禁注册完整性 | error/warn | 无 blocker 级漂移 |
 | **UC-14** | update-skill 级联图谱同步：`update-graph.json`、`CHECK_FUNCS`、本节 UG/UC 锚点一致 | error | 三方集合完全一致 |
@@ -856,7 +856,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
 - [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.8.0：+ G-AUTO-CONSENSUS = 30）
 - [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 23；v3.5.0 加 `ae-sdd-plugin-loader-skill.md`）
-- [ ] 🆕 v3.2.5 `source/docs/ae-sdd-design.md` 存在，包含 21 个系统级设计章节和 D-001~D-024 Design Ledger（D-024 记录台账治理本身）
+- [ ] `source/docs/ae-sdd-design.md` 存在，包含 22 个系统级设计章节和 D-001~D-025 Design Ledger（D-024 记录台账治理，D-025 记录有界测试策略）
 - [ ] 🆕 2026-07-03 `source/docs/ae-sdd-implementation-architecture.md` 存在，说明 CLI / tools/lib / scripts / state/cache / build/distribution / gate/scanner / runtime stats 的实现分层；本文件 §步骤1 含"设计/实现架构同步"后置块
 - [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
@@ -883,7 +883,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 2026-07-03 Runtime Stats P0：`tools/lib/runtime_stats.py` 与 `tools/lib/runtime_exec.py` 存在；`tools/bin/ae-sdd` 含 `perf report/doctor/clear`；`tools/lib/gates.py` `summarize()` 输出 `durationMs/slowest`；`tools/tests/test_runtime_stats.py` 与 `tools/tests/test_cli_perf.py` 存在；`.gitignore` 忽略 `.ae-sdd/runtime-stats/`；`source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/plans/2026-07-02-runtime-stats-performance-plan.md` 已同步；`source/standards/update-graph.json` 含 UG-21；`source/CHANGELOG/` 含 `2026-07-03-runtime-stats-p0.md`
 - [ ] 🆕 2026-07-03 ae-sdd Monitor：`apps/ae-sdd-monitor/` 存在；`source/docs/ae-sdd-monitor-design.md` 独立记录只读投影语义；`source/docs/ae-sdd-design.md` 含 Monitor 入口；`source/docs/ae-sdd-implementation-architecture.md` 含 Monitor 模块/数据流边界；`source/standards/update-graph.json` 含 UG-22；`apps/ae-sdd-monitor/src/workspace.js` 和 `apps/ae-sdd-monitor/test/workspace.test.js` 跟随 state/runtime 投影契约；`apps/ae-sdd-monitor/README.md` 链接设计契约
 - [ ] 🆕 v3.11.0 `tools/lib/state_store.py` 与 `tools/lib/operations.py` 存在；`ae-sdd ops describe/next/execute` 和 `lease acquire/status/renew/release/break` 已注册；`source/standards/operation-protocol.md` 含 §9 `Maintainer Change Contract`；本 SKILL 含 typed operation maintenance entry；UG-27、UC-19、StateStore/operation/scope/evidence/update-graph focused tests 与 changelog 已同步
-- [ ] 🆕 v3.11.1 `source/docs/ae-sdd-design.md` 含 D-001~D-024 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；CHANGELOG 模板、UG-28、UC-20、focused tests 与 runtime 已同步
+- [ ] `source/docs/ae-sdd-design.md` 含 D-001~D-025 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；CHANGELOG 模板、UG-28、UC-20、focused tests 与 runtime 已同步
 
 ### 跨 SKILL 一致性
 

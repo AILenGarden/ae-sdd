@@ -1,15 +1,15 @@
 ---
 name: testcase-generate
-description: TestCase 系列 Step 2 generateSkill。采用「假设驱动·覆盖兜底」范式——先挖掘缺陷假设（主线），再用三层覆盖矩阵查漏（兜底）。根据已通过 Story Review 的 Story 生成测试用例文档，覆盖 AC、全场景和 L1/L2/L3/L4 分层。
+description: TestCase 系列 Step 2 generateSkill。采用有界风险驱动范式：先建立有限风险登记，再按行为等价类和最低充分层级选择用例，以停止条件和预算例外限制无价值边界扩张。
 source_slimmed: true
 source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md
-source_fallback_sha256: 0bf95b956aa13f3994341aa59b62d1e4670a95d08fb026f3911b10d1cdcacee7
-source_original_bytes: 13322
-source_original_lines: 261
-source_semantic_inventory_sha256: 585463c8cd32e15d69863c0b53e734259364944ac83227502832395a19aeca7a
+source_fallback_sha256: 3d197bfc0481a3344f168dd7f33b2136653c2bef3e3eb79f2c1c3682dc0fb75a
+source_original_bytes: 13600
+source_original_lines: 235
+source_semantic_inventory_sha256: 82caa19d792008634c0130fcbb9f909262ca5c48b2ba0bcf118a0ba45d7f50de
 source_slimmer: slim_source_skills.py@2
 ---
 
@@ -28,27 +28,27 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `skills/phase1-design/testcase-generate-skill.md`
 - fallback: `skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md`
-- fallback_sha256: `0bf95b956aa13f3994341aa59b62d1e4670a95d08fb026f3911b10d1cdcacee7`
-- original_lines: 261
-- original_bytes: 13322
-- semantic_inventory_sha256: `585463c8cd32e15d69863c0b53e734259364944ac83227502832395a19aeca7a`
+- fallback_sha256: `3d197bfc0481a3344f168dd7f33b2136653c2bef3e3eb79f2c1c3682dc0fb75a`
+- original_lines: 235
+- original_bytes: 13600
+- semantic_inventory_sha256: `82caa19d792008634c0130fcbb9f909262ca5c48b2ba0bcf118a0ba45d7f50de`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
-- summary: TestCase 系列 Step 2 generateSkill。采用「假设驱动·覆盖兜底」范式——先挖掘缺陷假设（主线），再用三层覆盖矩阵查漏（兜底）。根据已通过 Story Review 的 Story 生成测试用例文档，覆盖 AC、全场景和 L1/L2/L3/L4 分层。
+- summary: TestCase 系列 Step 2 generateSkill。采用有界风险驱动范式：先建立有限风险登记，再按行为等价类和最低充分层级选择用例，以停止条件和预算例外限制无价值边界扩张。
 
 ## Semantic Inventory
 
 | category | evidence | design_refs | fallback_policy |
 | --- | --- | --- | --- |
-| identity_trigger | frontmatter: name, description; keyword_hits: 13 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
-| workflow_route | keyword_hits: 26 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:237 禁止事项; keyword_hits: 32 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
-| tool_command | keyword_hits: 25 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 20 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
-| output_doc_contract | headings: L2:169 输出; keyword_hits: 26 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
-| resource_reference | inline_refs: 23; refs: ae-sdd assets read testcase --project <projectKey>; ae-sdd assets section §10; ae-sdd assets section §14; +20 more; keyword_hits: 25 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
-| design_alignment | keyword_hits: 33 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
-| fallback_only_detail | keyword_hits: 5 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
+| identity_trigger | frontmatter: name, description; keyword_hits: 12 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | keyword_hits: 20 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | headings: L2:209 禁止事项; keyword_hits: 35 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | keyword_hits: 24 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| state_data | keyword_hits: 15 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| output_doc_contract | headings: L2:170 输出; keyword_hits: 23 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 23; refs: ae-sdd assets read testcase --project <projectKey>; ae-sdd assets section §10; ae-sdd assets section §14; +20 more; keyword_hits: 24 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| design_alignment | keyword_hits: 17 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| fallback_only_detail | keyword_hits: 6 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
 ## Source Slimming SOP
 
@@ -67,15 +67,15 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | 2 | 21 | 第零步：TestCase 准入检查 |
 | 2 | 45 | 输入 |
 | 2 | 70 | 生成规则 |
-| 3 | 72 | 0. 缺陷假设挖掘（🆕 v3.6.3 主线环节） |
-| 3 | 124 | 1. Story 类型识别 |
-| 3 | 138 | 2. 用例生成（假设驱动 + 覆盖兜底） |
-| 3 | 159 | 3. 测试真实性预埋 |
-| 2 | 169 | 输出 |
-| 2 | 179 | 合规性校验 |
-| 3 | 197 | TC-G11 假设覆盖率专项校验（🆕 v3.6.3） |
-| 2 | 237 | 禁止事项 |
-| 2 | 251 | 执行清单 |
+| 3 | 72 | 0. 有限风险登记与缺陷假设挖掘 |
+| 3 | 123 | 1. Story 类型识别 |
+| 3 | 137 | 2. 用例生成（风险驱动 + 有界查漏） |
+| 3 | 160 | 3. 测试真实性预埋 |
+| 2 | 170 | 输出 |
+| 2 | 180 | 合规性校验 |
+| 3 | 198 | TC-G11 测试组合价值与有界性专项校验 |
+| 2 | 209 | 禁止事项 |
+| 2 | 225 | 执行清单 |
 
 ## Inline References
 
@@ -92,10 +92,10 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | be-testcase-strategy.md |
 | be-testcase-strategy.md §通用缺陷假设库 |
 | be-testcase-template.md |
-| be-testcase-template.md §缺陷假设清单 |
 | constraints/*.md |
 | constraints/assets/Story |
 | document-storage-skill.md |
+| exclude/defer |
 | get_constraints/get_assets |
 | review-loop-skill.md |
 | source/standards/constraints/testing.md |
