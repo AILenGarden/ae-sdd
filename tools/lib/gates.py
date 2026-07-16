@@ -440,17 +440,32 @@ def check_g03(project_dir: Path, st: dict, current_story: str) -> GateResult:
 
 # ─── G-04 ───────────────────────────────────────────────────────────────────
 def check_g04(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    """G-04 TestCase 文档存在"""
+    """G-04 验证设计存在：优先 Story 内嵌矩阵，兼容独立 TestCase。"""
     if not current_story:
         return GateResult("G-04", "TestCase 文档存在", "blocker", False,
                           "state.currentStory 为空")
 
     tc = paths.find_doc(project_dir, current_story, "-testcase.md")
     if tc is None:
-        return GateResult("G-04", "TestCase 文档存在", "blocker", False,
-                          f"TestCase 文档不存在: design/{current_story}-testcase.md",
-                          f"跑 testcase-generate-skill 生成 {current_story}-testcase.md",
-                          details={"expected": str(paths.project_design_dir(project_dir) / f"{current_story}-testcase.md")})
+        story_doc, resolution = _resolve_story_doc(project_dir, st, current_story)
+        if story_doc is not None:
+            content = story_doc.read_text(encoding="utf-8", errors="replace")
+            has_matrix = (
+                "验证矩阵" in content
+                or ("验收标准" in content and re.search(r"\bTC[-_]?\d+\b|\bAC[-_]?\d+\b", content))
+            )
+            if has_matrix:
+                return GateResult(
+                    "G-04", "验证设计存在", "blocker", True,
+                    "Story 已内嵌 AC/验证矩阵（不需要独立 TestCase）",
+                    details={**resolution, "file": str(story_doc), "mode": "story-embedded"},
+                )
+        return GateResult(
+            "G-04", "验证设计存在", "blocker", False,
+            "Story 无验证矩阵，且独立 TestCase 不存在",
+            "在 Story 中补 AC/验证矩阵；仅复杂矩阵才显式生成 TESTCASE",
+            details={"mode": "missing"},
+        )
     return GateResult("G-04", "TestCase 文档存在", "blocker", True,
                       f"找到 {tc.name}",
                       details={"file": str(tc)})
@@ -506,6 +521,26 @@ def check_g06(project_dir: Path, st: dict, current_story: str) -> GateResult:
 # ─── G-07 ───────────────────────────────────────────────────────────────────
 def check_g07(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-07 CodingPlan 存在 + 7 章节齐全"""
+    plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+    if plan.get("goal") or plan.get("changedPaths") or plan.get("verification"):
+        missing = [name for name, value in (
+            ("goal", plan.get("goal")),
+            ("changedPaths", plan.get("changedPaths")),
+            ("verification", plan.get("verification")),
+        ) if not value]
+        if missing:
+            return GateResult(
+                "G-07", "ExecutionPlan 存在", "blocker", False,
+                f"state.executionPlan 缺必填字段: {missing}",
+                "补充 goal、changedPaths、verification 后重新确认",
+                details={"profile": "compact", "missing": missing},
+            )
+        return GateResult(
+            "G-07", "ExecutionPlan 存在", "blocker", True,
+            "结构化 executionPlan 已就绪",
+            details={"profile": "compact", "approved": bool(plan.get("approved")),
+                     "changedPaths": list(plan.get("changedPaths") or [])},
+        )
     cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
     if resolution.get("errorCode"):
         return GateResult("G-07", "CodingPlan 存在", "blocker", False,
@@ -678,37 +713,69 @@ def _check_report(project_dir: Path, st: dict, current_story: str, *,
 
 
 def check_g10(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    return _check_report(project_dir, st, current_story,
-                         gate_id="G-10", name="测试报告存在",
-                         category="Test",
-                         patterns=[f"{current_story}-Report.md",  # 🆕 v3.10.1 原地更新（主）
-                                   f"{current_story}-Report-v*-r*.md"],  # 兼容旧版本化文件
-                         legacy_suffixes=["-Report.md"],  # design/ 兼容
-                         expected_hint=f"ae-sdd-doc/Test/{current_story}/{current_story}-Report.md",
-                         action=f"跑完 Test 系列后生成 {current_story}-Report.md")
+    if current_story:
+        from lib import evidence
+        manifest = evidence.manifest_path(project_dir, current_story)
+        if manifest.is_file():
+            return GateResult(
+                "G-10", "测试证据存在", "blocker", True,
+                "evidence manifest 已存在（不生成 TestReport）",
+                details={"manifest": str(manifest), "processArtifactPolicy": "evidence-only"},
+            )
+    return _check_report(
+        project_dir, st, current_story,
+        gate_id="G-10", name="测试证据存在（兼容旧 TestReport）",
+        category="Test", patterns=[f"{current_story}-Report.md", f"{current_story}-Report-v*-r*.md"],
+        legacy_suffixes=["-Report.md"], expected_hint=f"evidence manifest for {current_story}",
+        action="记录真实测试 evidence；不要生成 TestReport",
+    )
 
 
 def check_g11(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    return _check_report(project_dir, st, current_story,
-                         gate_id="G-11", name="Coding 报告存在",
-                         category="Coding",
-                         patterns=[f"{current_story}-CodingReport.md",  # 🆕 v3.10.1 原地更新（主）
-                                   f"{current_story}-CodingReport-v*-r*.md",  # 兼容旧版本化
-                                   f"{current_story}-Coding-Report-v*-r*.md"],
-                         legacy_suffixes=["-CodingReport.md", "-Coding-Report.md"],  # design/ 兼容
-                         expected_hint=f"ae-sdd-doc/Coding/{current_story}/{current_story}-CodingReport.md",
-                         action=f"编码完成后生成 {current_story}-CodingReport.md")
+    plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+    if plan.get("approved") and plan.get("changedPaths"):
+        return GateResult(
+            "G-11", "Coding 交付证据存在", "blocker", True,
+            "approved executionPlan + changedPaths 已记录（不生成 CodingReport）",
+            details={"changedPaths": list(plan.get("changedPaths") or []),
+                     "processArtifactPolicy": "git-diff+evidence"},
+        )
+    return _check_report(
+        project_dir, st, current_story,
+        gate_id="G-11", name="Coding 交付证据存在（兼容旧 CodingReport）",
+        category="Coding",
+        patterns=[f"{current_story}-CodingReport.md", f"{current_story}-CodingReport-v*-r*.md",
+                  f"{current_story}-Coding-Report-v*-r*.md"],
+        legacy_suffixes=["-CodingReport.md", "-Coding-Report.md"],
+        expected_hint="approved state.executionPlan.changedPaths",
+        action="记录并批准 executionPlan；不要生成 CodingReport",
+    )
 
 
 def check_g12(project_dir: Path, st: dict, current_story: str) -> GateResult:
-    return _check_report(project_dir, st, current_story,
-                         gate_id="G-12", name="CodeReview 报告存在",
-                         category="CR",
-                         patterns=[f"{current_story}-CodeReview.md",  # 🆕 v3.10.1 原地更新（主）
-                                   f"{current_story}-CodeReview-v*-r*.md"],  # 兼容旧版本化
-                         legacy_suffixes=["-CodeReview.md"],  # design/ 兼容
-                         expected_hint=f"ae-sdd-doc/CR/{current_story}/{current_story}-CodeReview.md",
-                         action=f"CodeReview 后生成 {current_story}-CodeReview.md")
+    review = st.get("review") if isinstance(st.get("review"), dict) else {}
+    status = review.get("status")
+    findings = review.get("findings") if isinstance(review.get("findings"), list) else []
+    if status == "passed" and not findings:
+        return GateResult(
+            "G-12", "CodeReview 结论存在", "blocker", True,
+            "review.status=passed，findings 为空（不生成 CodeReview 报告）",
+            details={"review": review, "processArtifactPolicy": "findings-only"},
+        )
+    if status == "changes_required" and findings:
+        return GateResult(
+            "G-12", "CodeReview 结论存在", "blocker", False,
+            f"Review 有 {len(findings)} 个 findings 待修复",
+            "修复 findings 后重新记录 review.status",
+            details={"review": review, "processArtifactPolicy": "findings-only"},
+        )
+    return _check_report(
+        project_dir, st, current_story,
+        gate_id="G-12", name="CodeReview 结论存在（兼容旧报告）",
+        category="CR", patterns=[f"{current_story}-CodeReview.md", f"{current_story}-CodeReview-v*-r*.md"],
+        legacy_suffixes=["-CodeReview.md"], expected_hint="state.review.status/findings",
+        action="记录 review.status/findings；不要生成 CodeReview 报告",
+    )
 
 
 # 🆕 v3.9.20 G-REVIEW-DEPTH：Review 深度门禁——禁裸✅ + 零发现举证。
@@ -750,6 +817,23 @@ def check_g_review_depth(project_dir: Path, st: dict, current_story: str) -> Gat
         return GateResult(gate_id, name, "blocker", True,
                           "state.currentStory 为空（skip，由 G-12 兜底）",
                           details={"skipped": True})
+    compact_review = st.get("review") if isinstance(st.get("review"), dict) else {}
+    if compact_review.get("status") in {"passed", "changes_required"}:
+        findings = compact_review.get("findings") or []
+        invalid = [item for item in findings if not isinstance(item, dict) or not item.get("severity")]
+        if invalid:
+            return GateResult(
+                gate_id, name, "blocker", False,
+                "review.findings 缺 severity 等结构化证据",
+                "为每个 finding 补 severity/file/line/problem/requiredAction",
+                details={"profile": "findings-only", "invalidCount": len(invalid)},
+            )
+        return GateResult(
+            gate_id, name, "blocker", True,
+            "结构化 Review findings/status 已满足深度门禁（不读取 Markdown 报告）",
+            details={"profile": "findings-only", "status": compact_review.get("status"),
+                     "findings": len(findings), "reviewedPaths": compact_review.get("reviewedPaths", [])},
+        )
     work_item = _work_item_from_state(st) or current_story
     try:
         resolution = _resolve_report_doc(
@@ -842,6 +926,34 @@ CODINGPLAN_14GATES_KEYWORDS = [
 
 def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-08 CodingPlan 14 门禁通过 — 解析 CodingPlan 文档 14 门禁表"""
+    plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+    if plan.get("goal") or plan.get("changedPaths") or plan.get("verification"):
+        missing = [name for name, value in (
+            ("goal", plan.get("goal")),
+            ("changedPaths", plan.get("changedPaths")),
+            ("verification", plan.get("verification")),
+        ) if not value]
+        if missing:
+            return GateResult(
+                "G-08", "ExecutionPlan 门禁通过", "blocker", False,
+                f"executionPlan 缺字段: {missing}",
+                "补齐紧凑计划，不要创建 CodingPlan Markdown",
+                details={"profile": "compact", "missing": missing},
+            )
+        if not plan.get("approved"):
+            return GateResult(
+                "G-08", "ExecutionPlan 门禁通过", "blocker", False,
+                "executionPlan 尚未获得用户确认",
+                "在对话中展示紧凑计划并调用 execution.plan.approve",
+                details={"profile": "compact", "approved": False},
+            )
+        return GateResult(
+            "G-08", "ExecutionPlan 门禁通过", "blocker", True,
+            "紧凑 executionPlan 完整且已确认",
+            details={"profile": "compact", "approved": True,
+                     "verificationCount": len(plan.get("verification") or []),
+                     "riskCount": len(plan.get("risks") or [])},
+        )
     cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
     if resolution.get("errorCode"):
         return GateResult("G-08", "CodingPlan 门禁通过", "blocker", False,
@@ -1770,9 +1882,15 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
         # Story 文档不存在 → 链路断
         issues.append(f"Story 文档不存在：{current_story}.md（无法建立追溯）")
 
-    # 2. Task → Story 引用追溯
+    compact_process = isinstance(st.get("executionPlan"), dict) and bool(
+        st.get("executionPlan", {}).get("goal")
+    )
+
+    # 2. Task → Story 引用追溯（新流程默认不生成 Task Markdown）
     tasks = _find_task_docs(project_dir, current_story)
-    phase_requires_completed_chain = st.get("phase") in {"code-reviewed", "completed"}
+    phase_requires_completed_chain = (
+        st.get("phase") in {"code-reviewed", "completed"} and not compact_process
+    )
     if phase_requires_completed_chain and not tasks:
         issues.append(f"code-reviewed 链路缺少 Task 文档：{current_story}.md 或 {current_story}-task-*.md")
     for t in tasks:
@@ -1780,7 +1898,7 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
         if current_story not in task_content:
             issues.append(f"Task 文档未引用 Story ID {current_story}：{t.name}")
 
-    # 3. Coding Report → Task 引用追溯（如果存在）
+    # 3. Coding Report → Task 引用追溯（仅 legacy；新流程使用 executionPlan/evidence）
     work_item = _work_item_from_state(st) or current_story
     coding_report = _find_report_doc(
         project_dir, current_story,
@@ -1811,7 +1929,7 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
     elif phase_requires_completed_chain:
         issues.append(f"code-reviewed 链路缺少 Coding Report：{current_story}")
 
-    # 4. CodeReview → Story 引用追溯（如果存在）
+    # 4. CodeReview → Story 引用追溯（仅 legacy；新流程使用 review findings/status）
     code_review = _find_report_doc(
         project_dir, current_story,
         category="CR",
@@ -1827,6 +1945,14 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
     elif phase_requires_completed_chain:
         issues.append(f"code-reviewed 链路缺少 CodeReview：{current_story}")
 
+    if compact_process and st.get("phase") in {"code-reviewed", "completed"}:
+        plan = st.get("executionPlan") or {}
+        review = st.get("review") or {}
+        if not plan.get("approved"):
+            issues.append("executionPlan 尚未确认")
+        if review.get("status") != "passed":
+            issues.append("review.status 尚未通过")
+
     if issues:
         return GateResult("G-13", "全链路对称性核查通过", "blocker", False,
                           f"链路追溯发现 {len(issues)} 个问题：{issues[0]}" + ("..." if len(issues) > 1 else ""),
@@ -1838,9 +1964,12 @@ def check_g13(project_dir: Path, st: dict, current_story: str) -> GateResult:
                                    "traceMode": trace_mode})
 
     n_drs = len(_iter_dr_docs(design))
-    layer_note = "六层追溯完整（RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview）" \
-        if ra_layer_detail["present"] else \
-        "五层追溯完整（DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview，RA 层未生成/豁免）"
+    if compact_process:
+        layer_note = "核心文档与机器证据追溯完整（RA/DR/Story + executionPlan/evidence/review）"
+    else:
+        layer_note = "六层追溯完整（RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview）" \
+            if ra_layer_detail["present"] else \
+            "五层追溯完整（DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview，RA 层未生成/豁免）"
     return GateResult("G-13", "全链路对称性核查通过", "blocker", True,
                       layer_note,
                       details={"current_story": current_story,
@@ -2633,7 +2762,7 @@ def check_ra_implementation(project_dir: Path, st: dict, current_story: str,
 
 
 # ─── G-14：CodingPlan-Story 一致性（建议书4 G-08-15）─────────────────────────
-# CodingPlan 涉及的接口/DO/AC 必须与 Story 可对应；偏离项须有 Proposal 引用。
+# ExecutionPlan 涉及的接口/DO/AC 必须与 Story 可对应；偏离时先更新 Story。
 # 设计在 ④bis（CodingPlan 生成）-> ⑤ Coding 之间硬拦截。
 # 🆕 v3.10.5 BUG6：AC ID 正则加负向边界 (?<![A-Za-z0-9])，防 MAC1 被子串匹配为 AC1。
 # 保留无分隔 AC1 / 带分隔 AC-1 / AC_1 / AC100 全部匹配。
@@ -2661,6 +2790,35 @@ def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
         )
     if not current_story:
         return GateResult("G-14", name, "blocker", False, "state.currentStory 为空")
+
+    plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+    if plan.get("goal") or plan.get("changedPaths") or plan.get("verification"):
+        story_doc, story_resolution = _resolve_story_doc(project_dir, st, current_story)
+        if story_doc is None or story_resolution.get("errorCode"):
+            return GateResult(
+                "G-14", name, "blocker", False,
+                "Story 文档不存在或绑定无效，无法核对 executionPlan",
+                _story_binding_action(st, current_story), details=story_resolution,
+            )
+        story_content = story_doc.read_text(encoding="utf-8")
+        story_acs = set(_AC_ID_RE.findall(story_content))
+        plan_content = _json.dumps(plan, ensure_ascii=False)
+        plan_acs = set(_AC_ID_RE.findall(plan_content))
+        missing_acs = sorted(story_acs - plan_acs)
+        if missing_acs:
+            return GateResult(
+                "G-14", name, "blocker", False,
+                f"executionPlan 未覆盖 Story AC: {missing_acs}",
+                "在 executionPlan.verification 中补齐 AC 映射",
+                details={**story_resolution, "missingAcs": missing_acs,
+                         "planAcs": sorted(plan_acs)},
+            )
+        return GateResult(
+            "G-14", "ExecutionPlan-Story 一致性", "blocker", True,
+            f"executionPlan 与 Story 一致（AC 对齐 {len(plan_acs)} 个）",
+            details={**story_resolution, "profile": "compact",
+                     "ac_ids_in_plan": sorted(plan_acs), "story_doc": str(story_doc)},
+        )
 
     cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
     if resolution.get("errorCode"):
@@ -2709,17 +2867,14 @@ def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
             if story_acs and not (story_acs & ac_ids_in_cp):
                 issues.append(f"Story 含 AC {sorted(story_acs)} 但 CodingPlan 测试章节未对齐任何 AC ID")
 
-    # 3. 偏离 Story 设计须有 Proposal 引用（偏离声明段 + Proposal 文档）
+    # 3. 偏离 Story 设计必须先回写 Story；Proposal 已退役。
     if "偏离声明" in cp_content or "偏离" in cp_content:
-        has_proposal_ref = ("Proposal" in cp_content or "proposal" in cp_content
-                            or "PROPOSAL" in cp_content)
-        if not has_proposal_ref:
-            issues.append("CodingPlan 含'偏离声明'但未引用 Proposal 文档（偏离须有 Proposal 闭环）")
+        issues.append("CodingPlan 含偏离声明；请先更新 Story 当前契约，禁止用 Proposal 旁路")
 
     if issues:
         return GateResult("G-14", name, "blocker", False,
                           f"CodingPlan-Story 一致性未通过（{len(issues)} 项）：{'; '.join(issues)}",
-                          f"修复 {current_story}-CodingPlan.md 使其与 Story 一致，偏离项补 Proposal",
+                          f"修复 {current_story}-CodingPlan.md 使其与 Story 一致；偏离时先更新 Story",
                           details={**resolution, **story_resolution,
                                    "issues": issues, "ac_ids_in_cp": sorted(ac_ids_in_cp),
                                    "story_doc_exists": story_doc is not None})
@@ -2746,6 +2901,23 @@ _SRC_PENDING_RE = re.compile(r"【待核实源码[^】]*】")
 def check_g_codeplan_src(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-CODEPLAN-SRC CodingPlan 源码核对 — 新增/修改类建模范式须附来源标记"""
     name = "CodingPlan 源码核对"
+    plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+    if plan.get("goal") or plan.get("changedPaths") or plan.get("verification"):
+        source_reads = [str(item).strip().strip("`") for item in plan.get("sourceReads") or []]
+        missing = [item for item in source_reads if not (project_dir / item).is_file()]
+        if missing:
+            return GateResult(
+                "G-CODEPLAN-SRC", "ExecutionPlan 源码核对", "blocker", False,
+                f"executionPlan.sourceReads 含不存在路径: {missing[:5]}",
+                "修正 sourceReads；禁止伪造源码核对证据",
+                details={"profile": "compact", "missing_read_files": missing},
+            )
+        return GateResult(
+            "G-CODEPLAN-SRC", "ExecutionPlan 源码核对", "blocker", True,
+            f"executionPlan 源码核对通过（{len(source_reads)} 个路径）",
+            details={"profile": "compact", "read_files": source_reads,
+                     "skipped": not source_reads},
+        )
     cp, resolution = _resolve_codingplan_doc(project_dir, st, current_story)
     if resolution.get("errorCode"):
         return GateResult("G-CODEPLAN-SRC", name, "blocker", False,

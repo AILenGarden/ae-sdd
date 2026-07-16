@@ -17,6 +17,9 @@ EXPECTED_OPERATIONS = {
     "lease.release",
     "lease.break",
     "state.transition",
+    "execution.plan.set",
+    "execution.plan.approve",
+    "review.record",
     "document.resolve",
     "document.save",
     "gate.check",
@@ -102,6 +105,26 @@ def transition_request(project: Path, lease: dict, **overrides: object) -> dict:
     return request
 
 
+def compact_write_request(
+    project: Path, lease: dict, operation: str, parameters: dict,
+    *, revision: int, key: str,
+) -> dict:
+    return {
+        "schemaVersion": "1",
+        "operation": operation,
+        "project": str(project),
+        "workItem": "WORK-001",
+        "story": "STORY-001",
+        "lease": {
+            "leaseId": lease["leaseId"],
+            "fencingToken": lease["fencingToken"],
+        },
+        "expectedRevision": revision,
+        "idempotencyKey": key,
+        "parameters": parameters,
+    }
+
+
 def assert_operation_error(exc: pytest.ExceptionInfo[OperationError], code: str) -> None:
     assert exc.value.code == code
 
@@ -110,7 +133,7 @@ def test_describe_exposes_versioned_typed_registry_without_raw_patch(project: Pa
     description = registry(project).describe()
 
     assert description["schemaVersion"] == "1"
-    assert description["registryVersion"]
+    assert description["registryVersion"] == "1.1.0"
     names = {item["name"] for item in description["operations"]}
     assert names == EXPECTED_OPERATIONS
     assert "state.patch" not in names
@@ -322,14 +345,14 @@ def test_document_resolve_and_save_use_work_item_scope_and_state_revision(projec
     lease = acquire(reg, project)["lease"]
     resolved = reg.execute({
         "schemaVersion": "1", "operation": "document.resolve", "project": str(project),
-        "workItem": "WORK-001", "story": "STORY-001", "parameters": {"intent": "CODING_PLAN"},
+        "workItem": "WORK-001", "story": "STORY-001", "parameters": {"intent": "STORY"},
     })
-    assert resolved["artifacts"][0]["path"].endswith("WORK-001-CodingPlan.md")
+    assert resolved["artifacts"][0]["path"].endswith("STORY-001.md")
     saved = reg.execute({
         "schemaVersion": "1", "operation": "document.save", "project": str(project),
         "workItem": "WORK-001", "story": "STORY-001", "lease": lease,
         "expectedRevision": 0, "idempotencyKey": "doc-save-1",
-        "parameters": {"intent": "CODING_PLAN", "contentFile": "content.md"},
+        "parameters": {"intent": "STORY", "contentFile": "content.md"},
     })
     assert saved["revisionAfter"] == 1
     assert Path(saved["artifacts"][0]["path"]).read_text(encoding="utf-8") == "# generated\n"
@@ -366,6 +389,65 @@ def test_verification_and_evidence_adapters_persist_through_store(project: Path)
         "expectedRevision": 2, "idempotencyKey": "evidence-finalize-1", "parameters": {},
     })
     assert finalized["revisionAfter"] == 3
+
+
+def test_compact_execution_plan_approval_and_review_are_state_only(project: Path) -> None:
+    source = project / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("def run():\n    return True\n", encoding="utf-8")
+    reg = registry(project)
+    lease = acquire(reg, project)["lease"]
+
+    planned = reg.execute(compact_write_request(
+        project, lease, "execution.plan.set",
+        {
+            "goal": "Implement AC-1",
+            "changedPaths": ["src/service.py"],
+            "verification": [{"id": "V-1", "acId": "AC-1", "command": "pytest -q"}],
+            "risks": ["API compatibility"],
+            "sourceReads": ["src/service.py"],
+        },
+        revision=0, key="compact-plan-set",
+    ))
+    assert planned["revisionAfter"] == 1
+    assert planned["state"]["executionPlan"]["approved"] is False
+
+    approved = reg.execute(compact_write_request(
+        project, lease, "execution.plan.approve", {"approvedBy": "user"},
+        revision=1, key="compact-plan-approve",
+    ))
+    assert approved["revisionAfter"] == 2
+    assert approved["state"]["executionPlan"]["approved"] is True
+
+    reviewed = reg.execute(compact_write_request(
+        project, lease, "review.record",
+        {
+            "status": "changes_required",
+            "findings": [{"severity": "P1", "problem": "Missing guard"}],
+            "reviewedPaths": ["src/service.py"],
+        },
+        revision=2, key="compact-review-record",
+    ))
+    assert reviewed["revisionAfter"] == 3
+    assert reviewed["state"]["review"]["status"] == "changes_required"
+    assert not list(project.rglob("*CodingReport*.md"))
+    assert not list(project.rglob("*TestReport*.md"))
+    assert not list(project.rglob("*CodeReview*.md"))
+
+
+def test_review_record_rejects_unstructured_findings(project: Path) -> None:
+    reg = registry(project)
+    lease = acquire(reg, project)["lease"]
+    request = compact_write_request(
+        project, lease, "review.record",
+        {"status": "changes_required", "findings": [{"problem": "No severity"}]},
+        revision=0, key="compact-review-invalid",
+    )
+
+    with pytest.raises(OperationError) as exc:
+        reg.execute(request)
+    assert_operation_error(exc, "OPERATION_EXECUTION_FAILED")
+    assert "severity" in exc.value.details["error"]
 
 
 def test_verification_plan_rejects_changed_path_escape_with_stable_error(project: Path) -> None:

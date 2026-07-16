@@ -11,7 +11,9 @@ description: 根据 Story 中的 Task 描述和约束文档，生成或更新 Ta
 > 2. 手动生成 Task 文档作为可选上下文（非主流程）
 > 3. 参考：骨架分解要求已迁移至 coding-process-skill §A1.5
 
-# Task Generate — Task 文档生成 Skill
+# Task Generate — 并行任务拆分能力（独立文档按需）
+
+> **v3.12：** 默认把文件顺序和子任务写入 `state.executionPlan`，不生成 Task/TaskReview/TaskWriterReport/ImplPlan Markdown。仅大型任务存在多个并行 owner 或变更文件超过 8 个时，才显式生成 Task。
 
 ## 目标
 

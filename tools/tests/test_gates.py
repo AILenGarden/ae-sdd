@@ -913,6 +913,49 @@ class TestG13(unittest.TestCase):
 # ─── G-14 CodingPlan-Story 一致性（v3.4.0）──────────────────────────────────
 class TestG14(unittest.TestCase):
 
+    def test_compact_execution_plan_covers_story_without_markdown_plan(self):
+        tmp = _setup_project({
+            "design/STORY-001.md": "# STORY-001\n\nAC-1 login\nAC-2 logout\n",
+            "src/service.py": "def run():\n    return True\n",
+        })
+        st = {
+            "processPolicy": "compact",
+            "executionPlan": {
+                "goal": "Implement STORY-001",
+                "changedPaths": ["src/service.py"],
+                "verification": [
+                    {"id": "V-1", "acId": "AC-1", "command": "pytest -q"},
+                    {"id": "V-2", "acId": "AC-2", "command": "pytest -q"},
+                ],
+                "sourceReads": ["src/service.py"],
+                "approved": True,
+            },
+        }
+
+        self.assertTrue(gates.check_g07(tmp, st, "STORY-001").pass_)
+        self.assertTrue(gates.check_g08(tmp, st, "STORY-001").pass_)
+        self.assertTrue(gates.check_g14(tmp, st, "STORY-001").pass_)
+        self.assertTrue(gates.check_g_codeplan_src(tmp, st, "STORY-001").pass_)
+        self.assertTrue(gates.check_g11(tmp, st, "STORY-001").pass_)
+
+    def test_compact_execution_plan_missing_story_ac_blocks(self):
+        tmp = _setup_project({
+            "design/STORY-001.md": "# STORY-001\n\nAC-1 login\nAC-2 logout\n",
+        })
+        st = {
+            "processPolicy": "compact",
+            "executionPlan": {
+                "goal": "Implement STORY-001",
+                "changedPaths": ["src/service.py"],
+                "verification": [{"id": "V-1", "acId": "AC-1"}],
+                "approved": True,
+            },
+        }
+
+        result = gates.check_g14(tmp, st, "STORY-001")
+        self.assertFalse(result.pass_)
+        self.assertEqual(result.details["missingAcs"], ["AC-2"])
+
     def _cp(self, body: str) -> str:
         return f"# STORY-001-CodingPlan\n{body}\n"
 

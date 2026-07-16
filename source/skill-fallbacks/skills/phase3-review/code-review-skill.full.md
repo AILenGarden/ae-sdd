@@ -5,6 +5,8 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 
 # Code Review — 端到端代码评审 Skill
 
+> **v3.12 findings-only：** Review 不再生成 CodeReview Markdown。通过时写 `state.review.status=passed` 且 `findings=[]`；发现问题时只写结构化 findings（severity/file/line/problem/requiredAction）。既有报告仅供只读兼容。
+
 > CodeReview 准入中的 G-CODE-1：可信 work-item scope 仅检查当前 Story 生产代码；scope 内 blocker（含触及历史债）仍阻断。无可信 scope 时严格全仓扫描，不得用 baseline/waiver 伪造通过。
 
 > **核心定位：** 与 `story-review-skill.md` 同等地位 — Story Review 是设计阶段的评审，**Code Review 是实现阶段的评审**。两者结构对齐（目标/总则/整体流程/触发条件/Plan-first/第零步准入/第一步输入/第二步挖掘/结论/判定/补充说明/UpdatePlan/触发/循环/禁止/执行清单/讲解）。
@@ -1155,3 +1157,6 @@ CodeReview 只核验 `TEST_REPORT` 已经由 `test-review-skill.md` 独立复核
   - 6 大闸门从 coding-skill 迁出到本 SKILL §第七步
   - 与 story-review-skill 同等地位
   - 模板按项目资产 §3/§4 重构
+# v3.12 findings-only Review
+
+Review 不再生成 CodeReview Markdown。通过时写 `state.review.status=passed` 且 `findings=[]`；发现问题时只写结构化 findings（severity/file/line/problem/requiredAction）。既有 CodeReview 文件仅供只读兼容。

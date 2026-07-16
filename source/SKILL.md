@@ -1,9 +1,10 @@
 ---
 name: ae-sdd
-version: 3.11.5
+version: 3.11.6
 description: |
   端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.11.6：micro 意图分流第三支——`/ae-sdd 请根据 ae-sdd 的 Story 模板格式调整这份文档，仅调整格式不改变语义` 不再误套 story-update-skill 的 Proposal+G-STORY-CTX 重路径。classify 新增 entryNode=DOC_FORMAT + 文档上下文消歧（引用型前缀"根据/按照 ae-sdd"不计入 self-update 信号，内容变更信号压倒格式关键词）；gate 跨步跳跃对 DOC_FORMAT 放行（复用 OPTIMIZE/CODE_REVIEW 豁免范式）；重入流程走 document-storage-skill §5 原地更新，不新建 Proposal。详见 CHANGELOG/2026-07-16-v3.11.6-doc-format-micro-route.md。
   🆕 v3.11.3：Story 逻辑 ID 与正式 StoryName 解耦。`state new --story-name` / `state bind-story-doc` 精确绑定原生文件名，G-02/G-14 共用 metadata-validated resolver；禁止模糊猜测或创建 ID-only 别名，旧 `{STORY-ID}.md` 保持兼容。
   🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
   🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
@@ -65,6 +66,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 - template: `templates/skill/source-skill-slim-entry-template.md`
 - summary: 端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
 支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+🆕 v3.11.6：micro 意图分流第三支——`/ae-sdd 请根据 ae-sdd 的 Story 模板格式调整这份文档，仅调整格式不改变语义` 不再误套 story-update-skill 的 Proposal+G-STORY-CTX 重路径。classify 新增 entryNode=DOC_FORMAT + 文档上下文消歧（引用型前缀"根据/按照 ae-sdd"不计入 self-update 信号，内容变更信号压倒格式关键词）；gate 跨步跳跃对 DOC_FORMAT 放行（复用 OPTIMIZE/CODE_REVIEW 豁免范式）；重入流程走 document-storage-skill §5 原地更新，不新建 Proposal。详见 CHANGELOG/2026-07-16-v3.11.6-doc-format-micro-route.md。
 🆕 v3.11.3：Story 逻辑 ID 与正式 StoryName 解耦。`state new --story-name` / `state bind-story-doc` 精确绑定原生文件名，G-02/G-14 共用 metadata-validated resolver；禁止模糊猜测或创建 ID-only 别名，旧 `{STORY-ID}.md` 保持兼容。
 🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
 🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。

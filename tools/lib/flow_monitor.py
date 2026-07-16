@@ -69,7 +69,7 @@ class DriftResult:
 
 # ─── phase → gate_id 映射 ────────────────────────────────────────────────────
 
-def get_phase_gate_map() -> dict[str, list[str]]:
+def get_phase_gate_map(state: Optional[dict] = None) -> dict[str, list[str]]:
     """返回 phase -> 应检查的 gate_id 列表映射。
 
     每轮 UserPromptSubmit 时依据当前 phase 确定要校验哪些门禁，
@@ -85,6 +85,16 @@ def get_phase_gate_map() -> dict[str, list[str]]:
     v3.10 砍 Task 后：task-generated/task-reviewed 已废弃，改为 testcase 系列；
     code-reviewed 代表 gate 从 G-05 改为 G-09（与 PHASE_ENTRY_GATES 对齐）。
     """
+    if (state or {}).get("processPolicy") == "compact":
+        return {
+            "ra-generated":       ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"],
+            "dr-generated":       ["G-01"],
+            "story-generated":    ["G-02"],
+            "coding-process":     ["G-08"],
+            "coding":             ["G-CODEPLAN-SRC"],
+            "test-running":       ["G-10"],
+            "code-reviewed":      ["G-12"],
+        }
     return {
         "ra-generated":        ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"],
         "dr-generated":        ["G-01"],
@@ -183,7 +193,7 @@ def detect_drift(state: dict, ade_sdd: Path) -> DriftResult:
                 gate_message="", phase=phase, correction_count=0,
             )
 
-        gate_map = get_phase_gate_map()
+        gate_map = get_phase_gate_map(state)
         gate_ids = gate_map.get(phase, [])
 
         # 该 phase 无对应 gate → 不检测，让流程自然推进

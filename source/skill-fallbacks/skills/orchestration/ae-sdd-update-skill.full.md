@@ -37,7 +37,7 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 | # | 问题 | 判定为"是"时的动作 |
 | --- | --- | --- |
 | 1 | 这段是"为什么这样设计"的背景叙事？ | 删除，或压缩为 1 行脚注 |
-| 2 | 这段是历史版本变更堆积（🆕 vX.Y.Z 逐条罗列）？ | 移入 `CHANGELOG/`，正文只留"当前状态" |
+| 2 | 这段是历史版本变更堆积（🆕 vX.Y.Z 逐条罗列）？ | 删除；正文只留当前状态，任何时候都不写 changelog |
 | 3 | 这段能用表格代替长段落？ | 改表格 |
 | 4 | 这段重复了另一个文件已有的内容？ | 改成指针引用 |
 | 5 | 删掉这句话，AI 还能正确执行任务？ | 删除 |
@@ -48,7 +48,7 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 
 - ❌ 新增内容时旧内容"顺手"保留不删（导致文件只增不减）
 - ❌ 用"完整性/防遗漏"当借口堆砌背景说明
-- ❌ 版本变更历史写在正文（应写 CHANGELOG，正文只体现最终状态）
+- ❌ 版本变更历史写在正文或新建 changelog；只维护当前权威事实
 
 ### 各子 SKILL = 环节内具体规则
 
@@ -59,15 +59,15 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 | `coding-skill.md` | CodingSkill.Plan / Execute 能力库 / 编码异常路径 | 测试运行、测试真实性复核、CodeReview 报告模板、流程编排 |
 | `testcase-generate-skill.md` | 测试用例生成 / AC 映射 / 合规性校验 | 流程编排、Coding 规则、测试执行 |
 | `testcase-review-skill.md` | TestCase 缺陷挖掘 / TC-1~TC-9 复核 | 流程编排、测试执行 |
-| `test-generate-skill.md` | 编译、启动、L1-L4 测试运行 / TEST_REPORT 生成 | Coding 执行、CodeReview 规则 |
+| `test-generate-skill.md` | 编译、启动、L1-L4 测试运行 / evidence manifest | Coding 执行、CodeReview 规则 |
 | `test-review-skill.md` | test-verifier 独立复核 / G-09/G-10 / 测试证据链判定 | 测试执行、Coding 修复 |
 | `sonar-issue-fix-skill.md` | Sonar issue 分类 / 安全 EditPlan / 保守规则配方 / compile-test-rescan 闭环 | Sonar 分析器实现、CodeReview 主流程编排、安全类问题盲改 |
 | `dr-update-skill.md` | DR 文档更新 / DR 缺陷修复 | 流程编排、其他文档规则 |
 | `story-update-skill.md` | Story 文档更新 / Story 缺陷修复 | 流程编排、Task 规则 |
-| `templates/coding/be-codereview-template.md` | CodeReview 报告 9 章节空白模板 | 具体 Story 的填充内容 |
-| `templates/coding/be-coding-report-template.md` | Coding 报告空白模板 | 具体 Story 的填充内容 |
+| `state.review.status/findings` | Review 结论与结构化发现 | 长篇过程报告 |
+| `state.executionPlan` | 用户确认的紧凑执行计划 | CodingPlan/CodingReport Markdown |
 | `templates/design/*.md` | DR / Story / Task / Story Review 逻辑汇总等空白模板 | 具体 Story 的填充内容 |
-| `templates/testcase/*.md` | 测试用例 / 测试报告空白模板 | 具体 Story 的填充内容 |
+| `templates/testcase/*.md` | 复杂场景才使用的可选 TestCase 模板 | 默认测试报告 |
 
 ---
 
@@ -147,7 +147,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | **⑤ 工具链**（改 `tools/lib/*.py` 或 `tools/bin/ae-sdd`） | ①（SKILL 引用的 CLI 命令契约）+ ⑤（测试） | 同步 SKILL.md 命令引用；补/改对应 `tools/tests/test_*.py` | `update-check` UC-02/03 |
 | **⑤ 新增 scanner**（`scripts/*_scan.py`） | ③（build 白名单）+ ①（gates.py 注册）+ ⑤（gates _locate） | 加入 `build_dist.py` 白名单；gates.py 注册门禁；SKILL 引用 | `update-check` UC-04 |
 | **⑥ Harness 适配层** | ❌ 不手工改 | 母版升级后重跑 `ae-sdd-harness-adapter` SKILL 重新生成 | `.adapter.lock` source input hash 一致性 |
-| **任意 source/ 或 tools/** | ①（CHANGELOG）+ README:5 + 设计/实现架构文档 + dev-sync | 写 CHANGELOG；更新 README:5；按影响同步 `ae-sdd-design.md` / `ae-sdd-implementation-architecture.md`；跑 update-check 全绿才 dev-sync | `update-check` 全量 |
+| **任意 source/ 或 tools/** | README:5 + 设计/实现架构文档 + dev-sync | 永不写 changelog；更新 README:5；按影响同步当前设计/实现事实；跑 update-check 全绿才 dev-sync | `update-check` 全量 |
 
 ### 维护者 SOP（按子系统）
 
@@ -160,7 +160,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 2. （涉及门禁/子 SKILL 数变化）同步 README.md 正文计数 + §3 清单
 3. 跑 ae-sdd update-check → 全绿
 4. 跑 dev-sync.sh 分发
-5. 写 CHANGELOG
+5. 确认未写 changelog，当前事实已进入权威规范与测试
 ```
 
 **改 ③ 构建脚本：**
@@ -169,7 +169,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 2. 若新增 scanner → 确认加入白名单（UC-04 会查）
 3. 若 dist 剥离/注入规则变化 → 同步本文件「母版修改后的同步规则」+ README Q3
 4. 重跑 build_dist.py 验证 dist/ae-sdd/ 完整
-5. 写 CHANGELOG
+5. 确认未写 changelog，构建事实由验证命令承载
 ```
 
 **改 ⑤ 工具链：**
@@ -180,7 +180,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 4. 涉及能力语义变化 → 同步 source/docs/ae-sdd-design.md；涉及模块边界/数据流/缓存/子进程/hook/build/分发变化 → 同步 source/docs/ae-sdd-implementation-architecture.md
 5. 跑 ae-sdd update-check → 全绿
 6. 跑 tools/tests/ 对应测试
-7. 写 CHANGELOG
+7. 确认未写 changelog，兼容性分类写入协议并由测试覆盖
 8. 🆕 v3.5.0：如新增 plugin_loader 类的跨 SKILL 加载机制 → 同步 update-graph.json 加 UG-XX 规则（如 UG-12 plugin-registry）+ 新建对应 cross-cutting 加载协议 SKILL（如 ae-sdd-plugin-loader-skill.md）
 ```
 
@@ -365,27 +365,16 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 ---
 
-### 步骤 4.5：写入 CHANGELOG（🆕 2026-06-10 强制）
+### 步骤 4.5：同步当前事实与机器证据
 
-> **🔴 强制：** 每次修改 SKILL 母版，必须在 `CHANGELOG/` 目录新建一个 `YYYY-MM-DD-{主题}.md` 文件。
+> **🔴 永久规则：** 任何时候都不写 changelog。历史 changelog 只读，不删除、不改写、不回填。
 
 **操作：**
-1. **文件命名：** `YYYY-MM-DD-{主题}.md`（如 `2026-06-10-AE-4类需求路由.md`）
-2. **位置：** `CHANGELOG/` 目录下（与 SKILL 母版平级）
-3. **模板：** 参考 `CHANGELOG/_template.md`
-4. **必填内容：** 变更摘要 + 详细变更（文件:行号）+ 触发原因 + 影响范围 + 验证方式 + Reviewer
-5. **历史回填：** 历史变更按 MEMORY.md 索引补建 1 个 .md 文件（不丢历史）
-
-**为什么需要：**
-- 之前 SKILL 母版无变更日志，"为什么改"信息散落在 SKILL.md frontmatter / 章节内 emoji 标签 / README 末行长段
-- git commit 信息是"什么时候改"而不是"为什么改"
-- 一个 1 个文件集中"一次大变更"，比 git log 易查阅 100 倍
-
-**禁止：**
-- ❌ 修改 SKILL 后不写 CHANGELOG
-- ❌ 在 CHANGELOG/ 之外的地方记录 SKILL 变更历史（除 README.md 末行日期 + git commit）
-- ❌ 多个变更共用一个文件（每次大变更独立文件）
-- ❌ 删 CHANGELOG/ 里的历史文件（永久保留，git 跟踪）
+1. 能力语义写回当前 Design Ledger、流程规范或子 SKILL。
+2. 模块边界和数据流写回实现架构。
+3. 兼容性分类写回 operation protocol 等权威协议。
+4. 验证结果由测试、update-check、evidence 和 runtime verify 承载。
+5. 删除正文中的历史版本叙事，只保留当前生效规则。
 
 ### 步骤 5：验证无重复
 
@@ -626,13 +615,15 @@ ae-sdd update-check --only UC-02
 
 ### Design Ledger Maintenance Entry
 
+> 任何时候都不写 changelog。设计语义写回 Design Ledger，模块边界写回实现架构，验证事实由测试与 runtime evidence 承载。
+
 每次迭代都必须先判断是否改变系统设计语义。设计语义包括能力边界、流程规则、状态模型、LLM/用户可见行为、模块归属、验证方法或运行时数据流。
 
 强制顺序：
 
 1. 读取 `source/docs/ae-sdd-design.md` §0 Design Ledger，定位受影响的 D-xxx；新增设计先分配稳定 ID。
 2. 若设计问题、决策、预期价值、验证证据或版本状态变化，更新对应台账行；历史设计不重复复制到 changelog。
-3. 在 changelog 的 `Design ledger impact` 填写 `updated: D-xxx`；确认没有设计语义变化时填写 `N/A: no design semantics changed`。
+3. 设计语义变化时直接更新对应 D-xxx；没有设计语义变化时不制造过程文档。
 4. 运行 `ae-sdd update-check --affected <changed-files>`，完成 `UG-28` 返回的台账、主设计、实现架构、维护入口、测试和版本连带项。
 5. 运行 `ae-sdd update-check --only UC-20 --json`；缺行、空字段、占位文本、章节漏映射或 changelog 记录缺失时必须按 remediation 修复。
 6. 只有台账、设计/实现文档、CHANGELOG 和机器检查全部完成后，才能进入 build/runtime 分发。
@@ -671,7 +662,7 @@ ae-sdd update-check --only UC-02
 改动后：
   3. `ae-sdd update-check` 兜底验证 → 全绿（0 failed）才继续
   4. 跑 dev-sync 分发
-  5. 写 CHANGELOG
+  5. 确认未写 changelog，当前事实与机器证据齐全
 ```
 
 > 详见上方「🤖 Agent 程序化消费协议」。人工维护者也可直接读 `source/standards/update-graph.json`。
@@ -883,7 +874,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 2026-07-03 Runtime Stats P0：`tools/lib/runtime_stats.py` 与 `tools/lib/runtime_exec.py` 存在；`tools/bin/ae-sdd` 含 `perf report/doctor/clear`；`tools/lib/gates.py` `summarize()` 输出 `durationMs/slowest`；`tools/tests/test_runtime_stats.py` 与 `tools/tests/test_cli_perf.py` 存在；`.gitignore` 忽略 `.ae-sdd/runtime-stats/`；`source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/plans/2026-07-02-runtime-stats-performance-plan.md` 已同步；`source/standards/update-graph.json` 含 UG-21；`source/CHANGELOG/` 含 `2026-07-03-runtime-stats-p0.md`
 - [ ] 🆕 2026-07-03 ae-sdd Monitor：`apps/ae-sdd-monitor/` 存在；`source/docs/ae-sdd-monitor-design.md` 独立记录只读投影语义；`source/docs/ae-sdd-design.md` 含 Monitor 入口；`source/docs/ae-sdd-implementation-architecture.md` 含 Monitor 模块/数据流边界；`source/standards/update-graph.json` 含 UG-22；`apps/ae-sdd-monitor/src/workspace.js` 和 `apps/ae-sdd-monitor/test/workspace.test.js` 跟随 state/runtime 投影契约；`apps/ae-sdd-monitor/README.md` 链接设计契约
 - [ ] 🆕 v3.11.0 `tools/lib/state_store.py` 与 `tools/lib/operations.py` 存在；`ae-sdd ops describe/next/execute` 和 `lease acquire/status/renew/release/break` 已注册；`source/standards/operation-protocol.md` 含 §9 `Maintainer Change Contract`；本 SKILL 含 typed operation maintenance entry；UG-27、UC-19、StateStore/operation/scope/evidence/update-graph focused tests 与 changelog 已同步
-- [ ] `source/docs/ae-sdd-design.md` 含 D-001~D-025 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；CHANGELOG 模板、UG-28、UC-20、focused tests 与 runtime 已同步
+- [ ] `source/docs/ae-sdd-design.md` 含 D-001~D-025 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；UG-28、UC-20、focused tests 与 runtime 已同步；未写 changelog
 
 ### 跨 SKILL 一致性
 

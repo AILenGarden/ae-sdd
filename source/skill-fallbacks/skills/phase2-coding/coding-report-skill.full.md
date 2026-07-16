@@ -5,6 +5,8 @@ description: Coding 报告产出 SKILL — Phase 2 ⑤ Coding 完成后的报告
 
 # Coding Report — Coding 报告产出 Skill
 
+> **RETIRED v3.12：** CodingReport 不再生成。Coding 完成后使用 git diff、approved executionPlan 和 evidence manifest 表达交付结果；既有报告仅供只读兼容。
+
 > **核心定位：** Coding 完成（编译通过 + 测试通过 + 服务可启动）后，**生成 Coding 报告**，作为 Phase 3 ⑦ Code Review 的输入。报告质量直接决定 Code Review 质量。
 >
 > **与现有 SKILL 的分工：**
@@ -314,3 +316,6 @@ Coding 完成后生成**完整、客观、可评审**的 Coding 报告，目标�
   - 9 章节必填结构
   - 7 道闸自检（与 Code Review 闸门对齐）
   - 异常路径触发记录
+# RETIRED v3.12
+
+CodingReport 不再生成。Coding 完成后使用 git diff、approved executionPlan 和 evidence manifest 表达交付结果；既有 CodingReport 仅供只读兼容。

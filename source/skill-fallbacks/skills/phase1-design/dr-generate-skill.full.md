@@ -5,6 +5,8 @@ description: DR 生成 SKILL — ae-sdd Phase 1 ② 节点（规模=大 时触�
 
 # DR Generate — 从 RA 生成 DR Skill
 
+> **v3.12：** DR 是核心文档，直接生成/更新当前 DR；不生成 GeneratePlan、ReviewCompare、Report 或 changelog 旁车。Review 结论进入 `state.review.status/findings`。
+
 > **核心定位：** 与 `dr-update-skill.md` / `dr-review-skill.md` / `requirement-analysis-skill.md` / `story-generate-skill.md` 同等地位 — **DR Generate 是设计阶段的"生成"环节**（从 RA → DR），DR Review 是"评审"环节，DR Update 是"修订"环节。
 >
 > **与现有 SKILL 的分工：**

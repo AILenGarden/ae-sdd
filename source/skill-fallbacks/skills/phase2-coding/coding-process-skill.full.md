@@ -8,7 +8,9 @@ description: |
   当 state.phase 走到 coding-process 或 coding 时触发；用户说“开始 Coding/写代码/实现 Story/
 ---
 
-# CodingProcess - CodePlan->Coding 全流程编排节点（流程与能力分离）
+# CodingProcess - executionPlan->Coding 全流程编排节点（流程与能力分离）
+
+> **v3.12：** 不再生成 CodingPlan Markdown。将 goal/changedPaths/verification/risks/sourceReads 写入 `state.executionPlan`，在对话中渲染紧凑表格，用户确认后调用 `execution.plan.approve`。G-07/G-08/G-14/G-CODEPLAN-SRC 直接校验结构化状态。
 
 > **🔴 v3.10.0 定位（砍 Task 后全流程化）：** 本 SKILL 持有 **CodePlan->Coding 全流程编排**。
 > - **流程职责（本 SKILL 持有）**：加载上下文 -> 骨架分解 -> 调能力做 CodeAnalysis -> 出 CodePlan -> Execute 写代码 -> 验证 -> 异常追溯

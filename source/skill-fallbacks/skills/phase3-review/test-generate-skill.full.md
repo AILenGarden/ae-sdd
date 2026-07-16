@@ -5,6 +5,8 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 
 # Test Generate — 测试运行与报告 SKILL
 
+> **v3.12 evidence-only：** 测试执行不再生成 TestReport Markdown。每条真实命令写入 evidence manifest（command、exitCode、summary、artifact）；最终回复只展示失败项和摘要。既有报告仅供只读兼容。
+
 ## 与监管器 4 步的关系
 
 本文件只负责 **Test 系列 Step 2：generateSkill**。
@@ -94,3 +96,6 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 3 | 运行真实性扫描 | 扫描报告 | BLOCKER=0 或报告不通过 |
 | 4 | 生成测试报告 | `TEST_REPORT` | XML 与报告对账一致 |
 | 5 | 写 evidence manifest 并交接复核 | 复核输入清单 | 可由 `test-review-skill.md` 按 fingerprint 独立验证 |
+# v3.12 evidence-only Test
+
+测试执行不再生成 TestReport Markdown。每条真实命令写入 evidence manifest（command、exitCode、summary、artifact）；最终回复只展示失败项和摘要。既有 TestReport 仅供只读兼容。

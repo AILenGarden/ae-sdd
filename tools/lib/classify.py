@@ -332,12 +332,12 @@ def classify(text: str, *, filename: Optional[str] = None,
     multi_agent = scale in ("中", "大")
 
     # 下一步建议（v1.1：next_action 是工作流步骤名，与 PHASE_FLOW 解耦）
-    # 🆕 v3.10.0 Route 下移重分级：
-    # - "微"/"小" 规模 -> coding-process（直出 CodingPlan；微无文档，小有 Story+TestCase）
+    # v3.12 三核心文档模型：
+    # - "微"/"小" 规模 -> story-generate（Story-lite，随后 compact executionPlan）
     # - source=DR + 非微小 -> dr-generate（大任务 DR 入口）
     # - source=对话/Issue/未知 + 非微小 -> requirement-analysis（先分析再生成 DR）
     if scale in ("微", "小"):
-        next_action = "coding-process"
+        next_action = "story-generate"
     elif source in ("PRD", "DR"):
         next_action = "dr-generate"
     else:  # 对话 / Issue
@@ -357,6 +357,9 @@ def classify(text: str, *, filename: Optional[str] = None,
     #   消歧优先级：self-update 上下文（ae-sdd/SKILL/流程）> 代码上下文。
     #   "优化 ae-sdd" → 不进 micro（self-update 由 SKILL.md 路由表第①步接管）
     #   "优化这部分实现" + 代码上下文 → OPTIMIZE 微链
+    # 🆕 v3.11.6 micro 意图分流第三支：仅调整已有设计文档排版/格式、语义不变
+    #   → scale="微" + entry_node=DOC_FORMAT。要求文档上下文 + 非内容变更信号，
+    #   消歧优先级同上：self-update 上下文 > 文档上下文；内容变更信号 > 格式关键词。
     entry_node: Optional[str] = None
     text_lower = text.lower()
     if any(kw in text_lower for kw in ("bug", "缺陷", "故障", "修复", "fix")):
@@ -381,6 +384,16 @@ def classify(text: str, *, filename: Optional[str] = None,
         # 审查/CodeReview/评审代码 → micro-review
         # 审查天然是代码语境，不额外要求代码上下文词
         entry_node = "CODE_REVIEW"
+        if scale != "微":
+            scale = "微"
+    elif (any(kw in text_lower for kw in _DOC_FORMAT_KEYWORDS)
+          and _is_doc_context(text_lower)
+          and not _has_doc_format_selfupdate_context(text_lower)
+          and not _has_content_change_signal(text_lower)):
+        # 🆕 v3.11.6 仅调整已有设计文档排版/格式、语义不变 → micro-doc-format
+        # 要求文档上下文（Story/DR/PRD/TestCase/.md/模板等词）：避免"格式化代码"落入本分支。
+        # 要求非内容变更信号（新增字段/新增接口/需求变更等）：避免语义变更被误判为纯格式任务。
+        entry_node = "DOC_FORMAT"
         if scale != "微":
             scale = "微"
     elif source == "PRD":
@@ -465,6 +478,29 @@ _CODE_CONTEXT_KEYWORDS = (
     ".java", ".py", ".ts", ".js", ".go", ".cpp", ".c", ".rs",
 )
 
+# 🆕 v3.11.6 micro 意图分流第三支：仅调整已有设计文档排版/格式，语义不变
+# 关键词收窄为"格式/排版"专属表达，避免与 _OPTIMIZE_KEYWORDS（优化/重构/改进）重叠。
+_DOC_FORMAT_KEYWORDS = ("调整格式", "格式调整", "排版", "格式化", "套模板", "改格式", "统一格式")
+# 文档上下文词：表明操作对象是设计文档而非代码，避免"格式化代码"误入本分支。
+_DOC_CONTEXT_KEYWORDS = (
+    "文档", "story", "dr", "prd", "testcase", "test case", "用例文档",
+    ".md", "模板", "章节", "md 文件",
+)
+# 内容变更信号词：命中则说明本次改动涉及语义/字段/流程变化，不是纯格式任务，
+# 即使同时出现"格式"类词也不得判 DOC_FORMAT（防止"顺带改格式+改字段"被误判为零语义变更）。
+_CONTENT_CHANGE_KEYWORDS = (
+    "新增字段", "删除字段", "新增接口", "新增章节", "修改语义", "变更需求",
+    "调整逻辑", "补充需求", "新增ac", "新增 ac", "字段变更", "接口变更",
+)
+
+# 🆕 v3.11.6 引用型前缀：用户在"援引 ae-sdd 定义的标准/模板"而非"修改 ae-sdd 自身"时使用。
+# 例："根据 ae-sdd 的 Story 模板格式调整文档"——ae-sdd 是被引用的标准来源，不是修改目标。
+# 命中该前缀时，DOC_FORMAT 分支不把裸 "ae-sdd"/"ae_sdd" 词计入 self-update 上下文
+#（其余 self-update 关键词如 skill/流程/门禁 仍照常生效，见 _has_doc_format_selfupdate_context）。
+_AE_SDD_REFERENCE_PREFIX_RE = re.compile(
+    r"(根据|按照|按|依据|参照|遵循|套用)\s*(ae-sdd|ae_sdd)", re.IGNORECASE
+)
+
 
 def _has_selfupdate_context(text_lower: str) -> bool:
     """🆕 v3.10.2 检测文本是否指向 ae-sdd/SKILL/流程（self-update 上下文）。
@@ -483,6 +519,42 @@ def _is_code_context(text_lower: str) -> bool:
     命中代码/实现/这段代码/service/mapper 等词 → 代码上下文。
     """
     return any(kw in text_lower for kw in _CODE_CONTEXT_KEYWORDS)
+
+
+def _is_doc_context(text_lower: str) -> bool:
+    """🆕 v3.11.6 检测文本是否指向设计文档（文档上下文）。
+
+    用于区分"调整文档格式"（micro-doc-format）vs"格式化代码"（不进本分支）。
+    命中 文档/Story/DR/PRD/TestCase/.md/模板 等词 → 文档上下文。
+    """
+    return any(kw in text_lower for kw in _DOC_CONTEXT_KEYWORDS)
+
+
+def _has_content_change_signal(text_lower: str) -> bool:
+    """🆕 v3.11.6 检测文本是否含内容/语义变更信号。
+
+    命中则说明本次改动不是纯格式调整（如"调整格式并新增字段"），
+    应回退到正常 Story Update 流程而非 micro-doc-format 轻量路径。
+    """
+    return any(kw in text_lower for kw in _CONTENT_CHANGE_KEYWORDS)
+
+
+def _has_doc_format_selfupdate_context(text_lower: str) -> bool:
+    """🆕 v3.11.6 DOC_FORMAT 专用 self-update 上下文检测（比通用版更精确）。
+
+    通用 `_has_selfupdate_context` 对裸 "ae-sdd" 词做子串匹配，会误伤"根据 ae-sdd
+    的 Story 模板格式调整文档"这类『引用 ae-sdd 标准』的表达（ae-sdd 是被引用的
+    标准来源，不是修改目标）。本函数在通用检测命中前，先排除 _AE_SDD_REFERENCE_PREFIX_RE
+    命中的引用型前缀场景；skill/流程/门禁/runtime 等其余 self-update 词不受影响，
+    命中仍视为真正的 self-update 上下文（如"优化 ae-sdd 的 skill 路由逻辑"）。
+    """
+    if _AE_SDD_REFERENCE_PREFIX_RE.search(text_lower):
+        # 引用型前缀命中：裸 "ae-sdd"/"ae_sdd" 不计入信号，仅看其余 self-update 词
+        remaining_keywords = tuple(
+            kw for kw in _SELFUPDATE_CONTEXT_KEYWORDS if kw not in ("ae-sdd", "ae_sdd")
+        )
+        return any(kw in text_lower for kw in remaining_keywords)
+    return _has_selfupdate_context(text_lower)
 
 
 @dataclass

@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import state as state_mod  # noqa: E402
+from lib import flow_monitor  # noqa: E402
 from lib.flow_enums import (  # noqa: E402
     FlowEvent,
     FlowEventType,
@@ -335,6 +336,22 @@ class TestBackwardCompatibility(unittest.TestCase):
         # get_events 不报错，返回空列表
         self.assertEqual(state_mod.get_events(s), [])
         tmp.unlink(missing_ok=True)
+
+
+class TestCompactFlowMonitor(unittest.TestCase):
+
+    def test_compact_map_uses_structured_process_artifacts(self):
+        gate_map = flow_monitor.get_phase_gate_map({"processPolicy": "compact"})
+
+        self.assertNotIn("testcase-generated", gate_map)
+        self.assertEqual(gate_map["coding-process"], ["G-08"])
+        self.assertEqual(gate_map["test-running"], ["G-10"])
+        self.assertEqual(gate_map["code-reviewed"], ["G-12"])
+
+    def test_legacy_map_keeps_historical_testcase_compatibility(self):
+        gate_map = flow_monitor.get_phase_gate_map({"phase": "testcase-generated"})
+
+        self.assertEqual(gate_map["testcase-generated"], ["G-04"])
 
 
 if __name__ == "__main__":

@@ -36,12 +36,13 @@ LOAD_ORDER = [
 ROUTE_ROWS = [
     ("self-update", "modify/optimize/update ae-sdd or SKILL (ae-sdd/SKILL/flow context)", "skills/orchestration/ae-sdd-update-skill.md"),
     ("resume", "continue/resume/previous flow", "read state, report phase, load next slice"),
-    ("large", "has DR", "DR -> Story -> TestCase -> CodingPlan -> Coding -> Test -> Review"),
-    ("medium", "has Story", "Story -> TestCase -> CodingPlan -> Coding -> Test -> Review"),
-    ("small", "has Story+TestCase, enter at CodingPlan", "CodingPlan -> Coding -> Test -> Review"),
-    ("micro", "BUG/config, no docs", "CodingPlan -> Coding -> Test -> Review"),
-    ("micro-optimize", "optimize/refactor/improve code + code context (no docs, entryNode=OPTIMIZE)", "coding-process(light) -> Coding (skip test/review)"),
+    ("large", "system or cross-module change", "RA -> DR -> Story -> approved executionPlan -> Coding -> Test evidence -> Review findings"),
+    ("medium", "feature or existing Story", "Story -> approved executionPlan -> Coding -> Test evidence -> Review findings"),
+    ("small", "bounded implementation change", "Story-lite -> approved executionPlan -> Coding -> Test evidence -> Review findings"),
+    ("micro", "BUG/config/one-file implementation change", "Story-lite -> approved executionPlan -> Coding -> Test evidence -> Review findings"),
+    ("micro-optimize", "optimize/refactor/improve code + code context (entryNode=OPTIMIZE)", "Story-lite -> approved executionPlan -> Coding -> Test evidence -> Review findings"),
     ("micro-review", "review/CodeReview code (no docs, entryNode=CODE_REVIEW)", "code-review light-admit -> in-chat conclusion (skip coding/test)"),
+    ("micro-doc-format", "reformat/re-layout an existing design doc, semantics unchanged (entryNode=DOC_FORMAT)", "direct edit + structured before/after diff"),
     ("doc-storage", "where to write/read generated docs", "skills/cross-cutting/document-storage-skill.md"),
     ("plugin", "load/override coding skill", "skills/cross-cutting/ae-sdd-plugin-loader-skill.md"),
 ]

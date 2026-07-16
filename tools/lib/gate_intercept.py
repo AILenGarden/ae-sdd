@@ -800,8 +800,11 @@ def _check_state_write(
         #   micro-review:   initialized → code-reviewed（跳过 coding-process/coding/test-running，
         #                   由 code-review 无文档轻量准入分支接管）
         #   复用 v3.5.15 微链 BUG 范式：仅 scale="微" + 指定 entry_node 放行，其余照拦。
+        # 🆕 v3.11.6 DOC_FORMAT 同样纳入豁免：initialized → completed（跳过全部 5 个中间
+        #   phase）。不产出代码/测试/CR，直接编辑文档 + 结构化前后核对，不需要中间 phase 承载
+        #   任何门禁证据；默认也不要求真的推进到 completed（见 doc-format-skill §轻量准入）。
         entry_node = (state_data or {}).get("entryNode") if state_data else None
-        if scale == "微" and entry_node in ("OPTIMIZE", "CODE_REVIEW"):
+        if scale == "微" and entry_node in ("OPTIMIZE", "CODE_REVIEW", "DOC_FORMAT"):
             # 允许跨步；具体进入条件由下游 PHASE_ENTRY_GATES + 意图分流前置门把关
             pass
         else:
@@ -835,36 +838,35 @@ def _check_state_write(
     #   旧 state 无 scale -> _resolve_scale 已在上方跨步判定时回写，此处读同一 scale。
     scale_for_gates = scale_state.get("scale") or _resolve_scale(scale_state)
     PHASE_ENTRY_GATES: dict[str, dict[str, list[str]]] = {
-        "大": {  # RA 入口：4 loop（RA-DR-Story-TestCase）+ Coding/Testing
+        "大": {  # RA 入口：RA-DR-Story + Coding/Testing
             "ra-generated":    ["G-00", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION"],
             "dr-generated":    ["G-00", "G-01", "G-DR-CTX"],
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
-            "testcase-generated": ["G-00", "G-02", "G-03", "G-04", "G-TESTCASE-CTX"],
-            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX", "G-TESTCASE-CTX"],
+            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "中": {  # DR 入口：3 loop（DR-Story-TestCase）+ Coding/Testing，跳 RA
-            "dr-generated":    ["G-00", "G-01", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION", "G-DR-CTX"],
+        "中": {  # Story 入口：Story + Coding/Testing
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
-            "testcase-generated": ["G-00", "G-02", "G-03", "G-04", "G-TESTCASE-CTX"],
-            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX", "G-TESTCASE-CTX"],
+            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "小": {  # CodingPlan 入口：已有 Story+TestCase，直出 coding-process
-            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX", "G-TESTCASE-CTX"],
+        "小": {  # Story-lite 入口：直接生成 compact executionPlan
+            "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX"],
+            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "微": {  # 无文档：initialized->coding-process，coding 入口 G-00+G-07+G-08（Plan-first 不豁免）
-            "coding-process":  ["G-00"],
+        "微": {  # Story-lite：initialized->story-generated->coding-process
+            "story-generated": ["G-00", "G-02", "G-STORY-CTX"],
+            "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
             "coding":          ["G-00", "G-07", "G-08"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],

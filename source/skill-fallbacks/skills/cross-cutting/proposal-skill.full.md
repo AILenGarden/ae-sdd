@@ -5,6 +5,8 @@ description: 建议书（Proposal）SKILL — 统一所有"问题描述 + 解决
 
 # Proposal — 建议书 SKILL（统一问题描述 + 解决方案载体）
 
+> **RETIRED v3.12：** Proposal 不再是活动流程产物。用户反馈、缺陷和变更直接创建或更新 Story；既有 Proposal 仅供只读解析。禁止生成新的 Proposal/Archive。
+
 > **🔴 核心洞察（2026-06-06）：**
 > - **问题描述模式可以有很多种**（从 Code Review / Story Review / 用户反馈 / 生产事故 / Test 发现 等多种渠道来）
 > - **但最终的执行流程是不变的**：**修改 Story → TestCase → Task → Coding → Test**
@@ -668,3 +670,6 @@ input:
   - 🆕 5 步走流程（改 Story → TestCase → Task → Coding → Test）
   - 🆕 多渠道接入（7 个：Code Review / Story Review / Coding 异常 / Project Assets 漂移 / 用户反馈 / 生产事故 / Test 发现）
   - 🆕 "携带 Proposal"机制（下游 SKILL 接收 Proposal 作为输入）
+# RETIRED v3.12
+
+Proposal 不再是 ae-sdd 活动流程产物。用户反馈、缺陷和变更直接创建或更新 Story；既有 Proposal 仅供只读解析。禁止调用 document.save 生成新的 Proposal，也不生成 Proposal Archive 或 changelog。

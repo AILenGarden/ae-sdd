@@ -2,7 +2,7 @@
 name: ae-sdd
 version: 3.11.3
 description: |
-  端到端自动化工程主入口（v3.10.8）。从 DR 或合法 Story 入口出发，经 Story->TestCase->CodingPlan->Coding->Test->Review，直到全部通过。
+  端到端自动化工程主入口。核心文档为 RA、DR、Story；经紧凑 executionPlan 用户确认后进入 Coding->Test evidence->Review findings，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
   🆕 v3.11.3：Story 逻辑 ID 与正式 StoryName 解耦。`state new --story-name` / `state bind-story-doc` 精确绑定原生文件名，G-02/G-14 共用 metadata-validated resolver；禁止模糊猜测或创建 ID-only 别名，旧 `{STORY-ID}.md` 保持兼容。
   🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
@@ -296,7 +296,7 @@ ae-sdd gates check --only G-DOC-CONSISTENCY
 |------|------|
 | CodingPlan 含 Story 文档引用且文件存在 | 否 → 🔴 阻断 |
 | 测试章节 AC ID 与 Story AC 对齐（Story有AC时至少1个） | 否 → 🔴 阻断 |
-| 偏离设计有 Proposal 引用 | 否 → 🔴 阻断 |
+| 偏离设计已回写 Story 当前契约 | 否 → 🔴 阻断；禁止用 Proposal 旁路 |
 
 ```bash
 ae-sdd gates check --only G-14
@@ -372,13 +372,17 @@ automation:
 
 ## 🔴 输出核心原则（最高优先级）
 
+### 🆕 v3.12 过程产物极简策略
+
+RA、DR、Story 是必须保留的核心设计文档。Proposal、GeneratePlan、CodingReport、TestReport、CodeReview 报告、ReviewCompare、SourceTrace、ComplianceReport 和 STORING.md 停止新写入；执行计划进入 state.executionPlan，测试进入 evidence manifest，Review 进入 review.status/findings，用户只确认紧凑表格。历史文件只读兼容，不删除、不改写、不迁移。任何时候都不写 changelog。
+
 | 原则 | 要求 |
 |------|------|
 | 基于事实 | 所有输出必须有明确来源（DR/PRD/资产/用户告知/代码读取）|
 | 禁止猜测 | 不确定 → 标 `{待确认}` 并主动询问；禁止推断后输出 |
 | 禁止杜撰 | 不得编造不存在于输入材料中的规则/字段/类名/配置项 |
-| 🆕 禁止文档承载 changelog | 设计/架构/模板/标准类文档只写**当前生效内容**；历史变更走 `source/CHANGELOG/{YYYY-MM-DD}-{主题}.md`，文档内仅用一句引用（如「详见 CHANGELOG/...」）指向。混写会破坏主题连续性、加剧检索劣化、让 git blame 失真——属于坏习惯，不是细节。 |
-| 🆕 Story 输出边界 | Story 只写当前生效的需求与实现契约；不得写生成过程、CHANGELOG 或 DR 文档。DR 在 Story 链路中仅作只读输入，缺失时阻断，不得自动生成。 |
+| 🔴 永不写 changelog | 任何任务、任何规模、任何流程节点都不得新建或追加 changelog。历史 changelog 只读；当前事实只写权威规范、state 与测试 evidence。 |
+| Story 输出边界 | Story 只写当前生效的需求与实现契约，不得写生成过程或变更历史。DR 在需要 DR 的路由中作为只读输入，缺失时阻断。 |
 
 ---
 
@@ -398,6 +402,8 @@ automation:
 **调用顺序：** ① 自更新识别（🆕 v3.10.2 含消歧：代码上下文 → 不进自更新） → ② 任务类型（编码） → ③ 规格裁定 → ④ G-RA 门禁（大任务时）
 
 > 🆕 v3.10.2 **micro 意图分流**：`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。进微链后按 `entry_node`（OPTIMIZE/CODE_REVIEW）只调相应能力。消歧优先级：**self-update 上下文（ae-sdd/SKILL/流程）> 代码上下文**——`优化 ae-sdd` 走自更新，`优化这段实现` 走 micro-optimize。详见下方路由表「微-优化 / 微-审查」两行 + code-review-skill §无文档轻量准入。
+>
+> 🆕 v3.11.6 **micro 意图分流第三支**：`/ae-sdd 请根据 ae-sdd 的 Story 模板格式调整这份文档，仅调整格式不改变语义` 不再误套 story-update-skill 的 Proposal+G-STORY-CTX 重路径。命中 `entry_node=DOC_FORMAT` 时只做「直接编辑 + 结构化前后核对」，跳过 Proposal 驱动的内容变更流程。消歧优先级：**self-update 上下文 > 文档上下文**（但"根据/按照 ae-sdd 的模板格式"这类引用型前缀不计入 self-update 信号，见 doc-format-skill §消歧）；**内容变更信号 > 格式关键词**（"调整格式的同时新增字段"不算零语义变更，回退正常 Story Update）。详见下方路由表「微-文档格式化」一行。
 
 > 🆕 v3.9.0 **路由自动 state 匹配**：路由时 `classify.match_state()` 自动分析需求特征（提取 PRD/DR/Story ID + 判定 Bug/改 Story）→ 扫描现有嵌套 state → 命中则 relocate/absorb，未命中则 create_nested。匹配优先级：
 > 1. R4 Bug/微任务不改 Story → `create_flat`
@@ -412,16 +418,23 @@ automation:
 |------|----------------|---------|------|
 | **大** | 已有 DR | `dr-generate-skill.md`（DR 系列）| **必过**（RA 为前置）|
 | **中** | 已有 Story | `story-generate-skill.md`（Story 系列）| **必过** |
-| **小** | 已有 Story+TestCase | CodingPlan 系列 |
-| **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| CodingPlan 系列 |
+| **小** | 明确小需求 | Story-lite → executionPlan |
+| **微** | BUG / 配置 / 局部调整 | 极简 Story-lite → executionPlan |
 | **🆕 微-优化** | 优化/重构/改进代码（无文档，entryNode=OPTIMIZE）| coding-process（轻量：跳骨架分解，直 CodeAnalysis→Coding）| — |
 | **🆕 微-审查** | 审查/CodeReview/评审代码（无文档，entryNode=CODE_REVIEW）| code-review（无文档轻量准入，对话内出结论）| — |
+| **🆕 微-文档格式化** | 仅调整已有设计文档排版/格式，语义不变（entryNode=DOC_FORMAT）| doc-format（轻量准入：直接编辑 + 结构化前后核对，跳过 Proposal/G-STORY-CTX）| — |
 | — | 新需求无任何产物且非BUG | 🔴 阻断 | — |
 
 > 🆕 v3.10.2 **微-优化 / 微-审查 意图分流**：进微链后按 `state.entryNode` 只调单个能力，跳过无关步骤。
 > - 微-优化：`initialized → coding-process（轻量）→ coding → completed`，跳 test-running/code-reviewed。
 > - 微-审查：`initialized → code-reviewed → completed`，跳 coding-process/coding/test-running；gate 跨步跳跃对 OPTIMIZE/CODE_REVIEW + scale=微 放行（复用 v3.5.15 BUG 豁免范式）。
 > - 消歧（classify.py）：`优化/重构/改进` + 代码上下文 + 非 self-update 上下文 → OPTIMIZE；含 ae-sdd/SKILL/流程 词 → 仍走自更新。
+>
+> 🆕 v3.11.6 **微-文档格式化意图分流**：适用场景是"已定稿设计文档（Story/DR/PRD/TestCase 等）换排版、套模板，字段/AC/接口/流程语义不变"。
+> - 微-文档格式化：`initialized → completed`（跳过 coding-process/coding/test-running/code-reviewed 全部 4 个中间 phase），gate 跨步跳跃对 DOC_FORMAT + scale=微 放行（复用同一 BUG/OPTIMIZE/CODE_REVIEW 豁免范式）。
+> - 默认不强制推进 state 到 completed（同 micro-review「仅对话输出，不强制落文档」默认行为一致）；用户明确要求留痕时才落 state + 走 document-storage 原地更新（不新建 Proposal）。
+> - 执行方式：不读 Proposal、不重新做 §三步 bis 来源追溯、不过 G-STORY-CTX；改为直接按模板结构重排 + 逐节/逐字段核对新旧内容，产出核对表证明语义未丢失。
+> - 消歧（classify.py）：`格式化/排版/格式调整/套模板` 等词 + 文档上下文（Story/DR/PRD/TestCase/.md/模板）+ 非 self-update 上下文 + 无内容变更信号 → DOC_FORMAT；命中"根据/按照 ae-sdd 的模板格式"引用型前缀时裸 "ae-sdd" 不计入 self-update 信号，但 skill/流程/门禁等真实 self-update 词仍生效；命中"新增字段/新增接口"等内容变更信号时回退正常 Story Update。
 
 **非编码类路由：**
 
@@ -429,7 +442,7 @@ automation:
 |----------|------|
 | 修改SKILL / 优化ae-sdd | `ae-sdd-update-skill.md`（监管器全权交接）。🆕 v3.10.2 消歧：仅当含 ae-sdd/SKILL/流程 上下文词时进本路由；`优化这部分实现` 等代码上下文 → 微-优化（见上表）|
 | 安装/升级ae-sdd | `ae-sdd-install-skill.md` |
-| 修改/BUG/生产故障 proposal | `proposal-skill.md` |
+| 修改/BUG/生产故障 | 直接创建或更新 Story；不生成 Proposal |
 | 放文档哪里 / 命名 | `document-storage-skill.md` + G-DOC-STORAGE |
 | 从X继续 / 重入 | 读 state.json 判重入点再路由 |
 
@@ -439,21 +452,23 @@ automation:
 |------|---------|---------|
 | **大** | 已有 DR | `dr-generate-skill.md`（DR 系列）| **必过**（RA 为前置）|
 | **中** | 已有 Story（无DR）| Story 系列 |
-| **小** | 已有 Story+TestCase | CodingPlan 系列 |
-| **微** | BUG / 改逻辑 / 调整代码（无完整产物链）| CodingPlan 系列 |
+| **小** | 明确小需求 | Story-lite → executionPlan |
+| **微** | BUG / 改逻辑 / 配置 | 极简 Story-lite → executionPlan |
 | **🆕 微-优化** | 优化/重构/改进 + 代码上下文（非 ae-sdd）+ 无文档 | coding-process 轻量→coding |
 | **🆕 微-审查** | 审查/CodeReview/评审代码（非 ae-sdd）+ 无文档 | code-review 轻量准入→对话结论 |
+| **🆕 微-文档格式化** | 格式化/排版 + 文档上下文（非 self-update）+ 无内容变更信号 | doc-format 轻量准入→直接编辑+核对 |
 
 ### 状态机子链（实际 state.json phase 值）
 
 | scale | phase 序列 | 适用 |
 |-------|-----------|------|
-| 大(10) | initialized->ra-generated->dr-generated->story-generated->testcase-generated->coding-process->coding->test-running->code-reviewed->completed | 4 loop（RA-DR-Story-TestCase）+ Coding/Testing |
-| 中(9) | initialized->dr-generated->story-generated->testcase-generated->coding-process->coding->test-running->code-reviewed->completed | 3 loop（DR-Story-TestCase）+ Coding/Testing，跳 RA |
-| 小(6) | initialized->coding-process->coding->test-running->code-reviewed->completed | 有Story+TestCase，直出CodingPlan |
-| 微(6) | initialized->coding-process->coding->test-running->code-reviewed->completed | BUG/调整，无文档直出CodingPlan |
+| 大(9) | initialized->ra-generated->dr-generated->story-generated->coding-process->coding->test-running->code-reviewed->completed | RA→DR→Story + executionPlan/evidence/findings |
+| 中(7) | initialized->story-generated->coding-process->coding->test-running->code-reviewed->completed | Story + executionPlan/evidence/findings |
+| 小(7) | initialized->story-generated->coding-process->coding->test-running->code-reviewed->completed | Story-lite + executionPlan/evidence/findings |
+| 微(7) | initialized->story-generated->coding-process->coding->test-running->code-reviewed->completed | 极简 Story-lite + executionPlan/evidence/findings |
 | 🆕 微-优化 | initialized->coding-process（轻量）->coding->completed | OPTIMIZE entryNode；跳 test-running/code-reviewed；gate 跨步放行 |
 | 🆕 微-审查 | initialized->code-reviewed->completed | CODE_REVIEW entryNode；跳 coding-process/coding/test-running；gate 跨步放行 |
+| 🆕 微-文档格式化 | initialized->completed | DOC_FORMAT entryNode；跳 coding-process/coding/test-running/code-reviewed 全部；gate 跨步放行；默认不强制落 state |
 
 ---
 

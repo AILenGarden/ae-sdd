@@ -61,6 +61,9 @@ Identity is explicit: `project` and `workItem` are mandatory. `story` is a relat
 | `lease.release` | yes | yes | Release an owned lease |
 | `lease.break` | yes | admin action | Break a lease with actor and reason audit |
 | `state.transition` | yes | yes | Perform one legal phase transition and its gates |
+| `execution.plan.set` | yes | yes | Persist the compact goal, changed paths, verification, risks, and source reads |
+| `execution.plan.approve` | yes | yes | Record explicit user approval of the current compact execution plan |
+| `review.record` | yes | yes | Record review status and structured findings without a Markdown report |
 | `document.resolve` | no | no | Resolve a canonical Work Item-scoped document path |
 | `document.save` | yes | yes | Save document content through document storage |
 | `gate.check` | no | no | Evaluate named gates against explicit Work Item state |
@@ -122,7 +125,7 @@ Use this order when a description and an implementation disagree:
 3. `source/docs/ae-sdd-design.md` defines user/LLM-visible capability and boundaries.
 4. `source/docs/ae-sdd-implementation-architecture.md` defines module ownership and data flow.
 5. `source/standards/update-graph.json` defines the mandatory change cascade; `ae-sdd update-check --affected` is the required query.
-6. Tests, `update-check`, runtime verification, and the changelog are release evidence, not substitutes for the contract.
+6. Tests, `update-check`, and runtime verification are release evidence, not substitutes for the contract.
 
 If a conflict is found, stop the change, record the mismatch, repair the source of truth, and rerun the affected checks. Do not silently make prose describe an unimplemented operation.
 
@@ -137,7 +140,7 @@ If a conflict is found, stop the change, record the mismatch, repair the source 
 | Removing/renaming an operation, making an optional field required, changing a field type, changing default semantics, or changing error meaning | major |
 | Incompatible state/lease/evidence persistence format | major plus a migration or compatibility adapter |
 
-The version classification must be recorded in the changelog and covered by a compatibility test. A version bump without a contract/test update is incomplete.
+The version classification must be recorded in this protocol and covered by a compatibility test. A version bump without a contract/test update is incomplete.
 
 ### 9.3 Operation Admission
 
@@ -163,19 +166,19 @@ Before editing a typed operation, lease, scope resolver, or evidence adapter:
 3. Update the capability design when user/LLM semantics or boundaries change.
 4. Update the implementation architecture when module ownership, persistence, locking, hooks, build, or data flow changes.
 5. Update `ae-sdd-update`'s full fallback source so future maintainers can discover the rule through the self-update route; regenerate the slim entry and compiled runtime.
-6. Update the registry, protocol, tests, update graph, README/version markers, and changelog as indicated by the affected set. Do not hand-edit `dist/` or installed runtime copies.
+6. Update the registry, protocol, tests, update graph, README/version markers, and current design facts as indicated by the affected set. Never write a changelog. Do not hand-edit `dist/` or installed runtime copies.
 
 ### 9.5 Definition Of Done
 
 A typed-operation iteration is complete only when all of the following are true:
 
-- the Story/TestCase/CodingPlan or equivalent change carrier has AC, scenarios, implementation mapping, and user confirmation;
+- Story has AC and verification scenarios, and `state.executionPlan` has implementation mapping plus user confirmation;
 - focused tests cover positive, invalid, stale, retry, corruption, scope, and concurrency behavior;
 - `python tools/bin/ae-sdd update-check --affected <changed-files> --json` and the required full checks pass;
 - `python -m pytest tools/tests -q` passes when shared infrastructure changed;
 - `python scripts/build_dist.py` and `python tools/bin/ae-sdd runtime verify --json` pass;
 - `ops describe` from the built runtime matches the source registry;
-- the changelog records classification, impact, verification commands, and known warnings;
+- this protocol records compatibility classification, while tests and runtime verification record executable evidence;
 - no untracked implementation module, stale design header, ghost command, or unresolved `iteration-check` blocker remains.
 
 The maintainer must leave a concrete command, exit code, test statistic, or blocker for every checklist item. "Documented in the conversation" is not evidence.

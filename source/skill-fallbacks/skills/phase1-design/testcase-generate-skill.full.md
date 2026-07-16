@@ -3,7 +3,9 @@ name: testcase-generate
 description: TestCase 系列 Step 2 generateSkill。采用有界风险驱动范式：先建立有限风险登记，再按行为等价类和最低充分层级选择用例，以停止条件和预算例外限制无价值边界扩张。
 ---
 
-# TestCase Generate — 测试用例生成 SKILL
+# TestCase Generate — 测试设计能力（独立文档按需）
+
+> **v3.12：** 默认把验证矩阵写入 Story，不生成独立 TestCase。仅当独立场景超过 20 条、存在合规交付要求或测试矩阵需要独立所有权时，才显式 `doc save --intent TESTCASE`。不生成 ComplianceReport/TestCaseReview Markdown。
 
 ## 与监管器 4 步的关系
 

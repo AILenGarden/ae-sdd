@@ -5,6 +5,8 @@ description: Story 生成 SKILL - Phase 1 ① 节点的环节内具体规则。�
 
 # Story Generate - 从 DR 生成 Story Skill
 
+> **v3.12：** Story 是核心需求真值，默认内嵌 AC/验证矩阵；不生成 Proposal、StoryGeneratePlan、WriterReport、SourceTrace、ReviewCompare 或 changelog。微/小任务使用 Story-lite（目标/范围/AC/验证）。
+
 > **🆕 v3.9.3 重大变更：**
 > 1. §第零步：输入清单统一指向 `story-input-checklist.md` SSOT，13 项自检表 + CLI 门禁双重保障
 > 2. §第一步：每个输入项的"提取什么"改为引用 SSOT 的 13 项定位

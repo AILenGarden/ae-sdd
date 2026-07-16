@@ -81,22 +81,31 @@ from lib.flow_enums import FlowEvent, FlowEventType, FlowNode, FlowSkill  # noqa
 #   scale 由 classify() 判定，首次 state write --scale 携带写入；旧 state 无 scale → _infer_scale 反推。
 #   BUG/配置类 → scale="微" + entryNode=BUG/CONFIG（复用微链，不单独开链）。
 PHASE_FLOWS: dict[str, list[str]] = {
-    "大": [   # 大任务：4 loop（RA-DR-Story-TestCase）+ Coding/Testing 2 phase
+    "大": [
         "initialized", "ra-generated", "dr-generated", "story-generated",
-        "testcase-generated",
+        "testcase-generated", "coding-process", "coding", "test-running", "code-reviewed", "completed",
+    ],
+    "中": [
+        "initialized", "dr-generated", "story-generated", "testcase-generated",
         "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "中": [   # 中任务：3 loop（DR-Story-TestCase）+ Coding/Testing 2 phase，跳 RA
-        "initialized", "dr-generated", "story-generated",
-        "testcase-generated",
-        "coding-process", "coding", "test-running", "code-reviewed", "completed",
-    ],
-    "小": [   # 小任务：已有 Story+TestCase，直出 CodingPlan
+    "小": [
         "initialized", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
-    "微": [   # 微任务/BUG/配置类：无文档，直出 CodingPlan
+    "微": [
         "initialized", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
+}
+
+COMPACT_PHASE_FLOWS: dict[str, list[str]] = {
+    "大": ["initialized", "ra-generated", "dr-generated", "story-generated",
+           "coding-process", "coding", "test-running", "code-reviewed", "completed"],
+    "中": ["initialized", "story-generated", "coding-process", "coding",
+           "test-running", "code-reviewed", "completed"],
+    "小": ["initialized", "story-generated", "coding-process", "coding",
+           "test-running", "code-reviewed", "completed"],
+    "微": ["initialized", "story-generated", "coding-process", "coding",
+           "test-running", "code-reviewed", "completed"],
 }
 
 # 合法 scale 集合（与 classify.py SCALE 值一致）
@@ -107,10 +116,48 @@ VALID_SCALES = ("大", "中", "小", "微")
 PHASE_FLOW = PHASE_FLOWS["大"]
 
 
+def _default_execution_plan() -> dict:
+    return {
+        "goal": "",
+        "changedPaths": [],
+        "verification": [],
+        "risks": [],
+        "sourceReads": [],
+        "approved": False,
+        "approvedAt": None,
+        "approvedBy": None,
+    }
+
+
+def _default_review_state() -> dict:
+    return {
+        "status": "pending",
+        "findings": [],
+        "reviewedPaths": [],
+        "evidenceIds": [],
+        "updatedAt": None,
+    }
+
+
+def phase_flows_for_state(value: dict) -> dict[str, list[str]]:
+    return COMPACT_PHASE_FLOWS if value.get("processPolicy") == "compact" else PHASE_FLOWS
+
+
+def ensure_process_state(value: dict) -> dict:
+    """Backfill compact process state for legacy and nested Work Items."""
+    plan = value.setdefault("executionPlan", _default_execution_plan())
+    for key, default in _default_execution_plan().items():
+        plan.setdefault(key, default)
+    review = value.setdefault("review", _default_review_state())
+    for key, default in _default_review_state().items():
+        review.setdefault(key, default)
+    return value
+
+
 def read_state(state_path: Path) -> dict:
     """读 state.json，不存在则返回空模板"""
     if not state_path.is_file():
-        return {
+        return ensure_process_state({
             "version": "1",
             "projectKey": None,
             "phase": "initialized",
@@ -122,12 +169,13 @@ def read_state(state_path: Path) -> dict:
             "currentStory": None,
             "currentTask": None,
             "history": [],
-        }
-    return json.loads(state_path.read_text(encoding="utf-8"))
+        })
+    return ensure_process_state(json.loads(state_path.read_text(encoding="utf-8")))
 
 
 def write_state(state_path: Path, state: dict) -> None:
     """写 state.json（原子写：先写 .tmp 再 rename）"""
+    ensure_process_state(state)
     validate_state_invariants(state)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_path.with_suffix(".json.tmp")
@@ -145,6 +193,80 @@ def record_history(state: dict, phase: str, by: str = "ae-sdd") -> None:
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "by": by,
     })
+
+
+def set_execution_plan(state: dict, *, goal: str, changed_paths: list[str],
+                       verification: list[dict], risks: list[str],
+                       source_reads: Optional[list[str]] = None,
+                       by: str = "ae-sdd") -> dict:
+    """Persist the compact pre-coding plan; updating it clears approval."""
+    ensure_process_state(state)
+    normalized_paths = [str(item).replace("\\", "/") for item in changed_paths if str(item).strip()]
+    plan = {
+        "goal": str(goal or "").strip(),
+        "changedPaths": list(dict.fromkeys(normalized_paths)),
+        "verification": list(verification or []),
+        "risks": [str(item).strip() for item in (risks or []) if str(item).strip()],
+        "sourceReads": list(dict.fromkeys(
+            str(item).replace("\\", "/") for item in (source_reads or []) if str(item).strip()
+        )),
+        "approved": False,
+        "approvedAt": None,
+        "approvedBy": None,
+    }
+    state["executionPlan"] = plan
+    record_history(state, "execution-plan-updated", by)
+    return plan
+
+
+def approve_execution_plan(state: dict, *, by: str = "user") -> dict:
+    """Approve a complete compact execution plan."""
+    ensure_process_state(state)
+    plan = state["executionPlan"]
+    missing = [
+        name for name, value in (
+            ("goal", plan.get("goal")),
+            ("changedPaths", plan.get("changedPaths")),
+            ("verification", plan.get("verification")),
+        ) if not value
+    ]
+    if missing:
+        raise ValueError(f"executionPlan 缺必填字段: {missing}")
+    plan["approved"] = True
+    plan["approvedAt"] = _now_ts()
+    plan["approvedBy"] = by
+    record_history(state, "execution-plan-approved", by)
+    return plan
+
+
+def record_review(state: dict, *, status: str, findings: list[dict],
+                  reviewed_paths: Optional[list[str]] = None,
+                  evidence_ids: Optional[list[str]] = None,
+                  by: str = "ae-sdd") -> dict:
+    """Record findings-only review state; no Markdown report is generated."""
+    if status not in {"pending", "passed", "changes_required"}:
+        raise ValueError(f"未知 review status: {status}")
+    normalized_findings = list(findings or [])
+    invalid_findings = [
+        item for item in normalized_findings
+        if not isinstance(item, dict) or not str(item.get("severity") or "").strip()
+    ]
+    if invalid_findings:
+        raise ValueError("review findings 必须是包含 severity 的对象")
+    if status == "passed" and normalized_findings:
+        raise ValueError("review status=passed 时 findings 必须为空")
+    if status == "changes_required" and not normalized_findings:
+        raise ValueError("review status=changes_required 时 findings 不能为空")
+    review = {
+        "status": status,
+        "findings": normalized_findings,
+        "reviewedPaths": list(dict.fromkeys(str(item) for item in (reviewed_paths or []))),
+        "evidenceIds": list(dict.fromkeys(str(item) for item in (evidence_ids or []))),
+        "updatedAt": _now_ts(),
+    }
+    state["review"] = review
+    record_history(state, f"review-{status}", by)
+    return review
 
 
 def _infer_scale(state: dict) -> tuple[str, float, str]:
@@ -367,11 +489,11 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
         return True
 
     scale = _resolve_scale(state)
-    chain = PHASE_FLOWS[scale]
+    chain = phase_flows_for_state(state)[scale]
     if phase not in chain:
         raise ValueError(
             f"未知 phase: {phase}（scale={scale} 子链允许: {chain}）。"
-            f"若切换规模请先 set_scale；全主干参考: {PHASE_FLOWS['大']}"
+            f"若切换规模请先 set_scale；全主干参考: {phase_flows_for_state(state)['大']}"
         )
     if state.get("phase") == phase:
         # 重复写：跳过 history 累积
@@ -389,43 +511,65 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
 # key = scale；每条子链独立 mapping，next 与 PHASE_FLOWS[scale] 一致。
 _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
     "大": {
-        "initialized":     ("ra-generated",     "执行 RA generate+review loop【Generate-Review】（8维度需求分析+16道闸，2轮无新缺陷退出）", "requirement-analysis-skill.md"),
-        "ra-generated":    ("dr-generated",     "执行 DR generate+review loop【Generate-Review】（从 RA 生成 DR + DR Review，2轮无新缺陷退出）", "dr-generate-skill.md"),
+        "initialized":     ("ra-generated",     "生成并审查 RA 核心文档（不生成 GeneratePlan/Report）", "requirement-analysis-skill.md"),
+        "ra-generated":    ("dr-generated",     "从 RA 生成并审查 DR 核心文档", "dr-generate-skill.md"),
         "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
-        "story-generated": ("testcase-generated", "Story generate+review loop【Generate-Review】（含 F-Stage 前端契约，2轮无新缺陷退出）", "story-generate-skill.md"),
-        "testcase-generated": ("coding-process",  "TestCase generate+review loop【Generate-Review】（TC-1~TC-9，2轮无新缺陷退出）", "testcase-generate-skill.md"),
-        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
-        "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
+        "story-generated": ("coding-process",  "生成紧凑 executionPlan，在对话中确认；验证矩阵默认内嵌 Story", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
+        "coding":          ("test-running",     "执行测试并记录 evidence，不生成 TestReport", "test-generate-skill.md"),
+        "test-running":    ("code-reviewed",    "执行 Review；通过记状态，失败只记 findings", "code-review-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "中": {
-        "initialized":     ("dr-generated",     "执行 DR generate+review loop【Generate-Review】（已有 DR 上下文，生成 DR + DR Review，2轮无新缺陷退出）", "dr-generate-skill.md"),
-        "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
-        "story-generated": ("testcase-generated", "Story generate+review loop【Generate-Review】（含 F-Stage 前端契约，2轮无新缺陷退出）", "story-generate-skill.md"),
-        "testcase-generated": ("coding-process",  "TestCase generate+review loop【Generate-Review】（TC-1~TC-9，2轮无新缺陷退出）", "testcase-generate-skill.md"),
-        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
-        "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
+        "initialized":     ("story-generated",  "创建或更新 Story 核心文档", "story-generate-skill.md"),
+        "story-generated": ("coding-process",  "生成紧凑 executionPlan，在对话中确认", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
+        "coding":          ("test-running",     "执行测试并记录 evidence，不生成 TestReport", "test-generate-skill.md"),
+        "test-running":    ("code-reviewed",    "执行 Review；通过记状态，失败只记 findings", "code-review-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "小": {
-        "initialized":     ("coding-process",   "执行 CodingProcess（已有 Story+TestCase，直出 CodingPlan：骨架分解+CodeAnalysis+统一 CodingPlan）", "coding-process-skill.md"),
-        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
-        "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
+        "initialized":     ("story-generated",  "生成紧凑 Story-lite（含 AC/验证矩阵）", "story-generate-skill.md"),
+        "story-generated": ("coding-process",   "生成并确认紧凑 executionPlan", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
+        "coding":          ("test-running",     "执行测试并记录 evidence，不生成 TestReport", "test-generate-skill.md"),
+        "test-running":    ("code-reviewed",    "执行 Review；通过记状态，失败只记 findings", "code-review-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "微": {
-        "initialized":     ("coding-process",   "执行 CodingProcess（BUG/调整，无文档直出 CodingPlan：轻量骨架分解+CodeAnalysis+CodePlan）", "coding-process-skill.md"),
-        "coding-process":  ("coding",           "执行 CodingSkill（按 CodePlan 编码）",   "coding-skill.md"),
-        "coding":          ("test-running",     "执行 Test 系列（test-generate->test-review，出具并复核测试报告）", "test-generate-skill.md"),
-        "test-running":    ("code-reviewed",    "Test Review 通过后出具 Coding 报告 + CodeReview", "coding-report-skill.md"),
+        "initialized":     ("story-generated",  "生成极简 Story-lite（目标/范围/AC/验证）", "story-generate-skill.md"),
+        "story-generated": ("coding-process",   "生成并确认极简 executionPlan", "coding-process-skill.md"),
+        "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
+        "coding":          ("test-running",     "执行最小测试并记录 evidence", "test-generate-skill.md"),
+        "test-running":    ("code-reviewed",    "执行 findings-only Review", "code-review-skill.md"),
         "code-reviewed":   ("completed",        "等待用户最终确认 -> completed",            "（人工审核）"),
         "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
+    },
+}
+
+_LEGACY_NEXT_STEP_OVERRIDES: dict[str, dict[str, tuple[str, str, str]]] = {
+    "大": {
+        "story-generated": ("testcase-generated", "生成独立 TestCase（legacy）", "testcase-generate-skill.md"),
+        "testcase-generated": ("coding-process", "生成 legacy CodingPlan", "coding-process-skill.md"),
+        "test-running": ("code-reviewed", "Test Review 通过后生成 legacy 报告 + CodeReview", "coding-report-skill.md"),
+    },
+    "中": {
+        "initialized": ("dr-generated", "执行 legacy DR generate+review loop", "dr-generate-skill.md"),
+        "dr-generated": ("story-generated", "生成 Story（从 DR）", "story-generate-skill.md"),
+        "story-generated": ("testcase-generated", "生成 legacy TestCase", "testcase-generate-skill.md"),
+        "testcase-generated": ("coding-process", "生成 legacy CodingPlan", "coding-process-skill.md"),
+        "test-running": ("code-reviewed", "Test Review 通过后生成 legacy Coding 报告 + CodeReview", "coding-report-skill.md"),
+    },
+    "小": {
+        "initialized": ("coding-process", "执行 legacy CodingProcess（已有 Story+TestCase）", "coding-process-skill.md"),
+        "test-running": ("code-reviewed", "Test Review 通过后生成 legacy Coding 报告 + CodeReview", "coding-report-skill.md"),
+    },
+    "微": {
+        "initialized": ("coding-process", "执行 legacy 微任务 CodingProcess", "coding-process-skill.md"),
+        "test-running": ("code-reviewed", "Test Review 通过后生成 legacy Coding 报告 + CodeReview", "coding-report-skill.md"),
     },
 }
 
@@ -461,6 +605,8 @@ def next_step_suggestion(state: dict) -> dict:
 
     scale = _resolve_scale(state)
     mapping = _NEXT_STEP_MAPPINGS[scale]
+    if state.get("processPolicy") != "compact":
+        mapping = {**mapping, **_LEGACY_NEXT_STEP_OVERRIDES.get(scale, {})}
     next_phase, action, skill = mapping.get(cur, ("?", "未知 phase", "?"))
     return {
         "current": cur,
@@ -1319,6 +1465,7 @@ def init_nested_state(
         "version": SCHEMA_VERSION_V2,
         "projectKey": project_key,
         "stateModel": STATE_MODEL_NESTED,
+        "processPolicy": "compact",
         "entryNode": entry_node,
         "stateMachineId": full_state_machine_id,
         "stateMachineName": state_machine_id if state_uuid else state_machine_name,
@@ -1330,6 +1477,8 @@ def init_nested_state(
         "events": [],
         "createdAt": now,
         "lastUpdated": now,
+        "executionPlan": _default_execution_plan(),
+        "review": _default_review_state(),
     }
     if state_uuid:
         state["stateUuid"] = state_uuid

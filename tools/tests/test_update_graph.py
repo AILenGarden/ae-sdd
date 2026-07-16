@@ -487,29 +487,27 @@ class TestUC20(unittest.TestCase):
         )
 
     @classmethod
-    def _repo(cls, design=None, changelog_template=None, update_skill=None):
+    def _repo(cls, design=None, update_skill=None):
         design = design or cls._ledger_design()
-        changelog_template = changelog_template or "## Design ledger impact\nD-xxx or N/A\n"
         update_skill = update_skill or (
             "Design Ledger Maintenance Entry source/docs/ae-sdd-design.md "
-            "Design ledger impact UG-28 UC-20 待补基线\n"
+            "任何时候都不写 changelog UG-28 UC-20 待补基线\n"
         )
         return _setup_repo({
             "source/SKILL.md": "---\nversion: 3.11.1\n---\n",
             "source/docs/ae-sdd-design.md": design,
             "source/docs/ae-sdd-implementation-architecture.md":
-                "v3.11.1 Design Ledger Design ledger impact UC-20\n",
-            "source/CHANGELOG/_template.md": changelog_template,
+                "v3.11.1 Design Ledger 任何时候都不写 changelog UC-20\n",
             "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md": update_skill,
             "source/skills/orchestration/ae-sdd-update-skill.md": update_skill,
             "source/standards/update-graph.json": json.dumps({"rules": [{
                 "id": "UG-28",
                 "trigger": ["source/docs/ae-sdd-design.md",
-                            "source/CHANGELOG/_template.md",
+                            "source/docs/ae-sdd-implementation-architecture.md",
                             "tools/lib/update_graph.py",
                             "tools/tests/test_update_graph.py"],
                 "affected": [{"path": "source/docs/ae-sdd-design.md"},
-                             {"path": "source/CHANGELOG/_template.md"},
+                             {"path": "source/docs/ae-sdd-implementation-architecture.md"},
                              {"path": "tools/lib/update_graph.py"},
                              {"path": "tools/tests/test_update_graph.py"}],
                 "checks": ["UC-20"],
@@ -532,10 +530,10 @@ class TestUC20(unittest.TestCase):
         self.assertFalse(r.pass_)
         self.assertIn("§22", r.details.get("missing_section_mappings", []))
 
-    def test_missing_changelog_impact_blocks(self):
-        r = ug.check_uc20_design_ledger(self._repo(changelog_template="## Summary\n"))
+    def test_missing_no_changelog_policy_blocks(self):
+        r = ug.check_uc20_design_ledger(self._repo(update_skill="Design Ledger Maintenance Entry source/docs/ae-sdd-design.md UG-28 UC-20 待补基线"))
         self.assertFalse(r.pass_)
-        self.assertIn("Design ledger impact", r.details.get("missing_terms", []))
+        self.assertIn("任何时候都不写 changelog", r.details.get("missing_update_terms", []))
 
     def test_placeholder_row_blocks(self):
         design = self._ledger_design().replace("problem D-001", "TODO")

@@ -67,10 +67,11 @@ class TestDocSave(unittest.TestCase):
         cl = tmp / "ae-sdd-doc" / "Story" / "STORY-001-BE-changelog.md"
         self.assertFalse(cl.is_file(), "v3.10.1 不应生成 ChangeLog 旁车文件")
 
-        # STORING 更新
-        storing = tmp / "ae-sdd-doc" / "STORING.md"
-        self.assertTrue(storing.is_file())
-        self.assertIn("STORY-001-BE.md", storing.read_text(encoding="utf-8"))
+        # 机器索引更新，不生成 STORING.md
+        index = tmp / "ae-sdd-doc" / "index.json"
+        self.assertTrue(index.is_file())
+        self.assertIn("STORY-001-BE.md", index.read_text(encoding="utf-8"))
+        self.assertFalse((tmp / "ae-sdd-doc" / "STORING.md").exists())
 
         # 草稿已删
         self.assertFalse(draft.exists(), "草稿应已自动删除")
@@ -123,25 +124,19 @@ class TestDocSave(unittest.TestCase):
         self.assertFalse((tmp / "ae-sdd-doc" / "RA" / "RA-BAD-001.md").exists())
         self.assertTrue(draft.is_file(), "failed doc save must retain its source draft")
 
-    def test_save_report_in_place_overwrite(self):
-        """报告类文档（CODING_REPORT）v3.10.1 原地更新：两份 doc save 写同一路径，后者覆盖前者。"""
+    def test_retired_coding_report_fails_closed(self):
+        """CODING_REPORT 停止生成，CLI 返回 E012 且保留草稿。"""
         tmp = _setup_project()
-        results = []
-        for i in (1, 2):
-            draft = tmp / f".ae-sdd/tmp/r{i}.md"
-            draft.parent.mkdir(parents=True, exist_ok=True)
-            draft.write_text(f"# r{i}", encoding="utf-8")
-            code, out, err = _run_cli(tmp, "doc", "save",
-                                      "--intent", "CODING_REPORT",
-                                      "--story-id", "STORY-001",
-                                      "--content-file", str(draft),
-                                      "--keep-draft")
-            self.assertEqual(code, 0, msg=f"r{i} stderr={err}")
-            # output.ok/info 走 stderr（见 output.py 设计约定）
-            results.append(out + err)
-        # 两份路径相同（原地更新，不带版本号）
-        self.assertIn("CodingReport.md", results[0])
-        self.assertIn("CodingReport.md", results[1])
+        draft = tmp / ".ae-sdd/tmp/report.md"
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text("# report", encoding="utf-8")
+        code, out, err = _run_cli(tmp, "doc", "save",
+                                  "--intent", "CODING_REPORT",
+                                  "--story-id", "STORY-001",
+                                  "--content-file", str(draft))
+        self.assertEqual(code, 1)
+        self.assertIn("E012", out + err)
+        self.assertTrue(draft.is_file())
 
     def test_save_task_with_work_item(self):
         """BUG/OPT 独立任务通过 --work-item 分桶，不依赖 --story-id。"""

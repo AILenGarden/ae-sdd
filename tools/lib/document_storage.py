@@ -30,7 +30,7 @@ from typing import Optional
 from . import paths
 
 
-# ─── intent → 路径模板表（对齐 document-storage-skill §2.2 8 类流程目录）────────
+# ─── intent → 路径模板表（历史读取兼容 + 新写入策略）──────────────────────────
 # 每条 = (intent, 子目录模板, 是否带版本号, STORING 分类)
 # 模板占位符：{docWorkspace} {projectKey} {workItem} {storyId} {docId} {major} {minor}
 # 未带版本号的文档（设计类）原地更新；带版本号的（事件报告）每次写新版本。
@@ -70,6 +70,77 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
     "PROPOSAL_ARCHIVE":  ("{docWorkspace}/ae-sdd-doc/CR/{workItem}/archive/{docId}.md", False, "CR"),
     "ASSETS":            ("{docWorkspace}/.ae-sdd/assets/{projectKey}/{projectKey}.assets.md", False, "Assets"),
 }
+
+# v3.12 process-artifact policy：RA / DR / Story 是长期核心文档。
+# 旧过程 intent 继续保留路径解析能力，确保历史文件可读；save/finalize 对这些
+# intent fail closed，禁止未来继续生成重复 Markdown。
+CORE_DOCUMENT_INTENTS: frozenset[str] = frozenset({"RA", "DR", "STORY"})
+OPTIONAL_DOCUMENT_INTENTS: frozenset[str] = frozenset({
+    "PRD", "ISSUE", "DR_SUPPLEMENT", "STORY_SUPPLEMENT", "TASK",
+    "TASK_SUPPLEMENT", "TESTCASE", "ASSETS",
+})
+RETIRED_WRITE_INTENTS: frozenset[str] = frozenset({
+    "RA_GENERATE_PLAN", "RA_IMPACT", "RA_REVERSE_ISSUES",
+    "STORY_GENERATE_PLAN", "STORY_WRITER_REPORT",
+    "TASK_WRITER_REPORT", "TASK_REVIEW", "TASK_IMPL_PLAN",
+    "CODING_PLAN", "CODING_REPORT", "CODING_ISSUE_LOG",
+    "TESTCASE_COMPLIANCE_REPORT", "TESTCASE_REVIEW", "TEST_REPORT",
+    "CODE_REVIEW", "TRACE_MATRIX", "STORY_REVIEW", "REVIEW_UPDATEPLAN",
+    "REVIEW_COMPARE", "PROPOSAL", "PROPOSAL_ARCHIVE",
+})
+
+PROCESS_ARTIFACT_REPLACEMENTS: dict[str, str] = {
+    "PROPOSAL": "直接创建或更新 Story",
+    "PROPOSAL_ARCHIVE": "历史 Proposal 保持只读，不再新增归档副本",
+    "CODING_PLAN": "使用 state.executionPlan，并在对话中渲染紧凑审核表",
+    "CODING_REPORT": "使用 git diff + evidence manifest",
+    "TEST_REPORT": "使用 evidence manifest（command/exitCode/summary/artifact）",
+    "CODE_REVIEW": "使用 state.review.status/findings",
+    "TESTCASE_COMPLIANCE_REPORT": "使用 gate JSON details",
+    "TESTCASE_REVIEW": "将验证矩阵合并到 Story；复杂矩阵显式使用 TESTCASE",
+    "RA_GENERATE_PLAN": "直接生成 RA",
+    "STORY_GENERATE_PLAN": "直接生成 Story",
+    "REVIEW_COMPARE": "按需使用临时 diff，不持久化文档",
+    "STORY_WRITER_REPORT": "使用 Story 本文和机器 evidence",
+    "TASK_WRITER_REPORT": "使用 executionPlan/evidence",
+    "TASK_REVIEW": "使用 review findings",
+    "TASK_IMPL_PLAN": "使用 executionPlan",
+    "TRACE_MATRIX": "使用 Story AC 与 executionPlan.verification 的结构化映射",
+    "STORY_REVIEW": "使用 review findings",
+    "REVIEW_UPDATEPLAN": "直接更新 Story 和 executionPlan",
+    "CODING_ISSUE_LOG": "使用 state.review.findings 或 evidence summary",
+    "RA_IMPACT": "把影响分析写入 RA 当前生效内容",
+    "RA_REVERSE_ISSUES": "把反向问题写入 RA 当前生效内容",
+}
+
+
+def document_write_policy(intent: str) -> dict:
+    """Return the active write policy without hiding historical resolvers."""
+    normalized = str(intent or "").strip().upper()
+    if normalized in RETIRED_WRITE_INTENTS:
+        return {
+            "intent": normalized,
+            "writable": False,
+            "status": "retired",
+            "replacement": PROCESS_ARTIFACT_REPLACEMENTS.get(
+                normalized, "使用 state/evidence 或核心文档"
+            ),
+        }
+    return {
+        "intent": normalized,
+        "writable": normalized in _PATH_TEMPLATES,
+        "status": "core" if normalized in CORE_DOCUMENT_INTENTS else "optional",
+        "replacement": None,
+    }
+
+
+def _reject_retired_write(intent: str) -> None:
+    policy = document_write_policy(intent)
+    if not policy["writable"] and policy["status"] == "retired":
+        raise DocStorageError(
+            "E012",
+            f"intent={policy['intent']} 已停止生成；替代方式：{policy['replacement']}",
+        )
 
 
 # Work Item scoped output intents. Explicit work_item_id is the canonical
@@ -389,7 +460,8 @@ def resolve_path(ade_sdd: Path, project_key: str, intent: str,
     full_path_obj = Path(full)
 
     scope = "service" if service_name else "project"
-    changelog_path = str(full_path_obj.parent / f"{_versionless_stem(full_path_obj.stem)}-changelog.md")
+    # 兼容字段保留，但永远为空：ae-sdd 不写 changelog。
+    changelog_path = ""
 
     return ResolvedPath(
         full_path=str(full_path_obj),
@@ -857,6 +929,7 @@ def save_doc(ade_sdd: Path, project_key: str, intent: str, content: str,
       7. 返回 SaveResult
     """
     try:
+        _reject_retired_write(intent)
         resolved = resolve_path(ade_sdd, project_key, intent,
                                 story_id=story_id, doc_id=doc_id, version=version,
                                 work_item_id=work_item_id)
@@ -942,6 +1015,7 @@ def finalize_doc(ade_sdd: Path, project_key: str, intent: str, file_path: str,
     Raises:
         DocStorageError: file_path 不存在 / resolve_path 失败（E001/E003/E008/E000）
     """
+    _reject_retired_write(intent)
     target = Path(file_path)
     if not target.is_file():
         raise DocStorageError("E009", f"finalize 目标文件不存在: {file_path}")
@@ -972,23 +1046,46 @@ def finalize_doc(ade_sdd: Path, project_key: str, intent: str, file_path: str,
 
 
 def update_storing_index(ade_sdd: Path, project_key: str, scope: str, entry: dict) -> None:
-    """§4.4：更新 STORING.md 索引（单一项目级 ae-sdd-doc/STORING.md）。
+    """Update the machine document index; never generate STORING.md.
 
-    幂等：同 fullPath 不重复追加。
-    注：scope 参数当前保留以备小任务旧路径分支（后续兼容增强），项目级统一写单一索引。
+    Existing STORING.md files are historical and remain untouched. New writes use
+    ``ae-sdd-doc/index.json`` so tools can query paths without loading prose.
     """
     doc_ws = paths.resolve_doc_workspace(ade_sdd, project_key)
     if doc_ws is None:
         return
-    storing = doc_ws / "ae-sdd-doc" / "STORING.md"
-    line = f"| {entry.get('category', '')} | {entry.get('docType', '')} | {entry.get('fullPath', '')} |"
-    existing = ""
-    if storing.is_file():
-        existing = storing.read_text(encoding="utf-8", errors="replace")
-    if entry.get("fullPath", "") and entry["fullPath"] not in existing:
-        storing.parent.mkdir(parents=True, exist_ok=True)
-        with storing.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+    index_path = doc_ws / "ae-sdd-doc" / "index.json"
+    payload = {"schemaVersion": 1, "documents": []}
+    if index_path.is_file():
+        try:
+            loaded = json.loads(index_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and isinstance(loaded.get("documents"), list):
+                payload = loaded
+        except (OSError, json.JSONDecodeError):
+            payload = {"schemaVersion": 1, "documents": []}
+    full_path = str(entry.get("fullPath") or "")
+    if not full_path:
+        return
+    record = {
+        "category": str(entry.get("category") or ""),
+        "docType": str(entry.get("docType") or ""),
+        "fullPath": full_path,
+        "scope": scope,
+    }
+    documents = payload.setdefault("documents", [])
+    replaced = False
+    for index, current in enumerate(documents):
+        if isinstance(current, dict) and current.get("fullPath") == full_path:
+            documents[index] = record
+            replaced = True
+            break
+    if not replaced:
+        documents.append(record)
+    documents.sort(key=lambda item: str(item.get("fullPath") or ""))
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 # ─── P1 canonical document resolver ─────────────────────────────────────────

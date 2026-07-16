@@ -81,18 +81,19 @@ class TestSaveDoc(unittest.TestCase):
         cl = tmp / "ae-sdd-doc" / "Story" / "STORY-001-BE-changelog.md"
         self.assertFalse(cl.is_file(), "v3.10.1 不应生成 ChangeLog 旁车文件")
 
-    def test_save_doc_updates_storing_index(self):
-        """save_doc 更新单一 ae-sdd-doc/STORING.md 索引。"""
+    def test_save_doc_updates_machine_index(self):
+        """save_doc 更新 JSON 索引，不生成 STORING.md。"""
         tmp = _setup_project()
         document_storage.save_doc(
             tmp / ".ae-sdd", "test", "STORY", "# Story",
             story_id="STORY-001-BE",
         )
-        storing = tmp / "ae-sdd-doc" / "STORING.md"
-        self.assertTrue(storing.is_file())
-        content = storing.read_text(encoding="utf-8")
+        index = tmp / "ae-sdd-doc" / "index.json"
+        self.assertTrue(index.is_file())
+        content = index.read_text(encoding="utf-8")
         self.assertIn("STORY-001-BE.md", content)
         self.assertIn("Story", content)
+        self.assertFalse((tmp / "ae-sdd-doc" / "STORING.md").exists())
 
     def test_save_doc_maintains_gitignore(self):
         """save_doc 首次写入时维护 .gitignore（幂等追加 ae-sdd-doc/）。"""
@@ -105,25 +106,16 @@ class TestSaveDoc(unittest.TestCase):
         self.assertTrue(gi.is_file())
         self.assertIn("ae-sdd-doc/", gi.read_text(encoding="utf-8"))
 
-    def test_save_doc_version_increment_for_report(self):
-        """事件类报告（TRACE_MATRIX）未显式传 version 时 r 自增。"""
+    def test_retired_process_intents_fail_closed(self):
+        """过程 Markdown intent 停止新写入，历史文件仍由 resolve 兼容读取。"""
         tmp = _setup_project()
-        # 第一份：应为 v1-r1
-        r1 = document_storage.save_doc(
-            tmp / ".ae-sdd", "test", "TRACE_MATRIX", "# 追溯矩阵 r1",
-            story_id="STORY-001", changelog_note="首轮",
-        )
-        self.assertTrue(r1.success, msg=r1.error)
-        # 第二份：未传 version，应自增到 r2
-        r2 = document_storage.save_doc(
-            tmp / ".ae-sdd", "test", "TRACE_MATRIX", "# 追溯矩阵 r2",
-            story_id="STORY-001", changelog_note="次轮",
-        )
-        self.assertTrue(r2.success, msg=r2.error)
-        # 两份报告都保留（旧版本不删）
-        self.assertTrue(Path(r1.full_path).is_file())
-        self.assertTrue(Path(r2.full_path).is_file())
-        self.assertNotEqual(r1.full_path, r2.full_path)
+        for intent in ("TRACE_MATRIX", "CODING_PLAN", "CODE_REVIEW", "TEST_REPORT", "PROPOSAL"):
+            result = document_storage.save_doc(
+                tmp / ".ae-sdd", "test", intent, "# retired",
+                story_id="STORY-001",
+            )
+            self.assertFalse(result.success, intent)
+            self.assertIn("E012", result.error or "", intent)
 
     def test_save_doc_unknown_intent_e000(self):
         """未知 intent 返回失败，错误码含 E000。"""
@@ -157,42 +149,20 @@ class TestSaveDoc(unittest.TestCase):
         normalized = result.full_path.replace("\\", "/")
         self.assertTrue(normalized.endswith("ae-sdd-doc/Task/BUG-LIFE-001/TASK-001.md"))
 
-    def test_r_only_report_version_increment(self):
-        """r-only 报告（如 TESTCASE_REVIEW）重入时 r 自增，不覆盖 r1。"""
-        tmp = _setup_project()
-        r1 = document_storage.save_doc(
-            tmp / ".ae-sdd", "test", "TESTCASE_REVIEW", "# review r1",
-            work_item_id="BUG-LIFE-001",
-        )
-        r2 = document_storage.save_doc(
-            tmp / ".ae-sdd", "test", "TESTCASE_REVIEW", "# review r2",
-            work_item_id="BUG-LIFE-001",
-        )
-        self.assertTrue(r1.success, msg=r1.error)
-        self.assertTrue(r2.success, msg=r2.error)
-        self.assertNotEqual(r1.full_path, r2.full_path)
-        self.assertTrue(r1.full_path.endswith("TestCaseReview-r1.md"))
-        self.assertTrue(r2.full_path.endswith("TestCaseReview-r2.md"))
-
     def test_explicit_work_item_is_canonical_even_when_story_is_present(self):
-        """Independent BUG/OPT output must not be silently bucketed under its parent Story."""
+        """Retired CodingPlan no longer writes an execution Markdown artifact."""
         tmp = _setup_project()
         result = document_storage.save_doc(
             tmp / ".ae-sdd", "test", "CODING_PLAN", "# Plan",
             work_item_id="BUG-LIFE-004", story_id="STORY-004-BE",
         )
-        self.assertTrue(result.success, msg=result.error)
-        normalized = result.full_path.replace("\\", "/")
-        self.assertTrue(
-            normalized.endswith("ae-sdd-doc/Coding/BUG-LIFE-004/BUG-LIFE-004-CodingPlan.md"),
-            f"显式 Work Item 应是执行产物 canonical bucket，实际: {normalized}",
-        )
+        self.assertFalse(result.success)
+        self.assertIn("E012", result.error or "")
 
     def test_explicit_work_item_priority_across_intents(self):
-        """Coding/Test/CR consistently use explicit Work Item identity."""
+        """Only explicit optional TESTCASE/TASK retain Work Item identity."""
         tmp = _setup_project()
         for intent, suffix in [
-            ("CODE_REVIEW", "BUG-LIFE-004-CodeReview.md"),
             ("TESTCASE", "BUG-LIFE-004-testcase.md"),
             ("TASK", "BUG-LIFE-004.md"),
         ]:
@@ -211,13 +181,13 @@ class TestSaveDoc(unittest.TestCase):
     def test_story_is_legacy_bucket_when_work_item_is_absent(self):
         tmp = _setup_project()
         result = document_storage.save_doc(
-            tmp / ".ae-sdd", "test", "CODING_PLAN", "# Plan",
+            tmp / ".ae-sdd", "test", "STORY", "# Story",
             story_id="STORY-004-BE",
         )
         self.assertTrue(result.success, msg=result.error)
         normalized = result.full_path.replace("\\", "/")
         self.assertTrue(
-            normalized.endswith("ae-sdd-doc/Coding/STORY-004-BE/STORY-004-BE-CodingPlan.md")
+            normalized.endswith("ae-sdd-doc/Story/STORY-004-BE.md")
         )
 
     def test_bug_task_keeps_work_item_bucketing(self):
@@ -281,8 +251,8 @@ class TestFinalizeDoc(unittest.TestCase):
         cl = target.parent / "STORY-003-BE-changelog.md"
         self.assertFalse(cl.is_file(), "v3.10.1 不应生成 ChangeLog 旁车文件")
 
-    def test_finalize_updates_storing(self):
-        """finalize 更新 STORING.md 索引（用已写文件路径）。"""
+    def test_finalize_updates_machine_index(self):
+        """finalize 更新 JSON 索引，不生成 STORING.md。"""
         tmp = _setup_project()
         target = tmp / "ae-sdd-doc" / "Story" / "STORY-004-BE.md"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -292,8 +262,9 @@ class TestFinalizeDoc(unittest.TestCase):
             tmp / ".ae-sdd", "test", "STORY", str(target),
             story_id="STORY-004-BE",
         )
-        storing = tmp / "ae-sdd-doc" / "STORING.md"
-        self.assertIn("STORY-004-BE.md", storing.read_text(encoding="utf-8"))
+        index = tmp / "ae-sdd-doc" / "index.json"
+        self.assertIn("STORY-004-BE.md", index.read_text(encoding="utf-8"))
+        self.assertFalse((tmp / "ae-sdd-doc" / "STORING.md").exists())
 
     def test_finalize_nonexistent_file_e009(self):
         """finalize 不存在的文件抛 E009。"""

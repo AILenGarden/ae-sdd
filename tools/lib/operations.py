@@ -12,7 +12,7 @@ from lib.state_store import LeaseOwner, StateStore, StateStoreError
 
 
 SCHEMA_VERSION = "1"
-REGISTRY_VERSION = "1.0.0"
+REGISTRY_VERSION = "1.1.0"
 PROTECTED_TRANSITIONS = {"coding"}
 
 
@@ -155,6 +155,24 @@ _DEFINITIONS = [
     OperationDefinition("lease.release", True, True, False, _parameter_schema(["owner"], {"owner": {"type": "object"}}), COMMON_OUTPUT_SCHEMA, "_handle_lease_release"),
     OperationDefinition("lease.break", True, False, False, _parameter_schema(["actor", "reason"], {"actor": {"type": "object"}, "reason": {"type": "string", "minLength": 1}}), COMMON_OUTPUT_SCHEMA, "_handle_lease_break"),
     OperationDefinition("state.transition", True, True, True, _parameter_schema(["targetPhase"], {"targetPhase": {"type": "string"}}), COMMON_OUTPUT_SCHEMA, "_handle_state_transition"),
+    OperationDefinition("execution.plan.set", True, True, False, _parameter_schema(
+        ["goal", "changedPaths", "verification"],
+        {"goal": {"type": "string", "minLength": 1},
+         "changedPaths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+         "verification": {"type": "array", "items": {"type": "object"}, "minItems": 1},
+         "risks": {"type": "array", "items": {"type": "string"}},
+         "sourceReads": {"type": "array", "items": {"type": "string"}}}),
+        COMMON_OUTPUT_SCHEMA, "_handle_execution_plan_set"),
+    OperationDefinition("execution.plan.approve", True, True, True, _parameter_schema(
+        [], {"approvedBy": {"type": "string"}}),
+        COMMON_OUTPUT_SCHEMA, "_handle_execution_plan_approve"),
+    OperationDefinition("review.record", True, True, False, _parameter_schema(
+        ["status", "findings"],
+        {"status": {"type": "string", "enum": ["pending", "passed", "changes_required"]},
+         "findings": {"type": "array", "items": {"type": "object"}},
+         "reviewedPaths": {"type": "array", "items": {"type": "string"}},
+         "evidenceIds": {"type": "array", "items": {"type": "string"}}}),
+        COMMON_OUTPUT_SCHEMA, "_handle_review_record"),
     OperationDefinition("document.resolve", False, False, False, _parameter_schema(["intent"], {"intent": {"type": "string"}, "docId": {"type": "string"}, "version": {"type": ["object", "string"]}}), COMMON_OUTPUT_SCHEMA, "_handle_deferred_adapter"),
     OperationDefinition("document.save", True, True, False, _parameter_schema(["intent", "contentFile"], {"intent": {"type": "string"}, "contentFile": {"type": "string"}, "docId": {"type": "string"}, "version": {"type": ["object", "string"]}, "changelogNote": {"type": "string"}}), COMMON_OUTPUT_SCHEMA, "_handle_deferred_adapter"),
     OperationDefinition("gate.check", False, False, False, _parameter_schema([], {"gateIds": {"type": "array", "items": {"type": "string"}}}), COMMON_OUTPUT_SCHEMA, "_handle_deferred_adapter"),
@@ -594,6 +612,90 @@ class OperationRegistry:
         result = self._handle_state_transition(forwarded, self._definitions["state.transition"])
         result["operation"] = definition.name
         return result
+
+    def _mutate_compact_process_state(
+        self, request: dict[str, Any], definition: OperationDefinition,
+        mutate_state: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> dict[str, Any]:
+        work_item = str(request["workItem"])
+        store = StateStore(self._resolve_state_path(work_item))
+        lease_ref = request["lease"]
+        expected_revision = int(request["expectedRevision"])
+        if bool(request.get("dryRun", False)):
+            snapshot = store.validate_mutation(
+                expected_revision=expected_revision,
+                lease_id=str(lease_ref["leaseId"]),
+                fencing_token=int(lease_ref["fencingToken"]),
+            )
+            projected = copy.deepcopy(snapshot.state)
+            result = mutate_state(projected)
+            return self._response(
+                definition.name, work_item, changed=False,
+                revision_before=snapshot.revision, revision_after=snapshot.revision + 1,
+                state_value=projected, extra={"dryRun": True, "result": result},
+            )
+        response = store.mutate(
+            expected_revision=expected_revision,
+            lease_id=str(lease_ref["leaseId"]),
+            fencing_token=int(lease_ref["fencingToken"]),
+            idempotency_key=str(request["idempotencyKey"]),
+            operation=definition.name,
+            payload=request["parameters"],
+            mutate=mutate_state,
+        )
+        return self._response(
+            definition.name, work_item, changed=response.changed,
+            revision_before=response.revision_before, revision_after=response.revision_after,
+            state_value=response.state, next_actions=self.next_actions(
+                work_item, str(request.get("story") or "")
+            )["nextActions"], extra={"dryRun": False, "replayed": response.replayed,
+                                      "result": response.result},
+        )
+
+    def _handle_execution_plan_set(
+        self, request: dict[str, Any], definition: OperationDefinition
+    ) -> dict[str, Any]:
+        parameters = request["parameters"]
+
+        def mutate_state(state_value: dict[str, Any]) -> dict[str, Any]:
+            return state.set_execution_plan(
+                state_value,
+                goal=str(parameters["goal"]),
+                changed_paths=[str(item) for item in parameters["changedPaths"]],
+                verification=list(parameters["verification"]),
+                risks=[str(item) for item in parameters.get("risks") or []],
+                source_reads=[str(item) for item in parameters.get("sourceReads") or []],
+                by="ae-sdd ops execution.plan.set",
+            )
+
+        return self._mutate_compact_process_state(request, definition, mutate_state)
+
+    def _handle_execution_plan_approve(
+        self, request: dict[str, Any], definition: OperationDefinition
+    ) -> dict[str, Any]:
+        approved_by = str(request["parameters"].get("approvedBy") or "user")
+
+        def mutate_state(state_value: dict[str, Any]) -> dict[str, Any]:
+            return state.approve_execution_plan(state_value, by=approved_by)
+
+        return self._mutate_compact_process_state(request, definition, mutate_state)
+
+    def _handle_review_record(
+        self, request: dict[str, Any], definition: OperationDefinition
+    ) -> dict[str, Any]:
+        parameters = request["parameters"]
+
+        def mutate_state(state_value: dict[str, Any]) -> dict[str, Any]:
+            return state.record_review(
+                state_value,
+                status=str(parameters["status"]),
+                findings=list(parameters["findings"]),
+                reviewed_paths=[str(item) for item in parameters.get("reviewedPaths") or []],
+                evidence_ids=[str(item) for item in parameters.get("evidenceIds") or []],
+                by="ae-sdd ops review.record",
+            )
+
+        return self._mutate_compact_process_state(request, definition, mutate_state)
 
     def _handle_deferred_adapter(
         self, request: dict[str, Any], definition: OperationDefinition

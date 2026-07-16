@@ -5,6 +5,8 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
 
 # Requirement Analysis — 需求分析 SKILL（ae-sdd Phase 1 起点）
 
+> **v3.12：** RA 是核心文档，直接生成/更新当前 RA；不生成 RA GeneratePlan、Impact、ReverseIssues、ReviewReport 或 changelog 旁车。分析过程留在内存，最终只写当前有效结论。
+
 > **🔴 核心定位（2026-06-17 重大重构）：** 本 SKILL 是 ae-sdd 体系的 **Phase 1 起点**（"入口"），与 `story-generate-skill` / `dr-generate-skill` / `dr-review-skill` 平级但**位置更靠前**——它产出"RA 文档 + 规模裁定 + 路由决策"，再触发下游对应 SKILL。
 >
 > **与现有 SKILL 的分工：**

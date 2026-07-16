@@ -1,6 +1,10 @@
 # ae-sdd 实现架构说明书
 
-> v3.11.5 · 面向 ae-sdd 维护者。本文档描述代码实现结构、模块边界和设计-实现对齐规则；能力语义仍以 [`ae-sdd-design.md`](ae-sdd-design.md) 为入口。
+> v3.11.6 · 面向 ae-sdd 维护者。本文档描述代码实现结构、模块边界和设计-实现对齐规则；能力语义仍以 [`ae-sdd-design.md`](ae-sdd-design.md) 为入口。
+
+## 过程状态与文档边界
+
+`document_storage` 对 retired intent 保留 resolve/read 兼容，但 save/finalize 返回 E012；新写入只允许核心文档和显式可选文档。`state.json` 持有 `executionPlan` 与 `review`，evidence manifest 持有测试/交付证据。G-07/G-08/G-14/G-CODEPLAN-SRC 优先读取 executionPlan，G-10/G-11/G-12 优先读取 evidence/review，旧 Markdown 仅作 legacy fallback。文档索引写入 `ae-sdd-doc/index.json`，不更新历史 `STORING.md`。
 
 ## 1. 文档边界
 
@@ -342,7 +346,7 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
 
 ## 12. 新实现设计写入规则
 
-每个系统级设计必须先在主设计文档的 Design Ledger 记录“要解决的问题、核心决策、预期价值、验证证据和版本状态”。实现架构文档只记录模块边界和数据流，不重复叙述设计动机。每次迭代必须在 changelog 填写 `Design ledger impact`：设计语义变化指向 D-xxx；无设计语义变化明确填写 N/A。维护者通过 `ae-sdd update-check --affected` 查询 UG-28，并运行 UC-20；对话中的说明不能代替台账或机器证据。
+每个系统级设计必须先在主设计文档的 Design Ledger 记录“要解决的问题、核心决策、预期价值、验证证据和版本状态”。实现架构文档只记录当前模块边界和数据流，不重复叙述设计动机。任何时候都不写 changelog；维护者通过 `ae-sdd update-check --affected` 查询 UG-28，并运行 UC-20，机器测试与运行时验证提供迭代证据。
 
 | 内容 | 写入位置 |
 | --- | --- |
@@ -350,7 +354,9 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
 | 设计 ID、问题、预期价值、验证证据、版本状态 | `source/docs/ae-sdd-design.md` §0 Design Ledger |
 | 模块分层、文件职责、数据流、缓存、子进程、hook、build/distribute | 本文件 |
 | 单次技术方案、阶段性取舍、性能基线 | `source/docs/plans/*.md` |
-| 发版事实、影响范围、验证命令、Design ledger impact | `source/CHANGELOG/*.md` |
+| 当前设计事实与预期价值 | `source/docs/ae-sdd-design.md` Design Ledger |
+| 模块边界与数据流 | `source/docs/ae-sdd-implementation-architecture.md` |
+| 可执行验证结果 | 测试输出、evidence manifest、runtime verify |
 | Agent 执行入口和路由 | `source/SKILL.md` |
 | 阶段内具体规则 | 对应 `source/skills/**/**-skill.md` |
 | 机器可读依赖闭环 | `source/standards/update-graph.json` |

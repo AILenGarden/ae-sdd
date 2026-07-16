@@ -1223,7 +1223,6 @@ def check_uc19_operation_maintenance_contract(repo_root: Path) -> UpdateCheckRes
         "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
         "source/docs/ae-sdd-design.md",
         "source/docs/ae-sdd-implementation-architecture.md",
-        "source/CHANGELOG/",
     ]
     graph_triggers = list((ug27 or {}).get("trigger") or [])
     graph_affected = [str(item.get("path")) for item in ((ug27 or {}).get("affected") or []) if isinstance(item, dict)]
@@ -1306,7 +1305,6 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
     root = Path(repo_root)
     design_path = root / "source" / "docs" / "ae-sdd-design.md"
     architecture_path = root / "source" / "docs" / "ae-sdd-implementation-architecture.md"
-    changelog_template_path = root / "source" / "CHANGELOG" / "_template.md"
     fallback_update_path = root / "source" / "skill-fallbacks" / "skills" / "orchestration" / "ae-sdd-update-skill.full.md"
     slim_update_path = root / "source" / "skills" / "orchestration" / "ae-sdd-update-skill.md"
     graph_path = root / "source" / "standards" / "update-graph.json"
@@ -1316,14 +1314,12 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
 
     design_text = read(design_path)
     architecture_text = read(architecture_path)
-    changelog_text = read(changelog_template_path)
     update_text = read(fallback_update_path) + "\n" + read(slim_update_path)
     version = _extract_skill_version(root / "source" / "SKILL.md")
 
     required_files = {
         "source/docs/ae-sdd-design.md": design_path.is_file(),
         "source/docs/ae-sdd-implementation-architecture.md": architecture_path.is_file(),
-        "source/CHANGELOG/_template.md": changelog_template_path.is_file(),
         "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md": fallback_update_path.is_file(),
         "source/skills/orchestration/ae-sdd-update-skill.md": slim_update_path.is_file(),
         "source/standards/update-graph.json": graph_path.is_file(),
@@ -1374,22 +1370,20 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
     required_update_terms = [
         "Design Ledger Maintenance Entry",
         "source/docs/ae-sdd-design.md",
-        "Design ledger impact",
+        "任何时候都不写 changelog",
         "UG-28",
         "UC-20",
         "待补基线",
     ]
     missing_update_terms = [term for term in required_update_terms if term not in update_text]
-    required_architecture_terms = ["Design Ledger", "Design ledger impact", "UC-20"]
+    required_architecture_terms = ["Design Ledger", "任何时候都不写 changelog", "UC-20"]
     missing_architecture_terms = [term for term in required_architecture_terms if term not in architecture_text]
-    required_changelog_terms = ["Design ledger impact", "D-xxx", "N/A: no design semantics changed"]
-    missing_changelog_terms = [term for term in required_changelog_terms if term not in changelog_text]
 
     graph, graph_error = _read_update_graph_data(root)
     ug28 = next((rule for rule in (graph or {}).get("rules", []) if rule.get("id") == "UG-28"), None)
     required_graph_paths = [
         "source/docs/ae-sdd-design.md",
-        "source/CHANGELOG/_template.md",
+        "source/docs/ae-sdd-implementation-architecture.md",
         "tools/lib/update_graph.py",
         "tools/tests/test_update_graph.py",
     ]
@@ -1435,8 +1429,6 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
         issues.append(f"update-skill terms missing: {missing_update_terms}")
     if missing_architecture_terms:
         issues.append(f"architecture terms missing: {missing_architecture_terms}")
-    if missing_changelog_terms:
-        issues.append(f"changelog terms missing: {missing_changelog_terms}")
     if missing_graph_paths:
         issues.append(f"UG-28 cascade missing: {missing_graph_paths}")
     if version_drift:
@@ -1451,11 +1443,10 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
         "unknown_design_ids": unknown_design_ids,
         "invalid_rows": invalid_rows,
         "missing_section_mappings": missing_section_mappings,
-        "missing_terms": missing_terms + missing_changelog_terms,
+        "missing_terms": missing_terms,
         "missing_typed_operation_terms": missing_typed_operation_terms,
         "missing_update_terms": missing_update_terms,
         "missing_architecture_terms": missing_architecture_terms,
-        "missing_changelog_terms": missing_changelog_terms,
         "missing_graph_paths": missing_graph_paths,
         "version_drift": version_drift,
     }
@@ -1463,7 +1454,7 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
         return UpdateCheckResult(
             "UC-20", name, "error", False,
             "; ".join(issues[:4]),
-            "sync the Design Ledger, changelog impact field, ae-sdd-update entry and UG-28/UC-20",
+            "sync the Design Ledger, current architecture facts, ae-sdd-update entry and UG-28/UC-20",
             details,
         )
     return UpdateCheckResult(
@@ -1621,6 +1612,8 @@ def query_affected(changed_files: list, repo_root: Optional[Path] = None) -> Aff
         })
 
         for aff in rule.get("affected", []):
+            if str(aff.get("path") or "").replace("\\", "/").startswith("source/CHANGELOG"):
+                continue
             key = (aff["path"], aff["action"])
             if key not in affected_seen:
                 affected_seen.add(key)

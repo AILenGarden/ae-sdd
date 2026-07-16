@@ -95,10 +95,9 @@
       "trigger": ["source/**", "tools/**"],
       "trigger_condition": "任何改动",
       "affected": [
-        {"path": "source/CHANGELOG/", "action": "新增 CHANGELOG 文件", "auto_checkable": false},
         {"path": "README.md", "action": "第 5 行版本行更新", "auto_checkable": true},
-        {"path": "source/docs/ae-sdd-design.md", "action": "若能力语义、流程边界、门禁语义或用户可见行为变化，必须同步；若无影响，在 CHANGELOG 写明 N/A", "auto_checkable": false},
-        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "若 CLI/lib/scripts/hook/build/distribution/cache/scanner/state 等实现边界或数据流变化，必须同步；若无影响，在 CHANGELOG 写明 N/A", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-design.md", "action": "能力语义、流程边界、门禁语义或用户可见行为变化时同步当前事实；无影响则不制造过程文档", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "CLI/lib/scripts/hook/build/distribution/cache/scanner/state 的实现边界或数据流变化时同步当前事实", "auto_checkable": false},
         {"path": "(分发闭环 v3.4.0)", "action": ".githooks/post-commit 自动触发 build_dist → install → harness adapter → mavis remount；不再依赖手工 dev-sync", "auto_checkable": true},
         {"path": ".githooks/post-commit", "action": "🆕 v3.4.0：hook 自身必须存在且可执行（UC-07 验证）", "auto_checkable": true},
         {"path": "git config core.hooksPath", "action": "🆕 v3.4.0：必须 = .githooks（UC-07 验证）", "auto_checkable": true}
@@ -548,8 +547,7 @@
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "维护者入口必须指向 operation protocol §9，并列出 UC-19/Definition of Done", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "self-update 完整语义必须包含 typed operation maintenance entry", "auto_checkable": false},
         {"path": "source/docs/ae-sdd-design.md", "action": "能力设计版本和 LLM 操作协议维护入口保持当前状态", "auto_checkable": false},
-        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "实现架构版本和 OperationRegistry/StateStore 维护边界保持当前状态", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录 typed operation 与 state lease 发布变更", "auto_checkable": false}
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "实现架构版本和 OperationRegistry/StateStore 维护边界保持当前状态；永不写 changelog", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-19"]
     },
@@ -559,8 +557,6 @@
       "trigger": [
         "source/docs/ae-sdd-design.md",
         "source/docs/ae-sdd-implementation-architecture.md",
-        "source/CHANGELOG/_template.md",
-        "source/CHANGELOG/",
         "source/standards/update-graph.json",
         "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
         "source/skills/orchestration/ae-sdd-update-skill.md",
@@ -573,17 +569,15 @@
         "scripts/build_dist.py",
         "scripts/slim_source_skills.py"
       ],
-      "trigger_condition": "系统设计语义、模块边界、状态/CLI/运行时数据流或设计价值验证方式发生变化，或者维护设计文档、CHANGELOG 模板、Design Ledger、UC-20 实现",
+      "trigger_condition": "系统设计语义、模块边界、状态/CLI/运行时数据流或设计价值验证方式发生变化，或者维护设计文档、Design Ledger、UC-20 实现",
       "affected": [
         {"path": "source/docs/ae-sdd-design.md", "action": "§0 Design Ledger 必须回填 D-xxx、问题、决策、价值、证据、权威入口和版本状态；§1~§21 每个系统级设计必须有映射", "auto_checkable": true},
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "§12 维护设计台账与实现架构/验证证据的归属规则", "auto_checkable": true},
-        {"path": "source/CHANGELOG/_template.md", "action": "包含 Design ledger impact，设计变化填写 D-xxx，无设计语义填写 N/A", "auto_checkable": true},
         {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "包含 Design Ledger Maintenance Entry、UG-28、UC-20 和 Definition of Done", "auto_checkable": true},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "slim entry 保留设计台账维护路由", "auto_checkable": true},
         {"path": "tools/lib/update_graph.py", "action": "UC-20 校验 ID 唯一、§1~§21 覆盖、必填字段、版本和迭代记录", "auto_checkable": true},
         {"path": "tools/tests/test_update_graph.py", "action": "UC-20 正例、缺行、缺字段、占位、重复 ID、缺维护入口和 N/A 反例", "auto_checkable": true},
-        {"path": "README.md", "action": "公开 Design Ledger、UC-20 和每次迭代记录入口", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录历史设计回填、设计影响、验证命令和待补基线", "auto_checkable": false}
+        {"path": "README.md", "action": "公开 Design Ledger 与 UC-20 入口；任何时候都不写 changelog", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-20"]
     },
@@ -622,8 +616,7 @@
         {"path": "tools/tests/test_cli_doc.py", "action": "覆盖 RA prerequisite 非零退出、零写入与草稿保留", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "机器同步锚点包含 UG-29", "auto_checkable": true},
         {"path": "source/docs/ae-sdd-design.md", "action": "记录 Work Item RA scope 与 PowerShell 逐命令 fail-fast 设计", "auto_checkable": false},
-        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 resolver→scanner --file→gate details 数据流和 dist 依赖", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录 false blocker 根因、兼容边界、验证命令与 Design Ledger impact", "auto_checkable": false}
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 resolver→scanner --file→gate details 数据流和 dist 依赖；验证结果由测试承载", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-06", "UC-14", "UC-20"]
     }

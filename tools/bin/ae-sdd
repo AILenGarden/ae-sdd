@@ -1904,7 +1904,7 @@ def _resolve_ade_sdd_and_project_key(args):
 def cmd_doc_save(args, parser):
     """doc save — 一步到位存文档（封装 document_storage.save_doc，🆕 v3.7.2）
 
-    流程：读草稿 → save_doc（resolve+写+版本+ChangeLog+STORING+gitignore）→ 删草稿。
+    流程：读草稿 → save_doc（resolve+写+版本+机器 index+gitignore）→ 删草稿。
     对齐 document-storage-skill.md §4.3 + §9 写入 SOP。
     """
     ade_sdd, project_key = _resolve_ade_sdd_and_project_key(args)
@@ -1950,7 +1950,8 @@ def cmd_doc_save(args, parser):
         output.info(f"   版本：{result.new_version}")
     if args.json:
         output.emit({"success": result.success, "fullPath": result.full_path,
-                     "newVersion": result.new_version, "changelogEntry": result.changelog_entry},
+                     "newVersion": result.new_version, "changelogEntry": None,
+                     "processArtifactPolicy": "core-or-explicit-optional-only"},
                     as_json=True)
     return 0
 
@@ -1980,7 +1981,8 @@ def cmd_doc_resolve(args, parser):
         "dirPath": resolved.dir_path,
         "fileName": resolved.file_name,
         "versionSuffix": resolved.version_suffix,
-        "changelogPath": resolved.changelog_path,
+        "changelogPath": "",
+        "writePolicy": document_storage.document_write_policy(args.intent),
         "scope": resolved.scope,
     }
     if args.json:
@@ -1989,15 +1991,17 @@ def cmd_doc_resolve(args, parser):
         output.ok(f"📍 路径：{resolved.full_path}")
         if resolved.version_suffix:
             output.info(f"   版本后缀：{resolved.version_suffix}")
-        output.info(f"   ChangeLog：{resolved.changelog_path}")
+        policy = document_storage.document_write_policy(args.intent)
+        if not policy.get("writable"):
+            output.info(f"   写入策略：{policy.get('status')}；替代：{policy.get('replacement')}")
     return 0
 
 
 def cmd_doc_finalize(args, parser):
-    """doc finalize — 对已手写文件补版本号/ChangeLog/STORING（封装 document_storage.finalize_doc，🆕 v3.7.2）
+    """doc finalize — 对已手写文件补版本号/机器 index（不生成过程 Markdown）
 
     适用：未实现 intent 的文档 LLM 手写后补登记，或漏跑 save_doc 后处理。
-    不覆盖文件内容，只补 ChangeLog + STORING + .gitignore。
+    不覆盖文件内容，只更新机器 index + .gitignore；历史 STORING.md 不修改。
     """
     ade_sdd, project_key = _resolve_ade_sdd_and_project_key(args)
     if not ade_sdd:
@@ -2020,11 +2024,10 @@ def cmd_doc_finalize(args, parser):
         return 1
 
     output.ok(f"✅ 已登记：{result.full_path}")
-    if result.changelog_entry:
-        output.info(f"   ChangeLog：已追加")
     if args.json:
         output.emit({"success": result.success, "fullPath": result.full_path,
-                     "newVersion": result.new_version, "changelogEntry": result.changelog_entry},
+                     "newVersion": result.new_version, "changelogEntry": None,
+                     "processArtifactPolicy": "machine-index-only"},
                     as_json=True)
     return 0
 
@@ -5823,7 +5826,7 @@ def main() -> int:
     doc_sub = p_doc.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
 
     # doc save — 一步到位存文档
-    p_doc_save = doc_sub.add_parser("save", help="一步到位存文档（resolve+写+版本+ChangeLog+STORING+gitignore+删草稿）",
+    p_doc_save = doc_sub.add_parser("save", help="写核心/显式可选文档（resolve+写+版本+机器 index+gitignore+删草稿）",
                                     parents=[common])
     p_doc_save.add_argument("--intent", required=True,
                             help="文档意图（见 document-storage §4.10 intent 枚举）")
@@ -5833,7 +5836,7 @@ def main() -> int:
     p_doc_save.add_argument("--doc-id", default=None, help="文档 ID（raId/prdId/issueId/taskId 等归一到此）")
     p_doc_save.add_argument("--content-file", required=True,
                             help="内容文件路径（存完自动删除，可用 --keep-draft 保留）")
-    p_doc_save.add_argument("--changelog-note", default=None, help="ChangeLog 记录（一句话修改说明）")
+    p_doc_save.add_argument("--changelog-note", default=None, help="已废弃兼容参数：忽略且绝不写 changelog")
     p_doc_save.add_argument("--version", default=None, help="版本号，格式 \"v1-r1\" 或 \"1.0\"（事件类报告）")
     p_doc_save.add_argument("--keep-draft", action="store_true", help="保留草稿文件（默认删除）")
     p_doc_save.add_argument("--project", default="", help="项目根目录（默认 cwd）")
@@ -5851,14 +5854,14 @@ def main() -> int:
 
     # doc finalize — 已手写文件补后处理
     p_doc_finalize = doc_sub.add_parser("finalize",
-                                        help="对已手写文件补版本号/ChangeLog/STORING（不覆盖内容）",
+                                        help="对已手写文件补版本号/机器 index（不覆盖内容）",
                                         parents=[common])
     p_doc_finalize.add_argument("--path", required=True, help="已写好的文件路径")
     p_doc_finalize.add_argument("--intent", required=True, help="文档意图（用于 STORING 登记 category）")
     p_doc_finalize.add_argument("--work-item", default=None)
     p_doc_finalize.add_argument("--story-id", default=None)
     p_doc_finalize.add_argument("--doc-id", default=None)
-    p_doc_finalize.add_argument("--changelog-note", default=None, help="ChangeLog 记录")
+    p_doc_finalize.add_argument("--changelog-note", default=None, help="已废弃兼容参数：忽略且绝不写 changelog")
     p_doc_finalize.add_argument("--project", default="", help="项目根目录（默认 cwd）")
     p_doc_finalize.set_defaults(func=cmd_doc_finalize)
 
