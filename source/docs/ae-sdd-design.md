@@ -480,6 +480,8 @@ ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执�
 | 版本类 | `bump <ver> / version` |
 | 维护类 | `health / init / init-hooks / runtime / plugin / scripts-dir / prompt-inject / stop-check` |
 
+**Windows CLI 启动契约**：`tools/bin/ae-sdd` 是无扩展名 Python 入口，Windows 不得将它直接交给 PowerShell `&`、ShellExecute 或 `Start-Process`，否则会进入“打开方式”或报非 Win32 应用。Hook 使用 `python.exe <绝对路径>/tools/bin/ae-sdd ...`；Agent 的完整路径调用使用包内同目录 `tools/bin/ae-sdd.cmd`。编译器必须把该规则写入生成的主 `SKILL.md` 和 `runtime/boot.compact.md`，确保 fast path 不会误用无扩展名入口。不得通过注册系统级无扩展名文件关联解决该问题。
+
 **批处理退出码边界**：单个 `ae-sdd` 命令的退出码是权威结果；连续执行多个命令时，shell 最终退出码只代表最后一条命令。PowerShell 编排必须在每条可能失败的命令后读取并判断 `$LASTEXITCODE`（或设置显式 fail-fast 包装），不能在前一条 `doc save`/gate 已返回 1 后继续运行成功命令，再把最终 0 误记为前一条 CLI 成功。`doc save --intent RA` prerequisite 失败会返回 1、不生成正式 RA、保留草稿；该契约由 subprocess 回归测试验证。
 
 - `ae-sdd health` 9 项自检：子 SKILL 章节完整性 / 项目资产双源一致 / 规则-工具同步 / 门禁覆盖度 / TR-1~7 / 扫描器就绪 / CHANGELOG 版本一致

@@ -329,6 +329,8 @@ python scripts/distribute.py
 - `dist/ae-sdd/runtime/manifest.json` 包含版本、source hash、runtime_fingerprint、load_order，不包含 `compiled_at`。
 - `runtime/gates.compact.md` 从 `GATE_REGISTRY` 生成。
 - `runtime/flow.compact.md` 从 `PHASE_FLOWS` 生成。
+- 生成的主 `SKILL.md` 与 `runtime/boot.compact.md` 都包含 Windows CLI 启动契约，禁止直接执行无扩展名 `tools/bin/ae-sdd`。
+- `dist/ae-sdd/tools/bin/ae-sdd.cmd` 随工具链分发，支持 Windows 完整路径调用并透传参数与退出码。
 - 单元测试覆盖编译器最小行为和字节级幂等：不同 `--build-date` 重复编译同一输入，runtime 输出完全一致。
 - `python scripts/slim_source_skills.py --validate` 通过，确认源瘦身入口符合 `ae-sdd-source-slim/v2` 标准。
 - 编译后的主入口和子 SKILL runtime fallback 均来自 `source/skill-fallbacks/**` 的完整原文，而不是 slim entry。
@@ -368,6 +370,7 @@ python scripts/distribute.py
 | 源瘦身标准与模板 | 已实现 | `source/standards/skill-source-slimming-standard.md` + `source/templates/skill/source-skill-slim-entry-template.md` |
 | runtime 编译器 | 已实现 | `scripts/compile_skill_runtime.py` |
 | 构建链路接入 | 已实现 | `scripts/build_dist.py` 调用 runtime 编译器 |
+| Windows fast-path 启动契约 | 已实现 | 生成的 `SKILL.md` + `runtime/boot.compact.md` + `tools/bin/ae-sdd.cmd` |
 | compiled bootloader | 已实现 | `dist/ae-sdd/SKILL.md` 由编译器生成 |
 | runtime manifest | 已实现 | `dist/ae-sdd/runtime/manifest.json` |
 | compact slices | 已实现 | `boot/route/subskills/gates/flow/macros.compact.md` |
@@ -404,7 +407,7 @@ python tools/bin/ae-sdd update-check --only UC-15
 python scripts/build_dist.py
 ```
 
-实现约束已经进入测试：同一输入重复编译时，`dist/ae-sdd/SKILL.md`、`dist/ae-sdd/runtime/**` 与 `dist/ae-sdd/skills/**/*.md` 必须字节级一致；不同 `--build-date` 不得改变 runtime 输出。
+实现约束已经进入测试：同一输入重复编译时，`dist/ae-sdd/SKILL.md`、`dist/ae-sdd/runtime/**` 与 `dist/ae-sdd/skills/**/*.md` 必须字节级一致；不同 `--build-date` 不得改变 runtime 输出。Windows fast path 还必须同时暴露显式 Python / `.cmd` 调用规则，且分发包必须包含同目录 `.cmd` launcher。
 
 后续实现清单：
 

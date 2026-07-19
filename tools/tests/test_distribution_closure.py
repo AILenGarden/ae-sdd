@@ -76,6 +76,34 @@ def test_install_py_target_path():
     print("✅ test_install_py_target_path")
 
 
+def test_windows_sibling_cli_launcher_is_distributed(tmp_path):
+    """The compiled package must carry a full-path-safe Windows launcher."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import build_dist
+
+    dist = tmp_path / "dist" / "ae-sdd"
+    build_dist._copy_tools_to_dist(REPO_ROOT, dist)
+
+    launcher = dist / "tools" / "bin" / "ae-sdd.cmd"
+    assert launcher.is_file(), "dist must include tools/bin/ae-sdd.cmd"
+    text = launcher.read_text(encoding="utf-8")
+    assert '"%~dp0ae-sdd"' in text
+    assert "%*" in text
+
+
+def test_windows_sibling_cli_launcher_preserves_exit_status(tmp_path):
+    """The launcher must return the adjacent Python CLI status unchanged."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import build_dist
+
+    dist = tmp_path / "dist" / "ae-sdd"
+    build_dist._copy_tools_to_dist(REPO_ROOT, dist)
+
+    launcher = dist / "tools" / "bin" / "ae-sdd.cmd"
+    text = launcher.read_text(encoding="utf-8").lower()
+    assert "exit /b %errorlevel%" in text
+
+
 def test_init_read_master_version():
     """init.py _read_master_version 应能解析 source/SKILL.md frontmatter
 

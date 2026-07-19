@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 
+import compile_skill_runtime as runtime_compiler  # noqa: E402
 from compile_skill_runtime import compile_runtime_package  # noqa: E402
 from lib.gates import GATE_REGISTRY  # noqa: E402
 from lib.state import PHASE_FLOWS  # noqa: E402
@@ -70,7 +71,7 @@ class TestSkillRuntimeCompiler(unittest.TestCase):
         self.assertEqual(parsed["version"], "9.9.9")
         self.assertTrue(parsed["deterministic"])
         self.assertNotIn("compiled_at", parsed)
-        self.assertEqual(parsed["compiler"]["version"], "2")
+        self.assertEqual(parsed["compiler"]["version"], "3")
         self.assertEqual(len(parsed["runtime_fingerprint"]), 64)
         self.assertEqual(len(parsed["source"]["fallback_sha256"]), 64)
         self.assertEqual(parsed["source"]["file_count"], 2)
@@ -290,6 +291,52 @@ class TestSkillRuntimeCompiler(unittest.TestCase):
         )
         boot = (self.dist / "runtime" / "boot.compact.md").read_text(encoding="utf-8")
         self.assertIn("manifest-index.json", boot)
+
+    def test_windows_fast_paths_forbid_direct_extensionless_cli_execution(self):
+        """Every always-loaded entry must prevent Windows ShellExecute fallback."""
+        compile_runtime_package(
+            REPO_ROOT,
+            self.source,
+            self.dist,
+            build_date="2026-07-02T00:00:00Z",
+        )
+
+        generated = {
+            "SKILL.md": (self.dist / "SKILL.md").read_text(encoding="utf-8"),
+            "runtime/boot.compact.md": (
+                self.dist / "runtime" / "boot.compact.md"
+            ).read_text(encoding="utf-8"),
+        }
+        for path, text in generated.items():
+            with self.subTest(path=path):
+                self.assertIn("Windows CLI launch contract", text)
+                self.assertIn("<skill-root>/tools/bin/ae-sdd", text)
+                self.assertIn("<skill-root>/tools/bin/ae-sdd.cmd", text)
+                self.assertIn("Never execute the extensionless", text)
+                self.assertIn("PowerShell", text)
+
+    def test_windows_launch_contract_participates_in_runtime_fingerprint(self):
+        """Changing an always-loaded launch contract must invalidate the runtime fingerprint."""
+        first = compile_runtime_package(
+            REPO_ROOT,
+            self.source,
+            self.dist,
+            build_date="2026-07-02T00:00:00Z",
+        )["runtime_fingerprint"]
+
+        original = runtime_compiler.WINDOWS_CLI_LAUNCH_CONTRACT
+        runtime_compiler.WINDOWS_CLI_LAUNCH_CONTRACT = original + "\n- fingerprint sentinel"
+        try:
+            second = compile_runtime_package(
+                REPO_ROOT,
+                self.source,
+                self.dist,
+                build_date="2026-07-02T00:00:00Z",
+            )["runtime_fingerprint"]
+        finally:
+            runtime_compiler.WINDOWS_CLI_LAUNCH_CONTRACT = original
+
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":

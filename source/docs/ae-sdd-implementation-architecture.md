@@ -64,6 +64,7 @@ harness/                        派生适配层，不手工改生成物
 | 子系统 | 主要文件 | 职责 | 变更要求 |
 | --- | --- | --- | --- |
 | CLI 入口 | `tools/bin/ae-sdd` | 命令注册、参数解析、输出模式分发 | 新命令必须补测试和 SKILL/README 引用 |
+| Windows 包内 launcher | `tools/bin/ae-sdd.cmd` | 把 Windows 完整路径调用转发到相邻 Python + 无扩展名 CLI | 必须透传参数和退出码；生成的 fast path 必须明确禁止直接执行无扩展名入口 |
 | 输出层 | `tools/lib/output.py` | stdout/stderr 约定、JSON 输出 | 不在业务模块手写不一致输出 |
 | 路径层 | `tools/lib/paths.py` | 母版、项目、state、文档路径定位 | 禁止各模块重复拼路径 |
 | 状态机 | `tools/lib/state.py` | phase、PRD/work item 状态、事件日志、StoryName/docPath 绑定 | 改状态字段需同步 gates/hook/tests；正文绑定只存指针 |
@@ -94,6 +95,7 @@ harness/                        派生适配层，不手工改生成物
 - 新增子命令必须有 `--json` 契约测试。
 - 命令引用必须被 `update-check` 覆盖，避免文档声明幽灵命令。
 - PowerShell 或其他 shell 批量编排必须逐命令检查退出码；最终 process exit 只代表最后一条命令。不得用后续成功覆盖前序 `doc save`/gate 的失败。
+- Windows Hook 直接调用 `python.exe <absolute>/tools/bin/ae-sdd`；Agent 的包内完整路径调用使用相邻 `tools/bin/ae-sdd.cmd`。生成的主 `SKILL.md` 与 `runtime/boot.compact.md` 均声明此规则；无扩展名入口不得直接执行，也不得通过全局文件关联赋予执行语义。
 
 当前 `tools/bin/ae-sdd` 已承载较多命令函数，后续新能力应优先新增 `tools/lib/<capability>.py`，入口只做分发。
 

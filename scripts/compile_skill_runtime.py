@@ -20,8 +20,14 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-COMPILER_VERSION = "2"
+COMPILER_VERSION = "3"
 SUBSKILL_SCHEMA = "ae-sdd-subskill-runtime/v1"
+
+WINDOWS_CLI_LAUNCH_CONTRACT = """## Windows CLI launch contract
+
+- On Windows, invoke this package with `python "<skill-root>/tools/bin/ae-sdd" <args>` or `"<skill-root>/tools/bin/ae-sdd.cmd" <args>`.
+- Never execute the extensionless `tools/bin/ae-sdd` directly with PowerShell `&`, `Start-Process`, or ShellExecute; Windows may open the application chooser.
+"""
 
 LOAD_ORDER = [
     "runtime/boot.compact.md",
@@ -614,6 +620,7 @@ def compute_runtime_fingerprint(
         "load_order": LOAD_ORDER,
         "route_rows": ROUTE_ROWS,
         "macros": MACROS,
+        "windows_cli_launch_contract": WINDOWS_CLI_LAUNCH_CONTRACT,
         "source_checksums": source_checksums,
         "fallback_sha256": fallback_hash,
         "gates": gates,
@@ -645,6 +652,8 @@ def render_boot_compact(version: str, source_hash: str, runtime_fingerprint: str
 - Do not install or execute `source/` directly as an Agent skill package.
 - `dist/ae-sdd/SKILL.md` and `runtime/*.compact.md` are generated files; do not hand-edit.
 - If compact and fallback conflict, prefer compact only when `runtime/manifest.json` exists and `compiled=true`.
+
+{WINDOWS_CLI_LAUNCH_CONTRACT}
 
 ## Fallback
 
@@ -747,6 +756,8 @@ This is the compiled Agent runtime entry. Do not treat it as the human-maintaine
 - Use fallback only when compact runtime is insufficient.
 - CLI gate/state output overrides prompt text.
 - Never hand-edit generated runtime files; rebuild with `scripts/build_dist.py`.
+
+{WINDOWS_CLI_LAUNCH_CONTRACT}
 
 runtime_fingerprint: {runtime_fingerprint}
 """
