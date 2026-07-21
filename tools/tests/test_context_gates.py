@@ -62,7 +62,7 @@ def _full_context_project(phase: str = "dr-generated", scale: str = "大",
         ),
         "constraints/code-style.md": "# code style\n",
         "constraints/database.md": "# database\n",
-        "RA-001.md": "# RA\n## §2 角色\n## §3 场景\n## §4 流程\n## §5 数据\n## §6 规则\n## §7 设计方向\n## §8 AC\n## §9 假设\n",
+        "ae-sdd-doc/RA/RA-001.md": "# RA\n## §2 角色\n## §3 场景\n## §4 流程\n## §5 数据\n## §6 规则\n## §7 设计方向\n## §8 AC\n## §9 假设\n",
         "PRD-001.md": "# PRD\n业务背景\n",
         "design/DR-001.md": "# DR\n业务背景 + 业务规则 + 验收标准\n",
         f"design/{current_story}.md": (
@@ -107,7 +107,7 @@ class TestGDrCtx(unittest.TestCase):
     def test_missing_ra_blocks(self):
         """缺 RA → block。"""
         tmp = _full_context_project(phase="dr-generated", scale="大")
-        (tmp / "RA-001.md").unlink()
+        (tmp / "ae-sdd-doc" / "RA" / "RA-001.md").unlink()
         r = gates.check_g_dr_ctx(tmp, _make_state("dr-generated", "大"), "")
         self.assertFalse(r.pass_)
         self.assertIn("RA", r.message)

@@ -1,9 +1,9 @@
 ---
 name: test-generate
-description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、启动与 L1/L2/L3/L4 测试，生成带原始证据链的测试报告。
+description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、启动与 L1/L2/L3/L4 测试，把真实命令和 artifact 写入 evidence manifest。
 ---
 
-# Test Generate — 测试运行与报告 SKILL
+# Test Generate — 测试运行与 Evidence SKILL
 
 > **v3.12 evidence-only：** 测试执行不再生成 TestReport Markdown。每条真实命令写入 evidence manifest（command、exitCode、summary、artifact）；最终回复只展示失败项和摘要。既有报告仅供只读兼容。
 
@@ -14,11 +14,11 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 系列步骤 | 执行方 | 本文件职责 |
 |---|---|---|
 | Step 1 compact + 调用声明 | 主流程监管器 | 无 |
-| Step 2 generateSkill | `test-generate-skill.md` | 运行验证命令并生成 `TEST_REPORT` |
+| Step 2 generateSkill | `test-generate-skill.md` | 运行验证命令并写 immutable evidence |
 | Step 3 reviewSkill + Loop | `test-review-skill.md` + 主流程监管器 | 按缺陷报告重跑或补证据 |
 | Step 4 人工审核 | 主流程监管器 | 提供测试摘要材料 |
 
-禁止在 CodingSkill 内替代本系列；CodingSkill 只交付代码，测试运行与测试报告归本文件。
+禁止在 CodingSkill 内替代本系列；CodingSkill 只交付代码，测试运行与 evidence 归本文件。
 
 ## 输入
 
@@ -27,10 +27,13 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | Story / TestCase / Task / CodingPlan | 确定 AC、用例、真实 HTTP/DB 要求 |
 | 变更文件清单 | 选择最小但充分的测试范围 |
 | 项目资产 §6.7 / §11.8 | 读取测试框架、环境、惯用写法 |
-| `source/templates/testcase/be-testcase-report-template.md` | 测试报告格式 |
 | `source/standards/constraints/testing.md` | 测试红线 |
 
 ## 流程
+
+### 0. 先执行场景合同
+
+对新 `scenarioPolicyVersion=1` 的 HTTP AC，先验证 CapabilityModel/ScenarioManifest 和 `G-HTTP-1`。未通过时不得启动 HTTP、数据库或项目测试命令；不得用 Mock 或状态码断言替代缺失场景。
 
 ### 1. 制定执行矩阵
 
@@ -39,42 +42,40 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 层级 | 必跑对象 | 证据 |
 |---|---|---|
 | L1 | 单元测试 / 纯逻辑测试 | TestCase ID + 测试类方法 |
-| L2 | 真实 HTTP 接口测试 | `RANDOM_PORT + TestRestTemplate`，MockMvc 降级须写原因 |
+| L2 | 本地真实 HTTP 接口测试 | `RANDOM_PORT + HTTP client`，内部主链真实，记录 `http-local` |
 | L3 | 真实 DB / SQL / 事务测试 | INSERT/UPDATE 后 SELECT、回滚证据 |
-| L4 | 端到端 / 跨 Story 路径 | 全链路步骤与外部依赖 Mock 边界 |
+| L4 | 测试环境 HTTP / 跨 Story 路径 | 同一 buildId 的非 loopback endpoint，记录 `http-test-env` |
 
 ### 2. 执行验证命令
 
-每条命令执行前先用 `ae-sdd evidence lookup` 按 implementation fingerprint、command hash、toolchain fingerprint 和 artifact SHA-256 查成功证据。完整命中且未超过 freshness window 时复用；失败、篡改、过期或任一 fingerprint 不同必须重跑。命令必须可复现，并写入测试报告：
+每条命令执行前先用 `ae-sdd evidence lookup` 按 implementation fingerprint、command hash、toolchain fingerprint 和 artifact SHA-256 查成功证据。完整命中且未超过 freshness window 时复用；失败、篡改、过期或任一 fingerprint 不同必须重跑。命令必须可复现并写入 evidence：
 
 | 目标 | 命令要求 |
 |---|---|
 | 编译 | 父工程根执行 `mvn compile` 或项目等价命令 |
-| 服务启动 | 需验证真实 HTTP 时启动应用，记录端口与启动日志 |
+| 本地 HTTP | 启动真实端口，确认内部 Service/Repository/Mapper/DB 未被 mock，记录 baseUrl/buildId/AC/artifact |
+| 测试环境 HTTP | 部署同一 buildId 后请求非 loopback endpoint，记录同组 AC 与 artifact |
 | 测试 | 禁止 `-DskipTests`、`maven.test.skip=true`、`testFailureIgnore=true` |
 | 扫描 | 运行 `scripts/test_authenticity_scan.py` 或 `ae-sdd gates check --only G-09` |
 
 所有 stdout/stderr、Surefire/Failsafe XML、扫描报告必须归档到 `.auto-engineering/{WORKITEM-ID}/evidence/`，并由单一 `manifest.json` 登记。documentation/review fingerprint 变化不得使只绑定 implementation fingerprint 的 Maven 证据失效。
 
-### 3. 生成测试报告
+### 3. 记录 Evidence
 
-使用 `ae-sdd doc save --intent TEST_REPORT --work-item {WORKITEM-ID} --story-id {S?} --content-file 草稿.md` 写报告。报告必须包含：
+使用 `ae-sdd evidence record` 写入真实命令和 artifact；完成后 `ae-sdd evidence finalize --story {STORY-ID}`。接口 AC 必须各有 active `http-local` 与 `http-test-env`，summary 包含：
 
-- 实际命令、工作目录、退出码、Profile。
-- 原始日志、XML、扫描报告路径。
-- XML 对账：tests / failures / errors / skipped 与报告统计一致。
-- TestCase ID ↔ 测试方法 ↔ AC ID 映射。
-- L1/L2/L3/L4 结果。
-- 失败用例根因分类：代码缺陷 / 测试数据 / 环境问题 / 设计缺陷。
-- 修改测试记录：修改原因、证据、用户确认记录。
+- `stage=local|test-env`、`baseUrl`、`buildId`、`acIds`、`internalMocks=false`、`result=PASS`。
+- local URL 必须是 loopback；test-env URL 必须非 loopback；URL 不含 userinfo/query。
+- local evidence 先于 test-env，两个阶段 buildId 相同。
+- 外部 sandbox/stub 故障注入写 `http-external-supplemental`，不计入双阶段完成。
 
 ### 4. 初步判定
 
 | 判定 | 行为 |
 |---|---|
-| 全部命令成功 + XML 对账一致 + G-09 BLOCKER=0 | 交给 `test-review-skill.md` 独立复核 |
-| 有失败 | 报告结论写“不通过”，不得隐藏失败 |
-| 证据缺失 / 统计不一致 | 报告作废，补证据后重跑 |
+| 全部命令成功 + XML 对账一致 + HTTP 双阶段 evidence + G-09 BLOCKER=0 | 交给 `test-review-skill.md` 独立复核 |
+| 有失败 | evidence 记录真实 exitCode/失败 artifact，不得隐藏失败 |
+| 缺 test-env、环境不可达或证据不一致 | Work Item 保持 BLOCKED，修复环境或重跑 |
 
 ## 禁止事项
 
@@ -84,7 +85,7 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 跳测或忽略失败 | 去掉跳测参数，失败必须暴露 |
 | 人工估算测试数量 | 从 Surefire/Failsafe XML 解析 |
 | 修测试代替修代码 | 先判根因；修测试须记录原因并获用户确认 |
-| Mock 核心 HTTP/DB 路径 | L2 真实 HTTP，L3 真实 DB；只能解释性降级 |
+| MockMvc 或内部 MockBean/SpyBean 替代接口主链 | 本地真实端口完整内部链 + 同 buildId 测试环境 HTTP；不可降级通过 |
 | 代码未变却重复跑 Maven | 先查 evidence manifest；命中可复用证据时禁止重跑 |
 
 ## 执行清单
@@ -94,8 +95,5 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 1 | 生成 VerificationPlan + 读取输入 | 测试执行矩阵 | 变更分类与 TestCase/AC/方法映射齐 |
 | 2 | 运行编译/启动/测试 | 原始证据 | 无跳测、无忽略失败 |
 | 3 | 运行真实性扫描 | 扫描报告 | BLOCKER=0 或报告不通过 |
-| 4 | 生成测试报告 | `TEST_REPORT` | XML 与报告对账一致 |
-| 5 | 写 evidence manifest 并交接复核 | 复核输入清单 | 可由 `test-review-skill.md` 按 fingerprint 独立验证 |
-# v3.12 evidence-only Test
-
-测试执行不再生成 TestReport Markdown。每条真实命令写入 evidence manifest（command、exitCode、summary、artifact）；最终回复只展示失败项和摘要。既有 TestReport 仅供只读兼容。
+| 4 | 写并 finalize evidence manifest | immutable snapshots | HTTP AC 双阶段、同 buildId、internalMocks=false |
+| 5 | 交接复核 | 复核输入清单 | `test-review-skill.md` 按 fingerprint/hash 独立验证 |

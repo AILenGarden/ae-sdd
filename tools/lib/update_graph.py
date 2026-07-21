@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Optional
 
 
+GIT_CONFIG_TIMEOUT_SECONDS = 5
+
+
 @dataclass
 class UpdateCheckResult:
     """单项更新检查结果"""
@@ -496,7 +499,8 @@ def check_uc07_distribution_closure(repo_root: Path) -> UpdateCheckResult:
         import subprocess as _sp_uc07
         r = _sp_uc07.run(
             ["git", "config", "--get", "core.hooksPath"],
-            cwd=str(repo_root), capture_output=True, text=True, timeout=5,
+            cwd=str(repo_root), capture_output=True, text=True,
+            timeout=GIT_CONFIG_TIMEOUT_SECONDS,
         )
         hooks_path = r.stdout.strip() if r.returncode == 0 else ""
         if hooks_path != ".githooks":
@@ -1296,7 +1300,7 @@ def check_uc19_operation_maintenance_contract(repo_root: Path) -> UpdateCheckRes
 
 
 # ─── UC-20 Design Ledger contract ───────────────────────────────────────────
-DESIGN_LEDGER_IDS = tuple(f"D-{index:03d}" for index in range(1, 26))
+DESIGN_LEDGER_IDS = tuple(f"D-{index:03d}" for index in range(1, 29))
 
 
 def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
@@ -1361,7 +1365,7 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
         int(value) for value in re.findall(r"^##\s+(\d+)\.\s+", design_text, re.MULTILINE)
     }
     missing_section_mappings = [
-        f"§{index}" for index in range(1, 23)
+        f"§{index}" for index in range(1, 24)
         if index not in section_mappings or index not in section_headings
     ]
 
@@ -1459,7 +1463,7 @@ def check_uc20_design_ledger(repo_root: Path) -> UpdateCheckResult:
         )
     return UpdateCheckResult(
         "UC-20", name, "error", True,
-        f"Design Ledger aligned: {len(rows)} designs cover §1~§22 plus cross-cutting governance",
+        f"Design Ledger aligned: {len(rows)} designs cover §1~§23 plus cross-cutting governance",
         details=details,
     )
 

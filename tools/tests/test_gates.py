@@ -258,6 +258,19 @@ class TestG01(unittest.TestCase):
         r = gates.check_g01(tmp, {}, "")
         self.assertTrue(r.pass_)
 
+    def test_with_canonical_dr_passes(self):
+        tmp = _setup_project({"ae-sdd-doc/DR/DR-001.md": "# DR"})
+        r = gates.check_g01(tmp, {}, "")
+        self.assertTrue(r.pass_, msg=r.message)
+
+    def test_canonical_non_dr_bucket_does_not_pass(self):
+        tmp = _setup_project({
+            "ae-sdd-doc/Coding/DR-001-CodingPlan.md": "# plan",
+            "ae-sdd-doc/CR/DR-001-Proposal.md": "# legacy report",
+        })
+        r = gates.check_g01(tmp, {}, "")
+        self.assertFalse(r.pass_, msg="Only canonical DR bucket documents may satisfy G-01")
+
     def test_with_lowercase_dr_passes(self):
         tmp = _setup_project({"design/dr-001.md": "# dr"})
         r = gates.check_g01(tmp, {}, "")
@@ -1488,8 +1501,8 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
         # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
         # 🆕 v3.9.1：+4 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX（上下文加载准入）= 34
-        # 🆕 v3.9.20：+1 G-REVIEW-DEPTH（Review 深度，禁裸✅+零发现举证）= 35
-        self.assertEqual(len(results), 35)
+        # + G-HTTP-1 场景推导有效性门禁 = 36
+        self.assertEqual(len(results), 36)
 
     def test_check_all_only_filter(self):
         ade_sdd = _full_ade_sdd()
@@ -1521,9 +1534,9 @@ class TestCheckAll(unittest.TestCase):
         # 🆕 v3.5.18：+1 G-RA-6（RA 实现视角完整性）= 29
         # 🆕 v3.8.0：+1 G-AUTO-CONSENSUS（自动化联审共识）= 30
         # 🆕 v3.9.1：+4 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX（上下文加载准入）= 34
-        # 🆕 v3.9.20：+1 G-REVIEW-DEPTH（Review 深度，禁裸✅+零发现举证）= 35
-        self.assertEqual(summary["total"], 35)
-        self.assertEqual(summary["passed"] + summary["failed"], 35)
+        # + G-HTTP-1 场景推导有效性门禁 = 36
+        self.assertEqual(summary["total"], 36)
+        self.assertEqual(summary["passed"] + summary["failed"], 36)
         self.assertIn("results", summary)
 
 

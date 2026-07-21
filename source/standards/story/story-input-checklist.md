@@ -50,14 +50,14 @@ v3.9.2 之前，Story 系列输入清单散落在 4 个文件且互不一致：
 | C1 | **本 Story 复用的其他 Story** | 元信息中"复用其他 Story / 模块的能力"表 → Story ID 列表 → `ae-sdd doc resolve --intent STORY --story-id {ID}` | 字段契约对齐、避免接口不一致 |
 | C2 | **本 Story 阻塞的下游 Story**（如有） | 由 DR 反向推，或上游需求文档中明确 | 影响 Task 编排顺序 |
 
-### D. 模板与标准（3 项）
+### D. 模板与标准（4 项）
 
 | # | 输入项 | 定位路径 / 加载 API | 用途 |
 |---|--------|---------------------|------|
-| D1 | **Story 模板** | `source/templates/design/story-template.md`（主模板，已合并原 be-story-template.md；纯后端可在前端章节标注"不涉及"） | 章节结构基准 |
-| D2 | **Story 生成标准** | `source/standards/story/story-generation-standard.md` | 7 阶段输出、9 道闸 |
-| D3 | **Story 审核标准 + 前端接口契约标准** | `source/standards/story/story-review-checklist.md` + `source/standards/story/story-frontend-contract-standard.md` | Review 检查口径、①bis 6 维度 |
-| D4 | **测试策略**（D 实际含 4 项）| `source/strategies/be-testcase-strategy.md`（或项目级等价文件）| AC 覆盖基线 |
+| D1 | **Story 模板** | Document Storage `STORY_TEMPLATE`（返回 `path/source/content/sha256`） | 章节结构、顺序、ID 与主副层级 |
+| D2 | **Story 撰写指南** | Document Storage `STORY_WRITING_GUIDE`（返回 `path/source/content/sha256`） | 各 section ID 的必填性、来源、写法与 Review 口径 |
+| D3 | **Story 生成 / Review / 前端契约标准** | ae-sdd 当前 runtime 中的对应标准引用 | 阶段顺序、Review 与前端契约约束 |
+| D4 | **测试策略** | 项目级测试约束与 ae-sdd 测试策略 | AC 覆盖基线 |
 
 > **注：** D 类实际 4 项（Story 模板 / 生成标准 / 审核标准 / 测试策略），编号记为 D1-D4。
 
@@ -68,13 +68,14 @@ v3.9.2 之前，Story 系列输入清单散落在 4 个文件且互不一致：
 每个 Skill（generate / review / update）执行前，必须按以下 SOP 加载输入：
 
 ### Step 1：定位输入
-- 遍历 §2 的 13 项输入，逐项确定其文件路径
-- 缺失项：标记 ❌ 并尝试自动发现（rglob / assets query）
+- 遍历 §2 的输入，逐项通过声明的 Document Storage / assets API 定位
+- 模板和指南禁止 rglob、手拼路径或直接读取固定文件
+- 缺失项：标记 ❌ 并通过相应权威 API 重试
 - 仍找不到：列入"待补输入清单"，禁止进入下一步
 
 ### Step 2：读取输入
-- 按 §2 的"加载 API"读取每项
-- 记录每项的文件路径 + 文件大小 + sha256（用于一致性校验）
+- 按 §2 的加载 API 读取每项；模板和指南直接消费 Document Storage 响应中的 `content`
+- 记录每项的权威来源、路径和 sha256（用于一致性校验）
 - 提取每项的关键章节摘要（用于 AI 上下文压缩时保留）
 
 ### Step 3：输入完整性自检（prose checklist）
@@ -185,7 +186,7 @@ AI 必须按以下 13 项 ✅/❌ 自检，全部 ✅ 才能进入下一步：
 1. **新增输入项**：在本文件 §2 表格追加一行，并同步 §3 自检表 + §5 引用关系
 2. **删除输入项**：先评估影响范围，更新所有引用本 SSOT 的下游文件后再删除
 3. **修改输入项**：同样需更新下游引用
-4. **版本演进**：本 SSOT 的变更必须写入 `source/CHANGELOG/`，并在 `story-generation-standard.md` §1 标注指向本文件的版本号
+4. **当前事实**：本 SSOT 只维护当前生效规则；设计语义写回 Design Ledger，验证事实由测试承载，任何时候都不写 changelog
 
 ---
 
@@ -194,8 +195,9 @@ AI 必须按以下 13 项 ✅/❌ 自检，全部 ✅ 才能进入下一步：
 | SSOT 文件 | 关系 |
 |-----------|------|
 | `tools/lib/paths.py:MASTER_VERSION` | 版本号 SSOT |
-| `tools/lib/document_storage.py:resolve_path()` | 文档定位 API SSOT |
-| `source/templates/design/story-template.md` | Story 章节结构 SSOT（与本 SSOT 配套）|
+| `tools/lib/document_storage.py` | 文档与只读 Story 资源定位/正文/指纹 API SSOT |
+| `STORY_TEMPLATE` | Story 章节结构、section ID 与主副层级 SSOT |
+| `STORY_WRITING_GUIDE` | Story 章节撰写 SOP SSOT |
 | `source/standards/story/story-generation-standard.md` | 7 阶段输出标准 SSOT（与本 SSOT 配套）|
 | `source/standards/story/story-review-checklist.md` | Story Review 检查标准 SSOT（与本 SSOT 配套）|
 | `source/standards/story/story-frontend-contract-standard.md` | 前端契约 6 维度 SSOT（与本 SSOT 配套）|

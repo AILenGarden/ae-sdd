@@ -391,7 +391,7 @@ class TestNestedNextStepSuggestion(unittest.TestCase):
         suggestion = state.next_step_suggestion(s)
 
         assert suggestion["current"] == "story-generated"
-        assert suggestion["next"] == "testcase-generated"  # v3.10.1 子系列合并
+        assert suggestion["next"] == "coding-process"  # compact 流程的验证矩阵内嵌 Story
 
 
 class TestNestedFlowMonitor:

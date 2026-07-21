@@ -843,7 +843,7 @@ def _check_state_write(
             "dr-generated":    ["G-00", "G-01", "G-DR-CTX"],
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
             "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
-            "coding":          ["G-00", "G-07", "G-08"],
+            "coding":          ["G-00", "G-07", "G-08", "G-HTTP-1"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
@@ -851,7 +851,7 @@ def _check_state_write(
         "中": {  # Story 入口：Story + Coding/Testing
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
             "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
-            "coding":          ["G-00", "G-07", "G-08"],
+            "coding":          ["G-00", "G-07", "G-08", "G-HTTP-1"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
@@ -859,7 +859,7 @@ def _check_state_write(
         "小": {  # Story-lite 入口：直接生成 compact executionPlan
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX"],
             "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
-            "coding":          ["G-00", "G-07", "G-08"],
+            "coding":          ["G-00", "G-07", "G-08", "G-HTTP-1"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
@@ -867,7 +867,7 @@ def _check_state_write(
         "微": {  # Story-lite：initialized->story-generated->coding-process
             "story-generated": ["G-00", "G-02", "G-STORY-CTX"],
             "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
-            "coding":          ["G-00", "G-07", "G-08"],
+            "coding":          ["G-00", "G-07", "G-08", "G-HTTP-1"],
             "test-running":    ["G-00"],
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],

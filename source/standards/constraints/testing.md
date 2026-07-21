@@ -13,7 +13,7 @@
 | --- | --- |
 | 单元测试 | JUnit 4.12 + Mockito + AssertJ |
 | 集成测试 | Spring Boot Test + 开发库（@Transactional + @Rollback） |
-| Controller 测试 | 🔴 真实 HTTP：SpringBootTest(RANDOM_PORT) + TestRestTemplate（MockMvc 仅在框架过老无法启动嵌入式容器时降级，须注明原因） |
+| Controller / REST 验收 | 🔴 真实 HTTP：本地 SpringBootTest(RANDOM_PORT) + TestRestTemplate/RestAssured/标准 HTTP client；随后以同一 buildId 请求测试环境 |
 | 代码质量 | Checkstyle + SpotBugs |
 
 ---
@@ -22,7 +22,9 @@
 
 ```
 ┌──────────────────────────────┐
-│     Controller 集成测试       │  ← 🔴 真实 HTTP（RANDOM_PORT+TestRestTemplate），验证接口行为
+│     测试环境接口验收（L4）    │  ← 🔴 同一 buildId 请求非 loopback 测试环境
+├──────────────────────────────┤
+│     本地接口验收（L2）        │  ← 🔴 RANDOM_PORT + HTTP client，完整内部链
 ├──────────────────────────────┤
 │     Mapper 集成测试           │  ← 开发库，验证 SQL 正确性
 ├──────────────────────────────┤
@@ -34,11 +36,17 @@
 | --- | --- | --- | --- |
 | Service | 单元测试 | JUnit + Mockito | 纯逻辑，不依赖数据库，Mock 所有外部依赖 |
 | Mapper | 集成测试 | Spring Boot Test + 开发库 | 验证自定义 SQL 和 XML 映射正确性，使用 @Transactional + @Rollback 回滚数据 |
-| Controller | 集成测试 | 🔴 真实 HTTP：SpringBootTest(RANDOM_PORT) + TestRestTemplate | 经真实端口/网络/容器栈验证接口入参校验、响应结构、异常路径；Service 层用 @MockBean 隔离。MockMvc 不走真实端口，仅框架过老时降级 |
+| Controller / REST | 接口验收 | 🔴 真实 HTTP：SpringBootTest(RANDOM_PORT) + TestRestTemplate/RestAssured/标准 HTTP client | 本地真实端口走 Controller→Service→Repository/Mapper→测试 DB 完整内部链；禁止内部 @MockBean/@SpyBean/@Mock/@Spy/Mockito.mock；同一 buildId 必须再跑测试环境 |
 
 **单元测试 Mock 规则：**
 - Service 单元测试必须 mock 所有外部依赖（Repository、Facade、外部服务调用），禁止在单元测试中真实调用数据库或远程服务
 - 每个测试用例必须明确说明 mock 的依赖及其返回值，不同场景的 mock 返回值应在用例中独立配置，禁止跨用例共享 mock 状态
+- 单元测试和 test double 只提供快速反馈，不能作为接口 AC 的验收证据；外部系统 sandbox/stub 只能作为 supplemental 故障注入
+
+**接口 executionPlan 合同：**
+- 接口 AC 的 verification 必须声明 `boundary=http`、`stages=[local,test-env]`、`internalMocksAllowed=false` 和非空命令
+- 两阶段 evidence 必须覆盖同一 AC 集合、使用同一 buildId，且本地阶段完成时间不得晚于测试环境阶段开始时间
+- 缺测试环境、buildId 不同、内部 mock、非真实 HTTP URL 或 supplemental 证据冒充任一必需阶段时，接口 AC 保持 BLOCKED
 
 ---
 
@@ -111,6 +119,8 @@ Mapper 集成测试（开发库）
     ↓
 Controller 集成测试（真实 HTTP：RANDOM_PORT + TestRestTemplate）
     ↓
+同一 buildId 部署并请求测试环境 HTTP
+    ↓
 覆盖率达标检查
     ↓
 ✅ 验收通过
@@ -120,7 +130,10 @@ Controller 集成测试（真实 HTTP：RANDOM_PORT + TestRestTemplate）
 
 ## 八、禁止事项
 
-- 🔴 禁止用 MockMvc 替代能走真实 HTTP 的接口测试——接口测试默认走真实 HTTP（SpringBootTest RANDOM_PORT + TestRestTemplate），MockMvc 仅框架过老无法启动嵌入式容器时降级，须注明原因且不得标"HTTP 层已验证通过"
+- 🔴 禁止用 MockMvc、@WebMvcTest、application-context/controller-bound WebTestClient 或直接 Controller 调用关闭接口 AC
+- 🔴 禁止在真实端口接口验收中用 @MockBean/@SpyBean/@Mock/@Spy/Mockito.mock 替换内部 Service、Repository、Mapper、DAO、UseCase、Application 或 Controller
+- 🔴 禁止只有本地 HTTP 结果就关闭接口 AC；必须以同一 buildId 完成测试环境 HTTP 阶段
+- 🔴 禁止用 external supplemental stub/sandbox evidence 代替 `http-local` 或 `http-test-env`
 - 🔴 禁止用全 Mock 替代核心落库路径验证——INSERT/UPDATE/DELETE 核心路径必须用真实 DB（H2/TestContainers）验证落库
 - 禁止使用 `Thread.sleep()` 等待异步结果，使用 `Awaitility` 或 Mock 替代
 - 禁止在测试中使用生产数据库

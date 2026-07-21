@@ -345,6 +345,7 @@ class TestCompactFlowMonitor(unittest.TestCase):
 
         self.assertNotIn("testcase-generated", gate_map)
         self.assertEqual(gate_map["coding-process"], ["G-08"])
+        self.assertEqual(gate_map["coding"], ["G-CODEPLAN-SRC", "G-HTTP-1"])
         self.assertEqual(gate_map["test-running"], ["G-10"])
         self.assertEqual(gate_map["code-reviewed"], ["G-12"])
 

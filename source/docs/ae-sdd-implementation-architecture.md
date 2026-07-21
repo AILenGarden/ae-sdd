@@ -1,10 +1,10 @@
 # ae-sdd 实现架构说明书
 
-> v3.11.6 · 面向 ae-sdd 维护者。本文档描述代码实现结构、模块边界和设计-实现对齐规则；能力语义仍以 [`ae-sdd-design.md`](ae-sdd-design.md) 为入口。
+> v3.12.1 · 面向 ae-sdd 维护者。本文档描述代码实现结构、模块边界和设计-实现对齐规则；能力语义仍以 [`ae-sdd-design.md`](ae-sdd-design.md) 为入口。
 
 ## 过程状态与文档边界
 
-`document_storage` 对 retired intent 保留 resolve/read 兼容，但 save/finalize 返回 E012；新写入只允许核心文档和显式可选文档。`state.json` 持有 `executionPlan` 与 `review`，evidence manifest 持有测试/交付证据。G-07/G-08/G-14/G-CODEPLAN-SRC 优先读取 executionPlan，G-10/G-11/G-12 优先读取 evidence/review，旧 Markdown 仅作 legacy fallback。文档索引写入 `ae-sdd-doc/index.json`，不更新历史 `STORING.md`。
+`document_storage` 对 retired intent 保留 resolve/read 兼容，但 save/finalize 返回 E012；新写入只允许核心文档和显式可选文档。`state.json` 持有 `executionPlan` 与 `review`，evidence manifest 持有测试/交付证据。G-07/G-08/G-14/G-CODEPLAN-SRC 优先读取 executionPlan；G-09 对 HTTP verification 额外校验同 buildId 的 local/test-env evidence；G-10/G-11/G-12 优先读取 evidence/review，旧 Markdown 仅作 legacy fallback。文档索引写入 `ae-sdd-doc/index.json`，不更新历史 `STORING.md`。
 
 ## 1. 文档边界
 
@@ -64,19 +64,21 @@ harness/                        派生适配层，不手工改生成物
 | 子系统 | 主要文件 | 职责 | 变更要求 |
 | --- | --- | --- | --- |
 | CLI 入口 | `tools/bin/ae-sdd` | 命令注册、参数解析、输出模式分发 | 新命令必须补测试和 SKILL/README 引用 |
-| Windows 包内 launcher | `tools/bin/ae-sdd.cmd` | 把 Windows 完整路径调用转发到相邻 Python + 无扩展名 CLI | 必须透传参数和退出码；生成的 fast path 必须明确禁止直接执行无扩展名入口 |
+| Windows CLI launchers | `tools/bin/ae-sdd.cmd` / `scripts/install_cli.py` / `%LOCALAPPDATA%/Programs/ae-sdd/ae-sdd.cmd` | 包内 `.cmd` 支持安全的完整路径调用；用户级 `.cmd` 支持裸命令并维护 PATH | 两者都转发到 Python + 无扩展名 CLI、透传参数和退出码；PATH 更新须大小写不敏感去重；不得创建抢占 `Start-Process` 的同名 `.ps1` |
 | 输出层 | `tools/lib/output.py` | stdout/stderr 约定、JSON 输出 | 不在业务模块手写不一致输出 |
 | 路径层 | `tools/lib/paths.py` | 母版、项目、state、文档路径定位 | 禁止各模块重复拼路径 |
 | 状态机 | `tools/lib/state.py` | phase、PRD/work item 状态、事件日志、StoryName/docPath 绑定 | 改状态字段需同步 gates/hook/tests；正文绑定只存指针 |
 | StateStore | `tools/lib/state_store.py` | Work Item allowed-root、exclusive create、lease、fencing、revision CAS、idempotency、atomic persistence | 所有 mutation 必须经 StateStore；state/lock/lease/temp 均做 resolved containment；并发/过期/损坏场景需 subprocess 与 fail-closed 测试 |
 | Typed operations | `tools/lib/operations.py` | LLM 可发现、可校验、可执行的 operation registry 与适配器 | 新 operation 必须有 schema、稳定错误码、CLI/文档和 focused tests |
 | 门禁 | `tools/lib/gates.py` | GATE_REGISTRY、check_all、单 gate 实现、Work Item-scoped CodingPlan profile 与 G-RA selected RA 选择 | 改门禁需同步 UC-02/UC-03/test_gates；G-RA-1~6/FLOW 不得各自猜 RA |
+| 场景推导 | `tools/lib/scenario_derivation.py` / `http_scenario.py` | CapabilityModel 推导、ScenarioManifest 校验、独立观察和字段/状态 finding | 禁止硬编码 CRUD 套餐；每条场景必须绑定独立失败机制和可重复命令 |
 | update-check | `tools/lib/update_graph.py` | UG/UC 检查、变更影响查询 | 改图谱需同步 JSON、锚点和测试 |
 | 对齐审计 | `tools/lib/alignment_audit.py` | UC-08~13 深度对齐验证 | report-only 与阻断语义需明确 |
 | 迭代检查 | `tools/lib/iteration_check.py` | IC-1~4 设计-实现一致性粗筛 | 不替代人工语义复核 |
-| 文档存取 | `tools/lib/document_storage.py` | intent 驱动的文档定位、保存、finalize；原生 StoryName 精确解析与元数据校验 | SKILL 不应自行拼接产物路径；禁止 fuzzy Story ID 选择 |
+| 文档存取 | `tools/lib/document_storage.py` | intent 驱动的文档定位、保存、finalize；原生 StoryName 精确解析；只读 Story 资源定位、正文读取与 sha256 | SKILL 不应自行拼接或二次读取资源路径；禁止 fuzzy Story ID 选择；只读 intent 禁止写入 |
+| Story 章节解析 | `tools/lib/story_template_sections.py` | 对 Document Storage 返回的文本解析 section ID/layer、指南覆盖、导航锚点、Story ID 与历史精确迁移 | 保持纯函数，无文件 I/O、固定标题表或语义猜测 |
 | Review Batch | `tools/lib/review_batch.py` / `review_loop.py` | session/batch 状态、fingerprint、失败分类、预算、retry merge、legacy projection | 新状态字段需同步 state/gates/tests；`STALLED` 不得映射为 PASS；平台失败只重试缺失角色 |
-| 增量质量 | `tools/lib/baseline.py` / `verification_plan.py` / `evidence.py` | baseline delta、最小验证计划、成功证据 manifest 与安全复用 | baseline 创建必须显式批准；tampered/touched debt 阻断；缓存命中必须验证 artifact/freshness hash |
+| 增量质量 | `tools/lib/baseline.py` / `verification_plan.py` / `evidence.py` | baseline delta、最小验证计划、成功证据 manifest、安全复用、HTTP local/test-env evidence 配对 | HTTP 双阶段须同 buildId、正确 URL/顺序、internalMocks=false；新版 evidence 还须覆盖 scenarioId、实质断言类型和 rerun command |
 | 资产索引 | `tools/lib/assets_index.py` | assets 读取、outline、section、query、stats | 缓存变更需测试缓存失效 |
 | Hook 层 | `gate_intercept.py` / `prompt_inject.py` / `stop_check.py` | 工具调用前、提示注入、响应后校验 | HARNESS 声明必须能追到实现 |
 | 源 SKILL 瘦身 | `scripts/slim_source_skills.py` / `source/skill-fallbacks/**` | 按标准识别源 SKILL 语义、渲染 slim entry、保留完整 fallback、校验模板一致性 | 已瘦身文件默认跳过；schema 升级必须从 fallback 重渲染，禁止二次摘要 |
@@ -95,7 +97,8 @@ harness/                        派生适配层，不手工改生成物
 - 新增子命令必须有 `--json` 契约测试。
 - 命令引用必须被 `update-check` 覆盖，避免文档声明幽灵命令。
 - PowerShell 或其他 shell 批量编排必须逐命令检查退出码；最终 process exit 只代表最后一条命令。不得用后续成功覆盖前序 `doc save`/gate 的失败。
-- Windows Hook 直接调用 `python.exe <absolute>/tools/bin/ae-sdd`；Agent 的包内完整路径调用使用相邻 `tools/bin/ae-sdd.cmd`。生成的主 `SKILL.md` 与 `runtime/boot.compact.md` 均声明此规则；无扩展名入口不得直接执行，也不得通过全局文件关联赋予执行语义。
+- Windows Hook 直接调用 `python.exe <absolute>/tools/bin/ae-sdd`；包内完整路径调用使用相邻 `tools/bin/ae-sdd.cmd`，裸命令、ShellExecute 和 `Start-Process` 使用用户级 `ae-sdd.cmd`。生成的主 `SKILL.md` 与 `runtime/boot.compact.md` 均声明此规则；无扩展名入口不得直接执行，也不得通过全局文件关联赋予执行语义。
+- `scripts/install_cli.py` 将 shim 目录写入 `HKCU\Environment\Path`，保留原注册表值类型并广播环境变化；当前父进程仍需重启才能继承。安装幂等覆盖 `.cmd`，并清理会抢占 PowerShell 命令解析的旧 `ae-sdd.ps1`；卸载反向移除自有 shim 和 PATH 条目。
 
 当前 `tools/bin/ae-sdd` 已承载较多命令函数，后续新能力应优先新增 `tools/lib/<capability>.py`，入口只做分发。
 
@@ -115,13 +118,14 @@ harness/                        派生适配层，不手工改生成物
 - G-PATH 的 SSOT 豁免按 scan root 下的严格相对路径识别，仅覆盖 canonical document-storage source entry、source full fallback 和 compiled runtime fallback；basename 相同但父目录错误的文件不得豁免。
 - G-PATH 项目侧只扫描 `.ae-sdd/memory/**/*.md`、顶层 `AGENTS.md`/`CLAUDE.md`/`MEMORY.md` 与 `.harness/memory/**/*.md`；`.ae-sdd/drafts/**/*.md` 属于过程产物，不纳入该 gate。`current_story` 不作为项目路径静默过滤条件。
 - scanner 输出 JSON 必须包含项目根 `root`、`status`、`scannedPaths`、顶层统计、同值 `reportStats` 和 `findings[]`；G-CODE-1 对路径安全/唯一性/scope 覆盖、exit/status、finding schema 及全部计数执行 fail-closed attestation。production eligibility 与 scanner 枚举使用同一文本代码边界：Java/Kotlin/XML/YAML/properties 加 `.py/.js/.ts`，生成目录、虚拟环境/site-packages、`__tests__` 和常规 Python/JS/TS test/spec 命名在两侧均排除。scanner 用 Python AST 只定位自身 `LINE_RULES` 与 metadata 常量赋值范围；业务代码同 URI 不豁免，真实 pom metadata 由 XML 解析确认；不提供通用 inline suppression。
+- `test_authenticity_scan.py` 在逐行规则之外执行文件级 HTTP 判定：MockMvc/application-context-bound WebTestClient 产生 `mock-http-boundary`；真实端口 marker 与内部 Service/Repository/Mapper/Application mock bean 共现产生 `http-internal-mock`。外部 Client stub 不被误分类为内部主链，但只可生成 supplemental evidence。
 - Coding scanner 仅在 XML 解析确认真实 Maven POM 根元素后豁免标准 `xmlns`/`xsi`/`schemaLocation` 元数据 URL；Java 或 XML 中的实际外部 endpoint 仍按 `hardcoded-external-url` 阻断。
 - G-RA-1~6/FLOW 共用 `_resolve_selected_ra()`：合法 `state.raDocPath`/active Story `raDocPath` 优先，否则从 `resolve_ra_scan_scope(root).files` 选择统一 latest formal RA。scanner gate 必须传 `--file <selected>`，details 必须包含 `selected_file`、`selection_source`、`scope_mode`；selected RA 自身有 blocker 时仍 fail closed。
 - RA scanner 显式 `--file` 是 caller-authoritative scope，但仍要求项目根 containment、普通 Markdown 文件和存在性；错误以 exit 2 + `INVALID_RA_SCAN_SCOPE` JSON 返回。未传 file 的 root audit 排除 `references/templates/CHANGELOG/dist`、依赖/缓存和 GeneratePlan/Impact/ReverseIssues/Review/Report 等 event sidecar，同时保留 canonical `ae-sdd-doc/RA` 与 legacy `design/**/RA-*`。
 - 新增 `scripts/*_scan.py` 必须加入 `scripts/build_dist.py` runtime_scripts 白名单。
 - 高频 scanner 应优先支持进程内调用，子进程 CLI 仅作为兼容入口。
 - Review Batch、baseline、VerificationPlan 和 evidence 均通过 `tools/lib/` 提供纯 Python API，CLI 只做参数适配；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。
-- `verification.plan` 先规范化项目内真实文件，再由 `StateStore` 以 lease + fencing token + revision CAS 原子写入 Work Item 绑定 plan；`dryRun` 不写任何状态文件。计划同时保留兼容 `inputFingerprint` 和专用 `evidenceInputFingerprint`，Evidence 命令不得使用 `planFingerprint`。G-09 与 G-CODE-1 共用 changedPaths containment、plan fingerprint 和 evidence/artifact hash 校验；G-CODE-1 再过滤测试/文档，只保留生产代码，要求 scanner `scannedPaths` 完整覆盖该 scope，空生产 scope 阻断，无 scope 保持全仓结果。evidence artifact 必须是项目内文件，record 复制到内容寻址 immutable snapshot；同 logical key 的旧 active entry 标记 superseded，finalize 只校验 active snapshot，旧 schema manifest 读取不静默改写。
+- `verification.plan` 先规范化项目内真实文件，再由 `StateStore` 以 lease + fencing token + revision CAS 原子写入 Work Item 绑定 plan；`dryRun` 不写任何状态文件。计划同时保留兼容 `inputFingerprint` 和专用 `evidenceInputFingerprint`，Evidence 命令不得使用 `planFingerprint`。G-09 与 G-CODE-1 共用 changedPaths containment、plan fingerprint 和 evidence/artifact hash 校验；G-CODE-1 再过滤测试/文档，只保留生产代码，要求 scanner `scannedPaths` 完整覆盖该 scope，空生产 scope 阻断，无 scope 保持全仓结果。evidence artifact 必须是项目内文件，record 复制到内容寻址 immutable snapshot；同 logical key 的旧 active entry 标记 superseded，finalize 只校验 active snapshot，旧 schema manifest 读取不静默改写。HTTP plan 由 G-09 调 `validate_http_acceptance_manifest()`，只接受 active `http-local`/`http-test-env`，校验 current input fingerprint、artifact、loopback/non-loopback URL、同 buildId、AC 覆盖和 local→test-env 顺序；`http-external-supplemental` 不计入完成度。
 - LLM 写入口统一由 `tools/lib/operations.py::OperationRegistry` 提供。`ops describe` 暴露 JSON Schema，`ops next` 暴露当前 revision/lease/nextActions，`ops execute` 执行显式 Work Item 的 typed operation；未知 operation、raw `state.patch`、项目根不匹配、路径越界和缺少 lease/revision/idempotency 均 fail closed。`ae-sdd state write` 仅保留为通过 StateStore 短租约的兼容 adapter。
 - G-13 的 DR exemption 只由 `entryNode=STORY && scale=中` 触发；实现继续校验 Story 本体与成熟阶段的 Task/CodingReport/CodeReview 存在及引用关系。
 - G-07/G-08/G-14/G-CODEPLAN-SRC 共用 `_resolve_codingplan_doc()`，通过 `document_storage.resolve_scoped_artifact()` 按显式 Work Item 优先定位，Story 仅作唯一兼容 fallback。G-08 根据 `state.scale` 选择 full 或 micro profile；G-14 仅对无 Story 的 standalone 微任务返回可审计 N/A。

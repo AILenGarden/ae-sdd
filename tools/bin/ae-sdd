@@ -4,7 +4,7 @@ ae-sdd — ae-sdd CLI 入口
 
 🆕 v3.0 P0 三件套（2026-06-18）：
   - state    : 项目状态管理（read / write / next-step）
-  - gates    : 门禁检查（pre-flight；v3.10.0 共 35 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC +
+  - gates    : 门禁检查（pre-flight；共 36 门禁：G-00~14 + G-HTTP-1 + G-09B + G-CODEPLAN-SRC +
                G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION +
                G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + G-REVIEW-DEPTH + G-*-CTX）
   - classify : 4 维判定（来源/规模/AI 适配/多 Agent）
@@ -1957,18 +1957,34 @@ def cmd_doc_save(args, parser):
 
 
 def cmd_doc_resolve(args, parser):
-    """doc resolve — 只推路径不写（封装 document_storage.resolve_path，🆕 v3.7.2）
+    """doc resolve — 解析文档路径或读取权威只读资源。
 
-    用途：LLM 查"会写到哪"、或落地前单点校验路径合规。不写文件、无副作用。
+    可写文档 intent 只返回路径；只读资源 intent 返回 path/source/content/sha256。
     """
     ade_sdd, project_key = _resolve_ade_sdd_and_project_key(args)
     if not ade_sdd:
         output.err("找不到 .ae-sdd/ 项目根（可用 --project 指定）")
         return 1
 
+    normalized_intent = str(args.intent or "").strip().upper()
+    if normalized_intent in document_storage.READ_RESOURCE_ROUTES:
+        try:
+            payload = document_storage.resolve_read_resource(
+                ade_sdd, project_key, normalized_intent
+            )
+        except document_storage.DocStorageError as e:
+            output.err(f"❌ {e}")
+            return 1
+        if args.json:
+            output.emit(payload, as_json=True)
+        else:
+            output.ok(f"📖 资源：{payload['fullPath']}")
+            output.info(f"   来源：{payload['source']}；SHA-256：{payload['sha256']}")
+        return 0
+
     try:
         resolved = document_storage.resolve_path(
-            ade_sdd, project_key, args.intent,
+            ade_sdd, project_key, normalized_intent,
             story_id=args.story_id, doc_id=args.doc_id,
             work_item_id=args.work_item,
         )
@@ -1982,7 +1998,7 @@ def cmd_doc_resolve(args, parser):
         "fileName": resolved.file_name,
         "versionSuffix": resolved.version_suffix,
         "changelogPath": "",
-        "writePolicy": document_storage.document_write_policy(args.intent),
+        "writePolicy": document_storage.document_write_policy(normalized_intent),
         "scope": resolved.scope,
     }
     if args.json:
@@ -1991,7 +2007,7 @@ def cmd_doc_resolve(args, parser):
         output.ok(f"📍 路径：{resolved.full_path}")
         if resolved.version_suffix:
             output.info(f"   版本后缀：{resolved.version_suffix}")
-        policy = document_storage.document_write_policy(args.intent)
+        policy = document_storage.document_write_policy(normalized_intent)
         if not policy.get("writable"):
             output.info(f"   写入策略：{policy.get('status')}；替代：{policy.get('replacement')}")
     return 0
@@ -5785,7 +5801,7 @@ def main() -> int:
     p_pf_collect.set_defaults(func=cmd_preflight_collect)
 
     # gates
-    p_gates = sub.add_parser("gates", help="门禁检查（35 门禁：G-00~14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + G-REVIEW-DEPTH + G-*-CTX）", parents=[common])
+    p_gates = sub.add_parser("gates", help="门禁检查（36 门禁：G-00~14 + G-HTTP-1 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + G-REVIEW-DEPTH + G-*-CTX）", parents=[common])
     gates_sub = p_gates.add_subparsers(dest="subcmd", required=True, metavar="<subcmd>")
     p_gates_check = gates_sub.add_parser("check", help="跑门禁", parents=[common])
     p_gates_check.add_argument("--only", help="只查指定门禁（如 G-00 / G-RA-1）")
@@ -5843,7 +5859,7 @@ def main() -> int:
     p_doc_save.set_defaults(func=cmd_doc_save)
 
     # doc resolve — 只推路径不写
-    p_doc_resolve = doc_sub.add_parser("resolve", help="只推路径不写（查会写到哪/落地前校验）",
+    p_doc_resolve = doc_sub.add_parser("resolve", help="解析文档路径；只读资源同时返回正文与 SHA-256",
                                        parents=[common])
     p_doc_resolve.add_argument("--intent", required=True, help="文档意图")
     p_doc_resolve.add_argument("--work-item", default=None)

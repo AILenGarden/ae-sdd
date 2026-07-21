@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,7 @@ CLI_SCAN_COMMANDS = (
     "ra-implementation-scan",
     "flow-violation-scan",
 )
+UTF8_SUBPROCESS_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 
 class TestExplicitRAScanScope(unittest.TestCase):
@@ -71,6 +73,7 @@ class TestExplicitRAScanScope(unittest.TestCase):
             text=True,
             check=False,
             encoding="utf-8",
+            env=UTF8_SUBPROCESS_ENV,
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -112,6 +115,7 @@ class TestExplicitRAScanScope(unittest.TestCase):
                     text=True,
                     check=False,
                     encoding="utf-8",
+                    env=UTF8_SUBPROCESS_ENV,
                 )
                 self.assertNotEqual(result.returncode, 2, result.stderr)
                 payload = json.loads(result.stdout)
@@ -157,6 +161,7 @@ class TestExplicitRAScanScope(unittest.TestCase):
             text=True,
             check=False,
             encoding="utf-8",
+            env=UTF8_SUBPROCESS_ENV,
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -204,6 +209,7 @@ class TestExplicitRAScanScope(unittest.TestCase):
                     text=True,
                     check=False,
                     encoding="utf-8",
+                    env=UTF8_SUBPROCESS_ENV,
                 )
                 self.assertNotEqual(result.returncode, 2, result.stderr)
                 payload = json.loads(result.stdout)
@@ -234,6 +240,7 @@ class TestExplicitRAScanScope(unittest.TestCase):
                     text=True,
                     check=False,
                     encoding="utf-8",
+                    env=UTF8_SUBPROCESS_ENV,
                 )
                 self.assertEqual(result.returncode, 2)
                 payload = json.loads(result.stdout)
@@ -263,6 +270,7 @@ class TestExplicitRAScanScope(unittest.TestCase):
                     text=True,
                     check=False,
                     encoding="utf-8",
+                    env=UTF8_SUBPROCESS_ENV,
                 )
                 self.assertNotEqual(result.returncode, 0)
                 payload = json.loads(result.stdout)

@@ -474,7 +474,8 @@ interface ResolvedPath {
 | `get_git_path()` | `projectKey` | `string`（项目根绝对路径）| 从 assets.md §1 读取 gitPath |
 | `get_service_root()` | `projectKey`, `serviceName` | `string`（微服务根 = `{gitPath}/{serviceName}`）| 微服务级定位 |
 | `get_constraints()` | `projectKey` | `ConstraintList`（约束文档名 → 完整路径映射）| 取代 SKILL 内写死的 `constraints/` 路径。定位：`{gitPath}/constraints/` 或 `docWorkspace/constraints/`（二者其一）|
-| `get_thinking_engine()` | `projectKey` | `ThinkingEngineRef`（path / source / content / sha256）| 加载 CodingModel / 11 维思维引擎。优先项目覆盖，回退到 ae-sdd 自带 `standards/thinking/be-coding-thinking-engine.md` |
+| `get_thinking_engine()` | `projectKey` | `ThinkingEngineRef`（path / source / content / sha256）| 加载 CodingModel / 11 维思维引擎。优先项目覆盖，回退到 ae-sdd 自带 CodingModel |
+| `resolve_read_resource()` | `projectKey`, `intent` | `ReadResourceRef`（path / fullPath / source / content / sha256 / writable=false）| 读取模板、撰写指南等只读资源；项目覆盖优先，内置资源回退 |
 | `get_assets()` | `projectKey` | `AssetsRef`（项目资产文件路径列表）| 取代 SKILL 内写死的 `assets/{projectKey}/` 路径。复用 `paths.find_module_asset_files`（v4.1 支持 line 分组发现）|
 | `resolve_story_document()` | `projectDir`, `storyId`, `storyName?`, `boundPath?` | `StoryDocumentResolution`（path / storyId / storyName / source / candidates / rejected）| 原生 Story 文件解析；供 G-02/G-14 与 state 绑定共用 |
 
@@ -491,6 +492,24 @@ interface ResolvedPath {
 禁止按 `*story-006*`、标题片段、目录最近修改时间或任意别名做模糊选择。同一精确 StoryName 出现多个元数据有效候选时返回 `STORY_DOC_AMBIGUOUS`；元数据缺失或不一致时列入 `rejected`，门禁 fail closed。嵌套 state 写 `storyStates[storyId].storyName/docPath`，扁平兼容 state 写顶层 `storyName/storyDocPath`；不得创建第二份 ID-only 正文或软链接作为修复手段。
 
 G-02 与 G-14 必须调用同一解析器。无绑定且只有正式命名文件时，G-02 的恢复动作是 `ae-sdd state bind-story-doc`，不是要求项目改名或复制文档。
+
+#### 4.2.2 只读资源 API
+
+`resolve_read_resource(projectKey, intent)` 使用声明式资源路由表解析并读取只读资源。当前 Story 资源 intent 包括 `STORY_TEMPLATE` 与 `STORY_WRITING_GUIDE`。返回值包含：
+
+```typescript
+interface ReadResourceRef {
+  intent: string;
+  path: string;
+  fullPath: string;
+  source: 'project-override' | 'packaged-default';
+  content: string;
+  sha256: string;
+  writable: false;
+}
+```
+
+项目覆盖候选超过一个、资源不存在或读取失败时 fail closed。调用 Skill 只消费 `content` 和 `sha256`，不得重新打开 `path`；`doc save/finalize` 对只读资源 intent 必须返回 `E013`。
 
 ### 4.3 统一保存 API：`save_doc()`
 

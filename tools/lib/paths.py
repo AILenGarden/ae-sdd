@@ -15,7 +15,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.12.0"
+MASTER_VERSION = "3.12.1"
 
 
 # ─── 🆕 v3.10.1 state UUID 前缀（保证目录名/stateMachineId 全局唯一）─────────

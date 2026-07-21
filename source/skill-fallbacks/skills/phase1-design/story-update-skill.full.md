@@ -1,134 +1,34 @@
----
-name: story-update
-description: 根据 Proposal、Story 补充说明文档和 Story 模板更新 Story 主文档。当 Story Review、Coding 或其他渠道发现 Story 缺陷时触发，或开发者说"更新 Story"、"同步补充说明到 Story"时触发。
----
-
-# Story Update — Story 文档更新 Skill
-
-> **🆕 v3.9.3 重大变更：**
-> 1. §第零步：准入清单统一指向 `story-input-checklist.md` SSOT（13 项自检表）
-> 2. §执行规则新增第 6 条："Update 修改字段时必须保持来源追溯标注不被破坏"
-> 3. §禁止事项新增 4 条：禁止破坏来源追溯 / 禁止修改字段而不同步来源 / 禁止跳过 §三步 bis 来源追溯
+# Story Update - Story 文档更新 Skill
 
 ## 目标
 
-根据 Proposal 中记录的修复建议更新 Story 主文档，并同步回写 Supplement、模板优化建议或 DR 反馈。
+安全更新既有 Story。Document Storage 返回当前模板、撰写指南和 Story 正文；`story_template_sections` 按稳定 section ID 分类变更；本 Skill 不维护章节清单。
 
-## 依赖标准
+## 资源加载
 
-- [Story 输入清单 SSOT（v3.9.3 新增）](../../standards/story/story-input-checklist.md) **← 单一权威源**
-- [Story Review 检查标准](../../standards/story/story-review-checklist.md)（v3.9.3 已扩展 §A.bis / §D.bis / §D.ter）
-- [Story 前端接口契约标准（①bis）](../../standards/story/story-frontend-contract-standard.md)
-- [Story 生成标准](../../standards/story/story-generation-standard.md)（v3.9.3 已扩展 §2.5 映射表 + 10 道闸）
-- [`proposal-skill.md`](../cross-cutting/proposal-skill.md)
-- [`document-storage-skill.md`](../cross-cutting/document-storage-skill.md)
+1. 通过 `resolve_read_resource("STORY_TEMPLATE")` 和 `resolve_read_resource("STORY_WRITING_GUIDE")` 获取 `path/source/content/sha256`。
+2. 通过 `ae-sdd doc resolve --intent STORY --story-id {storyId}` 获取正式 Story 资源并消费其正文。
+3. 所有正文均来自 Document Storage 响应；禁止 Skill 按路径再次打开。
+4. 模板、指南或 Story 解析失败时 fail closed。
 
-## 文档存放前置调用
+## 更新流程
 
-写入前必须先调用 `document-storage-skill.md`，不手写路径。
+1. 解析当前模板和指南，校验 section ID 覆盖、显式锚点和导航链接；更新后必须通过 `validate_story_document_navigation`。
+2. 解析 Story 的 ID-only 标记；新文档按 ID 识别变更范围。
+3. 历史无 ID 文档只允许标题精确、唯一迁移；迁移后补齐全部显式锚点和 ID-only 标记。
+4. 调用 `classify_story_section_ids(template.content, changed_ids)` 判断主要或副章节。
+5. 主要章节变化：重新确认受影响输入，更新主要章节，执行 `Review(scope=primary)`，使依赖副章节失效并重新派生，最后执行 `Review(scope=full)`。
+6. 仅副章节变化：禁止改变主要章节，更新后执行 `Review(scope=full)`。
+7. 仅模板标题变化：保持 Story section ID 不变；按当前模板标题刷新展示，不修改层级逻辑。
 
-| 文档类型 | API 调用 | 命名规则 | 动作 |
-|---------|---------|---------|------|
-| Story 主文档 | `ae-sdd doc save --intent STORY --story-id {S} --content-file 草稿.md` | 不带版本号（原地更新）|
-| Story Supplement | `ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 | 原地更新 |
-| Proposal | `ae-sdd doc save --intent PROPOSAL --work-item {W} --story-id {S} --content-file 草稿.md` | 不带版本号 | 原地更新 |
+## 变更分类
 
-## 第零步：准入检查（🆕 v3.9.3 新增 SSOT 化）
+- 业务目标、范围、流程、契约、状态、错误码、数据、配置、非功能、实现设计、AC、依赖变化，按当前模板 layer 判为主要变更。
+- 任务映射、人工任务和未决问题变化，按当前模板 layer 判为副变更。
+- 无语义的格式变化只做最小原地更新，但仍须保留 ID-only 标记。
 
-**输入清单统一指向 [`story-input-checklist.md`](../../standards/story/story-input-checklist.md) 单一权威源（SSOT）。**
+## 输出与禁止事项
 
-### 0.1 加载 SSOT
-读 `source/standards/story/story-input-checklist.md` 全文，按 §3 输入加载 SOP 4 步执行。
-
-### 0.2 13 项 prose 自检表（必须全部 ✅）
-
-```
-[ ] A1 DR 文档已读取
-[ ] A2 PRD 文档已读取
-[ ] A3 产品原型已读取（或标注"无原型"）
-[ ] A4 历史 RA 已读取（如有）
-[ ] B1 项目资产已读取
-[ ] B2 项目约束已读取
-[ ] B3 前端约束已读取（如涉及前端）
-[ ] B4 依赖能力清单已扫描
-[ ] C1 依赖 Story 已加载并比对字段（**Update 时尤其重要**：需确认修改不影响依赖 Story）
-[ ] C2 阻塞下游 Story 已识别（如有）
-[ ] D1 Story 模板已加载
-[ ] D2 Story 生成标准已加载
-[ ] D3 Story 审核标准 + 前端契约标准已加载
-[ ] D4 测试策略已加载
-```
-
-### 0.3 🔴 机械门禁
-
-```bash
-ae-sdd gates check --only G-STORY-CTX
-```
-
-未过 → **BLOCK，禁止进入 Update**。
-
-> 🔴 **v3.9.3 强化理由：** Update 修改字段时可能影响依赖 Story 字段对齐（§D.ter），必须重新加载并校验。
-
-## 流程
-
-```text
-触发
-  → 【v3.9.3 新增】第零步：加载 13 项输入（SSOT prose 自检 + G-STORY-CTX 门禁）
-  → 读取 Proposal + Supplement
-  → 读取 Story 模板
-  → 校验 Proposal 可执行性
-  → 按 Proposal 更新 Story
-  → 【v3.9.3 新增】重新执行 §三步 bis 来源追溯与验证（确保修改后来源标注不被破坏）
-  → 【v3.9.3 新增】重新执行 §A.bis / §D.ter 字段对齐（如修改了接口字段）
-  → 判断是否影响 Task / DR / 模板
-  → 回写 Supplement / Proposal 状态
-  → 必要时触发 Task Generate 或 DR Update
-```
-
-## 核心原则
-
-- Story Update 只执行 Proposal 覆盖的修复。
-- Story Update 不重新分析问题根因。
-- Story Update 不生成 Proposal。
-- 如果发现新的业务语义变更，必须暂停并让上游补新 Proposal。
-- **🔴 v3.9.3 新增：** Update 修改字段时必须保持来源追溯标注不被破坏（§三步 bis 重新校验）。
-- **🔴 v3.9.3 新增：** Update 修改接口字段必须重新执行 §A.bis DR-Story 字段级一致性比对。
-
-## 执行规则
-
-1. 先读 Proposal，再读 Supplement。
-2. 只修改 Proposal 覆盖的章节。
-3. 字段链路、接口、数据模型、错误码一旦涉及，必须同步闭环。
-4. 任何计划外修改都视为无效。
-5. 修改后必须标记缺陷状态，并回写更新结果。
-6. **🔴 v3.9.3 新增：** Update 修改字段时必须保持来源追溯标注不被破坏：
-   - 字段类型/名称变更 → 同步更新该字段的 `📌 来源：` 标注
-   - 字段来源变更 → 在 Supplement 中说明并补充 Proposal 引用
-   - 新增字段 → 必须填写完整四维 + 章节级来源标注，禁止留空
-   - 删除字段 → 在 Supplement 中保留删除记录（含原来源标注），便于追溯
-7. **🔴 v3.9.3 新增：** Update 修改接口字段必须重新执行：
-   - §三步 bis 字段来源追溯（确保四维完整）
-   - §A.bis DR-Story 字段级一致性（与 DR 重新比对）
-   - §D.ter 依赖 Story 字段对齐（与依赖 Story 重新比对）
-
-## 触发下游
-
-| 变更类型 | 是否触发下游 |
-|---------|-------------|
-| Task 列表、任务说明、接口字段、数据模型、字段链路、错误码变化 | 触发 Task Generate |
-| DR 规则或设计缺陷被确认 | 触发 DR Update |
-| 仅 AC / 验收记录变化 | 不触发 |
-| 仅补充说明变化 | 不触发 |
-| **🔴 v3.9.3 新增：** 字段来源标注变化 | 不触发下游，但在 Supplement 中记录 |
-| **🔴 v3.9.3 新增：** 影响依赖 Story 字段对齐 | 触发对应依赖 Story 的 Update |
-
-## 禁止事项
-
-- 禁止读取或依赖旧版 Story Review 计划载体
-- 禁止按计划外内容改 Story
-- 禁止跳过 Proposal 直接修改 Story
-- 禁止把 Supplement 当作修复计划
-- **🔴 v3.9.3 新增：** 禁止在 Update 时破坏来源追溯标注（违反 → 必须重做 §三步 bis）
-- **🔴 v3.9.3 新增：** 禁止修改字段而不更新该字段的来源标注
-- **🔴 v3.9.3 新增：** 禁止跳过第零步 SSOT 自检与 G-STORY-CTX 门禁
-- **🔴 v3.9.3 新增：** 禁止跳过 Update 后的 §三步 bis 与 §A.bis / §D.ter 重校验
+- 正文原地更新，使用 `ae-sdd doc save --intent STORY`；不生成旁车报告或 changelog。
+- 回写结构化 Review finding 和验证证据，不写过程 Markdown。
+- 禁止标题近似匹配或语义猜测、部分 ID 与无 ID 混用、直接读取固定路径或跳过 primary Review。

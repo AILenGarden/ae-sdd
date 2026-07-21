@@ -11,6 +11,7 @@ test_fixes_v13.py — v1.3 修复验证测试
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,10 @@ from lib.stop_check import (
     increment_retry,
 )
 from lib.prompt_inject import inject, QUICK_CHANNEL_MARKERS
+
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+import install_cli
 
 
 # ─── 1. MultiEdit 拦截 ───────────────────────────────────────────────────────
@@ -330,3 +335,160 @@ class TestInstallCli:
             cwd=str(Path(__file__).parent.parent.parent)
         )
         assert "True" in result.stdout, f"CLI 文件不存在: {result.stderr}"
+
+    def test_windows_path_append_is_case_insensitive_and_idempotent(self):
+        """同一路径的大小写、斜杠和尾分隔符差异不得造成重复追加。"""
+        original = "C:\\Windows;C:\\Users\\EDY\\AppData\\Local\\Programs\\AE-SDD\\"
+        updated, changed = install_cli._append_windows_path_entry(
+            original,
+            r"c:/users/edy/appdata/local/programs/ae-sdd",
+        )
+
+        assert not changed
+        assert updated == original
+
+    def test_windows_path_remove_only_target_entry(self):
+        """卸载时只移除 ae-sdd 目录，保留前后 PATH 条目。"""
+        original = r"C:\Windows;C:\Tools;C:\Users\EDY\AppData\Local\Programs\ae-sdd"
+        updated, changed = install_cli._remove_windows_path_entry(
+            original,
+            r"c:/users/edy/appdata/local/programs/AE-SDD/",
+        )
+
+        assert changed
+        assert updated == r"C:\Windows;C:\Tools"
+
+    def test_windows_path_mutation_preserves_empty_components(self):
+        """PATH 中已有的空组件不得因安装或卸载被顺带归一化。"""
+        original = r"C:\Windows;;C:\Tools;"
+        appended, changed = install_cli._append_windows_path_entry(original, r"C:\AeSdd")
+
+        assert changed
+        assert appended == r"C:\Windows;;C:\Tools;;C:\AeSdd"
+
+        removed, changed = install_cli._remove_windows_path_entry(
+            r"C:\Windows;;C:\AeSdd;;C:\Tools;",
+            r"c:/aesdd/",
+        )
+
+        assert changed
+        assert removed == r"C:\Windows;;;C:\Tools;"
+
+    def test_windows_check_requires_persisted_user_path(self, tmp_path, monkeypatch):
+        """仅当前进程可见、但未写入用户 PATH 时，--check 必须失败。"""
+        cli = tmp_path / "tools" / "bin" / "ae-sdd"
+        cli.parent.mkdir(parents=True)
+        cli.write_text("print('ok')\n", encoding="utf-8")
+        shim_dir = tmp_path / "shim"
+        shim_dir.mkdir()
+        cmd_shim = shim_dir / "ae-sdd.cmd"
+        cmd_shim.write_text("@echo off\n", encoding="utf-8")
+
+        monkeypatch.setattr(install_cli, "_cli_target", lambda: cli)
+        monkeypatch.setattr(install_cli, "_windows_shim_dir", lambda: shim_dir)
+        monkeypatch.setattr(install_cli.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(
+            install_cli,
+            "_read_windows_user_path",
+            lambda: (r"C:\Windows", 2),
+        )
+        monkeypatch.setattr(install_cli.shutil, "which", lambda *_args, **_kwargs: str(cmd_shim))
+
+        assert install_cli.check_status() == 1
+
+    def test_windows_check_rejects_conflicting_command_resolution(self, tmp_path, monkeypatch):
+        """用户 PATH 已持久化时，其他目录中的同名命令也不能被误报为成功。"""
+        cli = tmp_path / "tools" / "bin" / "ae-sdd"
+        cli.parent.mkdir(parents=True)
+        cli.write_text("print('ok')\n", encoding="utf-8")
+        shim_dir = tmp_path / "shim"
+        shim_dir.mkdir()
+        wrong_shim = tmp_path / "other" / "ae-sdd.cmd"
+        wrong_shim.parent.mkdir()
+        wrong_shim.write_text("@echo off\n", encoding="utf-8")
+
+        monkeypatch.setattr(install_cli, "_cli_target", lambda: cli)
+        monkeypatch.setattr(install_cli, "_windows_shim_dir", lambda: shim_dir)
+        monkeypatch.setattr(install_cli.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(
+            install_cli,
+            "_read_windows_user_path",
+            lambda: (str(shim_dir), 2),
+        )
+        monkeypatch.setattr(install_cli.shutil, "which", lambda *_args, **_kwargs: str(wrong_shim))
+
+        assert install_cli.check_status() == 1
+
+    def test_windows_check_fails_when_version_command_fails(self, tmp_path, monkeypatch):
+        """shim 可解析但实际执行失败时，--check 必须返回非零。"""
+        cli = tmp_path / "tools" / "bin" / "ae-sdd"
+        cli.parent.mkdir(parents=True)
+        cli.write_text("print('ok')\n", encoding="utf-8")
+        shim_dir = tmp_path / "shim"
+        shim_dir.mkdir()
+        cmd_shim = shim_dir / "ae-sdd.cmd"
+        cmd_shim.write_text("@echo off\n", encoding="utf-8")
+
+        monkeypatch.setattr(install_cli, "_cli_target", lambda: cli)
+        monkeypatch.setattr(install_cli, "_windows_shim_dir", lambda: shim_dir)
+        monkeypatch.setattr(install_cli.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(
+            install_cli,
+            "_read_windows_user_path",
+            lambda: (str(shim_dir), 2),
+        )
+        monkeypatch.setattr(install_cli.shutil, "which", lambda *_args, **_kwargs: str(cmd_shim))
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1, "", "boom"),
+        )
+
+        assert install_cli.check_status() == 1
+
+    def test_windows_install_writes_shims_and_persists_path_once(self, tmp_path, monkeypatch):
+        """连续安装两次应保持 shim 内容稳定，用户 PATH 只出现一次。"""
+        shim_dir = tmp_path / "ae-sdd-bin"
+        cli = tmp_path / "tools" / "bin" / "ae-sdd"
+        cli.parent.mkdir(parents=True)
+        cli.write_text("print('ok')\n", encoding="utf-8")
+        shim_dir.mkdir()
+        (shim_dir / "ae-sdd.ps1").write_text("legacy\n", encoding="utf-8")
+
+        registry = {"value": r"C:\Windows", "type": 2, "writes": 0}
+
+        monkeypatch.setattr(install_cli, "_windows_shim_dir", lambda: shim_dir)
+        monkeypatch.setattr(install_cli, "_python_exe", lambda: r"C:\Python\python.exe")
+        monkeypatch.setattr(
+            install_cli,
+            "_read_windows_user_path",
+            lambda: (registry["value"], registry["type"]),
+        )
+
+        def write_user_path(value, value_type):
+            registry["value"] = value
+            registry["type"] = value_type
+            registry["writes"] += 1
+
+        monkeypatch.setattr(install_cli, "_write_windows_user_path", write_user_path)
+        monkeypatch.setattr(install_cli, "_broadcast_environment_change", lambda: None)
+        monkeypatch.setenv("PATH", r"C:\Windows")
+
+        assert install_cli.install_windows(cli) == 0
+        assert install_cli.install_windows(cli) == 0
+
+        assert (shim_dir / "ae-sdd.cmd").read_text(encoding="utf-8") == (
+            "@echo off\n"
+            f'"C:\\Python\\python.exe" "{cli}" %*\n'
+        )
+        assert not (shim_dir / "ae-sdd.ps1").exists()
+        assert registry["writes"] == 1
+        assert sum(
+            install_cli._canonical_windows_path(item)
+            == install_cli._canonical_windows_path(shim_dir)
+            for item in install_cli._split_windows_path(registry["value"])
+        ) == 1
+        assert install_cli._canonical_windows_path(shim_dir) in {
+            install_cli._canonical_windows_path(item)
+            for item in install_cli._split_windows_path(os.environ["PATH"])
+        }

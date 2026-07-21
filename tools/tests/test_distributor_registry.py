@@ -153,7 +153,8 @@ class DistributorRegistryTests(unittest.TestCase):
 
     def test_scan_for_agents_returns_known(self):
         """scan_for_agents 返回已知 Agent 清单。"""
-        found = dr.scan_for_agents()
+        with patch.object(dr, "_cli_exists", side_effect=lambda cli: cli == "mavis"):
+            found = dr.scan_for_agents()
         names = [f["name"] for f in found]
         self.assertIn("claude", names)
         self.assertIn("mavis", names)
