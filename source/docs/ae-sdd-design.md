@@ -1,6 +1,6 @@
 # ae-sdd 系统能力说明书
 
-> v3.11.6 · 面向开发者、LLM Agent 与项目接入方
+> v3.12.1 · 面向开发者、LLM Agent 与项目接入方
 >
 > 本文档是**系统能力设计入口**，说明 ae-sdd 的能力语义、边界和当前实现状态。代码分层、模块职责、运行时数据流和变更闭环统一维护在 [`ae-sdd-implementation-architecture.md`](ae-sdd-implementation-architecture.md)。若本文与代码实现冲突，以 CLI/测试输出为准，并同步修正文档。
 
@@ -33,7 +33,7 @@ RA、DR、Story 是核心设计文档。Proposal、GeneratePlan、CodingReport�
 | D-006 | Review Batch 与增量验证 | 每次变更都全量重跑，成本高；历史证据容易被覆盖 | review batch、baseline、changedPaths、verification plan、evidence fingerprint | 缩短验证时间，减少无效重跑，同时保持证据可追溯 | `verification.plan`、evidence active/superseded、focused tests | §5 Review Batch；`verification_plan.py`、`evidence.py` | v3.10.1/v3.11.0/已实现 |
 | D-007 | Typed operation + state lease | LLM 不知道调用什么、参数怎么写、哪些操作需要锁；并发写会覆盖 state，失败重试会重复推进 | `ops describe/next/execute`、JSON Schema、lease/fencing/revision/idempotency、`nextActions`、短事务锁 | 减少 LLM 理解成本、上下文读取、命令猜测、冲突和失败重试；把自然语言契约变成机器契约 | `ops describe --json`、UC-19、StateStore/operation/concurrency tests、CLI latency baseline（待持续补充） | §5 Review Batch 表、`operation-protocol.md`、`operations.py` | v3.11.0/v3.11.0/已实现 |
 | D-008 | 项目资产七层索引 | LLM 每次从工程源码重新寻找约束、技术栈、模块和接口，容易遗漏上下文 | project assets 分层、生成/审计、倒排/BM25 查询、G-00 | 缩短上下文检索，提升首次回答和路由准确度 | `assets generate/check/query/stats`、G-00、asset index tests | §6；`project_assets.py`、`assets_index.py` | v3.2.4~v3.5.1/v3.11.0/已实现 |
-| D-009 | Document Storage | Story/Work Item/constraints/assets 路径分散，正式 StoryName 与逻辑 ID 不同或 ID 重复时，LLM 和工具容易读错、猜错或要求改名 | intent-based resolve、Work Item-first、非 glob StoryName 精确绑定与元数据反校验、Story-category-only ID fallback、save/finalize | 减少路径猜测、跨类别假命中和文档错写，让项目正式命名可直接使用，同时保留受限旧 ID-only 兼容 | `doc resolve/save/finalize`、`state bind-story-doc`、G-DOC-STORAGE、Story resolver tests、life Story-004/006 验收 | §7；`document_storage.py`、`document-storage-skill.md` | v3.7.2/v3.11.3/已实现 |
+| D-009 | Document Storage | Story/Work Item/constraints/assets/只读模板资源路径分散，正式 StoryName 与逻辑 ID 不同或项目覆盖存在时，LLM 和工具容易读错、猜错或重复读取 | intent-based resolve、Work Item-first、精确 StoryName 绑定；只读资源按项目覆盖→内置回退统一返回 `path/source/content/sha256`；save/finalize 拒绝只读 intent | 减少路径猜测、跨类别假命中、读取竞态和文档错写，让调用 Skill 消费同一权威正文与指纹 | `doc resolve/save/finalize`、`resolve_read_resource`、G-DOC-STORAGE、Story/resource resolver tests | §7；`document_storage.py`、`document-storage-skill.md` | v3.7.2/v3.12.1/已实现 |
 | D-010 | 四层实例化与分发 | source、dist、用户安装、项目实例互相漂移，修复或共享 scanner 依赖无法传递 | Layer 1 source -> Layer 2 dist -> Layer 3 install -> Layer 4 init/override；独立运行时脚本及其共享 helper 必须显式进入 `runtime_scripts` 白名单 | 降低升级和环境差异造成的故障，保证 LLM 使用同一版本契约，并避免 dist scanner 因漏 helper 无法启动 | `build_dist.py`、`test_build_dist_packages_the_shared_scope_helper`、install/init、UC-15/runtime verify | §8；`build_dist.py`、`install.py`、`init.py` | v3.4.1/v3.11.4/已实现 |
 | D-011 | Harness 适配层 | 不同 Agent 运行时需要不同入口，手工转译易造成版本和模板漂移 | adapter lock、source hash、tree hash、生成/回滚/备份轮转 | 减少接入和升级的人工操作，避免安装产物陈旧 | `build_harness.py`、adapter lock tests、iteration-check | §9；`.harness/`、`build_harness.py` | v3.5.6/v3.11.0/已实现 |
 | D-012 | Memory 生命周期 | 长会话上下文过大，compact 后关键业务事实丢失或 scope 混用 | 实体树、boot/context/pending compact、manifest hash、生命周期 CLI | 缩短默认上下文，提升跨 session 恢复和业务事实复用 | `memory create/read/update/search/summarize`、memory tests | §10；`memory_store.py`、`memory_compiler.py` | v3.8.2~v3.10.3/v3.11.0/已实现 |
@@ -50,6 +50,10 @@ RA、DR、Story 是核心设计文档。Proposal、GeneratePlan、CodingReport�
 | D-023 | Sonar Issue 修复收尾 | CodeReview 发现的问题容易重复处理、越界修改或缺少 exactly-once 证据 | issue registry、TextEdit/provenance、compile/test/rescan 闭环 | 减少重复修复和错误补丁，提升 review 收尾效率 | `test_sonar_issue_fix_skill.py`、规则 registry、CodeReview evidence | §21；`sonar-issue-fix-skill.md`、`sonar-issue-fix-rules.md` | v3.11.0/v3.11.0/已实现 |
 | D-024 | Design Ledger 治理 | 设计动机、价值假设和迭代影响容易再次分散或漏记，台账本身也可能失去维护 | §0 台账 + CHANGELOG `Design ledger impact` + UG-28/UC-20 fail-closed | 降低后续 LLM 重新理解和维护者追溯成本，让设计价值记录成为可检查资产 | `UC-20`、`update-check 20/20`、台账字段/章节/版本反例测试 | §0；`update_graph.py`、`ae-sdd-update`、CHANGELOG 模板 | v3.11.1/v3.11.1/已实现 |
 | D-025 | 风险驱动的有界测试策略 | 全矩阵、逐字段边界、最少用例公式和证伪比例会制造低价值测试，且没有停止条件 | 先建有限风险登记，再按边界准入、行为等价类、最低充分层级和局部数量上限选择；停止后扩展必须走预算例外 | 减少无独立缺陷发现价值的测试执行与维护成本，同时保护显式契约和高影响风险 | `test_bounded_test_strategy.py`、TC-G11/TC-10、后续项目 TestCase 数量与缺陷发现率基线 | §22；`be-testcase-strategy.md`、TestCase generate/review/template、CodingModel | v3.11.5/v3.11.5/已实现，收益待补基线 |
+| D-026 | 真实 HTTP 双阶段接口验收 | MockMvc 或 `RANDOM_PORT + @MockBean` 只验证模拟边界，且仅本地结果无法证明部署后的接口可用 | Story/plan 声明 HTTP AC；G-08/G-14 校验双阶段和边界；scanner 阻断 MockMvc/内部 mock；G-09 要求同 buildId 的 `http-local` 与 `http-test-env` immutable evidence | 防止 mock 测试和未部署结果冒充接口完成，把本地实现与测试环境部署纳入同一验收事实链 | `test_http_acceptance_policy.py`、G-08/G-14/G-09、scanner/evidence tests | §12、§22；`gates.py`、`evidence.py`、`test_authenticity_scan.py` | v3.11.7/v3.11.7/已实现 |
+| D-027 | Story 模板章节分层与导航 | 语义清单无法稳定对应完整模板章节，章节增删、重命名或改层级会迫使三个 Story Skill 同步硬编码列表；长 Story 和多接口契约还需要稳定跳转与清晰分组 | 模板以稳定 section ID 和 `primary/secondary` 元数据声明唯一边界；独立撰写指南按 ID 定义 SOP；Document Storage 返回正文/指纹；纯函数动态取章节和校验导航；生成 Story 保留显式锚点与 ID-only 标记；章节按分析→设计→实现排序，核心与补充区隔离 | 模板或层级变化无需改 Skill，标题重命名不破坏 Review/Update；目录无断链；接口块可独立定位；正式 Story 省略不适用章节并降低认知负担 | `test_story_template_sections.py`、`test_story_content_layering.py`、Document Storage CLI tests、slim/runtime 验证 | §23；Story 模板/指南、`story_template_sections.py`、Story 三件套 | v3.12/v3.12.1/已实现 |
+
+| D-028 | 能力驱动的测试场景推导 | 固定 CRUD 示例和大量 Mock 单测不能根据接口语义发现真实缺陷，真实 HTTP 也可能只有状态码断言 | 从能力、状态、独立观察面、不变量、扰动和失败机制推导最小场景；G-HTTP-1 校验 manifest，G-09 对账 scenario evidence | 让测试计划随接口语义变化并能解释检错价值，删除无独立失败机制的肤浅测试 | `test_scenario_derivation.py`、`test_http_scenario_contract.py`、`test_scenario_effectiveness.py` | §22；`scenario_derivation.py`、`http_scenario.py`、`be-http-scenario-strategy.md` | v3.12/已实现 |
 
 ### 0.3 台账的证据等级
 
@@ -218,7 +222,7 @@ G-RA-1~6 与 G-RA-FLOW-VIOLATION 通过 `_resolve_selected_ra()` 共享当前 Wo
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，**实际 34 个**：G-00~G-14 + G-09B + G-CODEPLAN-SRC + G-DOC-STORAGE + G-DOC-CONSISTENCY + G-PATH + G-RA-1~6 + G-RA-FLOW-VIOLATION + G-CODE-1 + G-REVIEW-LOOP + G-AUTO-CONSENSUS + 🆕 v3.9.1 G-DR-CTX/G-STORY-CTX/G-TESTCASE-CTX/G-TASK-CTX） |
+| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，实际 36 个；包含 G-HTTP-1 场景推导门禁） |
 | CLI 统一扫描入口 | `ae-sdd gates check`（`tools/bin/ae-sdd` 行2688，帮助文本自带门禁清单） |
 | 单个门禁定向检查 | `ae-sdd gates check --only <gate_id>` |
 | G-00 资产门卫 | `gates.py` G-00 check 函数；不通过时可运行 `ae-sdd assets generate --project <key>` 生成/修复 baseline 资产，再用 `ae-sdd assets check` 校验 |
@@ -304,6 +308,7 @@ G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存
 | 文档定稿 | `document_storage.py:finalize_doc()`（行444） |
 | 项目约束读取 | `document_storage.py:get_constraints()`（行119） |
 | 项目资产列表读取 | `document_storage.py:get_assets()`（行140） |
+| Story 只读资源 | `document_storage.py:resolve_read_resource()`；`STORY_TEMPLATE` / `STORY_WRITING_GUIDE` 返回 path/source/content/sha256，项目覆盖优先 |
 | Git 路径/服务根路径 | `document_storage.py:get_git_path()`（行99）/ `get_service_root()`（行108） |
 | 版本号推断 | `document_storage.py:get_latest_version()`（行259）/ `_normalize_version()`（行239） |
 | ChangeLog 读取 | `document_storage.py:get_changelog()`（行286） |
@@ -313,7 +318,7 @@ G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存
 
 **已补齐**：`get_thinking_engine(projectKey)` 已在 `tools/lib/document_storage.py` 实现，并收录到 `document-storage-skill.md` §4.2。编码流程引用该 API 时会优先读取项目/文档工作区覆盖版本，找不到时回退到 ae-sdd 自带 `standards/thinking/be-coding-thinking-engine.md`，返回 `path/source/content/sha256`。
 
-**颗粒度与边界**：所有 ae-sdd 生成文档的读写必须走本层 API，不允许 SKILL 各自维护路径拼接逻辑；version/ChangeLog 策略变更须同步 §4.10 intent 枚举表的"实现状态"列（✅已实现/📝待实现）。
+**颗粒度与边界**：所有 ae-sdd 生成文档的读写必须走本层 API，不允许 SKILL 各自维护路径拼接逻辑。只读资源由本层一次性完成定位、UTF-8 读取和 sha256 计算；调用方消费返回正文，不得二次打开路径。只读 intent 不进入可写路径表，save/finalize 必须 fail closed。
 
 ---
 
@@ -431,7 +436,7 @@ CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策�
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 测试真实性扫描（⑥.10/G-09硬门禁） | `scripts/test_authenticity_scan.py`：8类禁止手段 + Surefire XML 解析 + AC覆盖率100%验证；由 test-verifier sub-agent 独立执行 |
+| 测试真实性扫描（⑥.10/G-09硬门禁） | `scripts/test_authenticity_scan.py`：通用假测试规则 + `mock-http-boundary` + `http-internal-mock` + Surefire XML；由 G-09 消费 |
 | Coding 真实性扫描（G-CODE-1） | `scripts/coding_authenticity_scan.py`：AP-1~AP-6反模式库；`ae-sdd gate coding-required` 自动触发 |
 | RA 真实性扫描（G-RA-4） | `scripts/ra_authenticity_scan.py`：8类禁止规则（vague-ellipsis/no-evidence/fabricated-field等） |
 | RA 流程违规审计（G-RA-FLOW-VIOLATION） | `scripts/flow_violation_scan.py`：R1~R3规则（12维决策记录/8维度挖掘/缺口管理） |
@@ -442,7 +447,7 @@ CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策�
 | 设计-实现对齐验证器（AA） | `tools/lib/alignment_audit.py`：UC-08~UC-13（6个 check_uc0x 函数），反向对账"doc 承诺门禁↔gates 注册↔实现真实性"，CLI `ae-sdd update-check` |
 | 设计-实现一致性迭代检查（IC） | `tools/lib/iteration_check.py`：IC-1~IC-4 机器粗筛（report-only 不阻断），CLI `ae-sdd iteration-check` |
 
-**颗粒度与边界**：测试真实性扫描是 ⑥.10 硬门禁；扫描器均不可被 SKILL 文字描述替代；RA scanner 的 `--file` 是 Work Item authoritative scope，`--root` 是 formal RA 全量审计，两者同时出现时 file scope 优先；missing/outside/non-Markdown explicit file 返回非 0 与 `INVALID_RA_SCAN_SCOPE` JSON。AA（UC-08~13）阻断式，IC（IC-1~4）report-only 不阻断；扫描器路径变更须同步更新 update-graph.json。
+**颗粒度与边界**：测试真实性扫描是 ⑥.10 硬门禁；MockMvc/application-context-bound client 不属于 socket-level HTTP，真实端口测试中替换内部 Service/Repository/Mapper/Application 仍是 blocker。扫描器均不可被 SKILL 文字描述替代；RA scanner 的 `--file` 是 Work Item authoritative scope，`--root` 是 formal RA 全量审计，两者同时出现时 file scope 优先；missing/outside/non-Markdown explicit file 返回非 0 与 `INVALID_RA_SCAN_SCOPE` JSON。AA（UC-08~13）阻断式，IC（IC-1~4）report-only 不阻断；扫描器路径变更须同步更新 update-graph.json。
 
 ---
 
@@ -480,7 +485,7 @@ ae-sdd Python CLI，将 SKILL 规则工具化，实现"规则描述 + 工具执�
 | 版本类 | `bump <ver> / version` |
 | 维护类 | `health / init / init-hooks / runtime / plugin / scripts-dir / prompt-inject / stop-check` |
 
-**Windows CLI 启动契约**：`tools/bin/ae-sdd` 是无扩展名 Python 入口，Windows 不得将它直接交给 PowerShell `&`、ShellExecute 或 `Start-Process`，否则会进入“打开方式”或报非 Win32 应用。Hook 使用 `python.exe <绝对路径>/tools/bin/ae-sdd ...`；Agent 的完整路径调用使用包内同目录 `tools/bin/ae-sdd.cmd`。编译器必须把该规则写入生成的主 `SKILL.md` 和 `runtime/boot.compact.md`，确保 fast path 不会误用无扩展名入口。不得通过注册系统级无扩展名文件关联解决该问题。
+**Windows CLI 启动契约**：`tools/bin/ae-sdd` 是无扩展名 Python 入口，Windows 不得将它直接交给 PowerShell `&`、ShellExecute 或 `Start-Process`，否则会进入“打开方式”或报非 Win32 应用。Hook 使用 `python.exe <绝对路径>/tools/bin/ae-sdd ...`；完整路径调用使用包内同目录 `tools/bin/ae-sdd.cmd`，裸命令由 `scripts/install_cli.py` 安装用户级 `ae-sdd.cmd` shim 并幂等加入当前用户 PATH。编译器必须把该规则写入生成的主 `SKILL.md` 和 `runtime/boot.compact.md`，确保 fast path 不会误用无扩展名入口。Windows 不安装同名 `.ps1` shim，避免 PowerShell 命令优先级抢占 `.cmd`，导致 `Start-Process ae-sdd` 解析到非 Win32 脚本。不得通过注册系统级无扩展名文件关联解决该问题。
 
 **批处理退出码边界**：单个 `ae-sdd` 命令的退出码是权威结果；连续执行多个命令时，shell 最终退出码只代表最后一条命令。PowerShell 编排必须在每条可能失败的命令后读取并判断 `$LASTEXITCODE`（或设置显式 fail-fast 包装），不能在前一条 `doc save`/gate 已返回 1 后继续运行成功命令，再把最终 0 误记为前一条 CLI 成功。`doc save --intent RA` prerequisite 失败会返回 1、不生成正式 RA、保留草稿；该契约由 subprocess 回归测试验证。
 
@@ -799,3 +804,35 @@ TestCase 质量以独立缺陷发现价值和可追溯证据衡量，不以测�
 | 回归证据 | `tools/tests/test_bounded_test_strategy.py` 阻止旧公式、占比门禁和无条件跨层覆盖回流 |
 
 **颗粒度与边界**：当前能力是 Markdown SKILL/标准层软约束，不新增 CLI、gate、state、scanner、Document Storage 或 Monitor 行为。generate 与 review 双重检查选择证据，但“独立失败机制”的语义判断仍依赖 Agent；长期价值需通过真实项目的 TestCase 数量、维护耗时和缺陷发现率补充基线。
+
+### 真实 HTTP 接口验收硬边界
+
+有界测试控制“测多少”，不能削弱接口 AC 的验证边界。接口 AC 固定使用 `boundary=http`、`stages=[local,test-env]`、`internalMocksAllowed=false`：先在 loopback 真实端口验证 Controller→Service→Repository/Mapper→测试 DB，再以同一 buildId 请求非 loopback 测试环境。MockMvc、直接 Controller 调用、内部 MockBean/SpyBean、只有本地结果或 external supplemental evidence 均不能关闭接口 AC。
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 计划契约 | G-08 校验 HTTP verification 字段；G-14 从 Story 验证矩阵反查接口 AC boundary |
+| 源码真实性 | `test_authenticity_scan.py` 输出 `mock-http-boundary` / `http-internal-mock` BLOCKER |
+| 运行证据 | `evidence.validate_http_acceptance_manifest()` 校验阶段、URL、buildId、AC、顺序、artifact 与 internalMocks |
+| 完成门禁 | G-09 在通用真实性 evidence 之外要求 active `http-local` + `http-test-env`；环境不可达保持 BLOCKED |
+
+## 23. Story 主/副内容分层
+
+### 设计
+
+Story 的主要内容是对任务最直接描述的完整模板章节，而不是跨章节语义片段。模板在每个 H2 前用稳定 section ID、显式锚点和 `primary/secondary` 元数据声明唯一边界；独立撰写指南按 section ID 定义适用条件、必填性、来源、写法和 Review 口径，Skill 不保存章节清单。章节按分析→设计→实现排序，核心设计集中，任务/人工操作/未决问题隔离到补充区。
+
+Document Storage 返回模板和指南的 `path/source/content/sha256`，纯解析函数从模板正文动态取得主要/副章节。生成 Story 保留 ID-only 隐藏标记，Review/Update 按 ID 使用当前模板层级，因此标题重命名或层级调整不要求修改 Skill。主要章节先执行 `scope=primary`，通过后派生副章节并执行 `scope=full`；主要章节变化使依赖副章节失效。
+
+### 实现
+
+| 设计点 | 实现方式 |
+| --- | --- |
+| 章节与层级 SSOT | `STORY_TEMPLATE`：每个 H2 的稳定 ID、layer、顺序和空白结构 |
+| 撰写 SOP SSOT | `STORY_WRITING_GUIDE`：按 section ID 定义规则，不复制层级名单 |
+| 资源读取 | `document_storage.resolve_read_resource()` 返回正文与 sha256；只读 intent 禁止写入 |
+| 动态解析 | `tools/lib/story_template_sections.py`：主要/副章节、ID 分类、指南覆盖、导航锚点和历史精确迁移 |
+| Generate/Review/Update | 三件套只消费资源正文和解析结果；生成 Story 输出 ID-only 标记；primary → full |
+| 验证 | `test_story_template_sections.py`、`test_story_content_layering.py`、Document Storage/CLI、slim/runtime |
+
+**颗粒度与边界**：层级变量只存在于模板，生成 Story 只保留稳定 ID，不新增 state 字段。历史 Story 完全无 ID 时只允许标题精确唯一迁移；部分 ID、未知标题或歧义均 fail closed，禁止语义猜测。

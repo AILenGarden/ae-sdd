@@ -53,6 +53,8 @@ ae-sdd gates check --only G-TESTCASE-CTX
 
 ## 流程
 
+Review 先反查 CapabilityModel 到 ScenarioManifest 的推导链，再检查每条场景的独立观察面、不变量、扰动和失败机制。固定 CRUD 套餐、同一失败机制重复、status-only 或同路径自证必须退回 generate，不得用增加用例数量修复。
+
 ```text
 触发
   → 读取 Story（AC/接口/数据模型/异常路径）+ 测试用例文档（含 🆕 缺陷假设清单）
@@ -70,7 +72,7 @@ ae-sdd gates check --only G-TESTCASE-CTX
 | TC-1 | AC 覆盖完整性 | 每个 AC 至少被一个用例覆盖；允许一条用例覆盖多个 AC |
 | TC-2 | 风险登记完整性 | 候选有证据来源、风险等级、行为分区、独立失败机制和选择决策 |
 | TC-3 | L1 最低充分性 | 纯逻辑风险优先在 L1；等价边界和异常输入不重复 |
-| TC-4 | L2 接口风险 | 仅 HTTP/序列化/异常映射的独立风险有真实 HTTP 用例 |
+| TC-4 | HTTP 接口风险 | 每个接口 AC 均声明 `boundary=http`、local→test-env、internalMocksAllowed=false；MockMvc/内部 mock 不得作为验收 |
 | TC-5 | L3 数据风险 | 仅 DB 约束、事务和 SQL 的独立风险有真实 DB 用例 |
 | TC-6 | L4 链路风险 | 仅跨服务/多组件的独立风险有端到端用例 |
 | TC-7 | 高影响风险保护 | 安全、权限、金额、数据丢失、事务、并发、幂等和不可逆状态适用时未被预算排除 |

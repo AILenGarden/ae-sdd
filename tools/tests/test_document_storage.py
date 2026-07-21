@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -295,6 +296,60 @@ class TestThinkingEngine(unittest.TestCase):
         result = document_storage.get_thinking_engine(tmp / ".ae-sdd", "test")
         self.assertEqual(Path(result["path"]), override.resolve())
         self.assertIn("custom thinking engine", result["content"])
+
+
+class TestReadResources(unittest.TestCase):
+    def test_story_template_uses_packaged_fallback_with_content_hash(self):
+        tmp = _setup_project()
+        result = document_storage.resolve_read_resource(
+            tmp / ".ae-sdd", "test", "STORY_TEMPLATE"
+        )
+
+        self.assertEqual(result["source"], "packaged-default")
+        self.assertEqual(result["path"], result["fullPath"])
+        self.assertFalse(result["writable"])
+        self.assertIn("ae-sdd:story-section", result["content"])
+        self.assertEqual(
+            result["sha256"],
+            hashlib.sha256(result["content"].encode("utf-8")).hexdigest(),
+        )
+
+    def test_story_resource_prefers_project_override(self):
+        tmp = _setup_project()
+        override = tmp / "templates/design/story-template.md"
+        override.parent.mkdir(parents=True)
+        override.write_text("# project story template\n", encoding="utf-8")
+
+        result = document_storage.resolve_read_resource(
+            tmp / ".ae-sdd", "test", "STORY_TEMPLATE"
+        )
+
+        self.assertEqual(result["source"], "project-override")
+        self.assertEqual(Path(result["path"]), override.resolve())
+        self.assertEqual(result["content"], "# project story template\n")
+
+    def test_ambiguous_project_resource_overrides_fail_closed(self):
+        tmp = _setup_project()
+        for override in (
+            tmp / "templates/design/story-template.md",
+            tmp / ".ae-sdd/templates/design/story-template.md",
+        ):
+            override.parent.mkdir(parents=True, exist_ok=True)
+            override.write_text("# override\n", encoding="utf-8")
+
+        with self.assertRaises(document_storage.DocStorageError) as ctx:
+            document_storage.resolve_read_resource(
+                tmp / ".ae-sdd", "test", "STORY_TEMPLATE"
+            )
+        self.assertIn("E014", str(ctx.exception))
+
+    def test_read_resource_intents_reject_save(self):
+        tmp = _setup_project()
+        result = document_storage.save_doc(
+            tmp / ".ae-sdd", "test", "STORY_TEMPLATE", "# overwrite"
+        )
+        self.assertFalse(result.success)
+        self.assertIn("E013", result.error or "")
 
 
 class TestStoryDocumentResolution(unittest.TestCase):

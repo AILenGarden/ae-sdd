@@ -53,10 +53,12 @@ def test_agent_policy_has_delegation_limits_and_pointer():
 
 
 def test_version_and_previous_pom_namespace_fix_are_preserved():
-    assert "version: 3.11.1" in ENTRY.splitlines()[:5]
-    assert "v3.11.1" in (ROOT / "README.md").read_text(encoding="utf-8")
+    version_line = next(line for line in ENTRY.splitlines()[:5] if line.startswith("version: "))
+    version = version_line.removeprefix("version: ").strip()
+    assert tuple(int(part) for part in version.split(".")) >= (3, 11, 1)
+    assert f"v{version}" in (ROOT / "README.md").read_text(encoding="utf-8")
     paths = (ROOT / "tools" / "lib" / "paths.py").read_text(encoding="utf-8")
-    assert 'MASTER_VERSION = "3.11.1"' in paths
+    assert f'MASTER_VERSION = "{version}"' in paths
     pom_changelog = (ROOT / "source" / "CHANGELOG"
                      / "2026-07-14-v3.10.8-gcode1-fail-closed-attestation.md")
     assert "Maven" in pom_changelog.read_text(encoding="utf-8")

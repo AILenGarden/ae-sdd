@@ -71,6 +71,13 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
     "ASSETS":            ("{docWorkspace}/.ae-sdd/assets/{projectKey}/{projectKey}.assets.md", False, "Assets"),
 }
 
+# Read-only packaged resources are routed separately from writable documents.
+# Adding a resource is data-only; callers continue to use doc resolve.
+READ_RESOURCE_ROUTES: dict[str, Path] = {
+    "STORY_TEMPLATE": Path("templates/design/story-template.md"),
+    "STORY_WRITING_GUIDE": Path("standards/story/story-writing-guide.md"),
+}
+
 # v3.12 process-artifact policy：RA / DR / Story 是长期核心文档。
 # 旧过程 intent 继续保留路径解析能力，确保历史文件可读；save/finalize 对这些
 # intent fail closed，禁止未来继续生成重复 Markdown。
@@ -117,6 +124,13 @@ PROCESS_ARTIFACT_REPLACEMENTS: dict[str, str] = {
 def document_write_policy(intent: str) -> dict:
     """Return the active write policy without hiding historical resolvers."""
     normalized = str(intent or "").strip().upper()
+    if normalized in READ_RESOURCE_ROUTES:
+        return {
+            "intent": normalized,
+            "writable": False,
+            "status": "resource",
+            "replacement": "使用 doc resolve 读取权威资源",
+        }
     if normalized in RETIRED_WRITE_INTENTS:
         return {
             "intent": normalized,
@@ -136,6 +150,11 @@ def document_write_policy(intent: str) -> dict:
 
 def _reject_retired_write(intent: str) -> None:
     policy = document_write_policy(intent)
+    if policy["status"] == "resource":
+        raise DocStorageError(
+            "E013",
+            f"intent={policy['intent']} 是只读资源；必须使用 doc resolve，禁止 save/finalize",
+        )
     if not policy["writable"] and policy["status"] == "retired":
         raise DocStorageError(
             "E012",
@@ -321,6 +340,76 @@ def _existing_unique_paths(candidates: list[Path]) -> list[Path]:
         if resolved.is_file():
             existing.append(resolved)
     return existing
+
+
+def _resource_override_candidates(
+    ade_sdd: Path, project_key: str, relative_path: Path
+) -> list[Path]:
+    candidates: list[Path] = []
+    doc_ws = paths.resolve_doc_workspace(ade_sdd, project_key)
+    if doc_ws:
+        candidates.extend([doc_ws / relative_path, doc_ws / ".ae-sdd" / relative_path])
+    git_path = get_git_path(ade_sdd, project_key)
+    if git_path:
+        git_root = Path(git_path)
+        candidates.extend([git_root / relative_path, git_root / ".ae-sdd" / relative_path])
+    return _existing_unique_paths(candidates)
+
+
+def _packaged_resource_candidates(relative_path: Path) -> list[Path]:
+    candidates: list[Path] = []
+    master = paths.locate_master_source()
+    if master:
+        candidates.extend([master / "source" / relative_path, master / relative_path])
+    package_root = Path(__file__).resolve().parents[2]
+    candidates.extend([package_root / "source" / relative_path, package_root / relative_path])
+    return _existing_unique_paths(candidates)
+
+
+def resolve_read_resource(ade_sdd: Path, project_key: str, intent: str) -> dict:
+    """Resolve and read an authoritative packaged/project resource.
+
+    The returned content and fingerprint are one atomic reference from the
+    caller's perspective.  Story Skills must consume this response rather than
+    reopen ``path`` themselves.
+    """
+    normalized = str(intent or "").strip().upper()
+    relative_path = READ_RESOURCE_ROUTES.get(normalized)
+    if relative_path is None:
+        raise DocStorageError(
+            "E000", f"未知只读资源 intent: {normalized}（已知: {sorted(READ_RESOURCE_ROUTES)}）"
+        )
+
+    overrides = _resource_override_candidates(ade_sdd, project_key, relative_path)
+    if len(overrides) > 1:
+        raise DocStorageError(
+            "E014",
+            f"只读资源存在多个项目覆盖候选: {normalized}: {[str(path) for path in overrides]}",
+        )
+    if overrides:
+        selected = overrides[0]
+        source = "project-override"
+    else:
+        packaged = _packaged_resource_candidates(relative_path)
+        if not packaged:
+            raise DocStorageError("E015", f"只读资源不存在: {normalized} ({relative_path})")
+        selected = packaged[0]
+        source = "packaged-default"
+
+    try:
+        content = selected.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise DocStorageError("E016", f"只读资源读取失败: {selected}: {exc}") from exc
+    full_path = str(selected.resolve())
+    return {
+        "intent": normalized,
+        "path": full_path,
+        "fullPath": full_path,
+        "source": source,
+        "content": content,
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "writable": False,
+    }
 
 
 def get_thinking_engine(ade_sdd: Path, project_key: str) -> dict:

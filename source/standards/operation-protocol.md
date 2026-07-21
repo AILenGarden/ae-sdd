@@ -87,9 +87,20 @@ Identity is explicit: `project` and `workItem` are mandatory. `story` is a relat
 
 ## 6. Evidence Semantics
 
+For `scenarioPolicyVersion=1`, each HTTP verification references a project-contained `scenarioManifest`. Active `http-local` and `http-test-env` evidence summaries must cover the required scenario IDs and record, per scenario, `result=PASS`, at least one substantive assertion kind (`field/state/relation/invariant/effect/atomicity`), and a standalone `rerunCommand`. Status-only evidence cannot satisfy the contract.
+
 `verification.plan` returns both the compatibility field `inputFingerprint` and the explicit `evidenceInputFingerprint`. Evidence operations MUST use `evidenceInputFingerprint`; `planFingerprint` identifies plan structure and is not an evidence input identity.
 
 `evidence.record` copies each source artifact into a content-addressed immutable snapshot under the Story evidence directory. Recording the same `logicalKey` marks the previous active entry `superseded` and appends a new active entry. Finalization and gate validation ignore superseded entries and validate active snapshots only. Legacy manifests without lifecycle or snapshot fields remain readable and are not silently rewritten by reads.
+
+HTTP acceptance uses the existing open `kind` and `summary` fields; it does not add a new operation or change the operation JSON Schema:
+
+- `executionPlan.verification` marks interface ACs with `boundary=http`, `stages=[local,test-env]`, and `internalMocksAllowed=false`.
+- required evidence kinds are `http-local` and `http-test-env`; `http-external-supplemental` is fault-injection evidence and never satisfies a required stage.
+- each required summary contains `stage`, credential-free `baseUrl`, non-empty `buildId`, `acIds`, `internalMocks=false`, and `result=PASS`.
+- G-09 requires both stages to use the current evidence input fingerprint and the same buildId; local must precede test-env. Missing test-env remains BLOCKED rather than PASS.
+
+Compatibility classification for v3.11.7 is patch at the operation protocol layer: `registryVersion`, request/response schemas, lease semantics, manifest readability, and evidence persistence remain unchanged. The stricter behavior is gated by an explicitly declared HTTP verification contract.
 
 ## 7. Stable Failure Codes
 

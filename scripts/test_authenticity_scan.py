@@ -106,6 +106,28 @@ TEST_METHOD_BLOCK = re.compile(
 ASSERT_OR_VERIFY = re.compile(
     r"\b(assert\w*|assertThat|verify\s*\(|then\s*\(|expectThrows|assertThrows|ExpectedException)\b"
 )
+MOCK_HTTP_BOUNDARY = re.compile(
+    r"\bMockMvc\b|@AutoConfigureMockMvc\b|@WebMvcTest\b|"
+    r"WebTestClient\s*\.\s*bindTo(?:ApplicationContext|Controller|RouterFunction)\s*\("
+)
+REAL_HTTP_STACK = re.compile(
+    r"\bRANDOM_PORT\b|@LocalServerPort\b|\bTestRestTemplate\b|\bRestAssured\b|"
+    r"WebTestClient\s*\.\s*bindToServer\s*\(|\bjava\.net\.http\.HttpClient\b|"
+    r"\borg\.apache\.hc\.client5\.http\b"
+)
+INTERNAL_COMPONENT_TYPE = (
+    r"[A-Za-z_]\w*(?:Service|Repository|Mapper|Dao|DAO|UseCase|Application|Controller)"
+    r"(?:Impl|Adapter|Advice|Delegate|Decorator|Proxy)?"
+)
+INTERNAL_HTTP_MOCK = re.compile(
+    rf"(?:"
+    rf"@(?:MockBean|SpyBean|MockitoBean|MockitoSpyBean|Mock|Spy)\b"
+    rf"(?:(?!;).){{0,240}}\b{INTERNAL_COMPONENT_TYPE}\b"
+    rf"|\b(?:Mockito\s*\.\s*)?(?:mock|spy)\s*\(\s*"
+    rf"(?:new\s+)?{INTERNAL_COMPONENT_TYPE}\s*(?:\.class|\()"
+    rf")",
+    re.DOTALL,
+)
 
 
 def rel(path: Path, root: Path) -> str:
@@ -159,6 +181,33 @@ def scan_java_tests(root: Path) -> tuple[list[Finding], int]:
         test_files += 1
         text = read_text(path)
         lines = text.splitlines()
+
+        mock_http = MOCK_HTTP_BOUNDARY.search(text)
+        if mock_http:
+            add_finding(
+                findings,
+                "BLOCKER",
+                "mock-http-boundary",
+                path,
+                root,
+                line_no(text, mock_http.start()),
+                "MockMvc or an application-context-bound HTTP client is not real socket-level HTTP acceptance.",
+                mock_http.group(0),
+            )
+
+        if REAL_HTTP_STACK.search(text):
+            internal_mock = INTERNAL_HTTP_MOCK.search(text)
+            if internal_mock:
+                add_finding(
+                    findings,
+                    "BLOCKER",
+                    "http-internal-mock",
+                    path,
+                    root,
+                    line_no(text, internal_mock.start()),
+                    "Real-port HTTP acceptance must not replace internal Service/Repository/Mapper/Application beans.",
+                    internal_mock.group(0),
+                )
 
         for idx, source_line in enumerate(lines, start=1):
             for severity, rule, pattern, message in LINE_RULES:

@@ -1,9 +1,11 @@
 ---
 name: ae-sdd
-version: 3.11.3
+version: 3.12.1
 description: |
   端到端自动化工程主入口。核心文档为 RA、DR、Story；经紧凑 executionPlan 用户确认后进入 Coding->Test evidence->Review findings，直到全部通过。
   支持大/中/小/微四条子链（按已有产物就近入链）、流程状态跟踪、中断恢复、主流程监管器（产物核查+偏移检测+暂离回归协议）。
+  🆕 v3.12.1：Story 主/副内容由模板 section 元数据声明；Document Storage 返回模板/指南正文与 sha256，解析器按稳定 section ID 取得章节，主内容先 primary Review，再派生副内容并 full Review。
+  🆕 场景推导：接口 AC 先由能力、状态、独立观察面、不变量、扰动和失败机制生成最小场景，再做真实 HTTP 双阶段验收；固定 CRUD 套餐、status-only、内部 Mock 和不可重跑场景由 G-HTTP-1/G-09 fail closed。
   🆕 v3.11.3：Story 逻辑 ID 与正式 StoryName 解耦。`state new --story-name` / `state bind-story-doc` 精确绑定原生文件名，G-02/G-14 共用 metadata-validated resolver；禁止模糊猜测或创建 ID-only 别名，旧 `{STORY-ID}.md` 保持兼容。
   🆕 v3.10.8：G-CODE-1 work-item scope 必须通过 evidence 三方语义绑定与 scanner coverage/report attestation；任一证据、路径、schema、计数不可信均 fail closed，无可信 scope 时仍严格全仓扫描。
   🆕 v3.10.2：micro 意图分流——`/ae-sdd 优化这部分实现` / `/ae-sdd CodeReview 这段` 不再误进自更新、也不走完整 Coding 全链。classify 新增 entryNode=OPTIMIZE/CODE_REVIEW + 代码上下文消歧（self-update 上下文优先）；gate 跨步跳跃对微链意图 entry_node 放行（复用 BUG 豁免范式）；code-review 新增无文档轻量准入分支；coding-process §A1.4 加意图分流前置门。详见 CHANGELOG/2026-07-11-v3.10.2-micro-intent-routing.md。
@@ -376,6 +378,8 @@ automation:
 
 RA、DR、Story 是必须保留的核心设计文档。Proposal、GeneratePlan、CodingReport、TestReport、CodeReview 报告、ReviewCompare、SourceTrace、ComplianceReport 和 STORING.md 停止新写入；执行计划进入 state.executionPlan，测试进入 evidence manifest，Review 进入 review.status/findings，用户只确认紧凑表格。历史文件只读兼容，不删除、不改写、不迁移。任何时候都不写 changelog。
 
+Story 内容必须按 `source/standards/story/story-content-layering-standard.md` 分层：模板 section 元数据是主副边界 SSOT，指南按 section ID 提供写法；主内容 `primary` Review 通过后才派生副内容并执行 `full` Review；主内容变更会使受影响副内容失效并重新派生。
+
 | 原则 | 要求 |
 |------|------|
 | 基于事实 | 所有输出必须有明确来源（DR/PRD/资产/用户告知/代码读取）|
@@ -527,9 +531,9 @@ ae-sdd context-pressure --story {STORY-ID}   # report-only，不阻断，不改s
 
 ```
 Phase 1 设计阶段
-  ① 生成Story（story-generate-skill）
+  ① 生成 Story 主内容（story-generate-skill：模板 section ID → primary）
   ①bis 前端视角接口审视（6维度→story-review-skill §①bis）
-  ② Story Review（story-review-skill，含F-Stage前端契约）
+  ② Story Review（先primary；通过后派生副内容，再full，含F-Stage前端契约）
   ③ 生成测试用例（testcase-generate-skill）
   ③bis TestCase Review（testcase-review-skill，TC-1~TC-9循环，2轮无新增退出）
   ③ter 业务逻辑汇总
@@ -547,7 +551,7 @@ Phase 2 实现阶段
 Phase 3 验证阶段
   ⑥ Test 系列（test-generate-skill→test-review-skill，按监管器4步子流程；⑥.10由test-verifier独立验证）
   ⑥bis 编码后全切面一致性核查闸（→ code-review-skill §闸1）
-  ⑦ CodeReview报告（→ code-review-skill，templates/coding/be-codereview-template.md）
+  ⑦ Code Review findings（→ code-review-skill，写入 state.review.status/findings）
   ⑦bis 全链路对称性核查闸（→ code-review-skill §闸2）
   🔍 审核点4：CodeReview完成确认 + context-pressure
   ⑦ter 流程收尾合规自检（5维度：7t-1~7t-5，禁止裸✅收尾）
@@ -590,7 +594,7 @@ PRD收尾（可选）：
 AE编排层门禁：① 完成后必做 ①bis；② Story含"接口契约"章节（v3.10.9 起拆为 SPI/REST 两章节，REST 章节含 ①bis 6 维度）；③ Story Review含F-Stage
 
 ### ② Story Review
-循环：挖掘→判定→Proposal→按Proposal修复→再挖掘→退出（连续2轮无新增）
+顺序：`scope=primary` 审主内容 → 通过后派生副内容 → `scope=full` 审完整 Story；结论写入 `state.review.status/findings`。主内容变更必须使受影响副内容失效并回到 `primary`，副内容缺失不得阻断 `primary`。
 
 退出协议 → `review-loop-skill.md`；F-Stage未通过 → Story Review不完整
 
@@ -638,14 +642,14 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 |---|------|---------|
 | 6.1 | mvn compile | BUILD SUCCESS |
 | 6.2 | 服务启动 | Started XxxApplication；端口监听；无BeanCreationException |
-| 6.3 | 主流程接口 | L2 HTTP 100% Pass（能跑真实HTTP禁用MockMvc）|
+| 6.3 | 主流程接口 | 每个 HTTP AC 本地真实端口完整内部链 PASS，再以同一 buildId 在测试环境 PASS；MockMvc/内部 MockBean/SpyBean 不计入验收 |
 | 6.4 | 错误码映射 | 业务异常→对应错误码 |
 | 6.5 | DB写落库 | L3 INSERT后SELECT可查到 |
 | 6.6 | 事务边界 | 失败全回滚；事务外操作异步 |
 | 6.7 | 所有测试 | L1/L2/L3/L4全Pass |
 | 6.8 | 无Open问题 | 开发记录无Open |
-| 6.9 | 测试报告已出 | `TEST_REPORT`（`{story}-Report-v{N}-r{M}.md`）存在 |
-| 6.10🔴 | 测试真实性 | test-verifier独立验证，BLOCKER=0；详见 `test-review-skill.md` |
+| 6.9 | 测试证据已封存 | evidence manifest active snapshots/hash 有效；HTTP AC 同时有 `http-local` 与 `http-test-env` |
+| 6.10🔴 | 测试真实性 | test-verifier 独立验证，scanner BLOCKER=0，HTTP 双阶段同 buildId 且 `internalMocks=false` |
 
 ### ⑦ter 流程收尾合规自检（5维度，禁止裸✅收尾）
 
@@ -655,7 +659,7 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 | 7t-2 文档位置 | `gates check --only G-DOC-STORAGE` | stray=[] |
 | 7t-3 state完整 | `ae-sdd state read --work-item <WORKITEM-ID> --json` | phase合法+currentWorkItem非空；Story 流程需 currentStory非空 |
 | 7t-4 产出物齐全 | 逐项核§⑧产出物表 | 全部文件真实存在 |
-| 7t-5 无遗留🔴 | 读CodeReview报告 | 无Open态🔴问题 |
+| 7t-5 无遗留🔴 | 读 `state.review.status/findings` | status=passed，且无 Open P0/P1 finding |
 
 🟢 可自愈→修复后重跑该维度；🔴 阻断→升级用户，禁止裸✅进⑧
 
@@ -663,12 +667,11 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 
 | 产出物 | 路径定位 |
 |--------|---------|
-| Story文档 | `resolve_path(intent="STORY", storyId)` |
-| Task文档 | `resolve_path(intent="TASK", workItemId, storyId?, taskId)` |
-| Coding报告 | `resolve_path(intent="CODING_REPORT", workItemId, storyId?, version={v,r})` |
-| CodeReview报告 | `resolve_path(intent="CODE_REVIEW", workItemId, storyId?, version={v,r})` |
-| 测试用例 | `resolve_path(intent="TESTCASE", workItemId, storyId?)` |
-| 测试报告 | `resolve_path(intent="TEST_REPORT", workItemId, storyId?, version={v,r})` |
+| Story 文档 | `resolve_path(intent="STORY", storyId)` |
+| TestCase（仅复杂矩阵选填） | `resolve_path(intent="TESTCASE", workItemId, storyId?)` |
+| executionPlan | Work Item `state.executionPlan` |
+| 测试证据 | immutable evidence manifest + active artifact snapshots |
+| Review 结论 | Work Item `state.review.status/findings` |
 | 源代码 | 工程目录 |
 
 路径均通过 `documentStorage.resolve_path()` 定位，禁止硬编码（路径模板见 `document-storage-skill.md` §1.3）。
@@ -678,7 +681,7 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 ## PRD级完成判定（v3.3.0）
 
 4层AND闸：
-- G-PRD-1：∀ Story 的 codeReviewReport存在 + sevenBisPassed + userConfirmedAt非空
+- G-PRD-1：∀ Story 的 `state.review.status=passed` + sevenBisPassed + userConfirmedAt非空
 - G-PRD-2：∀ Story 的 sevenBisMatrix 无🔴断链
 - G-PRD-3：crossStoryDeps全部verifiedAt + crossStoryResidualRisks全部有mitigationPlan
 - G-PRD-4：prdReview.confirmedAt非空
@@ -707,16 +710,16 @@ ae-sdd state prd-complete --prd {PRD-ID} --runtime {runtime}   # 4层AND通过�
 | Requirement Analysis | `requirement-analysis-skill.md` | PRD→RA文档+规模裁定 |
 | DR Generate | `dr-generate-skill.md` | RA→DR草稿（规模=大）|
 | DR Review | `dr-review-skill.md` | DR 5阶段评审 |
-| Story Generate | `story-generate-skill.md` | DR→Story（7阶段挖掘）|
-| Story Review | `story-review-skill.md` | Story缺陷挖掘循环 |
+| Story Generate | `story-generate-skill.md` | 确认清单→主内容→primary→副内容派生 |
+| Story Review | `story-review-skill.md` | primary/full 分阶段缺陷挖掘 |
 | TestCase Generate | `testcase-generate-skill.md` | 测试用例生成 |
 | TestCase Review | `testcase-review-skill.md` | 测试用例缺陷挖掘循环（TC-1~TC-9）|
-| Story Update | `story-update-skill.md` | Story文档更新 |
+| Story Update | `story-update-skill.md` | 主/副内容变更分类、失效与重审 |
 | CodingProcess | `coding-process-skill.md` | 骨架分解+CodeAnalysis+CodingPlan（v3.10.0 砍 Task）|
 | Coding Process | `coding-process-skill.md` | Task→Coding 编排：CodeAnalysis→CodingPlan→Execute |
 | Coding | `coding-skill.md` | CodingSkill.Plan/Execute 能力库 |
-| Coding Report | `coding-report-skill.md` | Coding 报告生成 |
-| Test Generate | `test-generate-skill.md` | 运行编译/启动/L1-L4 测试并生成测试报告 |
+| Coding Report | `coding-report-skill.md` | legacy 历史报告只读兼容；新流程不生成 |
+| Test Generate | `test-generate-skill.md` | 运行编译/启动/L1-L4 测试并记录、finalize immutable evidence |
 | Test Review | `test-review-skill.md` | test-verifier 独立复核测试真实性与证据链 |
 | Code Review | `code-review-skill.md` | Phase 3 代码评审与一致性/对称性核查 |
 | Sonar Issue Fix | `sonar-issue-fix-skill.md` | CodeReview 收尾前的 Sonar issue 唯一分类、安全修复与复扫闭环 |
@@ -823,7 +826,7 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 0b | G-00项目资产检查 | 通过才继续 |
 | 1 | 路由判定（1.5自更新→1.6来源→1.7规模→1.8 G-RA）| 路由明确才继续 |
 | 2 | 生成Story（story-generate-skill）| 文件存在 |
-| 2 | Story loop【Generate-Review】（story-generate + story-review 含F-Stage）| 循环退出（3轮无新增）= phase story-generated |
+| 2 | Story loop【Generate-Review】（主内容 primary → 副内容派生 → full，含F-Stage）| primary/full 均退出 = phase story-generated |
 | 2b | ①bis 前端视角接口审视 | 6维度通过；Story含"接口契约-SPI"+"接口契约-REST"章节（REST 章节含①bis 6维度） |
 | 3 | （v3.10.1 已合并入步骤2 loop）| - |
 | 4 | TestCase loop【Generate-Review】（testcase-generate + testcase-review TC-1~TC-9）| 循环退出（3轮无新增）= phase testcase-generated |
@@ -837,11 +840,11 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 | 5c | ④bis CodingProcess（CodeAnalysis→CodingPlan）| G-CODEPLAN-SRC+G-14通过 |
 | 5b.5 | （v3.10.0 已合并入步骤5b）| - |
 | 6 | Execute（coding-skill）| 代码按 CodingPlan 落地，编译预检无阻断 |
-| 7 | Test Generate（test-generate-skill）| TEST_REPORT 已生成，证据链齐 |
+| 7 | Test Generate（test-generate-skill）| evidence manifest 已记录并 finalize，证据链齐 |
 | 7a | Test Review（test-review-skill）| test-verifier 独立复核通过；G-09/G-10 通过 |
-| 8 | 出具Coding报告 | 文件已生成 |
+| 8 | 汇总代码实现事实 | 不生成 CodingReport；实现事实由源码、executionPlan 与 evidence 承载 |
 | 8a | ⑥bis 全切面一致性核查 | 无🔴漂移 |
-| 8b | 出具CodeReview报告 | 含"零、"章节；无阻断型问题 |
+| 8b | 记录 Code Review findings | `state.review.status=passed`；无 Open P0/P1 finding |
 | 8c | ⑦bis 全链路对称性核查 | 无🔴断链 |
 | 9 | 完成判定（6.1~6.10）| 全部✅（⑥.10由test-verifier独立验证）|
 | 9-📖 | AI主动讲解Code故事 | 7维度+文件:行号+代码片段才进审核点4 |

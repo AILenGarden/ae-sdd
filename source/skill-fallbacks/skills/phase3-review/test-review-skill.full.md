@@ -1,6 +1,6 @@
 ---
 name: test-review
-description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测试报告、原始证据、真实性扫描与 AC 覆盖，决定是否回到 test-generate。
+description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核 immutable evidence、真实性扫描、HTTP 双阶段与 AC 覆盖，决定是否回到 test-generate。
 ---
 
 # Test Review — 测试真实性复核 SKILL
@@ -26,7 +26,6 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 
 | 输入 | 必读 |
 |---|---|
-| `TEST_REPORT` 最新版 | 是 |
 | `.auto-engineering/{WORKITEM-ID}/evidence/manifest.json` | 是；按 fingerprint/hash 复核，不按 evidence 文件数量判断真实性 |
 | 原始 stdout/stderr 日志 | 是 |
 | Surefire/Failsafe XML | 是 |
@@ -37,14 +36,16 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 
 ## 检查口径（TV-1~TV-10）
 
+新场景策略先核对能力→状态→观察面→不变量→扰动→失败机制链。HTTP evidence 必须引用 scenarioId，并包含 field/state/relation/invariant 等实质断言；只有 status、对象非空或同实现路径 read-back 的证据不得 PASS。
+
 | # | 检查项 | 通过标准 |
 |---|---|---|
 | TV-1 | 证据链存在 | manifest 中 input/command/toolchain/artifact hash 完整；artifact 为项目内相对路径，entry/summary/report 三方语义一致且 SHA-256 匹配 |
 | TV-2 | 命令真实性 | 无 skipTests / testFailureIgnore / 未解释 excludes |
-| TV-3 | XML 对账 | 报告统计与 XML 完全一致，skipped=0 或有 Story 豁免 |
+| TV-3 | XML 对账 | evidence summary 与 XML 完全一致，skipped=0 或有 Story 豁免 |
 | TV-4 | AC 覆盖 | 每个 AC 至少有实际执行方法 |
 | TV-5 | TestCase 对账 | 应跑用例数、测试源码方法数、XML 执行数一致或有解释 |
-| TV-6 | L2 真实 HTTP | 接口测试走真实 HTTP；MockMvc 降级有证据 |
+| TV-6 | HTTP 双阶段 | 接口 AC 有 `http-local` + `http-test-env`；同 buildId、local 在前、internalMocks=false；MockMvc/内部 mock 为 blocker |
 | TV-7 | L3 真实 DB | 核心写路径有真实 DB/H2/Testcontainers 证据 |
 | TV-8 | 失败暴露 | 失败用例不被隐藏，根因分类合理 |
 | TV-9 | 禁假修复 | 无未授权修改测试、无全 Mock 核心路径、无空断言 |
@@ -58,11 +59,12 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 - scope 内新增 blocker 与被触及的历史 blocker 均阻断；scope 外历史债不阻断当前 work item。
 - evidence manifest 仅作可验证 provenance/cache：存在时必须匹配 Story、input fingerprint 与 artifact SHA-256，不能定义 scope 或豁免源码扫描。
 - G-09 不读取、不创建、也不使用 G-CODE-1 baseline；Coding baseline 只归 G-CODE-1 管理。
+- executionPlan 存在 `boundary=http` 时，G-09 额外要求 local/test-env 两类 active evidence；外部 supplemental evidence 不计入完成度，缺测试环境保持 BLOCKED。
 - G-CODE-1 scoped 扫描必须校验 scanner exit/status、finding schema/path、`scannedPaths` 完整覆盖 production scope，以及 root/顶层计数/`reportStats` 自洽；任一缺失、越界、类型或计数不一致均 fail closed。
 
 ## 输出
 
-复核不新增独立流程产物，默认在 canonical `TEST_REPORT` 中原地更新“独立复核”章节；历史审计写入事件 ledger，不通过 `vN-rM` 文件名复制正文。
+复核不新增 Markdown。结论写入 `state.review.status/findings`，证据引用使用 evidenceId/artifact hash；历史报告只读兼容。
 
 章节必须包含：
 
@@ -80,10 +82,10 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 
 | 缺陷类型 | 处理 |
 |---|---|
-| 证据缺失 / XML 不一致 / 扫描报告缺失 | 回 `test-generate-skill.md` 补证据或重跑 |
+| 证据缺失 / XML 不一致 / 扫描报告缺失 / HTTP 阶段缺失 | 回 `test-generate-skill.md` 补证据或重跑 |
 | 测试失败指向生产代码 | 回 Coding 修复，再重跑 Test 系列 |
 | 测试数据或测试断言错误 | 需说明原因；修改测试前必须用户确认 |
-| Story / Task 设计缺陷 | 触发 Proposal 或回对应设计节点 |
+| Story 设计缺陷 | 更新 Story 后重新批准 executionPlan |
 | verifier 无法独立验证 | 标 BLOCKED，升级用户，不得 PASS |
 
 ## 禁止事项
@@ -104,4 +106,4 @@ description: Test 系列 Step 3 reviewSkill。由 test-verifier 独立复核测�
 | 2 | 读取证据 | 证据清单 | 路径真实存在 |
 | 3 | 执行 TV-1~TV-10 | 复核矩阵 | 无 BLOCKED |
 | 4 | 抽样重跑 | 抽样日志 | 结果与报告一致 |
-| 5 | 写复核章节 | 新版 TEST_REPORT | G-09/G-10 通过 |
+| 5 | 记录 review status/findings | state review | G-09/G-10 通过 |

@@ -1,151 +1,76 @@
 # Story Review 检查标准
 
-> **🆕 v3.9.3 变更：**
-> 1. §输入 统一指向 `story-input-checklist.md`（SSOT）
-> 2. §A-E 检查维度新增 §A.bis（DR-Story 字段级一致性）、§D.bis（来源追溯验证）、§D.ter（依赖 Story 字段对齐）
-> 3. §退出条件 补充"来源追溯报告已生成"
+## 1. Review 资源
 
-## 作用
+Review 必须通过 Document Storage 获取 `STORY_TEMPLATE` 与 `STORY_WRITING_GUIDE` 的 `path/source/content/sha256`，并使用 `story_template_sections` 解析正文。不得使用 Skill 内置标题表或直接读取固定路径。
 
-本文件定义 Story Review 的运行口径。`story-review-skill.md` 只负责编排和产出；具体检查项、判定口径与记录边界放在这里。
+## 2. 准入检查
 
-## 输入
+1. Story 已绑定正式文档路径，Story ID 与元信息一致。
+2. 模板元数据合法，指南 section ID 覆盖完整。
+3. `validate_story_navigation(template.content)` 与 `validate_story_document_navigation(story.content)` 均通过；Story 中全部 H2 有显式锚点与 ID-only 标记；历史无标记文档满足精确唯一迁移条件。
+4. Story ID 在当前模板中全部可识别，无重复或部分标记。
+5. 上游、约束、资产、依赖 Story 和来源输入已按 `story-input-checklist.md` 加载。
+6. Review scope 明确为 `primary` 或 `full`。
 
-**🆕 v3.9.3：** 输入清单统一指向单一权威源 [`story-input-checklist.md`](story-input-checklist.md)（SSOT），共 13 项输入：
+## 3. Review 范围
 
-- A. 上游文档（4 项）：DR / PRD / 产品原型 / 历史 RA
-- B. 项目级约束（4 项）：项目资产 / 项目约束 / 前端约束 / 依赖能力清单
-- C. 依赖 Story（2 项）：本 Story 复用的其他 Story / 阻塞的下游 Story
-- D. 模板与标准（4 项）：Story 模板 / 生成标准 / 审核标准+前端契约 / 测试策略
+### `scope=primary`
 
-外加：
+- 只检查 `get_primary_story_sections(template.content)` 返回的章节。
+- 逐章应用指南相同 section ID 的必填性、来源、写法和红线。
+- 尚未派生的副章节缺失、留空或没有 ID 不得形成 finding。
+- 无主要章节阻断 finding 时才允许进入副章节派生。
 
-- Story 主文档（审查对象）
-- 当前 Supplement（如有，承载前轮遗留存疑项）
-- 前一轮 Proposal（如有）
+### `scope=full`
 
-> 🔴 **v3.9.3 加载 SOP：** 按 `story-input-checklist.md §3` 4 步流程加载（定位 → 读取 → prose 自检 13 项 → CLI 门禁 `G-STORY-CTX` 双重保障）。
+- 前置条件是 `primary` Review 已通过且副章节已派生。
+- 检查模板全部适用 section ID、指南合规和跨章节一致性。
+- 副章节不得引入主要章节中不存在的新范围、规则、状态或核心错误语义。
+- 若必须改变主要章节，停止 full Review，使相关副章节失效并回到 `primary`。
 
-## 准入检查
+## 4. 通用检查维度
 
-进入 Review 前，至少确认以下事项：
+| 维度 | 检查内容 |
+| --- | --- |
+| 上游一致性 | 用户目标、范围、流程、字段、规则和状态与 PRD/RA/DR 一致 |
+| 流程闭环 | 主流程、异常流程、状态转换和用户可见结果闭环 |
+| 契约一致性 | SPI/REST 请求响应、错误码、幂等、超时和调用双方一致 |
+| 数据一致性 | 字段链路、DDL、索引、枚举、CRUD 和迁移一致 |
+| 非功能 | 权限、安全、一致性、性能、观测、补偿、灰度和回滚有可验证结论 |
+| AC 与验证 | 每个适用行为有 AC，每个 AC 映射可证明结果的验证项 |
+| 来源追溯 | 关键事实有权威来源；不涉及有依据；未决项有责任人与影响 |
+| 模板/指南 | 无占位符残留，section ID 合法，内容满足相应指南条目 |
+| 导航完整性 | 总章节目录覆盖实际 H2；接口目录与 SPI/REST 详情一一对应；无重复锚点、断链或未分隔接口块 |
 
-1. Story 文档已存在，且版本号是当前最新。
-2. **🔴 v3.9.3 新增：** 13 项输入已加载完毕（prose 自检 + CLI 门禁全过）。
-3. **🔴 v3.9.3 新增：** DR / PRD / 原型 / 模板 / 项目资产 / 项目约束 / **依赖 Story** 已读取。
-4. Story 不处于同一轮进行中的 Review 状态。
-5. Story 至少有一个 AC。
-6. 主流程不是空壳。
-7. 若涉及前端交互，①bis 前端接口契约要么已完成，要么明确标注 `不涉及`。
-8. 若 Story 涉及状态机，状态枚举、流转和终态必须可定位。
-9. C8 数据视角总览应能落到可审查的字段和操作清单。
-10. **🔴 v3.9.3 新增：** 来源追溯报告已生成（每个 AC / 字段 / 异常流程都有章节级来源标注）。
+## 5. 历史 Story 迁移
 
-## A-E 检查维度
+- 完全没有 section ID 时，允许按当前模板标题精确、唯一匹配。
+- 任一标题未知或歧义时阻断，禁止近似或语义匹配。
+- 获得更新授权后一次性为全部 H2 补写显式锚点和 ID-only 标记。
+- 已存在部分 ID 的 Story 不走迁移；缺 ID 的 H2 直接形成阻断 finding。
 
-### A. DR-Story 一致性
+## 6. Finding 与结论
 
-- 业务规则是否一致
-- 边界场景是否一致
-- 验收标准是否一致
-- 字段定义是否一致
-- 接口契约是否一致
+finding 至少包含：
 
-### A.bis（🔴 v3.9.3 新增）DR-Story 字段级一致性
+- `severity`；
+- `sectionId` 与层级；
+- 问题、证据和违反的指南/契约；
+- 修复动作及是否导致副章节失效。
 
-> 🔴 在 §A 的抽象一致性基础上，进一步做字段级比对：
+结论只写入 `state.review.status/findings`：
 
-- [ ] DR 中所有接口 Request 字段 → 与 Story Request 字段名 / 类型 / 必填 / 校验规则一致
-- [ ] DR 中所有接口 Response 字段 → 与 Story Response 字段名 / 类型一致
-- [ ] DR 中所有错误码 → 与 Story 错误码表一致
-- [ ] DR 中所有状态枚举值 → 与 Story 状态机定义一致
-- [ ] 不一致项：标注为 🔴 阻断型
+- `passed`：当前 scope 无未关闭阻断 finding；
+- `changes_required`：存在可修复 finding；
+- `blocked`：缺权威输入、ID 无法迁移或路由/解析失败。
 
-### B. AC 完整性
+不生成 ReviewReport、Proposal、Compare、SourceTrace 或 changelog。
 
-- AC 是否能覆盖核心业务目标
-- AC 是否可独立验证
-- AC 是否能映射到具体的输入、输出或状态变化
-- AC 是否存在空泛或不可测试表述
-- **🔴 v3.9.3 新增：** AC 是否每条都标注了上游来源（DR §章节 / PRD §章节）
+## 7. 禁止事项
 
-### C. 业务逻辑覆盖
-
-- 主流程是否完整
-- 异常流程是否完整
-- 分支是否穷尽
-- 状态流转是否完整
-- C8 数据视角是否包含状态、操作、出入参、字段链路与外部依赖
-
-### D. 数据模型与接口
-
-- 字段链路是否闭环
-- 数据模型是否和接口契约一致
-- DB / 外部依赖 / DTO / VO / DO / PO 是否对应
-- 错误码、枚举值、分页、时间、金额、ID 是否写清
-
-### D.bis（🔴 v3.9.3 新增）来源追溯验证
-
-> 🔴 每个 AC / 字段 / 异常流程 / 数据模型字段必须有章节级来源标注，格式：`📌 来源：{文档类型} {文档ID} §{章节号}`。
-
-- [ ] 元信息中"来源 PRD" / "来源 DR" 已填具体文档 ID
-- [ ] 主流程每步有 DR 规则编号引用
-- [ ] 异常流程每行触发条件有 DR / PRD 章节引用
-- [ ] 每条 AC 有 DR §验收标准 / PRD §业务规则 引用
-- [ ] 接口契约 Request 每字段有来源追溯（路径参数 / 上游接口 / 用户输入 / CurrentUser / 常量）
-- [ ] 接口契约 Response 每字段有服务端产出逻辑追溯（DB 字段 / 计算 / 透传）
-- [ ] 数据模型每字段有 DR §数据模型 引用
-- [ ] 状态机每状态有 DR §状态机 引用
-- [ ] 错误码每行有 DR §错误码表 引用
-- [ ] **来源缺失 = 阻断型**
-
-### D.ter（🔴 v3.9.3 新增）依赖 Story 字段对齐
-
-> 🔴 本 Story 引用的依赖 Story 字段必须与依赖 Story 实际定义一致。
-
-- [ ] 元信息中"复用其他 Story"列出的每个 Story ID 都能定位到对应 Story 文档
-- [ ] 复用项的接口字段名 / 类型 / 必填与依赖 Story 的接口契约一致
-- [ ] 复用项的数据模型字段与依赖 Story 的数据模型一致
-- [ ] 不一致项：标注为 🔴 阻断型
-- [ ] 输出：**依赖 Story 字段对齐报告**（加入 Review 报告或 Supplement）
-
-### E. 模板与约束
-
-- 必填章节是否齐全
-- 模板格式是否一致
-- 项目约束是否落地
-- 引用是否可定位
-- 偏离声明是否明确
-- **🔴 v3.9.3 新增：** 是否按 `story-generation-standard.md §2.5 章节映射表` 填齐所有阶段对应模板章节
-
-## F. 前端接口契约
-
-如果 Story 涉及前端交互，必须引用并满足：
-
-- [`story-frontend-contract-standard.md`](story-frontend-contract-standard.md)
-
-核心要求：
-
-- 6 个维度必须填全
-- 不能只写后端字段
-- 不能只写接口，不写调用流程、状态展示、错误处理和联调支持
-
-## 判定结果
-
-每个发现都必须落到以下之一：
-
-- `confirmed`：确认缺陷，进入 Proposal
-- `deferred`：本轮不修，说明原因
-- `misreport`：误报
-- `info`：提示或经验项，不阻断
-
-## 退出条件
-
-满足以下条件时退出 Review：
-
-1. 满足 `review-loop-skill.md` 的退出条件。
-2. C8 数据视角已完成。
-3. 补充说明和 Proposal 状态已回写。
-4. **🔴 v3.9.3 新增：** 来源追溯报告已生成（§D.bis 全部勾选）。
-5. **🔴 v3.9.3 新增：** 依赖 Story 字段对齐报告已生成（§D.ter 全部勾选）。
-6. **🔴 v3.9.3 新增：** 13 项输入自检 + CLI 门禁全过（§输入 全部勾选）。
+- 禁止因副章节缺失阻断 `primary`。
+- 禁止 `primary` 未通过就执行 `full`。
+- 禁止在 `full` 中静默修改主要章节。
+- 禁止按标题含义猜主副层级。
+- 禁止零发现但不给出覆盖证据。

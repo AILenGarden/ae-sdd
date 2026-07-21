@@ -542,6 +542,8 @@ mavis harness remount
 
 **图谱数据文件**：`source/standards/update-graph.json`
 
+Story 模板、Story 撰写指南或章节解析器变更时，必须通过 `UG-06` 查询 Document Storage、Story 标准、三件套 Skill、解析器测试、slim/runtime 和 Design Ledger 的连带项；章节层级不得凭记忆回填。
+
 结构（每条 rule = 一个"改了 trigger → 同步 affected → 跑 checks"的依赖）：
 ```json
 {
@@ -565,7 +567,7 @@ mavis harness remount
 
 > 本小节是 `source/standards/update-graph.json` 的人读锚点索引，不是权威源。新增/删除 UG 规则或 UC 检查时，必须同步本小节；`ae-sdd update-check --only UC-14` 会自动校验 JSON、`CHECK_FUNCS` 与本小节是否一致。
 
-- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`, `UG-22`, `UG-23`, `UG-24`, `UG-25`, `UG-26`, `UG-27`, `UG-28`, `UG-29`
+- 图谱规则锚点：`UG-01`, `UG-02`, `UG-03`, `UG-04`, `UG-05`, `UG-06`, `UG-07`, `UG-08`, `UG-09`, `UG-10`, `UG-11`, `UG-12`, `UG-13`, `UG-14`, `UG-15`, `UG-16`, `UG-18`, `UG-19`, `UG-20`, `UG-21`, `UG-22`, `UG-23`, `UG-24`, `UG-25`, `UG-26`, `UG-27`, `UG-28`, `UG-29`, `UG-30`
 - 检查器锚点：`UC-01`, `UC-02`, `UC-03`, `UC-04`, `UC-05`, `UC-06`, `UC-07`, `UC-08`, `UC-09`, `UC-10`, `UC-11`, `UC-12`, `UC-13`, `UC-14`, `UC-15`, `UC-16`, `UC-17`, `UC-18`, `UC-19`, `UC-20`
 
 ### 🤖 Agent 程序化消费协议（强制 — Agent 改完文件后必做）
@@ -847,7 +849,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
 - [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.8.0：+ G-AUTO-CONSENSUS = 30）
 - [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 23；v3.5.0 加 `ae-sdd-plugin-loader-skill.md`）
-- [ ] `source/docs/ae-sdd-design.md` 存在，包含 22 个系统级设计章节和 D-001~D-025 Design Ledger（D-024 记录台账治理，D-025 记录有界测试策略）
+- [ ] `source/docs/ae-sdd-design.md` 存在，包含 22 个系统级设计章节和 D-001~D-026 Design Ledger（D-024 记录台账治理，D-025 记录有界测试策略，D-026 记录真实 HTTP 双阶段接口验收）
 - [ ] 🆕 2026-07-03 `source/docs/ae-sdd-implementation-architecture.md` 存在，说明 CLI / tools/lib / scripts / state/cache / build/distribution / gate/scanner / runtime stats 的实现分层；本文件 §步骤1 含"设计/实现架构同步"后置块
 - [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
@@ -874,7 +876,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 2026-07-03 Runtime Stats P0：`tools/lib/runtime_stats.py` 与 `tools/lib/runtime_exec.py` 存在；`tools/bin/ae-sdd` 含 `perf report/doctor/clear`；`tools/lib/gates.py` `summarize()` 输出 `durationMs/slowest`；`tools/tests/test_runtime_stats.py` 与 `tools/tests/test_cli_perf.py` 存在；`.gitignore` 忽略 `.ae-sdd/runtime-stats/`；`source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/plans/2026-07-02-runtime-stats-performance-plan.md` 已同步；`source/standards/update-graph.json` 含 UG-21；`source/CHANGELOG/` 含 `2026-07-03-runtime-stats-p0.md`
 - [ ] 🆕 2026-07-03 ae-sdd Monitor：`apps/ae-sdd-monitor/` 存在；`source/docs/ae-sdd-monitor-design.md` 独立记录只读投影语义；`source/docs/ae-sdd-design.md` 含 Monitor 入口；`source/docs/ae-sdd-implementation-architecture.md` 含 Monitor 模块/数据流边界；`source/standards/update-graph.json` 含 UG-22；`apps/ae-sdd-monitor/src/workspace.js` 和 `apps/ae-sdd-monitor/test/workspace.test.js` 跟随 state/runtime 投影契约；`apps/ae-sdd-monitor/README.md` 链接设计契约
 - [ ] 🆕 v3.11.0 `tools/lib/state_store.py` 与 `tools/lib/operations.py` 存在；`ae-sdd ops describe/next/execute` 和 `lease acquire/status/renew/release/break` 已注册；`source/standards/operation-protocol.md` 含 §9 `Maintainer Change Contract`；本 SKILL 含 typed operation maintenance entry；UG-27、UC-19、StateStore/operation/scope/evidence/update-graph focused tests 与 changelog 已同步
-- [ ] `source/docs/ae-sdd-design.md` 含 D-001~D-025 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；UG-28、UC-20、focused tests 与 runtime 已同步；未写 changelog
+- [ ] `source/docs/ae-sdd-design.md` 含 D-001~D-026 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；UG-28、UC-20、focused tests 与 runtime 已同步；未写 changelog
 
 ### 跨 SKILL 一致性
 

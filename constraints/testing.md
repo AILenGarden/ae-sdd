@@ -13,7 +13,7 @@
 | --- | --- |
 | 单元测试 | JUnit 4.12 + Mockito + AssertJ |
 | 集成测试 | Spring Boot Test + 开发库（@Transactional + @Rollback） |
-| Controller 测试 | 🔴 真实 HTTP：SpringBootTest(RANDOM_PORT) + TestRestTemplate（MockMvc 仅在框架过老无法启动嵌入式容器时降级，须注明原因） |
+| Controller / REST 接口验收 | 🔴 真实 HTTP：本地 RANDOM_PORT + HTTP client，随后同一 buildId 在测试环境再次执行 |
 | 代码质量 | Checkstyle + SpotBugs |
 
 ---
@@ -34,11 +34,12 @@
 | --- | --- | --- | --- |
 | Service | 单元测试 | JUnit + Mockito | 纯逻辑，不依赖数据库，Mock 所有外部依赖 |
 | Mapper | 集成测试 | Spring Boot Test + 开发库 | 验证自定义 SQL 和 XML 映射正确性，使用 @Transactional + @Rollback 回滚数据 |
-| Controller | 集成测试 | 🔴 真实 HTTP：SpringBootTest(RANDOM_PORT) + TestRestTemplate | 经真实端口/网络/容器栈验证接口入参校验、响应结构、异常路径；Service 层用 @MockBean 隔离。MockMvc 不走真实端口，仅框架过老时降级 |
+| Controller / REST | 接口验收 | 🔴 真实 HTTP：SpringBootTest(RANDOM_PORT) + TestRestTemplate/RestAssured/标准 HTTP client | 本地真实端口走 Controller→Service→Repository/Mapper→测试 DB 完整内部链；禁止内部 @MockBean/@SpyBean；同一 buildId 必须再跑测试环境 |
 
-**单元测试 Mock 规则：**
-- Service 单元测试必须 mock 所有外部依赖（Repository、Facade、外部服务调用），禁止在单元测试中真实调用数据库或远程服务
-- 每个测试用例必须明确说明 mock 的依赖及其返回值，不同场景的 mock 返回值应在用例中独立配置，禁止跨用例共享 mock 状态
+**Test double 边界：**
+- 纯逻辑单元测试可以隔离外部依赖，但不得作为接口 AC 的验收证据。
+- 接口验收不得 mock/spy 内部 Service、Repository、Mapper、Application/UseCase；外部服务优先 sandbox，stub 只作 supplemental 故障注入。
+- 每个 HTTP verification 固定声明 `boundary=http`、`stages=[local,test-env]`、`internalMocksAllowed=false`。
 
 ---
 
@@ -111,6 +112,10 @@ Mapper 集成测试（开发库）
     ↓
 Controller 集成测试（真实 HTTP：RANDOM_PORT + TestRestTemplate）
     ↓
+同一 buildId 部署测试环境并执行真实 HTTP
+    ↓
+G-09 校验 http-local + http-test-env evidence
+    ↓
 覆盖率达标检查
     ↓
 ✅ 验收通过
@@ -120,7 +125,9 @@ Controller 集成测试（真实 HTTP：RANDOM_PORT + TestRestTemplate）
 
 ## 八、禁止事项
 
-- 🔴 禁止用 MockMvc 替代能走真实 HTTP 的接口测试——接口测试默认走真实 HTTP（SpringBootTest RANDOM_PORT + TestRestTemplate），MockMvc 仅框架过老无法启动嵌入式容器时降级，须注明原因且不得标"HTTP 层已验证通过"
+- 🔴 MockMvc、application-context-bound WebTestClient、直接 Controller 方法调用不得关闭接口 AC
+- 🔴 RANDOM_PORT 测试中禁止用 @MockBean/@SpyBean 替换内部 Service、Repository、Mapper、Application/UseCase
+- 🔴 只有本地 HTTP、缺测试环境 HTTP、两个阶段 buildId 不同或顺序错误时不得 PASS
 - 🔴 禁止用全 Mock 替代核心落库路径验证——INSERT/UPDATE/DELETE 核心路径必须用真实 DB（H2/TestContainers）验证落库
 - 禁止使用 `Thread.sleep()` 等待异步结果，使用 `Awaitility` 或 Mock 替代
 - 禁止在测试中使用生产数据库

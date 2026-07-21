@@ -8,6 +8,19 @@
 
 ## 1. 元信息 `必填`
 
+## 1.1 能力与场景推导 `必填`
+
+| 字段 | 内容 |
+|---|---|
+| CapabilityModel | command/query/state-machine/batch/async/file/auth/idempotent/concurrent（按契约选择） |
+| 前态/后态 | 可达前态、合法后态、禁止后态 |
+| 独立观察面 | 公开查询、列表、任务状态、事件、下载或只读持久化观察；说明为何独立 |
+| 变化维度/不变量 | 执行后必须变化和必须保持的字段、关系、守恒或单调性 |
+| 扰动轴 | field/identity/order/replay/concurrency/time/boundary/dependency-failure |
+| 失败机制 | 本场景能检出的具体缺陷 |
+
+> CRUD 场景不是固定清单。只有 CapabilityModel 命中时，才生成 create→read 或 full-update→read 等具体步骤。
+
 - 文档类型：用例设计
 - 用例设计 ID：TC-STORY-{number}-BE
 - 来源 Story：[{story文件名}]({story相对路径})
@@ -24,11 +37,11 @@
 
 ## 3. 覆盖矩阵 `必填`
 
-| AC ID | 风险/假设 ID | 用例 ID | 场景 | 最低充分层级 | 独立验证价值 | 自动化方式 | 状态 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| AC-001 | H-CONC-1 | TC-001 | | L1 / L2 / L3 / L4 | 新控制流/约束/协议/断言/层级证据 | JUnit / Real HTTP / Real DB | Planned |
+| AC ID | 风险/假设 ID | 用例 ID | 场景 | 最低充分层级 | 验证边界 | HTTP 阶段 | 内部 Mock | 独立验证价值 | 自动化方式 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AC-001 | H-CONC-1 | TC-001 | | L1 / L2 / L3 / L4 | unit / http / integration | HTTP 固定 local → test-env | HTTP 固定 false | 新控制流/约束/协议/断言/层级证据 | JUnit / Real HTTP / Real DB | Planned |
 
-> 🔴 接口（L2）测试默认走真实 HTTP（SpringBootTest RANDOM_PORT + TestRestTemplate），MockMvc 仅在框架过老无法启动嵌入式容器时降级，须在备注注明原因。
+> 🔴 接口（L2）AC 固定 `boundary=http`、`stages=[local,test-env]`、`internalMocksAllowed=false`。本地 `RANDOM_PORT + HTTP client` 必须走 Controller→Service→Repository/Mapper→测试 DB，随后以同一 buildId 跑非 loopback 测试环境。MockMvc、直接 Controller 调用、内部 MockBean/SpyBean 都不能关闭接口 AC。
 
 ---
 
@@ -72,9 +85,12 @@
 - 选择决策：keep
 - 覆盖 AC：AC-001
 - 测试层级：L1 / L2 / L3 / L4（最低充分层级）
+- 验证边界：unit / http / integration
+- HTTP 阶段（接口必填）：local → test-env
+- internalMocksAllowed（接口必填）：false
 - 前置条件：
-- Mock 配置：
-  - `when(...).thenReturn(...)`
+- Test double 配置（仅非接口单测或外部 supplemental 故障注入填写）：
+  - 外部边界：`when(...).thenReturn(...)`
 - 操作步骤：
   1. 
 - 期望结果：
@@ -89,6 +105,8 @@
 
 - 必跑单元测试：
 - 必跑接口测试：
+- 必跑本地 HTTP：
+- 必跑测试环境 HTTP（同 buildId）：
 - 可跳过项：
 
 ---

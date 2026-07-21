@@ -17,6 +17,10 @@ description: 有界风险驱动的测试用例生成策略。以有限风险登�
 | **行为等价类** | 按控制流、错误码、持久化约束、外部协议、副作用和失败影响合并候选 | 同一行为分区默认一个代表用例 |
 | **最小充分组合** | 在能暴露缺陷的最低充分层级验证，覆盖已准入风险后停止 | 不因层级、字段或状态数量机械扩张 |
 
+### 场景推导前置
+
+风险登记之前先从 Story/API contract 建立 `能力 → 状态 → 独立观察面 → 不变量 → 扰动 → 失败机制` 推导链，再用风险登记裁剪等价候选。`create→read`、`update→read` 只在能力模型命中时产生；查询、异步、批处理、鉴权和并发接口按自身关系生成场景。每条保留用例必须能说明它会抓住什么具体缺陷。
+
 ### 有限风险登记
 
 生成用例前先建立候选表。只有选择决策为 `keep` 的候选才形成独立用例；`merge` 必须指向覆盖它的用例，`exclude/defer` 必须写理由。
@@ -181,22 +185,20 @@ description: 有界风险驱动的测试用例生成策略。以有限风险登�
 
 | 层级 | 验证目标 | 外部依赖 | 执行速度 | 工具 |
 |------|---------|---------|---------|------|
-| L1 单元测试 | 业务逻辑正确性 | 全部 Mock | 快（ms级） | JUnit + Mockito |
-| L2 接口测试 | HTTP 层行为（状态码、参数校验、序列化、异常映射） | Mock Service 层（`@MockBean`） | 中（s级） | **真实 HTTP：`SpringBootTest(webEnvironment=RANDOM_PORT)` + `TestRestTemplate`**（MockMvc 仅作降级，见下方原则） |
+| L1 单元测试 | 业务逻辑正确性 | 可使用 test double 隔离非验收边界；不得关闭接口 AC | 快（ms级） | JUnit + Mockito |
+| L2 接口验收 | HTTP 契约 + Controller→Service→Repository/Mapper→测试 DB 完整内部链 | 内部主链真实；外部依赖优先 sandbox，stub 仅作补充故障注入 | 中（s级） | **真实 HTTP：`SpringBootTest(webEnvironment=RANDOM_PORT)` + `TestRestTemplate`** |
 | L3 集成测试 | 真实数据库交互（事务、索引、SQL） | 真实 DB（H2/TestContainers） | 中（s级） | SpringBootTest + @Transactional |
-| L4 端到端测试 | 多 Story 协作的完整业务路径 | 真实 DB + Mock 外部服务 | 慢（s级） | SpringBootTest(RANDOM_PORT) + TestRestTemplate + WireMock |
+| L4 部署环境验收 | 已部署测试环境中的完整业务路径 | 测试环境真实构建；外部 sandbox/stub 证据不得替代主链 | 慢（s级） | HTTP client + test-env base URL + buildId evidence |
 
 > ### 🔴 强制原则：能走真实 HTTP 的接口测试，必须走真实 HTTP
 >
-> **L2/L4 凡是验证 HTTP 接口行为的用例，默认必须经过真实 HTTP 栈**——即 `@SpringBootTest(webEnvironment = RANDOM_PORT)` 启动真实嵌入式容器 + `TestRestTemplate`（或 Boot 2.1+ MVC 的 `WebTestClient`）发起真实端口上的 HTTP 请求。Service 层用 `@MockBean` 隔离即可，不影响走真实 HTTP。
+> **L2/L4 凡是验证 HTTP 接口行为的用例，必须经过真实网络端口**——本地使用 `@SpringBootTest(webEnvironment = RANDOM_PORT)` + `TestRestTemplate`（或 server-bound `WebTestClient`/RestAssured/标准 HTTP client），并保持 Controller→Service→Repository/Mapper→测试 DB 内部主链真实。`RANDOM_PORT + @MockBean/@SpyBean` 替换内部 Service、Repository、Mapper 或 Application 组件仍是假链路，不能关闭接口 AC。
 >
-> **为什么不用 MockMvc 当默认：** MockMvc 直接调 `DispatcherServlet`，**不开真实端口、不走真实网络、不经过真实容器**。它会放过只有真实 HTTP 才暴露的问题：真实序列化/反序列化往返、过滤器与拦截器链、容器级异常处理、真实 HTTP 状态码、连接与编码行为。这与"核心落库禁止全 Mock"是同一条原则——能用真实链路验证的，就不用模拟链路。
+> **MockMvc 不属于接口验收：** MockMvc 直接调 `DispatcherServlet`，不开真实端口、不走真实网络，不能提供 HTTP acceptance evidence。它也不得作为“降级通过”关闭接口 AC。
 >
-> **MockMvc 仅在以下情形作为降级**，且必须在用例备注里写明降级原因：
-> - 遗留工程框架版本过老，无法启动嵌入式容器跑 `RANDOM_PORT`；
-> - 真实容器启动存在已知阻塞且短期无法解决（须附问题记录链接）。
+> **双阶段强制：** 每个 HTTP AC 的 executionPlan verification 必须声明 `boundary=http`、`stages=[local,test-env]`、`internalMocksAllowed=false`。先记录 `http-local` evidence，再把同一 `buildId` 部署到非 loopback 的测试环境并记录 `http-test-env` evidence。缺测试环境、阶段顺序错误、buildId 不同或内部 mock 不为 false 时，结果只能是 FAIL/BLOCKED。
 >
-> 降级用 MockMvc 时视为"未完全验证 HTTP 层"，需在测试报告中标注，不得标"HTTP 层已验证通过"。
+> 外部服务优先使用测试 sandbox。WireMock/stub 仅可记录为 `http-external-supplemental` 故障注入证据，不计入 local/test-env 两个必需阶段。
 
 ### 各层级验证重点
 
@@ -223,7 +225,7 @@ description: 有界风险驱动的测试用例生成策略。以有限风险登�
 | 异常映射 | 业务异常 → 对应错误码和 HTTP 状态码 |
 | @SkipAuth 生效 | 无 Token 也能访问 |
 
-**不验证：** 数据库实际写入、事务回滚、真实业务逻辑
+**必须验证：** 接口 AC 对应的真实业务规则和持久化结果；只测状态码/序列化而 mock 掉内部主链不算接口验收
 
 #### L3 集成测试
 

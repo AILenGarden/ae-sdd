@@ -1,19 +1,17 @@
 ---
-name: story-review
-description: 根据 DR + PRD + 产品原型 + Story 模板审查 Story，记录缺陷、存疑项和误报，先写 Supplement，再触发 Proposal，禁止生成旧版计划载体。当开发者说"审查 Story"、"检查 Story"、"优化 Story"、"Story 缺陷挖掘"、"Story Review"时触发。
 source_slimmed: true
 source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/skills/phase1-design/story-review-skill.full.md
-source_fallback_sha256: c9b85e0799ad49a323eb45620e2f1ad010001a3d0eee580d531780fae2fadb04
-source_original_bytes: 4884
-source_original_lines: 112
-source_semantic_inventory_sha256: c42b5f001e1e4fc240ea016e1231a04bfa8c9bc556fdb9ec4ae20ced4795a00c
+source_fallback_sha256: f1c6b661bc4027fe99c277048dd0f8d606fc5d43b04b143f70926346d86de436
+source_original_bytes: 2596
+source_original_lines: 54
+source_semantic_inventory_sha256: 5159f99b1e67b8d0156f0f2b14b3818da841b5cc8070fa3ec435d205e59621ac
 source_slimmer: slim_source_skills.py@2
 ---
 
-# Story Review — Story 缺陷挖掘 Skill Source SKILL Slim Entry
+# Story Review - Story 缺陷挖掘 Skill Source SKILL Slim Entry
 
 This source SKILL has been slimmed by the standard source-slimming pipeline. The full pre-slim source is preserved at `skill-fallbacks/skills/phase1-design/story-review-skill.full.md` and remains the semantic fallback.
 
@@ -28,27 +26,26 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `skills/phase1-design/story-review-skill.md`
 - fallback: `skill-fallbacks/skills/phase1-design/story-review-skill.full.md`
-- fallback_sha256: `c9b85e0799ad49a323eb45620e2f1ad010001a3d0eee580d531780fae2fadb04`
-- original_lines: 112
-- original_bytes: 4884
-- semantic_inventory_sha256: `c42b5f001e1e4fc240ea016e1231a04bfa8c9bc556fdb9ec4ae20ced4795a00c`
+- fallback_sha256: `f1c6b661bc4027fe99c277048dd0f8d606fc5d43b04b143f70926346d86de436`
+- original_lines: 54
+- original_bytes: 2596
+- semantic_inventory_sha256: `5159f99b1e67b8d0156f0f2b14b3818da841b5cc8070fa3ec435d205e59621ac`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
-- summary: 根据 DR + PRD + 产品原型 + Story 模板审查 Story，记录缺陷、存疑项和误报，先写 Supplement，再触发 Proposal，禁止生成旧版计划载体。当开发者说"审查 Story"、"检查 Story"、"优化 Story"、"Story 缺陷挖掘"、"Story Review"时触发。
+- summary: 基于当前权威 Story 模板和撰写指南审查 Story。Document Storage 返回资源正文与 sha256；`story_template_sections` 按 section ID 提供章节和层级；本 Skill 只编排 Review。
 
 ## Semantic Inventory
 
 | category | evidence | design_refs | fallback_policy |
 | --- | --- | --- | --- |
-| identity_trigger | frontmatter: name, description; headings: L2:20 文档存放前置调用; keyword_hits: 10 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
-| workflow_route | headings: L2:60 流程; keyword_hits: 4 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:106 禁止事项; keyword_hits: 31 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
-| tool_command | keyword_hits: 13 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
+| identity_trigger | keyword_hits: 4 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
+| workflow_route | keyword_hits: 1 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
+| gate_constraint | headings: L2:48 禁止事项; keyword_hits: 11 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| tool_command | keyword_hits: 2 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
 | state_data | keyword_hits: 3 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
-| output_doc_contract | headings: L2:20 文档存放前置调用; L2:95 输出要求; keyword_hits: 16 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
-| resource_reference | inline_refs: 19; refs: *DR*.md; *PRD*.md; *prd*.md; +16 more; keyword_hits: 26 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
-| design_alignment | keyword_hits: 1 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
-| fallback_only_detail | keyword_hits: 1 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
+| output_doc_contract | headings: L2:30 ID 与历史文档; L2:44 输出; keyword_hits: 7 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
+| resource_reference | inline_refs: 1; refs: state.review.status/findings | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
+| fallback_only_detail | headings: L2:30 ID 与历史文档; keyword_hits: 3 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
 ## Source Slimming SOP
 
@@ -62,38 +59,19 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 | level | line | title |
 | --- | --- | --- |
-| 1 | 6 | Story Review — Story 缺陷挖掘 Skill |
-| 2 | 8 | 目标 |
-| 2 | 12 | 依赖标准 |
-| 2 | 20 | 文档存放前置调用 |
-| 2 | 31 | 第零步：Story Review 准入检查 |
-| 2 | 60 | 流程 |
-| 2 | 73 | 核心原则 |
-| 2 | 82 | A-E / F 检查口径 |
-| 2 | 95 | 输出要求 |
-| 2 | 102 | 退出条件 |
-| 2 | 106 | 禁止事项 |
+| 1 | 1 | Story Review - Story 缺陷挖掘 Skill |
+| 2 | 3 | 目标 |
+| 2 | 7 | 资源与准入 |
+| 2 | 14 | Review scope |
+| 3 | 16 | `scope=primary` |
+| 3 | 23 | `scope=full` |
+| 2 | 30 | ID 与历史文档 |
+| 2 | 36 | 检查维度 |
+| 2 | 44 | 输出 |
+| 2 | 48 | 禁止事项 |
 
 ## Inline References
 
 | ref |
 | --- |
-| *DR*.md |
-| *PRD*.md |
-| *prd*.md |
-| *需求*.md |
-| ae-sdd assets read story-review --project <projectKey> |
-| ae-sdd doc resolve --intent DR |
-| ae-sdd doc resolve --intent STORY/STORY_SUPPLEMENT --story-id {S} |
-| ae-sdd doc save --intent PROPOSAL --work-item {W} --story-id {S} --content-file 草稿.md |
-| ae-sdd doc save --intent REVIEW_COMPARE --work-item {W} --story-id {S} --version "v1-to-v2" --content-file 草稿.md |
-| ae-sdd doc save --intent STORY_REVIEW --work-item {W} --story-id {S} --version "r1" --content-file 草稿.md |
-| ae-sdd doc save --intent STORY_SUPPLEMENT --work-item {W} --story-id {S} --content-file 草稿.md |
-| constraints/*.md |
-| constraints/assets/DR/PRD |
-| design/ |
-| document-storage-skill.md |
-| get_constraints/get_assets |
-| proposal-skill.md |
-| review-loop-skill.md |
-| standards/story/story-review-checklist.md |
+| state.review.status/findings |

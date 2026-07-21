@@ -44,6 +44,7 @@ G-CODE Coding 真实性门禁（v3.2.1 — 对标 CodingModel §6 AI Coding 反�
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 import tempfile
@@ -74,7 +75,7 @@ class GateResult:
     details: dict = field(default_factory=dict)
 
 
-# 门禁元信息（GATE_REGISTRY 实际 35 条；v3.10.0 砍 Task phase 后 G-04/G-05/G-06/G-TASK-CTX 仍注册但不再在 PHASE_ENTRY_GATES 中触发）
+# 门禁元信息（GATE_REGISTRY 实际 36 条；v3.10.0 砍 Task phase 后 G-04/G-05/G-06/G-TASK-CTX 仍注册但不再在 PHASE_ENTRY_GATES 中触发）
 # 🆕 v3.10.3 hint 字段迁入本注册表（单一权威源）：每个 gate 自带 scope/pass/fail 三元组，
 # 编译器 render_gates_compact 直接从 gate["hint"] 读取，不再维护独立的 GATE_HINTS 字典。
 GATE_REGISTRY: list[dict] = [
@@ -96,6 +97,8 @@ GATE_REGISTRY: list[dict] = [
      "hint": {"scope": "before coding execute", "pass": "CodingPlan document exists", "fail": "BLOCK"}},
     {"id": "G-08", "name": "CodingPlan 14 门禁通过", "severity": "blocker",
      "hint": {"scope": "before coding execute", "pass": "CodingPlan 14 gates are present", "fail": "BLOCK"}},
+    {"id": "G-HTTP-1", "name": "HTTP 场景推导有效", "severity": "blocker",
+     "hint": {"scope": "before coding execute", "pass": "HTTP AC has a derived, repeatable, independently observed scenario manifest", "fail": "BLOCK"}},
     {"id": "G-09", "name": "测试真实性扫描通过",   "severity": "blocker",
      "hint": {"scope": "test review", "pass": "test authenticity scanner passes", "fail": "BLOCK"}},
     {"id": "G-10", "name": "测试报告存在",         "severity": "blocker",
@@ -300,7 +303,12 @@ def _iter_dr_docs(design_dir: Path) -> list[Path]:
     """
     if not design_dir.is_dir():
         return []
-    drs = sorted(set(design_dir.rglob("*DR*.md")) | set(design_dir.rglob("*dr*.md")))
+    scan_root = design_dir
+    if design_dir.name.lower() == "ae-sdd-doc":
+        scan_root = design_dir / "DR"
+        if not scan_root.is_dir():
+            return []
+    drs = sorted(set(scan_root.rglob("*DR*.md")) | set(scan_root.rglob("*dr*.md")))
     return [d for d in drs if not any(kw in d.name for kw in _DR_EXCLUDE_KEYWORDS)]
 
 
@@ -332,10 +340,10 @@ def _g13_design_root(project_dir: Path) -> Path:
 # ─── G-01 ───────────────────────────────────────────────────────────────────
 def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-01 DR 文档存在"""
-    design = paths.project_design_dir(project_dir)
+    design = _g13_design_root(project_dir)
     if not design.is_dir():
         return GateResult("G-01", "DR 文档存在", "blocker", False,
-                          f"design/ 目录不存在: {design}",
+                          f"DR 文档目录不存在: {design}",
                           "跑 dr-generate-skill 生成 DR 文档")
 
     # 🆕 v3.5.10 Gap-004：原用 design.glob("*DR*.md") 只看根一层，不递归子目录，
@@ -344,7 +352,7 @@ def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
     drs = _iter_dr_docs(design)
     if not drs:
         return GateResult("G-01", "DR 文档存在", "blocker", False,
-                          f"design/ 目录无 DR 文档（rglob *DR*.md / *dr*.md，已排除报告类）",
+                          f"{design} 无 DR 文档（rglob *DR*.md / *dr*.md，已排除报告类）",
                           "跑 dr-generate-skill 生成 DR 文档")
     return GateResult("G-01", "DR 文档存在", "blocker", True,
                       f"找到 {len(drs)} 个 DR 文档",
@@ -924,6 +932,147 @@ CODINGPLAN_14GATES_KEYWORDS = [
 ]
 
 
+def _http_verification_items(plan: dict) -> list[dict]:
+    verification = plan.get("verification") if isinstance(plan, dict) else None
+    if not isinstance(verification, list):
+        return []
+    return [
+        item for item in verification
+        if isinstance(item, dict)
+        and str(item.get("boundary") or "").strip().casefold() == "http"
+    ]
+
+
+def _http_verification_ac_ids(plan: dict) -> list[str]:
+    ac_ids = []
+    for item in _http_verification_items(plan):
+        ac_id = str(item.get("acId") or item.get("ac") or "").strip()
+        if ac_id:
+            ac_ids.append(ac_id)
+    return sorted(set(ac_ids))
+
+
+def _http_execution_plan_issues(plan: dict) -> list[dict]:
+    issues = []
+    for index, item in enumerate(_http_verification_items(plan)):
+        item_id = str(item.get("id") or f"verification[{index}]")
+        ac_id = str(item.get("acId") or item.get("ac") or "").strip()
+        if not ac_id:
+            issues.append({"id": item_id, "field": "acId",
+                           "message": "HTTP verification acId is required"})
+        if item.get("stages") != ["local", "test-env"]:
+            issues.append({"id": item_id, "field": "stages",
+                           "message": "HTTP verification stages must be exactly [local, test-env]"})
+        if item.get("internalMocksAllowed") is not False:
+            issues.append({"id": item_id, "field": "internalMocksAllowed",
+                           "message": "HTTP verification must set internalMocksAllowed=false"})
+        if not str(item.get("command") or "").strip():
+            issues.append({"id": item_id, "field": "command",
+                           "message": "HTTP verification command is required"})
+    return issues
+
+
+def _safe_project_file(project_dir: Path, value: str) -> Optional[Path]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    root = project_dir.resolve()
+    candidate = (root / raw).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def check_g_http_1(project_dir: Path, st: dict, current_story: str) -> GateResult:
+    """Validate capability-derived HTTP scenarios without executing the runner."""
+    gate_id = "G-HTTP-1"
+    name = "HTTP 场景推导有效"
+    plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+    policy_version = plan.get("scenarioPolicyVersion")
+    if policy_version is None:
+        return GateResult(gate_id, name, "blocker", True,
+                          "legacy executionPlan 未启用场景推导策略（兼容读取）",
+                          details={"skipped": True, "profile": "legacy"})
+    if policy_version != 1:
+        return GateResult(gate_id, name, "blocker", False,
+                          f"不支持 scenarioPolicyVersion={policy_version}",
+                          "使用当前支持的 scenarioPolicyVersion=1")
+    http_items = _http_verification_items(plan)
+    if not http_items:
+        return GateResult(gate_id, name, "blocker", True,
+                          "当前计划无 HTTP verification（not applicable）",
+                          details={"skipped": True, "profile": "non-http"})
+
+    from lib import http_scenario
+
+    failures: list[dict] = []
+    validated: list[dict] = []
+    for index, item in enumerate(http_items):
+        item_id = str(item.get("id") or f"verification[{index}]")
+        manifest_value = str(item.get("scenarioManifest") or "").strip()
+        manifest_path = _safe_project_file(project_dir, manifest_value)
+        if manifest_path is None:
+            failures.append({"id": item_id, "reason": "scenario-manifest-path",
+                             "path": manifest_value})
+            continue
+        if not manifest_path.is_file():
+            failures.append({"id": item_id, "reason": "scenario-manifest-absent",
+                             "path": manifest_value})
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            failures.append({"id": item_id, "reason": "scenario-manifest-invalid-json",
+                             "path": manifest_value, "error": str(exc)})
+            continue
+        issues = http_scenario.validate_manifest(manifest)
+        if issues:
+            failures.append({"id": item_id, "reason": "scenario-contract-invalid",
+                             "path": manifest_value, "issues": issues})
+            continue
+        required_acs = set(re.findall(r"AC[-_]?\d+", str(item.get("acId") or ""), re.I))
+        scenario_acs = {
+            str(ac_id) for scenario in manifest.get("scenarios") or []
+            if isinstance(scenario, dict) for ac_id in scenario.get("acIds") or []
+        }
+        missing_acs = sorted(required_acs - scenario_acs)
+        if missing_acs:
+            failures.append({"id": item_id, "reason": "scenario-ac-coverage",
+                             "path": manifest_value, "missingAcs": missing_acs})
+            continue
+        validated.append({"id": item_id, "path": manifest_value,
+                          "scenarioCount": len(manifest.get("scenarios") or [])})
+    if failures:
+        return GateResult(gate_id, name, "blocker", False,
+                          f"HTTP 场景推导合同无效（{len(failures)} 项）",
+                          "补齐能力→状态→观察面→不变量→扰动→失败机制推导链及可重复命令",
+                          details={"failures": failures})
+    return GateResult(gate_id, name, "blocker", True,
+                      f"HTTP 场景推导合同通过（{len(validated)} 项 verification）",
+                      details={"validated": validated})
+
+
+def _required_http_scenario_ids(project_dir: Path, plan: dict) -> list[str]:
+    if plan.get("scenarioPolicyVersion") != 1:
+        return []
+    scenario_ids: set[str] = set()
+    for item in _http_verification_items(plan):
+        path = _safe_project_file(project_dir, str(item.get("scenarioManifest") or ""))
+        if path is None or not path.is_file():
+            continue
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        scenario_ids.update(
+            str(scenario.get("scenarioId") or "").strip()
+            for scenario in manifest.get("scenarios") or [] if isinstance(scenario, dict)
+        )
+    return sorted(item for item in scenario_ids if item)
+
+
 def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-08 CodingPlan 14 门禁通过 — 解析 CodingPlan 文档 14 门禁表"""
     plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
@@ -940,6 +1089,18 @@ def check_g08(project_dir: Path, st: dict, current_story: str) -> GateResult:
                 "补齐紧凑计划，不要创建 CodingPlan Markdown",
                 details={"profile": "compact", "missing": missing},
             )
+        http_issues = _http_execution_plan_issues(plan)
+        if http_issues:
+            return GateResult(
+                "G-08", "ExecutionPlan HTTP 验证契约", "blocker", False,
+                f"executionPlan HTTP verification 契约无效（{len(http_issues)} 项）",
+                "接口 AC 必须声明 boundary=http、stages=[local,test-env]、internalMocksAllowed=false 和可执行 command",
+                details={"profile": "compact", "reason": "http-verification-contract",
+                         "issues": http_issues},
+            )
+        scenario_gate = check_g_http_1(project_dir, st, current_story)
+        if not scenario_gate.pass_:
+            return scenario_gate
         if not plan.get("approved"):
             return GateResult(
                 "G-08", "ExecutionPlan 门禁通过", "blocker", False,
@@ -1368,6 +1529,30 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
                          "evidenceReason": evidence_reason},
             )
 
+    http_ac_ids = _http_verification_ac_ids(
+        st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+    )
+    http_evidence_details = None
+    if http_ac_ids:
+        from lib import evidence
+        execution_plan = st.get("executionPlan") if isinstance(st.get("executionPlan"), dict) else {}
+        http_ok, http_reason, http_evidence_details = evidence.validate_http_acceptance_manifest(
+            project_dir, current_story, http_ac_ids, scope_fingerprint,
+            _required_http_scenario_ids(project_dir, execution_plan),
+        )
+        if not http_ok:
+            return GateResult(
+                "G-09", "HTTP 双阶段验收证据", "blocker", False,
+                f"HTTP acceptance evidence 校验失败: {http_reason}",
+                "先完成本地真实 HTTP，再以同一 buildId 完成测试环境 HTTP，并重新记录 evidence",
+                details={"scanned": False, "scopeMode": scope_mode,
+                         "scopeSource": scope_source, "scopePaths": scope_paths,
+                         "scopeStatus": "BLOCK_HTTP_EVIDENCE_INVALID",
+                         "evidenceReason": http_reason,
+                         "httpAcs": http_ac_ids,
+                         "httpEvidence": http_evidence_details},
+            )
+
     scanner = _locate_authenticity_scanner(master_source)
     if scanner is None:
         return GateResult("G-09", "测试真实性扫描通过", "blocker", True,
@@ -1417,6 +1602,8 @@ def check_g09(project_dir: Path, st: dict, current_story: str,
     n_total = len(findings)
     scope_details = {"scopeMode": scope_mode, "scopeSource": scope_source,
                      "scopePaths": scope_paths, "scopeStatus": "VERIFIED"}
+    if http_evidence_details is not None:
+        scope_details["httpEvidence"] = http_evidence_details
 
     # 有 findings / BLOCKER → 直接 fail（无论 phase）
     if status != "PASS" or blockers > 0:
@@ -2771,6 +2958,57 @@ _AC_ID_RE = re.compile(r"(?<![A-Za-z0-9])AC[-_]?\d+")
 _STORY_ID_RE = re.compile(r"STORY[-_]?\d+", re.IGNORECASE)
 
 
+def _story_http_ac_ids(content: str) -> list[str]:
+    """Read HTTP/interface ACs from structured Story verification tables."""
+    lines = content.splitlines()
+    http_acs: set[str] = set()
+    index = 0
+    while index + 1 < len(lines):
+        header_line = lines[index].strip()
+        separator_line = lines[index + 1].strip()
+        if not (header_line.startswith("|") and separator_line.startswith("|")):
+            index += 1
+            continue
+        headers = [cell.strip() for cell in header_line.strip("|").split("|")]
+        separators = [cell.strip() for cell in separator_line.strip("|").split("|")]
+        if len(headers) != len(separators) or not all(
+            re.fullmatch(r":?-{3,}:?", cell) for cell in separators
+        ):
+            index += 1
+            continue
+
+        normalized_headers = [
+            re.sub(r"[\s`_/-]+", "", header).casefold() for header in headers
+        ]
+        ac_col = next((i for i, header in enumerate(normalized_headers)
+                       if header in {"ac", "acid", "验收标准", "验收标准id"}
+                       or header.startswith("acid")), -1)
+        boundary_col = next((i for i, header in enumerate(normalized_headers)
+                             if "验证边界" in header or "测试边界" in header
+                             or header == "boundary"), -1)
+        level_col = next((i for i, header in enumerate(normalized_headers)
+                          if "测试层级" in header or "验证层级" in header
+                          or header == "testlevel"), -1)
+        if ac_col < 0 or (boundary_col < 0 and level_col < 0):
+            index += 2
+            continue
+
+        row = index + 2
+        while row < len(lines) and lines[row].strip().startswith("|"):
+            cells = [cell.strip() for cell in lines[row].strip().strip("|").split("|")]
+            if len(cells) < len(headers):
+                cells.extend([""] * (len(headers) - len(cells)))
+            boundary = cells[boundary_col].casefold() if boundary_col >= 0 else ""
+            level = cells[level_col].casefold() if level_col >= 0 else ""
+            is_http = "http" in boundary or boundary.strip() == "rest"
+            is_interface = level.strip() in {"接口", "接口测试", "api", "http", "rest"}
+            if is_http or is_interface:
+                http_acs.update(_AC_ID_RE.findall(cells[ac_col]))
+            row += 1
+        index = row
+    return sorted(http_acs)
+
+
 def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-14 CodingPlan-Story 一致性 - Plan 须引用 Story 且关键设计可对应"""
     name = "CodingPlan-Story 一致性"
@@ -2813,6 +3051,24 @@ def check_g14(project_dir: Path, st: dict, current_story: str) -> GateResult:
                 details={**story_resolution, "missingAcs": missing_acs,
                          "planAcs": sorted(plan_acs)},
             )
+        http_acs = _story_http_ac_ids(story_content)
+        if http_acs:
+            verification = plan.get("verification") if isinstance(plan.get("verification"), list) else []
+            plan_boundaries = {
+                str(item.get("acId") or item.get("ac") or "").strip():
+                str(item.get("boundary") or "").strip().casefold()
+                for item in verification if isinstance(item, dict)
+            }
+            mismatched = [ac_id for ac_id in http_acs if plan_boundaries.get(ac_id) != "http"]
+            if mismatched:
+                return GateResult(
+                    "G-14", "ExecutionPlan-Story HTTP 边界一致性", "blocker", False,
+                    f"Story 接口级 AC 未使用 HTTP verification: {mismatched}",
+                    "把对应 executionPlan.verification.boundary 改为 http，并补齐双阶段契约",
+                    details={**story_resolution, "reason": "http-ac-boundary-mismatch",
+                             "httpAcs": http_acs, "mismatchedAcs": mismatched,
+                             "planBoundaries": plan_boundaries},
+                )
         return GateResult(
             "G-14", "ExecutionPlan-Story 一致性", "blocker", True,
             f"executionPlan 与 Story 一致（AC 对齐 {len(plan_acs)} 个）",
@@ -4240,7 +4496,7 @@ CHECK_FUNCS: dict[str, Callable] = {
     "G-01": check_g01, "G-02": check_g02, "G-03": check_g03,
     "G-04": check_g04, "G-05": check_g05, "G-06": check_g06,
     "G-07": check_g07,
-    "G-08": check_g08, "G-09": check_g09,
+    "G-08": check_g08, "G-HTTP-1": check_g_http_1, "G-09": check_g09,
     "G-10": check_g10, "G-11": check_g11, "G-12": check_g12,
     "G-13": check_g13,
     "G-14": check_g14,

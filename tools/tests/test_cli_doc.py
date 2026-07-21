@@ -8,6 +8,7 @@
 通过 subprocess 调真实 CLI（非 mock），覆盖 LLM 实际执行路径。
 """
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -180,10 +181,39 @@ class TestDocResolve(unittest.TestCase):
                                   "--story-id", "STORY-001",
                                   "--json")
         self.assertEqual(code, 0, msg=f"stderr={err}")
-        import json
         data = json.loads(out)
         self.assertIn("fullPath", data)
         self.assertIn("CodingPlan", data["fullPath"])
+
+    def test_resolve_story_template_returns_content_and_hash(self):
+        tmp = _setup_project()
+        code, out, err = _run_cli(
+            tmp,
+            "doc", "resolve",
+            "--intent", "STORY_TEMPLATE",
+            "--json",
+        )
+        self.assertEqual(code, 0, msg=f"stderr={err}")
+        data = json.loads(out)
+        self.assertEqual(data["intent"], "STORY_TEMPLATE")
+        self.assertEqual(data["source"], "packaged-default")
+        self.assertFalse(data["writable"])
+        self.assertIn("ae-sdd:story-section", data["content"])
+        self.assertEqual(len(data["sha256"]), 64)
+
+    def test_save_read_resource_fails_closed(self):
+        tmp = _setup_project()
+        draft = tmp / "resource.md"
+        draft.write_text("# overwrite", encoding="utf-8")
+        code, out, err = _run_cli(
+            tmp,
+            "doc", "save",
+            "--intent", "STORY_WRITING_GUIDE",
+            "--content-file", str(draft),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("E013", out + err)
+        self.assertTrue(draft.exists())
 
 
 class TestDocFinalize(unittest.TestCase):

@@ -91,7 +91,7 @@ def get_phase_gate_map(state: Optional[dict] = None) -> dict[str, list[str]]:
             "dr-generated":       ["G-01"],
             "story-generated":    ["G-02"],
             "coding-process":     ["G-08"],
-            "coding":             ["G-CODEPLAN-SRC"],
+            "coding":             ["G-CODEPLAN-SRC", "G-HTTP-1"],
             "test-running":       ["G-10"],
             "code-reviewed":      ["G-12"],
         }
@@ -104,7 +104,7 @@ def get_phase_gate_map(state: Optional[dict] = None) -> dict[str, list[str]]:
         "testcase-generated":  ["G-04"],
         "testcase-reviewed":   ["G-04"],
         "coding-process":      ["G-08"],   # CodingPlan 文档存在且 14 门禁全过
-        "coding":              ["G-CODEPLAN-SRC"],
+        "coding":              ["G-CODEPLAN-SRC", "G-HTTP-1"],
         # 🆕 v3.10.4：G-05（Task 文档存在）已从 PHASE_ENTRY_GATES 摘除，改用 G-09
         # （测试通过）作为 code-reviewed 的漂移检测代表，消除双源不一致。
         "code-reviewed":       ["G-09"],

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 
 def _canonical(value) -> bytes:
@@ -219,6 +221,275 @@ def validate_g09_manifest(project_dir: Path, story_id: str,
     if str(report.get("toolchainFingerprint") or "") != toolchain:
         return False, "report-toolchain"
     return True, "verified"
+
+
+def _normalized_ac_ids(values) -> Optional[list[str]]:
+    if not isinstance(values, list) or not values:
+        return None
+    normalized = []
+    for value in values:
+        ac_id = str(value or "").strip()
+        if not ac_id:
+            return None
+        normalized.append(ac_id)
+    return sorted(set(normalized))
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    value = str(hostname or "").strip().rstrip(".").casefold()
+    if value == "localhost" or value.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def _valid_http_stage_url(stage: str, value: str) -> bool:
+    try:
+        parsed = urlsplit(str(value or "").strip())
+        hostname = parsed.hostname or ""
+    except ValueError:
+        return False
+    if parsed.scheme.casefold() not in {"http", "https"} or not hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.query or parsed.fragment:
+        return False
+    try:
+        address = ipaddress.ip_address(hostname.rstrip("."))
+    except ValueError:
+        address = None
+    if address is not None and (
+        address.is_unspecified or address.is_multicast or address.is_link_local
+    ):
+        return False
+    loopback = _is_loopback_host(hostname)
+    return loopback if stage == "local" else not loopback
+
+
+def _evidence_started_at(entry: dict) -> Optional[datetime]:
+    try:
+        started_at = datetime.fromisoformat(
+            str(entry.get("startedAt") or "").replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError):
+        return None
+    if started_at.tzinfo is None or started_at.utcoffset() is None:
+        return None
+    return started_at
+
+
+def validate_http_acceptance_manifest(
+    project_dir: Path,
+    story_id: str,
+    required_acs: list[str],
+    input_fingerprint: str,
+    required_scenario_ids: Optional[list[str]] = None,
+) -> tuple[bool, str, dict]:
+    """Validate real-HTTP acceptance evidence for local then test-env stages.
+
+    Only active ``http-local`` and ``http-test-env`` entries can satisfy the
+    contract.  External sandbox/stub evidence is supplemental and is ignored
+    when computing required stage completion.
+    """
+    required = _normalized_ac_ids(required_acs)
+    if required is None:
+        return False, "http-evidence-required-acs", {"requiredAcs": required_acs}
+    if not str(input_fingerprint or "").strip():
+        return False, "http-evidence-input-fingerprint", {"requiredAcs": required}
+    required_scenarios = sorted(set(str(item).strip() for item in
+                                    (required_scenario_ids or []) if str(item).strip()))
+
+    path = manifest_path(project_dir, story_id)
+    if not path.is_file():
+        return False, "http-evidence-absent", {"requiredAcs": required}
+    manifest = load_manifest(project_dir, story_id)
+    if manifest.get("corrupt") or manifest.get("_integrityStatus") != "VERIFIED":
+        return False, "http-evidence-manifest-integrity", {"requiredAcs": required}
+    if str(manifest.get("storyId") or "") != story_id:
+        return False, "http-evidence-story", {"requiredAcs": required}
+
+    expected_kinds = {"local": "http-local", "test-env": "http-test-env"}
+    stage_entries: dict[str, list[dict]] = {"local": [], "test-env": []}
+    active = [
+        entry for entry in manifest.get("entries", [])
+        if entry.get("status", "active") == "active"
+    ]
+    for stage, kind in expected_kinds.items():
+        candidates = [entry for entry in active if entry.get("kind") == kind]
+        stage_entries[stage] = [
+            entry for entry in candidates
+            if entry.get("inputFingerprint") == input_fingerprint
+        ]
+        if candidates and not stage_entries[stage]:
+            return False, "http-evidence-input-fingerprint", {
+                "stage": stage,
+                "requiredAcs": required,
+            }
+
+    missing_stages = [stage for stage in ("local", "test-env") if not stage_entries[stage]]
+    if missing_stages:
+        return False, "http-evidence-missing-stage", {
+            "requiredAcs": required,
+            "missingStages": missing_stages,
+        }
+
+    normalized: dict[str, list[dict]] = {"local": [], "test-env": []}
+    invalid_candidates: dict[str, list[tuple[str, dict]]] = {"local": [], "test-env": []}
+    for stage in ("local", "test-env"):
+        for entry in stage_entries[stage]:
+            if not entry.get("reusable") or int(entry.get("exitCode", 1)) != 0:
+                invalid_candidates[stage].append(("http-evidence-unsuccessful", {
+                    "stage": stage,
+                    "evidenceId": entry.get("evidenceId"),
+                }))
+                continue
+            summary = entry.get("summary")
+            if not isinstance(summary, dict):
+                invalid_candidates[stage].append(("http-evidence-summary", {"stage": stage}))
+                continue
+            if str(summary.get("stage") or "") != stage:
+                invalid_candidates[stage].append(("http-evidence-stage", {"stage": stage}))
+                continue
+            if str(summary.get("result") or "") != "PASS":
+                invalid_candidates[stage].append(("http-evidence-result", {"stage": stage}))
+                continue
+            if summary.get("internalMocks") is not False:
+                invalid_candidates[stage].append(("http-evidence-internal-mock", {"stage": stage}))
+                continue
+            scenario_ids: set[str] = set()
+            if required_scenarios:
+                scenario_results = summary.get("scenarioResults")
+                if not isinstance(scenario_results, list) or not scenario_results:
+                    invalid_candidates[stage].append(("http-evidence-scenario-results", {"stage": stage}))
+                    continue
+                invalid_result = False
+                for scenario_result in scenario_results:
+                    if not isinstance(scenario_result, dict):
+                        invalid_result = True
+                        break
+                    scenario_id = str(scenario_result.get("scenarioId") or "").strip()
+                    assertion_kinds = {
+                        str(item).strip().casefold()
+                        for item in scenario_result.get("assertionKinds") or []
+                        if str(item).strip()
+                    }
+                    meaningful = assertion_kinds & {
+                        "field", "state", "relation", "invariant", "effect", "atomicity"
+                    }
+                    if (not scenario_id or scenario_result.get("result") != "PASS"
+                            or not meaningful
+                            or not str(scenario_result.get("rerunCommand") or "").strip()):
+                        invalid_result = True
+                        break
+                    scenario_ids.add(scenario_id)
+                if invalid_result:
+                    invalid_candidates[stage].append(("http-evidence-scenario-depth", {"stage": stage}))
+                    continue
+            ac_ids = _normalized_ac_ids(summary.get("acIds"))
+            if ac_ids is None:
+                invalid_candidates[stage].append(("http-evidence-ac-ids", {"stage": stage}))
+                continue
+            build_id = str(summary.get("buildId") or "").strip()
+            if not build_id:
+                invalid_candidates[stage].append(("http-evidence-build-id", {"stage": stage}))
+                continue
+            base_url = str(summary.get("baseUrl") or "").strip()
+            if not _valid_http_stage_url(stage, base_url):
+                invalid_candidates[stage].append((
+                    "http-evidence-url", {"stage": stage, "baseUrl": base_url}
+                ))
+                continue
+            started_at = _evidence_started_at(entry)
+            if started_at is None:
+                invalid_candidates[stage].append(("http-evidence-time", {"stage": stage}))
+                continue
+
+            artifacts = entry.get("artifacts") or []
+            if not artifacts:
+                invalid_candidates[stage].append((
+                    "http-evidence-artifact-integrity", {"stage": stage}
+                ))
+                continue
+            if not all(_project_artifact_matches(project_dir, artifact)[0]
+                       for artifact in artifacts):
+                invalid_candidates[stage].append((
+                    "http-evidence-artifact-integrity", {"stage": stage}
+                ))
+                continue
+
+            normalized[stage].append({
+                "buildId": build_id,
+                "acIds": set(ac_ids),
+                "startedAt": started_at,
+                "evidenceId": entry.get("evidenceId"),
+                "scenarioIds": scenario_ids,
+            })
+
+        if not normalized[stage]:
+            reason, details = invalid_candidates[stage][0]
+            return False, reason, details
+
+    local_builds = {item["buildId"] for item in normalized["local"]}
+    test_env_builds = {item["buildId"] for item in normalized["test-env"]}
+    common_builds = sorted(local_builds & test_env_builds)
+    if not common_builds:
+        return False, "http-evidence-build-mismatch", {
+            "localBuildIds": sorted(local_builds),
+            "testEnvBuildIds": sorted(test_env_builds),
+        }
+
+    required_set = set(required)
+    coverage_failures = []
+    order_failures = []
+    for build_id in common_builds:
+        local = [item for item in normalized["local"] if item["buildId"] == build_id]
+        test_env = [item for item in normalized["test-env"] if item["buildId"] == build_id]
+        local_coverage = set().union(*(item["acIds"] for item in local))
+        test_env_coverage = set().union(*(item["acIds"] for item in test_env))
+        missing_local = sorted(required_set - local_coverage)
+        missing_test_env = sorted(required_set - test_env_coverage)
+        if missing_local or missing_test_env:
+            coverage_failures.append({
+                "buildId": build_id,
+                "missingLocalAcs": missing_local,
+                "missingTestEnvAcs": missing_test_env,
+            })
+            continue
+        if required_scenarios:
+            required_scenario_set = set(required_scenarios)
+            local_scenarios = set().union(*(item["scenarioIds"] for item in local))
+            test_env_scenarios = set().union(*(item["scenarioIds"] for item in test_env))
+            missing_local_scenarios = sorted(required_scenario_set - local_scenarios)
+            missing_test_env_scenarios = sorted(required_scenario_set - test_env_scenarios)
+            if missing_local_scenarios or missing_test_env_scenarios:
+                coverage_failures.append({
+                    "buildId": build_id,
+                    "missingLocalScenarios": missing_local_scenarios,
+                    "missingTestEnvScenarios": missing_test_env_scenarios,
+                })
+                continue
+        local_completed_at = max(item["startedAt"] for item in local)
+        test_env_started_at = min(item["startedAt"] for item in test_env)
+        if local_completed_at > test_env_started_at:
+            order_failures.append({"buildId": build_id})
+            continue
+        return True, "verified", {
+            "requiredAcs": required,
+            "stages": ["local", "test-env"],
+            "buildId": build_id,
+            "internalMocks": False,
+            "scenarioIds": required_scenarios,
+        }
+
+    if coverage_failures:
+        return False, "http-evidence-missing-ac", {
+            "requiredAcs": required,
+            "candidates": coverage_failures,
+        }
+    return False, "http-evidence-order", {"candidates": order_failures}
 
 
 def record(project_dir: Path, story_id: str, *, kind: str, command: str | list[str],

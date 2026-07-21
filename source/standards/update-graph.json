@@ -69,12 +69,24 @@
     {
       "id": "UG-06",
       "name": "模板变更",
-      "trigger": ["source/templates/**/*.md"],
-      "trigger_condition": "修改模板",
+      "trigger": ["source/templates/**/*.md", "source/standards/templates/template-layout-standard.md", "source/standards/story/story-writing-guide.md", "tools/lib/story_template_sections.py"],
+      "trigger_condition": "修改模板、Story 撰写指南或章节解析器",
       "affected": [
-        {"path": "source/skills/**/*.md", "action": "对应子 SKILL 的章节锚点引用同步；模板章节与 SKILL 要求 1:1", "auto_checkable": false}
+        {"path": "source/standards/templates/template-layout-standard.md", "action": "同步默认内置声明表模式与独立撰写指南模式边界", "auto_checkable": false},
+        {"path": "source/standards/story/story-generation-standard.md", "action": "同步模板/指南/解析器消费契约，不复制章节名单", "auto_checkable": false},
+        {"path": "source/standards/story/story-review-checklist.md", "action": "同步 section ID、primary/full 和历史迁移检查", "auto_checkable": false},
+        {"path": "source/standards/story/story-content-layering-standard.md", "action": "同步模板元数据、ID-only 输出和解析接口契约", "auto_checkable": false},
+        {"path": "source/standards/story/story-input-checklist.md", "action": "同步 STORY_TEMPLATE/STORY_WRITING_GUIDE 资源加载契约", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase1-design/story-generate-skill.full.md", "action": "同步 Document Storage content/sha256 和 section ID 生成流程", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase1-design/story-review-skill.full.md", "action": "同步 section ID 分类与历史迁移流程", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase1-design/story-update-skill.full.md", "action": "同步 section ID 变更分类与失效规则", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/cross-cutting/document-storage-skill.full.md", "action": "同步只读资源 intent 的正文/指纹响应和写入拒绝规则", "auto_checkable": false},
+        {"path": "tools/lib/document_storage.py", "action": "同步只读 Story 资源路由、正文读取、SHA-256 和错误码", "auto_checkable": true},
+        {"path": "tools/tests/test_story_template_sections.py", "action": "覆盖元数据、19/11、ID-only 和迁移契约", "auto_checkable": true},
+        {"path": "tools/tests/test_story_content_layering.py", "action": "覆盖三件套 Skill 的资源/解析/分层流程", "auto_checkable": true},
+        {"path": "source/skills/**/*.md", "action": "对应 slim entry 的资源契约同步；禁止硬编码章节名单", "auto_checkable": false}
       ],
-      "checks": ["UC-05"]
+      "checks": ["UC-01", "UC-05", "UC-06", "UC-14", "UC-15", "UC-20"]
     },
     {
       "id": "UG-07",
@@ -619,6 +631,36 @@
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 resolver→scanner --file→gate details 数据流和 dist 依赖；验证结果由测试承载", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-06", "UC-14", "UC-20"]
+    },
+    {
+      "id": "UG-30",
+      "name": "能力驱动 HTTP 场景推导与证据闭环",
+      "trigger": [
+        "tools/lib/scenario_derivation.py",
+        "tools/lib/http_scenario.py",
+        "tools/lib/evidence.py",
+        "tools/lib/gates.py",
+        "source/standards/testing/be-http-scenario-strategy.md"
+      ],
+      "trigger_condition": "CapabilityModel、ScenarioManifest、G-HTTP-1 或 scenario evidence 契约变化",
+      "affected": [
+        {"path": "tools/lib/scenario_derivation.py", "action": "能力规则、失败机制和最小场景推导保持一致", "auto_checkable": true},
+        {"path": "tools/lib/http_scenario.py", "action": "manifest 深度、独立观察、重复机制和 finding 契约同步", "auto_checkable": true},
+        {"path": "tools/lib/evidence.py", "action": "local/test-env scenarioId、assertionKinds 和 rerunCommand 对账同步", "auto_checkable": true},
+        {"path": "tools/lib/gates.py", "action": "G-HTTP-1 registry、CHECK_FUNCS、G-08/G-09 接入同步", "auto_checkable": true},
+        {"path": "source/standards/testing/be-http-scenario-strategy.md", "action": "能力→状态→观察→不变量→扰动→失败机制标准同步", "auto_checkable": false},
+        {"path": "source/templates/testcase/be-testcase-template.md", "action": "CapabilityModel 与推导矩阵模板同步", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md", "action": "先推导后生成规则同步", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md", "action": "固定 CRUD/status-only/同路径自证审查同步", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "执行前 G-HTTP-1 规则同步", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase3-review/test-review-skill.full.md", "action": "scenario evidence 深度复核同步", "auto_checkable": false},
+        {"path": "tools/tests/test_scenario_derivation.py", "action": "不同能力生成不同场景且不注入无关 CRUD", "auto_checkable": true},
+        {"path": "tools/tests/test_http_scenario_contract.py", "action": "G-HTTP-1 与 evidence 正反例同步", "auto_checkable": true},
+        {"path": "tools/tests/test_scenario_effectiveness.py", "action": "代表性 seeded defect 检出同步", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-design.md", "action": "Design Ledger 问题、决策、价值和证据同步", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "场景推导模块与数据流同步", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-20"]
     }
   ]
 }

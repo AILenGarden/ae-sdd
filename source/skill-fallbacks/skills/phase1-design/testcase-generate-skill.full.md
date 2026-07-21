@@ -46,6 +46,10 @@ ae-sdd gates check --only G-TESTCASE-CTX
 
 ## 输入
 
+### 场景推导前置
+
+先从 Story/API contract 生成 CapabilityModel：能力、前后状态、独立观察面、变化维度、不变量、扰动轴和失败机制。再生成最小 ScenarioManifest；不得从 CRUD 名称或固定示例复制用例。每条场景必须写 `rationale`、`detects`、独立观察面、可重复 command/isolation/cleanup，并证明它能发现具体缺陷。新 HTTP executionPlan 写 `scenarioPolicyVersion: 1`，每个 `boundary=http` verification 写项目内 `scenarioManifest` 相对路径。
+
 必须读取：
 
 | 输入 | 路径 / 来源 | 用途 |
@@ -157,15 +161,15 @@ Story 涉及金额 → 挖高风险边界候选（BigDecimal 精度）
 
 生成结束前执行停止条件：AC、`keep` 风险、改动分支和历史回归均已映射，剩余候选不增加新的失败机制、控制流、契约、协议、断言或层级证据。超出局部数量上限必须记录预算例外的新增价值、执行/维护成本、不可合并原因和确认人。
 
-L2/L4 接口测试默认真实 HTTP：`SpringBootTest(RANDOM_PORT) + TestRestTemplate`。MockMvc 只能降级，且必须在用例备注写明原因。
+L2/L4 接口 AC 固定真实 HTTP 双阶段：`boundary=http`、`stages=[local,test-env]`、`internalMocksAllowed=false`。本地 `RANDOM_PORT + HTTP client` 走完整内部链，随后以同一 buildId 请求测试环境；MockMvc、直接 Controller 调用和内部 MockBean/SpyBean 都不能关闭 AC。
 
 ### 3. 测试真实性预埋
 
 每条用例必须包含：
 
 - 测试数据来源：Story AC / Task / 接口示例 / 项目资产。
-- 真实链路要求：真实 HTTP / 真实 DB / 单元测试 / 外部依赖 Mock。
-- Mock 边界：只 Mock 直接外部依赖，且返回具体业务值。
+- 真实链路要求：HTTP AC 同时规划 `http-local` 与 `http-test-env` evidence；核心 DB 真实验证。
+- Test double 边界：只用于非接口单测或外部 supplemental 故障注入，不得替换内部 Service/Repository/Mapper/Application 主链。
 - 负向或失败注入：核心 AC 存在可追溯的独立失败机制时保留代表用例；不得按 AC 机械追加。
 - 自动化入口：`src/test/java/...#method`，无法确定则标 `{待确认}`。
 
@@ -187,7 +191,7 @@ L2/L4 接口测试默认真实 HTTP：`SpringBootTest(RANDOM_PORT) + TestRestTem
 | TC-G2 | 风险覆盖 | 每个 `keep` 风险已映射；高影响风险未被预算静默排除 |
 | TC-G3 | 有界选择 | 候选均有选择决策，行为等价项已合并，停止条件已满足 |
 | TC-G4 | L1 | 适合纯逻辑层暴露的独立失败机制在 L1 验证 |
-| TC-G5 | L2 | 仅 HTTP/序列化/异常映射的独立风险使用真实 HTTP |
+| TC-G5 | L2/L4 | 接口 AC 规划本地完整内部链 + 同 buildId 测试环境 HTTP；缺任一阶段为 BLOCKED |
 | TC-G6 | L3 | 仅 DB 约束、事务、SQL 的独立风险使用真实 DB |
 | TC-G7 | L4 | 仅跨 Story / 多组件的独立链路风险使用端到端测试 |
 | TC-G8 | 可执行性 | 前置、步骤、断言、清理动作齐全 |
@@ -215,7 +219,7 @@ L2/L4 接口测试默认真实 HTTP：`SpringBootTest(RANDOM_PORT) + TestRestTem
 | 只覆盖 AC | 在 AC 之外补充有证据且通过准入的独立风险 |
 | 不读策略/模板/约束 | 先读输入表中必读文件 |
 | 用例无数据来源 | 每条写明来源或 `{待确认}` |
-| 用 MockMvc 冒充真实 HTTP | 仅降级使用并写原因 |
+| 用 MockMvc、方法调用或内部 MockBean 冒充真实 HTTP | 改为真实端口完整内部链；MockMvc 不属于接口验收 |
 | 全 Mock 核心落库路径 | L3 用真实 DB/H2/Testcontainers 验证 |
 | 生成阶段直接改 Story | 缺 AC/接口时输出缺口，交监管器路由 |
 | 跳过有限风险登记直接填矩阵 | 先登记候选，再执行准入、合并和选择决策 |
