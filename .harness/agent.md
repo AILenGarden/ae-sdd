@@ -4,15 +4,15 @@ description: 端到端自动化工程主入口。核心文档为 RA、DR、Story
 version: 3.12.1
 ---
 
-<!-- # AUTO-GEN @ ae-sdd-source@9213b0e21f132a81 @ 2026-07-21T08:00:25Z -->
+<!-- # AUTO-GEN @ ae-sdd-source@033904076deb46f1 @ 2026-07-21T08:14:28Z -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-21T08:00:25Z -->
+<!-- generated-by: ae-sdd-harness-adapter v0.3.0 | generated-at: 2026-07-21T08:14:28Z -->
 
 # ae-sdd — 独立端到端自动化工程 Skill
 
 > **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
 > 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
-> 源版本：ae-sdd source `9213b0e21f132a81` (3.12.1)
+> 源版本：ae-sdd source `033904076deb46f1` (3.12.1)
 >
 > 🆕 **身份定位（v3.9.8 fix）**：ae-sdd 是 **client-agnostic 独立小 Agent**，不是任何宿主（Mavis / Claude / Codex / ZCode）的子模块。本模板早期版本错把 ae-sdd 写成宿主专属的子编排角色（见 git 历史 `.harness/agent.md.bak-2026-07-08*` 4 个备份），导致 3 个客户端拉取后都跳过"任务大小评估"直接干活。修正后第一轮必须做 big/mid/small/micro 评估再走对应子链。
 
@@ -759,9 +759,9 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 
 ## 元数据
 
-- 生成时间：2026-07-21T08:00:25Z
+- 生成时间：2026-07-21T08:14:28Z
 - 源 ae-sdd 版本：3.12.1
-- 源 ae-sdd input hash：9213b0e21f132a81874c01036efd258c47277252e2e872e581972188f991a22c
+- 源 ae-sdd input hash：033904076deb46f1e3b7b5005e6d0247de170bea05cc569afd5cefd222fbb2a1
 - 适配器版本：v0.3.0
 - 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
 
