@@ -1,5 +1,16 @@
 """
-prompt_inject.py — UserPromptSubmit hook v1.4
+prompt_inject.py — UserPromptSubmit hook v1.5
+
+v1.5 修正（2026-07-21）：
+  - 修复 pending-init 标记生命周期缺陷：ade_sdd is None 分支下，此前只有
+    命中 AE_SDD_DISENGAGE_MARKERS 才清除标记，普通非触发消息不会清除——
+    导致用户主目录/磁盘根目录等永久不会存在 .ae-sdd/ 的 cwd 一旦被误触发一次
+    (哪怕是句子里恰好出现"端到端实现"这种日常措辞)，标记就永久锁死，此后
+    所有新会话在该 cwd 下的非只读操作都被拦截，且用户不知道原因。
+    改为与下方 ade_sdd 存在时的分支对称："非触发消息一律清除"（disengage
+    词本身也是非触发词，自然被覆盖，行为超集不破坏既有约定）。
+  - 修复 AE_SDD_DISENGAGE_MARKERS 里 "退出 ae-sdd" 的空格匹配陷阱：中文用户
+    打「退出ae-sdd」(无空格) 时 `in` 子串匹配不命中；补充无空格变体。
 
 v1.4 修正（2026-06-22）：
   - 修复 completed phase 注入消息中的无效命令：
@@ -88,6 +99,7 @@ AE_SDD_TRIGGER_MARKERS: tuple[str, ...] = (
 AE_SDD_DISENGAGE_MARKERS: tuple[str, ...] = (
     "ae-sdd-exit",
     "退出 ae-sdd",
+    "退出ae-sdd",  # 🆕 v1.5：补无空格变体，"退出 ae-sdd" 的 in 子串匹配对此不命中
     "不锁了",
     "解除门禁",
 )
@@ -257,19 +269,20 @@ def inject(
 
     ade_sdd = paths.locate_project_ae_sdd(project_dir)
     if ade_sdd is None:
-        # 🆕 v3.10.2 修复死锁：pending-init 标记原本只在"后来找到了 .ae-sdd/"
-        # 分支里才会被清除（见下方 _clear_pending_init 调用）。但对永远不会
-        # 存在 .ae-sdd/ 的仓库（如本仓库自身，纯工具源码，不是 ae-sdd 落地目标
-        # 项目），标记一旦写入就没有任何自救路径——快速通道同样要求先定位到
-        # .ae-sdd/ 才生效，_deny_response 里"说'走快速通道'"的提示因此指向
-        # 死路。这里让 disengage 词（"退出 ae-sdd"/"不锁了" 等）独立于
-        # .ae-sdd/ 是否存在都能清除标记，与 mark_session_engaged 的触发词
-        # 对称，不依赖项目已初始化。
+        # 🆕 v3.10.2 修复死锁：disengage 词（"退出 ae-sdd"/"不锁了" 等）独立于
+        # .ae-sdd/ 是否存在都能清除标记，与 mark_session_engaged 的触发词对称。
         if any(m in user_prompt for m in AE_SDD_DISENGAGE_MARKERS):
             _clear_pending_init(project_dir)
             return {}
         if _is_ae_sdd_triggered:
             return _inject_uninitialized_block(project_dir)
+        # 🆕 v1.5 修复死锁：非触发消息也必须清除标记，不能只靠 disengage 词。
+        # 旧行为只在触发/退出词命中时才处理标记，普通消息什么都不做——对永远
+        # 不会存在 .ae-sdd/ 的 cwd（用户主目录、磁盘根目录等），标记一旦被
+        # 误触发写入就再没有自动恢复路径，只能靠用户记住并手动说退出词。
+        # 这里与下方 ade_sdd 存在时的分支（284-286 行）对齐："非触发消息一律
+        # 清除"，让标记的生效范围收窄为"仅本轮触发消息"，不再跨轮持久锁定。
+        _clear_pending_init(project_dir)
         return {}
 
     # 清除待初始化标记（已找到 .ae-sdd/，说明项目已初始化）
@@ -653,13 +666,20 @@ def _inject_uninitialized_block(project_dir: Optional[Path]) -> dict:
     """用户触发 /ae-sdd 但项目未初始化 → 注入"请先 init"状态块 + 写标记文件。
 
     标记文件供 gate_intercept 跨 hook 读取，用于拦截未初始化项目的写操作。
+
+    🆕 v1.5：home 目录 / 磁盘根目录不写标记（源头防御）。这类目录是大量
+    无关会话共用的默认 cwd，永远不会是真实的 ae-sdd 项目根；写了标记只会
+    在下次误触发前持续拦截该目录下与 ae-sdd 无关的操作。gate_intercept 侧
+    也有对称豁免（is_home_or_drive_root），这里双层防御：即便某处遗漏，
+    另一侧仍能兜底，不依赖单点判断。
     """
     from lib import paths as _paths
-    marker = _paths.pending_init_marker(project_dir)
-    try:
-        marker.write_text("ae-sdd pending init", encoding="utf-8")
-    except OSError:
-        pass  # 标记文件写入失败不阻断注入
+    if not _paths.is_home_or_drive_root(project_dir):
+        marker = _paths.pending_init_marker(project_dir)
+        try:
+            marker.write_text("ae-sdd pending init", encoding="utf-8")
+        except OSError:
+            pass  # 标记文件写入失败不阻断注入
 
     from datetime import datetime as _dt, timezone as _tz
     now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

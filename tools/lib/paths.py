@@ -15,7 +15,7 @@ from typing import Optional
 
 
 # Keep in sync with source/SKILL.md YAML frontmatter.
-MASTER_VERSION = "3.11.6"
+MASTER_VERSION = "3.12.0"
 
 
 # ─── 🆕 v3.10.1 state UUID 前缀（保证目录名/stateMachineId 全局唯一）─────────
@@ -143,6 +143,34 @@ def locate_project_ae_sdd(cwd: Optional[Path] = None) -> Optional[Path]:
             break
         cur = cur.parent
     return None
+
+
+# 🆕 v1.5：home 目录 / 磁盘根目录判定（pending-init 标记生命周期修复共用）。
+# 根因：pending-init 标记（见 gate_intercept.pending_init_marker /
+# prompt_inject._inject_uninitialized_block）只在 cwd 向上 5 层找不到
+# .ae-sdd/ 时才会被写入。用户主目录、磁盘/文件系统根目录是大量无关会话
+# 共用的默认 cwd，永远不会、也不应该存在 .ae-sdd/config.yaml——一旦某次
+# 会话的消息偶然命中触发词，标记就会锁死这个高频复用目录，波及此后所有
+# 与 ae-sdd 无关的会话。gate_intercept（拦截侧）与 prompt_inject（写入侧）
+# 都需要这个判定：前者用它跳过 pending-init 拦截分支，后者用它从源头
+# 不写入标记；两处共用同一实现，避免各自维护一份判定逻辑分叉走样。
+# 只判定"这个目录本身"，不含子目录——子目录仍可能是合法的 ae-sdd 项目根。
+def is_home_or_drive_root(cwd: Optional[Path]) -> bool:
+    """判断 cwd 是否恰好是用户主目录或磁盘/文件系统根目录（不含子目录）。"""
+    if cwd is None:
+        return False
+    try:
+        resolved = Path(cwd).resolve()
+    except OSError:
+        return False
+    if resolved.parent == resolved:
+        return True  # 文件系统根（Windows 盘符根 / POSIX "/"）
+    try:
+        if resolved == Path.home().resolve():
+            return True
+    except OSError:
+        pass
+    return False
 
 
 def _strip_yaml_comment(raw: str) -> str:

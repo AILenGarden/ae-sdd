@@ -1001,6 +1001,21 @@ def _is_ae_sdd_self_repo(cwd: Optional[Path]) -> bool:
     return False
 
 
+# 🆕 v1.5：home 目录 / 磁盘根目录永久豁免。
+# 根因：pending-init 标记只在 cwd 向上 5 层找不到 .ae-sdd/ 时才会被写入
+# （见 prompt_inject._inject_uninitialized_block），且用户主目录（如
+# C:\Users\EDY）是大量无关会话共用的默认 cwd，永远不会、也不应该存在
+# .ae-sdd/config.yaml。一旦某次会话的普通消息里偶然出现触发词（如日常
+# 措辞"端到端实现"），标记就会在这个高频复用的目录上被写入，进而拦住
+# 之后所有新会话里与 ae-sdd 完全无关的操作（如单纯 cd 看一下目录）。
+# 磁盘根目录（Windows 盘符根 "C:\\"、POSIX "/"）同理：真实项目不会以
+# 磁盘根本身为工作目录，且一旦被锁在这类"最大公分母"路径上，影响面
+# 是这台机器上的所有会话，风险远高于收益。
+# 判定逻辑（是否恰好是 home/磁盘根，不含子目录）与 prompt_inject 写入侧
+# 共用 paths.is_home_or_drive_root，避免两处独立实现分叉走样。
+# 只跳过 pending-init 拦截分支，不影响已 init 项目的正常门禁校验。
+
+
 def _check_pending_init_intercept(
     tool_name: str,
     bash_command: Optional[str],
@@ -1127,6 +1142,10 @@ def check_intercept(
             # 导致死锁（连修 hook 自己都被拦）。从根上识别工具仓并放行，
             # 不进 pending-init 拦截分支。豁免只跳过本分支，不影响已 init 项目。
             if _is_ae_sdd_self_repo(project_dir):
+                return True, ""
+            # 🆕 v1.5：home 目录 / 磁盘根目录永久豁免，同上一条一样只跳过
+            # pending-init 拦截分支，不影响已 init 项目的正常门禁校验。
+            if paths.is_home_or_drive_root(project_dir):
                 return True, ""
             # 🆕 v3.9.3：用户触发 /ae-sdd 但项目未 init -> 检查待初始化标记
             pending = paths.pending_init_marker(project_dir)

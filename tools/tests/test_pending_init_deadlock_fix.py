@@ -220,6 +220,138 @@ class TestSelfRepoExemption:
         assert "尚未初始化" in reason
 
 
+class TestPendingInitLifecycleFix:
+    """🆕 v1.5：pending-init 标记生命周期缺陷修复测试。
+
+    背景：ade_sdd is None 分支下，旧行为只有命中 AE_SDD_DISENGAGE_MARKERS
+    才清除标记；普通非触发消息什么都不做。用户主目录/磁盘根目录等永久
+    不存在 .ae-sdd/ 的 cwd 一旦被误触发一次，标记就永久锁死，之后所有
+    新会话在该 cwd 下的非只读操作都被拦截。
+    """
+
+    def test_ordinary_message_clears_pending_init_without_disengage_word(self, tmp_path):
+        """核心修复：不含触发词/退出词的普通消息，也应清除已存在的标记。"""
+        marker = paths_mod.pending_init_marker(tmp_path)
+        inject(project_dir=tmp_path, user_prompt="/ae-sdd 开始处理")
+        assert marker.is_file(), "触发词应写入 pending-init 标记"
+
+        # 普通消息，既非触发词也非退出词
+        inject(project_dir=tmp_path, user_prompt="今天天气怎么样")
+        assert not marker.exists(), (
+            "非触发消息也应清除 pending-init 标记，不能只依赖 disengage 词，"
+            "否则用户不知道要说退出词就会永久卡死"
+        )
+
+    def test_disengage_no_space_variant_clears_marker(self, tmp_path):
+        """修复空格匹配陷阱："退出ae-sdd"（无空格）也应能清除标记。"""
+        marker = paths_mod.pending_init_marker(tmp_path)
+        inject(project_dir=tmp_path, user_prompt="/ae-sdd 开始处理")
+        assert marker.is_file()
+
+        inject(project_dir=tmp_path, user_prompt="退出ae-sdd")
+        assert not marker.exists(), (
+            "无空格变体'退出ae-sdd'应与'退出 ae-sdd'同样生效，"
+            "中文用户几乎不会手动加这个空格"
+        )
+
+    def test_repeated_trigger_then_ordinary_message_does_not_relock(self, tmp_path):
+        """完整闭环：触发写标记 → 普通消息清除 → 标记不再残留，不依赖用户记住退出词。"""
+        marker = paths_mod.pending_init_marker(tmp_path)
+        inject(project_dir=tmp_path, user_prompt="端到端实现这个功能")
+        assert marker.is_file()
+
+        inject(project_dir=tmp_path, user_prompt="帮我看看这段代码")
+        assert not marker.exists()
+
+        # 标记已清除，后续 pending-init 拦截不应再命中
+        allowed, _ = _check_pending_init_intercept(
+            "Write", bash_command=None, file_path="src/Foo.java", allow_readonly=True,
+        )
+        # 注意：_check_pending_init_intercept 本身不检查标记是否存在（那是
+        # check_intercept 的上游职责），这里只验证标记文件状态已恢复正常，
+        # check_intercept 上游 pending.exists() 判断会跳过本拦截分支。
+        assert not marker.exists()
+
+
+class TestHomeOrDriveRootExemption:
+    """🆕 v1.5：home 目录 / 磁盘根目录永久豁免测试。
+
+    背景：用户主目录（如 C:\\Users\\EDY）是大量无关会话共用的默认 cwd，
+    永远不会是真实的 ae-sdd 项目根。一旦某次会话的消息偶然命中触发词，
+    pending-init 标记就会锁死这个高频复用目录，波及此后所有无关会话。
+    """
+
+    def test_is_home_or_drive_root_detects_home(self):
+        from lib import paths as paths_mod2
+        assert paths_mod2.is_home_or_drive_root(Path.home()) is True
+
+    def test_is_home_or_drive_root_detects_drive_root(self, tmp_path):
+        from lib import paths as paths_mod2
+        # tmp_path 的文件系统根（Windows 盘符根 / POSIX "/"）
+        root = tmp_path.resolve()
+        while root.parent != root:
+            root = root.parent
+        assert paths_mod2.is_home_or_drive_root(root) is True
+
+    def test_is_home_or_drive_root_rejects_ordinary_subdir(self, tmp_path):
+        from lib import paths as paths_mod2
+        (tmp_path / "project").mkdir()
+        assert paths_mod2.is_home_or_drive_root(tmp_path / "project") is False
+        assert paths_mod2.is_home_or_drive_root(None) is False
+
+    def test_inject_does_not_write_marker_at_home(self):
+        """写入侧源头防御：home 目录下触发词不应写入 pending-init 标记。"""
+        marker = paths_mod.pending_init_marker(Path.home())
+        assert not marker.exists(), "前置：home 目录不应残留标记（若失败先手动清理再重跑）"
+        try:
+            inject(project_dir=Path.home(), user_prompt="/ae-sdd 开始处理")
+            assert not marker.exists(), (
+                "home 目录不应被写入 pending-init 标记，"
+                "它是无关会话共用的默认 cwd，一旦写入会锁死后续所有会话"
+            )
+        finally:
+            marker.unlink(missing_ok=True)  # 防御性清理，避免测试失败污染真实环境
+
+    def test_gate_intercept_exempts_home_even_if_marker_exists(self):
+        """拦截侧兜底豁免：即便标记已存在于 home 目录，Write 也不应被拦截。"""
+        marker = paths_mod.pending_init_marker(Path.home())
+        try:
+            marker.write_text("ae-sdd pending init", encoding="utf-8")
+            allowed, reason = check_intercept(
+                "Write", file_path="foo.md", project_dir=Path.home(),
+            )
+            assert allowed is True, "home 目录应豁免 pending-init 拦截，不形成死锁"
+            assert reason == ""
+        finally:
+            marker.unlink(missing_ok=True)
+
+    def test_gate_intercept_exempts_drive_root_even_if_marker_exists(self, tmp_path):
+        """磁盘根目录同样豁免（用 tmp_path 反推其文件系统根，不依赖真实盘符根写权限）。"""
+        from lib import paths as paths_mod2
+        root = tmp_path.resolve()
+        while root.parent != root:
+            root = root.parent
+        assert paths_mod2.is_home_or_drive_root(root) is True
+
+        allowed, reason = check_intercept(
+            "Write", file_path="foo.md", project_dir=root,
+        )
+        assert allowed is True, "磁盘根目录应豁免 pending-init 拦截"
+        assert reason == ""
+
+    def test_non_root_subdir_still_blocked_with_marker(self, tmp_path):
+        """回归：普通子目录（非 home/磁盘根）有标记时仍应被拦截，豁免不能误放。"""
+        work_dir = tmp_path / "some-project"
+        work_dir.mkdir()
+        marker = paths_mod.pending_init_marker(work_dir)
+        marker.write_text("ae-sdd pending init", encoding="utf-8")
+        allowed, reason = check_intercept(
+            "Write", file_path="src/Foo.java", project_dir=work_dir,
+        )
+        assert allowed is False, "普通项目子目录不应被豁免"
+        assert "尚未初始化" in reason
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main(verbosity=2)
