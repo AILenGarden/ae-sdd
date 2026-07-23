@@ -104,6 +104,7 @@ tools/.sync-manifest.json
 # ae-sdd 项目实例化运行时产物（init/flow 生成，不入母版仓库）
 # =============================================
 .ae-sdd/
+.harness/.ae-sdd-job-receipts/
 .auto-engineering/
 ae-sdd-doc/
 # ae-sdd generated docs

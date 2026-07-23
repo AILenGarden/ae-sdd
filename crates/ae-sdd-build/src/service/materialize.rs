@@ -91,9 +91,7 @@ pub fn inspect_service_descriptor(
     })
 }
 
-pub(super) fn remove_service_descriptor(
-    plan: &ServiceLifecyclePlan,
-) -> Result<bool, ServiceError> {
+pub(super) fn remove_service_descriptor(plan: &ServiceLifecyclePlan) -> Result<bool, ServiceError> {
     let home = plan
         .user_home
         .canonicalize()
@@ -120,10 +118,7 @@ pub(super) fn remove_service_descriptor(
     }
 }
 
-pub(super) fn ensure_destination(
-    home: &Path,
-    destination: &Path,
-) -> Result<(), ServiceError> {
+pub(super) fn ensure_destination(home: &Path, destination: &Path) -> Result<(), ServiceError> {
     let mut ancestor = destination;
     while !ancestor.exists() {
         ancestor = ancestor

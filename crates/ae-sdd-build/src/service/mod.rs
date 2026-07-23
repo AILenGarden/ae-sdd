@@ -16,10 +16,11 @@ pub use executor::{
 pub use materialize::{inspect_service_descriptor, materialize_service_descriptor};
 pub use model::{
     SERVICE_EXECUTION_SCHEMA, SERVICE_PLAN_SCHEMA, SERVICE_REQUEST_SCHEMA, ServiceCommandReceipt,
-    ServiceDescriptorAction, ServiceDescriptorState, ServiceDescriptorStatus, ServiceExecutionLimits,
-    ServiceExecutionReceipt, ServiceLifecycleContract, ServiceLifecyclePlan, ServiceLifecycleRequest,
-    ServiceManagerCommand, ServiceManagerOutput, ServiceMaterialization, ServiceOperation,
-    ServicePermissionAssertion, ServicePermissionPolicy, ServicePlatform,
+    ServiceDescriptorAction, ServiceDescriptorState, ServiceDescriptorStatus,
+    ServiceExecutionLimits, ServiceExecutionReceipt, ServiceLifecycleContract,
+    ServiceLifecyclePlan, ServiceLifecycleRequest, ServiceManagerCommand, ServiceManagerOutput,
+    ServiceMaterialization, ServiceOperation, ServicePermissionAssertion, ServicePermissionPolicy,
+    ServicePlatform,
 };
 pub use render::generate_service_lifecycle_plan;
 

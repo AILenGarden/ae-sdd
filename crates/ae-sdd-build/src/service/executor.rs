@@ -54,14 +54,20 @@ impl ServiceManagerRunner for NativeServiceManagerRunner {
                 program: command.program.to_owned(),
                 source,
             })?;
-        let stdout = child.stdout.take().ok_or_else(|| ServiceError::ManagerPipe {
-            program: command.program.to_owned(),
-            stream: "stdout",
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| ServiceError::ManagerPipe {
-            program: command.program.to_owned(),
-            stream: "stderr",
-        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ServiceError::ManagerPipe {
+                program: command.program.to_owned(),
+                stream: "stdout",
+            })?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| ServiceError::ManagerPipe {
+                program: command.program.to_owned(),
+                stream: "stderr",
+            })?;
         let max_bytes = limits.max_output_bytes;
         let stdout_reader = thread::spawn(move || drain_bounded(stdout, max_bytes));
         let stderr_reader = thread::spawn(move || drain_bounded(stderr, max_bytes));
@@ -69,13 +75,10 @@ impl ServiceManagerRunner for NativeServiceManagerRunner {
             .checked_add(limits.command_timeout)
             .ok_or(ServiceError::InvalidExecutionLimits)?;
         let (status, timed_out) = loop {
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|source| ServiceError::ManagerIo {
-                    program: command.program.to_owned(),
-                    source,
-                })?
-            {
+            if let Some(status) = child.try_wait().map_err(|source| ServiceError::ManagerIo {
+                program: command.program.to_owned(),
+                source,
+            })? {
                 break (status, false);
             }
             let now = Instant::now();
@@ -262,14 +265,9 @@ fn validate_plan(plan: &ServiceLifecyclePlan) -> Result<(), ServiceError> {
     Ok(())
 }
 
-fn validate_arguments(
-    platform: ServicePlatform,
-    arguments: &[String],
-) -> Result<(), ServiceError> {
+fn validate_arguments(platform: ServicePlatform, arguments: &[String]) -> Result<(), ServiceError> {
     if arguments.iter().any(|argument| {
-        argument.is_empty()
-            || argument.len() > 16 * 1024
-            || argument.contains(['\0', '\n', '\r'])
+        argument.is_empty() || argument.len() > 16 * 1024 || argument.contains(['\0', '\n', '\r'])
     }) {
         return Err(ServiceError::InvalidManagerArguments);
     }
@@ -396,14 +394,15 @@ fn bounded_text(bytes: &[u8], max_bytes: usize) -> (String, bool) {
 }
 
 fn drain_bounded(mut reader: impl Read, max_bytes: usize) -> io::Result<Vec<u8>> {
-    let mut retained = Vec::with_capacity(max_bytes.min(8 * 1024));
+    let retained_limit = max_bytes.saturating_add(1);
+    let mut retained = Vec::with_capacity(retained_limit.min(8 * 1024));
     let mut buffer = [0_u8; 8 * 1024];
     loop {
         let count = reader.read(&mut buffer)?;
         if count == 0 {
             return Ok(retained);
         }
-        let available = max_bytes.saturating_sub(retained.len());
+        let available = retained_limit.saturating_sub(retained.len());
         retained.extend_from_slice(&buffer[..count.min(available)]);
     }
 }

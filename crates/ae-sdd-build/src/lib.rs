@@ -35,12 +35,12 @@ pub use post_commit::{
 };
 pub use release::{ReleaseArtifact, ReleaseFinding, ReleaseVerification, verify_release};
 pub use service::{
-    SERVICE_EXECUTION_SCHEMA, SERVICE_PLAN_SCHEMA, SERVICE_REQUEST_SCHEMA, NativeServiceManagerRunner,
-    ServiceCommandReceipt, ServiceDescriptorAction, ServiceDescriptorState, ServiceDescriptorStatus,
-    ServiceError, ServiceExecutionLimits, ServiceExecutionReceipt, ServiceLifecycleContract,
-    ServiceLifecyclePlan, ServiceLifecycleRequest, ServiceManagerCommand, ServiceManagerOutput,
-    ServiceManagerRunner, ServiceMaterialization, ServiceOperation, ServicePermissionAssertion,
-    ServicePermissionPolicy, ServicePlatform, execute_service_lifecycle,
-    execute_service_lifecycle_with_runner, generate_service_lifecycle_plan,
-    inspect_service_descriptor, materialize_service_descriptor,
+    NativeServiceManagerRunner, SERVICE_EXECUTION_SCHEMA, SERVICE_PLAN_SCHEMA,
+    SERVICE_REQUEST_SCHEMA, ServiceCommandReceipt, ServiceDescriptorAction, ServiceDescriptorState,
+    ServiceDescriptorStatus, ServiceError, ServiceExecutionLimits, ServiceExecutionReceipt,
+    ServiceLifecycleContract, ServiceLifecyclePlan, ServiceLifecycleRequest, ServiceManagerCommand,
+    ServiceManagerOutput, ServiceManagerRunner, ServiceMaterialization, ServiceOperation,
+    ServicePermissionAssertion, ServicePermissionPolicy, ServicePlatform,
+    execute_service_lifecycle, execute_service_lifecycle_with_runner,
+    generate_service_lifecycle_plan, inspect_service_descriptor, materialize_service_descriptor,
 };

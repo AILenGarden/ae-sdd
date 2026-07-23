@@ -1040,9 +1040,20 @@ impl ProjectBackend<'_> {
         let idempotency = IdempotencyKey::new(idempotency_key.to_owned()).map_err(store_error)?;
         let workspace_id = parse(&self.workspace.workspace_id, "workspaceId")?;
         let payload_digest = InputFingerprint::from_array(*request.payload_digest());
+        let work_item_id = request
+            .request()
+            .work_item_id
+            .as_ref()
+            .ok_or_else(|| schema_error("workItemId is required"))?;
         let store = self.store()?;
         if let Some(committed) = store
-            .replay_committed(workspace_id, &idempotency, payload_digest)
+            .replay_committed(
+                workspace_id,
+                work_item_id,
+                request.operation_id(),
+                &idempotency,
+                payload_digest,
+            )
             .map_err(store_error)?
         {
             return Ok(OperationResponse {
@@ -1119,11 +1130,7 @@ impl ProjectBackend<'_> {
             .commit(MutationRequest {
                 mutation_id: RequestId::from_uuid(Uuid::new_v4()),
                 workspace_id,
-                work_item_id: request
-                    .request()
-                    .work_item_id
-                    .clone()
-                    .ok_or_else(|| schema_error("workItemId is required"))?,
+                work_item_id: work_item_id.clone(),
                 operation: request.operation_id().clone(),
                 idempotency_key: idempotency,
                 canonical_payload_digest: payload_digest,

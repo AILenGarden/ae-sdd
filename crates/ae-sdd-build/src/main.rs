@@ -4,8 +4,8 @@ use ae_sdd_build::{
     ExpectedCounts, HarnessBuildRequest, HookBenchmarkConfig, NativeJobRequest, OfflineRequest,
     PostCommitRequest, ServiceLifecycleRequest, ServiceOperation, audit_compatibility,
     benchmark_hook, execute_harness_build, execute_native_job, execute_offline,
-    execute_post_commit, generate_service_lifecycle_plan, inspect_service_descriptor,
-    materialize_service_descriptor, verify_release,
+    execute_post_commit, execute_service_lifecycle, generate_service_lifecycle_plan,
+    inspect_service_descriptor, materialize_service_descriptor, verify_release,
 };
 use clap::{Parser, Subcommand};
 
@@ -67,6 +67,8 @@ enum Command {
     Service {
         #[arg(long)]
         request: PathBuf,
+        #[arg(long, conflicts_with_all = ["materialize", "inspect"])]
+        execute: bool,
         #[arg(long, conflicts_with = "inspect")]
         materialize: bool,
         #[arg(long, conflicts_with = "materialize")]
@@ -232,6 +234,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Service {
             request,
+            execute,
             materialize,
             inspect,
             json,
@@ -239,7 +242,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let request: ServiceLifecycleRequest =
                 serde_json::from_slice(&std::fs::read(request)?)?;
             let plan = generate_service_lifecycle_plan(&request)?;
-            if materialize {
+            if execute {
+                let receipt = execute_service_lifecycle(&plan)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&receipt)?);
+                } else {
+                    println!(
+                        "service {} {}: commands={} descriptor={:?}",
+                        request.operation.as_str(),
+                        if receipt.replayed {
+                            "replayed"
+                        } else {
+                            "executed"
+                        },
+                        receipt.commands.len(),
+                        receipt.descriptor_action
+                    );
+                }
+            } else if materialize {
                 if request.operation != ServiceOperation::Install {
                     return Err("--materialize is valid only for an install plan".into());
                 }
