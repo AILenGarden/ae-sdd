@@ -32,7 +32,7 @@ pub enum LegacyRequestSource {
 pub struct LegacyArgumentError(String);
 
 impl LegacyArgumentError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(super) fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
 }

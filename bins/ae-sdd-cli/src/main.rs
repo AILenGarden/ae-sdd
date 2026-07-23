@@ -346,7 +346,10 @@ fn print_host_outcome(method: RpcMethod, outcome: &HookOutcome) -> Result<(), St
 }
 
 async fn run_legacy(arguments: Vec<String>) -> Result<(), String> {
-    use legacy::{ImplementationStatus, LegacyRpcAdapter, LegacyTarget};
+    use legacy::{
+        ImplementationStatus, LegacyNativeRequestSource, LegacyRequestSource, LegacyRpcAdapter,
+        LegacyTarget,
+    };
 
     let resolved = legacy::resolve_legacy_argv(&arguments).map_err(|error| error.to_string())?;
     if resolved.route.contract.status == ImplementationStatus::Pending {
@@ -355,39 +358,68 @@ async fn run_legacy(arguments: Vec<String>) -> Result<(), String> {
             resolved.route.command_id, resolved.route.contract.evidence
         ));
     }
-    match resolved.route.target {
+    match &resolved.route.target {
         LegacyTarget::Rejected { .. } => {
             Err("removed legacy route cannot be dispatched".to_owned())
         }
         LegacyTarget::NativeBuildJob { entrypoint, .. } => {
-            let request = required_flag(&resolved.trailing_arguments, "--request")?;
-            let request_bytes = tokio::fs::read(&request)
-                .await
-                .map_err(|error| error.to_string())?;
-            let request_json: Value =
-                serde_json::from_slice(&request_bytes).map_err(|error| error.to_string())?;
-            if request_json.get("entrypoint").and_then(Value::as_str) != Some(entrypoint.as_str()) {
-                return Err(
-                    "native job request entrypoint differs from the frozen route".to_owned(),
-                );
+            let invocation = legacy::parse_native_invocation(
+                &resolved.route,
+                entrypoint,
+                &resolved.trailing_arguments,
+                |name| std::env::var(name).ok(),
+            )
+            .map_err(|error| error.to_string())?;
+            let mut temporary = None;
+            let request = match invocation.request {
+                LegacyNativeRequestSource::ExplicitFile(path) => {
+                    let request_bytes = tokio::fs::read(&path)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let request_json: Value = serde_json::from_slice(&request_bytes)
+                        .map_err(|error| error.to_string())?;
+                    legacy::verify_offline_request(entrypoint, &request_json)
+                        .map_err(|error| error.to_string())?;
+                    path
+                }
+                LegacyNativeRequestSource::Generated(request) => {
+                    let file = legacy::TemporaryJsonRequest::create(&request)
+                        .map_err(|error| error.to_string())?;
+                    let path = file.path().to_path_buf();
+                    temporary = Some(file);
+                    path
+                }
+            };
+            let mut command = Command::new(sibling_build()?);
+            command.arg("offline").arg("--request").arg(request);
+            if invocation.output_json {
+                command.arg("--json");
             }
-            let status = Command::new(sibling_build()?)
-                .arg("native-job")
-                .arg("--request")
-                .arg(request)
-                .arg("--json")
+            let status = command
                 .status()
                 .await
                 .map_err(|error| error.to_string())?;
+            drop(temporary);
             if status.success() {
                 Ok(())
             } else {
-                Err(format!("native Rust build job failed with status {status}"))
+                Err(format!("offline Rust build job failed with status {status}"))
             }
         }
         LegacyTarget::Rpc { method, adapter } => {
-            let request = required_flag(&resolved.trailing_arguments, "--request-json")?;
-            let mut params: RequestParams<Value> = read_json_argument(&request)?;
+            let invocation = legacy::parse_rpc_invocation(
+                &resolved.route,
+                *method,
+                &resolved.trailing_arguments,
+                |name| std::env::var(name).ok(),
+            )
+            .map_err(|error| error.to_string())?;
+            let mut params: RequestParams<Value> = match invocation.request {
+                LegacyRequestSource::ExplicitJson(request) => read_json_argument(&request)?,
+                LegacyRequestSource::Synthesized(params) => params,
+            };
+            legacy::validate_request_params(&resolved.route, *method, &params)
+                .map_err(|error| error.to_string())?;
             match adapter {
                 LegacyRpcAdapter::Passthrough => {}
                 LegacyRpcAdapter::TypedOperation { operation } => {
@@ -401,22 +433,14 @@ async fn run_legacy(arguments: Vec<String>) -> Result<(), String> {
                     });
                 }
             }
-            let client = client(None, ClientKind::Cli, params.deadline_ms)?;
+            let client = client(invocation.manifest, ClientKind::Cli, params.deadline_ms)?;
             let result: Value = client
-                .call(method, params)
+                .call(*method, params)
                 .await
                 .map_err(|error| error.to_string())?;
             print_json(&result)
         }
     }
-}
-
-fn required_flag(arguments: &[String], name: &str) -> Result<String, String> {
-    arguments
-        .windows(2)
-        .find(|window| window[0] == name)
-        .map(|window| window[1].clone())
-        .ok_or_else(|| format!("{name} is required for this legacy route"))
 }
 
 async fn runtime(command: RuntimeCommand) -> Result<(), String> {

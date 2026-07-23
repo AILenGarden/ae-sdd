@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -546,6 +545,3 @@ fn private_create_new(path: &Path) -> io::Result<File> {
     }
     options.open(path)
 }
-
-#[allow(dead_code)]
-fn _assert_btree_map_is_used(_: BTreeMap<String, Value>) {}

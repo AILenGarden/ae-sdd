@@ -49,6 +49,20 @@ jobs:
         shell: bash
         run: cargo test --workspace --release --locked
 
+      - name: Verify current-OS descriptor ACL and isolated service lifecycle
+        shell: bash
+        run: >-
+          cargo test -p ae-sdd-build --release --locked
+          --test service_lifecycle -- --nocapture
+
+      - name: Verify 100-Agent isolation and daemon lifecycle
+        shell: bash
+        run: >-
+          cargo test -p ae-sdd-runtime --release --locked
+          --test multi_workspace_100_agents
+          --test drain_quiesce
+          --test shadow_canary_no_double_write
+
       - name: Build native release artifacts
         shell: bash
         run: cargo build --workspace --release --locked

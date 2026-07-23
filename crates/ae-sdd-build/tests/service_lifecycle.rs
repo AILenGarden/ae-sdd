@@ -1,12 +1,16 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ae_sdd_build::{
-    SERVICE_PLAN_SCHEMA, ServiceDescriptorState, ServiceError, ServiceLifecycleRequest,
-    ServiceOperation, ServicePlatform, generate_service_lifecycle_plan, inspect_service_descriptor,
-    materialize_service_descriptor,
+    SERVICE_EXECUTION_SCHEMA, SERVICE_PLAN_SCHEMA, ServiceDescriptorAction, ServiceDescriptorState,
+    ServiceError, ServiceExecutionLimits, ServiceLifecycleRequest, ServiceManagerCommand,
+    ServiceManagerOutput, ServiceManagerRunner, ServiceOperation, ServicePlatform,
+    execute_service_lifecycle_with_runner, generate_service_lifecycle_plan,
+    inspect_service_descriptor, materialize_service_descriptor,
 };
 
 fn fixture_root(label: &str) -> PathBuf {
@@ -54,6 +58,66 @@ fn request(
             ServicePlatform::Linux => "1000".to_owned(),
         },
     )
+}
+
+#[derive(Default)]
+struct FakeRunner {
+    calls: Mutex<Vec<ServiceManagerCommand>>,
+    outputs: Mutex<VecDeque<ServiceManagerOutput>>,
+    descriptor_required: Option<PathBuf>,
+}
+
+impl FakeRunner {
+    fn with_outputs(outputs: Vec<ServiceManagerOutput>) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            outputs: Mutex::new(outputs.into()),
+            descriptor_required: None,
+        }
+    }
+
+    fn requiring_descriptor(path: PathBuf) -> Self {
+        Self {
+            descriptor_required: Some(path),
+            ..Self::default()
+        }
+    }
+
+    fn calls(&self) -> Vec<ServiceManagerCommand> {
+        self.calls.lock().expect("fake calls lock").clone()
+    }
+}
+
+impl ServiceManagerRunner for FakeRunner {
+    fn run(
+        &self,
+        command: &ServiceManagerCommand,
+        _limits: ServiceExecutionLimits,
+    ) -> Result<ServiceManagerOutput, ServiceError> {
+        if let Some(path) = &self.descriptor_required {
+            assert!(path.is_file(), "descriptor must exist before manager call");
+        }
+        self.calls
+            .lock()
+            .expect("fake calls lock")
+            .push(command.clone());
+        Ok(self
+            .outputs
+            .lock()
+            .expect("fake outputs lock")
+            .pop_front()
+            .unwrap_or_else(success_output))
+    }
+}
+
+fn success_output() -> ServiceManagerOutput {
+    ServiceManagerOutput {
+        exit_code: Some(0),
+        stdout: b"manager-ok".to_vec(),
+        stderr: Vec::new(),
+        timed_out: false,
+        elapsed_millis: 1,
+    }
 }
 
 #[test]
@@ -247,6 +311,170 @@ fn descriptor_rejects_secret_bearing_environment_and_non_absolute_paths() {
 }
 
 #[test]
+fn fake_runner_executes_install_before_replaying_without_side_effects() {
+    let root = fixture_root("execute-install");
+    let plan = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::current(),
+        ServiceOperation::Install,
+    ))
+    .expect("install plan");
+    let runner = FakeRunner::requiring_descriptor(plan.descriptor_path.clone());
+    let limits = ServiceExecutionLimits::default();
+
+    let first = execute_service_lifecycle_with_runner(&plan, &runner, limits)
+        .expect("first install execution");
+    assert_eq!(first.schema_version, SERVICE_EXECUTION_SCHEMA);
+    assert_eq!(
+        first.descriptor_action,
+        ServiceDescriptorAction::Materialized
+    );
+    assert_eq!(runner.calls(), plan.manager_commands);
+
+    let replay =
+        execute_service_lifecycle_with_runner(&plan, &runner, limits).expect("install replay");
+    assert!(replay.replayed);
+    assert_eq!(replay.descriptor_action, ServiceDescriptorAction::Replayed);
+    assert_eq!(runner.calls().len(), plan.manager_commands.len());
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn fake_runner_uninstalls_before_safe_descriptor_removal_and_replays() {
+    let root = fixture_root("execute-uninstall");
+    let install = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::current(),
+        ServiceOperation::Install,
+    ))
+    .expect("install plan");
+    execute_service_lifecycle_with_runner(
+        &install,
+        &FakeRunner::requiring_descriptor(install.descriptor_path.clone()),
+        ServiceExecutionLimits::default(),
+    )
+    .expect("install fixture service");
+    let uninstall = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::current(),
+        ServiceOperation::Uninstall,
+    ))
+    .expect("uninstall plan");
+    let runner = FakeRunner::requiring_descriptor(uninstall.descriptor_path.clone());
+
+    let first = execute_service_lifecycle_with_runner(
+        &uninstall,
+        &runner,
+        ServiceExecutionLimits::default(),
+    )
+    .expect("uninstall execution");
+    assert_eq!(first.descriptor_action, ServiceDescriptorAction::Removed);
+    assert!(!uninstall.descriptor_path.exists());
+    let call_count = runner.calls().len();
+    let replay = execute_service_lifecycle_with_runner(
+        &uninstall,
+        &runner,
+        ServiceExecutionLimits::default(),
+    )
+    .expect("uninstall replay");
+    assert!(replay.replayed);
+    assert_eq!(runner.calls().len(), call_count);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn status_execution_is_read_only_and_is_never_cached() {
+    let root = fixture_root("execute-status");
+    let plan = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::current(),
+        ServiceOperation::Status,
+    ))
+    .expect("status plan");
+    let runner = FakeRunner::default();
+
+    for _ in 0..2 {
+        let receipt = execute_service_lifecycle_with_runner(
+            &plan,
+            &runner,
+            ServiceExecutionLimits::default(),
+        )
+        .expect("status execution");
+        assert!(!receipt.replayed);
+        assert_eq!(receipt.descriptor_action, ServiceDescriptorAction::None);
+    }
+    assert_eq!(runner.calls().len(), plan.manager_commands.len() * 2);
+    assert!(!plan.state_dir.exists());
+    assert!(!plan.descriptor_path.exists());
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn manager_failures_and_timeouts_are_bounded_and_do_not_commit() {
+    let root = fixture_root("execute-errors");
+    let plan = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::current(),
+        ServiceOperation::Install,
+    ))
+    .expect("install plan");
+    let failed = ServiceManagerOutput {
+        exit_code: Some(42),
+        stderr: vec![b'e'; 64],
+        ..success_output()
+    };
+    let limits = ServiceExecutionLimits {
+        command_timeout: Duration::from_millis(50),
+        max_output_bytes: 8,
+    };
+    let error = execute_service_lifecycle_with_runner(
+        &plan,
+        &FakeRunner::with_outputs(vec![failed]),
+        limits,
+    )
+    .expect_err("non-zero manager exit must fail");
+    assert!(matches!(error, ServiceError::ManagerFailed { ref stderr, .. } if stderr.len() == 8));
+
+    let timed_out = ServiceManagerOutput {
+        timed_out: true,
+        stderr: vec![b't'; 64],
+        ..success_output()
+    };
+    let error = execute_service_lifecycle_with_runner(
+        &plan,
+        &FakeRunner::with_outputs(vec![timed_out]),
+        limits,
+    )
+    .expect_err("manager timeout must fail");
+    assert!(matches!(error, ServiceError::ManagerTimedOut { ref stderr, .. } if stderr.len() == 8));
+
+    execute_service_lifecycle_with_runner(&plan, &FakeRunner::default(), limits)
+        .expect("failed execution remains retryable");
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn executor_rejects_non_allowlisted_or_elevated_manager_plans() {
+    let root = fixture_root("execute-deny");
+    let mut plan = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::current(),
+        ServiceOperation::Install,
+    ))
+    .expect("install plan");
+    plan.manager_commands[0].program = "powershell.exe";
+    assert!(matches!(
+        execute_service_lifecycle_with_runner(
+            &plan,
+            &FakeRunner::default(),
+            ServiceExecutionLimits::default()
+        ),
+        Err(ServiceError::ManagerProgramDenied(_))
+    ));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn build_cli_emits_the_typed_service_plan() {
     let root = fixture_root("cli");
     let request = request(&root, ServicePlatform::current(), ServiceOperation::Status);
@@ -262,11 +490,7 @@ fn build_cli_emits_the_typed_service_plan() {
         .args(["--json"])
         .output()
         .expect("run build CLI");
-    assert!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.status.success());
     let plan: serde_json::Value = serde_json::from_slice(&output.stdout).expect("plan JSON");
     assert_eq!(plan["schemaVersion"], SERVICE_PLAN_SCHEMA);
     assert_eq!(plan["operation"], "status");
