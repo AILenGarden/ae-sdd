@@ -387,10 +387,16 @@ fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
 
 fn bounded_text(bytes: &[u8], max_bytes: usize) -> (String, bool) {
     let retained = &bytes[..bytes.len().min(max_bytes)];
-    (
-        String::from_utf8_lossy(retained).into_owned(),
-        bytes.len() > max_bytes,
-    )
+    let mut text = String::from_utf8_lossy(retained).into_owned();
+    let expanded = text.len() > max_bytes;
+    if expanded {
+        let mut boundary = max_bytes;
+        while boundary > 0 && !text.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        text.truncate(boundary);
+    }
+    (text, bytes.len() > max_bytes || expanded)
 }
 
 fn drain_bounded(mut reader: impl Read, max_bytes: usize) -> io::Result<Vec<u8>> {
@@ -426,4 +432,16 @@ fn join_reader(
 
 fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bounded_text;
+
+    #[test]
+    fn invalid_utf8_cannot_expand_beyond_the_receipt_budget() {
+        let (text, truncated) = bounded_text(&[0xff, 0xff, 0xff], 2);
+        assert!(truncated);
+        assert!(text.len() <= 2);
+    }
 }
