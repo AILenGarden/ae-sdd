@@ -26,7 +26,7 @@ ae-sdd 本身是 **client-agnostic 独立小 Agent**，可挂载到 Claude Code 
 ae-sdd 母版输入升级后（`source/SKILL.md`、`source/HARNESS.md` 或模板变化），跑：
 
 ```bash
-python scripts/build_harness.py --source "D:\Item\ae-sdd"
+cargo run -p ae-sdd-build --release -- harness --source "D:\Item\ae-sdd\source\SKILL.md" --source "D:\Item\ae-sdd\source\HARNESS.md" --target "D:\Item\ae-sdd\.harness\agent.md" --title "ae-sdd Agent Harness" --allowed-root "D:\Item\ae-sdd"
 ```
 
 脚本会自动：

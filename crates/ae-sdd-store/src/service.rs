@@ -276,7 +276,13 @@ where
         let _guard = self.locks.lock_exclusive(&self.paths.lock_path())?;
         self.files.create_dir_all(&self.paths.journal_dir())?;
 
-        if let Some(replayed) = self.lookup_or_rebuild_receipt(&request)? {
+        if let Some(replayed) = self.lookup_or_rebuild_receipt(
+            request.workspace_id,
+            &request.work_item_id,
+            &request.operation,
+            &request.idempotency_key,
+            request.canonical_payload_digest,
+        )? {
             return Ok(replayed);
         }
 
@@ -367,6 +373,28 @@ where
         })
     }
 
+    /// Replays a committed operation before a caller evaluates current-state
+    /// CAS preconditions. A matching semantic key and payload is side-effect
+    /// free; a different payload fails with `IdempotencyKeyReused`.
+    pub fn replay_committed(
+        &self,
+        workspace_id: WorkspaceId,
+        work_item_id: &WorkItemId,
+        operation: &OperationId,
+        idempotency_key: &IdempotencyKey,
+        payload_digest: InputFingerprint,
+    ) -> Result<Option<CommittedMutation>, StoreError> {
+        let _guard = self.locks.lock_exclusive(&self.paths.lock_path())?;
+        self.files.create_dir_all(&self.paths.journal_dir())?;
+        self.lookup_or_rebuild_receipt(
+            workspace_id,
+            work_item_id,
+            operation,
+            idempotency_key,
+            payload_digest,
+        )
+    }
+
     pub fn recover(&self, now: UtcTimestamp) -> Result<Vec<RecoveryReport>, StoreError> {
         let _guard = self.locks.lock_exclusive(&self.paths.lock_path())?;
         let mut reports = Vec::new();
@@ -445,16 +473,23 @@ where
 
     fn lookup_or_rebuild_receipt(
         &self,
-        request: &MutationRequest,
+        workspace_id: WorkspaceId,
+        work_item_id: &WorkItemId,
+        operation: &OperationId,
+        idempotency_key: &IdempotencyKey,
+        payload_digest: InputFingerprint,
     ) -> Result<Option<CommittedMutation>, StoreError> {
         if let Some((receipt, event)) = self
             .repository
-            .operation_receipt(request.workspace_id, request.idempotency_key.as_str())?
+            .operation_receipt(workspace_id, idempotency_key.as_str())?
         {
-            if receipt.payload_digest != request.canonical_payload_digest {
+            if receipt.payload_digest != payload_digest
+                || &receipt.work_item_id != work_item_id
+                || &receipt.operation != operation
+            {
                 return Err(StoreError::IdempotencyKeyReused {
                     expected: receipt.payload_digest,
-                    observed: request.canonical_payload_digest,
+                    observed: payload_digest,
                 });
             }
             return Ok(Some(CommittedMutation {
@@ -476,18 +511,21 @@ where
             };
             let entry = MutationJournalEntry::from_json(&bytes)?;
             if entry.status != JournalStatus::Committed
-                || entry.workspace_id != request.workspace_id
-                || entry.idempotency_key_digest != request.idempotency_key.digest()
+                || entry.workspace_id != workspace_id
+                || entry.idempotency_key_digest != idempotency_key.digest()
             {
                 continue;
             }
-            if entry.canonical_payload_digest != request.canonical_payload_digest {
+            if entry.canonical_payload_digest != payload_digest
+                || &entry.work_item_id != work_item_id
+                || &entry.operation != operation
+            {
                 return Err(StoreError::IdempotencyKeyReused {
                     expected: entry.canonical_payload_digest,
-                    observed: request.canonical_payload_digest,
+                    observed: payload_digest,
                 });
             }
-            let receipt = entry.operation_receipt(request.idempotency_key.clone())?;
+            let receipt = entry.operation_receipt(idempotency_key.clone())?;
             let committed_at = receipt.committed_at.clone();
             let event =
                 entry

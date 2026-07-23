@@ -30,6 +30,7 @@ dependencies = [
  "sha2",
  "sysinfo",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -166,9 +167,14 @@ name = "ae-sdd-integrations"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-domain",
+ "ae-sdd-flow",
+ "ae-sdd-gates",
  "ae-sdd-host",
+ "ae-sdd-operations",
+ "ae-sdd-policy",
  "ae-sdd-protocol",
  "ae-sdd-runtime",
+ "ae-sdd-scanners",
  "ae-sdd-store",
  "atomicwrites",
  "fs4",

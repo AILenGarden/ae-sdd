@@ -53,12 +53,12 @@ inference never override daemon state.
 | Area | Methods | Contract |
 | --- | --- | --- |
 | Runtime | `runtime.handshake`, `runtime.status`, `runtime.drain` | Authenticate endpoint and expose lifecycle/capabilities |
-| Workspace | `workspace.register`, `workspace.snapshot` | Resolve a canonical allowed workspace and current mode |
+| Workspace | `workspace.register`, `workspace.snapshot`, `workspace.mode_transition` | Resolve a canonical workspace and perform confirmed drained writer-mode transitions |
 | Session/Hook | `session.open`, `session.heartbeat`, `session.close`, `hook.user_prompt`, `hook.pre_tool`, `hook.post_tool`, `hook.stop` | Bind physical session and turn; return a host-compatible decision |
 | Flow | `flow.snapshot`, `flow.next` | Return the committed process projection and legal `nextAction` |
 | Delegation | `delegation.create`, `delegation.status`, `delegation.accept`, `delegation.report`, `delegation.collect`, `delegation.cancel` | Create and attest physical child work; validate bounded results |
 | Operations/Gates | `operation.describe`, `operation.execute`, `gate.evaluate` | Execute typed reads or guarded mutations; non-PASS never becomes PASS |
-| Events/Jobs | `events.subscribe`, `job.status`, `job.cancel` | Observe committed events and bounded background work |
+| Events/Jobs | `events.subscribe`, `job.submit`, `job.status`, `job.cancel` | Submit, observe, and cancel authorized bounded background work |
 | Context | `context.get`, `context.project` | Return role-aware full, delta, or no-change projections |
 | Compact | `compact.request`, `compact.status` | Track snapshot, host request, correlated ACK, and rehydrate |
 | Host | `host.register`, `host.capabilities`, `host.action_next`, `host.action_ack`, `host.pressure_report` | Bridge native spawn/send/wait/cancel/compact and authenticated pressure telemetry |

@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use ae_sdd_domain::EventStoreId;
-use ae_sdd_protocol::{RequestParams, RpcMethod, StableErrorCode};
+use ae_sdd_domain::{AgentRole, EventStoreId};
+use ae_sdd_protocol::{RequestParams, RpcMethod, StableErrorCode, WorkspaceMode};
 use serde_json::Value;
 
-use crate::{DurableEvent, IdempotencyReceipt, RuntimeError, RuntimeResult};
+use crate::{
+    ContextProjectionInput, DurableEvent, IdempotencyReceipt, RuntimeError, RuntimeResult,
+};
 
 /// Clock used for deadlines, TTL, and deterministic tests.
 pub trait ClockPort: Send + Sync {
@@ -37,6 +39,12 @@ pub struct BusinessWorkspace {
     pub canonical_root: String,
     /// Exact registered project identity.
     pub project_key: String,
+    /// Daemon-owned writer migration mode. Callers cannot supply this value.
+    pub mode: WorkspaceMode,
+    /// Daemon-verified session role for Agent business calls.
+    pub agent_role: Option<AgentRole>,
+    /// Current daemon-owned inventory generation.
+    pub inventory_generation: u64,
 }
 
 /// Durable runtime metadata and event port.
@@ -70,6 +78,8 @@ pub trait PersistencePort: Send + Sync {
     fn store_receipt(&self, receipt: &IdempotencyReceipt) -> RuntimeResult<()>;
     /// Reads one durable versioned aggregate projection.
     fn load_record(&self, namespace: &str, key: &str) -> RuntimeResult<Option<Value>>;
+    /// Lists all records in one bounded runtime namespace in key order.
+    fn list_records(&self, namespace: &str) -> RuntimeResult<Vec<(String, Value)>>;
     /// Atomically upserts one durable versioned aggregate projection.
     fn store_record(&self, namespace: &str, key: &str, value: &Value) -> RuntimeResult<()>;
 }
@@ -85,6 +95,40 @@ pub trait BusinessOperationPort: Send + Sync {
         method: RpcMethod,
         params: &RequestParams<Value>,
         workspace: Option<&BusinessWorkspace>,
+    ) -> RuntimeResult<Value>;
+
+    /// Builds one authoritative role-aware Hook/context projection off the fast path.
+    fn project_context(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: &str,
+        session_id: &str,
+        role: AgentRole,
+    ) -> RuntimeResult<ContextProjectionInput>;
+
+    /// Executes one already-admitted bounded background job.
+    fn execute_job(
+        &self,
+        workspace: &BusinessWorkspace,
+        entrypoint: &str,
+        arguments: &Value,
+    ) -> RuntimeResult<Value>;
+
+    /// Validates bounded child artifact references against authoritative files.
+    fn validate_delegation_artifacts(
+        &self,
+        workspace: &BusinessWorkspace,
+        delegation_id: &str,
+        result: &Value,
+    ) -> RuntimeResult<Value>;
+
+    /// Cleans the daemon-owned child memory namespace and returns a durable receipt.
+    fn cleanup_delegation_memory(
+        &self,
+        workspace: &BusinessWorkspace,
+        delegation_id: &str,
+        result: &Value,
+        artifact_receipt: &Value,
     ) -> RuntimeResult<Value>;
 }
 
@@ -107,6 +151,56 @@ impl BusinessOperationPort for RejectingBusinessPort {
         Err(RuntimeError::new(
             code,
             "authoritative business operation port is unavailable",
+        ))
+    }
+
+    fn project_context(
+        &self,
+        _workspace: &BusinessWorkspace,
+        _work_item_id: &str,
+        _session_id: &str,
+        _role: AgentRole,
+    ) -> RuntimeResult<ContextProjectionInput> {
+        Err(RuntimeError::new(
+            StableErrorCode::ContextRevisionStale,
+            "authoritative context projection port is unavailable",
+        ))
+    }
+
+    fn execute_job(
+        &self,
+        _workspace: &BusinessWorkspace,
+        _entrypoint: &str,
+        _arguments: &Value,
+    ) -> RuntimeResult<Value> {
+        Err(RuntimeError::new(
+            StableErrorCode::OperationNotRegistered,
+            "background job adapter is unavailable",
+        ))
+    }
+
+    fn validate_delegation_artifacts(
+        &self,
+        _workspace: &BusinessWorkspace,
+        _delegation_id: &str,
+        _result: &Value,
+    ) -> RuntimeResult<Value> {
+        Err(RuntimeError::new(
+            StableErrorCode::ChildResultInvalid,
+            "authoritative delegation artifact validator is unavailable",
+        ))
+    }
+
+    fn cleanup_delegation_memory(
+        &self,
+        _workspace: &BusinessWorkspace,
+        _delegation_id: &str,
+        _result: &Value,
+        _artifact_receipt: &Value,
+    ) -> RuntimeResult<Value> {
+        Err(RuntimeError::new(
+            StableErrorCode::ChildResultInvalid,
+            "authoritative delegation memory cleaner is unavailable",
         ))
     }
 }
@@ -270,6 +364,16 @@ impl PersistencePort for MemoryPersistence {
             .records
             .get(&(namespace.to_owned(), key.to_owned()))
             .cloned())
+    }
+
+    fn list_records(&self, namespace: &str) -> RuntimeResult<Vec<(String, Value)>> {
+        Ok(self
+            .lock()?
+            .records
+            .iter()
+            .filter(|((record_namespace, _), _)| record_namespace == namespace)
+            .map(|((_, key), value)| (key.clone(), value.clone()))
+            .collect())
     }
 
     fn store_record(&self, namespace: &str, key: &str, value: &Value) -> RuntimeResult<()> {

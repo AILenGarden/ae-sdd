@@ -23,7 +23,8 @@ pub use model::{
     DelegationCreatePayload, DelegationReportPayload, DelegationResult, DurableEvent, EventBatch,
     EventSubscriptionPayload, HookPayload, HookResult, HostAckPayload, HostActionPayload,
     HostPressurePayload, HostRegisterPayload, IdempotencyReceipt, RuntimeStatus,
-    SessionOpenPayload, SessionResult, WireAgentRole, WorkspaceRegisterPayload, WorkspaceResult,
+    SessionOpenPayload, SessionResult, WireAgentRole, WorkspaceModeTransitionPayload,
+    WorkspaceParityEvidence, WorkspaceRegisterPayload, WorkspaceResult,
 };
 pub use ports::{
     BusinessOperationPort, BusinessWorkspace, ClockPort, MemoryPersistence, PersistencePort,

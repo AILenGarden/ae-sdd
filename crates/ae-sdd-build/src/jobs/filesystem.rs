@@ -252,6 +252,10 @@ pub(super) fn set_permission(path: &Path, permission: PermissionClass) -> Result
 }
 
 #[cfg(not(unix))]
+#[allow(
+    clippy::permissions_set_readonly_false,
+    reason = "this branch clears the Windows read-only attribute and is never compiled on Unix"
+)]
 pub(super) fn set_permission(path: &Path, _permission: PermissionClass) -> Result<(), JobError> {
     let mut permissions = fs::metadata(path)
         .map_err(|source| io_error(path, source))?

@@ -178,6 +178,7 @@ fn audit_routes(
         }
         validate_evidence(repository_root, &route.fixture, excludes)?;
         validate_evidence(repository_root, &route.evidence, excludes)?;
+        validate_route_classification(route)?;
         if route.status == ImplementationStatus::Pending {
             pending.push(route.id.clone());
         } else {
@@ -191,6 +192,75 @@ fn audit_routes(
     }
     if !pending.is_empty() {
         return Err(ManifestError::UnimplementedRoutes(pending));
+    }
+    Ok(())
+}
+
+fn validate_route_classification(route: &CommandRoute) -> Result<(), ManifestError> {
+    let dotted = route.id.replace(' ', ".");
+    if crate::B_OFFLINE_ENTRYPOINTS.contains(&dotted.as_str()) {
+        let valid = matches!(
+            &route.route,
+            RouteTarget::NativeBuildJob {
+                job: NativeJobKind::Offline,
+                entrypoint,
+            } if entrypoint == &dotted
+        );
+        if !valid {
+            return Err(ManifestError::RouteTarget {
+                id: route.id.clone(),
+                reason: "B offline command must use its exact offline kernel entrypoint".to_owned(),
+            });
+        }
+        if route.status != ImplementationStatus::Implemented
+            || route.fixture != "crates/ae-sdd-build/tests/offline_kernels.rs"
+            || route.evidence != "crates/ae-sdd-build/tests/migration_oracle.rs"
+            || route.identity
+                != (RouteIdentity {
+                    workspace: false,
+                    work_item: false,
+                    session: false,
+                })
+        {
+            return Err(ManifestError::RouteTarget {
+                id: route.id.clone(),
+                reason: "B offline command requires native and migration-oracle evidence with no daemon identity"
+                    .to_owned(),
+            });
+        }
+        return Ok(());
+    }
+    if crate::C_ADMIN_JOB_COMMANDS.contains(&route.id.as_str()) {
+        if !matches!(
+            route.route,
+            RouteTarget::Rpc {
+                method: RpcMethod::JobSubmit
+            }
+        ) {
+            return Err(ManifestError::RouteTarget {
+                id: route.id.clone(),
+                reason: "C admin command must use job.submit".to_owned(),
+            });
+        }
+        return Ok(());
+    }
+    if crate::D_REJECTED_COMMANDS.contains(&route.id.as_str()) {
+        if !matches!(route.route, RouteTarget::Rejected { .. }) {
+            return Err(ManifestError::RouteTarget {
+                id: route.id.clone(),
+                reason: "D command must use explicit rejected route".to_owned(),
+            });
+        }
+        return Ok(());
+    }
+    if matches!(
+        route.route,
+        RouteTarget::NativeBuildJob { .. } | RouteTarget::Rejected { .. }
+    ) {
+        return Err(ManifestError::RouteTarget {
+            id: route.id.clone(),
+            reason: "A daemon command cannot use an offline/rejected route".to_owned(),
+        });
     }
     Ok(())
 }
@@ -233,17 +303,30 @@ fn validate_route_target(route: &CommandRoute) -> Result<(), ManifestError> {
         }
         RouteTarget::NativeBuildJob { job, entrypoint } => {
             let expected = route.id.replace(' ', ".");
-            let registered = native_entrypoint(entrypoint);
-            if entrypoint != &expected
-                || route.deadline_ms < 1_000
-                || registered.is_none_or(|spec| spec.kind != *job)
-            {
+            let registered = if *job == NativeJobKind::Offline {
+                crate::B_OFFLINE_ENTRYPOINTS.contains(&entrypoint.as_str())
+            } else {
+                native_entrypoint(entrypoint).is_some_and(|spec| spec.kind == *job)
+            };
+            if entrypoint != &expected || route.deadline_ms < 1_000 || !registered {
                 return Err(ManifestError::RouteTarget {
                     id: route.id.clone(),
                     reason: format!(
                         "{} job entrypoint must be exact ({expected}) with a >=1000ms deadline",
                         job.as_str()
                     ),
+                });
+            }
+        }
+        RouteTarget::Rejected {
+            stable_code,
+            remediation,
+        } => {
+            if stable_code != "LEGACY_COMMAND_REMOVED" || remediation.trim().is_empty() {
+                return Err(ManifestError::RouteTarget {
+                    id: route.id.clone(),
+                    reason: "rejected route needs the stable removal code and remediation"
+                        .to_owned(),
                 });
             }
         }
@@ -406,101 +489,4 @@ fn decode_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ManifestE
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entry(id: &str) -> SurfaceEntry {
-        SurfaceEntry {
-            id: id.to_owned(),
-            source: "source/path".to_owned(),
-            owner: "ae-sdd-build".to_owned(),
-            disposition: Disposition::Preserve,
-        }
-    }
-
-    fn manifest() -> CompatibilityManifest {
-        CompatibilityManifest {
-            schema_version: "1".to_owned(),
-            routing_manifest: "routing.json".to_owned(),
-            sources: InventorySources {
-                cli_parser: "tools/bin/ae-sdd".to_owned(),
-                operation_registry: "tools/lib/operations.py".to_owned(),
-                gate_registry: "tools/lib/gates.py".to_owned(),
-                scanner_registry: "scripts".to_owned(),
-            },
-            commands: vec![entry("version")],
-            operations: vec![entry("workitem.get")],
-            gates: vec![entry("G-00")],
-            scanners: vec![entry("flow-violation-scan")],
-        }
-    }
-
-    #[test]
-    fn inventory_audit_accepts_exact_non_empty_surface() {
-        let summary = manifest()
-            .audit(ExpectedCounts {
-                commands: 1,
-                operations: 1,
-                gates: 1,
-                scanners: 1,
-            })
-            .expect("valid inventory");
-        assert_eq!(summary.command_count, 1);
-        assert_eq!(summary.route_count, 0);
-    }
-
-    #[test]
-    fn inventory_rejects_duplicate_ids() {
-        let mut value = manifest();
-        value.commands.push(entry("version"));
-        assert!(matches!(
-            value.audit(ExpectedCounts {
-                commands: 2,
-                operations: 1,
-                gates: 1,
-                scanners: 1,
-            }),
-            Err(ManifestError::DuplicateId { .. })
-        ));
-    }
-
-    #[test]
-    fn route_schema_has_no_fallback_or_stub_variant() {
-        let fallback = r#"{
-          "id":"version","route":{"kind":"native-build-job","job":"admin","entrypoint":"version","fallback":"legacy"},
-          "identity":{"workspace":false,"workItem":false,"session":false},"deadlineMs":1000,
-          "failClosed":true,"fixture":"a","evidence":"b","status":"implemented"
-        }"#;
-        assert!(serde_json::from_str::<CommandRoute>(fallback).is_err());
-
-        let stub = fallback
-            .replace("\"fallback\":\"legacy\",", "")
-            .replace("\"implemented\"", "\"stub\"");
-        assert!(serde_json::from_str::<CommandRoute>(&stub).is_err());
-    }
-
-    #[test]
-    fn exact_native_entrypoint_is_enforced() {
-        let route = CommandRoute {
-            id: "assets check".to_owned(),
-            route: RouteTarget::NativeBuildJob {
-                job: NativeJobKind::Admin,
-                entrypoint: "assets.wrong".to_owned(),
-            },
-            identity: RouteIdentity {
-                workspace: true,
-                work_item: false,
-                session: true,
-            },
-            deadline_ms: 1_000,
-            fail_closed: true,
-            fixture: "a".to_owned(),
-            evidence: "b".to_owned(),
-            status: ImplementationStatus::Implemented,
-        };
-        assert!(matches!(
-            validate_route_target(&route),
-            Err(ManifestError::RouteTarget { .. })
-        ));
-    }
-}
+mod tests;

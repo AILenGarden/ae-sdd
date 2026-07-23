@@ -33,7 +33,20 @@ impl RuntimeService {
         }
 
         let context = self.context.hook_projection(&identity.session_id)?;
-        let decision = hook_decision(method, identity.engaged, context.as_ref());
+        let inventory_generation = self
+            .lock_state()?
+            .workspaces
+            .get(&identity.workspace_id)
+            .ok_or_else(|| project_mismatch("workspace is not registered"))?
+            .result
+            .inventory_generation;
+        let decision = hook_decision(
+            method,
+            identity.engaged,
+            context.as_ref(),
+            &self.config.policy_digest,
+            inventory_generation,
+        );
         let base = HookResult {
             engaged: identity.engaged,
             decision,
@@ -82,10 +95,17 @@ impl RuntimeService {
     pub(super) fn context_project(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
         let request: ContextProjectPayload = decode_value(params.payload.clone())?;
-        to_value(self.context.project(
+        let result = self.context.project(
             &identity.session_id,
             request.known_revision,
             &request.known_digest,
-        )?)
+        )?;
+        if request.known_revision == result.context_revision
+            && !request.known_digest.is_empty()
+            && request.known_digest == result.digest
+        {
+            self.complete_compact_after_rehydrate(&identity.session_id, &result.digest)?;
+        }
+        to_value(result)
     }
 }

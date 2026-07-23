@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "ae-sdd-migration-oracle/v1",
+  "commands": [
+    {
+      "id": "assets.generate",
+      "canonicalResult": ["projectKey", "changed", "buildFileDiscovered"],
+      "sideEffects": ["project-asset-baseline"]
+    },
+    {
+      "id": "bump",
+      "canonicalResult": ["oldVersion", "newVersion", "changedAuthorityCount"],
+      "sideEffects": ["three-version-authorities"]
+    },
+    {
+      "id": "distributor.disable",
+      "canonicalResult": ["name", "enabled"],
+      "sideEffects": ["distributor-registry"]
+    },
+    {
+      "id": "distributor.enable",
+      "canonicalResult": ["name", "enabled"],
+      "sideEffects": ["distributor-registry"]
+    },
+    {
+      "id": "distributor.list",
+      "canonicalResult": ["name", "kind", "targetPath", "enabled"],
+      "sideEffects": []
+    },
+    {
+      "id": "distributor.register",
+      "canonicalResult": ["name", "kind", "targetPath", "enabled"],
+      "sideEffects": ["distributor-registry"]
+    },
+    {
+      "id": "distributor.scan",
+      "canonicalResult": ["targetExists"],
+      "sideEffects": []
+    },
+    {
+      "id": "distributor.unregister",
+      "canonicalResult": ["name", "present"],
+      "sideEffects": ["distributor-registry"]
+    },
+    {
+      "id": "init",
+      "canonicalResult": ["projectKey", "runtimeRoot", "overrideRoot", "reportRoot"],
+      "sideEffects": ["project-runtime-skeleton"]
+    },
+    {
+      "id": "init-hooks",
+      "canonicalResult": ["preTool", "userPrompt", "stop"],
+      "sideEffects": ["claude-hook-config"]
+    },
+    {
+      "id": "plugin.init",
+      "canonicalResult": ["registryCreated", "pluginsKey"],
+      "sideEffects": ["plugin-registry"]
+    },
+    {
+      "id": "runtime.verify",
+      "canonicalResult": ["validAccepted", "tamperRejected"],
+      "sideEffects": []
+    },
+    {
+      "id": "version",
+      "canonicalResult": ["name", "version"],
+      "sideEffects": []
+    }
+  ]
+}

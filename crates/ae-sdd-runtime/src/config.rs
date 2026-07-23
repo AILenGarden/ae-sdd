@@ -10,6 +10,12 @@ pub struct RuntimeConfig {
     pub max_sessions: usize,
     /// Maximum queued calls for one Work Item actor.
     pub work_item_mailbox_capacity: usize,
+    /// Maximum retained Work Item actor slots across all workspaces.
+    pub max_work_item_actors: usize,
+    /// Maximum retained Work Item actor slots for one workspace.
+    pub max_work_item_actors_per_workspace: usize,
+    /// Idle actor slot lifetime before bounded eviction.
+    pub work_item_actor_idle_ms: u64,
     /// Maximum concurrent admitted connection handlers.
     pub connection_capacity: usize,
     /// Maximum Hook deadline accepted from a caller.
@@ -22,8 +28,12 @@ pub struct RuntimeConfig {
     pub max_frame_bytes: usize,
     /// Maximum returned event batch.
     pub max_event_batch: usize,
+    /// Maximum durable jobs retained by one daemon boot.
+    pub max_jobs: usize,
     /// Session heartbeat validity.
     pub session_ttl_ms: u64,
+    /// Maximum age of typed parity evidence accepted for a cutover.
+    pub parity_evidence_ttl_ms: u64,
     /// Current daemon policy digest.
     pub policy_digest: String,
     /// Current typed operation registry digest.
@@ -36,13 +46,18 @@ impl Default for RuntimeConfig {
             max_workspaces: 10,
             max_sessions: 100,
             work_item_mailbox_capacity: 64,
+            max_work_item_actors: 1_024,
+            max_work_item_actors_per_workspace: 128,
+            work_item_actor_idle_ms: 300_000,
             connection_capacity: 128,
             hook_deadline_ms: 250,
             max_deadline_ms: 30_000,
             max_context_projection_bytes: 65_536,
             max_frame_bytes: MAX_FRAME_BYTES,
             max_event_batch: 256,
+            max_jobs: 128,
             session_ttl_ms: 90_000,
+            parity_evidence_ttl_ms: 300_000,
             policy_digest: ae_sdd_policy::policy_digest().to_hex(),
             operation_schema_digest: ae_sdd_operations::operation_schema_digest(),
         }

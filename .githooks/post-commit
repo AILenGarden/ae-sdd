@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ae-sdd native post-commit distribution hook.
-# A completed Git commit is never rolled back when distribution fails.
+# ae-sdd Rust-only post-commit harness/build/distribution hook.
+# A completed Git commit is never rolled back when the follow-up chain fails.
 
 set -u
 
@@ -20,99 +20,64 @@ if [ -z "$MEANINGFUL" ]; then
     exit 0
 fi
 
-if ! command -v cargo >/dev/null 2>&1; then
-    echo "ae-sdd post-commit: cargo is unavailable; native distribution did not run" >&2
+run_build_tool() {
+    if [ -x "$REPO_ROOT/target/release/ae-sdd-build.exe" ]; then
+        "$REPO_ROOT/target/release/ae-sdd-build.exe" "$@"
+    elif [ -x "$REPO_ROOT/target/release/ae-sdd-build" ]; then
+        "$REPO_ROOT/target/release/ae-sdd-build" "$@"
+    elif command -v cargo >/dev/null 2>&1; then
+        (cd "$REPO_ROOT" && cargo run -p ae-sdd-build --release -- "$@")
+    else
+        echo "ae-sdd post-commit: ae-sdd-build and cargo are unavailable" >&2
+        return 127
+    fi
+}
+
+COMMIT_ID="$(git rev-parse HEAD 2>/dev/null || true)"
+if [ -z "$COMMIT_ID" ]; then
+    echo "ae-sdd post-commit: HEAD could not be resolved; follow-up chain did not run" >&2
     exit 0
 fi
-
-case "$REPO_ROOT${HOME:-}" in
-    *\"*)
-        echo "ae-sdd post-commit: paths containing a quote are unsupported" >&2
-        exit 0
-        ;;
-esac
-
-COMMIT_ID="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
-TMP_DIR="$(mktemp -d 2>/dev/null || true)"
-if [ -z "$TMP_DIR" ]; then
-    echo "ae-sdd post-commit: could not create a private request directory" >&2
-    exit 0
-fi
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-COMPILE_REQUEST="$TMP_DIR/compile.json"
-DISTRIBUTE_REQUEST="$TMP_DIR/distribute.json"
-PACKAGE_DIR="$REPO_ROOT/dist/ae-sdd"
 USER_HOME="${HOME:-$REPO_ROOT}"
+PACKAGE_DIR="$REPO_ROOT/dist/ae-sdd"
 
-cat >"$COMPILE_REQUEST" <<EOF
-{
-  "schemaVersion": "ae-sdd-native-job/v1",
-  "entrypoint": "post-commit.compile",
-  "actor": "git:post-commit",
-  "reason": "compile declarative package after a functional commit",
-  "idempotencyKey": "post-commit-$COMMIT_ID-compile",
-  "mode": "apply",
-  "allowedRoots": ["$REPO_ROOT"],
-  "job": {
-    "kind": "compile",
-    "input": {
-      "sourceDirectory": "$REPO_ROOT/source",
-      "outputDirectory": "$PACKAGE_DIR",
-      "generatedConfigs": []
-    }
-  }
-}
-EOF
-
-cat >"$DISTRIBUTE_REQUEST" <<EOF
-{
-  "schemaVersion": "ae-sdd-native-job/v1",
-  "entrypoint": "post-commit.distribute",
-  "actor": "git:post-commit",
-  "reason": "distribute the verified native package after compile",
-  "idempotencyKey": "post-commit-$COMMIT_ID-distribute",
-  "mode": "apply",
-  "allowedRoots": ["$REPO_ROOT", "$USER_HOME"],
-  "job": {
-    "kind": "distribute",
-    "input": {
-      "packageDirectory": "$PACKAGE_DIR",
-      "targetDirectories": [
-        "$USER_HOME/.claude/skills/ae-sdd",
-        "$USER_HOME/.codex/skills/ae-sdd",
-        "$USER_HOME/.zcode/skills/ae-sdd",
-        "$USER_HOME/.mavis/skills/ae-sdd",
-        "$USER_HOME/.hermes/skills/ae-sdd"
-      ]
-    }
-  }
-}
-EOF
-
-echo "ae-sdd post-commit: compiling native distribution package"
-COMPILE_OUTPUT="$(
-    cd "$REPO_ROOT" &&
-    cargo run -p ae-sdd-build --release -- native-job --request "$COMPILE_REQUEST" 2>&1
+echo "ae-sdd post-commit: generating native harness"
+HARNESS_OUTPUT="$(
+    run_build_tool harness \
+        --source "$REPO_ROOT/source/SKILL.md" \
+        --source "$REPO_ROOT/source/HARNESS.md" \
+        --target "$REPO_ROOT/.harness/agent.md" \
+        --title "ae-sdd Agent Harness" \
+        --allowed-root "$REPO_ROOT" 2>&1
 )"
-COMPILE_STATUS=$?
-printf '%s\n' "$COMPILE_OUTPUT" | tail -30
-if [ "$COMPILE_STATUS" -ne 0 ]; then
-    echo "ae-sdd post-commit: native compile failed; commit remains intact" >&2
+HARNESS_STATUS=$?
+printf '%s\n' "$HARNESS_OUTPUT" | tail -30
+if [ "$HARNESS_STATUS" -ne 0 ]; then
+    echo "ae-sdd post-commit: native harness generation failed; commit remains intact" >&2
     exit 0
 fi
 
-echo "ae-sdd post-commit: distributing verified native package"
-DISTRIBUTE_OUTPUT="$(
-    cd "$REPO_ROOT" &&
-    cargo run -p ae-sdd-build --release -- native-job --request "$DISTRIBUTE_REQUEST" 2>&1
+echo "ae-sdd post-commit: compiling, verifying, and distributing native package"
+POST_COMMIT_OUTPUT="$(
+    run_build_tool post-commit \
+        --repository-root "$REPO_ROOT" \
+        --source "$REPO_ROOT/source" \
+        --package "$PACKAGE_DIR" \
+        --commit "$COMMIT_ID" \
+        --allowed-root "$REPO_ROOT" \
+        --allowed-root "$USER_HOME" \
+        --target "$USER_HOME/.claude/skills/ae-sdd" \
+        --target "$USER_HOME/.codex/skills/ae-sdd" \
+        --target "$USER_HOME/.zcode/skills/ae-sdd" \
+        --target "$USER_HOME/.mavis/skills/ae-sdd" \
+        --target "$USER_HOME/.hermes/skills/ae-sdd" 2>&1
 )"
-DISTRIBUTE_STATUS=$?
-printf '%s\n' "$DISTRIBUTE_OUTPUT" | tail -30
-if [ "$DISTRIBUTE_STATUS" -ne 0 ]; then
-    echo "ae-sdd post-commit: native distribution failed; commit remains intact" >&2
+POST_COMMIT_STATUS=$?
+printf '%s\n' "$POST_COMMIT_OUTPUT" | tail -30
+if [ "$POST_COMMIT_STATUS" -ne 0 ]; then
+    echo "ae-sdd post-commit: native compile/verify/distribution failed; commit remains intact" >&2
     exit 0
 fi
 
-echo "ae-sdd post-commit: native compile and distribution completed"
+echo "ae-sdd post-commit: native harness and distribution completed"
 exit 0

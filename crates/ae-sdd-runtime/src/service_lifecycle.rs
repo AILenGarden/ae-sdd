@@ -41,12 +41,43 @@ impl RuntimeService {
             .get("stop")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let key = require_idempotency(params)?;
+        let scope = format!("runtime-drain\0{}", self.boot_id);
+        let digest = canonical_digest(&params.payload)?;
+        if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
+            return Ok(value);
+        }
         self.set_lifecycle(if stop {
             DaemonLifecycle::Stopping
         } else {
             DaemonLifecycle::Draining
         })?;
-        to_value(self.status()?)
+        let started = Instant::now();
+        while self.admitted.load(Ordering::Acquire) > 1 {
+            if started.elapsed().as_millis() >= u128::from(params.deadline_ms) {
+                return Err(RuntimeError::new(
+                    StableErrorCode::DaemonDraining,
+                    "daemon entered drain mode but in-flight work did not quiesce before the deadline",
+                ));
+            }
+            std::thread::park_timeout(std::time::Duration::from_micros(100));
+        }
+        let value = to_value(self.status()?)?;
+        self.commit_receipt_event(
+            &scope,
+            key,
+            digest,
+            value,
+            if stop {
+                "runtime.stopping"
+            } else {
+                "runtime.drained"
+            },
+            None,
+            None,
+            None,
+        )
+        .map(|(value, _)| value)
     }
 
     pub(super) fn events_subscribe(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {

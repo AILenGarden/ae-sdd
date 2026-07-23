@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::Duration;
 
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -89,12 +89,7 @@ fn publish_watch_event(
 }
 
 fn drain(receiver: &Receiver<WatchSignal>) {
-    loop {
-        match receiver.try_recv() {
-            Ok(_) => {}
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-        }
-    }
+    while receiver.try_recv().is_ok() {}
 }
 
 fn notify_error(error: notify::Error) -> IntegrationError {

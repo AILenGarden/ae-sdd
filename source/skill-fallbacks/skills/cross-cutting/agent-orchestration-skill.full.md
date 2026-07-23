@@ -120,31 +120,67 @@ description: Agent 编排 SKILL — 任务节点**内**的子任务拆分 + 多 
 ## 3. Agent 角色分配（从角色库选）
 
 > **🔴 来源（AE-skill 角色 1-8）：** 8 个角色已沉淀，本 SKILL 复用。
+>
+> **🆕 2026-07-23 子系列重构：** 原 8 个扁平角色按 ae-sdd 主流程子系列重组为 **5 个子系列 Agent**（`ra-agent` / `dr-agent` / `story-agent` / `coding-agent` / `test-agent`）。每个子系列 Agent 是一组同系列角色的容器，对应 §8.7.1 的一个 `series_type`，可整体派给一个子流程Agent。原 8 个角色名**保留不丢**（向下兼容，§4 任务分配卡 `agent_role` 字段仍填原角色名）。子系列 Agent 的注册分发协议见 `source/docs/agent-registry-protocol.md`。
 
-### 3.1 角色库
+### 3.1 角色库（🆕 按子系列重组）
 
-| 角色 | 适用节点 | 适用场景 |
-|------|---------|---------|
-| `story-writer` | Phase 1 ① | Story 起草 |
-| `story-reviewer` | Phase 1 ② | Story 评审（按 §8.4 Tier 判定选 1/2/3 个：设计实现 / 前端契约 / 数据模型 视角）|
-| `testcase-writer` | Phase 1 ③ | 测试用例生成 |
-| `testcase-reviewer` | Phase 1 ③bis 🆕 v3.7.0 | TestCase Review（TC-1~TC-9，按 §8.4 Tier 判定选 1/2/3 个） |
-| `task-writer` | Phase 2 ④ | Task 生成（含任务级 CodePlan）|
-| `plan-writer` | Phase 2 ④ter | 🆕 2026-06-06 合并入 task-writer |
-| `coder` | Phase 2 ⑤ | Coding |
-| `test-runner` | Phase 3 ⑥ | Test Generate：运行编译/启动/L1-L4 测试并生成测试报告 |
-| `code-reviewer` | Phase 3 ⑦ | Code Review（按 §8.4 Tier 判定选 1/2/3 个：BE / AR / QA 视角，即 A/B/C 模式）|
-| `test-verifier` | Phase 3 ⑥.10 | 测试真实性验证 🔴 强制 |
+#### 3.1.1 子系列 Agent 总表
 
-> **🆕 2026-06-25 对齐说明：** reviewer 类角色（`story-reviewer` / `code-reviewer`）的"选几个"统一由 **§8.4 多 reviewer 默认编排框架** 的 Tier 判定决定，不再在各角色描述里硬编码"1-2 个"。节点 SKILL 负责"视角怎么切"，本 SKILL 负责"选几个 + 怎么交叉"，职责分离。
+| 子系列 Agent | series_type（§8.7.1）| 内含角色 | 主流程阶段 | 派活粒度 |
+|-------------|---------------------|---------|-----------|---------|
+| `ra-agent` | `ra` | `ra-writer` | Route → RA | 整个 RA 系列派 1 个 |
+| `dr-agent` | `dr` | `dr-writer` / `dr-reviewer` | RA → DR | 整个 DR 系列派 1 个 |
+| `story-agent` | `story` | `story-writer` / `story-reviewer` / `testcase-writer` / `testcase-reviewer` | DR → Story | 整个 Story 系列派 1 个，内部按节点再拆 |
+| `coding-agent` | `coding` | `task-writer` / `coder` / `code-reviewer` | Story → Coding | 整个 Coding 系列派 1 个，内部按 Task 再拆 |
+| `test-agent` | `test` 🆕 | `test-runner` / `test-verifier` | Coding → Test | 整个 Test 系列派 1 个，test-verifier 强制独立 sub-session |
 
-### 3.2 角色与子任务匹配
+> **🆕 新增项说明：**
+> - `ra-agent` / `ra-writer`：原 §3.1 无 RA 级角色（RA 起草散落在 requirement-analysis-skill），现归入 `ra-agent` 子系列。
+> - `dr-agent` / `dr-writer` / `dr-reviewer`：原 §3.1 无 DR 级角色，现归入 `dr-agent` 子系列。
+> - `test` series_type：§8.7.1 原枚举为 `ra|dr|story|testcase|coding`，现新增 `test`（与 `testcase` 区分：`testcase` = TestCase 文档生成，`test` = 测试运行+验证）。
+> - `plan-writer`（原 §3.1 ④ter）已于 2026-06-06 合并入 `task-writer`，不再单列。
 
-- **子任务 A（业务逻辑）** → `story-writer` / `coder` / `code-reviewer`(业务评审)
-- **子任务 B（分层）** → `coder` / `code-reviewer`(架构评审)
-- **子任务 C（数据库）** → `coder` / `code-reviewer`(架构评审)
-- **子任务 D（测试）** → `coder` / `code-reviewer`(测试评审) / `test-verifier`
-- **子任务 E（项目资产）** → `code-reviewer`(规范评审) / `project-assets-update-skill.md`
+#### 3.1.2 角色明细（向下兼容，原角色名不变）
+
+| 角色 | 所属子系列 Agent | 适用节点 | 适用场景 |
+|------|-----------------|---------|---------|
+| `ra-writer` 🆕 | `ra-agent` | Route → RA | RA 起草 / RA 修订影响分析 |
+| `dr-writer` 🆕 | `dr-agent` | RA → DR | DR 起草 |
+| `dr-reviewer` 🆕 | `dr-agent` | DR Review | DR 评审（按 §8.4 Tier 判定选 1/2/3 个：业务价值 / 架构拆分 / 跨 Story 边界 视角）|
+| `story-writer` | `story-agent` | Phase 1 ① | Story 起草 |
+| `story-reviewer` | `story-agent` | Phase 1 ② | Story 评审（按 §8.4 Tier 判定选 1/2/3 个：设计实现 / 前端契约 / 数据模型 视角）|
+| `testcase-writer` | `story-agent` | Phase 1 ③ | 测试用例生成 |
+| `testcase-reviewer` | `story-agent` | Phase 1 ③bis 🆕 v3.7.0 | TestCase Review（TC-1~TC-9，按 §8.4 Tier 判定选 1/2/3 个） |
+| `task-writer` | `coding-agent` | Phase 2 ④ | Task 生成（含任务级 CodePlan）|
+| `coder` | `coding-agent` | Phase 2 ⑤ | Coding |
+| `code-reviewer` | `coding-agent` | Phase 3 ⑦ | Code Review（按 §8.4 Tier 判定选 1/2/3 个：BE / AR / QA 视角，即 A/B/C 模式）|
+| `test-runner` | `test-agent` | Phase 3 ⑥ | Test Generate：运行编译/启动/L1-L4 测试并生成测试报告 |
+| `test-verifier` | `test-agent` | Phase 3 ⑥.10 | 测试真实性验证 🔴 强制 |
+
+> **🆕 2026-06-25 对齐说明：** reviewer 类角色（`dr-reviewer` / `story-reviewer` / `code-reviewer`）的"选几个"统一由 **§8.4 多 reviewer 默认编排框架** 的 Tier 判定决定，不再在各角色描述里硬编码"1-2 个"。节点 SKILL 负责"视角怎么切"，本 SKILL 负责"选几个 + 怎么交叉"，职责分离。
+>
+> **🆕 2026-07-23 子系列重构说明：**
+> - 角色库从扁平清单升级为「子系列 Agent → 内含角色」两层结构，与 §8.7 子流程Agent 模型对齐。
+> - `agent_role` 字段（§4 任务分配卡）仍填**内含角色名**（如 `coder`），不填子系列 Agent 名（如 `coding-agent`）—— 子系列 Agent 是派活容器，内含角色才是执行单元。
+> - 子系列 Agent 的预创建模板、分发注册协议见 `source/docs/agent-registry-protocol.md`（SSOT）。
+
+### 3.2 角色与子任务匹配（🆕 按子系列重组）
+
+- **RA 子系列** → `ra-writer`（RA 起草 / 修订影响分析）
+- **DR 子系列** → `dr-writer`（起草）/ `dr-reviewer`（评审，按 §8.4 Tier）
+- **Story 子系列**
+  - 子任务 A（业务逻辑 Story）→ `story-writer` / `story-reviewer`(业务评审)
+  - 子任务 B（TestCase）→ `testcase-writer` / `testcase-reviewer`
+- **Coding 子系列**
+  - 子任务 A（业务逻辑）→ `coder` / `code-reviewer`(业务评审)
+  - 子任务 B（分层）→ `coder` / `code-reviewer`(架构评审)
+  - 子任务 C（数据库）→ `coder` / `code-reviewer`(架构评审)
+  - 子任务 D（测试代码）→ `coder` / `code-reviewer`(测试评审)
+  - 子任务 E（项目资产）→ `code-reviewer`(规范评审) / `project-assets-update-skill.md`
+- **Test 子系列**
+  - 子任务 A（测试运行）→ `test-runner`
+  - 子任务 B（测试真实性验证）→ `test-verifier`（🔴 强制独立 sub-session，不得与 `test-runner` 同 session）
 
 ---
 
@@ -666,7 +702,7 @@ report_back:
 ```yaml
 # 委托契约
 agent_id: spa-{uuid}
-series_type: ra|dr|story|testcase|coding
+series_type: ra|dr|story|testcase|coding|test
 entity_id: STORY-001-BE
 memory_entity_type: story  # 默认 = series_type
 input:
@@ -817,6 +853,7 @@ ae-sdd context-pressure --story {STORY-ID}
 | 节点 SKILL（`coding / code-review / story-generate` 等）| 复杂任务时调用本 SKILL 决定"是否拆子任务" |
 | `proposal-skill.md` | sub-agent 故障时升级用户 → 触发 Proposal 走流程 |
 | `document-storage-skill.md` | sub-agent 产出物路径按本 SKILL §2 路径模板确定 |
+| `agent-registry-protocol.md` | 子系列 Agent 预创建模板 + 分发注册协议（ClaudeCode/Codex/ZCode 注册中心适配），详见 `source/docs/agent-registry-protocol.md` |
 
 ### 10.1 调用方式（节点 SKILL 如何调用本 SKILL）
 

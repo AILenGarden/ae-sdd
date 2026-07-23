@@ -11,6 +11,9 @@ use crate::{RuntimeError, RuntimeResult};
 #[derive(Debug)]
 pub struct WorkItemActors {
     mailbox_capacity: usize,
+    maximum_actors: usize,
+    maximum_per_workspace: usize,
+    idle_ttl: Duration,
     actors: Mutex<BTreeMap<(String, String), Arc<ActorSlot>>>,
 }
 
@@ -18,6 +21,7 @@ pub struct WorkItemActors {
 struct ActorSlot {
     admitted: AtomicUsize,
     execution: Mutex<()>,
+    last_used: Mutex<Instant>,
 }
 
 struct Admission<'a> {
@@ -33,9 +37,17 @@ impl Drop for Admission<'_> {
 impl WorkItemActors {
     /// Creates a registry with an explicit mailbox bound per actor.
     #[must_use]
-    pub fn new(mailbox_capacity: usize) -> Self {
+    pub fn new(
+        mailbox_capacity: usize,
+        maximum_actors: usize,
+        maximum_per_workspace: usize,
+        idle_ttl_ms: u64,
+    ) -> Self {
         Self {
             mailbox_capacity: mailbox_capacity.max(1),
+            maximum_actors: maximum_actors.max(1),
+            maximum_per_workspace: maximum_per_workspace.max(1),
+            idle_ttl: Duration::from_millis(idle_ttl_ms.max(1)),
             actors: Mutex::new(BTreeMap::new()),
         }
     }
@@ -55,16 +67,29 @@ impl WorkItemActors {
                     "Work Item actor registry is poisoned",
                 )
             })?;
-            Arc::clone(
-                actors
-                    .entry((workspace_id.to_owned(), work_item_id.to_owned()))
-                    .or_insert_with(|| {
-                        Arc::new(ActorSlot {
-                            admitted: AtomicUsize::new(0),
-                            execution: Mutex::new(()),
-                        })
-                    }),
-            )
+            self.evict_idle(&mut actors);
+            let key = (workspace_id.to_owned(), work_item_id.to_owned());
+            if !actors.contains_key(&key) {
+                let workspace_count = actors
+                    .keys()
+                    .filter(|(workspace, _)| workspace == workspace_id)
+                    .count();
+                if actors.len() >= self.maximum_actors
+                    || workspace_count >= self.maximum_per_workspace
+                {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::SubscriberBackpressure,
+                        "Work Item actor registry capacity is exhausted",
+                    ));
+                }
+            }
+            Arc::clone(actors.entry(key).or_insert_with(|| {
+                Arc::new(ActorSlot {
+                    admitted: AtomicUsize::new(0),
+                    execution: Mutex::new(()),
+                    last_used: Mutex::new(Instant::now()),
+                })
+            }))
         };
 
         let previous = actor.admitted.fetch_add(1, Ordering::AcqRel);
@@ -83,7 +108,11 @@ impl WorkItemActors {
         let maximum = Duration::from_millis(deadline_ms.max(1));
         loop {
             match actor.execution.try_lock() {
-                Ok(_guard) => return operation(),
+                Ok(_guard) => {
+                    let result = operation();
+                    actor.touch();
+                    return result;
+                }
                 Err(std::sync::TryLockError::WouldBlock) if started.elapsed() < maximum => {
                     std::thread::park_timeout(Duration::from_micros(100));
                 }
@@ -100,6 +129,25 @@ impl WorkItemActors {
                     ));
                 }
             }
+        }
+    }
+
+    fn evict_idle(&self, actors: &mut BTreeMap<(String, String), Arc<ActorSlot>>) {
+        actors.retain(|_, actor| {
+            actor.admitted.load(Ordering::Acquire) != 0
+                || Arc::strong_count(actor) != 1
+                || actor
+                    .last_used
+                    .lock()
+                    .map_or(true, |last_used| last_used.elapsed() < self.idle_ttl)
+        });
+    }
+}
+
+impl ActorSlot {
+    fn touch(&self) {
+        if let Ok(mut last_used) = self.last_used.lock() {
+            *last_used = Instant::now();
         }
     }
 }

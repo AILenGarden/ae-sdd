@@ -50,6 +50,73 @@ impl HostCoordinator {
         }
     }
 
+    /// Restores durable adapter registrations, ACKs, command sequences, and pending queues.
+    pub fn recover(&self) -> RuntimeResult<()> {
+        let mut registrations = BTreeMap::new();
+        for (adapter_id, value) in self.persistence.list_records("host-adapter/v1")? {
+            let capabilities = value
+                .get("capabilities")
+                .and_then(Value::as_array)
+                .ok_or_else(|| malformed("durable host adapter capabilities are malformed"))?
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| malformed("durable host adapter capability is not a string"))
+                })
+                .collect::<RuntimeResult<BTreeSet<_>>>()?;
+            registrations.insert(adapter_id, capabilities);
+        }
+
+        let mut acknowledgements = BTreeMap::new();
+        let mut acknowledged_actions = BTreeSet::new();
+        for (ack_id, value) in self.persistence.list_records("host-ack/v1")? {
+            let ack: HostAckPayload = serde_json::from_value(value)
+                .map_err(|_| malformed("durable host ACK is malformed"))?;
+            if ack.ack_id != ack_id || !acknowledged_actions.insert(ack.action_id.clone()) {
+                return Err(malformed(
+                    "durable host ACK identity is inconsistent or duplicated",
+                ));
+            }
+            acknowledgements.insert(ack_id, ack);
+        }
+
+        let mut queues: BTreeMap<String, Vec<HostActionPayload>> = BTreeMap::new();
+        let mut command_sequences = BTreeMap::new();
+        for (action_id, value) in self.persistence.list_records("host-action/v1")? {
+            let action: HostActionPayload = serde_json::from_value(value)
+                .map_err(|_| malformed("durable host action is malformed"))?;
+            if action.action_id != action_id || !registrations.contains_key(&action.adapter_id) {
+                return Err(malformed(
+                    "durable host action identity or adapter registration is inconsistent",
+                ));
+            }
+            command_sequences
+                .entry(action.adapter_id.clone())
+                .and_modify(|current: &mut u64| *current = (*current).max(action.command_seq))
+                .or_insert(action.command_seq);
+            if !acknowledged_actions.contains(&action.action_id) {
+                queues
+                    .entry(action.adapter_id.clone())
+                    .or_default()
+                    .push(action);
+            }
+        }
+        let queues = queues
+            .into_iter()
+            .map(|(adapter_id, mut actions)| {
+                actions.sort_by_key(|action| action.command_seq);
+                (adapter_id, actions.into_iter().collect::<VecDeque<_>>())
+            })
+            .collect();
+
+        *self.registrations.lock().map_err(lock_error)? = registrations;
+        *self.acknowledgements.lock().map_err(lock_error)? = acknowledgements;
+        *self.command_sequences.lock().map_err(lock_error)? = command_sequences;
+        *self.queues.lock().map_err(lock_error)? = queues;
+        Ok(())
+    }
+
     /// Registers the authenticated capability matrix for an adapter.
     pub fn register(&self, adapter_id: &str, capabilities: &[String]) -> RuntimeResult<()> {
         if adapter_id.is_empty() || capabilities.iter().any(String::is_empty) {
@@ -180,13 +247,12 @@ impl HostCoordinator {
             .lock()
             .map_err(lock_error)?
             .insert(ack.ack_id.clone(), ack);
-        if let Some(queue) = self.queues.lock().map_err(lock_error)?.get_mut(adapter_id) {
-            if queue
+        if let Some(queue) = self.queues.lock().map_err(lock_error)?.get_mut(adapter_id)
+            && queue
                 .front()
                 .is_some_and(|queued| queued.action_id == action.action_id)
-            {
-                queue.pop_front();
-            }
+        {
+            queue.pop_front();
         }
         Ok(action)
     }
@@ -227,6 +293,10 @@ fn canonical_error(_error: serde_json::Error) -> RuntimeError {
         StableErrorCode::ExternalStateConflict,
         "runtime record could not be canonicalized",
     )
+}
+
+fn malformed(message: &str) -> RuntimeError {
+    RuntimeError::new(StableErrorCode::ExternalStateConflict, message)
 }
 
 fn lock_error<T>(_error: std::sync::PoisonError<T>) -> RuntimeError {

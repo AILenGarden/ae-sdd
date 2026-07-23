@@ -5,8 +5,8 @@ use std::time::Duration;
 use ae_sdd_protocol::{MAX_FRAME_BYTES, encode_frame};
 #[cfg(unix)]
 use interprocess::local_socket::GenericFilePath;
+use interprocess::local_socket::GenericNamespaced;
 use interprocess::local_socket::tokio::{Stream, prelude::*};
-use interprocess::local_socket::{GenericNamespaced, prelude::*};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout as with_timeout;
 

@@ -7,7 +7,7 @@ use ae_sdd_runtime::ConnectionState;
 #[cfg(unix)]
 use interprocess::local_socket::GenericFilePath;
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
-use interprocess::local_socket::{GenericNamespaced, ListenerOptions, prelude::*};
+use interprocess::local_socket::{GenericNamespaced, ListenerOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::timeout;
@@ -60,8 +60,12 @@ impl LocalIpcServer {
         let blocking_calls = Arc::clone(&self.blocking_calls);
         let io_timeout = self.io_timeout;
         tokio::spawn(async move {
-            let _guard = ActiveConnection { active, _permit: permit };
-            if let Err(error) = serve_connection(stream, io_timeout, blocking_calls, handler).await {
+            let _guard = ActiveConnection {
+                active,
+                _permit: permit,
+            };
+            if let Err(error) = serve_connection(stream, io_timeout, blocking_calls, handler).await
+            {
                 tracing::debug!(error = %error, "local IPC connection closed with an error");
             }
         });
@@ -112,7 +116,7 @@ where
         let mut prefix = [0_u8; 4];
         match timeout(io_timeout, stream.read_exact(&mut prefix)).await {
             Err(_) => return Err(timeout_error()),
-            Ok(()) => {}
+            Ok(Ok(_)) => {}
             Ok(Err(error))
                 if matches!(
                     error.kind(),

@@ -4,14 +4,13 @@
     {
       "id": "assets check",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "assets.check"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -23,31 +22,30 @@
       "id": "assets generate",
       "route": {
         "kind": "native-build-job",
-        "job": "compile",
+        "job": "offline",
         "entrypoint": "assets.generate"
       },
       "identity": {
-        "workspace": true,
+        "workspace": false,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "assets outline",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "assets.outline"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -58,14 +56,13 @@
     {
       "id": "assets query",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "assets.query"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -76,14 +73,13 @@
     {
       "id": "assets read",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "assets.read"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -94,14 +90,13 @@
     {
       "id": "assets section",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "assets.section"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -112,14 +107,13 @@
     {
       "id": "assets stats",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "assets.stats"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -130,14 +124,13 @@
     {
       "id": "automation disable",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "automation.disable"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -148,14 +141,13 @@
     {
       "id": "automation enable",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "automation.enable"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -166,14 +158,13 @@
     {
       "id": "automation status",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "automation.status"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -184,14 +175,13 @@
     {
       "id": "baseline create",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "baseline.create"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -202,14 +192,13 @@
     {
       "id": "baseline diff",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "baseline.diff"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -220,14 +209,13 @@
     {
       "id": "baseline inspect",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "baseline.inspect"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -239,7 +227,7 @@
       "id": "bump",
       "route": {
         "kind": "native-build-job",
-        "job": "admin",
+        "job": "offline",
         "entrypoint": "bump"
       },
       "identity": {
@@ -249,21 +237,20 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "classify",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "classify"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -274,15 +261,16 @@
     {
       "id": "context-pressure",
       "route": {
-        "kind": "rpc",
-        "method": "host.pressure_report"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use host.pressure_report through an authenticated host adapter"
       },
       "identity": {
-        "workspace": true,
+        "workspace": false,
         "workItem": false,
         "session": false
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -291,14 +279,13 @@
     {
       "id": "db audit",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "db.audit"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -309,14 +296,13 @@
     {
       "id": "db explain",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "db.explain"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -327,14 +313,13 @@
     {
       "id": "db profiles",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "db.profiles"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -345,14 +330,13 @@
     {
       "id": "db query",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "db.query"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -364,7 +348,7 @@
       "id": "distributor disable",
       "route": {
         "kind": "native-build-job",
-        "job": "distribute",
+        "job": "offline",
         "entrypoint": "distributor.disable"
       },
       "identity": {
@@ -374,15 +358,15 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "distributor enable",
       "route": {
         "kind": "native-build-job",
-        "job": "distribute",
+        "job": "offline",
         "entrypoint": "distributor.enable"
       },
       "identity": {
@@ -392,15 +376,15 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "distributor list",
       "route": {
         "kind": "native-build-job",
-        "job": "distribute",
+        "job": "offline",
         "entrypoint": "distributor.list"
       },
       "identity": {
@@ -410,15 +394,15 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "distributor register",
       "route": {
         "kind": "native-build-job",
-        "job": "distribute",
+        "job": "offline",
         "entrypoint": "distributor.register"
       },
       "identity": {
@@ -428,15 +412,15 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "distributor scan",
       "route": {
         "kind": "native-build-job",
-        "job": "distribute",
+        "job": "offline",
         "entrypoint": "distributor.scan"
       },
       "identity": {
@@ -446,15 +430,15 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "distributor unregister",
       "route": {
         "kind": "native-build-job",
-        "job": "distribute",
+        "job": "offline",
         "entrypoint": "distributor.unregister"
       },
       "identity": {
@@ -464,21 +448,20 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "doc finalize",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "doc.finalize"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -497,7 +480,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -523,15 +506,16 @@
     {
       "id": "enter",
       "route": {
-        "kind": "rpc",
-        "method": "session.open"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use session.open through the daemon client"
       },
       "identity": {
-        "workspace": true,
+        "workspace": false,
         "workItem": false,
         "session": false
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -557,14 +541,13 @@
     {
       "id": "evidence lookup",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "evidence.lookup"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -660,15 +643,16 @@
     {
       "id": "gate-intercept",
       "route": {
-        "kind": "rpc",
-        "method": "hook.pre_tool"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use ae-sdd hook --method hook.pre_tool --request-json -"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 250,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -685,7 +669,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -694,14 +678,13 @@
     {
       "id": "git blame",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "git.blame"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -712,14 +695,13 @@
     {
       "id": "git diff",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "git.diff"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -730,14 +712,13 @@
     {
       "id": "git impact",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "git.impact"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -748,14 +729,13 @@
     {
       "id": "git log",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "git.log"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -766,14 +746,13 @@
     {
       "id": "git status",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "git.status"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -792,7 +771,7 @@
         "workItem": false,
         "session": false
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -802,7 +781,7 @@
       "id": "init",
       "route": {
         "kind": "native-build-job",
-        "job": "init",
+        "job": "offline",
         "entrypoint": "init"
       },
       "identity": {
@@ -812,15 +791,15 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "init-hooks",
       "route": {
         "kind": "native-build-job",
-        "job": "init",
+        "job": "offline",
         "entrypoint": "init-hooks"
       },
       "identity": {
@@ -830,9 +809,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "iteration-check",
@@ -930,7 +909,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -981,7 +960,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1015,7 +994,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1032,7 +1011,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1049,7 +1028,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1083,7 +1062,7 @@
         "workItem": false,
         "session": false
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1126,14 +1105,13 @@
     {
       "id": "perf clear",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "perf.clear"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1144,14 +1122,13 @@
     {
       "id": "perf doctor",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "perf.doctor"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1162,14 +1139,13 @@
     {
       "id": "perf report",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "perf.report"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1181,31 +1157,30 @@
       "id": "plugin init",
       "route": {
         "kind": "native-build-job",
-        "job": "init",
+        "job": "offline",
         "entrypoint": "plugin.init"
       },
       "identity": {
-        "workspace": true,
+        "workspace": false,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "plugin list",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "plugin.list"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1216,14 +1191,13 @@
     {
       "id": "plugin trace",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "plugin.trace"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1234,14 +1208,13 @@
     {
       "id": "plugin validate",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "plugin.validate"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1253,14 +1226,14 @@
       "id": "preflight collect",
       "route": {
         "kind": "rpc",
-        "method": "workspace.snapshot"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
         "session": false
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1269,15 +1242,16 @@
     {
       "id": "prompt-inject",
       "route": {
-        "kind": "rpc",
-        "method": "hook.user_prompt"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use ae-sdd hook --method hook.user_prompt --request-json -"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 250,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1320,15 +1294,16 @@
     {
       "id": "ra-gate",
       "route": {
-        "kind": "rpc",
-        "method": "gate.evaluate"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use gate.evaluate with the registered RA gate"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
+        "workspace": false,
+        "workItem": false,
         "session": false
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1447,7 +1422,7 @@
         "workItem": true,
         "session": false
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1515,7 +1490,7 @@
         "workItem": true,
         "session": false
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1541,15 +1516,16 @@
     {
       "id": "runtime compact",
       "route": {
-        "kind": "rpc",
-        "method": "compact.request"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use compact.request through an authenticated session"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1559,7 +1535,7 @@
       "id": "runtime verify",
       "route": {
         "kind": "native-build-job",
-        "job": "compile",
+        "job": "offline",
         "entrypoint": "runtime.verify"
       },
       "identity": {
@@ -1569,23 +1545,23 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     },
     {
       "id": "scripts-dir",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "scripts-dir"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "Rust releases contain no Python scripts directory"
       },
       "identity": {
         "workspace": false,
         "workItem": false,
         "session": false
       },
-      "deadlineMs": 300000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1594,14 +1570,13 @@
     {
       "id": "state bind-story-doc",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.bind-story-doc"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1612,16 +1587,16 @@
     {
       "id": "state confirm",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.confirm"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use the confirmation field on the protected typed operation"
       },
       "identity": {
-        "workspace": true,
+        "workspace": false,
         "workItem": false,
-        "session": true
+        "session": false
       },
-      "deadlineMs": 300000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1630,16 +1605,16 @@
     {
       "id": "state lock",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.lock"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use lease.acquire"
       },
       "identity": {
-        "workspace": true,
+        "workspace": false,
         "workItem": false,
-        "session": true
+        "session": false
       },
-      "deadlineMs": 300000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1648,14 +1623,13 @@
     {
       "id": "state new",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.new"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1674,7 +1648,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1683,14 +1657,13 @@
     {
       "id": "state prd-archive",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.prd-archive"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1701,14 +1674,13 @@
     {
       "id": "state prd-check-complete",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.prd-check-complete"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1719,14 +1691,13 @@
     {
       "id": "state prd-complete",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.prd-complete"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1737,14 +1708,13 @@
     {
       "id": "state prd-init",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.prd-init"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1763,7 +1733,7 @@
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1772,14 +1742,13 @@
     {
       "id": "state register-review-consensus",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.register-review-consensus"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1790,14 +1759,13 @@
     {
       "id": "state relocate",
       "route": {
-        "kind": "native-build-job",
-        "job": "migrate",
-        "entrypoint": "state.relocate"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1808,16 +1776,16 @@
     {
       "id": "state unlock",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.unlock"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use lease.release"
       },
       "identity": {
-        "workspace": true,
+        "workspace": false,
         "workItem": false,
-        "session": true
+        "session": false
       },
-      "deadlineMs": 300000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1826,14 +1794,13 @@
     {
       "id": "state write",
       "route": {
-        "kind": "native-build-job",
-        "job": "admin",
-        "entrypoint": "state.write"
+        "kind": "rpc",
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": false,
-        "session": true
+        "session": false
       },
       "deadlineMs": 300000,
       "failClosed": true,
@@ -1844,15 +1811,16 @@
     {
       "id": "stop-check",
       "route": {
-        "kind": "rpc",
-        "method": "hook.stop"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use ae-sdd hook --method hook.stop --request-json -"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 250,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1861,15 +1829,16 @@
     {
       "id": "subprocess collect",
       "route": {
-        "kind": "rpc",
-        "method": "delegation.collect"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use delegation.collect"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1878,15 +1847,16 @@
     {
       "id": "subprocess list",
       "route": {
-        "kind": "rpc",
-        "method": "delegation.status"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use delegation.status"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1895,15 +1865,16 @@
     {
       "id": "subprocess spawn",
       "route": {
-        "kind": "rpc",
-        "method": "delegation.create"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use delegation.create"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1912,15 +1883,16 @@
     {
       "id": "subprocess status",
       "route": {
-        "kind": "rpc",
-        "method": "delegation.status"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use delegation.status"
       },
       "identity": {
-        "workspace": true,
-        "workItem": true,
-        "session": true
+        "workspace": false,
+        "workItem": false,
+        "session": false
       },
-      "deadlineMs": 2000,
+      "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
       "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
@@ -1964,7 +1936,7 @@
       "id": "version",
       "route": {
         "kind": "native-build-job",
-        "job": "admin",
+        "job": "offline",
         "entrypoint": "version"
       },
       "identity": {
@@ -1974,9 +1946,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
+      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "status": "implemented"
     }
   ],
   "capabilities": [

@@ -53,10 +53,7 @@ const COMPATIBILITY_COMPANIONS: &[&str] = &[
     "crates/ae-sdd-build/tests/compatibility_routes.rs",
     "bins/ae-sdd-cli/tests/legacy_dispatch.rs",
 ];
-const SERVICE_TRIGGERS: &[&str] = &[
-    "crates/ae-sdd-build/src/config.rs",
-    "bins/ae-sdd-daemon/",
-];
+const SERVICE_TRIGGERS: &[&str] = &["crates/ae-sdd-build/src/config.rs", "bins/ae-sdd-daemon/"];
 const SERVICE_COMPANIONS: &[&str] = &[
     ".github/workflows/ae-sdd-rust.yml",
     "tests/fixtures/protocol/",
@@ -306,10 +303,12 @@ mod tests {
         ])
         .expect("valid paths");
         let audit = AlignmentAudit::run(&changes);
-        assert!(audit
-            .findings
-            .iter()
-            .any(|finding| finding.missing_companion == "constraints/api.md"));
+        assert!(
+            audit
+                .findings
+                .iter()
+                .any(|finding| finding.missing_companion == "constraints/api.md")
+        );
     }
 
     #[test]

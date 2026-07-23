@@ -100,11 +100,9 @@ impl<'a> HookClient<'a> {
                     }
                 };
                 match verifier.verify(token, session_id, invocation.now_unix_ms) {
-                    Ok(claims) if claims.engaged => Ok(fail_closed(
-                        invocation.method,
-                        error.stable_code(),
-                        true,
-                    )),
+                    Ok(claims) if claims.engaged => {
+                        Ok(fail_closed(invocation.method, error.stable_code(), true))
+                    }
                     Ok(_) => Ok(HookOutcome {
                         engaged: false,
                         decision: HookDecision::Allow,

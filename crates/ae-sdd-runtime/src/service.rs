@@ -1,31 +1,34 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use ae_sdd_context::PressureDecision;
-use ae_sdd_domain::{AgentRole, BootId, CapabilityId, DelegationId, EventStoreId, SessionId};
+use ae_sdd_domain::{
+    AgentRole, BootId, CapabilityId, DelegationId, EventStoreId, GateOutcome, SessionId,
+};
 use ae_sdd_host::{BootCapabilitySigner, CapabilityClaims, CapabilityToken, GrantDigest};
 use ae_sdd_policy::{HookAction, HookPoint, HookPolicy};
 use ae_sdd_protocol::{
-    ClientKind, HandshakeLimits, HandshakeRequest, HandshakeResponse, HookDecision,
-    JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, OperationScope, PROTOCOL_RANGE_V1,
-    PROTOCOL_VERSION_V1, RequestParams, RpcErrorObject, RpcMethod, StableErrorCode, WorkspaceMode,
+    ClientKind, GateOutcomeKind, HandshakeLimits, HandshakeRequest, HandshakeResponse,
+    HookDecision, JobStatus, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, OperationScope,
+    PROTOCOL_RANGE_V1, PROTOCOL_VERSION_V1, RequestParams, RpcErrorObject, RpcMethod,
+    StableErrorCode, WorkspaceMode,
 };
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
     BusinessOperationPort, BusinessWorkspace, ClockPort, CompactRequestPayload, CompactResult,
-    ContextCache, ContextProjectPayload, DaemonLifecycle,
-    DelegationAcceptPayload, DelegationCreatePayload, DelegationReportPayload,
-    DelegationSupervisor, DurableEvent, EventBatch, EventSubscriptionPayload, FlowSupervisor,
-    HookPayload, HookResult, HostAckPayload, HostCoordinator, HostPressurePayload,
-    HostRegisterPayload, IdempotencyReceipt, PersistencePort, RuntimeConfig, RuntimeError,
-    RuntimeResult, RuntimeStatus, SessionOpenPayload, SessionResult, WireAgentRole, WorkItemActors,
+    ContextCache, ContextProjectPayload, DaemonLifecycle, DelegationAcceptPayload,
+    DelegationCreatePayload, DelegationReportPayload, DelegationSupervisor, DurableEvent,
+    EventBatch, EventSubscriptionPayload, FlowSupervisor, HookPayload, HookResult, HostAckPayload,
+    HostCoordinator, HostPressurePayload, HostRegisterPayload, IdempotencyReceipt, PersistencePort,
+    RuntimeConfig, RuntimeError, RuntimeResult, RuntimeStatus, SessionOpenPayload, SessionResult,
+    WireAgentRole, WorkItemActors, WorkspaceModeTransitionPayload, WorkspaceParityEvidence,
     WorkspaceRegisterPayload, WorkspaceResolverPort, WorkspaceResult,
 };
 
@@ -33,6 +36,8 @@ use crate::{
 mod hook_context;
 #[path = "service_host.rs"]
 mod host_methods;
+#[path = "service_jobs.rs"]
+mod job_methods;
 #[path = "service_lifecycle.rs"]
 mod lifecycle;
 #[path = "service_protocol.rs"]
@@ -49,6 +54,7 @@ mod workspace_methods;
 pub struct ConnectionState {
     handshaken: bool,
     client_kind: Option<ClientKind>,
+    adapter_id: Option<String>,
 }
 
 impl ConnectionState {
@@ -59,15 +65,18 @@ impl ConnectionState {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
 struct WorkspaceRecord {
     result: WorkspaceResult,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SessionRecord {
     workspace_id: String,
     agent_id: String,
+    external_key: String,
+    current_work_item: Option<String>,
     result: SessionResult,
     delegation_id: Option<String>,
     current_turn_id: Option<String>,
@@ -81,6 +90,32 @@ struct RuntimeState {
     workspace_by_root: BTreeMap<String, String>,
     sessions: BTreeMap<String, SessionRecord>,
     session_by_external: BTreeMap<(String, String), String>,
+    jobs: BTreeMap<String, JobRecord>,
+    job_queue: VecDeque<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobRecord {
+    job_id: String,
+    workspace: BusinessWorkspaceWire,
+    work_item_id: Option<String>,
+    entrypoint: String,
+    arguments: Value,
+    deadline_unix_ms: u64,
+    status: JobStatus,
+    result: Option<Value>,
+    error_code: Option<StableErrorCode>,
+}
+
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BusinessWorkspaceWire {
+    workspace_id: String,
+    canonical_root: String,
+    project_key: String,
+    mode: WorkspaceMode,
+    inventory_generation: u64,
 }
 
 struct Admission<'a> {
@@ -126,7 +161,12 @@ impl RuntimeService {
         business: Arc<dyn BusinessOperationPort>,
     ) -> Self {
         let capability_signer = BootCapabilitySigner::generate(boot_id);
-        let actors = WorkItemActors::new(config.work_item_mailbox_capacity);
+        let actors = WorkItemActors::new(
+            config.work_item_mailbox_capacity,
+            config.max_work_item_actors,
+            config.max_work_item_actors_per_workspace,
+            config.work_item_actor_idle_ms,
+        );
         let context = Arc::new(ContextCache::new(config.max_context_projection_bytes));
         let host = Arc::new(HostCoordinator::new(Arc::clone(&persistence)));
         let delegation = DelegationSupervisor::new(Arc::clone(&persistence), Arc::clone(&host));
@@ -173,6 +213,76 @@ impl RuntimeService {
     #[must_use]
     pub fn policy_digest(&self) -> &str {
         &self.config.policy_digest
+    }
+
+    /// Restores durable workspace and external-session indexes for a new boot.
+    ///
+    /// Recovered sessions are intentionally inactive: callers must reopen so
+    /// the daemon can issue a capability signed by the current boot key.
+    pub fn recover(&self) -> RuntimeResult<()> {
+        let workspace_values = self.persistence.list_records("workspace/v1")?;
+        let session_values = self.persistence.list_records("session/v1")?;
+        let mut state = self.lock_state()?;
+        state.workspaces.clear();
+        state.workspace_by_root.clear();
+        state.sessions.clear();
+        state.session_by_external.clear();
+        state.jobs.clear();
+        state.job_queue.clear();
+        for (key, value) in workspace_values {
+            let result: WorkspaceResult = decode_value(value)?;
+            if key != result.workspace_id || state.workspaces.len() >= self.config.max_workspaces {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "durable workspace projection is inconsistent or exceeds capacity",
+                ));
+            }
+            state
+                .workspace_by_root
+                .insert(result.canonical_root.clone(), key.clone());
+            state.workspaces.insert(key, WorkspaceRecord { result });
+        }
+        for (key, value) in session_values {
+            let mut record: SessionRecord = decode_value(value)?;
+            if key != record.result.session_id
+                || !state.workspaces.contains_key(&record.workspace_id)
+                || state.sessions.len() >= self.config.max_sessions
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "durable session projection is inconsistent or exceeds capacity",
+                ));
+            }
+            record.active = false;
+            record.result.capability_token.clear();
+            state.session_by_external.insert(
+                (record.workspace_id.clone(), record.external_key.clone()),
+                key.clone(),
+            );
+            state.sessions.insert(key, record);
+        }
+        for (key, value) in self.persistence.list_records("job/v1")? {
+            let mut record: JobRecord = decode_value(value)?;
+            if key != record.job_id || state.jobs.len() >= self.config.max_jobs {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "durable job projection is inconsistent or exceeds capacity",
+                ));
+            }
+            let normalized = matches!(record.status, JobStatus::Queued | JobStatus::Running);
+            if normalized {
+                record.status = JobStatus::Queued;
+                state.job_queue.push_back(key.clone());
+            }
+            if normalized {
+                self.persistence
+                    .store_record("job/v1", &key, &to_value(&record)?)?;
+            }
+            state.jobs.insert(key, record);
+        }
+        drop(state);
+        self.host.recover()?;
+        Ok(())
     }
 
     /// Handles one unframed JSON-RPC payload and returns one unframed response.
@@ -231,6 +341,8 @@ impl RuntimeService {
 
         let params: RequestParams<Value> = decode_value(request.params)?;
         self.validate_request(request.method, &params)?;
+        authorize_client_kind(connection.client_kind, request.method)?;
+        authorize_host_connection(connection, request.method, &params)?;
         if requires_session_capability(request.method) {
             let identity = self.session_identity(&params, is_hook(request.method))?;
             if !capability_allows(&identity.capability_id, request.method) {
@@ -241,16 +353,31 @@ impl RuntimeService {
             }
         }
         let _admission = self.admit()?;
-        let result = self.dispatch(request.method, &params)?;
+        let result = self.dispatch(request.method, &params, connection.client_kind)?;
+        if request.method == RpcMethod::HostRegister {
+            connection.adapter_id = params
+                .payload
+                .get("adapterId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
         encode_success(request.id, result)
     }
 
-    fn dispatch(&self, method: RpcMethod, params: &RequestParams<Value>) -> RuntimeResult<Value> {
+    fn dispatch(
+        &self,
+        method: RpcMethod,
+        params: &RequestParams<Value>,
+        client_kind: Option<ClientKind>,
+    ) -> RuntimeResult<Value> {
         match method {
             RpcMethod::RuntimeHandshake => unreachable!("handshake handled before dispatch"),
             RpcMethod::RuntimeStatus => to_value(self.status()?),
             RpcMethod::RuntimeDrain => self.runtime_drain(params),
             RpcMethod::WorkspaceRegister => self.workspace_register(params),
+            RpcMethod::WorkspaceModeTransition => {
+                self.workspace_mode_transition(params, client_kind)
+            }
             RpcMethod::WorkspaceSnapshot => self.workspace_snapshot(params),
             RpcMethod::SessionOpen => self.session_open(params),
             RpcMethod::SessionHeartbeat => self.session_heartbeat(params),
@@ -279,9 +406,10 @@ impl RuntimeService {
             | RpcMethod::FlowNext
             | RpcMethod::OperationDescribe
             | RpcMethod::OperationExecute
-            | RpcMethod::GateEvaluate
-            | RpcMethod::JobStatus
-            | RpcMethod::JobCancel => self.authoritative_business(method, params),
+            | RpcMethod::GateEvaluate => self.authoritative_business(method, params),
+            RpcMethod::JobSubmit => self.job_submit(params),
+            RpcMethod::JobStatus => self.job_status(params),
+            RpcMethod::JobCancel => self.job_cancel(params),
         }
     }
 
@@ -340,7 +468,82 @@ fn capability_allows(capability_id: &str, method: RpcMethod) -> bool {
         && requires_session_capability(method)
 }
 
-fn hook_decision(method: RpcMethod, engaged: bool, context: Option<&Value>) -> HookDecision {
+fn authorize_client_kind(client_kind: Option<ClientKind>, method: RpcMethod) -> RuntimeResult<()> {
+    let authorized = match method {
+        RpcMethod::RuntimeDrain | RpcMethod::WorkspaceModeTransition => {
+            client_kind == Some(ClientKind::Admin)
+        }
+        RpcMethod::HostRegister
+        | RpcMethod::HostCapabilities
+        | RpcMethod::HostActionNext
+        | RpcMethod::HostActionAck => client_kind == Some(ClientKind::HostAdapter),
+        RpcMethod::JobSubmit | RpcMethod::JobStatus | RpcMethod::JobCancel => {
+            matches!(client_kind, Some(ClientKind::Cli | ClientKind::Admin))
+        }
+        _ => true,
+    };
+    if authorized {
+        Ok(())
+    } else {
+        Err(RuntimeError::new(
+            StableErrorCode::RoleOperationForbidden,
+            "negotiated client kind does not authorize this RPC method",
+        ))
+    }
+}
+
+fn authorize_host_connection(
+    connection: &ConnectionState,
+    method: RpcMethod,
+    params: &RequestParams<Value>,
+) -> RuntimeResult<()> {
+    let host_bound = matches!(
+        method,
+        RpcMethod::HostCapabilities
+            | RpcMethod::HostActionNext
+            | RpcMethod::HostActionAck
+            | RpcMethod::HostPressureReport
+    );
+    if !host_bound {
+        return Ok(());
+    }
+    if connection.client_kind != Some(ClientKind::HostAdapter) {
+        return Err(RuntimeError::new(
+            StableErrorCode::RoleOperationForbidden,
+            "host method requires a host-adapter connection",
+        ));
+    }
+    let requested = params
+        .payload
+        .get("adapterId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| schema_error("adapterId is required"))?;
+    if connection.adapter_id.as_deref() != Some(requested) {
+        return Err(RuntimeError::new(
+            StableErrorCode::EndpointAuthFailed,
+            "host adapter identity is not bound to this connection",
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HookGuardWire {
+    outcome: GateOutcomeKind,
+    state_revision: u64,
+    policy_digest: String,
+    inventory_generation: u64,
+    input_fingerprint: String,
+}
+
+fn hook_decision(
+    method: RpcMethod,
+    engaged: bool,
+    context: Option<&Value>,
+    policy_digest: &str,
+    inventory_generation: u64,
+) -> HookDecision {
     let point = match method {
         RpcMethod::HookUserPrompt => HookPoint::UserPrompt,
         RpcMethod::HookPreTool => HookPoint::PreTool,
@@ -348,9 +551,17 @@ fn hook_decision(method: RpcMethod, engaged: bool, context: Option<&Value>) -> H
         RpcMethod::HookStop => HookPoint::Stop,
         _ => return HookDecision::Deny,
     };
-    let guard = context
-        .and_then(|value| value.get("hookGuard"))
-        .and_then(|value| serde_json::from_value(value.clone()).ok());
+    let guard = context.and_then(|value| {
+        let wire: HookGuardWire = serde_json::from_value(value.get("hookGuard")?.clone()).ok()?;
+        let state_revision = value.get("stateRevision")?.as_u64()?;
+        let input_fingerprint = value.get("inputFingerprint")?.as_str()?;
+        (wire.outcome == GateOutcomeKind::Pass
+            && wire.state_revision == state_revision
+            && wire.policy_digest == policy_digest
+            && wire.inventory_generation == inventory_generation
+            && wire.input_fingerprint == input_fingerprint)
+            .then_some(GateOutcome::Pass)
+    });
     match HookPolicy::decide(point, engaged, guard.as_ref()) {
         HookAction::Allow => HookDecision::Allow,
         HookAction::Deny => HookDecision::Deny,

@@ -42,6 +42,14 @@ struct CachedProjection {
     digest: String,
     value: Value,
     bytes: usize,
+    previous: Option<Box<HistoricalProjection>>,
+}
+
+#[derive(Clone, Debug)]
+struct HistoricalProjection {
+    context_revision: u64,
+    digest: String,
+    value: Value,
 }
 
 impl ContextCache {
@@ -71,6 +79,19 @@ impl ContextCache {
         }
         let digest = hex::encode(Sha256::digest(&canonical));
         let mut projections = self.projections.lock().map_err(lock_error)?;
+        if let Some(current) = projections.get(&input.session_id)
+            && current.digest == digest
+            && current.source_revision == input.source_revision
+        {
+            return Ok(ContextProjectResult {
+                kind: "no_change".to_owned(),
+                context_revision: current.context_revision,
+                digest,
+                source_revision: current.source_revision,
+                projection: None,
+                byte_length: 0,
+            });
+        }
         let revision = projections
             .get(&input.session_id)
             .map_or(1, |current| current.context_revision.saturating_add(1));
@@ -80,12 +101,20 @@ impl ContextCache {
                 "context revision overflow",
             ));
         }
+        let previous = projections.get(&input.session_id).map(|current| {
+            Box::new(HistoricalProjection {
+                context_revision: current.context_revision,
+                digest: current.digest.clone(),
+                value: current.value.clone(),
+            })
+        });
         let cached = CachedProjection {
             source_revision: input.source_revision,
             context_revision: revision,
             digest: digest.clone(),
             value: input.projection.clone(),
             bytes: canonical.len(),
+            previous,
         };
         projections.insert(input.session_id, cached);
         Ok(ContextProjectResult {
@@ -119,6 +148,35 @@ impl ContextCache {
             ));
         }
         let unchanged = known_revision == cached.context_revision && known_digest == cached.digest;
+        if known_revision == cached.context_revision && !known_digest.is_empty() && !unchanged {
+            return Err(RuntimeError::new(
+                StableErrorCode::ContextRevisionStale,
+                "caller context digest does not match the daemon revision",
+            ));
+        }
+        if !unchanged
+            && let Some(previous) = cached.previous.as_deref()
+            && known_revision == previous.context_revision
+            && known_digest == previous.digest
+        {
+            let delta = projection_delta(&previous.value, &cached.value);
+            let delta_bytes = serde_json::to_vec(&delta).map_err(|_| {
+                RuntimeError::new(
+                    StableErrorCode::ContextBudgetExceeded,
+                    "context delta could not be canonicalized",
+                )
+            })?;
+            if delta_bytes.len() <= self.maximum_bytes {
+                return Ok(ContextProjectResult {
+                    kind: "delta".to_owned(),
+                    context_revision: cached.context_revision,
+                    digest: cached.digest.clone(),
+                    source_revision: cached.source_revision,
+                    projection: Some(delta),
+                    byte_length: delta_bytes.len(),
+                });
+            }
+        }
         Ok(ContextProjectResult {
             kind: if unchanged { "no_change" } else { "full" }.to_owned(),
             context_revision: cached.context_revision,
@@ -137,6 +195,15 @@ impl ContextCache {
             .map_err(lock_error)?
             .get(session_id)
             .map(|cached| cached.value.clone()))
+    }
+
+    /// Removes a cached projection so engaged Hooks fail closed until reprojected.
+    pub fn invalidate(&self, session_id: &str) -> RuntimeResult<()> {
+        self.projections
+            .lock()
+            .map_err(lock_error)?
+            .remove(session_id);
+        Ok(())
     }
 
     /// Applies an authenticated host pressure sample and returns whether compact should start.
@@ -171,6 +238,34 @@ impl ContextCache {
         tracker
             .observe(&sample)
             .map_err(|_| invalid_pressure("pressure identity, generation, or sequence mismatch"))
+    }
+}
+
+fn projection_delta(previous: &Value, current: &Value) -> Value {
+    match (previous.as_object(), current.as_object()) {
+        (Some(previous), Some(current)) => {
+            let mut set = serde_json::Map::new();
+            let mut remove = Vec::new();
+            for (key, value) in current {
+                if previous.get(key) != Some(value) {
+                    set.insert(key.clone(), value.clone());
+                }
+            }
+            for key in previous.keys() {
+                if !current.contains_key(key) {
+                    remove.push(Value::String(key.clone()));
+                }
+            }
+            json!({
+                "schemaVersion":"context-delta/v1",
+                "set":set,
+                "remove":remove,
+            })
+        }
+        _ => json!({
+            "schemaVersion":"context-delta/v1",
+            "replace":current,
+        }),
     }
 }
 

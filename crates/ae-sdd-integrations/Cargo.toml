@@ -8,9 +8,14 @@ repository.workspace = true
 
 [dependencies]
 ae-sdd-domain = { path = "../ae-sdd-domain" }
+ae-sdd-flow = { path = "../ae-sdd-flow" }
+ae-sdd-gates = { path = "../ae-sdd-gates" }
 ae-sdd-host = { path = "../ae-sdd-host" }
+ae-sdd-operations = { path = "../ae-sdd-operations" }
+ae-sdd-policy = { path = "../ae-sdd-policy" }
 ae-sdd-protocol = { path = "../ae-sdd-protocol" }
 ae-sdd-runtime = { path = "../ae-sdd-runtime" }
+ae-sdd-scanners = { path = "../ae-sdd-scanners" }
 ae-sdd-store = { path = "../ae-sdd-store" }
 atomicwrites = "0.4.4"
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }

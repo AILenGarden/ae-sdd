@@ -192,6 +192,24 @@ impl PersistencePort for SqliteRuntimePersistence {
             .transpose()
     }
 
+    fn list_records(&self, namespace: &str) -> RuntimeResult<Vec<(String, Value)>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT key,value_json FROM runtime_record_v1 WHERE namespace=?1 ORDER BY key")
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([namespace], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?;
+        rows.map(|row| {
+            let (key, json) = row.map_err(sqlite_error)?;
+            let value = serde_json::from_str(&json).map_err(canonical_error)?;
+            Ok((key, value))
+        })
+        .collect()
+    }
+
     fn store_record(&self, namespace: &str, key: &str, value: &Value) -> RuntimeResult<()> {
         let json = serde_json::to_string(value).map_err(canonical_error)?;
         self.connection()?

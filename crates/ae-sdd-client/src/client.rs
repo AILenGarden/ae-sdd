@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use ae_sdd_protocol::{
-    ClientKind, ENDPOINT_MANIFEST_SCHEMA_V1, EndpointManifest, HandshakeRequest,
-    HandshakeResponse, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, MAX_FRAME_BYTES,
-    PROTOCOL_RANGE_V1, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, SecretString,
+    ClientKind, ENDPOINT_MANIFEST_SCHEMA_V1, EndpointManifest, HandshakeRequest, HandshakeResponse,
+    JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, MAX_FRAME_BYTES, PROTOCOL_RANGE_V1,
+    PROTOCOL_VERSION_V1, RequestParams, RpcMethod, SecretString,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -163,8 +163,9 @@ fn required_capability(method: RpcMethod) -> Option<&'static str> {
         | RpcMethod::DelegationCollect
         | RpcMethod::DelegationCancel => Some("physical-delegation-v1"),
         RpcMethod::ContextGet | RpcMethod::ContextProject => Some("context-projection-v1"),
-        RpcMethod::CompactRequest | RpcMethod::CompactStatus => {
-            Some("compact-ack-rehydrate-v1")
+        RpcMethod::CompactRequest | RpcMethod::CompactStatus => Some("compact-ack-rehydrate-v1"),
+        RpcMethod::JobSubmit | RpcMethod::JobStatus | RpcMethod::JobCancel => {
+            Some("bounded-job-scheduler-v1")
         }
         _ => None,
     }

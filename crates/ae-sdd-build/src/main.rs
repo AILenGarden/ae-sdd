@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
 use ae_sdd_build::{
-    ExpectedCounts, HookBenchmarkConfig, NativeJobRequest, audit_compatibility, benchmark_hook,
-    execute_native_job, verify_release,
+    ExpectedCounts, HarnessBuildRequest, HookBenchmarkConfig, NativeJobRequest, OfflineRequest,
+    PostCommitRequest, ServiceLifecycleRequest, ServiceOperation, audit_compatibility,
+    benchmark_hook, execute_harness_build, execute_native_job, execute_offline,
+    execute_post_commit, generate_service_lifecycle_plan, inspect_service_descriptor,
+    materialize_service_descriptor, verify_release,
 };
 use clap::{Parser, Subcommand};
 
@@ -19,9 +22,55 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Offline {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     NativeJob {
         #[arg(long)]
         request: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    Harness {
+        #[arg(long = "source", required = true)]
+        sources: Vec<PathBuf>,
+        #[arg(long)]
+        target: PathBuf,
+        #[arg(long)]
+        title: String,
+        #[arg(long = "allowed-root", required = true)]
+        allowed_roots: Vec<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    PostCommit {
+        #[arg(long)]
+        repository_root: PathBuf,
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        package: PathBuf,
+        #[arg(long = "target", required = true)]
+        targets: Vec<PathBuf>,
+        #[arg(long = "allowed-root", required = true)]
+        allowed_roots: Vec<PathBuf>,
+        #[arg(long)]
+        commit: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Service {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long, conflicts_with = "inspect")]
+        materialize: bool,
+        #[arg(long, conflicts_with = "materialize")]
+        inspect: bool,
         #[arg(long)]
         json: bool,
     },
@@ -77,6 +126,23 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Offline { request, json } => {
+            let request: OfflineRequest = serde_json::from_slice(&std::fs::read(request)?)?;
+            let result = execute_offline(&request)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!(
+                    "offline {} {}: changed={}",
+                    result.command,
+                    match result.mode {
+                        ae_sdd_build::ExecutionMode::DryRun => "planned",
+                        ae_sdd_build::ExecutionMode::Apply => "applied",
+                    },
+                    result.changed_paths.len()
+                );
+            }
+        }
         Command::NativeJob { request, json } => {
             let request: NativeJobRequest = serde_json::from_slice(&std::fs::read(request)?)?;
             let execution = execute_native_job(&request)?;
@@ -97,6 +163,121 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     execution.changes.len(),
                     execution.plan_digest
+                );
+            }
+        }
+        Command::Harness {
+            sources,
+            target,
+            title,
+            allowed_roots,
+            dry_run,
+            json,
+        } => {
+            let execution = execute_harness_build(&HarnessBuildRequest {
+                source_files: sources,
+                target_file: target,
+                title,
+                allowed_roots,
+                mode: if dry_run {
+                    ae_sdd_build::ExecutionMode::DryRun
+                } else {
+                    ae_sdd_build::ExecutionMode::Apply
+                },
+            })?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&execution)?);
+            } else {
+                println!(
+                    "harness {}: changes={} planDigest={}",
+                    if execution.replayed {
+                        "replayed"
+                    } else if dry_run {
+                        "planned"
+                    } else {
+                        "applied"
+                    },
+                    execution.changes.len(),
+                    execution.plan_digest
+                );
+            }
+        }
+        Command::PostCommit {
+            repository_root,
+            source,
+            package,
+            targets,
+            allowed_roots,
+            commit,
+            json,
+        } => {
+            let execution = execute_post_commit(&PostCommitRequest {
+                repository_root,
+                source_directory: source,
+                package_directory: package,
+                target_directories: targets,
+                allowed_roots,
+                commit_id: commit,
+            })?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&execution)?);
+            } else {
+                println!(
+                    "post-commit complete: compileReplay={} distributeReplay={} verifiedFiles={}",
+                    execution.compile.replayed,
+                    execution.distribute.replayed,
+                    execution.verification.payload["verifiedFiles"]
+                );
+            }
+        }
+        Command::Service {
+            request,
+            materialize,
+            inspect,
+            json,
+        } => {
+            let request: ServiceLifecycleRequest =
+                serde_json::from_slice(&std::fs::read(request)?)?;
+            let plan = generate_service_lifecycle_plan(&request)?;
+            if materialize {
+                if request.operation != ServiceOperation::Install {
+                    return Err("--materialize is valid only for an install plan".into());
+                }
+                let result = materialize_service_descriptor(&plan)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!(
+                        "service descriptor {}: {} ({})",
+                        if result.created {
+                            "materialized"
+                        } else {
+                            "replayed"
+                        },
+                        result.descriptor_path.display(),
+                        result.descriptor_digest
+                    );
+                }
+            } else if inspect {
+                let status = inspect_service_descriptor(&plan)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&status)?);
+                } else {
+                    println!(
+                        "service descriptor status: {:?} ({})",
+                        status.state,
+                        status.descriptor_path.display()
+                    );
+                }
+            } else if json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                println!(
+                    "service {} plan for {}: descriptor={} commands={}",
+                    request.operation.as_str(),
+                    request.platform.as_str(),
+                    plan.descriptor_path.display(),
+                    plan.manager_commands.len()
                 );
             }
         }
@@ -176,7 +357,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string_pretty(&summary)?);
             } else {
                 println!(
-                    "hook benchmark: samples={} p50={}us p95={}us p99={}us max={}us errors={} receiptReplays={} cpuMillis={} rssBytes={}",
+                    "hook benchmark: samples={} p50={}us p95={}us p99={}us max={}us errors={} receiptReplays={} engagedReplays={} allowDecisions={} cpuMillis={} rssBytes={}",
                     summary.samples,
                     summary.p50_micros,
                     summary.p95_micros,
@@ -184,6 +365,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     summary.max_micros,
                     summary.error_count,
                     summary.receipt_replay_count,
+                    summary.engaged_replay_count,
+                    summary.allow_decision_count,
                     summary.cpu_millis,
                     summary.rss_bytes
                 );

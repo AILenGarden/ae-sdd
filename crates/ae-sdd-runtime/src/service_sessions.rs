@@ -23,7 +23,7 @@ impl RuntimeService {
         let now = self.clock.now_unix_ms();
         let expires = now.saturating_add(self.config.session_ttl_ms);
 
-        let result = {
+        let (result, previous_record) = {
             let mut state = self.lock_state()?;
             let mode = state
                 .workspaces
@@ -46,6 +46,11 @@ impl RuntimeService {
                 .get(&(workspace_id.clone(), payload.external_key.clone()))
                 .cloned()
             {
+                let previous = state
+                    .sessions
+                    .get(&session_id)
+                    .cloned()
+                    .expect("external session index is internally consistent");
                 let session = state
                     .sessions
                     .get_mut(&session_id)
@@ -56,17 +61,21 @@ impl RuntimeService {
                     ));
                 }
                 session.active = true;
+                session.result.engaged = engaged;
+                if params.work_item_id.is_some() {
+                    session.current_work_item = params.work_item_id.clone();
+                }
                 session.result.expires_at_unix_ms = expires;
                 session.result.capability_token = self.sign_capability(
                     &workspace_id,
                     &session_id,
                     session.result.role,
                     session.delegation_id.as_deref(),
-                    session.result.engaged,
+                    engaged,
                     now,
                     expires,
                 )?;
-                session.result.clone()
+                (session.result.clone(), Some(previous))
             } else {
                 if state.sessions.values().filter(|item| item.active).count()
                     >= self.config.max_sessions
@@ -126,6 +135,8 @@ impl RuntimeService {
                 let record = SessionRecord {
                     workspace_id: workspace_id.clone(),
                     agent_id,
+                    external_key: payload.external_key.clone(),
+                    current_work_item: params.work_item_id.clone(),
                     result: result.clone(),
                     delegation_id: payload.delegation_id,
                     current_turn_id: None,
@@ -133,16 +144,59 @@ impl RuntimeService {
                     active: true,
                 };
                 state.session_by_external.insert(
-                    (workspace_id.clone(), payload.external_key),
+                    (workspace_id.clone(), payload.external_key.clone()),
                     session_id.clone(),
                 );
                 state.sessions.insert(session_id, record);
-                result
+                (result, None)
             }
         };
         let value = to_value(&result)?;
-        self.persistence
-            .store_record("session/v1", &result.session_id, &value)?;
+        if let Some(work_item_id) = params.work_item_id.as_deref() {
+            let workspace = {
+                let state = self.lock_state()?;
+                let record = state
+                    .workspaces
+                    .get(&workspace_id)
+                    .ok_or_else(|| project_mismatch("workspace is not registered"))?;
+                BusinessWorkspace {
+                    workspace_id: record.result.workspace_id.clone(),
+                    canonical_root: record.result.canonical_root.clone(),
+                    project_key: record.result.project_key.clone(),
+                    mode: record.result.mode,
+                    agent_role: Some(AgentRole::from(result.role)),
+                    inventory_generation: record.result.inventory_generation,
+                }
+            };
+            let projection_result = self.business.project_context(
+                &workspace,
+                work_item_id,
+                &result.session_id,
+                AgentRole::from(result.role),
+            );
+            let projection = match projection_result {
+                Ok(projection) => projection,
+                Err(error) => {
+                    self.rollback_open(
+                        &workspace_id,
+                        &payload.external_key,
+                        &result.session_id,
+                        previous_record.as_ref(),
+                    )?;
+                    return Err(error);
+                }
+            };
+            if let Err(error) = self.context.put(projection) {
+                self.rollback_open(
+                    &workspace_id,
+                    &payload.external_key,
+                    &result.session_id,
+                    previous_record.as_ref(),
+                )?;
+                return Err(error);
+            }
+        }
+        self.persist_session(&result.session_id)?;
         self.commit_receipt_event(
             &scope,
             key,
@@ -154,6 +208,27 @@ impl RuntimeService {
             None,
         )
         .map(|(value, _)| value)
+    }
+
+    fn rollback_open(
+        &self,
+        workspace_id: &str,
+        external_key: &str,
+        session_id: &str,
+        previous: Option<&SessionRecord>,
+    ) -> RuntimeResult<()> {
+        let mut state = self.lock_state()?;
+        if let Some(previous) = previous {
+            state
+                .sessions
+                .insert(session_id.to_owned(), previous.clone());
+        } else {
+            state.sessions.remove(session_id);
+            state
+                .session_by_external
+                .remove(&(workspace_id.to_owned(), external_key.to_owned()));
+        }
+        Ok(())
     }
 
     pub(super) fn session_heartbeat(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
@@ -184,8 +259,7 @@ impl RuntimeService {
             )?;
             to_value(&session.result)?
         };
-        self.persistence
-            .store_record("session/v1", &identity.session_id, &value)?;
+        self.persist_session(&identity.session_id)?;
         self.commit_receipt_event(
             &scope,
             key,
@@ -216,6 +290,7 @@ impl RuntimeService {
             session.active = false;
             to_value(&session.result)?
         };
+        self.persist_session(&identity.session_id)?;
         self.commit_receipt_event(
             &scope,
             key,
@@ -227,6 +302,15 @@ impl RuntimeService {
             None,
         )
         .map(|(value, _)| value)
+    }
+
+    pub(super) fn persist_session(&self, session_id: &str) -> RuntimeResult<()> {
+        let value = {
+            let state = self.lock_state()?;
+            to_value(state.sessions.get(session_id).ok_or_else(session_expired)?)?
+        };
+        self.persistence
+            .store_record("session/v1", session_id, &value)
     }
 
     pub(super) fn validate_delegated_open(
@@ -248,7 +332,7 @@ impl RuntimeService {
                         "child session requires a physical delegation",
                     )
                 })?;
-                let projection = self.delegation.status(delegation_id)?;
+                let projection = self.delegation.status(session_id, delegation_id)?;
                 if projection.status != "running"
                     || projection.child_session_id.as_deref() != Some(session_id)
                     || projection.child_role != role

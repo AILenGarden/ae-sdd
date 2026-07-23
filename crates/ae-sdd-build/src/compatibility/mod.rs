@@ -16,6 +16,56 @@ pub const LEGACY_SCANNER_COUNT: usize = 7;
 const INVENTORY_SCHEMA: &str = "1";
 const ROUTING_SCHEMA: &str = "ae-sdd-compatibility-routing/v1";
 
+pub const C_ADMIN_JOB_COMMANDS: [&str; 29] = [
+    "assets check",
+    "assets outline",
+    "assets query",
+    "assets read",
+    "assets section",
+    "assets stats",
+    "automation disable",
+    "automation enable",
+    "automation status",
+    "baseline create",
+    "baseline diff",
+    "baseline inspect",
+    "db audit",
+    "db explain",
+    "db profiles",
+    "db query",
+    "git blame",
+    "git diff",
+    "git impact",
+    "git log",
+    "git status",
+    "perf clear",
+    "perf doctor",
+    "perf report",
+    "classify",
+    "plugin list",
+    "plugin trace",
+    "plugin validate",
+    "preflight collect",
+];
+
+pub const D_REJECTED_COMMANDS: [&str; 15] = [
+    "context-pressure",
+    "enter",
+    "gate-intercept",
+    "prompt-inject",
+    "ra-gate",
+    "runtime compact",
+    "scripts-dir",
+    "state confirm",
+    "state lock",
+    "state unlock",
+    "stop-check",
+    "subprocess collect",
+    "subprocess list",
+    "subprocess spawn",
+    "subprocess status",
+];
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompatibilityManifest {
@@ -78,7 +128,12 @@ pub struct CommandRoute {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum RouteTarget {
     Rpc {
         method: RpcMethod,
@@ -89,6 +144,10 @@ pub enum RouteTarget {
     NativeBuildJob {
         job: NativeJobKind,
         entrypoint: String,
+    },
+    Rejected {
+        stable_code: String,
+        remediation: String,
     },
 }
 

@@ -16,6 +16,7 @@ const METHOD_NAMES: [&str; METHOD_COUNT] = [
     "runtime.drain",
     "workspace.register",
     "workspace.snapshot",
+    "workspace.mode_transition",
     "session.open",
     "session.heartbeat",
     "session.close",

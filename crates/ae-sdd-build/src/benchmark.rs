@@ -1,18 +1,33 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ae_sdd_client::{DaemonClient, LocalIpcTransport};
-use ae_sdd_protocol::{ClientKind, RequestParams, RpcMethod};
+use ae_sdd_protocol::ClientKind;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use thiserror::Error;
+
+mod setup;
+
+use setup::{BenchmarkWorkspace, cached_hook_call, prepare_cached_hook, validate_controlled_hook};
 
 const MAX_HOOK_P95_MICROS: u64 = 50_000;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RPC_TIMEOUT: Duration = Duration::from_secs(2);
+const HOOK_DEADLINE_MS: u64 = 250;
+const WORK_ITEM_ID: &str = "BENCHMARK-HOOK-001";
+const CANARY_INVENTORY_GENERATION: u64 = 2;
+
+thread_local! {
+    static BENCHMARK_RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("benchmark Tokio runtime");
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookBenchmarkConfig {
@@ -81,6 +96,8 @@ pub struct HookBenchmarkSummary {
     pub elapsed_micros: u64,
     pub error_count: u64,
     pub receipt_replay_count: u64,
+    pub engaged_replay_count: u64,
+    pub allow_decision_count: u64,
     pub cpu_millis: u64,
     pub rss_bytes: u64,
 }
@@ -93,24 +110,34 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
         .workspace_root
         .canonicalize()
         .map_err(BenchmarkError::Io)?;
+    let benchmark_workspace = BenchmarkWorkspace::create(&workspace_root)?;
     let daemon = BenchmarkDaemon::connect_or_spawn(&config, &workspace_root)?;
-    let client = DaemonClient::new(
+    let hook_client = DaemonClient::new(
         daemon.manifest_path.clone(),
         ClientKind::Hook,
         Arc::new(LocalIpcTransport),
         RPC_TIMEOUT,
     );
-    let session = prepare_cached_hook(&client, &workspace_root)?;
+    let admin_client = DaemonClient::new(
+        daemon.manifest_path.clone(),
+        ClientKind::Admin,
+        Arc::new(LocalIpcTransport),
+        RPC_TIMEOUT,
+    );
+    let endpoint = block_on(hook_client.endpoint_manifest())?;
+    let input_fingerprint =
+        benchmark_workspace.write_authoritative_state(&endpoint.policy_digest)?;
+    let session = prepare_cached_hook(
+        &hook_client,
+        &admin_client,
+        benchmark_workspace.path(),
+        &input_fingerprint,
+        endpoint.started_at,
+    )?;
 
     for _ in 0..config.warmup {
-        let result = cached_hook_call(&client, &session)?;
-        if !result
-            .get("replayed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            return Err(BenchmarkError::ReceiptReplayMissing);
-        }
+        let result = cached_hook_call(&hook_client, &session)?;
+        validate_controlled_hook(&result, true)?;
     }
 
     let capacity =
@@ -118,6 +145,8 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
     let mut latencies = Vec::with_capacity(capacity);
     let mut error_count = 0_u64;
     let mut receipt_replay_count = 0_u64;
+    let mut engaged_replay_count = 0_u64;
+    let mut allow_decision_count = 0_u64;
     let mut metrics = ProcessMetrics::new(daemon.pid);
     let cpu_start = metrics.sample()?.cpu_millis;
     let mut peak_rss = metrics.sample()?.rss_bytes;
@@ -125,16 +154,24 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
     let benchmark_started = Instant::now();
     for index in 0..config.samples {
         let started = Instant::now();
-        match cached_hook_call(&client, &session) {
-            Ok(result)
-                if result
+        match cached_hook_call(&hook_client, &session) {
+            Ok(result) => {
+                let replayed = result
                     .get("replayed")
                     .and_then(Value::as_bool)
-                    .unwrap_or(false) =>
-            {
-                receipt_replay_count += 1;
+                    .unwrap_or(false);
+                let engaged = result
+                    .get("engaged")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let allowed = result.get("decision").and_then(Value::as_str) == Some("allow");
+                receipt_replay_count += u64::from(replayed);
+                engaged_replay_count += u64::from(engaged);
+                allow_decision_count += u64::from(allowed);
+                if !(replayed && engaged && allowed) {
+                    error_count += 1;
+                }
             }
-            Ok(_) => error_count += 1,
             Err(_) => error_count += 1,
         }
         latencies.push(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
@@ -148,8 +185,8 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
     latencies.sort_unstable();
 
     let summary = HookBenchmarkSummary {
-        schema_version: "ae-sdd-hook-benchmark/v2",
-        benchmark: "cached-hook-rpc-receipt-replay",
+        schema_version: "ae-sdd-hook-benchmark/v3",
+        benchmark: "engaged-authoritative-cached-hook-rpc-receipt-replay",
         build_profile: "release",
         operating_system: std::env::consts::OS,
         architecture: std::env::consts::ARCH,
@@ -169,10 +206,16 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
         elapsed_micros,
         error_count,
         receipt_replay_count,
+        engaged_replay_count,
+        allow_decision_count,
         cpu_millis: final_metrics.cpu_millis.saturating_sub(cpu_start),
         rss_bytes: peak_rss,
     };
-    if summary.error_count != 0 || summary.receipt_replay_count != summary.samples {
+    if summary.error_count != 0
+        || summary.receipt_replay_count != summary.samples
+        || summary.engaged_replay_count != summary.samples
+        || summary.allow_decision_count != summary.samples
+    {
         return Err(BenchmarkError::RoundTripFailures(summary.error_count));
     }
     if summary.p95_micros > MAX_HOOK_P95_MICROS {
@@ -184,137 +227,8 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
     Ok(summary)
 }
 
-fn prepare_cached_hook(
-    client: &DaemonClient,
-    workspace_root: &Path,
-) -> Result<HookSession, BenchmarkError> {
-    let workspace: Value = client.call(
-        RpcMethod::WorkspaceRegister,
-        request_params(
-            json!({
-                "projectRoot": workspace_root.to_string_lossy(),
-                "projectKey": "ae-sdd-hook-benchmark",
-                "mode": "shadow"
-            }),
-            None,
-            None,
-            None,
-            Some("benchmark-workspace-register"),
-        ),
-    )?;
-    let workspace_id = required_string(&workspace, "workspaceId")?;
-    let session: Value = client.call(
-        RpcMethod::SessionOpen,
-        request_params(
-            json!({
-                "externalKey": "ae-sdd-hook-benchmark-session",
-                "role": "root",
-                "engaged": true
-            }),
-            Some(&workspace_id),
-            None,
-            None,
-            Some("benchmark-session-open"),
-        ),
-    )?;
-    let session_id = required_string(&session, "sessionId")?;
-    let capability_token = required_string(&session, "capabilityToken")?;
-    let prepared = HookSession {
-        workspace_id,
-        session_id,
-        capability_token,
-        turn_id: "00000000-0000-0000-0000-000000000101".to_owned(),
-        work_item_id: "BENCHMARK-HOOK-001".to_owned(),
-    };
-    let _: Value = client.call(
-        RpcMethod::HookUserPrompt,
-        prepared.params(
-            "benchmark-user-prompt",
-            json!({"hookEventId":"benchmark-user-prompt","turnSeq":1,"hostPayload":{"prompt":"benchmark"}}),
-        ),
-    )?;
-    let first = cached_hook_call(client, &prepared)?;
-    if first
-        .get("replayed")
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
-    {
-        return Err(BenchmarkError::ReceiptSeedMissing);
-    }
-    Ok(prepared)
-}
-
-fn cached_hook_call(client: &DaemonClient, session: &HookSession) -> Result<Value, BenchmarkError> {
-    client
-        .call(
-            RpcMethod::HookPreTool,
-            session.params(
-                "benchmark-pre-tool-replay",
-                json!({
-                    "hookEventId": "benchmark-pre-tool-replay",
-                    "turnSeq": 1,
-                    "hostPayload": {"tool": "apply_patch", "path": "benchmark"}
-                }),
-            ),
-        )
-        .map_err(BenchmarkError::Client)
-}
-
-struct HookSession {
-    workspace_id: String,
-    session_id: String,
-    capability_token: String,
-    turn_id: String,
-    work_item_id: String,
-}
-
-impl HookSession {
-    fn params(&self, idempotency_key: &str, payload: Value) -> RequestParams<Value> {
-        let mut params = request_params(
-            payload,
-            Some(&self.workspace_id),
-            Some(&self.session_id),
-            Some(&self.capability_token),
-            Some(idempotency_key),
-        );
-        params.agent_id = Some("benchmark-agent".to_owned());
-        params.turn_id = Some(self.turn_id.clone());
-        params.work_item_id = Some(self.work_item_id.clone());
-        params
-    }
-}
-
-fn request_params(
-    payload: Value,
-    workspace_id: Option<&str>,
-    session_id: Option<&str>,
-    capability_token: Option<&str>,
-    idempotency_key: Option<&str>,
-) -> RequestParams<Value> {
-    RequestParams {
-        protocol_version: "1.0".to_owned(),
-        workspace_id: workspace_id.map(str::to_owned),
-        agent_id: Some("benchmark-agent".to_owned()),
-        session_id: session_id.map(str::to_owned),
-        capability_token: capability_token.map(str::to_owned),
-        turn_id: None,
-        work_item_id: None,
-        lease_id: None,
-        fencing_token: None,
-        expected_revision: None,
-        idempotency_key: idempotency_key.map(str::to_owned),
-        confirmation: None,
-        deadline_ms: 1_000,
-        payload,
-    }
-}
-
-fn required_string(value: &Value, field: &'static str) -> Result<String, BenchmarkError> {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or(BenchmarkError::ResponseField(field))
+fn block_on<F: Future>(future: F) -> F::Output {
+    BENCHMARK_RUNTIME.with(|runtime| runtime.block_on(future))
 }
 
 struct BenchmarkDaemon {
@@ -335,7 +249,7 @@ impl BenchmarkDaemon {
                 Arc::new(LocalIpcTransport),
                 RPC_TIMEOUT,
             );
-            let manifest = client.endpoint_manifest()?;
+            let manifest = block_on(client.endpoint_manifest())?;
             return Ok(Self {
                 pid: manifest.pid,
                 manifest_path: manifest_path.clone(),
@@ -478,8 +392,22 @@ pub enum BenchmarkError {
     ReceiptSeedMissing,
     #[error("cached Hook call did not replay a durable receipt")]
     ReceiptReplayMissing,
+    #[error("workspace did not follow the required shadow-to-canary transition")]
+    WorkspaceModeMismatch,
+    #[error("the invalidated session did not reopen as the same engaged session")]
+    SessionCutoverMismatch,
+    #[error("authoritative project context was not injected into the engaged Hook")]
+    AuthoritativeContextMismatch,
+    #[error("cached Hook response was not daemon-engaged")]
+    HookControlMissing,
+    #[error("cached Hook response did not preserve the authoritative allow decision")]
+    HookDecisionMismatch,
+    #[error("benchmark fixture path is outside the requested allowed root: {0}")]
+    UnsafeFixturePath(PathBuf),
     #[error("live Hook RPC failed: {0}")]
     Client(#[from] ae_sdd_client::ClientError),
+    #[error("live Hook benchmark JSON failed: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("live Hook benchmark I/O failed: {0}")]
     Io(std::io::Error),
     #[error("hook benchmark recorded {0} round-trip errors")]
@@ -494,7 +422,9 @@ pub enum BenchmarkError {
 #[cfg(test)]
 mod tests {
     use ae_sdd_protocol::{decode_frame, encode_frame};
+    use sha2::{Digest, Sha256};
 
+    use super::setup::{BenchmarkParityEvidence, authoritative_state, parity_transition_payload};
     use super::*;
 
     #[test]
@@ -518,5 +448,28 @@ mod tests {
     #[test]
     fn default_manifest_helper_remains_available_for_external_daemon_mode() {
         let _ = ae_sdd_client::default_endpoint_manifest();
+    }
+
+    #[test]
+    fn authoritative_fixture_fingerprint_excludes_the_guard() {
+        let (mut state, fingerprint) = authoritative_state(&"b".repeat(64)).expect("state");
+        state.as_object_mut().expect("object").remove("hookGuard");
+        assert_eq!(
+            fingerprint,
+            hex::encode(Sha256::digest(
+                serde_json::to_vec(&state).expect("canonical state")
+            ))
+        );
+    }
+
+    #[test]
+    fn canary_parity_payload_carries_its_typed_digest() {
+        let payload = parity_transition_payload().expect("payload");
+        let parity: BenchmarkParityEvidence =
+            serde_json::from_value(payload["parity"].clone()).expect("typed parity");
+        let expected = hex::encode(Sha256::digest(
+            serde_json::to_vec(&parity).expect("canonical parity"),
+        ));
+        assert_eq!(payload["parityDigest"].as_str(), Some(expected.as_str()));
     }
 }

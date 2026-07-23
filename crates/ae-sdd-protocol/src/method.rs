@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::OperationScope;
 
 /// Number of RPC methods frozen by protocol v1.
-pub const METHOD_COUNT: usize = 36;
+pub const METHOD_COUNT: usize = 37;
 
 /// Exact protocol-v1 RPC method identifier.
 ///
@@ -30,6 +30,9 @@ pub enum RpcMethod {
     /// Read a bounded workspace projection.
     #[serde(rename = "workspace.snapshot")]
     WorkspaceSnapshot,
+    /// Perform a confirmed, drained workspace writer-mode transition.
+    #[serde(rename = "workspace.mode_transition")]
+    WorkspaceModeTransition,
     /// Open a trusted Agent session.
     #[serde(rename = "session.open")]
     SessionOpen,
@@ -133,6 +136,7 @@ impl RpcMethod {
         Self::RuntimeDrain,
         Self::WorkspaceRegister,
         Self::WorkspaceSnapshot,
+        Self::WorkspaceModeTransition,
         Self::SessionOpen,
         Self::SessionHeartbeat,
         Self::SessionClose,
@@ -175,6 +179,7 @@ impl RpcMethod {
             Self::RuntimeDrain => "runtime.drain",
             Self::WorkspaceRegister => "workspace.register",
             Self::WorkspaceSnapshot => "workspace.snapshot",
+            Self::WorkspaceModeTransition => "workspace.mode_transition",
             Self::SessionOpen => "session.open",
             Self::SessionHeartbeat => "session.heartbeat",
             Self::SessionClose => "session.close",
@@ -390,6 +395,15 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         false,
         false,
         false,
+    ),
+    method(
+        RpcMethod::WorkspaceModeTransition,
+        OperationScope::Workspace,
+        true,
+        false,
+        true,
+        true,
+        true,
     ),
     method(
         RpcMethod::SessionOpen,

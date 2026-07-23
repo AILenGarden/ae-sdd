@@ -52,6 +52,14 @@ struct DurableDelegation {
     child_session_id: Option<String>,
     result_digest: Option<String>,
     summary: Option<String>,
+    #[serde(default)]
+    report_digest: Option<String>,
+    #[serde(default)]
+    result: Option<Value>,
+    #[serde(default)]
+    artifact_receipt: Option<Value>,
+    #[serde(default)]
+    cleanup_receipt: Option<Value>,
 }
 
 impl DelegationSupervisor {
@@ -100,6 +108,10 @@ impl DelegationSupervisor {
             child_session_id: None,
             result_digest: None,
             summary: None,
+            report_digest: None,
+            result: None,
+            artifact_receipt: None,
+            cleanup_receipt: None,
         };
         self.save(&record)?;
         Ok(project_delegation(&record))
@@ -164,9 +176,7 @@ impl DelegationSupervisor {
         payload: DelegationReportPayload,
     ) -> RuntimeResult<DelegationResult> {
         let mut record = self.load(&payload.delegation_id)?;
-        if record.status != "running"
-            || record.child_session_id.as_deref() != Some(child_session_id)
-        {
+        if record.child_session_id.as_deref() != Some(child_session_id) {
             return Err(RuntimeError::new(
                 StableErrorCode::RoleOperationForbidden,
                 "only the attested running child may report this delegation",
@@ -194,26 +204,126 @@ impl DelegationSupervisor {
                 "canonical child result exceeds 65536 bytes",
             ));
         }
-        record.result_digest = Some(hex::encode(Sha256::digest(&canonical)));
+        let report_digest = hex::encode(Sha256::digest(&canonical));
+        if record.status != "running" {
+            if matches!(
+                record.status.as_str(),
+                "result-staged" | "artifacts-validated" | "memory-cleaned" | "completed"
+            ) && record.report_digest.as_deref() == Some(report_digest.as_str())
+            {
+                return Ok(project_delegation(&record));
+            }
+            return Err(RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "delegation is not accepting this child result",
+            ));
+        }
+        let memory_snapshot = payload
+            .result
+            .get("memorySnapshotDigest")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ChildResultInvalid,
+                    "child result requires a memorySnapshotDigest",
+                )
+            })?;
+        if !is_lower_hex_digest(memory_snapshot) {
+            return Err(RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "memorySnapshotDigest must be lowercase sha256",
+            ));
+        }
+        let result_bytes = serde_json::to_vec(&payload.result).map_err(canonical_error)?;
+        record.result_digest = Some(hex::encode(Sha256::digest(result_bytes)));
         record.summary = Some(payload.summary);
+        record.report_digest = Some(report_digest);
+        record.result = Some(payload.result);
         record.status = "result-staged".to_owned();
         self.save(&record)?;
         Ok(project_delegation(&record))
     }
 
     /// Records successful artifact validation from its dedicated verifier port.
-    pub fn artifacts_validated(&self, delegation_id: &str) -> RuntimeResult<DelegationResult> {
-        self.advance(delegation_id, "result-staged", "artifacts-validated")
+    pub fn artifacts_validated(
+        &self,
+        delegation_id: &str,
+        receipt: Value,
+    ) -> RuntimeResult<DelegationResult> {
+        let mut record = self.load(delegation_id)?;
+        if record.status == "artifacts-validated"
+            && record.artifact_receipt.as_ref() == Some(&receipt)
+        {
+            return Ok(project_delegation(&record));
+        }
+        if record.status != "result-staged"
+            || receipt.get("schemaVersion").and_then(Value::as_str)
+                != Some("delegation-artifact-validation/v1")
+            || receipt.get("delegationId").and_then(Value::as_str) != Some(delegation_id)
+            || receipt.get("resultDigest").and_then(Value::as_str)
+                != record.result_digest.as_deref()
+            || !receipt.get("artifacts").is_some_and(Value::is_array)
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "artifact validation receipt does not bind the staged child result",
+            ));
+        }
+        record.artifact_receipt = Some(receipt);
+        record.status = "artifacts-validated".to_owned();
+        self.save(&record)?;
+        Ok(project_delegation(&record))
     }
 
     /// Records durable child memory cleanup from its dedicated cleaner port.
-    pub fn memory_cleaned(&self, delegation_id: &str) -> RuntimeResult<DelegationResult> {
-        self.advance(delegation_id, "artifacts-validated", "memory-cleaned")
+    pub fn memory_cleaned(
+        &self,
+        delegation_id: &str,
+        receipt: Value,
+    ) -> RuntimeResult<DelegationResult> {
+        let mut record = self.load(delegation_id)?;
+        if record.status == "memory-cleaned" && record.cleanup_receipt.as_ref() == Some(&receipt) {
+            return Ok(project_delegation(&record));
+        }
+        let snapshot = record
+            .result
+            .as_ref()
+            .and_then(|result| result.get("memorySnapshotDigest"))
+            .and_then(Value::as_str);
+        if record.status != "artifacts-validated"
+            || receipt.get("schemaVersion").and_then(Value::as_str)
+                != Some("delegation-memory-cleanup/v1")
+            || receipt.get("delegationId").and_then(Value::as_str) != Some(delegation_id)
+            || receipt.get("memorySnapshotDigest").and_then(Value::as_str) != snapshot
+            || !receipt
+                .get("cleanupDigest")
+                .and_then(Value::as_str)
+                .is_some_and(is_lower_hex_digest)
+            || receipt
+                .get("cleanedAtUnixMs")
+                .and_then(Value::as_u64)
+                .is_none_or(|value| value == 0)
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "memory cleanup receipt does not bind the validated child result",
+            ));
+        }
+        record.cleanup_receipt = Some(receipt);
+        record.status = "memory-cleaned".to_owned();
+        self.save(&record)?;
+        Ok(project_delegation(&record))
     }
 
     /// Completes and returns the bounded root projection only after validation and cleanup.
-    pub fn collect(&self, delegation_id: &str) -> RuntimeResult<Value> {
+    pub fn collect(&self, parent_session_id: &str, delegation_id: &str) -> RuntimeResult<Value> {
         let mut record = self.load(delegation_id)?;
+        if record.parent_session_id != parent_session_id {
+            return Err(RuntimeError::new(
+                StableErrorCode::RoleOperationForbidden,
+                "only the parent session may collect this delegation",
+            ));
+        }
         if record.status == "completed" {
             return Ok(collect_projection(&record));
         }
@@ -229,14 +339,36 @@ impl DelegationSupervisor {
     }
 
     /// Reads the durable delegation lifecycle projection.
-    pub fn status(&self, delegation_id: &str) -> RuntimeResult<DelegationResult> {
-        self.load(delegation_id)
-            .map(|record| project_delegation(&record))
+    pub fn status(
+        &self,
+        requester_session_id: &str,
+        delegation_id: &str,
+    ) -> RuntimeResult<DelegationResult> {
+        let record = self.load(delegation_id)?;
+        if record.parent_session_id != requester_session_id
+            && record.child_session_id.as_deref() != Some(requester_session_id)
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::RoleOperationForbidden,
+                "session is outside this delegation lineage",
+            ));
+        }
+        Ok(project_delegation(&record))
     }
 
     /// Moves a non-completed delegation to a terminal cancellation state.
-    pub fn cancel(&self, delegation_id: &str) -> RuntimeResult<DelegationResult> {
+    pub fn cancel(
+        &self,
+        parent_session_id: &str,
+        delegation_id: &str,
+    ) -> RuntimeResult<DelegationResult> {
         let mut record = self.load(delegation_id)?;
+        if record.parent_session_id != parent_session_id {
+            return Err(RuntimeError::new(
+                StableErrorCode::RoleOperationForbidden,
+                "only the parent session may cancel this delegation",
+            ));
+        }
         if record.status == "completed" {
             return Err(RuntimeError::new(
                 StableErrorCode::JobNotCancellable,
@@ -248,17 +380,19 @@ impl DelegationSupervisor {
         Ok(project_delegation(&record))
     }
 
-    fn advance(&self, id: &str, from: &str, to: &str) -> RuntimeResult<DelegationResult> {
-        let mut record = self.load(id)?;
-        if record.status != from {
-            return Err(RuntimeError::new(
+    /// Returns the staged result and any durable artifact receipt for completion orchestration.
+    pub fn completion_material(
+        &self,
+        delegation_id: &str,
+    ) -> RuntimeResult<(String, Value, Option<Value>)> {
+        let record = self.load(delegation_id)?;
+        let result = record.result.ok_or_else(|| {
+            RuntimeError::new(
                 StableErrorCode::ChildResultInvalid,
-                format!("delegation must be {from} before {to}"),
-            ));
-        }
-        record.status = to.to_owned();
-        self.save(&record)?;
-        Ok(project_delegation(&record))
+                "delegation has no staged child result",
+            )
+        })?;
+        Ok((record.status, result, record.artifact_receipt))
     }
 
     fn load(&self, id: &str) -> RuntimeResult<DurableDelegation> {
@@ -298,12 +432,26 @@ fn project_delegation(record: &DurableDelegation) -> DelegationResult {
 }
 
 fn collect_projection(record: &DurableDelegation) -> Value {
+    let result = record.result.as_ref().unwrap_or(&Value::Null);
     json!({
         "delegationId": record.delegation_id,
         "status": record.status,
         "summary": record.summary,
         "resultDigest": record.result_digest,
+        "outcome":result.get("outcome"),
+        "findings":result.get("findings").cloned().unwrap_or_else(|| json!([])),
+        "requestedAction":result.get("requestedAction"),
+        "artifacts":record.artifact_receipt.as_ref().and_then(|receipt| receipt.get("artifacts")).cloned().unwrap_or_else(|| json!([])),
+        "artifactValidationReceipt":record.artifact_receipt,
+        "memoryCleanupReceipt":record.cleanup_receipt,
     })
+}
+
+fn is_lower_hex_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn may_spawn(parent: WireAgentRole, child: WireAgentRole) -> bool {

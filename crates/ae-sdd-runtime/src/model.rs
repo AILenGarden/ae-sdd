@@ -61,6 +61,38 @@ pub struct WorkspaceRegisterPayload {
     pub mode: Option<WorkspaceMode>,
 }
 
+/// Admin-only, drain-only migration mode transition payload.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceModeTransitionPayload {
+    /// Exact next migration mode.
+    pub target_mode: WorkspaceMode,
+    /// Bounded auditable reason.
+    pub reason: String,
+    /// Digest of the shadow/canary parity evidence.
+    pub parity_digest: String,
+    /// Typed parity observation whose canonical digest must equal `parityDigest`.
+    pub parity: WorkspaceParityEvidence,
+}
+
+/// Bounded, typed evidence used for a writer-mode cutover.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceParityEvidence {
+    /// Number of legacy/Rust observations compared.
+    pub comparison_count: u64,
+    /// Number of observations that differed.
+    pub mismatch_count: u64,
+    /// Authoritative project revision at which the comparison was made.
+    pub source_revision: u64,
+    /// Digest of the legacy observation set.
+    pub legacy_digest: String,
+    /// Digest of the Rust observation set.
+    pub rust_digest: String,
+    /// Unix timestamp at which the evidence was observed.
+    pub observed_at_unix_ms: u64,
+}
+
 /// Workspace registration/snapshot projection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

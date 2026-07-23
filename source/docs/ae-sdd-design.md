@@ -228,6 +228,7 @@ ae-sddd -> Workspace/Session/Turn actors -> FlowRuntime/FlowSupervisor
 | 角色库/派活协议/故障 SOP/多 reviewer 框架 | `source/skills/cross-cutting/agent-orchestration-skill.md`（纯文字描述，AI 自律执行，**无代码校验**） |
 | 多 Agent 状态可见性（唯一落地的代码支撑） | `tools/lib/state.py`：`activeAgents` 字段（启动 sub-agent 时写入，行477起）/ `agentReports` 字段（完成后移入，行494起） |
 | test-verifier 独立性约束 | ⑥.10 测试真实性硬门禁 G-09 要求报告带独立 `session_id`（`tools/lib/gates.py` G-09 check 函数），是唯一有 CLI 侧校验的角色约束 |
+| 子系列 Agent 与注册器协议 | `source/docs/agent-registry-protocol.md`：5 子系列 Agent（ra/dr/story/coding/test）预创建模板 + 分发注册协议（ClaudeCode `.claude/agents/` / Codex / ZCode 适配）；角色库 SSOT 见 `agent-orchestration-skill.full.md` §3.1（已按子系列重组）|
 
 **颗粒度与边界**：节点内子任务级并行；降级为逻辑多视角时必须在报告头部标注 `reviewerMode: "logical-multi-perspective"`；root agent 保留最终冲突裁决权；除 activeAgents/agentReports 状态记录和 test-verifier session_id 校验外，其余编排规则完全依赖 AI 自律，无物理拦截。
 

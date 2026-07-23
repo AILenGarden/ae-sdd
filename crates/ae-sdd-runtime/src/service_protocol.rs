@@ -33,6 +33,7 @@ impl RuntimeService {
             "physical-delegation-v1",
             "context-projection-v1",
             "compact-ack-rehydrate-v1",
+            "bounded-job-scheduler-v1",
         ]
         .into_iter()
         .map(str::to_owned)
@@ -100,14 +101,18 @@ impl RuntimeService {
             ));
         }
         if self.lifecycle()? != DaemonLifecycle::Running
-            && matches!(
+            && !matches!(
                 method,
-                RpcMethod::SessionOpen | RpcMethod::WorkspaceRegister
+                RpcMethod::RuntimeStatus
+                    | RpcMethod::RuntimeDrain
+                    | RpcMethod::WorkspaceModeTransition
+                    | RpcMethod::WorkspaceSnapshot
+                    | RpcMethod::EventsSubscribe
             )
         {
             return Err(RuntimeError::new(
                 StableErrorCode::DaemonDraining,
-                "daemon is draining and does not admit new sessions or workspaces",
+                "daemon is draining and does not admit session, host, job, Hook, or business work",
             ));
         }
         Ok(())
