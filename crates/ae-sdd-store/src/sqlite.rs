@@ -17,8 +17,12 @@ use crate::{
 
 pub const SQLITE_RUNTIME_BASE_MIGRATION: &str =
     include_str!("../../../migrations/0001_runtime_base.sql");
-const MIGRATION_VERSION: i64 = 1;
-const MIGRATION_NAME: &str = "0001_runtime_base";
+pub const SQLITE_LEASE_CONTROL_RECEIPT_MIGRATION: &str =
+    include_str!("../../../migrations/0002_lease_control_receipts.sql");
+const BASE_MIGRATION_VERSION: i64 = 1;
+const BASE_MIGRATION_NAME: &str = "0001_runtime_base";
+const LEASE_CONTROL_MIGRATION_VERSION: i64 = 2;
+const LEASE_CONTROL_MIGRATION_NAME: &str = "0002_lease_control_receipts";
 
 #[derive(Debug)]
 pub struct SqliteRuntimeRepository {
@@ -112,28 +116,39 @@ fn migrate(
     proposed_event_store_id: EventStoreId,
     created_at: &UtcTimestamp,
 ) -> Result<EventStoreId, StoreError> {
-    let checksum = hex::encode(Sha256::digest(SQLITE_RUNTIME_BASE_MIGRATION.as_bytes()));
+    let base_checksum = migration_checksum(SQLITE_RUNTIME_BASE_MIGRATION);
+    let lease_control_checksum = migration_checksum(SQLITE_LEASE_CONTROL_RECEIPT_MIGRATION);
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     transaction.execute_batch(SQLITE_RUNTIME_BASE_MIGRATION)?;
-    let existing_checksum: Option<String> = transaction
-        .query_row(
-            "SELECT checksum FROM schema_migration WHERE version = ?1",
-            params![MIGRATION_VERSION],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if existing_checksum
-        .as_deref()
-        .is_some_and(|value| value != checksum)
-    {
-        return Err(StoreError::DatabaseIncompatible {
-            reason: "published migration checksum differs".into(),
-        });
-    }
+    verify_migration_checksum(&transaction, BASE_MIGRATION_VERSION, &base_checksum)?;
     transaction.execute(
         "INSERT OR IGNORE INTO schema_migration(version,name,checksum,applied_at) VALUES(?1,?2,?3,?4)",
-        params![MIGRATION_VERSION, MIGRATION_NAME, checksum, created_at.to_string()],
+        params![
+            BASE_MIGRATION_VERSION,
+            BASE_MIGRATION_NAME,
+            base_checksum,
+            created_at.to_string()
+        ],
     )?;
+    let lease_control_applied = verify_migration_checksum(
+        &transaction,
+        LEASE_CONTROL_MIGRATION_VERSION,
+        &lease_control_checksum,
+    )?;
+    if !lease_control_applied {
+        transaction.execute_batch(SQLITE_LEASE_CONTROL_RECEIPT_MIGRATION)?;
+        transaction.execute(
+            "INSERT INTO schema_migration(version,name,checksum,applied_at) VALUES(?1,?2,?3,?4)",
+            params![
+                LEASE_CONTROL_MIGRATION_VERSION,
+                LEASE_CONTROL_MIGRATION_NAME,
+                lease_control_checksum,
+                created_at.to_string()
+            ],
+        )?;
+    } else {
+        transaction.pragma_update(None, "user_version", LEASE_CONTROL_MIGRATION_VERSION)?;
+    }
     transaction.execute(
         "INSERT OR IGNORE INTO runtime_identity(singleton,event_store_id,created_at) VALUES(1,?1,?2)",
         params![proposed_event_store_id.to_string(), created_at.to_string()],
@@ -145,6 +160,33 @@ fn migrate(
     )?;
     transaction.commit()?;
     EventStoreId::from_str(&persisted).map_err(StoreError::from)
+}
+
+fn migration_checksum(sql: &str) -> String {
+    hex::encode(Sha256::digest(sql.as_bytes()))
+}
+
+fn verify_migration_checksum(
+    transaction: &rusqlite::Transaction<'_>,
+    version: i64,
+    expected_checksum: &str,
+) -> Result<bool, StoreError> {
+    let existing_checksum: Option<String> = transaction
+        .query_row(
+            "SELECT checksum FROM schema_migration WHERE version = ?1",
+            params![version],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if existing_checksum
+        .as_deref()
+        .is_some_and(|value| value != expected_checksum)
+    {
+        return Err(StoreError::DatabaseIncompatible {
+            reason: "published migration checksum differs".into(),
+        });
+    }
+    Ok(existing_checksum.is_some())
 }
 
 impl RuntimeRepository for SqliteRuntimeRepository {

@@ -59,4 +59,9 @@ fn adjacent_digest_bound_projection_returns_a_real_delta() {
     mismatched.work_item_id = Some("WORK".to_owned());
     let rejected = harness.call(&mut connection, RpcMethod::ContextProject, mismatched);
     assert_eq!(stable_error(&rejected), "CONTEXT_REVISION_STALE");
+
+    let mut wrong_work_item = session_params(&workspace, &session, "agent", json!({}), 1_000);
+    wrong_work_item.work_item_id = Some("OTHER-WORK".to_owned());
+    let rejected = harness.call(&mut connection, RpcMethod::ContextGet, wrong_work_item);
+    assert_eq!(stable_error(&rejected), "TURN_IDENTITY_MISMATCH");
 }

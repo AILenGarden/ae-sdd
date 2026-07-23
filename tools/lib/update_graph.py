@@ -529,7 +529,7 @@ def check_uc07_distribution_closure(repo_root: Path) -> UpdateCheckResult:
     else:
         warnings.append("ae-sdd-update-skill.md 不存在")
 
-    # 5. Mavis harness adapter lock must match the current source inputs.
+    # 5. Harness adapter lock must match the current source inputs.
     harness_agent = repo_root / ".harness" / "agent.md"
     harness_lock = repo_root / ".harness" / ".adapter.lock"
     if not harness_agent.is_file():

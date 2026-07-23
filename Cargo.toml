@@ -31,19 +31,49 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/AniviaFlome/ae-sdd"
 
 [workspace.dependencies]
+ae-sdd-artifacts = { path = "crates/ae-sdd-artifacts", version = "0.1.0" }
+ae-sdd-build = { path = "crates/ae-sdd-build", version = "0.1.0" }
+ae-sdd-client = { path = "crates/ae-sdd-client", version = "0.1.0" }
+ae-sdd-context = { path = "crates/ae-sdd-context", version = "0.1.0" }
+ae-sdd-delegation = { path = "crates/ae-sdd-delegation", version = "0.1.0" }
+ae-sdd-domain = { path = "crates/ae-sdd-domain", version = "0.1.0" }
+ae-sdd-flow = { path = "crates/ae-sdd-flow", version = "0.1.0" }
+ae-sdd-gates = { path = "crates/ae-sdd-gates", version = "0.1.0" }
+ae-sdd-governance = { path = "crates/ae-sdd-governance", version = "0.1.0" }
+ae-sdd-host = { path = "crates/ae-sdd-host", version = "0.1.0" }
+ae-sdd-integrations = { path = "crates/ae-sdd-integrations", version = "0.1.0" }
+ae-sdd-inventory = { path = "crates/ae-sdd-inventory", version = "0.1.0" }
+ae-sdd-operations = { path = "crates/ae-sdd-operations", version = "0.1.0" }
+ae-sdd-policy = { path = "crates/ae-sdd-policy", version = "0.1.0" }
+ae-sdd-protocol = { path = "crates/ae-sdd-protocol", version = "0.1.0" }
+ae-sdd-runtime = { path = "crates/ae-sdd-runtime", version = "0.1.0" }
+ae-sdd-scanners = { path = "crates/ae-sdd-scanners", version = "0.1.0" }
+ae-sdd-store = { path = "crates/ae-sdd-store", version = "0.1.0" }
+atomicwrites = "0.4.4"
 clap = { version = "4.5", features = ["derive"] }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["fast", "rand_core", "std", "zeroize"] }
+fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 hex = { version = "0.4", default-features = false, features = ["std"] }
+interprocess = { version = "2.4.2", features = ["tokio"] }
+jiff = { version = "0.2.34", default-features = false, features = ["std"] }
+notify = "=8.2.0"
 proptest = { version = "1.9", default-features = false, features = ["std"] }
+quick-xml = "0.41.0"
 rand_core = { version = "0.6", features = ["getrandom"] }
+regex = "1.13.1"
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+tempfile = "3.27.0"
 thiserror = "2.0"
 tokio = { version = "1.43", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt"] }
 uuid = { version = "1.18", default-features = false, features = ["std"] }
+windows-sys = "0.61.2"
+yaml-rust2 = { version = "0.11.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

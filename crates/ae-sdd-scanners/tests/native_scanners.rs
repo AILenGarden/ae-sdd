@@ -125,3 +125,30 @@ fn test_and_all_four_ra_scanners_enforce_native_rules() {
         assert_eq!(report.status(), ScanStatus::Fail);
     }
 }
+
+#[test]
+fn flow_scanner_accepts_the_numbered_requirement_analysis_model() {
+    let project = TempProject::new();
+    let dimensions = (1..=8)
+        .map(|index| format!("| RA-{index:02} | bounded decision | cited evidence |"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let gates = (1..=16)
+        .map(|index| format!("RA-G-{index:02}: decided from cited evidence"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    project.write(
+        "ae-sdd-doc/RA/RA-NUMBERED-001.md",
+        &format!(
+            "# RequirementAnalysisModel\n{dimensions}\n## Gap\n## Scale\n## self-check\n## 5-question\n{gates}\n"
+        ),
+    );
+
+    let report = ScannerEngine::scan(
+        ScannerId::RaFlowViolation,
+        &ScanRequest::new(project.root()).explicit([path("ae-sdd-doc/RA/RA-NUMBERED-001.md")]),
+    )
+    .expect("numbered RA scan completed");
+
+    assert_eq!(report.status(), ScanStatus::Pass);
+}

@@ -58,15 +58,6 @@ _KNOWN_AGENTS: dict[str, dict[str, Any]] = {
         "l2_global_file": None,
         "l2_language": None,
     },
-    "mavis": {
-        "protocol": "harness_mount",
-        "target_path": "~/.mavis",
-        "detect": "cli_exists",
-        "detect_cli": "mavis",
-        "notes": "Mavis harness mount",
-        "l2_global_file": None,
-        "l2_language": None,
-    },
 }
 
 
@@ -121,10 +112,7 @@ def registry_path() -> Path:
 
 
 def _default_distributors() -> list[DistributorEntry]:
-    """种子注册表：首次运行或注册表缺失时使用。
-
-    mavis 默认 enabled=False（环境无 daemon 时不自动尝试，避免 dev-sync 失败）。
-    """
+    """种子注册表：首次运行或注册表缺失时使用。"""
     entries = []
     for name, cfg in _KNOWN_AGENTS.items():
         entries.append(DistributorEntry(
@@ -133,7 +121,7 @@ def _default_distributors() -> list[DistributorEntry]:
             target_path=cfg["target_path"],
             detect=cfg["detect"],
             detect_cli=cfg["detect_cli"],
-            enabled=name != "mavis",  # mavis 默认禁用
+            enabled=True,
             registered_at=_utc_now(),
             notes=cfg["notes"],
             l2_global_file=cfg.get("l2_global_file"),

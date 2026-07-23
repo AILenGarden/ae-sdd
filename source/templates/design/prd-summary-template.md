@@ -5,7 +5,7 @@
 > **职责边界（与 state.json / summary.md 分离）：**
 > - `state.json` — **机器读**，结构化，含 gate 状态、Story 聚合、跨 Story 依赖
 > - `state.md`（本文件）— **人类读**，叙述性，**不重复 state.json 字段**，只讲"为什么"
-> - `summary.md` — **handoff 包**，`mavis session rotate --handoff-file` 时生成，给下个 session / 下个 PRD 用
+> - `summary.md` — **handoff 包**，`harness session rotate --handoff-file` 时生成，给下个 session / 下个 PRD 用
 
 ---
 

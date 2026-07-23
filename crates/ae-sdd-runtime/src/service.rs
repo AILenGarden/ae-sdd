@@ -6,7 +6,8 @@ use std::time::Instant;
 
 use ae_sdd_context::PressureDecision;
 use ae_sdd_domain::{
-    AgentRole, BootId, CapabilityId, DelegationId, EventStoreId, GateOutcome, SessionId,
+    AgentRole, BootId, CapabilityId, DelegationId, EventStoreId, GateOutcome, ScopedGrant,
+    SessionId,
 };
 use ae_sdd_host::{BootCapabilitySigner, CapabilityClaims, CapabilityToken, GrantDigest};
 use ae_sdd_policy::{HookAction, HookPoint, HookPolicy};
@@ -27,9 +28,9 @@ use crate::{
     DelegationCreatePayload, DelegationReportPayload, DelegationSupervisor, DurableEvent,
     EventBatch, EventSubscriptionPayload, FlowSupervisor, HookPayload, HookResult, HostAckPayload,
     HostCoordinator, HostPressurePayload, HostRegisterPayload, IdempotencyReceipt, PersistencePort,
-    RuntimeConfig, RuntimeError, RuntimeResult, RuntimeStatus, SessionOpenPayload, SessionResult,
-    WireAgentRole, WorkItemActors, WorkspaceModeTransitionPayload, WorkspaceParityEvidence,
-    WorkspaceRegisterPayload, WorkspaceResolverPort, WorkspaceResult,
+    RuntimeConfig, RuntimeError, RuntimeResult, RuntimeStatus, ScopedGrantWire, SessionOpenPayload,
+    SessionResult, WireAgentRole, WorkItemActors, WorkspaceModeTransitionPayload,
+    WorkspaceParityEvidence, WorkspaceRegisterPayload, WorkspaceResolverPort, WorkspaceResult,
 };
 
 #[path = "service_hook_context.rs"]
@@ -79,6 +80,8 @@ struct SessionRecord {
     current_work_item: Option<String>,
     result: SessionResult,
     delegation_id: Option<String>,
+    #[serde(default)]
+    grant: ScopedGrantWire,
     current_turn_id: Option<String>,
     current_turn_seq: u64,
     active: bool,
@@ -100,6 +103,20 @@ struct JobRecord {
     job_id: String,
     workspace: BusinessWorkspaceWire,
     work_item_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    agent_role: Option<WireAgentRole>,
+    #[serde(default)]
+    agent_grant: Option<ScopedGrantWire>,
+    #[serde(default)]
+    root_session_id: Option<String>,
+    #[serde(default)]
+    delegation_id: Option<String>,
+    #[serde(default)]
+    context_generation: Option<u64>,
+    #[serde(default)]
+    submission_idempotency_key: Option<String>,
     entrypoint: String,
     arguments: Value,
     deadline_unix_ms: u64,
@@ -343,7 +360,9 @@ impl RuntimeService {
         self.validate_request(request.method, &params)?;
         authorize_client_kind(connection.client_kind, request.method)?;
         authorize_host_connection(connection, request.method, &params)?;
-        if requires_session_capability(request.method) {
+        let admin_lease_break =
+            is_admin_lease_break(request.method, &params, connection.client_kind);
+        if requires_session_capability(request.method) && !admin_lease_break {
             let identity = self.session_identity(&params, is_hook(request.method))?;
             if !capability_allows(&identity.capability_id, request.method) {
                 return Err(RuntimeError::new(
@@ -406,7 +425,7 @@ impl RuntimeService {
             | RpcMethod::FlowNext
             | RpcMethod::OperationDescribe
             | RpcMethod::OperationExecute
-            | RpcMethod::GateEvaluate => self.authoritative_business(method, params),
+            | RpcMethod::GateEvaluate => self.authoritative_business(method, params, client_kind),
             RpcMethod::JobSubmit => self.job_submit(params),
             RpcMethod::JobStatus => self.job_status(params),
             RpcMethod::JobCancel => self.job_cancel(params),
@@ -431,6 +450,7 @@ struct TrustedSession {
     workspace_id: String,
     session_id: String,
     role: WireAgentRole,
+    grant: ScopedGrant,
     engaged: bool,
     capability_id: String,
 }
@@ -461,6 +481,16 @@ fn requires_session_capability(method: RpcMethod) -> bool {
         method.spec().scope,
         OperationScope::Session | OperationScope::WorkItem | OperationScope::Delegation
     ) && !matches!(method, RpcMethod::SessionOpen | RpcMethod::DelegationAccept)
+}
+
+fn is_admin_lease_break(
+    method: RpcMethod,
+    params: &RequestParams<Value>,
+    client_kind: Option<ClientKind>,
+) -> bool {
+    method == RpcMethod::OperationExecute
+        && client_kind == Some(ClientKind::Admin)
+        && params.payload.get("operation").and_then(Value::as_str) == Some("lease.break")
 }
 
 fn capability_allows(capability_id: &str, method: RpcMethod) -> bool {

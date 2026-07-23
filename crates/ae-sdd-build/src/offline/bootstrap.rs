@@ -58,11 +58,11 @@ pub(super) fn init_hooks(
             "claude" => ".claude/settings.json",
             "codex" => ".codex/hooks.json",
             "hermes" => ".hermes/hooks.json",
-            "mavis" => ".mavis/hooks.json",
+            "harness" => ".harness/hooks.json",
             "zcode" => ".zcode/hooks.json",
             _ => return Err(OfflineError::InvalidInput("host")),
         };
-        changes.push(change(relative, hook_manifest(executable)?));
+        changes.push(change(relative, hook_manifest(host, executable)?));
     }
     apply_changes(request, &root, changes)
 }
@@ -134,39 +134,76 @@ pub(super) fn bump(
     let root = repository_root
         .canonicalize()
         .map_err(|source| io(repository_root, source))?;
-    let files = ["Cargo.toml", "source/SKILL.md", "README.md"];
-    let mut changes = Vec::with_capacity(files.len());
-    for relative in files {
+    let version_fields = [
+        (
+            "source/SKILL.md",
+            format!("version: {expected_version}"),
+            format!("version: {new_version}"),
+        ),
+        (
+            "tools/lib/paths.py",
+            format!("MASTER_VERSION = \"{expected_version}\""),
+            format!("MASTER_VERSION = \"{new_version}\""),
+        ),
+        (
+            "README.md",
+            format!("> **版本：** v{expected_version}"),
+            format!("> **版本：** v{new_version}"),
+        ),
+    ];
+    let mut changes = Vec::with_capacity(version_fields.len());
+    for (relative, expected_field, new_field) in version_fields {
         let path = root.join(relative);
         let contents = std::fs::read_to_string(&path).map_err(|source| io(&path, source))?;
-        if !contents.contains(expected_version) {
+        if contents.match_indices(&expected_field).count() != 1 {
             return Err(OfflineError::InvalidArtifact(format!(
-                "{} does not contain expected version {expected_version}",
+                "{} does not contain exactly one authoritative version field for {expected_version}",
                 display(&path)
             )));
         }
         changes.push(change(
             relative,
-            contents.replace(expected_version, new_version),
+            contents.replacen(&expected_field, &new_field, 1),
         ));
     }
     apply_changes(request, &root, changes)
 }
 
-fn hook_manifest(executable: &str) -> Result<String, OfflineError> {
+fn hook_manifest(host: &str, executable: &str) -> Result<String, OfflineError> {
     let command = |method: &str| {
         format!(
             "{} hook --method hook.{method} --request-json -",
             quote_argument(executable)
         )
     };
+    let mut hooks = serde_json::Map::new();
+    if matches!(host, "claude" | "codex") {
+        hooks.insert(
+            "SessionStart".to_owned(),
+            serde_json::json!([{"hooks":[{
+                "type":"command",
+                "command":format!("{} runtime ensure --quiet", quote_argument(executable))
+            }]}]),
+        );
+    }
+    hooks.insert(
+        "PreToolUse".to_owned(),
+        serde_json::json!([{"matcher":"Write|Edit|MultiEdit|Bash","hooks":[{"type":"command","command":command("pre_tool")}]}]),
+    );
+    hooks.insert(
+        "PostToolUse".to_owned(),
+        serde_json::json!([{"matcher":"Write|Edit|MultiEdit|Bash","hooks":[{"type":"command","command":command("post_tool")}]}]),
+    );
+    hooks.insert(
+        "UserPromptSubmit".to_owned(),
+        serde_json::json!([{"hooks":[{"type":"command","command":command("user_prompt")}]}]),
+    );
+    hooks.insert(
+        "Stop".to_owned(),
+        serde_json::json!([{"hooks":[{"type":"command","command":command("stop")}]}]),
+    );
     Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "hooks": {
-            "PreToolUse": [{"matcher":"Write|Edit|MultiEdit|Bash","hooks":[{"type":"command","command":command("pre_tool")}]}],
-            "PostToolUse": [{"matcher":"Write|Edit|MultiEdit|Bash","hooks":[{"type":"command","command":command("post_tool")}]}],
-            "UserPromptSubmit": [{"hooks":[{"type":"command","command":command("user_prompt")}]}],
-            "Stop": [{"hooks":[{"type":"command","command":command("stop")}]}]
-        }
+        "hooks": hooks
     }))? + "\n")
 }
 
@@ -204,10 +241,24 @@ mod tests {
 
     #[test]
     fn hook_manifest_uses_frozen_native_argv() {
-        let value = hook_manifest("C:\\Program Files\\ae-sdd\\ae-sdd.exe").expect("hook manifest");
+        let value =
+            hook_manifest("codex", "C:\\Program Files\\ae-sdd\\ae-sdd.exe").expect("hook manifest");
+        assert!(value.contains("runtime ensure"));
         assert!(value.contains("hook --method hook.pre_tool --request-json -"));
         assert!(value.contains("hook --method hook.post_tool --request-json -"));
         assert!(!value.contains("python"));
+    }
+
+    #[test]
+    fn session_start_is_emitted_only_for_supported_hosts() {
+        let claude = hook_manifest("claude", "ae-sdd").expect("Claude hook manifest");
+        let codex = hook_manifest("codex", "ae-sdd").expect("Codex hook manifest");
+        let hermes = hook_manifest("hermes", "ae-sdd").expect("Hermes hook manifest");
+        assert!(claude.contains("SessionStart"));
+        assert!(codex.contains("SessionStart"));
+        assert!(claude.contains("runtime ensure --quiet"));
+        assert!(codex.contains("runtime ensure --quiet"));
+        assert!(!hermes.contains("SessionStart"));
     }
 
     #[test]

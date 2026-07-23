@@ -38,11 +38,15 @@ name = "ae-sdd-cli"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-client",
+ "ae-sdd-operations",
  "ae-sdd-protocol",
  "clap",
+ "fs4",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

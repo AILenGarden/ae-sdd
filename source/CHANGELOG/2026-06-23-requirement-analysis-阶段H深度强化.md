@@ -194,7 +194,7 @@ certutil -hashfile "C:\Users\EDY\.claude\skills\ae-sdd\skills\phase1-design\requ
 
 ## Reviewer
 
-- **改动设计**：Mavis（mavis root agent）
+- **改动设计**：Harness（harness root agent）
 - **用户决策**：icec-cloud-boss User 域 owner
 - **Reviewer**：待指派
 

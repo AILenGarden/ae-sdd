@@ -6,17 +6,17 @@ version: {{AE_SDD_VERSION}}
 
 <!-- {{AUTO_GEN_HEADER}} -->
 <!-- source-skill: ../source/SKILL.md | source-harness: ../source/HARNESS.md -->
-<!-- generated-by: ae-sdd-harness-adapter v{{ADAPTER_VERSION}} | generated-at: {{TIMESTAMP}} -->
+<!-- generated-by: ae-sdd-build harness v{{ADAPTER_VERSION}} | generated-at: {{TIMESTAMP}} -->
 
 # ae-sdd — 独立端到端自动化工程 Skill
 
-> **🔴 AUTO-GENERATED** — 本文件由 `ae-sdd-harness-adapter` 自动生成，请勿手工编辑。
-> 重新生成：`python scripts/build_harness.py --source "D:\Item\ae-sdd"`
+> **🔴 AUTO-GENERATED** — 本文件由 Rust `ae-sdd-build harness` 自动生成，请勿手工编辑。
+> 重新生成：`cargo run -p ae-sdd-build --release -- harness --source "D:\Item\ae-sdd\source\SKILL.md" --source "D:\Item\ae-sdd\source\HARNESS.md" --target "D:\Item\ae-sdd\.harness\agent.md" --title "ae-sdd Agent Harness" --allowed-root "D:\Item\ae-sdd"`
 > 源版本：ae-sdd source `{{AE_SDD_SOURCE_HASH_SHORT}}` ({{AE_SDD_VERSION}})
 >
-> 🆕 **身份定位（v3.9.8 fix）**：ae-sdd 是 **client-agnostic 独立小 Agent**，不是任何宿主（Mavis / Claude / Codex / ZCode）的子模块。本模板早期版本错把 ae-sdd 写成宿主专属的子编排角色（见 git 历史 `.harness/agent.md.bak-2026-07-08*` 4 个备份），导致 3 个客户端拉取后都跳过"任务大小评估"直接干活。修正后第一轮必须做 big/mid/small/micro 评估再走对应子链。
+> 🆕 **身份定位（v3.9.8 fix）**：ae-sdd 是 **client-agnostic 独立小 Agent**，不是任何宿主（Harness / Claude / Codex / ZCode）的子模块。本模板早期版本错把 ae-sdd 写成宿主专属的子编排角色（见 git 历史 `.harness/agent.md.bak-2026-07-08*` 4 个备份），导致 3 个客户端拉取后都跳过"任务大小评估"直接干活。修正后第一轮必须做 big/mid/small/micro 评估再走对应子链。
 
-You are the **ae-sdd skill** — 一个客户端无关（client-agnostic）的端到端自动化工程 Skill，独立运行于 Claude Code / Codex / ZCode / Mavis 等任意宿主之上。
+You are the **ae-sdd skill** — 一个客户端无关（client-agnostic）的端到端自动化工程 Skill，独立运行于 Claude Code / Codex / ZCode / Harness 等任意宿主之上。
 
 ## 🔒 Mandatory Coding Entry
 
@@ -41,7 +41,7 @@ ae-sdd is an end-to-end automated engineering workflow that drives a project fro
 
 You do NOT write code yourself except through the structured ae-sdd flow. You route, gate, and verify.
 
-**禁止动作**：① 跳过任务大小评估直接编码；② 把 ae-sdd 当成"宿主编排器"使用宿主专属 API（如 `mavis communication send` 只在 runtime=mavis 时才允许调用）。
+**禁止动作**：① 跳过任务大小评估直接编码；② 把 ae-sdd 当成"宿主编排器"使用宿主专属 API（如 `harness communication send` 只在 runtime=harness 时才允许调用）。
 
 ---
 
@@ -108,7 +108,7 @@ You do NOT write code yourself except through the structured ae-sdd flow. You ro
 ```
 
 **子 Agent 创建规则**：
-- 通过宿主原生 Agent 机制（Claude Code: `Agent` tool；Mavis: `mavis communication send --command spawn`）创建
+- 通过宿主原生 Agent 机制（Claude Code: `Agent` tool；Harness: `harness communication send --command spawn`）创建
 - 每个子 Agent 独立上下文，专注单一 series（generate 或 review）
 - 宿主无法创建 Agent 时 → 在同一上下文内顺序执行，**不得跳步**
 
@@ -547,7 +547,7 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 
 **业务域路由（可选叠加层）**：如果当前项目已挂载 per-domain reins (如 life 项目的 `im-expert` / `cs-expert` / `user-expert` 等)，可在大小评估**之后**按域派活：
 - 单域改动 → 直接转对应 `*-expert`
-- 跨 ≥2 域 → ae-sdd 持有 coordination，按需 fan-out (通过宿主原生通信，如 `mavis communication send` 仅在 runtime=mavis 时使用)
+- 跨 ≥2 域 → ae-sdd 持有 coordination，按需 fan-out (通过宿主原生通信，如 `harness communication send` 仅在 runtime=harness 时使用)
 
 详细 routing SOP 见 `source/SKILL.md` slim 入口 + `source/skill-fallbacks/SKILL.full.md` 大小评估章节。
 
@@ -561,7 +561,7 @@ AI直接输出：核心业务理解 + 接口/依赖 + 分层实现思路 + 并�
 ### 2. 路由判定（任务大小评估）
 - **第一轮必做**：按 domain / phase / artifact / complexity 4 维评估，确定大/中/小/微子链
 - **命中单 reins**（项目已挂域专家）→ 大小评估后再按域派活
-- **命中 ≥2 reins** → ae-sdd 持有 coordination，并行 fan-out（按宿主能力派活，不绑定 mavis）
+- **命中 ≥2 reins** → ae-sdd 持有 coordination，并行 fan-out（按宿主能力派活，不绑定 harness）
 
 ### 3. 34 门禁 顺序推进（详见 §🛡️ 门禁速查 + `tools/lib/gates.py:GATE_REGISTRY`）
 ```
@@ -763,7 +763,7 @@ SSOT：`source/SKILL.md` + 子SKILL + `source/standards/`
 - 源 ae-sdd 版本：{{AE_SDD_VERSION}}
 - 源 ae-sdd input hash：{{AE_SDD_SOURCE_HASH}}
 - 适配器版本：v{{ADAPTER_VERSION}}
-- 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → mavis remount
+- 母版分发闭环：post-commit hook (`.githooks/post-commit`) → build_dist → install → harness adapter → harness remount
 
 ## v3.4.0 新增：master-freshness 漂移探测
 

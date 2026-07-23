@@ -7,9 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ae-sdd-domain = { path = "../ae-sdd-domain" }
-ae-sdd-policy = { path = "../ae-sdd-policy" }
-ae-sdd-scanners = { path = "../ae-sdd-scanners" }
+ae-sdd-domain.workspace = true
+ae-sdd-policy.workspace = true
+ae-sdd-scanners.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 

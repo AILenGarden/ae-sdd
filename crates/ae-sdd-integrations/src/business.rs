@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -17,22 +18,27 @@ use ae_sdd_operations::{
     ValidatedOperationRequest,
 };
 use ae_sdd_policy::{RequiredGate, RoleOperation, RolePolicy, TransitionContext, TransitionPolicy};
-use ae_sdd_protocol::{RequestParams, RpcMethod, StableErrorCode, WorkspaceMode};
+use ae_sdd_protocol::{ClientKind, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode};
 use ae_sdd_runtime::{
-    BusinessOperationPort, BusinessWorkspace, ContextProjectionInput, FlowSupervisor,
-    PersistencePort, RuntimeError, RuntimeResult,
+    BoundJobIdentity, BusinessOperationPort, BusinessWorkspace, ContextProjectionInput,
+    FlowSupervisor, PersistencePort, RuntimeError, RuntimeResult,
 };
 use ae_sdd_store::{
-    IdempotencyKey, JournalEvent, LeaseLedger, LeaseOwner, LeaseProof, MutationRequest,
-    MutationTarget, ProjectMutationStore, ProjectStorePaths, RuntimeEventPayload,
-    SqliteRuntimeRepository, StateAuthority, StdCrossProcessLock, StdDurableFileSystem, StoreError,
-    UtcTimestamp,
+    CommittedMutation, IdempotencyKey, JournalEvent, LeaseControlAction, LeaseControlRequest,
+    LeaseLedger, LeaseOwner, LeaseProof, MutationRequest, MutationTarget, ProjectMutationStore,
+    ProjectStorePaths, RuntimeEventPayload, SqliteRuntimeRepository, StateAuthority,
+    StdCrossProcessLock, StdDurableFileSystem, StoreError, UtcTimestamp,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{AuthoritativeGateRuntime, SqliteRuntimePersistence, gate_result_json};
+use crate::operation_semantics::{evidence, governance, verification};
+use crate::{AuthoritativeGateRuntime, gate_result_json};
+
+#[path = "jobs/mod.rs"]
+mod jobs;
 
 /// Production Rust boundary for authoritative project operations.
 #[derive(Clone)]
@@ -73,9 +79,46 @@ impl NativeBusinessAdapter {
     ) -> RuntimeResult<Value> {
         let workspace = require_workspace(workspace)?;
         let work_item_id = require_work_item(params)?;
-        let gate_id = params.payload["gateId"]
-            .as_str()
-            .ok_or_else(|| schema_error("gateId is required"))?;
+        let wire: GateEvaluateWire = decode(params.payload.clone())?;
+        assert_expected_project_root(workspace, wire.expected_project_root.as_deref())?;
+        match (wire.gate_id.as_deref(), wire.gate_ids.as_deref()) {
+            (Some(gate_id), None) => {
+                self.gate_evaluate_one(workspace, work_item_id, params, gate_id, None)
+            }
+            (None, Some(gate_ids)) if valid_gate_batch(gate_ids) => {
+                let mut results = Vec::with_capacity(gate_ids.len());
+                for gate_id in gate_ids {
+                    let idempotency_key = params
+                        .idempotency_key
+                        .as_deref()
+                        .map(|key| batch_gate_idempotency_key(key, gate_id));
+                    results.push(self.gate_evaluate_one(
+                        workspace,
+                        work_item_id,
+                        params,
+                        gate_id,
+                        idempotency_key.as_deref(),
+                    )?);
+                }
+                let all_pass = results.iter().all(|result| {
+                    result.pointer("/outcome/kind").and_then(Value::as_str) == Some("PASS")
+                });
+                Ok(json!({"allPass":all_pass,"results":results}))
+            }
+            _ => Err(schema_error(
+                "exactly one of gateId or a non-empty bounded gateIds array is required",
+            )),
+        }
+    }
+
+    fn gate_evaluate_one(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: &str,
+        params: &RequestParams<Value>,
+        gate_id: &str,
+        idempotency_key: Option<&str>,
+    ) -> RuntimeResult<Value> {
         let gates = AuthoritativeGateRuntime::new(
             workspace,
             work_item_id,
@@ -98,9 +141,11 @@ impl NativeBusinessAdapter {
         {
             return Ok(projection);
         }
-        let idempotency_key = params.idempotency_key.as_deref().ok_or_else(|| {
-            schema_error("idempotencyKey is required to record a pending transition Gate")
-        })?;
+        let idempotency_key = idempotency_key
+            .or(params.idempotency_key.as_deref())
+            .ok_or_else(|| {
+                schema_error("idempotencyKey is required to record a pending transition Gate")
+            })?;
         let decision = self.flow.record_gate(
             &self.boot_id.to_string(),
             &workspace.workspace_id,
@@ -127,10 +172,15 @@ impl BusinessOperationPort for NativeBusinessAdapter {
         workspace: Option<&BusinessWorkspace>,
     ) -> RuntimeResult<Value> {
         match method {
-            RpcMethod::OperationDescribe => Ok(operation_registry()),
+            RpcMethod::OperationDescribe => {
+                let wire: DescribeWire = decode(params.payload.clone())?;
+                operation_registry(wire.operation.as_deref())
+            }
             RpcMethod::OperationExecute => {
                 let workspace = require_workspace(workspace)?;
                 let wire: ExecuteWire = decode(params.payload.clone())?;
+                assert_expected_project_root(workspace, wire.expected_project_root.as_deref())?;
+                assert_expected_project_key(workspace, wire.expected_project_key.as_deref())?;
                 let operation = OperationName::from_str(&wire.operation).map_err(|_| {
                     RuntimeError::new(
                         StableErrorCode::OperationNotRegistered,
@@ -148,42 +198,70 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                         "project mutation is forbidden until Rust owns the workspace writer mode",
                     ));
                 }
-                let request = operation_request(operation, params, workspace, wire.payload)?;
+                let authorization_payload = wire.payload.clone();
+                let request =
+                    operation_request(operation, params, workspace, wire.payload, wire.dry_run)?;
                 let backend = ProjectBackend::open(self, workspace, params)?;
-                let role = workspace.agent_role.ok_or_else(|| {
-                    RuntimeError::new(
-                        StableErrorCode::RoleOperationForbidden,
-                        "typed operations require a daemon-verified Agent role",
+                assert_story_scope(
+                    &backend.state.value,
+                    require_work_item(params)?,
+                    wire.story.as_deref(),
+                )?;
+                let response = if operation == OperationName::LeaseBreak {
+                    if workspace.caller_kind != Some(ClientKind::Admin) {
+                        return Err(RuntimeError::new(
+                            StableErrorCode::RoleOperationForbidden,
+                            "lease.break requires an authenticated Admin client",
+                        ));
+                    }
+                    OperationService::execute(ExecutionIdentity::Admin, request, &backend)
+                } else {
+                    let role = workspace.agent_role.ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::RoleOperationForbidden,
+                            "typed operations require a daemon-verified Agent role",
+                        )
+                    })?;
+                    RolePolicy::authorize(role, semantic_operation(role, operation)).map_err(
+                        |_| {
+                            RuntimeError::new(
+                                StableErrorCode::RoleOperationForbidden,
+                                "daemon-verified role forbids the typed operation",
+                            )
+                        },
+                    )?;
+                    let grant = workspace.agent_grant.as_ref().ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::RoleOperationForbidden,
+                            "typed operations require a daemon-verified scoped grant",
+                        )
+                    })?;
+                    authorize_operation_paths(
+                        grant,
+                        operation,
+                        &authorization_payload,
+                        &backend.state,
+                        workspace,
+                    )?;
+                    OperationService::execute(
+                        ExecutionIdentity::Agent { role, grant },
+                        request,
+                        &backend,
                     )
-                })?;
-                RolePolicy::authorize(role, semantic_operation(role, operation)).map_err(|_| {
-                    RuntimeError::new(
-                        StableErrorCode::RoleOperationForbidden,
-                        "daemon-verified role forbids the typed operation",
-                    )
-                })?;
-                let operation_id =
-                    ae_sdd_domain::OperationId::new(operation.as_str()).map_err(domain_error)?;
-                let grant = ScopedGrant::new([operation_id], [], []);
-                let response = OperationService::execute(
-                    ExecutionIdentity::Agent {
-                        role,
-                        grant: &grant,
-                    },
-                    request,
-                    &backend,
-                )
+                }
                 .map_err(operation_error)?;
                 Ok(response_value(response))
             }
             RpcMethod::FlowSnapshot | RpcMethod::FlowNext => {
                 let workspace = require_workspace(workspace)?;
                 let work_item_id = require_work_item(params)?;
+                let wire: FlowWire = decode(params.payload.clone())?;
+                assert_expected_project_root(workspace, wire.expected_project_root.as_deref())?;
                 let located = read_state(workspace, work_item_id)?;
+                assert_story_scope(&located.value, work_item_id, wire.story.as_deref())?;
                 let input = flow_input(&located.value, work_item_id, self.event_store_id)?;
                 let decision = if method == RpcMethod::FlowNext {
-                    if let Some(target) = params.payload.get("targetPhase").and_then(Value::as_str)
-                    {
+                    if let Some(target) = wire.target_phase.as_deref() {
                         let role = workspace.agent_role.ok_or_else(|| {
                             RuntimeError::new(
                                 StableErrorCode::RoleOperationForbidden,
@@ -215,6 +293,9 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                             .project(&workspace.workspace_id, work_item_id, input)?
                     }
                 } else {
+                    if wire.target_phase.is_some() {
+                        return Err(schema_error("flow.snapshot does not accept targetPhase"));
+                    }
                     self.flow
                         .project(&workspace.workspace_id, work_item_id, input)?
                 };
@@ -297,54 +378,52 @@ impl BusinessOperationPort for NativeBusinessAdapter {
         entrypoint: &str,
         arguments: &Value,
     ) -> RuntimeResult<Value> {
-        match entrypoint {
-            "assets.read" => {
-                let path = job_project_path(workspace, arguments, "path")?;
-                let bytes = fs::read(path).map_err(io_error)?;
-                if bytes.len() > 1_048_576 {
-                    return Err(schema_error("asset read exceeds the 1 MiB job bound"));
-                }
-                Ok(json!({
-                    "outcome":"PASS",
-                    "content":String::from_utf8_lossy(&bytes),
-                    "byteLength":bytes.len(),
-                    "digest":ArtifactDigest::digest(&bytes).to_string(),
-                }))
-            }
-            "assets.check" => {
-                let paths = arguments
-                    .get("paths")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| schema_error("assets.check requires paths"))?;
-                let missing = paths
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .filter(|path| {
-                        ProjectRelativePath::new((*path).to_owned()).map_or(true, |relative| {
-                            !Path::new(&workspace.canonical_root)
-                                .join(relative.as_str())
-                                .is_file()
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                Ok(json!({
-                    "outcome": if missing.is_empty() {"PASS"} else {"FAIL"},
-                    "missing": missing,
-                }))
-            }
-            "assets.stats" => asset_stats(workspace),
-            "git.status" | "git.diff" | "git.log" | "git.impact" | "git.blame" => {
-                git_job(workspace, entrypoint, arguments)
-            }
-            "db.audit" => {
-                SqliteRuntimePersistence::open(&self.database)?.integrity_check()?;
-                Ok(json!({"outcome":"PASS","integrity":"ok"}))
-            }
-            _ => Err(RuntimeError::new(
-                StableErrorCode::OperationNotRegistered,
-                "background job entrypoint is not implemented by a Rust adapter",
-            )),
-        }
+        jobs::execute(
+            workspace,
+            None,
+            &self.database,
+            self.persistence.as_ref(),
+            None,
+            entrypoint,
+            arguments,
+        )
+    }
+
+    fn execute_bound_job(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: Option<&str>,
+        entrypoint: &str,
+        arguments: &Value,
+    ) -> RuntimeResult<Value> {
+        jobs::execute(
+            workspace,
+            work_item_id,
+            &self.database,
+            self.persistence.as_ref(),
+            None,
+            entrypoint,
+            arguments,
+        )
+    }
+
+    fn execute_trusted_job(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: Option<&str>,
+        identity: Option<&BoundJobIdentity>,
+        entrypoint: &str,
+        arguments: &Value,
+    ) -> RuntimeResult<Value> {
+        jobs::execute(
+            workspace,
+            work_item_id,
+            &self.database,
+            self.persistence.as_ref(),
+            identity,
+            entrypoint,
+            arguments,
+        )
     }
 
     fn validate_delegation_artifacts(
@@ -552,98 +631,92 @@ fn child_result_error(message: &str) -> RuntimeError {
     RuntimeError::new(StableErrorCode::ChildResultInvalid, message)
 }
 
-fn job_project_path(
+fn authorize_operation_paths(
+    grant: &ScopedGrant,
+    operation: OperationName,
+    payload: &Value,
+    state: &LocatedState,
     workspace: &BusinessWorkspace,
-    arguments: &Value,
-    field: &str,
-) -> RuntimeResult<PathBuf> {
-    let value = arguments
-        .get(field)
-        .and_then(Value::as_str)
-        .ok_or_else(|| schema_error("job path argument is required"))?;
-    let relative = ProjectRelativePath::new(value.to_owned()).map_err(domain_error)?;
-    let root = Path::new(&workspace.canonical_root);
-    let path = root.join(relative.as_str());
-    let canonical = path.canonicalize().map_err(io_error)?;
-    if !canonical.starts_with(root) {
-        return Err(RuntimeError::new(
-            StableErrorCode::WorkspaceOutsideAllowedRoot,
-            "job path escaped the registered workspace",
-        ));
-    }
-    Ok(canonical)
-}
-
-fn asset_stats(workspace: &BusinessWorkspace) -> RuntimeResult<Value> {
-    let root = Path::new(&workspace.canonical_root);
-    let mut pending = vec![root.to_path_buf()];
-    let mut files = 0_u64;
-    let mut bytes = 0_u64;
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(directory).map_err(io_error)? {
-            let entry = entry.map_err(io_error)?;
-            let metadata = entry.metadata().map_err(io_error)?;
-            if metadata.is_dir() {
-                if pending.len() >= 4_096 {
-                    return Err(schema_error("asset traversal directory bound exceeded"));
-                }
-                pending.push(entry.path());
-            } else if metadata.is_file() {
-                files = files.saturating_add(1);
-                bytes = bytes.saturating_add(metadata.len());
-                if files > 100_000 {
-                    return Err(schema_error("asset traversal file bound exceeded"));
-                }
+) -> RuntimeResult<()> {
+    let mut required = Vec::new();
+    match operation {
+        OperationName::DocumentResolve | OperationName::DocumentSave => {
+            let intent = payload
+                .get("intent")
+                .and_then(Value::as_str)
+                .ok_or_else(|| schema_error("intent is required"))?;
+            required.push(document_path(&state.value, intent)?);
+            if operation == OperationName::DocumentSave {
+                let content = payload
+                    .get("contentFile")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| schema_error("contentFile is required"))?;
+                required.push(scoped_relative_path(workspace, content)?);
             }
         }
+        OperationName::EvidenceRecord => {
+            let artifact = payload
+                .get("artifactPath")
+                .and_then(Value::as_str)
+                .ok_or_else(|| schema_error("artifactPath is required"))?;
+            required.push(scoped_relative_path(workspace, artifact)?);
+        }
+        OperationName::VerificationPlan => {
+            required.extend(scoped_path_array(workspace, payload, "changedPaths")?);
+        }
+        OperationName::ReviewRecord if payload.get("reviewedPaths").is_some() => {
+            required.extend(scoped_path_array(workspace, payload, "reviewedPaths")?);
+        }
+        _ => {}
     }
-    Ok(json!({"outcome":"PASS","files":files,"bytes":bytes}))
+    if required.iter().all(|path| grant.permits_path(path)) {
+        Ok(())
+    } else {
+        Err(RuntimeError::new(
+            StableErrorCode::RoleOperationForbidden,
+            "daemon-verified scoped grant forbids an operation path",
+        ))
+    }
 }
 
-fn git_job(
+fn scoped_path_array(
     workspace: &BusinessWorkspace,
-    entrypoint: &str,
-    arguments: &Value,
-) -> RuntimeResult<Value> {
-    let mut command = match entrypoint {
-        "git.status" => vec!["status".to_owned(), "--short".to_owned()],
-        "git.diff" => vec!["diff".to_owned(), "--stat".to_owned()],
-        "git.log" => vec![
-            "log".to_owned(),
-            "--oneline".to_owned(),
-            "-n".to_owned(),
-            "50".to_owned(),
-        ],
-        "git.impact" => vec![
-            "diff".to_owned(),
-            "--name-only".to_owned(),
-            "HEAD~1".to_owned(),
-        ],
-        "git.blame" => {
-            let relative = arguments
-                .get("path")
-                .and_then(Value::as_str)
-                .ok_or_else(|| schema_error("git.blame requires path"))?;
-            ProjectRelativePath::new(relative.to_owned()).map_err(domain_error)?;
-            vec!["blame".to_owned(), "--".to_owned(), relative.to_owned()]
-        }
-        _ => return Err(schema_error("unsupported Git job")),
-    };
-    command.insert(0, "--no-pager".to_owned());
-    let output = crate::BoundedCommandRunner::new(1_048_576)
-        .run(
-            Path::new("git"),
-            &command,
-            Some(Path::new(&workspace.canonical_root)),
-            std::time::Duration::from_secs(30),
+    payload: &Value,
+    field: &str,
+) -> RuntimeResult<Vec<ProjectRelativePath>> {
+    payload
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_error("scoped path list must be an array"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| schema_error("scoped path list entries must be strings"))
+                .and_then(|path| scoped_relative_path(workspace, path))
+        })
+        .collect()
+}
+
+fn scoped_relative_path(
+    workspace: &BusinessWorkspace,
+    value: &str,
+) -> RuntimeResult<ProjectRelativePath> {
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return ProjectRelativePath::new(value.to_owned()).map_err(domain_error);
+    }
+    let root = fs::canonicalize(&workspace.canonical_root)
+        .map_err(|_| schema_error("registered workspace root cannot be canonicalized"))?;
+    let path = fs::canonicalize(path)
+        .map_err(|_| schema_error("operation path cannot be canonicalized"))?;
+    let relative = path.strip_prefix(root).map_err(|_| {
+        RuntimeError::new(
+            StableErrorCode::RoleOperationForbidden,
+            "operation path is outside the registered workspace",
         )
-        .map_err(|_| RuntimeError::new(StableErrorCode::GateError, "Git job failed"))?;
-    Ok(json!({
-        "outcome": if output.exit_code == Some(0) {"PASS"} else {"ERROR"},
-        "exitCode":output.exit_code,
-        "stdout":String::from_utf8_lossy(&output.stdout),
-        "stderr":String::from_utf8_lossy(&output.stderr),
-    }))
+    })?;
+    ProjectRelativePath::new(relative.to_string_lossy().replace('\\', "/")).map_err(domain_error)
 }
 
 fn semantic_operation(role: AgentRole, operation: OperationName) -> RoleOperation {
@@ -661,7 +734,7 @@ fn semantic_operation(role: AgentRole, operation: OperationName) -> RoleOperatio
         OperationName::ReviewRecord => RoleOperation::SubmitReviewFindings,
         OperationName::LeaseBreak => RoleOperation::BreakLease,
         OperationName::LeaseAcquire | OperationName::LeaseRenew | OperationName::LeaseRelease => {
-            RoleOperation::RequestGlobalTransition
+            RoleOperation::ManageOwnLease
         }
         _ if matches!(role, AgentRole::Root | AgentRole::Series) => {
             RoleOperation::ReadBoundedProjection
@@ -674,8 +747,45 @@ fn semantic_operation(role: AgentRole, operation: OperationName) -> RoleOperatio
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExecuteWire {
     operation: String,
+    #[serde(default)]
+    dry_run: bool,
     #[serde(default = "empty_object")]
     payload: Value,
+    #[serde(default)]
+    expected_project_root: Option<String>,
+    #[serde(default)]
+    expected_project_key: Option<String>,
+    #[serde(default)]
+    story: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DescribeWire {
+    #[serde(default)]
+    operation: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FlowWire {
+    #[serde(default)]
+    target_phase: Option<String>,
+    #[serde(default)]
+    story: Option<String>,
+    #[serde(default)]
+    expected_project_root: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GateEvaluateWire {
+    #[serde(default)]
+    gate_id: Option<String>,
+    #[serde(default)]
+    gate_ids: Option<Vec<String>>,
+    #[serde(default)]
+    expected_project_root: Option<String>,
 }
 
 fn empty_object() -> Value {
@@ -709,11 +819,78 @@ fn require_work_item(params: &RequestParams<Value>) -> RuntimeResult<&str> {
     })
 }
 
+fn assert_expected_project_root(
+    workspace: &BusinessWorkspace,
+    expected: Option<&str>,
+) -> RuntimeResult<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let expected = fs::canonicalize(expected)
+        .map_err(|_| schema_error("expectedProjectRoot cannot be canonicalized"))?;
+    let actual = fs::canonicalize(&workspace.canonical_root)
+        .map_err(|_| schema_error("registered workspace root cannot be canonicalized"))?;
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(RuntimeError::new(
+            StableErrorCode::ProjectMismatch,
+            "expectedProjectRoot does not match the registered workspace",
+        ))
+    }
+}
+
+fn assert_expected_project_key(
+    workspace: &BusinessWorkspace,
+    expected: Option<&str>,
+) -> RuntimeResult<()> {
+    match expected {
+        Some(expected) if expected != workspace.project_key => Err(RuntimeError::new(
+            StableErrorCode::ProjectMismatch,
+            "expectedProjectKey does not match the registered workspace",
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn assert_story_scope(
+    state: &Value,
+    work_item_id: &str,
+    expected: Option<&str>,
+) -> RuntimeResult<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let matches = expected == work_item_id
+        || state.get("activeStory").and_then(Value::as_str) == Some(expected)
+        || state.get("currentStory").and_then(Value::as_str) == Some(expected);
+    if matches {
+        Ok(())
+    } else {
+        Err(RuntimeError::new(
+            StableErrorCode::ProjectMismatch,
+            "story assertion does not match the authoritative Work Item",
+        ))
+    }
+}
+
+fn batch_gate_idempotency_key(base: &str, gate_id: &str) -> String {
+    hex::encode(Sha256::digest(format!("{base}\0{gate_id}").as_bytes()))
+}
+
+fn valid_gate_batch(gate_ids: &[String]) -> bool {
+    !gate_ids.is_empty()
+        && gate_ids.len() <= GateRegistry::all().len()
+        && gate_ids.iter().all(|gate_id| !gate_id.is_empty())
+        && gate_ids.iter().collect::<BTreeSet<_>>().len() == gate_ids.len()
+}
+
 fn operation_request(
     operation: OperationName,
     params: &RequestParams<Value>,
     workspace: &BusinessWorkspace,
     payload: Value,
+    dry_run: bool,
 ) -> RuntimeResult<OperationRequest> {
     Ok(OperationRequest {
         operation,
@@ -749,6 +926,7 @@ fn operation_request(
                 .map_err(|_| schema_error("confirmation is invalid"))
             })
             .transpose()?,
+        dry_run,
         payload,
     })
 }
@@ -759,6 +937,11 @@ struct ProjectBackend<'a> {
     state: LocatedState,
     session_id: Option<SessionId>,
     deadline_ms: u64,
+}
+
+struct PreparedSemanticMutation {
+    data: Value,
+    targets: Vec<evidence::SemanticTarget>,
 }
 
 impl<'a> ProjectBackend<'a> {
@@ -833,11 +1016,44 @@ impl OperationBackend for ProjectBackend<'_> {
         &self,
         request: &ValidatedOperationRequest,
     ) -> Result<OperationResponse, Self::Error> {
+        if request.request().dry_run {
+            return Err(schema_error(
+                "dry-run request reached the committing backend path",
+            ));
+        }
         match request.operation() {
             OperationName::LeaseAcquire
             | OperationName::LeaseRenew
             | OperationName::LeaseRelease
-            | OperationName::LeaseBreak => mutate_lease(&self.store()?, request, self.session_id),
+            | OperationName::LeaseBreak => mutate_lease(
+                &self.store()?,
+                request,
+                self.session_id,
+                self.adapter.boot_id,
+            ),
+            _ => self.mutate_state(request),
+        }
+    }
+
+    fn dry_run(
+        &self,
+        request: &ValidatedOperationRequest,
+    ) -> Result<OperationResponse, Self::Error> {
+        if !request.request().dry_run {
+            return Err(schema_error(
+                "non-dry-run request reached the validation-only backend path",
+            ));
+        }
+        match request.operation() {
+            OperationName::LeaseAcquire
+            | OperationName::LeaseRenew
+            | OperationName::LeaseRelease
+            | OperationName::LeaseBreak => mutate_lease(
+                &self.store()?,
+                request,
+                self.session_id,
+                self.adapter.boot_id,
+            ),
             _ => self.mutate_state(request),
         }
     }
@@ -1046,32 +1262,28 @@ impl ProjectBackend<'_> {
             .as_ref()
             .ok_or_else(|| schema_error("workItemId is required"))?;
         let store = self.store()?;
-        if let Some(committed) = store
-            .replay_committed(
-                workspace_id,
-                work_item_id,
-                request.operation_id(),
-                &idempotency,
-                payload_digest,
-            )
-            .map_err(store_error)?
+        if !request.request().dry_run
+            && let Some(committed) = store
+                .replay_committed(
+                    workspace_id,
+                    work_item_id,
+                    request.operation_id(),
+                    &idempotency,
+                    payload_digest,
+                )
+                .map_err(store_error)?
         {
+            let data = committed_result_data(&committed)?;
             return Ok(OperationResponse {
                 changed: false,
                 revision_before: Some(committed.receipt.revision_before),
                 revision_after: Some(committed.receipt.revision_after),
                 receipt_digest: Some(committed.receipt.result_digest.into_array()),
-                data: json!({"replayed":true}),
+                data,
             });
         }
         let before_bytes = fs::read(&self.state.absolute).map_err(io_error)?;
         let authority = StateAuthority::inspect(&before_bytes).map_err(store_error)?;
-        if request.request().expected_revision != Some(authority.revision()) {
-            return Err(RuntimeError::new(
-                StableErrorCode::RevisionConflict,
-                "expectedRevision does not match authoritative state",
-            ));
-        }
         let fencing = request.request().fencing_token.ok_or_else(|| {
             RuntimeError::new(StableErrorCode::LeaseRequired, "fencingToken is required")
         })?;
@@ -1088,9 +1300,23 @@ impl ProjectBackend<'_> {
             owner,
             fencing_token: fencing,
         };
+        store
+            .validate_lease_proof(&lease_proof, &UtcTimestamp::now())
+            .map_err(store_error)?;
+        if request.request().expected_revision != Some(authority.revision()) {
+            return Err(RuntimeError::new(
+                StableErrorCode::RevisionConflict,
+                "expectedRevision does not match authoritative state",
+            ));
+        }
+        let semantic = prepare_semantic_mutation(self.workspace, &self.state.value, request)?;
         let mut after = self.state.value.clone();
         let transition = self.authorize_transition_if_needed(&after, request)?;
-        apply_mutation(&mut after, request)?;
+        apply_mutation(
+            &mut after,
+            request,
+            semantic.as_ref().map(|prepared| &prepared.data),
+        )?;
         let revision_after = authority
             .revision()
             .checked_next()
@@ -1122,33 +1348,72 @@ impl ProjectBackend<'_> {
         if request.operation() == OperationName::DocumentSave {
             targets.push(document_target(self.workspace, &self.state.value, request)?);
         }
-        let event_value = json!({"operation": request.operation().as_str()});
+        let response_data = semantic
+            .as_ref()
+            .map(|prepared| prepared.data.clone())
+            .unwrap_or_else(|| json!({"replayed":false}));
+        if let Some(prepared) = semantic {
+            for target in prepared.targets {
+                targets.push(
+                    MutationTarget::new(
+                        ProjectRelativePath::new(target.relative_path).map_err(domain_error)?,
+                        target.before_digest,
+                        target.after_bytes,
+                    )
+                    .map_err(store_error)?,
+                );
+            }
+        }
+        let event_value = json!({
+            "operation": request.operation().as_str(),
+            "data": response_data,
+        });
         let event_bytes = serde_json::to_vec(&event_value)
             .map_err(|_| schema_error("event could not be serialized"))?;
-        let result_digest = ResultDigest::digest(&event_bytes);
-        let committed = store
-            .commit(MutationRequest {
-                mutation_id: RequestId::from_uuid(Uuid::new_v4()),
-                workspace_id,
-                work_item_id: work_item_id.clone(),
-                operation: request.operation_id().clone(),
-                idempotency_key: idempotency,
-                canonical_payload_digest: payload_digest,
-                expected_authority: authority,
-                lease_proof,
-                targets,
-                event: JournalEvent {
-                    boot_id: self.adapter.boot_id,
-                    session_id: self.session_id,
-                    event_type: request.operation().as_str().to_owned().into_boxed_str(),
-                    schema_version: 1,
-                    payload: RuntimeEventPayload::InlineJson(event_bytes),
-                },
-                result_digest,
-                prepared_at: UtcTimestamp::now(),
-                committed_at: UtcTimestamp::now(),
-            })
-            .map_err(store_error)?;
+        let result_bytes = serde_json::to_vec(&response_data)
+            .map_err(|_| schema_error("operation result could not be serialized"))?;
+        let result_digest = ResultDigest::digest(&result_bytes);
+        let target_paths = targets
+            .iter()
+            .map(|target| target.path().as_str().to_owned())
+            .collect::<Vec<_>>();
+        let mutation = MutationRequest {
+            mutation_id: RequestId::from_uuid(Uuid::new_v4()),
+            workspace_id,
+            work_item_id: work_item_id.clone(),
+            operation: request.operation_id().clone(),
+            idempotency_key: idempotency,
+            canonical_payload_digest: payload_digest,
+            expected_authority: authority,
+            lease_proof,
+            targets,
+            event: JournalEvent {
+                boot_id: self.adapter.boot_id,
+                session_id: self.session_id,
+                event_type: request.operation().as_str().to_owned().into_boxed_str(),
+                schema_version: 1,
+                payload: RuntimeEventPayload::InlineJson(event_bytes),
+            },
+            result_digest,
+            prepared_at: UtcTimestamp::now(),
+            committed_at: UtcTimestamp::now(),
+        };
+        if request.request().dry_run {
+            store.validate_mutation(&mutation).map_err(store_error)?;
+            return Ok(OperationResponse {
+                changed: false,
+                revision_before: Some(authority.revision()),
+                revision_after: Some(authority.revision()),
+                receipt_digest: None,
+                data: json!({
+                    "dryRun":true,
+                    "wouldChange":true,
+                    "targetPaths":target_paths,
+                    "result":response_data,
+                }),
+            });
+        }
+        let committed = store.commit(mutation).map_err(store_error)?;
         if let Some((input, target)) = transition {
             let commit_key = format!(
                 "flow-commit-{}",
@@ -1175,7 +1440,7 @@ impl ProjectBackend<'_> {
             revision_before: Some(committed.receipt.revision_before),
             revision_after: Some(committed.receipt.revision_after),
             receipt_digest: Some(committed.receipt.result_digest.into_array()),
-            data: json!({"replayed": committed.replayed}),
+            data: response_data,
         })
     }
 }
@@ -1335,33 +1600,219 @@ fn strip_derived_runtime_fields(value: &mut Value) {
     }
 }
 
-fn apply_mutation(state: &mut Value, request: &ValidatedOperationRequest) -> RuntimeResult<()> {
+fn prepare_semantic_mutation(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    request: &ValidatedOperationRequest,
+) -> RuntimeResult<Option<PreparedSemanticMutation>> {
+    let work_item_id = request
+        .request()
+        .work_item_id
+        .as_ref()
+        .ok_or_else(|| schema_error("workItemId is required"))?;
+    match request.operation() {
+        OperationName::EvidenceRecord => {
+            let story_id = operation_story_id(state, work_item_id.as_str())?;
+            let prepared = evidence::prepare_record(
+                Path::new(&workspace.canonical_root),
+                story_id,
+                &request.request().payload,
+                &UtcTimestamp::now().to_string(),
+            )
+            .map_err(evidence_error)?;
+            Ok(Some(PreparedSemanticMutation {
+                data: prepared.result,
+                targets: prepared.targets,
+            }))
+        }
+        OperationName::EvidenceFinalize => {
+            let story_id = operation_story_id(state, work_item_id.as_str())?;
+            let prepared =
+                evidence::prepare_finalize(Path::new(&workspace.canonical_root), story_id)
+                    .map_err(evidence_error)?;
+            Ok(Some(PreparedSemanticMutation {
+                data: prepared.result,
+                targets: prepared.targets,
+            }))
+        }
+        OperationName::VerificationPlan => {
+            if request
+                .request()
+                .payload
+                .get("persist")
+                .and_then(Value::as_bool)
+                == Some(false)
+            {
+                return Err(schema_error(
+                    "verification.plan persist=false is not an authoritative mutation",
+                ));
+            }
+            let story_id = operation_story_id(state, work_item_id.as_str())?;
+            let changed_paths = request
+                .request()
+                .payload
+                .get("changedPaths")
+                .and_then(Value::as_array)
+                .ok_or_else(|| schema_error("changedPaths must be an array"))?;
+            let since_fingerprint = request
+                .request()
+                .payload
+                .get("sinceFingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let plan = verification::build_verification_plan(
+                Path::new(&workspace.canonical_root),
+                story_id,
+                work_item_id.as_str(),
+                changed_paths,
+                since_fingerprint,
+            )
+            .map_err(|error| schema_error(&error.to_string()))?;
+            Ok(Some(PreparedSemanticMutation {
+                data: plan,
+                targets: Vec::new(),
+            }))
+        }
+        OperationName::ExecutionPlanSet => Ok(Some(PreparedSemanticMutation {
+            data: governance::execution_plan(&request.request().payload).map_err(schema_error)?,
+            targets: Vec::new(),
+        })),
+        OperationName::ExecutionPlanApprove => {
+            let confirmation = request
+                .request()
+                .confirmation
+                .as_ref()
+                .ok_or_else(|| schema_error("execution plan approval requires confirmation"))?;
+            Ok(Some(PreparedSemanticMutation {
+                data: governance::approved_execution_plan(state, confirmation)
+                    .map_err(schema_error)?,
+                targets: Vec::new(),
+            }))
+        }
+        OperationName::ReviewRecord => Ok(Some(PreparedSemanticMutation {
+            data: governance::review(&request.request().payload).map_err(schema_error)?,
+            targets: Vec::new(),
+        })),
+        OperationName::StateTransition => Ok(Some(PreparedSemanticMutation {
+            data: json!({
+                "phase": request
+                    .request()
+                    .payload
+                    .get("targetPhase")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| schema_error("targetPhase is required"))?,
+            }),
+            targets: Vec::new(),
+        })),
+        OperationName::WorkItemComplete => Ok(Some(PreparedSemanticMutation {
+            data: json!({"phase":"completed"}),
+            targets: Vec::new(),
+        })),
+        _ => Ok(None),
+    }
+}
+
+fn operation_story_id<'a>(state: &'a Value, work_item_id: &'a str) -> RuntimeResult<&'a str> {
+    if state
+        .get("storyStates")
+        .and_then(Value::as_object)
+        .is_some_and(|stories| stories.contains_key(work_item_id))
+    {
+        return Ok(work_item_id);
+    }
+    ["activeStory", "currentStory"]
+        .into_iter()
+        .find_map(|field| state.get(field).and_then(Value::as_str))
+        .filter(|story| !story.is_empty())
+        .ok_or_else(|| schema_error("operation requires an authoritative Story scope"))
+}
+
+fn evidence_error(error: evidence::EvidenceError) -> RuntimeError {
+    let conflict = matches!(
+        error,
+        evidence::EvidenceError::InvalidManifest(_)
+            | evidence::EvidenceError::ManifestTampered
+            | evidence::EvidenceError::SnapshotInvalid(_)
+            | evidence::EvidenceError::Io(_)
+    );
+    RuntimeError::new(
+        if conflict {
+            StableErrorCode::ExternalStateConflict
+        } else {
+            StableErrorCode::OperationSchemaInvalid
+        },
+        error.to_string(),
+    )
+}
+
+fn committed_result_data(committed: &CommittedMutation) -> RuntimeResult<Value> {
+    let RuntimeEventPayload::InlineJson(bytes) = &committed.event.draft.payload else {
+        return Err(RuntimeError::new(
+            StableErrorCode::ExternalStateConflict,
+            "operation receipt references a non-inline result event",
+        ));
+    };
+    let event: Value = serde_json::from_slice(bytes).map_err(|_| {
+        RuntimeError::new(
+            StableErrorCode::ExternalStateConflict,
+            "operation result event is malformed",
+        )
+    })?;
+    let data = event.get("data").cloned().ok_or_else(|| {
+        RuntimeError::new(
+            StableErrorCode::ExternalStateConflict,
+            "operation result event is missing data",
+        )
+    })?;
+    let data_bytes = serde_json::to_vec(&data)
+        .map_err(|_| schema_error("operation result could not be canonicalized"))?;
+    if ResultDigest::digest(&data_bytes) != committed.receipt.result_digest {
+        return Err(RuntimeError::new(
+            StableErrorCode::ExternalStateConflict,
+            "operation result digest does not match its durable event",
+        ));
+    }
+    Ok(data)
+}
+
+fn apply_mutation(
+    state: &mut Value,
+    request: &ValidatedOperationRequest,
+    semantic_data: Option<&Value>,
+) -> RuntimeResult<()> {
     let payload = request.request().payload.clone();
     match request.operation() {
         OperationName::ExecutionPlanSet => {
             let object = root_state_object_mut(state)?;
-            object.insert("executionPlan".to_owned(), payload);
+            object.insert(
+                "executionPlan".to_owned(),
+                semantic_data
+                    .cloned()
+                    .ok_or_else(|| schema_error("execution plan was not prepared"))?,
+            );
         }
         OperationName::ExecutionPlanApprove => {
-            let object = root_state_object_mut(state)?;
-            let plan = object
-                .get_mut("executionPlan")
-                .and_then(Value::as_object_mut)
-                .ok_or_else(|| schema_error("executionPlan does not exist"))?;
-            plan.insert("approved".to_owned(), Value::Bool(true));
-            plan.insert("approval".to_owned(), payload);
+            root_state_object_mut(state)?.insert(
+                "executionPlan".to_owned(),
+                semantic_data
+                    .cloned()
+                    .ok_or_else(|| schema_error("execution plan approval was not prepared"))?,
+            );
         }
-        OperationName::EvidenceRecord => {
-            push_array(root_state_object_mut(state)?, "evidence", payload)?;
-        }
-        OperationName::EvidenceFinalize => {
-            root_state_object_mut(state)?.insert("evidenceFinalized".to_owned(), Value::Bool(true));
-        }
+        OperationName::EvidenceRecord | OperationName::EvidenceFinalize => {}
         OperationName::ReviewRecord => {
-            root_state_object_mut(state)?.insert("review".to_owned(), payload);
+            root_state_object_mut(state)?.insert(
+                "review".to_owned(),
+                semantic_data
+                    .cloned()
+                    .ok_or_else(|| schema_error("review was not prepared"))?,
+            );
         }
         OperationName::VerificationPlan => {
-            root_state_object_mut(state)?.insert("verificationPlan".to_owned(), payload);
+            let plan = semantic_data
+                .cloned()
+                .ok_or_else(|| schema_error("verification plan was not prepared"))?;
+            root_state_object_mut(state)?.insert("verificationPlan".to_owned(), plan);
         }
         OperationName::StateTransition => {
             let target = payload
@@ -1425,16 +1876,6 @@ fn work_item_object_mut<'a>(
     root_state_object_mut(state)
 }
 
-fn push_array(object: &mut Map<String, Value>, key: &str, value: Value) -> RuntimeResult<()> {
-    let array = object
-        .entry(key.to_owned())
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .ok_or_else(|| schema_error("authoritative collection has the wrong type"))?;
-    array.push(value);
-    Ok(())
-}
-
 fn resolve_document(
     workspace: &BusinessWorkspace,
     state: &Value,
@@ -1493,68 +1934,100 @@ fn mutate_lease(
     >,
     request: &ValidatedOperationRequest,
     session_id: Option<SessionId>,
+    boot_id: BootId,
 ) -> RuntimeResult<OperationResponse> {
-    let state_bytes = fs::read(store.paths().state_path()).map_err(io_error)?;
-    let state_authority = StateAuthority::inspect(&state_bytes).map_err(store_error)?;
     let now = UtcTimestamp::now();
-    let owner = LeaseOwner::new(session_id.map_or_else(
-        || serde_json::to_string(&request.request().payload["owner"]).unwrap_or_default(),
-        |value| value.to_string(),
-    ))
+    let owner = if request.operation() == OperationName::LeaseBreak {
+        LeaseOwner::new("admin:authenticated-local-client")
+    } else {
+        LeaseOwner::new(session_id.as_ref().map_or_else(
+            || serde_json::to_string(&request.request().payload["owner"]).unwrap_or_default(),
+            ToString::to_string,
+        ))
+    }
     .map_err(store_error)?;
-    let data = match request.operation() {
+
+    let idempotency_key = request
+        .request()
+        .idempotency_key
+        .as_deref()
+        .ok_or_else(|| schema_error("idempotencyKey is required"))?;
+    let canonical_payload_digest = lease_control_digest(request, session_id.as_ref())?;
+    let action = match request.operation() {
         OperationName::LeaseAcquire => {
             let ttl = request.request().payload["ttlSeconds"]
                 .as_u64()
                 .ok_or_else(|| schema_error("ttlSeconds is required"))?;
-            let expires = add_seconds(ttl)?;
-            let lease_id = request
-                .request()
-                .idempotency_key
-                .as_deref()
-                .and_then(|value| Uuid::parse_str(value).ok())
-                .map_or_else(|| LeaseId::from_uuid(Uuid::new_v4()), LeaseId::from_uuid);
-            let record = store
-                .acquire_lease(lease_id, owner, now, expires)
-                .map_err(store_error)?;
-            json!({
-                "leaseId": record.lease_id().to_string(),
-                "fencingToken": record.fencing_token().get(),
-                "expiresAt": record.expires_at().to_string(),
-            })
+            let lease_id = deterministic_lease_id(idempotency_key, canonical_payload_digest);
+            LeaseControlAction::Acquire {
+                lease_id,
+                owner,
+                expires_at: add_seconds_from(&now, ttl)?,
+                now,
+            }
         }
         OperationName::LeaseRenew => {
             let proof = lease_proof(request, owner)?;
             let ttl = request.request().payload["ttlSeconds"]
                 .as_u64()
                 .ok_or_else(|| schema_error("ttlSeconds is required"))?;
-            let record = store
-                .renew_lease(&proof, &now, add_seconds(ttl)?)
-                .map_err(store_error)?;
-            json!({"leaseId":record.lease_id().to_string(),"expiresAt":record.expires_at().to_string()})
+            LeaseControlAction::Renew {
+                proof,
+                expires_at: add_seconds_from(&now, ttl)?,
+                now,
+            }
         }
-        OperationName::LeaseRelease => {
-            let tombstone = store
-                .release_lease(&lease_proof(request, owner)?, now)
-                .map_err(store_error)?;
-            json!({"leaseId":tombstone.lease_id.to_string(),"status":"released"})
-        }
-        OperationName::LeaseBreak => {
-            let reason = request.request().payload["reason"]
+        OperationName::LeaseRelease => LeaseControlAction::Release {
+            proof: lease_proof(request, owner)?,
+            now,
+        },
+        OperationName::LeaseBreak => LeaseControlAction::Break {
+            actor: owner,
+            reason: request.request().payload["reason"]
                 .as_str()
-                .ok_or_else(|| schema_error("reason is required"))?;
-            let tombstone = store.break_lease(owner, reason, now).map_err(store_error)?;
-            json!({"broken":tombstone.is_some()})
-        }
+                .ok_or_else(|| schema_error("reason is required"))?
+                .to_owned()
+                .into_boxed_str(),
+            now,
+        },
         _ => return Err(schema_error("unsupported lease mutation")),
     };
-    let digest = ResultDigest::digest(serde_json::to_vec(&data).unwrap_or_default());
+    let control = LeaseControlRequest {
+        mutation_id: RequestId::from_uuid(Uuid::new_v4()),
+        workspace_id: request
+            .request()
+            .workspace_id
+            .ok_or_else(|| schema_error("workspaceId is required"))?,
+        work_item_id: request
+            .request()
+            .work_item_id
+            .clone()
+            .ok_or_else(|| schema_error("workItemId is required"))?,
+        operation: request.operation_id().clone(),
+        idempotency_key: IdempotencyKey::new(idempotency_key.to_owned()).map_err(store_error)?,
+        canonical_payload_digest,
+        action,
+        boot_id,
+        session_id,
+        committed_at: UtcTimestamp::now(),
+    };
+    if request.request().dry_run {
+        let preview = store.preview_lease_control(&control).map_err(store_error)?;
+        return Ok(OperationResponse {
+            changed: false,
+            revision_before: Some(preview.revision),
+            revision_after: Some(preview.revision),
+            receipt_digest: None,
+            data: json!({"dryRun":true,"wouldChange":true,"result":preview.data}),
+        });
+    }
+    let committed = store.commit_lease_control(control).map_err(store_error)?;
     Ok(OperationResponse {
-        changed: true,
-        revision_before: Some(state_authority.revision()),
-        revision_after: Some(state_authority.revision()),
-        receipt_digest: Some(digest.into_array()),
-        data,
+        changed: !committed.mutation.replayed,
+        revision_before: Some(committed.mutation.receipt.revision_before),
+        revision_after: Some(committed.mutation.receipt.revision_after),
+        receipt_digest: Some(committed.mutation.receipt.result_digest.into_array()),
+        data: committed.data,
     })
 }
 
@@ -1571,6 +2044,33 @@ fn lease_proof(
             RuntimeError::new(StableErrorCode::LeaseRequired, "fencingToken is required")
         })?,
     })
+}
+
+fn lease_control_digest(
+    request: &ValidatedOperationRequest,
+    session_id: Option<&SessionId>,
+) -> RuntimeResult<InputFingerprint> {
+    let binding = json!({
+        "payload":request.request().payload.clone(),
+        "sessionId":session_id.map(ToString::to_string),
+        "leaseId":request.request().lease_id.map(|value| value.to_string()),
+        "fencingToken":request.request().fencing_token.map(FencingToken::get),
+    });
+    let bytes = serde_json::to_vec(&binding)
+        .map_err(|_| schema_error("lease control binding could not be canonicalized"))?;
+    Ok(InputFingerprint::digest(bytes))
+}
+
+fn deterministic_lease_id(key: &str, binding: InputFingerprint) -> LeaseId {
+    let mut digest = Sha256::new();
+    digest.update(b"ae-sdd-lease-id/v1\0");
+    digest.update(key.as_bytes());
+    digest.update([0]);
+    digest.update(binding.to_string().as_bytes());
+    let digest: [u8; 32] = digest.finalize().into();
+    let mut uuid = [0_u8; 16];
+    uuid.copy_from_slice(&digest[..16]);
+    LeaseId::from_uuid(Uuid::from_bytes(uuid))
 }
 
 fn lease_status(
@@ -1601,10 +2101,20 @@ fn lease_status(
     }
 }
 
-fn operation_registry() -> Value {
-    Value::Array(
-        OPERATION_REGISTRY
-            .iter()
+fn operation_registry(operation: Option<&str>) -> RuntimeResult<Value> {
+    let specs = OPERATION_REGISTRY
+        .iter()
+        .filter(|spec| operation.is_none_or(|name| spec.operation.as_str() == name))
+        .collect::<Vec<_>>();
+    if operation.is_some() && specs.is_empty() {
+        return Err(RuntimeError::new(
+            StableErrorCode::OperationNotRegistered,
+            "typed operation is not registered",
+        ));
+    }
+    Ok(Value::Array(
+        specs
+            .into_iter()
             .map(|spec| {
                 json!({
                     "operation": spec.operation.as_str(),
@@ -1620,7 +2130,7 @@ fn operation_registry() -> Value {
                 })
             })
             .collect(),
-    )
+    ))
 }
 
 fn response_value(response: OperationResponse) -> Value {
@@ -1633,9 +2143,10 @@ fn response_value(response: OperationResponse) -> Value {
     })
 }
 
-fn add_seconds(seconds: u64) -> RuntimeResult<UtcTimestamp> {
+fn add_seconds_from(now: &UtcTimestamp, seconds: u64) -> RuntimeResult<UtcTimestamp> {
     let seconds = i64::try_from(seconds).map_err(|_| schema_error("ttlSeconds is too large"))?;
-    let timestamp = jiff::Timestamp::now()
+    let timestamp = now
+        .as_timestamp()
         .checked_add(jiff::SignedDuration::from_secs(seconds))
         .map_err(|_| schema_error("lease expiry overflow"))?;
     UtcTimestamp::from_str(&timestamp.to_string()).map_err(store_error)
@@ -1745,7 +2256,10 @@ fn store_error(error: StoreError) -> RuntimeError {
         StoreError::IdempotencyKeyReused { .. } => StableErrorCode::IdempotencyKeyReused,
         _ => StableErrorCode::OperationSchemaInvalid,
     };
-    RuntimeError::new(code, "authoritative project store rejected the operation")
+    RuntimeError::new(
+        code,
+        format!("authoritative project store rejected the operation: {error}"),
+    )
 }
 
 fn io_error(_error: std::io::Error) -> RuntimeError {

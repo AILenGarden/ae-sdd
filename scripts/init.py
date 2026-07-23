@@ -85,7 +85,7 @@ master:
   masterDir: source
   # 🆕 v3.4.0：记录 init 时的母版检查时间 + 分发闭环版本号（PostToolUse hook 检测漂移用）
   lastCheckedAt: "{timestamp}"
-  expectedDispChain: build_dist -> install -> harness_adapter -> mavis_remount
+  expectedDispChain: build_dist -> install -> harness_adapter -> harness_remount
 
 # 项目资产（必填）
 assetPath: assets/{project_key}.assets.md

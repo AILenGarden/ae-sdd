@@ -7,7 +7,7 @@
       ├── compile()   —— needs_compile=True 时产出专属产物；否则返回 None（用通用 dist）
       ├── install()   —— 按该 Agent 自己的协议安装
       ├── verify()    —— 安装后校验（可选，默认 True）
-      └── cleanup()   —— 收尾（可选，mavis 清 -N 副本）
+      └── cleanup()   —— 收尾（可选，harness 清 -N 副本）
 
     CopytreeDistributor（Distributor 子类）
       共享 copytree 类安装逻辑（备份 → 复制 → 校验 → 清旧 .bak），
@@ -69,7 +69,7 @@ class DistributeContext:
     keep_bak: int = 2            # 每个目标保留的 .bak 备份数（0=全清；负数=不清理）
     quiet: bool = False          # 静默模式，只输出关键状态
     from_commit: bool = False    # 是否由 post-commit hook 触发（影响日志详尽度）
-    use_ps1: bool = False        # mavis 专属：是否回退用 PS1 而非 build_harness.py
+    use_ps1: bool = False        # harness 专属：是否回退用 PS1 而非 build_harness.py
 
 
 @dataclass
@@ -126,9 +126,9 @@ def _verify_compiled_runtime_source(source: Path, ctx: DistributeContext) -> tup
 # ─── Distributor ABC ─────────────────────────────────────────────────────────
 class Distributor(ABC):
     """Agent 分发器抽象基类。每个子类代表一种 Agent 的安装协议。"""
-    name: str = ""               # "claude" / "codex" / "zcode" / "mavis" ...
+    name: str = ""               # "claude" / "codex" / "zcode" / "harness" ...
     protocol: str = ""           # "copytree" / "harness_mount" / ...
-    needs_compile: bool = False  # 是否需要专属编译产物（mavis=True，其余=False）
+    needs_compile: bool = False  # 是否需要专属编译产物（harness=True，其余=False）
 
     @abstractmethod
     def detect(self) -> bool:
@@ -149,7 +149,7 @@ class Distributor(ABC):
         return True
 
     def cleanup(self, ctx: DistributeContext) -> None:
-        """收尾（可选 hook，mavis 清 -N 副本 + sqlite）。"""
+        """收尾（可选 hook，harness 清 -N 副本 + sqlite）。"""
         pass
 
 
@@ -292,21 +292,21 @@ class CopytreeDistributor(Distributor):
         return True
 
 
-# ─── HarnessMountDistributor（🆕 2026-07-03 从 mavis.py 抽象，参数化）─────────
-# 协议模板：harness_mount 类 Agent（mavis 及未来同类）。
-# 逻辑迁自 distributors/mavis.py，保持行为一致：compile(build_harness) →
-# install(mavis harness mount) → verify(harness list) → cleanup(-N 副本 + sqlite)。
+# ─── HarnessMountDistributor（🆕 2026-07-03 从 harness.py 抽象，参数化）─────────
+# 协议模板：harness_mount 类 Agent（harness 及未来同类）。
+# 逻辑迁自 distributors/harness.py，保持行为一致：compile(build_harness) →
+# install(harness mount) → verify(harness list) → cleanup(-N 副本 + sqlite)。
 
 _HARNESS_KEEP_DEFAULT = 0   # 清理 -N 副本保留数（0=全清；负数=不清理）
 
 
 class HarnessMountDistributor(Distributor):
-    """harness_mount 协议模板：调 build_harness.py 生成 agent.md + mavis harness mount。
+    """harness_mount 协议模板：调 build_harness.py 生成 agent.md + harness mount。
 
-    🆕 2026-07-03 注册表模式：不再需要 mavis.py 独立子类。
+    🆕 2026-07-03 注册表模式：不再需要 harness.py 独立子类。
     直接用注册表数据构造：
-        HarnessMountDistributor(name="mavis", agent_home=Path("~/.mavis"),
-                                detect_fn=lambda: find_mavis_cmd() is not None)
+        HarnessMountDistributor(name="harness", agent_home=Path("~/.harness"),
+                                detect_fn=lambda: find_harness_cmd() is not None)
     """
     protocol = "harness_mount"
     needs_compile = True
@@ -318,7 +318,7 @@ class HarnessMountDistributor(Distributor):
         detect_fn: Optional[callable] = None,
     ) -> None:
         self.name = name
-        self.agent_home = agent_home or (Path.home() / ".mavis")
+        self.agent_home = agent_home or (Path.home() / ".harness")
         self._detect_fn = detect_fn or (lambda: False)
 
     def detect(self) -> bool:
@@ -346,17 +346,17 @@ class HarnessMountDistributor(Distributor):
         return None
 
     def install(self, source: Path, ctx: DistributeContext) -> InstallResult:
-        """source 是 compile 产出的 .harness 目录；执行 mavis harness mount。"""
+        """source 是 compile 产出的 .harness 目录；执行 harness mount。"""
         import time
         t0 = time.time()
         # build_harness 与本包同级（scripts/），由调用方保证 sys.path 含 scripts/
         try:
-            from build_harness import run_mavis, find_mavis_cmd, mavis_harness_name_for_path
+            from build_harness import run_harness, find_harness_cmd, harness_name_for_path
         except ImportError:
             return InstallResult(self.name, "skip",
                                  "build_harness.py 不可导入，跳过 mount", time.time() - t0)
 
-        if find_mavis_cmd() is None:
+        if find_harness_cmd() is None:
             return InstallResult(self.name, "skip",
                                  f"{self.name} 未安装，跳过 mount（产物已写入）", time.time() - t0)
 
@@ -366,12 +366,12 @@ class HarnessMountDistributor(Distributor):
         harness_root = source.parent  # source=.harness，mount 入参是 repo root
         # 先 unmount 旧挂载
         for hname in dict.fromkeys([
-            mavis_harness_name_for_path(harness_root),
-            mavis_harness_name_for_path(harness_root / "harness"),
+            harness_name_for_path(harness_root),
+            harness_name_for_path(harness_root / "harness"),
             SKILL_NAME,
         ]):
-            run_mavis(["harness", "unmount", hname])
-        rc, out = run_mavis(["harness", "mount", str(harness_root)])
+            run_harness(["harness", "unmount", hname])
+        rc, out = run_harness(["harness", "mount", str(harness_root)])
         if not ctx.quiet:
             for line in out.splitlines():
                 print(f"    {line}")
@@ -383,17 +383,17 @@ class HarnessMountDistributor(Distributor):
     def verify(self, ctx: DistributeContext) -> bool:
         """harness list 能列出 ae-sdd 即通过。"""
         try:
-            from build_harness import run_mavis
+            from build_harness import run_harness
         except ImportError:
             return False
-        rc, out = run_mavis(["harness", "list"])
+        rc, out = run_harness(["harness", "list"])
         if rc == 0 and SKILL_NAME in out:
             return True
         log_warn(ctx, f"{self.name} harness list 未确认 {SKILL_NAME}（rc={rc}）")
         return False
 
     def cleanup(self, ctx: DistributeContext) -> None:
-        """清 -N 副本 + 同步 sqlite（迁自 mavis.py:cleanup）。"""
+        """清 -N 副本 + 同步 sqlite（迁自 harness.py:cleanup）。"""
         import re
         import sqlite3
         from datetime import datetime

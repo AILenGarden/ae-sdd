@@ -238,18 +238,6 @@
       "status": "blocked"
     },
     {
-      "path": "scripts/distributors/mavis.py",
-      "kind": "legacy-script",
-      "rustOwner": "ae-sdd-build/ae-sdd-integrations",
-      "requiredEvidence": [
-        "V-001",
-        "V-010",
-        "V-012"
-      ],
-      "disposition": "delete-after-cutover",
-      "status": "blocked"
-    },
-    {
       "path": "scripts/distributors/zcode.py",
       "kind": "legacy-script",
       "rustOwner": "ae-sdd-build/ae-sdd-integrations",
@@ -1332,17 +1320,6 @@
       "path": "tools/tests/test_l2_inject.py",
       "kind": "migration-oracle-test",
       "rustOwner": "ae-sdd-cli/ae-sdd-build",
-      "requiredEvidence": [
-        "V-010",
-        "owning Rust native/golden test"
-      ],
-      "disposition": "delete-after-cutover",
-      "status": "blocked"
-    },
-    {
-      "path": "tools/tests/test_mavis_distributor.py",
-      "kind": "migration-oracle-test",
-      "rustOwner": "ae-sdd-build/ae-sdd-integrations",
       "requiredEvidence": [
         "V-010",
         "owning Rust native/golden test"

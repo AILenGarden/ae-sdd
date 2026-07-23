@@ -2,7 +2,7 @@
 
 > **起草日期**：2026-06-22
 > **目标版本**：ae-sdd v3.1（接 2026-06-18 v3 重组计划之后的纪律层加固）
-> **起草人**：Mavis（基于 2026-06-22 life 项目 STORY-020-BE v3-r2 增量评审时的自我审计）
+> **起草人**：Harness（基于 2026-06-22 life 项目 STORY-020-BE v3-r2 增量评审时的自我审计）
 > **状态**：待评审（转交 ae-sdd 迭代 Agent）
 > **目标读者**：ae-sdd 维护者 + root agent 的 system prompt 作者
 
@@ -149,7 +149,7 @@ G-00 通过后按 §🎯 统一入口的 7 步判定流程路由到对应 sub-SK
 
 ### 1.3 sub-agent 边界
 - 自己动手前必须回答"这件事应该派给哪个 sub-SKILL / sub-agent"
-- 能回答 → 用 `mavis communication send --command spawn` 派活
+- 能回答 → 用 `harness communication send --command spawn` 派活
 - 不能回答 → 先停下来想清楚
 
 ## 2. 项目级产物路径约定
@@ -206,8 +206,8 @@ G-00 通过后按 §🎯 统一入口的 7 步判定流程路由到对应 sub-SK
 ```bash
 # pre-ae-sdd-check.sh
 # 🔴 待定（2026-06-22）：
-#   1) 检测源未定:原文写 `~/.mavis/logs/recent-tools.log` 实测不存在,
-#      mavis daemon 是否暴露 pre-trigger hook 待验证
+#   1) 检测源未定:原文写 `~/.harness/logs/recent-tools.log` 实测不存在,
+#      harness daemon 是否暴露 pre-trigger hook 待验证
 #   2) 阻断方式未定:CLI `ae-sdd` 不存在,只能用文件系统或 system prompt 强约束
 #   3) v3.1 不实现,留 v3.2 评估
 #
@@ -228,14 +228,14 @@ exit 0
 ```
 
 **接入方式**：
-- **v3.1 不接 hook**（mavis daemon 兼容性未验证，建议书 §5.1 已自承风险）
+- **v3.1 不接 hook**（harness daemon 兼容性未验证，建议书 §5.1 已自承风险）
 - **v3.1 fallback**：L1 母版硬前置 + L2 SOP 模板 + L3 实例化已能在 system prompt 层面形成软约束
-- **v3.2 评估项**：验证 mavis daemon 是否支持 pre-trigger hook + 是否需要将 L4 升级为硬阻断
+- **v3.2 评估项**：验证 harness daemon 是否支持 pre-trigger hook + 是否需要将 L4 升级为硬阻断
 
 **验收标准**：
 - [ ] 脚本存在且 `shellcheck` 通过
 - [ ] 测试用例：未跑 G-00 → 脚本 exit 1；已跑 G-00 → 脚本 exit 0
-- [ ] mavis daemon hook 接入文档（如不支持则 fallback 方案落档）
+- [ ] harness daemon hook 接入文档（如不支持则 fallback 方案落档）
 
 ---
 
@@ -273,7 +273,7 @@ L4 失职检测 hook (P2)
 | L1 硬前置让 root agent 误触发（不该跑 G-00 也跑）| 中 | 低 | L2 模板明确"快速通道"语义 |
 | L1 改母版影响其他项目（life、icec-cloud-boss 等）| 高 | 中 | **灰度发布**：先在 life 项目验证 1 周，再推全量 |
 | L2 模板与项目实际需求不符 | 中 | 中 | 模板保持"项目可裁剪"，不强制全部使用 |
-| L4 hook 接入与 mavis daemon 不兼容 | 中 | 低 | fallback 到 system prompt 强约束 |
+| L4 hook 接入与 harness daemon 不兼容 | 中 | 低 | fallback 到 system prompt 强约束 |
 | 改动后用户对"硬前置"反感（"太重了"）| 低 | 高 | L2 给 escape hatch 开口子 |
 
 ### 5.2 回滚方案
@@ -300,7 +300,7 @@ L4 失职检测 hook (P2)
 | L3 life 项目 ae-sdd-instance.md 完成 | ☐ |  |  |
 | L3 icec-cloud-boss 项目 ae-sdd-instance.md 完成（如适用）| ☐ |  |  |
 | L4 pre-ae-sdd-check.sh 脚本测试通过 | ☐ |  |  |
-| L4 mavis daemon hook 接入完成 | ☐ |  |  |
+| L4 harness daemon hook 接入完成 | ☐ |  |  |
 | 灰度发布 1 周无回归 | ☐ |  |  |
 | CHANGELOG 更新（v3.0 → v3.1）| ☐ |  |  |
 
@@ -316,7 +316,7 @@ L4 失职检测 hook (P2)
 
 ### 7.2 相关 memory 条目
 
-- `C:\Users\EDY\.mavis\agents\mavis\memory\MEMORY.md` 新增 `### ae-sdd SKILL 强制执行纪律 (2026-06-22)` 7 条规则
+- `C:\Users\EDY\.harness\agents\harness\memory\MEMORY.md` 新增 `### ae-sdd SKILL 强制执行纪律 (2026-06-22)` 7 条规则
 - `D:\Item\life\.harness\memory\MEMORY.md` 第 ⑥bis 条（STORY-020 v2-r2 CodeReview）— 漂移判断与升版纪律
 
 ### 7.3 相关 SKILL 章节索引

@@ -802,7 +802,7 @@ class TestHS7PrdCompleteGate:
     def test_prd_complete_blocked_when_4layers_fail(self, tmp_path):
         """4 层 AND 未全过 → prd-complete 被拦"""
         project_dir = self._make_prd_state(tmp_path, all_pass=False)
-        cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime mavis"
+        cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime harness"
         allowed, reason = check_intercept(
             "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True, forced_phase="code-reviewed"
         )
@@ -814,7 +814,7 @@ class TestHS7PrdCompleteGate:
     def test_prd_complete_allowed_when_4layers_pass(self, tmp_path):
         """4 层 AND 全过 → prd-complete 放行（不因 HS-7 拦）"""
         project_dir = self._make_prd_state(tmp_path, all_pass=True)
-        cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime mavis"
+        cmd = "ae-sdd state prd-complete --prd PRD-CS-001 --runtime harness"
         allowed, reason = check_intercept(
             "Bash", bash_command=cmd, project_dir=project_dir, forced_engaged=True, forced_phase="code-reviewed"
         )
@@ -824,7 +824,7 @@ class TestHS7PrdCompleteGate:
 
     def test_prd_complete_blocked_when_no_prd_state(self, tmp_path):
         """PRD state.json 不存在 → 拦截"""
-        cmd = "ae-sdd state prd-complete --prd PRD-NONEXIST --runtime mavis"
+        cmd = "ae-sdd state prd-complete --prd PRD-NONEXIST --runtime harness"
         allowed, reason = check_intercept(
             "Bash", bash_command=cmd, project_dir=tmp_path, forced_engaged=True, forced_phase="code-reviewed"
         )

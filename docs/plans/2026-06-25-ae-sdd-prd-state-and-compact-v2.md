@@ -3,7 +3,7 @@
 **版本:** v2.0
 **日期:** 2026-06-25
 **基线:** v1 方案 A' + reviewer 报告 (R-1~R-16)
-**作者:** root agent (Mavis)
+**作者:** root agent (Harness)
 **Reviewer:** general agent (mvs_5914995d3d1542e5aa37575f79e20f21)
 **Review 报告:** `D:\Item\ae-sdd\docs\plans\2026-06-25-ae-sdd-prd-review-report.md`
 
@@ -20,7 +20,7 @@
 | D-3 | Codex runtime | **A: PoC-first** | 30 分钟成本可接受 |
 | D-4 | Story 级 state.json 过渡 | **B: 三阶段渐进迁移** | R-9 兼容 |
 | D-5 | 同步清单扩展 | **B: 扩 L280 加 §4.1** | R-10 |
-| D-6 | Mavis compact 路径 | **B: `mavis session rotate --handoff-file`** | 已存在 |
+| D-6 | Harness compact 路径 | **B: `harness session rotate --handoff-file`** | 已存在 |
 
 ---
 
@@ -45,7 +45,7 @@
 |------|------|--------|--------|
 | `state.json` | `.auto-engineering/{PRD-ID}/state.json` | Story 完成 hook、PRD 收尾 CLI | 所有 phase SKILL、CLI |
 | `state.md` | `.auto-engineering/{PRD-ID}/state.md` | `ae-sdd state prd-complete`（一次性） | 用户、handoff 包 |
-| `summary.md` | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` | 下一个 session / 下一个 PRD |
+| `summary.md` | `.auto-engineering/{PRD-ID}/summary.md` | `harness session rotate --handoff-file` | 下一个 session / 下一个 PRD |
 
 #### 1.2 PRD ID 命名规范
 
@@ -161,7 +161,7 @@ codex session dump --help 2>&1
 
 ```markdown
 | 流程状态文件（PRD 级）| 不带版本号 | `.auto-engineering/{PRD-ID}/state.json` | 状态实时变化 |
-| 流程状态文件（PRD 级，handoff）| 不带版本号 | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate` 时生成 |
+| 流程状态文件（PRD 级，handoff）| 不带版本号 | `.auto-engineering/{PRD-ID}/summary.md` | `harness session rotate` 时生成 |
 | 流程状态文件（PRD 级，人类读）| 不带版本号 | `.auto-engineering/{PRD-ID}/state.md` | `ae-sdd state prd-complete` 时一次性生成 |
 ```
 
@@ -242,7 +242,7 @@ codex session dump --help 2>&1
   },
 
   "runtimeHooks": {
-    "mavis": { "compactCmd": "mavis session rotate", "args": ["--handoff-file", "{summary.md}"] },
+    "harness": { "compactCmd": "harness session rotate", "args": ["--handoff-file", "{summary.md}"] },
     "claude-code": { "hookType": "UserPromptSubmit", "injectCmd": "..." },
     "codex": { "compactCmd": null, "status": "unsupported", "fallback": "user-manual" }
   },
@@ -277,9 +277,9 @@ codex session dump --help 2>&1
 
 ```markdown
 | `state prd-check-complete` | 校验 4 层 AND，输出未达成项，不改状态 | `ae-sdd state prd-check-complete --prd {PRD-ID}` |
-| `state prd-complete` | 校验通过后执行 compact，更新 prdStatus | `ae-sdd state prd-complete --prd {PRD-ID} --runtime {mavis|claude-code|codex}` |
+| `state prd-complete` | 校验通过后执行 compact，更新 prdStatus | `ae-sdd state prd-complete --prd {PRD-ID} --runtime {harness|claude-code|codex}` |
 | `state prd-archive` | 归档 compactHistory 到 state.archive.json | `ae-sdd state prd-archive --prd {PRD-ID} --keep-last 5` |
-| `runtime compact` | runtime-specific compact 适配层 | `ae-sdd runtime compact --runtime {mavis|claude-code|codex}` |
+| `runtime compact` | runtime-specific compact 适配层 | `ae-sdd runtime compact --runtime {harness|claude-code|codex}` |
 ```
 
 ---
@@ -396,12 +396,12 @@ git diff harness/.adapter.lock  # 验证 commit hash 已更新
 
 ## 3. Runtime 适配落地（D-6 = B）
 
-### Mavis（已存在 rotate 路径）
+### Harness（已存在 rotate 路径）
 
-**实现：** `ae-sdd runtime compact --runtime mavis` 内部调用：
+**实现：** `ae-sdd runtime compact --runtime harness` 内部调用：
 
 ```bash
-mavis session rotate --handoff-file .auto-engineering/{PRD-ID}/summary.md
+harness session rotate --handoff-file .auto-engineering/{PRD-ID}/summary.md
 ```
 
 **前置：** `summary.md` 必须由 `ae-sdd state prd-complete` 先生成。

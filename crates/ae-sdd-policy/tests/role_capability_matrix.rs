@@ -54,6 +54,23 @@ fn no_agent_role_may_break_a_lease() {
 }
 
 #[test]
+fn every_agent_role_may_manage_only_its_own_session_lease() {
+    for role in [
+        AgentRole::Root,
+        AgentRole::Series,
+        AgentRole::Task,
+        AgentRole::Reviewer,
+    ] {
+        assert!(RolePolicy::permits(role, RoleOperation::ManageOwnLease));
+        assert!(!RolePolicy::permits(role, RoleOperation::BreakLease));
+    }
+    assert!(!RolePolicy::permits(
+        AgentRole::Task,
+        RoleOperation::RequestGlobalTransition
+    ));
+}
+
+#[test]
 fn root_reads_bounded_projection_not_child_artifact_bodies() {
     assert!(RolePolicy::permits(
         AgentRole::Root,
@@ -62,5 +79,21 @@ fn root_reads_bounded_projection_not_child_artifact_bodies() {
     assert!(!RolePolicy::permits(
         AgentRole::Root,
         RoleOperation::ReadAuthorizedArtifacts
+    ));
+}
+
+#[test]
+fn root_may_commit_bounded_child_artifacts_and_verification_evidence() {
+    assert!(RolePolicy::permits(
+        AgentRole::Root,
+        RoleOperation::ModifyAssignedPaths
+    ));
+    assert!(RolePolicy::permits(
+        AgentRole::Root,
+        RoleOperation::RunAssignedTests
+    ));
+    assert!(RolePolicy::permits(
+        AgentRole::Root,
+        RoleOperation::SubmitEvidence
     ));
 }

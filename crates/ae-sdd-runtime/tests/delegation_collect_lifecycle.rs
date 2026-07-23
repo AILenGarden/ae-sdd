@@ -1,5 +1,9 @@
 mod support;
 
+#[allow(dead_code, unused_imports)]
+#[path = "../../../bins/ae-sdd-cli/src/legacy/mod.rs"]
+mod legacy;
+
 use ae_sdd_protocol::{ClientKind, RpcMethod};
 use ae_sdd_runtime::{PersistencePort, RuntimeConfig};
 use serde_json::json;
@@ -38,7 +42,8 @@ fn parent_collects_only_after_artifact_and_memory_receipts_are_persisted() {
             "inputRevision":1,
             "inputFingerprint":"a".repeat(64),
             "deadlineUnixMs":2_000,
-            "adapterId":"host-a"
+            "adapterId":"host-a",
+            "grant":{"operations":[],"capabilities":[],"paths":[]}
         }),
         1_000,
     );
@@ -152,6 +157,8 @@ fn parent_collects_only_after_artifact_and_memory_receipts_are_persisted() {
     );
     collect.work_item_id = Some("WORK".to_owned());
     collect.idempotency_key = Some("delegation-collect".to_owned());
+    legacy::adapt_passthrough_request("review collect", RpcMethod::DelegationCollect, &mut collect)
+        .expect("review collect alias adapts");
     let collected =
         result(&harness.call(&mut root_connection, RpcMethod::DelegationCollect, collect));
     assert_eq!(collected["status"], "completed");
@@ -165,4 +172,23 @@ fn parent_collects_only_after_artifact_and_memory_receipts_are_persisted() {
         "delegation-memory-cleanup/v1"
     );
     assert!(collected.get("result").is_none());
+
+    let mut replay = session_params(
+        &workspace,
+        &root,
+        "root-agent",
+        json!({"delegationId":delegation_id}),
+        1_000,
+    );
+    replay.work_item_id = Some("WORK".to_owned());
+    replay.idempotency_key = Some("delegation-collect".to_owned());
+    legacy::adapt_passthrough_request(
+        "review-loop collect",
+        RpcMethod::DelegationCollect,
+        &mut replay,
+    )
+    .expect("review-loop collect alias adapts");
+    let replayed =
+        result(&harness.call(&mut root_connection, RpcMethod::DelegationCollect, replay));
+    assert_eq!(replayed, collected);
 }

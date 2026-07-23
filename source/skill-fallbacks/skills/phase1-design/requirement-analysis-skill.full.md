@@ -20,6 +20,7 @@ description: 需求分析 SKILL — ae-sdd 路由后的分析阶段。从 PRD/Is
 > - [`templates/design/ra-template.md`](../../templates/design/ra-template.md) = RA 空白模板
 > - [`templates/design/prd-template.md`](../../templates/design/prd-template.md) = PRD 空白模板
 > - [`templates/design/issue-template.md`](../../templates/design/issue-template.md) = Issue 空白模板
+> - [`standards/doc-density-standard.md`](../../standards/doc-density-standard.md) = 文档密度红线（写作前必读，`DOC_DENSITY_STANDARD`）
 >
 > **🔴 核心立场（2026-06-17 新建）：** 之前 Phase 1 起点只有 `auto-engineering-skill` 中"读 PRD → 启动流程"的一行描述，**没有独立 SKILL**。本次新建补齐——把"需求分析"作为独立环节固化下来，避免下游 SKILL 各做一遍零散的需求理解。
 

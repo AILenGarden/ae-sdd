@@ -72,6 +72,6 @@ ae-sdd update-check --json
 
 ## Reviewer
 
-- **改动设计**：Mavis（mavis root agent）
+- **改动设计**：Harness（harness root agent）
 - **用户决策**：用户确认"图谱表+检查脚本"形态
 - **Reviewer**：待指派

@@ -156,7 +156,9 @@ impl LeaseLedger {
         expires_at: UtcTimestamp,
     ) -> Result<LeaseRecord, StoreError> {
         self.expire_if_needed(now);
+        let minimum = self.last_fencing_token;
         let active = self.active.as_mut().ok_or(StoreError::LeaseExpired)?;
+        validate_fencing(minimum, proof)?;
         validate_identity(active, proof)?;
         if expires_at <= *now || expires_at <= active.expires_at {
             return Err(StoreError::InvalidState {
@@ -205,13 +207,8 @@ impl LeaseLedger {
     pub fn validate(&mut self, proof: &LeaseProof, now: &UtcTimestamp) -> Result<(), StoreError> {
         self.expire_if_needed(now);
         let active = self.active.as_ref().ok_or(StoreError::LeaseRequired)?;
+        validate_fencing(self.last_fencing_token, proof)?;
         validate_identity(active, proof)?;
-        if proof.fencing_token < self.last_fencing_token {
-            return Err(StoreError::StaleFencingToken {
-                minimum: self.last_fencing_token,
-                observed: proof.fencing_token,
-            });
-        }
         Ok(())
     }
 
@@ -237,6 +234,7 @@ impl LeaseLedger {
     ) -> Result<LeaseTombstone, StoreError> {
         self.expire_if_needed(&now);
         let active = self.active.as_ref().ok_or(StoreError::LeaseRequired)?;
+        validate_fencing(self.last_fencing_token, proof)?;
         validate_identity(active, proof)?;
         let active = self.active.take().expect("active lease was checked");
         let tombstone = LeaseTombstone {
@@ -412,6 +410,17 @@ fn validate_identity(record: &LeaseRecord, proof: &LeaseProof) -> Result<(), Sto
     Ok(())
 }
 
+fn validate_fencing(minimum: FencingToken, proof: &LeaseProof) -> Result<(), StoreError> {
+    if proof.fencing_token < minimum {
+        Err(StoreError::StaleFencingToken {
+            minimum,
+            observed: proof.fencing_token,
+        })
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -482,10 +491,9 @@ mod tests {
             )
             .expect("expired lease is replaced");
 
-        assert!(
-            ledger
-                .validate(&stale, &at("2026-07-23T00:02:30Z"))
-                .is_err()
-        );
+        assert!(matches!(
+            ledger.validate(&stale, &at("2026-07-23T00:02:30Z")),
+            Err(StoreError::StaleFencingToken { .. })
+        ));
     }
 }

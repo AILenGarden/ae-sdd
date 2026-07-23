@@ -16,6 +16,8 @@ fn workspace(root: &Path) -> BusinessWorkspace {
         project_key: "gate-test".to_owned(),
         mode: WorkspaceMode::Shadow,
         agent_role: None,
+        agent_grant: None,
+        caller_kind: None,
         inventory_generation: 1,
     }
 }

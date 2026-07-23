@@ -88,7 +88,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
 | ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |
 | ⑤ | **工具链（CLI + lib + tests）** | `tools/bin/ae-sdd`（30 顶层命令组，含 `perf`）+ `tools/lib/`（含 runtime_stats/runtime_exec）+ `tools/tests/` | 门禁检查、状态管理、记忆层、DB/Git 工具集、hook 拦截、update-check、Runtime Stats | 直接编辑 `tools/`，独立于 `source/` 但被 update-graph 联动 |
-| ⑥ | **Harness 适配层** | `.harness/agent.md` + `.harness/.adapter.lock` | 由 ae-sdd-harness-adapter SKILL 自动生成，转译为 Mavis 团队级 agent | ❌ 不手工改；母版升级后重跑 adapter SKILL 重新生成 |
+| ⑥ | **Harness 适配层** | `.harness/agent.md` + `.harness/.adapter.lock` | 由 ae-sdd-harness-adapter SKILL 自动生成，转译为 Harness 团队级 agent | ❌ 不手工改；母版升级后重跑 adapter SKILL 重新生成 |
 
 ### 子系统协同关系图
 
@@ -130,7 +130,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 │
 │  ⑥ Harness 适配层（派生，非本体）：
 │     source/SKILL.md + HARNESS.md ──adapter SKILL──► .harness/agent.md
-│     （Mavis 团队级 agent 入口，由 .adapter.lock 标记 source input hash）
+│     （Harness 团队级 agent 入口，由 .adapter.lock 标记 source input hash）
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -474,7 +474,7 @@ install.py --target-path ~/.zcode/skills/ae-sdd --quiet
    ↓
 ae-sdd-harness-adapter/scripts/convert-ae-sdd-to-harness.ps1
    ↓
-mavis harness remount
+harness remount
 ```
 
 **跳过策略**：
@@ -486,7 +486,7 @@ mavis harness remount
 **何时仍需手工 dev-sync**（hook 失效场景）：
 1. **开发机全局禁用 hook**（`git config --global core.hooksPath /dev/null`）
 2. **Windows 上 Git Bash 路径含空格**导致子进程失败
-3. **mavis daemon 没跑**但想强制 build+install（不依赖 mavis mount）
+3. **harness daemon 没跑**但想强制 build+install（不依赖 harness mount）
 4. **首次安装**：clone 完仓库后还没装 hook → 跑一次 `bash scripts/install-hooks.sh`（自动 git config core.hooksPath = .githooks）
 
 **`ae-sdd health master-freshness` 输出解读**：
@@ -837,8 +837,8 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2+ `tools/tests/test_update_graph.py` 存在，覆盖 UC-01~UC-07 + UC-14 各场景
 - [ ] 🆕 v3.2+ 本文件含 `## 更新依赖图谱` 章节（图谱表 + 使用 SOP + UC-01~15 检查说明 + UG/UC 机器同步锚点）
 - [ ] 🆕 v3.2.1 `tools/lib/gates.py` 含 `G-CODE-1` 门禁（Coding 真实性）+ `scripts/coding_authenticity_scan.py` 存在
-- [ ] 🆕 v3.2.2 `source/skills/cross-cutting/` 含 4 个 toolset SKILL（`database-tool-skill.md` / `git-insight-skill.md` / `memory-management-skill.md` / `toolset-orchestration-skill.md`）
-- [ ] 🆕 v3.2.2 `source/standards/toolsets/` 含 4 份 toolset 标准（`db-connection-profile.schema.md` / `git-insight.md` / `memory-layering.md` / `toolset-security.md`）
+- [ ] 🆕 v3.2.2 `source/skills/cross-cutting/` 含 5 个 toolset SKILL（`database-tool-skill.md` / `git-insight-skill.md` / `memory-management-skill.md` / `toolset-orchestration-skill.md` / `postman-tool-skill.md`）
+- [ ] 🆕 v3.2.2 `source/standards/toolsets/` 含 5 份 toolset 标准（`db-connection-profile.schema.md` / `git-insight.md` / `memory-layering.md` / `toolset-security.md` / `postman-profile.schema.md`）
 - [ ] 🆕 v3.2.2 `tools/lib/` 含 3 个 toolset 实现模块（`db_tool.py` 只读优先 + 本地 profile / `git_insight.py` 只读 JSON 输出 / `memory_store.py` 阶段感知 JSONL）
 - [ ] 🆕 v3.2.2 `tools/bin/ae-sdd` CLI 含 `memory` / `db` / `git` 三组子命令（`memory enter/write/exit/read/search/promote/summarize`、`db profiles/query/explain/audit`、`git status/diff/log/blame/impact`）
 - [ ] 🆕 v3.2.2 `tools/tests/test_toolsets.py` 存在，覆盖三组 toolset 子命令

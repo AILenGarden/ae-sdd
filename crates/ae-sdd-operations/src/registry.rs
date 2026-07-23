@@ -303,7 +303,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         false,
         false,
         true,
-        false,
+        true,
         LEASE_BREAK,
     ),
     spec(

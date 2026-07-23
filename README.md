@@ -67,12 +67,28 @@ ae-sddd serve --state-dir <protected-dir> --allowed-root <workspace-parent>...
 Installed lifecycle commands:
 
 ```text
+ae-sdd runtime ensure
 ae-sdd runtime start
 ae-sdd runtime status
 ae-sdd runtime drain
 ae-sdd runtime logs
 ae-sdd runtime stop
 ```
+
+`runtime ensure` is the idempotent startup entry. A supported host runs
+`runtime ensure --quiet` from `SessionStart` to prewarm the daemon. This is only
+a latency optimization: every daemon-bound CLI command and every trusted,
+session-bound Hook also recovers a missing or unavailable local endpoint, waits
+for authenticated readiness, and replays the original request once. An unbound
+host event still starts the runtime when possible, then fails closed because it
+has no authenticated session to execute against. `runtime status`, `drain`, and
+`stop` retain their non-starting administrative semantics.
+
+For one daemon to serve Agents in several workspaces, set
+`AE_SDD_ALLOWED_ROOTS` to the trusted parent roots before the first bootstrap
+(Windows uses the normal `;` path-list separator). Without that shared
+configuration, a cold start admits the current workspace only; it never widens
+filesystem access merely because a later client asks.
 
 Hook commands consume one JSON wrapper from stdin and emit one host-compatible
 outcome:
@@ -84,8 +100,15 @@ ae-sdd hook --method hook.post_tool --request-json -
 ae-sdd hook --method hook.stop --request-json -
 ```
 
-An engaged Hook fails closed when the daemon is unavailable. It never runs a
-local Gate or mutates state outside the daemon.
+An engaged, bound Hook first attempts daemon recovery and fails closed only if
+recovery or the one replay fails. An unbound host event is still denied after a
+best-effort runtime prewarm. Hooks never run a local Gate or mutate state
+outside the daemon.
+
+Windows uses a per-user Named Pipe, not TCP/HTTP, so ae-sdd has no daemon port to
+configure or expose. A current-user Scheduled Task can optionally run `ae-sdd
+runtime ensure` at sign-in to reduce the first-call cold-start latency, but it is
+not required for correctness.
 
 ## Repository Layout
 

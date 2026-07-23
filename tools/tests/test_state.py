@@ -573,15 +573,15 @@ class TestPrdComplete(unittest.TestCase):
             "events": [{"seq": 1}, {"seq": 2}],
         }
 
-    def test_mavis_generates_summary_and_status(self):
-        """mavis runtime：生成 summary.md + prdStatus → awaiting_compact，无 trigger"""
+    def test_harness_generates_summary_and_status(self):
+        """harness runtime：生成 summary.md + prdStatus → awaiting_compact，无 trigger"""
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             ps = self._make_prd_state()
-            r = state_mod.prd_complete(ps, "PRD-CS-001", "mavis", root)
+            r = state_mod.prd_complete(ps, "PRD-CS-001", "harness", root)
             self.assertTrue(r["summaryPath"].endswith("summary.md"))
             self.assertFalse(r["compactTrigger"])
-            self.assertIn("mavis session rotate", r["runtimeHint"])
+            self.assertIn("harness session rotate", r["runtimeHint"])
             # summary.md 真实生成
             self.assertTrue(Path(r["summaryPath"]).is_file())
             # prdStatus 流转
@@ -618,7 +618,7 @@ class TestPrdComplete(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             ps = self._make_prd_state()
-            r = state_mod.prd_complete(ps, "PRD-CS-001", "mavis", root)
+            r = state_mod.prd_complete(ps, "PRD-CS-001", "harness", root)
             content = Path(r["summaryPath"]).read_text(encoding="utf-8")
             self.assertIn("PRD-CS-001", content)
             self.assertIn("测试 PRD", content)
@@ -631,7 +631,7 @@ class TestPrdComplete(unittest.TestCase):
             root = Path(td)
             ps = self._make_prd_state()
             ps["prdStatus"] = "compacted"
-            state_mod.prd_complete(ps, "PRD-CS-001", "mavis", root)
+            state_mod.prd_complete(ps, "PRD-CS-001", "harness", root)
             self.assertEqual(ps["prdStatus"], "compacted")
 
 

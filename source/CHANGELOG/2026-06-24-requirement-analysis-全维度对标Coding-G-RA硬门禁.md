@@ -174,7 +174,7 @@ dev-sync 后 `dist/ae-sdd/scripts/ra_authenticity_scan.py` 与 `~/.claude/skills
 
 ## Reviewer
 
-- **改动设计**：Mavis（mavis root agent）
+- **改动设计**：Harness（harness root agent）
 - **用户决策**：用户确认"全维度对标（5 层全做）"
 - **Reviewer**：待指派
 

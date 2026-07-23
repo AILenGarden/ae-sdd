@@ -7,12 +7,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ae-sdd-domain = { path = "../ae-sdd-domain" }
-atomicwrites = "0.4.4"
-fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
+ae-sdd-domain.workspace = true
+atomicwrites.workspace = true
+fs4.workspace = true
 hex.workspace = true
-jiff = { version = "0.2.34", default-features = false, features = ["std"] }
-rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+jiff.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -21,7 +21,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-tempfile = "3.27.0"
+tempfile.workspace = true
 
 [lints]
 workspace = true

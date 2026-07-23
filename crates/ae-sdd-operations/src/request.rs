@@ -36,6 +36,21 @@ impl Confirmation {
         }
         Ok(value)
     }
+
+    #[must_use]
+    pub fn confirmation_id(&self) -> &str {
+        &self.confirmation_id
+    }
+
+    #[must_use]
+    pub fn approved_by(&self) -> &str {
+        &self.approved_by
+    }
+
+    #[must_use]
+    pub fn approved_at(&self) -> &str {
+        &self.approved_at
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +65,7 @@ pub struct OperationRequest {
     pub expected_revision: Option<StateRevision>,
     pub idempotency_key: Option<Box<str>>,
     pub confirmation: Option<Confirmation>,
+    pub dry_run: bool,
     pub payload: Value,
 }
 
@@ -99,6 +115,16 @@ impl ValidatedOperationRequest {
     pub const fn request(&self) -> &OperationRequest {
         &self.request
     }
+}
+
+/// Validates only the operation-specific business payload. Transport clients
+/// may use this as an early fail-closed check; the daemon still validates the
+/// complete request and remains authoritative.
+pub fn validate_operation_payload(
+    operation: OperationName,
+    payload: &Value,
+) -> Result<(), OperationRequestError> {
+    validate_payload(operation.spec(), payload)
 }
 
 fn validate_preconditions(

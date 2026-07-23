@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use ae_sdd_domain::{AgentRole, EventStoreId};
+use ae_sdd_domain::{AgentRole, EventStoreId, ScopedGrant};
 use ae_sdd_protocol::{RequestParams, RpcMethod, StableErrorCode, WorkspaceMode};
 use serde_json::Value;
 
@@ -43,8 +43,29 @@ pub struct BusinessWorkspace {
     pub mode: WorkspaceMode,
     /// Daemon-verified session role for Agent business calls.
     pub agent_role: Option<AgentRole>,
+    /// Daemon-verified operation/path grant for Agent business calls.
+    pub agent_grant: Option<ScopedGrant>,
+    /// Handshake-authenticated caller kind; absent only for daemon-internal work.
+    pub caller_kind: Option<ae_sdd_protocol::ClientKind>,
     /// Current daemon-owned inventory generation.
     pub inventory_generation: u64,
+}
+
+/// Daemon-captured session lineage bound to one durable background job.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundJobIdentity {
+    /// Runtime boot executing the job.
+    pub boot_id: String,
+    /// Physical session that submitted the job.
+    pub session_id: String,
+    /// Root orchestration session for the lineage.
+    pub root_session_id: String,
+    /// Physical delegation for non-root sessions.
+    pub delegation_id: Option<String>,
+    /// Session context generation captured at submission.
+    pub context_generation: u64,
+    /// Durable job submission idempotency key.
+    pub idempotency_key: String,
 }
 
 /// Durable runtime metadata and event port.
@@ -113,6 +134,32 @@ pub trait BusinessOperationPort: Send + Sync {
         entrypoint: &str,
         arguments: &Value,
     ) -> RuntimeResult<Value>;
+
+    /// Executes a job with the trusted work-item identity captured by the
+    /// scheduler. The default preserves adapters whose jobs are workspace-only;
+    /// adapters with work-item diagnostics override this method explicitly.
+    fn execute_bound_job(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: Option<&str>,
+        entrypoint: &str,
+        arguments: &Value,
+    ) -> RuntimeResult<Value> {
+        let _ = work_item_id;
+        self.execute_job(workspace, entrypoint, arguments)
+    }
+
+    /// Executes a job with daemon-captured session lineage and scoped identity.
+    fn execute_trusted_job(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: Option<&str>,
+        _identity: Option<&BoundJobIdentity>,
+        entrypoint: &str,
+        arguments: &Value,
+    ) -> RuntimeResult<Value> {
+        self.execute_bound_job(workspace, work_item_id, entrypoint, arguments)
+    }
 
     /// Validates bounded child artifact references against authoritative files.
     fn validate_delegation_artifacts(

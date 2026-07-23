@@ -1,5 +1,16 @@
 use super::*;
 
+struct CapabilitySignInput<'a> {
+    workspace_id: &'a str,
+    session_id: &'a str,
+    role: WireAgentRole,
+    delegation_id: Option<&'a str>,
+    grant: &'a ScopedGrantWire,
+    engaged: bool,
+    issued_at: u64,
+    expires_at: u64,
+}
+
 impl RuntimeService {
     pub(super) fn session_open(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let workspace_id = require(&params.workspace_id, "workspaceId")?.to_owned();
@@ -51,6 +62,19 @@ impl RuntimeService {
                     .get(&session_id)
                     .cloned()
                     .expect("external session index is internally consistent");
+                let authoritative_grant = self.validate_delegated_open(
+                    previous.result.role,
+                    previous.delegation_id.as_deref(),
+                    &session_id,
+                )?;
+                if previous.result.role != WireAgentRole::Root
+                    && previous.grant.normalized()? != authoritative_grant
+                {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::DelegationAttestationFailed,
+                        "durable child session grant differs from its delegation",
+                    ));
+                }
                 let session = state
                     .sessions
                     .get_mut(&session_id)
@@ -61,20 +85,22 @@ impl RuntimeService {
                     ));
                 }
                 session.active = true;
+                session.grant = authoritative_grant;
                 session.result.engaged = engaged;
                 if params.work_item_id.is_some() {
                     session.current_work_item = params.work_item_id.clone();
                 }
                 session.result.expires_at_unix_ms = expires;
-                session.result.capability_token = self.sign_capability(
-                    &workspace_id,
-                    &session_id,
-                    session.result.role,
-                    session.delegation_id.as_deref(),
+                session.result.capability_token = self.sign_capability(CapabilitySignInput {
+                    workspace_id: &workspace_id,
+                    session_id: &session_id,
+                    role: session.result.role,
+                    delegation_id: session.delegation_id.as_deref(),
+                    grant: &session.grant,
                     engaged,
-                    now,
-                    expires,
-                )?;
+                    issued_at: now,
+                    expires_at: expires,
+                })?;
                 (session.result.clone(), Some(previous))
             } else {
                 if state.sessions.values().filter(|item| item.active).count()
@@ -110,20 +136,21 @@ impl RuntimeService {
                         "sessionId is already bound to another physical session",
                     ));
                 }
-                self.validate_delegated_open(
+                let grant = self.validate_delegated_open(
                     payload.role,
                     payload.delegation_id.as_deref(),
                     &session_id,
                 )?;
-                let token = self.sign_capability(
-                    &workspace_id,
-                    &session_id,
-                    payload.role,
-                    payload.delegation_id.as_deref(),
+                let token = self.sign_capability(CapabilitySignInput {
+                    workspace_id: &workspace_id,
+                    session_id: &session_id,
+                    role: payload.role,
+                    delegation_id: payload.delegation_id.as_deref(),
+                    grant: &grant,
                     engaged,
-                    now,
-                    expires,
-                )?;
+                    issued_at: now,
+                    expires_at: expires,
+                })?;
                 let result = SessionResult {
                     session_id: session_id.clone(),
                     role: payload.role,
@@ -139,6 +166,7 @@ impl RuntimeService {
                     current_work_item: params.work_item_id.clone(),
                     result: result.clone(),
                     delegation_id: payload.delegation_id,
+                    grant,
                     current_turn_id: None,
                     current_turn_seq: 0,
                     active: true,
@@ -159,12 +187,20 @@ impl RuntimeService {
                     .workspaces
                     .get(&workspace_id)
                     .ok_or_else(|| project_mismatch("workspace is not registered"))?;
+                let grant = state
+                    .sessions
+                    .get(&result.session_id)
+                    .ok_or_else(session_expired)?
+                    .grant
+                    .to_domain()?;
                 BusinessWorkspace {
                     workspace_id: record.result.workspace_id.clone(),
                     canonical_root: record.result.canonical_root.clone(),
                     project_key: record.result.project_key.clone(),
                     mode: record.result.mode,
                     agent_role: Some(AgentRole::from(result.role)),
+                    agent_grant: Some(grant),
+                    caller_kind: None,
                     inventory_generation: record.result.inventory_generation,
                 }
             };
@@ -248,15 +284,16 @@ impl RuntimeService {
                 .get_mut(&identity.session_id)
                 .ok_or_else(session_expired)?;
             session.result.expires_at_unix_ms = expires;
-            session.result.capability_token = self.sign_capability(
-                &identity.workspace_id,
-                &identity.session_id,
-                session.result.role,
-                session.delegation_id.as_deref(),
-                session.result.engaged,
-                now,
-                expires,
-            )?;
+            session.result.capability_token = self.sign_capability(CapabilitySignInput {
+                workspace_id: &identity.workspace_id,
+                session_id: &identity.session_id,
+                role: session.result.role,
+                delegation_id: session.delegation_id.as_deref(),
+                grant: &session.grant,
+                engaged: session.result.engaged,
+                issued_at: now,
+                expires_at: expires,
+            })?;
             to_value(&session.result)?
         };
         self.persist_session(&identity.session_id)?;
@@ -318,9 +355,9 @@ impl RuntimeService {
         role: WireAgentRole,
         delegation_id: Option<&str>,
         session_id: &str,
-    ) -> RuntimeResult<()> {
+    ) -> RuntimeResult<ScopedGrantWire> {
         match role {
-            WireAgentRole::Root if delegation_id.is_none() => Ok(()),
+            WireAgentRole::Root if delegation_id.is_none() => Ok(crate::grant::root_grant()),
             WireAgentRole::Root => Err(RuntimeError::new(
                 StableErrorCode::DelegationAttestationFailed,
                 "root session cannot carry a delegation",
@@ -342,22 +379,15 @@ impl RuntimeService {
                         "child session does not match the attested delegation",
                     ));
                 }
-                Ok(())
+                let grant = projection.grant.normalized()?;
+                crate::grant::validate_session_grant(role, &grant)?;
+                Ok(grant)
             }
         }
     }
 
-    pub(super) fn sign_capability(
-        &self,
-        workspace_id: &str,
-        session_id: &str,
-        role: WireAgentRole,
-        delegation_id: Option<&str>,
-        engaged: bool,
-        issued_at: u64,
-        expires_at: u64,
-    ) -> RuntimeResult<String> {
-        let capability_id = if engaged {
+    fn sign_capability(&self, input: CapabilitySignInput<'_>) -> RuntimeResult<String> {
+        let capability_id = if input.engaged {
             "hook.engaged"
         } else {
             "hook.unengaged"
@@ -366,22 +396,25 @@ impl RuntimeService {
             self.capability_signer.key_id(),
             self.boot_id,
             CapabilityId::new(capability_id).expect("static capability ID is valid"),
-            SessionId::from_str(session_id).map_err(|_| schema_error("invalid session ID"))?,
-            role.into(),
-            delegation_id
+            SessionId::from_str(input.session_id)
+                .map_err(|_| schema_error("invalid session ID"))?,
+            input.role.into(),
+            input
+                .delegation_id
                 .map(DelegationId::from_str)
                 .transpose()
                 .map_err(|_| schema_error("invalid delegation ID"))?,
             capability_grant_digest(
-                workspace_id,
-                session_id,
-                role,
-                delegation_id,
+                input.workspace_id,
+                input.session_id,
+                input.role,
+                input.delegation_id,
+                input.grant,
                 &self.config.policy_digest,
                 capability_id,
-            ),
-            issued_at,
-            expires_at,
+            )?,
+            input.issued_at,
+            input.expires_at,
         )
         .map_err(|_| schema_error("session capability claims are invalid"))?;
         self.capability_signer
@@ -439,6 +472,16 @@ impl RuntimeService {
                     "session capability proof is forged, stale, or expired",
                 )
             })?;
+        let grant = crate::grant::validate_session_grant(session.result.role, &session.grant)?;
+        let expected_grant_digest = capability_grant_digest(
+            workspace_id,
+            session_id,
+            session.result.role,
+            session.delegation_id.as_deref(),
+            &session.grant,
+            &self.config.policy_digest,
+            claims.capability_id().as_str(),
+        )?;
         if claims.session_id().to_string() != session_id
             || AgentRole::from(session.result.role) != claims.role()
             || claims.delegation_id().map(|value| value.to_string()) != session.delegation_id
@@ -448,15 +491,7 @@ impl RuntimeService {
                 } else {
                     "hook.unengaged"
                 }
-            || claims.grant_digest()
-                != capability_grant_digest(
-                    workspace_id,
-                    session_id,
-                    session.result.role,
-                    session.delegation_id.as_deref(),
-                    &self.config.policy_digest,
-                    claims.capability_id().as_str(),
-                )
+            || claims.grant_digest() != expected_grant_digest
         {
             return Err(RuntimeError::new(
                 StableErrorCode::TurnIdentityMismatch,
@@ -467,6 +502,7 @@ impl RuntimeService {
             workspace_id: workspace_id.to_owned(),
             session_id: session_id.to_owned(),
             role: session.result.role,
+            grant,
             engaged: session.result.engaged,
             capability_id: claims.capability_id().as_str().to_owned(),
         })
@@ -510,17 +546,84 @@ fn capability_grant_digest(
     session_id: &str,
     role: WireAgentRole,
     delegation_id: Option<&str>,
+    grant: &ScopedGrantWire,
     policy_digest: &str,
     capability_id: &str,
-) -> GrantDigest {
+) -> RuntimeResult<GrantDigest> {
     let role = match role {
         WireAgentRole::Root => "root",
         WireAgentRole::Series => "series",
         WireAgentRole::Task => "task",
         WireAgentRole::Reviewer => "reviewer",
     };
-    GrantDigest::digest(format!(
+    let mut material = format!(
         "{workspace_id}\0{session_id}\0{role}\0{}\0{policy_digest}\0{capability_id}",
         delegation_id.unwrap_or("")
-    ))
+    )
+    .into_bytes();
+    material.push(0);
+    let normalized = grant.normalized()?;
+    material.extend(serde_json::to_vec(&normalized).map_err(canonical_error)?);
+    Ok(GrantDigest::digest(material))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GrantPathWire;
+
+    #[test]
+    fn capability_digest_binds_the_actual_operation_and_path_grant() {
+        let base = ScopedGrantWire {
+            operations: vec!["document.resolve".to_owned()],
+            capabilities: Vec::new(),
+            paths: vec![GrantPathWire::Subtree {
+                path: "ae-sdd-doc/Story".to_owned(),
+            }],
+        };
+        let wider_operation = ScopedGrantWire {
+            operations: vec!["document.resolve".to_owned(), "document.save".to_owned()],
+            ..base.clone()
+        };
+        let wider_path = ScopedGrantWire {
+            paths: vec![GrantPathWire::ProjectRoot],
+            ..base.clone()
+        };
+        let digest = capability_grant_digest(
+            "workspace",
+            "session",
+            WireAgentRole::Task,
+            Some("delegation"),
+            &base,
+            "policy",
+            "hook.engaged",
+        )
+        .expect("digest");
+        assert_ne!(
+            digest,
+            capability_grant_digest(
+                "workspace",
+                "session",
+                WireAgentRole::Task,
+                Some("delegation"),
+                &wider_operation,
+                "policy",
+                "hook.engaged",
+            )
+            .expect("digest")
+        );
+        assert_ne!(
+            digest,
+            capability_grant_digest(
+                "workspace",
+                "session",
+                WireAgentRole::Task,
+                Some("delegation"),
+                &wider_path,
+                "policy",
+                "hook.engaged",
+            )
+            .expect("digest")
+        );
+    }
 }

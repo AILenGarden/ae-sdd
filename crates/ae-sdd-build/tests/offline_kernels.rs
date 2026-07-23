@@ -76,6 +76,29 @@ fn version_and_strict_schema_have_success_and_negative_paths() {
 }
 
 #[test]
+fn offline_request_wire_round_trips_and_rejects_unknown_fields() {
+    let expected = request(
+        OfflineCommand::AssetsGenerate {
+            project_root: PathBuf::from("C:/workspace/example"),
+            project_key: "example-project".to_owned(),
+        },
+        "assets-wire-roundtrip",
+        ExecutionMode::DryRun,
+    );
+    let encoded = serde_json::to_vec(&expected).expect("serialize offline request");
+    let decoded: OfflineRequest =
+        serde_json::from_slice(&encoded).expect("deserialize offline request");
+    assert_eq!(decoded, expected);
+
+    let mut unknown = serde_json::to_value(&expected).expect("serialize request value");
+    unknown
+        .as_object_mut()
+        .expect("request object")
+        .insert("unknownField".to_owned(), serde_json::json!(true));
+    assert!(serde_json::from_value::<OfflineRequest>(unknown).is_err());
+}
+
+#[test]
 fn init_and_hook_kernels_write_only_frozen_files() {
     let root = fixture("init-hooks");
     let dry = execute_offline(&request(
@@ -126,7 +149,12 @@ fn init_and_hook_kernels_write_only_frozen_files() {
     ))
     .expect("hooks apply");
     let hooks = fs::read_to_string(root.join(".codex/hooks.json")).expect("Codex hooks");
+    assert!(hooks.contains("SessionStart"));
+    assert!(hooks.contains("runtime ensure"));
     assert!(hooks.contains("hook --method hook.pre_tool --request-json -"));
+    assert!(hooks.contains("hook --method hook.user_prompt --request-json -"));
+    assert!(hooks.contains("hook --method hook.post_tool --request-json -"));
+    assert!(hooks.contains("hook --method hook.stop --request-json -"));
     assert!(!hooks.to_ascii_lowercase().contains("python"));
     assert!(matches!(
         execute_offline(&request(
@@ -204,10 +232,15 @@ fn assets_and_plugin_kernels_validate_names_and_content() {
 #[test]
 fn bump_requires_all_three_authoritative_version_occurrences() {
     let root = fixture("bump");
+    fs::create_dir_all(root.join("tools/lib")).expect("tools/lib");
     fs::create_dir(root.join("source")).expect("source");
-    fs::write(root.join("Cargo.toml"), "version = \"1.2.3\"\n").expect("Cargo");
     fs::write(root.join("source/SKILL.md"), "version: 1.2.3\n").expect("skill");
-    fs::write(root.join("README.md"), "ae-sdd 1.2.3\n").expect("readme");
+    fs::write(
+        root.join("tools/lib/paths.py"),
+        "MASTER_VERSION = \"1.2.3\"\n",
+    )
+    .expect("paths");
+    fs::write(root.join("README.md"), "> **版本：** v1.2.3\n").expect("readme");
     execute_offline(&request(
         OfflineCommand::Bump {
             repository_root: root.clone(),
@@ -219,9 +252,19 @@ fn bump_requires_all_three_authoritative_version_occurrences() {
     ))
     .expect("bump");
     assert!(
-        fs::read_to_string(root.join("Cargo.toml"))
-            .expect("Cargo")
-            .contains("1.2.4")
+        fs::read_to_string(root.join("source/SKILL.md"))
+            .expect("skill")
+            .contains("version: 1.2.4")
+    );
+    assert!(
+        fs::read_to_string(root.join("tools/lib/paths.py"))
+            .expect("paths")
+            .contains("MASTER_VERSION = \"1.2.4\"")
+    );
+    assert!(
+        fs::read_to_string(root.join("README.md"))
+            .expect("readme")
+            .contains("> **版本：** v1.2.4")
     );
     assert!(matches!(
         execute_offline(&request(

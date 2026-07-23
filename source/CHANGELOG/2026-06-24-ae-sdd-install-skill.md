@@ -10,7 +10,7 @@
 
 本次新增 **ae-sdd-install-skill** —— 专门给 Agent 看的"安装引导 SKILL"，解决两个真实 gap：
 
-1. **Agent 启动路径**：当 Mavis / Claude Code / Codex 受用户委托装 ae-sdd 时，没有专门的引导文档
+1. **Agent 启动路径**：当 Harness / Claude Code / Codex 受用户委托装 ae-sdd 时，没有专门的引导文档
 2. **人启动路径**：当人跑 `install.sh` / `install.ps1` 后，没有智能引导（不知道下一步怎么用）
 
 **核心设计哲学：**
@@ -99,7 +99,7 @@ def print_usage() -> None:
 
 ### 3.2 新行为
 
-新增 `_detect_agents()` 函数，检测 Claude Code / Codex / Mavis CLI：
+新增 `_detect_agents()` 函数，检测 Claude Code / Codex / Harness CLI：
 
 ```python
 def _detect_agents() -> dict:
@@ -109,8 +109,8 @@ def _detect_agents() -> dict:
         agents["claude"] = "Claude Code"
     if shutil.which("codex") or shutil.which("codex.exe"):
         agents["codex"] = "Codex CLI"
-    if shutil.which("mavis") or shutil.which("mavis.exe"):
-        agents["mavis"] = "Mavis daemon"
+    if shutil.which("harness") or shutil.which("harness.exe"):
+        agents["harness"] = "Harness daemon"
     return agents
 ```
 
@@ -182,7 +182,7 @@ python ~/.claude/skills/ae-sdd/tools/bin/ae-sdd init-hooks --uninstall
 
 ## Reviewer
 
-- **改动设计**：Mavis（mavis root agent）
+- **改动设计**：Harness（harness root agent）
 - **用户决策**：icec-cloud-boss User 域 owner
 - **Reviewer**：待指派
 

@@ -3,7 +3,10 @@
 .githooks/*          text eol=lf
 *.sh                 text eol=lf
 *.bash               text eol=lf
-# harness/ 产物在 Windows 上保持 LF（mavis 正则锚定 ^--- 行首）
+*.rs                 text eol=lf
+*.toml               text eol=lf
+Cargo.lock           text eol=lf
+# harness/ 产物在 Windows 上保持 LF（harness 正则锚定 ^--- 行首）
 harness/.harness/*   text eol=lf
 # PowerShell 脚本保持 LF
 *.ps1                text eol=lf

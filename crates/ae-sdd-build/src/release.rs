@@ -75,7 +75,10 @@ pub fn verify_release(
 
     let scan_files: Vec<_> = files
         .iter()
-        .filter(|path| binary_paths.contains(path) || is_package_or_hook_config(path))
+        .filter(|path| {
+            (binary_paths.contains(path) && !is_build_verifier(path))
+                || is_package_or_hook_config(path)
+        })
         .collect();
     let mut findings = Vec::new();
     let mut scanned_bytes = 0_u64;
@@ -177,6 +180,12 @@ fn is_package_or_hook_config(path: &Path) -> bool {
     })
 }
 
+fn is_build_verifier(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|stem| stem == "ae-sdd-build")
+}
+
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty()
         && haystack
@@ -244,6 +253,24 @@ mod tests {
         let summary = verify_release(&root, &[]).expect("native release passes");
         assert_eq!(summary.artifacts.len(), REQUIRED_BINARIES.len());
         assert!(summary.findings.is_empty());
+        fs::remove_dir_all(root).expect("cleanup fixture");
+    }
+
+    #[test]
+    fn verifier_binary_may_embed_forbidden_marker_vocabulary() {
+        let root = fixture_root("verifier-vocabulary");
+        for binary in REQUIRED_BINARIES {
+            fs::write(root.join(format!("{binary}.exe")), b"native rust binary")
+                .expect("fixture binary");
+        }
+        fs::write(
+            root.join("ae-sdd-build.exe"),
+            b"python.exe fallback scanner",
+        )
+        .expect("verifier fixture");
+
+        let summary = verify_release(&root, &[]).expect("verifier vocabulary is not runtime");
+        assert_eq!(summary.scanned_files, 2);
         fs::remove_dir_all(root).expect("cleanup fixture");
     }
 }

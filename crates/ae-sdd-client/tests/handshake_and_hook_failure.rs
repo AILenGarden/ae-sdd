@@ -1,6 +1,8 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ae_sdd_client::{ClientError, ClientTransport, DaemonClient, HookClient, HookInvocation};
@@ -71,6 +73,79 @@ impl ClientTransport for FakeTransport {
                 }
             });
             let response = json!({"jsonrpc":"2.0","id":request_id,"result":{"ok":true}});
+            Ok(vec![
+                serde_json::to_vec(&handshake).map_err(|_| ClientError::Protocol)?,
+                serde_json::to_vec(&response).map_err(|_| ClientError::Protocol)?,
+            ])
+        })
+    }
+}
+
+#[derive(Clone)]
+struct RecoverOnceTransport {
+    attempts: Arc<AtomicUsize>,
+    request_params: Arc<Mutex<Vec<Value>>>,
+}
+
+impl ClientTransport for RecoverOnceTransport {
+    fn exchange<'a>(
+        &'a self,
+        _endpoint: &'a str,
+        payloads: &'a [Vec<u8>],
+        _timeout: Duration,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<u8>>, ClientError>> + Send + 'a>> {
+        Box::pin(async move {
+            let request =
+                serde_json::from_slice::<Value>(&payloads[1]).map_err(|_| ClientError::Protocol)?;
+            self.request_params
+                .lock()
+                .expect("request params lock")
+                .push(request["params"].clone());
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(ClientError::DaemonUnavailable);
+            }
+
+            let handshake_id = serde_json::from_slice::<Value>(&payloads[0])
+                .map_err(|_| ClientError::Protocol)?["id"]
+                .clone();
+            let request_id = request["id"].clone();
+            let handshake = json!({
+                "jsonrpc":"2.0",
+                "id":handshake_id,
+                "result": {
+                    "protocolVersion":PROTOCOL_VERSION_V1,
+                    "bootId":"00000000-0000-0000-0000-000000000001",
+                    "eventStoreId":"00000000-0000-0000-0000-000000000002",
+                    "daemonBuild":"ae-sdd-daemon/test",
+                    "capabilities":["hook-fail-closed-v1"],
+                    "policyDigest":"a".repeat(64),
+                    "operationSchemaDigest":"b".repeat(64),
+                    "limits": {
+                        "maxFrameBytes":1048576,
+                        "maxAgentDepth":2,
+                        "maxStringBytes":65536,
+                        "maxCollectionItems":128,
+                        "maxDeadlineMs":30000,
+                        "hookDeadlineMs":250,
+                        "maxChildResultBytes":65536,
+                        "maxChildSummaryBytes":4096,
+                        "maxContextProjectionBytes":65536
+                    },
+                    "capabilityKeyId":"d".repeat(64),
+                    "capabilityPublicKey":"e".repeat(64)
+                }
+            });
+            let response = json!({
+                "jsonrpc":"2.0",
+                "id":request_id,
+                "result": {
+                    "engaged":true,
+                    "decision":"allow",
+                    "context":null,
+                    "eventSeq":42,
+                    "offline":false
+                }
+            });
             Ok(vec![
                 serde_json::to_vec(&handshake).map_err(|_| ClientError::Protocol)?,
                 serde_json::to_vec(&response).map_err(|_| ClientError::Protocol)?,
@@ -175,4 +250,126 @@ async fn hook_failure_is_fail_closed_when_daemon_is_unavailable() {
     assert!(!outcome.engaged);
     assert_eq!(outcome.decision, ae_sdd_protocol::HookDecision::Deny);
     assert!(outcome.offline);
+}
+
+#[tokio::test]
+async fn hook_recovery_retries_once_with_identical_params() {
+    let manifest = manifest_file();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let request_params = Arc::new(Mutex::new(Vec::new()));
+    let client = DaemonClient::new(
+        manifest.path(),
+        ClientKind::Hook,
+        Arc::new(RecoverOnceTransport {
+            attempts: Arc::clone(&attempts),
+            request_params: Arc::clone(&request_params),
+        }),
+        Duration::from_millis(250),
+    );
+    let recoveries = Arc::new(AtomicUsize::new(0));
+    let recoveries_for_callback = Arc::clone(&recoveries);
+    let mut hook_params = params();
+    hook_params.session_id = Some("00000000-0000-0000-0000-000000000003".to_owned());
+    hook_params.idempotency_key = Some("hook-event-1".to_owned());
+    hook_params.payload = json!({"hookEventId":"event-1","hostPayload":{"tool":"read"}});
+
+    let outcome = HookClient::new(&client)
+        .invoke_with_recovery(
+            HookInvocation {
+                method: RpcMethod::HookPreTool,
+                params: hook_params,
+                engaged: true,
+                offline_capability: None,
+                now_unix_ms: 1,
+            },
+            move || async move {
+                recoveries_for_callback.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect("successful recovery replays the Hook");
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(recoveries.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.event_seq, 42);
+    assert!(!outcome.offline);
+    let captured = request_params.lock().expect("request params lock");
+    assert_eq!(captured.len(), 2);
+    assert_eq!(captured[0], captured[1]);
+    assert_eq!(captured[1]["idempotencyKey"], "hook-event-1");
+}
+
+#[tokio::test]
+async fn hook_recovery_failure_applies_existing_offline_policy_without_replay() {
+    let manifest = manifest_file();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let client = DaemonClient::new(
+        manifest.path(),
+        ClientKind::Hook,
+        Arc::new(RecoverOnceTransport {
+            attempts: Arc::clone(&attempts),
+            request_params: Arc::new(Mutex::new(Vec::new())),
+        }),
+        Duration::from_millis(250),
+    );
+    let recoveries = Arc::new(AtomicUsize::new(0));
+    let recoveries_for_callback = Arc::clone(&recoveries);
+
+    let outcome = HookClient::new(&client)
+        .invoke_with_recovery(
+            HookInvocation {
+                method: RpcMethod::HookPreTool,
+                params: params(),
+                engaged: true,
+                offline_capability: None,
+                now_unix_ms: 1,
+            },
+            move || async move {
+                recoveries_for_callback.fetch_add(1, Ordering::SeqCst);
+                Err(ClientError::DaemonUnavailable)
+            },
+        )
+        .await
+        .expect("failed recovery is represented by offline policy");
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(recoveries.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.decision, ae_sdd_protocol::HookDecision::Deny);
+    assert!(outcome.offline);
+}
+
+#[tokio::test]
+async fn non_recoverable_hook_error_does_not_invoke_recovery() {
+    let manifest = manifest_file();
+    let client = DaemonClient::new(
+        manifest.path(),
+        ClientKind::Hook,
+        Arc::new(FakeTransport {
+            mode: FakeMode::WrongPolicy,
+        }),
+        Duration::from_millis(250),
+    );
+    let recoveries = Arc::new(AtomicUsize::new(0));
+    let recoveries_for_callback = Arc::clone(&recoveries);
+
+    let error = HookClient::new(&client)
+        .invoke_with_recovery(
+            HookInvocation {
+                method: RpcMethod::HookPreTool,
+                params: params(),
+                engaged: true,
+                offline_capability: None,
+                now_unix_ms: 1,
+            },
+            move || async move {
+                recoveries_for_callback.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect_err("protocol errors must remain visible");
+
+    assert!(matches!(error, ClientError::Protocol));
+    assert_eq!(recoveries.load(Ordering::SeqCst), 0);
 }

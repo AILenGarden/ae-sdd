@@ -87,13 +87,16 @@ impl RuntimeService {
     }
 
     pub(super) fn context_get(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
+        let _: EmptyPayload = decode_value(params.payload.clone())?;
         let identity = self.session_identity(params, false)?;
+        self.assert_context_work_item(&identity.session_id, params.work_item_id.as_deref())?;
         let result = self.context.project(&identity.session_id, 0, "")?;
         to_value(result)
     }
 
     pub(super) fn context_project(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
+        self.assert_context_work_item(&identity.session_id, params.work_item_id.as_deref())?;
         let request: ContextProjectPayload = decode_value(params.payload.clone())?;
         let result = self.context.project(
             &identity.session_id,
@@ -108,4 +111,27 @@ impl RuntimeService {
         }
         to_value(result)
     }
+
+    fn assert_context_work_item(
+        &self,
+        session_id: &str,
+        requested_work_item: Option<&str>,
+    ) -> RuntimeResult<()> {
+        let requested = requested_work_item
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| schema_error("workItemId is required for context projection"))?;
+        let state = self.lock_state()?;
+        let session = state.sessions.get(session_id).ok_or_else(session_expired)?;
+        if session.current_work_item.as_deref() == Some(requested) {
+            Ok(())
+        } else {
+            Err(turn_mismatch(
+                "context projection Work Item differs from the session binding",
+            ))
+        }
+    }
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyPayload {}

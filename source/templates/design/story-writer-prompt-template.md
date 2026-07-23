@@ -44,7 +44,7 @@ context:
 deadline: {最长执行时间}
 
 report_back:
-  channel: mavis communication
+  channel: harness communication
   target: {root session id}
   format: {STORY-ID}-Story-WriterReport.md
 ```

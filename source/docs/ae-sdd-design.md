@@ -384,7 +384,7 @@ G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存
 
 ### 设计
 
-将 ae-sdd SKILL.md 自动转译为 Mavis harness 格式的 agent.md，使 ae-sdd 能作为 Mavis 团队级 agent 被编排。不需要手工维护两套定义，转译脚本从 SKILL.md + HARNESS.md 生成 agent.md，母版升级后重跑即可同步。
+将 ae-sdd SKILL.md 自动转译为 Harness 格式的 agent.md，使 ae-sdd 能作为 Harness 团队级 agent 被编排。不需要手工维护两套定义，转译脚本从 SKILL.md + HARNESS.md 生成 agent.md，母版升级后重跑即可同步。
 
 **⚠️ 文档滞后修正**：原文档写转译脚本是 `convert-ae-sdd-to-harness.ps1`——该文件已不存在。实际实现是 `scripts/build_harness.py`（Python 重写版，脚本头部注释明确写"由 convert-ae-sdd-to-harness.ps1 迁移而来"），逐功能对齐原 PS1 版本（版本号 fallback / frontmatter 解析 / 多维幂等锁 / 模板渲染 / mount 失败回滚等）。
 
@@ -399,11 +399,11 @@ G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存
 | tree-hash amend 检测 | `build_harness.py:get_tree_hash()`（行147，🆕 v3.5.6，区分 amend 和真实内容变更） |
 | SKILL frontmatter 解析 | `build_harness.py:parse_skill_frontmatter()`（行168） |
 | 模板渲染 | `build_harness.py:render_template()`（行207，`{{VAR}}` 占位符替换） |
-| mavis CLI 探测与 mount | `build_harness.py:find_mavis_cmd()`（行233）/ `run_mavis()`（行252），mount 失败自动回滚产物（行488起） |
+| harness CLI 探测与 mount | `build_harness.py:find_harness_cmd()`（行233）/ `run_harness()`（行252），mount 失败自动回滚产物（行488起） |
 | 备份轮转 | `build_harness.py:cleanup_old_bak()`（行68，保留最近3个 `.bak.<ts>`） |
 | CLI 用法 | `python scripts/build_harness.py [--dry-run/--force/--unmount/--clean/--no-mount]` |
 
-**颗粒度与边界**：禁止手工编辑 agent.md；母版（source/SKILL.md / source/HARNESS.md / harness 模板）升级后必须重跑 `build_harness.py` 重新生成；harness 格式由 Mavis 规范决定，转译脚本负责映射；`.adapter.lock` 多维比对（source_input_sha256 + ae_sdd_version + adapter_version + templateHash）任一漂移触发重转，`source_commit` 只作诊断，不参与幂等判断，避免提交生成物后继续漂移。
+**颗粒度与边界**：禁止手工编辑 agent.md；母版（source/SKILL.md / source/HARNESS.md / harness 模板）升级后必须重跑 `build_harness.py` 重新生成；harness 格式由 Harness 规范决定，转译脚本负责映射；`.adapter.lock` 多维比对（source_input_sha256 + ae_sdd_version + adapter_version + templateHash）任一漂移触发重转，`source_commit` 只作诊断，不参与幂等判断，避免提交生成物后继续漂移。
 
 ---
 

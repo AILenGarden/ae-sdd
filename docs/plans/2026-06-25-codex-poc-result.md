@@ -1,10 +1,10 @@
 # Codex PoC 结果（v3.3.0 PRD 级 runtime 适配）
 
 **日期：** 2026-06-25
-**执行者：** Mavis root agent
+**执行者：** Harness root agent
 **Codex 版本：** codex-cli 0.137.0
 **PoC 目标：** 验证 Codex runtime 是否能跑 ae-sdd PRD 级 hook 协议（D-3=A 路径）
-**结论：** ✅ **D-3 = A 路径可行，Codex 支持 hook + event stream，可与 Mavis / Claude Code 三 runtime 对齐**
+**结论：** ✅ **D-3 = A 路径可行，Codex 支持 hook + event stream，可与 Harness / Claude Code 三 runtime 对齐**
 
 ---
 
@@ -103,7 +103,7 @@ $ codex exec --help | grep -iE "json|output|schema|ephemeral"
 
 **最终决策：D-3 = A 路径可行，但需调整 hook 协议以适配 Codex 实际能力：**
 
-| 闸功能 | Mavis / Claude Code | Codex 等价 | 实现状态 |
+| 闸功能 | Harness / Claude Code | Codex 等价 | 实现状态 |
 |--------|--------|---------|---------|
 | **PreToolUse 拦截（HS-7）** | `hookSpecificOutput.permissionDecision = "deny"` | Codex 当前无 PreToolUse → **降级到 PostToolUse** + 在 ae-sdd 校验失败时回滚操作 | 🟡 替代方案 |
 | **Stop hook（HS-8）** | `decision = "block"` | Codex Stop hook（replayio 例子）| 🟢 等价 |

@@ -7,23 +7,23 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ae-sdd-domain = { path = "../ae-sdd-domain" }
-ae-sdd-flow = { path = "../ae-sdd-flow" }
-ae-sdd-gates = { path = "../ae-sdd-gates" }
-ae-sdd-host = { path = "../ae-sdd-host" }
-ae-sdd-operations = { path = "../ae-sdd-operations" }
-ae-sdd-policy = { path = "../ae-sdd-policy" }
-ae-sdd-protocol = { path = "../ae-sdd-protocol" }
-ae-sdd-runtime = { path = "../ae-sdd-runtime" }
-ae-sdd-scanners = { path = "../ae-sdd-scanners" }
-ae-sdd-store = { path = "../ae-sdd-store" }
-atomicwrites = "0.4.4"
-fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
+ae-sdd-domain.workspace = true
+ae-sdd-flow.workspace = true
+ae-sdd-gates.workspace = true
+ae-sdd-host.workspace = true
+ae-sdd-operations.workspace = true
+ae-sdd-policy.workspace = true
+ae-sdd-protocol.workspace = true
+ae-sdd-runtime.workspace = true
+ae-sdd-scanners.workspace = true
+ae-sdd-store.workspace = true
+atomicwrites.workspace = true
+fs4.workspace = true
 hex.workspace = true
-interprocess = { version = "2.4.2", features = ["tokio"] }
-jiff = { version = "0.2.34", default-features = false, features = ["std"] }
-notify = "=8.2.0"
-rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+interprocess.workspace = true
+jiff.workspace = true
+notify.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -33,7 +33,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile.workspace = true
 
 [lints]
 workspace = true

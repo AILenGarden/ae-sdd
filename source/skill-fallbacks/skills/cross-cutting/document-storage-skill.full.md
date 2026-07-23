@@ -273,7 +273,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 | **项目资产 + 更新日志** | **不带版本号** | `icec-cloud-boss.assets.md` + `icec-cloud-boss.update-log.md` | 资产是"单一权威源" |
 | **流程状态文件** | **不带版本号** | `.auto-engineering/{WORKITEM-ID}/state.json` | 状态实时变化；每个独立编码任务隔离 |
 | **流程状态文件（PRD 级）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.json` | PRD 本身也是 WorkItem；Story 完成 hook 写入 |
-| **流程状态文件（PRD 级，handoff）**| **不带版本号** | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` 时生成 |
+| **流程状态文件（PRD 级，handoff）**| **不带版本号** | `.auto-engineering/{PRD-ID}/summary.md` | `harness session rotate --handoff-file` 时生成 |
 | **流程状态文件（PRD 级，人类读）**| **不带版本号** | `.auto-engineering/{PRD-ID}/state.md` | `ae-sdd state prd-complete` 时一次性生成 |
 
 > **🔴 PRD ID 命名规范（与 `SKILL.md §1.2` SSOT）：** 格式 `PRD-<业务域>-<序号>`（CS / IM / USER / LIFE + 3 位数字）。示例：`PRD-CS-001`。
@@ -1289,7 +1289,7 @@ SKILL 流程
        保留此注释说明删除原因，避免后续误加回。 -->
 
   "runtimeHooks": {
-    "mavis": { "compactCmd": "mavis session rotate", "args": ["--handoff-file", "{summary.md}"] },
+    "harness": { "compactCmd": "harness session rotate", "args": ["--handoff-file", "{summary.md}"] },
     "claude-code": { "hookType": "UserPromptSubmit", "injectCmd": "..." },
     "codex": {
       "compactCmd": "codex plugin add ae-sdd-prd-state",

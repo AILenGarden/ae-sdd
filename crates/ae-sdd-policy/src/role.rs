@@ -9,6 +9,8 @@ pub enum RoleOperation {
     SelectRoute,
     /// Request a global process transition.
     RequestGlobalTransition,
+    /// Acquire, renew, or release the lease owned by this physical session.
+    ManageOwnLease,
     /// Approve the compact execution plan.
     ApproveExecutionPlan,
     /// Create a series-level delegation.
@@ -53,16 +55,21 @@ impl RolePolicy {
                 operation,
                 RoleOperation::SelectRoute
                     | RoleOperation::RequestGlobalTransition
+                    | RoleOperation::ManageOwnLease
                     | RoleOperation::ApproveExecutionPlan
                     | RoleOperation::CreateSeriesDelegation
                     | RoleOperation::CollectChildResult
                     | RoleOperation::ReportProgress
                     | RoleOperation::ReadBoundedProjection
+                    | RoleOperation::ModifyAssignedPaths
+                    | RoleOperation::RunAssignedTests
+                    | RoleOperation::SubmitEvidence
             ),
             AgentRole::Series => matches!(
                 operation,
                 RoleOperation::CreateTaskDelegation
                     | RoleOperation::CreateReviewerDelegation
+                    | RoleOperation::ManageOwnLease
                     | RoleOperation::CollectChildResult
                     | RoleOperation::ReportProgress
                     | RoleOperation::ReadBoundedProjection
@@ -72,6 +79,7 @@ impl RolePolicy {
             AgentRole::Task => matches!(
                 operation,
                 RoleOperation::ReadAuthorizedArtifacts
+                    | RoleOperation::ManageOwnLease
                     | RoleOperation::SubmitChildResult
                     | RoleOperation::ModifyAssignedPaths
                     | RoleOperation::RunAssignedTests
@@ -80,6 +88,7 @@ impl RolePolicy {
             AgentRole::Reviewer => matches!(
                 operation,
                 RoleOperation::ReadAuthorizedArtifacts
+                    | RoleOperation::ManageOwnLease
                     | RoleOperation::SubmitChildResult
                     | RoleOperation::ReviewAssignedDiff
                     | RoleOperation::SubmitReviewFindings

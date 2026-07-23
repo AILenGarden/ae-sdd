@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use ae_sdd_runtime::RuntimeResult;
@@ -118,7 +117,10 @@ fn query(context: &JobContext<'_>, arguments: &Value, explain: bool) -> RuntimeR
         .find(|profile| profile.name == profile_name)
         .ok_or_else(|| schema_error("database profile does not exist"))?;
     if profile.driver != "sqlite" {
-        return Ok(blocked(profile, "configured driver is not supported by the Rust runtime"));
+        return Ok(blocked(
+            profile,
+            "configured driver is not supported by the Rust runtime",
+        ));
     }
     let database = profile
         .database
@@ -142,7 +144,7 @@ fn query(context: &JobContext<'_>, arguments: &Value, explain: bool) -> RuntimeR
     let mut statement = connection
         .prepare(&sql)
         .map_err(|_| schema_error("read-only SQL could not be prepared"))?;
-    if statement.readonly() == Ok(false) {
+    if !statement.readonly() {
         return Err(schema_error("SQLite classified the statement as mutating"));
     }
     let columns = statement
@@ -195,10 +197,10 @@ fn query(context: &JobContext<'_>, arguments: &Value, explain: bool) -> RuntimeR
 
 fn load_profiles(context: &JobContext<'_>) -> RuntimeResult<(String, Vec<Profile>)> {
     const RELATIVE: &str = ".ae-sdd/secrets/db-connections.local.json";
-    let path = match context.project_file(RELATIVE) {
-        Ok(path) => path,
-        Err(_) => return Ok((RELATIVE.to_owned(), Vec::new())),
-    };
+    if !context.root.join(RELATIVE).exists() {
+        return Ok((RELATIVE.to_owned(), Vec::new()));
+    }
+    let path = context.project_file(RELATIVE)?;
     let payload = read_json(&path, MAX_FILE_BYTES)?;
     let values = payload
         .get("profiles")
@@ -213,7 +215,10 @@ fn load_profiles(context: &JobContext<'_>) -> RuntimeResult<(String, Vec<Profile
             .as_object()
             .ok_or_else(|| schema_error("database profile must be an object"))?;
         let name = object_string(object, "name")?;
-        if profiles.iter().any(|profile: &Profile| profile.name == name) {
+        if profiles
+            .iter()
+            .any(|profile: &Profile| profile.name == name)
+        {
             return Err(schema_error("database profile names must be unique"));
         }
         profiles.push(Profile {
@@ -223,7 +228,10 @@ fn load_profiles(context: &JobContext<'_>) -> RuntimeResult<(String, Vec<Profile
             host: optional_string(object, "host")?,
             port: object.get("port").map(scalar_string).transpose()?,
             schema: optional_string(object, "schema")?,
-            readonly: object.get("readonly").and_then(Value::as_bool).unwrap_or(true),
+            readonly: object
+                .get("readonly")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
         });
     }
     Ok((RELATIVE.to_owned(), profiles))
@@ -249,12 +257,16 @@ fn validate_readonly_sql(sql: &str) -> RuntimeResult<()> {
     }
     let without_trailing = trimmed.strip_suffix(';').unwrap_or(trimmed);
     if without_trailing.contains(';') || without_trailing.contains('\0') {
-        return Err(schema_error("only one read-only SQL statement is permitted"));
+        return Err(schema_error(
+            "only one read-only SQL statement is permitted",
+        ));
     }
     let folded = without_trailing.to_ascii_lowercase();
     let first = folded.split_whitespace().next().unwrap_or_default();
     if !matches!(first, "select" | "with" | "explain" | "pragma") {
-        return Err(schema_error("only SELECT, WITH, EXPLAIN, or safe PRAGMA is permitted"));
+        return Err(schema_error(
+            "only SELECT, WITH, EXPLAIN, or safe PRAGMA is permitted",
+        ));
     }
     let mut words = folded
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')

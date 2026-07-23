@@ -163,14 +163,14 @@ SKILL.md 规定的 3 个审核点（① 设计 ② Task ④ CodeReview）：
 ### 🟠 S-5：PRD 级 compact（`ae-sdd state prd-complete`）在多 runtime 下的行为未定义
 
 **问题位置：** `source/SKILL.md` §🛠️ 工具 API 速查 → PRD 级子命令  
-**现象：** `ae-sdd state prd-complete --runtime {mavis|claude-code|codex}` 的 `--runtime` 参数在 `tools/lib/state.py` 中未有分支处理，三种 runtime 执行路径相同。
+**现象：** `ae-sdd state prd-complete --runtime {harness|claude-code|codex}` 的 `--runtime` 参数在 `tools/lib/state.py` 中未有分支处理，三种 runtime 执行路径相同。
 
 **建议：**  
 在 `tools/lib/state.py` 的 `prd_complete()` 方法中明确 runtime 差异表：
 
 | runtime | compact 行为 | handoff 文件生成 |
 |---------|-------------|----------------|
-| mavis | `mavis session rotate --handoff-file summary.md` | 是 |
+| harness | `harness session rotate --handoff-file summary.md` | 是 |
 | claude-code | 写 `summary.md`，触发 `/compact` 指令 | 是 |
 | codex | 写 `summary.md`（无 compact 机制，标注待调研）| 否（待补全）|
 

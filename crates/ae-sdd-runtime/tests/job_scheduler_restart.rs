@@ -52,6 +52,7 @@ fn queued_job_recovers_runs_once_and_publishes_lifecycle_events() {
     let mut second_connection = second.connection(ClientKind::Cli);
     let mut status = params(json!({"jobId":job_id}), 1_000);
     status.workspace_id = Some(workspace.workspace_id.clone());
+    status.work_item_id = Some("WORK".to_owned());
     let completed = result(&second.call(&mut second_connection, RpcMethod::JobStatus, status));
     assert_eq!(completed["status"], "pass");
     assert_eq!(completed["result"]["outcome"], "PASS");

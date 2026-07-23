@@ -367,6 +367,8 @@ pub struct DelegationCreatePayload {
     pub deadline_unix_ms: u64,
     /// Host adapter selected by policy.
     pub adapter_id: String,
+    /// Parent-requested child scope, validated and narrowed by the daemon.
+    pub grant: crate::ScopedGrantWire,
 }
 
 /// Child physical claim payload.
@@ -409,6 +411,8 @@ pub struct DelegationResult {
     pub delegation_id: String,
     /// Lifecycle state.
     pub status: String,
+    /// Canonical daemon-validated scoped grant for the physical child.
+    pub grant: crate::ScopedGrantWire,
     /// Child role.
     pub child_role: WireAgentRole,
     /// Host create action.

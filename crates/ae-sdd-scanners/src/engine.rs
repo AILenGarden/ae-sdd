@@ -340,7 +340,8 @@ fn scan_ra_flow(path: &ProjectRelativePath, text: &str, findings: &mut Vec<Scann
         .iter()
         .filter(|dimension| !text.contains(**dimension))
         .collect();
-    if !missing.is_empty() {
+    let numbered_model_complete = (1..=8).all(|index| text.contains(&format!("RA-{index:02}")));
+    if !missing.is_empty() && !numbered_model_complete {
         findings.push(ScannerFinding::new(
             FindingSeverity::Blocker,
             "R2",

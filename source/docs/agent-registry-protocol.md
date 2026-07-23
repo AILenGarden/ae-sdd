@@ -60,7 +60,7 @@ default_standards:  # 默认必须满足的标准
   - <标准 2>
 default_deadline: <ISO8601 时长>  # 如 PT30M（30 分钟）
 default_report_back:  # 默认回传配置
-  channel: mavis communication
+  channel: harness communication
   target: <root session id 占位，实例化时填>
   format: <报告模板路径>
 parent_skills:  # 该子系列执行时需读的节点 SKILL
@@ -87,7 +87,7 @@ default_standards:
   - 模糊需求必须主动提问，禁止主观臆断
 default_deadline: PT30M
 default_report_back:
-  channel: mavis communication
+  channel: harness communication
   target: <root session id>
   format: requirement-analysis-skill.md §RA 报告模板
 parent_skills:
@@ -112,7 +112,7 @@ default_standards:
   - 跨 Story 边界清晰（Tier 3 才强制）
 default_deadline: PT40M
 default_report_back:
-  channel: mavis communication
+  channel: harness communication
   target: <root session id>
   format: dr-review-skill.md §DR 报告模板
 parent_skills:
@@ -140,7 +140,7 @@ default_standards:
   - 接口契约 / 字段 / AC / 数据模型齐
 default_deadline: PT45M
 default_report_back:
-  channel: mavis communication
+  channel: harness communication
   target: <root session id>
   format: story-generate-skill.md §Story 报告模板
 parent_skills:
@@ -169,7 +169,7 @@ default_standards:
   - 阻断型问题必须 0
 default_deadline: PT60M
 default_report_back:
-  channel: mavis communication
+  channel: harness communication
   target: <root session id>
   format: coding-skill.md §Coding 报告模板
 parent_skills:
@@ -196,7 +196,7 @@ default_standards:
   - test-verifier TV-1~TV-10 全过
 default_deadline: PT45M
 default_report_back:
-  channel: mavis communication
+  channel: harness communication
   target: <root session id>
   format: test-generate-skill.md §Test 报告模板
 parent_skills:

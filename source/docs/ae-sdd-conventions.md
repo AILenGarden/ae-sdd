@@ -106,7 +106,7 @@ ASSETS_SYNC="$HOME/.claude/skills/ae-sdd/skills/ae-sdd/assets/${PROJECT_KEY}/${P
 
 | 答案 | 动作 |
 |------|------|
-| **能回答** | 用 `mavis communication send --command spawn` 派活,自己只做 reviewer |
+| **能回答** | 用 `harness communication send --command spawn` 派活,自己只做 reviewer |
 | **能回答但任务简单**(单文件单改) | 可直接动手,但**事后必出追溯文档** |
 | **不能回答** | 先停下来想清楚,或问用户,不要"先动手再说" |
 | **任务仅涉及 root agent 自身职责**（如 ae-sdd 自身维护）| 直接动手,按母版 `ae-sdd-update-skill.md` |
@@ -155,7 +155,7 @@ ASSETS_SYNC="$HOME/.claude/skills/ae-sdd/skills/ae-sdd/assets/${PROJECT_KEY}/${P
 | Coding Plan | `CodingPlan-{事务简称}.md` | `source/templates/coding/be-coding-plan-template.md` |
 | **PRD ID 命名** | **`PRD-<业务域>-<序号>`**（3 位数字）| `dr-review-skill.md:184` + `ae-sdd-skill.md §1.2` |
 | **PRD 级 state.json** | `.auto-engineering/{PRD-ID}/state.json` | `document-storage-skill.md §3.5` |
-| **PRD 级 handoff** | `.auto-engineering/{PRD-ID}/summary.md` | `mavis session rotate --handoff-file` |
+| **PRD 级 handoff** | `.auto-engineering/{PRD-ID}/summary.md` | `harness session rotate --handoff-file` |
 
 ---
 
@@ -216,7 +216,7 @@ ASSETS_SYNC="$HOME/.claude/skills/ae-sdd/skills/ae-sdd/assets/${PROJECT_KEY}/${P
 
 | 方案 | 阻断能力 | 兼容性风险 | 优先级 |
 |------|---------|----------|-------|
-| **mavis daemon pre-trigger hook** | 🔴 硬 | 中（需验证 daemon 是否支持）| P0 |
+| **harness daemon pre-trigger hook** | 🔴 硬 | 中（需验证 daemon 是否支持）| P0 |
 | **system prompt 强约束**（每次 /ae-sdd 触发必跑 pre-ae-sdd-check.sh）| 🟡 半硬 | 低 | P1 |
 | **对话内软警告**（AI 自检 + 用户提醒）| 🟢 软 | 无 | P2（v3.1 现状）|
 

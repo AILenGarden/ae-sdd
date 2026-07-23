@@ -19,7 +19,7 @@ ae-sdd 的 SKILL 文档既承担人类维护说明，又承担 LLM 运行时指�
 | 版本 | 位置 | 面向对象 | 允许手工编辑 | 说明 |
 | --- | --- | --- | --- | --- |
 | 未编译母版 | `source/` | 维护者 | 是 | 人类可读、可审查、可 diff 的完整 SSOT |
-| 编译实例版 | `dist/ae-sdd/` | Agent 运行时 | 否 | 由编译工具生成，正式发给 Claude/Codex/ZCode/Hermes/Mavis |
+| 编译实例版 | `dist/ae-sdd/` | Agent 运行时 | 否 | 由编译工具生成，正式发给 Claude/Codex/ZCode/Hermes/Harness |
 
 编译不是把 SKILL 变成不可读密文，而是生成一组短、结构化、稳定的 runtime compact slices，让 LLM 优先读取运行时契约；完整 Markdown 保留为 fallback。
 
@@ -125,7 +125,7 @@ dist/ae-sdd/runtime/*.compact.md  # 生成 compact runtime
 
 `build_dist.py` 是 source → dist 的唯一通用构建入口，因此编译器必须接入它，而不是让各 Agent 分发器各自编译一份。
 
-分发器仍可以有 Agent 专属 compile 阶段，例如 Mavis harness 转译，但它们接收的输入必须已经是通用编译实例包。
+分发器仍可以有 Agent 专属 compile 阶段，例如 Harness 转译，但它们接收的输入必须已经是通用编译实例包。
 
 ---
 
@@ -233,7 +233,7 @@ dist/ae-sdd/SKILL.md、dist/ae-sdd/runtime/** 与 dist/ae-sdd/skills/**/*.md 字
 - 安装到任何 Agent。
 - 解释或执行业务流程。
 - 替代 `ae-sdd gates check`。
-- 替代 Mavis harness 等 Agent 专属适配器。
+- 替代 Harness 等 Agent 专属适配器。
 
 ---
 
@@ -419,7 +419,7 @@ python scripts/build_dist.py
 | 已实现 | 分发器 compiled-only 校验 | `scripts/distribute.py` 安装前拒绝未编译 `source/` 包 |
 | 已实现 | 子 SKILL compiled bootloader | 全量编译 `source/skills/**/*.md` 为入口薄片，局部 outline/manifest/fallback 进入 `runtime/skills/**` |
 | P3 | 子 SKILL 语义 compact 增强 | 在现有 heading/inline-ref outline 基础上，从高频子 SKILL 抽取更细粒度 runtime slices |
-| P3 | Agent 专属二次编译约束 | 允许 Hermes/Mavis 等做二次适配，但输入必须是通用 compiled runtime |
+| P3 | Agent 专属二次编译约束 | 允许 Hermes/Harness 等做二次适配，但输入必须是通用 compiled runtime |
 
 ---
 

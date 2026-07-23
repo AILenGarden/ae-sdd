@@ -18,7 +18,7 @@ distribute.py — ae-sdd 自动编译分发闭环单入口 orchestrator（决策
 用法:
     python scripts/distribute.py                         # auto：跑所有 detect=True 的分发器
     python scripts/distribute.py --target all            # 强制全跑（含 detect=False）
-    python scripts/distribute.py --target mavis          # 只跑 mavis
+    python scripts/distribute.py --target kimi           # 只跑 kimi
     python scripts/distribute.py --target-path ~/.claude/skills/ae-sdd  # 旧形式兼容
     python scripts/distribute.py --quiet --from-commit   # post-commit hook 调用
     python scripts/distribute.py --no-build              # 跳过 build_dist（dist 已存在）
@@ -161,8 +161,6 @@ def main() -> int:
                         help="由 post-commit hook 触发（影响日志详尽度）")
     parser.add_argument("--no-build", action="store_true",
                         help="跳过 build_dist（假设 dist 已存在）")
-    parser.add_argument("--no-cleanup-mavis", action="store_true",
-                        help="跳过 mavis 端 -N 副本清理")
     parser.add_argument("--keep-bak", type=int, default=2,
                         help="每个目标保留的 .bak 备份数（默认 2；0=全清；负数=不清理）")
     args = parser.parse_args()
@@ -250,13 +248,10 @@ def main() -> int:
             # verify（仅 install 成功时）
             verified = d.verify(ctx) if res.status == "ok" else False
             # cleanup
-            if d.name == "mavis" and args.no_cleanup_mavis:
-                pass  # 跳过 mavis 清理
-            else:
-                try:
-                    d.cleanup(ctx)
-                except Exception as e:
-                    log_warn(ctx, f"{d.name}: cleanup 异常（不影响安装结果）: {e}")
+            try:
+                d.cleanup(ctx)
+            except Exception as e:
+                log_warn(ctx, f"{d.name}: cleanup 异常（不影响安装结果）: {e}")
             results.append((d.name, res, verified))
         except Exception as e:
             log_error(f"{d.name}: 未预期异常: {e}")

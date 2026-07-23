@@ -140,9 +140,12 @@ impl RuntimeService {
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
-        let projection = self
-            .delegation
-            .create(&identity.session_id, identity.role, payload)?;
+        let projection = self.delegation.create(
+            &identity.session_id,
+            identity.role,
+            &identity.grant,
+            payload,
+        )?;
         self.persistence.store_record(
             "delegation-memory/v1",
             &projection.delegation_id,
@@ -308,10 +311,11 @@ impl RuntimeService {
 
     pub(super) fn delegation_collect(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
-        let id = payload_string(&params.payload, "delegationId")?;
+        let payload: DelegationCollectPayload = decode_value(params.payload.clone())?;
+        let id = payload.delegation_id.as_str();
         let key = require_idempotency(params)?;
         let scope = format!("delegation-collect\0{}", id);
-        let digest = canonical_digest(&params.payload)?;
+        let digest = canonical_digest(&payload)?;
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
@@ -331,14 +335,25 @@ impl RuntimeService {
 
     pub(super) fn delegation_cancel(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
-        let id = payload_string(&params.payload, "delegationId")?;
+        let payload: DelegationCancelPayload = decode_value(params.payload.clone())?;
+        if payload.reason.trim().is_empty()
+            || payload.reason.len() > 1_024
+            || payload.reason.contains(['\0', '\r', '\n'])
+        {
+            return Err(schema_error("delegation cancellation reason is invalid"));
+        }
+        let id = payload.delegation_id.as_str();
         let key = require_idempotency(params)?;
         let scope = format!("delegation-cancel\0{}", id);
-        let digest = canonical_digest(&params.payload)?;
+        let digest = canonical_digest(&payload)?;
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
-        let value = to_value(self.delegation.cancel(&identity.session_id, id)?)?;
+        let mut value = to_value(self.delegation.cancel(&identity.session_id, id)?)?;
+        value
+            .as_object_mut()
+            .expect("delegation projection is an object")
+            .insert("cancellationReason".to_owned(), json!(payload.reason));
         self.commit_receipt_event(
             &scope,
             key,
@@ -410,6 +425,7 @@ impl RuntimeService {
         &self,
         method: RpcMethod,
         params: &RequestParams<Value>,
+        client_kind: Option<ClientKind>,
     ) -> RuntimeResult<Value> {
         let business_workspace = params
             .workspace_id
@@ -420,17 +436,22 @@ impl RuntimeService {
                     .workspaces
                     .get(workspace_id)
                     .ok_or_else(|| project_mismatch("workspace is not registered"))?;
-                let agent_role = params
+                let session = params
                     .session_id
                     .as_deref()
-                    .and_then(|session_id| state.sessions.get(session_id))
-                    .map(|session| AgentRole::from(session.result.role));
+                    .and_then(|session_id| state.sessions.get(session_id));
+                let agent_role = session.map(|session| AgentRole::from(session.result.role));
+                let agent_grant = session
+                    .map(|session| session.grant.to_domain())
+                    .transpose()?;
                 Ok(BusinessWorkspace {
                     workspace_id: record.result.workspace_id.clone(),
                     canonical_root: record.result.canonical_root.clone(),
                     project_key: record.result.project_key.clone(),
                     mode: record.result.mode,
                     agent_role,
+                    agent_grant,
+                    caller_kind: client_kind,
                     inventory_generation: record.result.inventory_generation,
                 })
             })
@@ -449,6 +470,11 @@ impl RuntimeService {
                 .execute(method, params, business_workspace.as_ref())
         }?;
         if method == RpcMethod::OperationExecute
+            && !params
+                .payload
+                .get("dryRun")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
             && params
                 .payload
                 .get("operation")
@@ -492,6 +518,11 @@ impl RuntimeService {
                 StableErrorCode::RoleOperationForbidden,
                 "Rust mutation is forbidden until the daemon owns the workspace writer mode",
             ));
+        }
+        if operation == ae_sdd_operations::OperationName::LeaseBreak
+            && workspace.caller_kind == Some(ClientKind::Admin)
+        {
+            return Ok(());
         }
         let identity = self.session_identity(params, false)?;
         if !identity.engaged || identity.capability_id != "hook.engaged" {
@@ -675,4 +706,22 @@ impl RuntimeService {
         )?;
         Ok(())
     }
+}
+
+#[derive(Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DelegationCollectPayload {
+    delegation_id: String,
+}
+
+#[derive(Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DelegationCancelPayload {
+    delegation_id: String,
+    #[serde(default = "default_cancellation_reason")]
+    reason: String,
+}
+
+fn default_cancellation_reason() -> String {
+    "user-abort".to_owned()
 }

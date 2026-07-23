@@ -10,8 +10,7 @@ mod model;
 mod render;
 
 pub use executor::{
-    NativeServiceManagerRunner, ServiceManagerRunner, execute_service_lifecycle,
-    execute_service_lifecycle_with_runner,
+    ServiceManagerRunner, execute_service_lifecycle, execute_service_lifecycle_with_runner,
 };
 pub use materialize::{inspect_service_descriptor, materialize_service_descriptor};
 pub use model::{

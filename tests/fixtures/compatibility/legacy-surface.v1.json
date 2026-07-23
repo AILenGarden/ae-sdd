@@ -54,13 +54,13 @@
       "id": "automation disable",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "automation enable",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "automation status",
@@ -72,7 +72,7 @@
       "id": "baseline create",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "baseline diff",
@@ -102,31 +102,31 @@
       "id": "context-pressure",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "db audit",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "db explain",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "db profiles",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "db query",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "distributor disable",
@@ -168,7 +168,7 @@
       "id": "doc finalize",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "doc resolve",
@@ -186,7 +186,7 @@
       "id": "enter",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "evidence finalize",
@@ -210,7 +210,7 @@
       "id": "flow-violation-scan",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "gate coding-required",
@@ -234,7 +234,7 @@
       "id": "gate-intercept",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "gates check",
@@ -306,7 +306,7 @@
       "id": "lease break",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "lease release",
@@ -330,49 +330,49 @@
       "id": "memory clean",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "memory clean-all",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "memory common",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "memory create",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "memory read",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "memory search",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "memory summarize",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "memory update",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "ops describe",
@@ -396,7 +396,7 @@
       "id": "perf clear",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "perf doctor",
@@ -420,127 +420,127 @@
       "id": "plugin list",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "plugin trace",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "plugin validate",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "preflight collect",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "prompt-inject",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "ra-authenticity-scan",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "ra-depth-scan",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "ra-gate",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "ra-implementation-scan",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review abort",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review collect",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review retry",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review retry-role",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review start",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review status",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review verify-exit",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review-loop collect",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review-loop start",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review-loop status",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "review-loop verify-exit",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "runtime compact",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "runtime verify",
@@ -552,31 +552,31 @@
       "id": "scripts-dir",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state bind-story-doc",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state confirm",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state lock",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state new",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state next-step",
@@ -588,25 +588,25 @@
       "id": "state prd-archive",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state prd-check-complete",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state prd-complete",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state prd-init",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state read",
@@ -618,55 +618,55 @@
       "id": "state register-review-consensus",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state relocate",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state unlock",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "state write",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "stop-check",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "subprocess collect",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "subprocess list",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "subprocess spawn",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "subprocess status",
       "source": "tools/bin/ae-sdd",
       "owner": "ae-sdd-cli",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "update-check",
@@ -740,7 +740,7 @@
       "id": "lease.break",
       "source": "tools/lib/operations.py",
       "owner": "ae-sdd-operations",
-      "disposition": "preserve"
+      "disposition": "breaking-fix"
     },
     {
       "id": "lease.release",

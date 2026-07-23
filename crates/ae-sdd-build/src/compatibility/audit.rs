@@ -179,6 +179,9 @@ fn audit_routes(
         validate_evidence(repository_root, &route.fixture, excludes)?;
         validate_evidence(repository_root, &route.evidence, excludes)?;
         validate_route_classification(route)?;
+        if let Some(inventory) = manifest.commands.iter().find(|entry| entry.id == route.id) {
+            validate_route_disposition(route, inventory.disposition)?;
+        }
         if route.status == ImplementationStatus::Pending {
             pending.push(route.id.clone());
         } else {
@@ -192,6 +195,23 @@ fn audit_routes(
     }
     if !pending.is_empty() {
         return Err(ManifestError::UnimplementedRoutes(pending));
+    }
+    Ok(())
+}
+
+fn validate_route_disposition(
+    route: &CommandRoute,
+    disposition: Disposition,
+) -> Result<(), ManifestError> {
+    let rejected = matches!(route.route, RouteTarget::Rejected { .. });
+    let breaking_disposition = disposition == Disposition::BreakingFix;
+    let verified_breaking_fix = route.status == ImplementationStatus::BreakingFixVerified;
+    if breaking_disposition != verified_breaking_fix || (rejected && !verified_breaking_fix) {
+        return Err(ManifestError::RouteTarget {
+            id: route.id.clone(),
+            reason: "breaking-fix inventory and verified route status must match; rejected routes always require both"
+                .to_owned(),
+        });
     }
     Ok(())
 }
@@ -269,11 +289,14 @@ fn validate_route_target(route: &CommandRoute) -> Result<(), ManifestError> {
     match &route.route {
         RouteTarget::Rpc { method } => {
             let spec = method.spec();
-            let session_required = matches!(spec.scope, OperationScope::Delegation)
-                || (spec.scope == OperationScope::Session && *method != RpcMethod::SessionOpen);
-            if route.identity.workspace != spec.requirements.requires_workspace
-                || route.identity.work_item != spec.requirements.requires_work_item
-                || route.identity.session != session_required
+            let session_required = matches!(
+                spec.scope,
+                OperationScope::WorkItem | OperationScope::Delegation
+            ) || (spec.scope == OperationScope::Session
+                && *method != RpcMethod::SessionOpen);
+            if (spec.requirements.requires_workspace && !route.identity.workspace)
+                || (spec.requirements.requires_work_item && !route.identity.work_item)
+                || (session_required && !route.identity.session)
             {
                 return Err(ManifestError::RouteIdentity {
                     id: route.id.clone(),
@@ -322,10 +345,14 @@ fn validate_route_target(route: &CommandRoute) -> Result<(), ManifestError> {
             stable_code,
             remediation,
         } => {
-            if stable_code != "LEGACY_COMMAND_REMOVED" || remediation.trim().is_empty() {
+            if !matches!(
+                stable_code.as_str(),
+                "LEGACY_COMMAND_REMOVED" | "LEGACY_UNTYPED_MUTATION_REMOVED"
+            ) || remediation.trim().is_empty()
+            {
                 return Err(ManifestError::RouteTarget {
                     id: route.id.clone(),
-                    reason: "rejected route needs the stable removal code and remediation"
+                    reason: "rejected route needs a registered stable removal code and remediation"
                         .to_owned(),
                 });
             }
@@ -338,9 +365,10 @@ fn validate_operation_identity(
     route: &CommandRoute,
     operation: &OperationSpec,
 ) -> Result<(), ManifestError> {
+    let session_required = operation.operation != OperationName::LeaseBreak;
     if route.identity.workspace != operation.requires_workspace
         || route.identity.work_item != operation.requires_work_item
-        || !route.identity.session
+        || route.identity.session != session_required
     {
         return Err(ManifestError::RouteIdentity {
             id: route.id.clone(),
@@ -373,6 +401,7 @@ fn audit_capability_evidence(
         )
         .collect();
     let mut actual = BTreeSet::new();
+    let mut pending = Vec::new();
     for evidence in &routing.capabilities {
         if !actual.insert((evidence.surface, evidence.id.clone())) {
             return Err(ManifestError::DuplicateId {
@@ -385,6 +414,12 @@ fn audit_capability_evidence(
         }
         validate_evidence(repository_root, &evidence.fixture, excludes)?;
         validate_evidence(repository_root, &evidence.evidence, excludes)?;
+        if let Some(inventory) = capability_inventory_entry(manifest, evidence) {
+            validate_capability_disposition(evidence, inventory.disposition)?;
+        }
+        if evidence.status == ImplementationStatus::Pending {
+            pending.push(format!("{:?}:{}", evidence.surface, evidence.id));
+        }
     }
     let render = |entries: BTreeSet<(CapabilitySurface, String)>| {
         entries
@@ -396,6 +431,36 @@ fn audit_capability_evidence(
     let extra: Vec<String> = render(actual.difference(&expected).cloned().collect());
     if !missing.is_empty() || !extra.is_empty() {
         return Err(ManifestError::EvidenceCoverage { missing, extra });
+    }
+    if !pending.is_empty() {
+        return Err(ManifestError::UnimplementedCapabilities(pending));
+    }
+    Ok(())
+}
+
+fn capability_inventory_entry<'a>(
+    manifest: &'a CompatibilityManifest,
+    evidence: &CapabilityEvidence,
+) -> Option<&'a SurfaceEntry> {
+    let entries = match evidence.surface {
+        CapabilitySurface::Operation => &manifest.operations,
+        CapabilitySurface::Gate => &manifest.gates,
+        CapabilitySurface::Scanner => &manifest.scanners,
+    };
+    entries.iter().find(|entry| entry.id == evidence.id)
+}
+
+fn validate_capability_disposition(
+    evidence: &CapabilityEvidence,
+    disposition: Disposition,
+) -> Result<(), ManifestError> {
+    let breaking_disposition = disposition == Disposition::BreakingFix;
+    let verified_breaking_fix = evidence.status == ImplementationStatus::BreakingFixVerified;
+    if breaking_disposition != verified_breaking_fix {
+        return Err(ManifestError::CapabilityStatus {
+            id: format!("{:?}:{}", evidence.surface, evidence.id),
+            reason: "breaking-fix inventory and verified capability status must match".to_owned(),
+        });
     }
     Ok(())
 }

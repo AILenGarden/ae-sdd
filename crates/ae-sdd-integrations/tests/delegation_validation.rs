@@ -27,6 +27,8 @@ fn setup() -> (
         project_key: "delegation-test".to_owned(),
         mode: WorkspaceMode::RustCanary,
         agent_role: None,
+        agent_grant: None,
+        caller_kind: None,
         inventory_generation: 1,
     };
     let adapter = NativeBusinessAdapter::new(

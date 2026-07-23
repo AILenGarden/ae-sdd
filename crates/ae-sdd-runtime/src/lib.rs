@@ -9,6 +9,7 @@
 mod actor;
 mod config;
 mod error;
+mod grant;
 mod model;
 mod ports;
 mod service;
@@ -17,6 +18,7 @@ mod supervisor;
 pub use actor::WorkItemActors;
 pub use config::RuntimeConfig;
 pub use error::{RuntimeError, RuntimeResult};
+pub use grant::{GrantPathWire, ScopedGrantWire};
 pub use model::{
     CompactAckPayload, CompactRequestPayload, CompactResult, ContextProjectPayload,
     ContextProjectResult, ContextProjectionInput, DaemonLifecycle, DelegationAcceptPayload,
@@ -27,8 +29,8 @@ pub use model::{
     WorkspaceParityEvidence, WorkspaceRegisterPayload, WorkspaceResult,
 };
 pub use ports::{
-    BusinessOperationPort, BusinessWorkspace, ClockPort, MemoryPersistence, PersistencePort,
-    RejectingBusinessPort, ResolvedWorkspace, WorkspaceResolverPort,
+    BoundJobIdentity, BusinessOperationPort, BusinessWorkspace, ClockPort, MemoryPersistence,
+    PersistencePort, RejectingBusinessPort, ResolvedWorkspace, WorkspaceResolverPort,
 };
 pub use service::{ConnectionState, RuntimeService};
 pub use supervisor::{ContextCache, DelegationSupervisor, FlowSupervisor, HostCoordinator};

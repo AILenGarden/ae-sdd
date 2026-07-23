@@ -17,7 +17,7 @@ install.py — ae-sdd SKILL 安装脚本（兼容入口）
   - ~/.claude/skills/ae-sdd/        (copytree)
   - ~/.codex/skills/ae-sdd/         (copytree，auto 检测)
   - ~/.zcode/skills/ae-sdd/         (copytree，auto 检测)
-  - mavis harness mount             (harness_mount，auto 检测)
+  - harness mount             (harness_mount，auto 检测)
 
 用法:
     python scripts/install.py                    # 转调 distribute.py（auto 模式）
@@ -140,8 +140,8 @@ def _detect_agents() -> dict:
         agents["codex"] = "Codex CLI"
     if shutil.which("hermes") or shutil.which("hermes.exe"):
         agents["hermes"] = "Hermes CLI"
-    if shutil.which("mavis") or shutil.which("mavis.exe"):
-        agents["mavis"] = "Mavis daemon"
+    if shutil.which("harness") or shutil.which("harness.exe"):
+        agents["harness"] = "Harness daemon"
     return agents
 
 
@@ -160,7 +160,7 @@ def print_usage() -> None:
         print(f"    1. 启动 Claude Code：claude")
         print(f"    2. 启动后输入 /ae-sdd 启动自动化工程助手")
     else:
-        print(f"  ⚠️ 未检测到 Claude Code / Codex / Mavis 等 Agent CLI")
+        print(f"  ⚠️ 未检测到 Claude Code / Codex / Harness 等 Agent CLI")
         print(f"  → 推荐安装 Claude Code：https://docs.claude.com/en/docs/claude-code/installation")
     print()
     print(f"  更多信息：{REPO_URL}")
@@ -179,24 +179,24 @@ def main() -> int:
                         help="卸载本地安装（独立逻辑，不转调 distribute）")
     parser.add_argument("--target", default="auto",
                         help="安装目标：auto=所有 detect=True 的分发器；all=强制全跑；"
-                             "claude/codex/zcode/hermes/mavis=单跑指定（透传给 distribute.py）")
+                             "claude/codex/zcode/hermes/harness=单跑指定（透传给 distribute.py）")
     parser.add_argument("--target-path", type=str, default=None,
                         help="(兼容 post-commit) 显式安装目标绝对路径，优先级高于 --target")
     parser.add_argument("--quiet", action="store_true",
                         help="(post-commit 用) 静默模式，只输出关键状态")
     parser.add_argument("--keep-bak", type=int, default=2,
                         help=f"每个目标保留的 .bak 备份数（默认 2；0=全清；负数=不清理）")
-    parser.add_argument("--cleanup-mavis", dest="cleanup_mavis", action="store_true",
-                        default=True, help="(兼容) 清理 mavis 端 ae-sdd-N 副本（默认开启）")
-    parser.add_argument("--no-cleanup-mavis", dest="cleanup_mavis", action="store_false",
-                        help="跳过 mavis 端 ae-sdd-N 副本清理")
-    parser.add_argument("--mavis-keep", type=int, default=0,
-                        help="(兼容) mavis 端 -N 副本保留数（默认 0=全清）")
+    parser.add_argument("--cleanup-harness", dest="cleanup_harness", action="store_true",
+                        default=True, help="(兼容) 清理 harness 端 ae-sdd-N 副本（默认开启）")
+    parser.add_argument("--no-cleanup-harness", dest="cleanup_harness", action="store_false",
+                        help="跳过 harness 端 ae-sdd-N 副本清理")
+    parser.add_argument("--harness-keep", type=int, default=0,
+                        help="(兼容) harness 端 -N 副本保留数（默认 0=全清）")
     args = parser.parse_args()
 
     # ── --uninstall：独立逻辑（distribute.py 不处理卸载） ───────────────────
     # 注：uninstall 仅支持 copytree 类目标（claude/codex/zcode/hermes/all/auto）。
-    # mavis 卸载请用 `mavis harness unmount ae-sdd`（非文件操作）。
+    # harness 卸载请用 `harness unmount ae-sdd`（非文件操作）。
     if args.uninstall:
         if args.target_path:
             targets = [Path(args.target_path).expanduser().resolve()]
@@ -204,7 +204,7 @@ def main() -> int:
             targets = _target_paths(args.target)
         else:
             error(f"--uninstall 不支持 target='{args.target}'（仅 claude/codex/zcode/hermes/all/auto）")
-            error(f"卸载 mavis 请用：mavis harness unmount ae-sdd")
+            error(f"卸载 harness 请用：harness unmount ae-sdd")
             return 1
         uninstall(targets)
         return 0
@@ -218,8 +218,8 @@ def main() -> int:
         distribute_cmd.append("--quiet")
     if args.keep_bak is not None:
         distribute_cmd += ["--keep-bak", str(args.keep_bak)]
-    if not args.cleanup_mavis:
-        distribute_cmd.append("--no-cleanup-mavis")
+    if not args.cleanup_harness:
+        distribute_cmd.append("--no-cleanup-harness")
 
     if not args.quiet:
         info("转调 distribute.py ...")

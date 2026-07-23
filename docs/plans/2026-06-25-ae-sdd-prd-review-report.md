@@ -134,7 +134,7 @@ PRD 级 state.json 必须包含：
 2. 重跑 `ae-sdd-harness-adapter`（`convert-ae-sdd-to-harness.ps1`）
 3. 检查 `.adapter.lock` 的 commit hash 已更新
 
-否则 Mavis 团队级 agent 完全看不见 PRD 级状态机。
+否则 Harness 团队级 agent 完全看不见 PRD 级状态机。
 
 ### ⚠️ R-10：CHANGELOG + update-graph.json + README:5 同步清单
 
@@ -172,7 +172,7 @@ state.json 用 `prdId` / `prdTitle` / `prdPath` / `drId` 风格不统一——`p
 
 ### 🟢 R-15：multi-runtime 适配层抽象
 
-方案第 5 步把 runtime-specific compact 钩子直接写在 `prd complete` 命令里。建议新增 `ae-sdd runtime compact --runtime <mavis|claude|codex>` 子命令作为适配层，`prd complete` 内部调用 `runtime compact`，未来加新 runtime 不用改 prd-complete 逻辑。
+方案第 5 步把 runtime-specific compact 钩子直接写在 `prd complete` 命令里。建议新增 `ae-sdd runtime compact --runtime <harness|claude|codex>` 子命令作为适配层，`prd complete` 内部调用 `runtime compact`，未来加新 runtime 不用改 prd-complete 逻辑。
 
 ### 🟢 R-16：state.md 模板归属
 
@@ -210,11 +210,11 @@ PRD 级 state.md 没有对应模板（`templates/design/prd-summary-template.md`
 
 | Runtime | 已有能力 | PRD complete 触发 compact 的可行路径 | 风险等级 |
 |---------|---------|-------|------|
-| **Mavis** | `mavis session rotate --handoff-file`（同 synchronous rotation）<br>`mavis memory append/read/write`<br>`mavis communication send` | ❌ 方案提到 `mavis session compact` 不存在；<br>✅ 应改为 `mavis session rotate --handoff-file .auto-engineering/{PRD-ID}/state.md`（rotate 已有，handoff file 必需，state.md 直接做移交包） | 🟢 可行，但方案描述错误必须改 |
+| **Harness** | `harness session rotate --handoff-file`（同 synchronous rotation）<br>`harness memory append/read/write`<br>`harness communication send` | ❌ 方案提到 `harness session compact` 不存在；<br>✅ 应改为 `harness session rotate --handoff-file .auto-engineering/{PRD-ID}/state.md`（rotate 已有，handoff file 必需，state.md 直接做移交包） | 🟢 可行，但方案描述错误必须改 |
 | **Claude Code** | PreToolUse + UserPromptSubmit + Stop hook（`HARNESS.md:101-128`）<br>Stop hook 当前检查 `◆ STATE:` 标记 | ⚠️ 方案"emit stop hook signal"在 PRD 级不写 STATE 头；<br>✅ 可行路径：让 `state prd-complete` 命令触发 Bash 写入 `state.md`，下次 prompt 通过 `prompt-inject` hook 自动注入 PRD 完成提示 + state.md 路径（复用现有 UserPromptSubmit 协议） | 🟡 可行但需改造 STATE 头注入逻辑 |
 | **Codex** | 完全未验证 | ❌ 方案自承"待调研"；<br>🛑 阻断，必须先 PoC，否则 PRD 级 compact 在 Codex runtime 下根本无法跑通 | 🔴 阻断 |
 
-**适配矩阵整体结论：** Mavis 路径可行但方案命名错误；Claude Code 可行但需改造；Codex 必须先 PoC 才能确定能否落地。
+**适配矩阵整体结论：** Harness 路径可行但方案命名错误；Claude Code 可行但需改造；Codex 必须先 PoC 才能确定能否落地。
 
 ---
 
@@ -247,7 +247,7 @@ PRD 级 state.md 没有对应模板（`templates/design/prd-summary-template.md`
 不要直接给用户报方案 A'。先回用户三件事：
 1. **🔴 阻断项 4 项 + ⚠️ 必改项 7 项**（已写完）
 2. **问用户一个边界问题：** Codex runtime 是 PoC-first 还是 fallback 到"用户手动清空"？
-3. **Mavis runtime 命名修正：** 方案中的 `mavis session compact` 不存在，应改为 `mavis session rotate --handoff-file <state.md>`
+3. **Harness runtime 命名修正：** 方案中的 `harness session compact` 不存在，应改为 `harness session rotate --handoff-file <state.md>`
 
 review 双方满意后 → 让用户拍板"是 / 否 / 修改哪条"，再交付实施计划。
 
@@ -415,7 +415,7 @@ codingPlanIds/codeReviewReport/completedAt
 - 结构：
 ```json
 {
-  "mavis": { "compactCmd": "mavis session rotate", "args": ["--handoff-file", "{state.md}"] },
+  "harness": { "compactCmd": "harness session rotate", "args": ["--handoff-file", "{state.md}"] },
   "claude-code": { "hookType": "UserPromptSubmit", "injectCmd": "..." },
   "codex": { "compactCmd": null, "status": "unsupported", "fallback": "user-manual" }
 }
@@ -473,7 +473,7 @@ codex session dump --help 2>&1
 | PoC 结论 | 方案 A' 影响 | 决策 |
 |---------|------|------|
 | Codex 有 hook | 完整 3 runtime 适配 | ✅ 推进 |
-| Codex 有 session export | 2.5 runtime（Claude + Mavis 完整，Codex 半自动） | 🟡 推进但文档化降级 |
+| Codex 有 session export | 2.5 runtime（Claude + Harness 完整，Codex 半自动） | 🟡 推进但文档化降级 |
 | 都没有 | 2 runtime + 1 fallback | 🟡 推进，Codex runtime 状态标 "manual" |
 
 **PoC 不通过 → 方案可以发布，但 Codex runtime 必须显式标记 "manual compact required"，并在 install-skill.md §5.2 加 FAQ。**
@@ -633,7 +633,7 @@ codex session dump --help 2>&1
 | D-3 | Codex runtime | **PoC-first（建议）** | Defer 到 v3.3 | 直接 fallback "用户手动" | **A** |
 | D-4 | Story 级兼容 | 双写一直保留 | **三阶段渐进迁移（建议）** | 一次性迁移 | **B** |
 | D-5 | 同步清单扩展 | 不扩 L280 | **扩 L280 加 4.1 子节（建议）** | 重写 L280 | **B** |
-| D-6 | Mavis compact 路径 | 草案 `mavis session compact` | **`mavis session rotate --handoff-file`（已存在）** | 新增 `mavis session compact` 命令 | **B** |
+| D-6 | Harness compact 路径 | 草案 `harness session compact` | **`harness session rotate --handoff-file`（已存在）** | 新增 `harness session compact` 命令 | **B** |
 
 **给用户的话术建议（root agent 转达）：**
 
@@ -644,7 +644,7 @@ codex session dump --help 2>&1
 > 3. Codex 怎么走？PoC-first / v3.3 defer / 直接手动？（PoC-first 推荐，30 分钟可搞定）
 > 4. Story 级 state.json 怎么过渡？双写 / 三阶段 / 一次性？（三阶段推荐）
 > 5. ae-sdd-update-skill.md L280 同步清单要扩吗？（扩成 L4.1 推荐）
-> 6. Mavis runtime 用哪个命令？rotate --handoff-file（已存在）vs 新加 compact（rotate 推荐）
+> 6. Harness runtime 用哪个命令？rotate --handoff-file（已存在）vs 新加 compact（rotate 推荐）
 > 
 > review 双方满意后再交付实施计划。完整 review 报告在 scratchpad。
 

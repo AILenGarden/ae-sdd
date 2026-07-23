@@ -16,6 +16,8 @@ impl RuntimeService {
             project_key: workspace.result.project_key.clone(),
             mode: workspace.result.mode,
             agent_role: Some(AgentRole::from(identity.role)),
+            agent_grant: Some(identity.grant.clone()),
+            caller_kind: None,
             inventory_generation: workspace.result.inventory_generation,
         })
     }
@@ -56,14 +58,16 @@ impl RuntimeService {
                     }
                     let workspace = state.workspaces.get(&session.workspace_id)?;
                     Some((
-                        BusinessWorkspace {
+                        session.grant.to_domain().map(|grant| BusinessWorkspace {
                             workspace_id: workspace.result.workspace_id.clone(),
                             canonical_root: workspace.result.canonical_root.clone(),
                             project_key: workspace.result.project_key.clone(),
                             mode: workspace.result.mode,
                             agent_role: Some(AgentRole::from(session.result.role)),
+                            agent_grant: Some(grant),
+                            caller_kind: None,
                             inventory_generation: workspace.result.inventory_generation,
-                        },
+                        }),
                         work_item_id.to_owned(),
                         session.result.session_id.clone(),
                         AgentRole::from(session.result.role),
@@ -73,6 +77,13 @@ impl RuntimeService {
         };
         let mut refreshed = 0;
         for (workspace, work_item_id, session_id, role) in targets {
+            let workspace = match workspace {
+                Ok(workspace) => workspace,
+                Err(_) => {
+                    self.context.invalidate(&session_id)?;
+                    continue;
+                }
+            };
             match self
                 .business
                 .project_context(&workspace, &work_item_id, &session_id, role)

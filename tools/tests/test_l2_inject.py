@@ -7,7 +7,7 @@ test_l2_inject.py - l2_inject.py 单元测试（🆕 v3.10.8）。
   - diff-aware skip（hash 一致不重写）
   - bootstrap 段落边界识别（三家各自的标题模式）
   - 备份 + 回滚
-  - mavis/hermes 跳过（无 l2_global_file）
+  - harness/hermes 跳过（无 l2_global_file）
   - Claude 红线条款 11 补丁识别
 """
 import sys
@@ -286,14 +286,14 @@ class TestBackupRollback(unittest.TestCase):
         self.assertFalse(ok)
 
 
-# ─── mavis/hermes 跳过 ────────────────────────────────────────────────────────
+# ─── harness/hermes 跳过 ────────────────────────────────────────────────────────
 
 class TestAgentFiltering(unittest.TestCase):
 
-    def test_mavis_hermes_have_no_l2_config(self):
-        """mavis/hermes 的 l2_global_file 应为 None。"""
+    def test_harness_hermes_have_no_l2_config(self):
+        """harness/hermes 的 l2_global_file 应为 None。"""
         for name, cfg in dr._KNOWN_AGENTS.items():
-            if name in ("mavis", "hermes"):
+            if name in ("harness", "hermes"):
                 self.assertIsNone(cfg["l2_global_file"],
                                   f"{name} 不应有 l2_global_file")
                 self.assertIsNone(cfg["l2_language"])

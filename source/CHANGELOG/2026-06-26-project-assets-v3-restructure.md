@@ -59,4 +59,4 @@
 
 ## Reviewer
 
-EDY（Mavis root session 2026-06-26 自动生成）
+EDY（Harness root session 2026-06-26 自动生成）

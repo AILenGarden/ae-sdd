@@ -7,8 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ae-sdd-domain = { path = "../ae-sdd-domain" }
-ae-sdd-policy = { path = "../ae-sdd-policy" }
+ae-sdd-domain.workspace = true
+ae-sdd-policy.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

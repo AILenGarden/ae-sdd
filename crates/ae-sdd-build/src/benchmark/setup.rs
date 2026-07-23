@@ -362,8 +362,7 @@ pub(super) fn authoritative_state(policy_digest: &str) -> Result<(Value, String)
         "stateMachineName": WORK_ITEM_ID,
         "currentWorkItem": WORK_ITEM_ID,
         "revision": 1,
-        "currentPhase": "benchmark",
-        "nextActions": ["hook.pre_tool"],
+        "currentPhase": "coding",
     });
     let input_fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(&state)?));
     state["hookGuard"] = json!({

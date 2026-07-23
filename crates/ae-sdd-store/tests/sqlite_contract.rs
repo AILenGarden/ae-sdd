@@ -63,6 +63,19 @@ fn receipt(
     }
 }
 
+fn lease_control_receipt(
+    workspace_id: WorkspaceId,
+    work_item_id: WorkItemId,
+    key: &str,
+    revision: u64,
+) -> OperationReceipt {
+    let mut receipt = receipt(workspace_id, work_item_id, key, revision + 1);
+    receipt.operation = OperationId::new("lease.acquire").expect("operation is valid");
+    receipt.revision_before = StateRevision::new(revision);
+    receipt.revision_after = StateRevision::new(revision);
+    receipt
+}
+
 #[test]
 fn migration_is_repeatable_and_event_sequence_survives_restart() {
     let temp = tempfile::tempdir().expect("temp directory is created");
@@ -79,6 +92,10 @@ fn migration_is_repeatable_and_event_sequence_survives_restart() {
     assert_eq!(
         first.pragma_value("foreign_keys").expect("PRAGMA reads"),
         "1"
+    );
+    assert_eq!(
+        first.pragma_value("user_version").expect("PRAGMA reads"),
+        "2"
     );
     let (_, first_event) = first
         .index_committed_mutation(
@@ -104,6 +121,42 @@ fn migration_is_repeatable_and_event_sequence_survives_restart() {
         .expect("second event commits after restart");
     assert_eq!(second_event.event_sequence.get(), 2);
     assert_eq!(second_event.event_store_id, proposed);
+    assert_eq!(
+        reopened.pragma_value("user_version").expect("PRAGMA reads"),
+        "2"
+    );
+}
+
+#[test]
+fn lease_control_receipts_can_keep_the_project_revision_unchanged() {
+    let temp = tempfile::tempdir().expect("temp directory is created");
+    let database = temp.path().join("runtime.sqlite3");
+    let created_at = support::at("2026-07-23T00:00:00Z");
+    let event_store_id = EventStoreId::from_uuid(Uuid::from_u128(705));
+    let workspace_id = WorkspaceId::from_uuid(Uuid::from_u128(706));
+    let work_item_id = WorkItemId::new("WI-LEASE").expect("work item is valid");
+    let repository = SqliteRuntimeRepository::open(&database, event_store_id, &created_at)
+        .expect("database opens and migrates");
+    repository
+        .index_committed_mutation(
+            &lease_control_receipt(workspace_id, work_item_id.clone(), "acquire", 3),
+            &event(workspace_id, work_item_id.clone(), 3),
+        )
+        .expect("same-revision receipt commits");
+    drop(repository);
+
+    let reopened = SqliteRuntimeRepository::open(&database, event_store_id, &created_at)
+        .expect("version two migration is repeatable");
+    reopened
+        .index_committed_mutation(
+            &lease_control_receipt(workspace_id, work_item_id.clone(), "renew", 3),
+            &event(workspace_id, work_item_id, 4),
+        )
+        .expect("same-revision receipt commits after restart");
+    assert_eq!(
+        reopened.pragma_value("user_version").expect("PRAGMA reads"),
+        "2"
+    );
 }
 
 #[test]

@@ -16,17 +16,14 @@ pub const LEGACY_SCANNER_COUNT: usize = 7;
 const INVENTORY_SCHEMA: &str = "1";
 const ROUTING_SCHEMA: &str = "ae-sdd-compatibility-routing/v1";
 
-pub const C_ADMIN_JOB_COMMANDS: [&str; 29] = [
+pub const C_ADMIN_JOB_COMMANDS: [&str; 24] = [
     "assets check",
     "assets outline",
     "assets query",
     "assets read",
     "assets section",
     "assets stats",
-    "automation disable",
-    "automation enable",
     "automation status",
-    "baseline create",
     "baseline diff",
     "baseline inspect",
     "db audit",
@@ -38,27 +35,48 @@ pub const C_ADMIN_JOB_COMMANDS: [&str; 29] = [
     "git impact",
     "git log",
     "git status",
-    "perf clear",
     "perf doctor",
     "perf report",
     "classify",
     "plugin list",
     "plugin trace",
     "plugin validate",
-    "preflight collect",
 ];
 
-pub const D_REJECTED_COMMANDS: [&str; 15] = [
+pub const D_REJECTED_COMMANDS: [&str; 38] = [
+    "automation disable",
+    "automation enable",
+    "baseline create",
     "context-pressure",
+    "doc finalize",
     "enter",
     "gate-intercept",
     "prompt-inject",
+    "perf clear",
+    "preflight collect",
     "ra-gate",
+    "review retry",
+    "review retry-role",
+    "review start",
+    "review status",
+    "review verify-exit",
+    "review-loop start",
+    "review-loop status",
+    "review-loop verify-exit",
     "runtime compact",
     "scripts-dir",
     "state confirm",
+    "state bind-story-doc",
     "state lock",
+    "state new",
+    "state prd-archive",
+    "state prd-check-complete",
+    "state prd-complete",
+    "state prd-init",
+    "state register-review-consensus",
+    "state relocate",
     "state unlock",
+    "state write",
     "stop-check",
     "subprocess collect",
     "subprocess list",
@@ -265,6 +283,8 @@ pub enum ManifestError {
     RouteTarget { id: String, reason: String },
     #[error("legacy command semantics are not implemented: {0:?}")]
     UnimplementedRoutes(Vec<String>),
+    #[error("legacy capability semantics are not implemented: {0:?}")]
+    UnimplementedCapabilities(Vec<String>),
     #[error("command {id} identity contract does not match its target")]
     RouteIdentity { id: String },
     #[error("command/capability {0} is not fail-closed")]
@@ -278,6 +298,8 @@ pub enum ManifestError {
         missing: Vec<String>,
         extra: Vec<String>,
     },
+    #[error("capability {id} has an invalid compatibility status: {reason}")]
+    CapabilityStatus { id: String, reason: String },
     #[error("compatibility evidence path is invalid, excluded, or missing: {0}")]
     EvidencePath(String),
     #[error("could not locate repository root above {0}")]

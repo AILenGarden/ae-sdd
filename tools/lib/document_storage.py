@@ -76,6 +76,7 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
 READ_RESOURCE_ROUTES: dict[str, Path] = {
     "STORY_TEMPLATE": Path("templates/design/story-template.md"),
     "STORY_WRITING_GUIDE": Path("standards/story/story-writing-guide.md"),
+    "DOC_DENSITY_STANDARD": Path("standards/doc-density-standard.md"),
 }
 
 # v3.12 process-artifact policy：RA / DR / Story 是长期核心文档。

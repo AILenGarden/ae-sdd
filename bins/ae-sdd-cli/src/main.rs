@@ -1,12 +1,11 @@
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ae_sdd_client::{
-    DaemonClient, HookClient, HookInvocation, HookOutcome, LocalIpcTransport,
+    ClientError, DaemonClient, HookClient, HookInvocation, HookOutcome, LocalIpcTransport,
     default_endpoint_manifest, default_state_dir,
 };
 use ae_sdd_protocol::{
@@ -17,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
+pub mod bootstrap;
 pub mod legacy;
 
 #[derive(Parser)]
@@ -74,7 +74,7 @@ enum TopLevel {
 
 #[derive(Subcommand)]
 enum RuntimeCommand {
-    /// Start `ae-sddd serve` in the background and wait for a successful handshake.
+    /// Ensure `ae-sddd serve` is ready and print its authenticated status.
     Start {
         /// Daemon executable override; defaults to a sibling `ae-sddd` binary.
         #[arg(long)]
@@ -91,6 +91,33 @@ enum RuntimeCommand {
         /// Maximum startup wait.
         #[arg(long, default_value_t = 5_000)]
         timeout_ms: u64,
+    },
+    /// Reuse or race-safely bootstrap the per-user daemon.
+    Ensure {
+        /// Daemon executable override; defaults to a sibling `ae-sddd` binary.
+        #[arg(long)]
+        daemon: Option<PathBuf>,
+        /// Per-user daemon state directory.
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Endpoint manifest override, primarily for isolated tests.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Canonical parent roots from which workspaces may be registered.
+        #[arg(long)]
+        allowed_root: Vec<PathBuf>,
+        /// Current project root; defaults to the current working directory.
+        #[arg(long)]
+        project_root: Option<PathBuf>,
+        /// Current policy digest.
+        #[arg(long)]
+        policy_digest: Option<String>,
+        /// Maximum bootstrap wait.
+        #[arg(long, default_value_t = 5_000)]
+        timeout_ms: u64,
+        /// Suppress status output for host lifecycle prewarming.
+        #[arg(long)]
+        quiet: bool,
     },
     /// Read daemon status over authenticated local RPC.
     Status {
@@ -173,11 +200,18 @@ async fn run(arguments: Arguments) -> Result<(), String> {
                 );
             }
             let params: RequestParams<Value> = read_json_argument(&params_json)?;
+            let recover_runtime = manifest.is_none()
+                && !matches!(method, RpcMethod::RuntimeStatus | RpcMethod::RuntimeDrain);
             let client = client(manifest, ClientKind::Cli, timeout_ms)?;
-            let result: Value = client
-                .call(method, params)
-                .await
-                .map_err(|error| error.to_string())?;
+            let result: Value = call_with_runtime_recovery(
+                &client,
+                method,
+                params,
+                recover_runtime,
+                ClientKind::Cli,
+                timeout_ms,
+            )
+            .await?;
             print_json(&result)
         }
         TopLevel::Hook {
@@ -200,7 +234,11 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             }
             let raw: Value = read_json_argument(&request_json)?;
             let parsed = parse_hook_request(&method, raw)?;
+            let recover_runtime = manifest.is_none();
             if parsed.host_input && !host_binding_available() {
+                if recover_runtime {
+                    let _ = ensure_default_runtime(ClientKind::Hook, timeout_ms).await;
+                }
                 return print_json(&host_fail_closed(
                     method,
                     "trusted hook session binding is unavailable",
@@ -210,16 +248,27 @@ async fn run(arguments: Arguments) -> Result<(), String> {
                 "host Hook event could not be converted to a typed request".to_owned()
             })?;
             let client = client(manifest, ClientKind::Hook, timeout_ms)?;
-            let outcome = HookClient::new(&client)
-                .invoke(HookInvocation {
-                    method,
-                    params: request.params,
-                    engaged: request.engaged,
-                    offline_capability: request.offline_capability,
-                    now_unix_ms: request.now_unix_ms,
-                })
-                .await
-                .map_err(|error| error.to_string())?;
+            let invocation = HookInvocation {
+                method,
+                params: request.params,
+                engaged: request.engaged,
+                offline_capability: request.offline_capability,
+                now_unix_ms: request.now_unix_ms,
+            };
+            let hook_client = HookClient::new(&client);
+            let outcome = if recover_runtime {
+                hook_client
+                    .invoke_with_recovery(invocation, || async move {
+                        ensure_default_runtime(ClientKind::Hook, timeout_ms)
+                            .await
+                            .map(|_| ())
+                            .map_err(|_| ClientError::DaemonUnavailable)
+                    })
+                    .await
+            } else {
+                hook_client.invoke(invocation).await
+            }
+            .map_err(|error| error.to_string())?;
             if parsed.host_input {
                 print_host_outcome(method, &outcome)
             } else {
@@ -395,15 +444,14 @@ async fn run_legacy(arguments: Vec<String>) -> Result<(), String> {
             if invocation.output_json {
                 command.arg("--json");
             }
-            let status = command
-                .status()
-                .await
-                .map_err(|error| error.to_string())?;
+            let status = command.status().await.map_err(|error| error.to_string())?;
             drop(temporary);
             if status.success() {
                 Ok(())
             } else {
-                Err(format!("offline Rust build job failed with status {status}"))
+                Err(format!(
+                    "offline Rust build job failed with status {status}"
+                ))
             }
         }
         LegacyTarget::Rpc { method, adapter } => {
@@ -414,31 +462,104 @@ async fn run_legacy(arguments: Vec<String>) -> Result<(), String> {
                 |name| std::env::var(name).ok(),
             )
             .map_err(|error| error.to_string())?;
-            let mut params: RequestParams<Value> = match invocation.request {
-                LegacyRequestSource::ExplicitJson(request) => read_json_argument(&request)?,
-                LegacyRequestSource::Synthesized(params) => params,
+            let (mut params, synthesized): (RequestParams<Value>, bool) = match invocation.request {
+                LegacyRequestSource::ExplicitJson(request) => {
+                    (read_json_argument(&request)?, false)
+                }
+                LegacyRequestSource::Synthesized(params) => (*params, true),
             };
             legacy::validate_request_params(&resolved.route, *method, &params)
                 .map_err(|error| error.to_string())?;
             match adapter {
-                LegacyRpcAdapter::Passthrough => {}
+                LegacyRpcAdapter::Passthrough => {
+                    if synthesized {
+                        legacy::adapt_passthrough_request(
+                            &resolved.route.command_id,
+                            *method,
+                            &mut params,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    }
+                }
                 LegacyRpcAdapter::TypedOperation { operation } => {
-                    params.payload = json!({"operation":operation,"payload":params.payload});
+                    legacy::adapt_typed_operation_request(operation, &mut params)
+                        .map_err(|error| error.to_string())?;
                 }
                 LegacyRpcAdapter::JobSubmission { entrypoint, .. } => {
-                    params.payload = json!({
-                        "entrypoint":entrypoint,
-                        "arguments":params.payload,
-                        "deadlineUnixMs":now_unix_ms().saturating_add(params.deadline_ms),
-                    });
+                    legacy::adapt_job_submission(
+                        &resolved.route,
+                        entrypoint,
+                        &mut params,
+                        now_unix_ms(),
+                    )
+                    .map_err(|error| error.to_string())?;
                 }
             }
-            let client = client(invocation.manifest, ClientKind::Cli, params.deadline_ms)?;
-            let result: Value = client
-                .call(*method, params)
-                .await
+            legacy::validate_request_params(&resolved.route, *method, &params)
                 .map_err(|error| error.to_string())?;
-            print_json(&result)
+            let job_poll = matches!(adapter, LegacyRpcAdapter::JobSubmission { .. })
+                .then(|| legacy::LegacyJobPollContext::from_submission(&params))
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let client_kind = if matches!(
+                adapter,
+                LegacyRpcAdapter::TypedOperation { operation } if operation == "lease.break"
+            ) {
+                ClientKind::Admin
+            } else {
+                ClientKind::Cli
+            };
+            let recover_runtime = invocation.manifest.is_none();
+            let deadline_ms = params.deadline_ms;
+            let client = client(invocation.manifest, client_kind, deadline_ms)?;
+            let result: Value = call_with_runtime_recovery(
+                &client,
+                *method,
+                params,
+                recover_runtime,
+                client_kind,
+                deadline_ms,
+            )
+            .await?;
+            if let Some(job_poll) = job_poll {
+                return poll_legacy_job(&client, &resolved.route.command_id, &job_poll, &result)
+                    .await;
+            }
+            print_json(&result)?;
+            legacy::validate_passthrough_result(&resolved.route.command_id, *method, &result)
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
+async fn poll_legacy_job(
+    client: &DaemonClient,
+    command_id: &str,
+    context: &legacy::LegacyJobPollContext,
+    submitted: &Value,
+) -> Result<(), String> {
+    let job_id = submitted
+        .get("jobId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "job.submit returned no jobId".to_owned())?;
+    loop {
+        let params = context
+            .status_request(job_id, now_unix_ms())
+            .map_err(|error| error.to_string())?;
+        let status: Value = client
+            .call(RpcMethod::JobStatus, params)
+            .await
+            .map_err(|error| error.to_string())?;
+        match legacy::validate_job_terminal_status(command_id, &status) {
+            Ok(false) => tokio::time::sleep(Duration::from_millis(20)).await,
+            Ok(true) => {
+                print_json(&status)?;
+                return Ok(());
+            }
+            Err(error) => {
+                print_json(&status)?;
+                return Err(error.to_string());
+            }
         }
     }
 }
@@ -452,6 +573,31 @@ async fn runtime(command: RuntimeCommand) -> Result<(), String> {
             policy_digest,
             timeout_ms,
         } => start_daemon(daemon, state_dir, allowed_root, policy_digest, timeout_ms).await,
+        RuntimeCommand::Ensure {
+            daemon,
+            state_dir,
+            manifest,
+            allowed_root,
+            project_root,
+            policy_digest,
+            timeout_ms,
+            quiet,
+        } => {
+            let result = bootstrap::ensure_daemon(bootstrap::BootstrapOptions {
+                daemon,
+                state_dir,
+                manifest,
+                allowed_roots: allowed_root,
+                project_root,
+                policy_digest,
+                timeout: Duration::from_millis(timeout_ms.max(1)),
+                probe_timeout: Duration::from_millis(500),
+                client_kind: ClientKind::Cli,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+            if quiet { Ok(()) } else { print_json(&result) }
+        }
         RuntimeCommand::Status { manifest } => {
             let client = client(manifest, ClientKind::Cli, 2_000)?;
             let status: Value = client
@@ -487,46 +633,86 @@ async fn start_daemon(
     policy_digest: Option<String>,
     timeout_ms: u64,
 ) -> Result<(), String> {
-    let state_dir = state_dir
-        .map(Ok)
-        .unwrap_or_else(default_state_dir)
-        .map_err(|error| error.to_string())?;
-    let daemon = daemon.unwrap_or(sibling_daemon()?);
-    let mut command = Command::new(daemon);
-    command
-        .arg("serve")
-        .arg("--state-dir")
-        .arg(&state_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    for root in allowed_roots {
-        command.arg("--allowed-root").arg(root);
-    }
-    if let Some(digest) = policy_digest {
-        command.arg("--policy-digest").arg(digest);
-    }
-    configure_background(&mut command);
-    command.spawn().map_err(|error| error.to_string())?;
+    let result = bootstrap::ensure_daemon(bootstrap::BootstrapOptions {
+        daemon,
+        state_dir,
+        manifest: None,
+        allowed_roots,
+        project_root: None,
+        policy_digest,
+        timeout: Duration::from_millis(timeout_ms.max(1)),
+        probe_timeout: Duration::from_millis(500),
+        client_kind: ClientKind::Cli,
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    print_json(&result.status)
+}
 
-    let manifest = state_dir.join("endpoint.v1.json");
-    let started = Instant::now();
-    let timeout = Duration::from_millis(timeout_ms.max(1));
-    loop {
-        if tokio::fs::try_exists(&manifest).await.unwrap_or(false) {
-            let client = client(Some(manifest.clone()), ClientKind::Cli, 500)?;
-            if let Ok(status) = client
-                .call::<Value>(RpcMethod::RuntimeStatus, empty_params(json!({}), 500))
+async fn call_with_runtime_recovery<T>(
+    client: &DaemonClient,
+    method: RpcMethod,
+    params: RequestParams<Value>,
+    recover_runtime: bool,
+    client_kind: ClientKind,
+    request_timeout_ms: u64,
+) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let first_attempt = duplicate_params(&params);
+    match client.call(method, first_attempt).await {
+        Ok(result) => Ok(result),
+        Err(error) if recover_runtime && is_runtime_unavailable(&error) => {
+            ensure_default_runtime(client_kind, request_timeout_ms)
                 .await
-            {
-                return print_json(&status);
-            }
+                .map_err(|bootstrap_error| bootstrap_error.to_string())?;
+            client
+                .call(method, params)
+                .await
+                .map_err(|replay_error| replay_error.to_string())
         }
-        if started.elapsed() >= timeout {
-            return Err("daemon did not become ready before the startup deadline".to_owned());
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        Err(error) => Err(error.to_string()),
     }
+}
+
+async fn ensure_default_runtime(
+    client_kind: ClientKind,
+    request_timeout_ms: u64,
+) -> Result<bootstrap::BootstrapResult, bootstrap::BootstrapError> {
+    bootstrap::ensure_daemon(bootstrap::BootstrapOptions {
+        timeout: Duration::from_secs(5),
+        probe_timeout: Duration::from_millis(request_timeout_ms.clamp(1, 500)),
+        client_kind,
+        ..bootstrap::BootstrapOptions::default()
+    })
+    .await
+}
+
+fn duplicate_params(params: &RequestParams<Value>) -> RequestParams<Value> {
+    RequestParams {
+        protocol_version: params.protocol_version.clone(),
+        workspace_id: params.workspace_id.clone(),
+        agent_id: params.agent_id.clone(),
+        session_id: params.session_id.clone(),
+        capability_token: params.capability_token.clone(),
+        turn_id: params.turn_id.clone(),
+        work_item_id: params.work_item_id.clone(),
+        lease_id: params.lease_id.clone(),
+        fencing_token: params.fencing_token,
+        expected_revision: params.expected_revision,
+        idempotency_key: params.idempotency_key.clone(),
+        confirmation: params.confirmation.clone(),
+        deadline_ms: params.deadline_ms,
+        payload: params.payload.clone(),
+    }
+}
+
+fn is_runtime_unavailable(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::EndpointManifest | ClientError::DaemonUnavailable
+    )
 }
 
 async fn lifecycle_request(manifest: Option<PathBuf>, stop: bool) -> Result<(), String> {
@@ -616,19 +802,6 @@ fn print_json(value: &impl serde::Serialize) -> Result<(), String> {
     Ok(())
 }
 
-fn sibling_daemon() -> Result<PathBuf, String> {
-    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-    let parent = executable
-        .parent()
-        .ok_or_else(|| "CLI executable has no parent directory".to_owned())?;
-    let name = if cfg!(windows) {
-        "ae-sddd.exe"
-    } else {
-        "ae-sddd"
-    };
-    Ok(parent.join(name))
-}
-
 fn sibling_build() -> Result<PathBuf, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let parent = executable
@@ -648,16 +821,3 @@ fn now_unix_ms() -> u64 {
             duration.as_millis().try_into().unwrap_or(u64::MAX)
         })
 }
-
-#[cfg(windows)]
-fn configure_background(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(unix)]
-fn configure_background(_command: &mut Command) {}
-
-#[allow(dead_code)]
-fn _path_anchor(_path: &Path) {}

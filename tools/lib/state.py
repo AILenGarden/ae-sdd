@@ -1145,11 +1145,11 @@ def set_prd_status(state: dict, status: str) -> bool:
 # 本 helper 封装"生成 summary.md + 流转 prdStatus → awaiting_compact + 返回 runtime 差异化提示"，
 # 消除 CLI 与 state 库职责分散。实际 compact 由各 runtime 的 hook/session 协议执行（保持协议骨架）。
 # runtime 差异表（对齐 2026-07-02 remediation plan §1.4）：
-#   mavis       → summary.md + mavis session rotate --handoff-file 指令
+#   harness       → summary.md + harness session rotate --handoff-file 指令
 #   claude-code → summary.md + 写 .ae-sdd/compact-trigger 文件（UserPromptSubmit hook 读取注入 /compact）
 #   codex       → summary.md + 标注"待调研"（codex 无 compact 机制）
 RUNTIME_COMPACT_HINTS: dict[str, str] = {
-    "mavis": "下一步：mavis session rotate --handoff-file {summary_path}",
+    "harness": "下一步：harness session rotate --handoff-file {summary_path}",
     "claude-code": "下一步：已写 compact-trigger 文件，UserPromptSubmit hook 将注入 /compact 指令",
     "codex": "下一步：codex 无原生 compact 机制（待调研），summary.md 已生成供人工衔接",
 }
@@ -1162,7 +1162,7 @@ def prd_complete(state: dict, prd_id: str, runtime: str,
     Args:
         state:        PRD 级 state.json 的 dict（read_state 结果，原地修改）
         prd_id:       PRD 标识
-        runtime:      目标 runtime（mavis / claude-code / codex）
+        runtime:      目标 runtime（harness / claude-code / codex）
         project_root: 项目根路径（用于定位 .auto-engineering/{prd_id}/summary.md）
 
     Returns:

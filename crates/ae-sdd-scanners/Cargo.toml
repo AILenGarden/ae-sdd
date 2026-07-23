@@ -7,10 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ae-sdd-domain = { path = "../ae-sdd-domain" }
-ae-sdd-inventory = { path = "../ae-sdd-inventory" }
-quick-xml = "0.41.0"
-regex = "1.13.1"
+ae-sdd-domain.workspace = true
+ae-sdd-inventory.workspace = true
+quick-xml.workspace = true
+regex.workspace = true
 thiserror.workspace = true
 
 [lints]

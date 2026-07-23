@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use ae_sdd_build::{
-    CompatibilityRoutingManifest, ExpectedCounts, ImplementationStatus, ManifestError, RouteTarget,
+    CompatibilityRoutingManifest, ExpectedCounts, ImplementationStatus, RouteTarget,
     audit_compatibility,
 };
 use ae_sdd_protocol::{CapabilityTokenWire, RequestParams};
@@ -26,27 +26,103 @@ fn repository_root() -> PathBuf {
 }
 
 #[test]
-fn compatibility_audit_rejects_manifest_only_legacy_routes() {
+fn compatibility_audit_accepts_only_fully_evidenced_legacy_routes() {
     let root = repository_root();
     let inventory = root.join("tests/fixtures/compatibility/legacy-surface.v1.json");
-    let error = audit_compatibility(
+    let summary = audit_compatibility(
         &inventory,
         ExpectedCounts::legacy(),
         &[PathBuf::from("apps/ae-sdd-monitor/**")],
     )
-    .expect_err("manifest-only routes must not pass parity");
-    let ManifestError::UnimplementedRoutes(routes) = error else {
-        panic!("unexpected audit error: {error}")
-    };
-    assert_eq!(routes.len(), 100);
+    .expect("every preserved or breaking-fix route must carry executable evidence");
+    assert_eq!(summary.command_count, 113);
+    assert_eq!(summary.capability_evidence_count, 61);
+    assert_eq!(summary.stub_count, 0);
+    assert_eq!(summary.logical_fallback_count, 0);
 }
 
 #[test]
 fn every_route_declares_one_typed_target_without_overclaiming_implementation() {
+    const IMPLEMENTED_RPC: [&str; 6] = [
+        "gate coding-required",
+        "gate ra-required",
+        "health",
+        "ops describe",
+        "ops execute",
+        "ops next",
+    ];
+    const BREAKING_RPC: [&str; 7] = [
+        "flow-violation-scan",
+        "ra-authenticity-scan",
+        "ra-depth-scan",
+        "ra-implementation-scan",
+        "review abort",
+        "review collect",
+        "review-loop collect",
+    ];
+    const IMPLEMENTED_TYPED: [&str; 12] = [
+        "doc resolve",
+        "doc save",
+        "evidence finalize",
+        "evidence record",
+        "gates check",
+        "lease acquire",
+        "lease release",
+        "lease renew",
+        "lease status",
+        "state next-step",
+        "state read",
+        "verify plan",
+    ];
+    const IMPLEMENTED_JOBS: [&str; 21] = [
+        "assets check",
+        "assets outline",
+        "assets query",
+        "assets read",
+        "assets section",
+        "assets stats",
+        "automation status",
+        "baseline diff",
+        "baseline inspect",
+        "classify",
+        "evidence lookup",
+        "git blame",
+        "git diff",
+        "git impact",
+        "git log",
+        "git status",
+        "gate doc-storage",
+        "iteration-check",
+        "perf doctor",
+        "perf report",
+        "update-check",
+    ];
+    const BREAKING_JOBS: [&str; 15] = [
+        "db audit",
+        "db explain",
+        "db profiles",
+        "db query",
+        "memory clean",
+        "memory clean-all",
+        "memory common",
+        "memory create",
+        "memory read",
+        "memory search",
+        "memory summarize",
+        "memory update",
+        "plugin list",
+        "plugin trace",
+        "plugin validate",
+    ];
+    const BREAKING_TYPED: [&str; 1] = ["lease break"];
     let path = repository_root().join("tests/fixtures/compatibility/cli-routing.v1.json");
     let routing: CompatibilityRoutingManifest =
         serde_json::from_slice(&std::fs::read(path).expect("routing fixture"))
             .expect("strict routing schema");
+    let inventory = ae_sdd_build::CompatibilityManifest::from_path(
+        &repository_root().join("tests/fixtures/compatibility/legacy-surface.v1.json"),
+    )
+    .expect("compatibility inventory");
 
     let mut command_ids = BTreeSet::new();
     let mut dispatches = Vec::new();
@@ -54,12 +130,33 @@ fn every_route_declares_one_typed_target_without_overclaiming_implementation() {
         assert!(command_ids.insert(route.id.clone()), "duplicate command");
         assert!(route.fail_closed, "{} must fail closed", route.id);
         let dotted = route.id.replace(' ', ".");
-        let expected_status = if ae_sdd_build::B_OFFLINE_ENTRYPOINTS.contains(&dotted.as_str()) {
+        let expected_status = if ae_sdd_build::B_OFFLINE_ENTRYPOINTS.contains(&dotted.as_str())
+            || IMPLEMENTED_RPC.contains(&route.id.as_str())
+            || IMPLEMENTED_TYPED.contains(&route.id.as_str())
+            || IMPLEMENTED_JOBS.contains(&route.id.as_str())
+        {
             ImplementationStatus::Implemented
+        } else if BREAKING_RPC.contains(&route.id.as_str())
+            || BREAKING_JOBS.contains(&route.id.as_str())
+            || BREAKING_TYPED.contains(&route.id.as_str())
+            || matches!(&route.route, RouteTarget::Rejected { .. })
+        {
+            ImplementationStatus::BreakingFixVerified
         } else {
             ImplementationStatus::Pending
         };
         assert_eq!(route.status, expected_status, "{} status", route.id);
+        let disposition = inventory
+            .commands
+            .iter()
+            .find(|entry| entry.id == route.id)
+            .expect("inventory route")
+            .disposition;
+        if route.status == ImplementationStatus::BreakingFixVerified {
+            assert_eq!(disposition, ae_sdd_build::Disposition::BreakingFix);
+        } else {
+            assert_ne!(disposition, ae_sdd_build::Disposition::BreakingFix);
+        }
         let dispatch = match route.route {
             RouteTarget::Rpc { method } => format!("rpc:{method}"),
             RouteTarget::TypedOperation { operation } => format!("operation:{operation}"),
@@ -101,8 +198,10 @@ fn build_tool_contains_no_subprocess_fallback_executor() {
                     && line.contains("Command::new(&daemon_binary)");
                 let windows_acl = normalized.ends_with("/src/service/materialize.rs")
                     && line.contains("Command::new(\"icacls.exe\")");
+                let native_service_manager = normalized.ends_with("/src/service/executor.rs")
+                    && line.contains("Command::new(command.program)");
                 assert!(
-                    daemon_benchmark || windows_acl,
+                    daemon_benchmark || windows_acl || native_service_manager,
                     "unapproved subprocess executor found in {}: {}",
                     path.display(),
                     line.trim()
@@ -222,7 +321,7 @@ fn compatibility_classification_partitions_the_113_commands_exactly() {
         .count();
     assert_eq!(
         (b, c, d, routing.commands.len() - b - c - d),
-        (13, 29, 15, 56)
+        (13, 24, 38, 38)
     );
 }
 
@@ -243,4 +342,35 @@ fn post_commit_and_harness_docs_use_rust_typed_argv_only() {
     assert!(readme.contains("ae-sdd-build --release -- harness"));
     assert!(!readme.contains("build_harness.py"));
     assert!(!readme.to_ascii_lowercase().contains("python"));
+}
+
+#[test]
+fn member_manifests_inherit_every_dependency_from_the_workspace() {
+    let root = repository_root();
+    for parent in ["bins", "crates"] {
+        for entry in std::fs::read_dir(root.join(parent)).expect("workspace member directory") {
+            let path = entry.expect("workspace member").path().join("Cargo.toml");
+            if !path.is_file() {
+                continue;
+            }
+            let manifest = std::fs::read_to_string(&path).expect("member manifest");
+            let mut dependency_section = false;
+            for line in manifest.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('[') {
+                    dependency_section = trimmed.ends_with("dependencies]");
+                    continue;
+                }
+                if dependency_section && !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    assert!(
+                        trimmed.contains(".workspace = true")
+                            || trimmed.contains("workspace = true"),
+                        "member dependency must inherit [workspace.dependencies] in {}: {}",
+                        path.display(),
+                        trimmed
+                    );
+                }
+            }
+        }
+    }
 }

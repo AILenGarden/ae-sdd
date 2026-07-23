@@ -16,10 +16,25 @@ the workflow executor. `FlowRuntime` is the sole process owner.
 
 | Host event | Rust client command |
 | --- | --- |
+| SessionStart (when the host supports it) | `ae-sdd runtime ensure --quiet` |
 | UserPromptSubmit | `ae-sdd hook --method hook.user_prompt --request-json -` |
 | PreToolUse | `ae-sdd hook --method hook.pre_tool --request-json -` |
 | PostToolUse | `ae-sdd hook --method hook.post_tool --request-json -` |
 | Stop | `ae-sdd hook --method hook.stop --request-json -` |
+
+`SessionStart` is an eager prewarm, not a correctness dependency. Every
+daemon-bound CLI command and each trusted, session-bound Hook still performs its
+own call-first/recover-once path: if the endpoint is missing or the local
+transport is unavailable, the Rust client ensures the daemon is ready and then
+replays the original request once. Hosts without `SessionStart`, and sessions
+in which the daemon exits after startup, therefore use the same recovery path.
+An unbound host event is prewarmed when possible but remains fail-closed because
+there is no authenticated session/capability to send to the daemon.
+
+A per-user daemon that serves several workspaces must receive their trusted
+parent roots through `AE_SDD_ALLOWED_ROOTS` before its first bootstrap (a normal
+OS path list; `;` on Windows). If it is unset, bootstrap admits the current
+workspace only and later clients cannot silently widen that security boundary.
 
 `-` means one JSON request on stdin. The wrapper is:
 
@@ -40,7 +55,7 @@ Hosts may additionally map native lifecycle events when supported:
 
 | Host capability | Runtime contract |
 | --- | --- |
-| SessionStart | `session.open` |
+| SessionStart | prewarm with `runtime ensure --quiet`; the first engaged turn opens the typed session |
 | SubagentStart | `delegation.accept`, then `session.open` |
 | SubagentStop | `delegation.report`, then `session.close` |
 | PreCompact | `compact.request` |
@@ -48,6 +63,12 @@ Hosts may additionally map native lifecycle events when supported:
 
 Unsupported events remain explicitly unsupported. The adapter must not invent a
 physical claim or compact ACK.
+
+On Windows the daemon listens on a per-user Named Pipe described by the protected
+endpoint manifest. It does not bind a TCP/HTTP port, so no daemon port setting or
+firewall rule is required. A current-user Scheduled Task may run `ae-sdd runtime
+ensure` at sign-in as an optional latency prewarm; Hooks and CLI recovery remain
+the authoritative startup mechanism.
 
 ## Agent Roles
 

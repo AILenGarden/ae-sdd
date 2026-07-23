@@ -192,7 +192,7 @@ DR 中所有非平凡实现点都必须先完成决策基线（与 story-generat
 
 ## 第零步：DR 准入检查（🔴 硬门禁，未通过禁止进入生成）
 
-**🔴 必读清单（7 个文件）：**
+**🔴 必读清单（8 个文件）：**
 
 | # | 来源 | 文件 | 读取要求 |
 |---|------|------|---------|
@@ -203,9 +203,10 @@ DR 中所有非平凡实现点都必须先完成决策基线（与 story-generat
 | 5 | 自动加载 | 相关模块详情 | 按需（`ae-sdd assets query "<name>" --project <projectKey>`）|
 | 6 | 模板 | dr-template.md | 全部 18 章节 |
 | 7 | 约束 | `standards/constraints/` 全部 9 个 .md | 必读（用于 §3 约束承接）|
+| 8 | 标准 | doc-density-standard.md（`DOC_DENSITY_STANDARD`）| 必读（写作密度红线 D-1~D-7）|
 
 **门禁判定：**
-- ✅ 7 个文件全部读取 + 用户确认 → 进入第一步
+- ✅ 8 个文件全部读取 + 用户确认 → 进入第一步
 - ❌ 任一文件未读取 / 未确认 → **停止，补充读取 + 用户确认后再继续**
 - 🔴 缺 PRD 或 RA → 询问用户（**不编造信息**）
 
@@ -231,6 +232,7 @@ ae-sdd gates check --only G-DR-CTX
 | 5 | 相关模块详情 | ✅ `ae-sdd assets query "<{X}>"` / ❌ | 涉及：{模块列表} |
 | 6 | DR 模板 | ✅ 已读 / ❌ | |
 | 7 | 约束文件 | ✅ 9 个 / ❌ | 必读：{列表} |
+| 8 | doc-density-standard | ✅ `DOC_DENSITY_STANDARD` / ❌ | 写作密度红线 |
 
 **用户确认：** ☐ 通过 ☐ 补充后再继续
 ```
@@ -1037,7 +1039,7 @@ context:
 deadline: {最长执行时间}
 
 report_back:
-  channel: mavis communication
+  channel: harness communication
   target: {root session id}
   format: {DR-ID}-DR-WriterReport.md
 ```

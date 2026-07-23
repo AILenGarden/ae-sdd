@@ -230,7 +230,7 @@ ls ~/.claude/skills/ae-sdd/ 2>&1   # 应该不存在
 | `ae-sdd.md`（主入口）| 业务使用 ae-sdd（跑流程 / 写代码）| ❌ 不管（用户用 `/ae-sdd` 触发）|
 | `ae-sdd-update-skill.md` | 维护 ae-sdd SKILL 自身（修改母版 / 同步）| ❌ 不管（用户用"修改 SKILL"触发）|
 | **`ae-sdd-install-skill.md`（本文件）** | **安装 / 重装 / 卸载 ae-sdd** | ✅ **本职** |
-| `ae-sdd-harness-adapter`（如有）| 转译为 Mavis harness 格式 | ❌ 不管 |
+| `ae-sdd-harness-adapter`（如有）| 转译为 Harness 格式 | ❌ 不管 |
 | `init.py` / `init.sh`（项目级）| 项目内 `.ae-sdd/` 初始化 | ❌ 不管（init-skill 是另一个职责）|
 
 **判断原则：** 用户的目标是**"让 ae-sdd 跑起来"还是"维护 ae-sdd"**？

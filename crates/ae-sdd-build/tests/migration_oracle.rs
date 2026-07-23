@@ -551,9 +551,12 @@ fn migration_oracle_init_and_bump_use_temp_repositories_and_match_side_effects()
         legacy_bump.path().join("README.md"),
         "# ae-sdd\n\n**\u{7248}\u{672c}\u{ff1a}** v1.2.3\n",
     );
-    write(rust_bump.path().join("Cargo.toml"), "version = \"1.2.3\"\n");
     write(rust_bump.path().join("source/SKILL.md"), "version: 1.2.3\n");
-    write(rust_bump.path().join("README.md"), "ae-sdd 1.2.3\n");
+    write(
+        rust_bump.path().join("tools/lib/paths.py"),
+        "MASTER_VERSION = \"1.2.3\"\n",
+    );
+    write(rust_bump.path().join("README.md"), "> **版本：** v1.2.3\n");
     let legacy = python_script(
         r#"import json,sys
 from pathlib import Path
@@ -577,8 +580,8 @@ print(json.dumps({"oldVersion":r["old"],"newVersion":r["new"],"changedAuthorityC
     ))
     .expect("Rust bump");
     let rust_texts = [
-        fs::read_to_string(rust_bump.path().join("Cargo.toml")).expect("Cargo"),
         fs::read_to_string(rust_bump.path().join("source/SKILL.md")).expect("skill"),
+        fs::read_to_string(rust_bump.path().join("tools/lib/paths.py")).expect("paths"),
         fs::read_to_string(rust_bump.path().join("README.md")).expect("README"),
     ];
     assert_eq!(

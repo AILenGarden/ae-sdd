@@ -7,8 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ae-sdd-domain = { path = "../ae-sdd-domain" }
-ae-sdd-host = { path = "../ae-sdd-host" }
+ae-sdd-domain.workspace = true
+ae-sdd-host.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

@@ -8,6 +8,7 @@ mod endpoint;
 mod error;
 mod gate_source;
 mod ipc;
+mod operation_semantics;
 mod persistence;
 mod platform;
 mod watcher;

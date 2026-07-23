@@ -4,21 +4,22 @@ mod assets;
 mod baseline;
 mod common;
 mod database;
+mod diagnostics;
 mod git;
+mod memory;
 mod misc;
 mod perf;
 mod plugin;
 
 use std::path::Path;
 
-use ae_sdd_protocol::WorkspaceMode;
-use ae_sdd_runtime::{BusinessWorkspace, RuntimeError, RuntimeResult};
+use ae_sdd_runtime::{BoundJobIdentity, BusinessWorkspace, PersistencePort, RuntimeResult};
 use serde_json::Value;
 
 use common::{JobContext, mutation_rejected, unsupported};
 
 /// Frozen legacy entrypoints routed through the daemon job scheduler.
-pub(super) const ENTRYPOINTS: [&str; 40] = [
+pub(super) const ENTRYPOINTS: [&str; 51] = [
     "assets.check",
     "assets.outline",
     "assets.query",
@@ -43,6 +44,16 @@ pub(super) const ENTRYPOINTS: [&str; 40] = [
     "git.impact",
     "git.log",
     "git.status",
+    "gate.doc-storage",
+    "iteration-check",
+    "memory.clean",
+    "memory.clean-all",
+    "memory.common",
+    "memory.create",
+    "memory.read",
+    "memory.search",
+    "memory.summarize",
+    "memory.update",
     "perf.clear",
     "perf.doctor",
     "perf.report",
@@ -59,26 +70,44 @@ pub(super) const ENTRYPOINTS: [&str; 40] = [
     "state.register-review-consensus",
     "state.relocate",
     "state.write",
+    "update-check",
 ];
 
 pub(super) fn execute(
     workspace: &BusinessWorkspace,
-    runtime_database: &Path,
+    work_item_id: Option<&str>,
+    _runtime_database: &Path,
+    persistence: &dyn PersistencePort,
+    identity: Option<&BoundJobIdentity>,
     entrypoint: &str,
     arguments: &Value,
 ) -> RuntimeResult<Value> {
-    let context = JobContext::new(workspace, runtime_database)?;
+    if !ENTRYPOINTS.contains(&entrypoint) {
+        return Err(unsupported(entrypoint));
+    }
+    if memory::is_entrypoint(entrypoint) {
+        return memory::execute(
+            workspace,
+            work_item_id,
+            persistence,
+            identity,
+            entrypoint,
+            arguments,
+        );
+    }
+    let context = JobContext::new(workspace, work_item_id)?;
     match entrypoint {
-        "assets.check" | "assets.outline" | "assets.query" | "assets.read"
-        | "assets.section" | "assets.stats" => assets::execute(&context, entrypoint, arguments),
-        "baseline.inspect" | "baseline.diff" => {
-            baseline::execute(&context, entrypoint, arguments)
-        }
+        "assets.check" | "assets.outline" | "assets.query" | "assets.read" | "assets.section"
+        | "assets.stats" => assets::execute(&context, entrypoint, arguments),
+        "baseline.inspect" | "baseline.diff" => baseline::execute(&context, entrypoint, arguments),
         "db.audit" | "db.explain" | "db.profiles" | "db.query" => {
             database::execute(&context, entrypoint, arguments)
         }
         "git.status" | "git.diff" | "git.log" | "git.impact" | "git.blame" => {
             git::execute(&context, entrypoint, arguments)
+        }
+        "gate.doc-storage" | "iteration-check" | "update-check" => {
+            diagnostics::execute(&context, entrypoint, arguments)
         }
         "automation.status" | "classify" | "evidence.lookup" => {
             misc::execute(&context, entrypoint, arguments)
@@ -102,18 +131,23 @@ pub(super) fn execute(
         | "state.register-review-consensus"
         | "state.relocate"
         | "state.write" => mutation_rejected(&context, entrypoint),
-        _ => Err(unsupported(entrypoint)),
+        _ => unreachable!("frozen entrypoint inventory and dispatcher diverged"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ae_sdd_protocol::WorkspaceMode;
+    use ae_sdd_runtime::RuntimeError;
 
     #[test]
     fn frozen_entrypoint_inventory_is_unique_and_complete() {
-        let unique = ENTRYPOINTS.iter().copied().collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(ENTRYPOINTS.len(), 40);
+        let unique = ENTRYPOINTS
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(ENTRYPOINTS.len(), 51);
         assert_eq!(unique.len(), ENTRYPOINTS.len());
     }
 

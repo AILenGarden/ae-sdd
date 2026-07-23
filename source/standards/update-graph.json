@@ -110,7 +110,7 @@
         {"path": "README.md", "action": "第 5 行版本行更新", "auto_checkable": true},
         {"path": "source/docs/ae-sdd-design.md", "action": "能力语义、流程边界、门禁语义或用户可见行为变化时同步当前事实；无影响则不制造过程文档", "auto_checkable": false},
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "CLI/lib/scripts/hook/build/distribution/cache/scanner/state 的实现边界或数据流变化时同步当前事实", "auto_checkable": false},
-        {"path": "(分发闭环 v3.4.0)", "action": ".githooks/post-commit 自动触发 build_dist → install → harness adapter → mavis remount；不再依赖手工 dev-sync", "auto_checkable": true},
+        {"path": "(分发闭环 v3.4.0)", "action": ".githooks/post-commit 自动触发 build_dist → install → harness adapter → harness remount；不再依赖手工 dev-sync", "auto_checkable": true},
         {"path": ".githooks/post-commit", "action": "🆕 v3.4.0：hook 自身必须存在且可执行（UC-07 验证）", "auto_checkable": true},
         {"path": "git config core.hooksPath", "action": "🆕 v3.4.0：必须 = .githooks（UC-07 验证）", "auto_checkable": true}
       ],
@@ -661,6 +661,25 @@
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "场景推导模块与数据流同步", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-20"]
+    },
+    {
+      "id": "UG-31",
+      "name": "业务文档密度规范变更",
+      "trigger": [
+        "source/standards/doc-density-standard.md",
+        "tools/lib/document_storage.py"
+      ],
+      "trigger_condition": "修改文档密度规范本体或 DOC_DENSITY_STANDARD 资源路由（READ_RESOURCE_ROUTES）",
+      "affected": [
+        {"path": "tools/lib/document_storage.py", "action": "READ_RESOURCE_ROUTES 含 DOC_DENSITY_STANDARD 且路径指向 standards/doc-density-standard.md", "auto_checkable": true},
+        {"path": "source/skill-fallbacks/skills/phase1-design/dr-generate-skill.full.md", "action": "第零步必读清单含 doc-density-standard.md；门禁计数与产出记录同步", "auto_checkable": true},
+        {"path": "source/skill-fallbacks/skills/phase1-design/story-generate-skill.full.md", "action": "资源加载块含 resolve_read_resource(DOC_DENSITY_STANDARD)", "auto_checkable": true},
+        {"path": "source/skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md", "action": "头部模板引用列表含 doc-density-standard.md", "auto_checkable": true},
+        {"path": "source/standards/story/story-writing-guide.md", "action": "使用协议第 1 项含 DOC_DENSITY_STANDARD", "auto_checkable": true},
+        {"path": "source/skills/**/*.md", "action": "对应 slim entry 的资源契约同步", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/cross-cutting/document-storage-skill.full.md", "action": "只读资源 intent 清单含 DOC_DENSITY_STANDARD 与写入拒绝规则", "auto_checkable": false}
+      ],
+      "checks": ["UC-05", "UC-14"]
     }
   ]
 }

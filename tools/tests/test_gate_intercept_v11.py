@@ -245,7 +245,7 @@ class TestPathAwareness:
 
 
 def _additional_context(result: dict) -> str:
-    """从 prompt_inject 返回结构中提取 additionalContext（Mavis harness 新格式）。
+    """从 prompt_inject 返回结构中提取 additionalContext（Harness 新格式）。
 
     prompt_inject 自 v3.5.8 ra-review-loop-unification 起输出
     ``{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",

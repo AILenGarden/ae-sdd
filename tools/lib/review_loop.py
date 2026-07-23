@@ -190,7 +190,7 @@ def check_session_independence(reviewer_session_ids: list[str],
       tier: 当前 review 节点的 Tier（决定需要几个 reviewer）
 
     诚实边界：session_id 靠"字符串不等"判定，要做到 runtime 注入不可伪造
-    需 Mavis harness 配合。当前足够堵最常见的"完全自扮"偷懒。
+    需 Harness 配合。当前足够堵最常见的"完全自扮"偷懒。
     """
     violations: list[str] = []
     needed = max(1, tier)  # Tier 1 需 1 个，Tier 2 需 2 个，Tier 3 需 3 个

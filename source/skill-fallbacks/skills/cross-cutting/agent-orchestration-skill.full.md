@@ -218,7 +218,7 @@ context:
 deadline: {最长执行时间}  # 如 30 分钟
 
 report_back:
-  channel: mavis communication  # 或其他
+  channel: harness communication  # 或其他
   target: {root session id}
   format: {报告模板路径}
 ```
@@ -536,7 +536,7 @@ root agent 收集所有产出物
 
 ### 8.4.5 降级规则（环境不支持物理 sub-agent 时）
 
-> **为什么需要降级：** 部分运行环境（单 session、无 mavis spawn 能力）无法派物理 sub-agent。此时不能阻断流程，但也不能假装"多 reviewer 已达标"。
+> **为什么需要降级：** 部分运行环境（单 session、无 harness spawn 能力）无法派物理 sub-agent。此时不能阻断流程，但也不能假装"多 reviewer 已达标"。
 
 **降级执行方式：**
 
@@ -680,7 +680,7 @@ context:
 deadline: <最长执行时间>
 
 report_back:
-  channel: mavis communication
+  channel: harness communication
   target: <root session id>
   format: <节点报告模板>
 ```

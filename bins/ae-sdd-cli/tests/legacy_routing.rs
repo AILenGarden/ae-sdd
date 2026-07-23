@@ -61,7 +61,7 @@ fn admin_diagnostics_use_daemon_job_submit_and_only_build_kernels_stay_native() 
             _ => {}
         }
     }
-    assert_eq!(admin_rpc, 40);
+    assert_eq!(admin_rpc, 36);
     assert_eq!(native, 13);
 }
 
@@ -103,6 +103,11 @@ fn removed_old_spellings_carry_a_stable_remediation_and_never_dispatch() {
     ];
     for command in cases {
         let route = resolve_command_id(command).expect("known removed spelling");
+        assert_eq!(
+            route.contract.status,
+            ImplementationStatus::BreakingFixVerified
+        );
+        assert!(!route.is_provisional());
         assert!(matches!(
             route.target,
             LegacyTarget::Rejected {
@@ -125,15 +130,62 @@ fn removed_old_spellings_carry_a_stable_remediation_and_never_dispatch() {
 }
 
 #[test]
+fn untyped_legacy_mutations_are_rejected_before_dispatch() {
+    let cases = [
+        "automation disable",
+        "automation enable",
+        "baseline create",
+        "doc finalize",
+        "perf clear",
+        "preflight collect",
+        "state bind-story-doc",
+        "state new",
+        "state prd-archive",
+        "state prd-check-complete",
+        "state prd-complete",
+        "state prd-init",
+        "state register-review-consensus",
+        "state relocate",
+        "state write",
+    ];
+    for command in cases {
+        let route = resolve_command_id(command).expect("known legacy mutation");
+        assert_eq!(
+            route.contract.status,
+            ImplementationStatus::BreakingFixVerified
+        );
+        assert!(matches!(
+            route.target,
+            LegacyTarget::Rejected {
+                ref stable_code,
+                ref remediation,
+            } if stable_code == "LEGACY_UNTYPED_MUTATION_REMOVED"
+                && remediation.contains("typed daemon operation")
+        ));
+        let args = command.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        assert!(matches!(
+            resolve_legacy_argv(&args),
+            Err(LegacyRouteError::RemovedDeprecated {
+                ref command_id,
+                ref stable_code,
+                ref remediation,
+            }) if command_id == command
+                && stable_code == "LEGACY_UNTYPED_MUTATION_REMOVED"
+                && remediation.contains("typed daemon operation")
+        ));
+    }
+}
+
+#[test]
 fn argv_resolution_uses_longest_exact_prefix_and_preserves_trailing_arguments() {
     let args = [
         "state".to_owned(),
-        "register-review-consensus".to_owned(),
+        "next-step".to_owned(),
         "--work-item".to_owned(),
         "WORK-001".to_owned(),
     ];
     let resolved = resolve_legacy_argv(&args).expect("known leaf");
-    assert_eq!(resolved.route.command_id, "state register-review-consensus");
+    assert_eq!(resolved.route.command_id, "state next-step");
     assert_eq!(resolved.consumed_arguments, 2);
     assert_eq!(
         resolved.trailing_arguments,
@@ -175,7 +227,7 @@ fn fake_launchers_receive_every_route_once_without_a_fallback_branch() {
             LegacyTarget::Rejected { .. } => {}
         }
     }
-    assert_eq!(launcher.rpc, 85);
+    assert_eq!(launcher.rpc, 62);
     assert_eq!(launcher.native, 13);
-    assert_eq!(launcher.rpc + launcher.native, 98);
+    assert_eq!(launcher.rpc + launcher.native, 75);
 }

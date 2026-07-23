@@ -19,6 +19,10 @@ pub trait OperationBackend {
     fn read(&self, request: &ValidatedOperationRequest) -> Result<OperationResponse, Self::Error>;
     fn mutate(&self, request: &ValidatedOperationRequest)
     -> Result<OperationResponse, Self::Error>;
+    fn dry_run(
+        &self,
+        request: &ValidatedOperationRequest,
+    ) -> Result<OperationResponse, Self::Error>;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,13 +45,19 @@ impl OperationService {
     ) -> Result<OperationResponse, OperationServiceError> {
         let validated = ValidatedOperationRequest::validate(request)?;
         authorize(identity, validated.operation_id())?;
-        let response = if validated.spec().writes {
+        let response = if validated.spec().writes && validated.request().dry_run {
+            backend.dry_run(&validated)
+        } else if validated.spec().writes {
             backend.mutate(&validated)
         } else {
             backend.read(&validated)
         }
         .map_err(|error| OperationServiceError::Backend(Box::new(error)))?;
-        validate_response(validated.spec().writes, &response)?;
+        validate_response(
+            validated.spec().writes,
+            validated.request().dry_run,
+            &response,
+        )?;
         Ok(response)
     }
 }
@@ -67,9 +77,20 @@ fn authorize(
 
 fn validate_response(
     writes: bool,
+    dry_run: bool,
     response: &OperationResponse,
 ) -> Result<(), OperationServiceError> {
     if writes
+        && dry_run
+        && (response.changed
+            || response.revision_before.is_none()
+            || response.revision_before != response.revision_after
+            || response.receipt_digest.is_some())
+    {
+        return Err(OperationServiceError::DryRunReceiptInvalid);
+    }
+    if writes
+        && !dry_run
         && (response.revision_before.is_none()
             || response.revision_after.is_none()
             || response.receipt_digest.is_none())
@@ -92,6 +113,8 @@ pub enum OperationServiceError {
     Backend(Box<dyn std::error::Error + Send + Sync>),
     #[error("mutation response lacks revision or committed receipt")]
     MutationReceiptIncomplete,
+    #[error("dry-run response changed state or exposed a committed receipt")]
+    DryRunReceiptInvalid,
     #[error("read-only operation backend reported a mutation")]
     ReadReportedMutation,
 }

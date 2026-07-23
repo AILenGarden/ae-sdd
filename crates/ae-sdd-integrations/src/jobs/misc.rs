@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use ae_sdd_runtime::RuntimeResult;
 use ae_sdd_store::UtcTimestamp;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::common::{
     JobContext, MAX_FILE_BYTES, digest, read_bounded, read_json, required_string, safe_segment,
@@ -27,8 +27,8 @@ pub(super) fn execute(
 fn automation_status(context: &JobContext<'_>) -> RuntimeResult<Value> {
     let path = context.project_file(".ae-sdd/config.yaml")?;
     let bytes = read_bounded(&path, MAX_FILE_BYTES)?;
-    let text = String::from_utf8(bytes.clone())
-        .map_err(|_| schema_error("config.yaml must be UTF-8"))?;
+    let text =
+        String::from_utf8(bytes.clone()).map_err(|_| schema_error("config.yaml must be UTF-8"))?;
     let fields = yaml_section(&text, "automation")?;
     let enabled = yaml_bool(&fields, "enabled", false)?;
     let reviewer_tier = yaml_u64(&fields, "reviewerTier", 3)?;
@@ -81,12 +81,12 @@ fn classify(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value>
         return Err(schema_error("classification text exceeds the 1 MiB bound"));
     }
     let folded = text.to_lowercase();
-    let first_line = text.lines().find(|line| !line.trim().is_empty()).unwrap_or_default();
-    let (source, source_confidence, source_reason) = classify_source(
-        &folded,
-        &first_line.to_lowercase(),
-        filename.as_deref(),
-    );
+    let first_line = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default();
+    let (source, source_confidence, source_reason) =
+        classify_source(&folded, &first_line.to_lowercase(), filename.as_deref());
     let nonempty_lines = text.lines().filter(|line| !line.trim().is_empty()).count();
     let mut scale = classify_scale(&folded, nonempty_lines);
     let mut entry_node = match source {
@@ -100,13 +100,18 @@ fn classify(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value>
     } else if contains_any(&folded, &["config", "配置", "改个常量", "改个枚举"]) {
         scale = "micro";
         entry_node = Some("CONFIG");
-    } else if contains_any(&folded, &["code review", "codereview", "代码审查", "评审代码"])
-        && !contains_any(&folded, &["ae-sdd", "skill", "runtime", "门禁"])
+    } else if contains_any(
+        &folded,
+        &["code review", "codereview", "代码审查", "评审代码"],
+    ) && !contains_any(&folded, &["ae-sdd", "skill", "runtime", "门禁"])
     {
         scale = "micro";
         entry_node = Some("CODE_REVIEW");
     } else if contains_any(&folded, &["优化", "重构", "改进"])
-        && contains_any(&folded, &["代码", "实现", "函数", "方法", ".rs", ".py", ".java"])
+        && contains_any(
+            &folded,
+            &["代码", "实现", "函数", "方法", ".rs", ".py", ".java"],
+        )
         && !contains_any(&folded, &["ae-sdd", "skill", "runtime", "门禁"])
     {
         scale = "micro";
@@ -120,11 +125,66 @@ fn classify(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value>
     let multi_agent = matches!(scale, "medium" | "large");
     let needs_review = source_confidence < 0.4;
     let analysis_required = !matches!(entry_node, Some("CODE_REVIEW" | "DOC_FORMAT"));
-    let recommended_design = match scale {
-        "large" => "DR",
-        "medium" => "Story",
-        "small" | "micro" => "CodingPlan",
-        _ => unreachable!(),
+    let direct_plan = contains_any(
+        &folded,
+        &[
+            "codingplan",
+            "coding plan",
+            "直接 coding",
+            "直接编码",
+            "无需设计",
+        ],
+    );
+    let recommended_design = if direct_plan {
+        "CODING_PLAN"
+    } else {
+        match scale {
+            "large" => "DR",
+            "medium" => "STORY",
+            "small" | "micro" => "CODING_PLAN",
+            _ => unreachable!(),
+        }
+    };
+    let route_reason = if !analysis_required {
+        format!(
+            "entry_node={} 为只读轻量链，跳过需求分析",
+            entry_node.unwrap_or_default()
+        )
+    } else if direct_plan {
+        "输入明确要求直接形成 CodingPlan".to_owned()
+    } else {
+        match scale {
+            "large" => "大规模任务默认需要架构设计；需求分析后可调整".to_owned(),
+            "medium" => "中规模任务默认使用 Story 行为契约；需求分析后可调整".to_owned(),
+            _ => format!("规模={}，默认使用紧凑 CodingPlan", scale_display(scale)),
+        }
+    };
+    let next_action = if analysis_required {
+        "requirement-analysis"
+    } else if entry_node == Some("CODE_REVIEW") {
+        "code-review"
+    } else {
+        "doc-format"
+    };
+    let spec_strategy = if analysis_required {
+        json!({
+            "needs":true,
+            "entry_spec":"RA",
+            "series":"requirement-analysis",
+            "auto_create":true,
+            "recommended_design":recommended_design,
+            "reason":format!(
+                "先分析本次任务；当前设计建议={recommended_design}（{route_reason}）"
+            ),
+        })
+    } else {
+        json!({
+            "needs":false,
+            "reason":format!(
+                "entry_node={} 为只读轻量链",
+                entry_node.unwrap_or_default()
+            ),
+        })
     };
     Ok(json!({
         "outcome":"PASS",
@@ -138,10 +198,15 @@ fn classify(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value>
         "needsReview":needs_review,
         "reviewReasons":if needs_review {vec!["source has no strong signal"]} else {Vec::<&str>::new()},
         "entryNode":entry_node,
+        "next_action":next_action,
+        "nextAction":next_action,
+        "spec_strategy":spec_strategy,
+        "specStrategy":spec_strategy,
         "analysisRequired":analysis_required,
         "recommendedDesign":recommended_design,
-        "routeReason":"native deterministic four-dimension classification",
-        "routeConfidence":0.5,
+        "route_reason":route_reason,
+        "routeReason":route_reason,
+        "routeConfidence":source_confidence.max(0.5),
     }))
 }
 
@@ -214,7 +279,11 @@ fn load_evidence_manifest(
         let entry = entry.map_err(super::common::io_error)?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if (name == story || name.ends_with(&format!("-{story}")))
-            && entry.path().join("evidence").join("manifest.json").is_file()
+            && entry
+                .path()
+                .join("evidence")
+                .join("manifest.json")
+                .is_file()
         {
             candidates.push(entry.path().join("evidence").join("manifest.json"));
         }
@@ -253,7 +322,7 @@ fn manifest_hash_matches(manifest: &Value) -> RuntimeResult<bool> {
     payload.retain(|key, _| !key.starts_with('_'));
     let bytes = serde_json::to_vec(&Value::Object(payload))
         .map_err(|_| schema_error("evidence manifest canonicalization failed"))?;
-    Ok(expected == digest(&bytes))
+    Ok(digest_matches(expected, &digest(&bytes)))
 }
 
 fn evidence_entry_matches(
@@ -270,7 +339,10 @@ fn evidence_entry_matches(
         || object.get("reusable").and_then(Value::as_bool) != Some(true)
         || object.get("exitCode").and_then(Value::as_i64) != Some(0)
         || object.get("inputFingerprint").and_then(Value::as_str) != Some(input)
-        || object.get("commandHash").and_then(Value::as_str) != Some(command_hash)
+        || !object
+            .get("commandHash")
+            .and_then(Value::as_str)
+            .is_some_and(|expected| digest_matches(expected, command_hash))
         || object.get("toolchainFingerprint").and_then(Value::as_str) != Some(toolchain)
     {
         return Ok(false);
@@ -299,11 +371,15 @@ fn evidence_entry_matches(
             .and_then(Value::as_str)
             .ok_or_else(|| schema_error("evidence artifact sha256 is required"))?;
         let bytes = read_bounded(&context.existing_file(path)?, MAX_FILE_BYTES)?;
-        if expected != digest(&bytes) {
+        if !digest_matches(expected, &digest(&bytes)) {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+fn digest_matches(expected: &str, actual_hex: &str) -> bool {
+    expected == actual_hex || expected.strip_prefix("sha256:") == Some(actual_hex)
 }
 
 fn fresh(entry: &Value) -> RuntimeResult<bool> {
@@ -326,7 +402,11 @@ fn fresh(entry: &Value) -> RuntimeResult<bool> {
     Ok(UtcTimestamp::now().as_timestamp() <= &expires)
 }
 
-fn classify_source(folded: &str, first: &str, filename: Option<&str>) -> (&'static str, f64, &'static str) {
+fn classify_source(
+    folded: &str,
+    first: &str,
+    filename: Option<&str>,
+) -> (&'static str, f64, &'static str) {
     if first.starts_with("# prd") {
         return ("PRD", 1.0, "title signal");
     }
@@ -340,7 +420,10 @@ fn classify_source(folded: &str, first: &str, filename: Option<&str>) -> (&'stat
         if filename.contains("prd") {
             return ("PRD", 0.9, "filename signal");
         }
-        if ["dr-", "story-", "task-"].iter().any(|value| filename.contains(value)) {
+        if ["dr-", "story-", "task-"]
+            .iter()
+            .any(|value| filename.contains(value))
+        {
             return ("DR", 0.9, "filename signal");
         }
         if filename.contains("bug") || filename.contains("issue") {
@@ -351,23 +434,41 @@ fn classify_source(folded: &str, first: &str, filename: Option<&str>) -> (&'stat
         ("PRD", 0.5, "keyword signal")
     } else if contains_any(folded, &["issue", "bug", "defect", "缺陷", "问题", "工单"]) {
         ("Issue", 0.5, "keyword signal")
-    } else if contains_any(folded, &["design requirement", "设计需求", "story", "task", "dr-"]) {
+    } else if contains_any(
+        folded,
+        &["design requirement", "设计需求", "story", "task", "dr-"],
+    ) {
         ("DR", 0.5, "keyword signal")
     } else {
-        ("Conversation", 0.2, "fallback without a strong source signal")
+        (
+            "Conversation",
+            0.2,
+            "fallback without a strong source signal",
+        )
     }
 }
 
 fn classify_scale(folded: &str, lines: usize) -> &'static str {
-    if contains_any(folded, &["large", "massive", "cross-module", "跨模块", "架构", "全量"]) {
+    if contains_any(
+        folded,
+        &["large", "massive", "cross-module", "跨模块", "架构", "全量"],
+    ) {
         "large"
-    } else if contains_any(folded, &["medium", "中型", "多个模块", "10 files", "10 个文件"]) {
+    } else if contains_any(
+        folded,
+        &["medium", "中型", "多个模块", "10 files", "10 个文件"],
+    ) {
         "medium"
-    } else if contains_any(folded, &["small", "小任务", "小改", "几个文件", "1-3 files"]) {
+    } else if contains_any(
+        folded,
+        &["small", "小任务", "小改", "几个文件", "1-3 files"],
+    ) {
         "small"
-    } else if contains_any(folded, &["micro", "微任务", "微改", "单文件", "typo", "trivial"]) {
-        "micro"
-    } else if lines < 10 {
+    } else if contains_any(
+        folded,
+        &["micro", "微任务", "微改", "单文件", "typo", "trivial"],
+    ) || lines < 10
+    {
         "micro"
     } else if lines < 50 {
         "small"

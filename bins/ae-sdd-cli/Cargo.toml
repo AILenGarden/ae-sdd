@@ -11,12 +11,18 @@ name = "ae-sdd"
 path = "src/main.rs"
 
 [dependencies]
-ae-sdd-client = { path = "../../crates/ae-sdd-client" }
-ae-sdd-protocol = { path = "../../crates/ae-sdd-protocol" }
+ae-sdd-client.workspace = true
+ae-sdd-operations.workspace = true
+ae-sdd-protocol.workspace = true
 clap.workspace = true
+fs4.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 
 [lints]
 workspace = true

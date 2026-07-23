@@ -8,6 +8,7 @@ pub use registry::{
 };
 pub use request::{
     Confirmation, OperationRequest, OperationRequestError, ValidatedOperationRequest,
+    validate_operation_payload,
 };
 pub use service::{
     ExecutionIdentity, OperationBackend, OperationResponse, OperationService, OperationServiceError,

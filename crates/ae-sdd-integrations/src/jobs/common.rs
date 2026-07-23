@@ -12,22 +12,24 @@ pub(super) const MAX_ASSET_BYTES: u64 = 8 * MAX_FILE_BYTES;
 pub(super) struct JobContext<'a> {
     pub(super) workspace: &'a BusinessWorkspace,
     pub(super) root: PathBuf,
-    pub(super) runtime_database: &'a Path,
+    work_item_id: Option<&'a str>,
 }
 
 impl<'a> JobContext<'a> {
     pub(super) fn new(
         workspace: &'a BusinessWorkspace,
-        runtime_database: &'a Path,
+        work_item_id: Option<&'a str>,
     ) -> RuntimeResult<Self> {
         let root = fs::canonicalize(&workspace.canonical_root).map_err(io_error)?;
         if !root.is_dir() {
-            return Err(external_error("registered workspace root is not a directory"));
+            return Err(external_error(
+                "registered workspace root is not a directory",
+            ));
         }
         Ok(Self {
             workspace,
             root,
-            runtime_database,
+            work_item_id,
         })
     }
 
@@ -36,8 +38,9 @@ impl<'a> JobContext<'a> {
         let candidate = if raw.is_absolute() {
             raw.to_path_buf()
         } else {
-            let relative = ProjectRelativePath::new(value.replace('\\', "/"))
-                .map_err(|_| schema_error("job path must be project-relative and traversal-free"))?;
+            let relative = ProjectRelativePath::new(value.replace('\\', "/")).map_err(|_| {
+                schema_error("job path must be project-relative and traversal-free")
+            })?;
             self.root.join(relative.as_str())
         };
         let canonical = fs::canonicalize(candidate).map_err(io_error)?;
@@ -53,16 +56,40 @@ impl<'a> JobContext<'a> {
     pub(super) fn project_file(&self, relative: &str) -> RuntimeResult<PathBuf> {
         self.existing_file(relative)
     }
+
+    pub(super) fn existing_directory(&self, relative: &str) -> RuntimeResult<PathBuf> {
+        let relative = ProjectRelativePath::new(relative.replace('\\', "/"))
+            .map_err(|_| schema_error("job directory must be project-relative"))?;
+        let canonical = fs::canonicalize(self.root.join(relative.as_str())).map_err(io_error)?;
+        if !canonical.starts_with(&self.root) || !canonical.is_dir() {
+            return Err(RuntimeError::new(
+                StableErrorCode::WorkspaceOutsideAllowedRoot,
+                "job directory is not inside the registered workspace",
+            ));
+        }
+        Ok(canonical)
+    }
+
+    pub(super) fn required_work_item(&self) -> RuntimeResult<&str> {
+        self.work_item_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| schema_error("diagnostic job requires trusted workItemId identity"))
+    }
 }
 
 pub(super) fn read_bounded(path: &Path, limit: u64) -> RuntimeResult<Vec<u8>> {
     let metadata = fs::metadata(path).map_err(io_error)?;
     if !metadata.is_file() || metadata.len() > limit {
-        return Err(schema_error("job input file exceeds its bounded read contract"));
+        return Err(schema_error(
+            "job input file exceeds its bounded read contract",
+        ));
     }
     let bytes = fs::read(path).map_err(io_error)?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
-        return Err(schema_error("job input changed beyond its bounded read contract"));
+        return Err(schema_error(
+            "job input changed beyond its bounded read contract",
+        ));
     }
     Ok(bytes)
 }
@@ -85,8 +112,16 @@ pub(super) fn required_string<'a>(arguments: &'a Value, name: &str) -> RuntimeRe
     Ok(value)
 }
 
-pub(super) fn bounded_u64(arguments: &Value, name: &str, default: u64, max: u64) -> RuntimeResult<u64> {
-    let value = arguments.get(name).and_then(Value::as_u64).unwrap_or(default);
+pub(super) fn bounded_u64(
+    arguments: &Value,
+    name: &str,
+    default: u64,
+    max: u64,
+) -> RuntimeResult<u64> {
+    let value = arguments
+        .get(name)
+        .and_then(Value::as_u64)
+        .unwrap_or(default);
     if value == 0 || value > max {
         return Err(schema_error(&format!("{name} must be between 1 and {max}")));
     }
@@ -97,9 +132,9 @@ pub(super) fn safe_segment(value: &str, name: &str) -> RuntimeResult<String> {
     let trimmed = value.trim();
     if trimmed.is_empty()
         || trimmed.len() > 128
-        || !trimmed
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+        || !trimmed.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
         || trimmed == "."
         || trimmed == ".."
     {
@@ -112,7 +147,10 @@ pub(super) fn digest(bytes: &[u8]) -> String {
     ArtifactDigest::digest(bytes).to_string()
 }
 
-pub(super) fn mutation_rejected(context: &JobContext<'_>, entrypoint: &str) -> RuntimeResult<Value> {
+pub(super) fn mutation_rejected(
+    context: &JobContext<'_>,
+    entrypoint: &str,
+) -> RuntimeResult<Value> {
     let (code, message) = match context.workspace.mode {
         WorkspaceMode::Legacy | WorkspaceMode::Shadow => (
             StableErrorCode::RoleOperationForbidden,
@@ -123,10 +161,7 @@ pub(super) fn mutation_rejected(context: &JobContext<'_>, entrypoint: &str) -> R
             "mutation jobs require the typed operation lease, revision, and idempotency envelope",
         ),
     };
-    Err(RuntimeError::new(
-        code,
-        format!("{entrypoint}: {message}"),
-    ))
+    Err(RuntimeError::new(code, format!("{entrypoint}: {message}")))
 }
 
 pub(super) fn unsupported(entrypoint: &str) -> RuntimeError {

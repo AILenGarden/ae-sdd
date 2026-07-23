@@ -27,7 +27,8 @@ pub use model::{
 };
 pub use repository::{InMemoryRuntimeRepository, RuntimeRepository};
 pub use service::{
-    CommitFaultPort, CommitPoint, CommittedMutation, MutationRequest, NoCommitFault,
-    ProjectMutationStore, ProjectStorePaths,
+    CommitFaultPort, CommitPoint, CommittedLeaseControl, CommittedMutation, LeaseControlAction,
+    LeaseControlPreview, LeaseControlRequest, MutationRequest, NoCommitFault, ProjectMutationStore,
+    ProjectStorePaths,
 };
 pub use sqlite::{SQLITE_RUNTIME_BASE_MIGRATION, SqliteRuntimeRepository};

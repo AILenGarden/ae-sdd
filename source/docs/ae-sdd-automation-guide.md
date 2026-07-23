@@ -34,7 +34,7 @@ description: ae-sdd 自动化模式使用指南 — 面向终端用户的从 0 �
 - [ ] **ae-sdd 已安装**（`ae-sdd version` 能输出版本号 ≥ 3.8.0）
 - [ ] **项目已 init**（项目根有 `.ae-sdd/config.yaml`）；未 init 先跑 `ae-sdd init <项目路径> <projectKey>`
 - [ ] **项目资产已生成**（`.ae-sdd/assets/<projectKey>.assets.md` 7 层索引齐备）；`ae-sdd gates check --only G-00` 通过
-- [ ] **运行环境支持派物理 sub-agent**（Claude Code / Codex / Mavis 等能 spawn 独立 session；单 session 环境见 §6 降级说明）
+- [ ] **运行环境支持派物理 sub-agent**（Claude Code / Codex / Harness 等能 spawn 独立 session；单 session 环境见 §6 降级说明）
 - [ ] **输入材料已就绪**（PRD/DR/Story 至少有一份；自动化模式不改变"必须有产物才能入链"的规则）
 
 ```bash
@@ -346,7 +346,7 @@ automation:
 
 自动化模式**禁用逻辑多视角降级**（同一 AI 切换视角跑 3 遍不算真联审，盲区未消除）。环境不支持时：
 - 默认 `onConsensusStall: pause` → 到审核点会暂停，提示你"环境不支持物理 sub-agent"
-- 建议：换支持 spawn 的环境（Claude Code / Codex / Mavis），或保持默认模式（人工✅）
+- 建议：换支持 spawn 的环境（Claude Code / Codex / Harness），或保持默认模式（人工✅）
 
 ### Q4：预收集漏了信息，开工后发现还要补
 

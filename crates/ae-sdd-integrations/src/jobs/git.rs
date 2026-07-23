@@ -7,7 +7,7 @@ use ae_sdd_protocol::StableErrorCode;
 use ae_sdd_runtime::{RuntimeError, RuntimeResult};
 use serde_json::{Value, json};
 
-use super::common::{JobContext, bounded_u64, required_string, schema_error};
+use super::common::{JobContext, bounded_u64, schema_error};
 
 pub(super) fn execute(
     context: &JobContext<'_>,
@@ -25,30 +25,31 @@ pub(super) fn execute(
 }
 
 fn status(context: &JobContext<'_>) -> RuntimeResult<Value> {
-    let output = run_git(context, &["status", "--short", "--branch"])?;
-    if output.exit_code != Some(0) {
-        return Ok(command_error(output));
+    let status = run_git(context, &["status", "--short"])?;
+    if status.exit_code != Some(0) {
+        return Ok(command_error(status));
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut branch = Value::Null;
+    let branch = run_git(context, &["branch", "--show-current"])?;
+    if branch.exit_code != Some(0) {
+        return Ok(command_error(branch));
+    }
+    let text = String::from_utf8_lossy(&status.stdout);
     let mut entries = Vec::new();
     for line in text.lines() {
-        if let Some(value) = line.strip_prefix("## ") {
-            branch = Value::String(value.to_owned());
-            continue;
-        }
         if line.len() < 3 {
             continue;
         }
         entries.push(json!({
-            "index":line.chars().next().unwrap_or(' '),
-            "worktree":line.chars().nth(1).unwrap_or(' '),
+            "status":line.get(..2).unwrap_or_default(),
             "path":line.get(3..).unwrap_or_default(),
+            "raw":line,
         }));
     }
     Ok(json!({
         "outcome":"PASS",
-        "branch":branch,
+        "repo":".",
+        "branch":String::from_utf8_lossy(&branch.stdout).trim(),
+        "dirty":!entries.is_empty(),
         "clean":entries.is_empty(),
         "entries":entries,
     }))
@@ -62,22 +63,33 @@ fn diff(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value> {
     append_revision_range(&mut args, arguments)?;
     args.push("--".to_owned());
     let output = run_git_owned(context, &args)?;
-    output_value(output, json!({"base":arguments.get("base"),"head":arguments.get("head")}))
+    if output.exit_code != Some(0) {
+        return Ok(command_error(output));
+    }
+    Ok(json!({
+        "outcome":"PASS",
+        "repo":".",
+        "base":optional_argument(arguments,"base"),
+        "head":optional_argument(arguments,"head"),
+        "stat":arguments.get("stat").and_then(Value::as_bool).unwrap_or(false),
+        "diff":String::from_utf8_lossy(&output.stdout),
+    }))
 }
 
 fn log(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value> {
     let limit = bounded_u64(arguments, "limit", 20, 100)?;
     let mut args = vec![
         "log".to_owned(),
-        format!("-n{limit}"),
-        "--format=%H%x1f%an%x1f%aI%x1f%s".to_owned(),
+        format!("--max-count={limit}"),
+        "--date=iso-strict".to_owned(),
+        "--pretty=format:%H%x1f%ad%x1f%an%x1f%s".to_owned(),
     ];
-    if let Some(path) = arguments
+    let path = arguments
         .get("path")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+        .filter(|value| !value.is_empty());
+    if let Some(path) = path {
         validate_project_path(context, path, false)?;
         args.push("--".to_owned());
         args.push(path.replace('\\', "/"));
@@ -92,15 +104,21 @@ fn log(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value> {
             let fields = line.splitn(4, '\u{1f}').collect::<Vec<_>>();
             (fields.len() == 4).then(|| {
                 json!({
-                    "commit":fields[0],
-                    "author":fields[1],
-                    "authoredAt":fields[2],
+                    "hash":fields[0],
+                    "date":fields[1],
+                    "author":fields[2],
                     "subject":fields[3],
                 })
             })
         })
         .collect::<Vec<_>>();
-    Ok(json!({"outcome":"PASS","commits":commits,"limit":limit}))
+    Ok(json!({
+        "outcome":"PASS",
+        "repo":".",
+        "path":path.unwrap_or_default(),
+        "limit":limit,
+        "commits":commits,
+    }))
 }
 
 fn blame(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value> {
@@ -126,7 +144,39 @@ fn blame(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value> {
     args.push("--".to_owned());
     args.push(file.replace('\\', "/"));
     let output = run_git_owned(context, &args)?;
-    output_value(output, json!({"file":file}))
+    if output.exit_code != Some(0) {
+        return Ok(command_error(output));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+    let mut current = None;
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let starts_metadata = line.starts_with('\t')
+            || line.starts_with("author ")
+            || line.starts_with("summary ")
+            || line.starts_with("filename ");
+        if line.split_whitespace().count() >= 3 && !starts_metadata {
+            entries.push(json!({"hash":line.split_whitespace().next().unwrap_or_default()}));
+            current = Some(entries.len() - 1);
+        } else if let Some(index) = current {
+            if let Some(value) = line.strip_prefix("author ") {
+                entries[index]["author"] = Value::String(value.to_owned());
+            } else if let Some(value) = line.strip_prefix("summary ") {
+                entries[index]["summary"] = Value::String(value.to_owned());
+            } else if let Some(value) = line.strip_prefix("filename ") {
+                entries[index]["filename"] = Value::String(value.to_owned());
+            }
+        }
+    }
+    Ok(json!({
+        "outcome":"PASS",
+        "repo":".",
+        "file":file,
+        "entries":entries,
+    }))
 }
 
 fn impact(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value> {
@@ -149,26 +199,76 @@ fn impact(context: &JobContext<'_>, arguments: &Value) -> RuntimeResult<Value> {
     if files.len() > 10_000 {
         return Err(schema_error("git.impact file list exceeds its bound"));
     }
-    let mut areas = BTreeMap::<String, usize>::new();
-    let mut extensions = BTreeMap::<String, usize>::new();
+    let mut modules = std::collections::BTreeSet::new();
+    let mut by_extension = BTreeMap::<String, usize>::new();
     for file in &files {
         validate_project_path(context, file, false)?;
         let normalized = file.replace('\\', "/");
-        let area = normalized.split('/').next().unwrap_or("root");
-        *areas.entry(area.to_owned()).or_default() += 1;
+        if let Some(module) = normalized
+            .split('/')
+            .next()
+            .filter(|value| !value.is_empty())
+        {
+            modules.insert(module.to_owned());
+        }
         let extension = Path::new(&normalized)
             .extension()
             .and_then(|value| value.to_str())
-            .unwrap_or("none");
-        *extensions.entry(extension.to_owned()).or_default() += 1;
+            .map(|value| format!(".{value}"))
+            .unwrap_or_else(|| "<none>".to_owned());
+        *by_extension.entry(extension).or_default() += 1;
     }
     Ok(json!({
         "outcome":"PASS",
+        "repo":".",
+        "base":optional_argument(arguments,"base"),
+        "head":optional_argument(arguments,"head"),
         "files":files,
         "fileCount":files.len(),
-        "areas":areas,
-        "extensions":extensions,
+        "modules":modules,
+        "by_extension":by_extension,
+        "risk_hints":risk_hints(&files),
     }))
+}
+
+fn optional_argument(arguments: &Value, name: &str) -> Value {
+    arguments
+        .get(name)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| Value::String(value.to_owned()))
+        .unwrap_or_else(|| Value::String(String::new()))
+}
+
+fn risk_hints(files: &[String]) -> Vec<&'static str> {
+    let lowered = files
+        .iter()
+        .map(|file| file.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let mut hints = Vec::new();
+    if lowered
+        .iter()
+        .any(|file| file.contains("mapper") || file.ends_with(".sql"))
+    {
+        hints.push("database/sql path changed; require DB evidence or explain plan");
+    }
+    if lowered
+        .iter()
+        .any(|file| file.contains("controller") || file.contains("api"))
+    {
+        hints.push("API surface changed; require contract and compatibility review");
+    }
+    if lowered
+        .iter()
+        .any(|file| file.contains("security") || file.contains("auth"))
+    {
+        hints.push("security/auth path changed; require permission review");
+    }
+    if lowered.iter().any(|file| file.contains("test")) {
+        hints.push("test code changed; require test authenticity evidence");
+    }
+    hints
 }
 
 fn append_revision_range(args: &mut Vec<String>, arguments: &Value) -> RuntimeResult<()> {
@@ -273,22 +373,6 @@ fn run_git_owned(
             Duration::from_secs(30),
         )
         .map_err(|_| RuntimeError::new(StableErrorCode::GateError, "bounded Git process failed"))
-}
-
-fn output_value(
-    output: crate::BoundedCommandOutput,
-    metadata: Value,
-) -> RuntimeResult<Value> {
-    if output.exit_code != Some(0) {
-        return Ok(command_error(output));
-    }
-    Ok(json!({
-        "outcome":"PASS",
-        "exitCode":output.exit_code,
-        "stdout":String::from_utf8_lossy(&output.stdout),
-        "stderr":String::from_utf8_lossy(&output.stderr),
-        "metadata":metadata,
-    }))
 }
 
 fn command_error(output: crate::BoundedCommandOutput) -> Value {

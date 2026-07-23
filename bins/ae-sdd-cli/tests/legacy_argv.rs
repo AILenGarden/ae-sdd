@@ -92,12 +92,7 @@ fn required_identity_duplicate_alias_and_malformed_argv_fail_closed() {
     let missing = parse_rpc_invocation(
         &route,
         RpcMethod::OperationExecute,
-        &arguments(&[
-            "--workspace-id",
-            "workspace-1",
-            "--work-item-id",
-            "WORK-1",
-        ]),
+        &arguments(&["--workspace-id", "workspace-1", "--work-item-id", "WORK-1"]),
         &base_environment,
     )
     .expect_err("missing session must fail");
@@ -179,12 +174,7 @@ fn all_thirteen_native_routes_synthesize_typed_offline_requests() {
     let cases: [(&str, &[&str]); 13] = [
         (
             "assets generate",
-            &[
-                "--project-root",
-                "C:/project",
-                "--project-key",
-                "sample",
-            ],
+            &["--project-root", "C:/project", "--project-key", "sample"],
         ),
         (
             "bump",
@@ -299,13 +289,7 @@ fn native_adapter_rejects_unknown_duplicate_python_and_route_redirection() {
     let duplicate = parse_native_invocation(
         &route,
         entrypoint,
-        &arguments(&[
-            "C:/project",
-            "--hosts",
-            "claude",
-            "--hosts",
-            "codex",
-        ]),
+        &arguments(&["C:/project", "--hosts", "claude", "--hosts", "codex"]),
         environment(&[]),
     )
     .expect_err("duplicate flags fail closed");
@@ -343,4 +327,53 @@ fn explicit_native_request_file_is_retained_as_an_advanced_path() {
         LegacyNativeRequestSource::ExplicitFile(ref path)
             if path == &PathBuf::from("C:/requests/version.json")
     ));
+}
+
+#[test]
+fn bump_infers_the_product_version_from_the_selected_repository() {
+    let route = resolve_command_id("bump").expect("known native route");
+    let LegacyTarget::NativeBuildJob { entrypoint, .. } = &route.target else {
+        panic!("native route");
+    };
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repository root");
+    let invocation = parse_native_invocation(
+        &route,
+        entrypoint,
+        &arguments(&[
+            "3.15.0",
+            "--repository-root",
+            &repository.display().to_string(),
+            "--dry-run",
+        ]),
+        environment(&[]),
+    )
+    .expect("bump request");
+    let LegacyNativeRequestSource::Generated(request) = invocation.request else {
+        panic!("generated request");
+    };
+    assert_eq!(request["expectedVersion"], "3.14.0");
+    assert_eq!(request["newVersion"], "3.15.0");
+}
+
+#[test]
+fn generated_idempotency_ignores_output_only_flags() {
+    let route = resolve_command_id("version").expect("known native route");
+    let LegacyTarget::NativeBuildJob { entrypoint, .. } = &route.target else {
+        panic!("native route");
+    };
+    let parse = |argv: &[&str]| {
+        let invocation =
+            parse_native_invocation(&route, entrypoint, &arguments(argv), environment(&[]))
+                .expect("version request");
+        let LegacyNativeRequestSource::Generated(request) = invocation.request else {
+            panic!("generated request");
+        };
+        request
+    };
+    let plain = parse(&[]);
+    let json_output = parse(&["--json"]);
+    assert_eq!(plain["idempotencyKey"], json_output["idempotencyKey"]);
 }

@@ -8,7 +8,7 @@ description: AI Agent 任务开始前自审清单 SOP（🔴 强制，每任务�
 > **🔴 核心定位（2026-06-27 新建）：** 本 SOP 是 ae-sdd 体系的**任务启动前置自审**机制——任何 AI Agent 在接到任务、开始动笔之前，必须跑完本 SOP 的 5 步骤，否则视为流程违规。
 >
 > **🔴 署名原则（来自 2026-06-27 用户裁决）：**
-> - **本 SOP 不绑定任何特定 Agent 身份**（无论 Mavis / ZCode / Claude / GPT / GLM-5.2 / claude-code）
+> - **本 SOP 不绑定任何特定 Agent 身份**（无论 Harness / ZCode / Claude / GPT / GLM-5.2 / claude-code）
 > - SOP 适用对象是"任何使用 ae-sdd 的 AI Agent"，由 ae-sdd-update-skill 执行人 / 架构组维护
 > - 生成文档的 AI Agent 不应出现在署名字段；文档署名应为产出责任主体
 >

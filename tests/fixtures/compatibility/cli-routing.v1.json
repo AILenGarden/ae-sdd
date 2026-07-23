@@ -14,9 +14,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "assets generate",
@@ -49,9 +49,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "assets query",
@@ -66,9 +66,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "assets read",
@@ -83,9 +83,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "assets section",
@@ -100,9 +100,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "assets stats",
@@ -117,15 +117,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "automation disable",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -134,15 +135,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "automation enable",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -151,9 +153,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "automation status",
@@ -168,15 +170,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "baseline create",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -185,9 +188,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "baseline diff",
@@ -202,9 +205,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "baseline inspect",
@@ -219,9 +222,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "bump",
@@ -254,9 +257,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "context-pressure",
@@ -273,8 +276,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "db audit",
@@ -289,9 +292,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "db explain",
@@ -306,9 +309,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "db profiles",
@@ -323,9 +326,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "db query",
@@ -340,9 +343,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "distributor disable",
@@ -455,8 +458,9 @@
     {
       "id": "doc finalize",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -465,9 +469,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "doc resolve",
@@ -482,9 +486,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "doc save",
@@ -499,9 +503,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "enter",
@@ -518,8 +522,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "evidence finalize",
@@ -534,9 +538,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "evidence lookup",
@@ -551,9 +555,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "evidence record",
@@ -568,9 +572,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "flow-violation-scan",
@@ -581,13 +585,13 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "gate coding-required",
@@ -598,30 +602,30 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "implemented"
     },
     {
       "id": "gate doc-storage",
       "route": {
         "kind": "rpc",
-        "method": "gate.evaluate"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_diagnostics_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "gate ra-required",
@@ -632,13 +636,13 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "implemented"
     },
     {
       "id": "gate-intercept",
@@ -655,8 +659,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "gates check",
@@ -671,9 +675,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "git blame",
@@ -688,9 +692,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "git diff",
@@ -705,9 +709,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "git impact",
@@ -722,9 +726,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "git log",
@@ -739,9 +743,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "git status",
@@ -756,9 +760,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "health",
@@ -774,8 +778,8 @@
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-runtime/tests/legacy_rpc_aliases.rs",
+      "status": "implemented"
     },
     {
       "id": "init",
@@ -817,18 +821,18 @@
       "id": "iteration-check",
       "route": {
         "kind": "rpc",
-        "method": "gate.evaluate"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_diagnostics_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "lease acquire",
@@ -843,9 +847,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "lease break",
@@ -856,13 +860,13 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": true
+        "session": false
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "lease release",
@@ -877,9 +881,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "lease renew",
@@ -894,9 +898,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "lease status",
@@ -911,145 +915,145 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "memory clean",
       "route": {
         "kind": "rpc",
-        "method": "context.project"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "memory clean-all",
       "route": {
         "kind": "rpc",
-        "method": "context.project"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "memory common",
       "route": {
         "kind": "rpc",
-        "method": "context.get"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "memory create",
       "route": {
         "kind": "rpc",
-        "method": "context.project"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "memory read",
       "route": {
         "kind": "rpc",
-        "method": "context.get"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "memory search",
       "route": {
         "kind": "rpc",
-        "method": "context.get"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "memory summarize",
       "route": {
         "kind": "rpc",
-        "method": "context.get"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "memory update",
       "route": {
         "kind": "rpc",
-        "method": "context.project"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
         "session": true
       },
-      "deadlineMs": 10000,
+      "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_job_poll.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/memory_jobs.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "ops describe",
@@ -1065,8 +1069,8 @@
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "implemented"
     },
     {
       "id": "ops execute",
@@ -1077,13 +1081,13 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_rpc_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "ops next",
@@ -1094,19 +1098,20 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "implemented"
     },
     {
       "id": "perf clear",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1115,9 +1120,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "perf doctor",
@@ -1132,9 +1137,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "perf report",
@@ -1149,9 +1154,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "implemented"
     },
     {
       "id": "plugin init",
@@ -1184,9 +1189,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "plugin trace",
@@ -1201,9 +1206,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "plugin validate",
@@ -1218,15 +1223,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "preflight collect",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1235,9 +1241,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "prompt-inject",
@@ -1254,8 +1260,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "ra-authenticity-scan",
@@ -1266,13 +1272,13 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "ra-depth-scan",
@@ -1283,13 +1289,13 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "ra-gate",
@@ -1306,8 +1312,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "ra-implementation-scan",
@@ -1318,13 +1324,13 @@
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_gate_rpc.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review abort",
@@ -1340,8 +1346,8 @@
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-runtime/tests/legacy_rpc_aliases.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review collect",
@@ -1357,14 +1363,15 @@
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-runtime/tests/delegation_collect_lifecycle.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review retry",
       "route": {
-        "kind": "rpc",
-        "method": "flow.next"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use FlowRuntime plus delegation.create/report/collect and review.record"
       },
       "identity": {
         "workspace": true,
@@ -1373,15 +1380,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/supervisor_restart.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review retry-role",
       "route": {
-        "kind": "rpc",
-        "method": "flow.next"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use a new reviewer delegation selected by FlowRuntime policy"
       },
       "identity": {
         "workspace": true,
@@ -1390,15 +1398,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/delegation_collect_lifecycle.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review start",
       "route": {
-        "kind": "rpc",
-        "method": "flow.next"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use delegation.create for a physical reviewer session"
       },
       "identity": {
         "workspace": true,
@@ -1407,15 +1416,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/delegation_collect_lifecycle.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review status",
       "route": {
-        "kind": "rpc",
-        "method": "flow.snapshot"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use flow.snapshot and delegation.status"
       },
       "identity": {
         "workspace": true,
@@ -1424,15 +1434,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/supervisor_restart.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review verify-exit",
       "route": {
-        "kind": "rpc",
-        "method": "flow.next"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use fresh review Gates and workitem.complete"
       },
       "identity": {
         "workspace": true,
@@ -1441,9 +1452,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review-loop collect",
@@ -1459,14 +1470,15 @@
       "deadlineMs": 10000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "crates/ae-sdd-runtime/tests/delegation_collect_lifecycle.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review-loop start",
       "route": {
-        "kind": "rpc",
-        "method": "flow.next"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use FlowRuntime and physical reviewer delegations"
       },
       "identity": {
         "workspace": true,
@@ -1475,15 +1487,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/delegation_collect_lifecycle.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review-loop status",
       "route": {
-        "kind": "rpc",
-        "method": "flow.snapshot"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use flow.snapshot and delegation.status"
       },
       "identity": {
         "workspace": true,
@@ -1492,15 +1505,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/supervisor_restart.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "review-loop verify-exit",
       "route": {
-        "kind": "rpc",
-        "method": "flow.next"
+        "kind": "rejected",
+        "stableCode": "LEGACY_COMMAND_REMOVED",
+        "remediation": "use fresh review Gates and workitem.complete"
       },
       "identity": {
         "workspace": true,
@@ -1509,9 +1523,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "runtime compact",
@@ -1528,8 +1542,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "runtime verify",
@@ -1564,14 +1578,15 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state bind-story-doc",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1580,9 +1595,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state confirm",
@@ -1599,8 +1614,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state lock",
@@ -1617,14 +1632,15 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state new",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1633,9 +1649,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state next-step",
@@ -1650,15 +1666,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "state prd-archive",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1667,15 +1684,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state prd-check-complete",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1684,15 +1702,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state prd-complete",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1701,15 +1720,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state prd-init",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1718,9 +1738,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state read",
@@ -1735,15 +1755,16 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "state register-review-consensus",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1752,15 +1773,16 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state relocate",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1769,9 +1791,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state unlock",
@@ -1788,14 +1810,15 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "state write",
       "route": {
-        "kind": "rpc",
-        "method": "job.submit"
+        "kind": "rejected",
+        "stableCode": "LEGACY_UNTYPED_MUTATION_REMOVED",
+        "remediation": "Use a typed daemon operation with explicit Work Item, lease, revision, idempotency, and confirmation fields."
       },
       "identity": {
         "workspace": true,
@@ -1804,9 +1827,9 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "stop-check",
@@ -1823,8 +1846,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "subprocess collect",
@@ -1841,8 +1864,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "subprocess list",
@@ -1859,8 +1882,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "subprocess spawn",
@@ -1877,8 +1900,8 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "subprocess status",
@@ -1895,25 +1918,25 @@
       "deadlineMs": 1000,
       "failClosed": true,
       "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "evidence": "bins/ae-sdd-cli/tests/legacy_routing.rs",
+      "status": "breaking-fix-verified"
     },
     {
       "id": "update-check",
       "route": {
         "kind": "rpc",
-        "method": "gate.evaluate"
+        "method": "job.submit"
       },
       "identity": {
         "workspace": true,
         "workItem": true,
-        "session": false
+        "session": true
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_diagnostics_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_diagnostics_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "verify plan",
@@ -1928,9 +1951,9 @@
       },
       "deadlineMs": 10000,
       "failClosed": true,
-      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
-      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
-      "status": "pending"
+      "fixture": "bins/ae-sdd-cli/tests/typed_operation_adapter.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "status": "implemented"
     },
     {
       "id": "version",
@@ -1956,7 +1979,7 @@
       "surface": "operation",
       "id": "document.resolve",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -1964,7 +1987,7 @@
       "surface": "operation",
       "id": "document.save",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -1972,7 +1995,7 @@
       "surface": "operation",
       "id": "evidence.finalize",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -1980,7 +2003,7 @@
       "surface": "operation",
       "id": "evidence.record",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -1988,7 +2011,7 @@
       "surface": "operation",
       "id": "execution.plan.approve",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -1996,7 +2019,7 @@
       "surface": "operation",
       "id": "execution.plan.set",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2004,7 +2027,7 @@
       "surface": "operation",
       "id": "gate.check",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2012,7 +2035,7 @@
       "surface": "operation",
       "id": "lease.acquire",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2020,15 +2043,15 @@
       "surface": "operation",
       "id": "lease.break",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
-      "status": "implemented"
+      "status": "breaking-fix-verified"
     },
     {
       "surface": "operation",
       "id": "lease.release",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2036,7 +2059,7 @@
       "surface": "operation",
       "id": "lease.renew",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2044,7 +2067,7 @@
       "surface": "operation",
       "id": "lease.status",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2052,7 +2075,7 @@
       "surface": "operation",
       "id": "review.record",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2060,7 +2083,7 @@
       "surface": "operation",
       "id": "state.next_actions",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2068,7 +2091,7 @@
       "surface": "operation",
       "id": "state.transition",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2076,7 +2099,7 @@
       "surface": "operation",
       "id": "verification.plan",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2084,7 +2107,7 @@
       "surface": "operation",
       "id": "workitem.complete",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2092,7 +2115,7 @@
       "surface": "operation",
       "id": "workitem.get",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
-      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },

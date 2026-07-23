@@ -49,7 +49,7 @@ class CustomProtocolExample(Distributor):
     """自定义协议示范：演示 needs_compile=True + 自定义 install。
 
     适用于：Agent 不吃标准 dist 包，需要专属编译产物 + 独特安装命令。
-    （mavis.py 就是这种模式：compile 调 build_harness.py，install 调 harness mount）
+    （harness.py 就是这种模式：compile 调 build_harness.py，install 调 harness mount）
     """
     name = "custom-agent"
     protocol = "custom_protocol"

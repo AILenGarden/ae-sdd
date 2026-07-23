@@ -17,9 +17,10 @@
 ```text
 resolve_read_resource("STORY_TEMPLATE")
 resolve_read_resource("STORY_WRITING_GUIDE")
+resolve_read_resource("DOC_DENSITY_STANDARD")
 ```
 
-两个结果必须包含 `path/source/content/sha256`。Skill 只消费返回的 `content`，不得自行拼路径、搜索、打开或读取文件。将模板和指南内容交给 `story_template_sections` 固定函数。
+三个结果必须包含 `path/source/content/sha256`。Skill 只消费返回的 `content`，不得自行拼路径、搜索、打开或读取文件。将模板和指南内容交给 `story_template_sections` 固定函数；密度规范在写作前自检（§4 写作前 5 问）与写作后验收（§5）时执行。
 
 ## 流程
 

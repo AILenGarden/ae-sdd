@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-build_harness.py — ae-sdd 母版 → Mavis harness 格式（agent.md）编译脚本
+build_harness.py — ae-sdd 母版 → Harness 格式（agent.md）编译脚本
 
 由 convert-ae-sdd-to-harness.ps1 迁移而来（决策3：PS1→Python），逐功能对齐：
   - Get-AeSddVersion 三级 fallback（SKILL.md frontmatter → commit msg vX.Y.Z → git short hash）
   - Parse-SkillFrontmatter（name / version / description block）
   - 多维幂等锁（commit + ae_sdd_version + adapter_version + templateHash）
   - Render-Template（{{VAR}} 替换）
-  - 无 BOM UTF-8 写入（mavis frontmatter 正则 ^--- 要求文件首字节为 '-'）
+  - 无 BOM UTF-8 写入（harness frontmatter 正则 ^--- 要求文件首字节为 '-'）
   - mount 失败回滚产物（agent.md + lock）
-  - mavis CLI 探测（mavis / mavis.cmd / mavis.bat）
+  - harness CLI 探测（harness / harness.cmd / harness.bat）
   - -DryRun / -Force / -Unmount / -Clean 等价参数
 
-产物落在 <Source>/.harness/agent.md —— mavis 的 findHarnessDirs 优先扫描
+产物落在 <Source>/.harness/agent.md —— harness 的 findHarnessDirs 优先扫描
 <sourceRoot>/.harness/ 下的 identity 文件。.adapter.lock 同目录保存，用于
-adapter 幂等判断，不参与 Mavis identity 解析。
+adapter 幂等判断，不参与 Harness identity 解析。
 
 用法:
     python scripts/build_harness.py                          # 默认 Source=脚本父父目录
     python scripts/build_harness.py --source /path/to/ae-sdd
     python scripts/build_harness.py --dry-run                # 只看 diff 不写文件
     python scripts/build_harness.py --force                  # 强制重转（忽略幂等锁）
-    python scripts/build_harness.py --unmount                # 反向：mavis harness unmount
+    python scripts/build_harness.py --unmount                # 反向：harness unmount
     python scripts/build_harness.py --unmount --clean        # 卸载 + 删产物目录
 """
 from __future__ import annotations
@@ -85,13 +85,13 @@ def cleanup_old_bak(target: Path, keep: int = 3) -> int:
     return removed
 
 
-def mavis_harness_name_for_path(source_path: Path) -> str:
-    """Match Mavis HarnessManager.toKebabCase(sourcePath) for local mounts."""
+def harness_name_for_path(source_path: Path) -> str:
+    """Match HarnessManager.toKebabCase(sourcePath) for local mounts."""
     return re.sub(r"--+", "-", re.sub(r"[^a-z0-9-]+", "-", str(source_path).lower())).strip("-")
 
 
 def cleanup_legacy_harness_artifacts(src: Path, quiet: bool = False) -> int:
-    """Remove generated pre-v3.8 harness/harness artifacts so Mavis does not mount duplicates."""
+    """Remove generated pre-v3.8 harness/harness artifacts so Harness does not mount duplicates."""
     legacy_root = src / LEGACY_HARNESS_DIR
     legacy_target = legacy_root / ".harness"
     removed = 0
@@ -258,27 +258,26 @@ def render_template(template_path: Path, vars: dict) -> str:
     return content
 
 
-# ─── Identity sanity check（防 Mavis/orchestrator 污染回流） ──────────────────
-# 历史背景：v3.9.8 之前的 agent.md.template 错把 ae-sdd 写成 "Mavis Auto-Engineering
+# ─── Identity sanity check（防 Harness/orchestrator 污染回流） ──────────────────
+# 历史背景：v3.9.8 之前的 agent.md.template 错把 ae-sdd 写成 "Harness Auto-Engineering
 # Orchestrator"，导致 3 个客户端拉取后 AI 跳过"任务大小评估"直接干活。
 # 本函数拦截任何把 ae-sdd 钉死为宿主专属子编排角色的归属声明。
-#
-# ⚠️ 注意：禁止裸禁词（如 "Mavis harness" 整体禁掉），因为宿主名作为正常描述
-# 是合法的（如"宿主 Mavis harness 通过 mount 注册 ae-sdd"）。只拦截"ae-sdd 是
-# Mavis X" / "ae-sdd 是 orchestrator"这种归属句式，避免误报。
 import re as _re_identity
 
 # 身份归属声明句式（任意宿主 + orchestrator 类身份都禁）
+# ⚠️ 注意：禁止裸禁词（如 "Harness" 整体禁掉），因为宿主名作为正常描述
+# 是合法的（如"宿主 Harness 通过 mount 注册 ae-sdd"、`harness communication send`）。
+# 只拦截"ae-sdd 是 Harness <角色词>"这种归属句式，避免误报。
 _IDENTITY_ATTRIBUTION_PATTERNS: list[tuple[_re_identity.Pattern[str], str]] = [
     (_re_identity.compile(
         r"ae[- ]?sdd\s+(is|acts\s+as|serves\s+as|functions\s+as|works\s+as|=|:)\s+"
-        r".*?\b(Mavis|mavis)[- ]?(Harness|harness)\b",
+        r"(?:the\s+)?\bHarness\b\s*(orchestrator|sub[- ]?agent|sub[- ]?module|sub[- ]?orchestrator|子编排|子模块)",
         _re_identity.IGNORECASE | _re_identity.DOTALL,
     ),
-     "禁止把 ae-sdd 写成 Mavis Harness 子编排器（归属动词：is/acts as/...）"),
-    (_re_identity.compile(r"\b(Mavis|Mavis)[- ]?(Harness|harness)\s*(format|mode|role)",
+     "禁止把 ae-sdd 写成 Harness 子编排器（归属动词：is/acts as/...）"),
+    (_re_identity.compile(r"\b(Harness|harness)\s*(format|mode|role)",
                           _re_identity.IGNORECASE),
-     "禁止把 ae-sdd 描述成 Mavis Harness 的某种 format/mode/role"),
+     "禁止把 ae-sdd 描述成 Harness 的某种 format/mode/role"),
     (_re_identity.compile(r"\byou are the[^.\n]*\borchestrator\b", _re_identity.IGNORECASE),
      "禁止声明 ae-sdd 是 orchestrator（ae-sdd 是 client-agnostic Skill 不是编排器）"),
     (_re_identity.compile(r"\bae[- ]?sdd[^.\n]*\borchestrator\b", _re_identity.IGNORECASE),
@@ -329,7 +328,7 @@ def template_hash(template_path: Path) -> str:
 
 
 def source_input_hash(src: Path, template_agent: Path, template_readme: Path) -> str:
-    """Hash only the inputs that affect generated Mavis harness bytes."""
+    """Hash only the inputs that affect generated Harness bytes."""
     h = hashlib.sha256()
     for label, path in [
         ("adapter_version", None),
@@ -351,32 +350,32 @@ def source_input_hash(src: Path, template_agent: Path, template_readme: Path) ->
     return h.hexdigest()
 
 
-# ─── mavis CLI 探测（对齐 PS1 mount 预检） ───────────────────────────────────
-def find_mavis_cmd() -> Optional[list[str]]:
-    """探测 mavis 可执行命令（迁自 PS1 mavisCmd 探测 + post-commit MAVIS_RUN）。
+# ─── harness CLI 探测（对齐 PS1 mount 预检） ───────────────────────────────────
+def find_harness_cmd() -> Optional[list[str]]:
+    """探测 harness 可执行命令（迁自 PS1 harnessCmd 探测 + post-commit HARNESS_RUN）。
 
     返回命令前缀列表（含可能的 cmd.exe 包装），未找到返回 None。
     """
-    # 1. PATH 里的 mavis / mavis.exe
-    for name in ("mavis", "mavis.exe"):
+    # 1. PATH 里的 harness / harness.exe
+    for name in ("harness", "harness.exe"):
         path = shutil.which(name)
         if path:
             return [path]
-    # 2. ~/.mavis/bin/mavis.cmd / mavis.bat（Windows，需经 cmd.exe）
+    # 2. ~/.harness/bin/harness.cmd / harness.bat（Windows，需经 cmd.exe）
     home = Path.home()
-    for fname in ("mavis.cmd", "mavis.bat"):
-        cand = home / ".mavis" / "bin" / fname
+    for fname in ("harness.cmd", "harness.bat"):
+        cand = home / ".harness" / "bin" / fname
         if cand.is_file():
             return ["cmd.exe", "/c", str(cand)]
     return None
 
 
-def run_mavis(args: list[str]) -> tuple[int, str]:
-    """跑 mavis 子命令，返回 (returncode, combined_output)。"""
-    mavis_prefix = find_mavis_cmd()
-    if mavis_prefix is None:
-        return 127, "mavis not found"
-    full = mavis_prefix + args
+def run_harness(args: list[str]) -> tuple[int, str]:
+    """跑 harness 子命令，返回 (returncode, combined_output)。"""
+    harness_prefix = find_harness_cmd()
+    if harness_prefix is None:
+        return 127, "harness not found"
+    full = harness_prefix + args
     result = subprocess.run(full, capture_output=True, text=True)
     out = (result.stdout or "") + (result.stderr or "")
     return result.returncode, out
@@ -385,7 +384,7 @@ def run_mavis(args: list[str]) -> tuple[int, str]:
 # ─── 主流程 ──────────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="build_harness: ae-sdd 母版 → Mavis harness (agent.md) 编译脚本",
+        description="build_harness: ae-sdd 母版 → Harness (agent.md) 编译脚本",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # 默认 Source = 脚本父父目录（仓库根）
@@ -397,11 +396,11 @@ def main() -> int:
     parser.add_argument("--force", action="store_true",
                         help="强制重转，忽略幂等锁")
     parser.add_argument("--unmount", action="store_true",
-                        help="反向：mavis harness unmount 当前路径名及历史别名")
+                        help="反向：harness unmount 当前路径名及历史别名")
     parser.add_argument("--clean", action="store_true",
                         help="配合 --unmount：同时删除 harness 产物目录")
     parser.add_argument("--no-mount", action="store_true",
-                        help="只写产物不触发 mavis mount（CI/无 mavis 环境用）")
+                        help="只写产物不触发 harness mount（CI/无 harness 环境用）")
     args = parser.parse_args()
 
     src = args.source.resolve()
@@ -421,16 +420,16 @@ def main() -> int:
     if args.unmount:
         step("Unmount mode")
         mount_names = [
-            mavis_harness_name_for_path(src),
-            mavis_harness_name_for_path(src / LEGACY_HARNESS_DIR),
+            harness_name_for_path(src),
+            harness_name_for_path(src / LEGACY_HARNESS_DIR),
             "ae-sdd",
         ]
         print("  Will run:")
         for name in dict.fromkeys(mount_names):
-            print(f"    mavis harness unmount {name}")
+            print(f"    harness unmount {name}")
         if not args.dry_run:
             for name in dict.fromkeys(mount_names):
-                rc, out = run_mavis(["harness", "unmount", name])
+                rc, out = run_harness(["harness", "unmount", name])
                 print(out)
         else:
             print("  [DRY-RUN] would run the unmount commands above")
@@ -565,11 +564,11 @@ def main() -> int:
     print(f"  agent.md  length: {len(agent_content)} chars")
     print(f"  README.md length: {len(readme_content)} chars")
 
-    # ── 4.5 Identity sanity check（防 Mavis/orchestrator 污染回流） ────────
+    # ── 4.5 Identity sanity check（防 Harness/orchestrator 污染回流） ────────
     step("Identity sanity check")
     assert_independent_identity(agent_content, context="agent.md")
     assert_independent_identity(readme_content, context="README.md")
-    ok("产物身份描述合规（client-agnostic 独立 Skill，无 Mavis/orchestrator 残留）")
+    ok("产物身份描述合规（client-agnostic 独立 Skill，无 Harness/orchestrator 残留）")
 
     # ── 5. Dry-run ─────────────────────────────────────────────────────────
     if args.dry_run:
@@ -581,7 +580,7 @@ def main() -> int:
         print(f"    3. Write:             {target_agent}  ({len(agent_content)} chars)")
         print(f"    4. Write:             {target_readme} ({len(readme_content)} chars)")
         print(f"    5. Write lock:        {lock_file}")
-        print(f"    6. Verify mount:      mavis harness mount {harness_root}")
+        print(f"    6. Verify mount:      harness mount {harness_root}")
         print(f"    7. Remove legacy generated harness artifacts under: {src / LEGACY_HARNESS_DIR}")
         print()
         print("  agent.md preview (first 25 lines):")
@@ -611,7 +610,7 @@ def main() -> int:
 
     # ── 7. 写产物（无 BOM UTF-8，对齐 PS1 Write-AllTextNoBom） ─────────────
     step("Writing artifacts")
-    # ⚠ Python 写 bytes 默认无 BOM；mavis frontmatter 正则 ^--- 要求首字节为 '-'
+    # ⚠ Python 写 bytes 默认无 BOM；harness frontmatter 正则 ^--- 要求首字节为 '-'
     target_agent.write_bytes(agent_content.encode("utf-8"))
     ok(str(target_agent))
     target_readme.write_bytes(readme_content.encode("utf-8"))
@@ -635,22 +634,22 @@ def main() -> int:
         step("Skipping mount (--no-mount)")
         step("DONE")
         print(f"  Harness path:  {target_root}")
-        print(f"  Mount command: mavis harness mount {harness_root}")
+        print(f"  Mount command: harness mount {harness_root}")
         return 0
 
     step("Verifying mount")
-    mavis_prefix = find_mavis_cmd()
-    if mavis_prefix is None:
-        warn(f"mavis 未找到（产物已写到 {target_root}，请手动执行：mavis harness mount {harness_root}）")
-        warn("退出码 0 — 产物已落地，仅 mavis mount 未触发")
+    harness_prefix = find_harness_cmd()
+    if harness_prefix is None:
+        warn(f"harness 未找到（产物已写到 {target_root}，请手动执行：harness mount {harness_root}）")
+        warn("退出码 0 — 产物已落地，仅 harness mount 未触发")
         return 0
 
-    rc, out = run_mavis(["harness", "mount", str(harness_root)])
-    print("  mavis harness mount output:")
+    rc, out = run_harness(["harness", "mount", str(harness_root)])
+    print("  harness mount output:")
     for line in out.splitlines():
         print(f"    {line}")
     if rc == 0:
-        ok("mavis harness mounted")
+        ok("harness mounted")
     else:
         err(f"mount failed (rc={rc})")
         # mount 失败回滚三件套（agent.md / README.md / .adapter.lock），
@@ -668,20 +667,20 @@ def main() -> int:
 
     # ── 10. 验证 list ──────────────────────────────────────────────────────
     step("Verifying harness list")
-    rc, out = run_mavis(["harness", "list"])
+    rc, out = run_harness(["harness", "list"])
     print(out)
     if rc != 0:
         err("list command failed")
         return 1
-    expected_name = mavis_harness_name_for_path(src)
+    expected_name = harness_name_for_path(src)
     if "ae-sdd" not in out and expected_name not in out:
-        err(f"mavis harness list did not include ae-sdd/{expected_name}")
+        err(f"harness list did not include ae-sdd/{expected_name}")
         return 1
 
     step("DONE")
     print(f"  Harness path:  {target_root}")
-    print(f"  Mount command: mavis harness mount {harness_root}")
-    print(f"  Unmount:       mavis harness unmount {mavis_harness_name_for_path(src)}")
+    print(f"  Mount command: harness mount {harness_root}")
+    print(f"  Unmount:       harness unmount {harness_name_for_path(src)}")
     return 0
 
 

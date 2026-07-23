@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -23,10 +24,15 @@ const WORK_ITEM_ID: &str = "BENCHMARK-HOOK-001";
 const CANARY_INVENTORY_GENERATION: u64 = 2;
 
 thread_local! {
-    static BENCHMARK_RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("benchmark Tokio runtime");
+    // Windows named-pipe driver teardown can wait forever after the owned
+    // daemon has already been terminated. This is a short-lived build tool,
+    // so let the OS reclaim the runtime handles at process exit.
+    static BENCHMARK_RUNTIME: ManuallyDrop<tokio::runtime::Runtime> = ManuallyDrop::new(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("benchmark Tokio runtime")
+    );
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -311,7 +317,12 @@ struct OwnedDaemon {
 impl Drop for OwnedDaemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        for _ in 0..200 {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => break,
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
         let _ = std::fs::remove_dir_all(&self.state_dir);
     }
 }

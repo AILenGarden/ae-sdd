@@ -8,6 +8,7 @@ use ae_sdd_operations::{
     ValidatedOperationRequest,
 };
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -26,6 +27,7 @@ fn transition(payload: serde_json::Value) -> OperationRequest {
             Confirmation::new("confirmation-1", "user", "2026-07-23T00:00:00Z")
                 .expect("valid confirmation"),
         ),
+        dry_run: false,
         payload,
     }
 }
@@ -78,6 +80,13 @@ impl OperationBackend for NeverBackend {
     ) -> Result<OperationResponse, Self::Error> {
         Err(BackendError)
     }
+
+    fn dry_run(
+        &self,
+        _request: &ValidatedOperationRequest,
+    ) -> Result<OperationResponse, Self::Error> {
+        Err(BackendError)
+    }
 }
 
 #[test]
@@ -99,4 +108,65 @@ fn trusted_grant_not_client_role_controls_authorization() {
         result,
         Err(OperationServiceError::RoleOperationForbidden)
     ));
+}
+
+#[derive(Default)]
+struct DryRunSpy {
+    mutate_calls: AtomicUsize,
+    dry_run_calls: AtomicUsize,
+}
+
+impl OperationBackend for DryRunSpy {
+    type Error = BackendError;
+
+    fn read(&self, _request: &ValidatedOperationRequest) -> Result<OperationResponse, Self::Error> {
+        Err(BackendError)
+    }
+
+    fn mutate(
+        &self,
+        _request: &ValidatedOperationRequest,
+    ) -> Result<OperationResponse, Self::Error> {
+        self.mutate_calls.fetch_add(1, Ordering::AcqRel);
+        Err(BackendError)
+    }
+
+    fn dry_run(
+        &self,
+        request: &ValidatedOperationRequest,
+    ) -> Result<OperationResponse, Self::Error> {
+        self.dry_run_calls.fetch_add(1, Ordering::AcqRel);
+        Ok(OperationResponse {
+            changed: false,
+            revision_before: request.request().expected_revision,
+            revision_after: request.request().expected_revision,
+            receipt_digest: None,
+            data: json!({"dryRun":true}),
+        })
+    }
+}
+
+#[test]
+fn dry_run_dispatch_never_calls_the_mutation_backend() {
+    let grant = ScopedGrant::new(
+        [OperationId::new("state.transition").expect("operation")],
+        [],
+        [],
+    );
+    let backend = DryRunSpy::default();
+    let mut request = transition(json!({"targetPhase":"test-running"}));
+    request.dry_run = true;
+    let response = OperationService::execute(
+        ExecutionIdentity::Agent {
+            role: AgentRole::Root,
+            grant: &grant,
+        },
+        request,
+        &backend,
+    )
+    .expect("dry-run validates");
+
+    assert!(!response.changed);
+    assert_eq!(backend.dry_run_calls.load(Ordering::Acquire), 1);
+    assert_eq!(backend.mutate_calls.load(Ordering::Acquire), 0);
 }

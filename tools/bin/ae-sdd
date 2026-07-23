@@ -1593,7 +1593,7 @@ def cmd_runtime_compact(args, parser):
     2. PRD 级（v3.3.0 原有）：summary.md + compact-trigger + prdStatus=compacted。
 
     实际 compact 对话清理由对应 runtime 执行：
-    - mavis: `mavis session rotate --handoff-file <summary.md>`
+    - harness: `harness session rotate --handoff-file <summary.md>`
     - claude-code: UserPromptSubmit hook 读 compact-trigger 注入 /compact
     - codex: `codex exec --json --output-last-message`
     """
@@ -1641,9 +1641,9 @@ def cmd_runtime_compact(args, parser):
             except Exception as e:
                 output.warn(f"子流程 memory snapshot 失败（不阻断 PRD compact）: {e}")
 
-    if runtime == "mavis":
+    if runtime == "harness":
         summary_path = f".auto-engineering/{prd_id}/summary.md"
-        output.info(f"将执行：mavis session rotate --handoff-file {summary_path}")
+        output.info(f"将执行：harness session rotate --handoff-file {summary_path}")
         output.info("提示：summary.md 必须先由 `ae-sdd state prd-complete` 生成；如需自动触发，加 shell hook")
     elif runtime == "claude-code":
         output.info("将执行：UserPromptSubmit hook 读 compact-trigger 注入 /compact + memory 重载")
@@ -1652,7 +1652,7 @@ def cmd_runtime_compact(args, parser):
         output.info("  1. codex plugin add ae-sdd-prd-state")
         output.info("  2. codex exec --json --output-last-message .auto-engineering/{prd_id}/summary.md")
     else:
-        output.err(f"未知 runtime：{runtime}（仅支持 mavis / claude-code / codex）")
+        output.err(f"未知 runtime：{runtime}（仅支持 harness / claude-code / codex）")
         return 1
 
     # 🆕 v3.5.12：补真实 prdStatus 写入（闭环 5 态）
@@ -5731,7 +5731,7 @@ def main() -> int:
                                              parents=[common])
     p_state_prd_comp.add_argument("--prd", required=True, help="PRD ID")
     p_state_prd_comp.add_argument("--runtime", required=True,
-                                  choices=["mavis", "claude-code", "codex"],
+                                  choices=["harness", "claude-code", "codex"],
                                   help="目标 runtime")
     p_state_prd_comp.set_defaults(func=cmd_state_prd_complete)
 
@@ -5796,7 +5796,7 @@ def main() -> int:
                                                 help="[v3.3.0] PRD 级 compact 适配层",
                                                 parents=[common])
     p_runtime_compact.add_argument("--runtime", required=True,
-                                   choices=["mavis", "claude-code", "codex"],
+                                   choices=["harness", "claude-code", "codex"],
                                    help="目标 runtime")
     p_runtime_compact.add_argument("--prd", required=True, help="PRD ID")
     p_runtime_compact.set_defaults(func=cmd_runtime_compact)

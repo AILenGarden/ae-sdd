@@ -9,7 +9,7 @@ use ae_sdd_context::{
 };
 use ae_sdd_domain::{
     AgentRole, ClaimId, CompactId, ContextGeneration, DelegationId, EventStoreId, HostAckId,
-    HostActionId, InputFingerprint, SampleSequence, SessionId,
+    HostActionId, InputFingerprint, SampleSequence, ScopedGrant, SessionId,
 };
 use ae_sdd_flow::{FlowDecision, FlowEvent, FlowInput, FlowRuntime};
 use ae_sdd_host::{
@@ -27,7 +27,7 @@ use super::host_coordinator::HostCoordinator;
 use crate::{
     ContextProjectResult, ContextProjectionInput, DelegationCreatePayload, DelegationReportPayload,
     DelegationResult, HostAckPayload, HostActionPayload, HostPressurePayload, PersistencePort,
-    RuntimeError, RuntimeResult, WireAgentRole,
+    RuntimeError, RuntimeResult, ScopedGrantWire, WireAgentRole,
 };
 
 /// Durable three-layer delegation lifecycle supervisor.
@@ -44,6 +44,8 @@ struct DurableDelegation {
     parent_session_id: String,
     parent_delegation_id: Option<String>,
     child_role: WireAgentRole,
+    #[serde(default)]
+    grant: ScopedGrantWire,
     input_revision: u64,
     input_fingerprint: String,
     deadline_unix_ms: u64,
@@ -74,6 +76,7 @@ impl DelegationSupervisor {
         &self,
         parent_session_id: &str,
         parent_role: WireAgentRole,
+        parent_grant: &ScopedGrant,
         payload: DelegationCreatePayload,
     ) -> RuntimeResult<DelegationResult> {
         if !may_spawn(parent_role, payload.child_role) {
@@ -82,6 +85,8 @@ impl DelegationSupervisor {
                 "requested child role exceeds the root-series-task/reviewer lineage",
             ));
         }
+        let grant =
+            crate::grant::validate_child_grant(parent_grant, payload.child_role, &payload.grant)?;
         self.host
             .require_capabilities(&payload.adapter_id, &["create", "attest"])?;
         let delegation_id = Uuid::new_v4().to_string();
@@ -100,6 +105,7 @@ impl DelegationSupervisor {
             parent_session_id: parent_session_id.to_owned(),
             parent_delegation_id: payload.parent_delegation_id,
             child_role: payload.child_role,
+            grant,
             input_revision: payload.input_revision,
             input_fingerprint: payload.input_fingerprint,
             deadline_unix_ms: payload.deadline_unix_ms,
@@ -395,6 +401,28 @@ impl DelegationSupervisor {
         Ok((record.status, result, record.artifact_receipt))
     }
 
+    pub(crate) fn root_session_id(&self, delegation_id: &str) -> RuntimeResult<String> {
+        let mut current = delegation_id.to_owned();
+        let mut visited = std::collections::BTreeSet::new();
+        for _ in 0..3 {
+            if !visited.insert(current.clone()) {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "delegation lineage contains a cycle",
+                ));
+            }
+            let record = self.load(&current)?;
+            match record.parent_delegation_id {
+                Some(parent) => current = parent,
+                None => return Ok(record.parent_session_id),
+            }
+        }
+        Err(RuntimeError::new(
+            StableErrorCode::RunDepthExceeded,
+            "delegation lineage exceeds the supported three-layer model",
+        ))
+    }
+
     fn load(&self, id: &str) -> RuntimeResult<DurableDelegation> {
         let value = self
             .persistence
@@ -424,6 +452,7 @@ fn project_delegation(record: &DurableDelegation) -> DelegationResult {
     DelegationResult {
         delegation_id: record.delegation_id.clone(),
         status: record.status.clone(),
+        grant: record.grant.clone(),
         child_role: record.child_role,
         action_id: record.action_id.clone(),
         child_session_id: record.child_session_id.clone(),

@@ -485,5 +485,6 @@ const fn role_operation_tag(operation: RoleOperation) -> u8 {
         RoleOperation::ReviewAssignedDiff => 14,
         RoleOperation::SubmitReviewFindings => 15,
         RoleOperation::BreakLease => 16,
+        RoleOperation::ManageOwnLease => 17,
     }
 }

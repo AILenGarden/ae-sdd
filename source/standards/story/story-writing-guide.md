@@ -4,7 +4,7 @@
 
 ## 使用协议
 
-1. 通过 Document Storage 获取 `STORY_TEMPLATE` 与 `STORY_WRITING_GUIDE` 的 `content/sha256`。
+1. 通过 Document Storage 获取 `STORY_TEMPLATE`、`STORY_WRITING_GUIDE` 与 `DOC_DENSITY_STANDARD` 的 `content/sha256`。
 2. 把模板正文交给 `story_template_sections` 纯函数，按返回顺序处理章节。
 3. 先生成并 Review Primary，再派生 Secondary；正式 Story 只输出适用章节。
 4. 每个输出 H2 前保留 ID-only section marker，并在 marker 前保留与 section ID 相同的显式 ASCII 锚点。

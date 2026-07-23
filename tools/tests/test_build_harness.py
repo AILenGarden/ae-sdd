@@ -241,21 +241,21 @@ class TestIdentitySanityCheck:
             "You are the ae-sdd skill — a client-agnostic Skill running on any host."
         )
 
-    # ── Pattern 1: ae-sdd ... Mavis Harness 归属句 ──────────────────────────
+    # ── Pattern 1: ae-sdd ... Harness 归属句 ─────────────────────────────────
 
-    def test_pattern1_ae_sdd_is_mavis_harness(self):
-        self._assert_raises("ae-sdd is the Mavis Harness orchestrator.")
+    def test_pattern1_ae_sdd_is_harness(self):
+        self._assert_raises("ae-sdd is the Harness orchestrator.")
 
-    def test_pattern1_ae_sdd_mavis_harness_variant(self):
-        self._assert_raises("ae-sdd acts as MavisHarness sub-agent.")
+    def test_pattern1_ae_sdd_harness_variant(self):
+        self._assert_raises("ae-sdd acts as Harness sub-agent.")
 
-    # ── Pattern 2: Mavis Harness format/mode/role ────────────────────────────
+    # ── Pattern 2: Harness format/mode/role ────────────────────────────
 
-    def test_pattern2_mavis_harness_format(self):
-        self._assert_raises("This output is in Mavis Harness format.")
+    def test_pattern2_harness_format(self):
+        self._assert_raises("This output is in Harness format.")
 
-    def test_pattern2_mavis_harness_role(self):
-        self._assert_raises("Mavis-Harness role is to orchestrate tasks.")
+    def test_pattern2_harness_role(self):
+        self._assert_raises("Harness role is to orchestrate tasks.")
 
     # ── Pattern 3: you are the ... orchestrator ──────────────────────────────
 
@@ -268,7 +268,7 @@ class TestIdentitySanityCheck:
     # ── Pattern 4: ae-sdd ... orchestrator ──────────────────────────────────
 
     def test_pattern4_ae_sdd_orchestrator(self):
-        self._assert_raises("ae-sdd is an orchestrator embedded in Mavis.")
+        self._assert_raises("ae-sdd is an orchestrator embedded in Harness.")
 
     def test_pattern4_aesdd_orchestrator_no_dash(self):
         self._assert_raises("aesdd orchestrator runs inside the host.")
@@ -283,15 +283,15 @@ class TestIdentitySanityCheck:
 
     # ── 合法提及（误报防护）─────────────────────────────────────────────────
 
-    def test_no_false_positive_mavis_as_host_description(self):
-        """合法描述：ae-sdd 运行于 Mavis harness 之上，不是归属声明。"""
+    def test_no_false_positive_harness_as_host_description(self):
+        """合法描述：ae-sdd 运行于 Harness 之上，不是归属声明。"""
         self._assert_pass(
-            "ae-sdd runs on top of the Mavis harness via `mavis harness mount`."
+            "ae-sdd runs on top of the Harness via `harness mount`."
         )
 
-    def test_no_false_positive_mavis_harness_mount_command(self):
-        """命令行示例中出现 mavis harness 不应被误报。"""
-        self._assert_pass("Run: mavis harness mount ~/.ae-sdd/harness")
+    def test_no_false_positive_harness_mount_command(self):
+        """命令行示例中出现 harness 不应被误报。"""
+        self._assert_pass("Run: harness mount ~/.ae-sdd/harness")
 
     def test_no_false_positive_orchestration_as_noun(self):
         """orchestration（名词）≠ orchestrator（角色声明），不应触发。"""

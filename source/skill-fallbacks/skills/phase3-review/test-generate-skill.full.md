@@ -46,6 +46,14 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | L3 | 真实 DB / SQL / 事务测试 | INSERT/UPDATE 后 SELECT、回滚证据 |
 | L4 | 测试环境 HTTP / 跨 Story 路径 | 同一 buildId 的非 loopback endpoint，记录 `http-test-env` |
 
+### 1.1 可选 Postman supplemental 验证
+
+当使用者提供 test-env URL 且 Agent 内已安装 PostmanMCP 时，可调用
+[`postman-tool-skill.md`](../cross-cutting/postman-tool-skill.md) 把 AC 场景建成
+Postman collection 并 `runMonitor` 跑 HTTP 验证。run results 写
+`http-external-supplemental` evidence，summary 含 `postman collection/monitor
+run/buildId`。该证据不计入 L2/L4 双阶段完成度，不替代本地 HTTP 主链。
+
 ### 2. 执行验证命令
 
 每条命令执行前先用 `ae-sdd evidence lookup` 按 implementation fingerprint、command hash、toolchain fingerprint 和 artifact SHA-256 查成功证据。完整命中且未超过 freshness window 时复用；失败、篡改、过期或任一 fingerprint 不同必须重跑。命令必须可复现并写入 evidence：
@@ -87,6 +95,7 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 | 修测试代替修代码 | 先判根因；修测试须记录原因并获用户确认 |
 | MockMvc 或内部 MockBean/SpyBean 替代接口主链 | 本地真实端口完整内部链 + 同 buildId 测试环境 HTTP；不可降级通过 |
 | 代码未变却重复跑 Maven | 先查 evidence manifest；命中可复用证据时禁止重跑 |
+| Postman 替代 L2 本地 HTTP 主链 | L2 保持 RANDOM_PORT + 本地 client，internalMocks=false；Postman 只做 test-env supplemental，不计入双阶段完成 |
 
 ## 执行清单
 

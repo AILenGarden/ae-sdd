@@ -69,7 +69,7 @@ POST_COMMIT_OUTPUT="$(
         --target "$USER_HOME/.claude/skills/ae-sdd" \
         --target "$USER_HOME/.codex/skills/ae-sdd" \
         --target "$USER_HOME/.zcode/skills/ae-sdd" \
-        --target "$USER_HOME/.mavis/skills/ae-sdd" \
+        --target "$USER_HOME/.harness/skills/ae-sdd" \
         --target "$USER_HOME/.hermes/skills/ae-sdd" 2>&1
 )"
 POST_COMMIT_STATUS=$?

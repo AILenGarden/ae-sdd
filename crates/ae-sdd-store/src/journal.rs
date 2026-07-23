@@ -146,20 +146,93 @@ impl MutationJournalEntry {
         event: JournalEvent,
         prepared_at: UtcTimestamp,
     ) -> Result<Self, StoreError> {
+        Self::prepare(
+            mutation_id,
+            workspace_id,
+            work_item_id,
+            operation,
+            idempotency_key,
+            canonical_payload_digest,
+            planned_result_digest,
+            revision_before,
+            revision_after,
+            fencing_token,
+            target_files,
+            event,
+            prepared_at,
+            true,
+        )
+    }
+
+    /// Creates a journal entry for a lease-ledger control mutation that does
+    /// not advance project-state revision.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepared_control(
+        mutation_id: RequestId,
+        workspace_id: WorkspaceId,
+        work_item_id: WorkItemId,
+        operation: OperationId,
+        idempotency_key: &IdempotencyKey,
+        canonical_payload_digest: InputFingerprint,
+        planned_result_digest: ResultDigest,
+        revision: StateRevision,
+        fencing_token: FencingToken,
+        target_files: Vec<TargetDescriptor>,
+        event: JournalEvent,
+        prepared_at: UtcTimestamp,
+    ) -> Result<Self, StoreError> {
+        Self::prepare(
+            mutation_id,
+            workspace_id,
+            work_item_id,
+            operation,
+            idempotency_key,
+            canonical_payload_digest,
+            planned_result_digest,
+            revision,
+            revision,
+            fencing_token,
+            target_files,
+            event,
+            prepared_at,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare(
+        mutation_id: RequestId,
+        workspace_id: WorkspaceId,
+        work_item_id: WorkItemId,
+        operation: OperationId,
+        idempotency_key: &IdempotencyKey,
+        canonical_payload_digest: InputFingerprint,
+        planned_result_digest: ResultDigest,
+        revision_before: StateRevision,
+        revision_after: StateRevision,
+        fencing_token: FencingToken,
+        target_files: Vec<TargetDescriptor>,
+        event: JournalEvent,
+        prepared_at: UtcTimestamp,
+        advances_revision: bool,
+    ) -> Result<Self, StoreError> {
         if target_files.is_empty() || target_files.len() > MAX_MUTATION_TARGETS {
             return Err(StoreError::InvalidJournal {
                 reason: "mutation must contain between 1 and 128 targets".into(),
             });
         }
-        if revision_after
-            != revision_before
+        let expected_revision = if advances_revision {
+            revision_before
                 .checked_next()
                 .map_err(|error| StoreError::InvalidJournal {
                     reason: error.to_string().into_boxed_str(),
                 })?
-        {
+        } else {
+            revision_before
+        };
+        if revision_after != expected_revision {
             return Err(StoreError::InvalidJournal {
-                reason: "revisionAfter must be the exact successor of revisionBefore".into(),
+                reason: "journal revision relation does not match its mutation kind".into(),
             });
         }
         event

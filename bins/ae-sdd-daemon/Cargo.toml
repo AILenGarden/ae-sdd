@@ -11,12 +11,12 @@ name = "ae-sddd"
 path = "src/main.rs"
 
 [dependencies]
-ae-sdd-domain = { path = "../../crates/ae-sdd-domain" }
-ae-sdd-integrations = { path = "../../crates/ae-sdd-integrations" }
-ae-sdd-protocol = { path = "../../crates/ae-sdd-protocol" }
-ae-sdd-runtime = { path = "../../crates/ae-sdd-runtime" }
+ae-sdd-domain.workspace = true
+ae-sdd-integrations.workspace = true
+ae-sdd-protocol.workspace = true
+ae-sdd-runtime.workspace = true
 clap.workspace = true
-jiff = { version = "0.2.34", default-features = false, features = ["std"] }
+jiff.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true

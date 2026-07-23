@@ -3,9 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ae_sdd_runtime::RuntimeResult;
 use serde_json::{Map, Value, json};
 
-use super::common::{
-    JobContext, MAX_FILE_BYTES, digest, read_json, safe_segment, schema_error,
-};
+use super::common::{JobContext, MAX_FILE_BYTES, digest, read_json, safe_segment, schema_error};
 
 pub(super) fn execute(
     context: &JobContext<'_>,
@@ -205,7 +203,15 @@ fn normalized_map(values: &[Value]) -> RuntimeResult<BTreeMap<String, Value>> {
     values
         .iter()
         .map(normalize_finding)
-        .map(|result| result.map(|finding| (finding["findingKey"].as_str().unwrap().to_owned(), finding)))
+        .map(|result| {
+            let finding = result?;
+            let key = finding
+                .get("findingKey")
+                .and_then(Value::as_str)
+                .ok_or_else(|| schema_error("normalized finding has no key"))?
+                .to_owned();
+            Ok((key, finding))
+        })
         .collect()
 }
 
@@ -230,7 +236,7 @@ fn normalize_finding(value: &Value) -> RuntimeResult<Value> {
         .map(str::to_owned)
         .unwrap_or_else(|| {
             let raw = format!("{rule}\n{path}\n{}\n{severity}", scalar(&symbol));
-            digest(raw.as_bytes())
+            format!("sha256:{}", digest(raw.as_bytes()))
         });
     item.insert("findingKey".to_owned(), Value::String(key));
     item.insert("ruleId".to_owned(), Value::String(rule));
@@ -255,7 +261,11 @@ fn content_hash_matches(payload: &Value) -> RuntimeResult<bool> {
     unhashed.remove("contentHash");
     let canonical = serde_json::to_vec(&Value::Object(unhashed))
         .map_err(|_| schema_error("baseline canonicalization failed"))?;
-    Ok(expected == digest(&canonical))
+    Ok(digest_matches(expected, &digest(&canonical)))
+}
+
+fn digest_matches(expected: &str, actual_hex: &str) -> bool {
+    expected == actual_hex || expected.strip_prefix("sha256:") == Some(actual_hex)
 }
 
 fn touched_paths(arguments: &Value) -> RuntimeResult<BTreeSet<String>> {

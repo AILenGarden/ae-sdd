@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::{
@@ -32,8 +32,8 @@ pub const B_OFFLINE_ENTRYPOINTS: [&str; 13] = [
     "version",
 ];
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OfflineRequest {
     pub schema_version: String,
     pub mode: ExecutionMode,
@@ -44,8 +44,53 @@ pub struct OfflineRequest {
     pub command: OfflineCommand,
 }
 
+impl<'de> Deserialize<'de> for OfflineRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let mut object = value
+            .as_object()
+            .cloned()
+            .ok_or_else(|| serde::de::Error::custom("offline request must be an object"))?;
+        let schema_version =
+            take_wire_field(&mut object, "schemaVersion").map_err(serde::de::Error::custom)?;
+        let mode = take_wire_field(&mut object, "mode").map_err(serde::de::Error::custom)?;
+        let actor = take_wire_field(&mut object, "actor").map_err(serde::de::Error::custom)?;
+        let reason = take_wire_field(&mut object, "reason").map_err(serde::de::Error::custom)?;
+        let idempotency_key =
+            take_wire_field(&mut object, "idempotencyKey").map_err(serde::de::Error::custom)?;
+        let command =
+            serde_json::from_value(Value::Object(object)).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            schema_version,
+            mode,
+            actor,
+            reason,
+            idempotency_key,
+            command,
+        })
+    }
+}
+
+fn take_wire_field<T: DeserializeOwned>(
+    object: &mut Map<String, Value>,
+    field: &'static str,
+) -> Result<T, String> {
+    let value = object
+        .remove(field)
+        .ok_or_else(|| format!("missing field `{field}`"))?;
+    serde_json::from_value(value).map_err(|error| format!("invalid field `{field}`: {error}"))
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "command", rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(
+    tag = "command",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum OfflineCommand {
     #[serde(rename = "assets.generate")]
     AssetsGenerate {

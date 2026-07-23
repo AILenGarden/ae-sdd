@@ -4,7 +4,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -39,15 +38,16 @@ class DistributorRegistryTests(unittest.TestCase):
         return Path(self.tmp.name) / ".ae-sdd" / "distributors.json"
 
     def test_load_registry_seeds_defaults_when_absent(self):
-        """首次加载无文件时，用种子初始化（含 5 个，mavis 默认禁用）。"""
+        """首次加载无文件时，用种子初始化（含 4 个已知 Agent，默认全部启用）。"""
         entries = dr.load_registry()
         names = [e.name for e in entries]
-        self.assertEqual(len(entries), 5)
+        self.assertEqual(len(entries), 4)
         self.assertIn("claude", names)
-        self.assertIn("mavis", names)
-        # mavis 默认禁用
-        mavis = next(e for e in entries if e.name == "mavis")
-        self.assertFalse(mavis.enabled)
+        self.assertIn("codex", names)
+        self.assertIn("zcode", names)
+        self.assertIn("hermes", names)
+        for entry in entries:
+            self.assertTrue(entry.enabled)
         # 文件已落盘
         self.assertTrue(self._registry_path().is_file())
 
@@ -128,7 +128,11 @@ class DistributorRegistryTests(unittest.TestCase):
 
     def test_set_enabled_idempotent(self):
         """重复启用/禁用返回成功但消息提示已是该状态。"""
-        ok, msg, _ = dr.set_enabled("mavis", False)  # mavis 默认就禁用
+        dr.register_one(
+            name="disabled-agent", protocol="copytree",
+            target_path="~/disabled-agent", enabled=False,
+        )
+        ok, msg, _ = dr.set_enabled("disabled-agent", False)  # 已是禁用
         self.assertTrue(ok)
         self.assertIn("已是", msg)
 
@@ -152,16 +156,14 @@ class DistributorRegistryTests(unittest.TestCase):
         self.assertTrue(dr.evaluate_detect(entry))
 
     def test_scan_for_agents_returns_known(self):
-        """scan_for_agents 返回已知 Agent 清单。"""
-        with patch.object(dr, "_cli_exists", side_effect=lambda cli: cli == "mavis"):
-            found = dr.scan_for_agents()
+        """scan_for_agents 返回已知 Agent 清单（tmp HOME 下仅 detect=always 的 claude 命中）。"""
+        found = dr.scan_for_agents()
         names = [f["name"] for f in found]
         self.assertIn("claude", names)
-        self.assertIn("mavis", names)
 
     def test_scan_unregistered_excludes_registered(self):
         """scan_unregistered 排除已注册的。"""
-        # 默认注册表已有 5 个，scan_unregistered 应排除它们
+        # 默认注册表已有 4 个，scan_unregistered 应排除它们
         unreg = dr.scan_unregistered()
         registered = {e.name for e in dr.load_registry()}
         for item in unreg:

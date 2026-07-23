@@ -303,7 +303,7 @@ source/skills/**/*.md
 
 ### 注册表文件
 
-`~/.ae-sdd/distributors.json`（用户环境态，与 plugins/ 同级）。首次运行无文件时用种子初始化（含 claude/codex/zcode/hermes/mavis，mavis 默认 `enabled:false` 反映无 daemon 环境）。
+`~/.ae-sdd/distributors.json`（用户环境态，与 plugins/ 同级）。首次运行无文件时用种子初始化（含 claude/codex/zcode/hermes/harness，harness 默认 `enabled:false` 反映无 daemon 环境）。
 
 每条目字段：`name` / `protocol`(copytree|harness_mount) / `target_path` / `detect`(always|path_exists|cli_exists) / `detect_cli` / `enabled` / `registered_at` / `notes`。
 
@@ -312,13 +312,13 @@ source/skills/**/*.md
 | 协议 | 模板类 | 适用 | 复杂度 |
 | --- | --- | --- | --- |
 | `copytree` | `CopytreeDistributor` | claude/codex/zcode/hermes 及同类 | 备份→复制→校验→清旧 .bak |
-| `harness_mount` | `HarnessMountDistributor` | mavis 及同类 | compile(build_harness)→mount→verify→cleanup(-N 副本+sqlite) |
+| `harness_mount` | `HarnessMountDistributor` | harness 及同类 | compile(build_harness)→mount→verify→cleanup(-N 副本+sqlite) |
 
 注册一个 Agent = 选协议模板 + 填 target_path/detect 参数构造实例；注销 = 注册表除名，实例不再构造。旧 5 个 `*.py` 子类降级为兼容 shim，逻辑迁入模板。
 
 ### CLI 管理
 
-`ae-sdd distributor list|register|unregister|enable|disable|scan`。注销 mavis：`ae-sdd distributor disable mavis`（软注销，保留条目可恢复）或 `unregister mavis`（硬注销，删条目）。`scan` 扫描 `~/.*/skills/` 识别已安装 Agent 并建议注册命令，不越权委托 Agent 安装。
+`ae-sdd distributor list|register|unregister|enable|disable|scan`。注销 harness：`ae-sdd distributor disable harness`（软注销，保留条目可恢复）或 `unregister harness`（硬注销，删条目）。`scan` 扫描 `~/.*/skills/` 识别已安装 Agent 并建议注册命令，不越权委托 Agent 安装。
 
 ### 数据流
 
@@ -327,7 +327,7 @@ source/skills/**/*.md
   → _registry.get_active_distributors() 构造实例
   → distribute.py 遍历实例调 install()
   → CopytreeDistributor: copytree 编译后 dist
-  → HarnessMountDistributor: build_harness + mavis harness mount
+  → HarnessMountDistributor: build_harness + harness mount
 ```
 
 ### 边界

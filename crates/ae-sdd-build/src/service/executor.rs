@@ -35,7 +35,7 @@ pub trait ServiceManagerRunner {
 
 /// Production runner that starts an allowlisted manager directly without a shell.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct NativeServiceManagerRunner;
+struct NativeServiceManagerRunner;
 
 impl ServiceManagerRunner for NativeServiceManagerRunner {
     fn run(
@@ -43,6 +43,16 @@ impl ServiceManagerRunner for NativeServiceManagerRunner {
         command: &ServiceManagerCommand,
         limits: ServiceExecutionLimits,
     ) -> Result<ServiceManagerOutput, ServiceError> {
+        validate_limits(limits)?;
+        let planned = manager_platform(command.program)
+            .ok_or_else(|| ServiceError::ManagerProgramDenied(command.program.to_owned()))?;
+        if planned != ServicePlatform::current() {
+            return Err(ServiceError::PlatformMismatch {
+                planned,
+                current: ServicePlatform::current(),
+            });
+        }
+        validate_arguments(planned, &command.arguments)?;
         let started = Instant::now();
         let mut child = Command::new(command.program)
             .args(&command.arguments)
@@ -249,13 +259,8 @@ fn validate_plan(plan: &ServiceLifecyclePlan) -> Result<(), ServiceError> {
     {
         return Err(ServiceError::PrivilegeEscalation);
     }
-    let expected = match plan.platform {
-        ServicePlatform::Windows => "schtasks.exe",
-        ServicePlatform::Macos => "launchctl",
-        ServicePlatform::Linux => "systemctl",
-    };
     for command in &plan.manager_commands {
-        if command.program != expected {
+        if manager_platform(command.program) != Some(plan.platform) {
             return Err(ServiceError::ManagerProgramDenied(
                 command.program.to_owned(),
             ));
@@ -263,6 +268,15 @@ fn validate_plan(plan: &ServiceLifecyclePlan) -> Result<(), ServiceError> {
         validate_arguments(plan.platform, &command.arguments)?;
     }
     Ok(())
+}
+
+fn manager_platform(program: &str) -> Option<ServicePlatform> {
+    match program {
+        "schtasks.exe" => Some(ServicePlatform::Windows),
+        "launchctl" => Some(ServicePlatform::Macos),
+        "systemctl" => Some(ServicePlatform::Linux),
+        _ => None,
+    }
 }
 
 fn validate_arguments(platform: ServicePlatform, arguments: &[String]) -> Result<(), ServiceError> {
@@ -436,12 +450,33 @@ fn millis(duration: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::bounded_text;
+    use super::{
+        NativeServiceManagerRunner, ServiceExecutionLimits, ServiceManagerCommand,
+        ServiceManagerRunner, bounded_text,
+    };
 
     #[test]
     fn invalid_utf8_cannot_expand_beyond_the_receipt_budget() {
         let (text, truncated) = bounded_text(&[0xff, 0xff, 0xff], 2);
         assert!(truncated);
         assert!(text.len() <= 2);
+    }
+
+    #[test]
+    fn native_runner_rejects_non_allowlisted_program_before_spawn() {
+        let error = NativeServiceManagerRunner
+            .run(
+                &ServiceManagerCommand {
+                    purpose: "negative",
+                    program: "powershell.exe",
+                    arguments: vec!["-Command".to_owned()],
+                },
+                ServiceExecutionLimits::default(),
+            )
+            .expect_err("non-allowlisted manager must be rejected");
+        assert!(matches!(
+            error,
+            super::ServiceError::ManagerProgramDenied(_)
+        ));
     }
 }

@@ -1,15 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::error::Error;
-use std::fmt;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use ae_sdd_protocol::{ConfirmationRef, PROTOCOL_VERSION_V1, RequestParams, RpcMethod};
 use serde_json::{Map, Value};
 
-use super::LegacyCommandRoute;
-
-const MAX_ARGUMENT_BYTES: usize = 1024 * 1024;
-const MAX_VALUE_BYTES: usize = 64 * 1024;
+use super::tokens::{LegacyArgumentError, ParsedArguments, kebab_to_camel, validate_text};
+use super::{LegacyCommandRoute, LegacyRpcAdapter, LegacyTarget};
 
 /// One strict legacy RPC invocation after control-plane flags are separated
 /// from command business flags.
@@ -24,26 +20,8 @@ pub struct LegacyRpcInvocation {
 #[derive(Debug)]
 pub enum LegacyRequestSource {
     ExplicitJson(String),
-    Synthesized(RequestParams<Value>),
+    Synthesized(Box<RequestParams<Value>>),
 }
-
-/// Stable fail-closed argv error surfaced by the CLI.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LegacyArgumentError(String);
-
-impl LegacyArgumentError {
-    pub(super) fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-impl fmt::Display for LegacyArgumentError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl Error for LegacyArgumentError {}
 
 /// Parse legacy RPC argv. Environment access is injected so tests never need
 /// to mutate process-global environment state.
@@ -56,8 +34,21 @@ pub fn parse_rpc_invocation<F>(
 where
     F: Fn(&str) -> Option<String>,
 {
-    let mut parsed = ParsedArguments::parse(arguments, &["json"])?;
-    if !parsed.positionals.is_empty() {
+    let job_submission = matches!(
+        &route.target,
+        LegacyTarget::Rpc {
+            adapter: LegacyRpcAdapter::JobSubmission { .. },
+            ..
+        }
+    );
+    let repeatable_flags = if job_submission && route.command_id == "git impact" {
+        &["file"][..]
+    } else {
+        &[]
+    };
+    let mut parsed =
+        ParsedArguments::parse_with_repeatable(arguments, &["json"], repeatable_flags)?;
+    if !job_submission && !parsed.positionals.is_empty() {
         return Err(LegacyArgumentError::new(format!(
             "legacy daemon command {} accepts only named --kebab-case flags",
             route.command_id
@@ -66,15 +57,10 @@ where
     parsed.take_boolean("json")?;
 
     let explicit_json = parsed.take_required_optional("request-json")?;
-    let manifest = take_text(
-        &mut parsed,
-        &["manifest"],
-        "AE_SDD_MANIFEST",
-        &environment,
-    )?
-    .map(PathBuf::from);
+    let manifest =
+        take_text(&mut parsed, &["manifest"], "AE_SDD_MANIFEST", &environment)?.map(PathBuf::from);
     if let Some(request_json) = explicit_json {
-        if !parsed.options.is_empty() {
+        if !parsed.options.is_empty() || !parsed.positionals.is_empty() {
             return Err(LegacyArgumentError::new(
                 "--request-json cannot be combined with synthesized request flags",
             ));
@@ -116,24 +102,14 @@ where
         "AE_SDD_CAPABILITY_TOKEN",
         &environment,
     )?;
-    let turn_id = take_text(
-        &mut parsed,
-        &["turn-id"],
-        "AE_SDD_TURN_ID",
-        &environment,
-    )?;
+    let turn_id = take_text(&mut parsed, &["turn-id"], "AE_SDD_TURN_ID", &environment)?;
     let work_item_id = take_text(
         &mut parsed,
         &["work-item-id", "work-item"],
         "AE_SDD_WORK_ITEM_ID",
         &environment,
     )?;
-    let lease_id = take_text(
-        &mut parsed,
-        &["lease-id"],
-        "AE_SDD_LEASE_ID",
-        &environment,
-    )?;
+    let lease_id = take_text(&mut parsed, &["lease-id"], "AE_SDD_LEASE_ID", &environment)?;
     let fencing_token = take_u64(
         &mut parsed,
         &["fencing-token"],
@@ -162,7 +138,7 @@ where
     .unwrap_or(route.contract.deadline_ms);
 
     let payload = if let Some(raw) = parsed.take_required_optional("payload-json")? {
-        if !parsed.options.is_empty() {
+        if !parsed.options.is_empty() || !parsed.positionals.is_empty() {
             return Err(LegacyArgumentError::new(
                 "--payload-json cannot be combined with individual business flags",
             ));
@@ -171,7 +147,7 @@ where
             LegacyArgumentError::new(format!("--payload-json is invalid JSON: {error}"))
         })?
     } else {
-        business_payload(parsed.options)?
+        business_payload(parsed.options, parsed.positionals)?
     };
 
     let params = RequestParams {
@@ -192,7 +168,7 @@ where
     };
     validate_request_params(route, method, &params)?;
     Ok(LegacyRpcInvocation {
-        request: LegacyRequestSource::Synthesized(params),
+        request: LegacyRequestSource::Synthesized(Box::new(params)),
         manifest,
     })
 }
@@ -328,7 +304,9 @@ where
 {
     let explicit = parsed.take_aliases(aliases)?;
     let value = explicit.or_else(|| environment(environment_name));
-    value.map(|value| validate_text(environment_name, value)).transpose()
+    value
+        .map(|value| validate_text(environment_name, value))
+        .transpose()
 }
 
 fn take_u64<F>(
@@ -349,21 +327,9 @@ where
         .transpose()
 }
 
-fn validate_text(name: &str, value: String) -> Result<String, LegacyArgumentError> {
-    if value.trim().is_empty()
-        || value.len() > MAX_VALUE_BYTES
-        || value.contains(['\0', '\r', '\n'])
-    {
-        Err(LegacyArgumentError::new(format!(
-            "{name} is empty, contains control characters, or exceeds the value budget"
-        )))
-    } else {
-        Ok(value)
-    }
-}
-
 fn business_payload(
     options: BTreeMap<String, Option<String>>,
+    positionals: Vec<String>,
 ) -> Result<Value, LegacyArgumentError> {
     let mut payload = Map::new();
     for (name, raw) in options {
@@ -374,6 +340,18 @@ fn business_payload(
                 "business field {field} was supplied more than once"
             )));
         }
+    }
+    if !positionals.is_empty()
+        && payload
+            .insert(
+                "legacyPositionals".to_owned(),
+                Value::Array(positionals.into_iter().map(Value::String).collect()),
+            )
+            .is_some()
+    {
+        return Err(LegacyArgumentError::new(
+            "legacyPositionals is reserved for the job adapter",
+        ));
     }
     Ok(Value::Object(payload))
 }
@@ -389,158 +367,5 @@ fn parse_business_value(value: &str) -> Value {
         serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned()))
     } else {
         Value::String(value.to_owned())
-    }
-}
-
-fn kebab_to_camel(name: &str) -> Result<String, LegacyArgumentError> {
-    let mut segments = name.split('-');
-    let first = segments.next().unwrap_or_default();
-    if !valid_segment(first) {
-        return Err(LegacyArgumentError::new(format!(
-            "invalid --{name}; business flags must be lowercase kebab-case"
-        )));
-    }
-    let mut result = first.to_owned();
-    for segment in segments {
-        if !valid_segment(segment) {
-            return Err(LegacyArgumentError::new(format!(
-                "invalid --{name}; business flags must be lowercase kebab-case"
-            )));
-        }
-        let mut characters = segment.chars();
-        if let Some(first) = characters.next() {
-            result.push(first.to_ascii_uppercase());
-        }
-        result.extend(characters);
-    }
-    Ok(result)
-}
-
-fn valid_segment(segment: &str) -> bool {
-    !segment.is_empty()
-        && segment
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-}
-
-#[derive(Debug)]
-pub(super) struct ParsedArguments {
-    pub(super) options: BTreeMap<String, Option<String>>,
-    pub(super) positionals: Vec<String>,
-}
-
-impl ParsedArguments {
-    pub(super) fn parse(
-        arguments: &[String],
-        boolean_flags: &[&str],
-    ) -> Result<Self, LegacyArgumentError> {
-        let total_bytes = arguments.iter().map(String::len).sum::<usize>();
-        if total_bytes > MAX_ARGUMENT_BYTES {
-            return Err(LegacyArgumentError::new(
-                "legacy argv exceeds the one-megabyte budget",
-            ));
-        }
-        let booleans: BTreeSet<_> = boolean_flags.iter().copied().collect();
-        let mut options = BTreeMap::new();
-        let mut positionals = Vec::new();
-        let mut index = 0;
-        while index < arguments.len() {
-            let token = &arguments[index];
-            if !token.starts_with("--") {
-                if token.starts_with('-') {
-                    return Err(LegacyArgumentError::new(format!(
-                        "unsupported short or malformed option {token}"
-                    )));
-                }
-                validate_text("positional argument", token.clone())?;
-                positionals.push(token.clone());
-                index += 1;
-                continue;
-            }
-            if token == "--" {
-                return Err(LegacyArgumentError::new(
-                    "the -- positional escape is not accepted by legacy adapters",
-                ));
-            }
-            let option = &token[2..];
-            let (name, inline) = option
-                .split_once('=')
-                .map_or((option, None), |(name, value)| (name, Some(value)));
-            kebab_to_camel(name)?;
-            let value = if let Some(value) = inline {
-                Some(validate_text(name, value.to_owned())?)
-            } else if booleans.contains(name) {
-                None
-            } else if arguments
-                .get(index + 1)
-                .is_some_and(|next| !next.starts_with("--"))
-            {
-                index += 1;
-                Some(validate_text(name, arguments[index].clone())?)
-            } else {
-                None
-            };
-            if options.insert(name.to_owned(), value).is_some() {
-                return Err(LegacyArgumentError::new(format!(
-                    "duplicate legacy flag --{name}"
-                )));
-            }
-            index += 1;
-        }
-        Ok(Self {
-            options,
-            positionals,
-        })
-    }
-
-    pub(super) fn take_aliases(
-        &mut self,
-        aliases: &[&str],
-    ) -> Result<Option<String>, LegacyArgumentError> {
-        let present: Vec<_> = aliases
-            .iter()
-            .filter(|alias| self.options.contains_key(**alias))
-            .copied()
-            .collect();
-        if present.len() > 1 {
-            return Err(LegacyArgumentError::new(format!(
-                "ambiguous aliases were supplied together: {}",
-                present
-                    .iter()
-                    .map(|name| format!("--{name}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
-        }
-        present
-            .first()
-            .map_or(Ok(None), |name| self.take_required_optional(name))
-    }
-
-    pub(super) fn take_required_optional(
-        &mut self,
-        name: &str,
-    ) -> Result<Option<String>, LegacyArgumentError> {
-        match self.options.remove(name) {
-            Some(Some(value)) => Ok(Some(value)),
-            Some(None) => Err(LegacyArgumentError::new(format!(
-                "--{name} requires a value"
-            ))),
-            None => Ok(None),
-        }
-    }
-
-    pub(super) fn take_boolean(&mut self, name: &str) -> Result<bool, LegacyArgumentError> {
-        match self.options.remove(name) {
-            None => Ok(false),
-            Some(None) => Ok(true),
-            Some(Some(value)) => match value.as_str() {
-                "true" => Ok(true),
-                "false" => Ok(false),
-                _ => Err(LegacyArgumentError::new(format!(
-                    "--{name} accepts only true or false when assigned"
-                ))),
-            },
-        }
     }
 }

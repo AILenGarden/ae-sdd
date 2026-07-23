@@ -12,7 +12,7 @@ description: 参考同事 life-team-project-docs/knowledge/ 库的 7 处优质�
 version: 1.0
 date: 2026-06-27
 status: ✅ 已落地（v3.5.1 + v3.5.1.1 两次实施完成）
-authors: Mavis (mvs_f8e47fab87ca4c678c5f5ed77be0b448)
+authors: Harness (mvs_f8e47fab87ca4c678c5f5ed77be0b448)
 related:
   - standards/project-assets/project-assets-schema.md
   - standards/project-assets/project-assets-template.md

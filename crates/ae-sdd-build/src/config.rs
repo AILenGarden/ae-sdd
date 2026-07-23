@@ -31,6 +31,7 @@ pub struct ServiceConfigInput {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {
+    SessionStart,
     UserPrompt,
     PreTool,
     PostTool,
@@ -40,11 +41,45 @@ pub enum HookEvent {
 impl HookEvent {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::SessionStart => "session_start",
             Self::UserPrompt => "user_prompt",
             Self::PreTool => "pre_tool",
             Self::PostTool => "post_tool",
             Self::Stop => "stop",
         }
+    }
+
+    fn arguments(self, common_arguments: &[String]) -> Vec<String> {
+        let event_arguments: Vec<String> = match self {
+            Self::SessionStart => vec![
+                "runtime".to_owned(),
+                "ensure".to_owned(),
+                "--quiet".to_owned(),
+            ],
+            _ => vec![
+                "hook".to_owned(),
+                "--method".to_owned(),
+                format!("hook.{}", self.as_str()),
+                "--request-json".to_owned(),
+                "-".to_owned(),
+            ],
+        };
+        common_arguments
+            .iter()
+            .cloned()
+            .chain(event_arguments)
+            .collect()
+    }
+
+    const fn deadline_ms(self, hook_deadline_ms: u32) -> u32 {
+        match self {
+            Self::SessionStart => 5_000,
+            _ => hook_deadline_ms,
+        }
+    }
+
+    const fn fail_closed(self) -> bool {
+        !matches!(self, Self::SessionStart)
     }
 }
 
@@ -54,7 +89,7 @@ pub enum HookHost {
     ClaudeCode,
     Codex,
     Hermes,
-    Mavis,
+    Harness,
     Zcode,
 }
 
@@ -64,7 +99,7 @@ impl HookHost {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
             Self::Hermes => "hermes",
-            Self::Mavis => "mavis",
+            Self::Harness => "harness",
             Self::Zcode => "zcode",
         }
     }
@@ -153,20 +188,9 @@ pub fn generate_hook_config(input: &HookConfigInput) -> Result<GeneratedConfig, 
         .map(|event| HookEntry {
             event: event.as_str(),
             executable: input.executable.clone(),
-            arguments: input
-                .common_arguments
-                .iter()
-                .cloned()
-                .chain([
-                    "hook".to_owned(),
-                    "--method".to_owned(),
-                    format!("hook.{}", event.as_str()),
-                    "--request-json".to_owned(),
-                    "-".to_owned(),
-                ])
-                .collect(),
-            deadline_ms: input.deadline_ms,
-            fail_closed: true,
+            arguments: event.arguments(&input.common_arguments),
+            deadline_ms: event.deadline_ms(input.deadline_ms),
+            fail_closed: event.fail_closed(),
         })
         .collect();
     let manifest = HookManifest {
@@ -415,11 +439,17 @@ mod tests {
             host: HookHost::Codex,
             executable: "C:\\Program Files\\ae-sdd\\ae-sdd.exe".to_owned(),
             common_arguments: vec!["--json".to_owned()],
-            events: vec![HookEvent::PreTool, HookEvent::Stop],
+            events: vec![HookEvent::SessionStart, HookEvent::PreTool, HookEvent::Stop],
             deadline_ms: 250,
         })
         .expect("hook config");
         assert!(generated.contents.contains("\"failClosed\": true"));
+        assert!(generated.contents.contains("\"failClosed\": false"));
+        assert!(generated.contents.contains("\"session_start\""));
+        assert!(generated.contents.contains("\"runtime\""));
+        assert!(generated.contents.contains("\"ensure\""));
+        assert!(generated.contents.contains("\"deadlineMs\": 5000"));
+        assert!(!generated.contents.contains("hook.session_start"));
         assert!(generated.contents.contains("\"pre_tool\""));
         assert!(generated.contents.contains("\"hook.pre_tool\""));
         assert!(generated.contents.contains("\"--request-json\""));
