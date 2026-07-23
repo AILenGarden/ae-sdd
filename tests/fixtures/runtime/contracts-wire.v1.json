@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "v1",
+  "limits": {
+    "routeReasonCodes": 32,
+    "requiredSeries": 32,
+    "routeArtifacts": 64,
+    "impactFacts": 64,
+    "seriesGrantItems": 64,
+    "mutationIntents": 64,
+    "contextBundleBytes": 65536,
+    "hostMessageBytes": 32768,
+    "capabilityTokenBytes": 8192
+  },
+  "workScales": ["large", "medium", "small", "micro"],
+  "routeDispositions": ["await_user_approval", "approved", "denied", "superseded"],
+  "lifecycleDispositions": ["permitted", "denied", "awaiting_confirmation"],
+  "compactStatuses": [
+    "pressure-detected",
+    "snapshot-ready",
+    "compact-requested",
+    "host-compacting",
+    "host-acknowledged",
+    "context-restored",
+    "unsupported",
+    "timed-out",
+    "failed"
+  ]
+}

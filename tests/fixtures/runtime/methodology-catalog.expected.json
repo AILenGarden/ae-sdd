@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "ae-sdd-methodology-catalog/v1",
+  "entryCount": 31,
+  "activationCounts": {
+    "workflow": 15,
+    "capability": 14,
+    "deprecated": 2
+  },
+  "spawnPolicyCounts": {
+    "physical_series": 15,
+    "inline": 14,
+    "forbidden": 2
+  },
+  "deprecatedSkillIds": [
+    "cross-cutting.proposal",
+    "phase2-coding.coding-report"
+  ],
+  "mustNeverSpawnSeriesKinds": [
+    "plugin-loader",
+    "agent-orchestration",
+    "agent-self-audit",
+    "database-tool",
+    "document-storage",
+    "git-insight",
+    "memory-management",
+    "postman-tool",
+    "project-assets-update",
+    "review-loop",
+    "toolset-orchestration",
+    "ae-sdd-install",
+    "ae-sdd-update",
+    "coding-process",
+    "proposal",
+    "coding-report"
+  ]
+}

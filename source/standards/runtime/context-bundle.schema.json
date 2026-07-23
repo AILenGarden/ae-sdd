@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ae-sdd.local/schema/context-bundle.v1.json",
+  "title": "ae-sdd ContextBundleRef v1 wire shape",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "contextId", "workItemId", "artifactRefs", "bundleDigest", "byteLength"],
+  "properties": {
+    "schemaVersion": { "const": "v1" },
+    "contextId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "workItemId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "artifactRefs": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "object" } },
+    "bundleDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "byteLength": { "type": "integer", "minimum": 1, "maximum": 65536 }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "ae-sdd-methodology-catalog/v1",
+  "catalogVersion": "1.0.0",
+  "entries": [
+    {
+      "skillId": "phase1-design.escape",
+      "seriesKind": "escape",
+      "variant": "builtin-v1",
+      "version": "1.0.0",
+      "activation": "workflow",
+      "spawnPolicy": "physical_series",
+      "compactRef": "../outside.md",
+      "fallbackRef": null,
+      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "escape" }],
+      "requiredInputs": ["requested-intent"],
+      "deliverableKinds": ["invalid"],
+      "requiredGates": [],
+      "toolDependencies": []
+    }
+  ]
+}

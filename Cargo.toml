@@ -3,23 +3,31 @@ resolver = "3"
 members = [
     "bins/ae-sdd-cli",
     "bins/ae-sdd-daemon",
+    "bins/ae-sdd-worker",
     "crates/ae-sdd-artifacts",
     "crates/ae-sdd-build",
     "crates/ae-sdd-client",
+    "crates/ae-sdd-contracts",
     "crates/ae-sdd-context",
     "crates/ae-sdd-delegation",
     "crates/ae-sdd-domain",
+    "crates/ae-sdd-execution",
     "crates/ae-sdd-flow",
     "crates/ae-sdd-gates",
     "crates/ae-sdd-governance",
     "crates/ae-sdd-host",
     "crates/ae-sdd-integrations",
     "crates/ae-sdd-inventory",
+    "crates/ae-sdd-lifecycle",
+    "crates/ae-sdd-methodology",
     "crates/ae-sdd-operations",
     "crates/ae-sdd-policy",
     "crates/ae-sdd-protocol",
+    "crates/ae-sdd-resources",
+    "crates/ae-sdd-review",
     "crates/ae-sdd-runtime",
     "crates/ae-sdd-scanners",
+    "crates/ae-sdd-session",
     "crates/ae-sdd-store",
 ]
 
@@ -34,20 +42,27 @@ repository = "https://github.com/AniviaFlome/ae-sdd"
 ae-sdd-artifacts = { path = "crates/ae-sdd-artifacts", version = "0.1.0" }
 ae-sdd-build = { path = "crates/ae-sdd-build", version = "0.1.0" }
 ae-sdd-client = { path = "crates/ae-sdd-client", version = "0.1.0" }
+ae-sdd-contracts = { path = "crates/ae-sdd-contracts", version = "0.1.0" }
 ae-sdd-context = { path = "crates/ae-sdd-context", version = "0.1.0" }
 ae-sdd-delegation = { path = "crates/ae-sdd-delegation", version = "0.1.0" }
 ae-sdd-domain = { path = "crates/ae-sdd-domain", version = "0.1.0" }
+ae-sdd-execution = { path = "crates/ae-sdd-execution", version = "0.1.0" }
 ae-sdd-flow = { path = "crates/ae-sdd-flow", version = "0.1.0" }
 ae-sdd-gates = { path = "crates/ae-sdd-gates", version = "0.1.0" }
 ae-sdd-governance = { path = "crates/ae-sdd-governance", version = "0.1.0" }
 ae-sdd-host = { path = "crates/ae-sdd-host", version = "0.1.0" }
 ae-sdd-integrations = { path = "crates/ae-sdd-integrations", version = "0.1.0" }
 ae-sdd-inventory = { path = "crates/ae-sdd-inventory", version = "0.1.0" }
+ae-sdd-lifecycle = { path = "crates/ae-sdd-lifecycle", version = "0.1.0" }
+ae-sdd-methodology = { path = "crates/ae-sdd-methodology", version = "0.1.0" }
 ae-sdd-operations = { path = "crates/ae-sdd-operations", version = "0.1.0" }
 ae-sdd-policy = { path = "crates/ae-sdd-policy", version = "0.1.0" }
 ae-sdd-protocol = { path = "crates/ae-sdd-protocol", version = "0.1.0" }
+ae-sdd-resources = { path = "crates/ae-sdd-resources", version = "0.1.0" }
+ae-sdd-review = { path = "crates/ae-sdd-review", version = "0.1.0" }
 ae-sdd-runtime = { path = "crates/ae-sdd-runtime", version = "0.1.0" }
 ae-sdd-scanners = { path = "crates/ae-sdd-scanners", version = "0.1.0" }
+ae-sdd-session = { path = "crates/ae-sdd-session", version = "0.1.0" }
 ae-sdd-store = { path = "crates/ae-sdd-store", version = "0.1.0" }
 atomicwrites = "0.4.4"
 clap = { version = "4.5", features = ["derive"] }

@@ -1,0 +1,20 @@
+[package]
+name = "ae-sdd-contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Versioned cross-Part contracts for the ae-sdd Rust control plane"
+
+[dependencies]
+ae-sdd-domain.workspace = true
+ae-sdd-protocol.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

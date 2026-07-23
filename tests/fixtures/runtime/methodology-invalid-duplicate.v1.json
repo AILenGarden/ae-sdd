@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "ae-sdd-methodology-catalog/v1",
+  "catalogVersion": "1.0.0",
+  "entries": [
+    {
+      "skillId": "phase1-design.requirement-analysis",
+      "seriesKind": "requirement-analysis",
+      "variant": "builtin-v1",
+      "version": "1.0.0",
+      "activation": "workflow",
+      "spawnPolicy": "physical_series",
+      "compactRef": "skills/phase1-design/requirement-analysis-skill.md",
+      "fallbackRef": "skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md",
+      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "requirement-analysis" }],
+      "requiredInputs": ["requested-intent"],
+      "deliverableKinds": ["requirement-analysis"],
+      "requiredGates": [],
+      "toolDependencies": []
+    },
+    {
+      "skillId": "phase1-design.requirement-analysis",
+      "seriesKind": "requirement-analysis-copy",
+      "variant": "builtin-v1",
+      "version": "1.0.0",
+      "activation": "workflow",
+      "spawnPolicy": "physical_series",
+      "compactRef": "skills/phase1-design/requirement-analysis-skill.md",
+      "fallbackRef": null,
+      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "requirement-analysis-copy" }],
+      "requiredInputs": ["requested-intent"],
+      "deliverableKinds": ["requirement-analysis"],
+      "requiredGates": [],
+      "toolDependencies": []
+    }
+  ]
+}

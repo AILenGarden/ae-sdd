@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ae-sdd.local/schema/methodology-ir.v1.json",
+  "title": "ae-sdd Methodology Catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "catalogVersion", "entries"],
+  "properties": {
+    "schemaVersion": { "const": "ae-sdd-methodology-catalog/v1" },
+    "catalogVersion": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "portableId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact", "operator", "value"],
+      "properties": {
+        "fact": { "$ref": "#/$defs/portableId" },
+        "operator": { "enum": ["equals", "contains", "present", "not_equals"] },
+        "value": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "skillId",
+        "seriesKind",
+        "variant",
+        "version",
+        "activation",
+        "spawnPolicy",
+        "compactRef",
+        "fallbackRef",
+        "routePredicates",
+        "requiredInputs",
+        "deliverableKinds",
+        "requiredGates",
+        "toolDependencies"
+      ],
+      "properties": {
+        "skillId": { "$ref": "#/$defs/portableId" },
+        "seriesKind": { "$ref": "#/$defs/portableId" },
+        "variant": { "$ref": "#/$defs/portableId" },
+        "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "activation": { "enum": ["workflow", "capability", "deprecated"] },
+        "spawnPolicy": { "enum": ["physical_series", "inline", "forbidden"] },
+        "compactRef": { "$ref": "#/$defs/relativePath" },
+        "fallbackRef": {
+          "oneOf": [
+            { "$ref": "#/$defs/relativePath" },
+            { "type": "null" }
+          ]
+        },
+        "routePredicates": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/predicate" }
+        },
+        "requiredInputs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableId" }
+        },
+        "deliverableKinds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableId" }
+        },
+        "requiredGates": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableId" }
+        },
+        "toolDependencies": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableId" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "activation": { "const": "workflow" } } },
+          "then": {
+            "properties": {
+              "spawnPolicy": { "const": "physical_series" },
+              "routePredicates": { "minItems": 1 },
+              "deliverableKinds": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "activation": { "const": "capability" } } },
+          "then": { "properties": { "spawnPolicy": { "const": "inline" } } }
+        },
+        {
+          "if": { "properties": { "activation": { "const": "deprecated" } } },
+          "then": { "properties": { "spawnPolicy": { "const": "forbidden" } } }
+        }
+      ]
+    }
+  }
+}

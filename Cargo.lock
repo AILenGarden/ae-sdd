@@ -79,6 +79,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ae-sdd-contracts"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-domain",
+ "ae-sdd-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "ae-sdd-daemon"
 version = "0.1.0"
 dependencies = [
@@ -117,6 +128,13 @@ dependencies = [
  "sha2",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "ae-sdd-execution"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-contracts",
 ]
 
 [[package]]
@@ -208,6 +226,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ae-sdd-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-contracts",
+]
+
+[[package]]
+name = "ae-sdd-methodology"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-contracts",
+]
+
+[[package]]
 name = "ae-sdd-operations"
 version = "0.1.0"
 dependencies = [
@@ -236,6 +268,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "ae-sdd-resources"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-contracts",
+]
+
+[[package]]
+name = "ae-sdd-review"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-contracts",
 ]
 
 [[package]]
@@ -271,6 +317,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ae-sdd-session"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-contracts",
+]
+
+[[package]]
 name = "ae-sdd-store"
 version = "0.1.0"
 dependencies = [
@@ -287,6 +340,13 @@ dependencies = [
  "tempfile",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "ae-sdd-worker"
+version = "0.1.0"
+dependencies = [
+ "ae-sdd-contracts",
 ]
 
 [[package]]
