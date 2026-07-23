@@ -33,6 +33,55 @@ UTF8_SUBPROCESS_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 
 class TestExplicitRAScanScope(unittest.TestCase):
+    def test_flow_scanner_accepts_markdown_headings_without_retired_generate_plan(self):
+        root = Path(tempfile.mkdtemp())
+        selected = root / "ae-sdd-doc" / "RA" / "RA-STORY-001.md"
+        selected.parent.mkdir(parents=True, exist_ok=True)
+        selected.write_text(
+            "\n".join([
+                "# RA", "",
+                "## 0.5 RequirementAnalysisModel", "record",
+                "## 2 \u89d2\u8272\u5206\u6790", "record",
+                "## 3 \u573a\u666f\u5206\u6790", "record",
+                "## 4 \u4e1a\u52a1\u6d41\u7a0b", "record",
+                "## 5 \u6570\u636e\u8981\u7d20", "record",
+                "## 6 \u4e1a\u52a1\u89c4\u5219", "record",
+                "## 7 \u8bbe\u8ba1\u65b9\u5411", "record",
+                "## 8 AC \u9a8c\u6536\u6807\u51c6", "record",
+                "## 9 \u9690\u6027\u5047\u8bbe", "record",
+                "## 10 \u7f3a\u53e3\u7ba1\u7406", "no blockers",
+                "## 11 \u89c4\u6a21\u88c1\u5b9a", "large",
+                "## 12 5 \u95ee\u81ea\u68c0", "pass rate 100%",
+                "## 13 \u8def\u7531\u51b3\u7b56", "choose DR",
+                "RA-G01 RA-G02 RA-G03 RA-G04",
+            ]),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "flow_violation_scan.py"),
+                "--root",
+                str(root),
+                "--file",
+                str(selected),
+                "--format",
+                "json",
+                "--strict",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+            env=UTF8_SUBPROCESS_ENV,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "PASS")
+        self.assertNotIn("RAGeneratePlan", selected.read_text(encoding="utf-8"))
+
     def test_formal_classifier_rejects_a_resolved_path_outside_root(self):
         root = Path(tempfile.mkdtemp()).resolve()
         outside_root = Path(tempfile.mkdtemp()).resolve()

@@ -19,7 +19,7 @@
 
 与已有扫描器的关系：
   ra_authenticity_scan.py  = 内容真实性（无 fabricate/vague/timeless）
-  flow_violation_scan.py   = 流程完整性（章节是否存在 + RAGeneratePlan + RA-G 标记数）
+  flow_violation_scan.py   = 流程完整性（章节是否存在 + 路由决策 + RA-G 标记数）
   ra_depth_scan.py（本文）  = 机械派生深度（每行 R→R′→AC 是否真做了机械追问 + 链接）
 
 输出契约与 ra_authenticity_scan.py 一致（status/raFiles/findings[]），BLOCKER>0 → exit 1。

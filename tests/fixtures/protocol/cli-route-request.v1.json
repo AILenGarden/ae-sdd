@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "ae-sdd-cli-route-request/v1",
+  "command": "lease status",
+  "identity": {
+    "workspaceId": "00000000-0000-0000-0000-000000000001",
+    "workItemId": "WORK-001",
+    "sessionId": "00000000-0000-0000-0000-000000000002"
+  },
+  "deadlineMs": 2000,
+  "failClosed": true,
+  "payload": {}
+}

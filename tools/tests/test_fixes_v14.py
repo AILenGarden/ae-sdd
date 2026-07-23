@@ -264,7 +264,7 @@ class TestInitHooksPreserveCustomHooks:
 
         result = subprocess.run(
             ["python", "tools/bin/ae-sdd", "init-hooks", str(tmp_path), "--force", "--dry-run"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(Path(__file__).parent.parent.parent),
         )
         parsed = json.loads(result.stdout)
@@ -295,7 +295,7 @@ class TestInitHooksPreserveCustomHooks:
 
         result = subprocess.run(
             ["python", "tools/bin/ae-sdd", "init-hooks", str(tmp_path), "--force", "--dry-run"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(Path(__file__).parent.parent.parent),
         )
         parsed = json.loads(result.stdout)
@@ -337,7 +337,7 @@ class TestQuickChannelFileExistence:
         })
         result = subprocess.run(
             ["python", "tools/bin/ae-sdd", "gate-intercept", "--project", str(tmp_path)],
-            input=payload, text=True, capture_output=True,
+            input=payload, text=True, encoding="utf-8", errors="replace", capture_output=True,
             cwd=str(Path(__file__).parent.parent.parent),
         )
         parsed = json.loads(result.stdout)
@@ -377,7 +377,7 @@ class TestQuickChannelFileExistence:
         })
         result = subprocess.run(
             ["python", "tools/bin/ae-sdd", "gate-intercept", "--project", str(tmp_path)],
-            input=payload, text=True, capture_output=True,
+            input=payload, text=True, encoding="utf-8", errors="replace", capture_output=True,
             cwd=str(Path(__file__).parent.parent.parent),
         )
         parsed = json.loads(result.stdout)

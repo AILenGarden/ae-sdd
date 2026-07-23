@@ -1,0 +1,2472 @@
+{
+  "schemaVersion": "ae-sdd-compatibility-routing/v1",
+  "commands": [
+    {
+      "id": "assets check",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "assets.check"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "assets generate",
+      "route": {
+        "kind": "native-build-job",
+        "job": "compile",
+        "entrypoint": "assets.generate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "assets outline",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "assets.outline"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "assets query",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "assets.query"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "assets read",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "assets.read"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "assets section",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "assets.section"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "assets stats",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "assets.stats"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "automation disable",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "automation.disable"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "automation enable",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "automation.enable"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "automation status",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "automation.status"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "baseline create",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "baseline.create"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "baseline diff",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "baseline.diff"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "baseline inspect",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "baseline.inspect"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "bump",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "bump"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "classify",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "classify"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "context-pressure",
+      "route": {
+        "kind": "rpc",
+        "method": "host.pressure_report"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "db audit",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "db.audit"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "db explain",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "db.explain"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "db profiles",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "db.profiles"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "db query",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "db.query"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "distributor disable",
+      "route": {
+        "kind": "native-build-job",
+        "job": "distribute",
+        "entrypoint": "distributor.disable"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "distributor enable",
+      "route": {
+        "kind": "native-build-job",
+        "job": "distribute",
+        "entrypoint": "distributor.enable"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "distributor list",
+      "route": {
+        "kind": "native-build-job",
+        "job": "distribute",
+        "entrypoint": "distributor.list"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "distributor register",
+      "route": {
+        "kind": "native-build-job",
+        "job": "distribute",
+        "entrypoint": "distributor.register"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "distributor scan",
+      "route": {
+        "kind": "native-build-job",
+        "job": "distribute",
+        "entrypoint": "distributor.scan"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "distributor unregister",
+      "route": {
+        "kind": "native-build-job",
+        "job": "distribute",
+        "entrypoint": "distributor.unregister"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "doc finalize",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "doc.finalize"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "doc resolve",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "document.resolve"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "doc save",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "document.save"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "enter",
+      "route": {
+        "kind": "rpc",
+        "method": "session.open"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "evidence finalize",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "evidence.finalize"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "evidence lookup",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "evidence.lookup"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "evidence record",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "evidence.record"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "flow-violation-scan",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "gate coding-required",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "gate doc-storage",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "gate ra-required",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "gate-intercept",
+      "route": {
+        "kind": "rpc",
+        "method": "hook.pre_tool"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 250,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "gates check",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "gate.check"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "git blame",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "git.blame"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "git diff",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "git.diff"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "git impact",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "git.impact"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "git log",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "git.log"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "git status",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "git.status"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "health",
+      "route": {
+        "kind": "rpc",
+        "method": "runtime.status"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "init",
+      "route": {
+        "kind": "native-build-job",
+        "job": "init",
+        "entrypoint": "init"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "init-hooks",
+      "route": {
+        "kind": "native-build-job",
+        "job": "init",
+        "entrypoint": "init-hooks"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "iteration-check",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "lease acquire",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "lease.acquire"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "lease break",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "lease.break"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "lease release",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "lease.release"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "lease renew",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "lease.renew"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "lease status",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "lease.status"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory clean",
+      "route": {
+        "kind": "rpc",
+        "method": "context.project"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory clean-all",
+      "route": {
+        "kind": "rpc",
+        "method": "context.project"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory common",
+      "route": {
+        "kind": "rpc",
+        "method": "context.get"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory create",
+      "route": {
+        "kind": "rpc",
+        "method": "context.project"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory read",
+      "route": {
+        "kind": "rpc",
+        "method": "context.get"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory search",
+      "route": {
+        "kind": "rpc",
+        "method": "context.get"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory summarize",
+      "route": {
+        "kind": "rpc",
+        "method": "context.get"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "memory update",
+      "route": {
+        "kind": "rpc",
+        "method": "context.project"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "ops describe",
+      "route": {
+        "kind": "rpc",
+        "method": "operation.describe"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "ops execute",
+      "route": {
+        "kind": "rpc",
+        "method": "operation.execute"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "ops next",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.next"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "perf clear",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "perf.clear"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "perf doctor",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "perf.doctor"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "perf report",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "perf.report"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "plugin init",
+      "route": {
+        "kind": "native-build-job",
+        "job": "init",
+        "entrypoint": "plugin.init"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "plugin list",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "plugin.list"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "plugin trace",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "plugin.trace"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "plugin validate",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "plugin.validate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "preflight collect",
+      "route": {
+        "kind": "rpc",
+        "method": "workspace.snapshot"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "prompt-inject",
+      "route": {
+        "kind": "rpc",
+        "method": "hook.user_prompt"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 250,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "ra-authenticity-scan",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "ra-depth-scan",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "ra-gate",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "ra-implementation-scan",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review abort",
+      "route": {
+        "kind": "rpc",
+        "method": "delegation.cancel"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review collect",
+      "route": {
+        "kind": "rpc",
+        "method": "delegation.collect"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review retry",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.next"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review retry-role",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.next"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review start",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.next"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review status",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.snapshot"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review verify-exit",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.next"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review-loop collect",
+      "route": {
+        "kind": "rpc",
+        "method": "delegation.collect"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review-loop start",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.next"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review-loop status",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.snapshot"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "review-loop verify-exit",
+      "route": {
+        "kind": "rpc",
+        "method": "flow.next"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "runtime compact",
+      "route": {
+        "kind": "rpc",
+        "method": "compact.request"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "runtime verify",
+      "route": {
+        "kind": "native-build-job",
+        "job": "compile",
+        "entrypoint": "runtime.verify"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "scripts-dir",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "scripts-dir"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state bind-story-doc",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.bind-story-doc"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state confirm",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.confirm"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state lock",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.lock"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state new",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.new"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state next-step",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "state.next_actions"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state prd-archive",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.prd-archive"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state prd-check-complete",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.prd-check-complete"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state prd-complete",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.prd-complete"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state prd-init",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.prd-init"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state read",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "workitem.get"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state register-review-consensus",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.register-review-consensus"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state relocate",
+      "route": {
+        "kind": "native-build-job",
+        "job": "migrate",
+        "entrypoint": "state.relocate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state unlock",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.unlock"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "state write",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "state.write"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": false,
+        "session": true
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "stop-check",
+      "route": {
+        "kind": "rpc",
+        "method": "hook.stop"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 250,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "subprocess collect",
+      "route": {
+        "kind": "rpc",
+        "method": "delegation.collect"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "subprocess list",
+      "route": {
+        "kind": "rpc",
+        "method": "delegation.status"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "subprocess spawn",
+      "route": {
+        "kind": "rpc",
+        "method": "delegation.create"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "subprocess status",
+      "route": {
+        "kind": "rpc",
+        "method": "delegation.status"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 2000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "update-check",
+      "route": {
+        "kind": "rpc",
+        "method": "gate.evaluate"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": false
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "verify plan",
+      "route": {
+        "kind": "typed-operation",
+        "operation": "verification.plan"
+      },
+      "identity": {
+        "workspace": true,
+        "workItem": true,
+        "session": true
+      },
+      "deadlineMs": 10000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    },
+    {
+      "id": "version",
+      "route": {
+        "kind": "native-build-job",
+        "job": "admin",
+        "entrypoint": "version"
+      },
+      "identity": {
+        "workspace": false,
+        "workItem": false,
+        "session": false
+      },
+      "deadlineMs": 300000,
+      "failClosed": true,
+      "fixture": "tests/fixtures/protocol/cli-route-request.v1.json",
+      "evidence": "crates/ae-sdd-build/tests/compatibility_routes.rs",
+      "status": "pending"
+    }
+  ],
+  "capabilities": [
+    {
+      "surface": "operation",
+      "id": "document.resolve",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "document.save",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "evidence.finalize",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "evidence.record",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "execution.plan.approve",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "execution.plan.set",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "gate.check",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "lease.acquire",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "lease.break",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "lease.release",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "lease.renew",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "lease.status",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "review.record",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "state.next_actions",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "state.transition",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "verification.plan",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "workitem.complete",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "workitem.get",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-00",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-01",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-02",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-03",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-04",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-05",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-06",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-07",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-08",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-HTTP-1",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-09",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-10",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-11",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-12",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-13",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-14",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-CODEPLAN-SRC",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-DOC-STORAGE",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-PATH",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-RA-1",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-RA-2",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-RA-3",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-RA-4",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-RA-FLOW-VIOLATION",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-RA-5",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-RA-6",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-CODE-1",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-DOC-CONSISTENCY",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-REVIEW-LOOP",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-09B",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-REVIEW-DEPTH",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-AUTO-CONSENSUS",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-DR-CTX",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-STORY-CTX",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-TESTCASE-CTX",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-TASK-CTX",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "coding-authenticity-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "flow-violation-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "plugin-content-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "ra-authenticity-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "ra-depth-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "ra-implementation-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "test-authenticity-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    }
+  ]
+}

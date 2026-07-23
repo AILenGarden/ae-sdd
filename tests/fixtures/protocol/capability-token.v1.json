@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "ae-sdd-capability-fixture/v1",
+  "publicKey": {
+    "bootId": "00000000-0000-0000-0000-000000000001",
+    "keyId": "fe812c12f3ab4ce6ac5db69ac352f906cb1b11ef43fb33e252ef7ff552263889",
+    "ed25519PublicKeyHex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+  },
+  "canonicalClaimsUtf8": "{\"schemaVersion\":\"1\",\"keyId\":\"fe812c12f3ab4ce6ac5db69ac352f906cb1b11ef43fb33e252ef7ff552263889\",\"bootId\":\"00000000-0000-0000-0000-000000000001\",\"capabilityId\":\"flow.read\",\"sessionId\":\"00000000-0000-0000-0000-000000000002\",\"role\":\"root\",\"delegationId\":null,\"grantDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"issuedAtUnixMs\":1000,\"expiresAtUnixMs\":2000}",
+  "token": {
+    "schemaVersion": "1",
+    "keyId": "fe812c12f3ab4ce6ac5db69ac352f906cb1b11ef43fb33e252ef7ff552263889",
+    "bootId": "00000000-0000-0000-0000-000000000001",
+    "capabilityId": "flow.read",
+    "sessionId": "00000000-0000-0000-0000-000000000002",
+    "role": "root",
+    "delegationId": null,
+    "grantDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "issuedAtUnixMs": 1000,
+    "expiresAtUnixMs": 2000,
+    "signature": "81de0a4ded42e9fc5a11bbbfc1696e9057b41f8c5446b2340ed22d0ad3603fe89a624078212ded42f273049e718997a758697b19444b6c011ba37e0f089adb0a"
+  },
+  "requestParamsCases": [
+    {
+      "name": "valid",
+      "expected": "accepted",
+      "params": {
+        "protocolVersion": "1.0",
+        "workspaceId": "00000000-0000-0000-0000-000000000003",
+        "agentId": "fixture-agent",
+        "sessionId": "00000000-0000-0000-0000-000000000002",
+        "capabilityToken": "{\"schemaVersion\":\"1\",\"keyId\":\"fe812c12f3ab4ce6ac5db69ac352f906cb1b11ef43fb33e252ef7ff552263889\",\"bootId\":\"00000000-0000-0000-0000-000000000001\",\"capabilityId\":\"flow.read\",\"sessionId\":\"00000000-0000-0000-0000-000000000002\",\"role\":\"root\",\"delegationId\":null,\"grantDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"issuedAtUnixMs\":1000,\"expiresAtUnixMs\":2000,\"signature\":\"81de0a4ded42e9fc5a11bbbfc1696e9057b41f8c5446b2340ed22d0ad3603fe89a624078212ded42f273049e718997a758697b19444b6c011ba37e0f089adb0a\"}",
+        "workItemId": "FIXTURE-001",
+        "deadlineMs": 250,
+        "payload": {}
+      }
+    },
+    {
+      "name": "unknown-key",
+      "expected": "ENDPOINT_AUTH_FAILED",
+      "params": {
+        "protocolVersion": "1.0",
+        "workspaceId": "00000000-0000-0000-0000-000000000003",
+        "agentId": "fixture-agent",
+        "sessionId": "00000000-0000-0000-0000-000000000002",
+        "capabilityToken": "{\"schemaVersion\":\"1\",\"keyId\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"bootId\":\"00000000-0000-0000-0000-000000000001\",\"capabilityId\":\"flow.read\",\"sessionId\":\"00000000-0000-0000-0000-000000000002\",\"role\":\"root\",\"delegationId\":null,\"grantDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"issuedAtUnixMs\":1000,\"expiresAtUnixMs\":2000,\"signature\":\"81de0a4ded42e9fc5a11bbbfc1696e9057b41f8c5446b2340ed22d0ad3603fe89a624078212ded42f273049e718997a758697b19444b6c011ba37e0f089adb0a\"}",
+        "workItemId": "FIXTURE-001",
+        "deadlineMs": 250,
+        "payload": {}
+      }
+    },
+    {
+      "name": "forged-signature",
+      "expected": "ENDPOINT_AUTH_FAILED",
+      "params": {
+        "protocolVersion": "1.0",
+        "workspaceId": "00000000-0000-0000-0000-000000000003",
+        "agentId": "fixture-agent",
+        "sessionId": "00000000-0000-0000-0000-000000000002",
+        "capabilityToken": "{\"schemaVersion\":\"1\",\"keyId\":\"fe812c12f3ab4ce6ac5db69ac352f906cb1b11ef43fb33e252ef7ff552263889\",\"bootId\":\"00000000-0000-0000-0000-000000000001\",\"capabilityId\":\"flow.read\",\"sessionId\":\"00000000-0000-0000-0000-000000000002\",\"role\":\"root\",\"delegationId\":null,\"grantDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"issuedAtUnixMs\":1000,\"expiresAtUnixMs\":2000,\"signature\":\"81de0a4ded42e9fc5a11bbbfc1696e9057b41f8c5446b2340ed22d0ad3603fe89a624078212ded42f273049e718997a758697b19444b6c011ba37e0f089adb00\"}",
+        "workItemId": "FIXTURE-001",
+        "deadlineMs": 250,
+        "payload": {}
+      }
+    }
+  ]
+}

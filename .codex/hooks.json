@@ -6,7 +6,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:\\Users\\EDY\\AppData\\Local\\Programs\\Python\\Python315\\python.exe\" \"D:\\Item\\ae-sdd\\tools\\bin\\ae-sdd\" gate-intercept"
+            "command": "ae-sdd hook --method hook.pre_tool --request-json -"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ae-sdd hook --method hook.post_tool --request-json -"
           }
         ]
       }
@@ -16,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:\\Users\\EDY\\AppData\\Local\\Programs\\Python\\Python315\\python.exe\" \"D:\\Item\\ae-sdd\\tools\\bin\\ae-sdd\" prompt-inject"
+            "command": "ae-sdd hook --method hook.user_prompt --request-json -"
           }
         ]
       }
@@ -26,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:\\Users\\EDY\\AppData\\Local\\Programs\\Python\\Python315\\python.exe\" \"D:\\Item\\ae-sdd\\tools\\bin\\ae-sdd\" stop-check"
+            "command": "ae-sdd hook --method hook.stop --request-json -"
           }
         ]
       }

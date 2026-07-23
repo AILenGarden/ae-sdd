@@ -1,12 +1,47 @@
 # ae-sdd 系统能力说明书
 
-> v3.12.1 · 面向开发者、LLM Agent 与项目接入方
+> v3.14.0 · 面向开发者、LLM Agent 与项目接入方
 >
 > 本文档是**系统能力设计入口**，说明 ae-sdd 的能力语义、边界和当前实现状态。代码分层、模块职责、运行时数据流和变更闭环统一维护在 [`ae-sdd-implementation-architecture.md`](ae-sdd-implementation-architecture.md)。若本文与代码实现冲突，以 CLI/测试输出为准，并同步修正文档。
 
 ## 过程产物模型
 
 RA、DR、Story 是核心设计文档。Proposal、GeneratePlan、CodingReport、TestReport、CodeReview 报告和其他过程 Markdown 停止新写入；历史文件只读。普通测试设计内嵌 Story 验证矩阵，复杂矩阵才使用独立 TestCase；Task 仅用于大型并行拆分。编码前审核使用 `state.executionPlan`，测试使用 evidence manifest，Review 使用 `state.review.status/findings`。任何时候都不写 changelog。
+
+---
+
+## 当前 Rust Runtime 权威设计
+
+ae-sdd 的执行形态是每个 OS 用户一个 `ae-sddd`，多个 Agent 和 workspace 通过本地 Named Pipe/UDS 共享状态、规则、缓存、调度和审计。`source/SKILL.md` 只声明方法、模板和输出契约，不再执行 phase machine；确定性执行者是 daemon 内每个 Work Item 的 `FlowRuntime`，项目 mutation 的唯一 owner 是 `WorkItemActor`。
+
+```text
+Agent Hook / ae-sdd CLI
+        |
+        v
+protected endpoint + runtime.handshake
+        |
+        v
+ae-sddd -> Workspace/Session/Turn actors -> FlowRuntime/FlowSupervisor
+        |                                  |
+        |                                  +-> Delegation + HostRuntimeAdapter
+        |                                  +-> ContextProjection + CompactManager
+        +-> Operations/Gates/Scanners -> journal + state + rebuildable SQLite index
+```
+
+核心不变量：
+
+- FlowRuntime 从已提交 state、全局事件序列、policy digest 与 input fingerprint 计算唯一 `nextAction`；Agent 或 SKILL 文字不能自行推进 phase。
+- root 主会话只推动 typed action、创建物理委派、collect 有界 `ChildResult` 和向用户汇报。RA/DR/Story/Coding/Test/Review 等系列语义工作在独立 series session 中完成；lineage 为 `root -> series -> task|reviewer`，最大深度 2。
+- Host ACK 只表示原生命令已接收。child 必须使用一次性 claim 在独立物理 session 中完成 attestation，之后才可 running；reviewer 与 worker 物理隔离。
+- root 只接收摘要（最多 8 KiB）、finding 统计、next actions 与 artifact path/hash/kind；ChildResult 与 root projection 各最多 64 KiB。child transcript、原始 source bundle、scratch memory 和无界日志不得注入 root。
+- Hook 是薄 Rust client 快路径，只读预计算 projection/delta；不在同步路径扫描文档、启动子进程、跑重 Gate、等待 compact 或执行项目 mutation。engaged 时 daemon 不可用即 deny/block，不允许本地业务回退。
+- Gate 结果保留 `PASS/FAIL/ERROR/TIMEOUT/CANCELLED/STALE` 六类。只有 fresh PASS 允许依赖 mutation，只有 fresh FAIL 增加业务 correction。
+- compact 只接受可信 host token telemetry；默认使用 800/600 permille 滞回、连续两个样本与 300 秒 cooldown。仅 snapshot、匹配原生 ACK、rehydrate 全部完成后进入 `context-restored`。
+- workspace writer 模式按 `legacy -> shadow -> rust-canary -> rust-sole-writer` 迁移；shadow 只读比较，任何阶段禁止双写。删除 legacy runtime 后只允许回退到上一版完整 native release，不在 Rust client 中保留隐藏 fallback。
+
+路由仍遵循 v3.14 语义：先 route，再 Requirement Analysis；分析后按需选择 DR、Story 或 compact `state.executionPlan`。用户批准 `executionPlan` 前不得 Coding。
+
+本文后续涉及 `tools/lib/*.py`、脚本式监管器、本地 memory 文件和旧 dist 构建链的章节仅作为迁移 compatibility inventory；其运行时权威被本节、[`source/SKILL.md`](../SKILL.md) 与 [`ae-sdd-implementation-architecture.md`](ae-sdd-implementation-architecture.md) 的当前 Rust 基线替代。Monitor 设计与 `apps/ae-sdd-monitor/**` 不在本次 runtime 迁移范围。
 
 ---
 
@@ -26,7 +61,7 @@ RA、DR、Story 是核心设计文档。Proposal、GeneratePlan、CodingReport�
 | ID | 设计 | 要解决的问题 | 核心决策 | 预期价值 | 验证证据/指标 | 权威入口 | 引入/最近变更/状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | D-001 | 端到端 Phase 编排 | AI 容易跳过设计、审核、测试或收尾节点，产物链断裂 | Phase 1/2/3、节点门禁、人工确认和出口产物组成有序状态机 | 降低流程遗漏和返工，提升交付可追溯性 | `gates check`、state phase、Story/Task/Coding/Review 链路 | §1；`source/SKILL.md` | 历史版本（精确版本待补）/v3.11.0/已实现 |
-| D-002 | 智能路由 | 不同规模和入口的任务被错误地送入同一条流程，LLM 需要临时判断 | 来源、规模、已有产物、项目类型四维分类，映射到子链 | 减少错误入口和不必要上下文，缩短首次决策时间 | `ae-sdd classify`、`PHASE_FLOWS`、路由测试 | §2；`tools/lib/classify.py` | 历史版本（精确版本待补）/v3.11.0/已实现 |
+| D-002 | 路由后需求分析 | 仅按规模把任务送入固定文档链，RA 被误作 DR 前置 | 先 route，再产出本次任务 RA 需求说明书，再按分析结论选择 DR/Story/CodingPlan | 解耦分析与设计深度，减少过度设计并保留可审计事实 | `ae-sdd classify`、`routeDecision`、`PHASE_FLOWS`、路由测试 | §2；`tools/lib/classify.py`、`tools/lib/state.py` | v3.14/实现中 |
 | D-003 | Work Item state / Nested State | 多任务、跨 session、Story 归入和恢复时状态互相覆盖或丢失；逻辑 Story ID 无法指向项目正式文件名；恶意 Work Item token 可能逃逸隔离根 | 每个 Work Item 独立 state，支持 PRD/DR/Story 嵌套、UUID、revision、恢复和 StoryName/docPath 指针绑定；token 与 resolved path 双重 containment | 避免重复执行、跨任务污染和根外 state/sidecar 写入，让 LLM 可从 state 直接恢复并稳定定位正式 Story 正文 | state store、nested state、Story binding/state transition、path escape tests | §3；`tools/lib/state.py`、`paths.py`、`state_store.py` | v3.3~v3.10.1/v3.11.3/已实现 |
 | D-004 | 多 Agent 编排 | 并行任务缺少角色边界、报告格式和故障升级规则 | 角色库、结构化派活卡、reviewer tier、activeAgents/agentReports | 降低重复劳动和自审偏差，提升并行可见性 | agent state 字段、G-09 session 独立性、编排 SKILL | §4；`agent-orchestration-skill.md` | v3.2.6/v3.11.0/部分软约束 |
 | D-005 | G-XX 门禁体系 | 仅靠 LLM 自律无法稳定阻止越级、假测试和文档漂移；同一 Story/Work Item 在不同门禁可能被不同路径规则解析，RA-like 参考资料还可能误锁当前流程 | 软约束、硬门禁、扫描器三层防线，统一 GATE_REGISTRY；Plan 门禁按完整/微任务 profile 校验；G-02/G-14 共用 Story resolver；G-RA-1~6/FLOW 共用 state `raDocPath` 优先、latest formal fallback 的单一 RA resolver | 把高风险错误提前阻断，减少错误进入后续阶段的返工，同时避免微任务、正式 StoryName 和无关 RA-like 文档被错误规则误拦 | `gates check`、GATE_REGISTRY、完整/微任务 CodingPlan tests、G-02/G-14 StoryName tests、`TestGRAUnifiedSelection`、G-09/UC checks | §5；`tools/lib/gates.py` | v3.2~v3.9.1/v3.11.4/已实现 |
@@ -70,7 +105,7 @@ RA、DR、Story 是核心设计文档。Proposal、GeneratePlan、CodingReport�
 
 将整个研发流程切分为三个强制有序的 Phase，每个 Phase 有明确入口门禁、执行节点、人工审核点和出口产物。AI 负责驱动节点推进，不能跳过任何节点；每个人工审核节点 AI 必须主动"讲故事"（在对话内直接呈现），不能只丢文档链接。
 
-- Phase 1 设计阶段：需求分析(RA) → DR 生成 → Story 生成(①) → 前端视角审视(①bis) → Story Review(②) → 测试用例生成(③) → 业务逻辑汇总(③bis) → 人工审核点 1
+- Phase 1 设计阶段：路由 → 需求分析(RA) → 按需 DR/Story/CodingPlan → Story Review/验证矩阵 → 人工审核点 1
 - Phase 2 实现阶段：实现方案预确认(人工审核 1.5) → Task 生成 + 全局 Task Review(④) → CodingPlan 生成(④bis) → CodingPlan 评审(人工审核 2.5) → Coding(⑤)
 - Phase 3 验证阶段：完成判定⑥（10 项条件）→ 全切面一致性核查(⑥bis) → CodeReview 报告(⑦) → 全链路对称性核查(⑦bis) → 人工审核点 4
 - 共 5 个人工审核节点，内容必须输出在对话中，不能要求用户自行打开文件查看
@@ -122,7 +157,7 @@ RA、DR、Story 是核心设计文档。Proposal、GeneratePlan、CodingReport�
 
 **WorkItem 标识约定（2026-07-09 修正，🆕 v3.10.1 UUID 前缀）**：每个状态机必须归属于真实顶层工作项。CLI 入口为 `ae-sdd state new --id <ID> --entry-node <PRD|DR|STORY|TASK>`；物理目录名采用 R6 顶层名加随机 UUID 前缀（如 `{uuid}-PRD-001` / `{uuid}-DR-005` / `{uuid}-Story-006`），保证同业务名不撞目录；`stateMachineId` 同目录名（带 UUID 前缀），`stateMachineName` 存纯业务名（如 `PRD-001`）供按业务名查找匹配，`stateUuid` 存 UUID 冗余标识。`--work-item <ID|WORKITEM-KEY>` 定位 `.auto-engineering/{WORKITEM-KEY}/state.json`，`find_work_item_state_path` 支持后缀匹配（传业务名 `PRD-001` 可命中 `{uuid}-PRD-001` 目录）。项目级 `.ae-sdd/state.json` 不允许作为 active state、mirror 或 fallback；未能唯一定位 work-item 时必须拒绝并要求显式选择。
 
-**v3.5.15 多子链状态机**：单条 PHASE_FLOW 拆为 4 条 PHASE_FLOWS（大/中/小/微），按 scale 路由，微链最短单步合法，修复微任务 next-step 误建议跑 RA 的问题。旧 state 无 scale 字段时按 completedSteps 反推，默认"大"（最保守）。
+**v3.14 多子链状态机**：4 条 PHASE_FLOWS 统一从 `route-selected`、`requirement-analyzed` 进入；`routeDecision.selectedDesign` 决定后续 DR/Story/CodingPlan 分支。旧 state 无新字段时按旧 phase 兼容读取。
 
 **v3.6 暂停态**：`paused` 作为一级 phase，任何 phase 可跳入，用于 Level 3 人工升级（见 §15 流程偏移检测与矫正）。
 
@@ -152,7 +187,7 @@ RA、DR、Story 是核心设计文档。Proposal、GeneratePlan、CodingReport�
 | 设计点 | 实现方式 |
 | --- | --- |
 | 存储路径 | `.auto-engineering/{WORKITEM-KEY}/state.json`（🆕 v3.10.1 WORKITEM-KEY 带 UUID 前缀如 `{uuid}-PRD-001`）。`.ae-sdd/state.json` 禁止作为状态源、active mirror 或 fallback；hook/gate/CLI 均必须通过 work-item/session resolver 定位任务级 state |
-| 4 条子链定义 | `tools/lib/state.py:PHASE_FLOWS`（行69-92），大链 14 phase / 中链 13 / 小链 12 / 微链 8（🆕 2026-07-03 B1：微链加回 code-reviewed，与"CodeReview 报告不豁免"对齐；含 TestCase 系列后已扩容，🆕 v3.7.x） |
+| 4 条子链定义 | `tools/lib/state.py:PHASE_FLOWS`（行69-92），大链 11 phase / 中链 10 / 小链 8 / 微链 8（🆕 2026-07-03 B1：微链加回 code-reviewed，与"CodeReview 报告不豁免"对齐；含 TestCase 系列后已扩容，🆕 v3.7.x） |
 | 向后兼容别名 | `PHASE_FLOW = PHASE_FLOWS["大"]`（行95，🟡 deprecated） |
 | 合法 scale 枚举 | `VALID_SCALES = ("大", "中", "小", "微")`（行88） |
 | phase 允许工具集 | `tools/lib/gate_intercept.py:PHASE_PERMIT`（行64） |
@@ -216,7 +251,7 @@ G-02 与 G-14 通过 `document_storage.resolve_story_document()` 共享 Story �
 
 G-RA-1~6 与 G-RA-FLOW-VIOLATION 通过 `_resolve_selected_ra()` 共享当前 Work Item 的 RA 正文。合法 `state.raDocPath` 或 `storyStates[activeStory].raDocPath` 优先；没有 binding 时，只在 formal RA candidates 中沿用统一的 latest version/mtime fallback。Work Item 门禁把解析出的单一文件作为 `--file` 传给 scanner，`--root` 仅用于相对路径和 containment；因此 `references/`、templates、CHANGELOG、`dist/`、GeneratePlan/Impact/ReverseIssues 等 RA-like 文档既不会锁住当前流程，也不能替代 selected RA 自身的真实性、深度、流程或实现完整性检查。根目录全量审计仍保留，但使用同一 formal candidate 分类器，不再使用各 scanner 独立的宽泛 `rglob`。
 
-🆕 v3.9.1 上下文加载准入门禁（G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX）补齐 DR/Story/TestCase/Task 四组的"第零步准入检查"——此前这四组只有 prose 清单（dr-review/task-generate 还官方自认 report-only），AI 可不读 PRD/DR/项目资产/约束就过门禁切相。采用**注册表模式**：一个 `_check_context_loaded` 函数 + `CONTEXT_GATE_REGISTRY` 注册表服务 4 个门禁，流程一致用单函数封装，上下文差异（DR 查 RA+PRD，Story 查 DR+PRD，TestCase 查 Story，Task 查 Story+TestCase）走注册表 `required` 字段；读文件统一走 `document-storage-skill` 的 `get_constraints/get_assets` API。微链 G-TASK-CTX 用 `required_micro` 豁免 Story/TestCase。
+🆕 v3.9.1 上下文加载准入门禁（G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX）补齐 DR/Story/TestCase/Task 四组的"第零步准入检查"——此前这四组只有 prose 清单（dr-review/task-generate 还官方自认 report-only），AI 可不读 PRD/DR/项目资产/约束就过门禁切相。采用**注册表模式**：一个 `_check_context_loaded` 函数 + `CONTEXT_GATE_REGISTRY` 注册表服务 4 个门禁，流程一致用单函数封装，上下文差异（DR 查 RA，直接 Story 查 RA、DR 分支查 DR，TestCase 查 Story，Task 查 Story+TestCase）走注册表 `required` 字段；读文件统一走 `document-storage-skill` 的 `get_constraints/get_assets` API。微链 G-TASK-CTX 用 `required_micro` 豁免 Story/TestCase。
 
 ### 实现
 

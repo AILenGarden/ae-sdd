@@ -115,26 +115,39 @@ class TestMultiAgent(unittest.TestCase):
 class TestNextAction(unittest.TestCase):
     """next_action 建议测试"""
 
-    def test_micro_goes_to_story_lite(self):
-        # compact 流程始终保留 Story；微链先生成 Story-lite。
+    def test_micro_goes_to_requirement_analysis(self):
         c = classify.classify("fix typo in README")
-        self.assertEqual(c.next_action, "story-generate")
+        self.assertEqual(c.next_action, "requirement-analysis")
+        self.assertTrue(c.analysis_required)
 
-    def test_small_goes_to_story_lite(self):
-        # compact 流程始终保留 Story；小链先生成 Story-lite。
+    def test_small_goes_to_requirement_analysis(self):
         c = classify.classify("我想要修改用户头像的小任务")
-        self.assertEqual(c.next_action, "story-generate")
+        self.assertEqual(c.next_action, "requirement-analysis")
 
-    def test_small_dr_keyword_goes_to_dr_generate(self):
-        # DR 源 + 中等规模 → dr-generate
+    def test_medium_dr_keyword_still_analyzes_first(self):
         c = classify.classify("基于 DR-001 设计实现的中等任务：10 个文件")
-        # scale=中（命中"中等"），source=DR → next_action = dr-generate
-        self.assertEqual(c.next_action, "dr-generate")
+        self.assertEqual(c.next_action, "requirement-analysis")
+        self.assertEqual(c.recommended_design, "STORY")
 
     def test_large_dialogue_goes_to_requirement_analysis(self):
         c = classify.classify("大重构整个用户域，重新设计")
         # scale=大，source=对话 → next_action = requirement-analysis
         self.assertEqual(c.next_action, "requirement-analysis")
+
+    def test_mutating_micro_still_gets_requirement_analysis(self):
+        c = classify.classify("修复一个配置 bug")
+        self.assertTrue(c.analysis_required)
+        self.assertEqual(c.spec_strategy["entry_spec"], "RA")
+        self.assertEqual(c.recommended_design, "CODING_PLAN")
+
+    def test_direct_coding_plan_signal_overrides_default_design_depth(self):
+        c = classify.classify("大模块调整，但本次无需设计，直接 CodingPlan")
+        self.assertEqual(c.recommended_design, "CODING_PLAN")
+
+    def test_code_review_is_read_only_analysis_exemption(self):
+        c = classify.classify("请做 CodeReview")
+        self.assertFalse(c.analysis_required)
+        self.assertEqual(c.next_action, "code-review")
 
 
 class TestClassifyFromFile(unittest.TestCase):

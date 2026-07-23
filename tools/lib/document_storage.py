@@ -949,34 +949,19 @@ _RA_REQUIRED_SECTIONS: list[tuple[str, re.Pattern]] = [
 _RA_REQUIRED_GATES = ["RA-G01", "RA-G02", "RA-G03", "RA-G04",
                        "RA-G05", "RA-G06", "RA-G07", "RA-G08"]
 
-_RA_RAGENERATEPLAN_PATTERN = re.compile(r"RAGeneratePlan", re.IGNORECASE)
 _RA_5QUESTION_PATTERN = re.compile(r"5\s*问自检|5-question|5question", re.IGNORECASE)
-_RA_GATE_RESULT_PATTERN = re.compile(r"RA-G\d+\s*[:：]\s*(?:PASS|✅|通过)", re.IGNORECASE)
 
 
 def check_ra_prerequisites(content: str) -> None:
-    """🆕 2026-06-27 RA 文档落地前置检查（G-RA-PLAN / G-RA-COMPLETE / G-RA-GATES 三道子门禁）。
+    """Validate the structural RA contract before writing the core document.
 
-    来自 `2026-06-27-RA多轮挖掘流程未执行-自我修订建议书.md` §3.3，
-    对齐 `requirement-analysis-skill.md` §Plan-first / §第 0.5 步 / §第七步。
-
-    校验项（任一不通过即 raise DocStorageError）：
-      G-RA-PLAN     — content 必须包含 RAGeneratePlan 字样（Plan-first 硬前置）
-      G-RA-COMPLETE — content 必须含 12 个核心章节锚（§0.5/§0.6/§2~§11）
-      G-RA-5CHECK   — content 必须含 5 问自检字样
-      G-RA-GATES    — content 必须含 RA-G01~RA-G08 至少 4 个 PASS 标记
-
-    豁免：本函数不读 intent；调用方（save_doc）应只在 intent=="RA" 时调用本函数。
-    BUG / CONFIG intent 不会进入本检查路径（save_doc 双重豁免）。
+    RA generation plans and process reports are retired write intents. Their
+    former presence check made RA persistence impossible because the plan could
+    no longer be saved. Structural completeness remains here; semantic quality
+    and authenticity are enforced by the G-RA gate family.
     """
     if not content:
-        raise DocStorageError("G-RA-PLAN",
-            "RA 文档 content 为空（必须先有 RAGeneratePlan，见 requirement-analysis-skill §Plan-first）")
-
-    # G-RA-PLAN：必须含 RAGeneratePlan 字样
-    if not _RA_RAGENERATEPLAN_PATTERN.search(content):
-        raise DocStorageError("G-RA-PLAN",
-            "RA 文档必须先有 RAGeneratePlan 附件（见 requirement-analysis-skill §Plan-first 原则）")
+        raise DocStorageError("G-RA-COMPLETE", "RA 文档 content 为空")
 
     # G-RA-COMPLETE：必须含 12 个核心章节锚（标题行正则匹配，非松散子串）
     missing = [name for name, pattern in _RA_REQUIRED_SECTIONS if not pattern.search(content)]
@@ -988,13 +973,6 @@ def check_ra_prerequisites(content: str) -> None:
     if not _RA_5QUESTION_PATTERN.search(content):
         raise DocStorageError("G-RA-5CHECK",
             "RA 文档必须含 5 问自检记录（见 requirement-analysis-skill §第一步 bis，通过率 100%）")
-
-    # G-RA-GATES：必须含至少 4 个 RA-G01~RA-G08 的 PASS 标记
-    gate_passes = _RA_GATE_RESULT_PATTERN.findall(content)
-    if len(gate_passes) < 4:
-        raise DocStorageError("G-RA-GATES",
-            f"RA 文档必须显式列出 RA-G01~RA-G08 闸判定结果（至少 4 个 PASS），当前仅 {len(gate_passes)} 个"
-            f"（见 requirement-analysis-skill §第七步）")
 
     # 全部通过：静默返回
     return

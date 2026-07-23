@@ -1,144 +1,147 @@
-# DDL 约束
+# SQLite 与持久化规范
 
 ## 摘要
 
-本文件定义数据库 Schema 和建表规范，包括库级约束、标准字段、命名规则、字段类型约定、索引规范、SQL 规约和 ORM 规约。建表前必须逐条核对。
-适用场景：新建库、新建表、修改表结构、评审数据模型时。
+本文件定义 ae-sdd daemon 的 SQLite runtime metadata schema、migration、事务、索引和项目文件权威边界。项目业务状态不迁移到关系数据库。
+适用场景：新增/修改 runtime 表、repository、journal、cache、migration 或恢复逻辑。
 
 ---
 
-## 零、Schema 约束
+## 零、数据权威边界
 
-- 库名与应用服务名保持一致
-- 统一使用 utf8mb4 字符集、utf8mb4_0900_ai_ci 排序规则（MySQL 8.0 默认，性能优于 utf8mb4_general_ci）
-- 每个 Service 独占自己的数据库，禁止跨 Service 共用数据库
-- 单表行数超过 500 万行或容量超过 2GB 才考虑分库分表；未达到此阈值禁止提前分库分表
-- 特殊场景需要分库分表时，使用 ShardingSphere，并在 DR 中说明原因
+- WorkItem `state.json`、lease、正式文档、memory、evidence、review 和 artifact 是项目内可移植业务真相。
+- SQLite 只保存 workspace/session/turn/delegation/host-action/context/compact/supervisor/job/event/cache/receipt index 等 daemon 运行元数据。
+- phase、executionPlan、plan approval、test evidence 或 review completion 禁止只存在 SQLite。
+- 每个 Work Item 的 authoritative mutation journal 固定在其 state directory 的 `mutation-journal/v1/<revision-after>-<mutation-id>.json`；它与 `state.json`、lease 和 artifact 同属 project truth。SQLite 丢失时必须能从 project files、COMMITTED journal/event payload 和宿主重新握手重建安全状态；无法证明的 running job/delegation/compact 一律不得恢复为成功。
+- SQLite 与 project file 冲突时以 project revision/hash 为准；hash 改变但 revision 未增长必须进入 `EXTERNAL_STATE_CONFLICT`，禁止自动覆盖。
+- SQLite 初始化时生成 immutable `event_store_id`；daemon restart 保持，DB 重建时轮换。外部 cursor 必须绑定 `event_store_id + event_seq`，禁止在新 DB 上误认旧序列。
 
----
+## 一、技术与连接配置
 
-## 一、标准建表模板
+| 项目 | 约束 |
+| --- | --- |
+| 引擎 | SQLite 3，默认通过 `rusqlite` bundled feature |
+| journal | `PRAGMA journal_mode=WAL` |
+| durability | `PRAGMA synchronous=FULL`；不得为性能测试改为 OFF |
+| integrity | `PRAGMA foreign_keys=ON`；启动和恢复后执行 schema/integrity 检查 |
+| busy | 有界 `busy_timeout`，默认不超过 1000 ms；request deadline 始终优先 |
+| connection | runtime-owned 单 writer queue + 有界 read connections；禁止每请求新建连接 |
+| async boundary | 所有 SQLite 调用在有界 blocking executor/DB worker 上执行，禁止阻塞 Tokio core thread |
 
-```sql
-CREATE TABLE `业务名_表名` (
-  `id`                <类型> NOT NULL COMMENT '主键ID',
-  -- 业务字段 --
-  `created_by`        varchar(64) DEFAULT NULL COMMENT '创建人',
-  `created_date`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `last_updated_by`   varchar(64) DEFAULT NULL COMMENT '最后更新人',
-  `last_updated_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='表注释';
-```
+- 数据库位于当前 OS 用户 runtime dir，目录/文件权限遵循 `security.md`。
+- 禁止加载 SQLite extension、attach 任意外部数据库或使用共享网络盘作为默认 runtime DB。
+- 一个 protocol major 使用独立 schema/database identity；升级必须先 drain。
 
-**必备字段说明：**
+## 二、表与 owner
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| id | 视场景而定 | NOT NULL | 主键，类型见下方说明 |
-| created_by | varchar(64) | DEFAULT NULL | 创建人 |
-| created_date | datetime | NOT NULL DEFAULT CURRENT_TIMESTAMP | 创建时间，数据库自动填充 |
-| last_updated_by | varchar(64) | DEFAULT NULL | 最后更新人 |
-| last_updated_date | datetime | NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | 最后更新时间，数据库自动更新 |
+首版 runtime schema 至少覆盖：
 
-**主键类型选择：**
-- 普通业务表：`bigint AUTO_INCREMENT`，自增，步长为 1
-- 需要对用户友好的业务单号：`varchar(32)`，由业务层生成（如时间戳+随机数）
-- 其他场景按实际需求决定，在 DR 中说明选择理由
-
-**按需字段：**
-- `deleted_flag tinyint(1) NOT NULL DEFAULT 0`：有逻辑删除需求时加，无需求时不加
-
-> 注意：如果代码中对 `created_date` / `last_updated_date` 显式赋值，数据库自动填充会失效。建议统一由数据库自动维护，不在代码中赋值。
-
----
-
-## 二、命名规则
-
-- 表名、字段名使用小写字母或数字，下划线分隔，禁止驼峰命名
-- 表名不使用复数，如 `user` 而非 `users`
-- 表名推荐格式：`业务名_表的作用`，如 `abnormal_ticket`、`sms_template`
-- 禁用 MySQL 保留字（desc、range、match、delayed 等）
-- 表达是否概念的字段，命名格式为 `is_xxx`，类型为 `tinyint(1)`（1=是，0=否）
-- 索引命名规范：
-  - 主键索引：`pk_字段名`
-  - 唯一索引：`uk_字段名`
-  - 普通索引：`idx_字段名`
-
----
-
-## 三、字段类型约定
-
-| 场景 | 类型 | 说明 |
+| 表 | Owner | 业务含义 |
 | --- | --- | --- |
-| 主键 | bigint | 自增，非负 |
-| 金额/小数 | decimal | 禁止使用 float / double，存在精度损失 |
-| 定长字符串 | char | 长度几乎相等时使用 |
-| 变长字符串 | varchar | 长度不超过 5000 |
-| 长文本 | text | 超过 5000 时使用，建议独立成表 |
-| 时间 | datetime | 统一使用 datetime，不使用 timestamp |
-| 是否标识 | tinyint(1) | 1=是，0=否，命名加 `is_` 前缀；保留显示宽度 `(1)` 是为了兼容 MyBatis-Plus 的 Boolean 映射 |
-| 逻辑删除 | tinyint(1) | `deleted_flag`，1=已删除，0=未删除；同上保留 `(1)` |
-| 状态/类型枚举 | varchar 或 enum | 枚举值稳定（不频繁新增）且无维护表时用 enum；需要灵活扩展或频繁新增时用 varchar；新增枚举值必须追加到末尾 |
-| JSON 数据 | json | 适用于结构不固定的扩展字段 |
-| 字符集 | utf8mb4 | 统一使用 utf8mb4，支持 emoji |
+| `workspace` | runtime | canonical root、project identity、mode、inventory generation |
+| `agent_session` | runtime | Agent physical/logical session、trusted role/lineage、heartbeat |
+| `turn` | runtime | prompt/PreTool/PostTool/Stop lifecycle |
+| `delegation` | delegation | root/parent/child、assignment、deadline、status、receipt digest |
+| `delegation_request_receipt` | delegation | parent-scoped create idempotency key/request digest/delegation/response digest |
+| `delegation_grant` | delegation | operation/path/deliverable capability 子集 |
+| `child_result` | delegation/artifacts | bounded canonical result digest 与 validation status |
+| `memory_cleanup_receipt` | delegation/context | validated result 后的 namespace snapshot/cleanup proof |
+| `host_adapter_instance` | host | authenticated adapter capability/sequence/health |
+| `host_action` | host | spawn/send/wait/cancel/compact command 与相关 ACK |
+| `context_projection` | context | role-aware projection revision/digest/budget/cache |
+| `context_pressure_sample` | context/host | authenticated token usage sample、generation/sampleSeq 与 bounded retention |
+| `compact_cycle` | context | snapshot、generation、host action、ACK、rehydrate lifecycle |
+| `supervisor_checkpoint` | flow | per-workspace/WorkItem global event cursor/decision digest/health |
+| `operation_receipt` | store/operations | idempotency payload hash、revision before/after、result digest |
+| `hook_event_receipt` | runtime/policy | session + hookEventId request digest 与原 decision/event cursor |
+| `gate_job` | gates/runtime | GateKey snapshot、状态、outcome/evidence digest |
+| `runtime_event` | runtime | 跨 restart 全局单调 eventSeq、bootId provenance 与可重放的 versioned bounded committed payload/payloadRef |
+| `inventory_entry` | inventory | workspace-relative path、metadata、content hash、generation |
 
----
+禁止创建“万能 metadata”表承载未经 schema 的业务 JSON。确需 versioned payload 时，必须同时保留 schema_version、payload_digest、byte_len 和 owner，并在 decode 时按 owner/event_type + schema_version 选择 typed decoder。`runtime_event` 必须保存 canonical bounded `payload_json` 或 immutable `payload_ref` 二者之一，不能只有 digest；digest 只用于完整性验证，不能替代 replay 输入。
 
-## 四、索引规范
+## 三、命名与字段类型
 
-### 4.1 必建索引
+- 表名和字段名使用小写 `snake_case`；表名使用单数，如 `agent_session`。
+- UUID/领域 ID 持久化为 canonical lowercase text，必须在 repository 边界解析为 newtype，禁止在 domain 中传裸字符串。
+- sequence/revision/fencing/generation/size/duration 使用非负 `INTEGER`，读取时检查溢出和负值。
+- bool 使用 `INTEGER NOT NULL CHECK (field IN (0,1))`。
+- enum 使用稳定 lowercase snake_case/明确 wire mapping，并加 CHECK 或 repository validation；禁止存 Rust `Debug` 输出。
+- timestamp 使用 UTC RFC 3339 text；duration/deadline budget 使用整数毫秒。禁止混用本地时区。
+- digest 使用固定 64 字符小写 hex，写入前后验证；secret/token/claim 不得落库，必要时只存 SHA-256/HMAC digest。
+- nullable 字段必须有真实“尚不存在/不适用”语义；禁止以空字符串、0 或 nil UUID 代替 NULL。
 
-- 业务上具有唯一特性的字段（含组合字段）必须建唯一索引
-- `created_date`、`last_updated_date` 建普通索引（用于数据同步、分页查询）
-- 高频查询条件字段建普通索引
+每张表必须有主键、owner 说明、created/updated 语义和状态机约束；不强制复制业务系统的 created_by/updated_by 模板。
 
-### 4.2 推荐索引
+## 四、索引与约束
 
-- 组合索引：区分度最高的字段放最左边
-- 有 ORDER BY 场景：排序字段放组合索引最后
-- varchar 字段建索引时指定索引长度（一般 20 即可达到 90% 以上区分度）
-- 利用覆盖索引避免回表
+必须建立并测试以下关键约束：
 
-### 4.3 索引禁忌
+| 表 | 索引/约束 | 目的 |
+| --- | --- | --- |
+| `workspace` | UNIQUE(canonical_root, project_key) | 路径 alias 收敛 |
+| `agent_session` | INDEX(status, heartbeat_at) + partial UNIQUE(workspace_id, external_key_hash) for opening/active | expiry/recovery + session.open replay |
+| `turn` | UNIQUE(session_id, turn_seq) | turn 单调 |
+| `delegation` | INDEX(parent_delegation_id, status, deadline) | child join/timeout/orphan |
+| `delegation_request_receipt` | PRIMARY KEY(workspace_id, parent_session_id, idempotency_key) | response-loss 不重复物理 spawn |
+| `memory_cleanup_receipt` | PRIMARY KEY(delegation_id) | completed 前置证明 |
+| `host_action` | UNIQUE(adapter_id, command_seq) + UNIQUE(adapter_id, ack_id) | command 与 duplicate/out-of-order ACK 去重 |
+| `context_projection` | UNIQUE(session_id, context_revision) | Hook delta/no-change lookup |
+| `context_pressure_sample` | UNIQUE(adapter_id, session_id, sample_seq) + INDEX(session_id, context_generation, sample_seq) | hysteresis/cooldown replay |
+| `supervisor_checkpoint` | PRIMARY KEY(workspace_id, work_item_id) + last_event_seq/last_event_digest | durable replay cursor |
+| `operation_receipt` | PRIMARY KEY(workspace_id, idempotency_key) | retry safety |
+| `hook_event_receipt` | PRIMARY KEY(session_id, hook_event_id) | duplicate Hook 返回原 decision |
+| `gate_job` | INDEX(gate_key, status) | singleflight lookup |
+| `runtime_event` | INTEGER PRIMARY KEY event_seq（全局单调、不复用）+ INDEX(workspace_id, event_seq) + INDEX(workspace_id, work_item_id, event_seq) | 跨 restart replay 与 ordered subscription |
+| `inventory_entry` | PRIMARY KEY(workspace_id, path) | selector/fingerprint |
 
-- 禁止左模糊或全模糊查询（`LIKE '%xxx'`），需走 ElasticSearch
-- 超过三个表禁止 JOIN
-- JOIN 字段数据类型必须一致，且被关联字段必须有索引
-- 禁止在无索引字段上做 JOIN
-- 禁止使用外键与级联，外键约束在应用层实现
+- foreign key 必须显式声明；删除 owner 行时采用明确 lifecycle cleanup，禁止依赖级联删除隐藏审计数据。
+- 新索引必须由实际 query/EXPLAIN 或 pressure evidence支撑；禁止为了“可能查询”无限加索引。
+- 查询必须列出字段，禁止 `SELECT *`；分页/stream 必须有稳定 order 与硬 limit。
+- supervisor checkpoint 只能在 decision/side effect checkpoint 同一事务提交后推进；retention 不得删除任何 active checkpoint 之后仍需 replay 的 event 或其 payloadRef。
 
----
+## 五、SQL 与 repository
 
-## 五、SQL 规约
+- 所有值必须使用参数绑定；禁止 `format!`/字符串拼接构造 SQL value、identifier 或条件。
+- 动态 identifier 必须来自 compile-time allowlist；禁止由 RPC/plugin 输入直接形成表名、列名或 ORDER BY。
+- repository 只负责 row mapping、transaction 和数据存取，不实现 FlowRuntime、role、Gate 或业务 transition。
+- SQL 必须集中在 owning repository/migration，禁止散落在 actor、CLI、Hook 或 domain。
+- 禁止 trigger、stored business logic、user-defined extension 和 ORM 自动 schema mutation；状态变更由 Rust application service 显式完成。
+- batch 写使用显式 transaction 和数量上限；禁止循环逐行 autocommit。
 
-**强制：**
-- 禁止使用 `SELECT *`，必须明确列出查询字段
-- 禁止使用外键与级联
-- 禁止使用存储过程
-- 禁止使用 `TRUNCATE TABLE`
-- 禁止在 XML 中使用 `1=1` 等常量条件
-- 删除语句禁止使用 `<where></where>` 标签（防止条件为空时全表删除）
-- 使用 `#{}` 参数占位符，禁止使用 `${}` 防止 SQL 注入
-- 使用 `ISNULL()` 判断 NULL 值，不用 `= NULL`
-- `in` 集合元素控制在 1000 个以内
-- 分页查询先判断 count，为 0 直接返回
-- 字符串类型的 `<if>` 判断需同时判断不等于空字符串
-- XML 中 `<`、`>`、`&` 等特殊字符使用 `<![CDATA[]]>` 处理
+## 六、事务与 project file 提交
 
----
+- 单 SQLite transaction 只能覆盖 daemon metadata；它不能假装与 project filesystem 构成原子分布式事务。
+- project mutation journal entry 是 versioned typed document，至少包含 `schemaVersion, mutationId, workspaceId, workItemId, operation, idempotencyKeyDigest, canonicalPayloadDigest, revisionBefore, revisionAfter, fencingToken, targetFiles[{path,beforeDigest,afterDigest,stagedRef}], event{type,schemaVersion,payload/payloadRef,digest,byteLen}, status, preparedAt, committedAt`；secret 与绝对越界路径不得进入。
+- 提交顺序固定为：在跨进程锁内原子写/fsync `PREPARED` journal → 写并 fsync 同目录 staged targets → 逐项 atomic replace + directory fsync → 原子将 journal 替换为 `COMMITTED`（携带 receipt/event）并 fsync journal directory → 才向 SQLite 插入可重建 receipt/event index、推进 supervisor cursor并对外应答。任何阶段崩溃都按 journal target digest 完成或回滚到可证明状态，不得猜 committed。
+- `ABORTED` 只能在证明 project targets 均未提交或已安全回滚后写入；部分 target 无法证明时进入 `EXTERNAL_STATE_CONFLICT`。COMMITTED journal 在其 receipt/event/artifact 仍被 state/evidence/checkpoint 引用时不得清理。
+- event 只能在 project commit 成功后可见；SQLite rollback、disk full、fsync error 或 process crash 不得产生 fake committed/PASS。
+- transaction 内禁止 await host/Gate/process/file scan；先取得 immutable snapshot，在 I/O 返回后重新验证 freshness，再进入短 transaction/commit 临界区。
+- idempotency receipt 必须保存 canonical payload hash 和 revision before/after；同 key 不同 hash 必须拒绝。
+- `delegation.create`、`session.open`、Hook event、host action/ACK 与 ChildResult replay 必须有数据库唯一键和原 response/result digest；进程内 map 不能作为幂等证明。
 
-## 六、建表前检查清单
+## 七、migration
 
-- [ ] 库名与服务名一致，字符集为 utf8mb4
-- [ ] 表名符合命名规范，使用单数，加业务前缀
-- [ ] 包含所有必备字段：id、created_by、created_date、last_updated_by、last_updated_date
-- [ ] 主键类型选择有明确理由（自增 bigint / 业务单号 varchar / 其他）
-- [ ] 有逻辑删除需求时已加 deleted_flag 字段
-- [ ] 无 float / double 字段
-- [ ] 无外键约束
-- [ ] 是否字段命名加 `is_` 前缀，类型为 tinyint(1)
-- [ ] 高频查询字段已建索引
-- [ ] 唯一业务字段已建唯一索引
-- [ ] 索引命名符合规范（pk_ / uk_ / idx_）
-- [ ] 所有字段有注释
+- migration 文件放根 `migrations/`，使用单调编号和不可变 checksum，例如 `0001_runtime_base.sql`。
+- 已发布 migration 禁止原地修改；修复必须追加新 migration。
+- 每次启动在获取 daemon 单例锁后、开放 endpoint 前执行 migration；migration 必须在 transaction 中更新 schema version/checksum。
+- schema version 使用明确 migration table 或 `PRAGMA user_version`，不得从“表是否存在”猜版本。
+- migration 必须覆盖 empty DB、上一发布版本、重复执行、途中 crash、损坏/不兼容版本；失败时 daemon 不进入 serving。
+- rollback 通过上一版完整 binary + 兼容 reader/备份执行，不依赖不安全的自动 down migration。
+
+## 八、保留、清理与隐私
+
+- runtime event、job、projection/cache 可按 versioned retention policy 清理；operation receipt、host/delegation/compact audit 在其引用有效期内不得提前删除。
+- cleanup 本身必须是有界 job、可取消、可审计，不得在 Hook request 中执行 VACUUM/大范围删除。
+- 禁止在 SQLite 存储 prompt、child transcript、源码、完整系列文档、endpoint token、claim token、credential 或无界 stdout/stderr。
+- artifact 正文应落在项目允许路径并以 hash ref 关联；root projection 只存有界摘要/引用。
+
+## 九、验证清单
+
+- [ ] WAL/foreign_keys/synchronous/busy 配置已断言。
+- [ ] schema/migration checksum、empty/upgrade/repeat/crash 测试通过。
+- [ ] unique/FK/CHECK/index 与 query plan 已覆盖正反例。
+- [ ] 单 writer + bounded reader 在 100 sessions/10 workspaces 下无丢 mutation、无 event 重排。
+- [ ] DB 删除/损坏后不会把未证明状态恢复为 PASS/completed。
+- [ ] project hash/revision conflict 能稳定进入 `EXTERNAL_STATE_CONFLICT`。
+- [ ] release DB/日志扫描不含 secret、prompt、transcript 或源码正文。

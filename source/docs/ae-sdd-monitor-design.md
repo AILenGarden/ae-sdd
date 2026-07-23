@@ -88,7 +88,7 @@ Monitor 的展示状态是派生值，不是 ae-sdd 的新增状态机字段。
 | `idle` | 可读但近期无活动 |
 | `unknown` | 兜底状态 |
 
-进度条依据 ae-sdd 当前阶段链派生。Monitor 内置阶段链只是展示投影，必须跟随 `tools/lib/state.py:PHASE_FLOWS` 和 `ae-sdd-design.md` 的状态机语义；当 ae-sdd 新增/删除/重命名 phase、scale 或 entry node 时，Monitor 解析和测试必须同步。
+进度条依据 ae-sdd 当前阶段链派生。Monitor 内置阶段链只是展示投影，必须跟随 `tools/lib/state.py:PHASE_FLOWS` 和 `routeDecision.selectedDesign`：所有可变更任务展示 Route、Requirement Analysis，之后按 DR/Story/CodingPlan 动态裁剪设计节点；旧 phase 不在当前链时仍作为兼容节点展示。
 
 活跃任务汇总是另一个派生投影，不新增 ae-sdd 字段。来源包括：
 

@@ -2,78 +2,59 @@
 
 ## 这是什么
 
-Constraints 是 SDD 流程中的**规则层**——定义团队"怎么写代码"的唯一真相源。
+`constraints/` 是 ae-sdd 工程实现的规则层 SSOT：它定义 Rust 本地控制平面“必须怎样实现和验证”。SKILL 定义方法、模板和输出合同；FlowRuntime 才是运行时流程状态机，二者不得复制这里的工程规则。
 
-Skills（如 story2code）只定义流程步骤，不包含具体规则。它们通过文件名引用 constraints，由 AI 按需加载。
+```text
+source/skills + templates  -> 方法与内容资产
+constraints/               -> Rust 工程实现约束
+crates/ + bins/             -> 受约束的实现
+```
 
-```
-skills/  ← 框架（团队无关，定义流程）
-constraints/  ← 配置（团队特定，定义规则）
-```
+适用场景：Requirement Analysis、DR、Story、CodingPlan、Coding、Test 与 Review。任何实现任务在 Coding 前必须按影响面加载对应文件。
 
 ---
 
-## 新团队接入指引
-
-按以下 8 个标准文件名创建你的约束文件。文件名不可更改（skills 按文件名引用），内容填入你团队的规则。
-
-| 文件 | 职责 | 填写要点 |
-|------|------|----------|
-| `technology-stack.md` | 技术选型清单 | 语言、框架、中间件、版本号 |
-| `project-structure.md` | 工程目录结构 | 模块划分、包命名、文件放置规则 |
-| `layered-arch.md` | 分层架构与依赖方向 | 各层职责、层间调用规则、禁止事项 |
-| `code-style.md` | 编码风格 | 命名、注释、异常处理、日志、事务等 |
-| `api.md` | 接口设计规范 | URL 命名、HTTP 方法、请求响应结构、错误码 |
-| `database.md` | 数据库规范 | 建表规则、字段约定、索引、SQL 规约 |
-| `security.md` | 安全规范 | 鉴权、敏感数据、审计 |
-| `testing.md` | 测试规范 | 分层策略、覆盖率要求、框架选择、断言规则 |
-
-可选文件（按需添加）：
+## 约束文件索引
 
 | 文件 | 职责 |
-|------|------|
-| `implicit-constraints.md` | 无法归入上述文件的隐性约定 |
+| --- | --- |
+| `technology-stack.md` | Rust toolchain、依赖、IPC、持久化与供应链 |
+| `project-structure.md` | Cargo workspace、crate owner、目录与文件放置 |
+| `layered-arch.md` | inward dependency、FlowRuntime、Agent/host adapter 边界 |
+| `code-style.md` | Rust 命名、错误、async、日志、确定性与 `unsafe` |
+| `api.md` | 本地 framed JSON-RPC、方法、错误、幂等与 Hook 映射 |
+| `database.md` | SQLite runtime metadata、migration、事务、索引与文件权威边界 |
+| `security.md` | OS 用户 IPC、capability、路径、子进程、插件与审计 |
+| `testing.md` | unit/property/golden/concurrency/crash/E2E/跨平台测试 |
+| `plugin-registry-spec.md` | 三层 plugin registry schema、解析、冲突与安全扫描 |
+| `implicit-constraints.md` | 无法归入上述文件的迁移和运行隐性边界 |
 
 ---
 
-## 编写原则
+## 编写与修改原则
 
-1. **写给 AI 看** — 用明确的规则（"必须"/"禁止"），避免模糊描述（"建议"/"尽量"）
-2. **可执行** — 每条规则应能直接映射到代码检查点
-3. **无重复** — 一条规则只在一个文件中定义，其他文件通过引用指向
-4. **带示例** — 对容易误解的规则，给出正例和反例
-5. **标注适用场景** — 在文件开头的摘要中说明何时需要查阅此文件
+1. 使用“必须/禁止”和可验证的字段、命令或状态，不使用“建议/尽量”替代约束。
+2. 一条规则只在一个文件定义；其他文件引用 owner 文件，避免多份 policy。
+3. 新依赖、协议字段、状态、持久化表或平台差异必须同时更新对应约束、DR/Story contract 和验证矩阵。
+4. 约束不能用来绕过 ae-sdd gate；约束与正式设计冲突时必须停止 Coding，先更新上游资产并重新加载 CodingModel。
+5. 修改现有文件前必须检查 dirty diff；禁止覆盖用户未提交变更。
 
----
+### 规则 owner
 
-## 文件模板（参考）
+| 规则域 | 唯一 normative owner | 其他文件的处理 |
+| --- | --- | --- |
+| toolchain、dependency、license、IPC/DB/platform 技术选型 | `technology-stack.md` | 只能引用，不得重定义版本或 allowlist |
+| wire method、DTO、前置字段、错误码 | `api.md` | 只能说明本层如何消费该 contract |
+| secret、capability、身份、路径与审计安全 | `security.md` | 只能增加所属层实现责任，不得放宽 |
+| crate/层/role/daemon/Monitor 边界 | `project-structure.md` + `layered-arch.md` | `implicit-constraints.md` 仅登记兼容不变量并引用 owner |
+| schema、journal、event/checkpoint 持久化 | `database.md` | API/Story 只镜像 contract 字段 |
+| test topology 与 evidence 门槛 | `testing.md` | Story verification matrix 绑定具体 AC/命令 |
 
-每个约束文件建议使用以下结构：
+同一规则在 DR/Story 中出现是正式设计合同镜像，不产生第二 owner；发生差异时停止 Coding并先按上表修正 owner 与正式文档。
 
-```markdown
-# {规范名称}
+## 最小准入检查
 
-## 摘要
-
-一句话说明本文件定义什么。
-适用场景：{何时需要查阅此文件}。
-
----
-
-## 一、{分类 1}
-
-具体规则...
-
----
-
-## 二、{分类 2}
-
-具体规则...
-
----
-
-## N、禁止事项
-
-- 禁止 X，应该 Y
-- 禁止 A，应该 B
-```
+- 每次 Coding 前动态加载技术、结构、分层、代码、API、数据、安全、测试与 plugin 约束；本文件不证明它们已加载。
+- 动态确认 Story 的每个 AC 都有真实验证入口；Test/Review 只记录实际 evidence 和 findings。
+- 针对当前 state revision 动态确认 `state.executionPlan` 用户批准与 G-CODEPLAN-SRC、G-14、G-08 PASS；静态文字不构成 PASS。
+- 动态确认 Monitor 排除项和 Python migration oracle 未被误算为 released Rust runtime。

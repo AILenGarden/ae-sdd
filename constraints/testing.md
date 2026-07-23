@@ -1,147 +1,123 @@
-# 测试规范
+# Rust 测试规范
 
 ## 摘要
 
-本文件定义测试分层策略、覆盖率要求、测试数据管理和自动化约束。
-适用场景：制定测试策略、编写测试用例、评审测试覆盖时。
+本文件定义 ae-sdd Rust runtime 的测试分层、工具、fixture、并发/崩溃/跨平台边界、覆盖率和真实 evidence 要求。
+适用场景：Story 验证矩阵、实现、回归、release/cutover 和 Code Review。
 
 ---
 
-## 一、测试框架
+## 一、框架与工具
 
-| 用途 | 框架 / 工具 |
+| 用途 | 默认工具 |
 | --- | --- |
-| 单元测试 | JUnit 4.12 + Mockito + AssertJ |
-| 集成测试 | Spring Boot Test + 开发库（@Transactional + @Rollback） |
-| Controller / REST 接口验收 | 🔴 真实 HTTP：本地 RANDOM_PORT + HTTP client，随后同一 buildId 在测试环境再次执行 |
-| 代码质量 | Checkstyle + SpotBugs |
+| unit/integration | Rust built-in test harness + `cargo test` |
+| async/time | `tokio::test`、paused time、injectable clock |
+| property/model | `proptest`（必要时 loom 验证小型并发模型） |
+| golden/snapshot | versioned JSON/text fixtures；`insta` 仅在 reviewable snapshot 场景使用 |
+| temp filesystem | `tempfile` + project fixture builder |
+| CLI/process | `assert_cmd`/等价 process harness + `predicates` |
+| coverage | `cargo llvm-cov` |
+| benchmark/load | criterion 或专用 pressure harness + HDR histogram |
+| dependency/security | `cargo audit`, `cargo deny` |
 
----
+版本必须由 workspace dependency 和 `Cargo.lock` 固定；新增 test dependency 也受供应链规则约束。
 
-## 二、测试分层策略
+## 二、测试分层
 
-```
-┌──────────────────────────────┐
-│     Controller 集成测试       │  ← 🔴 真实 HTTP（RANDOM_PORT+TestRestTemplate），验证接口行为
-├──────────────────────────────┤
-│     Mapper 集成测试           │  ← 开发库，验证 SQL 正确性
-├──────────────────────────────┤
-│     Service 单元测试          │  ← Mockito，验证业务逻辑
-└──────────────────────────────┘
-```
-
-| 层级 | 测试类型 | 工具 | 说明 |
+| 层级 | 边界 | 必须验证 | 不可替代 |
 | --- | --- | --- | --- |
-| Service | 单元测试 | JUnit + Mockito | 纯逻辑，不依赖数据库，Mock 所有外部依赖 |
-| Mapper | 集成测试 | Spring Boot Test + 开发库 | 验证自定义 SQL 和 XML 映射正确性，使用 @Transactional + @Rollback 回滚数据 |
-| Controller / REST | 接口验收 | 🔴 真实 HTTP：SpringBootTest(RANDOM_PORT) + TestRestTemplate/RestAssured/标准 HTTP client | 本地真实端口走 Controller→Service→Repository/Mapper→测试 DB 完整内部链；禁止内部 @MockBean/@SpyBean；同一 buildId 必须再跑测试环境 |
+| unit | 单个 parser/value/reducer/scanner | 正例、边界、非法输入、exhaustive enum | 不关闭跨进程/持久化 AC |
+| property/model | reducer、lease/CAS/fencing、idempotency、event replay | 任意序列不变量、重放确定性、单调性 | 不以少量 happy path 代替 |
+| crate integration | public API + real adapter/fake external port | schema、transaction、error mapping、migration | 不访问 production 用户目录 |
+| golden differential | Python oracle vs Rust | preserve 相同；breaking-fix 明确不同；无 stub-pass | Python 不进入 release runtime |
+| process/IPC | real `ae-sddd` + real `ae-sdd` over Named Pipe/UDS | framing、handshake、deadline、ACL、restart、Hook JSON | in-memory service call 不关闭 AC |
+| concurrency/crash | 多 client/process、kill/fault point | single commit、journal recovery、no fake PASS/completed | sleep-based 顺序不作为证据 |
+| host contract | fake host matrix + enabled host live smoke | ACK≠claim、physical identity、cancel/timeout、authenticated pressure/hysteresis、compact ACK | daemon 自建 logical row 或 projection bytes 不算 physical session/token telemetry |
+| migration/cutover | legacy/shadow/canary/sole-writer | double-write=0、drain、rollback、release scan | 手工观察不关闭 AC |
+| cross-platform | actual Windows/macOS/Linux CI runners | IPC、ACL、atomic/fsync、service lifecycle | 单一 OS 或 `--platforms` 模拟不代表全平台 |
+| pressure | release profile，100 sessions/10 workspaces mixed workload | fairness、no lost mutation、fixed warmup/sample、p50/p95/p99/max/CPU/RSS | debug build 或平均值不替代 release percentile |
 
-**Test double 边界：**
-- 纯逻辑单元测试可以隔离外部依赖，但不得作为接口 AC 的验收证据。
-- 接口验收不得 mock/spy 内部 Service、Repository、Mapper、Application/UseCase；外部服务优先 sandbox，stub 只作 supplemental 故障注入。
-- 每个 HTTP verification 固定声明 `boundary=http`、`stages=[local,test-env]`、`internalMocksAllowed=false`。
+## 三、AC 验证最小矩阵
 
----
+- Rust-only：release binary/package/Hook config 扫描，Python worker/fallback 入口计数必须为 0。
+- workspace/session：10 workspace、100 session、canonical path alias 与 cross-workspace negative cases。
+- Hook fail-closed：daemon kill、protocol mismatch、deadline、duplicate hookEventId、engaged/未 engaged 矩阵。
+- Store：multi-process lock、lease expiry/break、revision CAS、fencing monotonicity、idempotency conflict、kill-point recovery。
+- Gate：36 Gate + 7 scanner inventory，六类 GateOutcome truth table，state/policy/inventory/input 改变后的 STALE。
+- Flow：相同 state/event/policy/input restart/replay 的 decision digest/nextAction 相同；child transition 被拒绝；prompt-only correction delta=0。
+- Delegation：root→series→task/reviewer maxDepth、role/path/operation matrix、fake/duplicate/out-of-order/timeout ACK、reviewer physical isolation。
+- ChildResult/context：64 KiB/8 KiB/64 KiB 边界、path/hash/required deliverable、跨 role memory leakage=0、delta/no-change。
+- Compact：authenticated high/low/consecutive/cooldown samples、supported/unknown/unsupported/wrong session/wrong generation/timeout/restart；无匹配 ACK + rehydrate 时 false context-restored=0。
+- Cross-platform/cutover：install/start/status/drain/upgrade/stop/uninstall、endpoint ACL、shadow/canary/rollback/sole-writer。
 
-## 三、覆盖率要求
+Story 每个 AC 必须至少映射一个可执行验证入口和预期 evidence；不能只写“人工确认”。
 
-| 层级 | 最低覆盖率 | 说明 |
-| --- | --- | --- |
-| 整体项目 | ≥ 60% | 通过 JaCoCo 统计 |
-| Service 核心业务逻辑 | ≥ 70% | |
-| Mapper 自定义 SQL | ≥ 60% | 仅针对 XML 中手写的方法，MyBatis-Plus 自动生成的不计入 |
-| Controller 接口 | ≥ 50% | 核心接口必须覆盖正常路径 + 主要异常路径 |
+## 四、fixture 与 golden corpus
 
-**断言要求：**
-- 禁止只断言 HTTP 状态码（如只检查 200），必须校验响应体中的业务字段
-- 异常路径必须断言错误码和错误信息
-- 断言必须覆盖 Story 接口契约中定义的关键业务字段，不能只断言操作成功
-- 正例：
-  ```java
-  // ❌ 反例
-  assertThat(result.getStatusCode()).isEqualTo(200);
+- fixture 必须有稳定 ID、schema version、输入、预期 outcome、owner、来源和 `preserve | breaking-fix | removed-deprecated` 分类。
+- 113 command、18 operation、36 Gate、7 scanner 和工程工具必须由 parser/registry/runtime trace 三源 inventory 对齐，计数与映射由测试生成审计。
+- golden 只存确定性输出；timestamp、absolute temp path、UUID、port/pipe name 必须 normalization 后比较。
+- 更新 golden 必须展示 semantic diff 并由 Story/DR 解释；禁止用 blanket accept 命令覆盖不理解的差异。
+- Python oracle 只能在 `migration_oracle` profile/read-only fixture 中运行；Rust canary/sole-writer test 禁止调用它。
 
-  // ✅ 正例
-  assertThat(result.getCode()).isEqualTo(200);
-  assertThat(result.getData().getId()).isNotNull();
-  assertThat(result.getData().getStatus()).isEqualTo("ACTIVE");
-  ```
+## 五、test double 边界
 
----
+- pure reducer/port consumer 可以使用 deterministic fake；fake 必须能注入 timeout、cancel、panic/error、duplicate、reorder 和 stale。
+- AC 验收禁止 mock 内部 TransitionPolicy、WorkItemActor、StateStore atomic write、Gate freshness 或 protocol framing。
+- filesystem/SQLite acceptance 使用临时真实目录/数据库；禁止生产目录和用户 runtime DB。
+- external Agent host/OS service 可使用 contract fake，但任何标记为 supported 的宿主/平台必须有 live smoke evidence。
+- fake ACK 不得自动创建 child claim；测试必须明确证明 ACK-only 不能进入 running。
 
-## 四、测试数据管理
+## 六、并发、时间与故障注入
 
-- 集成测试：在开发库上运行，使用 `@Transactional` + `@Rollback` 保证测试数据自动回滚，不污染数据库
-- 禁止测试用例之间共享可变状态
+- 禁止 `Thread.sleep()`、`tokio::time::sleep()` 或任意延时用来断言并发顺序；使用 barrier、Notify、channel、fake clock 和 paused time。
+- randomized concurrency test 必须记录 seed；失败 seed 可直接重放。
+- 所有 background task 必须在测试结束前 join/cancel；禁止遗留 daemon、pipe/socket、DB handle 或 child process。
+- fault points 至少覆盖 PREPARED 前后、atomic replace/fsync、COMMITTED 前后、event publish、Gate running、Host ACK/claim、compact ACK/rehydrate。
+- crash 测试断言 disk state/receipt/event，不接受仅看 process exit code。
+- sanitizer/Miri 可运行的 pure/platform-independent crate 应进入定期 CI；unsafe platform adapter 必须有 target-specific negative tests。
 
----
+## 七、性能与资源
 
-## 五、测试目录约定
+| 指标 | 门槛 |
+| --- | --- |
+| warm handshake p95 | <= 50 ms |
+| cached read p95 | <= 100 ms |
+| cached Hook RPC p95 | <= 50 ms |
+| invalidated non-external Hook p95 | <= 250 ms |
+| lost/duplicate project mutation | 0 |
+| false Gate PASS / false delegation completed / false compact context-restored | 0 |
+| cross-workspace/role leakage | 0 |
 
-```
-src/test/java/
-├── {package}/interfaces/     # Controller 集成测试，命名：*ControllerTest.java
-├── {package}/application/    # Service 单元测试，命名：*AppServiceTest.java
-└── {package}/infrastructure/ # Mapper 集成测试，命名：*MapperTest.java
+- performance evidence 必须使用 release profile，并记录机器/OS/build、样本数、warmup、HDR histogram config、p50/p95/p99/max、CPU/RSS 和 error count；debug `cargo test/run` 不得关闭性能 AC。
+- Hook load 中同步长作业计数必须为 0；达到 mailbox/queue 上限时验证 backpressure/fail-closed，不允许 OOM。
+- benchmark regression 阈值与 baseline 必须 versioned；单次本机噪声不得直接修改产品阈值。
 
-src/test/resources/
-└── test-data/
-    ├── init-*.sql            # 测试数据初始化
-    └── cleanup-*.sql         # 测试数据清理
-```
+## 八、覆盖率与质量门槛
 
----
+- 新 Rust workspace 整体 line coverage 必须 >= 80%；`domain/policy/flow/store/delegation/context/protocol` 必须 >= 90%。
+- 覆盖率不能替代 AC/negative/property/crash 证据；critical transition/error branch 必须在 verification matrix 中显式命中。
+- `cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace --all-features`, `cargo llvm-cov`, `cargo audit`, `cargo deny check` 任一失败均阻断 release。
+- flaky test 不得简单 retry 后忽略；必须隔离原因、记录 finding，并在恢复前保持 gate blocked。
 
-## 六、静态分析
+## 九、目录与命名
 
-- **Checkstyle**：代码风格检查（命名、缩进、括号等），CI 中 P0 问题阻断构建
-- **SpotBugs**：静态分析（NPE、资源泄漏、逻辑错误等），CI 中 P0 问题阻断构建
+- unit test 名使用 `given_when_then` 或清晰行为名，如 `stale_fencing_token_cannot_commit`。
+- crate integration 放 `<crate>/tests/<contract>.rs`；根级场景按 `contract/golden/concurrency/crash/e2e/fixtures` 分类。
+- test helper 只放相邻 `tests/support` 或 fixture builder；禁止生产 crate 暴露仅为测试的 public API。
+- 测试输出写临时目录；需要 evidence 的摘要由 ae-sdd evidence contract 收集，不提交 ad-hoc TestReport。
 
----
+## 十、真实 evidence
 
-## 七、验收流程
+- evidence 必须来自实际执行，至少记录 command/runner、toolchain/build digest、start/end、exit code、stdout/stderr digest、fixture/seed/input digest 和 AC/verification ID。
+- Test 只登记真实 evidence；Review 只登记 `status/findings`。禁止创建 TestReport、CodingReport 或 CodeReview report 文件。
+- cancelled、timeout、skipped、unsupported 与 stale 不能登记为 PASS；平台/宿主不支持必须按 Story 的显式降级 AC 判定。
 
-```
-编码完成
-    ↓
-Checkstyle / SpotBugs 静态检查
-    ↓
-Service 单元测试（JUnit + Mockito）
-    ↓
-Mapper 集成测试（开发库）
-    ↓
-Controller 集成测试（真实 HTTP：RANDOM_PORT + TestRestTemplate）
-    ↓
-同一 buildId 部署测试环境并执行真实 HTTP
-    ↓
-G-09 校验 http-local + http-test-env evidence
-    ↓
-覆盖率达标检查
-    ↓
-✅ 验收通过
-```
+## 十一、禁止事项
 
----
-
-## 八、禁止事项
-
-- 🔴 MockMvc、application-context-bound WebTestClient、直接 Controller 方法调用不得关闭接口 AC
-- 🔴 RANDOM_PORT 测试中禁止用 @MockBean/@SpyBean 替换内部 Service、Repository、Mapper、Application/UseCase
-- 🔴 只有本地 HTTP、缺测试环境 HTTP、两个阶段 buildId 不同或顺序错误时不得 PASS
-- 🔴 禁止用全 Mock 替代核心落库路径验证——INSERT/UPDATE/DELETE 核心路径必须用真实 DB（H2/TestContainers）验证落库
-- 禁止使用 `Thread.sleep()` 等待异步结果，使用 `Awaitility` 或 Mock 替代
-- 禁止在测试中使用生产数据库
-- 禁止测试方法名使用无意义命名（如 `test1()`、`testA()`）
-- 禁止空 catch 块吞掉测试异常
-
----
-
-## 九、跨 Story 集成测试
-
-当 Story 声明了系统前置依赖（`系统前置：STORY-XXX-BE 已完成`），且前置 Story 均为 Done 时，当前 Story 完成者须编写跨 Story 集成测试。
-
-- 验证范围：当前 Story 与直接前置 Story 之间的数据消费和接口调用链路
-- 实现方式：`@SpringBootTest` 启动完整上下文，仅 Mock 外部系统，不 Mock 内部 Service
-- 数据管理：`@Transactional` + `@Rollback`，通过 SQL 预置上游数据
-- 目录约定：`src/test/java/{package}/integration/*IntegrationTest.java`
-- 豁免：前置 Story 仅提供基础数据表且 Mapper 集成测试已验证读取正确性时可豁免，需在 TestCase 文档中说明
+- 禁止以 in-memory function call 代替 Named Pipe/UDS、process restart 或 filesystem commit 的验收。
+- 禁止只断言 exit code/错误存在；必须断言 stable code、state/revision/event/artifact 不变量。
+- 禁止使用 production 用户数据、runtime DB、endpoint token 或 Agent transcript 作为 fixture。
+- 禁止 snapshot 包含 secret、absolute user path、随机字段或无界日志。
+- 禁止 always-pass、ignored critical test、空 assertion、只覆盖 happy path 或用 retry 隐藏 race。

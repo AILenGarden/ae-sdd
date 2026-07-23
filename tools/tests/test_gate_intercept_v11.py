@@ -115,15 +115,15 @@ class TestStateMachineProtection:
         向前跳 1 步 + 无 .ae-sdd →
         gate 跑不完整（G-01 会失败因为没有 design/ 目录），应被拦截。
         这是有意为之：没有 .ae-sdd 就无法跑 gate，切 phase 应被阻止。
-        🆕 v3.4.0：initialized → ra-generated 是单步（G-00 失败因无 .ae-sdd）；initialized → dr-generated 现是跨步（ra-generated 插入）。
+        v3.14：initialized → route-selected 是单步（G-00 失败因无 .ae-sdd）。
         """
         allowed, reason = _check_state_write(
-            "ae-sdd state write --phase ra-generated",
+            "ae-sdd state write --phase route-selected",
             current_phase="initialized",
             ade_sdd=None,
             project_key="test",
         )
-        # ra-generated 入口门禁 = [G-00]；无 .ae-sdd → G-00 失败 → 拒绝
+        # route-selected 入口门禁 = [G-00]；无 .ae-sdd → G-00 失败 → 拒绝
         assert not allowed
         assert "gate" in reason.lower() or "G-00" in reason or "资产" in reason or "init" in reason
 

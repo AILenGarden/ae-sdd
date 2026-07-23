@@ -35,6 +35,26 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+
+def _configure_console_stream(stream) -> None:
+    """Keep Windows legacy consoles from turning a successful install into failure.
+
+    Python may select GBK/CP936 for redirected PowerShell output.  The installer
+    uses a few status glyphs that are not representable there, so retain the
+    console encoding but replace only unsupported glyphs instead of raising
+    ``UnicodeEncodeError`` after distribution has already succeeded.
+    """
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_configure_console_stream(sys.stdout)
+_configure_console_stream(sys.stderr)
+
 # 让 distribute.py 可被 import
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

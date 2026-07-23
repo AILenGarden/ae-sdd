@@ -21,9 +21,9 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
 ### 极简合法链
 
 ```text
-大：RA -> DR -> Story -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
-中：Story -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
-小/微：Story-lite -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
+大：Route -> Requirement Analysis -> DR/Story/CodingPlan -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
+中：Route -> Requirement Analysis -> Story/CodingPlan -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
+小/微：Route -> Requirement Analysis -> CodingPlan/Story-lite -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
 ```
 
 - RA、DR、Story 是核心设计文档；路由需要时必须存在，不得用过程报告替代。
@@ -40,7 +40,8 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
 | --- | --- | --- |
 | 项目约束 | `get_constraints(projectKey)` | 停止并更新项目资产 |
 | 技术约束 CodingModel | `get_thinking_engine(projectKey)` | 停止并补齐空维度 |
-| Story | `doc resolve --intent STORY` | 停止并生成/更新 Story |
+| 需求说明书 | `doc resolve --intent RA` | 停止并生成/更新 RA |
+| Story（按分析路径） | `doc resolve --intent STORY` | 仅当分析选择 Story 时生成/更新 |
 | 验证契约 | Story 验证矩阵；复杂时可引用 TestCase | 停止并补齐 AC 到验证映射 |
 
 ### 硬约束
@@ -68,9 +69,9 @@ constraints are in scope. Routing authority belongs to ae-sdd and the user.
 ### Minimal legal routes
 
 ```text
-large:  RA -> DR -> Story -> approved executionPlan -> Coding -> Test evidence -> Review findings
-medium: Story -> approved executionPlan -> Coding -> Test evidence -> Review findings
-small/micro: Story-lite -> approved executionPlan -> Coding -> Test evidence -> Review findings
+large: Route -> Requirement Analysis -> DR/Story/CodingPlan -> approved executionPlan -> Coding -> Test evidence -> Review findings
+medium: Route -> Requirement Analysis -> Story/CodingPlan -> approved executionPlan -> Coding -> Test evidence -> Review findings
+small/micro: Route -> Requirement Analysis -> CodingPlan/Story-lite -> approved executionPlan -> Coding -> Test evidence -> Review findings
 ```
 
 - RA, DR, and Story are the core design documents. Required upstream documents

@@ -1,239 +1,107 @@
-# 代码风格规范
+# Rust 代码风格规范
 
 ## 摘要
 
-本文件定义团队 Java 代码风格约定，包括注释、异常处理、日志、常量定义、ORM、事务、并发等规范。
-适用场景：代码评审、新成员入职、AI 生成代码时。
+本文件定义 ae-sdd Rust 命名、公开 API、错误、日志、async/concurrency、确定性、序列化和平台代码规范。
+适用场景：编码、重构、Code Review 和 AI 生成 Rust 代码。
 
 ---
 
-## 一、注释规范
+## 一、格式与 lint
 
-- 所有 public 方法必须有 Javadoc 注释
-- 注释语言不强制，中英文均可，同一个方法内保持一致
-- Javadoc 格式：
-  ```java
-  /**
-   * 方法说明
-   *
-   * @param paramName 参数说明
-   * @return 返回值说明
-   */
-  ```
-- 禁止无意义注释（如 `// 获取用户` 紧跟 `getUser()`）
-- 复杂业务逻辑、非显而易见的设计决策需要写行内注释说明原因
+- 所有代码必须通过 `cargo fmt --check`，禁止手工对齐产生与 rustfmt 冲突的样式。
+- 所有 target/feature 必须通过 `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
+- workspace 根必须统一设置 Rust/Clippy lint；crate 只能加严，不得局部 `allow` 隐藏 warning。
+- `#[allow(...)]` 必须缩小到最小 item，并用注释说明不变量或上游限制；禁止 crate-wide `allow(clippy::all)`。
 
----
+## 二、命名与模块
 
-## 二、异常处理
+| 对象 | 规则 | 示例 |
+| --- | --- | --- |
+| crate/module/function/field | `snake_case` | `input_fingerprint` |
+| type/trait/enum variant | `UpperCamelCase` | `GateOutcome::TimedOut` |
+| constant/static | `SCREAMING_SNAKE_CASE` | `MAX_FRAME_BYTES` |
+| stable wire method | `<domain>.<verb>` 小写 | `workspace.register` |
+| ID newtype | 领域名 + `Id` | `SessionId`, `DelegationId` |
+| error | 领域名 + `Error` | `StoreError`, `ProtocolError` |
 
-- 禁止直接抛 `RuntimeException`，必须使用自定义异常类
-- 自定义异常类继承 `RuntimeException`，包含错误码字段
-- 异常类按领域划分，定义在 domain 层的 `exception` 包下
-- 示例：
-  ```java
-  public class BossDomainException extends RuntimeException {
-      private final String code;
-      public BossDomainException(String code, String message) { ... }
-  }
-  ```
+- 禁止在多个 crate 使用裸 `String` 表示 workspace/session/workItem/revision 等关键 identity；必须使用 newtype 或明确 DTO field type。
+- 禁止创建无 owner 的 `utils`, `common`, `misc` 模块；helper 必须放在拥有该 invariant 的模块。
+- bool 字段使用可读谓词，如 `engaged`, `is_stale`, `requires_confirmation`；状态机优先 enum，不用多个互斥 bool。
 
----
+## 三、公开 API 与注释
 
-## 三、日志规范
+- 所有 public type、trait、method 和 wire field 必须有 rustdoc，说明业务语义、错误、幂等、deadline 或安全不变量；显而易见的 private helper 不写复述式注释。
+- 复杂并发、atomic file、journal recovery、host attestation 和 `unsafe` 代码必须写“为什么成立”，不能只写“做了什么”。
+- public API 必须使用拥有语义的 struct/enum；参数超过 4 个或存在同类型 identity 时必须使用 request/context struct。
+- 禁止将 `serde_json::Value` 作为核心 domain/application API；只允许在 versioned extension payload 边界使用并立即验证。
 
-- 统一使用 Lombok `@Slf4j` 注解，禁止手动声明 Logger
-- 日志级别约定：
-  - `log.error()`：异常场景，使用 `log.error("描述", e)` 打印完整堆栈，禁止同时用 `e.getMessage()` 和 `e` 导致重复输出
-  - `log.warn()`：业务告警，不影响主流程但需要关注
-  - `log.info()`：关键业务节点（如订单创建、状态变更）
-  - `log.debug()`：调试信息，生产环境不输出
-- 禁止在循环内打印 info/error 日志
-
-### 日志格式三要素（🔴 强制）
-
-每条 `log.*` 语句必须同时包含以下三段，缺任何一段均不合格：
-
-| 要素 | 说明 | 示例 |
-|------|------|------|
-| **① 位置** | `[服务名][类名][方法名]` | `[icec-cloud-life-cs][CsConsultAppService][transferToManual]` |
-| **② 业务动作** | 当前代码段的业务语义，用短语描述 | `[开始转人工]`、`[推送APP参数]`、`[查询工单列表]` |
-| **③ 数据** | 实际打印的变量或结果，`key=value` 格式 | `consultId={}, operatorId={}` |
-
-**格式模板：** `[服务][类][方法][业务动作] key=value, key=value`
-
-```java
-// 方法入口
-log.info("[icec-cloud-life-cs][CsConsultAppService][transferToManual][开始转人工] consultId={}, operatorId={}", consultId, operatorId);
-
-// 中间关键节点
-log.info("[icec-cloud-life-cs][CsConsultAppService][transferToManual][推送APP参数] param={}", JsonUtils.toJson(param));
-
-// 方法出口
-log.info("[icec-cloud-life-cs][CsConsultAppService][transferToManual][转人工完成] result={}", result);
-
-// 异常
-log.error("[icec-cloud-life-cs][CsConsultAppService][transferToManual][转人工异常] consultId={}", consultId, e);
+```rust
+/// Applies a mutation only when lease, revision and fencing preconditions remain fresh.
+pub async fn execute_mutation(
+    request: MutationRequest,
+    context: MutationContext,
+) -> Result<MutationReceipt, OperationError>;
 ```
 
-> **Code Review 判定：** 三要素缺任意一段 → 🟡 一般型问题，48 小时内修复。
+## 四、错误与 panic
 
----
+- library 使用 `Result<T, TypedError>`；错误 enum 用 `thiserror`，保留 source chain，但协议边界只暴露 stable error code、retryability 和脱敏 remediation。
+- 禁止在 request、event、Gate、recovery 和 background task 路径使用 `unwrap()`、`expect()`、`panic!()`、`todo!()` 或 `unimplemented!()`。
+- 仅测试或进程启动时被静态证明的不变量可使用 `expect`，message 必须说明 invariant；可恢复配置/文件错误仍必须返回 typed error。
+- 禁止空 catch 等价行为（`let _ = fallible()`）；明确忽略时必须记录理由或转换成 evidence/metric。
+- Gate panic、join error、I/O error 和 timeout 必须映射为 `ERROR/TIMEOUT/CANCELLED/STALE`，禁止映射为 PASS 或业务 FAIL。
 
-## 四、常量定义
+## 五、async 与并发
 
-- 常量定义在 `class` 中，禁止使用 `interface` 定义常量
-- 使用 `@NoArgsConstructor(access = AccessLevel.PRIVATE)` 防止实例化
-- 常量命名：全大写 + 下划线分隔
-- 相关常量组织在同一个类中，按业务域命名，如 `BossUserConstants`
-- 示例：
-  ```java
-  @NoArgsConstructor(access = AccessLevel.PRIVATE)
-  public class BossUserConstants {
-      public static final String DEFAULT_ROLE = "OPERATOR";
-      public static final Integer MAX_LOGIN_RETRY = 5;
-  }
-  ```
+- 禁止在 Tokio executor 上直接运行 blocking filesystem、SQLite、压缩、hash 大目录或同步 process wait；必须进入 runtime-owned 有界 blocking pool。
+- 所有 channel、mailbox、queue、semaphore 和 task set 必须有容量与 overflow/backpressure 行为；禁止无界 channel 和 fire-and-forget `spawn`。
+- 每个外部 I/O、host action、Gate job 和 child lifecycle 必须传播 deadline/cancellation；取消后必须 join/清理资源。
+- 持锁期间禁止 `.await`，除非锁类型和临界区专门支持且有并发测试证明；不得在 actor mailbox 中同步等待长 Gate/host/build job。
+- shared state 优先 actor/message 或 immutable snapshot；使用 mutex/RwLock 时必须记录 owner 和 lock ordering，禁止嵌套锁无顺序。
+- 时间相关测试使用 injectable clock/Tokio paused time，禁止用 `thread::sleep`/任意延迟证明顺序。
 
----
+## 六、确定性与状态机
 
-## 五、枚举定义规范
+- phase、Gate status、delegation、compact、session 和 workspace mode 必须使用 exhaustive enum + 显式 transition function。
+- reducer 输入必须显式包含 state revision、ordered event cursor、policy digest 和 input fingerprint；不得读取 wall clock、random 或全局环境产生隐藏分支。
+- 参与 idempotency/decision/artifact digest 的值必须先 canonicalize：稳定 field order、`BTreeMap`、规范 path、UTC time 和明确 null/empty 语义。
+- 浮点数不得用于 revision、deadline、size、token budget、event sequence 或 deterministic digest。
+- 重放同 command/event 必须返回旧 receipt/no-op 或稳定冲突，不能产生第二次 side effect。
 
-- 枚举统一使用 `key`（String）+ `value`（String，中文描述）双字段结构
-- 类上加 `@Getter`，通过 Lombok 生成 getter
-- 不需要定义 `MAP` 和 `getEnum` 静态方法，保持简洁
-- 枚举值命名：全大写 + 下划线分隔
-- 示例：
-  ```java
-  @Getter
-  public enum PrincipalTypeEnum {
+## 七、序列化与兼容
 
-      USER("USER", "用户"),
-      CS_AGENT("CS_AGENT", "客服坐席"),
-      ;
+- wire/project schema 必须声明 `schemaVersion` 或 protocol version；新增可选字段需有向后兼容默认，删除/改义字段需要 major migration。
+- enum wire value 必须显式定义并测试；禁止依赖 Rust variant debug/display 自动形成协议。
+- 对未知必需 enum/operation 必须 fail closed；对 negotiated optional field 可忽略但必须保留 capability 语义。
+- 禁止把内部 error debug、SQLite row、absolute path、claim/token 或完整 stdout 直接 serialize 给 client。
+- frame、字符串、数组、map、嵌套深度和 ChildResult/ContextProjection 都必须在 decode 前后校验预算。
 
-      private final String key;
+## 八、日志与 tracing
 
-      private final String value;
+- 使用 `tracing` event/span，字段名固定且结构化；禁止拼接 JSON 字符串日志。
+- request span 至少包含 `request_id`, `workspace_id`, `session_id`, `turn_id`, `method`, `outcome`, `elapsed_ms`；mutation/host/compact 按需增加 work item、revision、event、delegation/action/generation。
+- error 日志保留 source chain，warn 表示可恢复偏差，info 只记录生命周期/commit 边界，debug/trace 不得输出敏感正文。
+- 循环或高频 Hook 内禁止逐项 info；使用聚合 metric、sampling 或 trace level。
+- 日志脱敏和审计字段以 `security.md` 为准。
 
-      PrincipalTypeEnum(String key, String value) {
-          this.key = key;
-          this.value = value;
-      }
-  }
-  ```
+## 九、进程、文件与 SQLite
 
----
+- 外部进程使用 program + args，不经过 shell；保留 exit code、有限 stdout/stderr digest、deadline 和 cancellation evidence。
+- 文件 mutation 只能经 store/artifact adapter；禁止业务模块直接 `std::fs::write` 覆盖项目权威文件。
+- SQL 必须是静态或受控 builder 生成并绑定参数，禁止字符串插值；数据库调用只经 repository adapter。
+- path 比较必须使用 canonical/normalized path 类型，不得用字符串 `starts_with` 作为安全 containment。
 
-## 六、Lombok 使用规范
+## 十、`unsafe` 与平台代码
 
-- `@Data`：用于 PO、DTO、Command、Query、DO 等数据对象
-- `@Slf4j`：所有需要打日志的类统一使用
-- `@RequiredArgsConstructor`：推荐用于 Service 类的依赖注入，替代 `@Autowired`（非强制）
-- `@Builder`：用于需要链式构建的对象
-- DO 上可以使用 `@Data`，但手动定义的业务方法不能以 `get` / `set` 开头，避免与 Lombok 生成的方法混淆
-- 禁止使用 MapStruct 做对象转换，统一使用 Converter 类显式转换，详见 `project-structure.md`
+- 非 platform integration crate 必须 `#![forbid(unsafe_code)]`。
+- platform adapter 只有在 safe API 无法满足 Named Pipe/DACL/atomic semantics 时可使用 `unsafe`；unsafe block 必须最小化并附 `// SAFETY:` 前置条件、所有权、生命周期和线程安全证明。
+- 新增或扩大 unsafe 必须有 target-platform test、Miri/等价可行检查和独立 review；未验证平台不得宣称 capability supported。
 
----
+## 十一、禁止事项
 
-## 七、其他约定
-
-- 魔法值（Magic Number / Magic String）必须定义为常量，禁止直接使用字面量
-- 禁止在循环中执行数据库操作（查询或写入），必须改为批量操作：先收集参数，再一次批量查询 / 批量插入
-
----
-
-## 八、ORM 与事务规约
-
-**ORM：**
-- POJO 类的布尔属性不加 `is_` 前缀，数据库字段必须加，在 resultMap 中做映射
-- 禁止用 HashMap / Hashtable 作为查询结果集输出
-- 更新记录时必须同时更新 `last_updated_date`
-- 不写大而全的更新接口，只更新有变动的字段
-
-**事务：**
-- 查询方法不允许开启事务
-- 增删改方法必须开启事务，统一在 AppService 层使用 Spring `@Transactional` 注解，不在 interfaces 层开启
-- 事务方法中禁止包含远程调用（Feign）、MQ 消息发送、Kafka 消息发送
-- catch 异常后需要回滚时，必须手动调用回滚
-- 区分本地事务和分布式事务，不混用
-
----
-
-## 九、Feign 调用规范
-
-- `@FeignClient` 直接继承 SPI 接口，服务名从 SPI 模块的 `ServiceProviderConstants` 常量取，禁止硬编码字符串
-  ```java
-  @FeignClient(ServiceProviderConstants.LIFE_IM_SERVICE)
-  public interface ImServiceClient extends ImSessionService {
-  }
-  ```
-- Feign Client 定义在调用方的 `infrastructure/feign/` 包下
-- BFF 层禁止在 AppService 中直接调用 Feign Client，必须通过 Facade 层封装
-  - Facade 负责调用 Feign Client、处理异常、解包 `Result<T>`
-  - 异常时返回 null / 空集合 / `Result.error`，不向上抛出异常
-  ```java
-  @Component
-  @Slf4j
-  public class ImServiceClientFacade {
-      @Autowired
-      private ImServiceClient imServiceClient;
-
-      public ImSessionDTO getSessionInfo(Long sessionId) {
-          try {
-              Result<ImSessionDTO> result = imServiceClient.getSessionInfo(sessionId);
-              if (!Result.isOk(result)) {
-                  log.warn("获取会话详情失败 sessionId:{} result:{}", sessionId, result);
-                  return null;
-              }
-              return result.getData();
-          } catch (Exception e) {
-              log.error("获取会话详情异常 sessionId:{}", sessionId, e);
-              return null;
-          }
-      }
-  }
-  ```
-
----
-
-## 十、并发规约
-
-- 禁止在应用中显式创建线程，线程资源必须通过线程池提供
-- 禁止使用 `Executors` 创建线程池，必须通过 `ThreadPoolExecutor` 显式指定参数
-  - `Executors.newFixedThreadPool` / `newSingleThreadExecutor`：队列长度为 `Integer.MAX_VALUE`，可能堆积大量请求导致 OOM
-  - `Executors.newCachedThreadPool` / `newScheduledThreadPool`：允许创建线程数为 `Integer.MAX_VALUE`，可能创建大量线程导致 OOM
-- 创建线程或线程池时必须指定有意义的线程名称，方便出错时回溯
-  ```java
-  public class TimerTaskThread extends Thread {
-      public TimerTaskThread() {
-          super.setName("TimerTaskThread");
-      }
-  }
-  ```
-
----
-
-## 十一、时间类型规范
-
-- 全工程统一使用 `java.util.Date` 表示时间，禁止使用 `LocalDateTime`
-- 包括：SPI（Request / DTO）、Domain（DO）、Infrastructure（PO）、Application 层
-- 原因：Feign + JSON 跨服务传输时 `Date` 兼容性最好，统一类型避免各层之间反复转换
-
----
-
-## 十二、JSON 序列化规范
-
-- JSON 序列化 / 反序列化统一使用 `com.casstime.commons.utils.JsonUtils`
-- 禁止在业务代码中自行创建 `ObjectMapper` 实例
-- `JsonUtils` 已内置 `ObjectMapper` 单例，覆盖 `toJson`、`toBean`、`toList`、`toMap` 等常用场景
-- 示例：
-  ```java
-  // ✅ 正例
-  String json = JsonUtils.toJson(extraAttribute);
-  CsTicketExtraAttribute attr = JsonUtils.toBean(json, CsTicketExtraAttribute.class);
-
-  // ❌ 反例
-  ObjectMapper om = new ObjectMapper();
-  String json = om.writeValueAsString(extraAttribute);
-  ```
+- 禁止复制 TransitionPolicy、Gate truth table、role grants 或 stable error mapping。
+- 禁止用字符串状态、magic number 或 magic path 代替 enum/constant/config。
+- 禁止为消除编译错误使用宽泛 `clone()`、`Arc<Mutex<_>>` 或 `Box<dyn Any>`；必须说明 ownership boundary。
+- 禁止在 production code 留 stub、always-pass Gate、空 adapter 或“暂时返回成功”。
+- 禁止把 migration Python oracle、Monitor 或 generated dist 当 Rust library 调用。

@@ -1,0 +1,17 @@
+[package]
+name = "ae-sdd-flow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ae-sdd-domain = { path = "../ae-sdd-domain" }
+ae-sdd-policy = { path = "../ae-sdd-policy" }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

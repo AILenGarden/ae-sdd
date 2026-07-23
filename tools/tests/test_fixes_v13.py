@@ -129,7 +129,7 @@ class TestMultiEditInterception:
         """init-hooks 写入的 settings.json matcher 包含 MultiEdit"""
         result = subprocess.run(
             ["python", "tools/bin/ae-sdd", "init-hooks", str(tmp_path), "--dry-run"],
-            capture_output=True, text=True, cwd=str(Path(__file__).parent.parent.parent)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(Path(__file__).parent.parent.parent)
         )
         assert "MultiEdit" in result.stdout, (
             "init-hooks dry-run 输出里没有 MultiEdit，matcher 配置有误"
@@ -282,7 +282,7 @@ class TestQuickChannelFilePersistence:
 
         result = subprocess.run(
             ["python", "tools/bin/ae-sdd", "gate-intercept", "--project", str(tmp_path)],
-            input=payload, text=True, capture_output=True,
+            input=payload, text=True, encoding="utf-8", errors="replace", capture_output=True,
             cwd=str(Path(__file__).parent.parent.parent)
         )
         parsed = json.loads(result.stdout)
@@ -315,7 +315,7 @@ class TestInstallCli:
         """install_cli.py --check 能正常运行"""
         result = subprocess.run(
             ["python", "scripts/install_cli.py", "--check"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(Path(__file__).parent.parent.parent)
         )
         # exit 0 = 已在 PATH，exit 1 = 不在 PATH，都是合法结果
@@ -331,7 +331,7 @@ class TestInstallCli:
              "import sys; sys.path.insert(0,'scripts'); "
              "from install_cli import _repo_root, _cli_target; "
              "cli = _cli_target(); print(cli.exists())"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(Path(__file__).parent.parent.parent)
         )
         assert "True" in result.stdout, f"CLI 文件不存在: {result.stderr}"

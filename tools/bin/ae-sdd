@@ -1246,6 +1246,14 @@ def cmd_state_write(args, parser):
             else:
                 state.set_scale(s, requested_scale, entry_node=requested_entry_node)
 
+        if getattr(args, "design_route", ""):
+            state.set_design_route(
+                s,
+                args.design_route,
+                reason=getattr(args, "route_reason", ""),
+                by="ae-sdd state write",
+            )
+
         # 🆕 v3.9.0 嵌套 state 分支：--sub-story 操作子状态 phase；--add-story 归入新 Story
         if getattr(args, "add_story", "") and state.is_nested_state(s):
             new_sid = args.add_story.strip()
@@ -1309,6 +1317,7 @@ def cmd_state_write(args, parser):
                 "task": args.task or "",
                 "scale": args.scale or "",
                 "entryNode": args.entry_node or "",
+                "designRoute": getattr(args, "design_route", "") or "",
             },
             mutate=apply_legacy_state,
         )
@@ -4168,6 +4177,11 @@ def cmd_classify(args, parser):
             "next_action": c.next_action,
             "needs_review": c.needs_review,
             "review_reasons": c.review_reasons,
+            "spec_strategy": c.spec_strategy,
+            "analysis_required": c.analysis_required,
+            "recommended_design": c.recommended_design,
+            "route_reason": c.route_reason,
+            "route_confidence": c.route_confidence,
         }, as_json=True)
     else:
         output.info(f"4 维判定结果：")
@@ -4184,6 +4198,18 @@ def cmd_classify(args, parser):
             output.warn(f"⚠ 低置信度告警：以下维度需人工复核")
             for r in c.review_reasons:
                 output.warn(f"  - {r}")
+        # Route/analysis/design decision summary.
+        spec = c.spec_strategy or {}
+        output.info(f"")
+        if spec.get("needs"):
+            output.ok(
+                f"需求分析：{spec.get('series')}（entry_spec={spec.get('entry_spec')}）"
+                f"— {spec.get('reason')}"
+            )
+        elif spec.get("reason"):
+            output.info(f"需求分析：跳过（{spec.get('reason')}）")
+        if c.recommended_design:
+            output.info(f"  建议设计路径: {c.recommended_design}（{c.route_reason}）")
         output.info(f"")
         output.ok(f"建议下一步: {c.next_action}")
     return 0
@@ -5653,6 +5679,9 @@ def main() -> int:
                                help="🆕 v3.5.15 任务规模（首次 state write 携带，决定走哪条子链）")
     p_state_write.add_argument("--entry-node", default=None,
                                help="🆕 v3.5.15 入口节点语义（BUG/CONFIG/PRD/RA/DR/STORY/TASK/PLAN）")
+    p_state_write.add_argument("--design-route", choices=["DR", "STORY", "CODING_PLAN"],
+                               default="", help="🆕 需求分析后的设计路径选择")
+    p_state_write.add_argument("--route-reason", default="", help="设计路径选择理由（写入 state history）")
     p_state_write.add_argument("--allow-empty-memory", action="store_true",
                                help="maintenance override: allow phase transition without mandatory memory")
     p_state_write.add_argument("--project-state", action="store_true",

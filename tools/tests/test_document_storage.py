@@ -588,9 +588,8 @@ class TestRaPrerequisites(unittest.TestCase):
     """G-RA-COMPLETE 章节锚校验（C4 修复：标题行正则匹配，非松散子串）。"""
 
     def _full_ra_content(self) -> str:
-        """构造含全部 12 必填章节标题 + RAGeneratePlan + 5问 + RA-G PASS 的合法 RA 文档。"""
+        """构造含全部 12 必填章节标题 + 5问的合法 RA 文档。"""
         return (
-            "RAGeneratePlan\n\n"
             "5问自检 通过率100%\n\n"
             "## 0.5 RequirementAnalysisModel 决策记录\n\n"
             "## 0.6 需求风险预判\n\n"
@@ -627,7 +626,7 @@ class TestRaPrerequisites(unittest.TestCase):
             document_storage.check_ra_prerequisites(content)
 
     def test_template_itself_passes(self):
-        """ra-template.md 自身（补齐 RAGeneratePlan/5问/PASS 后）应通过门禁。"""
+        """ra-template.md 自身应通过结构门禁。"""
         import sys as _sys
         from pathlib import Path as _Path
         tmpl = (_Path(__file__).resolve().parent.parent.parent
@@ -635,8 +634,6 @@ class TestRaPrerequisites(unittest.TestCase):
         if not tmpl.is_file():
             self.skipTest("ra-template.md not found")
         text = tmpl.read_text(encoding="utf-8")
-        text += "\nRAGeneratePlan\n5问自检\n" + "\n".join(
-            f"RA-G0{i}: PASS" for i in range(1, 9))
         document_storage.check_ra_prerequisites(text)  # 不抛即通过
 
 

@@ -1,0 +1,1062 @@
+{
+  "schemaVersion": "1",
+  "routingManifest": "cli-routing.v1.json",
+  "sources": {
+    "cliParser": "tools/bin/ae-sdd",
+    "operationRegistry": "tools/lib/operations.py",
+    "gateRegistry": "tools/lib/gates.py:GATE_REGISTRY",
+    "scannerRegistry": "scripts/*_scan.py"
+  },
+  "commands": [
+    {
+      "id": "assets check",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "assets generate",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "assets outline",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "assets query",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "assets read",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "assets section",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "assets stats",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "automation disable",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "automation enable",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "automation status",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "baseline create",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "baseline diff",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "baseline inspect",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "bump",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "classify",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "context-pressure",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "db audit",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "db explain",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "db profiles",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "db query",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "distributor disable",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "distributor enable",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "distributor list",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "distributor register",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "distributor scan",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "distributor unregister",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "doc finalize",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "doc resolve",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "doc save",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "enter",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "evidence finalize",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "evidence lookup",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "evidence record",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "flow-violation-scan",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "gate coding-required",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "gate doc-storage",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "gate ra-required",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "gate-intercept",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "gates check",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "git blame",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "git diff",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "git impact",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "git log",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "git status",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "health",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "init",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "init-hooks",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "iteration-check",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease acquire",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease break",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease release",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease renew",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease status",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory clean",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory clean-all",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory common",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory create",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory read",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory search",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory summarize",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "memory update",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ops describe",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ops execute",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ops next",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "perf clear",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "perf doctor",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "perf report",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "plugin init",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "plugin list",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "plugin trace",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "plugin validate",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "preflight collect",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "prompt-inject",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ra-authenticity-scan",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ra-depth-scan",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ra-gate",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ra-implementation-scan",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review abort",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review collect",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review retry",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review retry-role",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review start",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review status",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review verify-exit",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review-loop collect",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review-loop start",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review-loop status",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review-loop verify-exit",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "runtime compact",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "runtime verify",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "scripts-dir",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state bind-story-doc",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state confirm",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state lock",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state new",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state next-step",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state prd-archive",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state prd-check-complete",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state prd-complete",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state prd-init",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state read",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state register-review-consensus",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state relocate",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state unlock",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state write",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "stop-check",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "subprocess collect",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "subprocess list",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "subprocess spawn",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "subprocess status",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "update-check",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "verify plan",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    },
+    {
+      "id": "version",
+      "source": "tools/bin/ae-sdd",
+      "owner": "ae-sdd-cli",
+      "disposition": "preserve"
+    }
+  ],
+  "operations": [
+    {
+      "id": "document.resolve",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "document.save",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "evidence.finalize",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "evidence.record",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "execution.plan.approve",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "execution.plan.set",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "gate.check",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease.acquire",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease.break",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease.release",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease.renew",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "lease.status",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "review.record",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state.next_actions",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "state.transition",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "verification.plan",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "workitem.complete",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "workitem.get",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    }
+  ],
+  "gates": [
+    {
+      "id": "G-00",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-01",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-02",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-03",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-04",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-05",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-06",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-07",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-08",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-HTTP-1",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-09",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-10",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-11",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-12",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-13",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-14",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-CODEPLAN-SRC",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-DOC-STORAGE",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-PATH",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-RA-1",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-RA-2",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-RA-3",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-RA-4",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-RA-FLOW-VIOLATION",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-RA-5",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-RA-6",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-CODE-1",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-DOC-CONSISTENCY",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-REVIEW-LOOP",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-09B",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-REVIEW-DEPTH",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-AUTO-CONSENSUS",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-DR-CTX",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-STORY-CTX",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-TESTCASE-CTX",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    },
+    {
+      "id": "G-TASK-CTX",
+      "source": "tools/lib/gates.py:GATE_REGISTRY",
+      "owner": "ae-sdd-gates",
+      "disposition": "preserve"
+    }
+  ],
+  "scanners": [
+    {
+      "id": "coding-authenticity-scan",
+      "source": "scripts/coding_authenticity_scan.py",
+      "owner": "ae-sdd-scanners",
+      "disposition": "preserve"
+    },
+    {
+      "id": "flow-violation-scan",
+      "source": "scripts/flow_violation_scan.py",
+      "owner": "ae-sdd-scanners",
+      "disposition": "preserve"
+    },
+    {
+      "id": "plugin-content-scan",
+      "source": "scripts/plugin_content_scan.py",
+      "owner": "ae-sdd-scanners",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ra-authenticity-scan",
+      "source": "scripts/ra_authenticity_scan.py",
+      "owner": "ae-sdd-scanners",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ra-depth-scan",
+      "source": "scripts/ra_depth_scan.py",
+      "owner": "ae-sdd-scanners",
+      "disposition": "preserve"
+    },
+    {
+      "id": "ra-implementation-scan",
+      "source": "scripts/ra_implementation_scan.py",
+      "owner": "ae-sdd-scanners",
+      "disposition": "preserve"
+    },
+    {
+      "id": "test-authenticity-scan",
+      "source": "scripts/test_authenticity_scan.py",
+      "owner": "ae-sdd-scanners",
+      "disposition": "preserve"
+    }
+  ]
+}

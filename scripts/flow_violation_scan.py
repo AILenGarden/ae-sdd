@@ -5,7 +5,7 @@ flow_violation_scan.py — 流程违规审计工具
 🆕 2026-06-27（来自 `2026-06-27-RA多轮挖掘流程未执行-自我修订建议书.md` §3.4）：
 扫描 RA 文档是否符合 `requirement-analysis-skill.md` 完整 7 步流程。
 解决"AI Agent 跳过 RA skill 完整流程直接出 RA 文档"的系统性漏洞（实测案例：
-2026-06-27 AI Agent 直接读 PDF 出 36KB proposal，未走 RAGeneratePlan / 8 维度 / 5 问
+2026-06-27 AI Agent 直接读 PDF 出 36KB proposal，未走完整 8 维度 / 5 问
 自检 / 缺口管理 / 规模裁定 / RA-G01~G16 闸判定）。
 
 8 条规则（与 `tools/lib/document_storage.py:check_ra_prerequisites` 互补）：
@@ -13,7 +13,7 @@ flow_violation_scan.py — 流程违规审计工具
   R2: RA 文档必须包含 8 维度挖掘章节（§2~§9）
   R3: RA 文档必须包含 §10 缺口管理
   R4: RA 文档必须包含 §11 规模裁定
-  R5: RA 文档必须含 RAGeneratePlan 字样（Plan-first 硬前置）
+  R5: RA 文档必须记录分析后的路由/设计路径决策
   R6: RA 文档必须显式列出 RA-G01~RA-G16 闸的判定结果
   R7: RA 文档必须包含 5 问自检记录（通过率 100%）
   R8: 缺口管理中 🔴/🟠 缺口必须有解决方案
@@ -47,12 +47,30 @@ from ra_scan_scope import (
 # 每条 = (rule_id, description, check_function_or_pattern, severity)
 # severity: BLOCKER = 阻断（违反即 🔴）/ WARN = 提示
 
-_R1_PATTERN = "§0.5 RequirementAnalysisModel"
-_R2_PATTERNS = ["§2 角色", "§3 场景", "§4 流程", "§5 数据",
-                "§6 规则", "§7 设计方向", "§8 AC", "§9 假设"]
-_R3_PATTERN = "§10 缺口"
-_R4_PATTERN = "§11 规模"
-_R5_PATTERN = re.compile(r"RAGeneratePlan", re.IGNORECASE)
+def _heading_pattern(number: str, title: str) -> re.Pattern[str]:
+    """Accept canonical Markdown headings and the historical ``§`` notation."""
+    return re.compile(
+        rf"(?mi)^\s*(?:#{{1,6}}\s*)?(?:§\s*)?{re.escape(number)}(?:\.)?\s+[^\n]*{title}",
+    )
+
+
+_R1_PATTERN = _heading_pattern("0.5", r"RequirementAnalysisModel")
+_R2_PATTERNS = [
+    ("2 角色", _heading_pattern("2", r"角色")),
+    ("3 场景", _heading_pattern("3", r"场景")),
+    ("4 流程", _heading_pattern("4", r"流程")),
+    ("5 数据", _heading_pattern("5", r"数据")),
+    ("6 规则", _heading_pattern("6", r"规则")),
+    ("7 设计方向", _heading_pattern("7", r"设计方向")),
+    ("8 AC", _heading_pattern("8", r"(?:AC|验收)")),
+    ("9 假设", _heading_pattern("9", r"假设")),
+]
+_R3_PATTERN = _heading_pattern("10", r"缺口")
+_R4_PATTERN = _heading_pattern("11", r"规模")
+_R5_PATTERN = re.compile(
+    r"路由决策|设计路径|候选下游|recommended(?:Next|Design)|recommended_design",
+    re.IGNORECASE,
+)
 _R6_PATTERN = re.compile(r"RA-G\d+", re.IGNORECASE)
 _R7_PATTERN = re.compile(r"5\s*问自检|5-question|5question", re.IGNORECASE)
 _R8_RE_PATTERNS = [
@@ -84,33 +102,31 @@ class ScanStats:
 def _check_doc(content: str, rel_path: str) -> list[ViolationFinding]:
     """对单个 RA 文档跑 8 条规则，返回违规清单。"""
     findings: list[ViolationFinding] = []
-    lines = content.splitlines()
-
-    # R1：必须含 §0.5 RequirementAnalysisModel
-    if _R1_PATTERN not in content:
+    # R1：必须含 0.5 RequirementAnalysisModel
+    if not _R1_PATTERN.search(content):
         findings.append(ViolationFinding("R1", "BLOCKER", rel_path, 0,
-            f"缺 {_R1_PATTERN}（RAModel 12 维决策记录，见 requirement-analysis-skill §第 0.5 步）"))
+            "缺 0.5 RequirementAnalysisModel（RAModel 12 维决策记录）"))
 
     # R2：必须含 8 维度章节
-    missing_dims = [p for p in _R2_PATTERNS if p not in content]
+    missing_dims = [label for label, pattern in _R2_PATTERNS if not pattern.search(content)]
     if missing_dims:
         findings.append(ViolationFinding("R2", "BLOCKER", rel_path, 0,
             f"缺 8 维度章节：{missing_dims}（见 requirement-analysis-skill §第一步）"))
 
     # R3：必须含 §10 缺口管理
-    if _R3_PATTERN not in content:
+    if not _R3_PATTERN.search(content):
         findings.append(ViolationFinding("R3", "BLOCKER", rel_path, 0,
-            f"缺 {_R3_PATTERN}（缺口管理，见 requirement-analysis-skill §第二步）"))
+            "缺 10 缺口管理（见 requirement-analysis-skill §第二步）"))
 
     # R4：必须含 §11 规模裁定
-    if _R4_PATTERN not in content:
+    if not _R4_PATTERN.search(content):
         findings.append(ViolationFinding("R4", "BLOCKER", rel_path, 0,
-            f"缺 {_R4_PATTERN}（规模裁定 + 路由决策，见 requirement-analysis-skill §第五步）"))
+            "缺 11 规模裁定（规模裁定 + 路由决策）"))
 
-    # R5：必须含 RAGeneratePlan 字样
+    # R5：必须记录分析后的路由/设计路径决策。RAGeneratePlan 已退役，不能再作为前置。
     if not _R5_PATTERN.search(content):
         findings.append(ViolationFinding("R5", "BLOCKER", rel_path, 0,
-            "缺 RAGeneratePlan 字样（Plan-first 硬前置，见 requirement-analysis-skill §Plan-first）"))
+            "缺分析后的路由/设计路径决策（DR / Story / CodingPlan）"))
 
     # R6：必须含 RA-G01~RA-G16 闸判定结果（至少 4 个）
     gate_marks = _R6_PATTERN.findall(content)
@@ -124,7 +140,7 @@ def _check_doc(content: str, rel_path: str) -> list[ViolationFinding]:
             "缺 5 问自检记录（见 requirement-analysis-skill §第一步 bis，通过率 100%）"))
 
     # R8：🔴/🟠 缺口必须有解决方案（INFO 级，不阻断 — 仅在 R3 已通过的文档检查）
-    if _R3_PATTERN in content:
+    if _R3_PATTERN.search(content):
         # 提取缺口章节
         gap_section = _extract_section(content, _R3_PATTERN)
         if gap_section:
@@ -139,12 +155,12 @@ def _check_doc(content: str, rel_path: str) -> list[ViolationFinding]:
     return findings
 
 
-def _extract_section(content: str, header: str) -> str:
+def _extract_section(content: str, header: re.Pattern[str]) -> str:
     """从 content 提取 header 开头到下一个同级或更高级 header 之间的内容。"""
     lines = content.splitlines()
     start_idx = -1
     for i, line in enumerate(lines):
-        if header in line:
+        if header.search(line):
             start_idx = i
             break
     if start_idx < 0:

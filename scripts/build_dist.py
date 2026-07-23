@@ -346,7 +346,17 @@ def main() -> int:
     # ── 整树复制（从 tar 流）────────────────────────────────────────────────
     step("构建实例化分发包")
     if dst.exists():
-        shutil.rmtree(dst)
+        try:
+            shutil.rmtree(dst)
+        except PermissionError:
+            # Windows may keep an empty destination directory open briefly (for
+            # example while a runtime consumer releases its directory handle).
+            # It is safe to continue only when the failed removal left no stale
+            # entries; a non-empty locked tree must still fail closed.
+            remaining = list(dst.iterdir()) if dst.is_dir() else []
+            if remaining:
+                raise
+            warn(f"目标目录仍被占用但为空，复用目录继续构建: {dst}")
     _extract_tar_to(tar_bytes, dst, EXCLUDE_DIRS, EXCLUDE_FILES)
     ok("整树复制完成（git archive → 字节级一致）")
 

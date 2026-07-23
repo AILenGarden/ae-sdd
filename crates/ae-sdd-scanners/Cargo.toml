@@ -1,0 +1,17 @@
+[package]
+name = "ae-sdd-scanners"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ae-sdd-domain = { path = "../ae-sdd-domain" }
+ae-sdd-inventory = { path = "../ae-sdd-inventory" }
+quick-xml = "0.41.0"
+regex = "1.13.1"
+thiserror.workspace = true
+
+[lints]
+workspace = true

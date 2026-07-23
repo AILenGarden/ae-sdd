@@ -1,10 +1,65 @@
 # ae-sdd 实现架构说明书
 
-> v3.12.1 · 面向 ae-sdd 维护者。本文档描述代码实现结构、模块边界和设计-实现对齐规则；能力语义仍以 [`ae-sdd-design.md`](ae-sdd-design.md) 为入口。
+> v3.14.0 · 面向 ae-sdd 维护者。本文档描述代码实现结构、模块边界和设计-实现对齐规则；能力语义仍以 [`ae-sdd-design.md`](ae-sdd-design.md) 为入口。
 
 ## 过程状态与文档边界
 
-`document_storage` 对 retired intent 保留 resolve/read 兼容，但 save/finalize 返回 E012；新写入只允许核心文档和显式可选文档。`state.json` 持有 `executionPlan` 与 `review`，evidence manifest 持有测试/交付证据。G-07/G-08/G-14/G-CODEPLAN-SRC 优先读取 executionPlan；G-09 对 HTTP verification 额外校验同 buildId 的 local/test-env evidence；G-10/G-11/G-12 优先读取 evidence/review，旧 Markdown 仅作 legacy fallback。文档索引写入 `ae-sdd-doc/index.json`，不更新历史 `STORING.md`。
+`document_storage` 对 retired intent 保留 resolve/read 兼容，但 save/finalize 返回 E012；新写入只允许核心文档和显式可选文档。`state.json` 除 `executionPlan` 与 `review` 外，持有 `routeDecision` 与 `requirementSpec`，分别记录路由事实和需求说明书引用。新任务阶段为 `route-selected -> requirement-analyzed`，之后由 `routeDecision.selectedDesign` 选择 DR/Story/CodingPlan；旧 phase 仍兼容读取。evidence manifest 持有测试/交付证据。文档索引写入 `ae-sdd-doc/index.json`，不更新历史 `STORING.md`。
+
+## 当前 Rust Runtime 实现基线
+
+本节是当前实现权威；后续 Python `tools/`/`scripts/` 内容仅用于迁移盘点与 golden oracle，不进入 native release，也不构成 daemon 不可用时的 fallback。
+
+### 进程与边界
+
+| 进程/入口 | 职责 | 禁止 |
+| --- | --- | --- |
+| `ae-sddd` | 每用户单例 daemon；IPC、actors、FlowRuntime、scheduler、store、supervisor | 读取宿主 prompt 作为可信身份；将 endpoint secret 写日志/SQLite |
+| `ae-sdd` | 薄 CLI/Hook/admin/host-adapter client；manifest + handshake + framing + host 输出转换 | 本地执行 Gate/state mutation；daemon 失败时调用脚本 |
+| `ae-sdd-build` | native package、compatibility audit、release scan、Hook benchmark、service descriptor generation | 把 migration oracle 打入 release |
+
+### Crate 分层
+
+```text
+domain <- protocol <- policy/flow/delegation/context/host
+   ^             ^                ^
+   |             |                |
+store/artifacts/inventory/gates/scanners/operations
+                 ^
+                 |
+runtime (ports + actors + supervisor)
+                 ^
+                 |
+integrations/client/build -> ae-sddd / ae-sdd / ae-sdd-build
+```
+
+`ae-sdd-runtime` 只依赖内向 ports，不直接持有平台 adapter。`ae-sdd-integrations` 实现 Named Pipe/UDS、filesystem、SQLite、native service manager、Git/toolchain 与 Host process adapters。
+
+### 请求路径
+
+1. client 原子读取受保护 endpoint manifest，以 token、expected boot/policy 和 protocol range 完成 `runtime.handshake`。
+2. Hook/session 请求绑定 workspace、work-item、agent/session、turn 与幂等 identity；业务 request 进入有界 actor mailbox。
+3. `FlowRuntime`/operation registry 验证 role、lineage、schema、confirmation、lease/revision/fencing/idempotency；轻 policy 进程内执行，重 Gate 进入有界 scheduler。
+4. Gate 返回后重新核对 state/policy/inventory/input freshness。non-PASS 保持原类型且阻断。
+5. mutation 先写 project state directory 下的 `mutation-journal/v1` PREPARED entry，再 staged write/atomic replace/fsync，最后 COMMITTED receipt/event；SQLite 仅保存可重建 index/cursor。
+6. `FlowSupervisor` 从跨 restart 全局 `eventStoreId + eventSeq` 重放 typed bounded event，持久化 checkpoint/decision 并预计算 role-aware context delta。
+
+### Hook 与宿主合同
+
+```text
+ae-sdd hook --method hook.user_prompt --request-json -
+ae-sdd hook --method hook.pre_tool --request-json -
+ae-sdd hook --method hook.post_tool --request-json -
+ae-sdd hook --method hook.stop --request-json -
+```
+
+stdin wrapper 为 `{params, engaged, offlineCapability?, nowUnixMs}`。engaged transport failure 仍按宿主协议输出 deny/block，不运行本地 Gate。SessionStart 映射 `session.open`；SubagentStart 必须先 `delegation.accept` 再 `session.open`；SubagentStop 映射 `delegation.report/session.close`；PreCompact 映射 `compact.request`；PostCompact 映射 `context.project`，原生 ACK 独立走 `host.action_ack`。宿主不支持事件时返回 unsupported，不伪造成功。
+
+### Service 与 cutover
+
+跨平台生成合同见 `source/skill-fallbacks/runtime/service-lifecycle-contract.md`；shadow/canary/rollback 与逐文件 legacy 删除门见 `source/skill-fallbacks/runtime/cutover-contract.md` 和 `legacy-runtime-cutover.v1.json`。Windows 使用当前用户 Task Scheduler 定义，macOS 使用 LaunchAgent，Linux 使用 systemd user unit。三者必须通过 actual CI 的 install/start/drain/upgrade/stop/uninstall、ACL 与恢复验证，单机模拟不算跨平台 PASS。
+
+Monitor (`apps/ae-sdd-monitor/**`) 完整排除。
 
 ## 1. 文档边界
 

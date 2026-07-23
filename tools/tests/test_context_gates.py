@@ -112,13 +112,13 @@ class TestGDrCtx(unittest.TestCase):
         self.assertFalse(r.pass_)
         self.assertIn("RA", r.message)
 
-    def test_missing_prd_blocks(self):
-        """缺 PRD → block。"""
+    def test_missing_prd_is_not_required_after_ra(self):
+        """RA 是 DR 上游事实源，缺少 PRD 不再阻断。"""
         tmp = _full_context_project(phase="dr-generated", scale="大")
         (tmp / "PRD-001.md").unlink()
         r = gates.check_g_dr_ctx(tmp, _make_state("dr-generated", "大"), "")
-        self.assertFalse(r.pass_)
-        self.assertIn("PRD", r.message)
+        self.assertTrue(r.pass_)
+        self.assertNotIn("PRD", r.message)
 
     def test_small_scale_exempt(self):
         """小链豁免 G-DR-CTX（小链跳过 DR）。"""

@@ -64,6 +64,8 @@ from lib import memory_gate, paths, state as state_mod, work_item_context  # noq
 # ─── Phase → 允许工具表 ─────────────────────────────────────────────────────
 PHASE_PERMIT: dict[str, frozenset[str]] = {
     "initialized":     frozenset({"Write", "Edit", "MultiEdit"}),
+    "route-selected":  frozenset({"Write", "Edit", "MultiEdit"}),
+    "requirement-analyzed": frozenset({"Write", "Edit", "MultiEdit"}),
     "ra-generated":    frozenset({"Write", "Edit", "MultiEdit"}),  # 🆕 v3.4.0 RA 阶段
     "dr-generated":    frozenset({"Write", "Edit", "MultiEdit"}),
     "story-generated": frozenset({"Write", "Edit", "MultiEdit"}),
@@ -167,9 +169,9 @@ _PRODUCT_PATTERNS: tuple[tuple[re.Pattern, str], ...] = tuple(
 
 # 产物类型 → 允许写入的 phase（关卡2校验依据）
 _PRODUCT_PHASE_MAP: dict[str, frozenset[str]] = {
-    "DR": frozenset({"dr-generated"}),
-    "RA": frozenset({"ra-generated", "dr-generated"}),
-    "Story": frozenset({"story-generated", "story-reviewed"}),
+    "DR": frozenset({"dr-generated", "requirement-analyzed"}),
+    "RA": frozenset({"ra-generated", "requirement-analyzed", "dr-generated"}),
+    "Story": frozenset({"story-generated", "story-reviewed", "requirement-analyzed"}),
     "TestCase": frozenset({"testcase-generated", "testcase-reviewed"}),  # 🆕 v3.7.0 独立系列
     "Task": frozenset({"task-generated", "task-reviewed"}),
     "CodingPlan": frozenset({"task-reviewed", "coding-process", "coding"}),  # 🆕 v3.5.16 coding-process 产出 CodePlan
@@ -777,13 +779,13 @@ def _check_state_write(
     if not target_phase:
         return True, ""
 
-    from lib.state import PHASE_FLOWS, _resolve_scale
+    from lib.state import _resolve_scale, phase_chain_for_state
     # 🆕 v3.5.15：按 state.scale 选子链判定跨步跳跃。
     #   微链 initialized→coding 是合法单步（idx 0→1），不再被「跨步跳跃」误拦。
     #   旧 state 无 scale → _resolve_scale 反推（默认大链，最保守）。
     scale_state = dict(state_data or {"phase": current_phase})
     scale = _resolve_scale(scale_state)
-    chain = PHASE_FLOWS[scale]
+    chain = phase_chain_for_state(scale_state)
     try:
         current_idx = chain.index(current_phase)
         target_idx = chain.index(target_phase)
@@ -838,7 +840,9 @@ def _check_state_write(
     #   旧 state 无 scale -> _resolve_scale 已在上方跨步判定时回写，此处读同一 scale。
     scale_for_gates = scale_state.get("scale") or _resolve_scale(scale_state)
     PHASE_ENTRY_GATES: dict[str, dict[str, list[str]]] = {
-        "大": {  # RA 入口：RA-DR-Story + Coding/Testing
+        "大": {  # route -> requirement analysis -> DR/Story + Coding/Testing
+            "route-selected":     ["G-00"],
+            "requirement-analyzed": ["G-00", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION"],
             "ra-generated":    ["G-00", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION"],
             "dr-generated":    ["G-00", "G-01", "G-DR-CTX"],
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
@@ -848,7 +852,9 @@ def _check_state_write(
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "中": {  # Story 入口：Story + Coding/Testing
+        "中": {  # route -> requirement analysis -> Story + Coding/Testing
+            "route-selected":     ["G-00"],
+            "requirement-analyzed": ["G-00", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION"],
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX", "G-REVIEW-DEPTH"],
             "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
             "coding":          ["G-00", "G-07", "G-08", "G-HTTP-1"],
@@ -856,7 +862,9 @@ def _check_state_write(
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "小": {  # Story-lite 入口：直接生成 compact executionPlan
+        "小": {  # route -> requirement analysis -> compact executionPlan
+            "route-selected":     ["G-00"],
+            "requirement-analyzed": ["G-00", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION"],
             "story-generated": ["G-00", "G-02", "G-03", "G-STORY-CTX"],
             "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
             "coding":          ["G-00", "G-07", "G-08", "G-HTTP-1"],
@@ -864,7 +872,9 @@ def _check_state_write(
             "code-reviewed":   ["G-00", "G-09", "G-CODE-1", "G-10", "G-11", "G-REVIEW-DEPTH"],
             "completed":       ["G-00", "G-12", "G-13"],
         },
-        "微": {  # Story-lite：initialized->story-generated->coding-process
+        "微": {  # route -> requirement analysis -> compact executionPlan
+            "route-selected":     ["G-00"],
+            "requirement-analyzed": ["G-00", "G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6", "G-RA-FLOW-VIOLATION"],
             "story-generated": ["G-00", "G-02", "G-STORY-CTX"],
             "coding-process":  ["G-00", "G-02", "G-03", "G-04", "G-STORY-CTX"],
             "coding":          ["G-00", "G-07", "G-08", "G-HTTP-1"],
@@ -875,6 +885,11 @@ def _check_state_write(
     }
     scale_gates = PHASE_ENTRY_GATES.get(scale_for_gates, {})
     required_gates = scale_gates.get(target_phase, [])
+    selected_design = (scale_state.get("routeDecision") or {}).get("selectedDesign")
+    if target_phase == "coding-process" and selected_design == "CODING_PLAN":
+        required_gates = ["G-00"]
+    elif target_phase == "coding" and selected_design == "CODING_PLAN":
+        required_gates = ["G-00", "G-07", "G-08", "G-HTTP-1"]
     if not required_gates:
         return True, ""
 

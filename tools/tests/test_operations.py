@@ -99,7 +99,7 @@ def transition_request(project: Path, lease: dict, **overrides: object) -> dict:
         "expectedRevision": 0,
         "idempotencyKey": "transition-1",
         "dryRun": False,
-        "parameters": {"targetPhase": "coding-process"},
+        "parameters": {"targetPhase": "route-selected"},
     }
     request.update(overrides)
     return request
@@ -197,7 +197,7 @@ def test_next_actions_exposes_legal_transition_for_active_owner(project: Path) -
     assert result["leaseStatus"]["status"] == "active"
     assert any(
         action["operation"] == "state.transition"
-        and action["parameters"]["targetPhase"] == "coding-process"
+        and action["parameters"]["targetPhase"] == "route-selected"
         for action in result["nextActions"]
     )
 
@@ -254,7 +254,7 @@ def test_dry_run_validates_and_projects_without_writing_any_file(project: Path) 
     assert response["dryRun"] is True
     assert response["revisionBefore"] == 0
     assert response["revisionAfter"] == 1
-    assert response["projectedState"]["phase"] == "coding-process"
+    assert response["projectedState"]["phase"] == "route-selected"
     assert state_path.read_bytes() == before_state
     assert lease_path.read_bytes() == before_lease
     assert not (state_path.parent / "state.operations.json").exists()
@@ -277,7 +277,7 @@ def test_idempotent_retry_does_not_advance_state_twice(project: Path) -> None:
     assert retried["revisionAfter"] == 1
     assert retried["replayed"] is True
     assert state["revision"] == 1
-    assert state["phase"] == "coding-process"
+    assert state["phase"] == "route-selected"
 
 
 def test_same_idempotency_key_with_different_payload_is_rejected(project: Path) -> None:
@@ -288,7 +288,7 @@ def test_same_idempotency_key_with_different_payload_is_rejected(project: Path) 
     changed = transition_request(
         project,
         lease,
-        parameters={"targetPhase": "coding"},
+        parameters={"targetPhase": "requirement-analyzed"},
     )
 
     with pytest.raises(OperationError) as exc:

@@ -121,7 +121,7 @@ class TestDocSave(unittest.TestCase):
         )
 
         self.assertEqual(code, 1, msg=f"stderr={err}\nstdout={out}")
-        self.assertIn("G-RA-PLAN", out + err)
+        self.assertIn("G-RA-COMPLETE", out + err)
         self.assertFalse((tmp / "ae-sdd-doc" / "RA" / "RA-BAD-001.md").exists())
         self.assertTrue(draft.is_file(), "failed doc save must retain its source draft")
 

@@ -388,6 +388,18 @@ class TestG03(unittest.TestCase):
 
 
 # ─── G-04 / G-05 / G-06 / G-07 ──────────────────────────────────────────────
+
+def test_g05_g06_skip_retired_task_artifacts_for_compact_policy(tmp_path):
+    state = {"processPolicy": "compact", "phase": "story-generated"}
+
+    g05 = gates.check_g05(tmp_path, state, "STORY-001")
+    g06 = gates.check_g06(tmp_path, state, "STORY-001")
+
+    assert g05.pass_ is True
+    assert g06.pass_ is True
+    assert g05.details["skipped"] is True
+    assert g06.details["skipped"] is True
+
 class TestG04(unittest.TestCase):
 
     def test_with_testcase_passes(self):

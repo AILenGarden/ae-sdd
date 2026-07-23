@@ -1,20 +1,20 @@
 ---
 name: requirement-analysis
-description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话需求生成需求分析（RA）文档：RequirementAnalysisModel 12 维决策 + 需求风险预判 + 8 维度并行挖掘 + 实现视角七要素（数据源/数据流/定义/复用/成本反驳/开发疑问/DR交接）+ 5 问自检 + 缺口管理 + 5 维规模裁定 + 16 道 RA 门禁 + 路由决策。当用户说"分析需求"/"从 PRD 开始"/"需求拆解"/"需求分析"时触发。
+description: 需求分析 SKILL — ae-sdd 路由后的分析阶段。从 PRD/Issue/对话需求生成需求分析（RA）文档：RequirementAnalysisModel 12 维决策 + 需求风险预判 + 8 维度并行挖掘 + 实现视角七要素（数据源/数据流/定义/复用/成本反驳/开发疑问/DR交接）+ 5 问自检 + 缺口管理 + 5 维规模裁定 + 16 道 RA 门禁 + 路由决策。当用户说"分析需求"/"从 PRD 开始"/"需求拆解"/"需求分析"时触发。
 ---
 
-# Requirement Analysis — 需求分析 SKILL（ae-sdd Phase 1 起点）
+# Requirement Analysis — 需求分析 SKILL（路由后的分析阶段）
 
 > **v3.12：** RA 是核心文档，直接生成/更新当前 RA；不生成 RA GeneratePlan、Impact、ReverseIssues、ReviewReport 或 changelog 旁车。分析过程留在内存，最终只写当前有效结论。
 
-> **🔴 核心定位（2026-06-17 重大重构）：** 本 SKILL 是 ae-sdd 体系的 **Phase 1 起点**（"入口"），与 `story-generate-skill` / `dr-generate-skill` / `dr-review-skill` 平级但**位置更靠前**——它产出"RA 文档 + 规模裁定 + 路由决策"，再触发下游对应 SKILL。
+> **🔴 核心定位（2026-06-17 重大重构）：** 本 SKILL 在任务路由之后执行，产出本次任务的 RA 需求说明书、设计深度建议与缺口；路由器负责入口分类，用户确认后再进入 DR、Story 或 `state.executionPlan`。
 >
 > **与现有 SKILL 的分工：**
-> - `SKILL.md` = 流程编排（Phase 1 起点在哪）
+> - `SKILL.md` = 流程编排（先路由，再分析，再选择设计路径）
 > - **`requirement-analysis-skill.md`（本文件）** = 需求分析的环节内具体规则（怎么分析）
-> - `dr-generate-skill.md` = 设计需求生成（Phase 1 ② 节点，规模 = 大 时触发）
-> - `story-generate-skill.md` = Story 生成（规模 = 中 时触发）
-> - `task-generate-skill.md` = Task 生成（规模 = 小 时触发）
+> - `dr-generate-skill.md` = 架构/跨模块设计（分析后按需触发）
+> - `story-generate-skill.md` = 行为契约设计（分析后按需触发）
+> - `state.executionPlan` = 可直接实现任务的紧凑 CodingPlan
 > - `coding-skill.md` = 编码实施（规模 = 微 / 特殊-BUG / 特殊-非代码 时触发）
 > - `dr-review-skill.md` = DR 评审（dr-generate 之后）
 > - [`templates/design/ra-template.md`](../../templates/design/ra-template.md) = RA 空白模板
@@ -52,21 +52,20 @@ description: 需求分析 SKILL — ae-sdd Phase 1 起点。从 PRD/Issue/对话
      --doc-id {DOC-ID} \
      --content-file .ae-sdd/tmp/{doc-id}-draft.md \
    ```
-   代码自动完成：resolve 推路径 → 写文件 → 版本号（事件类 r 自增）→ ChangeLog → STORING → .gitignore → 删草稿
+   代码自动完成：resolve 推路径 → 写核心文档 → 更新索引与 .gitignore → 删草稿
 3. **确认输出**：命令输出最终路径，记录到本 SKILL 的产出清单
 
 > **设计类文档（RA/PRD/ISSUE/RA_REVERSE_ISSUES）**不带版本号，原地更新，`--version` 不传。
-> **事件类报告（RA_GENERATE_PLAN/RA_IMPACT）**带 r{N}，`--version "v1-r1"`（重入 r 递增）。
+> RA 只写当前有效核心文档；GeneratePlan、Impact、ReverseIssues 等过程 intent 仅保留历史读取兼容。
 
 ### 本 SKILL 产出文档 × intent 对照
 
 | 输出文档 | intent | 命令示例 | 版本策略 |
 |---------|--------|---------|---------|
 | RA 主文档 | `RA` | `ae-sdd doc save --intent RA --doc-id {raId} ...` | 不带版本号（原地更新）|
-| RA ChangeLog | — | `ae-sdd doc save` 自动追加（无需手写路径）| — |
+| RA 索引 | — | `ae-sdd doc save` 自动追加（无需手写路径）| — |
 | PRD（无输入时生成）| `PRD` | `ae-sdd doc save --intent PRD --doc-id {prdId} ...` | 不带版本号 |
 | Issue（无输入时生成）| `ISSUE` | `ae-sdd doc save --intent ISSUE --doc-id {issueId} ...` | 不带版本号 |
-| RAGeneratePlan | `RA_GENERATE_PLAN` | `ae-sdd doc save --intent RA_GENERATE_PLAN --doc-id {raId} --version "v1-r1" ...` | 带 r{N}（r 递增）|
 | RA 修订影响分析报告 | `RA_IMPACT` | `ae-sdd doc save --intent RA_IMPACT --doc-id {raId} --version "v1-r1" ...` | 带 r{N} |
 | RA 反向问题登记 | `RA_REVERSE_ISSUES` | `ae-sdd doc save --intent RA_REVERSE_ISSUES --doc-id {raId} ...` | 不带版本号（原地累加）|
 
@@ -120,7 +119,7 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
 - **8 维度挖掘无遗漏**（角色/场景/流程/数据/规则/设计方向/AC/假设）
 - **实现视角七要素完整**（数据源、数据流、术语定义、不变量、复用证据、成本反驳、开发者疑问、DR 交接包）
 - **5 问自检通过**（每条结论都有证据/反例/边界/冲突/缺口 5 个角度的检验）
-- **5 维规模裁定 + 路由决策**（输出规模结果 + 下游 SKILL + 路径）
+- **5 维规模裁定 + 设计路径建议**（输出规模、DR/Story/CodingPlan 建议、置信度和反例）
 - **缺口管理显性化**（缺口不掩盖，所有未决问题有跟踪机制）
 
 ---
@@ -235,77 +234,6 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
 
 ---
 
-## Plan-first 生成原则（🔴 写 RA 前硬前置）
-
-> **🔴 强制：** RA 生成前**必须**先有 RAGeneratePlan，按 Plan 执行。
->
-> **Plan-first 与下游 SKILL 的差异：**
-> - `dr-generate-skill` / `story-generate-skill` 是 "DR-章节-初稿" 单向链
-> - 本 SKILL 是 **"输入识别 → 8 维度挖掘 → 自检 → 缺口 → 规模 → 路由"** 6 段链
-> - RAGeneratePlan 的目的是把"输入 + 挖掘 + 自检"做成可执行 SOP，避免"边挖边漏"
-
-**RAGeneratePlan 内容：**
-
-```markdown
-## RAGeneratePlan - {RA-ID} - {YYYY-MM-DD HH:mm}
-
-### 1. 输入识别
-- 输入类型：PRD / Issue / 对话 / 重入
-- 输入文件路径：{path}
-- 输入复杂度判定：{复杂（>3 功能点）/ 简单（1-3 功能点）/ BUG/配置}
-- 写入策略：{直接走 / 多轮对话写 PRD / 多轮对话写 Issue}
-
-### 2. 8 维度挖掘 SOP
-- 第 0.5 步 RequirementAnalysisModel：{12 维决策记录 + 需求风险预判，任一阻断项先补齐}
-- 阶段 A 角色分析：{从 PRD 角色段 + 现有项目角色反推}
-- 阶段 B 场景分析：{PRD 业务场景 + 项目资产业务流程}
-- 阶段 C 业务流程：{PRD 流程图 + 补充文档}
-- 阶段 D 数据要素：{PRD 字段 + `ae-sdd assets query "<tableName>"` 反查}
-- 阶段 E 业务规则：{PRD 规则段 + `ae-sdd assets section §6.X` 约束}
-- 阶段 E.5 衍生规则强制追问：{主规则 R → 衍生规则 R' 登记表，命中 H.5 模式编号}
-- 阶段 F 设计方向：{PRD 功能 + `ae-sdd assets query "<componentName>"` 复用扫描}
-- 阶段 G AC 雏形：{PRD 业务场景 + 业务流程}
-- 阶段 G.5 衍生 AC 强制覆盖：{主场景 AC → 衍生 AC，配套 E.5 衍生规则}
-- 阶段 H 假设挖掘：{PRD 全文反推}
-- 阶段 H.5 通用业务模式 Checklist：{6 大模式 + 衍生影响穷举 + 业务模式匹配表}
-- 阶段 H.6 跨域级联效应 Checklist：{5 问追问 + 跨域级联效应表}
-
-### 2.5 实现视角七要素 SOP（G-RA-6）
-- [ ] I1 数据源清单：DB/表/view、API、MQ/事件、缓存、配置、文件/OSS、第三方、前端状态、日志/审计/指标逐类排查；每项写 owner、读写、权威源、证据。
-- [ ] I2 数据流链路：source → ingress(API/event/job) → domain/service → persistence/cache/MQ → output/observability；每段写事务边界、一致性、失败补偿。
-- [ ] I3 术语/定义/不变量：业务术语、字段语义、状态/枚举、单位、空值、ID 规则、唯一性、权威源；消除开发者歧义。
-- [ ] I4 现有实现/复用证据：代码路径/class/method、表/API、assets/git 证据；每项判定复用/改造/新建/不复用并说明理由。
-- [ ] I5 高成本/难实现设计反驳：列出应拒绝或需降级的设计、成本/风险、不采用理由、低成本替代方案。
-- [ ] I6 开发者疑问答复矩阵：写 DR/Coding 前开发者会问的问题、答案、证据、状态、是否阻断 DR。
-- [ ] I7 DR 生成交接包：接口、数据模型、状态/事务、非功能、测试验收、迁移/回滚/灰度输入，供 DR 直接引用。
-
-### 3. 5 问自检清单（每条结论）
-- [ ] 证据（cite PRD 章节/Issue 描述/用户对话轮次）
-- [ ] 反例（有无反例推翻此结论）
-- [ ] 边界（此结论在什么边界条件下不成立）
-- [ ] 冲突（与其他维度结论有无冲突）
-- [ ] 缺口（假设了什么未明确事实）
-
-### 4. 缺口管理策略
-- 🔴 阻断型：必须解决（补充文档/用户确认）
-- 🟠 严重型：24h 内解决
-- 🟡 一般型：48h 内解决
-- 🟢 建议型：下次迭代
-
-### 5. 规模裁定算法
-- 5 维评分（服务范围/接口变更/架构决策/数据变更/测试层级）
-- 规模判定（一票否决：架构决策=4 或 数据变更=4 → 大）
-- 路由决策（6 类规模 → 6 类下游 SKILL）
-
-### 6. 与下游 SKILL 衔接
-- 规模 = 大 → 触发 `dr-generate-skill`，传入 RA + PRD + 项目资产
-- 规模 = 中 → 触发 `story-generate-skill`，传入 RA + PRD + 项目资产
-- 规模 = 小 → 触发 `task-generate-skill`，传入 RA + 项目资产
-- 规模 = 微/特殊-BUG/特殊-非代码 → 触发 `coding-skill`，传入 RA
-```
-
----
-
 ## 整体流程
 
 ```
@@ -335,7 +263,6 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
     ↓
 第三步：写入 RA 文档（save_doc + choose_iteration）
     ↓
-第三步 bis：生成 RAGeneratePlan
     ↓
 第四步：🔴 人工审核点（双支柱呈现）
     ↓
@@ -1163,7 +1090,7 @@ RA §9-quater.7 必须给 DR 可直接引用的输入：
 
 ## 第三步：写入 RA 文档
 
-> **🔴 强制：** 写入磁盘**必须通过 `ae-sdd doc save` 命令**，代码自动完成：迭代判定（choose_iteration）→ 版本号 → ChangeLog → 目录创建 → .gitignore。
+> **🔴 强制：** 写入磁盘**必须通过 `ae-sdd doc save` 命令**，代码自动完成：迭代判定（choose_iteration）→ 版本号 → 索引 → 目录创建 → .gitignore。
 
 ### 3.1 写入 SOP
 
@@ -1175,7 +1102,7 @@ RA §9-quater.7 必须给 DR 可直接引用的输入：
      --doc-id RA-001 \
      --content-file .ae-sdd/tmp/RA-001-draft.md \
    ```
-   代码自动完成：resolve 推路径 → 写文件（设计类原地更新）→ 追加 ChangeLog → 更新 STORING → 维护 .gitignore → 删草稿
+   代码自动完成：resolve 推路径 → 写文件（设计类原地更新）→ 追加 索引 → 更新 STORING → 维护 .gitignore → 删草稿
 3. **确认输出**：命令输出最终路径（如 `ae-sdd-doc/RA/RA-001.md`），记录到产出清单
 
 > **关联性分析已内置**：`ae-sdd doc save` 内部 `choose_iteration` 自动判定迭代归属（业务+逻辑双轨），无需单独调用。业务=0 ∧ 逻辑=0 时命令会阻塞并强制问用户。
@@ -1242,55 +1169,6 @@ target_iteration = choose_iteration(doc={
 - [ ] 5 问自检全部通过（无未通过条目）
 - [ ] 🔴 阻断型缺口已全部解决
 - [ ] 业务/逻辑标签已正确打上（关联性分析依赖）
-
----
-
-## 第三步 bis：生成 RAGeneratePlan
-
-```markdown
-## RAGeneratePlan - {RA-ID} - {YYYY-MM-DD HH:mm}
-
-### 1. 输入识别
-- 输入类型：{PRD/Issue/对话/重入}
-- 输入文件：{path}
-- 输入复杂度：{复杂/简单/BUG/配置}
-
-### 2. 8 维度挖掘结论
-- RequirementAnalysisModel：12 维全部完成，阻断项 {N} 个，已解决 {M} 个
-- 需求风险预判：命中 {N} 类风险，已闭环 {M} 类
-- 阶段 A 角色分析：{N} 个角色，{M} 个冲突
-- 阶段 B 场景分析：{N} 个主流程，{M} 个异常，{K} 个边界
-- 阶段 C 业务流程：{N} 个状态，{M} 个转换
-- 阶段 D 数据要素：{N} 个实体，{M} 个字段
-- 阶段 E 业务规则：{N} 条业务规则
-- 阶段 F 设计方向：{N} 个备选方案，选定：{方案}
-- 阶段 G AC 雏形：{N} 个 AC
-- 阶段 H 假设：{N} 条假设，已确认 {M} 条
-
-### 3. 5 问自检通过率
-- 总结论数：{N}
-- 通过：{M}（{百分比}%）
-- 未通过：{K}（已列入缺口管理）
-
-### 4. 缺口管理结果
-- 🔴 阻断：{N} 个（已解决）
-- 🟠 严重：{N} 个（已解决 / 待解决）
-- 🟡 一般：{N} 个（已标注）
-- 🟢 建议：{N} 个（已记录）
-
-### 5. 规模裁定结果
-- 5 维评分：服务范围={1/2/3/4} / 接口变更={1/2/3/4} / 架构决策={1/2/3/4} / 数据变更={1/2/3/4} / 测试层级={1/2/3/4}
-- 规模 = {大/中/小/微/特殊-BUG/特殊-非代码}
-- 路由 = {dr-generate-skill / story-generate-skill / task-generate-skill / coding-skill}
-
-### 6. 与下游 SKILL 衔接
-- 触发 SKILL：{name}
-- 传入文件：RA 路径 + PRD/Issue 路径
-- 项目资产引用：{`ae-sdd assets outline` + `ae-sdd assets query "<{X}>"`}
-
-### 7. 未解决问题清单
-- {Q1}：{描述}（负责人：{X}，截止：{Y}）
-```
 
 ---
 
@@ -1373,9 +1251,9 @@ stateDiagram-v2
 
 #### 表 5：路由决策
 
-| 规模结果 | 下游 SKILL | 路径定位 | 触发时机 |
-|---------|-----------|---------|---------|
-| {大/中/小/微/特殊-BUG/特殊-非代码} | {SKILL 名} | `ae-sdd doc resolve --intent {对应intent}` 定位 | 立即 |
+| 规模结果 | 建议设计路径 | 理由 | 用户覆盖 |
+|---------|-------------|------|---------|
+| {大/中/小/微} | {DR/Story/CodingPlan} | {证据与反例} | {保持/覆盖为...} |
 
 #### 表 6：缺口清单
 
@@ -1395,7 +1273,7 @@ stateDiagram-v2
 
 ## 第五步：🔴 5 维规模裁定 + 路由决策
 
-> **🔴 关键：** 规模裁定 + 路由决策决定下游走哪个 SKILL，是 RA 文档的"出口"。
+> **🔴 关键：** 规模裁定只提供设计深度建议；最终由分析证据和用户确认选择 DR、Story 或 CodingPlan。
 
 ### 5.1 5 维评分标准
 
@@ -1427,14 +1305,11 @@ else → 规模=小（默认）
 
 ### 5.3 路由决策表
 
-| 规模结果 | 下游 SKILL | 路径定位 | 触发命令 |
-|---------|-----------|---------|---------|
-| **大** | `dr-generate-skill` | `ae-sdd doc resolve --intent DR` | `触发 dr-generate-skill` |
-| **中** | `story-generate-skill` | `ae-sdd doc resolve --intent STORY` | `触发 story-generate-skill` |
-| **小** | `task-generate-skill` | `ae-sdd doc resolve --intent TASK` | `触发 task-generate-skill` |
-| **微** | `coding-skill` | `ae-sdd doc resolve --intent CODING_PLAN` | `触发 coding-skill` |
-| **特殊-BUG** | `coding-skill` | `ae-sdd doc resolve --intent CODING_PLAN` | `触发 coding-skill`（BUG 路径）|
-| **特殊-非代码** | `coding-skill` | `ae-sdd doc resolve --intent CODING_PLAN` | `触发 coding-skill`（配置/文档路径）|
+| 规模结果 | 默认建议 | 可覆盖路径 | 触发 |
+|---------|---------|-----------|------|
+| **大** | DR | Story / CodingPlan | 用户确认后设置 `state --design-route` |
+| **中** | Story | DR / CodingPlan | 用户确认后设置 `state --design-route` |
+| **小/微** | CodingPlan | Story / DR | 用户确认后设置 `state --design-route` |
 
 ### 5.4 路由决策产出
 
@@ -1452,25 +1327,25 @@ else → 规模=小（默认）
 **规模结果：{大/中/小/微/特殊-BUG/特殊-非代码}**
 
 **路由决策：**
-- 下游 SKILL：{name}
-- 路径：`ae-sdd doc resolve --intent {对应intent}` 定位（由下游 SKILL 接收命令输出路径）
+- 建议设计路径：{DR/Story/CodingPlan}
+- 用户确认/覆盖：{结果与理由}
 - 传入文件：RA + PRD/Issue + 项目资产
 ```
 
 ---
 
-## 第六步：触发下游 SKILL
+## 第六步：确认并触发设计路径
 
-> **🔴 前置条件：** RA 文档已通过 `ae-sdd doc save --intent RA ...` 落地（G-DOC-STORAGE ✅）后，才能触发下游 SKILL。
+> **🔴 前置条件：** RA 文档已通过 `ae-sdd doc save --intent RA ...` 落地，且用户已确认 DR、Story 或 CodingPlan 路径。
 
-按 §5.3 决策触发对应 SKILL，并传入：
+按 §5.3 设置 `routeDecision.selectedDesign`，再触发对应设计能力，并传入：
 
 | 传入项 | 来源 | 说明 |
 |--------|------|------|
 | RA 文档路径 | `ae-sdd doc resolve --intent RA --doc-id {raId}` | 完整 RA |
 | PRD/Issue 路径 | `ae-sdd doc resolve --intent PRD/ISSUE --doc-id {id}` | 原始需求 |
 | 项目资产引用 | `ae-sdd assets outline` + `ae-sdd assets query "<{X}>"` 调用记录 | 用于下游 SKILL 精准加载 |
-| 规模结果 | §11 规模 | 决定下游 SKILL 类型 |
+| 规模结果 | §11 规模 | 提供默认设计深度建议，不单独决定路径 |
 | 业务/逻辑标签 | `business + logic` | 用于下游 SKILL 关联性分析 |
 | 缺口清单 | §10 缺口 | 下游 SKILL 需知 |
 
@@ -1499,7 +1374,6 @@ else → 规模=小（默认）
 |---|---|---|
 | **协议 1：退出条件** | 连续 3 轮挖掘无新增确认缺口/缺陷才退出。计数器规则：本轮 RA-G 检查 + 8 维度回扫发现新 🔴/🟠/🟡 缺口 → 归零；无新增 → +1；累计到 3 退出 | review-loop §协议 1 |
 | **协议 2：循环上限** | 3 轮循环上限。第 3 轮结束仍有 🔴 阻断型缺口未解决 → 升级用户决策（不无限循环）| review-loop §协议 2 |
-| **协议 3：Plan-first** | 有确认缺口必先出/更新 RAGeneratePlan（已有载体），按 Plan 修订 RA，Plan 外修改无效 | review-loop §协议 3 + 本 SKILL §Plan-first |
 
 ### 7.1 RA 专属检查项（= 原 16 道 RA 质量闸，作为每轮挖掘的检查集）
 
@@ -1522,7 +1396,7 @@ else → 规模=小（默认）
 | **RA-G13** | 5 问自检通过 | 每条结论都有证据/反例/边界/冲突/缺口判定，通过率 100%；不得用 90% 逃避阻断项 | 回到第一步 bis |
 | **RA-G14** | 缺口管理闭环 | 🔴/🟠 缺口必须解决或用户明确接受；🟡/🟢 有负责人/处理计划 | 回到第二步 |
 | **RA-G15** | 规模与路由有依据 | §11 5 维评分有证据，路由结果与评分一致，给出置信度与反例 | 回到第五步 |
-| **RA-G16** | 实现视角与落盘审核完成 | §9-quater 实现视角七要素完整（数据源/数据流/定义/复用/成本反驳/开发疑问/DR交接，G-RA-6 I1-I7 校验）+ RA 已按 document-storage 保存、ChangeLog 已写、用户已确认双支柱呈现 | 回到第一步 ter 或第三/第四步 |
+| **RA-G16** | 实现视角与落盘审核完成 | §9-quater 实现视角七要素完整（数据源/数据流/定义/复用/成本反驳/开发疑问/DR交接，G-RA-6 I1-I7 校验）+ RA 已按 document-storage 保存、索引 已写、用户已确认双支柱呈现 | 回到第一步 ter 或第三/第四步 |
 
 ### 7.2 RA 挖掘循环 SOP（每轮必跑）
 
@@ -1536,7 +1410,6 @@ else → 规模=小（默认）
     ↓
 3. 判定本轮有无新增确认缺口/缺陷
     ├─ 有新增（🔴/🟠/🟡 任一）→ 计数器归零
-    │   ├─ 出/更新 RAGeneratePlan（Plan-first）
     │   ├─ 按 Plan 修订 RA（回到对应第一步阶段）
     │   └─ 进入下一轮
     └─ 无新增 → 计数器 +1
@@ -1612,8 +1485,7 @@ else → 规模=小（默认）
 | 14 | 第二步 | 循环迭代 | 5 轮迭代产出 | §第二步 |
 | 15 | 第三步 | choose_iteration | 关联性分析结果（强/中/无）| §第三步 |
 | 16 | 第三步 | get_latest_version | 当前最新版本 | §第三步 |
-| 17 | 第三步 | save_doc | RA 文档 + ChangeLog | §第三步 |
-| 18 | 第三步 bis | 生成 RAGeneratePlan | RAGeneratePlan 文档 | §第三步 bis |
+| 17 | 第三步 | save_doc | RA 文档 + 索引 | §第三步 |
 | 19 | 第四步 | 双支柱呈现 | 叙述性讲解 + 6 张表 | §第四步 |
 | 20 | 第四步 | 用户确认 | "确认" / "修改" / "补充" | §第四步 |
 | 21 | 第五步 | 5 维规模裁定 | §11 规模评分 | §第五步 |
@@ -1627,7 +1499,6 @@ else → 规模=小（默认）
 
 | # | 禁止 | 危害 | 正确做法 |
 |---|------|------|---------|
-| 1 | 禁止无 Plan 编码 | 流程乱 | §Plan-first 原则（先有 RAGeneratePlan）|
 | 2 | 禁止无证据结论 | 不可追溯 | §标尺 2（每条结论 cite PRD/Issue/用户对话）|
 | 3 | 禁止"等等" / "其他" / "大概" | 不可穷举 | §标尺 1（先列清单再打钩）|
 | 4 | 禁止无冲突识别 | 隐藏炸弹 | §标尺 3（角色/业务/流程冲突摆到台面）|
@@ -1636,7 +1507,7 @@ else → 规模=小（默认）
 | 7 | 禁止 🔴/🟠 缺口未解决或未获用户明确接受 | 阻断下游 | §第二步（🔴/🟠 必须闭环，🟡/🟢 至少有负责人和计划）|
 | 8 | 禁止未由 `ae-sdd doc save` 内部 `choose_iteration` 判定迭代 | 文档漂移 | §第三步.2（强/中/无关联判定）|
 | 9 | 禁止业务=0 ∧ 逻辑=0 时不问用户 | 归错迭代 | §第三步.2（E005 错误码）|
-| 10 | 禁止不写 ChangeLog | 失变更追踪 | §第三步 + document-storage-skill §5 |
+| 10 | 禁止不写 索引 | 失变更追踪 | §第三步 + document-storage-skill §5 |
 | 11 | 禁止不维护 `.gitignore`（由 `ae-sdd doc save` 自动维护）| 污染 git | §第三步 + document-storage-skill §7 |
 | 12 | 禁止规模裁定无依据 | 路由错乱 | §第五步（5 维评分 + 一票否决）|
 | 13 | 禁止用户未确认就触发下游 | 流程失控 | §第四步（双支柱 + 等待用户回复）|
@@ -1751,12 +1622,12 @@ RA 修订前（每次必跑）
 ### 6. 闭环审计
 
 - [ ] RA v{N+1} 已落盘（save_doc）
-- [ ] RA ChangeLog 已追加本次修订行
+- [ ] RA 索引 已追加本次修订行
 - [ ] RA §13 关联矩阵已更新
 - [ ] RAImpact 报告已生成
 - [ ] 🔴 强影响文档已全部触发重审
 - [ ] 🟠 中影响文档已全部标记重审建议
-- [ ] 闭环审计行已写入 CR/ChangeLog/RA-DEFECT-闭环-{RA-ID}.md
+- [ ] 闭环审计行已写入 CR/索引/RA-DEFECT-闭环-{RA-ID}.md
 ```
 
 ---
@@ -1918,7 +1789,6 @@ RA 修订前（每次必跑）
 
 | 用户话术 | 反问示例 | 必须达到的判定结果 |
 |---------|---------|------------------|
-| "我想要一次性回答" | "明白。为了'一次性回答'，我需要先把 RA skill 的最小必跑流程跑完（即使快速）：① RAGeneratePlan ② RAModel 12 维决策 ③ 8 维度挖掘 ④ 5 问自检 ⑤ 缺口管理 ⑥ 规模裁定。然后我把所有 🔴 阻断型问题一次性列给你，你能一次性回答。这是 RA skill 的最小合规路径。" | 用户接受"先跑最小必跑流程" |
 | "能不能跳过 RA 直接出方案？" | "跳过 RA 意味着：① 没有 5 问自检（结论无证据/反例/边界）② 没有缺口管理（不知道哪些风险未识别）③ 没有规模裁定（不知道下游走哪个 SKILL）。这违反 §禁止事项 #13。方案可以出，但必须先有 RA 文档作为审计依据。" | 用户接受"先 RA 后方案" |
 
 **🔴 关键约束：** 用户催促 ≠ 流程可跳过。用户催促 = 流程必须更快地收敛到最少必要轮次，但**不能跳到 0 轮**。
@@ -1955,7 +1825,6 @@ RA 修订前（每次必跑）
 
 | 任务特征 | 应走的最小流程 |
 |---------|--------------|
-| "出一份修订建议书" | RA skill 完整 7 步（最小必跑：RAGeneratePlan + 12 维 + 8 维度 + 5 问 + 缺口 + 规模 + 16 道闸）|
 | "出一份分析报告" | 同上 |
 | "出一份 proposal" | 同上 |
 | "出一份调研文档" | 同上 |
@@ -1979,7 +1848,7 @@ RA 修订前（每次必跑）
   - 与 `dr-generate-skill.md` / `story-generate-skill.md` / `task-generate-skill.md` / `coding-skill.md` 协调（边界判定表 + 路由决策表）
   - 与 `document-storage-skill.md §9.1` 协调（调用矩阵新增 1 行：requirement-analysis-skill）
   - 与 `project-assets-update-skill.md §G` 协调（项目资产读取 API）
-  - 与 `SKILL.md` 协调（Phase 1 起点位置）
+  - 与 `SKILL.md` 协调（路由后分析位置）
 - **关键变化（2026-06-17 新建）：**
   - 🆕 **prd-story-skill 拆分为 3 个独立 SKILL**：requirement-analysis（需求分析）+ dr-generate（设计需求生成）+ dr-review（设计需求评审）
   - 🆕 **入口多样**：PRD / Issue / 对话需求 / BUG/配置
@@ -1989,11 +1858,10 @@ RA 修订前（每次必跑）
   - 🆕 **8 维度并行挖掘**：角色/场景/流程/数据/规则/设计方向/AC/假设
   - 🆕 **5 问自检**：每条结论必须通过 5 个角度检验
   - 🆕 **5 维规模裁定**：服务范围/接口变更/架构决策/数据变更/测试层级
-  - 🆕 **6 类规模路由**：大/中/小/微/特殊-BUG/特殊-非代码 → 6 个下游 SKILL
+  - 🆕 **三类设计路径**：分析后选择 DR / Story / CodingPlan；规模只提供默认建议
   - 🆕 **业务+逻辑双轨关联性分析**：由 `ae-sdd doc save` 内部 `choose_iteration` 判定迭代
   - 🆕 **项目资产按需加载**：通过 `assets.*()` 索引化 API，不全文加载
   - 🆕 **缺口管理分级**：🔴 阻断 / 🟠 严重 / 🟡 一般 / 🟢 建议
-  - 🆕 **RAGeneratePlan**：每轮生成 1 份计划（带 r{N}）
   - 🆕 **双支柱审核**：叙述性讲解 + 对话内直接呈现
   - 🆕 **16 道 RA 质量闸**：从输入保真、RAModel、风险闭环到落盘审核全流程门禁
   - 🆕 **v3.5.8 RA 挖掘循环**：第七步从"16 道闸一次性终检"重构为引用 review-loop 公共协议（反复挖掘 + 连续 3 轮无新增确认缺口/缺陷才退出 + 3 轮仍有 🔴 升级用户 + 漏报升级）；第二步循环对象从"仅缺口"扩展为"缺口 + 8 维度挖掘穷尽"。补齐"RA 是全链路事实源头却无 review 闭环"的体系性缺口

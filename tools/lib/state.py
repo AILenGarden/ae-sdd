@@ -82,31 +82,35 @@ from lib.flow_enums import FlowEvent, FlowEventType, FlowNode, FlowSkill  # noqa
 #   BUG/配置类 → scale="微" + entryNode=BUG/CONFIG（复用微链，不单独开链）。
 PHASE_FLOWS: dict[str, list[str]] = {
     "大": [
-        "initialized", "ra-generated", "dr-generated", "story-generated",
+        "initialized", "route-selected", "requirement-analyzed", "dr-generated", "story-generated",
         "testcase-generated", "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
     "中": [
-        "initialized", "dr-generated", "story-generated", "testcase-generated",
+        "initialized", "route-selected", "requirement-analyzed", "story-generated", "testcase-generated",
         "coding-process", "coding", "test-running", "code-reviewed", "completed",
     ],
     "小": [
-        "initialized", "coding-process", "coding", "test-running", "code-reviewed", "completed",
+        "initialized", "route-selected", "requirement-analyzed", "coding-process", "coding",
+        "test-running", "code-reviewed", "completed",
     ],
     "微": [
-        "initialized", "coding-process", "coding", "test-running", "code-reviewed", "completed",
+        "initialized", "route-selected", "requirement-analyzed", "coding-process", "coding",
+        "test-running", "code-reviewed", "completed",
     ],
 }
 
 COMPACT_PHASE_FLOWS: dict[str, list[str]] = {
-    "大": ["initialized", "ra-generated", "dr-generated", "story-generated",
+    "大": ["initialized", "route-selected", "requirement-analyzed", "dr-generated", "story-generated",
            "coding-process", "coding", "test-running", "code-reviewed", "completed"],
-    "中": ["initialized", "story-generated", "coding-process", "coding",
+    "中": ["initialized", "route-selected", "requirement-analyzed", "story-generated", "coding-process", "coding",
            "test-running", "code-reviewed", "completed"],
-    "小": ["initialized", "story-generated", "coding-process", "coding",
+    "小": ["initialized", "route-selected", "requirement-analyzed", "coding-process", "coding",
            "test-running", "code-reviewed", "completed"],
-    "微": ["initialized", "story-generated", "coding-process", "coding",
+    "微": ["initialized", "route-selected", "requirement-analyzed", "coding-process", "coding",
            "test-running", "code-reviewed", "completed"],
 }
+
+VALID_DESIGN_ROUTES = ("DR", "STORY", "CODING_PLAN")
 
 # 合法 scale 集合（与 classify.py SCALE 值一致）
 VALID_SCALES = ("大", "中", "小", "微")
@@ -143,6 +147,23 @@ def phase_flows_for_state(value: dict) -> dict[str, list[str]]:
     return COMPACT_PHASE_FLOWS if value.get("processPolicy") == "compact" else PHASE_FLOWS
 
 
+def phase_chain_for_state(value: dict) -> list[str]:
+    """Return the selected route's phase chain, with legacy phase compatibility."""
+    scale = _resolve_scale(value)
+    base = list(phase_flows_for_state(value)[scale])
+    decision = value.get("routeDecision") or {}
+    selected = decision.get("selectedDesign") or value.get("selectedDesign")
+    if selected == "DR":
+        return [phase for phase in base if phase != "story-generated"]
+    if selected == "STORY":
+        return [phase for phase in base if phase != "dr-generated"]
+    if selected == "CODING_PLAN":
+        return [phase for phase in base if phase not in {
+            "dr-generated", "story-generated", "testcase-generated",
+        }]
+    return base
+
+
 def ensure_process_state(value: dict) -> dict:
     """Backfill compact process state for legacy and nested Work Items."""
     plan = value.setdefault("executionPlan", _default_execution_plan())
@@ -151,7 +172,25 @@ def ensure_process_state(value: dict) -> dict:
     review = value.setdefault("review", _default_review_state())
     for key, default in _default_review_state().items():
         review.setdefault(key, default)
+    value.setdefault("routeDecision", {})
+    value.setdefault("requirementSpec", {})
     return value
+
+
+def set_design_route(state: dict, selected_design: str, *, reason: str = "",
+                     by: str = "user") -> dict:
+    """Persist the post-analysis design selection used by dynamic phase routing."""
+    selected = str(selected_design or "").strip().upper()
+    if selected not in VALID_DESIGN_ROUTES:
+        raise ValueError(f"未知 design route: {selected}（允许: {VALID_DESIGN_ROUTES}）")
+    decision = state.setdefault("routeDecision", {})
+    decision["selectedDesign"] = selected
+    decision["reason"] = str(reason or "").strip()
+    decision["selectedBy"] = by
+    decision["selectedAt"] = _now_ts()
+    state["selectedDesign"] = selected
+    record_history(state, f"design-route-selected:{selected}", by)
+    return decision
 
 
 def read_state(state_path: Path) -> dict:
@@ -489,7 +528,7 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
         return True
 
     scale = _resolve_scale(state)
-    chain = phase_flows_for_state(state)[scale]
+    chain = phase_chain_for_state(state)
     if phase not in chain:
         raise ValueError(
             f"未知 phase: {phase}（scale={scale} 子链允许: {chain}）。"
@@ -511,8 +550,10 @@ def set_phase(state: dict, phase: str, by: str = "ae-sdd") -> bool:
 # key = scale；每条子链独立 mapping，next 与 PHASE_FLOWS[scale] 一致。
 _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
     "大": {
-        "initialized":     ("ra-generated",     "生成并审查 RA 核心文档（不生成 GeneratePlan/Report）", "requirement-analysis-skill.md"),
-        "ra-generated":    ("dr-generated",     "从 RA 生成并审查 DR 核心文档", "dr-generate-skill.md"),
+        "initialized":     ("route-selected", "记录任务路由决策", "ae-sdd classify"),
+        "route-selected":  ("requirement-analyzed", "生成并确认本次任务需求说明书", "requirement-analysis-skill.md"),
+        "requirement-analyzed": ("dr-generated", "按分析结论进入 DR 设计", "dr-generate-skill.md"),
+        "ra-generated":    ("dr-generated", "从 legacy RA 进入 DR 设计", "dr-generate-skill.md"),
         "dr-generated":    ("story-generated",  "生成 Story（从 DR）",                    "story-generate-skill.md"),
         "story-generated": ("coding-process",  "生成紧凑 executionPlan，在对话中确认；验证矩阵默认内嵌 Story", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
@@ -522,7 +563,9 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "中": {
-        "initialized":     ("story-generated",  "创建或更新 Story 核心文档", "story-generate-skill.md"),
+        "initialized":     ("route-selected", "记录任务路由决策", "ae-sdd classify"),
+        "route-selected":  ("requirement-analyzed", "生成并确认本次任务需求说明书", "requirement-analysis-skill.md"),
+        "requirement-analyzed": ("story-generated", "按分析结论进入 Story 设计", "story-generate-skill.md"),
         "story-generated": ("coding-process",  "生成紧凑 executionPlan，在对话中确认", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
         "coding":          ("test-running",     "执行测试并记录 evidence，不生成 TestReport", "test-generate-skill.md"),
@@ -531,8 +574,10 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "小": {
-        "initialized":     ("story-generated",  "生成紧凑 Story-lite（含 AC/验证矩阵）", "story-generate-skill.md"),
-        "story-generated": ("coding-process",   "生成并确认紧凑 executionPlan", "coding-process-skill.md"),
+        "initialized":     ("route-selected", "记录任务路由决策", "ae-sdd classify"),
+        "route-selected":  ("requirement-analyzed", "生成紧凑需求说明书", "requirement-analysis-skill.md"),
+        "requirement-analyzed": ("coding-process", "按分析结论直接设计并确认 executionPlan", "coding-process-skill.md"),
+        "story-generated": ("coding-process", "从 legacy Story-lite 生成 executionPlan", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
         "coding":          ("test-running",     "执行测试并记录 evidence，不生成 TestReport", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "执行 Review；通过记状态，失败只记 findings", "code-review-skill.md"),
@@ -540,8 +585,10 @@ _NEXT_STEP_MAPPINGS: dict[str, dict[str, tuple[str, str, str]]] = {
         "completed":       ("（已结束）",        "项目工程已完成",                          "-"),
     },
     "微": {
-        "initialized":     ("story-generated",  "生成极简 Story-lite（目标/范围/AC/验证）", "story-generate-skill.md"),
-        "story-generated": ("coding-process",   "生成并确认极简 executionPlan", "coding-process-skill.md"),
+        "initialized":     ("route-selected", "记录任务路由决策", "ae-sdd classify"),
+        "route-selected":  ("requirement-analyzed", "生成 Story-lite 深度的需求说明书", "requirement-analysis-skill.md"),
+        "requirement-analyzed": ("coding-process", "直接设计并确认极简 executionPlan", "coding-process-skill.md"),
+        "story-generated": ("coding-process", "从 legacy Story-lite 生成 executionPlan", "coding-process-skill.md"),
         "coding-process":  ("coding",           "执行 CodingSkill（按已确认 executionPlan 编码）",   "coding-skill.md"),
         "coding":          ("test-running",     "执行最小测试并记录 evidence", "test-generate-skill.md"),
         "test-running":    ("code-reviewed",    "执行 findings-only Review", "code-review-skill.md"),
@@ -607,7 +654,28 @@ def next_step_suggestion(state: dict) -> dict:
     mapping = _NEXT_STEP_MAPPINGS[scale]
     if state.get("processPolicy") != "compact":
         mapping = {**mapping, **_LEGACY_NEXT_STEP_OVERRIDES.get(scale, {})}
-    next_phase, action, skill = mapping.get(cur, ("?", "未知 phase", "?"))
+    chain = phase_chain_for_state(state)
+    if cur in chain and chain.index(cur) < len(chain) - 1:
+        next_phase = chain[chain.index(cur) + 1]
+        mapped = mapping.get(cur)
+        if mapped and mapped[0] == next_phase:
+            _, action, skill = mapped
+        else:
+            action, skill = {
+                "route-selected": ("记录任务路由决策", "ae-sdd classify"),
+                "requirement-analyzed": ("生成并确认本次任务需求说明书", "requirement-analysis-skill.md"),
+                "dr-generated": ("按需求分析结论生成并审查 DR", "dr-generate-skill.md"),
+                "story-generated": ("按需求分析或 DR 结论生成 Story", "story-generate-skill.md"),
+                "coding-process": ("生成并确认紧凑 executionPlan", "coding-process-skill.md"),
+                "coding": ("执行已批准 executionPlan", "coding-skill.md"),
+                "test-running": ("运行验证并记录 evidence", "test-generate-skill.md"),
+                "code-reviewed": ("执行 findings-only Review", "code-review-skill.md"),
+                "completed": ("等待用户最终确认", "（人工审核）"),
+            }.get(next_phase, (f"进入 {next_phase}", "?"))
+    elif cur == "completed":
+        next_phase, action, skill = "（已结束）", "项目工程已完成", "-"
+    else:
+        next_phase, action, skill = mapping.get(cur, ("?", "未知 phase", "?"))
     return {
         "current": cur,
         "next": next_phase,

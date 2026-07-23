@@ -353,7 +353,8 @@ def check_g01(project_dir: Path, st: dict, current_story: str) -> GateResult:
     if not drs:
         return GateResult("G-01", "DR 文档存在", "blocker", False,
                           f"{design} 无 DR 文档（rglob *DR*.md / *dr*.md，已排除报告类）",
-                          "跑 dr-generate-skill 生成 DR 文档")
+                          "跑 dr-generate-skill 生成 DR 文档；"
+                          "或由主流程监管器按 classify.spec_strategy 自动派 dr-generate 子流程生成")
     return GateResult("G-01", "DR 文档存在", "blocker", True,
                       f"找到 {len(drs)} 个 DR 文档",
                       details={"files": [str(d.relative_to(project_dir)) for d in drs]})
@@ -403,7 +404,8 @@ def _story_binding_action(st: dict, current_story: str) -> str:
     return (
         "运行 ae-sdd state bind-story-doc "
         f"--work-item {work_item} --story {current_story} "
-        "--story-name <正式Story文件名>"
+        "--story-name <正式Story文件名>；"
+        "或由主流程监管器按 classify.spec_strategy 自动派 story-generate 子流程生成"
     )
 
 
@@ -490,6 +492,11 @@ def check_g05(project_dir: Path, st: dict, current_story: str) -> GateResult:
     现优先检查与模板对齐的 ``{story_id}.md``，同时保留对旧布局
     ``{story_id}-task-*.md`` 的兼容（旧 task/ 目录或历史归档）。
     """
+    if st.get("processPolicy") == "compact":
+        return GateResult("G-05", "Task 文档存在", "blocker", True,
+                          "compact 流程不生成 Task 文档（兼容门禁跳过）",
+                          details={"skipped": True, "processPolicy": "compact"})
+
     if not current_story:
         return GateResult("G-05", "Task 文档存在", "blocker", False,
                           "state.currentStory 为空")
@@ -517,6 +524,10 @@ def check_g05(project_dir: Path, st: dict, current_story: str) -> GateResult:
 # ─── G-06 ───────────────────────────────────────────────────────────────────
 def check_g06(project_dir: Path, st: dict, current_story: str) -> GateResult:
     """G-06 Task Review 通过"""
+    if st.get("processPolicy") == "compact":
+        return GateResult("G-06", "Task Review 通过", "blocker", True,
+                          "compact 流程无 Task Review 阶段（兼容门禁跳过）",
+                          details={"skipped": True, "processPolicy": "compact"})
     phase = st.get("phase", "initialized")
     if phase in PHASE_PAST_TASK_REVIEW:
         return GateResult("G-06", "Task Review 通过", "blocker", True,
@@ -2677,7 +2688,7 @@ def check_ra_flow_violation(project_dir: Path, st: dict, current_story: str,
     """G-RA-FLOW-VIOLATION RA 流程违规审计通过（🆕 2026-06-27，建议书 §3.4）。
 
     调 flow_violation_scan.py 跑 8 条规则检查（R1 12 维 / R2 8 维度 / R3 缺口
-    / R4 规模 / R5 RAGeneratePlan / R6 RA-G 闸 / R7 5 问自检 / R8 缺口闭环）。
+    / R4 规模 / R5 路由决策 / R6 RA-G 闸 / R7 5 问自检 / R8 缺口闭环）。
     BLOCKER=0 → pass；BLOCKER>0 → blocker。
 
     与 G-RA-4 区别：G-RA-4 看真实性（无 fabricate/vague），本门禁看流程完整性
@@ -4048,18 +4059,18 @@ CONTEXT_GATE_REGISTRY: dict[str, dict] = {
     "G-DR-CTX": {
         "name": "DR 上下文加载",
         "scales": {"大", "中"},                 # 大/中链必填，小/微链豁免
-        "pre_phases": {"initialized", "ra-generated"},  # 这些 phase 时 stub 通过
+        "pre_phases": {"initialized", "route-selected", "requirement-analyzed", "ra-generated"},
         "passed_phases": {"story-generated", "story-reviewed",
                           "testcase-generated", "testcase-reviewed",
                           "task-generated", "task-reviewed",
                           "coding-process", "coding", "test-running",
                           "code-reviewed", "completed"},
-        "required": ["constraints", "assets", "RA", "PRD"],
+        "required": ["constraints", "assets", "RA"],
     },
     "G-STORY-CTX": {
         "name": "Story 上下文加载",
         "scales": {"大", "中", "小", "微"},
-        "pre_phases": {"initialized", "ra-generated", "dr-generated"},
+        "pre_phases": {"initialized", "route-selected", "requirement-analyzed", "ra-generated", "dr-generated"},
         "passed_phases": {"story-reviewed", "testcase-generated", "testcase-reviewed",
                           "task-generated", "task-reviewed",
                           "coding-process", "coding", "test-running",
@@ -4067,14 +4078,14 @@ CONTEXT_GATE_REGISTRY: dict[str, dict] = {
         # 🆕 v3.9.3: dependsStory + sourceTrace 覆盖 SSOT §3 C 类与 §4 来源追溯
         # 🆕 v3.9.20: standardsRef 升级为真"已引用"门禁（查产物证据，不查行为）
         #              + scales 扩到 {大,中,小,微}，取消小/微豁免（小/微走轻量阈值）
-        "required": ["constraints", "assets", "DR", "PRD",
+        "required": ["constraints", "assets", "RA",
                      "dependsStory", "sourceTrace", "standardsRef",
                      "outputBoundary"],
     },
     "G-TESTCASE-CTX": {
         "name": "TestCase 上下文加载",
         "scales": {"大", "中", "小"},
-        "pre_phases": {"initialized", "ra-generated", "dr-generated",
+        "pre_phases": {"initialized", "route-selected", "requirement-analyzed", "ra-generated", "dr-generated",
                        "story-generated", "story-reviewed"},
         "passed_phases": {"task-generated", "task-reviewed",
                           "coding-process", "coding", "test-running",
@@ -4084,7 +4095,7 @@ CONTEXT_GATE_REGISTRY: dict[str, dict] = {
     "G-TASK-CTX": {
         "name": "Task 上下文加载",
         "scales": {"大", "中", "小", "微"},
-        "pre_phases": {"initialized", "ra-generated", "dr-generated",
+        "pre_phases": {"initialized", "route-selected", "requirement-analyzed", "ra-generated", "dr-generated",
                        "story-generated", "story-reviewed",
                        "testcase-generated", "testcase-reviewed"},
         "passed_phases": {"coding-process", "coding", "test-running",
@@ -4341,7 +4352,12 @@ def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
     if gate_id == "G-TASK-CTX" and scale == "微":
         required_keys = spec["required_micro"]
     else:
-        required_keys = spec["required"]
+        required_keys = list(spec["required"])
+    selected_design = (st.get("routeDecision") or {}).get("selectedDesign")
+    if gate_id == "G-STORY-CTX" and (
+        selected_design == "DR" or phase in {"dr-generated", "story-generated"}
+    ):
+        required_keys.insert(3, "DR")
 
     # 6. 逐项校验
     status: dict[str, bool] = {}
@@ -4380,7 +4396,7 @@ def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
                 missing.append("PRD 文档")
                 missing_hints.append("向用户索取 PRD，或在 RA 中显式标注豁免理由")
         elif key == "DR":
-            design = paths.project_design_dir(project_dir)
+            design = _g13_design_root(project_dir)
             drs = _iter_dr_docs(design)
             ok = bool(drs)
             status["DR"] = ok
@@ -4394,14 +4410,20 @@ def _check_context_loaded(project_dir: Path, st: dict, current_story: str,
             if not current_story:
                 status["Story"] = False
                 missing.append("Story 文档（state.currentStory 为空）")
-                missing_hints.append("ae-sdd state write --phase story-generated --story STORY-XXX")
+                missing_hints.append(
+                    "ae-sdd state write --phase story-generated --story STORY-XXX；"
+                    "或由主流程监管器按 classify.spec_strategy 自动派 story-generate 子流程生成"
+                )
             else:
                 story_doc = paths.find_doc(project_dir, current_story, ".md")
                 ok = story_doc is not None
                 status["Story"] = ok
                 if not ok:
                     missing.append(f"Story 文档（{current_story}.md）")
-                    missing_hints.append(f"跑 story-generate-skill 生成 {current_story}")
+                    missing_hints.append(
+                        f"跑 story-generate-skill 生成 {current_story}；"
+                        "或由主流程监管器按 classify.spec_strategy 自动派 story-generate 子流程生成"
+                    )
         elif key == "TestCase":
             if not current_story:
                 status["TestCase"] = False

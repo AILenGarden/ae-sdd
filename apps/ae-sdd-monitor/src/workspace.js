@@ -24,14 +24,10 @@ const SKIP_DIRS = new Set([
 const PHASE_FLOWS = {
   large: [
     "initialized",
-    "ra-generated",
+    "route-selected",
+    "requirement-analyzed",
     "dr-generated",
     "story-generated",
-    "story-reviewed",
-    "testcase-generated",
-    "testcase-reviewed",
-    "task-generated",
-    "task-reviewed",
     "coding-process",
     "coding",
     "test-running",
@@ -40,13 +36,9 @@ const PHASE_FLOWS = {
   ],
   medium: [
     "initialized",
-    "dr-generated",
+    "route-selected",
+    "requirement-analyzed",
     "story-generated",
-    "story-reviewed",
-    "testcase-generated",
-    "testcase-reviewed",
-    "task-generated",
-    "task-reviewed",
     "coding-process",
     "coding",
     "test-running",
@@ -55,12 +47,8 @@ const PHASE_FLOWS = {
   ],
   small: [
     "initialized",
-    "story-generated",
-    "story-reviewed",
-    "testcase-generated",
-    "testcase-reviewed",
-    "task-generated",
-    "task-reviewed",
+    "route-selected",
+    "requirement-analyzed",
     "coding-process",
     "coding",
     "test-running",
@@ -69,8 +57,8 @@ const PHASE_FLOWS = {
   ],
   micro: [
     "initialized",
-    "task-generated",
-    "task-reviewed",
+    "route-selected",
+    "requirement-analyzed",
     "coding-process",
     "coding",
     "test-running",
@@ -81,6 +69,8 @@ const PHASE_FLOWS = {
 
 const PHASE_META = {
   initialized: ["初始化", "工作区已建立，等待进入对应规模的第一步。"],
+  "route-selected": ["Route", "任务路由已记录，准备分析本次需求。"],
+  "requirement-analyzed": ["Requirement Analysis", "本次任务需求说明书已形成，等待选择设计深度。"],
   "ra-generated": ["RA", "需求分析已生成，大任务主链中的需求澄清节点。"],
   "dr-generated": ["DR", "设计需求已生成，中/大任务从这里进入设计分解。"],
   "story-generated": ["Story", "用户故事已生成，进入 Story 复核前的设计展开节点。"],
@@ -278,13 +268,24 @@ function flowForScale(scale) {
   return PHASE_FLOWS[key] || PHASE_FLOWS.large;
 }
 
+function flowForState(state) {
+  const base = [...flowForScale(state?.scale)];
+  const selected = state?.routeDecision?.selectedDesign || state?.selectedDesign;
+  if (selected === "DR") return base.filter((phase) => phase !== "story-generated");
+  if (selected === "STORY") return base.filter((phase) => phase !== "dr-generated");
+  if (selected === "CODING_PLAN") {
+    return base.filter((phase) => !["dr-generated", "story-generated", "testcase-generated"].includes(phase));
+  }
+  return base;
+}
+
 function scaleKeyForState(state) {
   return SCALE_ALIASES.get(String(state?.scale || "").trim()) || "large";
 }
 
 function phaseProgress(state) {
   const phase = state?.phase || "initialized";
-  const flow = flowForScale(state?.scale);
+  const flow = flowForState(state);
   const index = flow.indexOf(phase);
   if (index < 0) {
     return { current: phase, index: -1, total: flow.length, percent: 0 };
@@ -300,7 +301,7 @@ function phaseProgress(state) {
 function phaseTimeline(state) {
   const phase = state?.phase || "initialized";
   const scaleKey = scaleKeyForState(state);
-  const flow = PHASE_FLOWS[scaleKey] || PHASE_FLOWS.large;
+  const flow = flowForState(state);
   const pausedFromPhase = state?.pausedFromPhase || null;
   const effectivePhase = phase === "paused" && pausedFromPhase ? pausedFromPhase : phase;
   const currentIndex = flow.indexOf(effectivePhase);

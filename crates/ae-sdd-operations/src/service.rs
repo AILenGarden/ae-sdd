@@ -1,0 +1,97 @@
+use ae_sdd_domain::{AgentRole, OperationId, ScopedGrant, StateRevision};
+use serde_json::Value;
+use thiserror::Error;
+
+use crate::{OperationRequest, OperationRequestError, ValidatedOperationRequest};
+
+#[derive(Clone, Debug)]
+pub enum ExecutionIdentity<'a> {
+    Agent {
+        role: AgentRole,
+        grant: &'a ScopedGrant,
+    },
+    Admin,
+}
+
+pub trait OperationBackend {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn read(&self, request: &ValidatedOperationRequest) -> Result<OperationResponse, Self::Error>;
+    fn mutate(&self, request: &ValidatedOperationRequest)
+    -> Result<OperationResponse, Self::Error>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OperationResponse {
+    pub changed: bool,
+    pub revision_before: Option<StateRevision>,
+    pub revision_after: Option<StateRevision>,
+    pub receipt_digest: Option<[u8; 32]>,
+    pub data: Value,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OperationService;
+
+impl OperationService {
+    pub fn execute<B: OperationBackend>(
+        identity: ExecutionIdentity<'_>,
+        request: OperationRequest,
+        backend: &B,
+    ) -> Result<OperationResponse, OperationServiceError> {
+        let validated = ValidatedOperationRequest::validate(request)?;
+        authorize(identity, validated.operation_id())?;
+        let response = if validated.spec().writes {
+            backend.mutate(&validated)
+        } else {
+            backend.read(&validated)
+        }
+        .map_err(|error| OperationServiceError::Backend(Box::new(error)))?;
+        validate_response(validated.spec().writes, &response)?;
+        Ok(response)
+    }
+}
+
+fn authorize(
+    identity: ExecutionIdentity<'_>,
+    operation: &OperationId,
+) -> Result<(), OperationServiceError> {
+    match identity {
+        ExecutionIdentity::Admin => Ok(()),
+        ExecutionIdentity::Agent { role: _, grant } if grant.operations().contains(operation) => {
+            Ok(())
+        }
+        ExecutionIdentity::Agent { .. } => Err(OperationServiceError::RoleOperationForbidden),
+    }
+}
+
+fn validate_response(
+    writes: bool,
+    response: &OperationResponse,
+) -> Result<(), OperationServiceError> {
+    if writes
+        && (response.revision_before.is_none()
+            || response.revision_after.is_none()
+            || response.receipt_digest.is_none())
+    {
+        return Err(OperationServiceError::MutationReceiptIncomplete);
+    }
+    if !writes && response.changed {
+        return Err(OperationServiceError::ReadReportedMutation);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Error)]
+pub enum OperationServiceError {
+    #[error(transparent)]
+    InvalidRequest(#[from] OperationRequestError),
+    #[error("trusted Agent role/grant does not permit this operation")]
+    RoleOperationForbidden,
+    #[error("operation backend failed: {0}")]
+    Backend(Box<dyn std::error::Error + Send + Sync>),
+    #[error("mutation response lacks revision or committed receipt")]
+    MutationReceiptIncomplete,
+    #[error("read-only operation backend reported a mutation")]
+    ReadReportedMutation,
+}

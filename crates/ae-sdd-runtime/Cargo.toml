@@ -1,0 +1,29 @@
+[package]
+name = "ae-sdd-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ae-sdd-context = { path = "../ae-sdd-context" }
+ae-sdd-delegation = { path = "../ae-sdd-delegation" }
+ae-sdd-domain = { path = "../ae-sdd-domain" }
+ae-sdd-flow = { path = "../ae-sdd-flow" }
+ae-sdd-host = { path = "../ae-sdd-host" }
+ae-sdd-operations = { path = "../ae-sdd-operations" }
+ae-sdd-policy = { path = "../ae-sdd-policy" }
+ae-sdd-protocol = { path = "../ae-sdd-protocol" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

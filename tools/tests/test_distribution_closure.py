@@ -14,6 +14,7 @@ test_distribution_closure.py — 🆕 v3.4.0 分发闭环单元测试
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -74,6 +75,25 @@ def test_install_py_target_path():
     assert "--target-path" in result.stdout, "install.py --help 应含 --target-path"
     assert "--quiet" in result.stdout, "install.py --help 应含 --quiet"
     print("✅ test_install_py_target_path")
+
+
+def test_install_print_usage_survives_gbk_console():
+    """A successful Windows install must not fail while printing status glyphs."""
+    code = (
+        "import importlib.util; "
+        f"p=r'{REPO_ROOT / 'scripts' / 'install.py'}'; "
+        "s=importlib.util.spec_from_file_location('ae_sdd_install', p); "
+        "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.print_usage()"
+    )
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "gbk:strict"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr.decode("gbk", errors="replace")
 
 
 def test_windows_sibling_cli_launcher_is_distributed(tmp_path):

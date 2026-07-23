@@ -53,6 +53,18 @@ class Classification:
     needs_review: bool = False  # 🆕 是否需要人工复核（低置信度）
     review_reasons: list = field(default_factory=list)  # 🆕 复核原因
     entry_node: Optional[str] = None  # 🆕 v3.5.15 入口节点语义（FlowNode.value，如 BUG/CONFIG/PRD）
+    # 🆕 v3.13.0 Spec 缺失自动派生策略。
+    # 形如：
+    #   {"needs": False, "reason": "..."}                               # 不需要 spec
+    #   {"needs": True, "entry_spec": "Story"|"DR"|"RA",
+    #    "series": "story-generate"|"dr-generate"|"requirement-analysis",
+    #    "auto_create": True, "reason": "..."}                          # 需要 spec
+    # 主流程监管器据此派对应 {series}-generate 子流程生成 spec，不阻断。
+    spec_strategy: Optional[dict] = None
+    analysis_required: bool = True
+    recommended_design: Optional[str] = None
+    route_reason: str = ""
+    route_confidence: float = 0.0
 
 
 # ─── 关键词字典（v1.1） ──────────────────────────────────────────────────────
@@ -331,18 +343,6 @@ def classify(text: str, *, filename: Optional[str] = None,
     # 维度 4：多 Agent（中等以上自动建议）
     multi_agent = scale in ("中", "大")
 
-    # 下一步建议（v1.1：next_action 是工作流步骤名，与 PHASE_FLOW 解耦）
-    # v3.12 三核心文档模型：
-    # - "微"/"小" 规模 -> story-generate（Story-lite，随后 compact executionPlan）
-    # - source=DR + 非微小 -> dr-generate（大任务 DR 入口）
-    # - source=对话/Issue/未知 + 非微小 -> requirement-analysis（先分析再生成 DR）
-    if scale in ("微", "小"):
-        next_action = "story-generate"
-    elif source in ("PRD", "DR"):
-        next_action = "dr-generate"
-    else:  # 对话 / Issue
-        next_action = "requirement-analysis"
-
     # 全局 needs_review 判定
     needs_review = (
         src_conf < LOW_CONFIDENCE_THRESHOLD
@@ -403,6 +403,37 @@ def classify(text: str, *, filename: Optional[str] = None,
     elif source in ("对话", "未知"):
         entry_node = "RA"
 
+    # Route first. Mutating tasks always enter requirement analysis; the
+    # analysis result then chooses DR, Story, or the compact CodingPlan.
+    analysis_required = entry_node not in ("CODE_REVIEW", "DOC_FORMAT")
+    direct_plan = any(token in text_lower for token in (
+        "codingplan", "coding plan", "直接 coding", "直接编码", "无需设计",
+    ))
+    if direct_plan:
+        recommended_design = "CODING_PLAN"
+        route_reason = "输入明确要求直接形成 CodingPlan"
+    elif scale == "大":
+        recommended_design = "DR"
+        route_reason = "大规模任务默认需要架构设计；需求分析后可调整"
+    elif scale == "中":
+        recommended_design = "STORY"
+        route_reason = "中规模任务默认使用 Story 行为契约；需求分析后可调整"
+    else:
+        recommended_design = "CODING_PLAN"
+        route_reason = f"规模={scale}，默认使用紧凑 CodingPlan"
+    if not analysis_required:
+        recommended_design = None
+        route_reason = f"entry_node={entry_node} 为只读轻量链，跳过需求分析"
+
+    spec_strategy = _derive_spec_strategy(scale, entry_node, source, project_context)
+    if spec_strategy.get("needs"):
+        spec_strategy["recommended_design"] = recommended_design
+        spec_strategy["reason"] = f"先分析本次任务；当前设计建议={recommended_design}（{route_reason}）"
+    next_action = "requirement-analysis" if analysis_required else (
+        "code-review" if entry_node == "CODE_REVIEW" else "doc-format"
+    )
+    route_confidence = round(min(max(src_conf, scale_conf), 1.0), 2)
+
     return Classification(
         source=source,
         scale=scale,
@@ -423,7 +454,33 @@ def classify(text: str, *, filename: Optional[str] = None,
         needs_review=needs_review,
         review_reasons=review_reasons,
         entry_node=entry_node,
+        spec_strategy=spec_strategy,
+        analysis_required=analysis_required,
+        recommended_design=recommended_design,
+        route_reason=route_reason,
+        route_confidence=route_confidence,
     )
+
+
+def _derive_spec_strategy(scale: str, entry_node: Optional[str],
+                          source: Optional[str],
+                          project_root: Optional[Path]) -> dict:
+    """Describe the requirement spec and suggested post-analysis design depth."""
+    if entry_node in ("CODE_REVIEW", "DOC_FORMAT"):
+        return {
+            "needs": False,
+            "reason": f"entry_node={entry_node} 为只读轻量链",
+        }
+    recommended = "DR" if scale == "大" else "STORY" if scale == "中" else "CODING_PLAN"
+    return {
+        "needs": True,
+        "entry_spec": "RA",
+        "series": "requirement-analysis",
+        "auto_create": True,
+        "recommended_design": recommended,
+        "reason": f"scale={scale} 先分析本次任务，再选择 {recommended} 或用户覆盖路径",
+    }
+
 
 
 def classify_from_file(path: Path) -> Classification:

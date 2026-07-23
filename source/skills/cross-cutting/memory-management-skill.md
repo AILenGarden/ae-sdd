@@ -1,77 +1,83 @@
 ---
 name: memory-management
-description: Phase-aware ae-sdd memory management. Mandatory for associated RA, design, CodingPlan, Coding, and Review nodes. Provides enter/write/exit/read/search/promote workflow and layered memory policy.
-source_slimmed: true
-source_slim_schema: ae-sdd-source-slim/v2
-source_slim_standard: standards/skill-source-slimming-standard.md
-source_slim_template: templates/skill/source-skill-slim-entry-template.md
-source_fallback: skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md
-source_fallback_sha256: 7c2bee41d718d493c5e92820ac5c7be2ee5896bd441786a367d96f1ff3e05bc1
-source_original_bytes: 5859
-source_original_lines: 145
-source_semantic_inventory_sha256: c75a330b68ad53cdfbd6d3fc9cd37df9799fd7a198d3a274e3c0653ae62b6a2f
-source_slimmer: slim_source_skills.py@2
+description: Declarative role-aware memory, context projection, and compact contract for ae-sddd.
+declarative_only: true
 ---
 
-# Memory Management Skill Source SKILL Slim Entry
+# Memory And Context Contract
 
-This source SKILL has been slimmed by the standard source-slimming pipeline. The full pre-slim source is preserved at `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md` and remains the semantic fallback.
+Memory lifecycle is owned by the Rust daemon. An Agent never creates a local
+memory directory, compiles source files into prompt memory, or deletes another
+session's memory directly.
 
-## Load Contract
+## Namespace
 
-- Use this slim entry first for routing, scope, semantic inventory, and resource discovery.
-- Load `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md` before executing any step whose exact wording is not represented in the semantic inventory below.
-- Do not run source slimming again when `source_slimmed: true` is present; use `--upgrade` only to re-render from the fallback with a newer schema.
-- When compiling, runtime fallback must come from `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md`, not this slim entry.
+Every memory record and projection is keyed by:
 
-## Summary
+```text
+workspaceId / workItemId / rootSessionId / delegationId / role / contextGeneration
+```
 
-- source: `skills/cross-cutting/memory-management-skill.md`
-- fallback: `skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md`
-- fallback_sha256: `7c2bee41d718d493c5e92820ac5c7be2ee5896bd441786a367d96f1ff3e05bc1`
-- original_lines: 145
-- original_bytes: 5859
-- semantic_inventory_sha256: `c75a330b68ad53cdfbd6d3fc9cd37df9799fd7a198d3a274e3c0653ae62b6a2f`
-- standard: `standards/skill-source-slimming-standard.md`
-- template: `templates/skill/source-skill-slim-entry-template.md`
-- summary: Phase-aware ae-sdd memory management. Mandatory for associated RA, design, CodingPlan, Coding, and Review nodes. Provides enter/write/exit/read/search/promote workflow and layered memory policy.
+The daemon derives role and lineage from an attested session. Request fields that
+claim another role, parent, sibling, workspace, or generation are untrusted and
+must be rejected.
 
-## Semantic Inventory
+## Projection Contract
 
-| category | evidence | design_refs | fallback_policy |
-| --- | --- | --- | --- |
-| identity_trigger | frontmatter: name, description | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
-| workflow_route | keyword_hits: 26 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | keyword_hits: 16 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
-| tool_command | headings: L2:131 6. CLI Contract; keyword_hits: 22 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 25 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
-| output_doc_contract | keyword_hits: 4 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
-| resource_reference | inline_refs: 2; refs: ae-sdd state write --phase <next>; memory-layering.md; keyword_hits: 6 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
-| design_alignment | keyword_hits: 1 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| Consumer | Allowed projection |
+| --- | --- |
+| root | flow digest, legal next action, child status, bounded summaries, finding counts, artifact indexes, receipts |
+| series | scoped methodology, upstream artifact references, series state, deliverable contract, child summaries |
+| task | allowed paths, task contract, required checks, task-local findings |
+| reviewer | immutable review inputs, artifact references, verification contract; no worker scratch memory |
 
-## Source Slimming SOP
+`context.get` returns a bounded full projection. `context.project` takes the last
+`contextRevision` and digest and returns full, delta, or no-change. A stale or
+unauthorized request never receives an old or broader projection.
 
-1. Read the full source or the recorded fallback as the only semantic input.
-2. Identify semantic categories before slimming: identity/trigger, workflow/route, gates/constraints, tools/API, state/data, output contracts, resources, design alignment, and fallback-only detail.
-3. Render this entry from `templates/skill/source-skill-slim-entry-template.md`; do not hand-edit generated slim sections.
-4. Validate `source_fallback_sha256`, required sections, and `source_semantic_inventory_sha256`.
-5. Rebuild compiled runtime and run runtime verification after any source SKILL slimming change.
+Budgets:
 
-## Headings
+- root projection: at most 64 KiB;
+- ChildResult envelope: at most 64 KiB;
+- child summary: at most 8 KiB;
+- oversized logs, source bundles, transcripts, and evidence bodies: artifact
+  reference only.
 
-| level | line | title |
-| --- | --- | --- |
-| 1 | 6 | Memory Management Skill |
-| 2 | 8 | 1. Core Rule |
-| 2 | 36 | 2. Associated Nodes |
-| 2 | 46 | 3. Layers |
-| 2 | 68 | 4. Required Write Quality |
-| 2 | 122 | 5. Conflict Handling |
-| 2 | 131 | 6. CLI Contract |
+## Delegation Memory Lifecycle
 
-## Inline References
+1. `delegation.create` allocates a scoped namespace and deliverable contract.
+2. The attested child receives its role-aware projection after
+   `delegation.accept` and `session.open`.
+3. The child reports a bounded result. The daemon validates artifact paths,
+   hashes, kinds, required deliverables, and memory scope.
+4. The daemon cleans temporary child memory and commits a durable
+   `MemoryCleanupReceipt`.
+5. Only then may `delegation.collect` expose the bounded result to the parent.
 
-| ref |
-| --- |
-| ae-sdd state write --phase <next> |
-| memory-layering.md |
+Cleanup replay returns the existing receipt and never deletes twice. A cleanup
+failure leaves the delegation before `memory-cleaned`; the parent cannot collect
+or advance.
+
+## Compact Contract
+
+Only authenticated `host.pressure_report` token telemetry may trigger an active
+compact policy. Context bytes are not a token-pressure substitute. The default
+policy requires two consecutive threshold samples, uses 800/600 permille
+hysteresis, and enforces a 300-second cooldown.
+
+Compact advances through durable snapshot, native host request, correlated ACK,
+and projection rehydrate. `contextGeneration` changes only after successful
+rehydrate. Unsupported hosts return explicit manual/rotate remediation; no
+physical compact or ACK is inferred from an Agent message.
+
+## Prohibitions
+
+- No root import of child transcript, raw source bundle, scratch memory, or
+  unbounded command output.
+- No cross-role, cross-lineage, cross-workspace, or stale-generation reads.
+- No local `.ae-sdd/memory` fallback when the daemon is unavailable.
+- No prompt-only compact completion and no projection-based token estimation.
+- No parent collection before artifact-validation and memory-cleanup receipts.
+
+The expanded schema and failure semantics are in
+`skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md`.

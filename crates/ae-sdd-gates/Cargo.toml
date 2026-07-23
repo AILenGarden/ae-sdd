@@ -1,0 +1,20 @@
+[package]
+name = "ae-sdd-gates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ae-sdd-domain = { path = "../ae-sdd-domain" }
+ae-sdd-policy = { path = "../ae-sdd-policy" }
+ae-sdd-scanners = { path = "../ae-sdd-scanners" }
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints]
+workspace = true

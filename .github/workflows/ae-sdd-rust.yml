@@ -1,0 +1,101 @@
+name: ae-sdd Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ae-sdd-rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  cross-platform:
+    name: ${{ matrix.os }} release contract
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+          rustup override set 1.97.1
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Verify formatting
+        shell: bash
+        run: cargo fmt --all -- --check
+
+      - name: Enforce strict Clippy
+        shell: bash
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run release-profile workspace tests
+        shell: bash
+        run: cargo test --workspace --release --locked
+
+      - name: Build native release artifacts
+        shell: bash
+        run: cargo build --workspace --release --locked
+
+      - name: Audit legacy compatibility inventory
+        shell: bash
+        run: >-
+          cargo run -p ae-sdd-build --release --locked --
+          compatibility-audit
+          --manifest tests/fixtures/compatibility/legacy-surface.v1.json
+          --expected-commands 113
+          --expected-operations 18
+          --expected-gates 36
+          --expected-scanners 7
+          --exclude apps/ae-sdd-monitor/**
+
+      - name: Benchmark cached Hook framing
+        shell: bash
+        run: >-
+          cargo run -p ae-sdd-build --release --locked --
+          benchmark-hook --warmup 1000 --samples 10000 --histogram hdr --json
+
+      - name: Reject Python and local fallback in release artifacts
+        shell: bash
+        run: >-
+          cargo run -p ae-sdd-build --release --locked --
+          verify-release --artifact-dir target/release
+          --exclude apps/ae-sdd-monitor/** --json
+
+  supply-chain:
+    name: Dependency policy and advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup override set 1.97.1
+
+      - name: Install pinned supply-chain tools
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Check sources, licenses, bans, and advisories
+        run: |
+          cargo deny check
+          cargo audit --deny warnings

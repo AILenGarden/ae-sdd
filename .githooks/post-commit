@@ -1,72 +1,118 @@
 #!/usr/bin/env bash
-# ae-sdd post-commit hook（v3.4.4 单入口版）
-#
-# 触发条件：ae-sdd 母版仓的任意 commit 提交完成
-# 动作：调 scripts/distribute.py 单入口 orchestrator，由它内部串联：
-#   build_dist → 遍历分发器（claude/codex/zcode/hermes copytree + mavis harness_mount）
-#   每个分发器各自 compile/install/verify/cleanup
-#
-# 跳过策略：
-#   - 非母版仓库（无 source/SKILL.md）：静默退出 0
-#   - 仅修改 CHANGELOG/ 或 README.md：跳过（无功能性变更）
-#   - SKIP_AE_SDD_HOOK=1 环境变量：跳过（紧急旁路）
-#   - 任何步骤失败：不回滚（commit 已落库），仅输出错误，不阻断 git
+# ae-sdd native post-commit distribution hook.
+# A completed Git commit is never rolled back when distribution fails.
 
-set -u  # 不开 -e：单步失败不阻断后续
+set -u
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-AE_SDD="$REPO_ROOT"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$REPO_ROOT" ] || [ ! -f "$REPO_ROOT/source/SKILL.md" ]; then
+    exit 0
+fi
 
-# ── 0. 旁路开关 ───────────────────────────────────────────────────────
 if [ "${SKIP_AE_SDD_HOOK:-0}" = "1" ]; then
-    echo "⏭️  ae-sdd post-commit: SKIP_AE_SDD_HOOK=1，跳过"
+    echo "ae-sdd post-commit: skipped by SKIP_AE_SDD_HOOK=1"
     exit 0
 fi
 
-# ── 1. 仅母版仓触发 ──────────────────────────────────────────────────
-if [ ! -f "$AE_SDD/source/SKILL.md" ]; then
+CHANGED="$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || true)"
+MEANINGFUL="$(printf '%s\n' "$CHANGED" | grep -vE '^(source/CHANGELOG/|README\.md$|\.githooks/)' || true)"
+if [ -z "$MEANINGFUL" ]; then
     exit 0
 fi
 
-# ── 2. 跳过 CHANGELOG-only / README-only 提交 ─────────────────────────
-CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || echo "")
-HAS_MEANINGFUL=$(echo "$CHANGED" | grep -vE '^(source/CHANGELOG/|README\.md$|\.githooks/)' || true)
-if [ -z "$HAS_MEANINGFUL" ]; then
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "ae-sdd post-commit: cargo is unavailable; native distribution did not run" >&2
     exit 0
 fi
 
-echo "🔄 ae-sdd post-commit: 检测到功能性变更，启动分发闭环..."
+case "$REPO_ROOT${HOME:-}" in
+    *\"*)
+        echo "ae-sdd post-commit: paths containing a quote are unsupported" >&2
+        exit 0
+        ;;
+esac
 
-# ── 3. 探测 Python ───────────────────────────────────────────────────
-PYTHON=""
-for cand in python python3 py; do
-    if command -v "$cand" >/dev/null 2>&1; then
-        PYTHON=$(command -v "$cand")
-        break
-    fi
-done
-if [ -z "$PYTHON" ]; then
-    echo "⚠️  ae-sdd post-commit: 找不到 python，跳过分发"
+COMMIT_ID="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
+TMP_DIR="$(mktemp -d 2>/dev/null || true)"
+if [ -z "$TMP_DIR" ]; then
+    echo "ae-sdd post-commit: could not create a private request directory" >&2
+    exit 0
+fi
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+COMPILE_REQUEST="$TMP_DIR/compile.json"
+DISTRIBUTE_REQUEST="$TMP_DIR/distribute.json"
+PACKAGE_DIR="$REPO_ROOT/dist/ae-sdd"
+USER_HOME="${HOME:-$REPO_ROOT}"
+
+cat >"$COMPILE_REQUEST" <<EOF
+{
+  "schemaVersion": "ae-sdd-native-job/v1",
+  "entrypoint": "post-commit.compile",
+  "actor": "git:post-commit",
+  "reason": "compile declarative package after a functional commit",
+  "idempotencyKey": "post-commit-$COMMIT_ID-compile",
+  "mode": "apply",
+  "allowedRoots": ["$REPO_ROOT"],
+  "job": {
+    "kind": "compile",
+    "input": {
+      "sourceDirectory": "$REPO_ROOT/source",
+      "outputDirectory": "$PACKAGE_DIR",
+      "generatedConfigs": []
+    }
+  }
+}
+EOF
+
+cat >"$DISTRIBUTE_REQUEST" <<EOF
+{
+  "schemaVersion": "ae-sdd-native-job/v1",
+  "entrypoint": "post-commit.distribute",
+  "actor": "git:post-commit",
+  "reason": "distribute the verified native package after compile",
+  "idempotencyKey": "post-commit-$COMMIT_ID-distribute",
+  "mode": "apply",
+  "allowedRoots": ["$REPO_ROOT", "$USER_HOME"],
+  "job": {
+    "kind": "distribute",
+    "input": {
+      "packageDirectory": "$PACKAGE_DIR",
+      "targetDirectories": [
+        "$USER_HOME/.claude/skills/ae-sdd",
+        "$USER_HOME/.codex/skills/ae-sdd",
+        "$USER_HOME/.zcode/skills/ae-sdd",
+        "$USER_HOME/.mavis/skills/ae-sdd",
+        "$USER_HOME/.hermes/skills/ae-sdd"
+      ]
+    }
+  }
+}
+EOF
+
+echo "ae-sdd post-commit: compiling native distribution package"
+COMPILE_OUTPUT="$(
+    cd "$REPO_ROOT" &&
+    cargo run -p ae-sdd-build --release -- native-job --request "$COMPILE_REQUEST" 2>&1
+)"
+COMPILE_STATUS=$?
+printf '%s\n' "$COMPILE_OUTPUT" | tail -30
+if [ "$COMPILE_STATUS" -ne 0 ]; then
+    echo "ae-sdd post-commit: native compile failed; commit remains intact" >&2
     exit 0
 fi
 
-# ── 4. 单入口：distribute.py ─────────────────────────────────────────
-# distribute.py 内部：build_dist → 遍历 active 分发器 → 各自编译+安装+校验+清理
-# --quiet：post-commit 场景只输出关键状态
-# --from-commit：标记由 hook 触发（影响日志详尽度）
-# 各分发器独立 try/except，单步失败不阻断其他分发器（保持"失败不阻断 git"语义）
-if [ -f "$AE_SDD/scripts/distribute.py" ]; then
-    "$PYTHON" "$AE_SDD/scripts/distribute.py" --quiet --from-commit 2>&1 | tail -30
-    # B4 修复：无 pipefail 时管道退出码取最右（tail，几乎恒成功），
-    # 会把 distribute.py 的失败掩盖成成功。改用 PIPESTATUS[0] 取真实退出码。
-    rc=${PIPESTATUS[0]}
-    if [ "$rc" -eq 0 ]; then
-        echo "✅ ae-sdd post-commit: 分发闭环结束"
-    else
-        echo "⚠️  ae-sdd post-commit: distribute.py 返回非零（commit 已落库，未回滚）"
-    fi
-else
-    echo "⚠️  ae-sdd post-commit: scripts/distribute.py 不存在，跳过"
+echo "ae-sdd post-commit: distributing verified native package"
+DISTRIBUTE_OUTPUT="$(
+    cd "$REPO_ROOT" &&
+    cargo run -p ae-sdd-build --release -- native-job --request "$DISTRIBUTE_REQUEST" 2>&1
+)"
+DISTRIBUTE_STATUS=$?
+printf '%s\n' "$DISTRIBUTE_OUTPUT" | tail -30
+if [ "$DISTRIBUTE_STATUS" -ne 0 ]; then
+    echo "ae-sdd post-commit: native distribution failed; commit remains intact" >&2
+    exit 0
 fi
 
+echo "ae-sdd post-commit: native compile and distribution completed"
 exit 0

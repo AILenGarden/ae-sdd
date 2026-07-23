@@ -38,9 +38,11 @@ def is_forward_transition(
     scale: Optional[str] = None,
 ) -> bool:
     """过渡期保留：按 scale 选子链判定向前转移。"""
-    from lib.state import PHASE_FLOWS, VALID_SCALES
+    from lib.state import VALID_SCALES
     from lib import state as state_mod
-    chain = PHASE_FLOWS[scale] if scale in VALID_SCALES else state_mod.PHASE_FLOW
+    chain = state_mod.phase_chain_for_state({
+        "scale": scale if scale in VALID_SCALES else "大",
+    })
     try:
         current_idx = chain.index(current_phase)
         target_idx = chain.index(target_phase)

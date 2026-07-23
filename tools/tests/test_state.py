@@ -250,20 +250,20 @@ class TestNextStepSuggestion(unittest.TestCase):
         """🆕 v3.10.2 大链 initialized -> ra-generated（4 loop 从 RA 起）"""
         s = {"phase": "initialized", "scale": "大"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "ra-generated")
+        self.assertEqual(sug["next"], "route-selected")
 
     def test_micro_initialized_to_coding_process(self):
         """🆕 v3.10.0 微链 initialized -> coding-process（无文档直出 CodingPlan）"""
         s = {"phase": "initialized", "scale": "微"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "coding-process")
-        self.assertIn("coding-process-skill.md", sug["skill"])
+        self.assertEqual(sug["next"], "route-selected")
+        self.assertIn("classify", sug["skill"])
 
     def test_small_initialized_to_coding_process(self):
         """🆕 v3.10.0 小链 initialized -> coding-process（CodingPlan 入口，已有 Story+TestCase）"""
         s = {"phase": "initialized", "scale": "小"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "coding-process")
+        self.assertEqual(sug["next"], "route-selected")
 
     def test_story_generated_to_testcase_generated(self):
         """🆕 v3.10.1 子系列合并：story-generated（=generate+review loop 完成）-> testcase-generated。
@@ -284,7 +284,7 @@ class TestNextStepSuggestion(unittest.TestCase):
         """🆕 v3.10.2 中链 initialized -> dr-generated（3 loop 从 DR 起，跳 RA）"""
         s = {"phase": "initialized", "scale": "中"}
         sug = state_mod.next_step_suggestion(s)
-        self.assertEqual(sug["next"], "dr-generated")
+        self.assertEqual(sug["next"], "route-selected")
 
     def test_large_dr_to_story(self):
         """🆕 v3.10.0 大链 dr-generated -> story-generated"""
@@ -333,19 +333,19 @@ class TestPhaseFlowCoverage(unittest.TestCase):
 
     def test_large_chain_has_10_phases(self):
         # 🆕 v3.10.2：4 loop（RA-DR-Story-TestCase）+ Coding/Testing 2 phase
-        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 10)
+        self.assertEqual(len(state_mod.PHASE_FLOWS["大"]), 11)
 
     def test_medium_chain_has_9_phases(self):
         # 🆕 v3.10.2：3 loop（DR-Story-TestCase）+ Coding/Testing 2 phase，跳 RA
-        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 9)
+        self.assertEqual(len(state_mod.PHASE_FLOWS["中"]), 10)
 
     def test_small_chain_has_6_phases(self):
         # 🆕 v3.10.0：小=CodingPlan 入口，直出 coding-process
-        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 6)
+        self.assertEqual(len(state_mod.PHASE_FLOWS["小"]), 8)
 
     def test_micro_chain_has_6_phases(self):
         # 🆕 v3.10.0：微=无文档直出 coding-process，移除 task-generated/task-reviewed
-        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 6)
+        self.assertEqual(len(state_mod.PHASE_FLOWS["微"]), 8)
 
     def test_micro_chain_includes_code_reviewed(self):
         """🆕 2026-07-03(B1): 微链必须含 code-reviewed（CodeReview 报告不豁免）"""
@@ -366,6 +366,28 @@ class TestPhaseFlowCoverage(unittest.TestCase):
     def test_phase_flow_alias_is_large_chain(self):
         """向后兼容：PHASE_FLOW 别名 = 大链"""
         self.assertEqual(state_mod.PHASE_FLOW, state_mod.PHASE_FLOWS["大"])
+
+    def test_selected_dr_can_skip_story(self):
+        s = {"phase": "requirement-analyzed", "scale": "大", "processPolicy": "compact"}
+        state_mod.set_design_route(s, "DR", reason="architecture only")
+        chain = state_mod.phase_chain_for_state(s)
+        self.assertIn("dr-generated", chain)
+        self.assertNotIn("story-generated", chain)
+
+    def test_selected_story_skips_dr(self):
+        s = {"phase": "requirement-analyzed", "scale": "大", "processPolicy": "compact"}
+        state_mod.set_design_route(s, "STORY")
+        chain = state_mod.phase_chain_for_state(s)
+        self.assertNotIn("dr-generated", chain)
+        self.assertIn("story-generated", chain)
+
+    def test_selected_coding_plan_skips_design_documents(self):
+        s = {"phase": "requirement-analyzed", "scale": "大", "processPolicy": "compact"}
+        state_mod.set_design_route(s, "CODING_PLAN")
+        self.assertEqual(
+            state_mod.next_step_suggestion(s)["next"],
+            "coding-process",
+        )
 
 
 class TestSetScale(unittest.TestCase):

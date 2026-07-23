@@ -10,6 +10,33 @@
 
 ---
 
+## ae-sdd Rust daemon 项目绑定（11 维结论）
+
+> 本节是 `projectKey=ae-sdd` 的 CodingModel 具体结论，优先级高于本文后续通用 Java/HTTP/DB/MQ 示例。后续示例只用于说明思考方法，不得据此为 ae-sdd 引入 JVM、HTTP server、远程数据库、Redis 或 MQ。实现必须同时遵守 `constraints/*.md`、正式 DR/Story 与已批准 `state.executionPlan`。
+
+| 维度 | 本项目是否适用 | 已冻结实现结论 | 必须验证的失败边界 |
+| --- | --- | --- | --- |
+| ① 原子性 | 是 | 项目 mutation 使用跨进程锁与 `<state-dir>/mutation-journal/v1` 的 typed PREPARED/COMMITTED authority，再执行同目录 staged file、fsync、atomic replace、目录 fsync；SQLite transaction 只在 COMMITTED 后更新可重建 index | disk full、multi-target replace/fsync crash、PREPARED/COMMITTED kill point 不得产生 fake commit/event；无法证明则 EXTERNAL_STATE_CONFLICT |
+| ② 并发安全 | 是 | 每个 Work Item 由有界 actor mailbox 串行；持久边界仍强制 lease TTL、revision CAS、单调 fencing、idempotency 与跨进程 lock；长 Gate/host/build job 在 mailbox 外运行 | stale lease/revision/fencing、restart、旧 client、mailbox saturation 只能单提交或稳定拒绝 |
+| ③ 幂等性 | 是 | operation 使用 idempotencyKey + canonical payload hash + receipt；session、Hook、delegation.create、host command/ACK、ChildResult 与 memory cleanup 都有 durable unique receipt；event 使用 eventStoreId + global eventSeq + decision digest；compact 使用 compactId + session/generation | 同 key 同 payload重放原 response；同 key 异 payload冲突；restart 后 duplicate prompt/event/ACK 仍不产生第二次 correction/spawn/side effect |
+| ④ 解耦与异步 | 是 | FlowRuntime 是纯 reducer；runtime 以跨 restart 全局 cursor 和 typed bounded event payload/outbox 驱动 FlowSupervisor、Delegation、HostAction 与 ContextProjection；Hook fast path 只鉴权、读预计算 delta 或入队 | 禁止 digest-only replay、同步递归扫描、等待 spawn/compact/build；cancel/timeout/orphan 必须收敛到显式终态 |
+| ⑤ 数据一致性 | 是 | project state/lease/docs/memory/evidence/review/artifact 是业务权威；SQLite 保存可重建 runtime metadata；Gate commit 绑定 state/policy/inventory/input freshness | SQLite/project 冲突以 project revision/hash 为准；hash 变但 revision 未增进入 EXTERNAL_STATE_CONFLICT；STALE 结果不提交 |
+| ⑥ 外部依赖容错 | 是 | 外部依赖仅为 Agent host、git、toolchain、test runner、OS service 与文件系统；全部经 typed adapter、deadline、cancellation、bounded output 和 capability negotiation；不经 shell 字符串调用 | daemon/host unavailable、protocol mismatch、panic、timeout、unsupported 均 fail closed 或显式降级，绝不映射 PASS/physical proof/compact context-restored |
+| ⑦ 性能 | 是 | 容量基线 100 session/10 workspace；warm handshake p95<=50 ms、cached read<=100 ms、cached Hook RPC p95<=50 ms、invalidated non-external Hook p95<=250 ms；ChildResult<=64 KiB、summary<=8 KiB、root projection<=64 KiB | 记录 p50/p95/p99/max/CPU/RSS；slow subscriber、queue 满、cache miss 时 backpressure/fail-closed，不允许 OOM 或同步长作业 |
+| ⑧ 资源隔离 | 是 | workspace/Work Item actor、scheduler semaphore、bounded mailbox、blocking/DB worker 与 subscription queue 都有配额；root/series/task/reviewer memory/context 由 delegation grant 隔离 | 单 workspace/Agent 不得饿死其他请求；cross-workspace/cross-role access=0；background task 必须可 join/cancel/recover |
+| ⑨ 安全 | 是 | IPC 仅当前 OS 用户：Windows Named Pipe 当前 SID DACL，Unix runtime dir 0700/socket+manifest 0600；256-bit endpoint secret；boot-scoped Ed25519 private key 签 capability、manifest 只给 public key；daemon-derived role/lineage；canonical path containment；secret/transcript 不入日志/SQLite/root projection | endpoint token 不能伪造 capability；fake child、ACK-only claim、path escape、cross-user、wrong compact generation、command injection 全部拒绝并审计 |
+| ⑩ 可观测性 | 是 | request/session/turn/delegation/hostAction/compact/workItem/revision/event/fencing/policy/input/decision 全链路结构化关联；Gate outcome、supervisor health 与业务 correction 分离 | 重启、stale、external conflict、invalid ACK、deadline 与 backpressure 均有稳定 code/metric/evidence；不记录 prompt、claim、token、transcript 正文 |
+| ⑪ 可运维性 | 是 | 用户级 service 支持 start/status/drain/stop/upgrade/recovery；workspace shadow→rust-canary→rust-sole-writer 经 drain 原子切换；删除 Python 前可回滚，删除后回退完整发行包 | service crash、migration failure、DB 损坏、watcher overflow、cursor gap、compact 中断均恢复到可诊断非成功状态；Monitor 不阻断核心 cutover |
+
+### 项目实现出口
+
+- 技术绑定：Rust edition 2024；根 `rust-toolchain.toml` 固定经验证的精确 stable；Tokio 仅启用所需 feature；本地 framed JSON-RPC over Named Pipe/UDS；SQLite WAL 默认 `rusqlite` bundled 且位于有界 blocking/DB worker。
+- 依赖方向：`domain -> policy -> flow/delegation/context/operations ports -> runtime`；`protocol` 独立拥有 wire DTO；concrete adapters 向内依赖以实现 port，runtime 不依赖 concrete adapter，daemon/build binary 负责装配；CLI 仅 `client -> protocol`。`domain/policy/flow reducer` 无 I/O、clock、random、Tokio、SQLite 或宿主 API。
+- 流程边界：SKILL 是声明式方法/模板/输出合同，Agent 是语义 worker，FlowRuntime/WorkItemActor 是唯一确定性流程与 mutation owner。
+- 准入规则：每次 Coding 前必须针对当前 Work Item/state revision 动态加载四个上下文，重新执行 G-CODEPLAN-SRC、G-14、G-08，并核对当前 `state.executionPlan` 的显式用户批准；本文件本身不构成任何 gate PASS 或批准证据。每个实现 slice 先编译、再真实测试、再 review，禁止空 crate、stub-pass、logical spawn success 或假 compact ACK。
+
+---
+
 ## 第0章·核心思想基座
 
 > 来源：《编码核心思想·完整版》89条。

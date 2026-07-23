@@ -1,0 +1,4 @@
+msrv = "1.97.0"
+too-many-arguments-threshold = 8
+type-complexity-threshold = 300
+
