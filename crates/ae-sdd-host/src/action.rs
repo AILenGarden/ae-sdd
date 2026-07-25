@@ -295,7 +295,14 @@ impl HostAck {
 pub trait HostRuntimeAdapter: Send + Sync {
     fn adapter_id(&self) -> &HostAdapterId;
     fn capabilities(&self) -> &HostCapabilitySet;
-    fn dispatch(&self, action: &HostAction) -> Result<(), HostAdapterError>;
+    /// Dispatches `action` to the host and returns its real result as a
+    /// local [`HostAck`]. Exit 0 maps to `Ok(HostAck { outcome: Accepted, .. })`;
+    /// a non-zero exit still maps to `Ok(HostAck { outcome: Rejected { error_code }, .. })`
+    /// — both are host-delivered outcomes carrying full correlation
+    /// (`action_id`/`adapter_id`/`command_seq`). Only conditions that mean the
+    /// action was never delivered (capability missing, spawn failure, timeout)
+    /// return `Err(HostAdapterError)`.
+    fn dispatch(&self, action: &HostAction) -> Result<HostAck, HostAdapterError>;
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -331,4 +338,168 @@ fn validate_opaque_id(kind: &'static str, value: &str) -> Result<(), HostActionE
         return Err(HostActionError::InvalidOpaqueId { kind });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn adapter() -> HostAdapterId {
+        HostAdapterId::new("adapter-1").expect("adapter id")
+    }
+
+    fn action_id() -> HostActionId {
+        HostActionId::from_uuid(uuid::Uuid::from_u128(1))
+    }
+
+    /// Builds an otherwise-valid `Create` action, letting each test vary one
+    /// field to isolate a single rejection rule.
+    fn create_action(
+        command_seq: u64,
+        deadline_unix_ms: u64,
+        delegation_id: Option<DelegationId>,
+    ) -> Result<HostAction, HostActionError> {
+        HostAction::new(
+            action_id(),
+            adapter(),
+            command_seq,
+            HostActionKind::Create,
+            delegation_id,
+            None,
+            None,
+            None,
+            deadline_unix_ms,
+            [7; 32],
+        )
+    }
+
+    fn delegation() -> DelegationId {
+        DelegationId::from_uuid(uuid::Uuid::from_u128(2))
+    }
+
+    #[test]
+    fn action_rejects_zero_command_sequence_and_zero_deadline_independently() {
+        assert_eq!(
+            create_action(0, 2_000, Some(delegation())),
+            Err(HostActionError::ZeroCommandSequence)
+        );
+        assert_eq!(
+            create_action(1, 0, Some(delegation())),
+            Err(HostActionError::ZeroDeadline)
+        );
+        // Both valid: proves the two guards above are the only thing that
+        // rejected the cases, not some unrelated field.
+        assert!(create_action(1, 2_000, Some(delegation())).is_ok());
+    }
+
+    #[test]
+    fn create_action_requires_a_delegation_binding() {
+        assert_eq!(
+            create_action(1, 2_000, None),
+            Err(HostActionError::DelegationBindingRequired)
+        );
+    }
+
+    #[test]
+    fn compact_action_requires_compact_session_and_generation_bindings() {
+        let compact_id = CompactId::from_uuid(uuid::Uuid::from_u128(3));
+        let session_id = SessionId::from_uuid(uuid::Uuid::from_u128(4));
+        let generation = ContextGeneration::default();
+        let build = |compact, session, generation_arg| {
+            HostAction::new(
+                action_id(),
+                adapter(),
+                1,
+                HostActionKind::Compact,
+                None,
+                compact,
+                session,
+                generation_arg,
+                2_000,
+                [7; 32],
+            )
+        };
+
+        // Each of the three bindings is individually required.
+        for (compact, session, generation_arg) in [
+            (None, Some(session_id), Some(generation)),
+            (Some(compact_id), None, Some(generation)),
+            (Some(compact_id), Some(session_id), None),
+        ] {
+            assert_eq!(
+                build(compact, session, generation_arg),
+                Err(HostActionError::CompactBindingRequired),
+                "missing one compact binding must be rejected"
+            );
+        }
+        assert!(build(Some(compact_id), Some(session_id), Some(generation)).is_ok());
+    }
+
+    #[test]
+    fn ack_rejects_zero_command_sequence() {
+        let build = |command_seq| {
+            HostAck::new(
+                HostAckId::from_uuid(uuid::Uuid::from_u128(5)),
+                action_id(),
+                adapter(),
+                command_seq,
+                HostAckOutcome::Accepted,
+                None,
+                None,
+            )
+        };
+
+        assert_eq!(build(0), Err(HostActionError::ZeroCommandSequence));
+        assert!(build(1).is_ok());
+    }
+
+    #[test]
+    fn opaque_ids_reject_empty_overlong_and_control_characters() {
+        // Empty.
+        assert_eq!(
+            HostAdapterId::new(""),
+            Err(HostActionError::InvalidOpaqueId { kind: "adapter" })
+        );
+        // Over the 256-byte bound.
+        assert_eq!(
+            HostAdapterId::new("a".repeat(257)),
+            Err(HostActionError::InvalidOpaqueId { kind: "adapter" })
+        );
+        // Control character embedded mid-value.
+        assert_eq!(
+            HostAdapterId::new("adapter\u{7}1"),
+            Err(HostActionError::InvalidOpaqueId { kind: "adapter" })
+        );
+        // The `kind` label is per-type, so a host task id reports its own.
+        assert_eq!(
+            HostTaskId::new(""),
+            Err(HostActionError::InvalidOpaqueId { kind: "host task" })
+        );
+        // Exactly at the bound is accepted.
+        assert!(HostAdapterId::new("a".repeat(256)).is_ok());
+    }
+
+    #[test]
+    fn every_error_variant_renders_a_distinct_nonempty_message() {
+        let variants = [
+            HostActionError::InvalidOpaqueId { kind: "adapter" },
+            HostActionError::ZeroCommandSequence,
+            HostActionError::ZeroDeadline,
+            HostActionError::DelegationBindingRequired,
+            HostActionError::CompactBindingRequired,
+            HostActionError::AckCorrelationMismatch,
+        ];
+        let rendered = variants.iter().map(ToString::to_string).collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().all(|message| !message.trim().is_empty()),
+            "no error variant may render an empty message"
+        );
+        let unique = rendered.iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            unique.len(),
+            rendered.len(),
+            "each variant must be distinguishable in logs: {rendered:?}"
+        );
+    }
 }

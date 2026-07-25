@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 ae-sdd-client.workspace = true
+ae-sdd-contracts.workspace = true
+ae-sdd-domain.workspace = true
 ae-sdd-operations.workspace = true
 ae-sdd-protocol.workspace = true
 clap.workspace = true

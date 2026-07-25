@@ -1,15 +1,124 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use ae_sdd_domain::HostAckId;
 use ae_sdd_host::{
-    HostAction, HostAdapterError, HostAdapterId, HostCapability, HostCapabilitySet,
-    HostRuntimeAdapter,
+    HostAck, HostAckOutcome, HostAction, HostAdapterError, HostAdapterId, HostCapability,
+    HostCapabilitySet, HostRuntimeAdapter,
 };
+use uuid::Uuid;
 
 use crate::{IntegrationError, IntegrationResult};
+
+/// Host environment variables ever forwarded to a spawned child. Everything
+/// else (credentials, tokens, unrelated user configuration) is stripped
+/// before spawn, matching `constraints/security.md` §四's allowlist
+/// requirement. Mirrors the equivalent list already verified for the daemon
+/// launcher in `bins/ae-sdd-cli/src/bootstrap.rs`.
+const SAFE_ENVIRONMENT_KEYS: &[&str] = &[
+    "APPDATA",
+    "CARGO_HOME",
+    "COMSPEC",
+    "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LANG",
+    "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATH",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_IDENTIFIER",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "RUSTUP_HOME",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "USERNAME",
+    "USERDOMAIN",
+    "WINDIR",
+];
+
+fn is_safe_environment_key(key: &std::ffi::OsStr) -> bool {
+    let key = key.to_string_lossy();
+    SAFE_ENVIRONMENT_KEYS
+        .iter()
+        .any(|allowed| key.eq_ignore_ascii_case(allowed))
+}
+
+/// Clears the inherited host environment and re-admits only allowlisted
+/// keys, so unrelated secrets/tokens in the caller's process never reach a
+/// spawned child.
+fn apply_environment_allowlist(command: &mut Command) {
+    command.env_clear();
+    for (key, value) in std::env::vars_os().filter(|(key, _)| is_safe_environment_key(key)) {
+        command.env(key, value);
+    }
+}
+
+/// Hides the console window and isolates the child into its own process
+/// group/job so a deadline timeout can clean up the whole subtree, not just
+/// the immediate child. `CREATE_NO_WINDOW` mirrors the constant already
+/// verified for the daemon launcher; `CREATE_NEW_PROCESS_GROUP` gives the
+/// timeout path a stable process-group root to target with `taskkill /T`.
+#[cfg(windows)]
+fn apply_platform_hardening(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+}
+
+/// Isolates the child into its own POSIX process group so a deadline
+/// timeout can signal the whole subtree via the group, not just the
+/// immediate child.
+#[cfg(unix)]
+fn apply_platform_hardening(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+/// Best-effort process-tree cleanup after a deadline overrun. `child.kill()`
+/// only terminates the immediate process; grandchildren spawned by it (a
+/// shell, a build tool wrapper) would otherwise keep running past the
+/// caller's deadline. On Windows, `taskkill /T` walks the process tree from
+/// the child's PID. On Unix, signalling the negated PID reaches the whole
+/// process group `process_group(0)` created for the child at spawn time.
+/// Both cleanup commands are themselves program+args invocations (never a
+/// shell), consistent with `constraints/security.md` §四.
+fn kill_process_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill.exe")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .env_clear()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", child.id())])
+            .env_clear()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
 
 /// Bounded output from one typed external process invocation.
 #[derive(Clone, Debug)]
@@ -53,6 +162,8 @@ impl BoundedCommandRunner {
         if let Some(directory) = current_dir {
             command.current_dir(directory);
         }
+        apply_environment_allowlist(&mut command);
+        apply_platform_hardening(&mut command);
         let mut child = command.spawn()?;
         let stdout = child.stdout.take().ok_or_else(|| {
             IntegrationError::Io(std::io::Error::other("stdout pipe is unavailable"))
@@ -76,8 +187,7 @@ impl BoundedCommandRunner {
                 break status;
             }
             if started.elapsed() >= deadline {
-                child.kill()?;
-                let _ = child.wait();
+                kill_process_tree(&mut child);
                 return Err(IntegrationError::CommandTimeout);
             }
             std::thread::sleep(Duration::from_millis(1));
@@ -217,7 +327,7 @@ impl HostRuntimeAdapter for HostProcessAdapter {
         &self.capabilities
     }
 
-    fn dispatch(&self, action: &HostAction) -> Result<(), HostAdapterError> {
+    fn dispatch(&self, action: &HostAction) -> Result<HostAck, HostAdapterError> {
         if !self
             .capabilities
             .supports(action.kind().required_capability())
@@ -240,13 +350,26 @@ impl HostRuntimeAdapter for HostProcessAdapter {
                 IntegrationError::CommandTimeout => HostAdapterError::Timeout,
                 _ => HostAdapterError::Unavailable,
             })?;
-        if output.exit_code == Some(0) {
-            Ok(())
+        let outcome = if output.exit_code == Some(0) {
+            HostAckOutcome::Accepted
         } else {
-            Err(HostAdapterError::Rejected(
-                "host process rejected action".into(),
-            ))
-        }
+            HostAckOutcome::Rejected {
+                error_code: "host process rejected action".into(),
+            }
+        };
+        // `HostAck::new`'s only failure mode is a zero command_seq, which
+        // `action.command_seq()` cannot produce: `HostAction::new` already
+        // rejects zero at construction time.
+        Ok(HostAck::new(
+            HostAckId::from_uuid(Uuid::new_v4()),
+            action.action_id(),
+            action.adapter_id().clone(),
+            action.command_seq(),
+            outcome,
+            None,
+            action.session_id(),
+        )
+        .expect("HostAction guarantees a non-zero command_seq"))
     }
 }
 
@@ -355,4 +478,46 @@ fn platform_service(
         None,
         Duration::from_secs(30),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::{SAFE_ENVIRONMENT_KEYS, is_safe_environment_key};
+
+    #[test]
+    fn safe_environment_keys_match_case_insensitively() {
+        assert!(is_safe_environment_key(OsStr::new("PATH")));
+        assert!(is_safe_environment_key(OsStr::new("path")));
+        assert!(is_safe_environment_key(OsStr::new("Path")));
+    }
+
+    #[test]
+    fn secrets_and_unrelated_variables_are_not_allowlisted() {
+        for leaked in [
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "OPENAI_API_KEY",
+            "SSH_AUTH_SOCK",
+            "AE_SDD_ENDPOINT_TOKEN",
+            "npm_config__auth",
+        ] {
+            assert!(
+                !is_safe_environment_key(OsStr::new(leaked)),
+                "{leaked} must not be forwarded to a spawned child"
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_has_no_duplicate_keys() {
+        let mut seen = std::collections::HashSet::new();
+        for key in SAFE_ENVIRONMENT_KEYS {
+            assert!(
+                seen.insert(key.to_ascii_uppercase()),
+                "{key} is listed more than once"
+            );
+        }
+    }
 }

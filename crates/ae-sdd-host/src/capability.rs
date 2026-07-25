@@ -445,4 +445,105 @@ mod tests {
             SessionId::from_uuid(Uuid::from_u128(2))
         );
     }
+
+    /// Builds claims varying only role/delegation/lifetime, so each assertion
+    /// below isolates a single `CapabilityClaims::new` rejection rule.
+    fn claims_with(
+        role: AgentRole,
+        delegation_id: Option<DelegationId>,
+        issued_at_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<CapabilityClaims, CapabilityError> {
+        CapabilityClaims::new(
+            "key-1",
+            BootId::from_uuid(Uuid::from_u128(1)),
+            CapabilityId::new("flow.read").expect("valid capability"),
+            SessionId::from_uuid(Uuid::from_u128(2)),
+            role,
+            delegation_id,
+            GrantDigest::digest(b"scoped grant"),
+            issued_at_unix_ms,
+            expires_at_unix_ms,
+        )
+    }
+
+    #[test]
+    fn claims_reject_a_non_positive_lifetime() {
+        let delegation = Some(DelegationId::from_uuid(Uuid::from_u128(3)));
+
+        // Expiry equal to issuance is not a valid window.
+        assert!(matches!(
+            claims_with(AgentRole::Series, delegation, 1_000, 1_000),
+            Err(CapabilityError::InvalidLifetime)
+        ));
+        // Expiry before issuance.
+        assert!(matches!(
+            claims_with(AgentRole::Series, delegation, 2_000, 1_000),
+            Err(CapabilityError::InvalidLifetime)
+        ));
+        assert!(claims_with(AgentRole::Series, delegation, 1_000, 1_001).is_ok());
+    }
+
+    #[test]
+    fn claims_enforce_the_root_delegation_invariant_both_ways() {
+        let delegation = Some(DelegationId::from_uuid(Uuid::from_u128(3)));
+
+        // Root must not carry a delegation.
+        assert!(matches!(
+            claims_with(AgentRole::Root, delegation, 1_000, 2_000),
+            Err(CapabilityError::RootHasDelegation)
+        ));
+        // Every non-root role must carry one.
+        for role in [AgentRole::Series, AgentRole::Task, AgentRole::Reviewer] {
+            assert!(
+                matches!(
+                    claims_with(role, None, 1_000, 2_000),
+                    Err(CapabilityError::ChildMissingDelegation)
+                ),
+                "{role:?} without a delegation must be rejected"
+            );
+        }
+        // The two legal shapes.
+        assert!(claims_with(AgentRole::Root, None, 1_000, 2_000).is_ok());
+        assert!(claims_with(AgentRole::Series, delegation, 1_000, 2_000).is_ok());
+    }
+
+    #[test]
+    fn signing_rejects_claims_bound_to_another_boot_or_key() {
+        let signer = BootCapabilitySigner::generate(BootId::from_uuid(Uuid::from_u128(1)));
+        let delegation = Some(DelegationId::from_uuid(Uuid::from_u128(3)));
+        let build = |key_id: &str, boot_id: BootId| {
+            CapabilityClaims::new(
+                key_id,
+                boot_id,
+                CapabilityId::new("flow.read").expect("valid capability"),
+                SessionId::from_uuid(Uuid::from_u128(2)),
+                AgentRole::Series,
+                delegation,
+                GrantDigest::digest(b"scoped grant"),
+                1_000,
+                2_000,
+            )
+            .expect("claims themselves are valid")
+        };
+
+        // Claims minted against a different boot generation.
+        assert!(matches!(
+            signer.sign(build(
+                signer.key_id(),
+                BootId::from_uuid(Uuid::from_u128(9))
+            )),
+            Err(CapabilityError::BootMismatch)
+        ));
+        // Right boot, wrong key id.
+        assert!(matches!(
+            signer.sign(build("not-this-signers-key", signer.boot_id())),
+            Err(CapabilityError::KeyMismatch)
+        ));
+        assert!(
+            signer
+                .sign(build(signer.key_id(), signer.boot_id()))
+                .is_ok()
+        );
+    }
 }

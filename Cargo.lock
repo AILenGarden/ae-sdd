@@ -38,6 +38,8 @@ name = "ae-sdd-cli"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-client",
+ "ae-sdd-contracts",
+ "ae-sdd-domain",
  "ae-sdd-operations",
  "ae-sdd-protocol",
  "clap",
@@ -188,6 +190,7 @@ dependencies = [
 name = "ae-sdd-integrations"
 version = "0.1.0"
 dependencies = [
+ "ae-sdd-contracts",
  "ae-sdd-domain",
  "ae-sdd-flow",
  "ae-sdd-gates",
@@ -321,6 +324,10 @@ name = "ae-sdd-session"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
+ "ae-sdd-domain",
+ "sha2",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]

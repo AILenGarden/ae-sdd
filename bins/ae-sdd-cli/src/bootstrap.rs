@@ -18,6 +18,9 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr;
 
 use ae_sdd_client::{ClientError, DaemonClient, LocalIpcTransport, default_state_dir};
+use ae_sdd_contracts::session::{SessionBootstrapRequest, SessionContractError};
+use ae_sdd_contracts::{AdapterId, ContextBundleId, ExternalSessionKey, SchemaVersion};
+use ae_sdd_domain::{AgentRole, CapabilityId, DelegationId, WorkspaceId};
 use ae_sdd_protocol::{ClientKind, PROTOCOL_VERSION_V1, RequestParams, RpcMethod};
 use fs4::{FileExt, TryLockError};
 use serde::Serialize;
@@ -924,6 +927,37 @@ fn absolute(path: PathBuf, current_dir: &Path) -> PathBuf {
     } else {
         current_dir.join(path)
     }
+}
+
+/// Assembles a type-safe `SessionBootstrapRequest` from its constituent
+/// identities, deferring all frozen-contract validation (root/delegation
+/// invariant, capability bound/uniqueness) to `SessionBootstrapRequest::new`.
+/// Pure construction, no I/O; `schema_version` is fixed to `SchemaVersion::V1`
+/// per the existing constructor convention (e.g. `HostActionBody::create`)
+/// rather than taken as a caller argument. Not yet wired to any call site;
+/// C1 will call this once workspace registration and delegation context
+/// resolution land.
+pub fn build_session_bootstrap_request(
+    workspace_id: WorkspaceId,
+    external_session_key: ExternalSessionKey,
+    adapter_id: AdapterId,
+    role: AgentRole,
+    engaged: bool,
+    delegation_id: Option<DelegationId>,
+    capabilities: Vec<CapabilityId>,
+    context_bundle_id: Option<ContextBundleId>,
+) -> Result<SessionBootstrapRequest, SessionContractError> {
+    SessionBootstrapRequest::new(
+        SchemaVersion::V1,
+        workspace_id,
+        external_session_key,
+        adapter_id,
+        role,
+        engaged,
+        delegation_id,
+        capabilities,
+        context_bundle_id,
+    )
 }
 
 fn ensure_before_deadline(deadline: Instant, timeout: Duration) -> Result<(), BootstrapError> {

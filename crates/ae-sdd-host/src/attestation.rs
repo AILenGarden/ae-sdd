@@ -256,4 +256,164 @@ mod tests {
         assert_eq!(proof.child_session_id(), session_id);
         assert_eq!(proof.delegation_id(), delegation_id);
     }
+
+    /// `establish` fills seven fields from three different sources, several of
+    /// them UUID-shaped and interchangeable to the compiler. Distinct id values
+    /// plus a full read-back is what actually catches a swapped assignment.
+    #[test]
+    fn proof_reads_back_every_field_from_the_right_source() {
+        let (delegation_id, action_id, session_id) = ids();
+        let adapter = HostAdapterId::new("codex").expect("valid adapter");
+        let ack_id = HostAckId::from_uuid(Uuid::from_u128(4));
+        let claim_id = ClaimId::from_uuid(Uuid::from_u128(5));
+        let host_task_id = HostTaskId::new("task-42").expect("valid task");
+        let action = HostAction::new(
+            action_id,
+            adapter.clone(),
+            1,
+            HostActionKind::Create,
+            Some(delegation_id),
+            None,
+            None,
+            None,
+            2_000,
+            [7; 32],
+        )
+        .expect("valid create action");
+        let ack = HostAck::new(
+            ack_id,
+            action_id,
+            adapter.clone(),
+            1,
+            HostAckOutcome::Accepted,
+            Some(host_task_id.clone()),
+            Some(session_id),
+        )
+        .expect("valid ack");
+        let claim = ChildClaim::new(claim_id, delegation_id, action_id, session_id, 1_900)
+            .expect("valid claim");
+
+        let proof = PhysicalSessionProof::establish(&action, &ack, &claim, 1_500)
+            .expect("attested session");
+
+        assert_eq!(proof.delegation_id(), delegation_id);
+        assert_eq!(proof.child_session_id(), session_id);
+        assert_eq!(proof.action_id(), action_id);
+        assert_eq!(proof.ack_id(), ack_id);
+        assert_eq!(proof.adapter_id(), &adapter);
+        assert_eq!(proof.host_task_id(), &host_task_id);
+        assert_eq!(proof.claim_id(), claim_id);
+
+        // The claim's own accessors must round-trip too.
+        assert_eq!(claim.claim_id(), claim_id);
+        assert_eq!(claim.delegation_id(), delegation_id);
+        assert_eq!(claim.child_session_id(), session_id);
+    }
+
+    #[test]
+    fn claim_rejects_a_zero_expiry() {
+        let (delegation_id, action_id, session_id) = ids();
+        assert!(matches!(
+            ChildClaim::new(
+                ClaimId::from_uuid(Uuid::from_u128(5)),
+                delegation_id,
+                action_id,
+                session_id,
+                0,
+            ),
+            Err(AttestationError::InvalidClaimExpiry)
+        ));
+    }
+
+    #[test]
+    fn establish_rejects_non_create_unaccepted_mismatched_and_expired_inputs() {
+        let (delegation_id, action_id, session_id) = ids();
+        let adapter = HostAdapterId::new("codex").expect("valid adapter");
+        let host_task_id = HostTaskId::new("task-42").expect("valid task");
+        let build_action = |kind, delegation| {
+            HostAction::new(
+                action_id,
+                adapter.clone(),
+                1,
+                kind,
+                delegation,
+                None,
+                None,
+                None,
+                2_000,
+                [7; 32],
+            )
+            .expect("valid action")
+        };
+        let build_ack = |outcome, task| {
+            HostAck::new(
+                HostAckId::from_uuid(Uuid::from_u128(4)),
+                action_id,
+                adapter.clone(),
+                1,
+                outcome,
+                task,
+                Some(session_id),
+            )
+            .expect("valid ack")
+        };
+        let claim = |expires| {
+            ChildClaim::new(
+                ClaimId::from_uuid(Uuid::from_u128(5)),
+                delegation_id,
+                action_id,
+                session_id,
+                expires,
+            )
+            .expect("valid claim")
+        };
+
+        // A Wait action can never yield a physical session proof.
+        let wait = build_action(HostActionKind::Wait, Some(delegation_id));
+        let accepted = build_ack(HostAckOutcome::Accepted, Some(host_task_id.clone()));
+        assert!(matches!(
+            PhysicalSessionProof::establish(&wait, &accepted, &claim(1_900), 1_500),
+            Err(AttestationError::NotCreateAction)
+        ));
+
+        // A rejected ACK is a delivered refusal, not a proof.
+        let create = build_action(HostActionKind::Create, Some(delegation_id));
+        let rejected = build_ack(
+            HostAckOutcome::Rejected {
+                error_code: "denied".into(),
+            },
+            Some(host_task_id.clone()),
+        );
+        assert!(matches!(
+            PhysicalSessionProof::establish(&create, &rejected, &claim(1_900), 1_500),
+            Err(AttestationError::AckNotAccepted)
+        ));
+
+        // A claim bound to a different delegation must not attach.
+        let other_claim = ChildClaim::new(
+            ClaimId::from_uuid(Uuid::from_u128(5)),
+            DelegationId::from_uuid(Uuid::from_u128(77)),
+            action_id,
+            session_id,
+            1_900,
+        )
+        .expect("valid claim");
+        assert!(matches!(
+            PhysicalSessionProof::establish(&create, &accepted, &other_claim, 1_500),
+            Err(AttestationError::DelegationMismatch)
+        ));
+
+        // `now` at or past expiry is already too late.
+        assert!(matches!(
+            PhysicalSessionProof::establish(&create, &accepted, &claim(1_900), 1_900),
+            Err(AttestationError::ClaimExpired)
+        ));
+
+        // An accepted ACK with no host task id cannot prove a live child.
+        let taskless = build_ack(HostAckOutcome::Accepted, None);
+        assert!(matches!(
+            PhysicalSessionProof::establish(&create, &taskless, &claim(1_900), 1_500),
+            Err(AttestationError::HostTaskMissing)
+        ));
+    }
 }

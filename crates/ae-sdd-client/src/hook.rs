@@ -249,3 +249,142 @@ fn is_hook(method: RpcMethod) -> bool {
             | RpcMethod::HookStop
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fail-closed decision per hook is a safety contract: if `PreTool`
+    /// stopped denying, an unreachable daemon would silently let tool calls
+    /// through. Each mapping is pinned explicitly.
+    #[test]
+    fn fail_closed_decisions_are_pinned_per_hook_method() {
+        let cases = [
+            (RpcMethod::HookPreTool, HookDecision::Deny),
+            (RpcMethod::HookStop, HookDecision::Block),
+            (RpcMethod::HookUserPrompt, HookDecision::Context),
+            // PostTool runs after the effect already happened, so denying it
+            // would be theatre; it allows but still reports offline.
+            (RpcMethod::HookPostTool, HookDecision::Allow),
+        ];
+
+        for (method, expected) in cases {
+            let outcome = fail_closed(method, StableErrorCode::DaemonUnavailable, true);
+            assert_eq!(
+                outcome.decision, expected,
+                "unexpected fail-closed decision for {method:?}"
+            );
+            assert!(outcome.offline, "a fail-closed outcome is always offline");
+            assert_eq!(
+                outcome.error_code,
+                Some(StableErrorCode::DaemonUnavailable),
+                "the originating code must stay visible to the caller"
+            );
+            assert_eq!(outcome.event_seq, 0);
+            assert!(outcome.context.is_none());
+        }
+
+        // A non-hook method must never be treated as permissive.
+        assert_eq!(
+            fail_closed(
+                RpcMethod::RuntimeStatus,
+                StableErrorCode::DaemonUnavailable,
+                false
+            )
+            .decision,
+            HookDecision::Deny
+        );
+    }
+
+    #[test]
+    fn fail_closed_propagates_the_engaged_flag_verbatim() {
+        for engaged in [true, false] {
+            assert_eq!(
+                fail_closed(
+                    RpcMethod::HookPreTool,
+                    StableErrorCode::SessionExpired,
+                    engaged
+                )
+                .engaged,
+                engaged
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_four_hook_methods_are_hooks() {
+        for method in [
+            RpcMethod::HookUserPrompt,
+            RpcMethod::HookPreTool,
+            RpcMethod::HookPostTool,
+            RpcMethod::HookStop,
+        ] {
+            assert!(is_hook(method), "{method:?} must be a hook");
+        }
+        for method in [
+            RpcMethod::RuntimeStatus,
+            RpcMethod::RuntimeHandshake,
+            RpcMethod::JobSubmit,
+            RpcMethod::EventsSubscribe,
+        ] {
+            assert!(!is_hook(method), "{method:?} must not be a hook");
+        }
+    }
+
+    #[test]
+    fn only_local_reachability_failures_are_recoverable() {
+        assert!(is_recoverable(&ClientError::DaemonUnavailable));
+        assert!(is_recoverable(&ClientError::EndpointManifest));
+        // A remote rejection or protocol breach is deterministic; retrying it
+        // after starting a daemon would not change the answer.
+        assert!(!is_recoverable(&ClientError::Protocol));
+        assert!(!is_recoverable(&ClientError::OfflineCapabilityInvalid));
+        assert!(!is_recoverable(&ClientError::Remote {
+            code: StableErrorCode::SessionExpired,
+            message: "redacted".to_owned(),
+        }));
+    }
+
+    #[test]
+    fn duplicate_params_copies_every_field_including_the_idempotency_key() {
+        // Recovery replays the *same* request identity; a dropped field here
+        // would turn one caller intent into a second distinct daemon request.
+        let original = RequestParams {
+            protocol_version: "1".to_owned(),
+            workspace_id: Some("ws".to_owned()),
+            agent_id: Some("agent".to_owned()),
+            session_id: Some("session".to_owned()),
+            capability_token: Some("token".to_owned()),
+            turn_id: Some("turn".to_owned()),
+            work_item_id: Some("work".to_owned()),
+            lease_id: Some("lease".to_owned()),
+            fencing_token: Some(9),
+            expected_revision: Some(11),
+            idempotency_key: Some("idem-1".to_owned()),
+            confirmation: Some(ae_sdd_protocol::ConfirmationRef {
+                confirmation_id: "confirm-1".to_owned(),
+                approved_by: "operator".to_owned(),
+                approved_at: "2024-01-01T00:00:00Z".to_owned(),
+            }),
+            deadline_ms: 250,
+            payload: serde_json::json!({"k": "v"}),
+        };
+
+        let copy = duplicate_params(&original);
+
+        assert_eq!(copy.protocol_version, original.protocol_version);
+        assert_eq!(copy.workspace_id, original.workspace_id);
+        assert_eq!(copy.agent_id, original.agent_id);
+        assert_eq!(copy.session_id, original.session_id);
+        assert_eq!(copy.capability_token, original.capability_token);
+        assert_eq!(copy.turn_id, original.turn_id);
+        assert_eq!(copy.work_item_id, original.work_item_id);
+        assert_eq!(copy.lease_id, original.lease_id);
+        assert_eq!(copy.fencing_token, original.fencing_token);
+        assert_eq!(copy.expected_revision, original.expected_revision);
+        assert_eq!(copy.idempotency_key, original.idempotency_key);
+        assert_eq!(copy.confirmation, original.confirmation);
+        assert_eq!(copy.deadline_ms, original.deadline_ms);
+        assert_eq!(copy.payload, original.payload);
+    }
+}
