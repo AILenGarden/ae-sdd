@@ -1,8 +1,9 @@
-//! Stable execution-policy, capsule-build and slice-transition errors.
+//! Stable execution-policy, capsule-build, slice-transition and supervisor errors.
 
 use ae_sdd_contracts::ControlPlaneErrorCode;
 use ae_sdd_contracts::execution_runtime::{ExecutionCapsuleError, ExecutionSliceStatus};
 use ae_sdd_domain::ExecutionSliceId;
+use ae_sdd_protocol::StableErrorCode;
 use thiserror::Error;
 
 use crate::slice::ExecutionSliceEvent;
@@ -122,3 +123,72 @@ pub enum ExecutionSliceTransitionError {
         event: ExecutionSliceEvent,
     },
 }
+
+/// Specific reason the pure execution supervisor rejected a tool event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionSupervisorFault {
+    /// The consecutive no-progress batch budget is exhausted, so only patch,
+    /// focused-test and blocker events remain admissible.
+    InvestigationExhausted,
+    /// A broad verification was requested before the focused GREEN.
+    BroadTestBeforeFocusedGreen,
+    /// A source read would exceed the per-batch source byte budget.
+    BatchSourceBytesExceeded,
+    /// A source read would exceed the per-batch distinct-file budget.
+    BatchSourceFilesExceeded,
+    /// The offered slice lifecycle event is not legal from the current status.
+    IllegalSliceEvent,
+    /// The slice is completed; no event may mutate the checkpoint anymore.
+    SliceCompleted,
+}
+
+/// Rejection returned by the pure execution supervisor inside
+/// `ExecutionDecisionV1::Deny` and `ExecutionDecisionV1::RequireProgress`.
+///
+/// The supervisor itself is infallible: policy violations are reported as
+/// typed decisions carrying this stable rejection, never as panics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecutionSupervisorError {
+    fault: ExecutionSupervisorFault,
+}
+
+impl ExecutionSupervisorError {
+    /// Wraps one supervisor fault.
+    pub const fn new(fault: ExecutionSupervisorFault) -> Self {
+        Self { fault }
+    }
+
+    /// Returns the specific rejection reason.
+    pub const fn fault(&self) -> ExecutionSupervisorFault {
+        self.fault
+    }
+
+    /// Maps the rejection to the frozen protocol stable error code.
+    #[must_use]
+    pub const fn error_code(&self) -> StableErrorCode {
+        use ExecutionSupervisorFault as Fault;
+        match self.fault {
+            Fault::InvestigationExhausted | Fault::BroadTestBeforeFocusedGreen => {
+                StableErrorCode::ExecutionProgressRequired
+            }
+            Fault::BatchSourceBytesExceeded | Fault::BatchSourceFilesExceeded => {
+                StableErrorCode::ExecutionBudgetExceeded
+            }
+            Fault::IllegalSliceEvent | Fault::SliceCompleted => {
+                StableErrorCode::ExecutionSliceInvalid
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ExecutionSupervisorError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "execution supervisor rejected event: {:?}",
+            self.fault
+        )
+    }
+}
+
+impl std::error::Error for ExecutionSupervisorError {}

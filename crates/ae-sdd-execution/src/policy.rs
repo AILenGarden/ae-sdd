@@ -1,10 +1,12 @@
-//! Worker-isolation content policy for verification execution plans.
+//! Worker-isolation content policy for verification execution plans, plus the
+//! decision vocabulary returned by the pure execution supervisor.
 
 use std::collections::BTreeSet;
 
 use ae_sdd_contracts::execution::VerificationExecutionPlan;
+use ae_sdd_domain::{ArtifactDigest, ArtifactRef};
 
-use crate::error::{ExecutionPolicyError, ExecutionPolicyFault};
+use crate::error::{ExecutionPolicyError, ExecutionPolicyFault, ExecutionSupervisorError};
 
 /// Names of executables that always indicate a shell dispatcher.
 const SHELL_EXECUTABLES: &[&str] = &[
@@ -93,6 +95,114 @@ pub fn reject_shell_program_path(path: &str) -> Result<(), ExecutionPolicyError>
 #[must_use]
 pub fn shell_executable_blocklist() -> BTreeSet<&'static str> {
     SHELL_EXECUTABLES.iter().copied().collect()
+}
+
+/// Machine-recognised progress event kinds (implementation plan §4.5).
+///
+/// These are the only events that may reset the consecutive no-progress
+/// batch counter; repeated reads, repeated failing runs, cache hits and
+/// state reprints never produce one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionProgressKindV1 {
+    /// A patch produced a content digest not seen before.
+    NewPatchDigest,
+    /// The focused verification ran for the first time in this slice.
+    FirstFocusedRun,
+    /// The focused verification turned from non-green to green.
+    FocusedTurnedGreen,
+    /// A blocker reported a new code + evidence locator pair.
+    NewBlocker,
+    /// A new evidence ledger event was appended.
+    NewEvidenceEvent,
+    /// The slice advanced to a next legal lifecycle status.
+    SliceAdvanced,
+}
+
+/// Bounded retained-output directive attached to an allowed tool event.
+///
+/// The supervisor never retains more than `max_tool_output_bytes` of one
+/// tool call; when truncation engages, the full output is bound to its
+/// digest and (when already persisted) artifact locator so evidence stays
+/// verifiable without carrying the output body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionOutputDirectiveV1 {
+    pub(crate) retained_bytes: u32,
+    pub(crate) truncated: bool,
+    pub(crate) output_digest: Option<ArtifactDigest>,
+    pub(crate) output_locator: Option<ArtifactRef>,
+}
+
+impl ExecutionOutputDirectiveV1 {
+    /// Returns how many output bytes may be retained for this call.
+    pub const fn retained_bytes(&self) -> u32 {
+        self.retained_bytes
+    }
+
+    /// Returns whether the raw output exceeded the retained budget.
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    /// Returns the digest of the full output when truncation engaged.
+    pub const fn output_digest(&self) -> Option<ArtifactDigest> {
+        self.output_digest
+    }
+
+    /// Returns the locator of the full output artifact when truncation engaged.
+    pub const fn output_locator(&self) -> Option<&ArtifactRef> {
+        self.output_locator.as_ref()
+    }
+}
+
+/// Allowance for one tool event, recording whether it made progress.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionAllowanceV1 {
+    pub(crate) progress: Option<ExecutionProgressKindV1>,
+    pub(crate) output: Option<ExecutionOutputDirectiveV1>,
+}
+
+impl ExecutionAllowanceV1 {
+    /// Returns the progress kind this event produced, if any.
+    pub const fn progress(&self) -> Option<ExecutionProgressKindV1> {
+        self.progress
+    }
+
+    /// Returns the retained-output directive for tool events carrying output.
+    pub const fn output(&self) -> Option<&ExecutionOutputDirectiveV1> {
+        self.output.as_ref()
+    }
+}
+
+/// Deferral for one tool event, with a bounded retry hint.
+///
+/// The pure slice-progress reducer never defers; the variant exists so the
+/// runtime resource arbitration (daemon-wide Cargo lock) can reuse the same
+/// decision vocabulary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecutionDeferralV1 {
+    pub(crate) retry_after_ms: u64,
+}
+
+impl ExecutionDeferralV1 {
+    /// Returns how long the caller should wait before retrying, in milliseconds.
+    pub const fn retry_after_ms(&self) -> u64 {
+        self.retry_after_ms
+    }
+}
+
+/// Machine decision returned by [`crate::ExecutionSupervisor::decide`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExecutionDecisionV1 {
+    /// The event is admissible; the allowance records progress and the
+    /// bounded retained-output directive.
+    Allow(ExecutionAllowanceV1),
+    /// The event is rejected because an execution budget is exhausted or the
+    /// slice can no longer change.
+    Deny(ExecutionSupervisorError),
+    /// The event must wait for a resource; never emitted by the pure reducer.
+    Defer(ExecutionDeferralV1),
+    /// The event is rejected until machine-verified progress is made.
+    RequireProgress(ExecutionSupervisorError),
 }
 
 #[cfg(test)]
