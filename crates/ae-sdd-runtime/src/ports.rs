@@ -6,7 +6,9 @@ use ae_sdd_protocol::{RequestParams, RpcMethod, StableErrorCode, WorkspaceMode};
 use serde_json::Value;
 
 use crate::{
-    ContextProjectionInput, DurableEvent, IdempotencyReceipt, RuntimeError, RuntimeResult,
+    ContextProjectionInput, DurableEvent, ExecutionCheckpointRecord, ExecutionCheckpointScope,
+    IdempotencyReceipt, RuntimeError, RuntimeIdentityKind, RuntimeIdentitySnapshot,
+    RuntimeIdentityTransition, RuntimeJobRecord, RuntimeJobTransition, RuntimeResult,
 };
 
 /// Clock used for deadlines, TTL, and deterministic tests.
@@ -54,6 +56,8 @@ pub struct BusinessWorkspace {
 /// Daemon-captured session lineage bound to one durable background job.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundJobIdentity {
+    /// Originating durable runtime job.
+    pub job_id: String,
     /// Runtime boot executing the job.
     pub boot_id: String,
     /// Physical session that submitted the job.
@@ -64,6 +68,12 @@ pub struct BoundJobIdentity {
     pub delegation_id: Option<String>,
     /// Session context generation captured at submission.
     pub context_generation: u64,
+    /// Immutable physical-attestation reference captured at submission.
+    pub attestation_ref: String,
+    /// Digest of the captured physical attestation.
+    pub attestation_digest: String,
+    /// Digest of the complete captured identity projection.
+    pub identity_digest: String,
     /// Durable job submission idempotency key.
     pub idempotency_key: String,
 }
@@ -103,6 +113,41 @@ pub trait PersistencePort: Send + Sync {
     fn list_records(&self, namespace: &str) -> RuntimeResult<Vec<(String, Value)>>;
     /// Atomically upserts one durable versioned aggregate projection.
     fn store_record(&self, namespace: &str, key: &str, value: &Value) -> RuntimeResult<()>;
+    /// Atomically commits a typed identity bundle and its durable receipt.
+    fn commit_identity_bundle(
+        &self,
+        transition: RuntimeIdentityTransition,
+    ) -> RuntimeResult<RuntimeIdentitySnapshot>;
+    /// Lists the latest typed identity snapshots for one aggregate family.
+    fn list_identity_snapshots(
+        &self,
+        kind: RuntimeIdentityKind,
+    ) -> RuntimeResult<Vec<RuntimeIdentitySnapshot>>;
+    /// Atomically commits one typed job CAS transition and its event.
+    fn commit_job_transition(
+        &self,
+        transition: RuntimeJobTransition,
+    ) -> RuntimeResult<RuntimeJobRecord>;
+    /// Loads one typed runtime job.
+    fn load_job(&self, job_id: &str) -> RuntimeResult<Option<RuntimeJobRecord>>;
+    /// Lists typed runtime jobs in stable identity order.
+    fn list_jobs(&self) -> RuntimeResult<Vec<RuntimeJobRecord>>;
+    /// Loads the rebuildable execution-supervisor checkpoint for one scope.
+    ///
+    /// The row is rebuildable runtime metadata only: it accelerates a daemon
+    /// restart and never outranks the project authority.  Callers validate it
+    /// against the authority cursor with [`ExecutionCheckpointRecord::recover`].
+    fn load_execution_checkpoint(
+        &self,
+        scope: &ExecutionCheckpointScope,
+    ) -> RuntimeResult<Option<ExecutionCheckpointRecord>>;
+    /// Atomically upserts the rebuildable execution-supervisor checkpoint.
+    fn store_execution_checkpoint(&self, record: &ExecutionCheckpointRecord) -> RuntimeResult<()>;
+    /// Discards the rebuildable execution-supervisor checkpoint for one scope.
+    ///
+    /// Used when the project authority disagrees with the cached row; the
+    /// discard must never touch project state.
+    fn discard_execution_checkpoint(&self, scope: &ExecutionCheckpointScope) -> RuntimeResult<()>;
 }
 
 /// Business-operation boundary for authoritative state, Gates, and jobs.
@@ -264,6 +309,11 @@ struct MemoryState {
     events: Vec<DurableEvent>,
     receipts: BTreeMap<(String, String), IdempotencyReceipt>,
     records: BTreeMap<(String, String), Value>,
+    identity_receipts: BTreeMap<(String, String, String), (String, RuntimeIdentitySnapshot)>,
+    identity_snapshots: Vec<RuntimeIdentitySnapshot>,
+    jobs: BTreeMap<String, RuntimeJobRecord>,
+    job_submissions: BTreeMap<(String, String), String>,
+    execution_checkpoints: BTreeMap<(String, String, String), ExecutionCheckpointRecord>,
 }
 
 impl MemoryPersistence {
@@ -429,4 +479,339 @@ impl PersistencePort for MemoryPersistence {
             .insert((namespace.to_owned(), key.to_owned()), value.clone());
         Ok(())
     }
+
+    fn commit_identity_bundle(
+        &self,
+        transition: RuntimeIdentityTransition,
+    ) -> RuntimeResult<RuntimeIdentitySnapshot> {
+        validate_identity_transition(&transition)?;
+        let mut state = self.lock()?;
+        let receipt_key = (
+            transition.snapshot.workspace.workspace_id.clone(),
+            transition.scope_digest.clone(),
+            transition.idempotency_key.clone(),
+        );
+        if let Some((request_digest, snapshot)) = state.identity_receipts.get(&receipt_key) {
+            if request_digest != &transition.request_digest {
+                return Err(RuntimeError::new(
+                    StableErrorCode::IdempotencyKeyReused,
+                    "identity idempotency key was reused with a different trusted request",
+                ));
+            }
+            let mut replayed = snapshot.clone();
+            replayed.replayed = true;
+            return Ok(replayed);
+        }
+        validate_identity_expected_values(&state.identity_snapshots, &transition)?;
+        let mut snapshot = transition.snapshot;
+        snapshot.replayed = false;
+        state.identity_snapshots.push(snapshot.clone());
+        state
+            .identity_receipts
+            .insert(receipt_key, (transition.request_digest, snapshot.clone()));
+        Ok(snapshot)
+    }
+
+    fn list_identity_snapshots(
+        &self,
+        kind: RuntimeIdentityKind,
+    ) -> RuntimeResult<Vec<RuntimeIdentitySnapshot>> {
+        let state = self.lock()?;
+        Ok(latest_identity_snapshots(&state.identity_snapshots, kind))
+    }
+
+    fn commit_job_transition(
+        &self,
+        mut transition: RuntimeJobTransition,
+    ) -> RuntimeResult<RuntimeJobRecord> {
+        validate_job_record(&transition.record)?;
+        let mut state = self.lock()?;
+        let submission_key = (
+            transition.record.submission_scope_digest.clone(),
+            transition.record.submission_idempotency_key.clone(),
+        );
+        if transition.expected_status.is_none()
+            && let Some(job_id) = state.job_submissions.get(&submission_key)
+        {
+            let existing = state.jobs.get(job_id).ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "typed job submission index points to a missing job",
+                )
+            })?;
+            if existing.request_digest != transition.record.request_digest {
+                return Err(RuntimeError::new(
+                    StableErrorCode::IdempotencyKeyReused,
+                    "job submission key was reused with a different trusted request",
+                ));
+            }
+            return Ok(existing.clone());
+        }
+        match state.jobs.get(&transition.record.job_id) {
+            Some(existing) => {
+                if Some(existing.status) != transition.expected_status
+                    || Some(existing.row_version) != transition.expected_row_version
+                {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::RevisionConflict,
+                        "typed job expected status or row version is stale",
+                    ));
+                }
+            }
+            None if transition.expected_status.is_some()
+                || transition.expected_row_version.is_some() =>
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::RevisionConflict,
+                    "typed job expected row does not exist",
+                ));
+            }
+            None => {}
+        }
+        let next = state
+            .events
+            .last()
+            .map_or(1, |previous| previous.event_seq.saturating_add(1));
+        transition.event.event_store_id = self.event_store_id.to_string();
+        transition.event.event_seq = next;
+        transition.record.last_event_seq = next;
+        if transition.expected_status.is_none() {
+            transition.record.submitted_event_seq = next;
+            state
+                .job_submissions
+                .insert(submission_key, transition.record.job_id.clone());
+        }
+        state.events.push(transition.event);
+        state
+            .jobs
+            .insert(transition.record.job_id.clone(), transition.record.clone());
+        Ok(transition.record)
+    }
+
+    fn load_job(&self, job_id: &str) -> RuntimeResult<Option<RuntimeJobRecord>> {
+        Ok(self.lock()?.jobs.get(job_id).cloned())
+    }
+
+    fn list_jobs(&self) -> RuntimeResult<Vec<RuntimeJobRecord>> {
+        Ok(self.lock()?.jobs.values().cloned().collect())
+    }
+
+    fn load_execution_checkpoint(
+        &self,
+        scope: &ExecutionCheckpointScope,
+    ) -> RuntimeResult<Option<ExecutionCheckpointRecord>> {
+        Ok(self
+            .lock()?
+            .execution_checkpoints
+            .get(&execution_checkpoint_key(scope))
+            .cloned())
+    }
+
+    fn store_execution_checkpoint(&self, record: &ExecutionCheckpointRecord) -> RuntimeResult<()> {
+        validate_execution_checkpoint(record)?;
+        self.lock()?.execution_checkpoints.insert(
+            (
+                record.workspace_id.clone(),
+                record.work_item_id.clone(),
+                record.session_id.clone(),
+            ),
+            record.clone(),
+        );
+        Ok(())
+    }
+
+    fn discard_execution_checkpoint(&self, scope: &ExecutionCheckpointScope) -> RuntimeResult<()> {
+        self.lock()?
+            .execution_checkpoints
+            .remove(&execution_checkpoint_key(scope));
+        Ok(())
+    }
+}
+
+fn validate_identity_transition(transition: &RuntimeIdentityTransition) -> RuntimeResult<()> {
+    if transition.idempotency_key.is_empty()
+        || transition.idempotency_key.len() > 128
+        || !is_digest(&transition.scope_digest)
+        || !is_digest(&transition.request_digest)
+        || contains_secret(&transition.snapshot.response)
+    {
+        return Err(RuntimeError::new(
+            StableErrorCode::OperationSchemaInvalid,
+            "typed identity transition is unbounded, malformed, or contains secret material",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_identity_expected_values(
+    snapshots: &[RuntimeIdentitySnapshot],
+    transition: &RuntimeIdentityTransition,
+) -> RuntimeResult<()> {
+    let workspace_current = snapshots.iter().rev().find(|snapshot| {
+        snapshot.workspace.workspace_id == transition.snapshot.workspace.workspace_id
+    });
+    let current = snapshots.iter().rev().find(|snapshot| {
+        snapshot.workspace.workspace_id == transition.snapshot.workspace.workspace_id
+            && match transition.snapshot.identity_kind {
+                RuntimeIdentityKind::Workspace => true,
+                RuntimeIdentityKind::Session => {
+                    snapshot
+                        .session
+                        .as_ref()
+                        .map(|record| record.session_id.as_str())
+                        == transition
+                            .snapshot
+                            .session
+                            .as_ref()
+                            .map(|record| record.session_id.as_str())
+                }
+                RuntimeIdentityKind::Delegation => {
+                    snapshot
+                        .delegation
+                        .as_ref()
+                        .map(|record| record.delegation_id.as_str())
+                        == transition
+                            .snapshot
+                            .delegation
+                            .as_ref()
+                            .map(|record| record.delegation_id.as_str())
+                }
+            }
+    });
+    if let Some(expected) = transition.expected_workspace_mode
+        && workspace_current.map(|value| value.workspace.mode) != Some(expected)
+    {
+        return revision_conflict();
+    }
+    if let Some(expected) = transition.expected_inventory_generation
+        && workspace_current.map(|value| value.workspace.inventory_generation) != Some(expected)
+    {
+        return revision_conflict();
+    }
+    if let Some(expected) = transition.expected_session_status.as_deref()
+        && current
+            .and_then(|value| value.session.as_ref())
+            .map(|value| value.status.as_str())
+            != Some(expected)
+    {
+        return revision_conflict();
+    }
+    if let Some(expected) = transition.expected_delegation_status.as_deref()
+        && current
+            .and_then(|value| value.delegation.as_ref())
+            .map(|value| value.status.as_str())
+            != Some(expected)
+    {
+        return revision_conflict();
+    }
+    if let Some(expected) = transition.expected_context_generation
+        && current
+            .and_then(|value| value.session.as_ref())
+            .map(|value| value.context_generation)
+            != Some(expected)
+    {
+        return revision_conflict();
+    }
+    Ok(())
+}
+
+fn latest_identity_snapshots(
+    snapshots: &[RuntimeIdentitySnapshot],
+    kind: RuntimeIdentityKind,
+) -> Vec<RuntimeIdentitySnapshot> {
+    let mut latest = BTreeMap::new();
+    for snapshot in snapshots.iter().filter(|value| value.identity_kind == kind) {
+        let key = match kind {
+            RuntimeIdentityKind::Workspace => snapshot.workspace.workspace_id.clone(),
+            RuntimeIdentityKind::Session => snapshot
+                .session
+                .as_ref()
+                .map(|record| record.session_id.clone())
+                .unwrap_or_default(),
+            RuntimeIdentityKind::Delegation => snapshot
+                .delegation
+                .as_ref()
+                .map(|record| record.delegation_id.clone())
+                .unwrap_or_default(),
+        };
+        latest.insert(key, snapshot.clone());
+    }
+    latest.into_values().collect()
+}
+
+fn validate_job_record(record: &RuntimeJobRecord) -> RuntimeResult<()> {
+    let arguments = serde_json::to_vec(&record.arguments).map_err(|_| {
+        RuntimeError::new(
+            StableErrorCode::OperationSchemaInvalid,
+            "typed job arguments are not canonical JSON",
+        )
+    })?;
+    if !record.arguments.is_object()
+        || arguments.len() > 65_536
+        || !is_digest(&record.submission_scope_digest)
+        || !is_digest(&record.submission_idempotency_key_digest)
+        || !is_digest(&record.request_digest)
+        || record.submission_idempotency_key.is_empty()
+        || record.submission_idempotency_key.len() > 256
+        || record.result.as_ref().is_some_and(contains_secret)
+    {
+        return Err(RuntimeError::new(
+            StableErrorCode::OperationSchemaInvalid,
+            "typed runtime job record is malformed or unbounded",
+        ));
+    }
+    Ok(())
+}
+
+fn execution_checkpoint_key(scope: &ExecutionCheckpointScope) -> (String, String, String) {
+    (
+        scope.workspace_id.clone(),
+        scope.work_item_id.clone(),
+        scope.session_id.clone(),
+    )
+}
+
+fn validate_execution_checkpoint(record: &ExecutionCheckpointRecord) -> RuntimeResult<()> {
+    if record.workspace_id.is_empty()
+        || record.workspace_id.len() > 128
+        || record.work_item_id.is_empty()
+        || record.work_item_id.len() > 128
+        || record.session_id.is_empty()
+        || record.session_id.len() > 128
+        || !is_digest(&record.capsule_digest)
+        || !is_digest(&record.queue_digest)
+    {
+        return Err(RuntimeError::new(
+            StableErrorCode::OperationSchemaInvalid,
+            "execution checkpoint record is unbounded or malformed",
+        ));
+    }
+    Ok(())
+}
+
+fn contains_secret(value: &Value) -> bool {
+    match value {
+        Value::Object(values) => values.iter().any(|(key, value)| {
+            matches!(
+                key.as_str(),
+                "capabilityToken" | "claimId" | "credential" | "endpointToken" | "secret" | "token"
+            ) || contains_secret(value)
+        }),
+        Value::Array(values) => values.iter().any(contains_secret),
+        _ => false,
+    }
+}
+
+fn is_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn revision_conflict<T>() -> RuntimeResult<T> {
+    Err(RuntimeError::new(
+        StableErrorCode::RevisionConflict,
+        "typed persistence expected value is stale",
+    ))
 }

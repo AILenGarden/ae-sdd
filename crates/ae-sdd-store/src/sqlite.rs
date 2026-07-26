@@ -19,10 +19,89 @@ pub const SQLITE_RUNTIME_BASE_MIGRATION: &str =
     include_str!("../../../migrations/0001_runtime_base.sql");
 pub const SQLITE_LEASE_CONTROL_RECEIPT_MIGRATION: &str =
     include_str!("../../../migrations/0002_lease_control_receipts.sql");
-const BASE_MIGRATION_VERSION: i64 = 1;
-const BASE_MIGRATION_NAME: &str = "0001_runtime_base";
-const LEASE_CONTROL_MIGRATION_VERSION: i64 = 2;
-const LEASE_CONTROL_MIGRATION_NAME: &str = "0002_lease_control_receipts";
+pub const SQLITE_ROUTE_SERIES_PLAN_MIGRATION: &str =
+    include_str!("../../../migrations/0003_route_series_plan.sql");
+pub const SQLITE_WORK_ITEM_LIFECYCLE_MIGRATION: &str =
+    include_str!("../../../migrations/0004_work_item_lifecycle.sql");
+pub const SQLITE_RESOURCE_CONTEXT_MIGRATION: &str =
+    include_str!("../../../migrations/0005_resource_context.sql");
+pub const SQLITE_HOST_SESSION_MIGRATION: &str =
+    include_str!("../../../migrations/0006_host_session.sql");
+pub const SQLITE_REVIEW_RUNTIME_MIGRATION: &str =
+    include_str!("../../../migrations/0007_review_runtime.sql");
+pub const SQLITE_EXECUTION_RECEIPTS_MIGRATION: &str =
+    include_str!("../../../migrations/0008_execution_receipts.sql");
+pub const SQLITE_REVIEW_BATCH_V2_MIGRATION: &str =
+    include_str!("../../../migrations/0009_review_batch_v2.sql");
+pub const SQLITE_RUNTIME_JOB_V1_MIGRATION: &str =
+    include_str!("../../../migrations/0010_runtime_job_v1.sql");
+pub const SQLITE_EXECUTION_SUPERVISOR_V1_MIGRATION: &str =
+    include_str!("../../../migrations/0011_execution_supervisor_v1.sql");
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeMigration {
+    pub version: i64,
+    pub name: &'static str,
+    pub sql: &'static str,
+}
+
+pub const SQLITE_RUNTIME_MIGRATIONS: &[RuntimeMigration] = &[
+    RuntimeMigration {
+        version: 1,
+        name: "0001_runtime_base",
+        sql: SQLITE_RUNTIME_BASE_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 2,
+        name: "0002_lease_control_receipts",
+        sql: SQLITE_LEASE_CONTROL_RECEIPT_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 3,
+        name: "0003_route_series_plan",
+        sql: SQLITE_ROUTE_SERIES_PLAN_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 4,
+        name: "0004_work_item_lifecycle",
+        sql: SQLITE_WORK_ITEM_LIFECYCLE_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 5,
+        name: "0005_resource_context",
+        sql: SQLITE_RESOURCE_CONTEXT_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 6,
+        name: "0006_host_session",
+        sql: SQLITE_HOST_SESSION_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 7,
+        name: "0007_review_runtime",
+        sql: SQLITE_REVIEW_RUNTIME_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 8,
+        name: "0008_execution_receipts",
+        sql: SQLITE_EXECUTION_RECEIPTS_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 9,
+        name: "0009_review_batch_v2",
+        sql: SQLITE_REVIEW_BATCH_V2_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 10,
+        name: "0010_runtime_job_v1",
+        sql: SQLITE_RUNTIME_JOB_V1_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 11,
+        name: "0011_execution_supervisor_v1",
+        sql: SQLITE_EXECUTION_SUPERVISOR_V1_MIGRATION,
+    },
+];
 
 #[derive(Debug)]
 pub struct SqliteRuntimeRepository {
@@ -116,38 +195,54 @@ fn migrate(
     proposed_event_store_id: EventStoreId,
     created_at: &UtcTimestamp,
 ) -> Result<EventStoreId, StoreError> {
-    let base_checksum = migration_checksum(SQLITE_RUNTIME_BASE_MIGRATION);
-    let lease_control_checksum = migration_checksum(SQLITE_LEASE_CONTROL_RECEIPT_MIGRATION);
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(SQLITE_RUNTIME_BASE_MIGRATION)?;
-    verify_migration_checksum(&transaction, BASE_MIGRATION_VERSION, &base_checksum)?;
-    transaction.execute(
-        "INSERT OR IGNORE INTO schema_migration(version,name,checksum,applied_at) VALUES(?1,?2,?3,?4)",
-        params![
-            BASE_MIGRATION_VERSION,
-            BASE_MIGRATION_NAME,
-            base_checksum,
-            created_at.to_string()
-        ],
-    )?;
-    let lease_control_applied = verify_migration_checksum(
-        &transaction,
-        LEASE_CONTROL_MIGRATION_VERSION,
-        &lease_control_checksum,
-    )?;
-    if !lease_control_applied {
-        transaction.execute_batch(SQLITE_LEASE_CONTROL_RECEIPT_MIGRATION)?;
+    let current_version: i64 =
+        transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let latest_version = SQLITE_RUNTIME_MIGRATIONS
+        .last()
+        .expect("migration catalog is non-empty")
+        .version;
+    if !(0..=latest_version).contains(&current_version) {
+        return Err(StoreError::DatabaseIncompatible {
+            reason: format!("unsupported runtime schema version {current_version}")
+                .into_boxed_str(),
+        });
+    }
+    validate_migration_prefix(&transaction, current_version)?;
+    for migration in SQLITE_RUNTIME_MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version > current_version)
+    {
+        transaction.execute_batch(migration.sql)?;
+        let observed: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if observed != migration.version {
+            return Err(StoreError::DatabaseIncompatible {
+                reason: format!(
+                    "migration {} set user_version {observed}, expected {}",
+                    migration.name, migration.version
+                )
+                .into_boxed_str(),
+            });
+        }
         transaction.execute(
             "INSERT INTO schema_migration(version,name,checksum,applied_at) VALUES(?1,?2,?3,?4)",
             params![
-                LEASE_CONTROL_MIGRATION_VERSION,
-                LEASE_CONTROL_MIGRATION_NAME,
-                lease_control_checksum,
+                migration.version,
+                migration.name,
+                migration_checksum(migration.sql),
                 created_at.to_string()
             ],
         )?;
-    } else {
-        transaction.pragma_update(None, "user_version", LEASE_CONTROL_MIGRATION_VERSION)?;
+    }
+    validate_migration_prefix(&transaction, latest_version)?;
+    let foreign_key_violations: i64 =
+        transaction.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })?;
+    if foreign_key_violations != 0 {
+        return Err(StoreError::DatabaseIncompatible {
+            reason: "runtime migration left foreign-key violations".into(),
+        });
     }
     transaction.execute(
         "INSERT OR IGNORE INTO runtime_identity(singleton,event_store_id,created_at) VALUES(1,?1,?2)",
@@ -166,27 +261,73 @@ fn migration_checksum(sql: &str) -> String {
     hex::encode(Sha256::digest(sql.as_bytes()))
 }
 
-fn verify_migration_checksum(
+fn validate_migration_prefix(
     transaction: &rusqlite::Transaction<'_>,
-    version: i64,
-    expected_checksum: &str,
-) -> Result<bool, StoreError> {
-    let existing_checksum: Option<String> = transaction
-        .query_row(
-            "SELECT checksum FROM schema_migration WHERE version = ?1",
-            params![version],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if existing_checksum
-        .as_deref()
-        .is_some_and(|value| value != expected_checksum)
-    {
+    current_version: i64,
+) -> Result<(), StoreError> {
+    let user_table_count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        [],
+        |row| row.get(0),
+    )?;
+    if current_version == 0 {
+        if user_table_count != 0 {
+            return Err(StoreError::DatabaseIncompatible {
+                reason: "version-zero runtime database is not empty".into(),
+            });
+        }
+        return Ok(());
+    }
+    let has_catalog: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migration'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_catalog != 1 {
         return Err(StoreError::DatabaseIncompatible {
-            reason: "published migration checksum differs".into(),
+            reason: "non-empty runtime database lacks schema_migration".into(),
         });
     }
-    Ok(existing_checksum.is_some())
+    let row_count: i64 =
+        transaction.query_row("SELECT COUNT(*) FROM schema_migration", [], |row| {
+            row.get(0)
+        })?;
+    if row_count != current_version {
+        return Err(StoreError::DatabaseIncompatible {
+            reason: "runtime migration catalog has a gap or extra row".into(),
+        });
+    }
+    for migration in
+        SQLITE_RUNTIME_MIGRATIONS
+            .iter()
+            .take(usize::try_from(current_version).map_err(|_| {
+                StoreError::DatabaseIncompatible {
+                    reason: "runtime migration version is out of range".into(),
+                }
+            })?)
+    {
+        let existing: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT name,checksum FROM schema_migration WHERE version=?1",
+                [migration.version],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let expected_checksum = migration_checksum(migration.sql);
+        if existing
+            .as_ref()
+            .is_none_or(|(name, checksum)| name != migration.name || checksum != &expected_checksum)
+        {
+            return Err(StoreError::DatabaseIncompatible {
+                reason: format!(
+                    "published migration {} name or checksum differs",
+                    migration.version
+                )
+                .into_boxed_str(),
+            });
+        }
+    }
+    Ok(())
 }
 
 impl RuntimeRepository for SqliteRuntimeRepository {

@@ -874,3 +874,151 @@ pub struct CompactResult {
     /// Restored projection digest only after ACK and rehydrate.
     pub restored_projection_digest: Option<String>,
 }
+
+/// Identity scope of one rebuildable execution-supervisor checkpoint row.
+///
+/// The triple keys the runtime metadata exactly the way the migration 0011
+/// table does: one bound session within one Work Item within one workspace.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionCheckpointScope {
+    /// Owning workspace identity.
+    pub workspace_id: String,
+    /// Owning Work Item identity.
+    pub work_item_id: String,
+    /// Bound physical session identity.
+    pub session_id: String,
+}
+
+/// Project-authority execution cursor observed at daemon restart.
+///
+/// The cursor mirrors the `executionRuntime` fragment of the project state:
+/// the capsule artifact locator, both content digests and the active slice
+/// ordinal exactly as the project authority reports them.  It is the truth
+/// every cached runtime row is validated against; runtime metadata that
+/// disagrees with the cursor is discarded, never written back.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionAuthorityCursor {
+    /// Project-relative capsule artifact locator.
+    pub capsule_ref: String,
+    /// Canonical 64-character lowercase hex capsule digest.
+    pub capsule_digest: String,
+    /// Canonical 64-character lowercase hex approved queue digest.
+    pub queue_digest: String,
+    /// Authority-reported active slice ordinal in the approved queue.
+    pub active_ordinal: u32,
+}
+
+/// Rebuildable execution-supervisor runtime metadata row (migration 0011).
+///
+/// The row only accelerates a daemon restart: every field is derivable from
+/// the project authority plus supervisor progress facts.  It stores the
+/// capsule and queue digests, the active slice ordinal, the consecutive
+/// no-progress batch counter, bounded source-read cache statistics and the
+/// durable event cursor of the last update.  Business truth — the approved
+/// plan, slice completion and evidence — never lives in this row.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionCheckpointRecord {
+    /// Owning workspace identity.
+    pub workspace_id: String,
+    /// Owning Work Item identity.
+    pub work_item_id: String,
+    /// Bound physical session identity.
+    pub session_id: String,
+    /// Canonical 64-character lowercase hex capsule digest accepted from the project authority.
+    pub capsule_digest: String,
+    /// Canonical 64-character lowercase hex approved queue digest.
+    pub queue_digest: String,
+    /// Active slice ordinal in the approved queue.
+    pub active_ordinal: u32,
+    /// Consecutive no-progress investigation batches for the active slice.
+    pub no_progress_batches: u8,
+    /// Source-read cache hits recorded for this binding.
+    pub source_cache_hits: u64,
+    /// Source-read cache misses recorded for this binding.
+    pub source_cache_misses: u64,
+    /// Durable event cursor at the last checkpoint update.
+    pub updated_event_seq: u64,
+    /// Last update time in Unix milliseconds.
+    pub updated_at_unix_ms: u64,
+}
+
+/// Pure restart-recovery input: the scope being recovered, the project
+/// authority cursor and the current durable facts used to seed a rebuild.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionCheckpointRecoveryInput {
+    /// Identity scope of the checkpoint row being recovered.
+    pub scope: ExecutionCheckpointScope,
+    /// Project-authority execution cursor the row is validated against.
+    pub authority: ExecutionAuthorityCursor,
+    /// Current durable event cursor stamped on a rebuilt row.
+    pub updated_event_seq: u64,
+    /// Current time in Unix milliseconds stamped on a rebuilt row.
+    pub now_unix_ms: u64,
+}
+
+/// Restart recovery verdict for one execution-supervisor checkpoint row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExecutionCheckpointRecovery {
+    /// The persisted row matches the project authority and is restored with
+    /// its progress counters; SQLite accelerated the restart.
+    Restored(ExecutionCheckpointRecord),
+    /// The project authority moved or no row exists: a fresh row is rebuilt
+    /// from the authority locator/digest with zeroed progress facts, and the
+    /// stale row, when one existed, must be discarded through the
+    /// persistence port.  The project authority itself is never modified.
+    Rebuilt {
+        /// Fresh row seeded from the authority with zeroed progress facts.
+        record: ExecutionCheckpointRecord,
+        /// Stale persisted row the caller must discard, when one existed.
+        discard: Option<ExecutionCheckpointRecord>,
+    },
+}
+
+impl ExecutionCheckpointRecord {
+    /// Validates one persisted checkpoint row against the project authority
+    /// cursor observed after a daemon restart.
+    ///
+    /// This is a pure, total decision: it performs no I/O and holds no
+    /// project-state handle, so it can never overwrite project truth.  A row
+    /// whose identity, capsule digest, queue digest and active ordinal all
+    /// match the authority is [`ExecutionCheckpointRecovery::Restored`] with
+    /// its counters; anything else is rebuilt from the authority and the
+    /// stale row is handed back for discard (SQLite only ever accelerates).
+    #[must_use]
+    pub fn recover(
+        input: &ExecutionCheckpointRecoveryInput,
+        persisted: Option<ExecutionCheckpointRecord>,
+    ) -> ExecutionCheckpointRecovery {
+        match persisted {
+            Some(row)
+                if row.workspace_id == input.scope.workspace_id
+                    && row.work_item_id == input.scope.work_item_id
+                    && row.session_id == input.scope.session_id
+                    && row.capsule_digest == input.authority.capsule_digest
+                    && row.queue_digest == input.authority.queue_digest
+                    && row.active_ordinal == input.authority.active_ordinal =>
+            {
+                ExecutionCheckpointRecovery::Restored(row)
+            }
+            stale => ExecutionCheckpointRecovery::Rebuilt {
+                record: Self {
+                    workspace_id: input.scope.workspace_id.clone(),
+                    work_item_id: input.scope.work_item_id.clone(),
+                    session_id: input.scope.session_id.clone(),
+                    capsule_digest: input.authority.capsule_digest.clone(),
+                    queue_digest: input.authority.queue_digest.clone(),
+                    active_ordinal: input.authority.active_ordinal,
+                    no_progress_batches: 0,
+                    source_cache_hits: 0,
+                    source_cache_misses: 0,
+                    updated_event_seq: input.updated_event_seq,
+                    updated_at_unix_ms: input.now_unix_ms,
+                },
+                discard: stale,
+            },
+        }
+    }
+}
