@@ -4,7 +4,7 @@ use ae_sdd_protocol::OperationScope;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub const OPERATION_COUNT: usize = 18;
+pub const OPERATION_COUNT: usize = 21;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
@@ -15,6 +15,9 @@ pub enum OperationName {
     EvidenceRecord,
     ExecutionPlanApprove,
     ExecutionPlanSet,
+    ExecutionResume,
+    ExecutionSliceRecord,
+    ExecutionSliceStart,
     GateCheck,
     LeaseAcquire,
     LeaseBreak,
@@ -37,6 +40,9 @@ impl OperationName {
         Self::EvidenceRecord,
         Self::ExecutionPlanApprove,
         Self::ExecutionPlanSet,
+        Self::ExecutionResume,
+        Self::ExecutionSliceRecord,
+        Self::ExecutionSliceStart,
         Self::GateCheck,
         Self::LeaseAcquire,
         Self::LeaseBreak,
@@ -60,6 +66,9 @@ impl OperationName {
             Self::EvidenceRecord => "evidence.record",
             Self::ExecutionPlanApprove => "execution.plan.approve",
             Self::ExecutionPlanSet => "execution.plan.set",
+            Self::ExecutionResume => "execution.resume",
+            Self::ExecutionSliceRecord => "execution.slice.record",
+            Self::ExecutionSliceStart => "execution.slice.start",
             Self::GateCheck => "gate.check",
             Self::LeaseAcquire => "lease.acquire",
             Self::LeaseBreak => "lease.break",
@@ -196,6 +205,19 @@ const EXECUTION_PLAN_SET: &[FieldSpec] = &[
     field("risks", FieldKind::Array, false),
     field("sourceReads", FieldKind::Array, false),
 ];
+const EXECUTION_RESUME: &[FieldSpec] = &[
+    field("knownCapsuleDigest", FieldKind::String, false),
+    field("knownContextRevision", FieldKind::Integer, false),
+];
+const EXECUTION_SLICE_START: &[FieldSpec] = &[
+    field("activeOrdinal", FieldKind::Integer, true),
+    field("queueDigest", FieldKind::String, true),
+];
+const EXECUTION_SLICE_RECORD: &[FieldSpec] = &[
+    field("sliceId", FieldKind::String, true),
+    field("status", FieldKind::String, true),
+    field("progressDigest", FieldKind::String, false),
+];
 const GATE_CHECK: &[FieldSpec] = &[field("gateIds", FieldKind::Array, false)];
 const LEASE_ACQUIRE: &[FieldSpec] = &[
     field("owner", FieldKind::Object, true),
@@ -218,9 +240,18 @@ const REVIEW_RECORD: &[FieldSpec] = &[
 ];
 const STATE_TRANSITION: &[FieldSpec] = &[field("targetPhase", FieldKind::String, true)];
 const VERIFICATION_PLAN: &[FieldSpec] = &[
+    field("toolsetJobId", FieldKind::String, true),
+    field("plan", FieldKind::Object, true),
+    field("receiptId", FieldKind::String, true),
+    field("receiptDigest", FieldKind::String, true),
+    field("sourceRevision", FieldKind::Integer, true),
+    field("planDigest", FieldKind::String, true),
+    field("methodologyDigest", FieldKind::String, true),
+    field("policyDigest", FieldKind::String, true),
+    field("inputFingerprint", FieldKind::String, true),
     field("changedPaths", FieldKind::Array, true),
     field("sinceFingerprint", FieldKind::String, false),
-    field("persist", FieldKind::Boolean, false),
+    field("persist", FieldKind::Boolean, true),
 ];
 const NO_FIELDS: &[FieldSpec] = &[];
 
@@ -278,6 +309,33 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         true,
         false,
         EXECUTION_PLAN_SET,
+    ),
+    spec(
+        OperationName::ExecutionResume,
+        false,
+        false,
+        false,
+        false,
+        false,
+        EXECUTION_RESUME,
+    ),
+    spec(
+        OperationName::ExecutionSliceRecord,
+        true,
+        true,
+        true,
+        true,
+        false,
+        EXECUTION_SLICE_RECORD,
+    ),
+    spec(
+        OperationName::ExecutionSliceStart,
+        true,
+        true,
+        true,
+        true,
+        false,
+        EXECUTION_SLICE_START,
     ),
     spec(
         OperationName::GateCheck,

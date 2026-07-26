@@ -1,12 +1,13 @@
 use std::{collections::HashSet, str::FromStr};
 
 use ae_sdd_protocol::{
-    ClientKind, CompactStatus, ContextPayloadKind, ENDPOINT_MANIFEST_SCHEMA_V1, EndpointManifest,
-    FrameError, GateOutcomeKind, HandshakeRequest, HandshakeResponse, HookDecision, HostAckOutcome,
+    CapabilityTokenWire, ClientKind, CompactStatus, ContextPayloadKind,
+    ENDPOINT_MANIFEST_SCHEMA_V1, ERROR_DATA_SCHEMA_V1, EndpointManifest, FrameError,
+    GateOutcomeKind, HandshakeRequest, HandshakeResponse, HookDecision, HostAckOutcome,
     HostActionKind, JobStatus, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse,
     JsonRpcVersion, MAX_FRAME_BYTES, METHOD_COUNT, METHOD_REGISTRY, MethodRequirements,
-    OperationScope, PROTOCOL_RANGE_V1, PROTOCOL_VERSION_V1, RequirementSource, RpcMethod,
-    SecretString, StableErrorCode, WorkspaceMode, decode_frame, encode_frame,
+    OperationScope, PROTOCOL_RANGE_V1, PROTOCOL_VERSION_V1, RequirementSource, RpcErrorObject,
+    RpcMethod, SecretString, StableErrorCode, WorkspaceMode, decode_frame, encode_frame,
 };
 use serde_json::{Value, json};
 
@@ -58,6 +59,7 @@ fn v1_method_registry_is_exact_and_ordered() {
     let actual = RpcMethod::ALL.map(RpcMethod::as_str);
     assert_eq!(actual, METHOD_NAMES);
     for (index, method) in RpcMethod::ALL.into_iter().enumerate() {
+        assert_eq!(method.to_string(), method.as_str());
         assert_eq!(method.spec(), &METHOD_REGISTRY[index]);
         assert_eq!(method.spec().method, method);
         assert_eq!(RpcMethod::from_str(method.as_str()), Ok(method));
@@ -78,6 +80,54 @@ fn v1_method_registry_is_exact_and_ordered() {
     }
     assert!(RpcMethod::from_str("runtime/handshake").is_err());
     assert!(RpcMethod::from_str("Runtime.Handshake").is_err());
+}
+
+#[test]
+fn public_constructors_and_secret_accessors_preserve_wire_values() {
+    let token = CapabilityTokenWire::new_v1(
+        "key-1",
+        "boot-1",
+        "flow.read",
+        "session-1",
+        "root",
+        None,
+        "grant-digest",
+        1_000,
+        2_000,
+        "signed-value",
+    );
+    assert_eq!(token.signature(), "signed-value");
+
+    let secret = SecretString::new("endpoint-secret");
+    assert_eq!(secret.expose_secret(), "endpoint-secret");
+
+    let success = JsonRpcResponse::new("request-1", json!({ "accepted": true }));
+    assert_eq!(success.jsonrpc, JsonRpcVersion);
+    assert_eq!(success.id, "request-1");
+    assert_eq!(success.result, json!({ "accepted": true }));
+
+    let error = RpcErrorObject::new(
+        StableErrorCode::DaemonUnavailable,
+        "daemon unavailable",
+        Some("retry after daemon startup".to_owned()),
+        Some("request-2".to_owned()),
+    );
+    assert_eq!(error.code, -32_000);
+    assert_eq!(error.message, "daemon unavailable");
+    assert_eq!(error.data.schema_version, ERROR_DATA_SCHEMA_V1);
+    assert_eq!(error.data.stable_code, StableErrorCode::DaemonUnavailable);
+    assert!(error.data.retryable);
+    assert_eq!(
+        error.data.remediation.as_deref(),
+        Some("retry after daemon startup")
+    );
+    assert_eq!(error.data.request_id.as_deref(), Some("request-2"));
+    assert_eq!(error.data.details_digest, None);
+
+    let failure = JsonRpcErrorResponse::new("request-2", error.clone());
+    assert_eq!(failure.jsonrpc, JsonRpcVersion);
+    assert_eq!(failure.id, "request-2");
+    assert_eq!(failure.error, error);
 }
 
 #[test]
@@ -150,6 +200,20 @@ fn method_precondition_flags_cover_bootstrap_hooks_and_typed_operations() {
             requires_idempotency: false,
             requires_confirmation: false,
             source: RequirementSource::TypedOperation,
+        },
+    );
+    assert_requirements(
+        RpcMethod::GateEvaluate,
+        OperationScope::WorkItem,
+        MethodRequirements {
+            requires_workspace: true,
+            requires_work_item: true,
+            writes: true,
+            requires_lease: false,
+            requires_revision: false,
+            requires_idempotency: true,
+            requires_confirmation: false,
+            source: RequirementSource::Method,
         },
     );
 
@@ -402,10 +466,97 @@ fn stable_errors_have_exact_wire_names_unique_numbers_and_no_combined_codes() {
     assert!(names.contains("HOST_ACK_REJECTED"));
     assert!(names.contains("CONTEXT_BUDGET_EXCEEDED"));
     assert!(names.contains("COMPACT_ACK_INVALID"));
+    assert!(names.contains("EXECUTION_CAPSULE_STALE"));
+    assert!(names.contains("EXECUTION_SLICE_INVALID"));
+    assert!(names.contains("EXECUTION_PROGRESS_REQUIRED"));
+    assert!(names.contains("EXECUTION_RESOURCE_BUSY"));
+    assert!(names.contains("EXECUTION_BUDGET_EXCEEDED"));
     assert_eq!(
         serde_json::to_value(StableErrorCode::IdempotencyKeyReused).unwrap(),
         json!("IDEMPOTENCY_KEY_REUSED")
     );
+
+    let retryable = HashSet::from([
+        StableErrorCode::DaemonUnavailable,
+        StableErrorCode::EndpointStale,
+        StableErrorCode::DaemonDraining,
+        StableErrorCode::RevisionConflict,
+        StableErrorCode::LeaseRequired,
+        StableErrorCode::LeaseConflict,
+        StableErrorCode::LeaseExpired,
+        StableErrorCode::StaleFencingToken,
+        StableErrorCode::ConfirmationRequired,
+        StableErrorCode::StaleGateResult,
+        StableErrorCode::GateError,
+        StableErrorCode::GateTimeout,
+        StableErrorCode::GateBlocked,
+        StableErrorCode::SessionExpired,
+        StableErrorCode::HostAckTimeout,
+        StableErrorCode::HostAckRejected,
+        StableErrorCode::ChildResultInvalid,
+        StableErrorCode::ChildResultTooLarge,
+        StableErrorCode::ContextRevisionStale,
+        StableErrorCode::ContextBudgetExceeded,
+        StableErrorCode::CompactAckTimeout,
+        StableErrorCode::EventCursorGap,
+        StableErrorCode::SubscriberBackpressure,
+        StableErrorCode::ScopeAmbiguous,
+        StableErrorCode::OperationSchemaInvalid,
+        StableErrorCode::ExecutionCapsuleStale,
+        StableErrorCode::ExecutionProgressRequired,
+        StableErrorCode::ExecutionResourceBusy,
+        StableErrorCode::ExecutionBudgetExceeded,
+    ]);
+    for code in StableErrorCode::ALL {
+        assert_eq!(
+            code.retryable_by_default(),
+            retryable.contains(code),
+            "unexpected retry default for {}",
+            code.as_str()
+        );
+    }
+}
+
+#[test]
+fn execution_supervisor_errors_have_frozen_wire_names_numbers_and_retry_defaults() {
+    let cases = [
+        (
+            StableErrorCode::ExecutionCapsuleStale,
+            "EXECUTION_CAPSULE_STALE",
+            -32_093,
+            true,
+        ),
+        (
+            StableErrorCode::ExecutionSliceInvalid,
+            "EXECUTION_SLICE_INVALID",
+            -32_094,
+            false,
+        ),
+        (
+            StableErrorCode::ExecutionProgressRequired,
+            "EXECUTION_PROGRESS_REQUIRED",
+            -32_095,
+            true,
+        ),
+        (
+            StableErrorCode::ExecutionResourceBusy,
+            "EXECUTION_RESOURCE_BUSY",
+            -32_096,
+            true,
+        ),
+        (
+            StableErrorCode::ExecutionBudgetExceeded,
+            "EXECUTION_BUDGET_EXCEEDED",
+            -32_097,
+            true,
+        ),
+    ];
+    for (code, name, number, retryable) in cases {
+        assert_eq!(code.as_str(), name);
+        assert_eq!(code.json_rpc_code(), number);
+        assert_eq!(code.retryable_by_default(), retryable);
+        assert_eq!(serde_json::to_value(code).unwrap(), json!(name));
+    }
 }
 
 #[test]

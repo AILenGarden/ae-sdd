@@ -95,6 +95,16 @@ pub enum StableErrorCode {
     OperationNotRegistered,
     /// The typed operation request violates its strict schema.
     OperationSchemaInvalid,
+    /// The approved plan or a required context drifted from the execution capsule.
+    ExecutionCapsuleStale,
+    /// A slice state transition or ordinal is not legal for the active queue.
+    ExecutionSliceInvalid,
+    /// Bounded investigation lacks the machine-verified progress to proceed.
+    ExecutionProgressRequired,
+    /// An execution resource such as the daemon-wide Cargo lock is held.
+    ExecutionResourceBusy,
+    /// A capsule, tool output, or investigation batch exceeded its budget.
+    ExecutionBudgetExceeded,
 }
 
 impl StableErrorCode {
@@ -142,6 +152,11 @@ impl StableErrorCode {
         Self::ScopeAmbiguous,
         Self::OperationNotRegistered,
         Self::OperationSchemaInvalid,
+        Self::ExecutionCapsuleStale,
+        Self::ExecutionSliceInvalid,
+        Self::ExecutionProgressRequired,
+        Self::ExecutionResourceBusy,
+        Self::ExecutionBudgetExceeded,
     ];
 
     /// Returns the exact stable ASCII wire code.
@@ -190,6 +205,11 @@ impl StableErrorCode {
             Self::ScopeAmbiguous => "SCOPE_AMBIGUOUS",
             Self::OperationNotRegistered => "OPERATION_NOT_REGISTERED",
             Self::OperationSchemaInvalid => "OPERATION_SCHEMA_INVALID",
+            Self::ExecutionCapsuleStale => "EXECUTION_CAPSULE_STALE",
+            Self::ExecutionSliceInvalid => "EXECUTION_SLICE_INVALID",
+            Self::ExecutionProgressRequired => "EXECUTION_PROGRESS_REQUIRED",
+            Self::ExecutionResourceBusy => "EXECUTION_RESOURCE_BUSY",
+            Self::ExecutionBudgetExceeded => "EXECUTION_BUDGET_EXCEEDED",
         }
     }
 
@@ -239,6 +259,11 @@ impl StableErrorCode {
             Self::ScopeAmbiguous => -32_090,
             Self::OperationNotRegistered => -32_091,
             Self::OperationSchemaInvalid => -32_092,
+            Self::ExecutionCapsuleStale => -32_093,
+            Self::ExecutionSliceInvalid => -32_094,
+            Self::ExecutionProgressRequired => -32_095,
+            Self::ExecutionResourceBusy => -32_096,
+            Self::ExecutionBudgetExceeded => -32_097,
         }
     }
 
@@ -275,6 +300,10 @@ impl StableErrorCode {
                 | Self::SubscriberBackpressure
                 | Self::ScopeAmbiguous
                 | Self::OperationSchemaInvalid
+                | Self::ExecutionCapsuleStale
+                | Self::ExecutionProgressRequired
+                | Self::ExecutionResourceBusy
+                | Self::ExecutionBudgetExceeded
         )
     }
 }

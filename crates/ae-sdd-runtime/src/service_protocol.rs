@@ -34,6 +34,7 @@ impl RuntimeService {
             "context-projection-v1",
             "compact-ack-rehydrate-v1",
             "bounded-job-scheduler-v1",
+            "execution-supervisor-v1",
         ]
         .into_iter()
         .map(str::to_owned)
