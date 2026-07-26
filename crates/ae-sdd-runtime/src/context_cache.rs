@@ -5,7 +5,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use ae_sdd_context::{
-    PressureDecision, PressurePolicy, PressureSample, PressureSource, PressureTracker,
+    ExecutionCapsuleProjection, PressureDecision, PressurePolicy, PressureSample, PressureSource,
+    PressureTracker,
 };
 use ae_sdd_domain::{
     AgentRole, ClaimId, CompactId, ContextGeneration, DelegationId, EventStoreId, HostAckId,
@@ -65,23 +66,72 @@ impl ContextCache {
 
     /// Replaces one precomputed projection after validating its exact serialized size.
     pub fn put(&self, input: ContextProjectionInput) -> RuntimeResult<ContextProjectResult> {
-        let canonical = serde_json::to_vec(&input.projection).map_err(|_| {
+        let ContextProjectionInput {
+            session_id,
+            source_revision,
+            projection,
+        } = input;
+        let canonical = serde_json::to_vec(&projection).map_err(|_| {
             RuntimeError::new(
                 StableErrorCode::ContextBudgetExceeded,
                 "context projection could not be canonicalized",
             )
         })?;
-        if canonical.len() > self.maximum_bytes {
+        let digest = hex::encode(Sha256::digest(&canonical));
+        self.put_canonical(
+            &session_id,
+            source_revision,
+            projection,
+            digest,
+            canonical.len(),
+        )
+    }
+
+    /// Stores a typed execution-capsule projection through the same
+    /// full/delta/no-change machinery as [`Self::put`], but binds the cache
+    /// entry digest to the canonical capsule digest so approved-plan, queue or
+    /// capsule drift changes the digest clients resume against.  No second
+    /// delta algorithm is introduced: the serialized capsule value is the
+    /// projection body the existing `project` delta diffs.
+    pub fn put_execution_capsule(
+        &self,
+        stream_key: &str,
+        source_revision: u64,
+        projection: &ExecutionCapsuleProjection,
+    ) -> RuntimeResult<ContextProjectResult> {
+        let canonical = serde_json::to_vec(projection.value()).map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::ContextBudgetExceeded,
+                "execution capsule projection could not be canonicalized",
+            )
+        })?;
+        self.put_canonical(
+            stream_key,
+            source_revision,
+            projection.value().clone(),
+            projection.digest().to_hex(),
+            canonical.len(),
+        )
+    }
+
+    fn put_canonical(
+        &self,
+        stream_key: &str,
+        source_revision: u64,
+        projection: Value,
+        digest: String,
+        bytes: usize,
+    ) -> RuntimeResult<ContextProjectResult> {
+        if bytes > self.maximum_bytes {
             return Err(RuntimeError::new(
                 StableErrorCode::ContextBudgetExceeded,
                 "context projection exceeds the configured byte budget",
             ));
         }
-        let digest = hex::encode(Sha256::digest(&canonical));
         let mut projections = self.projections.lock().map_err(lock_error)?;
-        if let Some(current) = projections.get(&input.session_id)
+        if let Some(current) = projections.get(stream_key)
             && current.digest == digest
-            && current.source_revision == input.source_revision
+            && current.source_revision == source_revision
         {
             return Ok(ContextProjectResult {
                 kind: "no_change".to_owned(),
@@ -93,7 +143,7 @@ impl ContextCache {
             });
         }
         let revision = projections
-            .get(&input.session_id)
+            .get(stream_key)
             .map_or(1, |current| current.context_revision.saturating_add(1));
         if revision == 0 {
             return Err(RuntimeError::new(
@@ -101,7 +151,7 @@ impl ContextCache {
                 "context revision overflow",
             ));
         }
-        let previous = projections.get(&input.session_id).map(|current| {
+        let previous = projections.get(stream_key).map(|current| {
             Box::new(HistoricalProjection {
                 context_revision: current.context_revision,
                 digest: current.digest.clone(),
@@ -109,21 +159,21 @@ impl ContextCache {
             })
         });
         let cached = CachedProjection {
-            source_revision: input.source_revision,
+            source_revision,
             context_revision: revision,
             digest: digest.clone(),
-            value: input.projection.clone(),
-            bytes: canonical.len(),
+            value: projection.clone(),
+            bytes,
             previous,
         };
-        projections.insert(input.session_id, cached);
+        projections.insert(stream_key.to_owned(), cached);
         Ok(ContextProjectResult {
             kind: "full".to_owned(),
             context_revision: revision,
             digest,
-            source_revision: input.source_revision,
-            projection: Some(input.projection),
-            byte_length: canonical.len(),
+            source_revision,
+            projection: Some(projection),
+            byte_length: bytes,
         })
     }
 

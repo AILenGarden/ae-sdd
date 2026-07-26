@@ -1,12 +1,16 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use ae_sdd_contracts::execution_runtime::ExecutionCapsuleV1;
 use ae_sdd_domain::{
-    AgentRole, ArtifactRef, ContextDigest, ContextProjectionId, ContextRevision, DelegationId,
-    DeliverableContract, InventoryGeneration, OperationId, PolicyDigest, ProjectPathScope,
-    SessionId, StateRevision,
+    AgentRole, ArtifactDigest, ArtifactRef, ContextDigest, ContextProjectionId, ContextRevision,
+    DelegationId, DeliverableContract, InventoryGeneration, OperationId, PolicyDigest,
+    ProjectPathScope, SessionId, StateRevision,
 };
 use serde::Serialize;
+use serde_json::Value;
 use thiserror::Error;
+
+use crate::service::ExecutionCapsuleKey;
 
 pub const DEFAULT_ROOT_PROJECTION_MAX_BYTES: u32 = 65_536;
 pub const DEFAULT_CHILD_PROJECTION_MAX_BYTES: u32 = 65_536;
@@ -68,9 +72,9 @@ impl ContextView {
         target_role: AgentRole,
         target_delegation_id: Option<DelegationId>,
         summary: impl Into<Box<str>>,
-        input_refs: Vec<ArtifactRef>,
-        constraint_refs: Vec<ArtifactRef>,
-        memory_refs: Vec<RoleMemoryRef>,
+        mut input_refs: Vec<ArtifactRef>,
+        mut constraint_refs: Vec<ArtifactRef>,
+        mut memory_refs: Vec<RoleMemoryRef>,
         allowed_operations: impl IntoIterator<Item = OperationId>,
         allowed_paths: impl IntoIterator<Item = ProjectPathScope>,
         deliverable_contract: Option<DeliverableContract>,
@@ -83,6 +87,20 @@ impl ContextView {
             !memory.is_visible_to(target_session_id, target_role, target_delegation_id)
         }) {
             return Err(ContextProjectionError::MemoryVisibilityViolation);
+        }
+        canonicalize_artifact_refs(&mut input_refs)?;
+        canonicalize_artifact_refs(&mut constraint_refs)?;
+        memory_refs.sort_by(|left, right| {
+            left.artifact()
+                .path()
+                .as_str()
+                .cmp(right.artifact().path().as_str())
+        });
+        if memory_refs
+            .windows(2)
+            .any(|pair| pair[0].artifact().path() == pair[1].artifact().path())
+        {
+            return Err(ContextProjectionError::DuplicateReferencePath);
         }
         Ok(Self {
             target_session_id,
@@ -126,6 +144,11 @@ impl ContextView {
     #[must_use]
     pub const fn allowed_paths(&self) -> &BTreeSet<ProjectPathScope> {
         &self.allowed_paths
+    }
+
+    #[must_use]
+    pub const fn deliverable_contract(&self) -> Option<&DeliverableContract> {
+        self.deliverable_contract.as_ref()
     }
 }
 
@@ -192,6 +215,7 @@ pub struct ContextProjection {
     byte_length: u32,
     digest: ContextDigest,
     expires_at_unix_ms: u64,
+    maximum_bytes: u32,
 }
 
 impl ContextProjection {
@@ -261,6 +285,7 @@ impl ContextProjection {
             byte_length,
             digest: ContextDigest::digest(canonical),
             expires_at_unix_ms,
+            maximum_bytes: maximum,
         })
     }
 
@@ -340,17 +365,28 @@ impl ContextProjection {
                 target_revision: self.context_revision,
                 target_digest: self.digest,
                 view: None,
+                changes: None,
             });
         }
-        let can_delta = previous.is_some_and(|old| {
+        let delta_source = previous.filter(|old| {
             old.context_revision == known_revision
                 && old.digest == known_digest
                 && old.session_id == self.session_id
                 && old.role == self.role
                 && old.delegation_id == self.delegation_id
         });
+        let changes = delta_source.map(|old| ContextViewDelta::between(&old.view, &self.view));
+        if let Some(changes) = &changes {
+            let actual = changes.estimated_bytes();
+            if actual > self.maximum_bytes {
+                return Err(ContextProjectionError::DeltaBudgetExceeded {
+                    actual,
+                    maximum: self.maximum_bytes,
+                });
+            }
+        }
         Ok(ContextDelta {
-            kind: if can_delta {
+            kind: if delta_source.is_some() {
                 ProjectionKind::Delta
             } else {
                 ProjectionKind::Full
@@ -358,7 +394,8 @@ impl ContextProjection {
             base_revision: known_revision,
             target_revision: self.context_revision,
             target_digest: self.digest,
-            view: Some(self.view.clone()),
+            view: delta_source.is_none().then(|| self.view.clone()),
+            changes,
         })
     }
 }
@@ -370,6 +407,71 @@ pub enum ProjectionKind {
     NoChange,
 }
 
+/// Canonical execution-capsule projection prepared for the runtime context
+/// cache.  The typed capsule is serialized exactly once; the encoding is
+/// bound by the capsule's own frozen byte budget and its digest, together
+/// with the approved-plan and queue digests, forms the
+/// [`ExecutionCapsuleKey`] a resume is validated against.  The JSON value is
+/// the body fed into the existing full/delta/no-change cache, so an active
+/// ordinal move only changes the `queue` and `activeSlice` top-level entries
+/// and the delta never re-sends unchanged context references.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionCapsuleProjection {
+    key: ExecutionCapsuleKey,
+    digest: ArtifactDigest,
+    value: Value,
+    byte_length: u32,
+}
+
+impl ExecutionCapsuleProjection {
+    /// Serializes the typed capsule into its canonical encoding and cache
+    /// value, failing closed when the encoding exceeds the capsule budget.
+    pub fn new(capsule: &ExecutionCapsuleV1) -> Result<Self, ContextProjectionError> {
+        let encoded = serde_json::to_vec(capsule).map_err(ContextProjectionError::Canonicalize)?;
+        let maximum = capsule.budgets().max_capsule_bytes();
+        let byte_length = u32::try_from(encoded.len()).unwrap_or(u32::MAX);
+        if byte_length > maximum {
+            return Err(ContextProjectionError::BudgetExceeded {
+                actual: byte_length,
+                maximum,
+            });
+        }
+        let digest = ArtifactDigest::digest(&encoded);
+        let value =
+            serde_json::from_slice(&encoded).map_err(ContextProjectionError::Canonicalize)?;
+        Ok(Self {
+            key: ExecutionCapsuleKey::from_capsule(capsule, digest),
+            digest,
+            value,
+            byte_length,
+        })
+    }
+
+    /// Returns the plan/queue/capsule digest binding for this projection.
+    #[must_use]
+    pub const fn key(&self) -> &ExecutionCapsuleKey {
+        &self.key
+    }
+
+    /// Returns the digest of the canonical capsule encoding.
+    #[must_use]
+    pub const fn digest(&self) -> ArtifactDigest {
+        self.digest
+    }
+
+    /// Returns the JSON projection body to feed into the context cache.
+    #[must_use]
+    pub const fn value(&self) -> &Value {
+        &self.value
+    }
+
+    /// Returns the canonical capsule encoded length in bytes.
+    #[must_use]
+    pub const fn byte_length(&self) -> u32 {
+        self.byte_length
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextDelta {
     kind: ProjectionKind,
@@ -377,6 +479,7 @@ pub struct ContextDelta {
     target_revision: ContextRevision,
     target_digest: ContextDigest,
     view: Option<ContextView>,
+    changes: Option<ContextViewDelta>,
 }
 
 impl ContextDelta {
@@ -388,6 +491,11 @@ impl ContextDelta {
     #[must_use]
     pub const fn view(&self) -> Option<&ContextView> {
         self.view.as_ref()
+    }
+
+    #[must_use]
+    pub const fn changes(&self) -> Option<&ContextViewDelta> {
+        self.changes.as_ref()
     }
 
     #[must_use]
@@ -406,6 +514,257 @@ impl ContextDelta {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeliverableContractDelta {
+    Unchanged,
+    Set(DeliverableContract),
+    Removed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextViewDelta {
+    summary: Option<Box<str>>,
+    changed_input_refs: Vec<ArtifactRef>,
+    removed_input_paths: Vec<ae_sdd_domain::ProjectRelativePath>,
+    changed_constraint_refs: Vec<ArtifactRef>,
+    removed_constraint_paths: Vec<ae_sdd_domain::ProjectRelativePath>,
+    changed_memory_refs: Vec<RoleMemoryRef>,
+    removed_memory_paths: Vec<ae_sdd_domain::ProjectRelativePath>,
+    added_operations: BTreeSet<OperationId>,
+    removed_operations: BTreeSet<OperationId>,
+    added_paths: BTreeSet<ProjectPathScope>,
+    removed_paths: BTreeSet<ProjectPathScope>,
+    deliverable_contract: DeliverableContractDelta,
+}
+
+impl ContextViewDelta {
+    fn between(previous: &ContextView, current: &ContextView) -> Self {
+        let (changed_input_refs, removed_input_paths) =
+            diff_artifacts(&previous.input_refs, &current.input_refs);
+        let (changed_constraint_refs, removed_constraint_paths) =
+            diff_artifacts(&previous.constraint_refs, &current.constraint_refs);
+        let (changed_memory_refs, removed_memory_paths) =
+            diff_memory(&previous.memory_refs, &current.memory_refs);
+        Self {
+            summary: (previous.summary != current.summary).then(|| current.summary.clone()),
+            changed_input_refs,
+            removed_input_paths,
+            changed_constraint_refs,
+            removed_constraint_paths,
+            changed_memory_refs,
+            removed_memory_paths,
+            added_operations: current
+                .allowed_operations
+                .difference(&previous.allowed_operations)
+                .cloned()
+                .collect(),
+            removed_operations: previous
+                .allowed_operations
+                .difference(&current.allowed_operations)
+                .cloned()
+                .collect(),
+            added_paths: current
+                .allowed_paths
+                .difference(&previous.allowed_paths)
+                .cloned()
+                .collect(),
+            removed_paths: previous
+                .allowed_paths
+                .difference(&current.allowed_paths)
+                .cloned()
+                .collect(),
+            deliverable_contract: match (
+                &previous.deliverable_contract,
+                &current.deliverable_contract,
+            ) {
+                (left, right) if left == right => DeliverableContractDelta::Unchanged,
+                (_, Some(contract)) => DeliverableContractDelta::Set(contract.clone()),
+                (Some(_), None) => DeliverableContractDelta::Removed,
+                (None, None) => DeliverableContractDelta::Unchanged,
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn summary(&self) -> Option<&str> {
+        self.summary.as_deref()
+    }
+
+    #[must_use]
+    pub fn changed_input_refs(&self) -> &[ArtifactRef] {
+        &self.changed_input_refs
+    }
+
+    #[must_use]
+    pub fn removed_input_paths(&self) -> &[ae_sdd_domain::ProjectRelativePath] {
+        &self.removed_input_paths
+    }
+
+    #[must_use]
+    pub fn changed_constraint_refs(&self) -> &[ArtifactRef] {
+        &self.changed_constraint_refs
+    }
+
+    #[must_use]
+    pub fn removed_constraint_paths(&self) -> &[ae_sdd_domain::ProjectRelativePath] {
+        &self.removed_constraint_paths
+    }
+
+    #[must_use]
+    pub fn changed_memory_refs(&self) -> &[RoleMemoryRef] {
+        &self.changed_memory_refs
+    }
+
+    #[must_use]
+    pub fn removed_memory_paths(&self) -> &[ae_sdd_domain::ProjectRelativePath] {
+        &self.removed_memory_paths
+    }
+
+    #[must_use]
+    pub const fn added_operations(&self) -> &BTreeSet<OperationId> {
+        &self.added_operations
+    }
+
+    #[must_use]
+    pub const fn removed_operations(&self) -> &BTreeSet<OperationId> {
+        &self.removed_operations
+    }
+
+    #[must_use]
+    pub const fn added_paths(&self) -> &BTreeSet<ProjectPathScope> {
+        &self.added_paths
+    }
+
+    #[must_use]
+    pub const fn removed_paths(&self) -> &BTreeSet<ProjectPathScope> {
+        &self.removed_paths
+    }
+
+    #[must_use]
+    pub const fn deliverable_contract(&self) -> &DeliverableContractDelta {
+        &self.deliverable_contract
+    }
+
+    fn estimated_bytes(&self) -> u32 {
+        let mut bytes = self
+            .summary
+            .as_ref()
+            .map_or(0_u64, |value| value.len() as u64);
+        for reference in self
+            .changed_input_refs
+            .iter()
+            .chain(self.changed_constraint_refs.iter())
+            .chain(self.changed_memory_refs.iter().map(RoleMemoryRef::artifact))
+        {
+            bytes = bytes
+                .saturating_add(reference.byte_length())
+                .saturating_add(reference.path().as_str().len() as u64);
+        }
+        for path in self
+            .removed_input_paths
+            .iter()
+            .chain(self.removed_constraint_paths.iter())
+            .chain(self.removed_memory_paths.iter())
+        {
+            bytes = bytes.saturating_add(path.as_str().len() as u64);
+        }
+        for operation in self
+            .added_operations
+            .iter()
+            .chain(self.removed_operations.iter())
+        {
+            bytes = bytes.saturating_add(operation.as_str().len() as u64);
+        }
+        for path in self.added_paths.iter().chain(self.removed_paths.iter()) {
+            bytes = bytes.saturating_add(path_scope_len(path));
+        }
+        if let DeliverableContractDelta::Set(contract) = &self.deliverable_contract {
+            bytes = bytes
+                .saturating_add(u64::from(contract.max_result_bytes()))
+                .saturating_add(u64::from(contract.max_summary_bytes()));
+            for requirement in contract.required().values() {
+                bytes = bytes
+                    .saturating_add(requirement.id().as_str().len() as u64)
+                    .saturating_add(requirement.kind().as_str().len() as u64)
+                    .saturating_add(requirement.path().as_str().len() as u64);
+            }
+        }
+        u32::try_from(bytes).unwrap_or(u32::MAX)
+    }
+}
+
+fn canonicalize_artifact_refs(refs: &mut [ArtifactRef]) -> Result<(), ContextProjectionError> {
+    refs.sort_by(|left, right| {
+        left.path()
+            .as_str()
+            .cmp(right.path().as_str())
+            .then_with(|| left.kind().as_str().cmp(right.kind().as_str()))
+    });
+    if refs.windows(2).any(|pair| pair[0].path() == pair[1].path()) {
+        return Err(ContextProjectionError::DuplicateReferencePath);
+    }
+    Ok(())
+}
+
+fn diff_artifacts(
+    previous: &[ArtifactRef],
+    current: &[ArtifactRef],
+) -> (Vec<ArtifactRef>, Vec<ae_sdd_domain::ProjectRelativePath>) {
+    let previous_by_path = previous
+        .iter()
+        .map(|reference| (reference.path().as_str(), reference))
+        .collect::<BTreeMap<_, _>>();
+    let current_by_path = current
+        .iter()
+        .map(|reference| (reference.path().as_str(), reference))
+        .collect::<BTreeMap<_, _>>();
+    let changed = current
+        .iter()
+        .filter(|reference| previous_by_path.get(reference.path().as_str()) != Some(reference))
+        .cloned()
+        .collect();
+    let removed = previous
+        .iter()
+        .filter(|reference| !current_by_path.contains_key(reference.path().as_str()))
+        .map(|reference| reference.path().clone())
+        .collect();
+    (changed, removed)
+}
+
+fn diff_memory(
+    previous: &[RoleMemoryRef],
+    current: &[RoleMemoryRef],
+) -> (Vec<RoleMemoryRef>, Vec<ae_sdd_domain::ProjectRelativePath>) {
+    let previous_by_path = previous
+        .iter()
+        .map(|reference| (reference.artifact().path().as_str(), reference))
+        .collect::<BTreeMap<_, _>>();
+    let current_by_path = current
+        .iter()
+        .map(|reference| (reference.artifact().path().as_str(), reference))
+        .collect::<BTreeMap<_, _>>();
+    let changed = current
+        .iter()
+        .filter(|reference| {
+            previous_by_path.get(reference.artifact().path().as_str()) != Some(reference)
+        })
+        .cloned()
+        .collect();
+    let removed = previous
+        .iter()
+        .filter(|reference| !current_by_path.contains_key(reference.artifact().path().as_str()))
+        .map(|reference| reference.artifact().path().clone())
+        .collect();
+    (changed, removed)
+}
+
+fn path_scope_len(scope: &ProjectPathScope) -> u64 {
+    match scope {
+        ProjectPathScope::ProjectRoot => 1,
+        ProjectPathScope::Subtree(path) => path.as_str().len() as u64,
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ContextProjectionError {
     #[error("projection budgets must be greater than zero")]
@@ -414,6 +773,8 @@ pub enum ContextProjectionError {
     EmptySummary,
     #[error("memory reference is not visible to the target session/delegation")]
     MemoryVisibilityViolation,
+    #[error("context view contains duplicate artifact paths within one slice")]
+    DuplicateReferencePath,
     #[error("context view identity does not match projection identity")]
     ViewIdentityMismatch,
     #[error("root projection cannot bind a delegation")]
@@ -424,6 +785,8 @@ pub enum ContextProjectionError {
     InvalidExpiry,
     #[error("context projection is {actual} bytes; maximum is {maximum}")]
     BudgetExceeded { actual: u32, maximum: u32 },
+    #[error("context projection delta is {actual} bytes; maximum is {maximum}")]
+    DeltaBudgetExceeded { actual: u32, maximum: u32 },
     #[error("known context revision is ahead of the current projection")]
     RevisionStale,
     #[error("failed to canonicalize context projection: {0}")]
