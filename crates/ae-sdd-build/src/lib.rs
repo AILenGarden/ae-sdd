@@ -3,12 +3,17 @@ mod compatibility;
 mod config;
 mod harness_build;
 mod jobs;
+mod managed_instructions;
 mod offline;
 mod post_commit;
 mod release;
 mod service;
 
-pub use benchmark::{BenchmarkError, HookBenchmarkConfig, HookBenchmarkSummary, benchmark_hook};
+pub use benchmark::{
+    BenchmarkError, EXECUTION_EFFICIENCY_P0, ExecutionEfficiencyBenchmarkSummary,
+    ExecutionEfficiencyMetrics, ExecutionEfficiencyThresholds, HookBenchmarkConfig,
+    HookBenchmarkSummary, benchmark_hook, evaluate_execution_efficiency,
+};
 pub use compatibility::{
     AuditSummary, C_ADMIN_JOB_COMMANDS, CapabilityEvidence, CapabilitySurface, CommandRoute,
     CompatibilityManifest, CompatibilityRoutingManifest, D_REJECTED_COMMANDS, Disposition,
@@ -26,12 +31,18 @@ pub use jobs::{
     NativeEntrypointSpec, NativeJobKind, NativeJobRequest, PermissionClass, PlannedChange,
     execute_native_job, native_entrypoint,
 };
+pub use managed_instructions::{
+    InstructionLanguage, MANAGED_ADAPTER_LABEL, MANAGED_ADAPTER_VERSION, MANAGED_ANCHOR,
+    ManagedInstructionError, ManagedInstructionPlan, ManagedInstructionRenderRequest,
+    ManagedInstructionTarget, render_managed_instruction,
+};
 pub use offline::{
     B_OFFLINE_ENTRYPOINTS, DistributorEntry, OfflineCommand, OfflineError, OfflineRequest,
     OfflineResult, execute_offline,
 };
 pub use post_commit::{
-    PostCommitError, PostCommitExecution, PostCommitRequest, execute_post_commit,
+    ManagedInstructionOutcome, ManagedInstructionStatus, PostCommitError, PostCommitExecution,
+    PostCommitRequest, execute_post_commit,
 };
 pub use release::{ReleaseArtifact, ReleaseFinding, ReleaseVerification, verify_release};
 pub use service::{

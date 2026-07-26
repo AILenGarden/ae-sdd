@@ -1,7 +1,7 @@
 use super::*;
-use ae_sdd_policy::{ExecutionHookToolClass, ExecutionHookVerdict};
+use ae_sdd_policy::ExecutionHookToolClass;
 
-use super::execution_supervisor::ExecutionHookGuardOutcome;
+use super::execution_supervisor::{ExecutionHookDisposition, ExecutionHookGuardOutcome};
 use crate::config::execution_cache::{SourceReadKey, SourceReadVisibility};
 use crate::config::execution_resources::{CargoAcquireRequest, ResourceDecision, ResourceKind};
 use crate::{ExecutionHookDirective, ExecutionHookDirectiveDecision, ExecutionHookEvent};
@@ -72,8 +72,8 @@ impl RuntimeService {
             && identity.engaged
             && (cargo_deferred
                 || matches!(
-                    execution.verdict(),
-                    ExecutionHookVerdict::RequireProgress { .. }
+                    execution.disposition(),
+                    ExecutionHookDisposition::RequireProgress | ExecutionHookDisposition::Deny
                 ))
         {
             decision = HookDecision::Deny;
@@ -166,7 +166,7 @@ impl RuntimeService {
         }
         match (method, class) {
             (RpcMethod::HookPreTool, ExecutionHookToolClass::SourceRead) => {
-                if !matches!(execution.verdict(), ExecutionHookVerdict::Allow { .. }) {
+                if execution.disposition() != ExecutionHookDisposition::Allow {
                     return Ok(false);
                 }
                 let Some(key) = source_read_key(identity, &wire) else {
@@ -205,7 +205,7 @@ impl RuntimeService {
                 RpcMethod::HookPreTool,
                 ExecutionHookToolClass::FocusedTest | ExecutionHookToolClass::BroadTest,
             ) => {
-                if !matches!(execution.verdict(), ExecutionHookVerdict::Allow { .. }) {
+                if execution.disposition() != ExecutionHookDisposition::Allow {
                     return Ok(false);
                 }
                 let request = CargoAcquireRequest {

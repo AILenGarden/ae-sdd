@@ -1,10 +1,15 @@
 //! Daemon-session execution supervision for the Hook fast path.
 //!
-//! After a successful `execution.resume`, the capsule digest and the
-//! supervisor checkpoint facts are bound to the authenticated session
+//! After a successful `execution.resume`, the capsule digest and a restartable
+//! [`ExecutionSupervisorCheckpointV1`] are bound to the authenticated session
 //! ([`ExecutionSessionBinding`]).  PreTool events reported through
-//! `hostPayload.executionEvent` are then adjudicated by the pure
-//! [`ExecutionHookGuard`], and PostTool appends one bounded
+//! `hostPayload.executionEvent` are adjudicated by the pure
+//! [`ExecutionSupervisor`] reducer — the single owner of slice-progress
+//! semantics (investigation batches, progress events, output budgets,
+//! broad-test timing) — and PostTool commits the resulting checkpoint back to
+//! the binding.  The `ae-sdd-policy` [`ExecutionHookGuard`] keeps its frozen
+//! broad-before-green boundary as a last-resort net only; it never
+//! re-implements batch counting.  Every supervised event appends one bounded
 //! `execution.tool` durable event — classification, byte counts and digests
 //! only, never the tool output body.
 //!
@@ -14,10 +19,23 @@
 //! without a binding, are recorded as `unclassified` shadow and are never
 //! blocked (rollout stage: shadow records decisions; only stale authority is
 //! enforced elsewhere, on the authoritative operation path).
+//!
+//! Commit discipline: a PreTool call previews the reducer decision without
+//! mutating the binding (the preview checkpoint is discarded), because only
+//! an executed tool call may consume the investigation budget; a denied
+//! PreTool produces no PostTool and therefore never consumes budget.  The
+//! PostTool call re-decides with the complete event (outcome, byte counts,
+//! digests) and commits the new checkpoint, so every executed call is
+//! accounted exactly once.
 
 use std::str::FromStr;
 
-use ae_sdd_contracts::execution_runtime::ExecutionCapsuleV1;
+use ae_sdd_contracts::execution_runtime::{ExecutionCapsuleV1, ExecutionSliceStatus};
+use ae_sdd_domain::{ArtifactDigest, ProjectRelativePath};
+use ae_sdd_execution::{
+    ExecutionDecisionV1, ExecutionSupervisor, ExecutionSupervisorCheckpointV1,
+    ExecutionToolEventV1, ExecutionToolOutputV1, FocusedTestOutcomeV1, FocusedTestStateV1,
+};
 use ae_sdd_policy::{
     ExecutionHookDenialReason, ExecutionHookGuard, ExecutionHookGuardInput, ExecutionHookToolClass,
     ExecutionHookVerdict,
@@ -39,8 +57,9 @@ const MAX_PATH_FIELD_BYTES: usize = 512;
 /// The binding is rebuildable runtime metadata: it never outranks the
 /// project authority, it is dropped on daemon recovery (a fresh resume
 /// rebinds), and it carries only what the Hook fast path may consult — the
-/// capsule digest, the queue cursor, the frozen retained-output budget and
-/// the authority-reported focused-GREEN fact.
+/// capsule digest, the queue cursor and the restartable supervisor
+/// checkpoint (slice status, focused verification state, frozen budgets and
+/// investigation accounting).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionSessionBinding {
     work_item_id: String,
@@ -48,8 +67,7 @@ pub struct ExecutionSessionBinding {
     context_revision: u64,
     active_ordinal: u32,
     queue_digest: String,
-    max_tool_output_bytes: u32,
-    focused_green: bool,
+    checkpoint: ExecutionSupervisorCheckpointV1,
 }
 
 impl ExecutionSessionBinding {
@@ -59,8 +77,7 @@ impl ExecutionSessionBinding {
         context_revision: u64,
         active_ordinal: u32,
         queue_digest: String,
-        max_tool_output_bytes: u32,
-        focused_green: bool,
+        checkpoint: ExecutionSupervisorCheckpointV1,
     ) -> Self {
         Self {
             work_item_id: work_item_id.to_owned(),
@@ -68,8 +85,7 @@ impl ExecutionSessionBinding {
             context_revision,
             active_ordinal,
             queue_digest,
-            max_tool_output_bytes,
-            focused_green,
+            checkpoint,
         }
     }
 
@@ -100,16 +116,22 @@ impl ExecutionSessionBinding {
 
     /// Returns the frozen single-call retained-output budget in bytes.
     pub const fn max_tool_output_bytes(&self) -> u32 {
-        self.max_tool_output_bytes
+        self.checkpoint.budgets().max_tool_output_bytes()
     }
 
-    /// Returns the authority-reported focused-GREEN fact for the active slice.
-    pub const fn focused_green(&self) -> bool {
-        self.focused_green
+    /// Returns whether the focused verification is green for the active slice.
+    pub fn focused_green(&self) -> bool {
+        self.checkpoint.focused_test() == FocusedTestStateV1::Green
     }
 
-    const fn set_focused_green(&mut self, green: bool) {
-        self.focused_green = green;
+    /// Returns the restartable supervisor checkpoint.
+    pub const fn checkpoint(&self) -> &ExecutionSupervisorCheckpointV1 {
+        &self.checkpoint
+    }
+
+    /// Commits the checkpoint produced by one PostTool supervisor decision.
+    fn commit_checkpoint(&mut self, checkpoint: ExecutionSupervisorCheckpointV1) {
+        self.checkpoint = checkpoint;
     }
 }
 
@@ -140,18 +162,49 @@ impl ClassifiedExecutionEvent {
     }
 }
 
+/// Hook-level disposition derived from one supervisor decision.
+///
+/// `RequireProgress` and `Deny` both deny an engaged PreTool; they differ
+/// only in the stable reason code attached to the directive and the bounded
+/// event (`EXECUTION_PROGRESS_REQUIRED` vs the budget/slice codes).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ExecutionHookDisposition {
+    /// No classified event or no binding; shadow records only, never blocks.
+    Unclassified,
+    /// The event is admissible.
+    Allow,
+    /// The event is rejected until machine-verified progress is made.
+    RequireProgress,
+    /// The event is rejected because a budget is exhausted or the slice can
+    /// no longer change.
+    Deny,
+}
+
+impl ExecutionHookDisposition {
+    /// Stable label recorded in the bounded `execution.tool` event.
+    const fn event_label(self) -> &'static str {
+        match self {
+            Self::Unclassified => "unclassified",
+            Self::Allow => "allow",
+            Self::RequireProgress => "require-progress",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 /// Outcome of one execution Hook guard evaluation.
 pub(super) struct ExecutionHookGuardOutcome {
-    verdict: ExecutionHookVerdict,
+    disposition: ExecutionHookDisposition,
     directive: Option<ExecutionHookDirective>,
     record: bool,
-    focused_fact: Option<bool>,
+    reason_code: Option<StableErrorCode>,
+    next_checkpoint: Option<ExecutionSupervisorCheckpointV1>,
 }
 
 impl ExecutionHookGuardOutcome {
-    /// Verdict the pure guard produced for the event.
-    pub(super) const fn verdict(&self) -> ExecutionHookVerdict {
-        self.verdict
+    /// Disposition the supervisor produced for the event.
+    pub(super) const fn disposition(&self) -> ExecutionHookDisposition {
+        self.disposition
     }
 
     /// Directive attached to the Hook result, when the event is supervised.
@@ -164,9 +217,14 @@ impl ExecutionHookGuardOutcome {
         self.record
     }
 
-    /// Focused-GREEN fact reported by a PostTool event, when present.
-    pub(super) const fn focused_fact(&self) -> Option<bool> {
-        self.focused_fact
+    /// Stable reason code for rejected events, when present.
+    pub(super) const fn reason_code(&self) -> Option<StableErrorCode> {
+        self.reason_code
+    }
+
+    /// Checkpoint committed back to the session binding after PostTool.
+    pub(super) const fn next_checkpoint(&self) -> Option<&ExecutionSupervisorCheckpointV1> {
+        self.next_checkpoint.as_ref()
     }
 }
 
@@ -271,44 +329,125 @@ const fn stable_reason_code(reason: ExecutionHookDenialReason) -> StableErrorCod
     }
 }
 
-fn directive_for(verdict: ExecutionHookVerdict) -> Option<ExecutionHookDirective> {
-    match verdict {
-        ExecutionHookVerdict::Allow {
-            output_budget_bytes,
-        } => Some(ExecutionHookDirective {
+/// Builds the directive for one supervised event from its disposition.
+///
+/// An `Allow` directive echoes the frozen retained-output budget so the host
+/// truncates before evidence is produced (the budget-truncation contract);
+/// rejections carry the stable reason code the supervisor reduction produced,
+/// and a resource deferral adds the bounded retry hint.
+fn directive_for(
+    disposition: ExecutionHookDisposition,
+    reason_code: Option<StableErrorCode>,
+    output_budget_bytes: u32,
+    retry_after_ms: Option<u64>,
+) -> Option<ExecutionHookDirective> {
+    match disposition {
+        ExecutionHookDisposition::Allow => Some(ExecutionHookDirective {
             decision: ExecutionHookDirectiveDecision::Allow,
             reason_code: None,
             output_budget_bytes: Some(output_budget_bytes),
             retry_after_ms: None,
             cached_read_ref: None,
         }),
-        ExecutionHookVerdict::RequireProgress { reason } => Some(ExecutionHookDirective {
-            decision: ExecutionHookDirectiveDecision::RequireProgress,
-            reason_code: Some(stable_reason_code(reason).as_str().to_owned()),
-            output_budget_bytes: None,
-            retry_after_ms: None,
-            cached_read_ref: None,
-        }),
-        ExecutionHookVerdict::Unclassified => None,
+        ExecutionHookDisposition::RequireProgress | ExecutionHookDisposition::Deny => {
+            Some(ExecutionHookDirective {
+                decision: ExecutionHookDirectiveDecision::RequireProgress,
+                reason_code: reason_code.map(|code| code.as_str().to_owned()),
+                output_budget_bytes: None,
+                retry_after_ms,
+                cached_read_ref: None,
+            })
+        }
+        ExecutionHookDisposition::Unclassified => None,
+    }
+}
+
+/// Parses one bounded host-reported digest field; unparseable or absent
+/// digests return `None` so the caller can degrade the event conservatively.
+fn parse_event_digest(value: Option<&String>) -> Option<ArtifactDigest> {
+    value.and_then(|value| ArtifactDigest::from_str(value).ok())
+}
+
+/// Maps one classified Hook event onto the bounded supervisor event.
+///
+/// Events whose class-required facts are absent or unparseable degrade to
+/// `Other`: they stay admissible while investigation budget remains and are
+/// denied once it is exhausted, but never consume batch accounting they
+/// cannot be charged for.  A focused verification without a reported outcome
+/// is probed as `fail` — admissibility of a focused run never depends on its
+/// outcome, and the PreTool preview checkpoint is discarded; the PostTool
+/// re-decision uses the reported outcome.
+fn build_tool_event(event: &ClassifiedExecutionEvent) -> ExecutionToolEventV1 {
+    let output = ExecutionToolOutputV1 {
+        bytes: event.output_bytes.unwrap_or(0),
+        digest: parse_event_digest(event.output_digest.as_ref())
+            .unwrap_or_else(|| ArtifactDigest::digest(b"ae-sdd/execution-hook/no-output-digest")),
+        locator: None,
+    };
+    match event.class() {
+        ExecutionHookToolClass::SourceRead => {
+            match (
+                event
+                    .path
+                    .as_deref()
+                    .and_then(|path| ProjectRelativePath::new(path).ok()),
+                parse_event_digest(event.content_digest.as_ref()),
+            ) {
+                (Some(path), Some(content_digest)) => ExecutionToolEventV1::SourceRead {
+                    path,
+                    content_digest,
+                    start_line: event.start_line,
+                    end_line: event.end_line,
+                    output,
+                },
+                _ => ExecutionToolEventV1::Other { output },
+            }
+        }
+        ExecutionHookToolClass::Search => match parse_event_digest(event.query_digest.as_ref()) {
+            Some(query_digest) => ExecutionToolEventV1::Search {
+                query_digest,
+                output,
+            },
+            None => ExecutionToolEventV1::Other { output },
+        },
+        ExecutionHookToolClass::Patch => match parse_event_digest(event.result_digest.as_ref()) {
+            Some(result_digest) => ExecutionToolEventV1::Patch {
+                result_digest,
+                output,
+            },
+            None => ExecutionToolEventV1::Other { output },
+        },
+        ExecutionHookToolClass::FocusedTest => {
+            let outcome = match event.outcome() {
+                Some(true) => FocusedTestOutcomeV1::Pass,
+                Some(false) | None => FocusedTestOutcomeV1::Fail,
+            };
+            ExecutionToolEventV1::FocusedTest { outcome, output }
+        }
+        ExecutionHookToolClass::BroadTest => ExecutionToolEventV1::BroadTest { output },
+        ExecutionHookToolClass::Evidence => match parse_event_digest(event.event_digest.as_ref()) {
+            Some(event_digest) => ExecutionToolEventV1::Evidence {
+                event_digest,
+                output,
+            },
+            None => ExecutionToolEventV1::Other { output },
+        },
+        ExecutionHookToolClass::Other => ExecutionToolEventV1::Other { output },
     }
 }
 
 fn execution_event_payload(
-    verdict: ExecutionHookVerdict,
+    disposition: ExecutionHookDisposition,
+    reason_code: Option<StableErrorCode>,
     event: Option<&ClassifiedExecutionEvent>,
 ) -> Value {
-    let decision = match verdict {
-        ExecutionHookVerdict::Unclassified => "unclassified",
-        ExecutionHookVerdict::Allow { .. } => "allow",
-        ExecutionHookVerdict::RequireProgress { .. } => "require-progress",
-    };
     let mut payload = json!({
         "schemaVersion": "execution-tool/v1",
         "class": event.map_or("unclassified", |event| event.class().wire_name()),
-        "decision": decision,
+        "decision": disposition.event_label(),
     });
-    if let ExecutionHookVerdict::RequireProgress { reason } = verdict {
-        payload["reasonCode"] = Value::String(stable_reason_code(reason).as_str().to_owned());
+    if let Some(code) = reason_code {
+        payload["reasonCode"] = Value::String(code.as_str().to_owned());
     }
     if let Some(event) = event {
         if let Some(bytes) = event.output_bytes {
@@ -394,11 +533,21 @@ impl RuntimeService {
         if !state.sessions.contains_key(session_id) {
             return Ok(());
         }
-        let focused_green = state
+        // A rebind to the same capsule keeps the supervised progress made so
+        // far; a different capsule starts a fresh checkpoint for its slice.
+        // The checkpoint begins at `running`: the resume binds the active
+        // slice the FlowRuntime next action told the session to execute.
+        let checkpoint = match state
             .execution_bindings
             .get(session_id)
             .filter(|existing| existing.capsule_digest() == capsule_digest)
-            .is_some_and(ExecutionSessionBinding::focused_green);
+        {
+            Some(existing) => existing.checkpoint().clone(),
+            None => ExecutionSupervisorCheckpointV1::new(
+                ExecutionSliceStatus::Running,
+                *capsule.budgets(),
+            ),
+        };
         if !state.execution_bindings.contains_key(session_id)
             && state.execution_bindings.len() >= self.config.max_sessions
         {
@@ -412,18 +561,23 @@ impl RuntimeService {
                 context_revision,
                 capsule.active_slice().ordinal(),
                 capsule.queue().queue_digest().to_hex(),
-                capsule.budgets().max_tool_output_bytes(),
-                focused_green,
+                checkpoint,
             ),
         );
         Ok(())
     }
 
-    /// Evaluates the pure execution Hook guard for one tool event.
+    /// Adjudicates one classified tool event with the pure execution
+    /// supervisor against the session checkpoint.
     ///
     /// Only PreTool and PostTool events are adjudicated; UserPrompt and Stop
-    /// never consult the execution supervisor.  The evaluation is read-only
-    /// against the session binding.
+    /// never consult the execution supervisor.  A PreTool call previews the
+    /// decision and discards the preview checkpoint (only an executed call
+    /// may consume budget); a PostTool call re-decides with the complete
+    /// event and carries the new checkpoint for [`Self::record_execution_hook_event`]
+    /// to commit.  The `ae-sdd-policy` guard re-checks only its frozen
+    /// broad-before-green boundary as a last-resort net — the supervisor
+    /// reducer owns every progress and batch rule.
     pub(super) fn execution_hook_guard(
         &self,
         session_id: &str,
@@ -433,10 +587,11 @@ impl RuntimeService {
     ) -> RuntimeResult<ExecutionHookGuardOutcome> {
         if !matches!(method, RpcMethod::HookPreTool | RpcMethod::HookPostTool) {
             return Ok(ExecutionHookGuardOutcome {
-                verdict: ExecutionHookVerdict::Unclassified,
+                disposition: ExecutionHookDisposition::Unclassified,
                 directive: None,
                 record: false,
-                focused_fact: None,
+                reason_code: None,
+                next_checkpoint: None,
             });
         }
         let state = self.lock_state()?;
@@ -444,37 +599,73 @@ impl RuntimeService {
             .execution_bindings
             .get(session_id)
             .filter(|binding| binding.work_item_id() == work_item_id);
-        let input = ExecutionHookGuardInput::new(
-            binding.is_some(),
-            binding.is_some_and(ExecutionSessionBinding::focused_green),
-            event.map(ClassifiedExecutionEvent::class),
-            binding.map_or(0, ExecutionSessionBinding::max_tool_output_bytes),
+        let (Some(binding), Some(event)) = (binding, event) else {
+            return Ok(ExecutionHookGuardOutcome {
+                disposition: ExecutionHookDisposition::Unclassified,
+                directive: None,
+                record: binding.is_some(),
+                reason_code: None,
+                next_checkpoint: None,
+            });
+        };
+        let tool_event = build_tool_event(event);
+        let (decision, next_checkpoint) =
+            ExecutionSupervisor::decide(binding.checkpoint(), &tool_event);
+        let (disposition, reason_code, retry_after_ms) = match &decision {
+            ExecutionDecisionV1::Allow(_) => {
+                // Last-resort net: the policy guard may still veto a broad
+                // verification before the focused GREEN.  The supervisor
+                // already denies it, so this can only fire on a reducer
+                // regression — the guard never re-implements batch rules.
+                let guard_input = ExecutionHookGuardInput::new(
+                    true,
+                    binding.focused_green(),
+                    Some(event.class()),
+                    binding.max_tool_output_bytes(),
+                );
+                match ExecutionHookGuard::decide(&guard_input) {
+                    ExecutionHookVerdict::RequireProgress { reason } => (
+                        ExecutionHookDisposition::RequireProgress,
+                        Some(stable_reason_code(reason)),
+                        None,
+                    ),
+                    _ => (ExecutionHookDisposition::Allow, None, None),
+                }
+            }
+            ExecutionDecisionV1::RequireProgress(error) => (
+                ExecutionHookDisposition::RequireProgress,
+                Some(error.error_code()),
+                None,
+            ),
+            ExecutionDecisionV1::Deny(error) => (
+                ExecutionHookDisposition::Deny,
+                Some(error.error_code()),
+                None,
+            ),
+            ExecutionDecisionV1::Defer(deferral) => (
+                ExecutionHookDisposition::RequireProgress,
+                Some(StableErrorCode::ExecutionResourceBusy),
+                Some(deferral.retry_after_ms()),
+            ),
+        };
+        let directive = directive_for(
+            disposition,
+            reason_code,
+            binding.max_tool_output_bytes(),
+            retry_after_ms,
         );
-        let verdict = ExecutionHookGuard::decide(&input);
-        let directive = if binding.is_some() && event.is_some() {
-            directive_for(verdict)
-        } else {
-            None
-        };
-        let focused_fact = if method == RpcMethod::HookPostTool
-            && binding.is_some()
-            && event.is_some_and(|event| event.class() == ExecutionHookToolClass::FocusedTest)
-        {
-            event.and_then(ClassifiedExecutionEvent::outcome)
-        } else {
-            None
-        };
         Ok(ExecutionHookGuardOutcome {
-            verdict,
+            disposition,
             directive,
-            record: binding.is_some(),
-            focused_fact,
+            record: true,
+            reason_code,
+            next_checkpoint: (method == RpcMethod::HookPostTool).then_some(next_checkpoint),
         })
     }
 
-    /// Appends the bounded `execution.tool` event and applies PostTool facts
-    /// to the session binding.  Runs after the Hook receipt committed so a
-    /// replayed Hook event never double-records.
+    /// Appends the bounded `execution.tool` event and commits the PostTool
+    /// supervisor checkpoint to the session binding.  Runs after the Hook
+    /// receipt committed so a replayed Hook event never double-records.
     pub(super) fn record_execution_hook_event(
         &self,
         identity: &TrustedSession,
@@ -485,19 +676,19 @@ impl RuntimeService {
         if !outcome.record() {
             return Ok(());
         }
-        if let Some(green) = outcome.focused_fact() {
+        if let Some(next) = outcome.next_checkpoint() {
             let mut state = self.lock_state()?;
             if let Some(binding) = state
                 .execution_bindings
                 .get_mut(identity.session_id.as_str())
             {
-                binding.set_focused_green(green);
+                binding.commit_checkpoint(next.clone());
             }
             drop(state);
         }
         self.append_runtime_event(
             "execution.tool",
-            execution_event_payload(outcome.verdict(), event),
+            execution_event_payload(outcome.disposition(), outcome.reason_code(), event),
             Some(identity.workspace_id.clone()),
             Some(identity.session_id.clone()),
             Some(work_item_id.to_owned()),

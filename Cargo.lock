@@ -17,8 +17,10 @@ name = "ae-sdd-build"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-client",
+ "ae-sdd-domain",
  "ae-sdd-gates",
  "ae-sdd-governance",
+ "ae-sdd-methodology",
  "ae-sdd-operations",
  "ae-sdd-protocol",
  "ae-sdd-scanners",
@@ -72,6 +74,7 @@ dependencies = [
 name = "ae-sdd-context"
 version = "0.1.0"
 dependencies = [
+ "ae-sdd-contracts",
  "ae-sdd-domain",
  "ae-sdd-host",
  "serde",
@@ -95,13 +98,18 @@ dependencies = [
 name = "ae-sdd-daemon"
 version = "0.1.0"
 dependencies = [
+ "ae-sdd-client",
+ "ae-sdd-contracts",
  "ae-sdd-domain",
+ "ae-sdd-execution",
  "ae-sdd-integrations",
  "ae-sdd-protocol",
  "ae-sdd-runtime",
  "clap",
  "jiff",
+ "rusqlite",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -137,15 +145,27 @@ name = "ae-sdd-execution"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
+ "ae-sdd-domain",
+ "ae-sdd-protocol",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
 name = "ae-sdd-flow"
 version = "0.1.0"
 dependencies = [
+ "ae-sdd-contracts",
  "ae-sdd-domain",
  "ae-sdd-policy",
+ "ae-sdd-protocol",
+ "jiff",
  "proptest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -192,12 +212,18 @@ version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
  "ae-sdd-domain",
+ "ae-sdd-execution",
  "ae-sdd-flow",
  "ae-sdd-gates",
  "ae-sdd-host",
+ "ae-sdd-inventory",
+ "ae-sdd-lifecycle",
+ "ae-sdd-methodology",
  "ae-sdd-operations",
  "ae-sdd-policy",
  "ae-sdd-protocol",
+ "ae-sdd-resources",
+ "ae-sdd-review",
  "ae-sdd-runtime",
  "ae-sdd-scanners",
  "ae-sdd-store",
@@ -216,6 +242,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "yaml-rust2",
 ]
 
 [[package]]
@@ -233,6 +260,14 @@ name = "ae-sdd-lifecycle"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
+ "ae-sdd-domain",
+ "ae-sdd-policy",
+ "ae-sdd-protocol",
+ "jiff",
+ "proptest",
+ "rusqlite",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -240,6 +275,10 @@ name = "ae-sdd-methodology"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
+ "ae-sdd-domain",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -278,6 +317,10 @@ name = "ae-sdd-resources"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
+ "ae-sdd-domain",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -285,6 +328,12 @@ name = "ae-sdd-review"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
+ "ae-sdd-domain",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -292,13 +341,16 @@ name = "ae-sdd-runtime"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-context",
+ "ae-sdd-contracts",
  "ae-sdd-delegation",
  "ae-sdd-domain",
+ "ae-sdd-execution",
  "ae-sdd-flow",
  "ae-sdd-host",
  "ae-sdd-operations",
  "ae-sdd-policy",
  "ae-sdd-protocol",
+ "ae-sdd-session",
  "hex",
  "proptest",
  "serde",
@@ -354,6 +406,14 @@ name = "ae-sdd-worker"
 version = "0.1.0"
 dependencies = [
  "ae-sdd-contracts",
+ "ae-sdd-domain",
+ "ae-sdd-execution",
+ "ae-sdd-protocol",
+ "clap",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

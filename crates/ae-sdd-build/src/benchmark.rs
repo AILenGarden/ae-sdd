@@ -376,6 +376,167 @@ fn percentile(sorted: &[u64], percentile: usize) -> u64 {
     sorted[numerator.div_ceil(100)]
 }
 
+/// Measured execution-efficiency surface for one supervised resume loop.
+///
+/// The values are collected by the P0 process E2E (or, later, by release
+/// telemetry): the wall time from `execution.resume` to the first admissible
+/// patch, the full capsule size, the no-change response size, the authority
+/// refresh count per resume, the consecutive no-progress batch peak and the
+/// number of broad verifications executed before the focused GREEN.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionEfficiencyMetrics {
+    /// Wall time from the first resume to the first patch event, in ms.
+    pub resume_to_first_patch_ms: u64,
+    /// Serialized bytes of the full `ExecutionCapsuleV1` projection.
+    pub full_capsule_bytes: u64,
+    /// Serialized bytes of the no-change resume response.
+    pub no_change_response_bytes: u64,
+    /// Authority refreshes observed for one resume call.
+    pub authority_refresh_count: u64,
+    /// Peak of consecutive investigation batches without machine progress.
+    pub max_no_progress_batches: u64,
+    /// Broad verifications executed before the focused GREEN.
+    pub broad_before_green_count: u64,
+}
+
+/// P0 execution-efficiency gates (implementation plan §5).
+///
+/// The thresholds are the frozen P0 budget contract: the full capsule never
+/// exceeds 16 KiB, a no-change response never exceeds 1 KiB, one resume
+/// refreshes the authority exactly once, investigation stops after three
+/// consecutive no-progress batches and no broad verification may execute
+/// before the focused GREEN.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionEfficiencyThresholds {
+    /// Maximum admitted resume-to-first-patch wall time in ms.
+    pub max_resume_to_first_patch_ms: u64,
+    /// Hard capsule byte ceiling.
+    pub max_full_capsule_bytes: u64,
+    /// Hard no-change response byte ceiling.
+    pub max_no_change_response_bytes: u64,
+    /// Maximum authority refreshes admitted per resume.
+    pub max_authority_refresh_count: u64,
+    /// Maximum consecutive no-progress investigation batches.
+    pub max_no_progress_batches: u64,
+    /// Admitted broad verifications before the focused GREEN.
+    pub max_broad_before_green_count: u64,
+}
+
+/// Frozen P0 thresholds for the execution-efficiency benchmark surface.
+pub const EXECUTION_EFFICIENCY_P0: ExecutionEfficiencyThresholds = ExecutionEfficiencyThresholds {
+    max_resume_to_first_patch_ms: 300_000,
+    max_full_capsule_bytes: 16 * 1024,
+    max_no_change_response_bytes: 1024,
+    max_authority_refresh_count: 1,
+    max_no_progress_batches: 3,
+    max_broad_before_green_count: 0,
+};
+
+/// Benchmark summary for one evaluated execution-efficiency surface.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionEfficiencyBenchmarkSummary {
+    /// Summary schema identity.
+    pub schema_version: &'static str,
+    /// Benchmark surface identity.
+    pub benchmark: &'static str,
+    /// Build profile the metrics were collected under.
+    pub build_profile: &'static str,
+    /// Operating system the metrics were collected on.
+    pub operating_system: &'static str,
+    /// CPU architecture the metrics were collected on.
+    pub architecture: &'static str,
+    /// Measured resume-to-first-patch wall time in ms.
+    pub resume_to_first_patch_ms: u64,
+    /// Measured full capsule bytes.
+    pub full_capsule_bytes: u64,
+    /// Measured no-change response bytes.
+    pub no_change_response_bytes: u64,
+    /// Measured authority refreshes per resume.
+    pub authority_refresh_count: u64,
+    /// Measured consecutive no-progress batch peak.
+    pub max_no_progress_batches: u64,
+    /// Measured broad verifications before the focused GREEN.
+    pub broad_before_green_count: u64,
+}
+
+/// Evaluates one measured execution-efficiency surface against the frozen
+/// P0 gates, returning the benchmark summary or the first gate violated.
+///
+/// The evaluation is a pure function: it performs no I/O and never reads a
+/// clock, so debug-profile unit tests and release-profile telemetry share
+/// the exact same gate semantics.
+pub fn evaluate_execution_efficiency(
+    metrics: &ExecutionEfficiencyMetrics,
+) -> Result<ExecutionEfficiencyBenchmarkSummary, BenchmarkError> {
+    let thresholds = EXECUTION_EFFICIENCY_P0;
+    let gates = [
+        (
+            "resumeToFirstPatchMs",
+            metrics.resume_to_first_patch_ms,
+            thresholds.max_resume_to_first_patch_ms,
+            "ms",
+        ),
+        (
+            "fullCapsuleBytes",
+            metrics.full_capsule_bytes,
+            thresholds.max_full_capsule_bytes,
+            "bytes",
+        ),
+        (
+            "noChangeResponseBytes",
+            metrics.no_change_response_bytes,
+            thresholds.max_no_change_response_bytes,
+            "bytes",
+        ),
+        (
+            "authorityRefreshesPerResume",
+            metrics.authority_refresh_count,
+            thresholds.max_authority_refresh_count,
+            "count",
+        ),
+        (
+            "maxConsecutiveNoProgressBatches",
+            metrics.max_no_progress_batches,
+            thresholds.max_no_progress_batches,
+            "count",
+        ),
+        (
+            "broadTestsBeforeFocusedGreen",
+            metrics.broad_before_green_count,
+            thresholds.max_broad_before_green_count,
+            "count",
+        ),
+    ];
+    for (metric, actual, maximum, unit) in gates {
+        if actual > maximum {
+            return Err(BenchmarkError::EfficiencyGateExceeded {
+                metric,
+                actual,
+                maximum,
+                unit,
+            });
+        }
+    }
+    Ok(ExecutionEfficiencyBenchmarkSummary {
+        schema_version: "ae-sdd-execution-efficiency-benchmark/v1",
+        benchmark: "execution-efficiency-p0-supervised-resume",
+        build_profile: if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+        operating_system: std::env::consts::OS,
+        architecture: std::env::consts::ARCH,
+        resume_to_first_patch_ms: metrics.resume_to_first_patch_ms,
+        full_capsule_bytes: metrics.full_capsule_bytes,
+        no_change_response_bytes: metrics.no_change_response_bytes,
+        authority_refresh_count: metrics.authority_refresh_count,
+        max_no_progress_batches: metrics.max_no_progress_batches,
+        broad_before_green_count: metrics.broad_before_green_count,
+    })
+}
+
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -427,6 +588,15 @@ pub enum BenchmarkError {
     P95BudgetExceeded {
         actual_micros: u64,
         maximum_micros: u64,
+    },
+    #[error(
+        "execution-efficiency gate {metric} recorded {actual} {unit}, exceeding the {maximum} {unit} P0 gate"
+    )]
+    EfficiencyGateExceeded {
+        metric: &'static str,
+        actual: u64,
+        maximum: u64,
+        unit: &'static str,
     },
 }
 
@@ -482,5 +652,124 @@ mod tests {
             serde_json::to_vec(&parity).expect("canonical parity"),
         ));
         assert_eq!(payload["parityDigest"].as_str(), Some(expected.as_str()));
+    }
+
+    fn golden_path_metrics() -> ExecutionEfficiencyMetrics {
+        ExecutionEfficiencyMetrics {
+            resume_to_first_patch_ms: 2_500,
+            full_capsule_bytes: 4_096,
+            no_change_response_bytes: 512,
+            authority_refresh_count: 1,
+            max_no_progress_batches: 3,
+            broad_before_green_count: 0,
+        }
+    }
+
+    #[test]
+    fn execution_efficiency_p0_gates_accept_the_golden_path_sample() {
+        let summary = evaluate_execution_efficiency(&golden_path_metrics()).expect("P0 gates pass");
+        assert_eq!(
+            summary.schema_version,
+            "ae-sdd-execution-efficiency-benchmark/v1"
+        );
+        assert_eq!(
+            summary.benchmark,
+            "execution-efficiency-p0-supervised-resume"
+        );
+        assert_eq!(summary.full_capsule_bytes, 4_096);
+        assert_eq!(summary.no_change_response_bytes, 512);
+        assert_eq!(summary.authority_refresh_count, 1);
+        assert_eq!(summary.broad_before_green_count, 0);
+        let encoded = serde_json::to_value(&summary).expect("summary serializes");
+        assert_eq!(encoded["resumeToFirstPatchMs"], 2_500);
+        assert_eq!(encoded["maxNoProgressBatches"], 3);
+    }
+
+    #[test]
+    fn execution_efficiency_p0_gates_reject_each_regression() {
+        fn expect_gate_violation(
+            metrics: ExecutionEfficiencyMetrics,
+            metric: &'static str,
+            actual: u64,
+            maximum: u64,
+            unit: &'static str,
+        ) {
+            match evaluate_execution_efficiency(&metrics) {
+                Err(BenchmarkError::EfficiencyGateExceeded {
+                    metric: violated,
+                    actual: recorded,
+                    maximum: gate,
+                    unit: gate_unit,
+                }) => {
+                    assert_eq!(violated, metric);
+                    assert_eq!(recorded, actual);
+                    assert_eq!(gate, maximum);
+                    assert_eq!(gate_unit, unit);
+                }
+                other => panic!("gate {metric} must reject {actual}: {other:?}"),
+            }
+        }
+
+        let base = golden_path_metrics();
+        expect_gate_violation(
+            ExecutionEfficiencyMetrics {
+                resume_to_first_patch_ms: 300_001,
+                ..base
+            },
+            "resumeToFirstPatchMs",
+            300_001,
+            300_000,
+            "ms",
+        );
+        expect_gate_violation(
+            ExecutionEfficiencyMetrics {
+                full_capsule_bytes: 16_385,
+                ..base
+            },
+            "fullCapsuleBytes",
+            16_385,
+            16_384,
+            "bytes",
+        );
+        expect_gate_violation(
+            ExecutionEfficiencyMetrics {
+                no_change_response_bytes: 1_025,
+                ..base
+            },
+            "noChangeResponseBytes",
+            1_025,
+            1_024,
+            "bytes",
+        );
+        expect_gate_violation(
+            ExecutionEfficiencyMetrics {
+                authority_refresh_count: 2,
+                ..base
+            },
+            "authorityRefreshesPerResume",
+            2,
+            1,
+            "count",
+        );
+        expect_gate_violation(
+            ExecutionEfficiencyMetrics {
+                max_no_progress_batches: 4,
+                ..base
+            },
+            "maxConsecutiveNoProgressBatches",
+            4,
+            3,
+            "count",
+        );
+        expect_gate_violation(
+            ExecutionEfficiencyMetrics {
+                broad_before_green_count: 1,
+                ..base
+            },
+            "broadTestsBeforeFocusedGreen",
+            1,
+            0,
+            "count",
+        );
     }
 }

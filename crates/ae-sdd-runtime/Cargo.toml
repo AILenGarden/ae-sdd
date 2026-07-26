@@ -7,14 +7,17 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+ae-sdd-contracts.workspace = true
 ae-sdd-context.workspace = true
 ae-sdd-delegation.workspace = true
 ae-sdd-domain.workspace = true
+ae-sdd-execution.workspace = true
 ae-sdd-flow.workspace = true
 ae-sdd-host.workspace = true
 ae-sdd-operations.workspace = true
 ae-sdd-policy.workspace = true
 ae-sdd-protocol.workspace = true
+ae-sdd-session.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
