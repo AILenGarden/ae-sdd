@@ -14,7 +14,11 @@ mod role;
 mod transition;
 
 pub use gate::{GateDirective, GateJudgement, GateTruth, InfrastructureImpact};
-pub use hook::{HookAction, HookPoint, HookPolicy};
+pub use hook::{
+    ExecutionHookDenialReason, ExecutionHookGuard, ExecutionHookGuardInput, ExecutionHookToolClass,
+    ExecutionHookVerdict, HookAction, HookContextProof, HookGuard, HookGuardDecision,
+    HookGuardDisposition, HookGuardInput, HookGuardPort, HookGuardReason, HookPoint, HookPolicy,
+};
 pub use role::{RoleAuthorizationError, RoleOperation, RolePolicy};
 pub use transition::{
     RequiredGate, TransitionContext, TransitionPermit, TransitionPolicy, TransitionPolicyError,
@@ -26,5 +30,5 @@ pub use transition::{
 /// daemon manifests must publish this value rather than a placeholder digest.
 #[must_use]
 pub fn policy_digest() -> PolicyDigest {
-    PolicyDigest::digest(b"ae-sdd-policy/v2:transition+gate+role+hook")
+    PolicyDigest::digest(b"ae-sdd-policy/v3:transition+gate+role+hook-guard")
 }

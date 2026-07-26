@@ -23,16 +23,21 @@ pub use model::{
     CompactAckPayload, CompactRequestPayload, CompactResult, ContextProjectPayload,
     ContextProjectResult, ContextProjectionInput, DaemonLifecycle, DelegationAcceptPayload,
     DelegationCreatePayload, DelegationReportPayload, DelegationResult, DurableEvent, EventBatch,
-    EventSubscriptionPayload, HookPayload, HookResult, HostAckPayload, HostActionPayload,
-    HostPressurePayload, HostRegisterPayload, IdempotencyReceipt, RuntimeStatus,
-    SessionOpenPayload, SessionResult, WireAgentRole, WorkspaceModeTransitionPayload,
-    WorkspaceParityEvidence, WorkspaceRegisterPayload, WorkspaceResult,
+    EventSubscriptionPayload, ExecutionHookDirective, ExecutionHookDirectiveDecision,
+    ExecutionHookEvent, HookPayload, HookResult, HostAckPayload, HostActionPayload,
+    HostPressurePayload, HostRegisterPayload, IdempotencyReceipt,
+    RuntimeDelegationAttestationRecord, RuntimeDelegationHostActionRecord, RuntimeDelegationRecord,
+    RuntimeIdentityKind, RuntimeIdentitySnapshot, RuntimeIdentityTransition, RuntimeJobRecord,
+    RuntimeJobStatus, RuntimeJobTransition, RuntimeSessionRecord, RuntimeStatus,
+    RuntimeWorkspaceRecord, SessionOpenPayload, SessionResult, WireAgentRole,
+    WorkspaceModeTransitionPayload, WorkspaceParityEvidence, WorkspaceRegisterPayload,
+    WorkspaceResult,
 };
 pub use ports::{
     BoundJobIdentity, BusinessOperationPort, BusinessWorkspace, ClockPort, MemoryPersistence,
     PersistencePort, RejectingBusinessPort, ResolvedWorkspace, WorkspaceResolverPort,
 };
-pub use service::{ConnectionState, RuntimeService};
+pub use service::{ConnectionState, ExecutionSessionBinding, RuntimeService};
 pub use supervisor::{ContextCache, DelegationSupervisor, FlowSupervisor, HostCoordinator};
 
 /// Runtime build identity.

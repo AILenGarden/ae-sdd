@@ -1,4 +1,5 @@
 use super::*;
+use ae_sdd_policy::ExecutionHookVerdict;
 
 impl RuntimeService {
     pub(super) fn hook(
@@ -16,6 +17,7 @@ impl RuntimeService {
                 "Hook payload exceeds the bounded event budget",
             ));
         }
+        let execution_event = execution_supervisor::decode_execution_event(&payload)?;
         self.validate_turn(&identity.session_id, &turn_id, payload.turn_seq)?;
         let scope = format!(
             "hook\0{}\0{}\0{}\0{}",
@@ -40,13 +42,28 @@ impl RuntimeService {
             .ok_or_else(|| project_mismatch("workspace is not registered"))?
             .result
             .inventory_generation;
-        let decision = hook_decision(
+        let mut decision = hook_decision(
             method,
             identity.engaged,
             context.as_ref(),
             &self.config.policy_digest,
             inventory_generation,
         );
+        let execution = self.execution_hook_guard(
+            &identity.session_id,
+            &work_item_id,
+            method,
+            execution_event.as_ref(),
+        )?;
+        if method == RpcMethod::HookPreTool
+            && identity.engaged
+            && matches!(
+                execution.verdict(),
+                ExecutionHookVerdict::RequireProgress { .. }
+            )
+        {
+            decision = HookDecision::Deny;
+        }
         let base = HookResult {
             engaged: identity.engaged,
             decision,
@@ -55,6 +72,7 @@ impl RuntimeService {
                 .flatten(),
             event_seq: 0,
             replayed: false,
+            execution_directive: execution.directive().cloned(),
         };
         let value = to_value(base)?;
         let (mut value, event_seq) = self.actors.execute(
@@ -62,7 +80,7 @@ impl RuntimeService {
             &work_item_id,
             params.deadline_ms,
             || {
-                self.commit_receipt_event(
+                let committed = self.commit_receipt_event(
                     &scope,
                     &payload.hook_event_id,
                     digest,
@@ -71,7 +89,14 @@ impl RuntimeService {
                     Some(identity.workspace_id.clone()),
                     Some(identity.session_id.clone()),
                     Some(work_item_id.clone()),
-                )
+                )?;
+                self.record_execution_hook_event(
+                    &identity,
+                    &work_item_id,
+                    &execution,
+                    execution_event.as_ref(),
+                )?;
+                Ok(committed)
             },
         )?;
         if let Some(object) = value.as_object_mut() {

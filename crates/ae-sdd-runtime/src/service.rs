@@ -6,17 +6,17 @@ use std::time::Instant;
 
 use ae_sdd_context::PressureDecision;
 use ae_sdd_domain::{
-    AgentRole, BootId, CapabilityId, DelegationId, EventStoreId, GateOutcome, ScopedGrant,
-    SessionId,
+    AgentRole, BootId, CapabilityId, EventStoreId, GateOutcome, ScopedGrant, SessionId,
 };
 use ae_sdd_host::{BootCapabilitySigner, CapabilityClaims, CapabilityToken, GrantDigest};
 use ae_sdd_policy::{HookAction, HookPoint, HookPolicy};
 use ae_sdd_protocol::{
     ClientKind, GateOutcomeKind, HandshakeLimits, HandshakeRequest, HandshakeResponse,
-    HookDecision, JobStatus, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, OperationScope,
+    HookDecision, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, OperationScope,
     PROTOCOL_RANGE_V1, PROTOCOL_VERSION_V1, RequestParams, RpcErrorObject, RpcMethod,
     StableErrorCode, WorkspaceMode,
 };
+use ae_sdd_session::{PureSessionBootstrap, SessionBootstrapPort};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -28,11 +28,16 @@ use crate::{
     DelegationCreatePayload, DelegationReportPayload, DelegationSupervisor, DurableEvent,
     EventBatch, EventSubscriptionPayload, FlowSupervisor, HookPayload, HookResult, HostAckPayload,
     HostCoordinator, HostPressurePayload, HostRegisterPayload, IdempotencyReceipt, PersistencePort,
-    RuntimeConfig, RuntimeError, RuntimeResult, RuntimeStatus, ScopedGrantWire, SessionOpenPayload,
-    SessionResult, WireAgentRole, WorkItemActors, WorkspaceModeTransitionPayload,
-    WorkspaceParityEvidence, WorkspaceRegisterPayload, WorkspaceResolverPort, WorkspaceResult,
+    RuntimeConfig, RuntimeError, RuntimeIdentityKind, RuntimeIdentitySnapshot,
+    RuntimeIdentityTransition, RuntimeJobRecord, RuntimeJobStatus, RuntimeJobTransition,
+    RuntimeResult, RuntimeSessionRecord, RuntimeStatus, RuntimeWorkspaceRecord, ScopedGrantWire,
+    SessionOpenPayload, SessionResult, WireAgentRole, WorkItemActors,
+    WorkspaceModeTransitionPayload, WorkspaceParityEvidence, WorkspaceRegisterPayload,
+    WorkspaceResolverPort, WorkspaceResult,
 };
 
+#[path = "execution_supervisor.rs"]
+mod execution_supervisor;
 #[path = "service_hook_context.rs"]
 mod hook_context;
 #[path = "service_host.rs"]
@@ -49,6 +54,8 @@ mod session_methods;
 mod support;
 #[path = "service_workspace.rs"]
 mod workspace_methods;
+
+pub use execution_supervisor::ExecutionSessionBinding;
 
 /// Per-connection protocol state owned by the local IPC server.
 #[derive(Clone, Debug, Default)]
@@ -76,7 +83,7 @@ struct WorkspaceRecord {
 struct SessionRecord {
     workspace_id: String,
     agent_id: String,
-    external_key: String,
+    external_key_hash: String,
     current_work_item: Option<String>,
     result: SessionResult,
     delegation_id: Option<String>,
@@ -87,52 +94,31 @@ struct SessionRecord {
     active: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacySessionRecord {
+    workspace_id: String,
+    agent_id: String,
+    external_key: String,
+    current_work_item: Option<String>,
+    result: SessionResult,
+    delegation_id: Option<String>,
+    #[allow(dead_code)]
+    current_turn_id: Option<String>,
+    #[allow(dead_code)]
+    current_turn_seq: u64,
+    active: bool,
+}
+
 #[derive(Default)]
 struct RuntimeState {
     workspaces: BTreeMap<String, WorkspaceRecord>,
     workspace_by_root: BTreeMap<String, String>,
     sessions: BTreeMap<String, SessionRecord>,
     session_by_external: BTreeMap<(String, String), String>,
-    jobs: BTreeMap<String, JobRecord>,
+    jobs: BTreeMap<String, RuntimeJobRecord>,
     job_queue: VecDeque<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct JobRecord {
-    job_id: String,
-    workspace: BusinessWorkspaceWire,
-    work_item_id: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    agent_role: Option<WireAgentRole>,
-    #[serde(default)]
-    agent_grant: Option<ScopedGrantWire>,
-    #[serde(default)]
-    root_session_id: Option<String>,
-    #[serde(default)]
-    delegation_id: Option<String>,
-    #[serde(default)]
-    context_generation: Option<u64>,
-    #[serde(default)]
-    submission_idempotency_key: Option<String>,
-    entrypoint: String,
-    arguments: Value,
-    deadline_unix_ms: u64,
-    status: JobStatus,
-    result: Option<Value>,
-    error_code: Option<StableErrorCode>,
-}
-
-#[derive(Clone, Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BusinessWorkspaceWire {
-    workspace_id: String,
-    canonical_root: String,
-    project_key: String,
-    mode: WorkspaceMode,
-    inventory_generation: u64,
+    execution_bindings: BTreeMap<String, ExecutionSessionBinding>,
 }
 
 struct Admission<'a> {
@@ -155,6 +141,7 @@ pub struct RuntimeService {
     clock: Arc<dyn ClockPort>,
     resolver: Arc<dyn WorkspaceResolverPort>,
     business: Arc<dyn BusinessOperationPort>,
+    session_bootstrap: Arc<dyn SessionBootstrapPort + Send + Sync>,
     lifecycle: RwLock<DaemonLifecycle>,
     state: Mutex<RuntimeState>,
     admitted: AtomicUsize,
@@ -197,6 +184,7 @@ impl RuntimeService {
             clock,
             resolver,
             business,
+            session_bootstrap: Arc::new(PureSessionBootstrap),
             lifecycle: RwLock::new(DaemonLifecycle::Running),
             state: Mutex::new(RuntimeState::default()),
             admitted: AtomicUsize::new(0),
@@ -237,8 +225,13 @@ impl RuntimeService {
     /// Recovered sessions are intentionally inactive: callers must reopen so
     /// the daemon can issue a capability signed by the current boot key.
     pub fn recover(&self) -> RuntimeResult<()> {
-        let workspace_values = self.persistence.list_records("workspace/v1")?;
-        let session_values = self.persistence.list_records("session/v1")?;
+        self.import_legacy_root_identities()?;
+        let workspace_snapshots = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Workspace)?;
+        let session_snapshots = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Session)?;
         let mut state = self.lock_state()?;
         state.workspaces.clear();
         state.workspace_by_root.clear();
@@ -246,9 +239,17 @@ impl RuntimeService {
         state.session_by_external.clear();
         state.jobs.clear();
         state.job_queue.clear();
-        for (key, value) in workspace_values {
-            let result: WorkspaceResult = decode_value(value)?;
-            if key != result.workspace_id || state.workspaces.len() >= self.config.max_workspaces {
+        state.execution_bindings.clear();
+        for snapshot in workspace_snapshots {
+            let workspace = snapshot.workspace;
+            let result = WorkspaceResult {
+                workspace_id: workspace.workspace_id,
+                canonical_root: workspace.canonical_root,
+                project_key: workspace.project_key,
+                mode: workspace.mode,
+                inventory_generation: workspace.inventory_generation,
+            };
+            if state.workspaces.len() >= self.config.max_workspaces {
                 return Err(RuntimeError::new(
                     StableErrorCode::ExternalStateConflict,
                     "durable workspace projection is inconsistent or exceeds capacity",
@@ -256,13 +257,19 @@ impl RuntimeService {
             }
             state
                 .workspace_by_root
-                .insert(result.canonical_root.clone(), key.clone());
-            state.workspaces.insert(key, WorkspaceRecord { result });
+                .insert(result.canonical_root.clone(), result.workspace_id.clone());
+            state
+                .workspaces
+                .insert(result.workspace_id.clone(), WorkspaceRecord { result });
         }
-        for (key, value) in session_values {
-            let mut record: SessionRecord = decode_value(value)?;
-            if key != record.result.session_id
-                || !state.workspaces.contains_key(&record.workspace_id)
+        for snapshot in session_snapshots {
+            let session = snapshot.session.ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "typed session snapshot lacks its session row",
+                )
+            })?;
+            if !state.workspaces.contains_key(&session.workspace_id)
                 || state.sessions.len() >= self.config.max_sessions
             {
                 return Err(RuntimeError::new(
@@ -270,35 +277,254 @@ impl RuntimeService {
                     "durable session projection is inconsistent or exceeds capacity",
                 ));
             }
-            record.active = false;
-            record.result.capability_token.clear();
+            let key = session.session_id.clone();
+            let record = SessionRecord {
+                workspace_id: session.workspace_id.clone(),
+                agent_id: session.agent_id,
+                external_key_hash: session.external_key_hash,
+                current_work_item: session.current_work_item,
+                result: SessionResult {
+                    session_id: session.session_id,
+                    role: session.role,
+                    engaged: session.engaged,
+                    expires_at_unix_ms: session.expires_at_unix_ms,
+                    context_generation: session.context_generation,
+                    capability_token: String::new(),
+                },
+                delegation_id: session.delegation_id,
+                grant: session.grant,
+                current_turn_id: None,
+                current_turn_seq: 0,
+                active: false,
+            };
             state.session_by_external.insert(
-                (record.workspace_id.clone(), record.external_key.clone()),
+                (
+                    record.workspace_id.clone(),
+                    record.external_key_hash.clone(),
+                ),
                 key.clone(),
             );
             state.sessions.insert(key, record);
         }
-        for (key, value) in self.persistence.list_records("job/v1")? {
-            let mut record: JobRecord = decode_value(value)?;
-            if key != record.job_id || state.jobs.len() >= self.config.max_jobs {
+        for mut record in self.persistence.list_jobs()? {
+            if state.jobs.len() >= self.config.max_jobs
+                || !state.workspaces.contains_key(&record.workspace_id)
+            {
                 return Err(RuntimeError::new(
                     StableErrorCode::ExternalStateConflict,
                     "durable job projection is inconsistent or exceeds capacity",
                 ));
             }
-            let normalized = matches!(record.status, JobStatus::Queued | JobStatus::Running);
-            if normalized {
-                record.status = JobStatus::Queued;
-                state.job_queue.push_back(key.clone());
+            let identity_bound = record.session_id.is_some();
+            let active = matches!(
+                record.status,
+                RuntimeJobStatus::Queued | RuntimeJobStatus::Running
+            );
+            let old_boot = identity_bound
+                && record.submission_boot_id.as_deref() != Some(self.boot_id.to_string().as_str());
+            if active && old_boot {
+                let expected_status = record.status;
+                let expected_row_version = record.row_version;
+                let recovery_at = self.clock.now_unix_ms();
+                if record.status == RuntimeJobStatus::Queued {
+                    record.started_at_unix_ms = Some(recovery_at);
+                }
+                record.status = RuntimeJobStatus::Stale;
+                record.row_version = record.row_version.saturating_add(1);
+                record.result = Some(json!({"errorCode":StableErrorCode::SessionExpired.as_str()}));
+                record.error_code = None;
+                record.finished_at_unix_ms = Some(recovery_at);
+                record.updated_at_unix_ms = recovery_at;
+                record = self
+                    .persistence
+                    .commit_job_transition(RuntimeJobTransition {
+                        event: self.job_event(
+                            "job.stale",
+                            &record,
+                            json!({"errorCode":StableErrorCode::SessionExpired.as_str()}),
+                        )?,
+                        record,
+                        expected_status: Some(expected_status),
+                        expected_row_version: Some(expected_row_version),
+                    })?;
+            } else if active {
+                state.job_queue.push_back(record.job_id.clone());
             }
-            if normalized {
-                self.persistence
-                    .store_record("job/v1", &key, &to_value(&record)?)?;
-            }
-            state.jobs.insert(key, record);
+            state.jobs.insert(record.job_id.clone(), record);
         }
         drop(state);
         self.host.recover()?;
+        self.delegation.recover()?;
+        Ok(())
+    }
+
+    fn import_legacy_root_identities(&self) -> RuntimeResult<()> {
+        let now = self.clock.now_unix_ms();
+        let mut workspaces = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Workspace)?
+            .into_iter()
+            .map(|snapshot| (snapshot.workspace.workspace_id.clone(), snapshot.workspace))
+            .collect::<BTreeMap<_, _>>();
+        for (key, value) in self.persistence.list_records("workspace/v1")? {
+            if workspaces.contains_key(&key) {
+                continue;
+            }
+            let result: WorkspaceResult = decode_value(value.clone())?;
+            if result.workspace_id != key {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "legacy workspace identity is inconsistent",
+                ));
+            }
+            let workspace = RuntimeWorkspaceRecord {
+                workspace_id: result.workspace_id.clone(),
+                canonical_root: result.canonical_root.clone(),
+                project_key: result.project_key.clone(),
+                mode: result.mode,
+                inventory_generation: result.inventory_generation,
+                dirty: false,
+                created_at_unix_ms: now,
+                updated_at_unix_ms: now,
+            };
+            let snapshot = self
+                .persistence
+                .commit_identity_bundle(RuntimeIdentityTransition {
+                    operation: "runtime.legacy.workspace.import".to_owned(),
+                    scope_digest: canonical_digest(&json!({
+                        "domain":"runtime.legacy.workspace.import/v1",
+                        "workspaceId":result.workspace_id,
+                    }))?,
+                    idempotency_key: format!("legacy-workspace-{}", result.workspace_id),
+                    request_digest: canonical_digest(&json!({
+                        "legacy":value,
+                        "typed":workspace,
+                    }))?,
+                    expected_workspace_mode: None,
+                    expected_inventory_generation: None,
+                    expected_session_status: None,
+                    expected_delegation_status: None,
+                    expected_context_generation: None,
+                    snapshot: RuntimeIdentitySnapshot {
+                        identity_kind: RuntimeIdentityKind::Workspace,
+                        workspace,
+                        session: None,
+                        delegation: None,
+                        host_action: None,
+                        attestation: None,
+                        response: to_value(&result)?,
+                        replayed: false,
+                    },
+                    committed_at_unix_ms: now,
+                })?;
+            workspaces.insert(key, snapshot.workspace);
+        }
+
+        let mut sessions = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Session)?
+            .into_iter()
+            .filter_map(|snapshot| snapshot.session)
+            .map(|session| (session.session_id.clone(), session))
+            .collect::<BTreeMap<_, _>>();
+        for (key, value) in self.persistence.list_records("session/v1")? {
+            if sessions.contains_key(&key) {
+                continue;
+            }
+            let legacy: LegacySessionRecord = decode_value(value.clone())?;
+            if legacy.result.session_id != key {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "legacy session identity is inconsistent",
+                ));
+            }
+            if legacy.result.role != WireAgentRole::Root {
+                continue;
+            }
+            let workspace = workspaces
+                .get(&legacy.workspace_id)
+                .cloned()
+                .ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "legacy root session references a missing typed workspace",
+                    )
+                })?;
+            if legacy.delegation_id.is_some() {
+                return Err(RuntimeError::new(
+                    StableErrorCode::DelegationAttestationFailed,
+                    "legacy root session cannot carry a delegation",
+                ));
+            }
+            let external_key_hash = hex::encode(Sha256::digest(legacy.external_key.as_bytes()));
+            let session = RuntimeSessionRecord {
+                session_id: legacy.result.session_id.clone(),
+                agent_id: legacy.agent_id.clone(),
+                workspace_id: legacy.workspace_id.clone(),
+                external_key_hash,
+                role: WireAgentRole::Root,
+                root_session_id: legacy.result.session_id.clone(),
+                parent_session_id: None,
+                delegation_id: None,
+                engaged: legacy.result.engaged,
+                current_work_item: legacy.current_work_item.clone(),
+                grant: crate::grant::root_grant(),
+                context_generation: legacy.result.context_generation,
+                expires_at_unix_ms: legacy.result.expires_at_unix_ms,
+                status: if legacy.active {
+                    "active".to_owned()
+                } else {
+                    "closed".to_owned()
+                },
+                created_at_unix_ms: now,
+                updated_at_unix_ms: now,
+            };
+            let response = json!({
+                "sessionId":legacy.result.session_id,
+                "role":legacy.result.role,
+                "engaged":legacy.result.engaged,
+                "expiresAtUnixMs":legacy.result.expires_at_unix_ms,
+                "contextGeneration":legacy.result.context_generation,
+            });
+            let snapshot = self
+                .persistence
+                .commit_identity_bundle(RuntimeIdentityTransition {
+                    operation: "runtime.legacy.root-session.import".to_owned(),
+                    scope_digest: canonical_digest(&json!({
+                        "domain":"runtime.legacy.root-session.import/v1",
+                        "workspaceId":legacy.workspace_id,
+                        "sessionId":legacy.result.session_id,
+                    }))?,
+                    idempotency_key: format!("legacy-session-{}", legacy.result.session_id),
+                    request_digest: canonical_digest(&json!({
+                        "legacy":value,
+                        "typed":session,
+                    }))?,
+                    expected_workspace_mode: Some(workspace.mode),
+                    expected_inventory_generation: Some(workspace.inventory_generation),
+                    expected_session_status: None,
+                    expected_delegation_status: None,
+                    expected_context_generation: None,
+                    snapshot: RuntimeIdentitySnapshot {
+                        identity_kind: RuntimeIdentityKind::Session,
+                        workspace,
+                        session: Some(session),
+                        delegation: None,
+                        host_action: None,
+                        attestation: None,
+                        response,
+                        replayed: false,
+                    },
+                    committed_at_unix_ms: now,
+                })?;
+            let imported = snapshot.session.ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "legacy session import returned no session",
+                )
+            })?;
+            sessions.insert(key, imported);
+        }
         Ok(())
     }
 
@@ -424,8 +650,12 @@ impl RuntimeService {
             RpcMethod::FlowSnapshot
             | RpcMethod::FlowNext
             | RpcMethod::OperationDescribe
-            | RpcMethod::OperationExecute
             | RpcMethod::GateEvaluate => self.authoritative_business(method, params, client_kind),
+            RpcMethod::OperationExecute => {
+                let value = self.authoritative_business(method, params, client_kind)?;
+                self.bind_execution_resume(params, &value)?;
+                Ok(value)
+            }
             RpcMethod::JobSubmit => self.job_submit(params),
             RpcMethod::JobStatus => self.job_status(params),
             RpcMethod::JobCancel => self.job_cancel(params),
@@ -442,6 +672,10 @@ impl RuntimeService {
     #[must_use]
     pub const fn delegation_supervisor(&self) -> &DelegationSupervisor {
         &self.delegation
+    }
+
+    pub(super) fn session_bootstrap(&self) -> &(dyn SessionBootstrapPort + Send + Sync) {
+        self.session_bootstrap.as_ref()
     }
 }
 
