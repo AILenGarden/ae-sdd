@@ -27,6 +27,12 @@ impl<T: Send> ExclusiveLockGuard for T {}
 
 pub trait CrossProcessLockPort: Send + Sync {
     fn lock_exclusive(&self, path: &Path) -> Result<Box<dyn ExclusiveLockGuard>, StoreError>;
+    /// Attempts the exclusive lock without blocking; returns `Ok(None)` when
+    /// the lock is already held by another process.
+    fn try_lock_exclusive(
+        &self,
+        path: &Path,
+    ) -> Result<Option<Box<dyn ExclusiveLockGuard>>, StoreError>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -123,6 +129,27 @@ impl CrossProcessLockPort for StdCrossProcessLock {
         fs4::FileExt::lock(&file).map_err(|error| StoreError::io(path, error))?;
         Ok(Box::new(file))
     }
+
+    fn try_lock_exclusive(
+        &self,
+        path: &Path,
+    ) -> Result<Option<Box<dyn ExclusiveLockGuard>>, StoreError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| StoreError::io(parent, error))?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|error| StoreError::io(path, error))?;
+        match fs4::FileExt::try_lock(&file) {
+            Ok(()) => Ok(Some(Box::new(file))),
+            Err(fs4::TryLockError::WouldBlock) => Ok(None),
+            Err(fs4::TryLockError::Error(error)) => Err(StoreError::io(path, error)),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -211,5 +238,19 @@ impl CrossProcessLockPort for InMemoryFileSystem {
             return Err(StoreError::LeaseConflict);
         }
         Ok(Box::new(InMemoryGuard(Arc::clone(&self.lock_held))))
+    }
+
+    fn try_lock_exclusive(
+        &self,
+        _path: &Path,
+    ) -> Result<Option<Box<dyn ExclusiveLockGuard>>, StoreError> {
+        if self
+            .lock_held
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Ok(None);
+        }
+        Ok(Some(Box::new(InMemoryGuard(Arc::clone(&self.lock_held)))))
     }
 }

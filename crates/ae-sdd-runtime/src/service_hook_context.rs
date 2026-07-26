@@ -1,5 +1,10 @@
 use super::*;
-use ae_sdd_policy::ExecutionHookVerdict;
+use ae_sdd_policy::{ExecutionHookToolClass, ExecutionHookVerdict};
+
+use super::execution_supervisor::ExecutionHookGuardOutcome;
+use crate::config::execution_cache::{SourceReadKey, SourceReadVisibility};
+use crate::config::execution_resources::{CargoAcquireRequest, ResourceDecision, ResourceKind};
+use crate::{ExecutionHookDirective, ExecutionHookDirectiveDecision, ExecutionHookEvent};
 
 impl RuntimeService {
     pub(super) fn hook(
@@ -55,12 +60,21 @@ impl RuntimeService {
             method,
             execution_event.as_ref(),
         )?;
+        let mut execution_directive = execution.directive().cloned();
+        let cargo_deferred = self.apply_execution_resources(
+            &identity,
+            method,
+            &payload,
+            &execution,
+            &mut execution_directive,
+        )?;
         if method == RpcMethod::HookPreTool
             && identity.engaged
-            && matches!(
-                execution.verdict(),
-                ExecutionHookVerdict::RequireProgress { .. }
-            )
+            && (cargo_deferred
+                || matches!(
+                    execution.verdict(),
+                    ExecutionHookVerdict::RequireProgress { .. }
+                ))
         {
             decision = HookDecision::Deny;
         }
@@ -72,7 +86,7 @@ impl RuntimeService {
                 .flatten(),
             event_seq: 0,
             replayed: false,
-            execution_directive: execution.directive().cloned(),
+            execution_directive,
         };
         let value = to_value(base)?;
         let (mut value, event_seq) = self.actors.execute(
@@ -109,6 +123,132 @@ impl RuntimeService {
             ));
         }
         Ok(value)
+    }
+
+    /// Applies the bounded source-read cache and the daemon-wide Cargo lease
+    /// to one classified execution event.
+    ///
+    /// A PreTool source read that hits the cache carries `cachedReadRef`; a
+    /// PostTool source read stores the bounded excerpt carried by the Hook
+    /// payload.  A PreTool Cargo-bearing event (focused or broad
+    /// verification) acquires the daemon-wide lease; the matching PostTool
+    /// releases it.  Only sessions bound by a successful `execution.resume`
+    /// are arbitrated — unbound shadow sessions stay unblocked during the
+    /// rollout shadow stage.  The fast path stays bounded: one in-memory LRU
+    /// lookup, one bounded lock-file attempt, no project file reads and no
+    /// Gate evaluation.  Returns true when the event deferred on the lease.
+    fn apply_execution_resources(
+        &self,
+        identity: &TrustedSession,
+        method: RpcMethod,
+        payload: &HookPayload,
+        execution: &ExecutionHookGuardOutcome,
+        directive: &mut Option<ExecutionHookDirective>,
+    ) -> RuntimeResult<bool> {
+        if !matches!(method, RpcMethod::HookPreTool | RpcMethod::HookPostTool) {
+            return Ok(false);
+        }
+        let Some(wire) = payload.host_payload.get("executionEvent") else {
+            return Ok(false);
+        };
+        // `decode_execution_event` already ran fail-closed on this payload, so
+        // a decode failure here cannot occur for a classified event.
+        let Ok(wire) = serde_json::from_value::<ExecutionHookEvent>(wire.clone()) else {
+            return Ok(false);
+        };
+        let Some(class) = ExecutionHookToolClass::from_wire_name(wire.class.as_str()) else {
+            return Ok(false);
+        };
+        // A directive exists exactly when the session is bound and the event
+        // was classified; unbound shadow sessions are never arbitrated.
+        if directive.is_none() {
+            return Ok(false);
+        }
+        match (method, class) {
+            (RpcMethod::HookPreTool, ExecutionHookToolClass::SourceRead) => {
+                if !matches!(execution.verdict(), ExecutionHookVerdict::Allow { .. }) {
+                    return Ok(false);
+                }
+                let Some(key) = source_read_key(identity, &wire) else {
+                    return Ok(false);
+                };
+                let hit = self
+                    .config
+                    .execution_resources()
+                    .source_reads()
+                    .get(&source_read_visibility(identity), &key);
+                if let (Some(directive), Some(reference)) = (directive.as_mut(), hit) {
+                    directive.cached_read_ref = Some(reference.into_string());
+                }
+                Ok(false)
+            }
+            (RpcMethod::HookPostTool, ExecutionHookToolClass::SourceRead) => {
+                let Some(key) = source_read_key(identity, &wire) else {
+                    return Ok(false);
+                };
+                let Some(body) = payload
+                    .host_payload
+                    .get("toolOutput")
+                    .and_then(Value::as_str)
+                else {
+                    return Ok(false);
+                };
+                self.config.execution_resources().source_reads().put(
+                    &source_read_visibility(identity),
+                    &key,
+                    body,
+                    self.config.source_read_cache_capacity,
+                );
+                Ok(false)
+            }
+            (
+                RpcMethod::HookPreTool,
+                ExecutionHookToolClass::FocusedTest | ExecutionHookToolClass::BroadTest,
+            ) => {
+                if !matches!(execution.verdict(), ExecutionHookVerdict::Allow { .. }) {
+                    return Ok(false);
+                }
+                let request = CargoAcquireRequest {
+                    session_id: identity.session_id.as_str(),
+                    lock_path: self.config.cargo_lock_path.as_deref(),
+                    now_unix_ms: self.clock.now_unix_ms(),
+                    ttl_ms: self.config.cargo_lock_ttl_ms,
+                    retry_after_ms: self.config.cargo_lock_retry_after_ms,
+                    queue_capacity: self.config.cargo_lock_queue_capacity,
+                };
+                match self
+                    .config
+                    .execution_resources()
+                    .cargo()
+                    .acquire(ResourceKind::Cargo, &request)
+                {
+                    ResourceDecision::Allow => Ok(false),
+                    ResourceDecision::Defer { retry_after_ms } => {
+                        *directive = Some(ExecutionHookDirective {
+                            decision: ExecutionHookDirectiveDecision::RequireProgress,
+                            reason_code: Some(
+                                StableErrorCode::ExecutionResourceBusy.as_str().to_owned(),
+                            ),
+                            output_budget_bytes: None,
+                            retry_after_ms: Some(retry_after_ms),
+                            cached_read_ref: None,
+                        });
+                        Ok(true)
+                    }
+                }
+            }
+            (
+                RpcMethod::HookPostTool,
+                ExecutionHookToolClass::FocusedTest | ExecutionHookToolClass::BroadTest,
+            ) => {
+                self.config
+                    .execution_resources()
+                    .cargo()
+                    .release(ResourceKind::Cargo, identity.session_id.as_str());
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
     }
 
     pub(super) fn context_get(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
@@ -160,3 +300,23 @@ impl RuntimeService {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmptyPayload {}
+
+/// Session visibility scope for the source-read cache: one authenticated
+/// session inside one workspace.
+fn source_read_visibility(identity: &TrustedSession) -> SourceReadVisibility<'_> {
+    SourceReadVisibility::new(identity.workspace_id.as_str(), identity.session_id.as_str())
+}
+
+/// Cache key for one source-read event; absent path or content digest means
+/// the read cannot be keyed and skips the cache.
+fn source_read_key(identity: &TrustedSession, wire: &ExecutionHookEvent) -> Option<SourceReadKey> {
+    let path = wire.path.as_deref()?;
+    let digest = wire.content_digest.as_deref()?;
+    Some(SourceReadKey::new(
+        identity.workspace_id.as_str(),
+        path,
+        digest,
+        wire.start_line,
+        wire.end_line,
+    ))
+}
