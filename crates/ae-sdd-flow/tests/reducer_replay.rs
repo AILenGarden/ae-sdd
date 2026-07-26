@@ -1,10 +1,32 @@
 mod support;
 
-use ae_sdd_domain::{AgentRole, GateOutcome, ProcessPhase};
-use ae_sdd_flow::{FlowEventKind, FlowRuntime};
+use ae_sdd_contracts::execution_runtime::ExecutionSliceStatus;
+use ae_sdd_domain::{
+    AgentRole, ArtifactDigest, DesignRoute, GateOutcome, InputFingerprint, ProcessPhase,
+    StateRevision, WorkScale,
+};
+use ae_sdd_flow::{
+    ExecutionCursor, FlowEnvironment, FlowEventKind, FlowInput, FlowRuntime, FlowSnapshot,
+    NextAction, RouteSelection,
+};
 use proptest::prelude::*;
 
-use support::{commit, event, gate, input, transition_request};
+use support::{commit, event, event_store, gate, input, transition_request};
+
+fn execution_input(status: ExecutionSliceStatus) -> FlowInput {
+    let snapshot = FlowSnapshot::new(ProcessPhase::Coding, StateRevision::new(7), 0);
+    let environment = FlowEnvironment::new(
+        event_store(),
+        InputFingerprint::digest(b"work-item-input-v1"),
+        RouteSelection::new(WorkScale::Large, DesignRoute::Story),
+    )
+    .with_execution_cursor(ExecutionCursor::new(
+        1,
+        ArtifactDigest::digest(b"approved-queue-v1"),
+        status,
+    ));
+    FlowInput::new(snapshot, environment)
+}
 
 #[test]
 fn reordered_complete_log_has_identical_decision_and_next_action() {
@@ -20,6 +42,54 @@ fn reordered_complete_log_has_identical_decision_and_next_action() {
 
     assert_eq!(first, second);
     assert_eq!(first.snapshot().phase(), ProcessPhase::RouteSelected);
+}
+
+#[test]
+fn execution_log_replay_digest_is_identical_across_runs_and_orderings() {
+    let queue_v1 = ArtifactDigest::digest(b"approved-queue-v1");
+    let queue_v2 = ArtifactDigest::digest(b"approved-queue-v2");
+    let log = || {
+        vec![
+            event(
+                3,
+                b"approved-v1-running",
+                FlowEventKind::ExecutionQueueApproved {
+                    cursor: ExecutionCursor::new(1, queue_v1, ExecutionSliceStatus::Running),
+                },
+            ),
+            event(
+                5,
+                b"approved-v2-pending",
+                FlowEventKind::ExecutionQueueApproved {
+                    cursor: ExecutionCursor::new(2, queue_v2, ExecutionSliceStatus::Pending),
+                },
+            ),
+            event(
+                8,
+                b"approved-v2-running",
+                FlowEventKind::ExecutionQueueApproved {
+                    cursor: ExecutionCursor::new(2, queue_v2, ExecutionSliceStatus::Running),
+                },
+            ),
+        ]
+    };
+
+    let input = execution_input(ExecutionSliceStatus::Pending);
+    let first = FlowRuntime::replay(input, log()).expect("ordered log is valid");
+    let second = FlowRuntime::replay(input, log()).expect("the same log replays");
+    let reordered =
+        FlowRuntime::replay(input, log().into_iter().rev()).expect("reordered delivery converges");
+
+    assert_eq!(first, second);
+    assert_eq!(first.decision_digest(), second.decision_digest());
+    assert_eq!(first.decision_digest(), reordered.decision_digest());
+    assert_eq!(
+        first.next_action(),
+        &NextAction::ExecuteApprovedSlice {
+            active_ordinal: 2,
+            queue_digest: queue_v2,
+        }
+    );
 }
 
 proptest! {

@@ -240,6 +240,15 @@ impl TransitionPolicy {
             required_gates: required_gates(context.scale, context.design_route, context.target),
         })
     }
+
+    /// Returns whether the phase hosts supervised approved-slice execution.
+    ///
+    /// Only `Coding` executes an approved slice queue; every other phase keeps
+    /// the regular transition/Gate actions, so the phase table remains the
+    /// single owner of where the execution surface may run.
+    pub const fn is_execution_phase(phase: ProcessPhase) -> bool {
+        matches!(phase, ProcessPhase::Coding)
+    }
 }
 
 fn route_chain(
@@ -432,5 +441,23 @@ mod tests {
         );
         assert!(permit.required_gates().contains(&RequiredGate::G14));
         assert!(permit.required_gates().contains(&RequiredGate::G08));
+    }
+
+    #[test]
+    fn only_coding_hosts_supervised_slice_execution() {
+        assert!(TransitionPolicy::is_execution_phase(ProcessPhase::Coding));
+        for phase in [
+            ProcessPhase::Initialized,
+            ProcessPhase::CodingProcess,
+            ProcessPhase::TestRunning,
+            ProcessPhase::CodeReviewed,
+            ProcessPhase::Completed,
+            ProcessPhase::Paused,
+        ] {
+            assert!(
+                !TransitionPolicy::is_execution_phase(phase),
+                "{phase:?} must not host slice execution",
+            );
+        }
     }
 }

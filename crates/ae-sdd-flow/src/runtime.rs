@@ -10,8 +10,8 @@ use ae_sdd_policy::{
 };
 
 use crate::{
-    FlowDecision, FlowError, FlowEvent, FlowEventKind, FlowInput, FlowSnapshot, NextAction,
-    SupervisorDegradation, SupervisorHealth,
+    ExecutionCursor, FlowDecision, FlowError, FlowEvent, FlowEventKind, FlowInput, FlowSnapshot,
+    NextAction, SupervisorDegradation, SupervisorHealth, canonical,
 };
 
 /// Pure deterministic flow reducer and replay entry point.
@@ -29,10 +29,15 @@ impl FlowRuntime {
             passed_gates: BTreeSet::new(),
             health: SupervisorHealth::Healthy,
             next_action: NextAction::AwaitAgentWork,
+            execution_cursor: input.environment().execution_cursor(),
             last_cursor: None,
             last_event_fingerprint: None,
             decision_digest: DecisionDigest::from_array([0; 32]),
         };
+        if let Some(action) = execution_action(decision.snapshot.phase(), decision.execution_cursor)
+        {
+            decision.next_action = action;
+        }
         decision.decision_digest = digest_decision(None, &decision);
         decision
     }
@@ -265,7 +270,23 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
             decision.pending_transition = None;
             decision.required_gates.clear();
             decision.passed_gates.clear();
-            decision.next_action = NextAction::AwaitAgentWork;
+            decision.next_action =
+                execution_action(decision.snapshot.phase(), decision.execution_cursor)
+                    .unwrap_or(NextAction::AwaitAgentWork);
+        }
+        FlowEventKind::ExecutionQueueApproved { cursor } => {
+            let previous = decision.execution_cursor;
+            decision.execution_cursor = Some(*cursor);
+            // A pending transition keeps owning the action until it commits.
+            if decision.pending_transition.is_none() {
+                decision.next_action = match previous {
+                    Some(previous) if previous.queue_digest() != cursor.queue_digest() => {
+                        NextAction::ResumeApprovedExecution
+                    }
+                    _ => execution_action(decision.snapshot.phase(), decision.execution_cursor)
+                        .unwrap_or(NextAction::AwaitAgentWork),
+                };
+            }
         }
         FlowEventKind::BackgroundFault(fault) => {
             decision.health = SupervisorHealth::Degraded(SupervisorDegradation::Background(*fault));
@@ -275,6 +296,24 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// Derives the execution-surface action for the policy-owned execution phase.
+///
+/// An open approved slice keeps executing; anything else leaves the caller's
+/// fallback action untouched so no second phase state machine appears.
+fn execution_action(phase: ProcessPhase, cursor: Option<ExecutionCursor>) -> Option<NextAction> {
+    if !TransitionPolicy::is_execution_phase(phase) {
+        return None;
+    }
+    let cursor = cursor?;
+    if !cursor.is_slice_open() {
+        return None;
+    }
+    Some(NextAction::ExecuteApprovedSlice {
+        active_ordinal: cursor.active_ordinal(),
+        queue_digest: cursor.queue_digest(),
+    })
 }
 
 fn digest_decision(previous: Option<DecisionDigest>, decision: &FlowDecision) -> DecisionDigest {
@@ -290,6 +329,7 @@ fn digest_decision(previous: Option<DecisionDigest>, decision: &FlowDecision) ->
     encode_optional_phase(&mut bytes, decision.snapshot.paused_from());
     bytes.extend_from_slice(&decision.snapshot.state_revision().get().to_be_bytes());
     bytes.extend_from_slice(&decision.snapshot.correction_count().to_be_bytes());
+    canonical::execution_cursor(&mut bytes, decision.execution_cursor);
     encode_optional_phase(&mut bytes, decision.pending_transition);
     encode_gates(&mut bytes, &decision.required_gates);
     encode_gates(
@@ -374,6 +414,15 @@ fn encode_action(bytes: &mut Vec<u8>, action: &NextAction) {
         NextAction::TransitionDenied { target, reason } => {
             bytes.extend_from_slice(&[8, phase_tag(*target)]);
             encode_transition_error(bytes, *reason);
+        }
+        NextAction::ResumeApprovedExecution => bytes.push(9),
+        NextAction::ExecuteApprovedSlice {
+            active_ordinal,
+            queue_digest,
+        } => {
+            bytes.push(10);
+            bytes.extend_from_slice(&active_ordinal.to_be_bytes());
+            bytes.extend_from_slice(queue_digest.as_bytes());
         }
     }
 }

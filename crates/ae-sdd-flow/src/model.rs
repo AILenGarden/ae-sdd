@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
+use ae_sdd_contracts::execution_runtime::ExecutionSliceStatus;
 use ae_sdd_domain::{
-    AgentRole, DecisionDigest, DesignRoute, EventSequence, EventStoreId, GateOutcome,
-    InputFingerprint, PolicyDigest, ProcessPhase, StateRevision, WorkScale,
+    AgentRole, ArtifactDigest, DecisionDigest, DesignRoute, EventSequence, EventStoreId,
+    GateOutcome, InputFingerprint, PolicyDigest, ProcessPhase, StateRevision, WorkScale,
 };
 use ae_sdd_policy::{RequiredGate, TransitionPolicy, TransitionPolicyError};
 
@@ -108,6 +109,8 @@ pub enum FlowEventKind {
         phase: ProcessPhase,
         state_revision: StateRevision,
     },
+    /// The mutation authority committed an approved execution queue cursor.
+    ExecutionQueueApproved { cursor: ExecutionCursor },
     /// A background adapter reported an infrastructure fault.
     BackgroundFault(SupervisorFault),
     /// Recovery evidence cleared the current infrastructure degradation.
@@ -162,6 +165,56 @@ impl RouteSelection {
     /// Returns the selected design route.
     pub const fn design_route(self) -> DesignRoute {
         self.design_route
+    }
+}
+
+/// Compact approved-execution cursor bound to one flow environment.
+///
+/// The cursor carries only the active slice ordinal, the approved queue
+/// digest, and the active slice status; the capsule body never enters a flow
+/// decision or checkpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionCursor {
+    active_ordinal: u32,
+    queue_digest: ArtifactDigest,
+    active_slice_status: ExecutionSliceStatus,
+}
+
+impl ExecutionCursor {
+    /// Creates a cursor from an already validated execution queue reference.
+    pub const fn new(
+        active_ordinal: u32,
+        queue_digest: ArtifactDigest,
+        active_slice_status: ExecutionSliceStatus,
+    ) -> Self {
+        Self {
+            active_ordinal,
+            queue_digest,
+            active_slice_status,
+        }
+    }
+
+    /// Returns the 1-based ordinal of the active approved slice.
+    pub const fn active_ordinal(self) -> u32 {
+        self.active_ordinal
+    }
+
+    /// Returns the digest of the approved slice queue.
+    pub const fn queue_digest(self) -> ArtifactDigest {
+        self.queue_digest
+    }
+
+    /// Returns the machine status of the active slice.
+    pub const fn active_slice_status(self) -> ExecutionSliceStatus {
+        self.active_slice_status
+    }
+
+    /// Returns whether the active slice still accepts supervised execution.
+    pub const fn is_slice_open(self) -> bool {
+        !matches!(
+            self.active_slice_status,
+            ExecutionSliceStatus::Completed | ExecutionSliceStatus::Blocked
+        )
     }
 }
 
@@ -228,6 +281,7 @@ pub struct FlowEnvironment {
     policy_digest: PolicyDigest,
     input_fingerprint: InputFingerprint,
     route: RouteSelection,
+    execution_cursor: Option<ExecutionCursor>,
 }
 
 impl FlowEnvironment {
@@ -242,7 +296,14 @@ impl FlowEnvironment {
             policy_digest: TransitionPolicy::digest(),
             input_fingerprint,
             route,
+            execution_cursor: None,
         }
+    }
+
+    /// Binds the approved execution cursor observed in authoritative state.
+    pub const fn with_execution_cursor(mut self, cursor: ExecutionCursor) -> Self {
+        self.execution_cursor = Some(cursor);
+        self
     }
 
     /// Returns the durable event store epoch.
@@ -263,6 +324,11 @@ impl FlowEnvironment {
     /// Returns the selected route.
     pub const fn route(self) -> RouteSelection {
         self.route
+    }
+
+    /// Returns the approved execution cursor bound to this environment.
+    pub const fn execution_cursor(self) -> Option<ExecutionCursor> {
+        self.execution_cursor
     }
 }
 
@@ -335,6 +401,13 @@ pub enum NextAction {
         target: ProcessPhase,
         reason: TransitionPolicyError,
     },
+    /// Re-run approved-plan resume because the tracked queue digest is stale.
+    ResumeApprovedExecution,
+    /// Execute the approved active slice under the supervisor budgets.
+    ExecuteApprovedSlice {
+        active_ordinal: u32,
+        queue_digest: ArtifactDigest,
+    },
 }
 
 /// Durable pure decision that doubles as the next supervisor checkpoint.
@@ -347,6 +420,7 @@ pub struct FlowDecision {
     pub(crate) passed_gates: BTreeSet<RequiredGate>,
     pub(crate) health: SupervisorHealth,
     pub(crate) next_action: NextAction,
+    pub(crate) execution_cursor: Option<ExecutionCursor>,
     pub(crate) last_cursor: Option<EventCursor>,
     pub(crate) last_event_fingerprint: Option<InputFingerprint>,
     pub(crate) decision_digest: DecisionDigest,
@@ -381,6 +455,11 @@ impl FlowDecision {
     /// Returns the next deterministic runtime action.
     pub const fn next_action(&self) -> &NextAction {
         &self.next_action
+    }
+
+    /// Returns the latest approved execution cursor tracked by the reducer.
+    pub const fn execution_cursor(&self) -> Option<ExecutionCursor> {
+        self.execution_cursor
     }
 
     /// Returns the last applied global event cursor.
