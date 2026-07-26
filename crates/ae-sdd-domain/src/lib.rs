@@ -30,9 +30,9 @@ pub use gate::{
 };
 pub use ids::{
     ArtifactKind, BootId, CancellationCode, CapabilityId, ClaimId, CompactId, ContextProjectionId,
-    DelegationId, DeliverableId, ErrorCode, EventStoreId, EvidenceId, FindingCode, GateId,
-    HostAckId, HostActionId, JobId, LeaseId, OperationId, ProjectKey, RequestId, SessionId,
-    StoryId, TurnId, VerificationId, WorkItemId, WorkspaceId,
+    DelegationId, DeliverableId, ErrorCode, EventStoreId, EvidenceId, ExecutionSliceId,
+    FindingCode, GateId, HostAckId, HostActionId, JobId, LeaseId, OperationId, ProjectKey,
+    RequestId, SessionId, StoryId, TurnId, VerificationId, WorkItemId, WorkspaceId,
 };
 pub use lifecycle::{DesignRoute, ProcessPhase, WorkScale};
 pub use path::{ProjectRelativePath, ProjectRelativePathError};

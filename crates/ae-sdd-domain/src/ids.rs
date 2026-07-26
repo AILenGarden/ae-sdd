@@ -160,6 +160,7 @@ string_id!(CapabilityId, "CapabilityId", 128);
 string_id!(ArtifactKind, "ArtifactKind", 64);
 string_id!(EvidenceId, "EvidenceId", 128);
 string_id!(VerificationId, "VerificationId", 128);
+string_id!(ExecutionSliceId, "ExecutionSliceId", 128);
 string_id!(DeliverableId, "DeliverableId", 128);
 string_id!(FindingCode, "FindingCode", 128);
 string_id!(ErrorCode, "ErrorCode", 128);
