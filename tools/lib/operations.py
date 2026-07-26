@@ -146,6 +146,109 @@ def _schema_violations(value: dict[str, Any], schema: dict[str, Any]) -> list[di
     return violations
 
 
+# ─── execution.resume migration-oracle（plan P0 Task 12）──────────────────────
+#
+# 只有 Rust daemon 计算权威 execution capsule/projection；这里的 builder 只镜像
+# 薄 Rust CLI（bins/ae-sdd-cli resume-approved-plan）组装的 request shape 与冻结
+# 的 response shape，供 migration harness 做 differential parity。只读、零文件
+# I/O，且刻意不在 _DEFINITIONS 注册执行入口 —— Python 永不成为 execution.resume
+# 的 canary/sole-writer fallback。
+
+EXECUTION_RESUME_OPERATION = "execution.resume"
+
+EXECUTION_RESUME_INPUT_SCHEMA = _parameter_schema(
+    [],
+    {
+        "knownCapsuleDigest": {"type": "string"},
+        "knownContextRevision": {"type": "integer", "minimum": 0},
+    },
+)
+
+EXECUTION_RESUME_RESPONSE_SHAPE = (
+    "projectionKind",
+    "contextRevision",
+    "capsuleDigest",
+    "capsule",
+    "nextAction",
+    "authorityRefreshCount",
+)
+
+_EXECUTION_RESUME_REQUIRED_IDENTITY = ("workspaceId", "agentId", "sessionId", "workItemId")
+_EXECUTION_RESUME_OPTIONAL_FIELDS = (
+    "turnId",
+    "capabilityToken",
+    "deadlineMs",
+    "knownCapsuleDigest",
+    "knownContextRevision",
+)
+
+
+def execution_resume_response_shape() -> list[str]:
+    """Return the frozen `execution.resume` daemon data keys rendered by both CLIs."""
+    return list(EXECUTION_RESUME_RESPONSE_SHAPE)
+
+
+def build_execution_resume_request(request: dict[str, Any]) -> dict[str, Any]:
+    """Assemble the frozen `operation.execute` payload for `execution.resume`.
+
+    Migration-oracle only: mirrors the thin Rust CLI envelope so the migration
+    harness can diff request/response shape parity. Pure function — no
+    filesystem, clock or environment access.
+    """
+    if not isinstance(request, dict):
+        raise OperationError("OPERATION_SCHEMA_INVALID", "resume request must be a JSON object")
+    allowed = set(_EXECUTION_RESUME_REQUIRED_IDENTITY) | set(_EXECUTION_RESUME_OPTIONAL_FIELDS)
+    unknown = sorted(set(request) - allowed)
+    if unknown:
+        raise OperationError(
+            "OPERATION_SCHEMA_INVALID",
+            "resume request carries unknown fields",
+            details={"unknown": unknown},
+        )
+    missing = [
+        name
+        for name in _EXECUTION_RESUME_REQUIRED_IDENTITY
+        if not isinstance(request.get(name), str) or not request[name].strip()
+    ]
+    if missing:
+        raise OperationError(
+            "OPERATION_SCHEMA_INVALID",
+            "resume request identity is incomplete",
+            details={"missing": missing},
+        )
+    for name in ("turnId", "capabilityToken"):
+        if name in request and not isinstance(request[name], str):
+            raise OperationError(
+                "OPERATION_SCHEMA_INVALID",
+                "resume request identity fields must be strings",
+                details={"field": name},
+            )
+    deadline = request.get("deadlineMs")
+    if deadline is not None and (type(deadline) is not int or deadline < 1):
+        raise OperationError(
+            "OPERATION_SCHEMA_INVALID",
+            "deadlineMs must be a positive integer millisecond budget",
+            details={"field": "deadlineMs"},
+        )
+    cursor = {
+        key: request[key]
+        for key in ("knownCapsuleDigest", "knownContextRevision")
+        if key in request
+    }
+    violations = _schema_violations(cursor, EXECUTION_RESUME_INPUT_SCHEMA)
+    if violations:
+        raise OperationError(
+            "OPERATION_SCHEMA_INVALID",
+            "resume cursor does not match the registered schema",
+            details={"violations": violations},
+        )
+    return {
+        "operation": EXECUTION_RESUME_OPERATION,
+        "dryRun": False,
+        "payload": cursor,
+    }
+
+
 _DEFINITIONS = [
     OperationDefinition("workitem.get", False, False, False, _parameter_schema(), COMMON_OUTPUT_SCHEMA, "_handle_workitem_get"),
     OperationDefinition("state.next_actions", False, False, False, _parameter_schema(), COMMON_OUTPUT_SCHEMA, "_handle_state_next_actions"),

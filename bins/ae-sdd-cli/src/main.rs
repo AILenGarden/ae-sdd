@@ -8,6 +8,7 @@ use ae_sdd_client::{
     ClientError, DaemonClient, HookClient, HookInvocation, HookOutcome, LocalIpcTransport,
     default_endpoint_manifest, default_state_dir,
 };
+use ae_sdd_operations::{OperationName, validate_operation_payload};
 use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, HookDecision, PROTOCOL_VERSION_V1, RequestParams, RpcMethod,
 };
@@ -65,6 +66,18 @@ enum TopLevel {
         manifest: Option<PathBuf>,
         /// End-to-end local IPC timeout.
         #[arg(long, default_value_t = 250)]
+        timeout_ms: u64,
+    },
+    /// Resume an approved execution plan; the daemon owns every business rule.
+    ResumeApprovedPlan {
+        /// Resume request JSON literal or `-` to read stdin.
+        #[arg(long)]
+        request: String,
+        /// Endpoint manifest override.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// End-to-end local IPC timeout.
+        #[arg(long, default_value_t = 30_000)]
         timeout_ms: u64,
     },
     /// Resolve one frozen legacy leaf command without a fallback branch.
@@ -175,6 +188,32 @@ struct ParsedHookRequest {
     host_input: bool,
 }
 
+/// Request document accepted by `ae-sdd resume-approved-plan --request <json>`.
+///
+/// The CLI only normalizes these identity fields and the optional resume
+/// cursor; every business rule (approved-plan validation, capsule build or
+/// reuse, projection kind) stays inside the daemon. Unknown fields fail
+/// closed so a drifting client cannot smuggle authority inputs past the
+/// registry contract.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResumeApprovedPlanRequest {
+    workspace_id: String,
+    agent_id: String,
+    session_id: String,
+    work_item_id: String,
+    #[serde(default)]
+    turn_id: Option<String>,
+    #[serde(default)]
+    capability_token: Option<String>,
+    #[serde(default)]
+    known_capsule_digest: Option<String>,
+    #[serde(default)]
+    known_context_revision: Option<u64>,
+    #[serde(default)]
+    deadline_ms: Option<u64>,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run(Arguments::parse()).await {
@@ -275,8 +314,103 @@ async fn run(arguments: Arguments) -> Result<(), String> {
                 print_json(&outcome)
             }
         }
+        TopLevel::ResumeApprovedPlan {
+            request,
+            manifest,
+            timeout_ms,
+        } => {
+            let request: ResumeApprovedPlanRequest = read_json_argument(&request)?;
+            let params = assemble_resume_request(&request)?;
+            let recover_runtime = manifest.is_none();
+            let client = client(manifest, ClientKind::Cli, timeout_ms)?;
+            let result: Value = call_with_runtime_recovery(
+                &client,
+                RpcMethod::OperationExecute,
+                params,
+                recover_runtime,
+                ClientKind::Cli,
+                timeout_ms,
+            )
+            .await?;
+            print_json(&render_resume_projection(&result)?)
+        }
         TopLevel::Legacy(arguments) => run_legacy(arguments).await,
     }
+}
+
+/// Assembles the `operation.execute` params for `execution.resume`.
+///
+/// The cursor is validated against the frozen operation registry before any
+/// IPC so malformed input fails closed on the client side; the daemon
+/// remains authoritative and re-validates the complete request. The CLI
+/// never reads Story, constraints, state or source files itself.
+pub fn assemble_resume_request(
+    request: &ResumeApprovedPlanRequest,
+) -> Result<RequestParams<Value>, String> {
+    let mut cursor = serde_json::Map::new();
+    if let Some(digest) = request.known_capsule_digest.as_deref() {
+        cursor.insert(
+            "knownCapsuleDigest".to_owned(),
+            Value::String(digest.to_owned()),
+        );
+    }
+    if let Some(revision) = request.known_context_revision {
+        cursor.insert("knownContextRevision".to_owned(), json!(revision));
+    }
+    let cursor = Value::Object(cursor);
+    validate_operation_payload(OperationName::ExecutionResume, &cursor)
+        .map_err(|error| format!("execution.resume cursor is invalid: {error}"))?;
+    Ok(RequestParams {
+        protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+        workspace_id: Some(request.workspace_id.clone()),
+        agent_id: Some(request.agent_id.clone()),
+        session_id: Some(request.session_id.clone()),
+        capability_token: request.capability_token.clone(),
+        turn_id: request.turn_id.clone(),
+        work_item_id: Some(request.work_item_id.clone()),
+        lease_id: None,
+        fencing_token: None,
+        expected_revision: None,
+        idempotency_key: None,
+        confirmation: None,
+        deadline_ms: request.deadline_ms.unwrap_or(30_000).max(1),
+        payload: json!({
+            "operation": OperationName::ExecutionResume.as_str(),
+            "dryRun": false,
+            "payload": cursor,
+        }),
+    })
+}
+
+/// Frozen fields the CLI renders from an `execution.resume` daemon response.
+const RESUME_PROJECTION_KEYS: [&str; 6] = [
+    "projectionKind",
+    "contextRevision",
+    "capsuleDigest",
+    "capsule",
+    "nextAction",
+    "authorityRefreshCount",
+];
+
+/// Renders the daemon-owned `execution.resume` projection.
+///
+/// Only the frozen projection fields are surfaced; a response that is not an
+/// object or misses a required key fails closed instead of fabricating a
+/// projection the daemon never produced.
+pub fn render_resume_projection(data: &Value) -> Result<Value, String> {
+    let object = data
+        .as_object()
+        .ok_or_else(|| "execution.resume response must be a JSON object".to_owned())?;
+    for key in RESUME_PROJECTION_KEYS {
+        if !object.contains_key(key) {
+            return Err(format!("execution.resume response is missing `{key}`"));
+        }
+    }
+    let mut projection = serde_json::Map::new();
+    for key in RESUME_PROJECTION_KEYS {
+        projection.insert(key.to_owned(), object[key].clone());
+    }
+    Ok(Value::Object(projection))
 }
 
 fn parse_hook_request(method: &RpcMethod, raw: Value) -> Result<ParsedHookRequest, String> {

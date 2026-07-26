@@ -223,6 +223,43 @@ def cmd_ops_execute(args, parser):
     return 0
 
 
+def cmd_resume_approved_plan(args, parser):
+    """[migration-oracle] 组装 execution.resume 的 operation.execute 请求形状。
+
+    只读 parity oracle（plan P0 Task 12）：不连接 daemon、不读取
+    Story/constraints/state/source 文件；生产环境的权威 resume 由 Rust
+    daemon 经 `ae-sdd resume-approved-plan` 执行。
+    """
+    try:
+        request = json.loads(args.request)
+    except json.JSONDecodeError as exc:
+        error = operations.OperationError(
+            "OPERATION_REQUEST_INVALID_JSON",
+            "--request cannot be read as a JSON object",
+            details={"error": str(exc)},
+        )
+        return _emit_operation_error(args, error, "execution.resume")
+    if not isinstance(request, dict):
+        error = operations.OperationError(
+            "OPERATION_REQUEST_INVALID_JSON", "--request JSON root must be an object"
+        )
+        return _emit_operation_error(args, error, "execution.resume")
+    try:
+        envelope = operations.build_execution_resume_request(request)
+    except operations.OperationError as exc:
+        return _emit_operation_error(args, exc, "execution.resume")
+    output.emit(
+        {
+            "schemaVersion": operations.SCHEMA_VERSION,
+            "oracle": "migration",
+            "operationExecute": envelope,
+            "responseShape": operations.execution_resume_response_shape(),
+        },
+        as_json=args.json,
+    )
+    return 0
+
+
 def _lease_owner_from_args(args):
     return {
         "agentId": args.agent_id,
@@ -5561,6 +5598,15 @@ def main() -> int:
     p_ops_execute.add_argument("--request-file", required=True, help="UTF-8 JSON request 文件")
     p_ops_execute.add_argument("--project", default="", help="request 未带 project 时使用")
     p_ops_execute.set_defaults(func=cmd_ops_execute)
+
+    # execution.resume parity oracle（仅 migration profile；生产由 Rust daemon 裁决）
+    p_resume = sub.add_parser(
+        "resume-approved-plan",
+        help="[migration-oracle] 组装 execution.resume 的 operation.execute 请求/响应形状",
+        parents=[common],
+    )
+    p_resume.add_argument("--request", required=True, help="resume 请求 JSON 字面量（identity + 可选 known cursor）")
+    p_resume.set_defaults(func=cmd_resume_approved_plan)
 
     # Lease convenience adapter. All commands translate to typed operations.
     p_lease = sub.add_parser("lease", help="Work Item writer lease", parents=[common])
