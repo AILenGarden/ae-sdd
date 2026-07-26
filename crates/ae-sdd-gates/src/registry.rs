@@ -39,6 +39,35 @@ pub struct GateSpec {
     pub rule: NativeGateRule,
 }
 
+/// Stable class of authoritative Gate inputs. A change to one input class
+/// invalidates exactly the Gates that declare the matching selector, so an
+/// evidence, review or source change never re-runs unrelated Gates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GateInputSelector {
+    ProjectAssets,
+    Story,
+    Constraints,
+    ThinkingEngine,
+    ExecutionPlan,
+    ChangedPaths,
+    VerificationPlan,
+    EvidenceLedger,
+    ReviewBatch,
+    Toolchain,
+    Inventory,
+}
+
+/// Declarative incremental dependencies of one Gate: prerequisite Gates that
+/// order evaluation and propagate invalidation to dependents, and the input
+/// selectors whose change forces re-evaluation. A Gate without selectors
+/// cannot prove freshness and fails closed to re-evaluation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GateDependencySpec {
+    pub gate: &'static str,
+    pub prerequisites: &'static [&'static str],
+    pub selectors: &'static [GateInputSelector],
+}
+
 const fn predicate(value: &'static str) -> NativeGateRule {
     NativeGateRule::Predicate(PredicateKey::new(value))
 }
@@ -370,6 +399,194 @@ const GATES: [GateSpec; GATE_COUNT] = [
     },
 ];
 
+use GateInputSelector::{
+    ChangedPaths, Constraints, EvidenceLedger, ExecutionPlan, Inventory, ProjectAssets,
+    ReviewBatch, Story, ThinkingEngine, VerificationPlan,
+};
+
+const GATE_DEPENDENCIES: [GateDependencySpec; GATE_COUNT] = [
+    GateDependencySpec {
+        gate: "G-00",
+        prerequisites: &[],
+        selectors: &[ProjectAssets, Inventory],
+    },
+    GateDependencySpec {
+        gate: "G-01",
+        prerequisites: &["G-RA-1"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-02",
+        prerequisites: &["G-01"],
+        selectors: &[Story],
+    },
+    GateDependencySpec {
+        gate: "G-03",
+        prerequisites: &["G-02"],
+        selectors: &[Story],
+    },
+    GateDependencySpec {
+        gate: "G-04",
+        prerequisites: &["G-03"],
+        selectors: &[Story, VerificationPlan],
+    },
+    GateDependencySpec {
+        gate: "G-05",
+        prerequisites: &["G-04"],
+        selectors: &[Story],
+    },
+    GateDependencySpec {
+        gate: "G-06",
+        prerequisites: &["G-05"],
+        selectors: &[Story],
+    },
+    GateDependencySpec {
+        gate: "G-07",
+        prerequisites: &["G-03"],
+        selectors: &[Story, ThinkingEngine],
+    },
+    GateDependencySpec {
+        gate: "G-08",
+        prerequisites: &["G-07"],
+        selectors: &[ExecutionPlan, Constraints],
+    },
+    GateDependencySpec {
+        gate: "G-HTTP-1",
+        prerequisites: &["G-07"],
+        selectors: &[Story, VerificationPlan],
+    },
+    GateDependencySpec {
+        gate: "G-09",
+        prerequisites: &["G-04"],
+        selectors: &[ChangedPaths],
+    },
+    GateDependencySpec {
+        gate: "G-10",
+        prerequisites: &["G-09"],
+        selectors: &[EvidenceLedger],
+    },
+    GateDependencySpec {
+        gate: "G-11",
+        prerequisites: &["G-08", "G-14", "G-CODEPLAN-SRC"],
+        selectors: &[ChangedPaths],
+    },
+    GateDependencySpec {
+        gate: "G-12",
+        prerequisites: &["G-10", "G-11"],
+        selectors: &[ReviewBatch],
+    },
+    GateDependencySpec {
+        gate: "G-13",
+        prerequisites: &["G-12"],
+        selectors: &[ProjectAssets, ReviewBatch],
+    },
+    GateDependencySpec {
+        gate: "G-14",
+        prerequisites: &["G-07"],
+        selectors: &[Story, ExecutionPlan],
+    },
+    GateDependencySpec {
+        gate: "G-CODEPLAN-SRC",
+        prerequisites: &["G-07"],
+        selectors: &[ExecutionPlan, ChangedPaths],
+    },
+    GateDependencySpec {
+        gate: "G-DOC-STORAGE",
+        prerequisites: &["G-00"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-PATH",
+        prerequisites: &["G-00"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-RA-1",
+        prerequisites: &["G-00"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-RA-2",
+        prerequisites: &["G-RA-1"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-RA-3",
+        prerequisites: &["G-RA-2"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-RA-4",
+        prerequisites: &["G-RA-3"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-RA-FLOW-VIOLATION",
+        prerequisites: &["G-RA-3"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-RA-5",
+        prerequisites: &["G-RA-3"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-RA-6",
+        prerequisites: &["G-RA-3"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-CODE-1",
+        prerequisites: &["G-11"],
+        selectors: &[ChangedPaths],
+    },
+    GateDependencySpec {
+        gate: "G-DOC-CONSISTENCY",
+        prerequisites: &["G-00"],
+        selectors: &[ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-REVIEW-LOOP",
+        prerequisites: &["G-12"],
+        selectors: &[ReviewBatch],
+    },
+    GateDependencySpec {
+        gate: "G-09B",
+        prerequisites: &["G-12"],
+        selectors: &[ReviewBatch],
+    },
+    GateDependencySpec {
+        gate: "G-REVIEW-DEPTH",
+        prerequisites: &["G-12"],
+        selectors: &[ReviewBatch],
+    },
+    GateDependencySpec {
+        gate: "G-AUTO-CONSENSUS",
+        prerequisites: &["G-09B", "G-REVIEW-DEPTH"],
+        selectors: &[ReviewBatch],
+    },
+    GateDependencySpec {
+        gate: "G-DR-CTX",
+        prerequisites: &["G-00"],
+        selectors: &[ProjectAssets, Constraints, ThinkingEngine],
+    },
+    GateDependencySpec {
+        gate: "G-STORY-CTX",
+        prerequisites: &["G-01"],
+        selectors: &[Story, Constraints, ProjectAssets],
+    },
+    GateDependencySpec {
+        gate: "G-TESTCASE-CTX",
+        prerequisites: &["G-03"],
+        selectors: &[Story, Constraints],
+    },
+    GateDependencySpec {
+        gate: "G-TASK-CTX",
+        prerequisites: &["G-04"],
+        selectors: &[Story, Constraints],
+    },
+];
+
 pub struct GateRegistry;
 
 impl GateRegistry {
@@ -379,6 +596,16 @@ impl GateRegistry {
 
     pub fn get(id: &str) -> Option<&'static GateSpec> {
         GATES.iter().find(|gate| gate.id == id)
+    }
+
+    /// Incremental dependency declarations for every registered Gate.
+    pub const fn dependencies() -> &'static [GateDependencySpec; GATE_COUNT] {
+        &GATE_DEPENDENCIES
+    }
+
+    /// Returns the incremental dependency declaration of one Gate.
+    pub fn dependency_spec(id: &str) -> Option<&'static GateDependencySpec> {
+        GATE_DEPENDENCIES.iter().find(|spec| spec.gate == id)
     }
 }
 

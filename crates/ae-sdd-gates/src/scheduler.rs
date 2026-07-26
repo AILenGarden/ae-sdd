@@ -1,18 +1,18 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Condvar, Mutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
 
 use ae_sdd_domain::{
-    CancellationCode, ErrorCode, GateCancellation, GateError, GateKey, GateKeyDigest, GateOutcome,
-    GateResult, GateTimeout,
+    CancellationCode, ErrorCode, GateCancellation, GateError, GateId, GateKey, GateKeyDigest,
+    GateOutcome, GateResult, GateTimeout,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -92,6 +92,20 @@ impl GateFreshnessSource for EchoFreshness {
     }
 }
 
+/// Point-in-time scheduler counters. `gates_evaluated` counts real executor
+/// invocations: a long-lived scheduler must keep it flat while Gate keys stay
+/// unchanged, which is the observable proof that fresh outcomes are reused.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GateSchedulerStats {
+    /// Runs answered from the completed-outcome cache.
+    pub cache_hits: u64,
+    /// Runs that had to start or join an in-flight evaluation.
+    pub cache_misses: u64,
+    /// Times the executor was actually invoked (cache hits, unknown Gates and
+    /// pre-cancelled runs excluded).
+    pub gates_evaluated: u64,
+}
+
 pub struct GateScheduler<E: GateExecutor, F: GateFreshnessSource> {
     inner: Arc<SchedulerInner<E, F>>,
 }
@@ -109,11 +123,19 @@ struct SchedulerInner<E: GateExecutor, F: GateFreshnessSource> {
     freshness: F,
     cache: Mutex<GateCache>,
     flights: Mutex<BTreeMap<GateKeyDigest, Arc<Flight>>>,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+    gates_evaluated: AtomicU64,
+}
+
+struct CacheEntry {
+    gate_id: GateId,
+    outcome: GateOutcome,
 }
 
 struct GateCache {
     capacity: NonZeroUsize,
-    entries: BTreeMap<GateKeyDigest, GateOutcome>,
+    entries: BTreeMap<GateKeyDigest, CacheEntry>,
     order: VecDeque<GateKeyDigest>,
 }
 
@@ -127,13 +149,13 @@ impl GateCache {
     }
 
     fn get(&mut self, key: GateKeyDigest) -> Option<GateOutcome> {
-        let outcome = self.entries.get(&key).cloned()?;
+        let outcome = self.entries.get(&key)?.outcome.clone();
         self.promote(key);
         Some(outcome)
     }
 
-    fn insert(&mut self, key: GateKeyDigest, outcome: GateOutcome) {
-        self.entries.insert(key, outcome);
+    fn insert(&mut self, key: GateKeyDigest, gate_id: GateId, outcome: GateOutcome) {
+        self.entries.insert(key, CacheEntry { gate_id, outcome });
         self.promote(key);
         while self.entries.len() > self.capacity.get() {
             let Some(oldest) = self.order.pop_front() else {
@@ -147,6 +169,23 @@ impl GateCache {
         let removed = self.entries.remove(key).is_some();
         if removed {
             self.order.retain(|candidate| candidate != key);
+        }
+        removed
+    }
+
+    fn remove_gates(&mut self, gate_ids: &BTreeSet<&str>) -> usize {
+        let stale: Vec<GateKeyDigest> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| gate_ids.contains(entry.gate_id.as_str()))
+            .map(|(key, _)| *key)
+            .collect();
+        let removed = stale.len();
+        for key in &stale {
+            self.entries.remove(key);
+        }
+        if removed > 0 {
+            self.order.retain(|candidate| !stale.contains(candidate));
         }
         removed
     }
@@ -199,6 +238,9 @@ impl<E: GateExecutor, F: GateFreshnessSource> GateScheduler<E, F> {
                 freshness,
                 cache: Mutex::new(GateCache::new(cache_capacity)),
                 flights: Mutex::new(BTreeMap::new()),
+                cache_hits: AtomicU64::new(0),
+                cache_misses: AtomicU64::new(0),
+                gates_evaluated: AtomicU64::new(0),
             }),
         }
     }
@@ -209,8 +251,10 @@ impl<E: GateExecutor, F: GateFreshnessSource> GateScheduler<E, F> {
         }
         let digest = canonical_gate_key_digest(&request.key);
         if let Some(outcome) = lock(&self.inner.cache).get(digest) {
+            self.inner.cache_hits.fetch_add(1, Ordering::Relaxed);
             return self.normalize(request.key, outcome);
         }
+        self.inner.cache_misses.fetch_add(1, Ordering::Relaxed);
 
         let (flight, leader) = {
             let mut flights = lock(&self.inner.flights);
@@ -244,12 +288,32 @@ impl<E: GateExecutor, F: GateFreshnessSource> GateScheduler<E, F> {
         keys.into_iter().filter(|key| cache.remove(key)).count()
     }
 
+    /// Drops every cached outcome belonging to one of `gate_ids`, regardless
+    /// of the key digest it was recorded under. Used by incremental
+    /// selector-based invalidation.
+    pub fn invalidate_gates<'a>(&self, gate_ids: impl IntoIterator<Item = &'a str>) -> usize {
+        let gate_ids: BTreeSet<&str> = gate_ids.into_iter().collect();
+        if gate_ids.is_empty() {
+            return 0;
+        }
+        lock(&self.inner.cache).remove_gates(&gate_ids)
+    }
+
     pub fn cache_len(&self) -> usize {
         lock(&self.inner.cache).len()
     }
 
     pub fn inflight_len(&self) -> usize {
         lock(&self.inner.flights).len()
+    }
+
+    /// Snapshot of the cumulative scheduler counters.
+    pub fn stats(&self) -> GateSchedulerStats {
+        GateSchedulerStats {
+            cache_hits: self.inner.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.inner.cache_misses.load(Ordering::Relaxed),
+            gates_evaluated: self.inner.gates_evaluated.load(Ordering::Relaxed),
+        }
     }
 
     fn spawn(
@@ -266,6 +330,7 @@ impl<E: GateExecutor, F: GateFreshnessSource> GateScheduler<E, F> {
             let outcome = if cancellation.is_cancelled() {
                 cancellation.outcome()
             } else if let Some(specification) = GateRegistry::get(key.gate_id().as_str()) {
+                inner.gates_evaluated.fetch_add(1, Ordering::Relaxed);
                 match catch_unwind(AssertUnwindSafe(|| {
                     inner.executor.evaluate(specification, &key, &cancellation)
                 })) {
@@ -291,7 +356,7 @@ impl<E: GateExecutor, F: GateFreshnessSource> GateScheduler<E, F> {
             };
 
             if matches!(outcome, GateOutcome::Pass | GateOutcome::Fail(_)) {
-                lock(&inner.cache).insert(digest, outcome.clone());
+                lock(&inner.cache).insert(digest, key.gate_id().clone(), outcome.clone());
             }
             *lock(&flight.state) = Some(outcome);
             flight.completed.notify_all();
@@ -592,5 +657,54 @@ mod tests {
         let result = thread.join().expect("caller thread");
         assert!(matches!(result.outcome(), GateOutcome::Cancelled(_)));
         assert_eq!(scheduler.cache_len(), 0);
+    }
+
+    #[test]
+    fn invalidate_gates_drops_only_matching_gate_entries() {
+        let scheduler = GateScheduler::new(
+            CountingExecutor {
+                calls: AtomicUsize::new(0),
+                delay: Duration::ZERO,
+                outcome: GateOutcome::Pass,
+            },
+            EchoFreshness,
+        );
+        for gate in ["G-13", "G-14"] {
+            let result = scheduler.run(
+                GateRunRequest::new(
+                    tests_support::gate_key(gate, 1),
+                    Duration::from_millis(250),
+                    CancellationToken::caller(),
+                )
+                .expect("valid request"),
+            );
+            assert!(matches!(result.outcome(), GateOutcome::Pass));
+        }
+        assert_eq!(scheduler.cache_len(), 2);
+        assert_eq!(scheduler.stats().gates_evaluated, 2);
+        assert_eq!(scheduler.invalidate_gates(["G-99"]), 0);
+
+        assert_eq!(scheduler.invalidate_gates(["G-14"]), 1);
+        assert_eq!(scheduler.cache_len(), 1);
+
+        for gate in ["G-13", "G-14"] {
+            let result = scheduler.run(
+                GateRunRequest::new(
+                    tests_support::gate_key(gate, 1),
+                    Duration::from_millis(250),
+                    CancellationToken::caller(),
+                )
+                .expect("valid request"),
+            );
+            assert!(matches!(result.outcome(), GateOutcome::Pass));
+        }
+
+        let stats = scheduler.stats();
+        assert_eq!(
+            stats.gates_evaluated, 3,
+            "only the invalidated Gate re-evaluates"
+        );
+        assert_eq!(stats.cache_hits, 1, "the untouched Gate stays cached");
+        assert_eq!(stats.cache_misses, 3);
     }
 }
