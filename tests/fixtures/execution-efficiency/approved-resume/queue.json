@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "ae-sdd-execution-queue/v1",
+  "fixtureId": "execution-efficiency/approved-resume",
+  "classification": "preserve",
+  "owner": "STORY-AE-SDD-EXECUTION-CAPSULE-001",
+  "source": ".hermes/plans/2026-07-27_005020-ae-sdd-execution-efficiency.md#task-1",
+  "workItemId": "PRD-AE-SDD-EXECUTION-EFFICIENCY-001",
+  "storyId": "STORY-AE-SDD-EXECUTION-CAPSULE-001",
+  "approvedPlanDigest": "sha256:8c2154d405858fdadf44710cb96aed8db60ad0b78d0541802180a668e6419b5d",
+  "totalSlices": 3,
+  "completedSlices": 0,
+  "activeOrdinal": 1,
+  "slices": [
+    {
+      "sliceId": "slice-contract",
+      "ordinal": 1,
+      "kind": "contract",
+      "objective": "冻结 ExecutionCapsule/ExecutionSlice v1 contracts，并实现纯 capsule builder 与 slice transition（plan P0 Task 2-3）",
+      "dependsOn": [],
+      "pathScope": [
+        "crates/ae-sdd-domain/src/ids.rs",
+        "crates/ae-sdd-contracts/src/execution_runtime.rs",
+        "crates/ae-sdd-contracts/tests/execution_capsule_contract.rs",
+        "crates/ae-sdd-execution/src/capsule.rs",
+        "crates/ae-sdd-execution/src/slice.rs"
+      ],
+      "sourceReads": [],
+      "focusedVerificationId": "V-EFF-001b",
+      "broadVerificationIds": ["V-EFF-001c"],
+      "evidenceLogicalKey": "execution-capsule/slice-contract"
+    },
+    {
+      "sliceId": "slice-runtime-wiring",
+      "ordinal": 2,
+      "kind": "runtime-wiring",
+      "objective": "接入 FlowRuntime 执行 nextAction、operation registry/稳定错误与 authoritative execution.resume（plan P0 Task 4-6）",
+      "dependsOn": ["slice-contract"],
+      "pathScope": [
+        "crates/ae-sdd-flow/src/runtime.rs",
+        "crates/ae-sdd-operations/src/registry.rs",
+        "crates/ae-sdd-protocol/src/error.rs",
+        "crates/ae-sdd-integrations/src/execution_authority.rs"
+      ],
+      "sourceReads": [],
+      "focusedVerificationId": "V-EFF-005a",
+      "broadVerificationIds": ["V-EFF-006a", "V-EFF-003"],
+      "evidenceLogicalKey": "execution-capsule/slice-runtime-wiring"
+    },
+    {
+      "sliceId": "slice-process-test",
+      "ordinal": 3,
+      "kind": "process-test",
+      "objective": "落地 capsule full/delta/no-change 投影，并完成 P0 进程级 E2E 与性能门槛（plan P0 Task 7、Task 13）",
+      "dependsOn": ["slice-runtime-wiring"],
+      "pathScope": [
+        "crates/ae-sdd-context/src/projection.rs",
+        "bins/ae-sdd-daemon/tests/execution_efficiency_process.rs",
+        "tools/tests/test_execution_efficiency_metrics.py"
+      ],
+      "sourceReads": [],
+      "focusedVerificationId": "V-EFF-002",
+      "broadVerificationIds": ["V-EFF-001a"],
+      "evidenceLogicalKey": "execution-capsule/slice-process-test"
+    }
+  ],
+  "budgets": {
+    "maxCapsuleBytes": 16384,
+    "maxToolOutputBytes": 65536,
+    "maxSourceReadBytesPerBatch": 24576,
+    "maxSourceFilesPerBatch": 12,
+    "inspectionCallsPerBatch": 4,
+    "maxNoProgressBatches": 3,
+    "maxAuthorityRefreshesPerResume": 1
+  }
+}

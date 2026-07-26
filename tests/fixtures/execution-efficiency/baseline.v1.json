@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "ae-sdd-execution-efficiency-baseline/v1",
+  "fixtureId": "execution-efficiency/baseline",
+  "classification": "preserve",
+  "owner": "PRD-AE-SDD-EXECUTION-EFFICIENCY-001",
+  "source": ".hermes/plans/2026-07-27_005020-ae-sdd-execution-efficiency.md#5-成功指标",
+  "phase": "P0",
+  "metrics": {
+    "resumeToFirstPatchMs": {
+      "threshold": 300000,
+      "direction": "lte",
+      "unit": "ms"
+    },
+    "fullCapsuleBytes": {
+      "threshold": 16384,
+      "direction": "lte",
+      "unit": "bytes"
+    },
+    "noChangeResponseBytes": {
+      "threshold": 1024,
+      "direction": "lte",
+      "unit": "bytes"
+    },
+    "authorityRefreshesPerResume": {
+      "threshold": 1,
+      "direction": "lte",
+      "unit": "count"
+    },
+    "maxConsecutiveNoProgressBatches": {
+      "threshold": 3,
+      "direction": "lte",
+      "unit": "count"
+    },
+    "broadTestsBeforeFocusedGreen": {
+      "threshold": 0,
+      "direction": "eq",
+      "unit": "count"
+    },
+    "inPlanReapprovalRate": {
+      "threshold": 0.05,
+      "direction": "lte",
+      "unit": "ratio"
+    },
+    "gateFreshCacheHitRate": {
+      "threshold": 0.6,
+      "direction": "gte",
+      "unit": "ratio"
+    },
+    "repeatedSourceReadBytesReduction": {
+      "threshold": 0.5,
+      "direction": "gte",
+      "unit": "ratio"
+    },
+    "goldenTraceTokenReduction": {
+      "threshold": 0.4,
+      "direction": "gte",
+      "unit": "ratio"
+    },
+    "requestBodyTimeouts": {
+      "threshold": 0,
+      "direction": "eq",
+      "unit": "count"
+    }
+  }
+}

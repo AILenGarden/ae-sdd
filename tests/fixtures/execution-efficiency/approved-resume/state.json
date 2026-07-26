@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "ae-sdd-execution-fixture-state/v1",
+  "fixtureId": "execution-efficiency/approved-resume",
+  "classification": "preserve",
+  "owner": "STORY-AE-SDD-EXECUTION-CAPSULE-001",
+  "source": ".hermes/plans/2026-07-27_005020-ae-sdd-execution-efficiency.md#task-1",
+  "workItemId": "PRD-AE-SDD-EXECUTION-EFFICIENCY-001",
+  "storyId": "STORY-AE-SDD-EXECUTION-CAPSULE-001",
+  "revision": 12,
+  "executionPlan": {
+    "status": "approved",
+    "planDigest": "sha256:8c2154d405858fdadf44710cb96aed8db60ad0b78d0541802180a668e6419b5d",
+    "changedPaths": [
+      "tests/fixtures/execution-efficiency",
+      "crates/ae-sdd-contracts/src/execution_runtime.rs",
+      "crates/ae-sdd-execution/src",
+      "crates/ae-sdd-flow/src",
+      "crates/ae-sdd-integrations/src/execution_authority.rs"
+    ]
+  },
+  "executionRuntime": {
+    "schemaVersion": 1,
+    "capsuleRef": ".auto-engineering/PRD-AE-SDD-EXECUTION-EFFICIENCY-001/execution/capsule.json",
+    "capsuleDigest": "sha256:dcc847246f3c417901a94dd303163cde29414f89c31361f8f3ae6affe5b97e64",
+    "queueRef": ".auto-engineering/PRD-AE-SDD-EXECUTION-EFFICIENCY-001/execution/queue.json",
+    "queueDigest": "sha256:287c106830c8cdaf55bc3465553514dcdb86aa6d49b666cf34a0b75ef2885504",
+    "ledgerRef": ".auto-engineering/PRD-AE-SDD-EXECUTION-EFFICIENCY-001/execution/ledger.jsonl",
+    "ledgerDigest": "sha256:26f79af0d174fc9628265859ad379c34f6d0a704febe82a622d765b5651b5bd6",
+    "activeSliceOrdinal": 1,
+    "completionMilestone": "none"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "ae-sdd-execution-context/v1",
+  "fixtureId": "execution-efficiency/approved-resume",
+  "classification": "preserve",
+  "owner": "STORY-AE-SDD-EXECUTION-CAPSULE-001",
+  "source": ".hermes/plans/2026-07-27_005020-ae-sdd-execution-efficiency.md#task-1",
+  "workItemId": "PRD-AE-SDD-EXECUTION-EFFICIENCY-001",
+  "storyId": "STORY-AE-SDD-EXECUTION-CAPSULE-001",
+  "contextRevision": 4,
+  "approvedPlanDigest": "sha256:8c2154d405858fdadf44710cb96aed8db60ad0b78d0541802180a668e6419b5d",
+  "policyDigest": "sha256:dce8bd093ae533829074004b5b4697b318194aeba35e23556700ecad4de50074",
+  "inventoryGeneration": 3,
+  "requiredContextRefs": {
+    "storyRef": {
+      "artifact": "ae-sdd-doc/Story/STORY-AE-SDD-EXECUTION-CAPSULE-001.md",
+      "digest": "sha256:8be5e744d3a4952b4eb70f92d201bb8195b10e3a44ec23faf0fd11efd5040991"
+    },
+    "constraintsRef": {
+      "artifact": "constraints",
+      "digest": "sha256:ca6ea3b0bb7a538e31b83964d25b99dcb2b0deee74f10626b077723ba852b62e"
+    },
+    "thinkingEngineRef": {
+      "artifact": "source/standards/thinking/be-coding-thinking-engine.md",
+      "digest": "sha256:d4a4ee46ad8c929438c10e87825eb45b1c41aa4ef85d5816711676ea3f121043"
+    },
+    "verificationRef": {
+      "artifact": "ae-sdd-doc/Story/STORY-AE-SDD-EXECUTION-CAPSULE-001.md#verification-matrix",
+      "digest": "sha256:2be192821df66b8ab6a0436fc16d8333035a81db8b0648076a9f0dad3f545730"
+    }
+  }
+}
