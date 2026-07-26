@@ -611,3 +611,153 @@ def find_reusable(project_dir: Path, story_id: str, *, input_fingerprint: str,
                        toolchain_fingerprint=toolchain_fingerprint, project_dir=project_dir):
             return entry
     return None
+
+
+# --- Append-only evidence ledger (migration oracle parity) -------------------
+#
+# The ledger is the evidence truth: one canonical JSON event per line forming a
+# hash chain.  ``manifest.json`` is only the deterministic active projection of
+# the ledger.  These helpers mirror the Rust contract
+# ``EvidenceLedgerEventV1`` byte-for-byte: canonical JSON means UTF-8,
+# sorted keys, compact separators and unescaped non-ASCII; digests are plain
+# 64-character lowercase hex without a ``sha256:`` prefix.  Production Rust
+# never calls this module; it exists so the migration oracle can verify the
+# same ledger and projection rules.
+
+LEDGER_EVENT_KINDS = ("recorded", "superseded", "finalized", "invalidated")
+
+
+def ledger_path(project_dir: Path, story_id: str) -> Path:
+    return project_dir / ".auto-engineering" / story_id / "evidence" / "ledger.jsonl"
+
+
+def event_digest(event: dict) -> str:
+    """Return the hash-chain digest: sha256 over the canonical event without ``eventDigest``."""
+    preimage = {key: value for key, value in event.items() if key != "eventDigest"}
+    return hashlib.sha256(_canonical(preimage)).hexdigest()
+
+
+def make_event(sequence: int, event_id: str, kind: str, logical_key: str,
+               input_fingerprint: str, artifact_refs: Optional[list] = None,
+               previous_event_digest: Optional[str] = None) -> dict:
+    """Build one canonical ledger event, computing its hash-chain digest."""
+    if kind not in LEDGER_EVENT_KINDS:
+        raise ValueError(f"evidence ledger event kind is unknown: {kind}")
+    event = {
+        "sequence": int(sequence),
+        "eventId": str(event_id),
+        "kind": kind,
+        "logicalKey": str(logical_key),
+        "inputFingerprint": str(input_fingerprint),
+        "artifactRefs": [
+            {
+                "kind": str(ref["kind"]),
+                "path": str(ref["path"]),
+                "digest": str(ref["digest"]),
+                "byteLength": int(ref["byteLength"]),
+            }
+            for ref in (artifact_refs or [])
+        ],
+        "previousEventDigest": previous_event_digest or None,
+    }
+    event["eventDigest"] = event_digest(event)
+    return event
+
+
+def canonical_event_line(event: dict) -> str:
+    """Return the canonical JSONL line (without the trailing newline)."""
+    return _canonical(event).decode("utf-8")
+
+
+def verify_ledger(events) -> list:
+    """Fail closed unless the events form one contiguous untampered hash chain."""
+    verified = []
+    previous = None
+    for index, event in enumerate(events):
+        sequence = index + 1
+        if int(event.get("sequence") or 0) != sequence:
+            raise ValueError(f"evidence ledger sequence gap at {sequence}")
+        if event.get("kind") not in LEDGER_EVENT_KINDS:
+            raise ValueError(f"evidence ledger event kind is unknown: {event.get('kind')}")
+        declared_previous = event.get("previousEventDigest") or None
+        if sequence == 1:
+            if declared_previous is not None:
+                raise ValueError(
+                    "evidence ledger genesis event must not reference a previous digest")
+        elif declared_previous != previous:
+            raise ValueError(f"evidence ledger chain link is broken at sequence {sequence}")
+        if event_digest(event) != event.get("eventDigest"):
+            raise ValueError(f"evidence ledger event digest mismatch at sequence {sequence}")
+        verified.append(event)
+        previous = event.get("eventDigest")
+    return verified
+
+
+def parse_ledger(text: str) -> list:
+    """Parse and verify canonical JSONL ledger text, failing closed on tampering."""
+    events = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if line != canonical_event_line(event):
+            raise ValueError("evidence ledger event is not canonical JSON")
+        events.append(event)
+    if text and not text.endswith("\n"):
+        raise ValueError("evidence ledger is truncated")
+    return verify_ledger(events)
+
+
+def project_entries(events, entry_payloads: dict, residue=()) -> list:
+    """Fold ledger events into the deterministic active manifest projection.
+
+    ``entry_payloads`` maps a recorded ``eventId`` to the full entry payload the
+    event binds (stored as a content-addressed artifact in production).
+    ``residue`` holds non-ledger entries (legacy or toolset receipts) that stay
+    verbatim at the head of the projection and are never rewritten in place.
+    """
+    entries = [dict(entry) for entry in residue]
+
+    def _active_index(logical_key: str) -> Optional[int]:
+        for position in range(len(entries) - 1, -1, -1):
+            entry = entries[position]
+            if (entry.get("status") or "active") == "active" \
+                    and entry.get("logicalKey") == logical_key:
+                return position
+        return None
+
+    for index, event in enumerate(events):
+        kind = event["kind"]
+        if kind == "recorded":
+            payload = entry_payloads.get(event["eventId"])
+            if payload is None:
+                raise ValueError(
+                    f"evidence ledger recorded event has no entry payload: {event['eventId']}")
+            entry = dict(payload)
+            entry["status"] = "active"
+            entries.append(entry)
+        elif kind in {"superseded", "invalidated"}:
+            position = _active_index(str(event.get("logicalKey") or ""))
+            if position is None:
+                raise ValueError(
+                    f"evidence ledger {kind} event has no active entry: {event.get('logicalKey')}")
+            entries[position]["status"] = "superseded" if kind == "superseded" else "invalidated"
+            if kind == "superseded":
+                successor = next(
+                    (later["eventId"] for later in events[index + 1:]
+                     if later["kind"] == "recorded"
+                     and later.get("logicalKey") == event.get("logicalKey")),
+                    None,
+                )
+                if successor is not None:
+                    entries[position]["supersededBy"] = successor
+        # ``finalized`` binds the projection digest and never alters entries.
+    return entries
+
+
+def rebuild_manifest(story_id: str, entries) -> dict:
+    """Rebuild the sealed manifest projection from ledger-derived entries."""
+    manifest = {"schemaVersion": 1, "storyId": story_id,
+                "entries": [dict(entry) for entry in entries]}
+    manifest["contentHash"] = manifest_content_hash(manifest)
+    return manifest

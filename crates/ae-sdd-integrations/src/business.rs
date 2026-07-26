@@ -1595,6 +1595,9 @@ struct ProjectBackend<'a> {
 struct PreparedSemanticMutation {
     data: Value,
     targets: Vec<evidence::SemanticTarget>,
+    /// `evidenceAuthority` state projection (ledger/manifest locator + digest)
+    /// produced by evidence mutations.
+    evidence_authority: Option<Value>,
     review: Option<Value>,
     review_session: Option<Value>,
     review_binding: Option<PreparedReviewBinding>,
@@ -1641,6 +1644,7 @@ impl PreparedSemanticMutation {
         Self {
             data,
             targets: Vec::new(),
+            evidence_authority: None,
             review: None,
             review_session: None,
             review_binding: None,
@@ -1649,9 +1653,10 @@ impl PreparedSemanticMutation {
         }
     }
 
-    fn with_targets(data: Value, targets: Vec<evidence::SemanticTarget>) -> Self {
+    fn with_targets(data: Value, targets: Vec<evidence::SemanticTarget>, authority: Value) -> Self {
         Self {
             targets,
+            evidence_authority: Some(authority),
             ..Self::plain(data)
         }
     }
@@ -2895,6 +2900,7 @@ fn prepare_semantic_mutation(
             Ok(Some(PreparedSemanticMutation::with_targets(
                 prepared.result,
                 prepared.targets,
+                prepared.authority,
             )))
         }
         OperationName::EvidenceFinalize => {
@@ -2905,6 +2911,7 @@ fn prepare_semantic_mutation(
             Ok(Some(PreparedSemanticMutation::with_targets(
                 prepared.result,
                 prepared.targets,
+                prepared.authority,
             )))
         }
         OperationName::VerificationPlan => {
@@ -3050,6 +3057,7 @@ fn prepare_semantic_mutation(
             Ok(Some(PreparedSemanticMutation {
                 data: review.clone(),
                 targets: Vec::new(),
+                evidence_authority: None,
                 review: Some(review),
                 review_session: Some(prepared.review_session.clone()),
                 review_binding: Some(PreparedReviewBinding {
@@ -3110,6 +3118,7 @@ fn evidence_error(error: evidence::EvidenceError) -> RuntimeError {
         error,
         evidence::EvidenceError::InvalidManifest(_)
             | evidence::EvidenceError::ManifestTampered
+            | evidence::EvidenceError::LedgerTampered(_)
             | evidence::EvidenceError::SnapshotInvalid(_)
             | evidence::EvidenceError::Io(_)
     );
@@ -3172,7 +3181,14 @@ fn apply_mutation(
                 prepared_data(semantic, "execution plan approval was not prepared")?.clone(),
             );
         }
-        OperationName::EvidenceRecord | OperationName::EvidenceFinalize => {}
+        OperationName::EvidenceRecord | OperationName::EvidenceFinalize => {
+            let prepared = semantic.ok_or_else(|| schema_error("evidence was not prepared"))?;
+            let authority = prepared
+                .evidence_authority
+                .clone()
+                .ok_or_else(|| schema_error("evidence authority projection was not prepared"))?;
+            root_state_object_mut(state)?.insert("evidenceAuthority".to_owned(), authority);
+        }
         OperationName::ReviewRecord => {
             let prepared = semantic.ok_or_else(|| schema_error("review was not prepared"))?;
             let review_session = prepared

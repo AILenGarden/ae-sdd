@@ -192,3 +192,118 @@ def test_artifact_invalidation_uses_input_fingerprint_edges():
     )
     assert [item["artifact"] for item in plan["invalidated"]] == ["CodingPlan"]
     assert [item["artifact"] for item in plan["retained"]] == ["MavenEvidence"]
+
+
+# --- Append-only evidence ledger parity with the Rust contract ---------------
+
+GOLDEN_EVENT_DIGEST = "f413824b8d196be69690e917fe65ef5291e6dc49d68dea750cd306172b355e56"
+
+
+def _golden_event():
+    return evidence.make_event(
+        1,
+        "ev-golden-00000001",
+        "recorded",
+        "tests/golden",
+        "1" * 64,
+        [{
+            "kind": "evidence-entry",
+            "path": ".auto-engineering/STORY-GOLDEN/evidence/entries/entry.json",
+            "digest": "2" * 64,
+            "byteLength": 128,
+        }],
+        None,
+    )
+
+
+def test_evidence_ledger_golden_event_digest_matches_the_rust_contract():
+    event = _golden_event()
+    assert event["eventDigest"] == GOLDEN_EVENT_DIGEST
+    line = evidence.canonical_event_line(event)
+    assert line.startswith('{"artifactRefs":[{"byteLength":128,')
+    assert '"previousEventDigest":null' in line
+    parsed = evidence.parse_ledger(line + "\n")
+    assert parsed == [event]
+
+
+def test_evidence_ledger_chain_links_events_and_detects_tampering():
+    first = _golden_event()
+    second = evidence.make_event(2, "ev-second", "superseded", "tests/golden", "3" * 64, [],
+                                 first["eventDigest"])
+    third = evidence.make_event(3, "ev-third", "recorded", "tests/golden", "3" * 64, [],
+                                second["eventDigest"])
+    assert [event["sequence"] for event in evidence.verify_ledger([first, second, third])] == [1, 2, 3]
+
+    tampered_digest = dict(second, logicalKey="tests/rewritten")
+    try:
+        evidence.verify_ledger([first, tampered_digest, third])
+        assert False, "a rewritten historical event must fail verification"
+    except ValueError:
+        pass
+    broken_link = dict(third, previousEventDigest="0" * 64)
+    try:
+        evidence.verify_ledger([first, second, broken_link])
+        assert False, "a broken chain link must fail verification"
+    except ValueError:
+        pass
+    try:
+        evidence.verify_ledger([second])
+        assert False, "a non-contiguous sequence must fail verification"
+    except ValueError:
+        pass
+    try:
+        evidence.verify_ledger([dict(first, previousEventDigest="0" * 64)])
+        assert False, "a genesis event must not reference a previous digest"
+    except ValueError:
+        pass
+    try:
+        evidence.parse_ledger(evidence.canonical_event_line(first) + " \n")
+        assert False, "a non-canonical ledger line must fail verification"
+    except ValueError:
+        pass
+
+
+def test_evidence_ledger_projection_supersede_finalize_and_rebuild():
+    first_entry = {
+        "evidenceId": "ev-1", "kind": "test", "logicalKey": "tests/core",
+        "inputFingerprint": "1" * 64, "exitCode": 0, "reusable": True, "artifacts": [],
+    }
+    second_entry = dict(first_entry, evidenceId="ev-3", inputFingerprint="3" * 64)
+    recorded = evidence.make_event(1, "ev-1", "recorded", "tests/core", "1" * 64, [], None)
+    superseded = evidence.make_event(2, "ev-2", "superseded", "tests/core", "3" * 64, [],
+                                     recorded["eventDigest"])
+    replacement = evidence.make_event(3, "ev-3", "recorded", "tests/core", "3" * 64, [],
+                                      superseded["eventDigest"])
+    finalized = evidence.make_event(4, "ev-4", "finalized", "", "4" * 64, [],
+                                    replacement["eventDigest"])
+    events = evidence.verify_ledger([recorded, superseded, replacement, finalized])
+    payloads = {"ev-1": first_entry, "ev-3": second_entry}
+
+    entries = evidence.project_entries(events, payloads)
+    assert [entry["evidenceId"] for entry in entries] == ["ev-1", "ev-3"]
+    assert entries[0]["status"] == "superseded"
+    assert entries[0]["supersededBy"] == "ev-3"
+    assert entries[1]["status"] == "active"
+    assert evidence.project_entries(events, payloads) == entries, "projection is deterministic"
+
+    manifest = evidence.rebuild_manifest("STORY-001", entries)
+    assert manifest["contentHash"] == evidence.manifest_content_hash(manifest)
+    assert evidence.rebuild_manifest("STORY-001", entries) == manifest, "rebuild is byte-stable"
+
+    dangling = evidence.make_event(1, "ev-x", "superseded", "tests/missing", "5" * 64, [], None)
+    try:
+        evidence.project_entries([dangling], {})
+        assert False, "a supersede without an active entry must fail closed"
+    except ValueError:
+        pass
+
+
+def test_evidence_ledger_projection_preserves_legacy_residue_verbatim():
+    legacy_entry = {"evidenceId": "ev-legacy", "kind": "test", "inputFingerprint": "i1",
+                    "exitCode": 0, "reusable": True, "artifacts": []}
+    recorded = evidence.make_event(1, "ev-1", "recorded", "tests/core", "1" * 64, [], None)
+    entries = evidence.project_entries([recorded], {"ev-1": {"evidenceId": "ev-1"}},
+                                       residue=[legacy_entry])
+    assert entries[0] == legacy_entry
+    assert "status" not in entries[0]
+    assert entries[1]["status"] == "active"

@@ -9,6 +9,7 @@
 
 pub mod compact;
 pub mod error;
+pub mod evidence;
 pub mod execution;
 pub mod execution_runtime;
 pub mod host;
@@ -24,6 +25,10 @@ mod value;
 
 pub use error::{
     ContractValidationError, ControlPlaneError, ControlPlaneErrorCode, Remediation, RetryClass,
+};
+pub use evidence::{
+    EvidenceLedgerError, EvidenceLedgerEventKind, EvidenceLedgerEventV1, MAX_LEDGER_ARTIFACT_REFS,
+    MAX_LEDGER_EVENTS,
 };
 pub use lifecycle::{
     ConfirmationRequirement, EventIntent, FileLockSnapshot, LifecycleCommand, LifecycleDisposition,
