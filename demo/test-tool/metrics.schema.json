@@ -1,0 +1,870 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ae-sdd.local/demo/test-tool/metrics.schema.json",
+  "title": "ae-sdd capability test metrics (test-tool)",
+  "description": "每次跑完 ae-sdd 能力测试后落地的指标 JSON。文件命名：metrics-<STORY-ID>-run<N>.json。配套评分卡：EVALUATION.md；配套需求：ae-sdd-doc/RA/RA-AE-SDD-CAPABILITY-TEST-TEST-TOOL.md。",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "runMeta",
+    "complianceScore",
+    "capabilityCoverage",
+    "qualityScore",
+    "efficiency",
+    "artifacts",
+    "totalScore"
+  ],
+  "additionalProperties": false,
+
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "ae-sdd.capabilityMetrics.test-tool.v1",
+      "description": "固定值，便于后续 schema 演进时区分。"
+    },
+
+    "runMeta": {
+      "type": "object",
+      "description": "本次运行的元信息。",
+      "required": [
+        "storyId",
+        "runIndex",
+        "operator",
+        "startedAt",
+        "finishedAt",
+        "aeSddVersion",
+        "hostAgent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "storyId": {
+          "type": "string",
+          "pattern": "^STORY-DEMO-TEST-TOOL-\\d{3}$",
+          "description": "本次跑用的 Story ID，递增。例如 STORY-DEMO-TEST-TOOL-001。"
+        },
+        "runIndex": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "同一 Story ID 的第几次跑（通常为 1）。"
+        },
+        "operator": {
+          "type": "string",
+          "description": "操作员标识（手动填，如 user:cc）。"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "/ae-sdd 触发的开始时间（ISO 8601 UTC）。"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Review 完成、采集结束的时间（ISO 8601 UTC）。"
+        },
+        "aeSddVersion": {
+          "type": "string",
+          "description": "ae-sdd skill 版本，取自 C:/Users/EDY/.zcode/skills/ae-sdd/SKILL.md frontmatter version 字段。"
+        },
+        "hostAgent": {
+          "type": "string",
+          "description": "宿主 agent 标识（如 ZCode / Claude Code / Codex / Mavis）。"
+        },
+        "modelId": {
+          "type": "string",
+          "description": "本次跑用的 LLM 模型 ID（如 glm-4.5 / claude-sonnet-4 / gpt-4o 等），用于横向对比模型能力。"
+        },
+        "baselineGitSha": {
+          "type": "string",
+          "description": "跑前的 git HEAD commit sha（用于锁定输入基线）。"
+        },
+        "baselineStateRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "跑前 .auto-engineering/<story>/state.json 的 revision 字段值。"
+        }
+      }
+    },
+
+    "complianceScore": {
+      "type": "object",
+      "description": "维度 A：流程合规性。配套 EVALUATION.md §2。",
+      "required": ["items", "redLineViolated", "rawTotal", "total"],
+      "additionalProperties": false,
+      "properties": {
+        "redLineViolated": {
+          "type": "boolean",
+          "description": "是否违反任一红线（A1/A6/A8/A9/A11）。true 则 total 强制为 0。"
+        },
+        "rawTotal": {
+          "type": "number",
+          "minimum": 0,
+          "description": "各项得分之和（含 A4 加分可超 100）。"
+        },
+        "total": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "min(rawTotal, 100)；若 redLineViolated 则为 0。"
+        },
+        "items": {
+          "type": "object",
+          "description": "维度 A 各检查项。",
+          "required": [
+            "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8",
+            "A9", "A10", "A11", "A12", "A13", "A14"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "A1": { "$ref": "#/$defs/checkItem" },
+            "A2": { "$ref": "#/$defs/checkItem" },
+            "A3": { "$ref": "#/$defs/checkItem" },
+            "A4": { "$ref": "#/$defs/checkItem" },
+            "A5": { "$ref": "#/$defs/checkItem" },
+            "A6": { "$ref": "#/$defs/checkItem" },
+            "A7": { "$ref": "#/$defs/checkItem" },
+            "A8": { "$ref": "#/$defs/checkItem" },
+            "A9": { "$ref": "#/$defs/checkItem" },
+            "A10": { "$ref": "#/$defs/checkItem" },
+            "A11": { "$ref": "#/$defs/checkItem" },
+            "A12": { "$ref": "#/$defs/checkItem" },
+            "A13": { "$ref": "#/$defs/checkItem" },
+            "A14": { "$ref": "#/$defs/checkItem" }
+          }
+        }
+      }
+    },
+
+    "capabilityCoverage": {
+      "type": "object",
+      "description": "维度 B：能力项覆盖度。配套 EVALUATION.md §3。",
+      "required": ["items", "total"],
+      "additionalProperties": false,
+      "properties": {
+        "total": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "各项得分之和（≤100）。"
+        },
+        "items": {
+          "type": "object",
+          "required": [
+            "B1", "B2", "B3", "B4", "B5", "B6",
+            "B7", "B8", "B9", "B10", "B11", "B12"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "B1": { "$ref": "#/$defs/checkItem" },
+            "B2": { "$ref": "#/$defs/checkItem" },
+            "B3": { "$ref": "#/$defs/checkItem" },
+            "B4": { "$ref": "#/$defs/checkItem" },
+            "B5": { "$ref": "#/$defs/checkItem" },
+            "B6": { "$ref": "#/$defs/checkItem" },
+            "B7": { "$ref": "#/$defs/checkItem" },
+            "B8": { "$ref": "#/$defs/checkItem" },
+            "B9": { "$ref": "#/$defs/checkItem" },
+            "B10": { "$ref": "#/$defs/checkItem" },
+            "B11": { "$ref": "#/$defs/checkItem" },
+            "B12": { "$ref": "#/$defs/checkItem" }
+          }
+        }
+      }
+    },
+
+    "qualityScore": {
+      "type": "object",
+      "description": "维度 C：完成度与质量。配套 EVALUATION.md §4。",
+      "required": [
+        "acRequired",
+        "acElective",
+        "boundaryCoverage",
+        "contractAlignment",
+        "engineeringQuality",
+        "requiredSubtotal",
+        "electiveSubtotal",
+        "capabilityCeiling",
+        "total",
+        "capabilityTier"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "total": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "= min(requiredSubtotal + electiveSubtotal, 100)。综合分用。"
+        },
+        "requiredSubtotal": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 80,
+          "description": "必修层得分 = AC必修 + 边界 + 契约 + 工程质量（满分 80）。"
+        },
+        "electiveSubtotal": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "选修 4 组加分之和（满分 30）。"
+        },
+        "capabilityCeiling": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "= electiveSubtotal。单独记录为模型能力上限指标。"
+        },
+        "capabilityTier": {
+          "type": "string",
+          "enum": ["basic", "intermediate", "advanced", "top"],
+          "description": "能力分档：0-7=basic, 8-15=intermediate, 16-23=advanced, 24-30=top。"
+        },
+        "acRequired": {
+          "type": "object",
+          "required": ["passed", "failed", "score", "maxScore"],
+          "additionalProperties": false,
+          "properties": {
+            "passed": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^AC-\\d{1,2}$" },
+              "description": "通过的必修 AC ID 列表（AC-1~AC-10）。"
+            },
+            "failed": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^AC-\\d{1,2}$" },
+              "description": "未通过的必修 AC ID 列表。"
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 40,
+              "description": "必修 AC 部分得分（含 AC-10 加分但不超过 40）。"
+            },
+            "maxScore": {
+              "type": "number",
+              "const": 40,
+              "description": "必修 AC 满分。"
+            }
+          }
+        },
+        "acElective": {
+          "type": "object",
+          "description": "选修层 4 组能力压测的完成情况。",
+          "required": ["groups", "deferredGroups"],
+          "additionalProperties": false,
+          "properties": {
+            "groups": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/electiveGroup" },
+              "description": "4 组选修（trait/generic/builder/serde）的完成情况。"
+            },
+            "deferredGroups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["group", "reason"],
+                "additionalProperties": false,
+                "properties": {
+                  "group": {
+                    "type": "string",
+                    "enum": ["trait", "generic", "builder", "serde"]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "ae-sdd 在 Story 里显式声明放弃的理由。空字符串表示未声明。"
+                  },
+                  "declaredInStory": {
+                    "type": "boolean",
+                    "description": "是否在 Story 里显式声明 deferred:true。未声明又不实现 = 半吊子，倒扣 1 分。"
+                  }
+                }
+              },
+              "description": "放弃的选修组清单（含理由）。"
+            }
+          }
+        },
+        "boundaryCoverage": {
+          "type": "object",
+          "required": ["covered", "count", "score"],
+          "additionalProperties": false,
+          "properties": {
+            "covered": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 12 },
+              "description": "覆盖的边界编号列表（对应 RA §6 的 1-12）。"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12,
+              "description": "覆盖的边界条数。"
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 15,
+              "description": "边界覆盖得分（每条 1.25 分，满分 15）。"
+            }
+          }
+        },
+        "contractAlignment": {
+          "type": "object",
+          "required": ["nameMismatches", "fieldMismatches", "wireSchemaGaps", "score"],
+          "additionalProperties": false,
+          "properties": {
+            "nameMismatches": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "struct/enum 名称与 RA §2 不一致的清单。"
+            },
+            "fieldMismatches": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "字段名/类型不一致的清单。"
+            },
+            "wireSchemaGaps": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "wire schema 缺失项（如缺 deny_unknown_fields）。"
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 15,
+              "description": "契约对齐得分（满分 15）。"
+            }
+          }
+        },
+        "engineeringQuality": {
+          "type": "object",
+          "required": [
+            "fmtCheckPassed",
+            "clippyWarnings",
+            "forbiddenPatterns",
+            "reviewFindings",
+            "score"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "fmtCheckPassed": {
+              "type": "boolean",
+              "description": "cargo fmt --check 是否通过。"
+            },
+            "clippyWarnings": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "cargo clippy -- -D warnings 的告警数（0 为通过）。"
+            },
+            "forbiddenPatterns": {
+              "type": "object",
+              "required": ["unsafeCount", "unwrapCount", "expectCount", "todoCount", "panicCount"],
+              "additionalProperties": false,
+              "properties": {
+                "unsafeCount": { "type": "integer", "minimum": 0 },
+                "unwrapCount": { "type": "integer", "minimum": 0 },
+                "expectCount": { "type": "integer", "minimum": 0 },
+                "todoCount": { "type": "integer", "minimum": 0 },
+                "panicCount": { "type": "integer", "minimum": 0 }
+              },
+              "description": "非 test 代码中禁止模式的出现次数。"
+            },
+            "reviewFindings": {
+              "type": "object",
+              "required": ["blocker", "major", "minor", "info"],
+              "additionalProperties": false,
+              "properties": {
+                "blocker": { "type": "integer", "minimum": 0 },
+                "major": { "type": "integer", "minimum": 0 },
+                "minor": { "type": "integer", "minimum": 0 },
+                "info": { "type": "integer", "minimum": 0 }
+              },
+              "description": "Review findings 各等级数量。"
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10,
+              "description": "工程质量得分（满分 10）。"
+            }
+          }
+        }
+      }
+    },
+
+    "efficiency": {
+      "type": "object",
+      "description": "维度 D：效率与资源指标。配套 EVALUATION.md §5。",
+      "required": [
+        "totalDurationMinutes",
+        "startedAt",
+        "finishedAt",
+        "phaseDurations",
+        "tokens",
+        "cost",
+        "code",
+        "turnCount",
+        "cliInvocations",
+        "stateRevisionDelta",
+        "gateBlocks",
+        "review",
+        "score",
+        "derived"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "totalDurationMinutes": {
+          "type": "number",
+          "minimum": 0,
+          "description": "总耗时（wall-clock 分钟）。"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "开始时间（ISO 8601 UTC）。"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "结束时间（ISO 8601 UTC）。"
+        },
+        "phaseDurations": {
+          "type": "object",
+          "description": "各阶段耗时（分钟）。0 表示该阶段未走（如中型任务可能没 DR）。",
+          "required": ["route", "ra", "dr", "story", "codingPlan", "coding", "test", "review"],
+          "additionalProperties": false,
+          "properties": {
+            "route": { "type": "number", "minimum": 0 },
+            "ra": { "type": "number", "minimum": 0 },
+            "dr": { "type": "number", "minimum": 0 },
+            "story": { "type": "number", "minimum": 0 },
+            "codingPlan": { "type": "number", "minimum": 0 },
+            "coding": { "type": "number", "minimum": 0 },
+            "test": { "type": "number", "minimum": 0 },
+            "review": { "type": "number", "minimum": 0 }
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "description": "Token 消耗。",
+          "required": ["input", "output", "total"],
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "累计 input token。"
+            },
+            "output": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "累计 output token。"
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "= input + output。"
+            },
+            "cached": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "prompt caching 命中的 token 数（无则填 0）。"
+            },
+            "contextWindowPeak": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "单轮最大上下文占用（无则填 0）。"
+            },
+            "inputOutputRatio": {
+              "type": "number",
+              "minimum": 0,
+              "description": "= output / input（产出密度）。input=0 时填 0。"
+            }
+          }
+        },
+        "cost": {
+          "type": "object",
+          "description": "成本估算（USD）。",
+          "required": ["totalUsd"],
+          "additionalProperties": false,
+          "properties": {
+            "modelName": {
+              "type": "string",
+              "description": "本次跑用的 LLM 模型（如 glm-4.5 / claude-sonnet-4）。"
+            },
+            "inputPricePerMillion": {
+              "type": "number",
+              "minimum": 0,
+              "description": "input 单价（USD / 1M token）。"
+            },
+            "outputPricePerMillion": {
+              "type": "number",
+              "minimum": 0,
+              "description": "output 单价（USD / 1M token）。"
+            },
+            "inputUsd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "= input token × inputPricePerMillion / 1_000_000。"
+            },
+            "outputUsd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "= output token × outputPricePerMillion / 1_000_000。"
+            },
+            "totalUsd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "= inputUsd + outputUsd。"
+            }
+          }
+        },
+        "code": {
+          "type": "object",
+          "description": "代码产出指标（跑完后用 tokei/cloc/git ls-files 统计）。",
+          "required": ["filesTotal", "locTotal"],
+          "additionalProperties": false,
+          "properties": {
+            "filesTotal": { "type": "integer", "minimum": 0 },
+            "filesContracts": { "type": "integer", "minimum": 0 },
+            "filesAlgorithm": { "type": "integer", "minimum": 0 },
+            "filesElective": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "pathfinder.rs/generic.rs/builder.rs/serde_impl.rs（选修产物）"
+            },
+            "filesTests": { "type": "integer", "minimum": 0 },
+            "locSrc": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "src/ 非空非注释行数。"
+            },
+            "locTests": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "tests/ 非空非注释行数。"
+            },
+            "locTotal": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "= locSrc + locTests。"
+            },
+            "testToCodeRatio": {
+              "type": "number",
+              "minimum": 0,
+              "description": "= locTests / locSrc（理想 ≥ 1.0）。locSrc=0 时填 0。"
+            },
+            "testCasesTotal": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "cargo test -- --list 统计的用例数。"
+            },
+            "testCasesPassed": { "type": "integer", "minimum": 0 },
+            "testCasesFailed": { "type": "integer", "minimum": 0 },
+            "testPassRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "= testCasesPassed / testCasesTotal × 100。无测试填 0。"
+            },
+            "unsafeBlocks": { "type": "integer", "minimum": 0 },
+            "unwrapCount": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "非 test 代码的 .unwrap() 数。"
+            },
+            "todoCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "turnCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "对话轮次数（一轮 user+assistant 算一轮）。"
+        },
+        "cliInvocations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ae-sdd CLI 调用次数（runtime-stats/<date>.jsonl 中本 story 相关行数）。"
+        },
+        "stateRevisionDelta": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "跑后 state.revision − 跑前 state.revision。"
+        },
+        "gateBlocks": {
+          "type": "object",
+          "required": ["count", "gateIds"],
+          "additionalProperties": false,
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "gate BLOCK 总次数（runtime-stats spans 中 allowed:false 计数）。"
+            },
+            "gateIds": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "BLOCK 涉及的 gate ID 列表（去重）。"
+            },
+            "totalRemediationMinutes": {
+              "type": "number",
+              "minimum": 0,
+              "description": "所有 BLOCK 累计补救耗时（分钟）。"
+            },
+            "avgRemediationMinutes": {
+              "type": "number",
+              "minimum": 0,
+              "description": "平均每次 BLOCK 到下次 PASS 的耗时（分钟）。无 BLOCK 填 0。"
+            }
+          }
+        },
+        "review": {
+          "type": "object",
+          "description": "Review 过程指标（取自 state.json reviewSession）。无 review 填全 0。",
+          "required": ["attempts", "remediations", "findingsOpened", "findingsClosed"],
+          "additionalProperties": false,
+          "properties": {
+            "attempts": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "reviewSession.counters.attempts。"
+            },
+            "validBatches": { "type": "integer", "minimum": 0 },
+            "remediations": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "reviewSession.counters.remediations（修复轮数）。"
+            },
+            "findingsOpened": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "findings 中曾出现过的总数。"
+            },
+            "findingsClosed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "findings 中 status=CLOSED 的总数。"
+            },
+            "blockerCount": { "type": "integer", "minimum": 0 },
+            "majorCount": { "type": "integer", "minimum": 0 },
+            "minorCount": { "type": "integer", "minimum": 0 },
+            "infoCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "phasesSkipped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "实际未走的 phase 数（如中型无 DR 则填 1）。"
+        },
+        "electiveDeferred": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "选修层显式声明放弃的组数。"
+        },
+        "electiveHalfDone": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "选修层\"只完成一条 AC\"的组数（半吊子）。"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "维度 D 时长分档：≤60min=100, 60-120=80, 120-180=60, >180=40。"
+        },
+        "derived": {
+          "type": "object",
+          "description": "派生比率（公式见 EVALUATION.md §5.6），便于横向对比。除数为 0 时填 0。",
+          "required": [
+            "designPhaseMinutes",
+            "executionPhaseMinutes",
+            "designExecutionRatio",
+            "totalScorePerMinute",
+            "requiredScorePerMinute",
+            "locPerMinute",
+            "acPassedPerMinute",
+            "totalScorePerMillionTokens",
+            "locPerMillionTokens",
+            "requiredScorePerUsd",
+            "totalScorePerUsd",
+            "blockerRatio",
+            "remediationPerFinding",
+            "cachedTokenRate"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "designPhaseMinutes": { "type": "number", "minimum": 0 },
+            "executionPhaseMinutes": { "type": "number", "minimum": 0 },
+            "designExecutionRatio": { "type": "number", "minimum": 0 },
+            "totalScorePerMinute": { "type": "number", "minimum": 0 },
+            "requiredScorePerMinute": { "type": "number", "minimum": 0 },
+            "locPerMinute": { "type": "number", "minimum": 0 },
+            "acPassedPerMinute": { "type": "number", "minimum": 0 },
+            "totalScorePerMillionTokens": { "type": "number", "minimum": 0 },
+            "locPerMillionTokens": { "type": "number", "minimum": 0 },
+            "requiredScorePerUsd": { "type": "number", "minimum": 0 },
+            "totalScorePerUsd": { "type": "number", "minimum": 0 },
+            "blockerRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "= blockerCount / max(findingsOpened, 1) × 100。"
+            },
+            "remediationPerFinding": { "type": "number", "minimum": 0 },
+            "cachedTokenRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "= cached / total × 100。total=0 填 0。"
+            }
+          }
+        }
+      }
+    },
+
+    "artifacts": {
+      "type": "object",
+      "description": "关键产物文件的 sha256 清单（用于回溯与防篡改）。",
+      "required": ["files"],
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "path", "sha256", "exists"],
+            "additionalProperties": false,
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "ra",
+                  "dr",
+                  "story",
+                  "codingPlan",
+                  "state",
+                  "evidenceManifest",
+                  "codeLib",
+                  "codeContracts",
+                  "codePathfinder",
+                  "codeGeneric",
+                  "codeBuilder",
+                  "codeSerdeImpl",
+                  "codeAlgorithmDir",
+                  "tests"
+                ],
+                "description": "文件角色。codePathfinder/codeGeneric/codeBuilder/codeSerdeImpl 是选修层产物（若放弃则不存在）。"
+              },
+              "path": {
+                "type": "string",
+                "description": "绝对或仓库相对路径。"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$",
+                "description": "sha256 十六进制小写；exists=false 时填全 0。"
+              },
+              "exists": {
+                "type": "boolean",
+                "description": "文件是否存在。"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "totalScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "综合总分 = A×0.35 + B×0.25 + min(C_raw, 100)×0.25 + D×0.15。"
+    },
+
+    "grade": {
+      "type": "string",
+      "enum": ["A", "B", "C", "D", "F"],
+      "description": "等级：≥90=A, 80-89=B, 70-79=C, 60-69=D, <60=F。"
+    },
+
+    "notes": {
+      "type": "string",
+      "description": "操作员主观评语（可选）。"
+    }
+  },
+
+  "$defs": {
+    "checkItem": {
+      "type": "object",
+      "description": "单个检查项的评分记录。",
+      "required": ["passed", "score", "maxScore", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "该项是否通过（部分通过也算 false，由 score 体现程度）。"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "description": "该项实际得分。"
+        },
+        "maxScore": {
+          "type": "number",
+          "minimum": 0,
+          "description": "该项满分。"
+        },
+        "evidence": {
+          "type": "string",
+          "description": "证据描述：文件路径 + 关键字段值 或 命令输出。"
+        }
+      }
+    },
+
+    "electiveGroup": {
+      "type": "object",
+      "description": "一组选修压测（trait/generic/builder/serde）的完成情况。",
+      "required": ["group", "acs", "completed", "score", "maxScore"],
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": "string",
+          "enum": ["trait", "generic", "builder", "serde"],
+          "description": "组名。"
+        },
+        "acs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["acId", "passed"],
+            "additionalProperties": false,
+            "properties": {
+              "acId": { "type": "string", "pattern": "^AC-\\d{1,2}$" },
+              "passed": { "type": "boolean" },
+              "stars": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "description": "AC 星度（1-5）。"
+              }
+            }
+          },
+          "description": "该组 AC 完成情况。"
+        },
+        "completed": {
+          "type": "boolean",
+          "description": "该组是否全部 PASS（防半吊子：部分 PASS 算 false，0 分）。"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "description": "该组实际得分（completed=true 才给分）。"
+        },
+        "maxScore": {
+          "type": "number",
+          "minimum": 0,
+          "description": "该组满分（trait=8, generic=8, builder=7, serde=7）。"
+        }
+      }
+    }
+  }
+}
