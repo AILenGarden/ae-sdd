@@ -20,7 +20,10 @@ use tempfile::TempDir;
 use uuid::Uuid;
 
 const WORK_ITEM: &str = "STORY-AE-SDD-RUST-DAEMON-001";
-const VALID_RA: &str = include_str!("../../../ae-sdd-doc/RA/RA-AE-SDD-RUST-DAEMON-001.md");
+// `ae-sdd-doc/` holds live Work Item documents and is gitignored, so a clean
+// checkout cannot compile a test that reads from it. Keep a tracked copy of a
+// G-14-satisfying RA under `tests/fixtures/` instead.
+const VALID_RA: &str = include_str!("../../../tests/fixtures/gates/valid-ra.v1.md");
 
 fn setup(coding_source: &str) -> (TempDir, NativeBusinessAdapter, BusinessWorkspace) {
     setup_with_ra(coding_source, VALID_RA)
