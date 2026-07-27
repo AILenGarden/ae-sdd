@@ -1,5 +1,22 @@
 """
-gate_intercept.py — PreToolUse hook v1.4
+gate_intercept.py — PreToolUse hook v1.6
+
+v1.6 修正（2026-07-25）：
+  - 修复关卡2 产物识别全面失效：_PRODUCT_PATTERNS 用「文件名后缀」正则
+    （按 -DR.md 结尾匹配），但 document_storage 真实落地是「目录归属 + 前缀命名」
+    （ae-sdd-doc/DR/DR-XXX-001.md），后缀正则全 MISS，HS-10/entry-token/
+    产物-Phase 映射沦为死代码，且失败模式是静默放行（无法区分「合法通过」
+    和「没被检查」）。
+    识别改走 document_storage.classify_flow_product（目录归属 SSOT），
+    文件名正则降级为 ae-sdd-doc/ 之外的 legacy 兜底（补前缀分支，并修
+    -CodingReport.md 无尾段、-testcase.md 小写两处失配）。
+  - ae-sdd-doc/ 下识别失败的写入不再静默放行：stderr WARN + gate-audit.jsonl。
+  - 产物-Phase 映射新增级联修订通道：当前 phase 严格晚于产物全部 home phase
+    视为「修订上游产物」，放行 + WARN + 审计；抢跑（写下游产物）继续硬拦。
+  - _PRODUCT_PHASE_MAP 登记 PRD（home=initialized/route-selected/
+    requirement-analyzed，下游修订走级联通道，零新增阻断）。
+  - R5 story 归属校验：story id 优先取目录归属的 workItem 段，产物标签补无空格形式。
+  - v1.5（home/磁盘根目录永久豁免）此前仅行内注释，补记入本头。
 
 v1.4 修正（2026-06-22）：
   - 修复 _ALWAYS_ALLOW_PATTERNS 中 .json/.yaml/.yml 过宽放行问题：
@@ -58,7 +75,7 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import memory_gate, paths, state as state_mod, work_item_context  # noqa: E402
+from lib import document_storage, memory_gate, paths, state as state_mod, work_item_context  # noqa: E402
 
 
 # ─── Phase → 允许工具表 ─────────────────────────────────────────────────────
@@ -151,24 +168,40 @@ _ALWAYS_ALLOW_PATTERNS: tuple[re.Pattern, ...] = tuple(re.compile(p) for p in [
     # 改用 _check_path_permission 逻辑：先查 source code patterns，再查 always_allow
 ])
 
-# ─── 🆕 v3.4.0 关卡2：ae-sdd 流程产物路径模式 + 产物-Phase 映射（建议书4）─────────
-# 命中这些模式的流程产物，落地前校验 entry token + 当前 phase 允许写该类产物。
+# ─── 关卡2：ae-sdd 流程产物识别 + 产物-Phase 映射（建议书4）────────────────────
+# 🆕 v1.6 识别重构：产物类型首选 document_storage.classify_flow_product
+# （ae-sdd-doc/<类目>/ 目录归属 SSOT）。下列正则仅兜底 ae-sdd-doc/ 之外的
+# 旧布局（design/）与游离路径；具体后缀必须先于类型前缀，
+# 避免 STORY-...-CodingPlan.md 这类文件名被 STORY- 前缀吞掉。
 _PRODUCT_PATTERNS: tuple[tuple[re.Pattern, str], ...] = tuple(
     (re.compile(p), label) for p, label in [
         (r".*-CodingPlan\.md$", "CodingPlan"),
-        (r".*-CodingReport-.*\.md$", "CodingReport"),
+        (r".*-CodingReport(?:-.*)?\.md$", "CodingReport"),  # v1.6：补无尾段形式 -CodingReport.md
         (r".*-CodeReview.*\.md$", "CodeReview"),
-        (r".*-Story\.md$", "Story"),
-        (r".*-TestCase\.md$", "TestCase"),
+        (r".*-[Tt]est[Cc]ase\.md$", "TestCase"),  # v1.6：真实落地是小写 -testcase.md
         (r".*-task-.*\.md$", "Task"),
+        (r".*-业务逻辑汇总\.md$", "业务逻辑汇总"),
+        (r".*-Proposal\.md$", "Proposal"),
+        (r".*-Report\.md$", "TestReport"),
+        (r".*-Story\.md$", "Story"),
         (r".*-DR\.md$", "DR"),
         (r".*-RA\.md$", "RA"),
-        (r".*-业务逻辑汇总\.md$", "业务逻辑汇总"),
+        # v1.6：前缀命名兜底（document_storage 新 ID 规则 {TYPE}-{PROJECT}-{...}-{NNN}）
+        (r"(?:^|/)DR-[^/]*\.md$", "DR"),
+        (r"(?:^|/)RA-[^/]*\.md$", "RA"),
+        (r"(?:^|/)PRD-[^/]*\.md$", "PRD"),
+        (r"(?:^|/)STORY-[^/]*\.md$", "Story"),
+        (r"(?:^|/)BUG-[^/]*\.md$", "Story"),  # BUG 系列 Story 文档
     ]
 )
 
-# 产物类型 → 允许写入的 phase（关卡2校验依据）
+# 产物类型 → 允许写入的 home phase（关卡2校验依据）
+# 🆕 v1.6：PRD 登记（home=initialized/route-selected/requirement-analyzed，
+#   下游 phase 修订 PRD 走级联通道放行+审计，零新增阻断）；
+#   TestReport/Proposal 识别但暂不挂映射（v3.12 已 retire 的过程产物，
+#   历史文件在任意可写 phase 可维护，避免新门禁阻断既有维护流）。
 _PRODUCT_PHASE_MAP: dict[str, frozenset[str]] = {
+    "PRD": frozenset({"initialized", "route-selected", "requirement-analyzed"}),
     "DR": frozenset({"dr-generated", "requirement-analyzed"}),
     "RA": frozenset({"ra-generated", "requirement-analyzed", "dr-generated"}),
     "Story": frozenset({"story-generated", "story-reviewed", "requirement-analyzed"}),
@@ -181,13 +214,94 @@ _PRODUCT_PHASE_MAP: dict[str, frozenset[str]] = {
 }
 
 
-def _match_product_type(file_path: str) -> Optional[str]:
-    """若路径匹配某 ae-sdd 流程产物模式，返回产物类型；否则 None。"""
+# 产物-Phase 上下游判定的规范位次（仅服务级联通道判定，与 state write 的 scale 子链无关）。
+# 取 PHASE_FLOWS["大"] 全链，并把不在链内的 ra/review/task 相位按语义插入。
+_PRODUCT_PHASE_ORDER: tuple[str, ...] = (
+    "initialized", "route-selected", "requirement-analyzed", "ra-generated",
+    "dr-generated", "story-generated", "story-reviewed",
+    "testcase-generated", "testcase-reviewed",
+    "task-generated", "task-reviewed",
+    "coding-process", "coding", "test-running", "code-reviewed", "completed",
+)
+
+
+def _classify_product(file_path: str) -> tuple[Optional[str], Optional[str]]:
+    """识别流程产物：目录归属（document_storage SSOT）优先，文件名正则兜底。
+
+    Returns:
+        (product_type, work_item_id)；无法识别时 product_type 为 None。
+        work_item_id 仅新布局可提取（类目下第一段），旧布局为 None。
+    """
+    product_type, work_item_id = document_storage.classify_flow_product(file_path)
+    if product_type is not None:
+        return product_type, work_item_id
     normalized = file_path.replace("\\", "/")
     for pat, label in _PRODUCT_PATTERNS:
         if pat.search(normalized):
-            return label
-    return None
+            return label, work_item_id
+    return None, work_item_id
+
+
+def _match_product_type(file_path: str) -> Optional[str]:
+    """若路径匹配某 ae-sdd 流程产物模式，返回产物类型；否则 None。"""
+    return _classify_product(file_path)[0]
+
+
+def _is_cascade_revision(phase: str, home_phases: frozenset[str]) -> bool:
+    """🆕 v1.6 级联修订判定：当前 phase 严格晚于产物全部 home phase。
+
+    True  = 下游相位修订上游产物（放行 + WARN + 审计，见 _check_product_landing）
+    False = 非级联：抢跑（早于 home phase 写下游产物，继续硬拦）、
+            或相位不在 _PRODUCT_PHASE_ORDER 内（保守维持旧映射行为）
+    """
+    try:
+        cur = _PRODUCT_PHASE_ORDER.index(phase)
+        homes = [_PRODUCT_PHASE_ORDER.index(h) for h in home_phases]
+    except ValueError:
+        return False
+    return bool(homes) and cur > max(homes)
+
+
+def _append_gate_audit(ade_sdd: Optional[Path], record: dict) -> None:
+    """闸门审计 JSONL 追加（best-effort，任何异常都不阻断工具调用）。"""
+    if ade_sdd is None:
+        return
+    try:
+        import json
+        from datetime import datetime
+        entry = {"ts": datetime.now().isoformat(timespec="seconds"), **record}
+        audit_path = paths.reports_dir(ade_sdd) / "gate-audit.jsonl"
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with audit_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# ae-sdd-doc/ 下至少两层（类目/文件）才算「待识别文档」；
+# index.json、STORING.md 等根级登记文件不告警。
+_UNRECOGNIZED_DOC_RE = re.compile(r"(?:^|/)ae-sdd-doc/[^/]+/[^/]+")
+
+
+def _warn_unrecognized_doc_write(file_path: str, ade_sdd: Optional[Path]) -> None:
+    """🆕 v1.6 兜底：ae-sdd-doc/ 下识别失败的写入必须出声（原先静默放行）。
+
+    闸门最危险的失效模式不是规则写错，而是无法区分「合法通过」和「没被检查」。
+    本函数把「闸门没认出来」变成可观测事件：stderr WARN + gate-audit.jsonl。
+    """
+    normalized = file_path.replace("\\", "/")
+    if not _UNRECOGNIZED_DOC_RE.search(normalized):
+        return
+    sys.stderr.write(
+        f"[ae-sdd harness] ⚠️ 关卡2 未识别的文档写入：{normalized}\n"
+        f"  文件位于 ae-sdd-doc/ 下但不匹配任何已登记产物类目/命名，已放行但"
+        f"未受 HS-10/entry-token/产物-Phase 管控。若是新产物类型，请在"
+        f" document_storage._PATH_TEMPLATES 登记。\n"
+    )
+    _append_gate_audit(ade_sdd, {
+        "event": "unrecognized-doc-write",
+        "file": normalized,
+    })
 
 
 def _is_relative_to_path(path: Path, base: Path) -> bool:
@@ -260,8 +374,10 @@ def _check_product_landing(
     不合规 → 物理拦截。
     返回 (allowed, deny_reason)。
     """
-    product_type = _match_product_type(file_path)
+    product_type, work_item_id = _classify_product(file_path)
     if product_type is None:
+        # 🆕 v1.6：识别失败不再静默放行（ae-sdd-doc/ 下 WARN + 审计）
+        _warn_unrecognized_doc_write(file_path, ade_sdd)
         return True, ""
 
     # HS-10：先校验路径归属，避免 d:\tmp\ 等游离路径被 entry-token/phase 检查遮住。
@@ -283,9 +399,16 @@ def _check_product_landing(
     current_story = state_mod.get_active_story(st) or "" if ade_sdd else ""
 
     # 🆕 v3.9.0 R5：产物 STORY-ID 归属校验——若产物含 STORY-ID，须在当前 state 的 storyStates 内
+    # 🆕 v1.6：story id 优先取目录归属提取的 workItem 段（新布局 {workItem} 目录/docId），
+    #   正则兜底旧命名；产物标签补齐无空格形式（旧 "Test Report" 等带空格标签从未命中过）。
     if ade_sdd and product_type in ("Story", "Story Supplement", "TestCase", "Task", "CodingPlan",
+                                     "CodingReport", "TestReport", "CodeReview",
                                      "Coding Report", "Test Report", "CR Report"):
-        story_id_in_path = _extract_story_id_from_path(file_path)
+        story_id_in_path = (
+            work_item_id
+            if work_item_id and re.match(r"^(?:STORY|BUG)-", work_item_id, re.IGNORECASE)
+            else _extract_story_id_from_path(file_path)
+        )
         if story_id_in_path and state_mod.is_nested_state(st):
             story_states = set(state_mod.list_story_ids_in_state(st))
             if story_id_in_path not in story_states:
@@ -322,13 +445,31 @@ def _check_product_landing(
     # 关卡2：产物-Phase 映射校验
     allowed_phases = _PRODUCT_PHASE_MAP.get(product_type)
     if allowed_phases and phase not in allowed_phases:
-        return False, (
-            f"当前 phase={phase} 不允许写入 {product_type} 类产物（允许 phase: {sorted(allowed_phases)}）。\n"
-            f"目标文件: {file_path}\n"
-            f"请先切换到允许的 phase：ae-sdd state write --phase {sorted(allowed_phases)[0]}\n"
-            f"（关卡2 产物-Phase 映射，建议书4）"
-            f"{doc_save_hint}"
-        )
+        # 🆕 v1.6 级联修订通道：下游相位修订上游产物 → 放行 + WARN + 审计。
+        # 设计结论：级联修订是受管控的合法动作——抢跑（写下游产物）继续硬拦，
+        # 修订（写上游产物）放行但必须可观测，不留「被迫关闸门」的口子。
+        if _is_cascade_revision(phase, allowed_phases):
+            sys.stderr.write(
+                f"[ae-sdd harness] ⚠️ 级联修订：phase={phase} 写入上游产物 {product_type}"
+                f"（home phase: {sorted(allowed_phases)}）\n"
+                f"  目标文件: {file_path}\n"
+                f"  已放行并记录审计（.ae-sdd/reports/gate-audit.jsonl）。\n"
+            )
+            _append_gate_audit(ade_sdd, {
+                "event": "cascade-revision",
+                "phase": phase,
+                "productType": product_type,
+                "homePhases": sorted(allowed_phases),
+                "file": file_path.replace("\\", "/"),
+            })
+        else:
+            return False, (
+                f"当前 phase={phase} 不允许写入 {product_type} 类产物（允许 phase: {sorted(allowed_phases)}）。\n"
+                f"目标文件: {file_path}\n"
+                f"请先切换到允许的 phase：ae-sdd state write --phase {sorted(allowed_phases)[0]}\n"
+                f"（关卡2 产物-Phase 映射，建议书4）"
+                f"{doc_save_hint}"
+            )
 
     # 🆕 v3.8.1 S-3：文件意图锁冲突检测（多 sub-agent 并发写防护）
     # PreToolUse hook 无法可靠识别"当前是哪个 agent 在写"，故本层只做冲突告警不硬阻断。
@@ -344,7 +485,6 @@ def _check_product_landing(
                     if lock_info:
                         holder = lock_info.get("agentId", "unknown")
                         # warn 不阻断（首版策略，与 B-3 remediation 同思路）
-                        import sys
                         sys.stderr.write(
                             f"[ae-sdd harness] ⚠️ S-3 文件锁告警：{product_type} 产物 {rel_path} "
                             f"已被 agent {holder} 持锁，当前有 {len(active_agents)} 个活跃 agent 并发。"

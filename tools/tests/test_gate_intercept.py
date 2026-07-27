@@ -14,6 +14,8 @@ from lib import memory_store, work_item_context
 from lib.gate_intercept import (
     PHASE_PERMIT,
     READONLY_TOOLS,
+    _check_product_landing,
+    _match_product_type,
     check_intercept,
     is_quick_channel_active,
 )
@@ -1354,4 +1356,223 @@ class TestSessionEngageGate:
         )
         assert not allowed, "forced_engaged=True 应走门禁"
         assert "phase=initialized" in reason
+
+
+# ─── 🆕 v1.6 产物识别重构：目录归属 SSOT + 级联修订通道 + 未识别告警 ─────────────
+
+class TestProductRecognitionDirectoryFirst:
+    """v1.6：关卡2 产物识别改目录归属（document_storage SSOT），正则仅兜底 legacy。"""
+
+    @pytest.mark.parametrize("path,expected", [
+        ("ae-sdd-doc/DR/DR-AE-SDD-DAEMON-AUTHORITY-001.md", "DR"),
+        ("D:/proj/ae-sdd-doc/DR/DR-AE-SDD-OPS-001.md", "DR"),
+        ("ae-sdd-doc/RA/RA-AE-SDD-X-001.md", "RA"),
+        ("ae-sdd-doc/PRD/PRD-AE-SDD-X-001.md", "PRD"),
+        ("ae-sdd-doc/Story/STORY-AE-SDD-OPS-001.md", "Story"),
+        ("ae-sdd-doc/Story/BUG-AE-SDD-X-001.md", "Story"),
+        # 真实仓样本：Story 目录存在合法无前缀产物（STORING.md 登记），目录归属即判定
+        ("ae-sdd-doc/Story/SONAR-FIX-SKILL.md", "Story"),
+        ("ae-sdd-doc/DR/DR-ROUTING-REQUIREMENT-FLOW.md", "DR"),
+        ("ae-sdd-doc/Test/STORY-AE-SDD-X-001/STORY-AE-SDD-X-001-testcase.md", "TestCase"),
+        ("ae-sdd-doc/Test/BUG-AE-SDD-X-001/BUG-AE-SDD-X-001-Report.md", "TestReport"),
+        ("ae-sdd-doc/Coding/STORY-001/STORY-001-CodingPlan.md", "CodingPlan"),
+        ("ae-sdd-doc/Coding/BUG-001/BUG-001-CodingReport.md", "CodingReport"),
+        ("ae-sdd-doc/CR/STORY-001/STORY-001-CodeReview.md", "CodeReview"),
+        ("ae-sdd-doc/CR/STORY-001/STORY-001-Proposal.md", "Proposal"),
+        ("ae-sdd-doc/iterations/2026-07-25/Coding/PLAN-001/PLAN-001-CodingPlan.md", "CodingPlan"),
+        ("ae-sdd-doc/Issue/ISSUE-001.md", None),
+        # legacy 兜底（ae-sdd-doc/ 之外）
+        ("design/STORY-001-Story.md", "Story"),
+        ("design/STORY-001-CodingPlan.md", "CodingPlan"),  # 具体后缀不得被 STORY- 前缀吞掉
+        ("design/DR-005.md", "DR"),
+        ("design/RA-003.md", "RA"),
+        ("design/STORY-001.md", "Story"),  # 裸 STORY-ID 命名（旧 design/ 布局真实形态）
+        ("detached/STORY-001-Story.md", "Story"),
+        ("tmp/X-业务逻辑汇总.md", "业务逻辑汇总"),
+    ])
+    def test_classify(self, path, expected):
+        assert _match_product_type(path) == expected
+
+    @pytest.mark.parametrize("path", [
+        "ae-sdd-doc/DR/notes.md",
+        "ae-sdd-doc/Foo/x.md",
+        "ae-sdd-doc/index.json",
+        "ae-sdd-doc/STORING.md",
+        "src/main/java/Foo.java",
+        "README.md",
+    ])
+    def test_unrecognized_returns_none(self, path):
+        assert _match_product_type(path) is None
+
+
+class TestProductPhaseMapV16:
+    """v1.6：产物-Phase 映射 + 级联修订通道（ade_sdd=None 时只测识别+映射逻辑）。"""
+
+    def test_dr_write_in_home_phase_allowed(self):
+        allowed, reason = _check_product_landing(
+            "ae-sdd-doc/DR/DR-AE-SDD-X-001.md", "dr-generated", None)
+        assert allowed, reason
+
+    def test_ra_write_in_dr_generated_allowed(self):
+        # RA home 含 dr-generated（既有映射），属正常写入非级联
+        allowed, reason = _check_product_landing(
+            "ae-sdd-doc/RA/RA-AE-SDD-X-001.md", "dr-generated", None)
+        assert allowed, reason
+
+    def test_premature_codingplan_denied(self):
+        # 抢跑：dr-generated 写 CodingPlan（home=task-reviewed/coding-process/coding）→ 硬拦
+        allowed, reason = _check_product_landing(
+            "ae-sdd-doc/Coding/STORY-001/STORY-001-CodingPlan.md", "dr-generated", None)
+        assert not allowed
+        assert "关卡2 产物-Phase 映射" in reason
+
+    def test_story_in_dr_generated_denied(self):
+        # Story home 位次横跨 dr-generated 两侧（requirement-analyzed 在前、story-generated 在后）
+        # → 非「严格晚于全部 home」，维持旧映射行为硬拦
+        allowed, reason = _check_product_landing(
+            "ae-sdd-doc/Story/STORY-AE-SDD-X-001.md", "dr-generated", None)
+        assert not allowed
+
+    def test_testcase_in_story_generated_denied(self):
+        # 抢跑：story-generated 写 TestCase（home=testcase-generated/testcase-reviewed）
+        allowed, _ = _check_product_landing(
+            "ae-sdd-doc/Test/STORY-001/STORY-001-testcase.md", "story-generated", None)
+        assert not allowed
+
+    def test_legacy_story_doc_premature_denied(self):
+        # 旧 design/ 布局的裸 STORY-ID 文档同样受关卡2 管控
+        # （v11 test_write_doc_always_allowed 曾依赖识别漏洞放行，v1.6 钉死该行为）
+        allowed, reason = _check_product_landing("design/STORY-001.md", "initialized", None)
+        assert not allowed
+        assert "关卡2 产物-Phase 映射" in reason
+
+    def test_cascade_dr_in_story_generated_allowed(self, capsys):
+        allowed, reason = _check_product_landing(
+            "ae-sdd-doc/DR/DR-AE-SDD-X-001.md", "story-generated", None)
+        assert allowed, reason
+        assert "级联修订" in capsys.readouterr().err
+
+    def test_cascade_prd_revision_allowed(self, capsys):
+        # PRD home=initialized/route-selected/requirement-analyzed；dr-generated 修订 PRD → 级联放行
+        allowed, reason = _check_product_landing(
+            "ae-sdd-doc/PRD/PRD-AE-SDD-X-001.md", "dr-generated", None)
+        assert allowed, reason
+        assert "级联修订" in capsys.readouterr().err
+
+
+class TestGateAuditV16:
+    """v1.6：级联审计 + 未识别告警（.ae-sdd/reports/gate-audit.jsonl）。"""
+
+    def _make_ade_sdd(self, tmp_path):
+        # 完整夹具：config(projectKey) + assets(docWorkspace) + session(entry token)。
+        # ade_sdd 非 None 时 HS-10 与关卡1 entry token 会真实生效，缺这些会直接 fail-closed。
+        ae_sdd = tmp_path / ".ae-sdd"
+        assets = ae_sdd / "assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        (assets / "test.assets.md").write_text(
+            f"| gitPath | `{tmp_path}` |\n| docWorkspacePath | `{tmp_path}` |\n",
+            encoding="utf-8",
+        )
+        auto_eng = tmp_path / ".auto-engineering" / "STORY-001"
+        auto_eng.mkdir(parents=True, exist_ok=True)
+        (auto_eng / "session.json").write_text(json.dumps({
+            "sessionId": "test-session", "storyId": "STORY-001",
+        }, ensure_ascii=False), encoding="utf-8")
+        return ae_sdd
+
+    def _last_audit(self, ade):
+        audit = ade / "reports" / "gate-audit.jsonl"
+        assert audit.is_file(), "审计文件应已创建"
+        lines = audit.read_text(encoding="utf-8").strip().splitlines()
+        return json.loads(lines[-1])
+
+    def test_cascade_audit_written(self, tmp_path, capsys):
+        ade = self._make_ade_sdd(tmp_path)
+        target = tmp_path / "ae-sdd-doc" / "DR" / "DR-AE-SDD-X-001.md"
+        allowed, reason = _check_product_landing(
+            str(target), "story-generated", ade,
+            state_data={"phase": "story-generated", "currentStory": "STORY-001"})
+        assert allowed, reason
+        rec = self._last_audit(ade)
+        assert rec["event"] == "cascade-revision"
+        assert rec["productType"] == "DR"
+        assert rec["phase"] == "story-generated"
+        capsys.readouterr()  # 吞掉 stderr，避免串扰其他用例
+
+    def test_unrecognized_warns_but_allows(self, tmp_path, capsys):
+        ade = self._make_ade_sdd(tmp_path)
+        allowed, _ = _check_product_landing(
+            "ae-sdd-doc/DR/notes.md", "dr-generated", ade)
+        assert allowed
+        assert "未识别" in capsys.readouterr().err
+        rec = self._last_audit(ade)
+        assert rec["event"] == "unrecognized-doc-write"
+
+    def test_root_registry_files_silent(self, capsys):
+        # index.json / STORING.md 是工作区登记文件，非产物：放行且不告警
+        for path in ("ae-sdd-doc/index.json", "ae-sdd-doc/STORING.md"):
+            allowed, _ = _check_product_landing(path, "dr-generated", None)
+            assert allowed
+            assert capsys.readouterr().err == ""
+
+
+class TestProductGateE2EV16:
+    """v1.6 端到端：识别修复后关卡2 经 check_intercept 全链路生效。"""
+
+    def _make_project(self, tmp_path, phase="dr-generated", session_id="test-session"):
+        ae_sdd = tmp_path / ".ae-sdd"
+        assets = ae_sdd / "assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        (ae_sdd / "config.yaml").write_text("projectKey: test\n", encoding="utf-8")
+        _write_work_item_state(tmp_path, {
+            "version": "1", "projectKey": "test",
+            "phase": phase, "scale": "大",
+            "currentStory": "STORY-001", "currentTask": None,
+            "history": [],
+        })
+        (assets / "test.assets.md").write_text(
+            f"| gitPath | `{tmp_path}` |\n| docWorkspacePath | `{tmp_path}` |\n",
+            encoding="utf-8",
+        )
+        auto_eng = tmp_path / ".auto-engineering" / "STORY-001"
+        auto_eng.mkdir(parents=True, exist_ok=True)
+        sess = {"storyId": "STORY-001", "userConfirmedPhases": []}
+        if session_id:
+            sess["sessionId"] = session_id
+        (auto_eng / "session.json").write_text(
+            json.dumps(sess, ensure_ascii=False), encoding="utf-8")
+        return tmp_path
+
+    def test_premature_codingplan_blocked_end_to_end(self, tmp_path):
+        project_dir = self._make_project(tmp_path, phase="dr-generated")
+        target = tmp_path / "ae-sdd-doc" / "Coding" / "STORY-001" / "STORY-001-CodingPlan.md"
+        allowed, reason = check_intercept(
+            "Write", file_path=str(target),
+            project_dir=project_dir, forced_engaged=True,
+        )
+        assert not allowed
+        assert "关卡2 产物-Phase 映射" in reason
+
+    def test_dr_write_without_entry_token_blocked(self, tmp_path):
+        # 识别修复后关卡1 同样生效：缺 sessionId → entry token 硬拦
+        project_dir = self._make_project(tmp_path, phase="dr-generated", session_id="")
+        target = tmp_path / "ae-sdd-doc" / "DR" / "DR-AE-SDD-X-001.md"
+        allowed, reason = check_intercept(
+            "Write", file_path=str(target),
+            project_dir=project_dir, forced_engaged=True,
+        )
+        assert not allowed
+        assert "entry token" in reason
+
+    def test_dr_write_home_phase_passes_product_gate(self, tmp_path):
+        # DR 在 home phase：关卡1/关卡2/HS-10 全部不应是拦截来源
+        # （后续 memory gate 是否拦截不在本用例断言范围内）
+        project_dir = self._make_project(tmp_path, phase="dr-generated")
+        target = tmp_path / "ae-sdd-doc" / "DR" / "DR-AE-SDD-X-001.md"
+        allowed, reason = check_intercept(
+            "Write", file_path=str(target),
+            project_dir=project_dir, forced_engaged=True,
+        )
+        assert "关卡2" not in reason and "HS-10" not in reason and "entry token" not in reason
 

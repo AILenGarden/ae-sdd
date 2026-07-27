@@ -71,6 +71,100 @@ _PATH_TEMPLATES: dict[str, tuple[str, bool, str]] = {
     "ASSETS":            ("{docWorkspace}/.ae-sdd/assets/{projectKey}/{projectKey}.assets.md", False, "Assets"),
 }
 
+# ─── 🆕 v4.2 流程产物路径识别（gate_intercept 关卡2 的识别 SSOT）─────────────────
+# gate_intercept 曾用「文件名后缀」正则（.*-DR\.md$）反推产物类型，但本模块真实落地
+# 是「ae-sdd-doc/<类目>/ 目录归属 + {TYPE}-... 前缀命名」（如 DR-AE-SDD-OPS-001.md），
+# 后缀正则对真实产物全部 MISS，关卡2（HS-10/entry-token/产物-Phase 映射）沦为死代码。
+# 识别规则以此为唯一真相源：类目目录派生自 _PATH_TEMPLATES，命名规则变更只改这一处。
+
+# 单产物类目：目录下所有文件均为同一产物类型（值为 gate_intercept._PRODUCT_PHASE_MAP 的 key）
+_CATEGORY_SINGLE_PRODUCT: dict[str, str] = {
+    "PRD": "PRD",
+    "RA": "RA",
+    "DR": "DR",
+    "Story": "Story",
+    "Task": "Task",
+}
+
+# 单产物类目中要求 {TYPE}- 前缀命名的类目（仅 PRD/RA/DR —— 真实仓内这三个类目的
+# 全部产物均带前缀），防止 notes.md 这类散记被当作流程产物（识别失败走 WARN 兜底）。
+# Story/Task 不设前缀要求：Story 目录存在合法的无前缀产物（如 STORING.md 登记的
+# Story/SONAR-FIX-SKILL.md），Task 历史命名含 -task- 中缀，目录归属即判定。
+_CATEGORY_DOC_PREFIX: dict[str, tuple[str, ...]] = {
+    "PRD": ("PRD-",),
+    "RA": ("RA-",),
+    "DR": ("DR-",),
+}
+
+# 多产物类目：同目录容纳多种产物，按文件名后缀二次判别（后缀取自 _PATH_TEMPLATES 模板）
+_CATEGORY_SUFFIX_PRODUCT: dict[str, tuple[tuple[str, str], ...]] = {
+    "Coding": (
+        ("-CodingPlan.md", "CodingPlan"),
+        ("-CodingReport.md", "CodingReport"),
+    ),
+    "Test": (
+        ("-testcase.md", "TestCase"),
+        ("-TestCase.md", "TestCase"),
+        ("-Report.md", "TestReport"),
+    ),
+    "CR": (
+        ("-CodeReview.md", "CodeReview"),
+        ("-Proposal.md", "Proposal"),
+    ),
+}
+
+# 已登记但不属于流程产物的类目：识别成功、不参与关卡2 门禁
+_CATEGORY_NON_PRODUCT: frozenset[str] = frozenset({"Issue"})
+
+_AE_SDD_DOC_RE = re.compile(r"(?:^|/)ae-sdd-doc/(.+)$")
+
+
+def classify_flow_product(file_path: str) -> tuple[Optional[str], Optional[str]]:
+    """🆕 v4.2 按 ae-sdd-doc/ 目录归属识别 ae-sdd 流程产物类型。
+
+    Args:
+        file_path: 待识别文件路径（绝对/相对均可，Windows 反斜杠自动归一）
+
+    Returns:
+        (product_type, work_item_id)：
+          - product_type: 产物类型（gate_intercept._PRODUCT_PHASE_MAP 的 key），无法识别为 None
+          - work_item_id: 类目下的 workItem 段（如 STORY-AE-SDD-OPS-001），无则 None
+        路径不在 ae-sdd-doc/ 下、或落在非产物类目（Issue），返回 (None, None)。
+    """
+    m = _AE_SDD_DOC_RE.search(str(file_path).replace("\\", "/"))
+    if not m:
+        return (None, None)
+    segments = [seg for seg in m.group(1).split("/") if seg]
+    if not segments:
+        return (None, None)
+    head = segments[0]
+    if head == "iterations":
+        # ae-sdd-doc/iterations/{iterDate}/<类目>/{workItem}/...（TASK_SMALL/PLAN_MICRO）
+        segments = segments[2:]
+        if not segments:
+            return (None, None)
+        head = segments[0]
+    if head in _CATEGORY_NON_PRODUCT:
+        return (None, None)
+    if len(segments) >= 3:
+        work_item: Optional[str] = segments[1]
+    elif len(segments) == 2:
+        work_item = re.sub(r"\.md$", "", segments[1], flags=re.IGNORECASE)
+    else:
+        work_item = None
+    if head in _CATEGORY_SINGLE_PRODUCT:
+        prefixes = _CATEGORY_DOC_PREFIX.get(head)
+        if prefixes and not any(segments[-1].upper().startswith(p) for p in prefixes):
+            # PRD/RA/DR 类目要求 {TYPE}- 前缀；散记（如 notes.md）不视为产物
+            return (None, work_item)
+        # Story/Task 无前缀要求（存在合法无前缀产物），目录归属即判定
+        return (_CATEGORY_SINGLE_PRODUCT[head], work_item)
+    basename = segments[-1]
+    for suffix, label in _CATEGORY_SUFFIX_PRODUCT.get(head, ()):
+        if basename.endswith(suffix):
+            return (label, work_item)
+    return (None, work_item)
+
 # Read-only packaged resources are routed separately from writable documents.
 # Adding a resource is data-only; callers continue to use doc resolve.
 READ_RESOURCE_ROUTES: dict[str, Path] = {

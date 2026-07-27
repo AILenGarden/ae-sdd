@@ -197,11 +197,13 @@ class TestPathAwareness:
         assert allowed, f"{phase} 应允许写 Java 源码"
 
     def test_write_doc_always_allowed(self):
-        """文档路径任何 phase 都允许"""
+        """文档路径任何 phase 都允许（非流程产物文档；design/STORY-001.md 这类
+        真实 Story 产物自 v1.6 起会被关卡2 识别并按 phase 管控，见
+        test_gate_intercept.py TestProductPhaseMapV16）"""
         for phase in ["initialized", "coding", "completed"]:
             allowed, _ = _check_path_permission(
                 "Write",
-                "design/STORY-001.md",
+                "design/notes.md",
                 phase,
             )
             assert allowed, f"{phase} 应允许写文档"

@@ -57,7 +57,11 @@ if [ "$HARNESS_STATUS" -ne 0 ]; then
     exit 0
 fi
 
-echo "ae-sdd post-commit: compiling, verifying, and distributing native package"
+# Managed L2 instruction files are anchored global instructions for Codex, Claude
+# and ZCode only. Harness and Hermes stay package-distribution targets. A target
+# that is missing or carries no ae-sdd-l2-ssot anchor is reported as a skip and is
+# never created or bootstrapped.
+echo "ae-sdd post-commit: compiling, verifying, distributing, and syncing managed L2 instructions"
 POST_COMMIT_OUTPUT="$(
     run_build_tool post-commit \
         --repository-root "$REPO_ROOT" \
@@ -70,12 +74,15 @@ POST_COMMIT_OUTPUT="$(
         --target "$USER_HOME/.codex/skills/ae-sdd" \
         --target "$USER_HOME/.zcode/skills/ae-sdd" \
         --target "$USER_HOME/.harness/skills/ae-sdd" \
-        --target "$USER_HOME/.hermes/skills/ae-sdd" 2>&1
+        --target "$USER_HOME/.hermes/skills/ae-sdd" \
+        --codex-instructions "$USER_HOME/.codex/AGENTS.md" \
+        --claude-instructions "$USER_HOME/.claude/CLAUDE.md" \
+        --zcode-instructions "$USER_HOME/.zcode/AGENTS.md" 2>&1
 )"
 POST_COMMIT_STATUS=$?
 printf '%s\n' "$POST_COMMIT_OUTPUT" | tail -30
 if [ "$POST_COMMIT_STATUS" -ne 0 ]; then
-    echo "ae-sdd post-commit: native compile/verify/distribution failed; commit remains intact" >&2
+    echo "ae-sdd post-commit: native compile/verify/distribution or managed L2 sync failed; commit remains intact" >&2
     exit 0
 fi
 
