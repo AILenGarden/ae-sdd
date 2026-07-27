@@ -46,9 +46,9 @@ const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 /// The registry file's envelope.
 ///
 /// A missing or renamed `distributors` key is a parse failure rather than an
-/// empty host list: the Python loader silently falls back to its seed defaults
-/// in that case, which is how a registry can look healthy while distributing to
-/// a different set of hosts than it declares.
+/// empty host list. Reading it as empty is how a registry comes to look healthy
+/// while distributing to a different set of hosts than it declares, so this
+/// fails closed instead.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 struct RegistryEnvelope {
@@ -71,7 +71,8 @@ pub struct RegistryHostEntry {
     pub l2_global_file: Option<String>,
     #[serde(default)]
     pub l2_language: Option<String>,
-    /// Remaining registry fields are carried by the Python writer and ignored.
+    /// Fields this reader does not interpret are carried through rather than
+    /// rejected, so an entry written by a newer schema still resolves.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }

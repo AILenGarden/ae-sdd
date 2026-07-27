@@ -35,7 +35,8 @@ pub enum OperationScope {
 /// Workspace migration and sole-writer mode exposed on the wire.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum WorkspaceMode {
-    /// Existing Python implementation remains authoritative.
+    /// Pre-cutover mode, retained so existing workspaces still deserialize.
+    /// The implementation it once deferred to no longer exists.
     #[serde(rename = "legacy")]
     Legacy,
     /// Rust evaluates and compares but does not mutate.

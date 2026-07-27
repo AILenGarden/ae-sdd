@@ -18,7 +18,7 @@
 ## 二、迁移边界
 
 - shadow 阶段 Rust 只读比较；同一 workspace 任一时刻只能有一个 writer。切换与回滚必须先 drain，再原子更新 workspace mode。
-- Rust sole-writer 生效后，CLI/Hook/daemon 禁止回退到 Python。Python 只允许在 migration test profile 中作为 oracle。
+- CLI/Hook/daemon 禁止回退到 Python。Python 树已删除，仓库内不得再出现解释器调用、`.py` 文件或 shell 包装器；发布产物扫描与 CI 均对此 fail closed。
 - `apps/ae-sdd-monitor/**` 整体延后；任何 T1-T6 核心任务不得修改、依赖或用 Monitor 行为阻断 cutover。
 - generated `dist/`、runtime package 和安装产物只能由 build job 生成，禁止手工修补。
 

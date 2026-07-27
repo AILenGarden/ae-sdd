@@ -55,7 +55,6 @@ ae-sdd/
 │   └── fixtures/
 ├── source/                       # 方法论、模板、standards、plugins 的人维护源
 ├── constraints/                  # 本规则层 SSOT
-├── tools/ + scripts/             # 迁移期 Python oracle；cutover 后删除/收缩
 └── apps/ae-sdd-monitor/          # 本 WorkItem 明确排除
 ```
 
@@ -151,7 +150,7 @@ ae-sdd-cli -> client -> protocol
 - crate public contract integration test 放 `<crate>/tests/*.rs`。
 - 跨 crate、进程、平台、crash、migration、host contract 和 pressure 的 Rust test 放最接近 composition boundary 的 owning package（通常 `crates/ae-sdd-runtime/tests`、`crates/ae-sdd-build/tests` 或 binary package `tests`）；其 fixture/golden/config 放根 `tests/<category>`。
 - golden fixture 必须不可变、有 schema/version、输入 digest 和 preserve/breaking-fix 分类；不得把执行时临时输出提交为 golden。
-- Python oracle 只可由 migration test harness 调用，测试 module 名和 feature 必须显式包含 `migration_oracle`，release dependency graph 中计数必须为 0。
+- 仓库内不得存在 Python 文件、解释器调用或 shell 包装器；曾以 `migration_oracle` feature 隔离的对照测试已随 Python 树一并删除。
 
 ## 六、生成物与迁移
 

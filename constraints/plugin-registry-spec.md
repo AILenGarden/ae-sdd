@@ -149,7 +149,7 @@ Rust scanner 至少保留并版本化以下规则：
 
 ## 九、兼容、迁移与测试
 
-- Rust loader 必须用现有三层 fixture 与 Python oracle 做 shadow differential；差异逐项标记 preserve/breaking-fix，不能在 canary 期间双写或动态回退。
+- Rust loader 必须用现有三层 fixture 覆盖 preserve 与 breaking-fix 两类行为；曾用于对照的 Python oracle 已随 Python 树删除，其断言由原生测试直接承担，不能在 canary 期间双写或动态回退。
 - fixture 覆盖合法四种 type、空 registry、未知字段/type、duplicate YAML key、同/跨层冲突、path traversal、symlink/junction、missing target、semver、dependency、1 MiB 边界和 PC-001~008。
 - property test 必须证明 merge 结果不依赖 directory/YAML map 遍历顺序；相同规范化输入产生相同 registryDigest。
 - release artifact 必须扫描 Python plugin loader/scanner execution entry 数量为 0。

@@ -57,7 +57,7 @@ crates/ + bins/             -> 受约束的实现
 - 每次 Coding 前动态加载技术、结构、分层、代码、API、数据、安全、测试与 plugin 约束；本文件不证明它们已加载。
 - 动态确认 Story 的每个 AC 都有真实验证入口；Test/Review 只记录实际 evidence 和 findings。
 - 针对当前 state revision 动态确认 `state.executionPlan` 用户批准与 G-CODEPLAN-SRC、G-14、G-08 PASS；静态文字不构成 PASS。
-- 动态确认 Monitor 排除项和 Python migration oracle 未被误算为 released Rust runtime。
+- 动态确认 Monitor 排除项未被误算为 released Rust runtime。
 
 ## Agent 执行约束
 

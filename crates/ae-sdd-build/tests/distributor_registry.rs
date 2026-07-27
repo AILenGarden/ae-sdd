@@ -233,9 +233,8 @@ fn an_unreadable_envelope_fails_closed_rather_than_resolving_no_host() {
     let fixture = Fixture::new("envelope");
     let home = fixture.home();
 
-    // The Python loader falls back to seed defaults on a shape it cannot read,
-    // which lets a registry look healthy while the hosts it declares are ignored.
-    // The native reader refuses instead.
+    // Reading an unknown schema as an empty host list would let a registry look
+    // healthy while the hosts it declares are ignored, so this refuses instead.
     let future_schema = write_registry(
         fixture.path(),
         r#"{"schema_version":2,"distributors":[
@@ -262,8 +261,8 @@ fn an_unreadable_envelope_fails_closed_rather_than_resolving_no_host() {
 fn unknown_registry_fields_are_carried_without_rejecting_the_entry() {
     let fixture = Fixture::new("extra");
     let home = fixture.home();
-    // The Python writer records provenance fields the native reader has no use
-    // for; rejecting them would break every existing registry on disk.
+    // Registries on disk carry provenance fields this reader has no use for;
+    // rejecting them would break every one of them.
     let registry = write_registry(
         fixture.path(),
         r#"{"schema_version":1,"distributors":[

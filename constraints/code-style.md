@@ -109,4 +109,4 @@ pub async fn execute_mutation(
 - 禁止用字符串状态、magic number 或 magic path 代替 enum/constant/config。
 - 禁止为消除编译错误使用宽泛 `clone()`、`Arc<Mutex<_>>` 或 `Box<dyn Any>`；必须说明 ownership boundary。
 - 禁止在 production code 留 stub、always-pass Gate、空 adapter 或“暂时返回成功”。
-- 禁止把 migration Python oracle、Monitor 或 generated dist 当 Rust library 调用。
+- 禁止把 Monitor 或 generated dist 当 Rust library 调用。

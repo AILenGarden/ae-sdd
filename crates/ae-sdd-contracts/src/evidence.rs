@@ -5,8 +5,10 @@
 //! only the deterministic active projection of the ledger, and project state
 //! stores nothing but the ledger/manifest locators and digests.
 //!
-//! Canonical event encoding (shared with the Python migration oracle; both
-//! sides are tested against the same golden digest):
+//! Canonical event encoding, pinned by golden digest. The encoding was chosen
+//! to match the migration oracle byte for byte; the oracle is retired, but the
+//! digests it fixed are what existing ledgers were written with, so the rules
+//! below are still binding:
 //!
 //! - UTF-8 JSON, object keys sorted byte-wise, no insignificant whitespace and
 //!   no ASCII escaping beyond the JSON-mandatory `"` and `\` escapes, the
@@ -383,9 +385,9 @@ fn canonical_event_bytes(
     output
 }
 
-/// Writes one JSON string using exactly the escapes `serde_json` and Python's
-/// `json.dumps(ensure_ascii=False)` produce: the mandatory quote/backslash
-/// escapes, the short C0 escapes and `\u00XX` for the remaining controls.
+/// Writes one JSON string using exactly the escapes `serde_json` produces: the
+/// mandatory quote/backslash escapes, the short C0 escapes and `\u00XX` for the
+/// remaining controls. Changing this set rewrites every historical digest.
 fn write_json_string(output: &mut Vec<u8>, value: &str) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     output.push(b'"');

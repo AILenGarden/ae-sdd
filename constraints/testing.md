@@ -30,7 +30,7 @@
 | unit | 单个 parser/value/reducer/scanner | 正例、边界、非法输入、exhaustive enum | 不关闭跨进程/持久化 AC |
 | property/model | reducer、lease/CAS/fencing、idempotency、event replay | 任意序列不变量、重放确定性、单调性 | 不以少量 happy path 代替 |
 | crate integration | public API + real adapter/fake external port | schema、transaction、error mapping、migration | 不访问 production 用户目录 |
-| golden differential | Python oracle vs Rust | preserve 相同；breaking-fix 明确不同；无 stub-pass | Python 不进入 release runtime |
+| golden differential | 冻结 golden vs Rust 当前输出 | preserve 逐字节相同；breaking-fix 明确不同且有记录；无 stub-pass | 不得把当次执行输出回写为 golden |
 | process/IPC | real `ae-sddd` + real `ae-sdd` over Named Pipe/UDS | framing、handshake、deadline、ACL、restart、Hook JSON | in-memory service call 不关闭 AC |
 | concurrency/crash | 多 client/process、kill/fault point | single commit、journal recovery、no fake PASS/completed | sleep-based 顺序不作为证据 |
 | host contract | fake host matrix + enabled host live smoke | ACK≠claim、physical identity、cancel/timeout、authenticated pressure/hysteresis、compact ACK | daemon 自建 logical row 或 projection bytes 不算 physical session/token telemetry |

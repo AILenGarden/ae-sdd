@@ -5,9 +5,8 @@
 //! only the bytes between those anchors and must leave every other byte of the
 //! user-owned file untouched. This module performs that replacement as a pure
 //! function: it never touches the filesystem, the wall clock, the process
-//! environment, or Git, so the same inputs always render the same bytes and the
-//! semantics can be compared against the legacy Python oracle without a home
-//! directory.
+//! environment, or Git, so the same inputs always render the same bytes and can
+//! be asserted without a home directory.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -16,7 +15,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-/// Anchor name shared with the legacy Python injector and every host file.
+/// Anchor name present in every host file, including those written before the
+/// cutover. Changing it orphans the block it was meant to replace.
 pub const MANAGED_ANCHOR: &str = "ae-sdd-l2-ssot";
 
 /// Adapter identity recorded in the audit header. Bump when the rendered block
