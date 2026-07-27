@@ -920,7 +920,7 @@ async fn crash_during_review_record(
             ),
         )
         .await;
-    daemon.wait_for_crash().await;
+    daemon.wait_for_crash(&fixture.runtime_dir).await;
 
     CrashedReviewRecord {
         workspace,
@@ -1098,7 +1098,7 @@ async fn crash_during_toolset_receipt(
             job_submit_request(&identity, payload, 1, submission_key),
         )
         .await;
-    daemon.wait_for_crash().await;
+    daemon.wait_for_crash(&fixture.runtime_dir).await;
 
     let persisted = persisted_job_by_submission_key(&fixture.runtime_dir, submission_key);
     assert_eq!(
@@ -1431,19 +1431,37 @@ impl DaemonProcess {
         }
     }
 
-    async fn wait_for_crash(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(15);
+    /// Waits for the commit-abort failpoint to kill the daemon.
+    ///
+    /// The timeout has been observed to expire under full-suite parallel load
+    /// while passing in isolation, and the bare deadline message could not
+    /// distinguish "the request never reached the commit point" from "the abort
+    /// was merely slow". The failure text therefore carries how long the daemon
+    /// stayed alive, how many polls elapsed, and the daemon log, so the next
+    /// occurrence is diagnosable from the test output alone.
+    async fn wait_for_crash(&mut self, state_dir: &Path) {
+        const BUDGET: Duration = Duration::from_secs(15);
+        let started = Instant::now();
+        let deadline = started + BUDGET;
+        let mut polls = 0_u32;
         loop {
             if let Some(status) = self.child.try_wait().expect("daemon status is readable") {
                 assert!(
                     !status.success(),
-                    "commit abort unexpectedly exited successfully"
+                    "commit abort unexpectedly exited successfully after {:?} and {polls} polls",
+                    started.elapsed()
                 );
                 return;
             }
+            polls += 1;
             assert!(
                 Instant::now() < deadline,
-                "daemon did not abort at the configured commit point"
+                "daemon did not abort at the configured commit point: still alive after {:?} \
+                 and {polls} polls (budget {BUDGET:?}). A live daemon here means the operation \
+                 never reached the armed commit point, so check that the request was admitted \
+                 at all; log: {}",
+                started.elapsed(),
+                daemon_log(state_dir)
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

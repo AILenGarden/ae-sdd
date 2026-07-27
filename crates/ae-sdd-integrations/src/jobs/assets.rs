@@ -987,4 +987,63 @@ mod tests {
         assert_eq!(check["metadata"]["projectKey"], "assets-unit");
         assert_eq!(check["digest"].as_str().map(str::len), Some(64));
     }
+
+    // `assets.query` scores hits over tokens, so the split contract is part of
+    // the query surface: a change in casing, separator, or CJK boundary
+    // handling silently changes which sections a query can reach. These cases
+    // carry the inputs and expectations the retired Python oracle asserted.
+
+    #[test]
+    fn tokenize_splits_pascal_case_on_each_capital() {
+        assert_eq!(
+            tokenize("CsTicketAppService"),
+            ["cs", "ticket", "app", "service"]
+        );
+    }
+
+    #[test]
+    fn tokenize_keeps_a_trailing_acronym_whole() {
+        assert_eq!(tokenize("BossUserPO"), ["boss", "user", "po"]);
+    }
+
+    #[test]
+    fn tokenize_splits_snake_and_kebab_separators() {
+        assert_eq!(tokenize("boss_user_role"), ["boss", "user", "role"]);
+        assert_eq!(
+            tokenize("icec-cloud-life-cs"),
+            ["icec", "cloud", "life", "cs"]
+        );
+    }
+
+    #[test]
+    fn tokenize_separates_latin_from_cjk() {
+        let tokens = tokenize("BossUser 脱敏");
+        assert!(tokens.contains(&"boss".to_owned()), "{tokens:?}");
+        assert!(tokens.contains(&"user".to_owned()), "{tokens:?}");
+        assert!(
+            tokens.iter().any(|token| token.contains('脱')),
+            "{tokens:?}"
+        );
+    }
+
+    #[test]
+    fn tokenize_splits_digit_runs_on_a_separator() {
+        assert_eq!(tokenize("11101-11107"), ["11101", "11107"]);
+    }
+
+    #[test]
+    fn tokenize_yields_nothing_for_empty_or_punctuation_only_input() {
+        assert!(tokenize("").is_empty());
+        let punctuation = tokenize("---|***");
+        assert!(punctuation.is_empty(), "{punctuation:?}");
+    }
+
+    #[test]
+    fn tokenize_lowercases_every_token() {
+        let tokens = tokenize("AppService vs APPSERVICE");
+        assert!(
+            tokens.iter().all(|token| *token == token.to_lowercase()),
+            "{tokens:?}"
+        );
+    }
 }
