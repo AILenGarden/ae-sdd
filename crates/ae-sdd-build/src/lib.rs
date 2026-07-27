@@ -1,6 +1,7 @@
 mod benchmark;
 mod compatibility;
 mod config;
+mod distributor_registry;
 mod harness_build;
 mod jobs;
 mod managed_instructions;
@@ -23,6 +24,10 @@ pub use compatibility::{
 pub use config::{
     GeneratedConfig, HookConfigInput, HookEvent, HookHost, ServiceConfigInput, ServiceTarget,
     generate_hook_config, generate_service_config,
+};
+pub use distributor_registry::{
+    DistributorDetect, DistributorProtocol, RegistryError, RegistryHostEntry, RegistryResolution,
+    ResolvedHost, SkipReason, SkippedHost, resolve_registry,
 };
 pub use harness_build::{HarnessBuildRequest, execute_harness_build};
 pub use jobs::{

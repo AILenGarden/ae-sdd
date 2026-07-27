@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use ae_sdd_build::{
     ExpectedCounts, HarnessBuildRequest, HookBenchmarkConfig, InstructionLanguage,
     ManagedInstructionStatus, ManagedInstructionTarget, NativeJobRequest, OfflineRequest,
-    PostCommitRequest, ServiceLifecycleRequest, ServiceOperation, audit_compatibility,
-    benchmark_hook, execute_harness_build, execute_native_job, execute_offline,
-    execute_post_commit, execute_service_lifecycle, generate_service_lifecycle_plan,
-    inspect_service_descriptor, materialize_service_descriptor, verify_release,
+    PostCommitRequest, RegistryResolution, ServiceLifecycleRequest, ServiceOperation,
+    audit_compatibility, benchmark_hook, execute_harness_build, execute_native_job,
+    execute_offline, execute_post_commit, execute_service_lifecycle,
+    generate_service_lifecycle_plan, inspect_service_descriptor, materialize_service_descriptor,
+    resolve_registry, verify_release,
 };
 use clap::{Parser, Subcommand};
 
@@ -56,8 +57,21 @@ enum Command {
         source: PathBuf,
         #[arg(long)]
         package: PathBuf,
-        #[arg(long = "target", required = true)]
+        /// Explicit package targets. Mutually exclusive with the registry:
+        /// mixing a hardcoded list with a data-driven one is what let the two
+        /// drift in the first place.
+        #[arg(long = "target", required_unless_present = "distributor_registry")]
         targets: Vec<PathBuf>,
+        /// Distributor registry declaring every host, its target and its
+        /// optional managed instruction file. Enabled entries that pass their
+        /// `detect` check supply both the package and instruction targets.
+        #[arg(long, conflicts_with_all = [
+            "targets", "codex_instructions", "claude_instructions", "zcode_instructions",
+        ])]
+        distributor_registry: Option<PathBuf>,
+        /// Home directory used to expand `~` in registry paths.
+        #[arg(long, requires = "distributor_registry")]
+        registry_home: Option<PathBuf>,
         #[arg(long = "allowed-root", required = true)]
         allowed_roots: Vec<PathBuf>,
         #[arg(long)]
@@ -133,6 +147,46 @@ fn main() {
         eprintln!("{error}");
         std::process::exit(1);
     }
+}
+
+/// Resolves the home directory used to expand `~` in registry paths.
+///
+/// Failing closed matters here: guessing a home would silently distribute to the
+/// wrong tree, and the caller can always pass `--registry-home` explicitly.
+fn home_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    for key in ["HOME", "USERPROFILE"] {
+        if let Some(value) = std::env::var_os(key) {
+            let path = PathBuf::from(value);
+            if path.is_dir() {
+                return Ok(path);
+            }
+        }
+    }
+    Err("home directory could not be resolved; pass --registry-home".into())
+}
+
+/// Splits a resolved registry into package targets and instruction targets.
+///
+/// A host's instruction file is only ever the one the registry declares. A skill
+/// directory such as `~/.codex/skills/ae-sdd` carries no reliable relationship
+/// to a global instruction file, so it is never used to infer one; a host that
+/// declares no `l2GlobalFile` stays package-only.
+fn registry_targets(
+    resolution: &RegistryResolution,
+) -> (Vec<PathBuf>, Vec<ManagedInstructionTarget>) {
+    let mut packages = Vec::with_capacity(resolution.hosts.len());
+    let mut instructions = Vec::new();
+    for host in &resolution.hosts {
+        packages.push(host.package_target.clone());
+        if let Some((target_file, language)) = &host.instruction_target {
+            instructions.push(ManagedInstructionTarget {
+                host: host.name.clone(),
+                language: *language,
+                target_file: target_file.clone(),
+            });
+        }
+    }
+    (packages, instructions)
 }
 
 /// Maps the explicit CLI instruction flags to managed targets.
@@ -256,6 +310,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             source,
             package,
             targets,
+            distributor_registry,
+            registry_home,
             allowed_roots,
             commit,
             codex_instructions,
@@ -263,18 +319,42 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             zcode_instructions,
             json,
         } => {
+            let mut skipped_hosts = Vec::new();
+            let (target_directories, instruction_targets) = match &distributor_registry {
+                Some(path) => {
+                    let home = match registry_home {
+                        Some(home) => home,
+                        None => home_directory()?,
+                    };
+                    let resolution = resolve_registry(path, &home)?;
+                    if resolution.hosts.is_empty() {
+                        return Err(format!(
+                            "distributor registry {} resolved no host; distributing nothing \
+                             would report success while every agent stays stale",
+                            path.display()
+                        )
+                        .into());
+                    }
+                    skipped_hosts = resolution.skipped.clone();
+                    registry_targets(&resolution)
+                }
+                None => (
+                    targets,
+                    managed_instruction_targets(
+                        codex_instructions,
+                        claude_instructions,
+                        zcode_instructions,
+                    ),
+                ),
+            };
             let execution = execute_post_commit(&PostCommitRequest {
                 repository_root,
                 source_directory: source,
                 package_directory: package,
-                target_directories: targets,
+                target_directories,
                 allowed_roots,
                 commit_id: commit,
-                managed_instruction_targets: managed_instruction_targets(
-                    codex_instructions,
-                    claude_instructions,
-                    zcode_instructions,
-                ),
+                managed_instruction_targets: instruction_targets,
             })?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&execution)?);
@@ -295,6 +375,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         .collect::<Vec<_>>()
                         .join(" ");
                     println!("managed instructions: {summary}");
+                }
+                // A host that silently stops receiving the package is the defect
+                // this registry exists to prevent, so every exclusion is named.
+                if !skipped_hosts.is_empty() {
+                    let summary = skipped_hosts
+                        .iter()
+                        .map(|host| format!("{}={}", host.name, host.reason.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    println!("registry skipped: {summary}");
                 }
             }
         }

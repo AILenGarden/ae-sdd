@@ -39,6 +39,7 @@ if [ -z "$COMMIT_ID" ]; then
     exit 0
 fi
 USER_HOME="${HOME:-$REPO_ROOT}"
+DISTRIBUTOR_REGISTRY="$USER_HOME/.ae-sdd/distributors.json"
 # The package directory is replaced by an atomic rename, so it must not be held
 # open by any other process. `dist/ae-sdd` acquired a stale directory handle that
 # survives daemon restarts, which failed every post-commit compile with
@@ -61,17 +62,22 @@ if [ "$HARNESS_STATUS" -ne 0 ]; then
     exit 0
 fi
 
-# Skill targets must stay in step with the enabled entries in
-# ~/.ae-sdd/distributors.json. That registry is data-driven while this list is
-# hardcoded, so the two can drift: qoder was registered there, never reached this
-# list, and silently stopped receiving the skill when distribution moved off the
-# Python distributors. Adding a host means editing both until the list is read
-# from the registry.
+# Hosts come from ~/.ae-sdd/distributors.json, which is the only place they are
+# declared. This list used to be hardcoded here as well, and the two drifted in
+# both directions: qoder was registered but never listed, so it silently went
+# four minor versions stale, while harness was listed but never registered, so
+# `create_dir_all` invented ~/.harness/skills/ae-sdd for a host that was not
+# installed. Registering a host is now the single edit.
 #
-# Managed L2 instruction files are anchored global instructions for Codex, Claude
-# and ZCode only. Harness, Hermes and Qoder stay package-distribution targets. A
-# target that is missing or carries no ae-sdd-l2-ssot anchor is reported as a skip
-# and is never created or bootstrapped.
+# A host whose `detect` fails is skipped and named rather than having its
+# directory created. Managed L2 instruction files come from each entry's
+# l2GlobalFile; an entry without one stays package-only. A target that is
+# missing or carries no ae-sdd-l2-ssot anchor is reported as a skip and is never
+# created or bootstrapped.
+if [ ! -f "$DISTRIBUTOR_REGISTRY" ]; then
+    echo "ae-sdd post-commit: distributor registry $DISTRIBUTOR_REGISTRY is absent; no host received the package" >&2
+    exit 0
+fi
 echo "ae-sdd post-commit: compiling, verifying, distributing, and syncing managed L2 instructions"
 POST_COMMIT_OUTPUT="$(
     run_build_tool post-commit \
@@ -81,15 +87,8 @@ POST_COMMIT_OUTPUT="$(
         --commit "$COMMIT_ID" \
         --allowed-root "$REPO_ROOT" \
         --allowed-root "$USER_HOME" \
-        --target "$USER_HOME/.claude/skills/ae-sdd" \
-        --target "$USER_HOME/.codex/skills/ae-sdd" \
-        --target "$USER_HOME/.zcode/skills/ae-sdd" \
-        --target "$USER_HOME/.harness/skills/ae-sdd" \
-        --target "$USER_HOME/.hermes/skills/ae-sdd" \
-        --target "$USER_HOME/.qoder/skills/ae-sdd" \
-        --codex-instructions "$USER_HOME/.codex/AGENTS.md" \
-        --claude-instructions "$USER_HOME/.claude/CLAUDE.md" \
-        --zcode-instructions "$USER_HOME/.zcode/AGENTS.md" 2>&1
+        --distributor-registry "$DISTRIBUTOR_REGISTRY" \
+        --registry-home "$USER_HOME" 2>&1
 )"
 POST_COMMIT_STATUS=$?
 printf '%s\n' "$POST_COMMIT_OUTPUT" | tail -30

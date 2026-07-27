@@ -435,27 +435,39 @@ fn post_commit_and_harness_docs_use_rust_typed_argv_only() {
     assert!(!hook.to_ascii_lowercase().contains("python"));
     assert!(!hook.contains("l2_inject"));
 
+    // Hosts and their instruction files are declared once, in the distributor
+    // registry. The hook previously carried its own hardcoded list alongside it
+    // and the two drifted in both directions: a registered host silently went
+    // stale, and a listed-but-unregistered host had its directory invented.
+    assert!(
+        hook.contains("--distributor-registry"),
+        "the released hook must resolve hosts from the distributor registry"
+    );
+    assert!(
+        hook.contains("--registry-home"),
+        "the hook must pass the home used to expand registry paths, never let it be guessed"
+    );
     for flag in [
         "--codex-instructions",
         "--claude-instructions",
         "--zcode-instructions",
+        "--harness-instructions",
+        "--hermes-instructions",
     ] {
         assert!(
-            hook.contains(flag),
-            "the released hook must pass {flag} to the Rust post-commit chain"
-        );
-    }
-    for flag in ["--harness-instructions", "--hermes-instructions"] {
-        assert!(
             !hook.contains(flag),
-            "Harness and Hermes must stay package-distribution targets, not L2 injection targets"
+            "{flag} reintroduces a second host list beside the registry"
         );
     }
     assert!(
-        hook.contains("$USER_HOME/.codex/AGENTS.md")
-            && hook.contains("$USER_HOME/.claude/CLAUDE.md")
-            && hook.contains("$USER_HOME/.zcode/AGENTS.md"),
-        "global instruction paths must be explicit, never inferred from skill directories"
+        !hook.contains("$USER_HOME/.codex/skills")
+            && !hook.contains("$USER_HOME/.claude/skills")
+            && !hook.contains("$USER_HOME/.zcode/skills"),
+        "package targets must come from the registry, not from paths spelled out here"
+    );
+    assert!(
+        hook.contains(".ae-sdd/distributors.json"),
+        "the registry path must be explicit so an absent registry is a visible failure"
     );
 
     let readme = std::fs::read_to_string(root.join(".harness/README.md")).expect("harness README");
