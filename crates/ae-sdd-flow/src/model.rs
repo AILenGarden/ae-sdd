@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 
 use ae_sdd_contracts::execution_runtime::ExecutionSliceStatus;
 use ae_sdd_domain::{
-    AgentRole, ArtifactDigest, DecisionDigest, DesignRoute, EventSequence, EventStoreId,
-    GateOutcome, InputFingerprint, PolicyDigest, ProcessPhase, StateRevision, WorkScale,
+    AgentRole, ArtifactDigest, CompletionDigestSet, CompletionMilestone, DecisionDigest,
+    DesignRoute, EventSequence, EventStoreId, GateOutcome, InputFingerprint, PolicyDigest,
+    ProcessPhase, StateRevision, WorkScale,
 };
 use ae_sdd_policy::{RequiredGate, TransitionPolicy, TransitionPolicyError};
 
@@ -111,6 +112,22 @@ pub enum FlowEventKind {
     },
     /// The mutation authority committed an approved execution queue cursor.
     ExecutionQueueApproved { cursor: ExecutionCursor },
+    /// Focused and workspace verification are fresh for the bound code state.
+    VerificationFreshnessObserved {
+        code_digest: ArtifactDigest,
+        verification_digest: ArtifactDigest,
+    },
+    /// The execution evidence ledger was finalized for the verified state.
+    ExecutionEvidenceFinalized { evidence_digest: ArtifactDigest },
+    /// All required review contributions were collected for the current evidence.
+    ReviewContributionsCollected,
+    /// Review passed and the final Gates are fresh for the bound digests.
+    GovernanceFinalized {
+        review_input_digest: ArtifactDigest,
+        gate_digest: ArtifactDigest,
+    },
+    /// The authority observed the current completion input digests.
+    CompletionInputsChanged { observed: CompletionDigestSet },
     /// A background adapter reported an infrastructure fault.
     BackgroundFault(SupervisorFault),
     /// Recovery evidence cleared the current infrastructure degradation.
@@ -225,6 +242,8 @@ pub struct FlowSnapshot {
     paused_from: Option<ProcessPhase>,
     state_revision: StateRevision,
     correction_count: u64,
+    completion_milestone: CompletionMilestone,
+    completion_bound: CompletionDigestSet,
 }
 
 impl FlowSnapshot {
@@ -239,12 +258,29 @@ impl FlowSnapshot {
             paused_from: None,
             state_revision,
             correction_count,
+            completion_milestone: CompletionMilestone::None,
+            completion_bound: CompletionDigestSet::ZERO,
         }
     }
 
     /// Records the exact phase from which a paused snapshot may resume.
     pub const fn with_paused_from(mut self, paused_from: ProcessPhase) -> Self {
         self.paused_from = Some(paused_from);
+        self
+    }
+
+    /// Binds the completion milestone recorded in authoritative state.
+    ///
+    /// The milestone is orthogonal to the phase wire: it records how far the
+    /// verification -> evidence -> governance chain progressed, and `bound`
+    /// pins the input digests that made the milestone fresh.
+    pub const fn with_completion_milestone(
+        mut self,
+        milestone: CompletionMilestone,
+        bound: CompletionDigestSet,
+    ) -> Self {
+        self.completion_milestone = milestone;
+        self.completion_bound = bound;
         self
     }
 
@@ -266,6 +302,16 @@ impl FlowSnapshot {
     /// Returns the durable business correction count.
     pub const fn correction_count(self) -> u64 {
         self.correction_count
+    }
+
+    /// Returns the completion milestone recorded in authoritative state.
+    pub const fn completion_milestone(self) -> CompletionMilestone {
+        self.completion_milestone
+    }
+
+    /// Returns the input digests bound when the milestone was reached.
+    pub const fn completion_bound(self) -> CompletionDigestSet {
+        self.completion_bound
     }
 
     pub(crate) const fn with_correction_count(mut self, correction_count: u64) -> Self {
@@ -408,6 +454,12 @@ pub enum NextAction {
         active_ordinal: u32,
         queue_digest: ArtifactDigest,
     },
+    /// Finalize the execution evidence ledger for the verified implementation.
+    FinalizeExecutionEvidence,
+    /// Collect the required review contributions for the finalized evidence.
+    CollectReviewContributions,
+    /// Aggregate the Review and evaluate the final Gates for governance close.
+    FinalizeGovernance,
 }
 
 /// Durable pure decision that doubles as the next supervisor checkpoint.
@@ -421,6 +473,7 @@ pub struct FlowDecision {
     pub(crate) health: SupervisorHealth,
     pub(crate) next_action: NextAction,
     pub(crate) execution_cursor: Option<ExecutionCursor>,
+    pub(crate) review_contributions_ready: bool,
     pub(crate) last_cursor: Option<EventCursor>,
     pub(crate) last_event_fingerprint: Option<InputFingerprint>,
     pub(crate) decision_digest: DecisionDigest,
@@ -460,6 +513,12 @@ impl FlowDecision {
     /// Returns the latest approved execution cursor tracked by the reducer.
     pub const fn execution_cursor(&self) -> Option<ExecutionCursor> {
         self.execution_cursor
+    }
+
+    /// Returns whether the required review contributions were collected for
+    /// the current `ReviewReady` milestone.
+    pub const fn review_contributions_ready(&self) -> bool {
+        self.review_contributions_ready
     }
 
     /// Returns the last applied global event cursor.

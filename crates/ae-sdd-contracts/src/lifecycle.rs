@@ -3,8 +3,9 @@
 use std::collections::BTreeSet;
 
 use ae_sdd_domain::{
-    AgentRole, ArtifactDigest, DecisionDigest, DesignRoute, EvidenceRef, InputFingerprint,
-    ProcessPhase, ProjectRelativePath, SessionId, StateRevision, StoryId, WorkScale,
+    AgentRole, ArtifactDigest, CompletionDigestSet, CompletionMilestone, DecisionDigest,
+    DesignRoute, EvidenceRef, InputFingerprint, ProcessPhase, ProjectRelativePath, SessionId,
+    StateRevision, StoryId, WorkScale,
 };
 use ae_sdd_protocol::ConfirmationRef;
 use serde::{Deserialize, Serialize};
@@ -164,6 +165,123 @@ pub struct FileLockSnapshot {
     pub metadata_valid: bool,
 }
 
+/// Bounded completion-milestone freshness projection asserted by the trusted adapter.
+///
+/// `bound` records the input digests observed when the authoritative state
+/// reached `milestone`; `observed` carries the digests the trusted adapter
+/// sees right now. The effective milestone is the recorded one rolled back to
+/// the earliest still-fresh point, so a stale input can never keep
+/// `GovernanceClosed`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    from = "CompletionMilestoneInputWire",
+    into = "CompletionMilestoneInputWire"
+)]
+pub struct CompletionMilestoneInput {
+    milestone: CompletionMilestone,
+    bound: CompletionDigestSet,
+    observed: CompletionDigestSet,
+}
+
+impl CompletionMilestoneInput {
+    /// Constructs a milestone freshness projection.
+    pub const fn new(
+        milestone: CompletionMilestone,
+        bound: CompletionDigestSet,
+        observed: CompletionDigestSet,
+    ) -> Self {
+        Self {
+            milestone,
+            bound,
+            observed,
+        }
+    }
+
+    /// Returns the milestone recorded in authoritative state.
+    pub const fn milestone(&self) -> CompletionMilestone {
+        self.milestone
+    }
+
+    /// Returns the digests bound when the milestone was reached.
+    pub const fn bound(&self) -> CompletionDigestSet {
+        self.bound
+    }
+
+    /// Returns the currently observed input digests.
+    pub const fn observed(&self) -> CompletionDigestSet {
+        self.observed
+    }
+
+    /// Returns the milestone after rolling back to the earliest still-fresh point.
+    pub fn effective_milestone(&self) -> CompletionMilestone {
+        self.milestone.invalidate(&self.bound, &self.observed)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompletionMilestoneInputWire {
+    #[serde(with = "completion_milestone")]
+    milestone: CompletionMilestone,
+    bound: CompletionDigestSetWire,
+    observed: CompletionDigestSetWire,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompletionDigestSetWire {
+    #[serde(with = "serde_domain::artifact_digest")]
+    code_digest: ArtifactDigest,
+    #[serde(with = "serde_domain::artifact_digest")]
+    verification_digest: ArtifactDigest,
+    #[serde(with = "serde_domain::artifact_digest")]
+    evidence_digest: ArtifactDigest,
+    #[serde(with = "serde_domain::artifact_digest")]
+    review_input_digest: ArtifactDigest,
+    #[serde(with = "serde_domain::artifact_digest")]
+    gate_digest: ArtifactDigest,
+}
+
+impl From<CompletionMilestoneInputWire> for CompletionMilestoneInput {
+    fn from(value: CompletionMilestoneInputWire) -> Self {
+        Self::new(value.milestone, value.bound.into(), value.observed.into())
+    }
+}
+
+impl From<CompletionMilestoneInput> for CompletionMilestoneInputWire {
+    fn from(value: CompletionMilestoneInput) -> Self {
+        Self {
+            milestone: value.milestone(),
+            bound: value.bound().into(),
+            observed: value.observed().into(),
+        }
+    }
+}
+
+impl From<CompletionDigestSetWire> for CompletionDigestSet {
+    fn from(value: CompletionDigestSetWire) -> Self {
+        Self::new(
+            value.code_digest,
+            value.verification_digest,
+            value.evidence_digest,
+            value.review_input_digest,
+            value.gate_digest,
+        )
+    }
+}
+
+impl From<CompletionDigestSet> for CompletionDigestSetWire {
+    fn from(value: CompletionDigestSet) -> Self {
+        Self {
+            code_digest: value.code_digest(),
+            verification_digest: value.verification_digest(),
+            evidence_digest: value.evidence_digest(),
+            review_input_digest: value.review_input_digest(),
+            gate_digest: value.gate_digest(),
+        }
+    }
+}
+
 /// Error returned when a lifecycle input violates bounds or snapshot identity.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum LifecycleInputError {
@@ -194,6 +312,7 @@ pub struct LifecycleInput {
     confirmation_refs: Vec<ConfirmationRef>,
     evidence_refs: Vec<EvidenceRef>,
     file_locks: Vec<FileLockSnapshot>,
+    completion: Option<CompletionMilestoneInput>,
     evaluation_unix_ms: u64,
     input_fingerprint: InputFingerprint,
 }
@@ -247,9 +366,23 @@ impl LifecycleInput {
             confirmation_refs,
             evidence_refs,
             file_locks,
+            completion: None,
             evaluation_unix_ms,
             input_fingerprint,
         })
+    }
+
+    /// Binds the completion-milestone freshness projection asserted by the
+    /// trusted adapter; terminal `Completed` planning fails closed without it.
+    #[must_use]
+    pub const fn with_completion(mut self, completion: CompletionMilestoneInput) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+
+    /// Returns the optional completion-milestone freshness projection.
+    pub const fn completion(&self) -> Option<CompletionMilestoneInput> {
+        self.completion
     }
 
     /// Returns the typed command.
@@ -267,6 +400,16 @@ impl LifecycleInput {
         self.actor_role
     }
 
+    /// Returns the domain-owned work scale used by transition policy.
+    pub const fn scale(&self) -> WorkScale {
+        self.scale
+    }
+
+    /// Returns the selected direct design route used by transition policy.
+    pub const fn design_route(&self) -> DesignRoute {
+        self.design_route
+    }
+
     /// Returns bounded Story summaries.
     pub fn story_summaries(&self) -> &[StorySummary] {
         &self.story_summaries
@@ -275,6 +418,21 @@ impl LifecycleInput {
     /// Returns the optional PRD projection.
     pub const fn prd_summary(&self) -> Option<&PrdSummary> {
         self.prd_summary.as_ref()
+    }
+
+    /// Returns bounded confirmation references asserted by the trusted adapter.
+    pub fn confirmation_refs(&self) -> &[ConfirmationRef] {
+        &self.confirmation_refs
+    }
+
+    /// Returns bounded evidence references.
+    pub fn evidence_refs(&self) -> &[EvidenceRef] {
+        &self.evidence_refs
+    }
+
+    /// Returns the authoritative bounded file-lock projection.
+    pub fn file_locks(&self) -> &[FileLockSnapshot] {
+        &self.file_locks
     }
 
     /// Returns the explicit evaluation instant.
@@ -320,6 +478,8 @@ struct LifecycleInputWire {
     #[serde(with = "serde_domain::evidence_refs")]
     evidence_refs: Vec<EvidenceRef>,
     file_locks: Vec<FileLockSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion: Option<CompletionMilestoneInput>,
     evaluation_unix_ms: u64,
     #[serde(with = "serde_domain::input_fingerprint")]
     input_fingerprint: InputFingerprint,
@@ -329,7 +489,7 @@ impl TryFrom<LifecycleInputWire> for LifecycleInput {
     type Error = LifecycleInputError;
 
     fn try_from(value: LifecycleInputWire) -> Result<Self, Self::Error> {
-        Self::new(
+        let input = Self::new(
             value.schema_version,
             value.command,
             value.snapshot,
@@ -344,7 +504,11 @@ impl TryFrom<LifecycleInputWire> for LifecycleInput {
             value.file_locks,
             value.evaluation_unix_ms,
             value.input_fingerprint,
-        )
+        )?;
+        Ok(match value.completion {
+            Some(completion) => input.with_completion(completion),
+            None => input,
+        })
     }
 }
 
@@ -363,6 +527,7 @@ impl From<LifecycleInput> for LifecycleInputWire {
             confirmation_refs: value.confirmation_refs,
             evidence_refs: value.evidence_refs,
             file_locks: value.file_locks,
+            completion: value.completion,
             evaluation_unix_ms: value.evaluation_unix_ms,
             input_fingerprint: value.input_fingerprint,
         }
@@ -687,6 +852,47 @@ impl From<LifecyclePlan> for LifecyclePlanWire {
             confirmation_requirement: value.confirmation_requirement,
             plan_digest: value.plan_digest,
             remediation: value.remediation,
+        }
+    }
+}
+
+mod completion_milestone {
+    use ae_sdd_domain::CompletionMilestone;
+    use serde::{Deserialize, Deserializer, Serializer, de};
+
+    pub(super) fn serialize<S>(
+        value: &CompletionMilestone,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(match value {
+            CompletionMilestone::None => "none",
+            CompletionMilestone::ImplementationVerified => "implementation_verified",
+            CompletionMilestone::ReviewReady => "review_ready",
+            CompletionMilestone::GovernanceClosed => "governance_closed",
+        })
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<CompletionMilestone, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match String::deserialize(deserializer)?.as_str() {
+            "none" => Ok(CompletionMilestone::None),
+            "implementation_verified" => Ok(CompletionMilestone::ImplementationVerified),
+            "review_ready" => Ok(CompletionMilestone::ReviewReady),
+            "governance_closed" => Ok(CompletionMilestone::GovernanceClosed),
+            other => Err(de::Error::unknown_variant(
+                other,
+                &[
+                    "none",
+                    "implementation_verified",
+                    "review_ready",
+                    "governance_closed",
+                ],
+            )),
         }
     }
 }

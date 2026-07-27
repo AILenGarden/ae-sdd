@@ -2,7 +2,8 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ae_sdd_domain::{
-    AgentRole, DecisionDigest, DesignRoute, EventSequence, ProcessPhase, WorkScale,
+    AgentRole, CompletionMilestone, DecisionDigest, DesignRoute, EventSequence, ProcessPhase,
+    WorkScale,
 };
 use ae_sdd_policy::{
     GateDirective, GateTruth, InfrastructureImpact, RequiredGate, RoleOperation, TransitionContext,
@@ -30,14 +31,12 @@ impl FlowRuntime {
             health: SupervisorHealth::Healthy,
             next_action: NextAction::AwaitAgentWork,
             execution_cursor: input.environment().execution_cursor(),
+            review_contributions_ready: false,
             last_cursor: None,
             last_event_fingerprint: None,
             decision_digest: DecisionDigest::from_array([0; 32]),
         };
-        if let Some(action) = execution_action(decision.snapshot.phase(), decision.execution_cursor)
-        {
-            decision.next_action = action;
-        }
+        decision.next_action = idle_action(&decision);
         decision.decision_digest = digest_decision(None, &decision);
         decision
     }
@@ -156,17 +155,32 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
             };
             match TransitionPolicy::authorize(context) {
                 Ok(permit) => {
-                    decision.pending_transition = Some(*target);
-                    decision.required_gates = permit.required_gates().to_vec();
-                    decision.passed_gates.clear();
-                    decision.next_action = if decision.required_gates.is_empty() {
-                        NextAction::ApplyTransition { target: *target }
+                    let completion_denied = if *target == ProcessPhase::Completed {
+                        TransitionPolicy::authorize_completion(
+                            decision.snapshot.completion_milestone(),
+                        )
+                        .err()
                     } else {
-                        NextAction::EvaluateGates {
-                            target: *target,
-                            required_gates: decision.required_gates.clone(),
-                        }
+                        None
                     };
+                    if let Some(reason) = completion_denied {
+                        decision.next_action = NextAction::TransitionDenied {
+                            target: *target,
+                            reason,
+                        };
+                    } else {
+                        decision.pending_transition = Some(*target);
+                        decision.required_gates = permit.required_gates().to_vec();
+                        decision.passed_gates.clear();
+                        decision.next_action = if decision.required_gates.is_empty() {
+                            NextAction::ApplyTransition { target: *target }
+                        } else {
+                            NextAction::EvaluateGates {
+                                target: *target,
+                                required_gates: decision.required_gates.clone(),
+                            }
+                        };
+                    }
                 }
                 Err(reason) => {
                     decision.next_action = NextAction::TransitionDenied {
@@ -254,6 +268,12 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
                     committed: *state_revision,
                 });
             }
+            if *phase == ProcessPhase::Completed
+                && TransitionPolicy::authorize_completion(decision.snapshot.completion_milestone())
+                    .is_err()
+            {
+                return Err(FlowError::TransitionNotReady { target: *phase });
+            }
             let paused_from = if *phase == ProcessPhase::Paused {
                 Some(decision.snapshot.phase())
             } else {
@@ -263,6 +283,10 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
                 *phase,
                 *state_revision,
                 decision.snapshot.correction_count(),
+            )
+            .with_completion_milestone(
+                decision.snapshot.completion_milestone(),
+                decision.snapshot.completion_bound(),
             );
             if let Some(paused_from) = paused_from {
                 decision.snapshot = decision.snapshot.with_paused_from(paused_from);
@@ -270,9 +294,7 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
             decision.pending_transition = None;
             decision.required_gates.clear();
             decision.passed_gates.clear();
-            decision.next_action =
-                execution_action(decision.snapshot.phase(), decision.execution_cursor)
-                    .unwrap_or(NextAction::AwaitAgentWork);
+            decision.next_action = idle_action(decision);
         }
         FlowEventKind::ExecutionQueueApproved { cursor } => {
             let previous = decision.execution_cursor;
@@ -283,10 +305,76 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
                     Some(previous) if previous.queue_digest() != cursor.queue_digest() => {
                         NextAction::ResumeApprovedExecution
                     }
-                    _ => execution_action(decision.snapshot.phase(), decision.execution_cursor)
-                        .unwrap_or(NextAction::AwaitAgentWork),
+                    _ => idle_action(decision),
                 };
             }
+        }
+        FlowEventKind::VerificationFreshnessObserved {
+            code_digest,
+            verification_digest,
+        } => {
+            if decision.snapshot.completion_milestone() == CompletionMilestone::None {
+                let bound = decision
+                    .snapshot
+                    .completion_bound()
+                    .with_code_digest(*code_digest)
+                    .with_verification_digest(*verification_digest);
+                decision.snapshot = decision
+                    .snapshot
+                    .with_completion_milestone(CompletionMilestone::ImplementationVerified, bound);
+            }
+            refresh_idle_action(decision);
+        }
+        FlowEventKind::ExecutionEvidenceFinalized { evidence_digest } => {
+            if decision.snapshot.completion_milestone()
+                == CompletionMilestone::ImplementationVerified
+            {
+                let bound = decision
+                    .snapshot
+                    .completion_bound()
+                    .with_evidence_digest(*evidence_digest);
+                decision.snapshot = decision
+                    .snapshot
+                    .with_completion_milestone(CompletionMilestone::ReviewReady, bound);
+                decision.review_contributions_ready = false;
+            }
+            refresh_idle_action(decision);
+        }
+        FlowEventKind::ReviewContributionsCollected => {
+            if decision.snapshot.completion_milestone() == CompletionMilestone::ReviewReady {
+                decision.review_contributions_ready = true;
+            }
+            refresh_idle_action(decision);
+        }
+        FlowEventKind::GovernanceFinalized {
+            review_input_digest,
+            gate_digest,
+        } => {
+            if decision.snapshot.completion_milestone() == CompletionMilestone::ReviewReady
+                && decision.review_contributions_ready
+            {
+                let bound = decision
+                    .snapshot
+                    .completion_bound()
+                    .with_review_input_digest(*review_input_digest)
+                    .with_gate_digest(*gate_digest);
+                decision.snapshot = decision
+                    .snapshot
+                    .with_completion_milestone(CompletionMilestone::GovernanceClosed, bound);
+                decision.review_contributions_ready = false;
+            }
+            refresh_idle_action(decision);
+        }
+        FlowEventKind::CompletionInputsChanged { observed } => {
+            let current = decision.snapshot.completion_milestone();
+            let rolled = current.invalidate(&decision.snapshot.completion_bound(), observed);
+            if rolled != current {
+                decision.snapshot = decision
+                    .snapshot
+                    .with_completion_milestone(rolled, decision.snapshot.completion_bound());
+                decision.review_contributions_ready = false;
+            }
+            refresh_idle_action(decision);
         }
         FlowEventKind::BackgroundFault(fault) => {
             decision.health = SupervisorHealth::Degraded(SupervisorDegradation::Background(*fault));
@@ -316,6 +404,45 @@ fn execution_action(phase: ProcessPhase, cursor: Option<ExecutionCursor>) -> Opt
     })
 }
 
+/// Recomputes the idle action unless a pending transition owns the decision.
+fn refresh_idle_action(decision: &mut FlowDecision) {
+    if decision.pending_transition.is_none() {
+        decision.next_action = idle_action(decision);
+    }
+}
+
+/// Derives the idle action from the execution surface and the completion
+/// milestone chain; the execution surface always wins over milestone work.
+fn idle_action(decision: &FlowDecision) -> NextAction {
+    execution_action(decision.snapshot.phase(), decision.execution_cursor)
+        .or_else(|| {
+            completion_action(
+                decision.snapshot.completion_milestone(),
+                decision.review_contributions_ready,
+            )
+        })
+        .unwrap_or(NextAction::AwaitAgentWork)
+}
+
+/// Maps the completion milestone to the next chain-driving action.
+///
+/// `None` and `GovernanceClosed` produce no action: the chain still needs
+/// verification freshness, or is already complete and waits for the regular
+/// transition flow.
+fn completion_action(
+    milestone: CompletionMilestone,
+    review_contributions_ready: bool,
+) -> Option<NextAction> {
+    match milestone {
+        CompletionMilestone::None | CompletionMilestone::GovernanceClosed => None,
+        CompletionMilestone::ImplementationVerified => Some(NextAction::FinalizeExecutionEvidence),
+        CompletionMilestone::ReviewReady if review_contributions_ready => {
+            Some(NextAction::FinalizeGovernance)
+        }
+        CompletionMilestone::ReviewReady => Some(NextAction::CollectReviewContributions),
+    }
+}
+
 fn digest_decision(previous: Option<DecisionDigest>, decision: &FlowDecision) -> DecisionDigest {
     let mut bytes = Vec::with_capacity(512);
     bytes.extend_from_slice(b"ae-sdd-flow-decision/v1\0");
@@ -330,6 +457,12 @@ fn digest_decision(previous: Option<DecisionDigest>, decision: &FlowDecision) ->
     bytes.extend_from_slice(&decision.snapshot.state_revision().get().to_be_bytes());
     bytes.extend_from_slice(&decision.snapshot.correction_count().to_be_bytes());
     canonical::execution_cursor(&mut bytes, decision.execution_cursor);
+    canonical::completion(
+        &mut bytes,
+        decision.snapshot.completion_milestone(),
+        &decision.snapshot.completion_bound(),
+        decision.review_contributions_ready,
+    );
     encode_optional_phase(&mut bytes, decision.pending_transition);
     encode_gates(&mut bytes, &decision.required_gates);
     encode_gates(
@@ -424,6 +557,9 @@ fn encode_action(bytes: &mut Vec<u8>, action: &NextAction) {
             bytes.extend_from_slice(&active_ordinal.to_be_bytes());
             bytes.extend_from_slice(queue_digest.as_bytes());
         }
+        NextAction::FinalizeExecutionEvidence => bytes.push(11),
+        NextAction::CollectReviewContributions => bytes.push(12),
+        NextAction::FinalizeGovernance => bytes.push(13),
     }
 }
 
@@ -459,6 +595,9 @@ fn encode_transition_error(bytes: &mut Vec<u8>, error: TransitionPolicyError) {
             bytes.push(4);
             encode_optional_phase(bytes, recorded);
             bytes.push(phase_tag(target));
+        }
+        TransitionPolicyError::CompletionMilestoneOpen { milestone } => {
+            bytes.extend_from_slice(&[5, canonical::completion_milestone_tag(milestone)]);
         }
     }
 }

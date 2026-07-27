@@ -1,6 +1,8 @@
 use std::{error::Error, fmt};
 
-use ae_sdd_domain::{AgentRole, DesignRoute, PolicyDigest, ProcessPhase, WorkScale};
+use ae_sdd_domain::{
+    AgentRole, CompletionMilestone, DesignRoute, PolicyDigest, ProcessPhase, WorkScale,
+};
 
 use crate::{RoleAuthorizationError, RoleOperation, RolePolicy};
 
@@ -249,6 +251,20 @@ impl TransitionPolicy {
     pub const fn is_execution_phase(phase: ProcessPhase) -> bool {
         matches!(phase, ProcessPhase::Coding)
     }
+
+    /// Authorizes committing the terminal `Completed` phase.
+    ///
+    /// `Completed` may only be committed from `GovernanceClosed`; the caller
+    /// supplies the milestone after rolling it back against the freshest
+    /// observed digests, so a stale input can never open the terminal phase.
+    pub const fn authorize_completion(
+        milestone: CompletionMilestone,
+    ) -> Result<(), TransitionPolicyError> {
+        match milestone {
+            CompletionMilestone::GovernanceClosed => Ok(()),
+            milestone => Err(TransitionPolicyError::CompletionMilestoneOpen { milestone }),
+        }
+    }
 }
 
 fn route_chain(
@@ -307,6 +323,11 @@ pub enum TransitionPolicyError {
         recorded: Option<ProcessPhase>,
         target: ProcessPhase,
     },
+    /// The terminal phase was requested before governance closed.
+    CompletionMilestoneOpen {
+        /// The effective milestone after freshness rollback.
+        milestone: CompletionMilestone,
+    },
 }
 
 impl From<RoleAuthorizationError> for TransitionPolicyError {
@@ -336,6 +357,10 @@ impl fmt::Display for TransitionPolicyError {
             Self::InvalidResume { recorded, target } => write!(
                 formatter,
                 "paused flow recorded {recorded:?}, so it cannot resume to {target:?}"
+            ),
+            Self::CompletionMilestoneOpen { milestone } => write!(
+                formatter,
+                "completion milestone {milestone:?} has not closed governance"
             ),
         }
     }
@@ -459,5 +484,23 @@ mod tests {
                 "{phase:?} must not host slice execution",
             );
         }
+    }
+
+    #[test]
+    fn only_governance_closed_authorizes_completed() {
+        for milestone in [
+            CompletionMilestone::None,
+            CompletionMilestone::ImplementationVerified,
+            CompletionMilestone::ReviewReady,
+        ] {
+            assert_eq!(
+                TransitionPolicy::authorize_completion(milestone),
+                Err(TransitionPolicyError::CompletionMilestoneOpen { milestone }),
+            );
+        }
+        assert_eq!(
+            TransitionPolicy::authorize_completion(CompletionMilestone::GovernanceClosed),
+            Ok(())
+        );
     }
 }

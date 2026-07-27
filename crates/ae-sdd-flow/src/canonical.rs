@@ -2,6 +2,7 @@ use std::{error::Error, fmt};
 
 use ae_sdd_contracts::execution_runtime::ExecutionSliceStatus;
 use ae_sdd_contracts::series::{SeriesInput, SeriesPlanDecision};
+use ae_sdd_domain::{CompletionDigestSet, CompletionMilestone};
 use serde_json::{Map, Value};
 
 use crate::ExecutionCursor;
@@ -58,6 +59,35 @@ const fn execution_slice_status_tag(status: ExecutionSliceStatus) -> u8 {
         ExecutionSliceStatus::EvidenceBound => 5,
         ExecutionSliceStatus::Completed => 6,
         ExecutionSliceStatus::Blocked => 7,
+    }
+}
+
+/// Encodes the orthogonal completion dimension into the deterministic decision
+/// digest: milestone tag, the five bound input digests, and the contribution
+/// marker. The evidence or review bodies never enter a flow digest.
+pub(crate) fn completion(
+    bytes: &mut Vec<u8>,
+    milestone: CompletionMilestone,
+    bound: &CompletionDigestSet,
+    review_contributions_ready: bool,
+) {
+    bytes.push(completion_milestone_tag(milestone));
+    bytes.extend_from_slice(bound.code_digest().as_bytes());
+    bytes.extend_from_slice(bound.verification_digest().as_bytes());
+    bytes.extend_from_slice(bound.evidence_digest().as_bytes());
+    bytes.extend_from_slice(bound.review_input_digest().as_bytes());
+    bytes.extend_from_slice(bound.gate_digest().as_bytes());
+    bytes.push(u8::from(review_contributions_ready));
+}
+
+/// Stable explicit numbering of the completion milestones; these tags are part
+/// of the decision digest format and must never be renumbered.
+pub(crate) const fn completion_milestone_tag(milestone: CompletionMilestone) -> u8 {
+    match milestone {
+        CompletionMilestone::None => 0,
+        CompletionMilestone::ImplementationVerified => 1,
+        CompletionMilestone::ReviewReady => 2,
+        CompletionMilestone::GovernanceClosed => 3,
     }
 }
 

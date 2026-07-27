@@ -34,6 +34,8 @@ pub use ids::{
     FindingCode, GateId, HostAckId, HostActionId, JobId, LeaseId, OperationId, ProjectKey,
     RequestId, SessionId, StoryId, TurnId, VerificationId, WorkItemId, WorkspaceId,
 };
-pub use lifecycle::{DesignRoute, ProcessPhase, WorkScale};
+pub use lifecycle::{
+    CompletionDigestSet, CompletionMilestone, DesignRoute, ProcessPhase, WorkScale,
+};
 pub use path::{ProjectRelativePath, ProjectRelativePathError};
 pub use refs::{ArtifactRef, EvidenceRef};
