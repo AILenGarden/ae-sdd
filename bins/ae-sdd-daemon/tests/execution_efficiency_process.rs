@@ -139,14 +139,7 @@ async fn daemon_process_resumes_and_supervises_one_slice_within_p0_budgets() {
         &policy_digest,
         workspace.inventory_generation,
     );
-    let prompt = hook_call(
-        &hook,
-        &identity,
-        "hook-000-user-prompt",
-        RpcMethod::HookUserPrompt,
-        json!({}),
-    )
-    .await;
+    let prompt = await_guarded_prompt(&hook, &identity).await;
     assert_eq!(prompt["decision"], "context", "{prompt}");
 
     let mut script = HookScript::new(&hook, &identity);
@@ -589,6 +582,35 @@ impl<'a> HookScript<'a> {
         )
         .await
     }
+}
+
+/// Opens the turn with `hook.user_prompt` and waits until the cached context
+/// projection actually carries the freshly injected passing `hookGuard`.
+///
+/// `hook_projection` serves the cache without recomputing, and the daemon's
+/// context worker only rebuilds it on its own interval. Adjudicating a PreTool
+/// event before that rebuild lands reads a guard-free projection, which fails
+/// closed — so the assertion under test would depend on the refresh window
+/// rather than on the supervisor rule it means to prove. Each attempt needs a
+/// distinct `hookEventId`; a repeated identity would replay the first receipt.
+async fn await_guarded_prompt(client: &DaemonClient, identity: &Identity) -> Value {
+    const MAX_ATTEMPTS: u32 = 200;
+    let mut last = Value::Null;
+    for attempt in 0..MAX_ATTEMPTS {
+        last = hook_call(
+            client,
+            identity,
+            &format!("hook-000-user-prompt-{attempt}"),
+            RpcMethod::HookUserPrompt,
+            json!({}),
+        )
+        .await;
+        if last["context"]["hookGuard"]["outcome"] == "PASS" {
+            return last;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("context projection never published the injected passing guard: {last}");
 }
 
 async fn hook_call(
