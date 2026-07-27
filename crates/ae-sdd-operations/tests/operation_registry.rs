@@ -20,6 +20,8 @@ const NAMES: [&str; OPERATION_COUNT] = [
     "lease.release",
     "lease.renew",
     "lease.status",
+    "review.contribute",
+    "review.finalize",
     "review.record",
     "state.next_actions",
     "state.transition",

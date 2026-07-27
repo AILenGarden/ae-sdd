@@ -1298,7 +1298,7 @@ fn review_event_committed_at(
     };
     if workspace_id != write.workspace_id
         || work_item_id != write.work_item_id
-        || event_type != "review.record"
+        || !matches!(event_type.as_str(), "review.record" | "review.finalize")
         || parse_timestamp(&committed_at).is_err()
     {
         return Err(review_projection_error(

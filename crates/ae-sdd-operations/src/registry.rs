@@ -4,7 +4,7 @@ use ae_sdd_protocol::OperationScope;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub const OPERATION_COUNT: usize = 21;
+pub const OPERATION_COUNT: usize = 23;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
@@ -24,6 +24,8 @@ pub enum OperationName {
     LeaseRelease,
     LeaseRenew,
     LeaseStatus,
+    ReviewContribute,
+    ReviewFinalize,
     ReviewRecord,
     StateNextActions,
     StateTransition,
@@ -49,6 +51,8 @@ impl OperationName {
         Self::LeaseRelease,
         Self::LeaseRenew,
         Self::LeaseStatus,
+        Self::ReviewContribute,
+        Self::ReviewFinalize,
         Self::ReviewRecord,
         Self::StateNextActions,
         Self::StateTransition,
@@ -75,6 +79,8 @@ impl OperationName {
             Self::LeaseRelease => "lease.release",
             Self::LeaseRenew => "lease.renew",
             Self::LeaseStatus => "lease.status",
+            Self::ReviewContribute => "review.contribute",
+            Self::ReviewFinalize => "review.finalize",
             Self::ReviewRecord => "review.record",
             Self::StateNextActions => "state.next_actions",
             Self::StateTransition => "state.transition",
@@ -238,6 +244,7 @@ const REVIEW_RECORD: &[FieldSpec] = &[
     field("reviewedPaths", FieldKind::Array, false),
     field("evidenceIds", FieldKind::Array, false),
 ];
+const REVIEW_CONTRIBUTE: &[FieldSpec] = REVIEW_RECORD;
 const STATE_TRANSITION: &[FieldSpec] = &[field("targetPhase", FieldKind::String, true)];
 const VERIFICATION_PLAN: &[FieldSpec] = &[
     field("toolsetJobId", FieldKind::String, true),
@@ -388,6 +395,24 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         false,
         false,
         false,
+        false,
+        NO_FIELDS,
+    ),
+    spec(
+        OperationName::ReviewContribute,
+        true,
+        false,
+        true,
+        true,
+        false,
+        REVIEW_CONTRIBUTE,
+    ),
+    spec(
+        OperationName::ReviewFinalize,
+        true,
+        true,
+        true,
+        true,
         false,
         NO_FIELDS,
     ),

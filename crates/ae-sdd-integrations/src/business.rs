@@ -1285,7 +1285,9 @@ fn authorize_operation_paths(
         OperationName::VerificationPlan => {
             required.extend(scoped_path_array(workspace, payload, "changedPaths")?);
         }
-        OperationName::ReviewRecord if payload.get("reviewedPaths").is_some() => {
+        OperationName::ReviewRecord | OperationName::ReviewContribute
+            if payload.get("reviewedPaths").is_some() =>
+        {
             required.extend(scoped_path_array(workspace, payload, "reviewedPaths")?);
         }
         _ => {}
@@ -1352,7 +1354,10 @@ fn semantic_operation(role: AgentRole, operation: OperationName) -> RoleOperatio
             RoleOperation::SubmitEvidence
         }
         OperationName::VerificationPlan => RoleOperation::RunAssignedTests,
-        OperationName::ReviewRecord => RoleOperation::SubmitReviewFindings,
+        OperationName::ReviewContribute | OperationName::ReviewRecord => {
+            RoleOperation::SubmitReviewFindings
+        }
+        OperationName::ReviewFinalize => RoleOperation::RequestGlobalTransition,
         OperationName::LeaseBreak => RoleOperation::BreakLease,
         OperationName::LeaseAcquire | OperationName::LeaseRenew | OperationName::LeaseRelease => {
             RoleOperation::ManageOwnLease
@@ -1617,6 +1622,10 @@ struct PreparedReviewBinding {
 /// Bounded writer-lease TTL for the internal first-generation seed commit.
 const EXECUTION_SEED_LEASE_TTL_SECONDS: u64 = 300;
 
+/// Bounded writer-lease TTL for the internal atomic append commit of one
+/// `review.contribute`; never exposed to callers as a cross-reviewer lease.
+const REVIEW_CONTRIBUTE_LEASE_TTL_SECONDS: u64 = 300;
+
 /// Typed inputs for one first-generation execution seed commit.
 struct ExecutionSeedCommit<'a> {
     work_item_id: &'a WorkItemId,
@@ -1787,6 +1796,7 @@ impl OperationBackend for ProjectBackend<'_> {
                 self.session_id,
                 self.adapter.boot_id,
             ),
+            OperationName::ReviewContribute => self.mutate_review_contribution(request),
             _ => self.mutate_state(request),
         }
     }
@@ -1810,6 +1820,7 @@ impl OperationBackend for ProjectBackend<'_> {
                 self.session_id,
                 self.adapter.boot_id,
             ),
+            OperationName::ReviewContribute => self.mutate_review_contribution(request),
             _ => self.mutate_state(request),
         }
     }
@@ -2186,6 +2197,316 @@ impl ProjectBackend<'_> {
         Ok(())
     }
 
+    /// Authoritative `review.contribute` mutation. The registry keeps the
+    /// operation lease-free for callers: reviewers serialize through the Work
+    /// Item actor plus the revision/idempotency/fingerprint CAS, and the
+    /// daemon acquires a short internal writer lease only for its own atomic
+    /// append commit. No cross-reviewer writer lease is ever held.
+    fn mutate_review_contribution(
+        &self,
+        request: &ValidatedOperationRequest,
+    ) -> RuntimeResult<OperationResponse> {
+        let idempotency_key = request
+            .request()
+            .idempotency_key
+            .as_deref()
+            .ok_or_else(|| schema_error("idempotencyKey is required"))?;
+        let idempotency = IdempotencyKey::new(idempotency_key.to_owned()).map_err(store_error)?;
+        let workspace_id = parse(&self.workspace.workspace_id, "workspaceId")?;
+        let payload_digest = InputFingerprint::from_array(*request.payload_digest());
+        let work_item_id = request
+            .request()
+            .work_item_id
+            .as_ref()
+            .ok_or_else(|| schema_error("workItemId is required"))?;
+        let store = self.store_for(Some(request.operation().as_str()))?;
+        if !request.request().dry_run
+            && let Some(committed) = store
+                .replay_committed(
+                    workspace_id,
+                    work_item_id,
+                    request.operation_id(),
+                    &idempotency,
+                    payload_digest,
+                )
+                .map_err(store_error)?
+        {
+            let data = committed_result_data(&committed)?;
+            return Ok(OperationResponse {
+                changed: false,
+                revision_before: Some(committed.receipt.revision_before),
+                revision_after: Some(committed.receipt.revision_after),
+                receipt_digest: Some(committed.receipt.result_digest.into_array()),
+                data,
+            });
+        }
+        let before_bytes = fs::read(&self.state.absolute).map_err(io_error)?;
+        let authority = StateAuthority::inspect(&before_bytes).map_err(store_error)?;
+        let state = authoritative_state_snapshot(&self.state.value, &before_bytes)?;
+        if request.request().expected_revision != Some(authority.revision()) {
+            return Err(RuntimeError::new(
+                StableErrorCode::RevisionConflict,
+                "expectedRevision does not match authoritative state",
+            ));
+        }
+        let now = UtcTimestamp::now();
+        let owner = LeaseOwner::new(format!(
+            "review.contribute:{}",
+            self.session_id
+                .map_or_else(|| "daemon".to_owned(), |value| value.to_string())
+        ))
+        .map_err(store_error)?;
+        let lease = store
+            .acquire_lease(
+                LeaseId::from_uuid(Uuid::new_v4()),
+                owner,
+                now.clone(),
+                add_seconds_from(&now, REVIEW_CONTRIBUTE_LEASE_TTL_SECONDS)?,
+            )
+            .map_err(|error| match error {
+                StoreError::LeaseConflict => RuntimeError::new(
+                    StableErrorCode::ExecutionResourceBusy,
+                    "an active writer lease blocks the review contribution",
+                ),
+                other => store_error(other),
+            })?;
+        match self.commit_review_contribution(
+            &store,
+            request,
+            &state,
+            authority,
+            &before_bytes,
+            &lease,
+            work_item_id,
+        ) {
+            Ok(response) => {
+                self.release_review_contribute_lease(&store, &lease, work_item_id)?;
+                Ok(response)
+            }
+            Err(commit_error) => {
+                // Best-effort release so a failed append does not pin the
+                // writer lease; the commit failure stays the primary error.
+                match self.release_review_contribute_lease(&store, &lease, work_item_id) {
+                    Ok(()) => Err(commit_error),
+                    Err(release_error) => Err(commit_error.with_remediation(format!(
+                        "internal contribution lease release also failed: {}",
+                        release_error.message()
+                    ))),
+                }
+            }
+        }
+    }
+
+    /// Prepares and commits one pending contribution append through the
+    /// journaled mutation path under the internal writer lease.
+    #[allow(clippy::too_many_arguments)]
+    fn commit_review_contribution<C: CommitFaultPort>(
+        &self,
+        store: &ProjectMutationStore<
+            StdDurableFileSystem,
+            StdCrossProcessLock,
+            SqliteRuntimeRepository,
+            C,
+        >,
+        request: &ValidatedOperationRequest,
+        state: &Value,
+        authority: AuthoritySnapshot,
+        before_bytes: &[u8],
+        lease: &LeaseRecord,
+        work_item_id: &WorkItemId,
+    ) -> RuntimeResult<OperationResponse> {
+        let caller = review_authority::AuthenticatedCaller::new(
+            self.agent_id.clone().ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::RoleOperationForbidden,
+                    "review.contribute requires a daemon-authenticated agentId",
+                )
+            })?,
+            self.session_id.ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::RoleOperationForbidden,
+                    "review.contribute requires a daemon-authenticated sessionId",
+                )
+            })?,
+            self.workspace.agent_role.ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::RoleOperationForbidden,
+                    "review.contribute requires a daemon-authenticated role",
+                )
+            })?,
+        );
+        let prepared = review_authority::prepare_review_contribution(
+            self.workspace,
+            state,
+            work_item_id.as_str(),
+            request,
+            &caller,
+            self.adapter.persistence.as_ref(),
+            &self.adapter.boot_id.to_string(),
+            &self.adapter.policy_digest,
+            self.workspace.inventory_generation,
+            &UtcTimestamp::now(),
+        )?;
+        let mut after = state.clone();
+        let revision_after = authority
+            .revision()
+            .checked_next()
+            .map_err(|_| schema_error("state revision overflow"))?;
+        let object = after
+            .as_object_mut()
+            .ok_or_else(|| schema_error("authoritative state must be an object"))?;
+        object.insert("review".to_owned(), prepared.review.clone());
+        object.remove("reviewLoop");
+        object.insert("reviewSession".to_owned(), prepared.review_session.clone());
+        object.insert(
+            "inputFingerprint".to_owned(),
+            Value::String(prepared.input_fingerprint.clone()),
+        );
+        object.insert(
+            "rulesetFingerprint".to_owned(),
+            Value::String(prepared.ruleset_fingerprint.clone()),
+        );
+        object.insert(
+            "policyDigest".to_owned(),
+            Value::String(self.adapter.policy_digest.clone()),
+        );
+        object.insert(
+            "inventoryGeneration".to_owned(),
+            Value::from(self.workspace.inventory_generation),
+        );
+        object.insert("revision".to_owned(), Value::from(revision_after.get()));
+        object.insert(
+            "lastFencingToken".to_owned(),
+            Value::from(lease.fencing_token().get()),
+        );
+        object.insert(
+            "lastMutation".to_owned(),
+            json!({
+                "operation": request.operation().as_str(),
+                "idempotencyKey": request.request().idempotency_key.as_deref(),
+                "revisionBefore": authority.revision().get(),
+                "revisionAfter": revision_after.get(),
+            }),
+        );
+        let after_bytes = serde_json::to_vec_pretty(&after)
+            .map_err(|_| schema_error("state could not be serialized"))?;
+        let response_data = prepared.review.clone();
+        let event_bytes = serde_json::to_vec(&json!({
+            "operation": request.operation().as_str(),
+            "data": response_data,
+        }))
+        .map_err(|_| schema_error("event could not be serialized"))?;
+        let result_bytes = serde_json::to_vec(&response_data)
+            .map_err(|_| schema_error("operation result could not be serialized"))?;
+        let mutation = MutationRequest {
+            mutation_id: RequestId::from_uuid(Uuid::new_v4()),
+            workspace_id: parse(&self.workspace.workspace_id, "workspaceId")?,
+            work_item_id: work_item_id.clone(),
+            operation: request.operation_id().clone(),
+            idempotency_key: IdempotencyKey::new(
+                request
+                    .request()
+                    .idempotency_key
+                    .as_deref()
+                    .ok_or_else(|| schema_error("idempotencyKey is required"))?
+                    .to_owned(),
+            )
+            .map_err(store_error)?,
+            canonical_payload_digest: InputFingerprint::from_array(*request.payload_digest()),
+            expected_authority: authority,
+            lease_proof: LeaseProof::from(lease),
+            targets: vec![
+                MutationTarget::new(
+                    self.state.relative.clone(),
+                    Some(ArtifactDigest::digest(before_bytes)),
+                    after_bytes,
+                )
+                .map_err(store_error)?,
+            ],
+            event: JournalEvent {
+                boot_id: self.adapter.boot_id,
+                session_id: self.session_id,
+                event_type: request.operation().as_str().to_owned().into_boxed_str(),
+                schema_version: 1,
+                payload: RuntimeEventPayload::InlineJson(event_bytes),
+            },
+            result_digest: ResultDigest::digest(&result_bytes),
+            prepared_at: UtcTimestamp::now(),
+            committed_at: UtcTimestamp::now(),
+        };
+        if request.request().dry_run {
+            store.validate_mutation(&mutation).map_err(store_error)?;
+            let target_paths = mutation
+                .targets
+                .iter()
+                .map(|target| target.path().as_str().to_owned())
+                .collect::<Vec<_>>();
+            return Ok(OperationResponse {
+                changed: false,
+                revision_before: Some(authority.revision()),
+                revision_after: Some(authority.revision()),
+                receipt_digest: None,
+                data: json!({
+                    "dryRun":true,
+                    "wouldChange":true,
+                    "targetPaths":target_paths,
+                    "result":response_data,
+                }),
+            });
+        }
+        let committed = store.commit(mutation).map_err(store_error)?;
+        Ok(OperationResponse {
+            changed: !committed.replayed,
+            revision_before: Some(committed.receipt.revision_before),
+            revision_after: Some(committed.receipt.revision_after),
+            receipt_digest: Some(committed.receipt.result_digest.into_array()),
+            data: response_data,
+        })
+    }
+
+    /// Releases the internal contribution lease through the journaled
+    /// lease-control path so later writers are never blocked by a finished
+    /// append.
+    fn release_review_contribute_lease<C: CommitFaultPort>(
+        &self,
+        store: &ProjectMutationStore<
+            StdDurableFileSystem,
+            StdCrossProcessLock,
+            SqliteRuntimeRepository,
+            C,
+        >,
+        lease: &LeaseRecord,
+        work_item_id: &WorkItemId,
+    ) -> RuntimeResult<()> {
+        let now = UtcTimestamp::now();
+        let payload_bytes = serde_json::to_vec(&json!({
+            "leaseId": lease.lease_id().to_string(),
+            "fencingToken": lease.fencing_token().get(),
+        }))
+        .map_err(|_| schema_error("contribution lease release could not be canonicalized"))?;
+        let control = LeaseControlRequest {
+            mutation_id: RequestId::from_uuid(Uuid::new_v4()),
+            workspace_id: parse(&self.workspace.workspace_id, "workspaceId")?,
+            work_item_id: work_item_id.clone(),
+            operation: parse(OperationName::LeaseRelease.as_str(), "operation")?,
+            idempotency_key: IdempotencyKey::new(format!(
+                "review.contribute.release:{}",
+                lease.lease_id()
+            ))
+            .map_err(store_error)?,
+            canonical_payload_digest: InputFingerprint::digest(payload_bytes),
+            action: LeaseControlAction::Release {
+                proof: LeaseProof::from(lease),
+                now: now.clone(),
+            },
+            boot_id: self.adapter.boot_id,
+            session_id: self.session_id,
+            committed_at: now,
+        };
+        store.commit_lease_control(control).map_err(store_error)?;
+        Ok(())
+    }
+
     /// Assembles the `execution.resume` projection: `no-change` when the
     /// caller already knows the current capsule digest and context revision,
     /// otherwise the full capsule with its FlowRuntime-owned next action.
@@ -2320,7 +2641,7 @@ impl ProjectBackend<'_> {
         rebuild_review_authority_projections(&self.adapter.database, &[write])
     }
 
-    /// Returns the newest committed `review.record` event sequence for the
+    /// Returns the newest committed review aggregation event sequence for the
     /// bounded state fallback, or `0` when no such event exists.
     fn latest_review_event_sequence(&self, work_item_id: &str) -> RuntimeResult<u64> {
         let mut cursor = 0_u64;
@@ -2335,7 +2656,9 @@ impl ProjectBackend<'_> {
             }
             for event in &page {
                 cursor = cursor.max(event.event_seq);
-                if event.kind == OperationName::ReviewRecord.as_str()
+                let review_aggregation = event.kind == OperationName::ReviewRecord.as_str()
+                    || event.kind == OperationName::ReviewFinalize.as_str();
+                if review_aggregation
                     && event.workspace_id.as_deref() == Some(self.workspace.workspace_id.as_str())
                     && event.work_item_id.as_deref() == Some(work_item_id)
                 {
@@ -2381,7 +2704,10 @@ impl ProjectBackend<'_> {
             let data = committed_result_data(&committed)?;
             // Same-key replay must repair a missing or partially written
             // projection before reporting `changed=false`.
-            if request.operation() == OperationName::ReviewRecord {
+            if matches!(
+                request.operation(),
+                OperationName::ReviewRecord | OperationName::ReviewFinalize
+            ) {
                 self.repair_review_projections(work_item_id.as_str())?;
             }
             return Ok(OperationResponse {
@@ -2394,7 +2720,12 @@ impl ProjectBackend<'_> {
         }
         // A new Review attempt must not silently bypass an earlier projection
         // failure; repair committed history first.
-        if !request.request().dry_run && request.operation() == OperationName::ReviewRecord {
+        if !request.request().dry_run
+            && matches!(
+                request.operation(),
+                OperationName::ReviewRecord | OperationName::ReviewFinalize
+            )
+        {
             self.repair_review_projections(work_item_id.as_str())?;
         }
         let before_bytes = fs::read(&self.state.absolute).map_err(io_error)?;
@@ -2496,7 +2827,7 @@ impl ProjectBackend<'_> {
                 );
             }
         }
-        // `review.record` events carry a bounded replay seed so the durable
+        // Review aggregation events carry a bounded replay seed so the durable
         // SQLite projection can be rebuilt from committed events alone. `data`
         // already holds the batch/attempt/receipt; only the typed session is
         // additionally required to reconstruct the complete tuple.
@@ -2504,11 +2835,18 @@ impl ProjectBackend<'_> {
             .as_ref()
             .and_then(|prepared| prepared.review_session.as_ref())
         {
-            Some(session) if request.operation() == OperationName::ReviewRecord => json!({
-                "operation": request.operation().as_str(),
-                "data": response_data,
-                "reviewProjection": {"reviewSession": session},
-            }),
+            Some(session)
+                if matches!(
+                    request.operation(),
+                    OperationName::ReviewRecord | OperationName::ReviewFinalize
+                ) =>
+            {
+                json!({
+                    "operation": request.operation().as_str(),
+                    "data": response_data,
+                    "reviewProjection": {"reviewSession": session},
+                })
+            }
             _ => json!({
                 "operation": request.operation().as_str(),
                 "data": response_data,
@@ -2560,7 +2898,7 @@ impl ProjectBackend<'_> {
             });
         }
         let committed = store.commit(mutation).map_err(store_error)?;
-        // A `review.record` response must never succeed without its durable
+        // A review aggregation response must never succeed without its durable
         // projection. The project mutation is already committed, so a
         // projection failure stays retryable under the same idempotency key.
         if let Some(prepared) = semantic
@@ -2615,11 +2953,11 @@ impl ProjectBackend<'_> {
     }
 }
 
-/// Bounded page size for durable `review.record` event scans.
+/// Bounded page size for durable review aggregation event scans.
 const REVIEW_EVENT_PAGE: usize = 256;
 
-/// Reconstructs one Review Batch v2 projection write from a committed
-/// `review.record` event payload.
+/// Reconstructs one Review Batch v2 projection write from a committed review
+/// aggregation (`review.record` or `review.finalize`) event payload.
 ///
 /// The event carries `data` (batch/attempt/optional receipt) plus the
 /// `reviewProjection.reviewSession` replay seed. Historical events without the
@@ -2630,7 +2968,9 @@ fn review_projection_write_from_event(
     workspace_id: &str,
     work_item_id: &str,
 ) -> RuntimeResult<Option<ReviewProjectionWrite>> {
-    if event.kind != OperationName::ReviewRecord.as_str()
+    let review_aggregation = event.kind == OperationName::ReviewRecord.as_str()
+        || event.kind == OperationName::ReviewFinalize.as_str();
+    if !review_aggregation
         || event.workspace_id.as_deref() != Some(workspace_id)
         || event.work_item_id.as_deref() != Some(work_item_id)
     {
@@ -3037,38 +3377,41 @@ fn prepare_semantic_mutation(
                 authority.inventory_generation,
                 &UtcTimestamp::now(),
             )?;
-            let review = prepared
-                .review
-                .clone()
-                .ok_or_else(|| schema_error("review authority did not project a v2 batch"))?;
-            if let Some(receipt) = prepared.receipt.as_ref() {
-                if review.get("receipt") != Some(receipt) {
-                    return Err(schema_error(
-                        "review authority returned an inconsistent terminal receipt",
-                    ));
-                }
-            } else {
-                if review.get("receipt").is_some() {
-                    return Err(schema_error(
-                        "review authority projected a receipt for a nonterminal batch",
-                    ));
-                }
-            }
-            Ok(Some(PreparedSemanticMutation {
-                data: review.clone(),
-                targets: Vec::new(),
-                evidence_authority: None,
-                review: Some(review),
-                review_session: Some(prepared.review_session.clone()),
-                review_binding: Some(PreparedReviewBinding {
-                    input_fingerprint: prepared.input_fingerprint.clone(),
-                    ruleset_fingerprint: prepared.ruleset_fingerprint.clone(),
-                    policy_digest: authority.policy_digest.to_owned(),
-                    inventory_generation: authority.inventory_generation,
-                }),
-                review_record: Some(prepared),
-                lifecycle: None,
-            }))
+            prepared_review_mutation(prepared, authority)
+        }
+        OperationName::ReviewFinalize => {
+            let caller = AuthenticatedCaller::new(
+                authority.agent_id.ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::RoleOperationForbidden,
+                        "review.finalize requires a daemon-authenticated agentId",
+                    )
+                })?,
+                authority.session_id.ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::RoleOperationForbidden,
+                        "review.finalize requires a daemon-authenticated sessionId",
+                    )
+                })?,
+                authority.actor_role.ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::RoleOperationForbidden,
+                        "review.finalize requires a daemon-authenticated role",
+                    )
+                })?,
+            );
+            let prepared = review_authority::prepare_review_finalize(
+                workspace,
+                state,
+                work_item_id.as_str(),
+                request,
+                &caller,
+                authority.persistence,
+                authority.policy_digest,
+                authority.inventory_generation,
+                &UtcTimestamp::now(),
+            )?;
+            prepared_review_mutation(prepared, authority)
         }
         OperationName::StateTransition | OperationName::WorkItemComplete => {
             let expected_revision = request
@@ -3096,6 +3439,45 @@ fn prepare_semantic_mutation(
         }
         _ => Ok(None),
     }
+}
+
+/// Projects one prepared review aggregation into the semantic mutation shared
+/// by `review.record` and `review.finalize`: response data, state binding and
+/// the typed records the post-commit path persists as the SQLite projection.
+fn prepared_review_mutation(
+    prepared: review_authority::PreparedReviewRecord,
+    authority: &SemanticAuthorityContext<'_>,
+) -> RuntimeResult<Option<PreparedSemanticMutation>> {
+    let review = prepared
+        .review
+        .clone()
+        .ok_or_else(|| schema_error("review authority did not project a v2 batch"))?;
+    if let Some(receipt) = prepared.receipt.as_ref() {
+        if review.get("receipt") != Some(receipt) {
+            return Err(schema_error(
+                "review authority returned an inconsistent terminal receipt",
+            ));
+        }
+    } else if review.get("receipt").is_some() {
+        return Err(schema_error(
+            "review authority projected a receipt for a nonterminal batch",
+        ));
+    }
+    Ok(Some(PreparedSemanticMutation {
+        data: review.clone(),
+        targets: Vec::new(),
+        evidence_authority: None,
+        review: Some(review),
+        review_session: Some(prepared.review_session.clone()),
+        review_binding: Some(PreparedReviewBinding {
+            input_fingerprint: prepared.input_fingerprint.clone(),
+            ruleset_fingerprint: prepared.ruleset_fingerprint.clone(),
+            policy_digest: authority.policy_digest.to_owned(),
+            inventory_generation: authority.inventory_generation,
+        }),
+        review_record: Some(prepared),
+        lifecycle: None,
+    }))
 }
 
 fn operation_story_id<'a>(state: &'a Value, work_item_id: &'a str) -> RuntimeResult<&'a str> {
@@ -3189,7 +3571,7 @@ fn apply_mutation(
                 .ok_or_else(|| schema_error("evidence authority projection was not prepared"))?;
             root_state_object_mut(state)?.insert("evidenceAuthority".to_owned(), authority);
         }
-        OperationName::ReviewRecord => {
+        OperationName::ReviewRecord | OperationName::ReviewFinalize => {
             let prepared = semantic.ok_or_else(|| schema_error("review was not prepared"))?;
             let review_session = prepared
                 .review_session

@@ -134,6 +134,24 @@ impl PreparedReviewRecord {
     }
 }
 
+/// Prepared `review.contribute` mutation: the pending review object, the
+/// session it binds to, and the fingerprint binding committed into state.
+///
+/// A contribution never produces a batch, attempt, receipt or SQLite Review
+/// projection; those exist only after a `review.finalize` aggregates the
+/// pending projection.
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedReviewContribution {
+    /// Pending review projection: status/findings/pendingContributions.
+    pub(crate) review: Value,
+    /// Authoritative typed v2 review session the contribution binds to.
+    pub(crate) review_session: Value,
+    /// Input fingerprint computed from the locked non-review state.
+    pub(crate) input_fingerprint: String,
+    /// Ruleset fingerprint derived from daemon policy and inventory.
+    pub(crate) ruleset_fingerprint: String,
+}
+
 /// Rebuilds one typed Review Batch v2 projection write from authoritative
 /// project state during restart replay.
 ///
@@ -161,13 +179,19 @@ pub(crate) fn review_projection_write_from_state(
     let review = review_value
         .and_then(Value::as_object)
         .ok_or_else(|| external_conflict("review projection replay lacks the review object"))?;
-    let batch: ReviewBatchV2 = serde_json::from_value(
-        review
-            .get("batch")
-            .cloned()
-            .ok_or_else(|| external_conflict("review projection replay lacks the v2 batch"))?,
-    )
-    .map_err(|_| external_conflict("review projection replay has a malformed v2 batch"))?;
+    let Some(batch_value) = review.get("batch") else {
+        // A `review.contribute` commit leaves a session plus a pending
+        // contribution projection but no batch: there is nothing to rebuild
+        // into the SQLite Review projection until a finalize aggregates.
+        if review.contains_key("pendingContributions") {
+            return Ok(None);
+        }
+        return Err(external_conflict(
+            "review projection replay lacks the v2 batch",
+        ));
+    };
+    let batch: ReviewBatchV2 = serde_json::from_value(batch_value.clone())
+        .map_err(|_| external_conflict("review projection replay has a malformed v2 batch"))?;
     let attempt: ReviewAttemptV2 =
         serde_json::from_value(review.get("attempt").cloned().ok_or_else(|| {
             external_conflict("review projection replay lacks the latest attempt")
@@ -310,12 +334,14 @@ pub(crate) fn validate_review_gate_authority(
     Ok(())
 }
 
-/// Resolves the daemon boot that durably committed the `review.record` event the
-/// SQLite projection was built from.
+/// Resolves the daemon boot that durably committed the review aggregation
+/// event the SQLite projection was built from.
 ///
-/// The event must exist in this event store at exactly the projected cursor and
-/// must carry the same workspace and Work Item. A projection whose committing
-/// event cannot be produced fails closed rather than being trusted.
+/// The event must exist in this event store at exactly the projected cursor
+/// and must carry the same workspace and Work Item. Both the legacy
+/// `review.record` adapter and `review.finalize` produce the authoritative
+/// aggregation event. A projection whose committing event cannot be produced
+/// fails closed rather than being trusted.
 fn committing_review_boot_id(
     persistence: &dyn PersistencePort,
     workspace_id: &str,
@@ -331,14 +357,16 @@ fn committing_review_boot_id(
             "Review projection committing event is missing from the durable event store",
         ));
     };
+    let aggregation_event = event.kind == OperationName::ReviewRecord.as_str()
+        || event.kind == OperationName::ReviewFinalize.as_str();
     if event.event_seq != last_event_sequence
-        || event.kind != OperationName::ReviewRecord.as_str()
+        || !aggregation_event
         || event.workspace_id.as_deref() != Some(workspace_id)
         || event.work_item_id.as_deref() != Some(work_item_id)
         || event.boot_id.is_empty()
     {
         return Err(external_conflict(
-            "Review projection cursor does not resolve one committed review.record event",
+            "Review projection cursor does not resolve one committed review aggregation event",
         ));
     }
     Ok(event.boot_id.clone())
@@ -1091,7 +1119,15 @@ fn validate_projected_reviewer(
             .map_err(|_| identity_error("Review physicalSessionId is invalid"))?,
         AgentRole::Reviewer,
     );
-    let bound = bind_reviewer(workspace, work_item_id, &caller, persistence, boots, now_ms)?;
+    let bound = bind_reviewer(
+        workspace,
+        work_item_id,
+        &caller,
+        persistence,
+        boots,
+        now_ms,
+        ReviewAdmission::Revalidate,
+    )?;
     let projected_reviewer: AttestedReviewerV2 = serde_json::from_value(json!({
         "agentRole": contribution.get("agentRole"),
         "specialty": contribution.get("specialty"),
@@ -1133,7 +1169,13 @@ struct ProjectAuthorityMaterial {
     journal_mutation_id: String,
 }
 
-/// Validates and prepares one `review.record` mutation through the v2 supervisor.
+/// Validates and prepares one legacy `review.record` mutation through the v2
+/// supervisor.
+///
+/// Compat adapter only: the operation appends its own contribution to the
+/// pending projection and immediately finalizes the aggregate through the
+/// shared `review.finalize` pipeline. No second business implementation lives
+/// here; every invocation is counted as deprecated telemetry.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_review_record(
     workspace: &BusinessWorkspace,
@@ -1150,75 +1192,32 @@ pub(crate) fn prepare_review_record(
     if request.operation() != OperationName::ReviewRecord {
         return Err(schema_error("review authority requires review.record"));
     }
-    if caller.role() != AgentRole::Reviewer {
-        return Err(role_error(
-            "only an authenticated reviewer may record a review",
-        ));
-    }
-    if request.request().session_id.as_ref() != Some(&caller.session_id()) {
-        return Err(identity_error(
-            "review request session does not match the authenticated caller",
-        ));
-    }
-    if request
-        .request()
-        .workspace_id
-        .as_ref()
-        .map(ToString::to_string)
-        .as_deref()
-        != Some(workspace.workspace_id.as_str())
-    {
-        return Err(identity_error(
-            "review request workspace does not match the authenticated workspace",
-        ));
-    }
-    if request
-        .request()
-        .work_item_id
-        .as_ref()
-        .map(|value| value.as_str())
-        != Some(work_item_id)
-    {
-        return Err(identity_error(
-            "review request Work Item does not match the locked authority",
-        ));
-    }
-    let source_revision = state
-        .get("revision")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| schema_error("authoritative state revision is missing"))?;
-    if request.request().expected_revision.map(|value| value.get()) != Some(source_revision) {
-        return Err(RuntimeError::new(
-            StableErrorCode::RevisionConflict,
-            "review expectedRevision does not match the locked authority",
-        ));
-    }
-
+    tracing::warn!(
+        operation = "review.record",
+        deprecated = true,
+        replacement = "review.contribute+review.finalize",
+        "deprecated review operation served by the compat adapter"
+    );
+    let source_revision = validate_review_caller(
+        workspace,
+        state,
+        work_item_id,
+        request,
+        caller,
+        AgentRole::Reviewer,
+    )?;
     let payload = request
         .request()
         .payload
         .as_object()
         .ok_or_else(|| schema_error("review payload must be an object"))?;
-    let wire_status = required_string(payload.get("status"), "review status is required")?;
-    let raw_findings = payload
-        .get("findings")
-        .and_then(Value::as_array)
-        .ok_or_else(|| schema_error("review findings must be an array"))?;
-    let outcome = contribution_outcome(wire_status, raw_findings)?;
-    let findings = dedup_findings(
-        &raw_findings
-            .iter()
-            .map(project_finding)
-            .collect::<RuntimeResult<Vec<_>>>()?,
-    )
-    .map_err(supervisor_error)?;
+    let (outcome, findings) = decode_review_contribution_payload(payload)?;
 
     let input_fingerprint = authoritative_review_workspace_input_fingerprint(workspace, state)?;
     let policy_digest = PolicyDigest::from_str(policy_digest)
         .map_err(|_| schema_error("daemon policy digest is invalid"))?;
     let ruleset_fingerprint = review_ruleset_fingerprint(policy_digest, inventory_generation);
-    let observed = ReviewTimestamp::new(observed_at.to_string())
-        .map_err(|_| schema_error("daemon review timestamp is invalid"))?;
+    let observed = review_observed_timestamp(observed_at)?;
     let now_ms = u64::try_from(observed_at.as_timestamp().as_millisecond())
         .map_err(|_| schema_error("daemon review timestamp predates the Unix epoch"))?;
     let bound = bind_reviewer(
@@ -1228,6 +1227,7 @@ pub(crate) fn prepare_review_record(
         persistence,
         AttestationBoots::live(boot_id),
         now_ms,
+        ReviewAdmission::Record,
     )?;
     if outcome == ReviewContributionOutcomeV2::Clean {
         validate_clean_contribution_depth(
@@ -1239,47 +1239,322 @@ pub(crate) fn prepare_review_record(
         )?;
     }
 
-    let existing_session = parse_existing_session(state)?;
-    let existing_batch = parse_existing_batch(state)?;
-    if let Some(session) = existing_session.as_ref() {
-        validate_session_identity(session, &bound)?;
-    }
-    let tier = existing_session
-        .as_ref()
-        .map_or_else(|| derive_tier(state), ReviewSessionV2::tier);
-    let current_repair_class = derive_repair_class(state, raw_findings);
-    let (mut session, remediation) = select_or_start_session(
-        existing_session,
-        existing_batch.as_ref(),
-        tier,
-        current_repair_class,
+    let raw_findings = payload
+        .get("findings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_error("review findings must be an array"))?;
+    let opened = open_review_session(
+        state,
         work_item_id,
-        bound.author_session_id,
-        bound.root_session_id,
+        &bound,
+        raw_findings,
         input_fingerprint,
         ruleset_fingerprint,
         policy_digest,
         source_revision,
         inventory_generation,
-        remediation_plan_fingerprint(state)?,
         &observed,
     )?;
-    validate_session_identity(&session, &bound)?;
 
-    if session.status() == ReviewSessionStatusV2::RemediationRequired
-        && session.input_fingerprint() == input_fingerprint
-        && session.ruleset_fingerprint() == ruleset_fingerprint
-    {
+    // Adapter: contribute one, then finalize immediately. Any pending
+    // projection from earlier `review.contribute` calls aggregates into the
+    // same single attempt.
+    let mut materials = load_pending_contributions(state)?
+        .iter()
+        .map(contribution_material)
+        .collect::<RuntimeResult<Vec<_>>>()?;
+    materials.push(ContributionMaterial {
+        reviewer: bound.reviewer,
+        outcome,
+        findings,
+        report_digest: review_report_digest(payload)?,
+        input_fingerprint,
+        ruleset_fingerprint,
+    });
+    finalize_review_attempt(
+        workspace,
+        state,
+        work_item_id,
+        request,
+        opened.session,
+        opened.remediation,
+        opened.prior_batch,
+        materials,
+        input_fingerprint,
+        ruleset_fingerprint,
+        source_revision,
+        persistence,
+        &observed,
+    )
+}
+
+/// Validates and prepares one `review.contribute` mutation: exactly one
+/// reviewer contribution is appended to the pending projection without
+/// closing, opening, or judging a batch.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_review_contribution(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+    request: &ValidatedOperationRequest,
+    caller: &AuthenticatedCaller,
+    persistence: &dyn PersistencePort,
+    boot_id: &str,
+    policy_digest: &str,
+    inventory_generation: u64,
+    observed_at: &UtcTimestamp,
+) -> RuntimeResult<PreparedReviewContribution> {
+    if request.operation() != OperationName::ReviewContribute {
+        return Err(schema_error("review authority requires review.contribute"));
+    }
+    let source_revision = validate_review_caller(
+        workspace,
+        state,
+        work_item_id,
+        request,
+        caller,
+        AgentRole::Reviewer,
+    )?;
+    let payload = request
+        .request()
+        .payload
+        .as_object()
+        .ok_or_else(|| schema_error("review payload must be an object"))?;
+    let (outcome, findings) = decode_review_contribution_payload(payload)?;
+
+    let input_fingerprint = authoritative_review_workspace_input_fingerprint(workspace, state)?;
+    let policy_digest = PolicyDigest::from_str(policy_digest)
+        .map_err(|_| schema_error("daemon policy digest is invalid"))?;
+    let ruleset_fingerprint = review_ruleset_fingerprint(policy_digest, inventory_generation);
+    let observed = review_observed_timestamp(observed_at)?;
+    let now_ms = u64::try_from(observed_at.as_timestamp().as_millisecond())
+        .map_err(|_| schema_error("daemon review timestamp predates the Unix epoch"))?;
+    let bound = bind_reviewer(
+        workspace,
+        work_item_id,
+        caller,
+        persistence,
+        AttestationBoots::live(boot_id),
+        now_ms,
+        ReviewAdmission::Contribute,
+    )?;
+    if outcome == ReviewContributionOutcomeV2::Clean {
+        validate_clean_contribution_depth(
+            workspace,
+            state,
+            work_item_id,
+            payload,
+            input_fingerprint,
+        )?;
+    }
+
+    let raw_findings = payload
+        .get("findings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_error("review findings must be an array"))?;
+    let opened = open_review_session(
+        state,
+        work_item_id,
+        &bound,
+        raw_findings,
+        input_fingerprint,
+        ruleset_fingerprint,
+        policy_digest,
+        source_revision,
+        inventory_generation,
+        &observed,
+    )?;
+    let session = opened.session;
+    if !session.required_specialties().contains(&bound.specialty) {
         return Err(gate_blocked(
-            "review findings require a committed input-changing remediation",
+            "reviewer specialty is not required by the active review session",
         ));
     }
 
-    let prior_batch = existing_batch
-        .as_ref()
+    // A reused session keeps its pending projection; a freshly started
+    // (child) session invalidates any projection recorded under the old
+    // input, so the pending set restarts with this contribution.
+    let mut pending = if opened.reused {
+        load_pending_contributions(state)?
+    } else {
+        Vec::new()
+    };
+    let already_pending = |contribution: &ReviewerContributionV2| {
+        contribution.reviewer().specialty() == bound.specialty
+            || contribution.reviewer().physical_session_id() == bound.reviewer.physical_session_id()
+    };
+    if pending.iter().any(already_pending)
+        || opened
+            .prior_batch
+            .iter()
+            .flat_map(ReviewBatchV2::retained_contributions)
+            .any(already_pending)
+    {
+        return Err(gate_blocked(
+            "a pending contribution already exists for this reviewer or specialty",
+        ));
+    }
+
+    let idempotency_key = request
+        .request()
+        .idempotency_key
+        .as_deref()
+        .ok_or_else(|| schema_error("review idempotencyKey is required"))?;
+    let pending_attempt_id = derived_attempt_id(
+        session.review_id(),
+        &pending_batch_id(&session, opened.prior_batch.as_ref())?,
+        idempotency_key,
+        request.payload_digest(),
+    )?;
+    let contribution = build_contribution(
+        pending_attempt_id,
+        &ContributionMaterial {
+            reviewer: bound.reviewer,
+            outcome,
+            findings,
+            report_digest: review_report_digest(payload)?,
+            input_fingerprint,
+            ruleset_fingerprint,
+        },
+    )?;
+    pending.push(contribution);
+
+    let pending_values = pending
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| schema_error("pending review contribution could not be projected"))?;
+    let mut review = Map::from_iter([
+        ("status".to_owned(), Value::String("pending".to_owned())),
+        (
+            "findings".to_owned(),
+            serde_json::to_value(Vec::<ReviewFinding>::new())
+                .map_err(|_| schema_error("review findings could not be projected"))?,
+        ),
+        (
+            "pendingContributions".to_owned(),
+            Value::Array(pending_values),
+        ),
+    ]);
+    if let Some(remediation) = opened.remediation.as_ref() {
+        review.insert(
+            "pendingRemediation".to_owned(),
+            serde_json::to_value(remediation)
+                .map_err(|_| schema_error("pending review remediation could not be projected"))?,
+        );
+    }
+    Ok(PreparedReviewContribution {
+        review: Value::Object(review),
+        review_session: serde_json::to_value(&session)
+            .map_err(|_| schema_error("review session could not be projected"))?,
+        input_fingerprint: input_fingerprint.to_string(),
+        ruleset_fingerprint: ruleset_fingerprint.to_string(),
+    })
+}
+
+/// Validates and prepares one `review.finalize` mutation: the root/finalizer
+/// aggregates the current pending contribution projection into exactly one
+/// attempt, evaluates it through the existing supervisor, and atomically
+/// writes batch/session/exit receipt.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_review_finalize(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+    request: &ValidatedOperationRequest,
+    caller: &AuthenticatedCaller,
+    persistence: &dyn PersistencePort,
+    policy_digest: &str,
+    inventory_generation: u64,
+    observed_at: &UtcTimestamp,
+) -> RuntimeResult<PreparedReviewRecord> {
+    if request.operation() != OperationName::ReviewFinalize {
+        return Err(schema_error("review authority requires review.finalize"));
+    }
+    let source_revision = validate_review_caller(
+        workspace,
+        state,
+        work_item_id,
+        request,
+        caller,
+        AgentRole::Root,
+    )?;
+    let input_fingerprint = authoritative_review_workspace_input_fingerprint(workspace, state)?;
+    let policy_digest = PolicyDigest::from_str(policy_digest)
+        .map_err(|_| schema_error("daemon policy digest is invalid"))?;
+    let ruleset_fingerprint = review_ruleset_fingerprint(policy_digest, inventory_generation);
+    let observed = review_observed_timestamp(observed_at)?;
+
+    let session = parse_existing_session(state)?
+        .ok_or_else(|| gate_blocked("review.finalize requires an active review session"))?;
+    if session.input_fingerprint() != input_fingerprint
+        || session.ruleset_fingerprint() != ruleset_fingerprint
+        || session.policy_digest() != policy_digest
+        || session.inventory_generation() != inventory_generation
+    {
+        return Err(gate_blocked(
+            "review.finalize input or ruleset drifted from the pending contributions",
+        ));
+    }
+    let pending = load_pending_contributions(state)?;
+    if pending.is_empty() {
+        return Err(gate_blocked(
+            "review.finalize requires at least one pending contribution",
+        ));
+    }
+    if pending.iter().any(|contribution| {
+        contribution.input_fingerprint() != input_fingerprint
+            || contribution.ruleset_fingerprint() != ruleset_fingerprint
+    }) {
+        return Err(gate_blocked(
+            "pending review contributions are stale for the current input",
+        ));
+    }
+    let prior_batch = parse_existing_batch(state)?
         .filter(|batch| batch.review_id() == session.review_id())
         .filter(|batch| !batch.is_closed());
-    let batch_id = match prior_batch {
+    let materials = pending
+        .iter()
+        .map(contribution_material)
+        .collect::<RuntimeResult<Vec<_>>>()?;
+    finalize_review_attempt(
+        workspace,
+        state,
+        work_item_id,
+        request,
+        session,
+        load_pending_remediation(state)?,
+        prior_batch,
+        materials,
+        input_fingerprint,
+        ruleset_fingerprint,
+        source_revision,
+        persistence,
+        &observed,
+    )
+}
+
+/// Shared finalize pipeline: binds the contribution materials to one derived
+/// attempt, evaluates it through the existing supervisor, and projects the
+/// next batch/session/exit receipt. Used by `review.finalize` and by the
+/// legacy `review.record` compat adapter.
+#[allow(clippy::too_many_arguments)]
+fn finalize_review_attempt(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+    request: &ValidatedOperationRequest,
+    mut session: ReviewSessionV2,
+    remediation: Option<ReviewRemediationV2>,
+    prior_batch: Option<ReviewBatchV2>,
+    materials: Vec<ContributionMaterial>,
+    input_fingerprint: InputFingerprint,
+    ruleset_fingerprint: InputFingerprint,
+    source_revision: u64,
+    persistence: &dyn PersistencePort,
+    observed: &ReviewTimestamp,
+) -> RuntimeResult<PreparedReviewRecord> {
+    let batch_id = match prior_batch.as_ref() {
         Some(batch) => batch.batch_id().clone(),
         None => derived_batch_id(&session)?,
     };
@@ -1299,20 +1574,16 @@ pub(crate) fn prepare_review_record(
         idempotency_key,
         request.payload_digest(),
     )?;
-    let contribution = build_contribution(
-        payload,
-        attempt_id.clone(),
-        bound.reviewer,
-        bound.specialty,
-        outcome,
-        findings,
-        input_fingerprint,
-        ruleset_fingerprint,
-    )?;
-    let completing_clean_attempt = outcome == ReviewContributionOutcomeV2::Clean
+    let mut contributions = Vec::with_capacity(materials.len());
+    for material in &materials {
+        contributions.push(build_contribution(attempt_id.clone(), material)?);
+    }
+    let completing_clean_attempt = materials
+        .iter()
+        .all(|material| material.outcome == ReviewContributionOutcomeV2::Clean)
         && input_fingerprint == session.input_fingerprint()
         && ruleset_fingerprint == session.ruleset_fingerprint()
-        && completes_specialty_set(&session, prior_batch, bound.specialty);
+        && completes_specialty_projection(&session, prior_batch.as_ref(), &materials);
     let (final_proof, proof_authority) = derive_final_proof(
         workspace,
         state,
@@ -1321,7 +1592,7 @@ pub(crate) fn prepare_review_record(
         persistence,
         &session,
         completing_clean_attempt,
-        &observed,
+        observed,
     )?;
     let project_authority = build_project_authority(
         workspace,
@@ -1340,8 +1611,8 @@ pub(crate) fn prepare_review_record(
             .map_err(|_| schema_error("review idempotencyKey is invalid"))?,
         input_fingerprint,
         ruleset_fingerprint,
-        vec![contribution],
-        observed,
+        contributions,
+        observed.clone(),
         final_proof,
         project_authority,
         remediation,
@@ -1350,8 +1621,8 @@ pub(crate) fn prepare_review_record(
     let attempt_value = serde_json::to_value(&attempt)
         .map_err(|_| schema_error("review attempt could not be projected"))?;
     let typed_attempt = attempt.clone();
-    let evaluation =
-        ReviewSupervisor::evaluate(&session, prior_batch, attempt).map_err(supervisor_error)?;
+    let evaluation = ReviewSupervisor::evaluate(&session, prior_batch.as_ref(), attempt)
+        .map_err(supervisor_error)?;
     session = evaluation.next_session().clone();
 
     let batch = evaluation.next_batch().clone();
@@ -1403,10 +1674,10 @@ pub(crate) fn prepare_review_record(
 
 /// Which daemon boots may own a physical delegation attestation.
 ///
-/// Admission of a live `review.record` requires the running boot: a claim
+/// Admission of a live review contribution requires the running boot: a claim
 /// accepted by an older boot must never mint new Review authority. Re-validating
 /// already committed Review authority additionally accepts the boot that
-/// durably committed the projected `review.record` event, because the durable
+/// durably committed the projected review aggregation event, because the durable
 /// journal is what proves that boot really was this daemon. Without that, every
 /// daemon restart would permanently destroy committed Review authority.
 #[derive(Clone, Copy, Debug)]
@@ -1439,6 +1710,33 @@ impl<'a> AttestationBoots<'a> {
     }
 }
 
+/// Which review operation a physical reviewer admission must be granted.
+///
+/// Live admission is operation-exact: a contribution requires
+/// `review.contribute`, the legacy adapter requires `review.record`.
+/// Revalidation of already committed authority accepts either, because the
+/// attested grant minted at admission time remains the authority regardless
+/// of which operation name carried it.
+#[derive(Clone, Copy, Debug)]
+enum ReviewAdmission {
+    Contribute,
+    Record,
+    Revalidate,
+}
+
+impl ReviewAdmission {
+    fn permits(self, operation: &str) -> bool {
+        match self {
+            Self::Contribute => operation == OperationName::ReviewContribute.as_str(),
+            Self::Record => operation == OperationName::ReviewRecord.as_str(),
+            Self::Revalidate => {
+                operation == OperationName::ReviewContribute.as_str()
+                    || operation == OperationName::ReviewRecord.as_str()
+            }
+        }
+    }
+}
+
 fn bind_reviewer(
     workspace: &BusinessWorkspace,
     work_item_id: &str,
@@ -1446,6 +1744,7 @@ fn bind_reviewer(
     persistence: &dyn PersistencePort,
     boots: AttestationBoots<'_>,
     now_ms: u64,
+    admission: ReviewAdmission,
 ) -> RuntimeResult<BoundReviewer> {
     let sessions = persistence.list_identity_snapshots(RuntimeIdentityKind::Session)?;
     let mut by_id = BTreeMap::<String, RuntimeSessionRecord>::new();
@@ -1559,7 +1858,7 @@ fn bind_reviewer(
             .grant
             .operations
             .iter()
-            .any(|operation| operation == "review.record")
+            .any(|operation| admission.permits(operation.as_str()))
     {
         return Err(attestation_error(
             "reviewer grant differs from its physical attestation",
@@ -1906,17 +2205,21 @@ fn parse_existing_batch(state: &Value) -> RuntimeResult<Option<ReviewBatchV2>> {
         .map_err(|_| schema_error("authoritative v2 review batch is malformed"))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_contribution(
-    payload: &Map<String, Value>,
-    attempt_id: ReviewAttemptId,
+/// Contribution content that is independent of the attempt binding. The
+/// attempt identity is only assigned when a finalize aggregates the pending
+/// projection, so the same material can be re-bound without rewriting the
+/// reviewer's attested content.
+#[derive(Clone, Debug)]
+struct ContributionMaterial {
     reviewer: AttestedReviewerV2,
-    specialty: ReviewerSpecialty,
     outcome: ReviewContributionOutcomeV2,
     findings: Vec<ReviewFinding>,
+    report_digest: ArtifactDigest,
     input_fingerprint: InputFingerprint,
     ruleset_fingerprint: InputFingerprint,
-) -> RuntimeResult<ReviewerContributionV2> {
+}
+
+fn review_report_digest(payload: &Map<String, Value>) -> RuntimeResult<ArtifactDigest> {
     let report_bytes = serde_json::to_vec(&json!({
         "status": payload.get("status"),
         "findings": payload.get("findings"),
@@ -1924,14 +2227,24 @@ fn build_contribution(
         "evidenceIds": payload.get("evidenceIds"),
     }))
     .map_err(|_| schema_error("review contribution report could not be canonicalized"))?;
-    let report_digest = ArtifactDigest::digest(report_bytes);
-    let reviewer_value = serde_json::to_value(&reviewer)
+    Ok(ArtifactDigest::digest(report_bytes))
+}
+
+fn contribution_digest_for(
+    attempt_id: &ReviewAttemptId,
+    reviewer: &AttestedReviewerV2,
+    outcome: ReviewContributionOutcomeV2,
+    report_digest: ArtifactDigest,
+    input_fingerprint: InputFingerprint,
+    ruleset_fingerprint: InputFingerprint,
+) -> RuntimeResult<ArtifactDigest> {
+    let reviewer_value = serde_json::to_value(reviewer)
         .map_err(|_| schema_error("reviewer identity could not be canonicalized"))?;
-    let contribution_digest = ArtifactDigest::digest(
+    Ok(ArtifactDigest::digest(
         serde_json::to_vec(&json!({
             "domain":"review-contribution/v2",
             "attemptId":attempt_id.as_str(),
-            "specialty":specialty_name(specialty),
+            "specialty":specialty_name(reviewer.specialty()),
             "reviewer":reviewer_value,
             "outcome":outcome,
             "reportDigest":report_digest.to_string(),
@@ -1939,18 +2252,274 @@ fn build_contribution(
             "rulesetFingerprint":ruleset_fingerprint.to_string(),
         }))
         .map_err(|_| schema_error("review contribution could not be canonicalized"))?,
-    );
+    ))
+}
+
+fn build_contribution(
+    attempt_id: ReviewAttemptId,
+    material: &ContributionMaterial,
+) -> RuntimeResult<ReviewerContributionV2> {
+    let contribution_digest = contribution_digest_for(
+        &attempt_id,
+        &material.reviewer,
+        material.outcome,
+        material.report_digest,
+        material.input_fingerprint,
+        material.ruleset_fingerprint,
+    )?;
     ReviewerContributionV2::new(
         attempt_id,
-        reviewer,
-        outcome,
-        findings,
-        report_digest,
+        material.reviewer.clone(),
+        material.outcome,
+        material.findings.clone(),
+        material.report_digest,
         contribution_digest,
-        input_fingerprint,
-        ruleset_fingerprint,
+        material.input_fingerprint,
+        material.ruleset_fingerprint,
     )
     .map_err(|_| schema_error("reviewer contribution is invalid"))
+}
+
+/// Re-derives the attempt-independent material of one stored pending
+/// contribution so a finalize can bind it to the aggregating attempt. The
+/// report digest travels inside the typed wire form because the frozen
+/// contract exposes no accessor for it.
+fn contribution_material(
+    contribution: &ReviewerContributionV2,
+) -> RuntimeResult<ContributionMaterial> {
+    let value = serde_json::to_value(contribution)
+        .map_err(|_| external_conflict("pending review contribution could not be canonicalized"))?;
+    let report_digest = value
+        .get("reportDigest")
+        .and_then(Value::as_str)
+        .and_then(|raw| ArtifactDigest::from_str(raw).ok())
+        .ok_or_else(|| external_conflict("pending review contribution report digest is invalid"))?;
+    Ok(ContributionMaterial {
+        reviewer: contribution.reviewer().clone(),
+        outcome: contribution.outcome(),
+        findings: contribution.findings().to_vec(),
+        report_digest,
+        input_fingerprint: contribution.input_fingerprint(),
+        ruleset_fingerprint: contribution.ruleset_fingerprint(),
+    })
+}
+
+fn completes_specialty_projection(
+    session: &ReviewSessionV2,
+    prior_batch: Option<&ReviewBatchV2>,
+    materials: &[ContributionMaterial],
+) -> bool {
+    let mut completed = prior_batch
+        .into_iter()
+        .flat_map(ReviewBatchV2::retained_contributions)
+        .map(|contribution| contribution.reviewer().specialty())
+        .collect::<BTreeSet<_>>();
+    completed.extend(
+        materials
+            .iter()
+            .map(|material| material.reviewer.specialty()),
+    );
+    completed
+        == session
+            .required_specialties()
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+}
+
+fn load_pending_contributions(state: &Value) -> RuntimeResult<Vec<ReviewerContributionV2>> {
+    let Some(value) = state.pointer("/review/pendingContributions") else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .ok_or_else(|| external_conflict("pending review contributions are malformed"))?
+        .iter()
+        .map(|entry| {
+            serde_json::from_value(entry.clone())
+                .map_err(|_| external_conflict("pending review contribution is malformed"))
+        })
+        .collect()
+}
+
+fn load_pending_remediation(state: &Value) -> RuntimeResult<Option<ReviewRemediationV2>> {
+    let Some(value) = state.pointer("/review/pendingRemediation") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(value.clone())
+        .map(Some)
+        .map_err(|_| external_conflict("pending review remediation is malformed"))
+}
+
+fn pending_batch_id(
+    session: &ReviewSessionV2,
+    prior_batch: Option<&ReviewBatchV2>,
+) -> RuntimeResult<ReviewBatchId> {
+    match prior_batch {
+        Some(batch) => Ok(batch.batch_id().clone()),
+        None => derived_batch_id(session),
+    }
+}
+
+/// Shared caller/scope/revision validation for every review operation. The
+/// daemon-derived role decides whether the caller may contribute (Reviewer)
+/// or finalize (Root); returns the locked authoritative source revision.
+fn validate_review_caller(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+    request: &ValidatedOperationRequest,
+    caller: &AuthenticatedCaller,
+    expected_role: AgentRole,
+) -> RuntimeResult<u64> {
+    if caller.role() != expected_role {
+        return Err(role_error(match expected_role {
+            AgentRole::Reviewer => "only an authenticated reviewer may record a review",
+            AgentRole::Root => "only the root finalizer may finalize a review batch",
+            _ => "the authenticated role may not operate review authority",
+        }));
+    }
+    if request.request().session_id.as_ref() != Some(&caller.session_id()) {
+        return Err(identity_error(
+            "review request session does not match the authenticated caller",
+        ));
+    }
+    if request
+        .request()
+        .workspace_id
+        .as_ref()
+        .map(ToString::to_string)
+        .as_deref()
+        != Some(workspace.workspace_id.as_str())
+    {
+        return Err(identity_error(
+            "review request workspace does not match the authenticated workspace",
+        ));
+    }
+    if request
+        .request()
+        .work_item_id
+        .as_ref()
+        .map(|value| value.as_str())
+        != Some(work_item_id)
+    {
+        return Err(identity_error(
+            "review request Work Item does not match the locked authority",
+        ));
+    }
+    let source_revision = state
+        .get("revision")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| schema_error("authoritative state revision is missing"))?;
+    if request.request().expected_revision.map(|value| value.get()) != Some(source_revision) {
+        return Err(RuntimeError::new(
+            StableErrorCode::RevisionConflict,
+            "review expectedRevision does not match the locked authority",
+        ));
+    }
+    Ok(source_revision)
+}
+
+fn decode_review_contribution_payload(
+    payload: &Map<String, Value>,
+) -> RuntimeResult<(ReviewContributionOutcomeV2, Vec<ReviewFinding>)> {
+    let wire_status = required_string(payload.get("status"), "review status is required")?;
+    let raw_findings = payload
+        .get("findings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_error("review findings must be an array"))?;
+    let outcome = contribution_outcome(wire_status, raw_findings)?;
+    let findings = dedup_findings(
+        &raw_findings
+            .iter()
+            .map(project_finding)
+            .collect::<RuntimeResult<Vec<_>>>()?,
+    )
+    .map_err(supervisor_error)?;
+    Ok((outcome, findings))
+}
+
+struct OpenedReviewSession {
+    session: ReviewSessionV2,
+    remediation: Option<ReviewRemediationV2>,
+    prior_batch: Option<ReviewBatchV2>,
+    reused: bool,
+}
+
+/// Loads or starts the review session for one contribution admission and
+/// returns the open batch projection the finalize pipeline aggregates into.
+#[allow(clippy::too_many_arguments)]
+fn open_review_session(
+    state: &Value,
+    work_item_id: &str,
+    bound: &BoundReviewer,
+    raw_findings: &[Value],
+    input_fingerprint: InputFingerprint,
+    ruleset_fingerprint: InputFingerprint,
+    policy_digest: PolicyDigest,
+    source_revision: u64,
+    inventory_generation: u64,
+    observed: &ReviewTimestamp,
+) -> RuntimeResult<OpenedReviewSession> {
+    let existing_session = parse_existing_session(state)?;
+    let existing_batch = parse_existing_batch(state)?;
+    if let Some(session) = existing_session.as_ref() {
+        validate_session_identity(session, bound)?;
+    }
+    let existing_review_id = existing_session
+        .as_ref()
+        .map(|session| session.review_id().clone());
+    let tier = existing_session
+        .as_ref()
+        .map_or_else(|| derive_tier(state), ReviewSessionV2::tier);
+    let current_repair_class = derive_repair_class(state, raw_findings);
+    let (session, remediation) = select_or_start_session(
+        existing_session,
+        existing_batch.as_ref(),
+        tier,
+        current_repair_class,
+        work_item_id,
+        bound.author_session_id,
+        bound.root_session_id,
+        input_fingerprint,
+        ruleset_fingerprint,
+        policy_digest,
+        source_revision,
+        inventory_generation,
+        remediation_plan_fingerprint(state)?,
+        observed,
+    )?;
+    validate_session_identity(&session, bound)?;
+
+    if session.status() == ReviewSessionStatusV2::RemediationRequired
+        && session.input_fingerprint() == input_fingerprint
+        && session.ruleset_fingerprint() == ruleset_fingerprint
+    {
+        return Err(gate_blocked(
+            "review findings require a committed input-changing remediation",
+        ));
+    }
+
+    let prior_batch = existing_batch
+        .as_ref()
+        .filter(|batch| batch.review_id() == session.review_id())
+        .filter(|batch| !batch.is_closed())
+        .cloned();
+    let reused = existing_review_id.as_ref() == Some(session.review_id());
+    Ok(OpenedReviewSession {
+        session,
+        remediation,
+        prior_batch,
+        reused,
+    })
+}
+
+fn review_observed_timestamp(observed_at: &UtcTimestamp) -> RuntimeResult<ReviewTimestamp> {
+    ReviewTimestamp::new(observed_at.to_string())
+        .map_err(|_| schema_error("daemon review timestamp is invalid"))
 }
 
 fn contribution_outcome(
@@ -1970,25 +2539,6 @@ fn contribution_outcome(
         )),
         _ => Err(schema_error("review status is not registered")),
     }
-}
-
-fn completes_specialty_set(
-    session: &ReviewSessionV2,
-    prior_batch: Option<&ReviewBatchV2>,
-    current: ReviewerSpecialty,
-) -> bool {
-    let mut completed = prior_batch
-        .into_iter()
-        .flat_map(ReviewBatchV2::retained_contributions)
-        .map(|contribution| contribution.reviewer().specialty())
-        .collect::<BTreeSet<_>>();
-    completed.insert(current);
-    completed
-        == session
-            .required_specialties()
-            .iter()
-            .copied()
-            .collect::<BTreeSet<_>>()
 }
 
 #[allow(clippy::too_many_arguments)]
