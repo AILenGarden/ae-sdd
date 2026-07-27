@@ -61,10 +61,17 @@ if [ "$HARNESS_STATUS" -ne 0 ]; then
     exit 0
 fi
 
+# Skill targets must stay in step with the enabled entries in
+# ~/.ae-sdd/distributors.json. That registry is data-driven while this list is
+# hardcoded, so the two can drift: qoder was registered there, never reached this
+# list, and silently stopped receiving the skill when distribution moved off the
+# Python distributors. Adding a host means editing both until the list is read
+# from the registry.
+#
 # Managed L2 instruction files are anchored global instructions for Codex, Claude
-# and ZCode only. Harness and Hermes stay package-distribution targets. A target
-# that is missing or carries no ae-sdd-l2-ssot anchor is reported as a skip and is
-# never created or bootstrapped.
+# and ZCode only. Harness, Hermes and Qoder stay package-distribution targets. A
+# target that is missing or carries no ae-sdd-l2-ssot anchor is reported as a skip
+# and is never created or bootstrapped.
 echo "ae-sdd post-commit: compiling, verifying, distributing, and syncing managed L2 instructions"
 POST_COMMIT_OUTPUT="$(
     run_build_tool post-commit \
@@ -79,6 +86,7 @@ POST_COMMIT_OUTPUT="$(
         --target "$USER_HOME/.zcode/skills/ae-sdd" \
         --target "$USER_HOME/.harness/skills/ae-sdd" \
         --target "$USER_HOME/.hermes/skills/ae-sdd" \
+        --target "$USER_HOME/.qoder/skills/ae-sdd" \
         --codex-instructions "$USER_HOME/.codex/AGENTS.md" \
         --claude-instructions "$USER_HOME/.claude/CLAUDE.md" \
         --zcode-instructions "$USER_HOME/.zcode/AGENTS.md" 2>&1
