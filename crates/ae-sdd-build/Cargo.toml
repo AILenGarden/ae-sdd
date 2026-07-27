@@ -24,10 +24,6 @@ sysinfo.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 
-[features]
-default = []
-migration_oracle = []
-
 [lints]
 workspace = true
 
@@ -37,8 +33,3 @@ path = "src/main.rs"
 
 [dev-dependencies]
 ed25519-dalek.workspace = true
-
-[[test]]
-name = "migration_oracle"
-path = "tests/migration_oracle.rs"
-required-features = ["migration_oracle"]

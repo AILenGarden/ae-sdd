@@ -12,7 +12,7 @@ use ae_sdd_store::{
     CompactCycleRecord, ContextPressureSampleRecord, ContextProjectionRecord, DelegationRecord,
     HostAckReceipt, HostActionRecord, HostAdapterRecord, IdempotencyKey, OperationReceipt,
     RuntimeEventDraft, RuntimeEventPayload, RuntimeRepository, SqliteRuntimeRepository, StoreError,
-    SupervisorCheckpointRecord,
+    SupervisorCheckpointRecord, latest_runtime_schema_version,
 };
 use uuid::Uuid;
 
@@ -95,7 +95,7 @@ fn migration_is_repeatable_and_event_sequence_survives_restart() {
     );
     assert_eq!(
         first.pragma_value("user_version").expect("PRAGMA reads"),
-        "11"
+        latest_runtime_schema_version().to_string()
     );
     let (_, first_event) = first
         .index_committed_mutation(
@@ -123,7 +123,7 @@ fn migration_is_repeatable_and_event_sequence_survives_restart() {
     assert_eq!(second_event.event_store_id, proposed);
     assert_eq!(
         reopened.pragma_value("user_version").expect("PRAGMA reads"),
-        "11"
+        latest_runtime_schema_version().to_string()
     );
 }
 
@@ -155,7 +155,7 @@ fn lease_control_receipts_can_keep_the_project_revision_unchanged() {
         .expect("same-revision receipt commits after restart");
     assert_eq!(
         reopened.pragma_value("user_version").expect("PRAGMA reads"),
-        "11"
+        latest_runtime_schema_version().to_string()
     );
 }
 

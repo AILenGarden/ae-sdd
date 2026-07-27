@@ -14,8 +14,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -33,7 +33,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -49,8 +49,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -66,8 +66,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -83,8 +83,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -100,8 +100,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -117,8 +117,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -170,8 +170,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -205,8 +205,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -222,8 +222,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -241,7 +241,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -257,8 +257,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -292,8 +292,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "breaking-fix-verified"
     },
     {
@@ -309,8 +309,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "breaking-fix-verified"
     },
     {
@@ -326,8 +326,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "breaking-fix-verified"
     },
     {
@@ -343,8 +343,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "breaking-fix-verified"
     },
     {
@@ -362,7 +362,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -380,7 +380,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -398,7 +398,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -416,7 +416,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -434,7 +434,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -452,7 +452,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -555,8 +555,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -692,8 +692,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -709,8 +709,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -726,8 +726,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -743,8 +743,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -760,8 +760,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -796,7 +796,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -814,7 +814,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -1137,8 +1137,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -1154,8 +1154,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "implemented"
     },
     {
@@ -1173,7 +1173,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -1189,8 +1189,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "breaking-fix-verified"
     },
     {
@@ -1206,8 +1206,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "breaking-fix-verified"
     },
     {
@@ -1223,8 +1223,8 @@
       },
       "deadlineMs": 300000,
       "failClosed": true,
-      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
-      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_differential.rs",
+      "fixture": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/legacy_job_cli_e2e.rs",
       "status": "breaking-fix-verified"
     },
     {
@@ -1560,7 +1560,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     },
     {
@@ -1970,7 +1970,7 @@
       "deadlineMs": 300000,
       "failClosed": true,
       "fixture": "crates/ae-sdd-build/tests/offline_kernels.rs",
-      "evidence": "crates/ae-sdd-build/tests/migration_oracle.rs",
+      "evidence": "crates/ae-sdd-build/tests/offline_kernels.rs",
       "status": "implemented"
     }
   ],

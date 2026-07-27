@@ -194,25 +194,26 @@ fn validate_update_graph(graph: &UpdateGraph) -> RuntimeResult<BTreeMap<String, 
     Ok(checks)
 }
 
+/// Compares the product version across the files that still declare it.
+///
+/// `source/SKILL.md` is the sole source of truth: it is the distributed artifact,
+/// so a version that is right there is right everywhere the skill is consumed.
+/// A third declaration used to live in `tools/lib/paths.py`, which made a Python
+/// module load-bearing for a Rust drift check and blocked its deletion.
 fn check_versions(context: &JobContext<'_>) -> RuntimeResult<(bool, String)> {
     let skill = required_known_text(context, "source/SKILL.md")?;
-    let paths = required_known_text(context, "tools/lib/paths.py")?;
     let readme = required_known_text(context, "README.md")?;
     let skill_version = line_value(&skill, "version:");
-    let paths_version = quoted_assignment(&paths, "MASTER_VERSION");
     let readme_version = skill_version
         .as_ref()
         .filter(|version| readme.contains(&format!("v{version}")))
         .cloned();
-    let passed = skill_version.is_some()
-        && skill_version == paths_version
-        && skill_version == readme_version;
+    let passed = skill_version.is_some() && skill_version == readme_version;
     Ok((
         passed,
         format!(
-            "source/SKILL.md={}; tools/lib/paths.py={}; README.md={}",
+            "source/SKILL.md={}; README.md={}",
             skill_version.as_deref().unwrap_or("missing"),
-            paths_version.as_deref().unwrap_or("missing"),
             readme_version.as_deref().unwrap_or("missing")
         ),
     ))
@@ -225,18 +226,6 @@ fn line_value(source: &str, prefix: &str) -> Option<String> {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| value.trim_matches(['\'', '"']).to_owned())
-    })
-}
-
-fn quoted_assignment(source: &str, name: &str) -> Option<String> {
-    source.lines().find_map(|line| {
-        let line = line.trim();
-        if !line.starts_with(name) {
-            return None;
-        }
-        let value = line.split_once('=')?.1.trim();
-        let value = value.strip_prefix('"')?.split_once('"')?.0;
-        (!value.is_empty()).then(|| value.to_owned())
     })
 }
 

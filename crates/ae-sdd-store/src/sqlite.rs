@@ -37,12 +37,26 @@ pub const SQLITE_RUNTIME_JOB_V1_MIGRATION: &str =
     include_str!("../../../migrations/0010_runtime_job_v1.sql");
 pub const SQLITE_EXECUTION_SUPERVISOR_V1_MIGRATION: &str =
     include_str!("../../../migrations/0011_execution_supervisor_v1.sql");
+pub const SQLITE_REVIEW_CLEAN_TARGET_UNIFY_MIGRATION: &str =
+    include_str!("../../../migrations/0012_review_clean_target_unify.sql");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RuntimeMigration {
     pub version: i64,
     pub name: &'static str,
     pub sql: &'static str,
+}
+
+/// The schema version a fully migrated runtime database must report.
+///
+/// Single source for the head version so adding a migration does not require
+/// editing a literal in every caller and test; the catalog itself is the truth.
+#[must_use]
+pub fn latest_runtime_schema_version() -> i64 {
+    SQLITE_RUNTIME_MIGRATIONS
+        .last()
+        .expect("migration catalog is non-empty")
+        .version
 }
 
 pub const SQLITE_RUNTIME_MIGRATIONS: &[RuntimeMigration] = &[
@@ -100,6 +114,11 @@ pub const SQLITE_RUNTIME_MIGRATIONS: &[RuntimeMigration] = &[
         version: 11,
         name: "0011_execution_supervisor_v1",
         sql: SQLITE_EXECUTION_SUPERVISOR_V1_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 12,
+        name: "0012_review_clean_target_unify",
+        sql: SQLITE_REVIEW_CLEAN_TARGET_UNIFY_MIGRATION,
     },
 ];
 
@@ -198,10 +217,7 @@ fn migrate(
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let current_version: i64 =
         transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    let latest_version = SQLITE_RUNTIME_MIGRATIONS
-        .last()
-        .expect("migration catalog is non-empty")
-        .version;
+    let latest_version = latest_runtime_schema_version();
     if !(0..=latest_version).contains(&current_version) {
         return Err(StoreError::DatabaseIncompatible {
             reason: format!("unsupported runtime schema version {current_version}")

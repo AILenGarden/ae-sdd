@@ -141,11 +141,6 @@ pub(super) fn bump(
             format!("version: {new_version}"),
         ),
         (
-            "tools/lib/paths.py",
-            format!("MASTER_VERSION = \"{expected_version}\""),
-            format!("MASTER_VERSION = \"{new_version}\""),
-        ),
-        (
             "README.md",
             format!("> **版本：** v{expected_version}"),
             format!("> **版本：** v{new_version}"),

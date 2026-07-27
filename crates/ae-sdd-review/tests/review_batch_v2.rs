@@ -1,6 +1,6 @@
 use ae_sdd_contracts::review::{
-    ReviewAttemptV2, ReviewBatchStatusV2, ReviewBatchV2, ReviewBudgetV2, ReviewRepairClass,
-    ReviewSessionStatusV2, ReviewSessionV2, ReviewTier,
+    ReviewAttemptV2, ReviewBatchStatusV2, ReviewBatchV2, ReviewBudgetV2, ReviewCleanPolicyV2,
+    ReviewRepairClass, ReviewSessionStatusV2, ReviewSessionV2, ReviewTier,
 };
 use ae_sdd_review::ReviewSupervisor;
 use serde_json::{Value, json};
@@ -35,13 +35,8 @@ fn session(
         ReviewRepairClass::HighRisk => "high_risk",
         ReviewRepairClass::CriticalContract => "critical_contract",
     };
-    let clean_target = if (tier == "tier2" && repair == "critical_contract")
-        || (tier == "tier3" && matches!(repair, "high_risk" | "critical_contract"))
-    {
-        2
-    } else {
-        1
-    };
+    // One valid clean batch closes every session, for every tier and repair class.
+    let clean_target = 1;
     serde_json::from_value(json!({
         "schemaVersion": "v2",
         "reviewId": "review-v2",
@@ -338,7 +333,7 @@ fn last_allowed_attempt_passes_before_exhaustion_but_nonpass_stalls() {
 }
 
 #[test]
-fn high_risk_tier3_requires_two_consecutive_clean_batches() {
+fn high_risk_tier3_passes_on_the_first_clean_batch() {
     let session = session(ReviewTier::Tier3, ReviewRepairClass::HighRisk, 0, 0, 0, 5);
     let first = ReviewSupervisor::evaluate(
         &session,
@@ -355,27 +350,32 @@ fn high_risk_tier3_requires_two_consecutive_clean_batches() {
     .unwrap();
     assert_eq!(
         first.next_session().status(),
-        ReviewSessionStatusV2::Running
-    );
-    assert!(first.exit_receipt().is_none());
-
-    let second = ReviewSupervisor::evaluate(
-        first.next_session(),
-        None,
-        attempt(
-            ReviewTier::Tier3,
-            2,
-            "batch-2",
-            "attempt-2",
-            &["clean", "clean", "clean"],
-            None,
-        ),
-    )
-    .unwrap();
-    assert_eq!(
-        second.next_session().status(),
         ReviewSessionStatusV2::Completed
     );
+    assert!(
+        first
+            .exit_receipt()
+            .is_some_and(|receipt| receipt.is_pass()),
+        "one clean batch with the full required specialty set must PASS"
+    );
+}
+
+#[test]
+fn every_tier_and_repair_class_targets_one_clean_batch() {
+    for tier in [ReviewTier::Tier1, ReviewTier::Tier2, ReviewTier::Tier3] {
+        for repair in [
+            ReviewRepairClass::None,
+            ReviewRepairClass::NonCritical,
+            ReviewRepairClass::HighRisk,
+            ReviewRepairClass::CriticalContract,
+        ] {
+            assert_eq!(
+                ReviewCleanPolicyV2::derive(tier, repair).clean_target(),
+                1,
+                "{tier:?}/{repair:?} must target a single clean batch"
+            );
+        }
+    }
 }
 
 #[test]
@@ -391,23 +391,32 @@ fn critical_tier3_reaches_pass_with_one_specialty_per_attempt() {
     );
     let mut current_batch: Option<ReviewBatchV2> = None;
 
-    for (index, specialty) in ["be", "ar", "qa", "be", "ar", "qa"].into_iter().enumerate() {
+    // The required specialty set still has to complete before the batch counts
+    // as clean; only the number of clean batches dropped to one.
+    for (index, specialty) in ["be", "ar", "qa"].into_iter().enumerate() {
         let ordinal = u32::try_from(index + 1).unwrap();
-        let batch_id = if ordinal <= 3 { "batch-1" } else { "batch-2" };
         let attempt_id = format!("attempt-{ordinal}");
         let evaluation = ReviewSupervisor::evaluate(
             &current_session,
             current_batch.as_ref(),
-            single_specialty_attempt(ReviewTier::Tier3, ordinal, batch_id, &attempt_id, specialty),
+            single_specialty_attempt(
+                ReviewTier::Tier3,
+                ordinal,
+                "batch-1",
+                &attempt_id,
+                specialty,
+            ),
         )
         .unwrap();
 
-        if ordinal == 5 {
+        if ordinal < 3 {
             assert_eq!(
                 evaluation.next_session().status(),
-                ReviewSessionStatusV2::Running
+                ReviewSessionStatusV2::Running,
+                "an incomplete specialty set must not close the session"
             );
-        } else if ordinal == 6 {
+            assert!(evaluation.exit_receipt().is_none());
+        } else {
             assert_eq!(
                 evaluation.next_session().status(),
                 ReviewSessionStatusV2::Completed
@@ -423,7 +432,7 @@ fn critical_tier3_reaches_pass_with_one_specialty_per_attempt() {
             (!evaluation.next_batch().is_closed()).then(|| evaluation.next_batch().clone());
     }
 
-    assert_eq!(current_session.counters().attempts(), 6);
+    assert_eq!(current_session.counters().attempts(), 3);
     assert_eq!(current_session.status(), ReviewSessionStatusV2::Completed);
     assert!(
         current_batch.is_none(),

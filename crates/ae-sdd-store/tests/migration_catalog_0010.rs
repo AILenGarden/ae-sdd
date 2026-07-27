@@ -1,7 +1,10 @@
 use std::{path::Path, str::FromStr};
 
 use ae_sdd_domain::EventStoreId;
-use ae_sdd_store::{SQLITE_RUNTIME_MIGRATIONS, SqliteRuntimeRepository, StoreError, UtcTimestamp};
+use ae_sdd_store::{
+    SQLITE_RUNTIME_MIGRATIONS, SqliteRuntimeRepository, StoreError, UtcTimestamp,
+    latest_runtime_schema_version,
+};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -19,13 +22,17 @@ fn assert_catalog(connection: &Connection) {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("user version");
-    assert_eq!(version, 11);
+    assert_eq!(version, latest_runtime_schema_version());
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM schema_migration", [], |row| {
             row.get(0)
         })
         .expect("migration count");
-    assert_eq!(count, 11);
+    assert_eq!(
+        usize::try_from(count).expect("catalog count fits"),
+        SQLITE_RUNTIME_MIGRATIONS.len(),
+        "catalog rows and the published migration list must agree"
+    );
     let violations: String = connection
         .query_row(
             "SELECT COALESCE(group_concat(\"table\"), '') FROM pragma_foreign_key_check",

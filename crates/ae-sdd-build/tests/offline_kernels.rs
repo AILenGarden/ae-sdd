@@ -332,16 +332,10 @@ fn assets_generation_is_byte_deterministic_and_root_independent() {
 }
 
 #[test]
-fn bump_requires_all_three_authoritative_version_occurrences() {
+fn bump_requires_every_authoritative_version_occurrence() {
     let root = fixture("bump");
-    fs::create_dir_all(root.join("tools/lib")).expect("tools/lib");
     fs::create_dir(root.join("source")).expect("source");
     fs::write(root.join("source/SKILL.md"), "version: 1.2.3\n").expect("skill");
-    fs::write(
-        root.join("tools/lib/paths.py"),
-        "MASTER_VERSION = \"1.2.3\"\n",
-    )
-    .expect("paths");
     fs::write(root.join("README.md"), "> **版本：** v1.2.3\n").expect("readme");
     execute_offline(&request(
         OfflineCommand::Bump {
@@ -357,11 +351,6 @@ fn bump_requires_all_three_authoritative_version_occurrences() {
         fs::read_to_string(root.join("source/SKILL.md"))
             .expect("skill")
             .contains("version: 1.2.4")
-    );
-    assert!(
-        fs::read_to_string(root.join("tools/lib/paths.py"))
-            .expect("paths")
-            .contains("MASTER_VERSION = \"1.2.4\"")
     );
     assert!(
         fs::read_to_string(root.join("README.md"))

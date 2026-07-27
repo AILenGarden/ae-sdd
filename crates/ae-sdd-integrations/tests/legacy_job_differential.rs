@@ -1,6 +1,3 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use ae_sdd_domain::{BootId, EventStoreId};
@@ -20,16 +17,10 @@ use uuid::Uuid;
 #[allow(dead_code, unused_imports)]
 #[path = "../../../bins/ae-sdd-cli/src/legacy/mod.rs"]
 mod legacy;
-#[path = "support/legacy_job_cases.rs"]
-mod legacy_job_cases;
 #[path = "support/legacy_job_fixture.rs"]
 mod legacy_job_fixture;
-#[path = "support/legacy_job_projection.rs"]
-mod legacy_job_projection;
 
-use legacy_job_cases::CASES;
 use legacy_job_fixture::prepare_workspace;
-use legacy_job_projection::{Verdict, assert_pair};
 
 const NOW_MS: u64 = 1_000;
 const ENDPOINT_TOKEN: &str = "legacy-job-differential-token";
@@ -161,31 +152,12 @@ impl RustHarness {
     }
 }
 
-#[test]
-fn python_and_rust_oracle_covers_all_twenty_five_read_only_jobs() {
-    let python_root = TempDir::new().expect("Python fixture root");
-    let rust_root = TempDir::new().expect("Rust fixture root");
-    let home = TempDir::new().expect("isolated home");
-    prepare_workspace(&python_root);
-    prepare_master(home.path());
-    let mut rust = RustHarness::new(&rust_root);
-    let mut seen = std::collections::BTreeSet::new();
-    let mut verdicts = std::collections::BTreeMap::<Verdict, usize>::new();
-    for (sequence, case) in CASES.iter().enumerate() {
-        assert!(seen.insert(case.id), "duplicate oracle case {}", case.id);
-        let python = run_python(python_root.path(), home.path(), case.id, case.args);
-        let rust = rust.run(case.id, case.args, sequence + 1);
-        assert_pair(case.id, case.verdict, case.reason, &python, &rust);
-        *verdicts.entry(case.verdict).or_default() += 1;
-    }
-    assert_eq!(seen.len(), 25);
-    assert_eq!(verdicts[&Verdict::PreserveImplemented], 18);
-    assert_eq!(verdicts[&Verdict::BreakingFixVerified], 7);
-    assert_eq!(
-        verdicts.get(&Verdict::Pending).copied().unwrap_or_default(),
-        0
-    );
-}
+// The differential oracle that ran each of the 25 read-only jobs through both
+// `python tools/bin/ae-sdd` and the native adapter was removed with the Python
+// tree it depended on. `legacy_job_cli_e2e.rs` still submits all 25 natively,
+// but only asserts that each reaches a passing outcome; the field-level payload
+// assertions the oracle carried now exist for 8 of them and are absent for the
+// other 17.
 
 #[test]
 fn verified_breaking_fixes_reject_ambient_database_and_plugin_authority() {
@@ -233,36 +205,24 @@ fn verified_breaking_fixes_reject_ambient_database_and_plugin_authority() {
         );
     }
 
-    let python_root = TempDir::new().expect("Python plugin fixture root");
+    // Dropping ambient global plugin authority was a deliberate breaking fix.
+    // The fixture registers a project plugin and a global one; only the project
+    // plugin may be seen, and the global layer must be reported as absent rather
+    // than silently consulted. This used to be stated as a Python-versus-Rust
+    // difference, but the native side is the whole contract now.
     let rust_root = TempDir::new().expect("Rust plugin fixture root");
-    let home = TempDir::new().expect("isolated plugin home");
-    prepare_workspace(&python_root);
-    prepare_master(home.path());
     let mut rust = RustHarness::new(&rust_root);
 
-    let python_list = run_python(python_root.path(), home.path(), "plugin list", &[]);
     let rust_list = rust.run("plugin list", &[], 101);
-    assert_eq!(python_list["totalPlugins"], 2);
     assert_eq!(rust_list["totalPlugins"], 1);
     assert_eq!(rust_list.pointer("/layers/1/exists"), Some(&json!(false)));
 
-    let python_trace = run_python(
-        python_root.path(),
-        home.path(),
-        "plugin trace",
-        &["global-skill"],
-    );
     let rust_trace = rust.run("plugin trace", &["global-skill"], 102);
-    assert_eq!(python_trace["layer"], 2);
-    assert_eq!(python_trace["plugin"]["name"], "global-fixture");
     assert_eq!(rust_trace["hit"], false);
     assert!(rust_trace["plugin"].is_null());
 
-    let python_validate = run_python(python_root.path(), home.path(), "plugin validate", &[]);
     let rust_validate = rust.run("plugin validate", &[], 103);
-    assert_eq!(python_validate["valid"], true);
     assert_eq!(rust_validate["valid"], true);
-    assert_eq!(python_validate["totalPlugins"], 2);
     assert_eq!(rust_validate["totalPlugins"], 1);
 }
 
@@ -299,64 +259,6 @@ fn rust_adapter_error(id: &str, business_args: &[&str]) -> String {
     legacy::adapt_job_submission(&resolved.route, &entrypoint, &mut request, NOW_MS)
         .expect_err("breaking-fix arguments must be rejected")
         .to_string()
-}
-
-fn prepare_master(home: &Path) {
-    let source = home.join("master/source");
-    fs::create_dir_all(&source).expect("isolated master source");
-    fs::write(
-        source.join("SKILL.md"),
-        "---\nname: ae-sdd\nversion: 3.14.0\n---\n",
-    )
-    .expect("isolated master marker");
-    let global = home.join(".ae-sdd/plugins/global");
-    fs::create_dir_all(&global).expect("isolated global plugin");
-    fs::write(global.join("SKILL.md"), "# isolated global fixture\n").expect("global plugin skill");
-    fs::write(
-        home.join(".ae-sdd/plugins/registry.yaml"),
-        "schema_version: 1\nplugins:\n  - name: global-fixture\n    type: skill-new\n    version: 1.0.0\n    description: isolated global differential fixture\n    provides: global-skill\n    path: ./global/SKILL.md\n",
-    )
-    .expect("global plugin registry");
-}
-
-fn run_python(root: &Path, home: &Path, id: &str, args: &[&str]) -> Value {
-    let repository = repository_root();
-    let mut command = Command::new(std::env::var_os("PYTHON").unwrap_or_else(|| "python".into()));
-    command.arg(repository.join("tools/bin/ae-sdd"));
-    command.args(id.split_whitespace());
-    command.args(args);
-    command.arg("--json");
-    let output = command
-        .current_dir(root)
-        .env("HOME", home)
-        .env("USERPROFILE", home)
-        .env("AE_SDD_MASTER", home.join("master/source"))
-        .env("AE_SDD_STATS", "0")
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .output()
-        .expect("Python legacy CLI must be installed for the differential oracle");
-    assert!(
-        output.status.success(),
-        "Python {id} failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "Python {id} returned non-JSON ({error}): stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    })
-}
-
-fn repository_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root")
-        .to_path_buf()
 }
 
 fn params(payload: Value, deadline_ms: u64) -> RequestParams<Value> {

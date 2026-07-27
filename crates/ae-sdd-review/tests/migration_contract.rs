@@ -83,3 +83,42 @@ fn migration_0007_references_runtime_event() {
         "review projections must reference runtime_event for durable replay"
     );
 }
+
+const CLEAN_TARGET_MIGRATION: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../migrations/0012_review_clean_target_unify.sql"
+));
+
+#[test]
+fn migration_0012_rebuilds_both_clean_target_projections() {
+    let tables = table_names(CLEAN_TARGET_MIGRATION);
+    for expected in &[
+        "review_session_v2_projection",
+        "review_exit_receipt_v2_projection",
+    ] {
+        assert!(
+            tables.contains(*expected),
+            "migration 0012 must rebuild table '{expected}'"
+        );
+    }
+}
+
+#[test]
+fn migration_0012_pins_clean_target_to_one() {
+    assert!(
+        CLEAN_TARGET_MIGRATION.contains("clean_target INTEGER NOT NULL CHECK(clean_target=1)"),
+        "clean_target must be constrained to exactly 1"
+    );
+    assert!(
+        !CLEAN_TARGET_MIGRATION.contains("clean_target=2"),
+        "no tier or repair class may still require two clean batches"
+    );
+}
+
+#[test]
+fn migration_0012_sets_user_version_to_12() {
+    assert!(
+        CLEAN_TARGET_MIGRATION.contains("PRAGMA user_version=12"),
+        "migration 0012 must set user_version to 12"
+    );
+}

@@ -234,7 +234,7 @@ fn validate_route_classification(route: &CommandRoute) -> Result<(), ManifestErr
         }
         if route.status != ImplementationStatus::Implemented
             || route.fixture != "crates/ae-sdd-build/tests/offline_kernels.rs"
-            || route.evidence != "crates/ae-sdd-build/tests/migration_oracle.rs"
+            || route.evidence != "crates/ae-sdd-build/tests/offline_kernels.rs"
             || route.identity
                 != (RouteIdentity {
                     workspace: false,
@@ -244,7 +244,7 @@ fn validate_route_classification(route: &CommandRoute) -> Result<(), ManifestErr
         {
             return Err(ManifestError::RouteTarget {
                 id: route.id.clone(),
-                reason: "B offline command requires native and migration-oracle evidence with no daemon identity"
+                reason: "B offline command requires native kernel evidence with no daemon identity"
                     .to_owned(),
             });
         }

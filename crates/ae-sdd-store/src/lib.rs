@@ -33,5 +33,5 @@ pub use service::{
 };
 pub use sqlite::{
     RuntimeMigration, SQLITE_RUNTIME_BASE_MIGRATION, SQLITE_RUNTIME_MIGRATIONS,
-    SqliteRuntimeRepository,
+    SqliteRuntimeRepository, latest_runtime_schema_version,
 };

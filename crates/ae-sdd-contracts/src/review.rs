@@ -1240,31 +1240,32 @@ pub struct ReviewCleanPolicyV2 {
     final_proof_requirement: ReviewFinalProofKind,
 }
 
+/// One valid clean batch closes every review session.
+///
+/// The target is tier- and repair-class-independent: a single batch in which the
+/// complete required reviewer set reports zero findings is the exit condition.
+/// Risk is still bounded, but by the required reviewer set and by
+/// `final_proof_requirement`, not by repeating an already-clean batch.
+const CLEAN_TARGET: u32 = 1;
+
 impl ReviewCleanPolicyV2 {
     /// Derives the exact clean policy from tier and daemon repair class.
-    pub const fn derive(tier: ReviewTier, repair_class: ReviewRepairClass) -> Self {
+    ///
+    /// `repair_class` no longer raises the clean target; it stays in the
+    /// signature because the frozen wire and projection contracts carry it and
+    /// the daemon still records it as review provenance.
+    pub const fn derive(tier: ReviewTier, _repair_class: ReviewRepairClass) -> Self {
         match tier {
             ReviewTier::Tier1 => Self {
-                clean_target: 1,
+                clean_target: CLEAN_TARGET,
                 final_proof_requirement: ReviewFinalProofKind::None,
             },
             ReviewTier::Tier2 => Self {
-                clean_target: if matches!(repair_class, ReviewRepairClass::CriticalContract) {
-                    2
-                } else {
-                    1
-                },
+                clean_target: CLEAN_TARGET,
                 final_proof_requirement: ReviewFinalProofKind::DeterministicGates,
             },
             ReviewTier::Tier3 => Self {
-                clean_target: if matches!(
-                    repair_class,
-                    ReviewRepairClass::HighRisk | ReviewRepairClass::CriticalContract
-                ) {
-                    2
-                } else {
-                    1
-                },
+                clean_target: CLEAN_TARGET,
                 final_proof_requirement: ReviewFinalProofKind::FullVerification,
             },
         }
