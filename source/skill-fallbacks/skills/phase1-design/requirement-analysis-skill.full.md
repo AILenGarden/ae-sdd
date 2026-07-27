@@ -31,7 +31,7 @@ description: 需求分析 SKILL — ae-sdd 路由后的分析阶段。从 PRD/Is
 > 本文件「16 道 RA 质量闸 RA-G01~RA-G16」「第零步/第 0.5 步🔴硬门禁」「第七步 RA 挖掘循环」等标注，
 > **逐条为软门禁（report-only）**，由 analyst 在 RA 文档内逐项自评判定，**RA-G01~16 无逐条 GATE_REGISTRY 注册**。
 >
-> **注意区分**：RA 层的**真硬门禁**已存在且机械执行——`tools/lib/gates.py` 的 **G-RA-1~G-RA-6 + G-RA-FLOW-VIOLATION**（v3.5.18 新增 G-RA-6 实现视角完整性），
+> **注意区分**：RA 层的**真硬门禁**已存在且机械执行——`crates/ae-sdd-gates/src/registry.rs` 的 **G-RA-1~G-RA-6 + G-RA-FLOW-VIOLATION**（v3.5.18 新增 G-RA-6 实现视角完整性），
 > 覆盖 RA 文档存在 / 8 维度完整 / 衍生章节 / 真实性扫描 / 机械派生深度（D1-D5）/ 实现视角七要素（I1-I7）/ 流程违规审计（R1-R8）。
 > RA-G01~16 是**更细颗粒度的 analyst 自评清单**，被 G-RA 系列从外部兜底但非逐条机械。
 >
@@ -550,7 +550,7 @@ stateDiagram-v2
 >
 > **触发条件：** RA §4 状态机涉及任何状态变更主规则 R（如 R1）时必跑。
 >
-> **🔴 v3.5.9 机器强制：** 本阶段产出由 `G-RA-5` 机械校验（`scripts/ra_depth_scan.py` D1 规则）。**§6.5 有表头无逐行 R→R' 机械派生 = BLOCKER，等同未做。** 每个主规则 R 至少要有 1 行衍生 R'，且每行 R' 的「衍生模式命中」列必须含 H.5/H.5.1/编号（禁止空/「无」）。这是用户"13 个问题 → 被逼出 34 个"案例的直接根因——AI 把已知事实摘来归个类就停了，G-RA-5 把这种"形式通过、内容空转"变成可捕获的 BLOCKER。
+> **🔴 v3.5.9 机器强制：** 本阶段产出由 `G-RA-5` 机械校验（`ae-sdd ra-depth-scan` D1 规则）。**§6.5 有表头无逐行 R→R' 机械派生 = BLOCKER，等同未做。** 每个主规则 R 至少要有 1 行衍生 R'，且每行 R' 的「衍生模式命中」列必须含 H.5/H.5.1/编号（禁止空/「无」）。这是用户"13 个问题 → 被逼出 34 个"案例的直接根因——AI 把已知事实摘来归个类就停了，G-RA-5 把这种"形式通过、内容空转"变成可捕获的 BLOCKER。
 
 #### E.5.1 衍生规则强制追问 SOP
 
@@ -770,7 +770,7 @@ stateDiagram-v2
 
 #### H.5.3 配套工具调用
 
-```python
+```text
 # 业务模式匹配表自动生成（伪代码）
 def generate_pattern_checklist(requirement_keywords):
     patterns = []
@@ -826,7 +826,7 @@ def generate_pattern_checklist(requirement_keywords):
 
 #### H.6.3 配套工具调用
 
-```python
+```text
 # 跨域级联效应反查（伪代码）
 def find_cross_domain_cascade(trigger_event, project_assets):
     """根据触发事件反查所有受影响域"""
@@ -879,7 +879,7 @@ def find_cross_domain_cascade(trigger_event, project_assets):
 
 > **🔴 强制：** 8 维度挖掘回答"需求是什么"，本步回答"开发怎么做、数据从哪里来、哪些方案不该做"。RA 未完成本步，DR 生成会被迫补猜，等同 RA 未完成。
 >
-> **🔴 v3.5.18 机器强制：** 本步由 `G-RA-6` 机械校验（`scripts/ra_implementation_scan.py` I1-I7）。缺任一要素或章节为空/占位 = BLOCKER。
+> **🔴 v3.5.18 机器强制：** 本步由 `G-RA-6` 机械校验（`ae-sdd ra-implementation-scan` I1-I7）。缺任一要素或章节为空/占位 = BLOCKER。
 
 ### I1 数据源清单
 
@@ -1140,7 +1140,7 @@ RA §9-quater.7 必须给 DR 可直接引用的输入：
 | 0 | 0 | **无关联** | 🔴 强制问用户（E005） |
 
 **choose_iteration() 调用：**
-```python
+```text
 target_iteration = choose_iteration(doc={
     "doc_id": "RA-001",
     "doc_type": "RA",
@@ -1520,8 +1520,8 @@ else → 规模=小（默认）
 | 19 | 🆕 **禁止 RA 修订不评估下游影响** | 下游文档过期 / 漏改 | §RA 修订影响分析（v3.2 新增）|
 | 20 | 🆕 **禁止生产 BUG/工单直接修代码不分析需求** | 治标不治本 / 同类问题再犯 | §RA 反向通道（v3.2 新增）|
 | 21 | 🆕 **禁止对话中接受"合理/大概/差不多"敷衍回答** | 需求理解模糊 → 下游返工 | §反模式与对话陷阱 §1（v3.2 新增）|
-| 22 | 🆕 **禁止 §6.5/§8.5/§9-ter 表格「有表头无逐行机械派生」**（🆕 v3.5.9）| 形式通过、内容空转——AI 把已知事实摘来归个类就停了，下游 Story/Task 跟着漏 | §阶段 E.5/G.5/H.5/H.6 + G-RA-5 机器校验（`scripts/ra_depth_scan.py`） |
-| 23 | 🆕 **禁止没有实现视角七要素就交付 RA**（🆕 v3.5.18）| DR/Coding 无法回答数据源、数据流、定义、不变量、复用边界、高成本设计是否应拒绝、开发疑问是否已解决 | §第一步 ter + §9-quater + G-RA-6 机器校验（`scripts/ra_implementation_scan.py`） |
+| 22 | 🆕 **禁止 §6.5/§8.5/§9-ter 表格「有表头无逐行机械派生」**（🆕 v3.5.9）| 形式通过、内容空转——AI 把已知事实摘来归个类就停了，下游 Story/Task 跟着漏 | §阶段 E.5/G.5/H.5/H.6 + G-RA-5 机器校验（`ae-sdd ra-depth-scan`） |
+| 23 | 🆕 **禁止没有实现视角七要素就交付 RA**（🆕 v3.5.18）| DR/Coding 无法回答数据源、数据流、定义、不变量、复用边界、高成本设计是否应拒绝、开发疑问是否已解决 | §第一步 ter + §9-quater + G-RA-6 机器校验（`ae-sdd ra-implementation-scan`） |
 
 ---
 
@@ -1834,7 +1834,7 @@ RA 修订前（每次必跑）
 **🔴 强制：** 所有"出文档类"任务的最小流程是 RA skill 完整 7 步。仅以下情况可走 coding-skill 而跳过 RA：
 
 1. 用户说"修这个 bug，PRD 已明确" + bug 与已有 PRD/Issue 1:1 对应
-2. intent 标记为 `BUG` 或 `CONFIG`（双重豁免，详见 `tools/lib/document_storage.py:check_ra_prerequisites()`）
+2. intent 标记为 `BUG` 或 `CONFIG`（双重豁免，详见 `crates/ae-sdd-resources/src/document.rs (RA 前置检查)`）
 
 **🔴 实测案例（2026-06-27）：** AI Agent 接到"分析同事知识库 PDF 出 proposal"任务时，因"任务看起来小 + 用户催促"跳过 RA skill 完整 7 步，直接读 PDF 出 36KB proposal。后果：被用户连续批评"又来了，不遵守流程" + 触发本修订建议书 §3.1-3.8 的 7 项修订落地。
 
@@ -1866,4 +1866,4 @@ RA 修订前（每次必跑）
   - 🆕 **双支柱审核**：叙述性讲解 + 对话内直接呈现
   - 🆕 **16 道 RA 质量闸**：从输入保真、RAModel、风险闭环到落盘审核全流程门禁
   - 🆕 **v3.5.8 RA 挖掘循环**：第七步从"16 道闸一次性终检"重构为引用 review-loop 公共协议（反复挖掘 + 连续 3 轮无新增确认缺口/缺陷才退出 + 3 轮仍有 🔴 升级用户 + 漏报升级）；第二步循环对象从"仅缺口"扩展为"缺口 + 8 维度挖掘穷尽"。补齐"RA 是全链路事实源头却无 review 闭环"的体系性缺口
-  - 🆕 **v3.5.18 实现视角七要素 + G-RA-6**：新增第一步 ter 与 §9-quater，强制 RA 挖出数据源、数据流、术语定义/不变量、现有实现/复用证据、高成本/难实现设计反驳、开发者疑问答复矩阵、DR 生成交接包；由 `scripts/ra_implementation_scan.py` / `G-RA-6` 机器阻断空转 RA。
+  - 🆕 **v3.5.18 实现视角七要素 + G-RA-6**：新增第一步 ter 与 §9-quater，强制 RA 挖出数据源、数据流、术语定义/不变量、现有实现/复用证据、高成本/难实现设计反驳、开发者疑问答复矩阵、DR 生成交接包；由 `ae-sdd ra-implementation-scan` / `G-RA-6` 机器阻断空转 RA。

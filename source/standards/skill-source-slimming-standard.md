@@ -2,7 +2,6 @@
 
 > 适用范围：`source/SKILL.md` 与 `source/skills/**/*.md`。
 > 标准版本：`ae-sdd-source-slim/v2`。
-> 执行入口：`python scripts/slim_source_skills.py`。
 > 模板：`source/templates/skill/source-skill-slim-entry-template.md`。
 
 ## 1. 目标
@@ -24,7 +23,7 @@
 | 源 fallback | `source/skill-fallbacks/**` | 瘦身前完整原文，语义锚点 |
 | 编译 runtime | `dist/ae-sdd/**` | Agent 运行时入口和 compact slices |
 | 设计文档 | `source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/skill-runtime-compiler.md` | 能力边界、实现边界、编译契约 |
-| 工具事实 | `tools/lib/**`、`tools/bin/ae-sdd` | gate/state/CLI 的执行真相 |
+| 工具事实 | `crates/**`、`bins/ae-sdd-cli` | gate/state/CLI 的执行真相 |
 
 当 slim entry 与 fallback 冲突时，先检查 `source_fallback_sha256`。fallback 哈希正确时，以 fallback 为完整语义来源；执行 gate/state 时，CLI 输出仍高于任何 SKILL 文字。
 
@@ -36,9 +35,9 @@
 | --- | --- | --- |
 | `identity_trigger` | name、description、入口、触发条件、适用场景 | `ae-sdd-design.md` 路由与主入口设计 |
 | `workflow_route` | Step/Phase、状态机、路由分支、执行顺序、重入逻辑 | `ae-sdd-design.md` §2/§16，`update-graph.json` |
-| `gate_constraint` | G-* 门禁、MUST/必须/禁止/BLOCK/WARN/ASK_USER | `tools/lib/gates.py:GATE_REGISTRY` |
+| `gate_constraint` | G-* 门禁、MUST/必须/禁止/BLOCK/WARN/ASK_USER | `crates/ae-sdd-gates/src/registry.rs:GateRegistry` |
 | `tool_command` | `ae-sdd ...` 命令、脚本、API、工具调用契约 | `ae-sdd-implementation-architecture.md` CLI/模块边界 |
-| `state_data` | state/config/manifest/JSON/YAML 字段、phase、reviewConsensus | `tools/lib/state.py` 与状态设计 |
+| `state_data` | state/config/manifest/JSON/YAML 字段、phase、reviewConsensus | `crates/ae-sdd-store/src`（StateAuthority）与状态设计 |
 | `output_doc_contract` | 产物、模板、文档保存、ChangeLog、报告格式 | document-storage 与 `source/templates/**` |
 | `resource_reference` | standards/templates/skills/assets/docs 等引用路径 | `source/standards/**`、`source/templates/**` |
 | `design_alignment` | 设计-实现对齐、update-check、UC、架构约束 | 三份设计文档与 `update-check` |
@@ -55,8 +54,8 @@
 5. 语义识别：按 §3 分类识别 frontmatter、heading、关键词、inline references。
 6. 模板渲染：按 `source/templates/skill/source-skill-slim-entry-template.md` 输出 slim entry。
 7. 机器校验：校验 fallback 哈希、schema、标准路径、模板路径、必备 section、语义 inventory hash、模板重渲染一致性。
-8. 编译：运行 `scripts/compile_all_skills.py --include-references` 或 `scripts/build_dist.py`，让 runtime fallback 从源 fallback 取得完整语义。
-9. 验证：运行 `ae-sdd runtime verify`、`update-check --only UC-15` 和相关单元测试。
+8. 编译：运行 `ae-sdd-build native-job` 的 compile 作业，让 runtime fallback 从源 fallback 取得完整语义。
+9. 验证：运行 `ae-sdd runtime verify`、`ae-sdd update-check --only UC-15` 和相关单元测试。
 
 ## 5. 禁止事项
 
@@ -71,11 +70,10 @@
 
 一次源 SKILL 瘦身完成，必须同时满足：
 
-- `python scripts/slim_source_skills.py --validate` 通过。
 - 每个 slim entry 有 `source_slim_schema: ae-sdd-source-slim/v2`。
 - 每个 `source_fallback_sha256` 与 `source/skill-fallbacks/**` 实际内容一致。
 - 每个 slim entry 与模板重渲染结果字节一致。
 - `## Semantic Inventory` 至少能追到身份/触发语义，并按内容覆盖工作流、门禁、工具、状态、文档、资源或设计对齐语义。
 - 编译后的 `dist/ae-sdd/runtime/**/fallback/SKILL.full.md` 来自源 fallback，而不是 slim entry。
-- `python tools/bin/ae-sdd runtime verify --path dist/ae-sdd` 通过。
-- `python tools/bin/ae-sdd update-check --only UC-15 --json` 通过。
+- `ae-sdd runtime verify --path dist/ae-sdd` 通过。
+- `ae-sdd update-check --only UC-15 --json` 通过。

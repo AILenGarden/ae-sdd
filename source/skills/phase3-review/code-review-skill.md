@@ -10,7 +10,6 @@ source_fallback_sha256: 85f156891a4beee350f8874b839d16c53fe706b859472895520430e8
 source_original_bytes: 60098
 source_original_lines: 1158
 source_semantic_inventory_sha256: 4c113a531e2b31820a87eb5ca9e4c2c762120ab4b5eda53ff845513d81e48430
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Code Review — 端到端代码评审 Skill Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:30 📦 文档存放前置调用（🔴 横切依赖）; L2:174 触发条件; L3:312 1.5 调用项目资产服务; +5 more; keyword_hits: 81 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:121 整体流程; L2:369 第二步：多维评审（六阶段并行挖掘）; L3:373 阶段 A：业务逻辑评审; +7 more; keyword_hits: 89 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:20 🟠 门禁强度声明（v3.5.11 AA 诚实降级）; L3:76 标尺 1：证据标准（🔴 禁止裸结论）; L3:100 标尺 3：完整性度量（🔴 "覆盖所有"必须先有穷举清单）; +11 more; keyword_hits: 133 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L2:20 🟠 门禁强度声明（v3.5.11 AA 诚实降级）; L3:76 标尺 1：证据标准（🔴 禁止裸结论）; L3:100 标尺 3：完整性度量（🔴 "覆盖所有"必须先有穷举清单）; +11 more; keyword_hits: 133 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 43 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L3:598 闸门状态; keyword_hits: 48 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L3:598 闸门状态; keyword_hits: 48 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:30 📦 文档存放前置调用（🔴 横切依赖）; L3:48 本 SKILL 产出文档 × intent 对照; L2:199 🆕 v3.10.2 无文档轻量准入分支（micro-review 子路径）; +6 more; keyword_hits: 126 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 58; refs: .ae-sdd/tmp/{doc-id}-draft.md; /ae-sdd 审查这部分实现; /ae-sdd 帮我 CodeReview 这段; +55 more; keyword_hits: 72 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L1:335 按 §1.2 提取的 §3 Task 列表逐个读：; L3:501 阶段 F：跨文档引用核查（与 §3 调用层级一致性）; L3:1076 3 种多 Agent 模式触发条件（Code Review 场景专属 = §8.4.1 Tier 判定的 Code Review 实例化）; +1 more; keyword_hits: 273 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -187,7 +186,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | test-generate-skill.md |
 | test-review-skill.md |
 | testcase-generate-skill.md |
-| tools/lib/gates.py |
+| crates/ae-sdd-gates/src/registry.rs |
 | {STORY-ID}-CodeReview.md |
 | {STORY-ID}-CodingPlan.md |
 | {STORY-ID}-CodingReport.md |

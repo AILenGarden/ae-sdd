@@ -10,7 +10,6 @@ source_fallback_sha256: 9e9287743b0530e14c9d3f8c3eaa0ef187f2a7aea9900c338ca68a1f
 source_original_bytes: 6137
 source_original_lines: 110
 source_semantic_inventory_sha256: 4e4c10a7f75dbd0784fe97b84a544d7d71874f59d44229a7ae6695bef9a29998
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Test Review — 测试真实性复核 SKILL Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | keyword_hits: 7 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:54 G-09 work-item scope 规则; L2:91 禁止事项; keyword_hits: 41 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:54 G-09 work-item scope 规则; L2:91 禁止事项; keyword_hits: 41 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 9 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 9 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | keyword_hits: 9 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:65 输出; keyword_hits: 14 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 9; refs: .auto-engineering/{WORKITEM-ID}/evidence/manifest.json; ae-sdd evidence finalize --story {STORY-ID}; ae-sdd evidence record; +6 more; keyword_hits: 3 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | keyword_hits: 2 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |

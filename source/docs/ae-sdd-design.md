@@ -258,7 +258,7 @@ G-RA-1~6 与 G-RA-FLOW-VIOLATION 通过 `_resolve_selected_ra()` 共享当前 Wo
 
 | 设计点 | 实现方式 |
 | --- | --- |
-| 门禁注册表 | `tools/lib/gates.py:GATE_REGISTRY`（list，实际 36 个；包含 G-HTTP-1 场景推导门禁） |
+| 门禁注册表 | `crates/ae-sdd-gates/src/registry.rs:GateRegistry`（list，实际 36 个；包含 G-HTTP-1 场景推导门禁） |
 | CLI 统一扫描入口 | `ae-sdd gates check`（`tools/bin/ae-sdd` 行2688，帮助文本自带门禁清单） |
 | 单个门禁定向检查 | `ae-sdd gates check --only <gate_id>` |
 | G-00 资产门卫 | `gates.py` G-00 check 函数；不通过时可运行 `ae-sdd assets generate --project <key>` 生成/修复 baseline 资产，再用 `ae-sdd assets check` 校验 |
@@ -286,7 +286,7 @@ G-RA-1~6 与 G-RA-FLOW-VIOLATION 通过 `_resolve_selected_ra()` 共享当前 Wo
 
 ### Review Batch v2 与增量验证
 
-Review 的质量对象是带 `inputFingerprint` / `rulesetFingerprint` 的 `reviewSession`，不是模糊的 round 计数器。每次尝试落入 `VALID_CLEAN`、`VALID_FINDINGS`、`INVALID_INFRA`、`INVALID_PROTOCOL`、`INVALID_INPUT_DRIFT` 或 `CANCELLED`；平台失败不增加 clean streak，输入漂移必须新建 session。Tier 1/2 首批 clean 默认一次，Tier 3 在 P0/P1 修复后需要两个连续 clean batch；attempt、valid batch、remediation 和 wall-clock 任一预算耗尽进入 `STALLED`，不得当作通过。
+Review 的质量对象是带 `inputFingerprint` / `rulesetFingerprint` 的 `reviewSession`，不是模糊的 round 计数器。每次尝试落入 `VALID_CLEAN`、`VALID_FINDINGS`、`INVALID_INFRA`、`INVALID_PROTOCOL`、`INVALID_INPUT_DRIFT` 或 `CANCELLED`；平台失败不增加 clean streak，输入漂移必须新建 session。`cleanTarget` 恒为 1：任何 Tier、任何 repair class 都是一批 `VALID_CLEAN` 即通过，风险改由 required reviewer 集完整性与 `finalProofRequirement`（Tier 2 deterministic gates、Tier 3 全量验证）承担；attempt、valid batch、remediation 和 wall-clock 任一预算耗尽进入 `STALLED`，不得当作通过。
 
 G-CODE-1 在可信 `VerificationPlan.changedPaths` 与 G-09 evidence/hash 链存在时，仅检查当前 work-item 的生产代码；evidence 必须绑定 Story、scope、command、toolchain 与 report，artifact 只能是项目内相对路径。production scope 与 scanner 共同识别 Java/Kotlin/XML/YAML/properties 及 `.py/.js/.ts` 文本代码，并共同排除生成目录、`.venv/venv/.tox/site-packages`、`__tests__` 及 Python/JS/TS 常规测试命名。scanner 必须用安全、唯一的 `scannedPaths` 证明完整覆盖 production scope，并保证 root、exit/status、finding severity/path、顶层计数与 `reportStats` 自洽；任一缺失、越界、未知 schema 或计数漂移均 fail closed。self-hosting 例外只限 scanner 自身 AST `LINE_RULES` 与三个 metadata 常量赋值行；真实 pom metadata 由 XML 解析验证，普通业务文件使用同 URI 仍是 blocker。scope 内 blocker（含触及历史债）阻断，scope 外历史债不阻断；scope 缺失或为空时保持全仓严格扫描，测试/文档-only scope 阻断。scoped 路径不读取或创建 baseline；全仓模式的显式 baseline 仍必须经用户批准并校验完整性。
 
@@ -702,7 +702,7 @@ dist/ae-sdd/
 | Runtime 编译器 | `scripts/compile_skill_runtime.py`，生成 `runtime/*.compact.md`、`runtime/skills/**`，并替换 dist 主入口和子 SKILL 入口为 bootloader |
 | 通用编译器 SKILL | `standalone-skills/skill-runtime-compiler/`，可复制到其它 agent/仓库，用于把任意 `SKILL.md` 包编译成同级 `<name>-compiled/` |
 | 编译接入点 | `scripts/build_dist.py` 在复制 source/tools/scripts 后调用 runtime 编译器 |
-| 门禁 compact 数据源 | `tools/lib/gates.py:GATE_REGISTRY` |
+| 门禁 compact 数据源 | `crates/ae-sdd-gates/src/registry.rs:GateRegistry` |
 | 状态机 compact 数据源 | `tools/lib/state.py:PHASE_FLOWS` |
 | 机器校验 manifest | `runtime/manifest.json`：`compiled=true`、`deterministic=true`、`runtime_fingerprint`、`load_order`、`source_checksums` |
 | 分发入口 | `scripts/distribute.py` 只接受 `dist/ae-sdd/` 或基于它生成的 Agent 专属产物 |

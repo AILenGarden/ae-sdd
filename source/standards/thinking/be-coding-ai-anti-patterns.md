@@ -6,7 +6,7 @@
 > - 设计阶段末尾：扫一遍 6 类反模式，确认本任务会触发的具体类别
 > - 实现阶段每写完一个类：回查对应类别的「检测信号」
 > - Coding / CodeReview 阶段：用「检测信号」清单逐项扫代码
-> - CodeReview 前：运行 `ae-sdd gate coding-required`，由 `scripts/coding_authenticity_scan.py` 扫描可静态命中的 AP-1~AP-6 反模式
+> - CodeReview 前：运行 `ae-sdd gate coding-required`，由 coding 真实性扫描器扫描可静态命中的 AP-1~AP-6 反模式
 >
 > **与主文件关系**：
 > - 主文件 `be-coding-thinking-engine.md` §6 是索引 + 与 11 维决策树的交叉引用

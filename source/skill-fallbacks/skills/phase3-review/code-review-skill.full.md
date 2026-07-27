@@ -22,9 +22,9 @@ description: 端到端代码评审 SKILL — Phase 3 ⑦ 节点的环节内具�
 ## 🟠 门禁强度声明（v3.5.11 AA 诚实降级）
 
 > 本文件第七步「7 道闸」（⑥bis 一致性 / ⑦bis 对称性 / 全文档回扫 / 禁裸✅ / 报告-代码对账 / 产出物对账 / Test Review 引用）、
-> 第零步准入、§15 的 10 条门禁，其中**禁裸✅ + 零发现举证**已于 🆕 v3.9.20 升级为真硬门禁 **G-REVIEW-DEPTH**（`tools/lib/gates.py` GATE_REGISTRY 注册，机械校验每个 ✅ 附客观证据、零发现须附排查证据段）；其余检查项仍是 reviewer 自评的 Code Review 实质内容。
+> 第零步准入、§15 的 10 条门禁，其中**禁裸✅ + 零发现举证**已于 🆕 v3.9.20 升级为真硬门禁 **G-REVIEW-DEPTH**（`crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 注册，机械校验每个 ✅ 附客观证据、零发现须附排查证据段）；其余检查项仍是 reviewer 自评的 Code Review 实质内容。
 >
-> **真正的硬门禁**（CLI 阻断）见 `tools/lib/gates.py`：G-12（CodeReview 报告存在）/ G-09（测试真实性 + test-verifier 独立性 warn）/ G-CODE-1（Coding 真实性扫描）/ G-13（全链路对称性）/ **G-REVIEW-DEPTH（v3.9.20 Review 深度，禁裸✅+零发现举证）**。
+> **真正的硬门禁**（CLI 阻断）见 `crates/ae-sdd-gates/src/registry.rs`：G-12（CodeReview 报告存在）/ G-09（测试真实性 + test-verifier 独立性 warn）/ G-CODE-1（Coding 真实性扫描）/ G-13（全链路对称性）/ **G-REVIEW-DEPTH（v3.9.20 Review 深度，禁裸✅+零发现举证）**。
 > **全维对齐追踪**见 `ae-sdd update-check` UC-08~UC-12（AA），本文件未绑定 G-XX 的承诺会被 UC-08 持续追踪为「软门禁/待硬化」。
 
 ---

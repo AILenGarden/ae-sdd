@@ -69,7 +69,7 @@ memory 按业务实体平级分层，不按 phase 维度分：
 | pending | `pending.compact.md` | 待决项/失败历史/矫正计数/reviewLoop状态 |
 | manifest | `manifest.json` | source hash + slice hash + fingerprint（校验用） |
 
-**设计原则**（与 `compile_skill_runtime.py` 一致）：
+**设计原则**（与 runtime 编译器一致）：
 - 不做密文：compact 仍是可读 Markdown（表格/列表/JSON），不使用私有短码。
 - 高密度：去水词、表格化、引用符号化。
 - 确定性：同一输入编译两次结果完全一致（无时间戳/随机数）。
@@ -102,7 +102,6 @@ memory 按业务实体平级分层，不按 phase 维度分：
 
 ## 7. 过渡期兼容
 
-- `memory_gate.py` 改为 passthrough（check_state_transition 永远 pass）。
-- `memory_store.locate_scope()` 保留旧参数（phase/story/task）过渡期兼容。
+- memory 门禁在状态迁移上为 passthrough（永远 pass）。
+- memory scope 定位保留旧参数（phase/story/task）过渡期兼容。
 - `--allow-empty-memory` CLI 参数保留但无效。
-- 批 3 重写 prompt_inject/gate_intercept/CLI 后，过渡期兼容层可移除。

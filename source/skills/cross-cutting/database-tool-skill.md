@@ -10,7 +10,6 @@ source_fallback_sha256: 4b290b533a7c19b2dcb8518b9f465f760bf60fcc0b64f2c78e88d6f9
 source_original_bytes: 1871
 source_original_lines: 63
 source_semantic_inventory_sha256: 3372d78780bf98ec0215da8e1d6af424ba0e4e21e1c559fd1b580cae9e6db1fb
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Database Tool Skill Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:46 4. Phase Rules; keyword_hits: 2 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | keyword_hits: 3 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | keyword_hits: 3 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 8 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L2:46 4. Phase Rules; keyword_hits: 4 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L2:46 4. Phase Rules; keyword_hits: 4 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | keyword_hits: 2 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 1; refs: db-connection-profile.schema.md; keyword_hits: 3 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 

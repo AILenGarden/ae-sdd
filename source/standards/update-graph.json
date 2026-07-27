@@ -9,21 +9,20 @@
       "trigger": ["source/SKILL.md"],
       "trigger_condition": "frontmatter version 字段被修改",
       "affected": [
-        {"path": "tools/lib/paths.py", "action": "MASTER_VERSION 改为与 SKILL.md 一致", "auto_checkable": true},
         {"path": "README.md", "action": "第 5 行版本行改为与 SKILL.md 一致", "auto_checkable": true},
-        {"path": "dist/ae-sdd/VERSION", "action": "build_dist.py 运行时自动生成", "auto_checkable": true}
+        {"path": "dist/ae-sdd/VERSION", "action": "ae-sdd-build 编译发版包时自动生成", "auto_checkable": true}
       ],
       "checks": ["UC-01"]
     },
     {
       "id": "UG-02",
-      "name": "gates.py 门禁变更",
-      "trigger": ["tools/lib/gates.py"],
-      "trigger_condition": "新增/修改/删除门禁（GATE_REGISTRY / check_xxx / CHECK_FUNCS）",
+      "name": "门禁注册表变更",
+      "trigger": ["crates/ae-sdd-gates/src/registry.rs"],
+      "trigger_condition": "新增/修改/删除门禁（GATES / GATE_COUNT / GATE_DEPENDENCIES）",
       "affected": [
-        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 与 CHECK_FUNCS 一致；check_all 含新门禁特判", "auto_checkable": true},
-        {"path": "tools/tests/test_gates.py", "action": "门禁总数断言更新；新增对应测试类", "auto_checkable": false},
-        {"path": "tools/bin/ae-sdd", "action": "头注释门禁数更新；若 SKILL.md 声明了新命令则加子命令", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 与 GATE_DEPENDENCIES 一致；GATE_COUNT 与实际条目数一致", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "门禁总数断言更新；新增对应真值表用例", "auto_checkable": false},
+        {"path": "bins/ae-sdd-cli/src", "action": "若 SKILL.md 声明了新命令则加子命令", "auto_checkable": true},
         {"path": "source/SKILL.md", "action": "若新增门禁有准入门卫语义，在 SKILL.md 声明命令契约", "auto_checkable": true}
       ],
       "checks": ["UC-02", "UC-03"]
@@ -31,12 +30,11 @@
     {
       "id": "UG-03",
       "name": "CLI 子命令变更",
-      "trigger": ["tools/bin/ae-sdd"],
-      "trigger_condition": "新增/修改子命令（add_parser）",
+      "trigger": ["bins/ae-sdd-cli/src/**"],
+      "trigger_condition": "新增/修改子命令",
       "affected": [
-        {"path": "source/SKILL.md", "action": "若 SKILL.md 引用该命令则确认存在；头注释用法示例更新", "auto_checkable": true},
-        {"path": "tools/bin/ae-sdd", "action": "头注释用法示例更新", "auto_checkable": false},
-        {"path": "tools/tests/", "action": "新增对应子命令测试", "auto_checkable": false},
+        {"path": "source/SKILL.md", "action": "若 SKILL.md 引用该命令则确认存在", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/tests/", "action": "新增对应子命令测试", "auto_checkable": false},
         {"path": "source/docs/ae-sdd-design.md", "action": "CLI 能力表同步新增/修改命令；若无用户可见影响，在 CHANGELOG 写明 N/A", "auto_checkable": false},
         {"path": "README.md", "action": "若命令属于用户可见入口，版本摘要或文档索引同步", "auto_checkable": false}
       ],
@@ -45,11 +43,11 @@
     {
       "id": "UG-04",
       "name": "扫描器变更",
-      "trigger": ["scripts/*_scan.py"],
-      "trigger_condition": "新增扫描器脚本",
+      "trigger": ["crates/ae-sdd-scanners/src/registry.rs"],
+      "trigger_condition": "新增扫描器",
       "affected": [
-        {"path": "scripts/build_dist.py", "action": "_copy_runtime_scripts_to_dist 的 runtime_scripts 白名单追加新扫描器", "auto_checkable": true},
-        {"path": "tools/lib/gates.py", "action": "新增对应 _locate_xxx_scanner 函数 + 门禁调用", "auto_checkable": false},
+        {"path": "crates/ae-sdd-scanners/src/registry.rs", "action": "ScannerId 与扫描器注册表条目一致", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "对应门禁的 NativeGateRule::Scanner 指向新扫描器", "auto_checkable": false},
         {"path": "source/skills/**/*.md", "action": "引用该扫描器的 SKILL/子 SKILL 更新", "auto_checkable": false}
       ],
       "checks": ["UC-04"]
@@ -69,8 +67,8 @@
     {
       "id": "UG-06",
       "name": "模板变更",
-      "trigger": ["source/templates/**/*.md", "source/standards/templates/template-layout-standard.md", "source/standards/story/story-writing-guide.md", "tools/lib/story_template_sections.py"],
-      "trigger_condition": "修改模板、Story 撰写指南或章节解析器",
+      "trigger": ["source/templates/**/*.md", "source/standards/templates/template-layout-standard.md", "source/standards/story/story-writing-guide.md"],
+      "trigger_condition": "修改模板或 Story 撰写指南",
       "affected": [
         {"path": "source/standards/templates/template-layout-standard.md", "action": "同步默认内置声明表模式与独立撰写指南模式边界", "auto_checkable": false},
         {"path": "source/standards/story/story-generation-standard.md", "action": "同步模板/指南/解析器消费契约，不复制章节名单", "auto_checkable": false},
@@ -81,36 +79,33 @@
         {"path": "source/skill-fallbacks/skills/phase1-design/story-review-skill.full.md", "action": "同步 section ID 分类与历史迁移流程", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase1-design/story-update-skill.full.md", "action": "同步 section ID 变更分类与失效规则", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/cross-cutting/document-storage-skill.full.md", "action": "同步只读资源 intent 的正文/指纹响应和写入拒绝规则", "auto_checkable": false},
-        {"path": "tools/lib/document_storage.py", "action": "同步只读 Story 资源路由、正文读取、SHA-256 和错误码", "auto_checkable": true},
-        {"path": "tools/tests/test_story_template_sections.py", "action": "覆盖元数据、19/11、ID-only 和迁移契约", "auto_checkable": true},
-        {"path": "tools/tests/test_story_content_layering.py", "action": "覆盖三件套 Skill 的资源/解析/分层流程", "auto_checkable": true},
+        {"path": "crates/ae-sdd-resources/src/document.rs", "action": "同步只读 Story 资源路由、正文读取、SHA-256 和错误码", "auto_checkable": true},
         {"path": "source/skills/**/*.md", "action": "对应 slim entry 的资源契约同步；禁止硬编码章节名单", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-05", "UC-06", "UC-14", "UC-15", "UC-20"]
     },
     {
       "id": "UG-07",
-      "name": "update_graph 检查器变更",
-      "trigger": ["tools/lib/update_graph.py", "source/standards/update-graph.json"],
+      "name": "update-check 检查器变更",
+      "trigger": ["crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs", "source/standards/update-graph.json"],
       "trigger_condition": "修改检查器或图谱数据",
       "affected": [
         {"path": "source/standards/update-graph.json", "action": "图谱表追加对应规则；与检查器 UC-XX 对齐", "auto_checkable": false},
-        {"path": "tools/tests/test_update_graph.py", "action": "新增对应测试", "auto_checkable": false},
-        {"path": "tools/bin/ae-sdd", "action": "update-check 子命令覆盖新检查", "auto_checkable": false},
+        {"path": "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs", "action": "update-check 覆盖新检查", "auto_checkable": false},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "图谱章节同步新规则；补 UG/UC 机器锚点", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05", "UC-06", "UC-14", "UC-15"]
     },
     {
       "id": "UG-08",
-      "name": "任意 source/ 或 tools/ 改动",
-      "trigger": ["source/**", "tools/**"],
+      "name": "任意 source/ 或 crates/ 改动",
+      "trigger": ["source/**", "crates/**"],
       "trigger_condition": "任何改动",
       "affected": [
         {"path": "README.md", "action": "第 5 行版本行更新", "auto_checkable": true},
         {"path": "source/docs/ae-sdd-design.md", "action": "能力语义、流程边界、门禁语义或用户可见行为变化时同步当前事实；无影响则不制造过程文档", "auto_checkable": false},
-        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "CLI/lib/scripts/hook/build/distribution/cache/scanner/state 的实现边界或数据流变化时同步当前事实", "auto_checkable": false},
-        {"path": "(分发闭环 v3.4.0)", "action": ".githooks/post-commit 自动触发 build_dist → install → harness adapter → harness remount；不再依赖手工 dev-sync", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "CLI/crate/hook/build/distribution/cache/scanner/state 的实现边界或数据流变化时同步当前事实", "auto_checkable": false},
+        {"path": "(分发闭环 v3.4.0)", "action": ".githooks/post-commit 自动触发 ae-sdd-build harness + post-commit（compile → verify → distribute → 托管 L2 同步）", "auto_checkable": true},
         {"path": ".githooks/post-commit", "action": "🆕 v3.4.0：hook 自身必须存在且可执行（UC-07 验证）", "auto_checkable": true},
         {"path": "git config core.hooksPath", "action": "🆕 v3.4.0：必须 = .githooks（UC-07 验证）", "auto_checkable": true}
       ],
@@ -122,17 +117,16 @@
       "trigger": [
         ".githooks/post-commit",
         "scripts/install-hooks.sh",
-        "scripts/install.py",
-        "scripts/init.py",
-        "tools/lib/prompt_inject.py",
-        "tools/lib/paths.py",
-        "tools/bin/ae-sdd"
+        "crates/ae-sdd-build/src/jobs/install.rs",
+        "crates/ae-sdd-build/src/jobs/init.rs",
+        "crates/ae-sdd-build/src/post_commit.rs",
+        "bins/ae-sdd-cli/src/**"
       ],
-      "trigger_condition": "修改分发闭环任一节点（post-commit hook、install.py 的 --target-path/init.py 的 master.version 写入、prompt_inject 的 master-freshness 探测、ae-sdd health master-freshness 项）",
+      "trigger_condition": "修改分发闭环任一节点（post-commit hook、install 的目标路径、init 的 master.version 写入、master-freshness 探测、ae-sdd health master-freshness 项）",
       "affected": [
         {"path": "source/HARNESS.md", "action": "§\"分发闭环 v3.4.0+\" 章节与实现一致；自动触发链表格四行齐", "auto_checkable": true},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "§\"v3.4.0 自动分发闭环\" 章节与触发链同步", "auto_checkable": true},
-        {"path": ".harness/agent.md", "action": "build_harness.py 重转；agent.md templateHash 与 .harness/.adapter.lock 一致", "auto_checkable": true},
+        {"path": ".harness/agent.md", "action": "ae-sdd-build harness 重转；agent.md templateHash 与 .harness/.adapter.lock 一致", "auto_checkable": true},
         {"path": "$HOME/.zcode/skills/ae-sdd-harness-adapter/", "action": "适配器 SKILL 包版本号 → 0.2.0；SKILL.md 描述与新触发链一致", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-07", "UC-14"]
@@ -140,13 +134,12 @@
     {
       "id": "UG-10",
       "name": "文档-实现一致性变更（🆕 v3.4.0）",
-      "trigger": ["source/SKILL.md", "source/skills/**", "source/HARNESS.md", "tools/bin/ae-sdd", "tools/lib/gate_intercept.py", "tools/lib/stop_check.py", "tools/lib/prompt_inject.py"],
+      "trigger": ["source/SKILL.md", "source/skills/**", "source/HARNESS.md", "bins/ae-sdd-cli/src/**", "crates/ae-sdd-policy/src/hook.rs", "crates/ae-sdd-client/src/hook.rs"],
       "trigger_condition": "SKILL/HARNESS 引用新命令或声明新 HS 规则时，须确保 CLI/hook 有对应实现",
       "affected": [
-        {"path": "tools/bin/ae-sdd", "action": "SKILL/子SKILL 引用的 ae-sdd <cmd> 须在 CLI add_parser 注册", "auto_checkable": true},
-        {"path": "tools/lib/gate_intercept.py", "action": "HARNESS HS-X 声明的物理拦截须在此实现", "auto_checkable": true},
-        {"path": "tools/lib/stop_check.py", "action": "HARNESS HS-X 声明的 Stop hook 拦截须在此实现", "auto_checkable": true},
-        {"path": "tools/lib/prompt_inject.py", "action": "HARNESS HS-X 声明的 UserPromptSubmit 注入须在此实现", "auto_checkable": true}
+        {"path": "bins/ae-sdd-cli/src", "action": "SKILL/子SKILL 引用的 ae-sdd <cmd> 须在 CLI 注册", "auto_checkable": true},
+        {"path": "crates/ae-sdd-policy/src/hook.rs", "action": "HARNESS HS-X 声明的 PreTool/Stop/UserPrompt 拦截须在 HookPolicy 实现", "auto_checkable": true},
+        {"path": "crates/ae-sdd-client/src/hook.rs", "action": "HARNESS HS-X 声明的宿主侧 hook 传输与 fail-closed 行为须在此实现", "auto_checkable": true}
       ],
       "checks": ["UC-03", "UC-06"]
     },
@@ -165,8 +158,8 @@
         {"path": "source/docs/ae-sdd-conventions.md", "action": "§2.3 PRD ID 命名行 + PRD 级路径行与 SKILL.md §1.2 一致", "auto_checkable": true},
         {"path": "source/HARNESS.md", "action": "HS-7/HS-8 与 SKILL.md §1.6 G-PRD-* 闸对应；UserPromptSubmit PRD payload 引用 SKILL.md §1.3 schema", "auto_checkable": true},
         {"path": "source/templates/design/prd-summary-template.md", "action": "模板存在；与 document-storage-skill.md §3.5 字段职责分离原则一致", "auto_checkable": false},
-        {"path": "tools/bin/ae-sdd", "action": "state prd-check-complete / state prd-complete / state prd-archive / runtime compact 子命令存在", "auto_checkable": true},
-        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-PRD-1~4；check_all 覆盖", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src", "action": "state prd-check-complete / state prd-complete / state prd-archive / runtime compact 子命令存在", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 含 G-PRD-1~4；调度覆盖", "auto_checkable": true},
         {"path": "README.md", "action": "第 5 行版本行含 v3.3.0 + PRD 级状态机描述", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-03", "UC-05"]
@@ -177,21 +170,20 @@
       "trigger": [
         "source/standards/constraints/plugin-registry-spec.md",
         "source/templates/project-assets/plugin-registry-template.yaml",
-        "tools/lib/plugin_loader.py",
-        "tools/tests/test_plugin_loader.py",
+        "crates/ae-sdd-integrations/src/jobs/plugin/**",
         "source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md",
         "source/SKILL.md"
       ],
-      "trigger_condition": "修改 plugin registry 体系任一文件（schema / 模板 / Python 实现 / 测试 / Loader SKILL / 主 SKILL §2.5 步骤）",
+      "trigger_condition": "修改 plugin registry 体系任一文件（schema / 模板 / 实现 / 测试 / Loader SKILL / 主 SKILL §2.5 步骤）",
       "affected": [
-        {"path": "source/standards/constraints/plugin-registry-spec.md", "action": "schema_version 与 plugin_loader.py SCHEMA_VERSION_SUPPORTED 一致；type 枚举与 VALID_TYPES 一致", "auto_checkable": true},
-        {"path": "source/templates/project-assets/plugin-registry-template.yaml", "action": "模板示例与 schema 字段一致；replaces/path 等示例可被 plugin_loader 解析", "auto_checkable": true},
-        {"path": "tools/lib/plugin_loader.py", "action": "SCHEMA_VERSION_SUPPORTED / VALID_TYPES / LAYER_* / 公开 API（resolve_skill/load_registry/list_plugins/validate/collect_all_layers/detect_conflicts）与 spec 对齐", "auto_checkable": true},
-        {"path": "tools/tests/test_plugin_loader.py", "action": "覆盖 spec §7 校验表每条 + 三层优先级合成 + 多层冲突", "auto_checkable": false},
-        {"path": "source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md", "action": "§1 三层定义 + §2 加载 SOP + §3 用户注册流程 与 plugin_loader.py 实现一致", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "§路由决策算法 step 2.5 调用 plugin_loader；frontmatter version 含 v3.5.0 描述", "auto_checkable": true},
+        {"path": "source/standards/constraints/plugin-registry-spec.md", "action": "schema_version 与 plugin 解析器支持的版本一致；type 枚举与实现一致", "auto_checkable": true},
+        {"path": "source/templates/project-assets/plugin-registry-template.yaml", "action": "模板示例与 schema 字段一致；replaces/path 等示例可被 plugin 解析器解析", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/jobs/plugin/parser.rs", "action": "schema 版本 / type 枚举 / 层次常量与 spec 对齐", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/jobs/plugin/resolution.rs", "action": "resolve/list/validate/三层合成/冲突检测与 spec 对齐", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/jobs/plugin/tests.rs", "action": "覆盖 spec §7 校验表每条 + 三层优先级合成 + 多层冲突", "auto_checkable": false},
+        {"path": "source/skills/cross-cutting/ae-sdd-plugin-loader-skill.md", "action": "§1 三层定义 + §2 加载 SOP + §3 用户注册流程 与 plugin 解析实现一致", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "§路由决策算法 step 2.5 调用 plugin loader；frontmatter version 含 v3.5.0 描述", "auto_checkable": true},
         {"path": "README.md", "action": "第 5 行版本行含 v3.5.0 + plugin registry 描述；新增 ## 🔌 SKILL 注册与外挂指南 章节", "auto_checkable": true},
-        {"path": "source/CHANGELOG/", "action": "新增 2026-06-26-plugin-registry.md changelog 文件", "auto_checkable": false},
         {"path": "source/docs/plans/2026-06-26-plugin-registry-design.md", "action": "设计文档存在（仅参考，不强制同步实现细节）", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-05", "UC-06"]
@@ -209,8 +201,7 @@
         {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "第七步引用 review-loop 公共协议（协议 1/2/3）+ 7.0 骨架表 + 7.1 RA-G01~16 + 7.2 loop SOP + 7.3 漏报升级 + 7.4 循环记录；第二步循环对象含'8 维度穷尽度回扫'；整体流程图/执行清单/禁止事项/维护章节与重构一致", "auto_checkable": true},
         {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "核心洞察含 RA；节点配置表含 RA 行（RAModel 12 维 + 8 维度 + 5 问 / RAGeneratePlan / RA-G01~16）；实施历史含 v3.5.8 条目", "auto_checkable": true},
         {"path": "source/SKILL.md", "action": "frontmatter version 含 v3.5.8；G-RA 门卫章节描述与 RA 第七步 loop 化一致（RA-G01~16 仍为 RA 专属检查项，loop 骨架引用 review-loop）", "auto_checkable": true},
-        {"path": "README.md", "action": "第 5 行版本行含 v3.5.8 + RA review-loop 化描述", "auto_checkable": true},
-        {"path": "source/CHANGELOG/", "action": "新增 2026-06-27-RA挖掘循环review-loop化.md changelog 文件", "auto_checkable": false}
+        {"path": "README.md", "action": "第 5 行版本行含 v3.5.8 + RA review-loop 化描述", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-05", "UC-06"]
     },
@@ -218,25 +209,22 @@
       "id": "UG-14",
       "name": "🆕 v3.5.9 RA 机械派生深度门禁（G-RA-5）",
       "trigger": [
-        "scripts/ra_depth_scan.py",
-        "tools/lib/gates.py",
-        "tools/bin/ae-sdd",
+        "crates/ae-sdd-scanners/src/**",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "bins/ae-sdd-cli/src/**",
         "source/SKILL.md",
         "source/skills/phase1-design/requirement-analysis-skill.md",
         "source/standards/update-graph.json"
       ],
-      "trigger_condition": "修改 RA 机械派生深度扫描器 ra_depth_scan.py / G-RA-5 门禁注册 / ra-depth-scan 子命令 / SKILL.md G-RA 章节任一",
+      "trigger_condition": "修改 RA 机械派生深度扫描器 ra-depth / G-RA-5 门禁注册 / ra-depth-scan 子命令 / SKILL.md G-RA 章节任一",
       "affected": [
-        {"path": "scripts/ra_depth_scan.py", "action": "5 条机械派生规则 D1-D5 实现完整（§6.5/§8.5/§8.6/§9-bis/§9-ter 表格逐行核验 + JSON 输出契约）", "auto_checkable": false},
-        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-RA-5 + check_ra_depth + check_all G-RA-5 特判分支 + 头注释门禁计数 26", "auto_checkable": true},
-        {"path": "tools/tests/test_gates.py", "action": "TestCheckAll 门禁总数断言 26 + TestGRA5 含 3 用例（no_master_source/pre_ra_stub/form_pass_empty_ra_blocks）", "auto_checkable": true},
-        {"path": "tools/tests/test_ra_depth_scan.py", "action": "8 用例覆盖 D1-D5（state_machine_clean_passes / empty_table_blocks / missing_pattern_ref / unlinked_rprime / coverage_mismatch / h6_missing_dimension / non_state_machine_skips_d1 / cli_help）", "auto_checkable": false},
-        {"path": "tools/bin/ae-sdd", "action": "cmd_ra_depth_scan + argparse ra-depth-scan 子命令注册", "auto_checkable": true},
-        {"path": "scripts/build_dist.py", "action": "runtime_scripts 白名单含 ra_depth_scan.py", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "frontmatter version v3.5.9 + G-RA 规则表新增 G-RA-5 + §🛠️ 工具速查 ra-depth-scan + 门禁计数 26", "auto_checkable": true},
+        {"path": "crates/ae-sdd-scanners/src/engine.rs", "action": "5 条机械派生规则 D1-D5 实现完整（§6.5/§8.5/§8.6/§9-bis/§9-ter 表格逐行核验 + 结构化输出契约）", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 含 G-RA-5 且绑定 ScannerId::RaDepth", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "门禁总数断言 + G-RA-5 用例", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src", "action": "ra-depth-scan 子命令注册", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "frontmatter version v3.5.9 + G-RA 规则表新增 G-RA-5 + §🛠️ 工具速查 ra-depth-scan", "auto_checkable": true},
         {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "§阶段 E.5/G.5/H.5/H.6 顶部加 G-RA-5 机器校验红框 + 7.1 RA-G08/09/12 判定 SOP 升级 + 禁止事项第 22 条 + 执行清单 8.5/10.5/11.6 补 G-RA-5", "auto_checkable": false},
-        {"path": "README.md", "action": "第 5 行版本行含 v3.5.9 + RA 机械派生深度门禁描述", "auto_checkable": true},
-        {"path": "source/CHANGELOG/", "action": "新增 2026-06-27-v3.5.9-ra-derivation-depth-gate.md changelog 文件", "auto_checkable": false}
+        {"path": "README.md", "action": "第 5 行版本行含 RA 机械派生深度门禁描述", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
     },
@@ -244,27 +232,24 @@
       "id": "UG-18",
       "name": "🆕 v3.6.0 RA 实现视角完整性门禁（G-RA-6）",
       "trigger": [
-        "scripts/ra_implementation_scan.py",
-        "tools/lib/gates.py",
-        "tools/bin/ae-sdd",
+        "crates/ae-sdd-scanners/src/**",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "bins/ae-sdd-cli/src/**",
         "source/SKILL.md",
         "source/templates/design/ra-template.md",
         "source/skills/phase1-design/requirement-analysis-skill.md",
         "source/standards/update-graph.json"
       ],
-      "trigger_condition": "修改 RA 实现视角七要素扫描器 ra_implementation_scan.py / G-RA-6 门禁注册 / ra-implementation-scan 子命令 / RA §9-quater 模板或 skill 规范任一",
+      "trigger_condition": "修改 RA 实现视角七要素扫描器 ra-implementation / G-RA-6 门禁注册 / ra-implementation-scan 子命令 / RA §9-quater 模板或 skill 规范任一",
       "affected": [
-        {"path": "scripts/ra_implementation_scan.py", "action": "I1-I7 七要素实现完整（数据源/数据流/定义不变量/复用证据/成本反驳/开发疑问/DR交接包 + JSON 输出契约）", "auto_checkable": false},
-        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-RA-6 + check_ra_implementation + check_all G-RA-6 特判分支 + 门禁计数 29", "auto_checkable": true},
-        {"path": "tools/tests/test_gates.py", "action": "TestCheckAll 门禁总数断言 29 + TestGRA6 含 no_master_source/pre_ra_stub/complete_pass/missing_blocks", "auto_checkable": true},
-        {"path": "tools/tests/test_ra_implementation_scan.py", "action": "覆盖完整 RA 通过、缺章节阻断、占位阻断、CLI help", "auto_checkable": false},
-        {"path": "tools/bin/ae-sdd", "action": "cmd_ra_implementation_scan + argparse ra-implementation-scan 子命令注册 + gates help 29 + gate ra-required 覆盖 G-RA-1~6 + FLOW", "auto_checkable": true},
-        {"path": "scripts/build_dist.py", "action": "runtime_scripts 白名单含 ra_implementation_scan.py", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "G-RA 章节声明实现视角七要素 + 工具速查 ra-implementation-scan + 门禁计数 29", "auto_checkable": true},
+        {"path": "crates/ae-sdd-scanners/src/engine.rs", "action": "I1-I7 七要素实现完整（数据源/数据流/定义不变量/复用证据/成本反驳/开发疑问/DR交接包 + 结构化输出契约）", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 含 G-RA-6 且绑定 ScannerId::RaImplementation", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "门禁总数断言 + G-RA-6 用例", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src", "action": "ra-implementation-scan 子命令注册 + gate ra-required 覆盖 G-RA-1~6 + FLOW", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "G-RA 章节声明实现视角七要素 + 工具速查 ra-implementation-scan", "auto_checkable": true},
         {"path": "source/templates/design/ra-template.md", "action": "新增 §9-quater 实现视角七要素（7 张表）+ §12/§13/§14 同步", "auto_checkable": false},
         {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "新增第一步 ter + RAGeneratePlan §2.5 + G-RA-6 强度声明 + 执行清单 11.7 + 禁止事项 23 + 维护条目", "auto_checkable": false},
-        {"path": "README.md", "action": "第 5 行版本行含 v3.6.0 + G-RA-6 描述；仓库结构列出 ra_implementation_scan.py；门禁数 29", "auto_checkable": true},
-        {"path": "source/CHANGELOG/", "action": "新增 v3.6.0 RA 实现视角完整性门禁 changelog 文件", "auto_checkable": false}
+        {"path": "README.md", "action": "第 5 行版本行含 G-RA-6 描述", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
     },
@@ -272,50 +257,46 @@
       "id": "UG-15",
       "name": "🆕 v3.5.11 AA 全维对齐验证器（UC-08~14，根治「协议详尽 vs 工具链缺失」体系性病根）",
       "trigger": [
-        "tools/lib/alignment_audit.py",
-        "tools/lib/gates.py",
-        "tools/bin/ae-sdd",
-        "tools/lib/update_graph.py",
+        "crates/ae-sdd-build/src/compatibility/**",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "bins/ae-sdd-cli/src/**",
+        "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs",
         "source/SKILL.md",
         "source/skills/orchestration/ae-sdd-update-skill.md",
         "source/standards/update-graph.json"
       ],
-      "trigger_condition": "修改 AA 全维对齐验证器 alignment_audit.py / G-RA-FLOW-VIOLATION 假门禁修复 / update-check 接入 AA / SKILL.md 门禁强度声明 / update-skill AA 章节任一",
+      "trigger_condition": "修改全维对齐审计（compatibility-audit）/ 门禁注册完整性 / update-check 调度 / SKILL.md 门禁强度声明 / update-skill 对齐章节任一",
       "affected": [
-        {"path": "tools/lib/alignment_audit.py", "action": "6 维 check 函数（UC-08 门禁承诺↔注册双向 / UC-09 门禁实现真实性抓 stub-pass / UC-10 state 字段存活性 / UC-11 状态机闭环 / UC-12 幽灵命令全捕获 / UC-13 门禁注册完整性）+ register_to_update_graph 注入 CHECK_FUNCS", "auto_checkable": false},
-        {"path": "tools/lib/gates.py", "action": "G-RA-FLOW-VIOLATION 假门禁修复：check_all 加特判传 master_source（原走 CHECK_FUNCS 漏传→恒 stub-pass）+ _sys.executable→sys.executable（原 NameError）", "auto_checkable": true},
-        {"path": "tools/bin/ae-sdd", "action": "cmd_update_check 加 import alignment_audit 触发注册 + 全量调度（UC-01~15）", "auto_checkable": true},
-        {"path": "tools/tests/test_alignment_audit.py", "action": "≥12 用例覆盖 UC-08~13（正例/反例/边界）", "auto_checkable": false},
-        {"path": "tools/tests/test_gates.py", "action": "TestGRAFlowViolation 含 3 用例（no_master_source_skips/pre_ra_skips/real_execution_no_namesmoke）防假门禁修复回退", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "frontmatter version v3.5.11 + AA 描述", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/compatibility/audit.rs", "action": "命令/操作/门禁/扫描器四类清单与注册表双向一致；数量漂移必须失败而非静默通过", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "每个门禁必须绑定真实 predicate 或 scanner，禁止 stub-pass", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs", "action": "update-check 全量调度 UC-XX", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/compatibility/audit/tests.rs", "action": "覆盖对齐审计正例/反例/边界", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "覆盖 G-RA-FLOW-VIOLATION 等门禁的真值表，防假门禁回退", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "frontmatter version + 门禁强度声明同步", "auto_checkable": true},
         {"path": "source/skills/phase1-design/dr-review-skill.md", "action": "顶部加🟠门禁强度声明（软门禁 report-only，硬门禁见 GATE_REGISTRY）", "auto_checkable": false},
         {"path": "source/skills/phase1-design/story-review-skill.md", "action": "顶部加🟠门禁强度声明（A-E HARD 清单为软门禁）", "auto_checkable": false},
         {"path": "source/skills/phase3-review/code-review-skill.md", "action": "顶部加🟠门禁强度声明（7 道闸为软门禁）", "auto_checkable": false},
         {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "顶部加🟠门禁强度声明（16 道质量闸为软门禁，G-RA-1~5+FLOW 为真硬门禁）+ 删除 run dr-review-skill 幽灵命令", "auto_checkable": false},
         {"path": "source/skills/phase2-task/task-generate-skill.md", "action": "顶部加🟠门禁强度声明（TC-1~9/TR-1~7 为软门禁）", "auto_checkable": false},
-        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "新增 AA 章节 + UC-08~14 健康度清单项 + UG/UC 机器锚点", "auto_checkable": true},
-        {"path": "source/docs/plans/2026-06-29-v3.5.11-aa-tracking-list.md", "action": "AA 首跑 gap 留痕（15 死字段 + 3 状态机未闭环）", "auto_checkable": false},
-        {"path": "README.md", "action": "第 5 行版本行含 v3.5.11 + AA 全维对齐验证器描述", "auto_checkable": true},
-        {"path": "source/CHANGELOG/", "action": "新增 2026-06-29-v3.5.11-alignment-audit.md changelog 文件", "auto_checkable": false}
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "对齐审计章节 + UC-08~14 健康度清单项 + UG/UC 机器锚点", "auto_checkable": true},
+        {"path": "README.md", "action": "第 5 行版本行含全维对齐审计描述", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-05", "UC-06", "UC-08", "UC-09", "UC-10", "UC-11", "UC-12", "UC-13", "UC-14", "UC-15"]
     },
     {
       "id": "UG-16",
-      "name": "state.py 状态机变更（多入口 4 子链）",
-      "trigger": ["tools/lib/state.py"],
-      "trigger_condition": "修改 PHASE_FLOWS / set_phase / next_step_suggestion / set_scale / _infer_scale 任一（🆕 v3.5.15 多入口状态机）",
+      "name": "状态机变更（多入口 4 子链）",
+      "trigger": ["crates/ae-sdd-flow/src/**"],
+      "trigger_condition": "修改相位子链 / 相位推进 / 下一步建议 / 规模推断任一",
       "affected": [
-        {"path": "tools/lib/gate_intercept.py", "action": "_check_state_write 跨步跳跃按 scale 子链 + PHASE_ENTRY_GATES 按 scale 路由 + 关卡3 微链豁免 task-reviewed", "auto_checkable": false},
-        {"path": "tools/lib/memory_gate.py", "action": "is_forward_transition 按 scale 选子链（加 scale 参数）", "auto_checkable": false},
-        {"path": "tools/lib/classify.py", "action": "Classification 加 entry_node 字段；BUG/配置类→scale=微+entryNode=BUG/CONFIG", "auto_checkable": false},
-        {"path": "tools/bin/ae-sdd", "action": "cmd_state_write 加 --scale/--entry-node 参数 + set_scale 调用", "auto_checkable": true},
-        {"path": "tools/tests/test_state.py", "action": "PHASE_FLOWS 4 子链断言 + set_scale/infer_scale/微链回归测试（替换旧 11 phase 断言）", "auto_checkable": false},
-        {"path": "tools/tests/test_gate_intercept.py", "action": "TestScaleRoutedStateWrite（微链不拦/大链拦跨步）", "auto_checkable": false},
-        {"path": "source/SKILL.md", "action": "§流程状态跟踪 state.json schema 加 scale/entryNode + 4 子链表", "auto_checkable": true},
-        {"path": "source/docs/ae-sdd-design.md", "action": "§流程状态持久化 PHASE_FLOW→PHASE_FLOWS + 11 阶段→4 子链", "auto_checkable": false},
-        {"path": "README.md", "action": "第 5 行版本行含 v3.5.15 + 多入口状态机描述", "auto_checkable": true},
-        {"path": "source/CHANGELOG/", "action": "新增 2026-06-30-v3.5.15-state-machine-multi-entry.md", "auto_checkable": false}
+        {"path": "crates/ae-sdd-policy/src/transition.rs", "action": "跨步跳跃按 scale 子链判定 + 相位准入门禁按 scale 路由", "auto_checkable": false},
+        {"path": "crates/ae-sdd-policy/src/hook.rs", "action": "hook 侧前进判定按 scale 选子链", "auto_checkable": false},
+        {"path": "crates/ae-sdd-flow/src/route.rs", "action": "路由决策带 scale 与入口节点；BUG/配置类→scale=微", "auto_checkable": false},
+        {"path": "bins/ae-sdd-cli/src", "action": "state write 暴露 scale/entry-node 参数", "auto_checkable": true},
+        {"path": "crates/ae-sdd-flow/tests/", "action": "4 子链断言 + scale 推断 + 微链回归测试", "auto_checkable": false},
+        {"path": "source/SKILL.md", "action": "§流程状态跟踪 state schema 含 scale/entryNode + 4 子链表", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-design.md", "action": "§流程状态持久化 4 子链描述同步", "auto_checkable": false},
+        {"path": "README.md", "action": "第 5 行版本行含多入口状态机描述", "auto_checkable": true}
       ],
       "checks": ["UC-01", "UC-06"]
     },
@@ -323,18 +304,13 @@
       "id": "UG-19",
       "name": "runtime compiler and compiled distribution",
       "trigger": [
-        "scripts/compile_skill_runtime.py",
-        "scripts/build_dist.py",
-        "scripts/distribute.py",
-        "scripts/distributors/**",
-        "tools/lib/runtime_verify.py",
-        "tools/lib/update_graph.py",
-        "tools/bin/ae-sdd",
-        "tools/tests/test_skill_runtime_compiler.py",
-        "tools/tests/test_runtime_verify.py",
-        "tools/tests/test_standalone_skill_runtime_compiler.py",
-        "standalone-skills/skill-runtime-compiler/SKILL.md",
-        "standalone-skills/skill-runtime-compiler/scripts/compile_skill_package.py",
+        "crates/ae-sdd-build/src/jobs/compile.rs",
+        "crates/ae-sdd-build/src/jobs/distribute.rs",
+        "crates/ae-sdd-build/src/distributor_registry.rs",
+        "crates/ae-sdd-build/src/release.rs",
+        "crates/ae-sdd-methodology/src/**",
+        "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs",
+        "bins/ae-sdd-cli/src/**",
         "source/docs/skill-runtime-compiler.md",
         "source/docs/ae-sdd-design.md",
         "source/standards/update-graph.json",
@@ -342,15 +318,12 @@
       ],
       "trigger_condition": "runtime compiler, runtime verifier, compiled-only distribution, or UC-15 consistency contract changed",
       "affected": [
-        {"path": "scripts/compile_skill_runtime.py", "action": "runtime output remains deterministic and ignores wall-clock build date", "auto_checkable": true},
-        {"path": "tools/lib/runtime_verify.py", "action": "compiled runtime package verifier matches manifest/load_order/fallback contract", "auto_checkable": true},
-        {"path": "tools/lib/update_graph.py", "action": "UC-15 runtime compile consistency check remains registered", "auto_checkable": true},
-        {"path": "scripts/distribute.py", "action": "distribution refuses uncompiled or incomplete runtime packages", "auto_checkable": true},
-        {"path": "scripts/distributors/_base.py", "action": "copytree distributors reject uncompiled source packages before backup/install", "auto_checkable": true},
-        {"path": "standalone-skills/skill-runtime-compiler/", "action": "standalone compiler skill compiles any SKILL dir to same-parent compiled package without mutating source", "auto_checkable": true},
-        {"path": "tools/tests/test_runtime_verify.py", "action": "runtime verifier positive and negative cases stay covered", "auto_checkable": false},
-        {"path": "tools/tests/test_standalone_skill_runtime_compiler.py", "action": "standalone compiler source-preservation, structure, overwrite guard, CLI JSON, and idempotence coverage stays aligned", "auto_checkable": false},
-        {"path": "tools/tests/test_update_graph.py", "action": "UC-15 count/filter coverage stays aligned with CHECK_FUNCS", "auto_checkable": false},
+        {"path": "crates/ae-sdd-build/src/jobs/compile.rs", "action": "runtime output remains deterministic and ignores wall-clock build date", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/release.rs", "action": "compiled runtime package verifier matches manifest/load_order/fallback contract", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs", "action": "UC-15 runtime compile consistency check remains registered", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/jobs/distribute.rs", "action": "distribution refuses uncompiled or incomplete runtime packages", "auto_checkable": true},
+        {"path": "crates/ae-sdd-methodology/src/verifier.rs", "action": "compiled methodology bundle verification stays strict", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/tests/", "action": "compile/verify/distribute positive and negative cases stay covered", "auto_checkable": false},
         {"path": "source/docs/skill-runtime-compiler.md", "action": "implementation status and validation commands stay current", "auto_checkable": false},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "UG/UC anchors include UG-19 and UC-15", "auto_checkable": true}
       ],
@@ -360,27 +333,25 @@
       "id": "UG-20",
       "name": "automation switch and auto-consensus gate",
       "trigger": [
-        "tools/lib/config.py",
-        "scripts/init.py",
-        "tools/lib/gates.py",
-        "tools/lib/state.py",
-        "tools/bin/ae-sdd"
+        "crates/ae-sdd-runtime/src/config.rs",
+        "crates/ae-sdd-build/src/jobs/init.rs",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "crates/ae-sdd-store/src/**",
+        "bins/ae-sdd-cli/src/**"
       ],
-      "trigger_condition": "automation switch config / G-AUTO-CONSENSUS gate / reviewConsensus state field / automation|preflight CLI subcommand changed (🆕 v3.8.0)",
+      "trigger_condition": "automation switch config / G-AUTO-CONSENSUS gate / reviewConsensus state field / automation|preflight CLI subcommand changed",
       "affected": [
-        {"path": "tools/lib/config.py", "action": "AUTOMATION_DEFAULTS 与 .ae-sdd/config.yaml automation 段字段一致；load_automation_config 容错", "auto_checkable": true},
-        {"path": "scripts/init.py", "action": "CONFIG_TEMPLATE 含 automation 段（默认 enabled:false）", "auto_checkable": true},
-        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-AUTO-CONSENSUS + CHECK_FUNCS 注册 + check_g_auto_consensus 实现", "auto_checkable": true},
-        {"path": "tools/lib/state.py", "action": "register_review_consensus / get_review_consensus 函数存在", "auto_checkable": true},
-        {"path": "tools/bin/ae-sdd", "action": "automation status/enable/disable + preflight collect + state register-review-consensus 子命令注册", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "§🚀 自动化模式章节 + G-AUTO-CONSENSUS 门禁速查 + 工具API速查含 automation/preflight + 30门禁", "auto_checkable": true},
+        {"path": "crates/ae-sdd-runtime/src/config.rs", "action": "自动化默认值与 .ae-sdd/config.yaml automation 段字段一致；加载容错", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/jobs/init.rs", "action": "初始化配置模板含 automation 段（默认 enabled:false）", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 含 G-AUTO-CONSENSUS 且绑定真实 predicate", "auto_checkable": true},
+        {"path": "crates/ae-sdd-store/src/service.rs", "action": "review consensus 的登记与读取存在", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src", "action": "automation status/enable/disable + preflight collect + state register-review-consensus 子命令注册", "auto_checkable": true},
+        {"path": "source/SKILL.md", "action": "§🚀 自动化模式章节 + G-AUTO-CONSENSUS 门禁速查 + 工具API速查含 automation/preflight", "auto_checkable": true},
         {"path": "source/skills/cross-cutting/agent-orchestration-skill.md", "action": "§8.4.1 自动化强制 Tier 3 + §8.4.5 禁逻辑多视角降级", "auto_checkable": false},
-        {"path": "tools/tests/test_gates.py", "action": "TestGAutoConsensus + 门禁总数断言 30", "auto_checkable": false},
-        {"path": "tools/tests/test_automation_cli.py", "action": "automation status/enable/disable + preflight collect CLI 测试", "auto_checkable": false},
-        {"path": "source/docs/ae-sdd-design.md", "action": "新增 ## 19 自动化能力模块（设计+实现表）", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "G-AUTO-CONSENSUS 用例 + 门禁总数断言", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-design.md", "action": "自动化能力模块章节（设计+实现表）", "auto_checkable": false},
         {"path": "source/HARNESS.md", "action": "HS 规则表诚实降级标注（G-AUTO-CONSENSUS 门禁兜底，非物理 hook）", "auto_checkable": false},
-        {"path": "README.md", "action": "第 5 行版本行 v3.8.0 + 门禁数 30 + 自动化模式章节", "auto_checkable": true},
-        {"path": "source/CHANGELOG/", "action": "新增 2026-07-02-automation-switch.md", "auto_checkable": false}
+        {"path": "README.md", "action": "第 5 行版本行含自动化模式章节", "auto_checkable": true}
       ],
       "checks": ["UC-02", "UC-03", "UC-16"]
     },
@@ -388,27 +359,21 @@
       "id": "UG-21",
       "name": "Runtime Stats and subprocess wrapper",
       "trigger": [
-        "tools/lib/runtime_stats.py",
-        "tools/lib/runtime_exec.py",
-        "tools/lib/gates.py",
-        "tools/bin/ae-sdd",
-        "tools/tests/test_runtime_stats.py",
-        "tools/tests/test_cli_perf.py"
+        "crates/ae-sdd-integrations/src/jobs/perf.rs",
+        "crates/ae-sdd-gates/src/scheduler.rs",
+        "bins/ae-sdd-cli/src/**"
       ],
-      "trigger_condition": "Runtime Stats 统计存储、perf 子命令、gate/span 耗时或子进程 UTF-8 包装变更",
+      "trigger_condition": "Runtime Stats 统计存储、perf 子命令或 gate/span 耗时变更",
       "affected": [
-        {"path": "tools/lib/runtime_stats.py", "action": "command/span JSONL schema、脱敏、AE_SDD_STATS/AE_SDD_STATS_DIR 开关保持兼容", "auto_checkable": false},
-        {"path": "tools/lib/runtime_exec.py", "action": "默认 UTF-8、timeout、span 属性和 subprocess.run 兼容参数保持稳定", "auto_checkable": false},
-        {"path": "tools/lib/gates.py", "action": "check_all 记录 gate durationMs；summarize 输出 slowest 且不改变 pass/fail 语义", "auto_checkable": false},
-        {"path": "tools/bin/ae-sdd", "action": "perf report/doctor/clear 子命令注册；业务 --json 输出不被统计污染", "auto_checkable": true},
-        {"path": "tools/tests/test_runtime_stats.py", "action": "覆盖 JSONL 写入、脱敏、runtime_exec UTF-8 span、clear", "auto_checkable": false},
-        {"path": "tools/tests/test_cli_perf.py", "action": "覆盖真实 CLI version -> perf report/doctor/clear", "auto_checkable": false},
+        {"path": "crates/ae-sdd-integrations/src/jobs/perf.rs", "action": "command/span JSONL schema、脱敏与 .ae-sdd/runtime-stats 读取边界保持兼容", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/src/scheduler.rs", "action": "门禁调度记录耗时；汇总输出 slowest 且不改变 pass/fail 语义", "auto_checkable": false},
+        {"path": "bins/ae-sdd-cli/src", "action": "perf report/doctor/clear 子命令注册；业务 --json 输出不被统计污染", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/tests/", "action": "覆盖 JSONL 读取、脱敏、perf report/doctor/clear", "auto_checkable": false},
         {"path": "source/docs/ae-sdd-design.md", "action": "性能诊断类 CLI 能力与 report-only 边界同步", "auto_checkable": false},
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "Runtime Stats 模块、存储、环境开关、子进程边界同步", "auto_checkable": false},
         {"path": "source/docs/plans/2026-07-02-runtime-stats-performance-plan.md", "action": "P0/P1+ 状态与验证清单同步", "auto_checkable": false},
         {"path": "README.md", "action": "版本摘要或文档索引同步 Runtime Stats 状态", "auto_checkable": false},
-        {"path": ".gitignore", "action": "忽略 .ae-sdd/runtime-stats/ 等本地观测数据目录", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "新增 Runtime Stats 变更记录", "auto_checkable": false}
+        {"path": ".gitignore", "action": "忽略 .ae-sdd/runtime-stats/ 等本地观测数据目录", "auto_checkable": false}
       ],
       "checks": ["UC-03"]
     },
@@ -419,11 +384,10 @@
         "source/docs/ae-sdd-design.md",
         "source/docs/ae-sdd-implementation-architecture.md",
         "source/docs/ae-sdd-monitor-design.md",
-        "tools/lib/state.py",
-        "tools/lib/memory_store.py",
-        "tools/lib/memory_gate.py",
-        "tools/lib/runtime_stats.py",
-        "tools/bin/ae-sdd",
+        "crates/ae-sdd-store/src/**",
+        "crates/ae-sdd-artifacts/src/memory.rs",
+        "crates/ae-sdd-integrations/src/jobs/perf.rs",
+        "bins/ae-sdd-cli/src/**",
         "apps/ae-sdd-monitor/**"
       ],
       "trigger_condition": "ae-sdd 状态机、项目侧状态存储、Memory、Runtime Stats、用户可见流程语义或 Monitor 应用解析/展示/打包行为变更",
@@ -433,8 +397,7 @@
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "同步 Monitor 模块职责、数据流、只读边界和打包边界", "auto_checkable": false},
         {"path": "apps/ae-sdd-monitor/src/workspace.js", "action": "保持 .ae-sdd/state.json、.auto-engineering/*/state.json、memory JSONL/stage、runtime-stats JSONL 解析兼容", "auto_checkable": false},
         {"path": "apps/ae-sdd-monitor/test/workspace.test.js", "action": "覆盖新增/调整的 phase、scale、state 字段、work item、Memory 或 Runtime Stats 投影", "auto_checkable": false},
-        {"path": "apps/ae-sdd-monitor/README.md", "action": "同步安装、运行和设计契约说明", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录 Monitor 或 ae-sdd 状态/运行时契约对 Monitor 的影响", "auto_checkable": false}
+        {"path": "apps/ae-sdd-monitor/README.md", "action": "同步安装、运行和设计契约说明", "auto_checkable": false}
       ],
       "checks": ["UC-03", "UC-14"]
     },
@@ -450,8 +413,7 @@
       "affected": [
         {"path": "RELEASING.md", "action": "§1 构成表 / §2.2 顶层目录归类表同步顶层结构变更", "auto_checkable": false},
         {"path": "README.md", "action": "§📦 仓库结构 ASCII 树 + 「发版包边界」声明同步顶层结构变更", "auto_checkable": true},
-        {"path": "scripts/build_dist.py", "action": "若变更影响发版包取材来源（source/ + tools/），同步 EXCLUDE_DIRS/EXCLUDE_FILES/DOCS_KEEP/白名单", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录顶层结构整理（一版一文件）", "auto_checkable": false}
+        {"path": "crates/ae-sdd-build/src/jobs/compile.rs", "action": "若变更影响发版包取材来源，同步编译取材范围与排除规则", "auto_checkable": false}
       ],
       "checks": ["UC-17"]
     },
@@ -459,18 +421,17 @@
       "id": "UG-24",
       "name": "runtime manifest 编译契约变更",
       "trigger": [
-        "scripts/compile_skill_runtime.py",
-        "tools/lib/runtime_verify.py",
+        "crates/ae-sdd-build/src/jobs/compile.rs",
+        "crates/ae-sdd-build/src/release.rs",
         "dist/ae-sdd/runtime/manifest.json",
         "dist/ae-sdd/runtime/manifest-index.json",
         "dist/ae-sdd/SKILL.md"
       ],
       "trigger_condition": "manifest/manifest-index 生成逻辑、bootloader Load 指令、runtime 校验逻辑被修改",
       "affected": [
-        {"path": "scripts/compile_skill_runtime.py", "action": "manifest.json（机器用，全哈希）+ manifest-index.json（LLM 用，白名单字段）同步生成；bootloader Load 指向 index", "auto_checkable": true},
-        {"path": "tools/lib/runtime_verify.py", "action": "verify 仍读 manifest.json（含全字段），不读 index", "auto_checkable": false},
-        {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "UC 检查表含 UC-18", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录 manifest 拆双文件变更", "auto_checkable": false}
+        {"path": "crates/ae-sdd-build/src/jobs/compile.rs", "action": "manifest.json（机器用，全哈希）+ manifest-index.json（LLM 用，白名单字段）同步生成；bootloader Load 指向 index", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/release.rs", "action": "verify 仍读 manifest.json（含全字段），不读 index", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "UC 检查表含 UC-18", "auto_checkable": false}
       ],
       "checks": ["UC-15", "UC-18"]
     },
@@ -478,17 +439,16 @@
       "id": "UG-25",
       "name": "上下文加载/Review 深度门禁变更",
       "trigger": [
-        "tools/lib/gates.py",
-        "tools/lib/gate_intercept.py",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "crates/ae-sdd-policy/src/transition.rs",
         "source/standards/constraints/"
       ],
       "trigger_condition": "G-STORY-CTX standardsRef / G-REVIEW-DEPTH 逻辑、相位绑定、约束关键词映射被修改",
       "affected": [
-        {"path": "tools/lib/gates.py", "action": "GATE_REGISTRY 含 G-REVIEW-DEPTH + CHECK_FUNCS 注册；_check_standards_referenced + check_g_review_depth 实现；G-STORY-CTX scales 含 全规模", "auto_checkable": true},
-        {"path": "tools/lib/gate_intercept.py", "action": "PHASE_ENTRY_GATES 的 story-reviewed/code-reviewed 含 G-REVIEW-DEPTH", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 含 G-REVIEW-DEPTH 且绑定真实 predicate；G-STORY-CTX 覆盖全规模", "auto_checkable": true},
+        {"path": "crates/ae-sdd-policy/src/transition.rs", "action": "story-reviewed/code-reviewed 的相位准入门禁含 G-REVIEW-DEPTH", "auto_checkable": true},
         {"path": "source/skill-fallbacks/skills/phase3-review/code-review-skill.full.md", "action": "门禁强度声明指向 G-REVIEW-DEPTH 真硬门禁", "auto_checkable": false},
-        {"path": "tools/tests/test_gates.py", "action": "门禁总数计数同步 + G-REVIEW-DEPTH 用例", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录门禁升级变更", "auto_checkable": false}
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "门禁总数计数同步 + G-REVIEW-DEPTH 用例", "auto_checkable": false}
       ],
       "checks": ["UC-02", "UC-14"]
     },
@@ -496,26 +456,22 @@
       "id": "UG-26",
       "name": "Review Batch 与增量质量契约",
       "trigger": [
-        "tools/lib/review_batch.py",
-        "tools/lib/review_loop.py",
-        "tools/lib/baseline.py",
-        "tools/lib/evidence.py",
-        "tools/lib/verification_plan.py",
-        "tools/lib/document_storage.py",
-        "tools/lib/work_item_context.py",
-        "tools/bin/ae-sdd",
+        "crates/ae-sdd-review/src/**",
+        "crates/ae-sdd-integrations/src/jobs/baseline.rs",
+        "crates/ae-sdd-artifacts/src/**",
+        "crates/ae-sdd-resources/src/document.rs",
+        "bins/ae-sdd-cli/src/**",
         "source/templates/design/story-template.md",
         "source/templates/coding/be-codereview-template.md"
       ],
       "trigger_condition": "Review Batch 状态、G-CODE-1 baseline、验证计划/证据缓存、canonical 文档 resolver 或 Story/CodeReview 模板发生变化",
       "affected": [
-        {"path": "tools/lib/gates.py", "action": "同步 G-REVIEW-LOOP/G-CODE-1 policy outcome；STALLED、tampered、touched debt 不得伪装 PASS", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "同步 G-REVIEW-LOOP/G-CODE-1 policy outcome；STALLED、tampered、touched debt 不得伪装 PASS", "auto_checkable": true},
         {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "同步 batch schema、风险退出、失败角色重试和预算语义", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase3-review/code-review-skill.full.md", "action": "同步 canonical 聚合报告和 evidence manifest 引用", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "同步 VerificationPlan、evidence lookup 和最终全量只跑一次规则", "auto_checkable": false},
-        {"path": "tools/tests/test_review_batch.py", "action": "覆盖状态转移、retry merge、fingerprint drift、budget 和 disposition", "auto_checkable": false},
-        {"path": "tools/tests/test_incremental_quality.py", "action": "覆盖 baseline integrity/touched debt、evidence freshness、alias ambiguity 和 provenance", "auto_checkable": false},
-        {"path": "source/CHANGELOG/", "action": "记录 Review Batch/增量质量/模板契约变更", "auto_checkable": false}
+        {"path": "crates/ae-sdd-review/tests/", "action": "覆盖状态转移、retry merge、fingerprint drift、budget 和 disposition", "auto_checkable": false},
+        {"path": "crates/ae-sdd-integrations/tests/", "action": "覆盖 baseline integrity/touched debt、evidence freshness、alias ambiguity 和 provenance", "auto_checkable": false}
       ],
       "checks": ["UC-02", "UC-06", "UC-14"]
     },
@@ -523,18 +479,13 @@
       "id": "UG-27",
       "name": "Work Item lease 与 typed operation protocol",
       "trigger": [
-        "tools/lib/state_store.py",
-        "tools/lib/operations.py",
-        "tools/lib/evidence.py",
-        "tools/lib/verification_plan.py",
-        "tools/lib/document_storage.py",
-        "tools/lib/gates.py",
-        "tools/lib/state.py",
-        "tools/bin/ae-sdd",
-        "tools/lib/update_graph.py",
-        "tools/tests/test_state_store*.py",
-        "tools/tests/test_operations.py",
-        "tools/tests/test_cli_operations.py",
+        "crates/ae-sdd-store/src/**",
+        "crates/ae-sdd-operations/src/**",
+        "crates/ae-sdd-artifacts/src/**",
+        "crates/ae-sdd-resources/src/document.rs",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "bins/ae-sdd-cli/src/**",
+        "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs",
         "source/standards/operation-protocol.md",
         "source/skill-fallbacks/SKILL.full.md",
         "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
@@ -545,16 +496,15 @@
       ],
       "trigger_condition": "Work Item lease/fencing/revision CAS、typed operation registry、scope resolver 或 immutable evidence lifecycle 任一实现/协议变化",
       "affected": [
-        {"path": "tools/lib/state_store.py", "action": "lease TTL、过期接管、fencing token、revision CAS、idempotency 与 atomic persistence 保持 fail-closed", "auto_checkable": true},
-        {"path": "tools/lib/operations.py", "action": "registry schema、nextActions、真实 adapter 与稳定错误码同步", "auto_checkable": true},
-        {"path": "tools/bin/ae-sdd", "action": "ops/lease CLI、legacy state write adapter 与 JSON error envelope 同步", "auto_checkable": true},
-        {"path": "tools/lib/evidence.py", "action": "active/superseded entry、content-addressed snapshot、legacy manifest compatibility 同步", "auto_checkable": true},
-        {"path": "tools/lib/verification_plan.py", "action": "evidenceInputFingerprint 与 nextActions 绑定 changedPaths/workItem", "auto_checkable": true},
-        {"path": "tools/lib/document_storage.py", "action": "Work Item-first resolver、唯一 legacy Story fallback 与 scope ambiguity 同步", "auto_checkable": true},
-        {"path": "tools/lib/gates.py", "action": "G-09/G-13/G-10~12 使用同一 Work Item scope 与 evidence 解析", "auto_checkable": true},
-        {"path": "tools/lib/update_graph.py", "action": "UC-19 校验维护入口、协议锚点、UG-27 级联、设计版本与 registry 版本", "auto_checkable": true},
-        {"path": "tools/tests/", "action": "真实文件系统、subprocess 并发、CLI、schema、scope、evidence lifecycle 回归保持覆盖", "auto_checkable": false},
-        {"path": "tools/tests/test_update_graph.py", "action": "UC-19 正例与缺协议/缺维护入口/缺级联/版本漂移反例保持覆盖", "auto_checkable": true},
+        {"path": "crates/ae-sdd-store/src/lease.rs", "action": "lease TTL、过期接管、fencing token、revision CAS、idempotency 与 atomic persistence 保持 fail-closed", "auto_checkable": true},
+        {"path": "crates/ae-sdd-operations/src/registry.rs", "action": "registry schema、nextActions、真实 adapter 与稳定错误码同步", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src", "action": "ops/lease CLI、legacy state write adapter 与 JSON error envelope 同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-artifacts/src/store.rs", "action": "active/superseded entry、content-addressed snapshot 同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/execution_authority.rs", "action": "evidenceInputFingerprint 与 nextActions 绑定 changedPaths/workItem", "auto_checkable": true},
+        {"path": "crates/ae-sdd-resources/src/document.rs", "action": "Work Item-first resolver 与 scope ambiguity 同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "G-09/G-13/G-10~12 使用同一 Work Item scope 与 evidence 解析", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs", "action": "UC-19 校验维护入口、协议锚点、UG-27 级联、设计版本与 registry 版本", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/tests/", "action": "真实文件系统、进程并发、CLI、schema、scope、evidence lifecycle 回归保持覆盖", "auto_checkable": false},
         {"path": "source/standards/operation-protocol.md", "action": "LLM 请求 envelope、租约/CAS、错误码和证据生命周期文档必须与 registry 一致", "auto_checkable": false},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "维护者入口必须指向 operation protocol §9，并列出 UC-19/Definition of Done", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "self-update 完整语义必须包含 typed operation maintenance entry", "auto_checkable": false},
@@ -572,14 +522,12 @@
         "source/standards/update-graph.json",
         "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
         "source/skills/orchestration/ae-sdd-update-skill.md",
-        "tools/lib/update_graph.py",
-        "tools/tests/test_update_graph.py",
-        "tools/lib/operations.py",
-        "tools/lib/state_store.py",
-        "tools/lib/gates.py",
-        "tools/bin/ae-sdd",
-        "scripts/build_dist.py",
-        "scripts/slim_source_skills.py"
+        "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs",
+        "crates/ae-sdd-operations/src/**",
+        "crates/ae-sdd-store/src/**",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "bins/ae-sdd-cli/src/**",
+        "crates/ae-sdd-build/src/jobs/compile.rs"
       ],
       "trigger_condition": "系统设计语义、模块边界、状态/CLI/运行时数据流或设计价值验证方式发生变化，或者维护设计文档、Design Ledger、UC-20 实现",
       "affected": [
@@ -587,8 +535,8 @@
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "§12 维护设计台账与实现架构/验证证据的归属规则", "auto_checkable": true},
         {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "包含 Design Ledger Maintenance Entry、UG-28、UC-20 和 Definition of Done", "auto_checkable": true},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "slim entry 保留设计台账维护路由", "auto_checkable": true},
-        {"path": "tools/lib/update_graph.py", "action": "UC-20 校验 ID 唯一、§1~§21 覆盖、必填字段、版本和迭代记录", "auto_checkable": true},
-        {"path": "tools/tests/test_update_graph.py", "action": "UC-20 正例、缺行、缺字段、占位、重复 ID、缺维护入口和 N/A 反例", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/jobs/diagnostics/update.rs", "action": "UC-20 校验 ID 唯一、§1~§21 覆盖、必填字段、版本和迭代记录", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/tests/legacy_diagnostics_cli_e2e.rs", "action": "UC-20 正例、缺行、缺字段、占位、重复 ID、缺维护入口和 N/A 反例", "auto_checkable": true},
         {"path": "README.md", "action": "公开 Design Ledger 与 UC-20 入口；任何时候都不写 changelog", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-06", "UC-14", "UC-15", "UC-20"]
@@ -597,17 +545,11 @@
       "id": "UG-29",
       "name": "RA authoritative scan scope 与 G-RA 单文件一致性",
       "trigger": [
-        "scripts/ra_scan_scope.py",
-        "scripts/ra_authenticity_scan.py",
-        "scripts/ra_depth_scan.py",
-        "scripts/ra_implementation_scan.py",
-        "scripts/flow_violation_scan.py",
-        "tools/lib/gates.py",
-        "tools/bin/ae-sdd",
-        "scripts/build_dist.py",
-        "tools/tests/test_ra_scan_scope.py",
-        "tools/tests/test_gates.py",
-        "tools/tests/test_cli_doc.py",
+        "crates/ae-sdd-scanners/src/scope.rs",
+        "crates/ae-sdd-scanners/src/engine.rs",
+        "crates/ae-sdd-scanners/src/registry.rs",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "bins/ae-sdd-cli/src/**",
         "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
         "source/docs/ae-sdd-design.md",
         "source/docs/ae-sdd-implementation-architecture.md",
@@ -615,20 +557,16 @@
       ],
       "trigger_condition": "正式 RA 候选分类、scanner --file/root 契约、G-RA selected RA resolver、CLI 转发、分发清单或 fail-fast 编排说明任一变化",
       "affected": [
-        {"path": "scripts/ra_scan_scope.py", "action": "formal/event/non-authoritative 分类、explicit file containment、稳定排序与结构化错误契约保持统一", "auto_checkable": true},
-        {"path": "scripts/ra_authenticity_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
-        {"path": "scripts/ra_depth_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
-        {"path": "scripts/ra_implementation_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
-        {"path": "scripts/flow_violation_scan.py", "action": "共享 scope、repeatable --file、scope metadata 与错误 envelope 同步", "auto_checkable": true},
-        {"path": "tools/lib/gates.py", "action": "G-RA-1~6/FLOW 必须共享 state binding/latest formal resolver 并向 scanner 传单一 --file", "auto_checkable": true},
-        {"path": "tools/bin/ae-sdd", "action": "四个 RA scanner 子命令暴露并转发 repeatable --file", "auto_checkable": true},
-        {"path": "scripts/build_dist.py", "action": "runtime_scripts 白名单含 ra_scan_scope.py 与四 scanner", "auto_checkable": true},
-        {"path": "tools/tests/test_ra_scan_scope.py", "action": "覆盖 file/root/noise/error/CLI/build 契约", "auto_checkable": false},
-        {"path": "tools/tests/test_gates.py", "action": "覆盖 binding/latest formal 统一选择与 selected file 负例", "auto_checkable": false},
-        {"path": "tools/tests/test_cli_doc.py", "action": "覆盖 RA prerequisite 非零退出、零写入与草稿保留", "auto_checkable": false},
+        {"path": "crates/ae-sdd-scanners/src/scope.rs", "action": "formal/event/non-authoritative 分类、explicit file containment、稳定排序与结构化错误契约保持统一", "auto_checkable": true},
+        {"path": "crates/ae-sdd-scanners/src/engine.rs", "action": "四个 RA scanner 共享 scope、repeatable file 输入、scope metadata 与错误 envelope 同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "G-RA-1~6/FLOW 必须共享 state binding/latest formal resolver 并向 scanner 传单一 file", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src", "action": "四个 RA scanner 子命令暴露并转发 repeatable --file", "auto_checkable": true},
+        {"path": "crates/ae-sdd-scanners/tests/", "action": "覆盖 file/root/noise/error 契约", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "覆盖 binding/latest formal 统一选择与 selected file 负例", "auto_checkable": false},
+        {"path": "crates/ae-sdd-integrations/tests/", "action": "覆盖 RA prerequisite 非零退出、零写入与草稿保留", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "机器同步锚点包含 UG-29", "auto_checkable": true},
-        {"path": "source/docs/ae-sdd-design.md", "action": "记录 Work Item RA scope 与 PowerShell 逐命令 fail-fast 设计", "auto_checkable": false},
-        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 resolver→scanner --file→gate details 数据流和 dist 依赖；验证结果由测试承载", "auto_checkable": false}
+        {"path": "source/docs/ae-sdd-design.md", "action": "记录 Work Item RA scope 与逐命令 fail-fast 设计", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 resolver→scanner file→gate details 数据流；验证结果由测试承载", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-06", "UC-14", "UC-20"]
     },
@@ -636,27 +574,25 @@
       "id": "UG-30",
       "name": "能力驱动 HTTP 场景推导与证据闭环",
       "trigger": [
-        "tools/lib/scenario_derivation.py",
-        "tools/lib/http_scenario.py",
-        "tools/lib/evidence.py",
-        "tools/lib/gates.py",
+        "crates/ae-sdd-contracts/src/**",
+        "crates/ae-sdd-artifacts/src/**",
+        "crates/ae-sdd-gates/src/registry.rs",
         "source/standards/testing/be-http-scenario-strategy.md"
       ],
       "trigger_condition": "CapabilityModel、ScenarioManifest、G-HTTP-1 或 scenario evidence 契约变化",
       "affected": [
-        {"path": "tools/lib/scenario_derivation.py", "action": "能力规则、失败机制和最小场景推导保持一致", "auto_checkable": true},
-        {"path": "tools/lib/http_scenario.py", "action": "manifest 深度、独立观察、重复机制和 finding 契约同步", "auto_checkable": true},
-        {"path": "tools/lib/evidence.py", "action": "local/test-env scenarioId、assertionKinds 和 rerunCommand 对账同步", "auto_checkable": true},
-        {"path": "tools/lib/gates.py", "action": "G-HTTP-1 registry、CHECK_FUNCS、G-08/G-09 接入同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-contracts/src/value.rs", "action": "能力规则、失败机制和最小场景推导保持一致", "auto_checkable": true},
+        {"path": "crates/ae-sdd-contracts/src/review.rs", "action": "manifest 深度、独立观察、重复机制和 finding 契约同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-artifacts/src/store.rs", "action": "local/test-env scenarioId、assertionKinds 和 rerunCommand 对账同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "G-HTTP-1 注册与 G-08/G-09 接入同步", "auto_checkable": true},
         {"path": "source/standards/testing/be-http-scenario-strategy.md", "action": "能力→状态→观察→不变量→扰动→失败机制标准同步", "auto_checkable": false},
         {"path": "source/templates/testcase/be-testcase-template.md", "action": "CapabilityModel 与推导矩阵模板同步", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md", "action": "先推导后生成规则同步", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md", "action": "固定 CRUD/status-only/同路径自证审查同步", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "执行前 G-HTTP-1 规则同步", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase3-review/test-review-skill.full.md", "action": "scenario evidence 深度复核同步", "auto_checkable": false},
-        {"path": "tools/tests/test_scenario_derivation.py", "action": "不同能力生成不同场景且不注入无关 CRUD", "auto_checkable": true},
-        {"path": "tools/tests/test_http_scenario_contract.py", "action": "G-HTTP-1 与 evidence 正反例同步", "auto_checkable": true},
-        {"path": "tools/tests/test_scenario_effectiveness.py", "action": "代表性 seeded defect 检出同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-contracts/tests/", "action": "不同能力生成不同场景且不注入无关 CRUD；G-HTTP-1 与 evidence 正反例同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "代表性 seeded defect 检出同步", "auto_checkable": true},
         {"path": "source/docs/ae-sdd-design.md", "action": "Design Ledger 问题、决策、价值和证据同步", "auto_checkable": false},
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "场景推导模块与数据流同步", "auto_checkable": false}
       ],
@@ -667,11 +603,11 @@
       "name": "业务文档密度规范变更",
       "trigger": [
         "source/standards/doc-density-standard.md",
-        "tools/lib/document_storage.py"
+        "crates/ae-sdd-resources/src/document.rs"
       ],
-      "trigger_condition": "修改文档密度规范本体或 DOC_DENSITY_STANDARD 资源路由（READ_RESOURCE_ROUTES）",
+      "trigger_condition": "修改文档密度规范本体或 DOC_DENSITY_STANDARD 只读资源路由",
       "affected": [
-        {"path": "tools/lib/document_storage.py", "action": "READ_RESOURCE_ROUTES 含 DOC_DENSITY_STANDARD 且路径指向 standards/doc-density-standard.md", "auto_checkable": true},
+        {"path": "crates/ae-sdd-resources/src/document.rs", "action": "只读资源路由含 DOC_DENSITY_STANDARD 且路径指向 standards/doc-density-standard.md", "auto_checkable": true},
         {"path": "source/skill-fallbacks/skills/phase1-design/dr-generate-skill.full.md", "action": "第零步必读清单含 doc-density-standard.md；门禁计数与产出记录同步", "auto_checkable": true},
         {"path": "source/skill-fallbacks/skills/phase1-design/story-generate-skill.full.md", "action": "资源加载块含 resolve_read_resource(DOC_DENSITY_STANDARD)", "auto_checkable": true},
         {"path": "source/skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md", "action": "头部模板引用列表含 doc-density-standard.md", "auto_checkable": true},
@@ -697,12 +633,10 @@
         {"path": "crates/ae-sdd-build/src/post_commit.rs", "action": "托管同步排在 compile/verify/distribute 之后；四态上报与 fail-closed 语义同步", "auto_checkable": true},
         {"path": "crates/ae-sdd-build/src/jobs/model.rs", "action": "NATIVE_ENTRYPOINTS 含 post-commit.managed-instructions 且 kind=Admin", "auto_checkable": true},
         {"path": "crates/ae-sdd-build/src/main.rs", "action": "codex/claude/zcode 三个显式指令文件参数与语言映射同步；禁止从 skill 目录推断", "auto_checkable": true},
-        {"path": ".githooks/post-commit", "action": "传三个全局指令文件路径；不得出现 python 或 l2_inject；不得新增 harness/hermes 指令参数", "auto_checkable": true},
+        {"path": ".githooks/post-commit", "action": "只传 --distributor-registry 与 --registry-home；host 与 L2 指令文件一律由注册表声明，不得在钩子内另列 host 或指令路径", "auto_checkable": true},
         {"path": "crates/ae-sdd-build/tests/managed_instruction_sync.rs", "action": "更新/跳过/畸形/幂等/containment/包分发独立性端到端场景同步", "auto_checkable": true},
         {"path": "crates/ae-sdd-build/tests/compatibility_routes.rs", "action": "L2 双语源结构断言与 Rust-only hook 断言同步", "auto_checkable": true},
-        {"path": "crates/ae-sdd-build/tests/migration_oracle.rs", "action": "Rust 与 scripts/l2_inject.py 常规注入语义对照（审计头归一化后）同步", "auto_checkable": true},
-        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "post-commit 五阶段链路与 L2 注入权威边界同步", "auto_checkable": false},
-        {"path": "scripts/l2_inject.py", "action": "只作迁移 oracle 与手工兜底，禁止进入发布 hook 或 Rust 运行时", "auto_checkable": false}
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "post-commit 五阶段链路与 L2 注入权威边界同步", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-03", "UC-14"]
     }

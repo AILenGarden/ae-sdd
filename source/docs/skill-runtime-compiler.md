@@ -163,7 +163,7 @@ dist/ae-sdd/SKILL.md、dist/ae-sdd/runtime/** 与 dist/ae-sdd/skills/**/*.md 字
 | `boot.compact.md` | 固定契约 + manifest | 加载顺序、冲突优先级、fallback 规则 |
 | `route.compact.md` | `source/SKILL.md` 规则摘要 | 自更新、大/中/小/微任务、继续流程、文档定位等路由 |
 | `subskills.compact.md` | `source/skills/**/*.md` | 子 SKILL compiled bootloader 索引、局部 manifest/core/outline/fallback 路径 |
-| `gates.compact.md` | `tools/lib/gates.py:GATE_REGISTRY`（含 `hint` 字段） | Gate ID、名称、强度、scope/pass/fail hint、运行命令 |
+| `gates.compact.md` | `crates/ae-sdd-gates/src/registry.rs:GateRegistry`（含 `hint` 字段） | Gate ID、名称、强度、scope/pass/fail hint、运行命令 |
 | `flow.compact.md` | `tools/lib/state.py:PHASE_FLOWS` | 大/中/小/微四条状态链 |
 | `macros.compact.md` | 固定宏表 | BLOCK、WARN、ASK_USER、LOOP3、EVIDENCE、STATE_WRITE 等 |
 

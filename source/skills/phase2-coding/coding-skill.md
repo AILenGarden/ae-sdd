@@ -10,7 +10,6 @@ source_fallback_sha256: 70c10d05718925af99d3b0fe3baf810df30c10a15ca03eb85defcdc0
 source_original_bytes: 43634
 source_original_lines: 685
 source_semantic_inventory_sha256: 61ae02ebd16dfa9ddcb5788a70532425ad76692ad61b86157ecb46612767cf8c
-source_slimmer: slim_source_skills.py@2
 ---
 
 # CodingSKILL — 代码生成能力库（被调用，非流程节点） Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L1:6 CodingSKILL — 代码生成能力库（被调用，非流程节点）; L3:600 §13.1 加载协议 SOP（调用方执行，典型在 CodingProcess §A1 加载上下文时）; L3:661 §13.3 调用方与触发时机; keyword_hits: 30 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L1:6 CodingSKILL — 代码生成能力库（被调用，非流程节点）; L2:382 §8 验证判定标准（Execute 阶段怎么算验证通过）; L3:416 §8.3 主流程接口测试; keyword_hits: 36 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:140 §5.0 风险预判（必须先于 7 章节执行）; L3:164 §5.1 CodePlan 必须包含的 7 个章节; L3:258 §5.2 CodePlan 门禁（未通过禁止进入 Execute）; +6 more; keyword_hits: 128 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:140 §5.0 风险预判（必须先于 7 章节执行）; L3:164 §5.1 CodePlan 必须包含的 7 个章节; L3:258 §5.2 CodePlan 门禁（未通过禁止进入 Execute）; +6 more; keyword_hits: 128 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L3:416 §8.3 主流程接口测试; L1:580 Eclipse: Source → Organize Imports; keyword_hits: 40 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L4:208 章节 3：数据结构 / DO 字段; keyword_hits: 34 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L4:208 章节 3：数据结构 / DO 字段; keyword_hits: 34 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:136 §5 CodeAnalysis ④bis：CodePlan 输出（CodeAnalysis 能力本体）; L4:333 要素 5：输出类骨架; L1:576 期望输出为空；非空 → 修改为已 import 的短名; keyword_hits: 48 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 30; refs: ../../standards/thinking/be-coding-thinking-engine.md §1.4 风险预判·11维度; ../../templates/coding/be-coding-plan-template.md; TODO/TBD/待确认/❌; +27 more; keyword_hits: 32 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L2:21 §0 能力总览（本库提供的能力清单）; L2:41 §1 CodingModel 决策方法（11 维）; L2:72 §2 约束文件引用（9 项关键规则）; +34 more; keyword_hits: 186 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |

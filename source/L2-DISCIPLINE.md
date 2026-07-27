@@ -81,6 +81,12 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
   时立即收窄查询。
 - 避免过大的工具输出和不必要的上下文膨胀，二者会抬高延迟、token 消耗和请求超时
   风险。
+- 需要与基线对比时（判断某失败是否本次引入），用 `git worktree add <tmp> HEAD`
+  在隔离副本里跑，读完即 `git worktree remove`。禁止用 `git stash` 做基线对比：
+  它改写当前工作区，pathspec 命中未跟踪路径时会静默失败，随后的 `pop` 可能把无
+  关 stash 应用进来并注入冲突标记，有丢失未提交改动的风险。
+- 一条昂贵命令的输出只跑一次并落盘（`cmd > /tmp/x.log 2>&1`），后续统计一律读该
+  文件。禁止为换一个过滤角度而重跑同一条构建或测试命令。
 
 ### Agent 协同
 
@@ -174,6 +180,15 @@ authoritative checks, gates, approvals, test evidence, or Review.
   bounded line reads; if output truncates, narrow the query immediately.
 - Avoid oversized tool output and unnecessary context growth because they
   increase latency, token use, and request-timeout risk.
+- To compare against a baseline (deciding whether a failure is pre-existing), run
+  it in an isolated copy via `git worktree add <tmp> HEAD` and `git worktree
+  remove` when done. Never use `git stash` for baseline comparison: it rewrites
+  the live worktree, fails silently when a pathspec hits untracked paths, and a
+  following `pop` can apply an unrelated stash with conflict markers, risking
+  loss of uncommitted work.
+- Run an expensive command once and persist its output (`cmd > /tmp/x.log 2>&1`),
+  then read that file for every later tally. Never re-run the same build or test
+  command just to filter its output differently.
 
 ### Agent coordination
 

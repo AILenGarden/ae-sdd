@@ -185,9 +185,9 @@ A typed-operation iteration is complete only when all of the following are true:
 
 - Story has AC and verification scenarios, and `state.executionPlan` has implementation mapping plus user confirmation;
 - focused tests cover positive, invalid, stale, retry, corruption, scope, and concurrency behavior;
-- `python tools/bin/ae-sdd update-check --affected <changed-files> --json` and the required full checks pass;
-- `python -m pytest tools/tests -q` passes when shared infrastructure changed;
-- `python scripts/build_dist.py` and `python tools/bin/ae-sdd runtime verify --json` pass;
+- `ae-sdd update-check --affected <changed-files> --json` and the required full checks pass;
+- `cargo test --workspace --locked` passes when shared infrastructure changed;
+- the `ae-sdd-build` compile job and `ae-sdd runtime verify --json` pass;
 - `ops describe` from the built runtime matches the source registry;
 - this protocol records compatibility classification, while tests and runtime verification record executable evidence;
 - no untracked implementation module, stale design header, ghost command, or unresolved `iteration-check` blocker remains.

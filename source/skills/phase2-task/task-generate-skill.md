@@ -10,7 +10,6 @@ source_fallback_sha256: cbf320e3dbb8cf6b13ded105ad94242cc801e391c4989a5b4564b8a8
 source_original_bytes: 46092
 source_original_lines: 776
 source_semantic_inventory_sha256: 8a5c438aaf7b23316905ad7c6903ed3d174fd6e83a903c3df241c98fe37467dc
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Task Generate — Task 文档生成 Skill Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:28 📦 文档存放前置调用（🔴 横切依赖）; L2:63 🧠 阶段记忆强制调用（🔴 横切依赖）; L2:129 触发条件; +3 more; keyword_hits: 52 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:63 🧠 阶段记忆强制调用（🔴 横切依赖）; L2:78 整体流程; L3:482 Task 修复流程; +1 more; keyword_hits: 39 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:14 🟠 门禁强度声明（v3.5.11 AA 诚实降级 / v3.9.1 部分硬化）; L2:180 第一步半：前置依赖检查（门禁）; L2:307 第四步 bis：生成后一致性校验（强制门禁）; +2 more; keyword_hits: 127 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L2:14 🟠 门禁强度声明（v3.5.11 AA 诚实降级 / v3.9.1 部分硬化）; L2:180 第一步半：前置依赖检查（门禁）; L2:307 第四步 bis：生成后一致性校验（强制门禁）; +2 more; keyword_hits: 127 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 66 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 25 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | keyword_hits: 25 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L1:6 Task Generate — Task 文档生成 Skill; L2:28 📦 文档存放前置调用（🔴 横切依赖）; L3:47 本 SKILL 产出文档 × intent 对照; +9 more; keyword_hits: 157 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 30; refs: .ae-sdd/tmp/{doc-id}-draft.md; SKILL.md §实现方案决策基线; ae-sdd assets query "<name>"; +27 more; keyword_hits: 50 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:372 多 reviewer 视角切分（🆕 2026-06-25 — 落地 §8.4.2 节点专属配置）; L2:496 第六步 bis：输出完整实现方案; keyword_hits: 139 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -134,7 +133,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | task-{N}-{X}-*.md |
 | templates/design/be-task-implementation-plan-template.md |
 | templates/design/be-task-template.md |
-| tools/lib/gates.py |
+| crates/ae-sdd-gates/src/registry.rs |
 | {STORY-ID}-CodingPlan.md |
 | {STORY-ID}-Task实现方案.md |
 | {WORKITEM-ID}-CodingPlan.md |

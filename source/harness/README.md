@@ -44,6 +44,6 @@ ae-sdd gates check --json
 ## 相关文件
 
 - `source/HARNESS.md` — Harness 主文件
-- `tools/lib/gate_intercept.py` — 拦截逻辑核心
-- `tools/bin/ae-sdd` — CLI 入口（gate-intercept / init-hooks 子命令）
-- `tools/tests/test_gate_intercept.py` — 单元测试
+- `crates/ae-sdd-policy/src/hook.rs` — 拦截决策核心（HookPolicy）
+- `bins/ae-sdd-cli/src` — CLI 入口（gate-intercept / init-hooks 子命令）
+- `bins/ae-sdd-cli/tests/handshake_and_hook_failure.rs` — hook 拦截测试

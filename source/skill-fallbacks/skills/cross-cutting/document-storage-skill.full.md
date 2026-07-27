@@ -97,7 +97,7 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 
 ### 1.3 路径模板总表
 
-> **🔴 SSOT：** 下表合并了原路径模板表与命名规则。**Task/Coding/Test/CR 使用 `{WORKITEM-ID}` 分桶**，它代表一次独立编码任务（PRD / BUG / OPT / Story 均可），而不是只能代表 Story。**设计类不带版本号（原地更新），事件类带版本号（保留历史）**——与 `document_storage.py` `_PATH_TEMPLATES` 一致。
+> **🔴 SSOT：** 下表合并了原路径模板表与命名规则。**Task/Coding/Test/CR 使用 `{WORKITEM-ID}` 分桶**，它代表一次独立编码任务（PRD / BUG / OPT / Story 均可），而不是只能代表 Story。**设计类不带版本号（原地更新），事件类带版本号（保留历史）**——与 文档路由实现的路径模板表 一致。
 >
 > **🆕 v3.10.4 分桶键优先级（修复写读不一致）：** 当 `story_id` 非空时，Task/Coding/Test/CR/Story 子目录的分桶键优先取 `story_id`（与读取侧 `paths.list_docs` 硬编码的 `Task/{story_id}` 目录及既有文档树命名规范对齐）；`story_id` 为空时（BUG/OPT 无 Story）回退 `work_item_id`，保持 WorkItem 分桶兼容。即：`doc save --work-item Story-004 --story-id STORY-004-BE` 落到 `Coding/STORY-004-BE/`（非 `Coding/Story-004/`）。
 
@@ -278,7 +278,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\
 
 > **🔴 PRD ID 命名规范（与 `SKILL.md §1.2` SSOT）：** 格式 `PRD-<业务域>-<序号>`（CS / IM / USER / LIFE + 3 位数字）。示例：`PRD-CS-001`。
 
-> **📌 PRD 级 state.json schema 见附录 A。普通编码任务 state schema 归 `state.py` 管理，路径隔离键统一叫 `WORKITEM-ID`。**
+> **📌 PRD 级 state.json schema 见附录 A。普通编码任务 state schema 归状态权威（`crates/ae-sdd-store`）管理，路径隔离键统一叫 `WORKITEM-ID`。**
 
 ### 2.3 版本号含义
 
@@ -398,7 +398,7 @@ document-storage-skill.定位(projectKey, intent)
 
 ### 🆕 4.0 CLI 入口（v3.7.2 激活，推荐 LLM 使用）
 
-> **本节 API 已封装为 `ae-sdd doc` CLI 子命令**（v3.7.2，2026-07-01）。LLM 和用户**优先通过 CLI 调用**，而非读 Python 函数签名手模拟。
+> **本节 API 已封装为 `ae-sdd doc` CLI 子命令**（v3.7.2，2026-07-01）。LLM 和用户**优先通过 CLI 调用**，而非读函数签名手模拟。
 
 | CLI 命令 | 封装的 API | 用途 |
 |---------|-----------|------|
@@ -420,7 +420,7 @@ ae-sdd doc save \
   --keep-draft                   # 可选，保留草稿（默认删除）
 ```
 
-> 下方 §4.1-§4.11 是 Python 函数签名的**代码层契约**（供 document_storage.py 实现对齐），LLM/用户实际调用走 CLI。
+> 下方 §4.1-§4.11 是函数签名形式的**代码层契约**（供 `crates/ae-sdd-resources/src/document.rs` 实现对齐），LLM/用户实际调用走 CLI。
 
 ### 4.1 核心 API：`resolve_path()`
 
@@ -587,7 +587,7 @@ interface ReadResourceRef {
 
 > **SSOT：** 所有 SKILL 的 `save_doc(intent=...)` / `resolve_path(intent=...)` 调用，**intent 值必须是下表中已登记的枚举**。如需新增 intent，先在此表补行，再在调用方 SKILL 的 save_doc 矩阵中引用。
 >
-> **实现状态：** ✅ = 已在 `document_storage.py _PATH_TEMPLATES` 实现；📝 = 文档登记但代码未实现（属后续待办）。
+> **实现状态：** ✅ = 已在 文档路由实现的路径模板表 实现；📝 = 文档登记但代码未实现（属后续待办）。
 
 | intent 值 | 文档类型 | 产出 SKILL | 命名规则 | 实现 |
 |-----------|---------|-----------|---------|------|
@@ -849,7 +849,7 @@ d:\Item\icec-cloud-boss\ae-sdd-doc\iterations\2026-06-17\Coding\STORY-001-BE-Cod
 | **B4 业务规则匹配** | 文档涉及同一业务规则 | "幂等要求" / "权限校验" / "状态流转" |
 
 **判定算法：**
-```python
+```text
 def check_business_coherence(doc, iteration):
     for other_doc in iteration.docs:
         if doc.businessDomain == other_doc.businessDomain:  # B1
@@ -873,7 +873,7 @@ def check_business_coherence(doc, iteration):
 | **L4 组件复用** | 文档涉及同一组件/工具类/常量 | 同一工具类 / 同一枚举 / 同一常量 |
 
 **判定算法：**
-```python
+```text
 def check_logical_coherence(doc, iteration):
     for other_doc in iteration.docs:
         if doc.calls & other_doc.calls:  # L1
@@ -919,7 +919,7 @@ def check_logical_coherence(doc, iteration):
 
 > **调用方需在 save_doc 之前为文档打上业务/逻辑标签：**
 
-```python
+```text
 doc = {
     "doc_id": "STORY-002-BE",
     "doc_type": "Story",
@@ -987,7 +987,7 @@ ae-sdd-doc/
 
 ### 8.1 migrate_old_docs() 行为
 
-```python
+```text
 migrate_old_docs(
     projectKey="icec-cloud-boss",
     mode="dry-run"  # 或 "execute"
@@ -1213,7 +1213,7 @@ SKILL 流程
     - ChangeLog：明确"文档同级目录"（§6.1，与 save_doc 一致）
     - STORING.md：明确"单一文件"（§4.4，与 update_storing_index 一致）
   - 🔧 三重描述收敛：API 契约单一 SSOT（§4）、关联性算法单一 SSOT（§6.3）、调用矩阵合并为单一表（§9.1）
-  - 🔧 §3.5 PRD state.json schema 降级为附录 A（schema 读写归 state.py，本 SKILL 只管路径）
+  - 🔧 §3.5 PRD state.json schema 降级为附录 A（schema 读写归状态权威（`crates/ae-sdd-store`），本 SKILL 只管路径）
   - 🔧 intent 枚举表（§4.10）新增"实现状态"列（✅/📝），与代码 _PATH_TEMPLATES 对齐
 - **历史关键变化：**
   - 2026-06-27 v4.1：五维定位模型（新增业务线根）+ 资产路径 SSOT
@@ -1225,7 +1225,7 @@ SKILL 流程
 
 ## 附录 A. PRD 级 `state.json` schema（参考）
 
-> **⚠️ 定位声明：** 本附录仅作字段参考。schema 读写实现归 `state.py`（`prd_init`/`check_prd_4_layers` 等 PRD helper）；schema 定义 SSOT 归 `SKILL.md §1.3`。**本 SKILL 只负责 state.json 的路径**（见 §1.3），**不负责 schema**。如发生字段冲突以 `SKILL.md §1.3` 为准。
+> **⚠️ 定位声明：** 本附录仅作字段参考。schema 读写实现归状态权威（`crates/ae-sdd-store`，PRD 初始化与 4 层校验）；schema 定义 SSOT 归 `SKILL.md §1.3`。**本 SKILL 只负责 state.json 的路径**（见 §1.3），**不负责 schema**。如发生字段冲突以 `SKILL.md §1.3` 为准。
 
 ```json
 {
@@ -1284,7 +1284,7 @@ SKILL 流程
   },
 
   <!-- 🟠 v3.5.12 删除 memoryLifecycle 字段：死设计重复
-       实际 memory 门禁（memory_gate.py）读 memory_store.py 的独立 JSONL，
+       实际 memory 门禁读 memory 存储的独立 JSONL，
        完整记录 enter/write/exit 生命周期，不读 state.json 的 memoryLifecycle。
        保留此注释说明删除原因，避免后续误加回。 -->
 
@@ -1328,7 +1328,7 @@ SKILL 流程
 | **残留风险** | `crossStoryResidualRisks[]` | AI + 用户协作 | G-PRD-3 闸 |
 | **规模预算** | `sizeBudget` | 聚合自 Story | 🔍 人工审核点 5 |
 | **PRD 审核** | `prdReview` | 用户确认后（`state.prdReview`）| G-PRD-4 闸 |
-| **memory lifecycle** | ~~`memoryLifecycle`~~（🟠 v3.5.12 删除：死设计重复，实际门禁读 `memory_store.py` JSONL）| `ae-sdd memory enter/write/exit` | `ae-sdd state write` 前置校验（读 memory_store 不读此字段）|
+| **memory lifecycle** | ~~`memoryLifecycle`~~（🟠 v3.5.12 删除：死设计重复，实际门禁读 memory 存储 JSONL）| `ae-sdd memory enter/write/exit` | `ae-sdd state write` 前置校验（读 memory_store 不读此字段）|
 | **runtime 适配** | `runtimeHooks` | 项目实例化时一次 | `ae-sdd runtime compact` |
 | **闸注册表** | `gateRegistry` | G-PRD-* 闸 hook | PRD 完成判定 CLI |
 
@@ -1353,7 +1353,7 @@ SKILL 流程
 
 - `storyIds[]` 只在 Story **完成后**写入一条完成态快照；`storyStates{}` 在 Story **进行中**就维护完整流程状态。
 - v3.9.0 嵌套模型下，`storyStates{}` 是 Story 流程状态的**权威来源**；`storyIds[]` 仍保留供 G-PRD-1~4 闸校验。
-- 详见 `state.py:init_nested_state()` / `reset_story_substate()`。
+- 详见状态权威的嵌套状态初始化与 Story 子状态重置逻辑（`crates/ae-sdd-store`）。
 
 **🆕 v3.9.0 嵌套 state 命名规则（R6 顶层主体命名，🆕 v3.10.1 UUID 前缀）：**
 

@@ -10,7 +10,6 @@ source_fallback_sha256: df3798023709b5042af3e27cf0a28cb11a7b8fe9d97ffe8dcf046daa
 source_original_bytes: 77221
 source_original_lines: 1375
 source_semantic_inventory_sha256: da9937bcb902fd39ceb24d81d1944ef127c0ef1e85e670ae20ceee6f8783d173
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Document Storage — 文档存放标准 Skill（AE 体系横切依赖） Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L3:399 🆕 4.0 CLI 入口（v3.7.2 激活，推荐 LLM 使用）; L3:972 7.3 调用时机; L2:1051 9. 横切调用规范; +6 more; keyword_hits: 78 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:651 5. 重入流程与文档演进; L3:899 6.5 choose_iteration() 流程; keyword_hits: 42 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:586 4.10 intent 枚举表（🔴 save_doc / resolve_path 的 intent 参数必须取自此表）; L2:1158 11. 禁止事项; keyword_hits: 94 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:586 4.10 intent 枚举表（🔴 save_doc / resolve_path 的 intent 参数必须取自此表）; L2:1158 11. 禁止事项; keyword_hits: 94 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L2:395 4. 动态定位 API 契约（🆕 唯一 SSOT）; L3:399 🆕 4.0 CLI 入口（v3.7.2 激活，推荐 LLM 使用）; L3:425 4.1 核心 API：`resolve_path()`; +11 more; keyword_hits: 81 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L3:728 5.2 文档状态码与生命周期; L2:1226 附录 A. PRD 级 `state.json` schema（参考）; keyword_hits: 79 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L3:728 5.2 文档状态码与生命周期; L2:1226 附录 A. PRD 级 `state.json` schema（参考）; keyword_hits: 79 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L1:6 Document Storage — 文档存放标准 Skill（AE 体系横切依赖）; L2:50 1. 文档分类与目录结构; L3:52 1.1 文档分类（8 类）; +16 more; keyword_hits: 400 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 120; refs: # ae-sdd generated docs\nae-sdd-doc/; ...CodeReview.md; ...CodingReport.md; +117 more; keyword_hits: 238 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | keyword_hits: 190 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |

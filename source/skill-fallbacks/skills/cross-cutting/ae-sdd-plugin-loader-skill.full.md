@@ -49,7 +49,7 @@ description: |
 
    加载目标 SKILL = S（如 coding-skill.md）：
 
-   1. 调用 tools/lib/plugin_loader.py 的 resolve_skill(S, ade_sdd, master) API：
+   1. 调用 crates/ae-sdd-integrations/src/jobs/plugin 的 resolve_skill(S, ade_sdd, master) API：
       └─ 该函数会按 §2.2 优先级链合成三层注册表
       └─ 命中任何一层 → 返回该层指向的 resolved_path
       └─ 三层都未命中 → fallback 到内置 source/skills/... 路径
@@ -212,7 +212,7 @@ L1 项目层 (.ae-sdd/plugins/registry.yaml): 1 plugin
 
 **运行实际流程**：
 - 用户说"开始 Coding" → 触发 coding-skill 加载
-- Agent 加载本 SKILL → 按 §2.1 SOP 调 plugin_loader
+- Agent 加载本 SKILL → 按 §2.1 SOP 调 plugin loader
 - 命中 L1 → 读外挂 SKILL
 - 流程继续
 
@@ -240,7 +240,7 @@ L1 项目层 (.ae-sdd/plugins/registry.yaml): 1 plugin
 
 从模板生成新注册表（项目层或全局层）。
 
-> **CLI 实现状态：** v3.5.0 仅完成 `tools/lib/plugin_loader.py`（Python 模块）；CLI 子命令注册到 `tools/bin/ae-sdd` 留待 v3.5.1 PR。
+> **CLI 实现状态：** 解析实现在 `crates/ae-sdd-integrations/src/jobs/plugin`；`plugin list/trace/validate` 子命令已挂载。
 
 ---
 
@@ -260,13 +260,12 @@ L1 项目层 (.ae-sdd/plugins/registry.yaml): 1 plugin
 
 1. **`extends` 类型章节级合并未实现** —— v3.5.0 loader 把 `type=skill-extends` 当 `skill-override` 处理（整体替换）。完整实现留待 v3.6.0。
    > **🆕 v3.6.1 替代方案已落地**：语言/项目编码适配器的"叠加"不走未实现的 skill-extends，改由**共有 [`coding-skill.md` §13 注册加载协议](../phase2-coding/coding-skill.md)** 用现有 `skill-new` 机制实现——适配器以 `provides: coding-adapter-{lang}` 注册，AI 运行时读共有 + 适配器两份文件叠加。母版 L3 已注册首例 [`java3d-coding-skill`](../../plugins/registry.yaml)（`plugins/registry.yaml`）。
-2. **CLI `plugin` 子命令未挂载** —— v3.5.0 只完成 Python 模块；CLI 注册（`tools/bin/ae-sdd` add_parser）留待 v3.5.1。
-3. **依赖解析** —— dependencies 字段声明但 loader 不强制校验；v3.5.0 仅做提示。
-4. **缓存** —— 每次加载 SKILL 重新读注册表；高频场景需要缓存。留待性能 profiling 后优化。
-5. **GUI 化注册向导** —— CLI `plugin init` 是最小可用；后续考虑加交互式向导。
+2. **依赖解析** —— dependencies 字段声明但 loader 不强制校验；v3.5.0 仅做提示。
+3. **缓存** —— 每次加载 SKILL 重新读注册表；高频场景需要缓存。留待性能 profiling 后优化。
+4. **GUI 化注册向导** —— CLI `plugin init` 是最小可用；后续考虑加交互式向导。
 
 ---
 
 ## §7 实施历史
 
-- **v3.5.0（2026-06-26）**：新建本 SKILL。完成 plugin_loader.py + 35 个单元测试 + 注册表模板 + 设计文档 + schema 规范。CLI 子命令留待 v3.5.1。
+- **v3.5.0（2026-06-26）**：新建本 SKILL。完成 plugin loader + 单元测试 + 注册表模板 + 设计文档 + schema 规范。CLI 子命令留待 v3.5.1。

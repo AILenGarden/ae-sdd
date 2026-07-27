@@ -620,7 +620,7 @@ flowchart TD
 
 ### 4.1 调用 save_doc 的参数
 
-```python
+```text
 # 旧式伪代码已废弃，改用 CLI：
 # ae-sdd doc save --intent DR --doc-id DR-001 --content-file 草稿.md
 result_skip = save_doc(doc={  # noqa: 保留结构示例，实际用上面 CLI

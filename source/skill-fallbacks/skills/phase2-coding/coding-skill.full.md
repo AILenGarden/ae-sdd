@@ -478,7 +478,7 @@ cd {service-root} && mvn test -Dtest=*IntegrationTest
 - 缺原始日志或 XML，只在 Markdown 中写"通过" → 虚报成功
 - 测试命令带跳测参数（`-DskipTests`/`-Dmaven.test.skip`/`testFailureIgnore`），或 POM 配置跳过 → 虚报成功
 - XML 实际执行数小于测试用例应跑数，且无明确解释 → 假修复风险
-- `test_authenticity_scan.py` 出现 BLOCKER → 测试无效
+- 测试真实性扫描（G-09）出现 BLOCKER → 测试无效
 - 测试用例覆盖不完整 → 假修复风险
 - 某测试层级完全缺失（如只有 L1，没有 L2/L3）→ 假修复风险
 - 失败用例被标记"跳过"而非真正修复 → 假修复
@@ -595,7 +595,7 @@ grep -rn "^import static " --include="*.java" src/main/java/ | wc -l
 
 > **能力定位：** 本库 §1-§12 是**语言/项目无关的共有编码决策知识**。实际编码时还需"语言特有/项目特有"的决策知识（如 Java/Spring 的注解选型、icec 项目的 messagebus 选型）。这部分不写进本库（避免 DRY 违规与双源漂移），而是通过**注册表加载适配器**，在运行时**叠加**到本库的相应章节之上。
 >
-> **为什么用注册表而非合并引擎：** ae-sdd 注册表是路径解析系统（plugin_loader.py 的 resolve_skill），把一个 key 解析成一份文件。本节利用现有 `skill-new` 注册机制（已实现、已测试），由调用方在运行时**读两份文件叠加**，不依赖未实现的 skill-extends 章节合并。零 loader 代码改动。
+> **为什么用注册表而非合并引擎：** ae-sdd 注册表是路径解析系统（plugin loader 的 skill 解析），把一个 key 解析成一份文件。本节利用现有 `skill-new` 注册机制（已实现、已测试），由调用方在运行时**读两份文件叠加**，不依赖未实现的 skill-extends 章节合并。零 loader 代码改动。
 
 ### §13.1 加载协议 SOP（调用方执行，典型在 CodingProcess §A1 加载上下文时）
 

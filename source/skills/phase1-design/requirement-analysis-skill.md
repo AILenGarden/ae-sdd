@@ -10,7 +10,6 @@ source_fallback_sha256: 40cc21be5f1840c110802bc0614065e2dad42b8f0e1ec8a4b809f887
 source_original_bytes: 106687
 source_original_lines: 1869
 source_semantic_inventory_sha256: db5b55aff613724effd549ea970fd6a23e27c1d6cfb14e5f0aa8bc53526f248e
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Requirement Analysis — 需求分析 SKILL（路由后的分析阶段） Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:41 📦 文档存放前置调用（🔴 横切依赖）; L2:87 🧠 阶段记忆强制调用（🔴 横切依赖）; L2:222 触发条件; +4 more; keyword_hits: 135 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L1:6 Requirement Analysis — 需求分析 SKILL（路由后的分析阶段）; L2:87 🧠 阶段记忆强制调用（🔴 横切依赖）; L2:237 整体流程; +21 more; keyword_hits: 205 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:28 🟠 门禁强度声明（v3.5.11 AA 诚实降级）; L3:129 标尺 1：穷举优于抽样（🔴 "覆盖所有"必须先有穷举清单）; L3:150 标尺 3：冲突显性化（🔴 冲突必须摆到台面讨论）; +7 more; keyword_hits: 232 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L2:28 🟠 门禁强度声明（v3.5.11 AA 诚实降级）; L3:129 标尺 1：穷举优于抽样（🔴 "覆盖所有"必须先有穷举清单）; L3:150 标尺 3：冲突显性化（🔴 冲突必须摆到台面讨论）; +7 more; keyword_hits: 232 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L4:770 H.5.3 配套工具调用; L4:826 H.6.3 配套工具调用; keyword_hits: 139 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L3:546 阶段 E.5：状态变更衍生规则强制追问（🔴 状态机需求必跑）; L3:653 阶段 G.5：状态变更衍生 AC 强制覆盖（🔴 状态机需求必跑）; L3:788 阶段 H.6：跨域级联效应 Checklist（🔴 状态变更类需求必跑）; +1 more; keyword_hits: 162 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L3:546 阶段 E.5：状态变更衍生规则强制追问（🔴 状态机需求必跑）; L3:653 阶段 G.5：状态变更衍生 AC 强制覆盖（🔴 状态机需求必跑）; L3:788 阶段 H.6：跨域级联效应 Checklist（🔴 状态变更类需求必跑）; +1 more; keyword_hits: 162 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:41 📦 文档存放前置调用（🔴 横切依赖）; L3:61 本 SKILL 产出文档 × intent 对照; L3:186 RAModel 决策记录模板（RA §0.5 必填）; +7 more; keyword_hits: 161 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 71; refs: .ae-plan/; .ae-sdd/tmp/RA-001-draft.md; .ae-sdd/tmp/{doc-id}-draft.md; +68 more; keyword_hits: 57 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:186 RAModel 决策记录模板（RA §0.5 必填）; L2:189 §0.5 RequirementAnalysisModel 决策记录; L3:396 0.5.2 需求风险预判表（RA §0.6 必填）; +23 more; keyword_hits: 390 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -245,8 +244,8 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | project-assets-update-skill.md §G |
 | requirement-analysis-skill.md |
 | review-loop-skill.md |
-| scripts/ra_depth_scan.py |
-| scripts/ra_implementation_scan.py |
+| ae-sdd ra-depth-scan |
+| ae-sdd ra-implementation-scan |
 | source → ingress(API/event/job) → domain/service → persistence/cache/MQ → output/observability |
 | src/.../Class.method |
 | standards/constraints/ |
@@ -256,5 +255,5 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | templates/design/issue-template.md |
 | templates/design/prd-template.md |
 | templates/design/ra-template.md |
-| tools/lib/document_storage.py:check_ra_prerequisites() |
-| tools/lib/gates.py |
+| crates/ae-sdd-resources/src/document.rs (RA 前置检查) |
+| crates/ae-sdd-gates/src/registry.rs |

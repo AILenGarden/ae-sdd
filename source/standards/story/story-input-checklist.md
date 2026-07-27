@@ -101,7 +101,7 @@ AI 必须按以下 13 项 ✅/❌ 自检，全部 ✅ 才能进入下一步：
 ### Step 4：CLI 门禁验证（机械层）
 运行 `ae-sdd gates check --only G-STORY-CTX`，未过 → **BLOCK**。
 
-> 🔴 **G-STORY-CTX 在 v3.9.3 扩展**：除原有 `constraints/assets/DR/PRD` 4 类外，新增 `dependsStory` 与 `sourceTrace` 两项必查。详见 `tools/lib/gates.py:CONTEXT_GATE_REGISTRY["G-STORY-CTX"]`。
+> 🔴 **G-STORY-CTX 在 v3.9.3 扩展**：除原有 `constraints/assets/DR/PRD` 4 类外，新增 `dependsStory` 与 `sourceTrace` 两项必查。详见 `crates/ae-sdd-gates/src/registry.rs:CONTEXT_GATE_REGISTRY["G-STORY-CTX"]`。
 
 ---
 
@@ -177,7 +177,7 @@ AI 必须按以下 13 项 ✅/❌ 自检，全部 ✅ 才能进入下一步：
 | `story-update-skill.full.md` §第零步 | prose 自检表 | 准入 |
 | `story-generation-standard.md` §1 | 指向本 SSOT | 标准 |
 | `story-review-checklist.md` §输入 | 指向本 SSOT | 标准 |
-| `tools/lib/gates.py` G-STORY-CTX | `required` 字段 + 13 项校验 | 门禁 |
+| `crates/ae-sdd-gates/src/registry.rs` G-STORY-CTX | `required` 字段 + 13 项校验 | 门禁 |
 
 ---
 
@@ -194,8 +194,8 @@ AI 必须按以下 13 项 ✅/❌ 自检，全部 ✅ 才能进入下一步：
 
 | SSOT 文件 | 关系 |
 |-----------|------|
-| `tools/lib/paths.py:MASTER_VERSION` | 版本号 SSOT |
-| `tools/lib/document_storage.py` | 文档与只读 Story 资源定位/正文/指纹 API SSOT |
+| `source/SKILL.md frontmatter version` | 版本号 SSOT |
+| `crates/ae-sdd-resources/src/document.rs` | 文档与只读 Story 资源定位/正文/指纹 API SSOT |
 | `STORY_TEMPLATE` | Story 章节结构、section ID 与主副层级 SSOT |
 | `STORY_WRITING_GUIDE` | Story 章节撰写 SOP SSOT |
 | `source/standards/story/story-generation-standard.md` | 7 阶段输出标准 SSOT（与本 SSOT 配套）|

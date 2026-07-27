@@ -2,7 +2,7 @@
 name: review-loop
 description: |
   Review Loop 公共协议（🆕 v3.4.3）— 所有 review/循环判定节点的公共骨架。
-  统一 Review Batch v2：输入指纹、有效批次、风险策略、失败分类、硬预算和 Plan-first。旧 round/dryCounter 仅作兼容投影。
+  统一 Review Batch v2：输入指纹、有效批次、失败分类、硬预算和 Plan-first。退出条件是一批 VALID_CLEAN 即通过（cleanTarget 恒为 1）。旧 round/dryCounter 仅作兼容投影。
   各 review SKILL（story-review / dr-review / code-review / task-generate TR / proposal / story-generate）只定义自己的检查项与 Plan 载体，loop 骨架引用本协议。
   🆕 v3.4.3 废弃"每 N 轮暂停问人"——与退出条件矛盾，且把退出权交给人违反 Loop Engineering 自评估原则。
 ---
@@ -36,15 +36,24 @@ Review 状态使用 `reviewSession`（`schemaVersion: 2`）持久化；`reviewLo
 
 ### 协议 1：退出条件
 
-按风险策略退出，不再对所有 Tier 固定连续 N 轮：
+**一批 `VALID_CLEAN` 即通过。** `cleanTarget` 恒为 1，不随 Tier 或 repair class 升档：
 
 | Tier | 首批无缺陷 | P0/P1 修复后 |
 | --- | --- | --- |
 | Tier 1 | 1 个 `VALID_CLEAN` | 1 个新 fingerprint `VALID_CLEAN` |
-| Tier 2 | 1 个 `VALID_CLEAN` + deterministic gates | 1 个新 fingerprint `VALID_CLEAN`；关键契约变更可提高为 2 |
-| Tier 3 | 1 个 `VALID_CLEAN` + 全量最终验证 | 2 个连续 `VALID_CLEAN`，fingerprint 不变 |
+| Tier 2 | 1 个 `VALID_CLEAN` + deterministic gates | 1 个新 fingerprint `VALID_CLEAN` + deterministic gates |
+| Tier 3 | 1 个 `VALID_CLEAN` + 全量最终验证 | 1 个新 fingerprint `VALID_CLEAN` + 全量最终验证 |
 
 `VALID_CLEAN` 只在 required reviewer 集完整时增加 `validBatches`/`cleanStreak`；`INVALID_*` 不改变 clean 结论。
+
+风险由**两条正交防线**约束，而不是靠重复一个已经 clean 的批次：
+
+| 防线 | 作用 |
+|---|---|
+| required reviewer 集 | Tier 决定必须到齐的角色（Tier 1 GENERAL；Tier 2 BE+AR；Tier 3 BE+AR+QA），缺角色即 `INVALID_PROTOCOL`，不计 clean |
+| `finalProofRequirement` | Tier 2 收尾必须现场跑 `G-CODEPLAN-SRC`/`G-14`/`G-08` 且全 PASS；Tier 3 必须存在唯一一条 PASS 的完整验证 job，且 digest 与 fingerprint 全部对齐 |
+
+修复后重新挖掘仍必须换 `inputFingerprint`：改了代码就是新一代输入，旧 clean streak 失效。
 
 ### 协议 2：循环上限
 
@@ -77,11 +86,11 @@ Review 状态使用 `reviewSession`（`schemaVersion: 2`）持久化；`reviewLo
 **v3.4.3 废弃**之前 story-review / dr-review / SKILL.md 主编排层的"每完成 3 轮 A-E 阶段循环自动暂停，询问用户是否继续"规则。
 
 **废弃原因：**
-1. **与退出条件矛盾**：退出条件说"连续 3 轮无新增才退出"（信任自评估），暂停说"每 3 轮就停下问人"（不信任自评估）——同一文件内自相矛盾
+1. **与退出条件矛盾**：退出条件说"无新增即退出"（信任自评估），暂停说"每 3 轮就停下问人"（不信任自评估）——同一文件内自相矛盾
 2. **违反 Loop Engineering 自评估原则**：把退出权交给人，AI 无法自主决定"我审干净了可以退出"
 3. **不是 common 设定**：只有 story-review/dr-review 有，code-review/task-generate/proposal 都没有，说明它本就不是公共规则
 
-**替代方案：** 退出条件（协议 1）+ 循环上限（协议 2）已足够。AI 自评估达标即退出；3 轮仍有 🔴 才升级用户。人不在循环中间介入，只在异常退出（升级用户）或节点结束处的人工审核点介入。
+**替代方案：** 退出条件（协议 1）+ 循环上限（协议 2）已足够。AI 自评估达标即退出；预算耗尽仍有 🔴 才升级用户。人不在循环中间介入，只在异常退出（升级用户）或节点结束处的人工审核点介入。
 
 ### 禁止 2：禁止无预算循环
 

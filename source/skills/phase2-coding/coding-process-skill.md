@@ -15,7 +15,6 @@ source_fallback_sha256: 8642efbb585819f1fff9233561e931516081b4c61e49cdc2e433a5e7
 source_original_bytes: 32750
 source_original_lines: 538
 source_semantic_inventory_sha256: 74177d5c4b1ba2f4f068265bab22ccfc300d6e45a507548565901105f201fae4
-source_slimmer: slim_source_skills.py@2
 ---
 
 # CodingProcess - CodePlan->Coding 全流程编排节点（流程与能力分离） Source SKILL Slim Entry
@@ -51,9 +50,9 @@ CodePlan->Coding->验证->异常追溯全流程编排：加载4上下文 -> 骨�
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:21 📦 文档存放前置调用（🔴 横切依赖）; L2:40 🧠 阶段记忆强制调用（🔴 横切依赖）; L3:137 §A2 调用 coding-skill 能力做 CodeAnalysis; +1 more; keyword_hits: 33 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L1:11 CodingProcess - CodePlan->Coding 全流程编排节点（流程与能力分离）; L2:40 🧠 阶段记忆强制调用（🔴 横切依赖）; L2:93 Phase A：CodeAnalysis（产出 CodePlan）; +3 more; keyword_hits: 74 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:137 §A2 调用 coding-skill 能力做 CodeAnalysis; L3:146 §A3 产出统一版 CodePlan + 跑门禁; L3:177 §B0 第零步：复核 CodingModel（Execute 入口门禁）; +2 more; keyword_hits: 145 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:137 §A2 调用 coding-skill 能力做 CodeAnalysis; L3:146 §A3 产出统一版 CodePlan + 跑门禁; L3:177 §B0 第零步：复核 CodingModel（Execute 入口门禁）; +2 more; keyword_hits: 145 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L3:299 §B4 编译 + 服务启动 + 接口验证 + DB 验证 + 异常验证; keyword_hits: 52 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L2:93 Phase A：CodeAnalysis（产出 CodePlan）; L2:175 Phase B：Execute（按 CodePlan 写代码）; L2:356 Phase C：异常追溯（报错时实时追溯链 A1-A6）; keyword_hits: 44 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L2:93 Phase A：CodeAnalysis（产出 CodePlan）; L2:175 Phase B：Execute（按 CodePlan 写代码）; L2:356 Phase C：异常追溯（报错时实时追溯链 A1-A6）; keyword_hits: 44 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:21 📦 文档存放前置调用（🔴 横切依赖）; L2:93 Phase A：CodeAnalysis（产出 CodePlan）; L3:146 §A3 产出统一版 CodePlan + 跑门禁; keyword_hits: 75 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 27; refs: ../phase3-review/test-generate-skill.md; ../phase3-review/test-review-skill.md; /ae-sdd 优化这部分实现; +24 more; keyword_hits: 61 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:95 §A1 加载 4 上下文（🔴 强制，缺一停止）; L3:108 §A1.4 🆕 v3.10.2 micro 意图分流前置门（OPTIMIZE/CODE_REVIEW entry_node）; L3:124 §A1.5 骨架分解（🆕 v3.10.0 从 task-generate-skill 合并）; +14 more; keyword_hits: 149 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |

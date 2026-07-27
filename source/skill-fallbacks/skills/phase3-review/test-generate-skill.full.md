@@ -64,7 +64,7 @@ run/buildId`。该证据不计入 L2/L4 双阶段完成度，不替代本地 HTT
 | 本地 HTTP | 启动真实端口，确认内部 Service/Repository/Mapper/DB 未被 mock，记录 baseUrl/buildId/AC/artifact |
 | 测试环境 HTTP | 部署同一 buildId 后请求非 loopback endpoint，记录同组 AC 与 artifact |
 | 测试 | 禁止 `-DskipTests`、`maven.test.skip=true`、`testFailureIgnore=true` |
-| 扫描 | 运行 `scripts/test_authenticity_scan.py` 或 `ae-sdd gates check --only G-09` |
+| 扫描 | 运行 `ae-sdd gates check --only G-09` 或 `ae-sdd gates check --only G-09` |
 
 所有 stdout/stderr、Surefire/Failsafe XML、扫描报告必须归档到 `.auto-engineering/{WORKITEM-ID}/evidence/`，并由单一 `manifest.json` 登记。documentation/review fingerprint 变化不得使只绑定 implementation fingerprint 的 Maven 证据失效。
 

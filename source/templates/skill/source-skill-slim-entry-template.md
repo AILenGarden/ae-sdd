@@ -1,8 +1,8 @@
 # Source SKILL Slim Entry Template
 
-> **适用场景：** SKILL 源文件瘦身（slimming）流水线生成的精简入口模板，由 `scripts/slim_source_skills.py` 渲染；源精简入口禁止手工编辑，仅作为渲染产物的参考结构。
+> **适用场景：** SKILL 源文件瘦身（slimming）产出的精简入口模板，是 slim entry 的权威结构；任何 slim entry 都必须与本模板重渲染结果一致。
 
-This template is rendered by `scripts/slim_source_skills.py`; source slim entries must not be hand-edited.
+This template is the authoritative structure for source slim entries; every slim entry must stay byte-consistent with it.
 
 ```markdown
 ---
@@ -16,7 +16,6 @@ source_fallback_sha256: {sha256 of full fallback text}
 source_original_bytes: {byte count}
 source_original_lines: {line count}
 source_semantic_inventory_sha256: {sha256 of semantic inventory JSON}
-source_slimmer: slim_source_skills.py@2
 ---
 
 # {title} Source SKILL Slim Entry

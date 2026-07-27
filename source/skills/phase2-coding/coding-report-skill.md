@@ -10,7 +10,6 @@ source_fallback_sha256: 0a6ef12337b2703190070ee8cdd662088a6dbaa5ce4135851f221c5c
 source_original_bytes: 13224
 source_original_lines: 317
 source_semantic_inventory_sha256: c0f2a734724fe41c3e38dcba872fb948a4829940a289b20449751381544bf038
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Coding Report — Coding 报告产出 Skill Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:18 📦 文档存放前置调用（🔴 横切依赖）; L2:102 触发条件; L3:227 §九 异常路径触发（如有）; +1 more; keyword_hits: 30 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:69 整体流程; keyword_hits: 10 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:48 标尺 1：客观性（🔴 禁止主观描述）; L2:269 禁止事项; keyword_hits: 26 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:48 标尺 1：客观性（🔴 禁止主观描述）; L2:269 禁止事项; keyword_hits: 26 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 15 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 13 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | keyword_hits: 13 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L1:6 Coding Report — Coding 报告产出 Skill; L2:18 📦 文档存放前置调用（🔴 横切依赖）; L2:46 Coding Report 总则; +1 more; keyword_hits: 51 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 22; refs: SKILL.md; ae-sdd assets read coding --project <projectKey>; ae-sdd doc resolve --intent STORY --story-id {S}; +19 more; keyword_hits: 31 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:126 §一 元信息; L3:137 §二 本轮变更文件清单（🔴 按项目 §3 层级自上而下）; L3:147 §三 编译 + 服务启动结果; +6 more; keyword_hits: 50 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |

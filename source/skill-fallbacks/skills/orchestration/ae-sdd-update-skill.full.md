@@ -85,9 +85,9 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 |---|--------|---------|-----------|---------|
 | ① | **SKILL 本体（方法论 + 编排）** | `source/SKILL.md` + `source/skills/`(29 个子 SKILL) + `source/standards/` + `source/templates/` + `source/assets/` | ae-sdd 方法论母版 SSOT：流程编排、门禁、模板、约束、项目资产 | 直接编辑 `source/`，本文件「SKILL 边界判定表」管辖 |
 | ② | **实例化体系（4 层架构）** | `dist/ae-sdd/`(Layer2) + `~/.claude/skills/ae-sdd/`(Layer3) + `<project>/.ae-sdd/`(Layer4) | 母版→分发包→用户安装→项目实例，引用+override 模式 | 不手工改 Layer2/3/4；由 build/install/init 生成 |
-| ③ | **构建与安装脚本** | `scripts/build_dist.py` / `dev_sync.py` / `install.py` / `init.py` + 对应 `.sh`/`.ps1` 薄壳 | 构建分发包、跨平台安装、项目实例化、开发者一键同步 | 直接编辑 `scripts/*.py`（薄壳 `.sh`/`.ps1` 只找 Python 后 exec） |
+| ③ | **构建与安装工具** | `crates/ae-sdd-build`（`compile` / `install` / `init` / `distribute` / `harness` / `post-commit` 作业）| 构建分发包、跨平台安装、项目实例化、提交后自动同步 | 直接编辑 `crates/ae-sdd-build`；发布链路由 `.githooks/post-commit` 驱动 |
 | ④ | **安装引导 SKILL** | `source/skills/orchestration/ae-sdd-install-skill.md` | 面向 Agent 的安装/重装/升级/卸载引导（10 节流程） | 随子系统①一起维护（属 skills/），但逻辑独立于方法论 |
-| ⑤ | **工具链（CLI + lib + tests）** | `tools/bin/ae-sdd`（30 顶层命令组，含 `perf`）+ `tools/lib/`（含 runtime_stats/runtime_exec）+ `tools/tests/` | 门禁检查、状态管理、记忆层、DB/Git 工具集、hook 拦截、update-check、Runtime Stats | 直接编辑 `tools/`，独立于 `source/` 但被 update-graph 联动 |
+| ⑤ | **工具链（CLI + crates + tests）** | `bins/ae-sdd-cli`、`bins/ae-sdd-daemon` + `crates/`（gates/store/flow/scanners/integrations 等）+ 各 crate `tests/` | 门禁检查、状态管理、记忆层、DB/Git 工具集、hook 拦截、update-check、Runtime Stats | 直接编辑 `crates/` 与 `bins/`，独立于 `source/` 但被 update-graph 联动 |
 | ⑥ | **Harness 适配层** | `.harness/agent.md` + `.harness/.adapter.lock` | 由 ae-sdd-harness-adapter SKILL 自动生成，转译为 Harness 团队级 agent | ❌ 不手工改；母版升级后重跑 adapter SKILL 重新生成 |
 
 ### 子系统协同关系图
@@ -98,21 +98,21 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 │  source/SKILL.md + skills/ + standards/ + templates/ + assets/  │
 └──────────────┬───────────────────────────────────┬──────────────┘
                │                                   │
-        ③ build_dist.py                    ⑤ 工具链 tools/
-        (构建分发包)                        (CLI + lib + tests)
+    ③ ae-sdd-build compile              ⑤ 工具链 crates/+bins/
+        (构建分发包)                        (CLI + crates + tests)
                │                                   │
                ▼                                   │
 ┌──────────────────────────┐                       │
-│ ② Layer2 实例化分发包     │ ◄── build 时把 tools/  │
-│ dist/ae-sdd/             │     scanner 注入 dist  │
+│ ② Layer2 实例化分发包     │ ◄── 编译产出方法论包   │
+│ dist/ae-sdd/             │                       │
 └──────────┬───────────────┘                       │
-           │ ③ install.py                          │
+           │ ③ ae-sdd-build distribute             │
            ▼                                       │
 ┌──────────────────────────┐                       │
-│ ② Layer3 用户安装         │ ◄─ CLI 直接从 tools/  │
+│ ② Layer3 用户安装         │ ◄─ CLI 走原生二进制   │
 │ ~/.claude/skills/ae-sdd/ │   运行，不进 dist     │
 └──────────┬───────────────┘                       │
-           │ ③ init.py (ae-sdd init <dir> <key>)   │
+           │ ③ ae-sdd init <dir> <key>             │
            ▼                                       │
 ┌──────────────────────────┐                       │
 │ ② Layer4 项目实例         │ ── 引用 Layer3 ──►    │
@@ -126,7 +126,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 ┌──────────────────────────────────────────────────┘
 │
 │  ④ 安装引导 SKILL 串联 ②③④：
-│     install-skill.md → 调 install.py → 装到 Layer3 → 调 init.py → 建 Layer4
+│     install-skill.md → ae-sdd-build 分发 → 装到 Layer3 → ae-sdd init → 建 Layer4
 │
 │  ⑥ Harness 适配层（派生，非本体）：
 │     source/SKILL.md + HARNESS.md ──adapter SKILL──► .harness/agent.md
@@ -140,14 +140,14 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 
 | 改动源（子系统） | 连带影响的子系统 | 必做同步动作 | 权威检查 |
 |----------------|----------------|------------|---------|
-| **① SKILL 本体**（改 `source/*.md`） | ②③（build+install 重新分发） | 改完跑 `dev-sync.sh`；更新 README:5 版本号 | `update-check` UC-01/05 |
-| **③ 构建脚本**（改 `scripts/build_dist.py`） | ②（dist 产出内容变化） | 确认白名单含新 scanner；重跑 build 验证 dist 完整 | `update-check` UC-04 |
-| **③ 安装脚本**（改 `scripts/install.py` / `init.py`） | ②Layer3/4 安装行为变化 | ④ install-skill.md 的 §3/§4 流程可能需同步 | 人工核对 |
-| **④ 安装引导 SKILL**（改 `install-skill.md`） | 无连带（纯文档） | 确认与 ③ install.py 实际行为一致 | 人工核对 |
-| **⑤ 工具链**（改 `tools/lib/*.py` 或 `tools/bin/ae-sdd`） | ①（SKILL 引用的 CLI 命令契约）+ ⑤（测试） | 同步 SKILL.md 命令引用；补/改对应 `tools/tests/test_*.py` | `update-check` UC-02/03 |
-| **⑤ 新增 scanner**（`scripts/*_scan.py`） | ③（build 白名单）+ ①（gates.py 注册）+ ⑤（gates _locate） | 加入 `build_dist.py` 白名单；gates.py 注册门禁；SKILL 引用 | `update-check` UC-04 |
+| **① SKILL 本体**（改 `source/*.md`） | ②③（编译+分发重新执行） | 提交触发 post-commit 链路；更新 README:5 版本号 | `update-check` UC-01/05 |
+| **③ 构建作业**（改 `crates/ae-sdd-build/src/jobs/compile.rs`） | ②（dist 产出内容变化） | 确认取材范围含新组件；重跑编译验证 dist 完整 | `update-check` UC-04 |
+| **③ 安装/初始化作业**（改 `jobs/install.rs` / `jobs/init.rs`） | ②Layer3/4 安装行为变化 | ④ install-skill.md 的 §3/§4 流程可能需同步 | 人工核对 |
+| **④ 安装引导 SKILL**（改 `install-skill.md`） | 无连带（纯文档） | 确认与 ③ 实际安装行为一致 | 人工核对 |
+| **⑤ 工具链**（改 `crates/**` 或 `bins/ae-sdd-cli`） | ①（SKILL 引用的 CLI 命令契约）+ ⑤（测试） | 同步 SKILL.md 命令引用；补/改对应 crate `tests/` | `update-check` UC-02/03 |
+| **⑤ 新增 scanner**（`crates/ae-sdd-scanners`） | ①（门禁注册）+ ⑤（scanner 注册表） | `ScannerId` 注册；门禁绑定 `NativeGateRule::Scanner`；SKILL 引用 | `update-check` UC-04 |
 | **⑥ Harness 适配层** | ❌ 不手工改 | 母版升级后重跑 `ae-sdd-harness-adapter` SKILL 重新生成 | `.adapter.lock` source input hash 一致性 |
-| **任意 source/ 或 tools/** | README:5 + 设计/实现架构文档 + dev-sync | 永不写 changelog；更新 README:5；按影响同步当前设计/实现事实；跑 update-check 全绿才 dev-sync | `update-check` 全量 |
+| **任意 source/ 或 crates/** | README:5 + 设计/实现架构文档 + 分发 | 永不写 changelog；更新 README:5；按影响同步当前设计/实现事实；跑 update-check 全绿才分发 | `update-check` 全量 |
 
 ### 维护者 SOP（按子系统）
 
@@ -159,29 +159,29 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 1.5 过一遍 §🔴 极简描述原则 5 问自检（只增不删是禁止项）
 2. （涉及门禁/子 SKILL 数变化）同步 README.md 正文计数 + §3 清单
 3. 跑 ae-sdd update-check → 全绿
-4. 跑 dev-sync.sh 分发
+4. 提交，由 .githooks/post-commit 完成编译与分发
 5. 确认未写 changelog，当前事实已进入权威规范与测试
 ```
 
-**改 ③ 构建脚本：**
+**改 ③ 构建作业：**
 ```
-1. 编辑 scripts/build_dist.py
-2. 若新增 scanner → 确认加入白名单（UC-04 会查）
+1. 编辑 crates/ae-sdd-build/src/jobs/compile.rs
+2. 若新增组件 → 确认进入编译取材范围（UC-04 会查）
 3. 若 dist 剥离/注入规则变化 → 同步本文件「母版修改后的同步规则」+ README Q3
-4. 重跑 build_dist.py 验证 dist/ae-sdd/ 完整
+4. 重跑编译验证 dist/ae-sdd/ 完整
 5. 确认未写 changelog，构建事实由验证命令承载
 ```
 
 **改 ⑤ 工具链：**
 ```
-1. 编辑 tools/lib/*.py 或 tools/bin/ae-sdd
-2. 新增/修改门禁 → 同步 gates.py GATE_REGISTRY + CHECK_FUNCS（UC-02）+ test_gates.py
-3. 新增/修改 CLI 子命令 → 同步 SKILL.md 命令引用（UC-03）+ 补 tools/tests/
-4. 涉及能力语义变化 → 同步 source/docs/ae-sdd-design.md；涉及模块边界/数据流/缓存/子进程/hook/build/分发变化 → 同步 source/docs/ae-sdd-implementation-architecture.md
+1. 编辑 crates/** 或 bins/ae-sdd-cli
+2. 新增/修改门禁 → 同步 crates/ae-sdd-gates/src/registry.rs 的 GATES/GATE_COUNT（UC-02）+ gate_truth_table.rs
+3. 新增/修改 CLI 子命令 → 同步 SKILL.md 命令引用（UC-03）+ 补对应 crate tests/
+4. 涉及能力语义变化 → 同步 source/docs/ae-sdd-design.md；涉及模块边界/数据流/缓存/进程/hook/build/分发变化 → 同步 source/docs/ae-sdd-implementation-architecture.md
 5. 跑 ae-sdd update-check → 全绿
-6. 跑 tools/tests/ 对应测试
+6. 跑 cargo test --workspace --locked
 7. 确认未写 changelog，兼容性分类写入协议并由测试覆盖
-8. 🆕 v3.5.0：如新增 plugin_loader 类的跨 SKILL 加载机制 → 同步 update-graph.json 加 UG-XX 规则（如 UG-12 plugin-registry）+ 新建对应 cross-cutting 加载协议 SKILL（如 ae-sdd-plugin-loader-skill.md）
+8. 如新增 plugin loader 类的跨 SKILL 加载机制 → 同步 update-graph.json 加 UG-XX 规则（如 UG-12 plugin-registry）+ 新建对应 cross-cutting 加载协议 SKILL（如 ae-sdd-plugin-loader-skill.md）
 ```
 
 **改 ⑥ Harness 适配层：**
@@ -200,11 +200,11 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | Layer | 名称 | 路径 | 谁生成 | git 跟踪 | 维护者动作 |
 |-------|------|------|--------|---------|-----------|
 | 1 | 母版 SSOT | `source/` | 开发者编辑 | ✅ | 唯一手工维护点 |
-| 2 | 实例化分发包 | `dist/ae-sdd/` | `build_dist.py` | ❌ (gitignored) | 不手工改，构建产物 |
-| 3 | 用户安装 | `~/.claude/skills/ae-sdd/` | `install.py` | ❌ | 不手工改，安装产物 |
-| 4 | 项目实例 | `<project>/.ae-sdd/` | `init.py`（`ae-sdd init`） | ❌ (项目侧) | 不手工改，项目侧产物 |
+| 2 | 实例化分发包 | `dist/ae-sdd/` | `ae-sdd-build` compile 作业 | ❌ (gitignored) | 不手工改，构建产物 |
+| 3 | 用户安装 | `~/.claude/skills/ae-sdd/` | `ae-sdd-build` distribute 作业 | ❌ | 不手工改，安装产物 |
+| 4 | 项目实例 | `<project>/.ae-sdd/` | `ae-sdd init` | ❌ (项目侧) | 不手工改，项目侧产物 |
 
-**⚠️ 已知缺口（2026-06-25 更新）：** SKILL.md §6 描述的 `ae-sdd init <project-dir> <project-key>` 命令已于 v3.2.5（2026-06-25）挂载到 CLI（`tools/bin/ae-sdd`，通过 subprocess 调 `scripts/init.py`，透传全部参数），UC-03 历史遗留 warn 已清零该项。`ae-sdd fork` 仍为**未来命令**（v3.0 双目录分层 + overrides/ 机制已覆盖 fork 语义，暂不实现），保留在 UC-03 `HISTORICAL_UNIMPLEMENTED` 集合中（warn 状态）。`run`/`skill`/`sync-tools` 同属历史声明，标未来命令。维护者若补全 fork 等，需同步：CLI 注册 + SKILL.md §6 + install-skill.md + 本节 + update_graph.py `HISTORICAL_UNIMPLEMENTED` 集合。
+**⚠️ 已知缺口：** SKILL.md §6 描述的 `ae-sdd init <project-dir> <project-key>` 命令已挂载到 CLI，UC-03 历史遗留 warn 已清零该项。`ae-sdd fork` 仍为**未来命令**（双目录分层 + overrides/ 机制已覆盖 fork 语义，暂不实现），保留在 UC-03 历史未实现集合中（warn 状态）。`run`/`skill`/`sync-tools` 同属历史声明，标未来命令。维护者若补全 fork 等，需同步：CLI 注册 + SKILL.md §6 + install-skill.md + 本节 + update-check 的历史未实现集合。
 
 ---
 
@@ -272,8 +272,8 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 >
 > | 变更类型 | 必查/必改文档 | 不需要改时 |
 > | --- | --- | --- |
-> | 能力语义、流程边界、门禁语义、用户可见行为变化 | [`source/docs/ae-sdd-design.md`](../../docs/ae-sdd-design.md) | 在 CHANGELOG 写明"能力设计文档不受影响" |
-> | CLI/lib/scripts/hook/build/distribution/cache/scanner/state 等实现边界或数据流变化 | [`source/docs/ae-sdd-implementation-architecture.md`](../../docs/ae-sdd-implementation-architecture.md) | 在 CHANGELOG 写明"实现架构文档不受影响" |
+> | 能力语义、流程边界、门禁语义、用户可见行为变化 | [`source/docs/ae-sdd-design.md`](../../docs/ae-sdd-design.md) | 在 Design Ledger 影响列写明"能力设计文档不受影响" |
+> | CLI/lib/scripts/hook/build/distribution/cache/scanner/state 等实现边界或数据流变化 | [`source/docs/ae-sdd-implementation-architecture.md`](../../docs/ae-sdd-implementation-architecture.md) | 在 Design Ledger 影响列写明"实现架构文档不受影响" |
 >
 > 禁止只改 SKILL/代码而不判断这两份文档是否需要同步；这会重新制造"设计层与实现层岔开"。
 
@@ -334,7 +334,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 - **🆕 2026-07-03：** 任意 `source/` 或 `tools/` 调整后，必须同步判断：
   - 能力语义变了 → 更新 `source/docs/ae-sdd-design.md`
   - 实现架构变了 → 更新 `source/docs/ae-sdd-implementation-architecture.md`
-  - 未受影响 → 在本次 CHANGELOG 的影响范围/验证方式中显式写 `N/A`，不得默认跳过
+  - 未受影响 → 在 Design Ledger 本行的影响范围/验证方式中显式写 `N/A`，不得默认跳过
 - **🆕 2026-06-10 未来防御：修改任一 SKILL 时，必须同步更新 `README.md:5` 的版本号**
   - **触发条件：** 任何 SKILL .md 改动（不仅是 `SKILL.md`）→ 必须更新 README 第 5 行 `**版本：** YYYY-MM-DD（最新变更：...）`
   - **操作：** `README.md:5` 的 `**版本：**` 行 = 仓库整体"代际标识"；"最新变更"括号内简述本次变更（如 `+ 4 类需求路由` `+ 工程解耦定位器`）
@@ -354,12 +354,12 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 | # | 检查项 | 检查命令 / 位置 | 自动 / 人工 |
 |---|--------|---------------|-----------|
 | 1 | `document-storage-skill.md 附录 A` schema 与 `SKILL.md §1.3` 指针字段名 1:1 一致 | grep 比对 | 自动 |
-| 2 | `HARNESS.md` HS-7/HS-8 物理阻断实现存在（`tools/lib/gates.py` HS_REGISTRY） | `grep -n "HS-7\|HS-8" tools/lib/gates.py` | 自动 |
+| 2 | `HARNESS.md` HS-7/HS-8 物理阻断实现存在（`crates/ae-sdd-gates/src/registry.rs` HS_REGISTRY） | `grep -n "HS-7\|HS-8" crates/ae-sdd-gates/src/registry.rs` | 自动 |
 | 3 | 4 个新 CLI 子命令存在（`state prd-check-complete` / `state prd-complete` / `state prd-archive` / `runtime compact`） | `ae-sdd --help \| grep prd-` | 自动 |
 | 4 | `standards/update-graph.json` UG-09 规则存在 | `grep -n "UG-09" source/standards/update-graph.json` | 自动 |
 | 5 | `prd-summary-template.md` 与 `document-storage-skill.md 附录 A` 字段职责分离原则一致（state.md 不重复 state.json 字段）| 人工核对 | 人工 |
 
-**操作：** 改完 PRD 级任一文件 → 跑 `python tools/bin/ae-sdd update-check` → UC-01/UC-03/UC-05 全绿 + UG-09 连带项提示全勾。
+**操作：** 改完 PRD 级任一文件 → 跑 `ae-sdd update-check` → UC-01/UC-03/UC-05 全绿 + UG-09 连带项提示全勾。
 
 **禁止：** ❌ 改 `SKILL.md §1.1~1.6` 但不同步 `document-storage-skill.md 附录 A` schema（视为违规）。 ❌ 改 `state.json` schema 但不同步 `ae-sdd-conventions.md §2.3` PRD ID 命名行。
 
@@ -410,17 +410,17 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 | 对象 | 定位 | 维护方式 |
 |------|------|---------|
 | `source/`（仓库根 `source/`） | **唯一母版（SSOT）** | 直接修改（开发者编辑这里） |
-| `dist/ae-sdd/` | **实例化分发包**（构建产物，git ignored） | 不手工改；由 `bash scripts/build-dist.sh` 从 `source/` 构建 |
-| `~/.claude/skills/ae-sdd/` | **本地 Claude skills 安装** | 不手工改；由 `bash scripts/install.sh` 从 `dist/ae-sdd/` 装入 |
+| `dist/ae-sdd/` | **实例化分发包**（构建产物，git ignored） | 不手工改；由 `ae-sdd-build` compile 作业从 `source/` 构建 |
+| `~/.claude/skills/ae-sdd/` | **本地 Claude skills 安装** | 不手工改；由 `ae-sdd-build` distribute 作业从 `dist/ae-sdd/` 装入 |
 | **🆕 v3.0 母版根 `SKILL.md`**（`source/SKILL.md`） | ae-sdd 唯一主入口 | **手工编辑（直接修改主入口）；build 时自动包含** |
-| `dist/ae-sdd/SKILL.md`（构建产物） | 分发包入口 | 不手工改；由 build-dist.sh 自动从 `source/SKILL.md` 复制 |
-| `~/.claude/skills/ae-sdd/SKILL.md`（安装副本） | 本地 Claude 加载入口 | 不手工改；由 install.sh 自动从 `dist/ae-sdd/SKILL.md` 复制 |
+| `dist/ae-sdd/SKILL.md`（构建产物） | 分发包入口 | 不手工改；由 compile 作业自动从 `source/SKILL.md` 复制 |
+| `~/.claude/skills/ae-sdd/SKILL.md`（安装副本） | 本地 Claude 加载入口 | 不手工改；由 distribute 作业自动从 `dist/ae-sdd/SKILL.md` 复制 |
 
 > **🆕 v3.0 重大变更（2026-06-18）：**
 > 1. **目录结构重组**：仓库根改为 `source/`（母版）+ `dist/ae-sdd/`（分发包）双目录。
 > 2. **主入口已就位**：`source/SKILL.md` 即为 ae-sdd 唯一主入口（直接编辑），不再从 `skills/orchestration/ae-sdd-skill.md` 派生（原派生文件已删除）。
 > 3. **废弃 `plugins/ae-sdd/`**：v3.0 起 marketplace plugin 副本路径改为 `dist/ae-sdd/`，`plugins/ae-sdd/` 整个废弃。
-> 4. **脚本重命名**：`sync-to-plugin.sh` → `build-dist.sh`（构建）+ `install.sh`（安装）+ `dev-sync.sh`（开发者工具）。
+> 4. **构建入口统一**：编译、验证、分发与托管 L2 同步都归 `ae-sdd-build`，由 `.githooks/post-commit` 串起。
 > 5. **安装路径简化**：`~/.claude/skills/ae-sdd/skills/ae-sdd/` → `~/.claude/skills/ae-sdd/`（去掉多余中间层）。
 
 ### 修改后动作（🆕 v3.0 工作流）
@@ -430,15 +430,14 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 3. 如本次变更需要在本地 Claude Skill 中立即生效，运行：
 
    ```bash
-   # 开发者推荐：build + install 一步到位
-   bash scripts/dev-sync.sh
+   # 推荐：提交后由 .githooks/post-commit 自动完成 compile → verify → distribute → 托管 L2 同步
+   git commit
 
-   # 或显式两步：
-   bash scripts/build-dist.sh  # source/ → dist/ae-sdd/
-   bash scripts/install.sh     # dist/ae-sdd/ → ~/.claude/skills/ae-sdd/
+   # 或显式跑一次：
+   cargo run -p ae-sdd-build --release -- post-commit --repository-root . --source ./source ...
    ```
 
-4. 确认同步目标目录（**两个**，由 dev-sync 链式调用产出）：
+4. 确认同步目标目录（**两个**，由 post-commit 链路产出）：
 
    ```text
    1) <仓库根>/dist/ae-sdd/SKILL.md                      # 实例化分发包（build 产物）
@@ -446,19 +445,19 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
    ```
 
 5. 两个产物下的 `SKILL.md` 应与 `source/SKILL.md` **完全一致**（tar 整树复制保证）。
-6. 在最终回复中明确说明：本次是否已执行 dev-sync / build-dist / install；如未执行，说明"仅修改母版，尚未分发/安装"。
+6. 在最终回复中明确说明：本次是否已执行编译与分发；如未执行，说明"仅修改母版，尚未分发/安装"。
 
-### 同步脚本说明（🆕 v3.0 三脚本分工）
+### 分发作业说明
 
-| 脚本 | 位置 | 职责 |
+| 作业 | 入口 | 职责 |
 |------|------|------|
-| `build-dist.sh` | `scripts/build-dist.sh` | 从 `source/` 构建 `dist/ae-sdd/`（注入 VERSION + plugin.json，剥离 CHANGELOG/docs/marketplace.json）|
-| `install.sh` / `install.ps1` | `scripts/install.{sh,ps1}` | 从 `dist/ae-sdd/` 装到 `~/.claude/skills/ae-sdd/`（跨平台 + 本地/远程两模式）|
-| `dev-sync.sh` | `scripts/dev-sync.sh` | 开发者工具：build + install 组合 + `--watch` 监听模式 + `--uninstall` |
+| `compile` | `ae-sdd-build` | 从 `source/` 构建 `dist/ae-sdd/`（注入 VERSION，剥离 CHANGELOG/docs）|
+| `distribute` | `ae-sdd-build` | 从 `dist/ae-sdd/` 装到各 host（目标来自 `~/.ae-sdd/distributors.json`）|
+| `post-commit` | `ae-sdd-build` | 编译 → 验证 → 分发 → 托管 L2 指令同步，一次串完 |
 
 ### 🆕 v3.4.0 自动分发闭环（post-commit hook）
 
-> **v3.4.0 之前的债**：母版改完后，**全靠开发者主动跑 `dev-sync.sh`**。12 个 v3.2.x commit 期间没人跑 → `harness/.harness/agent.md` 停在 v3.1.2、已装 SKILL 停在 v3.2.3、`.adapter.lock` 漂移到 3.3.0。
+> **v3.4.0 之前的债**：母版改完后，**全靠开发者主动跑手工同步**。12 个 v3.2.x commit 期间没人跑 → `harness/.harness/agent.md` 停在 v3.1.2、已装 SKILL 停在 v3.2.3、`.adapter.lock` 漂移到 3.3.0。
 >
 > **v3.4.0 解决方案**：母版仓根目录 `.githooks/post-commit` 自动跑分发链，git hooksPath 设为 `.githooks`，让 hook 跟仓库一起分发。
 
@@ -467,14 +466,13 @@ grep -nE "^## 📋 ①bis|^## 📋 ④bis|^## 📋 测试真实性" *.md
 ```
 [ae-sdd 母版 commit]
    ↓ .githooks/post-commit (git hooksPath = .githooks)
-build_dist.py (source → dist/ae-sdd)
+ae-sdd-build harness (source/SKILL.md + HARNESS.md → .harness/agent.md)
    ↓
-install.py --target-path ~/.claude/skills/ae-sdd --quiet
-install.py --target-path ~/.zcode/skills/ae-sdd --quiet
-   ↓
-ae-sdd-harness-adapter/scripts/convert-ae-sdd-to-harness.ps1
-   ↓
-harness remount
+ae-sdd-build post-commit
+   ├─ compile   (source → dist/package)
+   ├─ verify    (拒绝未编译/不完整的 runtime 包)
+   ├─ distribute(按 ~/.ae-sdd/distributors.json 逐 host 安装)
+   └─ 托管 L2 指令同步
 ```
 
 **跳过策略**：
@@ -483,10 +481,10 @@ harness remount
 - `SKIP_AE_SDD_HOOK=1` → 跳过（紧急旁路）
 - 任一步骤失败 → 不回滚 commit，仅报错
 
-**何时仍需手工 dev-sync**（hook 失效场景）：
+**何时仍需手工跑 `ae-sdd-build post-commit`**（hook 失效场景）：
 1. **开发机全局禁用 hook**（`git config --global core.hooksPath /dev/null`）
-2. **Windows 上 Git Bash 路径含空格**导致子进程失败
-3. **harness daemon 没跑**但想强制 build+install（不依赖 harness mount）
+2. **Windows 上路径含空格**导致子进程失败
+3. **harness daemon 没跑**但想强制编译+分发（不依赖 harness mount）
 4. **首次安装**：clone 完仓库后还没装 hook → 跑一次 `bash scripts/install-hooks.sh`（自动 git config core.hooksPath = .githooks）
 
 **`ae-sdd health master-freshness` 输出解读**：
@@ -522,10 +520,10 @@ harness remount
 |------|------|---------|
 | 只改 `dist/ae-sdd/` 或本地 Claude skills 目录 | 产物会被下次 build/install 覆盖，母版丢失变更 | 只改 `source/` 母版 |
 | 同时手工维护母版和分发包 | 双源漂移，无法判断哪个是权威版本 | 母版单点维护，分发包由 `build-dist.sh` 生成 |
-| 修改母版后假设运行环境已自动更新 | 当前没有自动触发同步机制 | 需要即时生效时显式运行 `bash scripts/dev-sync.sh` |
+| 修改母版后假设运行环境已自动更新 | 当前没有自动触发同步机制 | 需要即时生效时显式运行 `ae-sdd-build post-commit` |
 | ~~手工编辑 `SKILL.md`~~ | ❌ v3.0 已废除此规则 | ✅ **v3.0 起，`source/SKILL.md` 是主入口，**直接编辑即可** |
-| ~~修改 `ae-sdd-skill.md` 后同步~~ | ❌ v3.0 已废除 | ✅ **v3.0 起，**直接修改 `source/SKILL.md`**，然后跑 `dev-sync.sh`** |
-| ~~运行 `sync-to-plugin.sh`~~ | ❌ v3.0 已重命名 | ✅ **v3.0 起，**运行 `build-dist.sh` + `install.sh`（或 `dev-sync.sh` 一步到位）** |
+| ~~修改 `ae-sdd-skill.md` 后同步~~ | ❌ v3.0 已废除 | ✅ **v3.0 起，**直接修改 `source/SKILL.md`**，然后提交触发 post-commit 链路** |
+| ~~运行 `sync-to-plugin.sh`~~ | ❌ v3.0 已重命名 | ✅ **v3.0 起，**运行 `ae-sdd-build post-commit`（compile + verify + distribute 一次串完）** |
 | ~~把构建产物 commit 到 git~~ | ❌ v3.0 已加 gitignore | ✅ **`dist/` 在 .gitignore 内，不应 commit** |
 
 ---
@@ -534,7 +532,7 @@ harness remount
 
 > **前置——设计意图确认（v3.2.5 新增）：** 本节管的是"改了 A 之后连带同步哪些 B/C/D"（物理层）。在查本节之前，先阅读 **[`source/docs/ae-sdd-design.md`](../../docs/ae-sdd-design.md)** 中对应能力模块，确认当前修改的是正确的设计层（流程编排层 / 子 SKILL 节点内规则层 / 工具链层 / 模板层），再用本节查连带项。两步缺一不可。
 >
-> **设计动机：** 原同步规则是线性的"改母版 → 跑 dev-sync"，但**改了 A 之后要同步哪些 B/C/D 无表可查**，靠人记忆必然漏。本节固化"变更触发源 → 连带项"的依赖图谱，配套 `ae-sdd update-check` 自动兜底检查。
+> **设计动机：** 原同步规则是线性的"改母版 → 跑分发"，但**改了 A 之后要同步哪些 B/C/D 无表可查**，靠人记忆必然漏。本节固化"变更触发源 → 连带项"的依赖图谱，配套 `ae-sdd update-check` 自动兜底检查。
 
 ### 📍 权威源（机器可读，Agent 必须从这里消费）
 
@@ -550,11 +548,11 @@ Story 模板、Story 撰写指南或章节解析器变更时，必须通过 `UG-
   "rules": [
     {
       "id": "UG-02",
-      "name": "gates.py 门禁变更",
-      "trigger": ["tools/lib/gates.py"],
+      "name": "门禁注册表变更",
+      "trigger": ["crates/ae-sdd-gates/src/registry.rs"],
       "trigger_condition": "新增/修改/删除门禁",
       "affected": [
-        {"path": "tools/tests/test_gates.py", "action": "...", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "...", "auto_checkable": false},
         ...
       ],
       "checks": ["UC-02", "UC-03"]
@@ -576,12 +574,12 @@ Agent 完成任何 `source/` 或 `tools/` 改动后，**必须**执行以下两�
 
 **第 1 步：查询连带项**（改了什么 → 该同步什么）
 ```bash
-ae-sdd update-check --affected tools/lib/gates.py,scripts/ra_authenticity_scan.py
+ae-sdd update-check --affected crates/ae-sdd-gates/src/registry.rs,ae-sdd ra-authenticity-scan
 ```
-或 Python API：
-```python
+或程序化调用：
+```text
 from lib import update_graph
-qr = update_graph.query_affected(["tools/lib/gates.py"])
+qr = update_graph.query_affected(["crates/ae-sdd-gates/src/registry.rs"])
 # qr.affected_items  → 连带项清单（path/action/auto_checkable）
 # qr.checks_to_run   → 该跑的 UC-XX 检查 ID
 ```
@@ -595,21 +593,21 @@ ae-sdd update-check          # 全量跑 UC-01~UC-20
 # 或只跑第 1 步返回的 checks_to_run
 ae-sdd update-check --only UC-02
 ```
-- 全 ✅ → 闭环完整，可 dev-sync
+- 全 ✅ → 闭环完整，可分发
 - 有 ❌ → 按 fix 提示补齐，重跑直到全 ✅
 
-> 🔴 **门禁：** dev-sync 前必须 `ae-sdd update-check` 全绿（error 级 0 failed）。Agent 不得在 update-check 有 failed 时跑 dev-sync。
+> 🔴 **门禁：** 分发前必须 `ae-sdd update-check` 全绿（error 级 0 failed）。Agent 不得在 update-check 有 failed 时跑分发。
 
 ### Typed Operation Maintenance Entry
 
-修改 `tools/lib/operations.py`、`state_store.py`、ops/lease CLI、Work Item scope、Evidence lifecycle 或 `source/standards/operation-protocol.md` 时，先读取 [`source/standards/operation-protocol.md §9 Maintainer Change Contract`](../../standards/operation-protocol.md)。本 SKILL 只负责把维护者路由到权威契约，不复制整份协议。
+修改 `crates/ae-sdd-operations`、`crates/ae-sdd-store`、ops/lease CLI、Work Item scope、Evidence lifecycle 或 `source/standards/operation-protocol.md` 时，先读取 [`source/standards/operation-protocol.md §9 Maintainer Change Contract`](../../standards/operation-protocol.md)。本 SKILL 只负责把维护者路由到权威契约，不复制整份协议。
 
 强制顺序：
 
 1. 运行 `ae-sdd ops describe --json`，记录当前 `schemaVersion` 与 `registryVersion`。
 2. 按协议 §9.2 判定 patch/minor/major；删除/重命名、字段由可选改必填、类型/默认语义/错误语义变化属于 major。
 3. 按协议 §9.3 逐项满足 operation admission；禁止注册 raw `state.patch`。
-4. 运行 `ae-sdd update-check --affected <changed-files>`，逐项完成 `UG-27` 返回的协议、维护入口、设计/实现架构、测试、版本和 CHANGELOG 连带项。
+4. 运行 `ae-sdd update-check --affected <changed-files>`，逐项完成 `UG-27` 返回的协议、维护入口、设计/实现架构、测试和版本连带项。
 5. 运行 `ae-sdd update-check --only UC-19 --json`；失败时按 details 修复，不得用对话说明、README 或 CHANGELOG 代替维护入口和机器检查。
 6. 按协议 §9.5 Definition of Done 完成 focused/full tests、build、runtime verify 和 built-runtime `ops describe` 对账。
 
@@ -627,8 +625,8 @@ ae-sdd update-check --only UC-02
 2. 若设计问题、决策、预期价值、验证证据或版本状态变化，更新对应台账行；历史设计不重复复制到 changelog。
 3. 设计语义变化时直接更新对应 D-xxx；没有设计语义变化时不制造过程文档。
 4. 运行 `ae-sdd update-check --affected <changed-files>`，完成 `UG-28` 返回的台账、主设计、实现架构、维护入口、测试和版本连带项。
-5. 运行 `ae-sdd update-check --only UC-20 --json`；缺行、空字段、占位文本、章节漏映射或 changelog 记录缺失时必须按 remediation 修复。
-6. 只有台账、设计/实现文档、CHANGELOG 和机器检查全部完成后，才能进入 build/runtime 分发。
+5. 运行 `ae-sdd update-check --only UC-20 --json`；缺行、空字段、占位文本或章节漏映射时必须按 remediation 修复。
+6. 只有台账、设计/实现文档和机器检查全部完成后，才能进入 build/runtime 分发。
 
 `预期价值`不是已验证收益。没有可重复测试、CLI 输出或运行指标时，必须写明 `待补基线`，不得把设计假设写成性能结论。
 
@@ -638,7 +636,7 @@ ae-sdd update-check --only UC-02
 
 | 触发源 | 连带项（简）| 检查 |
 |--------|------------|------|
-| SKILL.md version | paths.py MASTER_VERSION / README.md:5 / dist VERSION | UC-01 |
+| SKILL.md version | README.md:5 / dist VERSION | UC-01 |
 | gates.py 门禁 | CHECK_FUNCS 一致 / test_gates 断言 / CLI 注释 / SKILL 命令契约 | UC-02+UC-03 |
 | ae-sdd 子命令 | SKILL 引用存在 / 注释 / 测试 / 设计文档 / README | UC-03 |
 | *_scan.py 扫描器 | build_dist 白名单 / gates _locate / SKILL 引用 | UC-04 |
@@ -648,9 +646,9 @@ ae-sdd update-check --only UC-02
 | runtime compiler / compiled package | `compile_skill_runtime.py` / `runtime_verify.py` / `build_dist.py` / `distribute.py` / `standalone-skills/skill-runtime-compiler/` / compiled-only guard | UC-15+UC-14 |
 | Runtime Stats / subprocess wrapper | `runtime_stats.py` / `runtime_exec.py` / `perf` CLI / gate duration / UTF-8 子进程 / `.gitignore` / 设计与实现架构文档 | UC-03 |
 | ae-sdd Monitor | `ae-sdd-monitor-design.md` / `apps/ae-sdd-monitor/src/workspace.js` / Monitor tests / README / ae-sdd 设计与实现架构文档 | UC-03+UC-14 |
-| typed operations / Work Item lease | `operation-protocol.md §9` / `ae-sdd-update` / `operations.py` / `state_store.py` / UG-27 / design+implementation docs / tests / changelog | UC-03+UC-14+UC-19 |
-| Design Ledger / 每次迭代问题与价值记录 | `ae-sdd-design.md §0` / `ae-sdd-implementation-architecture.md §12` / CHANGELOG template / UG-28 | UC-20 |
-| 任意 source/tools | CHANGELOG / README:5 / 设计文档 / 实现架构文档 / dev-sync / 级联图谱锚点 | UC-01+03+04+05+14 |
+| typed operations / Work Item lease | `operation-protocol.md §9` / `ae-sdd-update` / `operations.py` / `state_store.py` / UG-27 / design+implementation docs / tests | UC-03+UC-14+UC-19 |
+| Design Ledger / 每次迭代问题与价值记录 | `ae-sdd-design.md §0` / `ae-sdd-implementation-architecture.md §12` / UG-28 | UC-20 |
+| 任意 source/tools | README:5 / 设计文档 / 实现架构文档 / 分发 / 级联图谱锚点 | UC-01+03+04+05+14 |
 
 ### 图谱使用 SOP（Agent 流程）
 
@@ -663,7 +661,7 @@ ae-sdd update-check --only UC-02
 
 改动后：
   3. `ae-sdd update-check` 兜底验证 → 全绿（0 failed）才继续
-  4. 跑 dev-sync 分发
+  4. 跑分发
   5. 确认未写 changelog，当前事实与机器证据齐全
 ```
 
@@ -679,7 +677,7 @@ ae-sdd update-check --only UC-02
 | **UC-04** | 扫描器分发一致性：scripts/*_scan.py 在 build_dist.py 白名单 | error | 全在白名单 |
 | **UC-05** | 健康度清单覆盖：本文件清单含关键组件 | warn | 关键组件齐 |
 | **UC-06** | 文档-实现一致性：SKILL/子 SKILL 命令引用、HARNESS HS 声明定位 | error/warn | 新命令有 CLI；HS 声明有实现线索 |
-| **UC-20** | Design Ledger 契约：D-xxx、§1~§22 覆盖、问题/价值/证据字段、版本和 CHANGELOG impact | error | 真实仓库台账完整，缺失时 fail closed |
+| **UC-20** | Design Ledger 契约：D-xxx、§1~§22 覆盖、问题/价值/证据字段、版本与影响范围 | error | 真实仓库台账完整，缺失时 fail closed |
 | **UC-07** | 分发闭环：post-commit hook、hooksPath、HARNESS/update-skill 声明一致 | error | hook 与文档闭环齐 |
 | **UC-08~UC-13** | AA 全维对齐验证：门禁承诺、实现真实性、state 字段、状态机、幽灵命令、门禁注册完整性 | error/warn | 无 blocker 级漂移 |
 | **UC-14** | update-skill 级联图谱同步：`update-graph.json`、`CHECK_FUNCS`、本节 UG/UC 锚点一致 | error | 三方集合完全一致 |
@@ -736,7 +734,7 @@ ae-sdd gates check      # 28 门禁，确认未被破坏
 ae-sdd iteration-check [--project <仓库根>] [--json]
 ```
 
-**机器自动接管**（report-only，不阻断 dev-sync）：
+**机器自动接管**（report-only，不阻断分发）：
 - **IC-1**：扫 SKILL.md 的幽灵命令引用 + 过时技术栈关键词（rules.yaml/.mjs/sync-tools）
 - **IC-2**：统计 stop_check.py 的 `_G\d+_CLEAR_RE` 覆盖数 vs GATE_REGISTRY 总数，判定 F-1 覆盖面
 - **IC-3**：扫 `tools/lib/*.py` 实现了但全树零 import 的模块 + git untracked 的 `tools/lib/*.py`
@@ -782,10 +780,10 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 
 | 维度 | UC-01~19（自动） | 本节迭代检查（人工/Agent） |
 |------|----------------|------------------------|
-| 触发 | dev-sync 前 / 改完文件 | 每月 / 重大变更 / 用户要求 |
+| 触发 | 分发前 / 改完文件 | 每月 / 重大变更 / 用户要求 |
 | 深度 | 机器可判定的注册/存在性 | 语义级"声明 vs 实现覆盖面" |
 | 盲区 | 无（这是它的边界） | 补 UC 的 4 类盲区 |
-| 阻断 | error 级阻断 dev-sync | 报告 + 修复建议，不阻断（由用户决定是否本次迭代修） |
+| 阻断 | error 级阻断分发 | 报告 + 修复建议，不阻断（由用户决定是否本次迭代修） |
 | 关系 | **本节步骤 1 调用 UC 作为基线** | 本节是 UC 的"深挖层" |
 
 > **定位：** UC 是"改完文件立即跑"的快速防线（防漏同步）；本节是"周期性深度体检"（防长期潜伏的文档撒谎）。两者互补，不替代。
@@ -794,7 +792,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 
 - 🔴 本节检查出的 🔴 阻断级不一致（文档撒谎），必须在**下次大版本发布前**修复或降级声明
 - 🟡 一般级不一致，纳入下次迭代计划
-- ✅ 检查报告须归档到 `source/CHANGELOG/` 或 `source/docs/plans/`（留痕，供下次对比）
+- ✅ 检查结论须写回 Design Ledger 对应 D-xxx 或 `source/docs/plans/`（留痕，供下次对比）
 
 ---
 
@@ -828,15 +826,15 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] Story Review 旧版计划模板若保留，则仅作为历史兼容壳，不再作为运行时输入
 - [ ] 🆕 v3.2 `requirement-analysis-skill.md` 包含 `## 🔴 RequirementAnalysisModel（12 维需求分析决策模型）` + `## 第七步：16 道 RA 质量闸`
 - [ ] 🆕 v3.2 `templates/design/ra-template.md` 包含 §6.5 衍生规则登记表 + §8.5 衍生 AC 登记表 + §8.6 衍生覆盖率 + §9-bis 业务模式匹配表 + §9-ter 跨域级联效应表 + §13 RA-G01~16 质量闸自检
-- [ ] 🆕 v3.2 `tools/lib/gates.py` GATE_REGISTRY 包含 G-RA-1~G-RA-4（RA 文档存在 / 8 维度完整 / 衍生章节完整 / 真实性扫描通过）+ CHECK_FUNCS 注册 + check_all G-RA-4 特判
-- [ ] 🆕 v3.2 `scripts/ra_authenticity_scan.py` 存在，8 类禁止规则（vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness）+ JSON 输出契约与 test_authenticity_scan.py 一致
-- [ ] 🆕 v3.2 `tools/lib/gates.py` check_g13 接入 RA 层（六层追溯：RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview），RA 为可选层不阻断
+- [ ] 🆕 v3.2 `crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 包含 G-RA-1~G-RA-4（RA 文档存在 / 8 维度完整 / 衍生章节完整 / 真实性扫描通过）+ CHECK_FUNCS 注册 + check_all G-RA-4 特判
+- [ ] 🆕 v3.2 `ae-sdd ra-authenticity-scan` 存在，8 类禁止规则（vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness）+ JSON 输出契约与 test_authenticity_scan.py 一致
+- [ ] 🆕 v3.2 `crates/ae-sdd-gates/src/registry.rs` check_g13 接入 RA 层（六层追溯：RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview），RA 为可选层不阻断
 - [ ] 🆕 v3.2 `SKILL.md` 含 `## 🛡️ G-RA 需求分析准入门卫` 章节 + 智能路由表 G-RA 门禁列
 - [ ] 🆕 v3.2+ `tools/lib/update_graph.py` 存在，含 UC-01~UC-07 + UC-14~UC-20 原生检查、`check_all`/`summarize`；`alignment_audit.py` 注入 UC-08~UC-13
 - [ ] 🆕 v3.2+ `tools/bin/ae-sdd` 含 `update-check` 子命令（跑 UC-01~UC-20）
 - [ ] 🆕 v3.2+ `tools/tests/test_update_graph.py` 存在，覆盖 UC-01~UC-07 + UC-14 各场景
 - [ ] 🆕 v3.2+ 本文件含 `## 更新依赖图谱` 章节（图谱表 + 使用 SOP + UC-01~15 检查说明 + UG/UC 机器同步锚点）
-- [ ] 🆕 v3.2.1 `tools/lib/gates.py` 含 `G-CODE-1` 门禁（Coding 真实性）+ `scripts/coding_authenticity_scan.py` 存在
+- [ ] 🆕 v3.2.1 `crates/ae-sdd-gates/src/registry.rs` 含 `G-CODE-1` 门禁（Coding 真实性）+ `scripts/coding_authenticity_scan.py` 存在
 - [ ] 🆕 v3.2.2 `source/skills/cross-cutting/` 含 5 个 toolset SKILL（`database-tool-skill.md` / `git-insight-skill.md` / `memory-management-skill.md` / `toolset-orchestration-skill.md` / `postman-tool-skill.md`）
 - [ ] 🆕 v3.2.2 `source/standards/toolsets/` 含 5 份 toolset 标准（`db-connection-profile.schema.md` / `git-insight.md` / `memory-layering.md` / `toolset-security.md` / `postman-profile.schema.md`）
 - [ ] 🆕 v3.2.2 `tools/lib/` 含 3 个 toolset 实现模块（`db_tool.py` 只读优先 + 本地 profile / `git_insight.py` 只读 JSON 输出 / `memory_store.py` 阶段感知 JSONL）
@@ -847,16 +845,16 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2.3 `tools/tests/test_memory_gate.py` 存在，覆盖阶段切换记忆门禁各场景
 - [ ] 🆕 v3.2.3 `memory_store.py` 含非破坏性 `check_exit_ready()`（gates 可校验 memory 而不写 exit 事件）+ `--allow-empty-memory` 维护 override
 - [ ] 🆕 v3.2.4 本文件含 `## 项目结构与设计说明` 章节（6 子系统总览 + 协同关系图 + 子系统维护边界判定表 + 维护者 SOP + 实例化 4 层速查）
-- [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `tools/lib/gates.py` GATE_REGISTRY 实际数量一致（🆕 v3.8.0：+ G-AUTO-CONSENSUS = 30）
+- [ ] 🆕 v3.2.4 README.md 正文门禁计数与 `crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 实际数量一致（🆕 v3.8.0：+ G-AUTO-CONSENSUS = 30）
 - [ ] 🆕 v3.2.4 README.md 正文子 SKILL 计数与 `source/skills/**/*-skill.md` 实际文件数一致（当前 23；v3.5.0 加 `ae-sdd-plugin-loader-skill.md`）
 - [ ] `source/docs/ae-sdd-design.md` 存在，包含 22 个系统级设计章节和 D-001~D-026 Design Ledger（D-024 记录台账治理，D-025 记录有界测试策略，D-026 记录真实 HTTP 双阶段接口验收）
 - [ ] 🆕 2026-07-03 `source/docs/ae-sdd-implementation-architecture.md` 存在，说明 CLI / tools/lib / scripts / state/cache / build/distribution / gate/scanner / runtime stats 的实现分层；本文件 §步骤1 含"设计/实现架构同步"后置块
 - [ ] 🆕 v3.2.5 本文件 §步骤1 含"设计意图确认"前置块，引用 `ae-sdd-design.md`
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
-- [ ] 🆕 v3.4.0 `tools/lib/gates.py` GATE_REGISTRY 含 G-14 / G-CODEPLAN-SRC / G-DOC-STORAGE（22 门禁）+ CHECK_FUNCS 注册 + check_g14/check_g_codeplan_src/check_g_doc_storage 实现
-- [ ] 🆕 v3.5.7 `tools/lib/gates.py` GATE_REGISTRY 含 G-DOC-CONSISTENCY（25 门禁）+ CHECK_FUNCS 注册 + check_g_doc_consistency 实现（项目侧记忆-配置路径一致性，防旧记忆劫持 config docWorkspacePath）；`source/SKILL.md` 含 §🛡️ G-DOC-CONSISTENCY 门禁章节；`tools/tests/test_gates.py` 含 TestGDocConsistency 4 用例
-- [ ] 🆕 v3.5.9 `scripts/ra_depth_scan.py` 存在（5 条机械派生规则 D1-D5：§6.5 主规则机械派生 / §8.5 R'→AC 链接 / §8.6 覆盖率真实重算 / §9-ter 五问覆盖 / §9-bis 业务模式六选一）；`tools/lib/gates.py` GATE_REGISTRY 含 G-RA-5（26 门禁）+ `check_ra_depth` + `check_all` G-RA-5 特判分支；`source/SKILL.md` frontmatter version ≥ v3.5.9 + G-RA 规则表含 G-RA-5 + §🛠️ 工具速查含 `ra-depth-scan` 子命令；`source/skills/phase1-design/requirement-analysis-skill.md` §阶段 E.5/G.5/H.5/H.6 顶部含 G-RA-5 红框 + 7.1 RA-G08/09/12 判定 SOP 升级 + 禁止事项第 22 条 + 执行清单 8.5/10.5/11.6 补 G-RA-5；`tools/tests/test_ra_depth_scan.py` 存在（≥6 用例覆盖 D1-D5）；`tools/tests/test_gates.py` TestCheckAll 断言 26 + TestGRA5 ≥2 用例；`scripts/build_dist.py` runtime_scripts 白名单含 ra_depth_scan.py；`tools/bin/ae-sdd` 含 `cmd_ra_depth_scan` + argparse `ra-depth-scan`；`source/standards/update-graph.json` 含 UG-14 规则；`source/CHANGELOG/` 含 `2026-06-27-v3.5.9-ra-derivation-depth-gate.md`
-- [ ] 🆕 v3.6.0 `scripts/ra_implementation_scan.py` 存在（I1-I7：数据源清单 / 数据流链路 / 术语定义不变量 / 现有实现复用证据 / 高成本难实现设计反驳 / 开发者疑问答复 / DR 生成交接包）；`tools/lib/gates.py` GATE_REGISTRY 含 G-RA-6（29 门禁）+ `check_ra_implementation` + `check_all` G-RA-6 特判分支；`tools/bin/ae-sdd` 含 `cmd_ra_implementation_scan` + argparse `ra-implementation-scan` + `gate ra-required` 覆盖 G-RA-1~6 + FLOW；`source/skills/phase1-design/requirement-analysis-skill.md` 含第一步 ter + RAGeneratePlan §2.5 + 禁止事项 #23；`source/templates/design/ra-template.md` 含 §9-quater 七要素表；`tools/tests/test_ra_implementation_scan.py` 与 `tools/tests/test_gates.py::TestGRA6` 存在；`scripts/build_dist.py` runtime_scripts 白名单含 ra_implementation_scan.py；`source/standards/update-graph.json` 含 UG-18；`source/CHANGELOG/` 含 `2026-06-30-v3.6.0-ra-implementation-view-gate.md`
+- [ ] 🆕 v3.4.0 `crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-14 / G-CODEPLAN-SRC / G-DOC-STORAGE（22 门禁）+ CHECK_FUNCS 注册 + check_g14/check_g_codeplan_src/check_g_doc_storage 实现
+- [ ] 🆕 v3.5.7 `crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-DOC-CONSISTENCY（25 门禁）+ CHECK_FUNCS 注册 + check_g_doc_consistency 实现（项目侧记忆-配置路径一致性，防旧记忆劫持 config docWorkspacePath）；`source/SKILL.md` 含 §🛡️ G-DOC-CONSISTENCY 门禁章节；`crates/ae-sdd-gates/tests/gate_truth_table.rs` 含 TestGDocConsistency 4 用例
+- [ ] 🆕 v3.5.9 `ae-sdd ra-depth-scan` 存在（5 条机械派生规则 D1-D5：§6.5 主规则机械派生 / §8.5 R'→AC 链接 / §8.6 覆盖率真实重算 / §9-ter 五问覆盖 / §9-bis 业务模式六选一）；`crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-RA-5（26 门禁）+ `check_ra_depth` + `check_all` G-RA-5 特判分支；`source/SKILL.md` frontmatter version ≥ v3.5.9 + G-RA 规则表含 G-RA-5 + §🛠️ 工具速查含 `ra-depth-scan` 子命令；`source/skills/phase1-design/requirement-analysis-skill.md` §阶段 E.5/G.5/H.5/H.6 顶部含 G-RA-5 红框 + 7.1 RA-G08/09/12 判定 SOP 升级 + 禁止事项第 22 条 + 执行清单 8.5/10.5/11.6 补 G-RA-5；`tools/tests/test_ra_depth_scan.py` 存在（≥6 用例覆盖 D1-D5）；`crates/ae-sdd-gates/tests/gate_truth_table.rs` TestCheckAll 断言 26 + TestGRA5 ≥2 用例；`scripts/build_dist.py` runtime_scripts 白名单含 ra_depth_scan.py；`tools/bin/ae-sdd` 含 `cmd_ra_depth_scan` + argparse `ra-depth-scan`；`source/standards/update-graph.json` 含 UG-14 规则；`source/CHANGELOG/` 含 `2026-06-27-v3.5.9-ra-derivation-depth-gate.md`
+- [ ] 🆕 v3.6.0 `ae-sdd ra-implementation-scan` 存在（I1-I7：数据源清单 / 数据流链路 / 术语定义不变量 / 现有实现复用证据 / 高成本难实现设计反驳 / 开发者疑问答复 / DR 生成交接包）；`crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-RA-6（29 门禁）+ `check_ra_implementation` + `check_all` G-RA-6 特判分支；`tools/bin/ae-sdd` 含 `cmd_ra_implementation_scan` + argparse `ra-implementation-scan` + `gate ra-required` 覆盖 G-RA-1~6 + FLOW；`source/skills/phase1-design/requirement-analysis-skill.md` 含第一步 ter + RAGeneratePlan §2.5 + 禁止事项 #23；`source/templates/design/ra-template.md` 含 §9-quater 七要素表；`tools/tests/test_ra_implementation_scan.py` 与 `crates/ae-sdd-gates/tests/gate_truth_table.rs::TestGRA6` 存在；`scripts/build_dist.py` runtime_scripts 白名单含 ra_implementation_scan.py；`source/standards/update-graph.json` 含 UG-18；`source/CHANGELOG/` 含 `2026-06-30-v3.6.0-ra-implementation-view-gate.md`
 - [ ] 🆕 v3.4.0 `tools/lib/session.py` 存在，entry token 管理（enter/read_session/has_valid_entry_token/confirm_phase/is_phase_confirmed）
 - [ ] 🆕 v3.4.0 `tools/bin/ae-sdd` 含 `enter` / `state confirm` / `gate doc-storage` 3 个新子命令
 - [ ] 🆕 v3.4.0 `tools/lib/gate_intercept.py` 含关卡2（_PRODUCT_PATTERNS + _PRODUCT_PHASE_MAP + _check_product_landing）+ 关卡3（coding phase 写 src/ 须 task-reviewed 确认）
@@ -871,9 +869,9 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.5.3 本文件含 `## 设计-实现一致性迭代检查` 章节（4 步 SOP：UC 基线 + HS 物理实现核对 + CLI 命令契约深挖 + 已实现未接入扫描 + 报告模板 + 与 UC 关系定位）；`source/docs/ae-sdd-design.md` 工具链 CLI 模块含 v3.5.3 迭代检查说明
 - [ ] 🆕 v3.5.4 本文件 `## 设计-实现一致性迭代检查` SOP 步骤 2/3/4 改为调 `ae-sdd iteration-check`（IC-1~4 机器粗筛 + 人工复核语义层）；`source/SKILL.md` 含 `## 🛠️ 工具 API 速查` 重写 + 删除幽灵命令段（v3.0 残留 rules.yaml/.mjs/sync-tools）；`source/HARNESS.md` HS-7/8 升级"已补物理实现"+ HS-4/6 降级自认；`tools/lib/iteration_check.py` + `tools/bin/ae-sdd:cmd_iteration_check` 注册；HS-7 物理拦截复用 `tools/lib/state.py:check_prd_4_layers`
 - [ ] 🆕 v3.5.5 `source/SKILL.md` 含 `## ⏱️ 节点级上下文压力软提示` 章节（6 审核点触发表 + 行为约束 + 5 信号表 + 缺省阈值 + config override + SOP + 对话呈现模板 + CLI 速查）+ 整体流程图 6 个审核点后加 ⏱️ 标记 + §🤖 章节含"主会话职责边界"小节；`source/skills/cross-cutting/agent-orchestration-skill.md` 含 §8.5 默认单 sub-agent 模式 + §8.6 节点级派活清单；`tools/lib/context_pressure.py` + `tools/bin/ae-sdd:cmd_context_pressure` + `tools/tests/test_context_pressure.py` 注册并通过；CLI 速查表含 `ae-sdd context-pressure [--story <ID>]`
-- [ ] 🆕 v3.5.11+ `tools/lib/alignment_audit.py` 存在（AA 全维对齐验证器，6 维 UC-08~13：门禁承诺↔注册双向 / 门禁实现真实性抓 stub-pass / state 字段存活性 / 状态机闭环 / 幽灵命令全捕获 / 门禁注册完整性）+ `register_to_update_graph()` 注入 update_graph.CHECK_FUNCS；`tools/bin/ae-sdd:cmd_update_check` import alignment_audit 触发注册 + UC-01~16 全量调度；`tools/tests/test_alignment_audit.py` ≥12 用例；`tools/lib/gates.py` 修复 G-RA-FLOW-VIOLATION 假门禁（check_all 特判传 master_source + `_sys`→`sys` NameError）+ `tools/tests/test_gates.py` TestGRAFlowViolation 3 用例；`source/SKILL.md` frontmatter v3.5.11 + AA 描述；5 个核心 review/生成 SKILL（dr-review/story-review/code-review/requirement-analysis/task-generate）顶部含🟠门禁强度声明；`requirement-analysis-skill.md` 删除 `run dr-review-skill`/`run story-update-skill` 幽灵命令引用；`source/standards/update-graph.json` 含 UG-15 规则；`source/docs/plans/2026-06-29-v3.5.11-aa-tracking-list.md` 存在（AA 首跑 gap 留痕）
-- [ ] 🆕 v3.8.0 `tools/lib/config.py` 存在（`AUTOMATION_DEFAULTS` + `load_automation_config` + `is_automation_enabled`/`get_reviewer_tier`/`get_automated_points`）；`scripts/init.py` CONFIG_TEMPLATE 含 `automation:` 段（默认 `enabled: false`）；`tools/lib/gates.py` GATE_REGISTRY 含 G-AUTO-CONSENSUS（30 门禁）+ CHECK_FUNCS 注册 + `check_g_auto_consensus` 实现；`tools/lib/state.py` 含 `register_review_consensus`/`get_review_consensus` + `reviewConsensus` 字段；`tools/bin/ae-sdd` 含 `automation status/enable/disable` + `preflight collect` + `state register-review-consensus` 子命令；`source/SKILL.md` 含 `## 🚀 自动化模式` 章节 + G-AUTO-CONSENSUS 门禁速查 + Step1 自动化检测 + Step1.5 预收集 + 监管器步骤4 联审共识双模式 + 30门禁；`source/skills/cross-cutting/agent-orchestration-skill.md` §8.4.1 自动化强制 Tier 3 + §8.4.5 禁逻辑多视角降级；`tools/tests/test_gates.py` TestGAutoConsensus ≥3 用例 + 门禁总数断言 30；`tools/tests/test_automation_cli.py` 存在；`source/docs/ae-sdd-design.md` 含 `## 19` 自动化能力模块；`source/standards/update-graph.json` 含 UG-20 规则；`tools/lib/update_graph.py` 含 `check_uc16_automation_cascade` + CHECK_FUNCS 注册 UC-16；`source/CHANGELOG/` 含 `2026-07-02-automation-switch.md`
-- [ ] 🆕 2026-07-03 Runtime Stats P0：`tools/lib/runtime_stats.py` 与 `tools/lib/runtime_exec.py` 存在；`tools/bin/ae-sdd` 含 `perf report/doctor/clear`；`tools/lib/gates.py` `summarize()` 输出 `durationMs/slowest`；`tools/tests/test_runtime_stats.py` 与 `tools/tests/test_cli_perf.py` 存在；`.gitignore` 忽略 `.ae-sdd/runtime-stats/`；`source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/plans/2026-07-02-runtime-stats-performance-plan.md` 已同步；`source/standards/update-graph.json` 含 UG-21；`source/CHANGELOG/` 含 `2026-07-03-runtime-stats-p0.md`
+- [ ] 🆕 v3.5.11+ `tools/lib/alignment_audit.py` 存在（AA 全维对齐验证器，6 维 UC-08~13：门禁承诺↔注册双向 / 门禁实现真实性抓 stub-pass / state 字段存活性 / 状态机闭环 / 幽灵命令全捕获 / 门禁注册完整性）+ `register_to_update_graph()` 注入 update_graph.CHECK_FUNCS；`tools/bin/ae-sdd:cmd_update_check` import alignment_audit 触发注册 + UC-01~16 全量调度；`tools/tests/test_alignment_audit.py` ≥12 用例；`crates/ae-sdd-gates/src/registry.rs` 修复 G-RA-FLOW-VIOLATION 假门禁（check_all 特判传 master_source + `_sys`→`sys` NameError）+ `crates/ae-sdd-gates/tests/gate_truth_table.rs` TestGRAFlowViolation 3 用例；`source/SKILL.md` frontmatter v3.5.11 + AA 描述；5 个核心 review/生成 SKILL（dr-review/story-review/code-review/requirement-analysis/task-generate）顶部含🟠门禁强度声明；`requirement-analysis-skill.md` 删除 `run dr-review-skill`/`run story-update-skill` 幽灵命令引用；`source/standards/update-graph.json` 含 UG-15 规则；`source/docs/plans/2026-06-29-v3.5.11-aa-tracking-list.md` 存在（AA 首跑 gap 留痕）
+- [ ] 🆕 v3.8.0 `tools/lib/config.py` 存在（`AUTOMATION_DEFAULTS` + `load_automation_config` + `is_automation_enabled`/`get_reviewer_tier`/`get_automated_points`）；`scripts/init.py` CONFIG_TEMPLATE 含 `automation:` 段（默认 `enabled: false`）；`crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-AUTO-CONSENSUS（30 门禁）+ CHECK_FUNCS 注册 + `check_g_auto_consensus` 实现；`tools/lib/state.py` 含 `register_review_consensus`/`get_review_consensus` + `reviewConsensus` 字段；`tools/bin/ae-sdd` 含 `automation status/enable/disable` + `preflight collect` + `state register-review-consensus` 子命令；`source/SKILL.md` 含 `## 🚀 自动化模式` 章节 + G-AUTO-CONSENSUS 门禁速查 + Step1 自动化检测 + Step1.5 预收集 + 监管器步骤4 联审共识双模式 + 30门禁；`source/skills/cross-cutting/agent-orchestration-skill.md` §8.4.1 自动化强制 Tier 3 + §8.4.5 禁逻辑多视角降级；`crates/ae-sdd-gates/tests/gate_truth_table.rs` TestGAutoConsensus ≥3 用例 + 门禁总数断言 30；`tools/tests/test_automation_cli.py` 存在；`source/docs/ae-sdd-design.md` 含 `## 19` 自动化能力模块；`source/standards/update-graph.json` 含 UG-20 规则；`tools/lib/update_graph.py` 含 `check_uc16_automation_cascade` + CHECK_FUNCS 注册 UC-16；`source/CHANGELOG/` 含 `2026-07-02-automation-switch.md`
+- [ ] 🆕 2026-07-03 Runtime Stats P0：`tools/lib/runtime_stats.py` 与 `tools/lib/runtime_exec.py` 存在；`tools/bin/ae-sdd` 含 `perf report/doctor/clear`；`crates/ae-sdd-gates/src/registry.rs` `summarize()` 输出 `durationMs/slowest`；`tools/tests/test_runtime_stats.py` 与 `tools/tests/test_cli_perf.py` 存在；`.gitignore` 忽略 `.ae-sdd/runtime-stats/`；`source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/plans/2026-07-02-runtime-stats-performance-plan.md` 已同步；`source/standards/update-graph.json` 含 UG-21；`source/CHANGELOG/` 含 `2026-07-03-runtime-stats-p0.md`
 - [ ] 🆕 2026-07-03 ae-sdd Monitor：`apps/ae-sdd-monitor/` 存在；`source/docs/ae-sdd-monitor-design.md` 独立记录只读投影语义；`source/docs/ae-sdd-design.md` 含 Monitor 入口；`source/docs/ae-sdd-implementation-architecture.md` 含 Monitor 模块/数据流边界；`source/standards/update-graph.json` 含 UG-22；`apps/ae-sdd-monitor/src/workspace.js` 和 `apps/ae-sdd-monitor/test/workspace.test.js` 跟随 state/runtime 投影契约；`apps/ae-sdd-monitor/README.md` 链接设计契约
 - [ ] 🆕 v3.11.0 `tools/lib/state_store.py` 与 `tools/lib/operations.py` 存在；`ae-sdd ops describe/next/execute` 和 `lease acquire/status/renew/release/break` 已注册；`source/standards/operation-protocol.md` 含 §9 `Maintainer Change Contract`；本 SKILL 含 typed operation maintenance entry；UG-27、UC-19、StateStore/operation/scope/evidence/update-graph focused tests 与 changelog 已同步
 - [ ] `source/docs/ae-sdd-design.md` 含 D-001~D-026 Design Ledger；本 SKILL 含 Design Ledger Maintenance Entry；UG-28、UC-20、focused tests 与 runtime 已同步；未写 changelog
@@ -885,7 +883,7 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 任何 SKILL 不重复定义"DR 是什么 / Story 是什么"等基础概念（依赖上下文）
 - [ ] **README.md §3 SKILL 功能清单与目录中实际 `*-skill.md` 文件数量一致**（不多不少）
 - [ ] **README.md 末行"最后更新"日期 ≥ 本次变更日期**（每次修改任一 SKILL 后必须更新）
-- [ ] 如本次变更需要即时生效，已运行 `bash scripts/dev-sync.sh`（或显式 `build-dist.sh` + `install.sh`），并确认 `dist/ae-sdd/SKILL.md` 与 `~/.claude/skills/ae-sdd/SKILL.md` 已刷新；如未运行，最终回复已明确说明"仅修改母版"
+- [ ] 如本次变更需要即时生效，已运行 `ae-sdd-build post-commit`（或显式 `build-dist.sh` + `install.sh`），并确认 `dist/ae-sdd/SKILL.md` 与 `~/.claude/skills/ae-sdd/SKILL.md` 已刷新；如未运行，最终回复已明确说明"仅修改母版"
 
 ---
 

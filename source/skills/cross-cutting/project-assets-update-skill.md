@@ -10,7 +10,6 @@ source_fallback_sha256: c080f795e036de22c41991e2428b40bd0fac5e9c086a520dd59ed5ec
 source_original_bytes: 78891
 source_original_lines: 1691
 source_semantic_inventory_sha256: 720b05b3b44fbc37771a508f2af731e002d20d21ace14ba6c26c5615551703bc
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Project Assets Update — 项目资产目录生成/更新/审计 SKILL Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:29 📦 文档存放前置调用（🔴 横切依赖）; L2:62 1. 触发条件; L3:126 3.1 触发场景; +8 more; keyword_hits: 123 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:74 2. 整体流程; L3:690 6.2 读取流程（🆕 2026-06-24 脚本化：初始化检查 + 映射表 + BM25 查询）; L4:710 步骤 2：按阶段调用 `ae-sdd assets read`（核心入口）; +2 more; keyword_hits: 60 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L4:167 3.3.1 🆕 pending-questions.md 格式; L3:197 3.4 门禁; L4:490 步骤 6：🆕 消掉 pending-questions.md 中已解决的问题; +6 more; keyword_hits: 89 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L4:167 3.3.1 🆕 pending-questions.md 格式; L3:197 3.4 门禁; L4:490 步骤 6：🆕 消掉 pending-questions.md 中已解决的问题; +6 more; keyword_hits: 89 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L3:233 §3.5.2 抽取命令清单; L1:295 2. 硬编码 API Key / Secret（🔴 P0）; L4:432 步骤 2：跑对应探查命令; +3 more; keyword_hits: 183 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L3:270 §3.6.1 部署信息抽取（schema §1.X 10 个字段）; L3:354 §3.7.3 步骤 16.c — config/ 环境配置专题; L1:447 🆕 新增表/字段; +3 more; keyword_hits: 118 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L3:270 §3.6.1 部署信息抽取（schema §1.X 10 个字段）; L3:354 §3.7.3 步骤 16.c — config/ 环境配置专题; L1:447 🆕 新增表/字段; +3 more; keyword_hits: 118 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:29 📦 文档存放前置调用（🔴 横切依赖）; L3:158 3.3 输出物; L4:598 步骤 6：输出审计报告; +3 more; keyword_hits: 65 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 97; refs: <projectKey>.assets.md; <version>X.X.X</version>; [已确认]/[据推断]/[待确认]; +94 more; headings: L3:132 3.2 17 步 SOP（详见 `project-assets-schema.md §9 + §12-15`，🆕 2026-06-26 增步骤 10-17）; L4:167 3.3.1 🆕 pending-questions.md 格式; L4:490 步骤 6：🆕 消掉 pending-questions.md 中已解决的问题; +4 more; keyword_hits: 112 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:132 3.2 17 步 SOP（详见 `project-assets-schema.md §9 + §12-15`，🆕 2026-06-26 增步骤 10-17）; L2:217 §3.5 步骤 14 SOP：抽完整技术栈版本号表（🆕 2026-06-26）; L3:221 §3.5.1 七张表必填; +24 more; keyword_hits: 688 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -271,7 +270,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | task-generate-skill.md |
 | templates/project-assets/project-assets-update-log-template.md |
 | testcase-generate-skill.md |
-| tools/lib/assets_index.py |
+| crates/ae-sdd-resources/src/assets.rs |
 | {Story编号}.md |
 | {docWorkspacePath}/.ae-sdd/assets/{workspaceKey}/ |
 | {line}/{工程名}/ |

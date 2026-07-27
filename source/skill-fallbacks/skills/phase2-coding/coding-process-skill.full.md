@@ -208,12 +208,12 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 | ✅ 无需修改 | 运行 `ae-sdd state confirm --phase spec-change --story {STORY-ID}` 写入物理 token → 进入 §B1 工程预检 |
 | 🔴 需要修改 | **立即停止 Execute**，先走对应 Update 路径（Story Update / DR Update / TestCase Update），完成后重新过 G-14 门禁，再重新进入 §B0.5，用户再次确认无需修改后再运行 confirm 命令 |
 
-> **物理门禁说明：** `gate_intercept.py` 关卡3 会在 `coding` phase 写 `src/` 前检查 `spec-change` confirm token。未写 token 直接写源码 → `PreToolUse` hook 物理拒绝，报错提示运行上述 confirm 命令。（🆕 v3.10.6 §B0.5 物理实现）
+> **物理门禁说明：** hook 拦截策略关卡3 会在 `coding` phase 写 `src/` 前检查 `spec-change` confirm token。未写 token 直接写源码 → `PreToolUse` hook 物理拒绝，报错提示运行上述 confirm 命令。（🆕 v3.10.6 §B0.5 物理实现）
 
 **🔴 强制约束：**
 - 用户未明确选择前，**禁止写任何 src/ 源码**（有物理门禁兜底）
 - 模糊回复（"应该不用"/"差不多"/"可能需要"）→ 按🔴需要修改处理，追问具体变更范围
-- 微任务（无 Story/TestCase 上下文）：仅询问"CodingPlan 骨架是否已是最新 spec"；用户确认后**同样须运行 confirm 命令**（微任务豁免说明：`gate_intercept.py` 对 scale=微 不做 spec-change 检查，但流程规范仍要求确认）
+- 微任务（无 Story/TestCase 上下文）：仅询问"CodingPlan 骨架是否已是最新 spec"；用户确认后**同样须运行 confirm 命令**（微任务豁免说明：hook 拦截策略对 scale=微 不做 spec-change 检查，但流程规范仍要求确认）
 
 ### §B1 工程预检（第一~五步合并）
 

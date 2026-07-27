@@ -16,7 +16,6 @@ source_fallback_sha256: 7ac7a8b6d222d6f9fbaca47f2e44d092d3e5bbb7e8a7f002c2528824
 source_original_bytes: 10951
 source_original_lines: 272
 source_semantic_inventory_sha256: e539cfa8ba8c6c87761c4f95f5e8020632613a00f110955e4371aabb727fc0fc
-source_slimmer: slim_source_skills.py@2
 ---
 
 # ae-sdd Plugin Loader — 三层 SKILL 注册表加载协议 Source SKILL Slim Entry
@@ -53,9 +52,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; keyword_hits: 4 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:110 §3 注册流程引导（母版维护者 / 项目 owner / 个人开发者 用）; L3:116 3.1 Step 1 — 确认注册层 + 使用方身份; L3:128 3.2 Step 2 — 生成注册表; +3 more; keyword_hits: 19 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | keyword_hits: 18 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | keyword_hits: 18 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L1:12 ae-sdd Plugin Loader — 三层 SKILL 注册表加载协议; L2:225 §4 CLI 命令; L3:227 4.1 `ae-sdd plugin list`; +3 more; keyword_hits: 31 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L1:161 registry.yaml; keyword_hits: 23 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L1:161 registry.yaml; keyword_hits: 23 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | keyword_hits: 13 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 21; refs: /ae-sdd; <ae-sdd-master>/plugins/registry.yaml; <project>/.ae-sdd/plugins/registry.yaml; +18 more; headings: L3:94 2.3 fallback 默认行为; keyword_hits: 66 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L2:24 §1 三层注册表定义; L2:41 §2 加载协议 SOP（Agent 用）; L2:110 §3 注册流程引导（母版维护者 / 项目 owner / 个人开发者 用）; +4 more; keyword_hits: 20 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -123,6 +122,6 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | source/standards/constraints/plugin-registry-spec.md |
 | source/templates/ |
 | source/templates/project-assets/plugin-registry-template.yaml |
-| tools/bin/ae-sdd |
-| tools/lib/plugin_loader.py |
+| bins/ae-sdd-cli |
+| crates/ae-sdd-integrations/src/jobs/plugin |
 | ~/.ae-sdd/plugins/registry.yaml |

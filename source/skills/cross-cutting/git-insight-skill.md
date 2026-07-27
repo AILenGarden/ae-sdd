@@ -10,7 +10,6 @@ source_fallback_sha256: 0867561448c77a987ebf5c1ea79139e8456de99f907fc5d0217c521e
 source_original_bytes: 1410
 source_original_lines: 56
 source_semantic_inventory_sha256: 8c8f53675271995dc5f84bb1171e75fce86cb72a0cd0ee6e69b0290bd2399ac4
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Git Insight Skill Source SKILL Slim Entry
@@ -41,7 +40,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | category | evidence | design_refs | fallback_policy |
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
-| gate_constraint | keyword_hits: 2 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | keyword_hits: 2 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 8 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
 | output_doc_contract | keyword_hits: 2 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 1; refs: ae-sdd git impact | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |

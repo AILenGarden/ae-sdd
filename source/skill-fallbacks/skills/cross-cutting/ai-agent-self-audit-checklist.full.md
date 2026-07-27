@@ -66,7 +66,7 @@ description: AI Agent 任务开始前自审清单 SOP（🔴 强制，每任务�
 - [ ] **5 问自检**（每条结论：证据 / 反例 / 边界 / 冲突 / 缺口，通过率 100%）
 - [ ] **缺口管理**（🔴/🟠 全部解决或用户明确接受）
 - [ ] **规模裁定**（5 维评分 + 路由决策）
-- [ ] **RA-G01~RA-G16 闸判定**（至少 8 个 PASS，详见 `tools/lib/document_storage.py:check_ra_prerequisites`）
+- [ ] **RA-G01~RA-G16 闸判定**（至少 8 个 PASS，详见 `crates/ae-sdd-resources/src/document.rs (RA 前置检查)`）
 - [ ] **落盘**（`save_doc` 调用，触发 G-RA-PLAN / G-RA-COMPLETE / G-RA-5CHECK / G-RA-GATES 前置检查）
 
 ### 步骤 4：用户催促的反模式处理
@@ -124,8 +124,8 @@ description: AI Agent 任务开始前自审清单 SOP（🔴 强制，每任务�
 - **同步对象：**
   - `requirement-analysis-skill.md` §反模式 7/8/9（本 SOP 的规则源头）
   - `SKILL.md` §🎯 智能路由（本 SOP 步骤 1/2 的判定依据）
-  - `tools/lib/document_storage.py:check_ra_prerequisites`（本 SOP 步骤 3 落盘硬卡片的代码实现）
-  - `scripts/flow_violation_scan.py`（本 SOP 步骤 3 的工具层兜底审计）
+  - `crates/ae-sdd-resources/src/document.rs (RA 前置检查)`（本 SOP 步骤 3 落盘硬卡片的代码实现）
+  - `ae-sdd flow-violation-scan`（本 SOP 步骤 3 的工具层兜底审计）
 - **关键变化（2026-06-27 新建）：**
   - 🆕 5 步骤自审清单（任务类型 / 输入类型 / 最小必跑流程硬卡片 / 用户催促反模式 / 自审声明）
   - 🆕 4 类反模式禁止（跳过 SOP / 误判非 RA / 催促跳流程 / 照抄署名）

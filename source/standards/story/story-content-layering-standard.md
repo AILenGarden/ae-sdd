@@ -44,7 +44,7 @@ Story Skill 必须通过 Document Storage 的 `STORY_TEMPLATE` 和 `STORY_WRITIN
 
 固定纯函数：
 
-```python
+```text
 parse_story_sections(template_text, source_path="")
 get_primary_story_sections(template_text, source_path="")
 get_secondary_story_sections(template_text, source_path="")

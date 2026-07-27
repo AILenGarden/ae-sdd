@@ -10,7 +10,6 @@ source_fallback_sha256: 46b64b2c50992bdc1718a9ce27efaf97e851e7227c72568c41fd935a
 source_original_bytes: 7783
 source_original_lines: 133
 source_semantic_inventory_sha256: 4af18754df745887d6b5209ba596a0e91d8d5715b6ef5be821e7359c7d9df061
-source_slimmer: slim_source_skills.py@2
 ---
 
 # AI Agent 自审清单 SOP — 任务开始前强制自审 Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:19 触发条件; L3:46 步骤 2：识别输入类型 + 触发 SKILL; keyword_hits: 16 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L3:59 步骤 3：识别最小必跑流程的"硬卡片"; keyword_hits: 20 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:109 反模式（本 SOP 禁止的 4 类行为）; keyword_hits: 19 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L2:109 反模式（本 SOP 禁止的 4 类行为）; keyword_hits: 19 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 5 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 5 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | keyword_hits: 5 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | keyword_hits: 20 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 7; refs: SKILL.md; ae-sdd enter <projectKey> --story <STORY-ID>; document-storage-skill.md; +4 more; keyword_hits: 9 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | keyword_hits: 13 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -83,5 +82,5 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | document-storage-skill.md |
 | proposal-skill.md |
 | requirement-analysis-skill.md |
-| scripts/flow_violation_scan.py |
-| tools/lib/document_storage.py:check_ra_prerequisites |
+| ae-sdd flow-violation-scan |
+| crates/ae-sdd-resources/src/document.rs (RA 前置检查) |

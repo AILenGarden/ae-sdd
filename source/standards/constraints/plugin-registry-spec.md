@@ -1,6 +1,6 @@
 # Plugin Registry Schema 规范（🆕 v3.5.0）
 
-> **权威源：** 本文件是 registry.yaml 的 schema 权威文档。`tools/lib/plugin_loader.py` 是机器可读实现；本文件是人读视图。
+> **权威源：** 本文件是 registry.yaml 的 schema 权威文档。`crates/ae-sdd-integrations/src/jobs/plugin` 是机器可读实现；本文件是人读视图。
 >
 > **适用范围：** ae-sdd v3.5.0+ 三层注册表（L1 项目层 / L2 全局层 / L3 仓库根层）。
 >
@@ -181,7 +181,7 @@ loader 跑 sanity check 时的校验项：
 
 ## 七-A、外挂内容安全扫描（规则 #16 详解，🆕 B4 增强）
 
-**扫描器：** `scripts/plugin_content_scan.py`（对标 `coding_authenticity_scan.py` 架构，零依赖）。
+**扫描器：** `ScannerId::PluginContent`（`crates/ae-sdd-scanners`，与 coding 真实性扫描器同架构）。
 
 **分层阻断策略**（依据威胁模型，平衡安全与可用性）：
 
@@ -206,7 +206,7 @@ loader 跑 sanity check 时的校验项：
 
 **失败优先：** 扫描器自身异常 → 降级为"跳过 + 告警"，绝不阻断主流程（与 ae-sdd 其他探测同模式）。单文件超 1MB 上限 → 跳过（防 DoS）。
 
-**独立可用：** `python scripts/plugin_content_scan.py <path> --plugin <name>` 可单独扫描任意外挂文件，有 BLOCKER 则退出码 1。
+**独立可用：** `ae-sdd plugin validate` 可单独扫描外挂文件，有 BLOCKER 则退出码非零。
 
 ---
 

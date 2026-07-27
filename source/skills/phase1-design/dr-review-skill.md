@@ -10,7 +10,6 @@ source_fallback_sha256: 6a742d69c2a620450ee23cdc5b968e5136ea043d81368d8a7334104c
 source_original_bytes: 66567
 source_original_lines: 1237
 source_semantic_inventory_sha256: bf1fdceb7bd4ca194470da2d105f04e0e2813eb78755bb340b86caedaa17799f
-source_slimmer: slim_source_skills.py@2
 ---
 
 # DR Review — DR 文档评审 Skill Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:28 📦 文档存放前置调用（🔴 横切依赖）; L3:285 1.4 调用项目资产服务; L4:541 C2 接口路径与契约入口对齐; +3 more; keyword_hits: 66 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:127 整体流程; L3:346 与 5 阶段并行挖掘的关系（引用 §8.4.6）; L2:352 第二步：5 阶段评审（并行挖掘）; +7 more; keyword_hits: 136 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L2:14 🟠 门禁强度声明（v3.5.11 AA 诚实降级 / v3.9.1 部分硬化）; L3:50 标尺 1：证据标准（🔴 禁止裸结论）; L3:84 标尺 3：完整性度量（🔴 "覆盖所有"必须先有穷举清单）; +7 more; keyword_hits: 128 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L2:14 🟠 门禁强度声明（v3.5.11 AA 诚实降级 / v3.9.1 部分硬化）; L3:50 标尺 1：证据标准（🔴 禁止裸结论）; L3:84 标尺 3：完整性度量（🔴 "覆盖所有"必须先有穷举清单）; +7 more; keyword_hits: 128 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L3:519 阶段 C：接口契约完整性; L4:534 C1 场景到接口映射; L4:541 C2 接口路径与契约入口对齐; +2 more; keyword_hits: 94 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L4:609 D2 表结构与项目资产字段索引一致; L2:1026 4. 字段链路与数据模型修订计划; keyword_hits: 69 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L4:609 D2 表结构与项目资产字段索引一致; L2:1026 4. 字段链路与数据模型修订计划; keyword_hits: 69 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L1:6 DR Review — DR 文档评审 Skill; L2:28 📦 文档存放前置调用（🔴 横切依赖）; L3:265 1.2 读取 RA 文档; +8 more; keyword_hits: 97 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 29; refs: CR-DR-XXX-vN.m-UpdatePlan.md; CR-DR-XXX-vN.m.md; CR/; +26 more; keyword_hits: 44 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L2:318 第一步 bis：多 reviewer 视角切分（🆕 2026-06-25 — 落地 §8.4.2 节点专属配置）; L3:322 Tier 判定（引用 §8.4.1，本节点关键决策点识别已有支撑）; L3:334 DR Review reviewer 视角分工（§8.4.2 三原则落地）; +8 more; keyword_hits: 267 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -202,5 +201,5 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | review-loop-skill.md |
 | templates/design/dr-review-update-plan-template.md |
 | templates/design/dr-template.md |
-| tools/lib/gates.py |
+| crates/ae-sdd-gates/src/registry.rs |
 | {projectKey}.assets.md |

@@ -638,7 +638,7 @@ reviewer-数据模型视角 ──┘
 | **源码** | 不读源码 | 读源码做分层 walkthrough |
 | **文档产出** | 不写流程文档 | 写 Story / Task / CodingPlan / TestCase / CodeReview |
 | **讲解** | ✅ 主笔（5-7 维度故事由主会话在对话中产出）| 准备讲解素材 |
-| **CLI 调用** | ✅ `ae-sdd state/gates/iteration-check/context-pressure` | 跑 `mvn test` / Surefire XML / `scripts/test_authenticity_scan.py` |
+| **CLI 调用** | ✅ `ae-sdd state/gates/iteration-check/context-pressure` | 跑 `mvn test` / Surefire XML / `ae-sdd gates check --only G-09` |
 | **状态落盘** | ✅ 写 `state.json` / `session.json` | 不直接写 |
 | **用户对话** | ✅ 输入分析、✅/⚠️/⏸️ 收口 | 不直接对话用户 |
 

@@ -26,7 +26,7 @@
 | ⑧ 资源隔离 | 是 | workspace/Work Item actor、scheduler semaphore、bounded mailbox、blocking/DB worker 与 subscription queue 都有配额；root/series/task/reviewer memory/context 由 delegation grant 隔离 | 单 workspace/Agent 不得饿死其他请求；cross-workspace/cross-role access=0；background task 必须可 join/cancel/recover |
 | ⑨ 安全 | 是 | IPC 仅当前 OS 用户：Windows Named Pipe 当前 SID DACL，Unix runtime dir 0700/socket+manifest 0600；256-bit endpoint secret；boot-scoped Ed25519 private key 签 capability、manifest 只给 public key；daemon-derived role/lineage；canonical path containment；secret/transcript 不入日志/SQLite/root projection | endpoint token 不能伪造 capability；fake child、ACK-only claim、path escape、cross-user、wrong compact generation、command injection 全部拒绝并审计 |
 | ⑩ 可观测性 | 是 | request/session/turn/delegation/hostAction/compact/workItem/revision/event/fencing/policy/input/decision 全链路结构化关联；Gate outcome、supervisor health 与业务 correction 分离 | 重启、stale、external conflict、invalid ACK、deadline 与 backpressure 均有稳定 code/metric/evidence；不记录 prompt、claim、token、transcript 正文 |
-| ⑪ 可运维性 | 是 | 用户级 service 支持 start/status/drain/stop/upgrade/recovery；workspace shadow→rust-canary→rust-sole-writer 经 drain 原子切换；删除 Python 前可回滚，删除后回退完整发行包 | service crash、migration failure、DB 损坏、watcher overflow、cursor gap、compact 中断均恢复到可诊断非成功状态；Monitor 不阻断核心 cutover |
+| ⑪ 可运维性 | 是 | 用户级 service 支持 start/status/drain/stop/upgrade/recovery；workspace shadow→rust-canary→rust-sole-writer 经 drain 原子切换；回退走完整发行包 | service crash、migration failure、DB 损坏、watcher overflow、cursor gap、compact 中断均恢复到可诊断非成功状态；Monitor 不阻断核心 cutover |
 
 ### 项目实现出口
 
@@ -1165,10 +1165,10 @@ Q4：依赖外部资源吗？超时 / 重试 / 降级怎么做？
 
 ### 6.3 与 G-08 / G-09 / G-CODE / G-RA 硬门禁关系
 
-- `gates.py G-08` CodingPlan 14 门禁 = **计划层**硬拦截（防无计划/假计划进入编码）
-- `gates.py G-09` test_authenticity_scan（8 类禁止扫描）= **测试层**硬拦截（防假测试）
-- `gates.py G-CODE-1` coding_authenticity_scan（AP-1~AP-6 可静态命中扫描）= **代码层**硬拦截（防 Coding 反模式）
-- `gates.py G-RA-4` ra_authenticity_scan（RA 真实性扫描）= **需求层**硬拦截（防假需求）
+- `G-08` CodingPlan 14 门禁 = **计划层**硬拦截（防无计划/假计划进入编码）
+- `G-09` 测试真实性扫描（8 类禁止扫描）= **测试层**硬拦截（防假测试）
+- `G-CODE-1` coding 真实性扫描（AP-1~AP-6 可静态命中扫描）= **代码层**硬拦截（防 Coding 反模式）
+- `G-RA-4` RA 真实性扫描 = **需求层**硬拦截（防假需求）
 - 本反模式库 = **思维层**参考，由 LLM 主动应用
 
 **门禁链路**：思维层（本文件）→ 计划层（G-08）→ 代码层（G-CODE-1）→ 测试层（G-09）→ 需求层（G-RA-4 反向校验）

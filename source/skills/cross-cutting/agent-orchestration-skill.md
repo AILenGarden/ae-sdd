@@ -10,7 +10,6 @@ source_fallback_sha256: e4f05b2477b1adab8eecddcfb535ab55c0480ad06eb380d433c6887a
 source_original_bytes: 48582
 source_original_lines: 906
 source_semantic_inventory_sha256: 8fcca3427d8e27feb91fbed88594dd60f55aa937f5775c1443684cb0f4dabfc5
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Agent Orchestration — 任务节点内子任务编排 Skill Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:358 8.4 多 reviewer 默认编排框架（🔴 横切规范 — 所有 Review 节点适用）; L3:821 10.1 调用方式（节点 SKILL 如何调用本 SKILL）; L4:827 步骤 X：决定是否拆子任务（调用 agent-orchestration-skill.md）; keyword_hits: 31 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L3:328 8.1 汇总流程; L3:524 8.4.6 与 5 阶段并行挖掘的关系（🔴 正交叠加，不冲突）; L2:591 8.5 🆕 v3.10.3 3层 Agent 模型（主流程 -> 子流程Agent -> sub-subAgent）; +5 more; keyword_hits: 94 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:33 标尺 1：独立性判定（🔴 子任务必须真正独立才能并行）; L2:839 11. 禁止事项; keyword_hits: 87 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:33 标尺 1：独立性判定（🔴 子任务必须真正独立才能并行）; L2:839 11. 禁止事项; keyword_hits: 87 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 15 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L2:758 9. 状态跟踪; L3:760 9.1 状态字段（追加到 state.json）; L3:800 9.2 状态展示; keyword_hits: 62 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L2:758 9. 状态跟踪; L3:760 9.1 状态字段（追加到 state.json）; L3:800 9.2 状态展示; keyword_hits: 62 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L3:72 1.2 拆法（按"输出维度"）; L2:151 4. 任务分配卡（Prompt 模板）; L3:342 8.2 一致性检查（🔴 多 Agent 输出的漂移风险）; keyword_hits: 101 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 40; refs: *-CodeReview-v{N}-r{M}.md; *-Coding-CoderReport-r{M}.md; *-PRD-SummaryReport.md; +37 more; headings: L4:827 步骤 X：决定是否拆子任务（调用 agent-orchestration-skill.md）; keyword_hits: 43 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:652 8.5.4 与 §8.4 多 reviewer 的衔接; L1:826 节点 SKILL 在 §整体流程 中插入; keyword_hits: 138 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
@@ -172,7 +171,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | proposal-skill.md |
 | requirement-analysis-skill.md |
 | review-loop-skill.md |
-| scripts/test_authenticity_scan.py |
+| ae-sdd gates check --only G-09 |
 | story-generate / coding / code-review |
 | story-generate-skill.md |
 | story-review-skill.md |

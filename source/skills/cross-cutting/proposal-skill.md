@@ -10,7 +10,6 @@ source_fallback_sha256: a14ce895782b9d13da399471f6a0cb52bf5227f26c95f80a4f746b5b
 source_original_bytes: 30302
 source_original_lines: 671
 source_semantic_inventory_sha256: 2f5e4b7204030d69893bedc68d6e69254caabfcf9908ca722f6f112768bbe105
-source_slimmer: slim_source_skills.py@2
 ---
 
 # Proposal — 建议书 SKILL（统一问题描述 + 解决方案载体） Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:26 📦 文档存放前置调用（🔴 横切依赖）; L2:126 触发条件; L3:498 渠道 3：Coding 异常追溯链 → 触发 Proposal; +1 more; keyword_hits: 52 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:88 整体流程; L2:314 第五步：用 Proposal 走流程（🔴 核心）; L3:318 5.1 5 步流程总览; keyword_hits: 33 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:75 标尺 3：可执行性（🔴 §3 必须有具体步骤）; L3:80 标尺 4：影响范围明示（🔴 §4 必须列下游动作）; L2:623 禁止事项; keyword_hits: 34 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:75 标尺 3：可执行性（🔴 §3 必须有具体步骤）; L3:80 标尺 4：影响范围明示（🔴 §4 必须列下游动作）; L2:623 禁止事项; keyword_hits: 34 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | keyword_hits: 21 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | keyword_hits: 10 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | keyword_hits: 10 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:26 📦 文档存放前置调用（🔴 横切依赖）; L2:280 第四步：写入 Proposal 文档; L3:509 追溯层 1 命中：Task 文档缺陷; +1 more; keyword_hits: 49 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 47; refs: GET /boss-user-bff/api/v1/users/list?roleId=0; SKILL.md; STORY-001-BE-CodeReview-v1-r1.md; +44 more; keyword_hits: 101 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:75 标尺 3：可执行性（🔴 §3 必须有具体步骤）; L3:80 标尺 4：影响范围明示（🔴 §4 必须列下游动作）; L3:166 §1 原本是怎么样（现状）; +4 more; keyword_hits: 160 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |

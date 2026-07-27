@@ -10,7 +10,6 @@ source_fallback_sha256: 365aadbb7005bcad3023f8731c381470dd328640276c57ffac1e5882
 source_original_bytes: 46206
 source_original_lines: 1064
 source_semantic_inventory_sha256: bce5e84fb6334335f8f9d78c485271cd715c9109c098e15793a537fdb84147e8
-source_slimmer: slim_source_skills.py@2
 ---
 
 # DR Generate — 从 RA 生成 DR Skill Source SKILL Slim Entry
@@ -42,9 +41,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | --- | --- | --- | --- |
 | identity_trigger | frontmatter: name, description; headings: L2:23 📦 文档存放前置调用（🔴 横切依赖）; L2:166 触发条件; L3:617 4.1 调用 save_doc 的参数; +2 more; keyword_hits: 47 | source/docs/ae-sdd-design.md §2/§16/§18; source/docs/skill-runtime-compiler.md §2 | Keep frontmatter and summary in the slim entry; full trigger wording stays in fallback. |
 | workflow_route | headings: L2:104 整体流程; L3:474 §9 状态与业务规则（按需：跨 Story 状态机时填写）; keyword_hits: 48 | source/docs/ae-sdd-design.md §2/§16; source/standards/update-graph.json | Index the route/workflow outline; load fallback before executing low-frequency branch detail. |
-| gate_constraint | headings: L3:66 标尺 1：与 RA 100% 一致（🔴 DR 不得偏离 RA）; L3:74 标尺 2：与项目资产对齐（🔴 实现必须基于现有工程能力）; L2:191 第零步：DR 准入检查（🔴 硬门禁，未通过禁止进入生成）; +2 more; keyword_hits: 71 | source/docs/ae-sdd-design.md §5; tools/lib/gates.py:GATE_REGISTRY | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
+| gate_constraint | headings: L3:66 标尺 1：与 RA 100% 一致（🔴 DR 不得偏离 RA）; L3:74 标尺 2：与项目资产对齐（🔴 实现必须基于现有工程能力）; L2:191 第零步：DR 准入检查（🔴 硬门禁，未通过禁止进入生成）; +2 more; keyword_hits: 71 | source/docs/ae-sdd-design.md §5; crates/ae-sdd-gates/src/registry.rs:GateRegistry | Preserve gate identifiers in index; CLI gate output remains higher authority than prose. |
 | tool_command | headings: L3:464 §8 接口契约（按需：有对外暴露的接口时填写）; L4:510 §12.2 前端 Story 矩阵（待后端接口稳定后补充）; L1:620 旧式伪代码已废弃，改用 CLI：; +3 more; keyword_hits: 85 | source/docs/ae-sdd-implementation-architecture.md §4/§5; source/docs/ae-sdd-design.md §13 | Index command/API references; full invocation contracts stay in fallback or implementation docs. |
-| state_data | headings: L3:474 §9 状态与业务规则（按需：跨 Story 状态机时填写）; keyword_hits: 53 | source/docs/ae-sdd-design.md §3/§15/§19; tools/lib/state.py | Index state/config vocabulary; use tools/lib state output as execution truth. |
+| state_data | headings: L3:474 §9 状态与业务规则（按需：跨 Story 状态机时填写）; keyword_hits: 53 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:23 📦 文档存放前置调用（🔴 横切依赖）; L3:274 1.4 产出：输入清单; L3:499 §12 Story 拆分（必填 — DR 核心产出）; +4 more; keyword_hits: 92 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 34; refs: .ae-plan/; .ae-task/; .spec/iterations/; +31 more; headings: L1:621 ae-sdd doc save --intent DR --doc-id DR-001 --content-file 草稿.md --changelog-note "首次创建"; L1:644 → 实际由 ae-sdd doc save 完成，自动写入 ae-sdd-doc/DR/DR-001.md; keyword_hits: 61 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:74 标尺 2：与项目资产对齐（🔴 实现必须基于现有工程能力）; L3:82 标尺 3：实现方案决策基线（🔴 复用优先 + 成熟方案参考 + 五维质量）; L3:94 标尺 4：Story 拆分可执行（🔴 DR §12 是下游 Story 的"母版"）; +27 more; keyword_hits: 334 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |

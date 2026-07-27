@@ -955,7 +955,7 @@ ae-sdd assets domain im --project icec-cloud-life
 | ... (1 行 / 微服务) |
 
 **调用示例：**
-```python
+```text
 # 拉 icec-cloud-boss-user 模块详情
 detail = assets.module("icec-cloud-boss-user")
 # 返回: {overview: §2 行 50, mainTables: [...], entryController: "...", keyService: "...", docs: [...]}
@@ -1027,7 +1027,7 @@ detail = assets.module("icec-cloud-boss-user")
 | ... |
 
 **调用示例：**
-```python
+```text
 # 查 cellphone 字段在哪些表
 result = assets.table.search("cellphone")
 # 返回: [{table: "boss_user", field: "cellphone", type: "varchar(20)", meaning: "手机号（脱敏）"}, ...]
@@ -1087,7 +1087,7 @@ fields = assets.table("boss_user")
 | ... |
 
 **调用示例：**
-```python
+```text
 # 查"有没有现成的手机号脱敏工具"
 detail = assets.component("DesensitizeUtils")
 # 返回: {name, function, path, callers, version, deprecation}
@@ -1134,7 +1134,7 @@ detail = assets.component("DesensitizeUtils")
 | ... |
 
 **调用示例：**
-```python
+```text
 # 查"谁提供 getUserById 接口"
 detail = assets.api("getUserById")
 # 返回: {spi: "BossUserService", service: "boss-user-service", method: "getUserById(Long)", in: "Long userId", out: "ApiResult<BossUserDTO>", docs: "§7 行 437"}
@@ -1192,7 +1192,7 @@ detail = assets.api("getUserById")
 | `...` | ... |
 
 **调用示例：**
-```python
+```text
 # 查"项目里所有出现 AppService 的地方"
 positions = assets.search("AppService")
 # 返回: [{section: "§4", line: "114"}, {section: "§5", line: "196"}, {file: "...", line: 50}, ...]
@@ -1216,7 +1216,7 @@ exists = assets.search("MySpecialConcept")
 > 任何 SKILL 需要读取项目资产时，必须查阅本节找到对应 API 并按 §G.5 的标准写法调用，**禁止直接全文 Read 资产文件**。
 
 > **🆕 2026-06-24 脚本化落地：** 本节原为"自然语言协议"（由调用 SKILL 通过 Read/Grep 组合读取）。
-> 现已由 `ae-sdd assets` CLI 子命令组真正实现（`tools/lib/assets_index.py` 提供
+> 现已由 `ae-sdd assets` CLI 子命令组真正实现（`crates/ae-sdd-resources/src/assets.rs` 提供
 > 倒排索引 + 分词 + BM25 评分）。下方 G.3/G.4 的 API 与 CLI 命令一一对应：
 >
 > | 协议 API | CLI 命令 |
@@ -1506,7 +1506,7 @@ assets_data = project-assets-update-skill.assets.forTestCase(projectKey)
 
 ### G.6 调用示例（端到端伪代码）
 
-```python
+```text
 # 示例 1：coding-skill 阶段拉取资产并开始编码
 def coding_phase_start(projectKey, moduleName):
     # 前置检查
