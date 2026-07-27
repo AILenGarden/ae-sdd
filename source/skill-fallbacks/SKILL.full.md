@@ -1,6 +1,6 @@
 ---
 name: ae-sdd
-version: 3.14.0
+version: 4.0.0
 description: Full declarative contract for the Rust ae-sdd runtime.
 declarative_only: true
 ---

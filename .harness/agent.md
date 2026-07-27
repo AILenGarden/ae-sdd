@@ -1,9 +1,9 @@
 # ae-sdd Agent Harness
 
-<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/SKILL.md" sha256="28fc23d4c96e7f39e7751f0a263b0cd23c5cd4575460b785b9b952f242bc483f" -->
+<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/SKILL.md" sha256="b80e242b974dfc0877fe0821c388ffa0fe857a2e85a4943fc336ab8589f02b5f" -->
 ---
 name: ae-sdd
-version: 3.14.0
+version: 4.0.0
 description: |
   Declarative ae-sdd method, template, and output contract. The Rust daemon owns
   workflow state, gates, transitions, delegation, context projection, and audit.

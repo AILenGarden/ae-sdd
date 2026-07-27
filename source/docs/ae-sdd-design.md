@@ -1,6 +1,6 @@
 # ae-sdd 系统能力说明书
 
-> v3.14.0 · 面向开发者、LLM Agent 与项目接入方
+> v4.0.0 · 面向开发者、LLM Agent 与项目接入方
 >
 > 本文档是**系统能力设计入口**，说明 ae-sdd 的能力语义、边界和当前实现状态。代码分层、模块职责、运行时数据流和变更闭环统一维护在 [`ae-sdd-implementation-architecture.md`](ae-sdd-implementation-architecture.md)。若本文与代码实现冲突，以 CLI/测试输出为准，并同步修正文档。
 

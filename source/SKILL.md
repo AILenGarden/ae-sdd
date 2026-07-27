@@ -1,6 +1,6 @@
 ---
 name: ae-sdd
-version: 3.14.0
+version: 4.0.0
 description: |
   Declarative ae-sdd method, template, and output contract. The Rust daemon owns
   workflow state, gates, transitions, delegation, context projection, and audit.

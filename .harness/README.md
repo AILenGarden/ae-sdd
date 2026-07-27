@@ -48,6 +48,6 @@ harness unmount ae-sdd
 ## 元数据
 
 - 生成时间：2026-07-23T04:33:48Z
-- ae-sdd 版本：3.14.0
+- ae-sdd 版本：4.0.0
 - ae-sdd input hash：556be6fb789e9844522edbaefe4aaa225188715de0dd2fff92e291cad25ae9af
 - 适配器：v0.3.0

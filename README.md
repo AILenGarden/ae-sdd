@@ -1,6 +1,6 @@
 # ae-sdd
 
-> **版本：** v3.14.0
+> **版本：** v4.0.0
 
 ae-sdd is a Rust daemon-backed engineering workflow runtime for multiple coding
 Agents and workspaces. One per-user `ae-sddd` owns state, Gates, transitions,

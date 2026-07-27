@@ -354,7 +354,7 @@ fn bump_infers_the_product_version_from_the_selected_repository() {
     let LegacyNativeRequestSource::Generated(request) = invocation.request else {
         panic!("generated request");
     };
-    assert_eq!(request["expectedVersion"], "3.14.0");
+    assert_eq!(request["expectedVersion"], "4.0.0");
     assert_eq!(request["newVersion"], "3.15.0");
 }
 

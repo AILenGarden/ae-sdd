@@ -120,7 +120,7 @@ fn version_and_strict_schema_have_success_and_negative_paths() {
     ))
     .expect("version");
     assert_eq!(valid.payload["name"], "ae-sdd");
-    assert_eq!(valid.payload["version"], "3.14.0");
+    assert_eq!(valid.payload["version"], "4.0.0");
     assert_eq!(valid.payload["runtime"], "rust");
 
     let mut invalid = request(OfflineCommand::Version, "version-2", ExecutionMode::DryRun);

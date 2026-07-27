@@ -82,7 +82,7 @@ python "D:/Item/ae-sdd/demo/test-tool/score-skill/scripts/collect.py" \
     --repo "D:/Item/ae-sdd" \
     --story-id "STORY-DEMO-TEST-TOOL-001" \
     --operator "user:cc" \
-    --ae-sdd-version "3.14.0" \
+    --ae-sdd-version "4.0.0" \
     --host-agent "ZCode" \
     --model-id "glm-4.5" \
     --total-minutes 75 \
