@@ -1,11 +1,16 @@
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ae_sdd_build::{
-    CompatibilityRoutingManifest, ExpectedCounts, ImplementationStatus, RouteTarget,
-    audit_compatibility,
+    AdminChange, BenchmarkError, CapabilitySurface, CompatibilityManifest,
+    CompatibilityRoutingManifest, ExecutionMode, ExpectedCounts, HookBenchmarkConfig,
+    ImplementationStatus, InitInput, JobInput, ManifestError, NativeJobRequest, PermissionClass,
+    RouteIdentity, RouteTarget, audit_compatibility, benchmark_hook,
 };
-use ae_sdd_protocol::{CapabilityTokenWire, RequestParams};
+use ae_sdd_protocol::{CapabilityTokenWire, RequestParams, RpcMethod};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
@@ -25,6 +30,91 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn fixture_root(label: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ae-sdd-build-{label}-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).expect("fixture root");
+    root
+}
+
+fn write_json(path: &std::path::Path, value: &impl serde::Serialize) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("JSON parent");
+    }
+    fs::write(path, serde_json::to_vec_pretty(value).expect("encode JSON")).expect("write JSON");
+}
+
+fn staged_compatibility_fixture(
+    label: &str,
+) -> (
+    PathBuf,
+    PathBuf,
+    CompatibilityManifest,
+    CompatibilityRoutingManifest,
+) {
+    let root = fixture_root(label);
+    fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("workspace marker");
+    let source = repository_root().join("tests/fixtures/compatibility");
+    let manifest: CompatibilityManifest = serde_json::from_slice(
+        &fs::read(source.join("legacy-surface.v1.json")).expect("source inventory"),
+    )
+    .expect("inventory JSON");
+    let routing: CompatibilityRoutingManifest = serde_json::from_slice(
+        &fs::read(source.join("cli-routing.v1.json")).expect("source routing"),
+    )
+    .expect("routing JSON");
+
+    for relative in routing
+        .commands
+        .iter()
+        .flat_map(|route| [route.fixture.as_str(), route.evidence.as_str()])
+        .chain(
+            routing
+                .capabilities
+                .iter()
+                .flat_map(|entry| [entry.fixture.as_str(), entry.evidence.as_str()]),
+        )
+    {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().expect("evidence parent")).expect("evidence directory");
+        if !path.exists() {
+            fs::write(path, b"fixture\n").expect("evidence file");
+        }
+    }
+
+    let manifest_path = root.join("tests/fixtures/compatibility/legacy-surface.v1.json");
+    write_json(&manifest_path, &manifest);
+    write_json(
+        &manifest_path
+            .parent()
+            .expect("manifest parent")
+            .join("cli-routing.v1.json"),
+        &routing,
+    );
+    (root, manifest_path, manifest, routing)
+}
+
+fn write_compatibility_fixture(
+    manifest_path: &std::path::Path,
+    manifest: &CompatibilityManifest,
+    routing: &CompatibilityRoutingManifest,
+) {
+    write_json(manifest_path, manifest);
+    write_json(
+        &manifest_path
+            .parent()
+            .expect("manifest parent")
+            .join("cli-routing.v1.json"),
+        routing,
+    );
+}
+
 #[test]
 fn compatibility_audit_accepts_only_fully_evidenced_legacy_routes() {
     let root = repository_root();
@@ -35,8 +125,14 @@ fn compatibility_audit_accepts_only_fully_evidenced_legacy_routes() {
         &[PathBuf::from("apps/ae-sdd-monitor/**")],
     )
     .expect("every preserved or breaking-fix route must carry executable evidence");
-    assert_eq!(summary.command_count, 113);
-    assert_eq!(summary.capability_evidence_count, 61);
+    let expected = ExpectedCounts::legacy();
+    assert_eq!(summary.command_count, expected.commands);
+    // Commands are evidenced by the routing manifest; the capability evidence
+    // set covers the three registry-backed surfaces.
+    assert_eq!(
+        summary.capability_evidence_count,
+        expected.operations + expected.gates + expected.scanners
+    );
     assert_eq!(summary.stub_count, 0);
     assert_eq!(summary.logical_fallback_count, 0);
 }
@@ -337,11 +433,108 @@ fn post_commit_and_harness_docs_use_rust_typed_argv_only() {
     assert!(!hook.contains("native-job --request"));
     assert!(!hook.contains("cat >"));
     assert!(!hook.to_ascii_lowercase().contains("python"));
+    assert!(!hook.contains("l2_inject"));
+
+    for flag in [
+        "--codex-instructions",
+        "--claude-instructions",
+        "--zcode-instructions",
+    ] {
+        assert!(
+            hook.contains(flag),
+            "the released hook must pass {flag} to the Rust post-commit chain"
+        );
+    }
+    for flag in ["--harness-instructions", "--hermes-instructions"] {
+        assert!(
+            !hook.contains(flag),
+            "Harness and Hermes must stay package-distribution targets, not L2 injection targets"
+        );
+    }
+    assert!(
+        hook.contains("$USER_HOME/.codex/AGENTS.md")
+            && hook.contains("$USER_HOME/.claude/CLAUDE.md")
+            && hook.contains("$USER_HOME/.zcode/AGENTS.md"),
+        "global instruction paths must be explicit, never inferred from skill directories"
+    );
 
     let readme = std::fs::read_to_string(root.join(".harness/README.md")).expect("harness README");
     assert!(readme.contains("ae-sdd-build --release -- harness"));
     assert!(!readme.contains("build_harness.py"));
     assert!(!readme.to_ascii_lowercase().contains("python"));
+}
+
+#[test]
+fn l2_discipline_ssot_carries_bilingual_execution_efficiency() {
+    let source = std::fs::read_to_string(repository_root().join("source/L2-DISCIPLINE.md"))
+        .expect("L2 discipline SSOT");
+    assert!(
+        source.contains("ae-sdd-build post-commit"),
+        "the SSOT header must name the released Rust injection authority"
+    );
+    assert!(
+        source.contains("`scripts/l2_inject.py` is migration/manual legacy tooling"),
+        "the SSOT header must demote the Python injector to legacy/oracle tooling"
+    );
+
+    let english = language_section(&source, "en");
+    let chinese = language_section(&source, "zh");
+    for (language, body, heading, subsections) in [
+        (
+            "en",
+            english,
+            "## Execution Efficiency and Scope Discipline",
+            [
+                "### Fast resume",
+                "### Shortest verified slice",
+                "### Bounded investigation and output",
+                "### Agent coordination",
+                "### Progress control",
+            ],
+        ),
+        (
+            "zh",
+            chinese,
+            "## 执行效率与范围纪律",
+            [
+                "### 快速续接",
+                "### 最短可验证切片",
+                "### 有界调查与输出",
+                "### Agent 协同",
+                "### 进度控制",
+            ],
+        ),
+    ] {
+        assert!(
+            body.contains(heading),
+            "SECTION:{language} must carry the execution efficiency discipline"
+        );
+        for subsection in subsections {
+            assert!(
+                body.contains(subsection),
+                "SECTION:{language} must carry the detailed subsection {subsection}"
+            );
+        }
+        assert_eq!(
+            source.matches(heading).count(),
+            1,
+            "the {language} efficiency heading must exist exactly once in the SSOT"
+        );
+    }
+}
+
+fn language_section<'a>(source: &'a str, language: &str) -> &'a str {
+    let open = format!("<!-- SECTION:{language} -->");
+    let close = format!("<!-- /SECTION:{language} -->");
+    let start = source
+        .find(&open)
+        .map(|index| index + open.len())
+        .expect("language section start");
+    let end = source[start..]
+        .find(&close)
+        .map(|index| start + index)
+        .expect("language section end");
+    &source[start..end]
 }
 
 #[test]
@@ -373,4 +566,555 @@ fn member_manifests_inherit_every_dependency_from_the_workspace() {
             }
         }
     }
+}
+
+#[test]
+fn build_cli_native_job_and_harness_modes_are_content_idempotent() {
+    let root = fixture_root("native-cli");
+    let project = root.join("project");
+    fs::create_dir(&project).expect("project");
+    let request_path = root.join("native-job.json");
+    let native = NativeJobRequest {
+        schema_version: "ae-sdd-native-job/v1".to_owned(),
+        entrypoint: "init".to_owned(),
+        actor: "compatibility-test".to_owned(),
+        reason: "exercise typed CLI output modes".to_owned(),
+        idempotency_key: "native-cli-apply".to_owned(),
+        mode: ExecutionMode::Apply,
+        allowed_roots: vec![root.clone()],
+        job: JobInput::Init(InitInput {
+            project_root: project.clone(),
+            changes: vec![AdminChange {
+                relative_path: PathBuf::from("generated.txt"),
+                contents: "generated\n".to_owned(),
+                permission: PermissionClass::PrivateFile,
+            }],
+        }),
+    };
+    write_json(&request_path, &native);
+
+    let applied = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["native-job", "--request"])
+        .arg(&request_path)
+        .output()
+        .expect("native apply CLI");
+    assert!(applied.status.success());
+    assert!(String::from_utf8_lossy(&applied.stdout).contains("applied"));
+    assert!(project.join("generated.txt").is_file());
+
+    let replayed = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["native-job", "--request"])
+        .arg(&request_path)
+        .output()
+        .expect("native replay CLI");
+    assert!(replayed.status.success());
+    assert!(String::from_utf8_lossy(&replayed.stdout).contains("replayed"));
+
+    let json = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["native-job", "--request"])
+        .arg(&request_path)
+        .arg("--json")
+        .output()
+        .expect("native JSON CLI");
+    assert!(json.status.success());
+    let execution: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("native execution JSON");
+    assert_eq!(execution["replayed"], true);
+
+    let mut dry_run = native;
+    dry_run.mode = ExecutionMode::DryRun;
+    dry_run.idempotency_key = "native-cli-dry-run".to_owned();
+    dry_run.job = JobInput::Init(InitInput {
+        project_root: project,
+        changes: vec![AdminChange {
+            relative_path: PathBuf::from("planned.txt"),
+            contents: "planned\n".to_owned(),
+            permission: PermissionClass::PrivateFile,
+        }],
+    });
+    write_json(&request_path, &dry_run);
+    let planned = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["native-job", "--request"])
+        .arg(&request_path)
+        .output()
+        .expect("native dry-run CLI");
+    assert!(planned.status.success());
+    assert!(String::from_utf8_lossy(&planned.stdout).contains("planned"));
+
+    let source = root.join("source.md");
+    let target = root.join("harness/agent.md");
+    fs::write(&source, "# Source\n").expect("harness source");
+    let harness = |dry_run: bool, json: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"));
+        command
+            .arg("harness")
+            .arg("--source")
+            .arg(&source)
+            .arg("--target")
+            .arg(&target)
+            .args(["--title", "Native Harness"])
+            .arg("--allowed-root")
+            .arg(&root);
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        if json {
+            command.arg("--json");
+        }
+        command.output().expect("harness CLI")
+    };
+    let planned = harness(true, false);
+    assert!(planned.status.success());
+    assert!(String::from_utf8_lossy(&planned.stdout).contains("planned"));
+    let applied = harness(false, false);
+    assert!(applied.status.success());
+    assert!(String::from_utf8_lossy(&applied.stdout).contains("applied"));
+    let replayed = harness(false, false);
+    assert!(replayed.status.success());
+    assert!(String::from_utf8_lossy(&replayed.stdout).contains("replayed"));
+    let json = harness(false, true);
+    assert!(json.status.success());
+    let execution: serde_json::Value = serde_json::from_slice(&json.stdout).expect("harness JSON");
+    assert_eq!(execution["replayed"], true);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn build_cli_post_commit_compatibility_release_and_benchmark_paths_are_safe()
+-> Result<(), BenchmarkError> {
+    let root = fixture_root("cli-matrix");
+    let repository = root.join("repo");
+    let source = repository.join("source");
+    let home = root.join("home");
+    fs::create_dir_all(&source).expect("source");
+    fs::create_dir(&home).expect("home");
+    fs::write(source.join("SKILL.md"), "---\nname: fixture\n---\n").expect("skill");
+    let package = repository.join("dist/ae-sdd");
+    let target = home.join(".codex/skills/ae-sdd");
+    let run_post_commit = |json: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"));
+        command
+            .arg("post-commit")
+            .arg("--repository-root")
+            .arg(&repository)
+            .arg("--source")
+            .arg(&source)
+            .arg("--package")
+            .arg(&package)
+            .arg("--target")
+            .arg(&target)
+            .arg("--allowed-root")
+            .arg(&repository)
+            .arg("--allowed-root")
+            .arg(&home)
+            .args(["--commit", "0123456789abcdef0123456789abcdef01234567"]);
+        if json {
+            command.arg("--json");
+        }
+        command.output().expect("post-commit CLI")
+    };
+    let post_commit = run_post_commit(false);
+    assert!(post_commit.status.success());
+    assert!(String::from_utf8_lossy(&post_commit.stdout).contains("post-commit complete"));
+    let post_commit = run_post_commit(true);
+    assert!(post_commit.status.success());
+    let post_commit: serde_json::Value =
+        serde_json::from_slice(&post_commit.stdout).expect("post-commit JSON");
+    assert_eq!(post_commit["compile"]["replayed"], true);
+
+    let inventory = repository_root().join("tests/fixtures/compatibility/legacy-surface.v1.json");
+    for json in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"));
+        command
+            .arg("compatibility-audit")
+            .arg("--manifest")
+            .arg(&inventory)
+            .arg("--exclude")
+            .arg("apps/ae-sdd-monitor/**");
+        if json {
+            command.arg("--json");
+        }
+        let output = command.output().expect("compatibility CLI");
+        assert!(output.status.success());
+        if json {
+            let summary: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("audit JSON");
+            assert_eq!(summary["commandCount"], 113);
+        } else {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("commands=113"));
+        }
+    }
+
+    let artifacts = root.join("release");
+    fs::create_dir(&artifacts).expect("release artifacts");
+    for binary in ["ae-sdd", "ae-sddd", "ae-sdd-build"] {
+        fs::write(artifacts.join(binary), b"native-rust-binary").expect("release binary");
+    }
+    for json in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"));
+        command
+            .arg("verify-release")
+            .arg("--artifact-dir")
+            .arg(&artifacts);
+        if json {
+            command.arg("--json");
+        }
+        let output = command.output().expect("release verification CLI");
+        assert!(output.status.success());
+        if json {
+            let verification: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("release JSON");
+            assert_eq!(verification["artifacts"].as_array().map(Vec::len), Some(3));
+        } else {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("binaries=3"));
+        }
+    }
+
+    for args in [
+        vec!["benchmark-hook", "--samples", "0"],
+        vec!["benchmark-hook", "--samples", "1", "--histogram", "linear"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+            .args(args)
+            .output()
+            .expect("rejected benchmark CLI");
+        assert!(!output.status.success());
+    }
+    let missing_manifest = root.join("missing-endpoint.json");
+    let missing_daemon = root.join("missing-daemon.exe");
+    let debug_only = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["benchmark-hook", "--warmup", "0", "--samples", "1"])
+        .arg("--manifest")
+        .arg(&missing_manifest)
+        .arg("--workspace-root")
+        .arg(&root)
+        .arg("--daemon-binary")
+        .arg(&missing_daemon)
+        .arg("--json")
+        .output()
+        .expect("debug benchmark CLI");
+    assert!(!debug_only.status.success());
+    assert!(String::from_utf8_lossy(&debug_only.stderr).contains("release build"));
+
+    let config = HookBenchmarkConfig::new(0, 1, "hdr")?
+        .with_manifest(missing_manifest)
+        .with_workspace_root(root.clone())
+        .with_daemon_binary(missing_daemon);
+    let benchmark = benchmark_hook(config);
+    if cfg!(debug_assertions) {
+        assert!(matches!(
+            benchmark,
+            Err(BenchmarkError::ReleaseProfileRequired)
+        ));
+    } else {
+        assert!(benchmark.is_err());
+    }
+    fs::remove_dir_all(root).expect("cleanup");
+    Ok::<(), BenchmarkError>(())
+}
+
+#[test]
+fn compatibility_manifest_inventory_failures_are_precise() {
+    let path = repository_root().join("tests/fixtures/compatibility/legacy-surface.v1.json");
+    let manifest = CompatibilityManifest::from_path(&path).expect("manifest");
+
+    let mut wrong_schema = manifest.clone();
+    wrong_schema.schema_version = "wrong".to_owned();
+    assert!(matches!(
+        wrong_schema.audit(ExpectedCounts::legacy()),
+        Err(ManifestError::SchemaVersion(_))
+    ));
+
+    let mut unsafe_routing = manifest.clone();
+    unsafe_routing.routing_manifest = "../routing.json".to_owned();
+    assert!(matches!(
+        unsafe_routing.audit(ExpectedCounts::legacy()),
+        Err(ManifestError::EvidencePath(_))
+    ));
+
+    let mut wrong_count = manifest.clone();
+    wrong_count.commands.pop();
+    assert!(matches!(
+        wrong_count.audit(ExpectedCounts::legacy()),
+        Err(ManifestError::Count {
+            surface: "commands",
+            ..
+        })
+    ));
+
+    for field in ["id", "source", "owner"] {
+        let mut empty = manifest.clone();
+        match field {
+            "id" => empty.commands[0].id.clear(),
+            "source" => empty.commands[0].source.clear(),
+            _ => empty.commands[0].owner.clear(),
+        }
+        assert!(matches!(
+            empty.audit(ExpectedCounts::legacy()),
+            Err(ManifestError::EmptyField { field: actual, .. }) if actual == field
+        ));
+    }
+
+    let mut duplicate = manifest;
+    duplicate.commands[1].id = duplicate.commands[0].id.clone();
+    assert!(matches!(
+        duplicate.audit(ExpectedCounts::legacy()),
+        Err(ManifestError::DuplicateId {
+            surface: "commands",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn compatibility_audit_fail_closed_matrix_reaches_route_and_capability_guards() {
+    let (root, manifest_path, manifest, routing) = staged_compatibility_fixture("audit-guards");
+    audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[])
+        .expect("staged compatibility fixture");
+
+    let mut wrong_registry = manifest.clone();
+    wrong_registry.operations[0].id = "unknown.operation".to_owned();
+    write_compatibility_fixture(&manifest_path, &wrong_registry, &routing);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::RegistryMismatch {
+            surface: "operations",
+            ..
+        })
+    ));
+
+    let mut wrong_schema = routing.clone();
+    wrong_schema.schema_version = "wrong".to_owned();
+    write_compatibility_fixture(&manifest_path, &manifest, &wrong_schema);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::SchemaVersion(_))
+    ));
+
+    let mut duplicate_route = routing.clone();
+    duplicate_route.commands[1].id = duplicate_route.commands[0].id.clone();
+    write_compatibility_fixture(&manifest_path, &manifest, &duplicate_route);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::DuplicateId {
+            surface: "command routes",
+            ..
+        })
+    ));
+
+    let mut open_route = routing.clone();
+    open_route.commands[0].fail_closed = false;
+    write_compatibility_fixture(&manifest_path, &manifest, &open_route);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::NotFailClosed(_))
+    ));
+
+    let mut unbounded_route = routing.clone();
+    unbounded_route.commands[0].deadline_ms = 0;
+    write_compatibility_fixture(&manifest_path, &manifest, &unbounded_route);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::Deadline { .. })
+    ));
+
+    let mut uncovered_route = routing.clone();
+    uncovered_route.commands.pop();
+    write_compatibility_fixture(&manifest_path, &manifest, &uncovered_route);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::RouteCoverage { .. })
+    ));
+
+    let mut pending_route = routing.clone();
+    pending_route
+        .commands
+        .iter_mut()
+        .find(|route| route.id == "health")
+        .expect("health route")
+        .status = ImplementationStatus::Pending;
+    write_compatibility_fixture(&manifest_path, &manifest, &pending_route);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::UnimplementedRoutes(_))
+    ));
+
+    for id in ["version", "assets check", "scripts-dir", "health"] {
+        let mut invalid = routing.clone();
+        let route = invalid
+            .commands
+            .iter_mut()
+            .find(|route| route.id == id)
+            .expect("classified route");
+        route.route = if id == "health" {
+            RouteTarget::Rejected {
+                stable_code: "LEGACY_COMMAND_REMOVED".to_owned(),
+                remediation: "use typed daemon health".to_owned(),
+            }
+        } else {
+            RouteTarget::Rpc {
+                method: RpcMethod::RuntimeStatus,
+            }
+        };
+        write_compatibility_fixture(&manifest_path, &manifest, &invalid);
+        assert!(matches!(
+            audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+            Err(ManifestError::RouteTarget { .. })
+        ));
+    }
+
+    let mut wrong_identity = routing.clone();
+    wrong_identity
+        .commands
+        .iter_mut()
+        .find(|route| route.id == "gate coding-required")
+        .expect("gate route")
+        .identity = RouteIdentity {
+        workspace: false,
+        work_item: false,
+        session: false,
+    };
+    write_compatibility_fixture(&manifest_path, &manifest, &wrong_identity);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::RouteIdentity { .. })
+    ));
+
+    let mut unknown_operation = routing.clone();
+    let operation = unknown_operation
+        .commands
+        .iter_mut()
+        .find(|route| route.id == "doc resolve")
+        .expect("typed route");
+    operation.route = RouteTarget::TypedOperation {
+        operation: "unknown.operation".to_owned(),
+    };
+    write_compatibility_fixture(&manifest_path, &manifest, &unknown_operation);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::RouteTarget { .. })
+    ));
+
+    let mut invalid_rejection = routing.clone();
+    let rejected = invalid_rejection
+        .commands
+        .iter_mut()
+        .find(|route| route.id == "scripts-dir")
+        .expect("rejected route");
+    if let RouteTarget::Rejected {
+        stable_code,
+        remediation,
+    } = &mut rejected.route
+    {
+        *stable_code = "UNKNOWN".to_owned();
+        remediation.clear();
+    } else {
+        panic!("scripts-dir must be rejected");
+    }
+    write_compatibility_fixture(&manifest_path, &manifest, &invalid_rejection);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::RouteTarget { .. })
+    ));
+
+    write_compatibility_fixture(&manifest_path, &manifest, &routing);
+    assert!(matches!(
+        audit_compatibility(
+            &manifest_path,
+            ExpectedCounts::legacy(),
+            &[PathBuf::from(&routing.commands[0].fixture)]
+        ),
+        Err(ManifestError::EvidencePath(_))
+    ));
+
+    let mut duplicate_capability = routing.clone();
+    duplicate_capability.capabilities[1].surface = duplicate_capability.capabilities[0].surface;
+    duplicate_capability.capabilities[1].id = duplicate_capability.capabilities[0].id.clone();
+    write_compatibility_fixture(&manifest_path, &manifest, &duplicate_capability);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::DuplicateId {
+            surface: "capability evidence",
+            ..
+        })
+    ));
+
+    let mut open_capability = routing.clone();
+    open_capability.capabilities[0].fail_closed = false;
+    write_compatibility_fixture(&manifest_path, &manifest, &open_capability);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::NotFailClosed(_))
+    ));
+
+    let mut uncovered_capability = routing.clone();
+    uncovered_capability.capabilities.pop();
+    write_compatibility_fixture(&manifest_path, &manifest, &uncovered_capability);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::EvidenceCoverage { .. })
+    ));
+
+    let mut pending_capability = routing.clone();
+    pending_capability.capabilities[0].status = ImplementationStatus::Pending;
+    write_compatibility_fixture(&manifest_path, &manifest, &pending_capability);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::UnimplementedCapabilities(_))
+    ));
+
+    let mut mismatched_capability = routing.clone();
+    let lease_break = mismatched_capability
+        .capabilities
+        .iter_mut()
+        .find(|entry| entry.surface == CapabilitySurface::Operation && entry.id == "lease.break")
+        .expect("lease.break capability");
+    lease_break.status = ImplementationStatus::Implemented;
+    write_compatibility_fixture(&manifest_path, &manifest, &mismatched_capability);
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::CapabilityStatus { .. })
+    ));
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn compatibility_audit_reports_decode_read_and_repository_root_failures() {
+    let missing = fixture_root("missing-manifest").join("missing.json");
+    assert!(matches!(
+        audit_compatibility(&missing, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::Read { .. })
+    ));
+    fs::remove_dir_all(missing.parent().expect("missing parent")).expect("missing cleanup");
+
+    let invalid_root = fixture_root("invalid-manifest");
+    fs::write(invalid_root.join("Cargo.toml"), "[workspace]\n").expect("workspace marker");
+    let invalid = invalid_root.join("invalid.json");
+    fs::write(&invalid, b"not-json").expect("invalid JSON");
+    assert!(matches!(
+        audit_compatibility(&invalid, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::Decode(_))
+    ));
+    fs::remove_dir_all(invalid_root).expect("invalid cleanup");
+
+    let root = fixture_root("repository-root");
+    let source = repository_root().join("tests/fixtures/compatibility");
+    let manifest_path = root.join("nested/legacy-surface.v1.json");
+    fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
+        .expect("manifest directory");
+    fs::copy(source.join("legacy-surface.v1.json"), &manifest_path).expect("copy manifest");
+    fs::copy(
+        source.join("cli-routing.v1.json"),
+        manifest_path
+            .parent()
+            .expect("manifest parent")
+            .join("cli-routing.v1.json"),
+    )
+    .expect("copy routing");
+    assert!(matches!(
+        audit_compatibility(&manifest_path, ExpectedCounts::legacy(), &[]),
+        Err(ManifestError::RepositoryRoot(_))
+    ));
+    fs::remove_dir_all(root).expect("repository root cleanup");
 }

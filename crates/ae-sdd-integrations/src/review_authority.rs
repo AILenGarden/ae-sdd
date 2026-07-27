@@ -3293,6 +3293,14 @@ fn strip_derived_review_fields(value: &mut Value) {
                 "revision",
                 "lastFencingToken",
                 "lastMutation",
+                // The execution runtime section is daemon-derived control-plane
+                // state, and `review.record` itself advances the completion
+                // milestone inside it. Hashing it would let a review invalidate
+                // the very Gate authority it just established, so a Work Item
+                // could satisfy `G-12` or reach `GovernanceClosed` but never
+                // both. Its `completionBound` digests stay authoritative through
+                // `CompletionMilestone::invalidate`, not through this input.
+                "executionRuntime",
             ] {
                 object.remove(field);
             }

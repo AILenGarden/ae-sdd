@@ -160,6 +160,28 @@ portable_identifier!(RuntimeModuleKey, "runtime module key", 128);
 portable_identifier!(RuntimeModuleName, "runtime module name", 128);
 portable_identifier!(OperationName, "operation name", 128);
 
+impl ReasonCode {
+    /// Returns the contract-owned emergency reason used only when richer
+    /// invariant vocabulary itself cannot be constructed.
+    ///
+    /// This is deliberately narrow: callers must not use it to bypass normal
+    /// validation or replace a recoverable input error.
+    pub fn invariant_fallback() -> Self {
+        Self("contract.invariant-failed".into())
+    }
+}
+
+impl MessageKey {
+    /// Returns the contract-owned emergency message key used only when richer
+    /// invariant vocabulary itself cannot be constructed.
+    ///
+    /// The value is owned here so error paths can remain total without panic,
+    /// abort, unsafe construction, or an invalid wire envelope.
+    pub fn invariant_fallback() -> Self {
+        Self("control-plane.contract-invariant-failed".into())
+    }
+}
+
 /// UTF-8 text whose encoded byte length is fixed by the surrounding contract.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -207,5 +229,19 @@ impl<'de, const MAX_BYTES: usize> Deserialize<'de> for BoundedText<MAX_BYTES> {
     {
         let value = String::deserialize(deserializer)?;
         Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MessageKey, ReasonCode};
+
+    #[test]
+    fn invariant_fallback_vocabulary_is_itself_contract_valid() {
+        let reason = ReasonCode::invariant_fallback();
+        let message = MessageKey::invariant_fallback();
+
+        assert!(ReasonCode::new(reason.as_str()).is_ok());
+        assert!(MessageKey::new(message.as_str()).is_ok());
     }
 }

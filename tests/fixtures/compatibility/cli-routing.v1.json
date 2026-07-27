@@ -2025,6 +2025,30 @@
     },
     {
       "surface": "operation",
+      "id": "execution.resume",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/execution_supervisor_e2e.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "execution.slice.record",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/service_dispatch_matrix.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "execution.slice.start",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-runtime/tests/service_dispatch_matrix.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
       "id": "gate.check",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
       "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
@@ -2068,6 +2092,22 @@
       "id": "lease.status",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
       "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "review.contribute",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/review_contribution_e2e.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "review.finalize",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/review_contribution_e2e.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2193,7 +2233,7 @@
     },
     {
       "surface": "gate",
-      "id": "G-HTTP-1",
+      "id": "G-09",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
       "failClosed": true,
@@ -2201,7 +2241,7 @@
     },
     {
       "surface": "gate",
-      "id": "G-09",
+      "id": "G-09B",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
       "failClosed": true,
@@ -2249,6 +2289,22 @@
     },
     {
       "surface": "gate",
+      "id": "G-AUTO-CONSENSUS",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-CODE-1",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
       "id": "G-CODEPLAN-SRC",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
@@ -2257,7 +2313,31 @@
     },
     {
       "surface": "gate",
+      "id": "G-DOC-CONSISTENCY",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
       "id": "G-DOC-STORAGE",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-DR-CTX",
+      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
+      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "gate",
+      "id": "G-HTTP-1",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
       "failClosed": true,
@@ -2305,14 +2385,6 @@
     },
     {
       "surface": "gate",
-      "id": "G-RA-FLOW-VIOLATION",
-      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
-      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
-      "failClosed": true,
-      "status": "implemented"
-    },
-    {
-      "surface": "gate",
       "id": "G-RA-5",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
@@ -2329,31 +2401,7 @@
     },
     {
       "surface": "gate",
-      "id": "G-CODE-1",
-      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
-      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
-      "failClosed": true,
-      "status": "implemented"
-    },
-    {
-      "surface": "gate",
-      "id": "G-DOC-CONSISTENCY",
-      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
-      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
-      "failClosed": true,
-      "status": "implemented"
-    },
-    {
-      "surface": "gate",
-      "id": "G-REVIEW-LOOP",
-      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
-      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
-      "failClosed": true,
-      "status": "implemented"
-    },
-    {
-      "surface": "gate",
-      "id": "G-09B",
+      "id": "G-RA-FLOW-VIOLATION",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
       "failClosed": true,
@@ -2369,15 +2417,7 @@
     },
     {
       "surface": "gate",
-      "id": "G-AUTO-CONSENSUS",
-      "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
-      "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
-      "failClosed": true,
-      "status": "implemented"
-    },
-    {
-      "surface": "gate",
-      "id": "G-DR-CTX",
+      "id": "G-REVIEW-LOOP",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
       "failClosed": true,
@@ -2393,7 +2433,7 @@
     },
     {
       "surface": "gate",
-      "id": "G-TESTCASE-CTX",
+      "id": "G-TASK-CTX",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
       "failClosed": true,
@@ -2401,7 +2441,7 @@
     },
     {
       "surface": "gate",
-      "id": "G-TASK-CTX",
+      "id": "G-TESTCASE-CTX",
       "fixture": "crates/ae-sdd-gates/tests/gate_truth_table.rs",
       "evidence": "crates/ae-sdd-gates/tests/non_pass_blocks_transition.rs",
       "failClosed": true,

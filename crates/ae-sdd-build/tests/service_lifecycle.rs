@@ -9,8 +9,8 @@ use ae_sdd_build::{
     SERVICE_EXECUTION_SCHEMA, SERVICE_PLAN_SCHEMA, ServiceDescriptorAction, ServiceDescriptorState,
     ServiceError, ServiceExecutionLimits, ServiceLifecycleRequest, ServiceManagerCommand,
     ServiceManagerOutput, ServiceManagerRunner, ServiceOperation, ServicePlatform,
-    execute_service_lifecycle_with_runner, generate_service_lifecycle_plan,
-    inspect_service_descriptor, materialize_service_descriptor,
+    execute_service_lifecycle, execute_service_lifecycle_with_runner,
+    generate_service_lifecycle_plan, inspect_service_descriptor, materialize_service_descriptor,
 };
 
 fn fixture_root(label: &str) -> PathBuf {
@@ -495,5 +495,473 @@ fn build_cli_emits_the_typed_service_plan() {
     assert_eq!(plan["schemaVersion"], SERVICE_PLAN_SCHEMA);
     assert_eq!(plan["operation"], "status");
     assert_eq!(plan["platform"], ServicePlatform::current().as_str());
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn request_validation_rejects_bounded_fields_and_runtime_fallbacks() {
+    let root = fixture_root("request-validation");
+    let baseline = request(&root, ServicePlatform::Linux, ServiceOperation::Install);
+
+    let mut invalid = baseline.clone();
+    invalid.schema_version = "wrong".to_owned();
+    assert!(matches!(
+        generate_service_lifecycle_plan(&invalid),
+        Err(ServiceError::Schema(_))
+    ));
+
+    for roots in [Vec::new(), vec![root.clone(); 65]] {
+        let mut invalid = baseline.clone();
+        invalid.allowed_roots = roots;
+        assert!(matches!(
+            generate_service_lifecycle_plan(&invalid),
+            Err(ServiceError::InvalidField("allowedRoots"))
+        ));
+    }
+
+    for restart_delay_seconds in [0, 301] {
+        let mut invalid = baseline.clone();
+        invalid.restart_delay_seconds = restart_delay_seconds;
+        assert!(matches!(
+            generate_service_lifecycle_plan(&invalid),
+            Err(ServiceError::InvalidRestartDelay)
+        ));
+    }
+
+    let mut invalid = baseline.clone();
+    invalid.user_identity.clear();
+    assert!(matches!(
+        generate_service_lifecycle_plan(&invalid),
+        Err(ServiceError::InvalidField("userIdentity"))
+    ));
+
+    for argument in ["line\nbreak", "--endpoint-token=secret"] {
+        let mut invalid = baseline.clone();
+        invalid.extra_arguments = vec![argument.to_owned()];
+        assert!(matches!(
+            generate_service_lifecycle_plan(&invalid),
+            Err(ServiceError::InvalidField("extraArguments"))
+                | Err(ServiceError::SecretInDescriptor)
+        ));
+    }
+
+    for (key, value, expected_key_error) in [
+        ("9INVALID", "value", true),
+        ("SAFE_NAME", "token=secret", false),
+        ("PRIVATE_KEY", "value", false),
+    ] {
+        let mut invalid = baseline.clone();
+        invalid.environment.insert(key.to_owned(), value.to_owned());
+        let result = generate_service_lifecycle_plan(&invalid);
+        if expected_key_error {
+            assert!(matches!(
+                result,
+                Err(ServiceError::InvalidEnvironmentKey(_))
+            ));
+        } else {
+            assert!(matches!(result, Err(ServiceError::SecretInDescriptor)));
+        }
+    }
+
+    let mut invalid = baseline.clone();
+    invalid.executable = root.join("bin/../ae-sddd");
+    assert!(matches!(
+        generate_service_lifecycle_plan(&invalid),
+        Err(ServiceError::InvalidPath("executable"))
+    ));
+
+    let mut forbidden = baseline;
+    forbidden.executable = root.join("bin/python.exe");
+    assert!(matches!(
+        generate_service_lifecycle_plan(&forbidden),
+        Err(ServiceError::SecretInDescriptor)
+    ));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn executor_rejects_invalid_limits_plans_and_storage_before_running() {
+    let root = fixture_root("executor-validation");
+    let plan = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::current(),
+        ServiceOperation::Status,
+    ))
+    .expect("status plan");
+    let runner = FakeRunner::default();
+
+    for limits in [
+        ServiceExecutionLimits {
+            command_timeout: Duration::ZERO,
+            max_output_bytes: 1,
+        },
+        ServiceExecutionLimits {
+            command_timeout: Duration::from_secs(301),
+            max_output_bytes: 1,
+        },
+        ServiceExecutionLimits {
+            command_timeout: Duration::from_secs(1),
+            max_output_bytes: 0,
+        },
+        ServiceExecutionLimits {
+            command_timeout: Duration::from_secs(1),
+            max_output_bytes: 1024 * 1024 + 1,
+        },
+    ] {
+        assert!(matches!(
+            execute_service_lifecycle_with_runner(&plan, &runner, limits),
+            Err(ServiceError::InvalidExecutionLimits)
+        ));
+    }
+
+    let mut wrong_platform = plan.clone();
+    wrong_platform.platform = match ServicePlatform::current() {
+        ServicePlatform::Windows => ServicePlatform::Linux,
+        ServicePlatform::Macos | ServicePlatform::Linux => ServicePlatform::Windows,
+    };
+    assert!(matches!(
+        execute_service_lifecycle_with_runner(
+            &wrong_platform,
+            &runner,
+            ServiceExecutionLimits::default()
+        ),
+        Err(ServiceError::PlatformMismatch { .. })
+    ));
+
+    for mutation in 0..4 {
+        let mut denied = plan.clone();
+        match mutation {
+            0 => denied.permission_policy.user_scope_only = false,
+            1 => denied.permission_policy.elevation_required = true,
+            2 => denied.lifecycle_contract.shell_wrapper = true,
+            _ => denied.manager_commands.clear(),
+        }
+        assert!(matches!(
+            execute_service_lifecycle_with_runner(
+                &denied,
+                &runner,
+                ServiceExecutionLimits::default()
+            ),
+            Err(ServiceError::PrivilegeEscalation)
+        ));
+    }
+
+    let mut invalid_argument = plan.clone();
+    invalid_argument.manager_commands[0]
+        .arguments
+        .push("line\nbreak".to_owned());
+    assert!(matches!(
+        execute_service_lifecycle_with_runner(
+            &invalid_argument,
+            &runner,
+            ServiceExecutionLimits::default()
+        ),
+        Err(ServiceError::InvalidManagerArguments)
+    ));
+
+    let mut elevated = plan.clone();
+    elevated.manager_commands[0]
+        .arguments
+        .push("sudo".to_owned());
+    assert!(matches!(
+        execute_service_lifecycle_with_runner(
+            &elevated,
+            &runner,
+            ServiceExecutionLimits::default()
+        ),
+        Err(ServiceError::PrivilegeEscalation)
+    ));
+
+    let mut missing_home = plan.clone();
+    missing_home.user_home = root.join("missing-home");
+    assert!(matches!(
+        execute_service_lifecycle_with_runner(
+            &missing_home,
+            &runner,
+            ServiceExecutionLimits::default()
+        ),
+        Err(ServiceError::Io { .. })
+    ));
+
+    let outside = root.parent().expect("fixture parent").to_path_buf();
+    let mut escaped = plan.clone();
+    escaped.state_dir = outside;
+    assert!(matches!(
+        execute_service_lifecycle_with_runner(&escaped, &runner, ServiceExecutionLimits::default()),
+        Err(ServiceError::DestinationOutsideUserHome)
+    ));
+
+    let mut native_denied = plan;
+    native_denied.manager_commands[0].program = "powershell.exe";
+    assert!(matches!(
+        execute_service_lifecycle(&native_denied),
+        Err(ServiceError::ManagerProgramDenied(_))
+    ));
+    assert!(runner.calls().is_empty());
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn lifecycle_execution_covers_descriptor_states_and_bounded_receipts() {
+    let revalidate_root = fixture_root("revalidate");
+    let revalidate = generate_service_lifecycle_plan(&request(
+        &revalidate_root,
+        ServicePlatform::current(),
+        ServiceOperation::Install,
+    ))
+    .expect("revalidate plan");
+    materialize_service_descriptor(&revalidate).expect("preexisting matching descriptor");
+    let receipt = execute_service_lifecycle_with_runner(
+        &revalidate,
+        &FakeRunner::default(),
+        ServiceExecutionLimits::default(),
+    )
+    .expect("revalidated install");
+    assert_eq!(
+        receipt.descriptor_action,
+        ServiceDescriptorAction::Revalidated
+    );
+    fs::remove_dir_all(revalidate_root).expect("revalidate cleanup");
+
+    let absent_root = fixture_root("already-absent");
+    let absent = generate_service_lifecycle_plan(&request(
+        &absent_root,
+        ServicePlatform::current(),
+        ServiceOperation::Uninstall,
+    ))
+    .expect("absent uninstall plan");
+    let receipt = execute_service_lifecycle_with_runner(
+        &absent,
+        &FakeRunner::default(),
+        ServiceExecutionLimits::default(),
+    )
+    .expect("absent uninstall");
+    assert_eq!(
+        receipt.descriptor_action,
+        ServiceDescriptorAction::AlreadyAbsent
+    );
+    fs::remove_dir_all(absent_root).expect("absent cleanup");
+
+    let drift_root = fixture_root("uninstall-drift");
+    let drift = generate_service_lifecycle_plan(&request(
+        &drift_root,
+        ServicePlatform::current(),
+        ServiceOperation::Uninstall,
+    ))
+    .expect("drift uninstall plan");
+    fs::create_dir_all(drift.descriptor_path.parent().expect("descriptor parent"))
+        .expect("descriptor parent");
+    fs::write(&drift.descriptor_path, b"drift").expect("drift descriptor");
+    assert!(matches!(
+        execute_service_lifecycle_with_runner(
+            &drift,
+            &FakeRunner::default(),
+            ServiceExecutionLimits::default()
+        ),
+        Err(ServiceError::DescriptorDrift)
+    ));
+    fs::remove_dir_all(drift_root).expect("drift cleanup");
+
+    let bounded_root = fixture_root("bounded-output");
+    let bounded = generate_service_lifecycle_plan(&request(
+        &bounded_root,
+        ServicePlatform::current(),
+        ServiceOperation::Status,
+    ))
+    .expect("bounded status plan");
+    let output = ServiceManagerOutput {
+        stdout: vec![b'o'; 64],
+        stderr: vec![b'e'; 64],
+        ..success_output()
+    };
+    let receipt = execute_service_lifecycle_with_runner(
+        &bounded,
+        &FakeRunner::with_outputs(vec![output]),
+        ServiceExecutionLimits {
+            command_timeout: Duration::from_secs(1),
+            max_output_bytes: 8,
+        },
+    )
+    .expect("bounded status");
+    assert!(receipt.commands[0].stdout_truncated);
+    assert!(receipt.commands[0].stderr_truncated);
+    assert_eq!(receipt.commands[0].stdout.len(), 8);
+    assert_eq!(receipt.commands[0].stderr.len(), 8);
+    fs::remove_dir_all(bounded_root).expect("bounded cleanup");
+}
+
+#[test]
+fn lifecycle_receipts_and_descriptor_staging_fail_closed() {
+    for (label, receipt_bytes, expected_schema) in [
+        ("invalid-json", b"not-json".to_vec(), None),
+        (
+            "invalid-schema",
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": "wrong",
+                "planDigest": "digest",
+                "platform": ServicePlatform::current().as_str(),
+                "operation": "install",
+                "descriptorDigest": "digest"
+            }))
+            .expect("schema receipt"),
+            Some("wrong"),
+        ),
+    ] {
+        let root = fixture_root(label);
+        let plan = generate_service_lifecycle_plan(&request(
+            &root,
+            ServicePlatform::current(),
+            ServiceOperation::Install,
+        ))
+        .expect("receipt plan");
+        materialize_service_descriptor(&plan).expect("matching descriptor");
+        let receipt_path = plan.state_dir.join("service-lifecycle.receipt.json");
+        fs::write(&receipt_path, receipt_bytes).expect("corrupt receipt");
+        let error = execute_service_lifecycle_with_runner(
+            &plan,
+            &FakeRunner::default(),
+            ServiceExecutionLimits::default(),
+        )
+        .expect_err("corrupt receipt must fail");
+        if let Some(schema) = expected_schema {
+            assert!(
+                matches!(error, ServiceError::ExecutionReceiptSchema(actual) if actual == schema)
+            );
+        } else {
+            assert!(matches!(error, ServiceError::InvalidExecutionReceipt(_)));
+        }
+        fs::remove_dir_all(root).expect("receipt cleanup");
+    }
+
+    let conflict_root = fixture_root("descriptor-stage-conflict");
+    let conflict = generate_service_lifecycle_plan(&request(
+        &conflict_root,
+        ServicePlatform::current(),
+        ServiceOperation::Install,
+    ))
+    .expect("conflict plan");
+    let parent = conflict
+        .descriptor_path
+        .parent()
+        .expect("descriptor parent");
+    fs::create_dir_all(parent).expect("descriptor parent");
+    let name = conflict
+        .descriptor_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .expect("descriptor name");
+    fs::write(
+        parent.join(format!(".{name}.ae-sdd-stage-{}", std::process::id())),
+        b"conflict",
+    )
+    .expect("staging conflict");
+    assert!(matches!(
+        materialize_service_descriptor(&conflict),
+        Err(ServiceError::StagingConflict)
+    ));
+    fs::remove_dir_all(conflict_root).expect("conflict cleanup");
+
+    let oversized_root = fixture_root("oversized-descriptor");
+    let mut oversized = generate_service_lifecycle_plan(&request(
+        &oversized_root,
+        ServicePlatform::current(),
+        ServiceOperation::Install,
+    ))
+    .expect("oversized plan");
+    oversized.descriptor_contents = "x".repeat(1024 * 1024 + 1);
+    assert!(matches!(
+        materialize_service_descriptor(&oversized),
+        Err(ServiceError::DescriptorTooLarge)
+    ));
+    fs::remove_dir_all(oversized_root).expect("oversized cleanup");
+
+    let directory_root = fixture_root("descriptor-directory");
+    let directory = generate_service_lifecycle_plan(&request(
+        &directory_root,
+        ServicePlatform::current(),
+        ServiceOperation::Status,
+    ))
+    .expect("directory plan");
+    fs::create_dir_all(&directory.descriptor_path).expect("descriptor directory");
+    assert!(matches!(
+        inspect_service_descriptor(&directory),
+        Err(ServiceError::InvalidPath("descriptorPath"))
+    ));
+    fs::remove_dir_all(directory_root).expect("directory cleanup");
+}
+
+#[test]
+fn build_cli_covers_plan_materialize_and_inspect_output_modes() {
+    let root = fixture_root("cli-modes");
+    let install = request(&root, ServicePlatform::current(), ServiceOperation::Install);
+    let request_path = root.join("install-request.json");
+    fs::write(
+        &request_path,
+        serde_json::to_vec_pretty(&install).expect("request JSON"),
+    )
+    .expect("write request");
+
+    let plan = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["service", "--request"])
+        .arg(&request_path)
+        .output()
+        .expect("text plan");
+    assert!(plan.status.success());
+    assert!(String::from_utf8_lossy(&plan.stdout).contains("service install plan"));
+
+    let materialized = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["service", "--request"])
+        .arg(&request_path)
+        .arg("--materialize")
+        .output()
+        .expect("text materialize");
+    assert!(materialized.status.success());
+    assert!(String::from_utf8_lossy(&materialized.stdout).contains("materialized"));
+
+    let replay = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["service", "--request"])
+        .arg(&request_path)
+        .args(["--materialize", "--json"])
+        .output()
+        .expect("JSON materialize replay");
+    assert!(replay.status.success());
+    let replay: serde_json::Value =
+        serde_json::from_slice(&replay.stdout).expect("materialize JSON");
+    assert_eq!(replay["created"], false);
+
+    for json in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"));
+        command
+            .args(["service", "--request"])
+            .arg(&request_path)
+            .arg("--inspect");
+        if json {
+            command.arg("--json");
+        }
+        let output = command.output().expect("inspect CLI");
+        assert!(output.status.success());
+        if json {
+            let status: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("inspect JSON");
+            assert_eq!(status["state"], "matches");
+        } else {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("status: Matches"));
+        }
+    }
+
+    let status_request = request(&root, ServicePlatform::current(), ServiceOperation::Status);
+    fs::write(
+        &request_path,
+        serde_json::to_vec(&status_request).expect("status request"),
+    )
+    .expect("rewrite request");
+    let rejected = Command::new(env!("CARGO_BIN_EXE_ae-sdd-build"))
+        .args(["service", "--request"])
+        .arg(&request_path)
+        .arg("--materialize")
+        .output()
+        .expect("rejected materialize");
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("valid only for an install plan"));
     fs::remove_dir_all(root).expect("cleanup");
 }

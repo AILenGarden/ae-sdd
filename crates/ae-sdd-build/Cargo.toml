@@ -8,8 +8,10 @@ repository.workspace = true
 
 [dependencies]
 ae-sdd-client.workspace = true
+ae-sdd-domain.workspace = true
 ae-sdd-governance.workspace = true
 ae-sdd-gates.workspace = true
+ae-sdd-methodology.workspace = true
 ae-sdd-operations.workspace = true
 ae-sdd-protocol.workspace = true
 ae-sdd-scanners.workspace = true
@@ -22,6 +24,10 @@ sysinfo.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 
+[features]
+default = []
+migration_oracle = []
+
 [lints]
 workspace = true
 
@@ -31,3 +37,8 @@ path = "src/main.rs"
 
 [dev-dependencies]
 ed25519-dalek.workspace = true
+
+[[test]]
+name = "migration_oracle"
+path = "tests/migration_oracle.rs"
+required-features = ["migration_oracle"]

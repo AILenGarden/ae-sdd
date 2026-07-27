@@ -7,10 +7,15 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+ae-sdd-contracts.workspace = true
 ae-sdd-domain.workspace = true
 ae-sdd-policy.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
+ae-sdd-protocol.workspace = true
 proptest.workspace = true
 
 [lints]

@@ -1,7 +1,8 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use ae_sdd_domain::{
@@ -10,9 +11,10 @@ use ae_sdd_domain::{
     ProjectRelativePath, StateRevision, StoryId, ToolchainDigest, VerificationId, WorkItemId,
     WorkspaceId,
 };
-use ae_sdd_gates::{GateRegistry, GateSpec, NativeGateRule};
+use ae_sdd_gates::{GateInputSelector, GateRegistry, GateSpec, NativeGateRule};
 use ae_sdd_protocol::StableErrorCode;
-use ae_sdd_runtime::{RuntimeError, RuntimeResult};
+use ae_sdd_runtime::{BusinessWorkspace, PersistencePort, RuntimeError, RuntimeResult};
+use ae_sdd_store::UtcTimestamp;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -31,6 +33,31 @@ const EXCLUDED_DIRS: &[&str] = &[
     "vendor",
 ];
 
+/// Production-only dependencies required to validate authoritative Review
+/// authority. A Gate context without them can never satisfy a Review predicate.
+#[derive(Clone)]
+pub struct ReviewGateAuthority {
+    /// Runtime SQLite database holding the Review Batch v2 projections.
+    pub database: PathBuf,
+    /// Durable runtime metadata port used for identity and job lineage.
+    pub persistence: Arc<dyn PersistencePort>,
+    /// Current daemon boot identity that must own reviewer attestations.
+    pub boot_id: String,
+    /// Daemon-authenticated workspace the Review authority is bound to.
+    pub workspace: BusinessWorkspace,
+}
+
+impl fmt::Debug for ReviewGateAuthority {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ReviewGateAuthority")
+            .field("database", &self.database)
+            .field("boot_id", &self.boot_id)
+            .field("workspace", &self.workspace)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct GateContext {
     pub(super) root: PathBuf,
@@ -39,9 +66,76 @@ pub(super) struct GateContext {
     pub(super) policy: PolicyDigest,
     pub(super) inventory: InventoryGeneration,
     pub(super) expected_fencing_token: Option<FencingToken>,
+    /// `None` for lightweight/non-production contexts. Review predicates then
+    /// fail closed because the durable authority cannot be joined at all.
+    pub(super) review: Option<ReviewGateAuthority>,
+}
+
+/// Stable reason a Review predicate refused to release its Gate. Absent Review
+/// authority dependencies produce a denial exactly like a validator error, so a
+/// lightweight context can never read as PASS.
+#[derive(Clone, Debug)]
+pub(super) struct ReviewAuthorityDenial {
+    code: &'static str,
+    message: String,
+}
+
+impl ReviewAuthorityDenial {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// Projects the denial as Gate finding evidence so a failing Review Gate
+    /// reports why instead of only `<GATE>-FAILED`.
+    pub(super) fn evidence(&self, located: &LocatedState) -> Option<EvidenceRef> {
+        let bytes = self.message.as_bytes();
+        Some(EvidenceRef::new(
+            EvidenceId::new("review-authority-denied").ok()?,
+            VerificationId::new(denial_verification_id(self.code, &self.message)).ok()?,
+            ProjectRelativePath::new(located.relative.clone()).ok()?,
+            EvidenceDigest::digest(bytes),
+            u64::try_from(bytes.len()).ok()?,
+        ))
+    }
 }
 
 impl GateContext {
+    /// Joins project state, the durable SQLite projection, reviewer lineage and
+    /// final proof. Any missing dependency or validator error is a denial, never
+    /// a silent PASS.
+    pub(super) fn review_authority_denial(
+        &self,
+        located: &LocatedState,
+    ) -> Option<ReviewAuthorityDenial> {
+        let Some(review) = self.review.as_ref() else {
+            return Some(ReviewAuthorityDenial::new(
+                "REVIEW_AUTHORITY_UNAVAILABLE",
+                "Gate context carries no Review authority dependencies",
+            ));
+        };
+        if review.workspace.workspace_id != self.workspace_id.to_string() {
+            return Some(ReviewAuthorityDenial::new(
+                "REVIEW_AUTHORITY_UNAVAILABLE",
+                "Review authority workspace differs from the evaluated workspace",
+            ));
+        }
+        crate::review_authority::validate_review_gate_authority(
+            &review.database,
+            &review.workspace,
+            &located.path,
+            &located.value,
+            self.work_item_id.as_str(),
+            review.persistence.as_ref(),
+            &review.boot_id,
+            &UtcTimestamp::now(),
+        )
+        .err()
+        .map(|error| ReviewAuthorityDenial::new(error.code().as_str(), error.message()))
+    }
+
     pub(super) fn build_key(&self, gate_id: &str, enforce_fencing: bool) -> RuntimeResult<GateKey> {
         let specification = GateRegistry::get(gate_id)
             .ok_or_else(|| RuntimeError::new(StableErrorCode::GateError, "unknown Gate"))?;
@@ -75,7 +169,7 @@ impl GateContext {
             self.inventory,
             toolchain_digest(&self.root)?,
             configuration_digest(&self.root)?,
-            input_fingerprint(&self.root, &located)?,
+            input_fingerprint(&self.root, &located, gate_id, self.work_item_id.as_str())?,
         ))
     }
 
@@ -132,14 +226,6 @@ pub(super) fn active_story(state: &Value, work_item: &str) -> Option<StoryId> {
     StoryId::new(candidate.to_owned()).ok()
 }
 
-pub(super) fn nested_phase<'a>(state: &'a Value, story: Option<&str>) -> Option<&'a str> {
-    story
-        .and_then(|id| state.pointer(&format!("/storyStates/{id}/currentPhase")))
-        .and_then(Value::as_str)
-        .or_else(|| state.get("currentPhase").and_then(Value::as_str))
-        .or_else(|| state.get("phase").and_then(Value::as_str))
-}
-
 pub(super) fn safe_document_path(root: &Path, value: &str) -> bool {
     let path = Path::new(value);
     let candidate = if path.is_absolute() {
@@ -171,6 +257,31 @@ pub(super) fn state_evidence(located: &LocatedState) -> Option<EvidenceRef> {
     ))
 }
 
+/// Builds a bounded `VerificationId`-safe reason slug: the stable error code
+/// followed by the validator message with unsupported bytes folded to `-`.
+fn denial_verification_id(code: &str, message: &str) -> String {
+    let mut slug = String::with_capacity(VerificationId::MAX_BYTES);
+    slug.push_str(code);
+    slug.push(':');
+    let mut previous_separator = true;
+    for character in message.chars() {
+        if slug.len() >= VerificationId::MAX_BYTES {
+            break;
+        }
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_') {
+            slug.push(character);
+            previous_separator = false;
+        } else if !previous_separator {
+            slug.push('-');
+            previous_separator = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    slug
+}
+
 fn implementation_digest(specification: &GateSpec) -> GateImplementationDigest {
     let rule = match specification.rule {
         NativeGateRule::Predicate(predicate) => format!("predicate:{}", predicate.as_str()),
@@ -187,7 +298,71 @@ fn implementation_digest(specification: &GateSpec) -> GateImplementationDigest {
     ))
 }
 
-fn input_fingerprint(root: &Path, located: &LocatedState) -> RuntimeResult<InputFingerprint> {
+/// Selector-scoped Gate input fingerprint.
+///
+/// The fingerprint binds exactly the authoritative inputs the Gate declares
+/// through its `GateDependencySpec` selectors: a source write under
+/// `ChangedPaths` no longer rewrites the fingerprint of RA/Story/CodingPlan
+/// Gates, so their fresh cached outcomes stay reusable while the affected
+/// nodes re-evaluate. A Gate without a selector declaration cannot prove its
+/// input scope and fails closed to the legacy whole-state/whole-inventory
+/// hash. The state revision, fencing token, inventory generation, toolchain
+/// and configuration stay independent `GateKey` dimensions, so any committed
+/// state mutation still busts the full key set; scoping only governs reuse
+/// while the revision is stable.
+fn input_fingerprint(
+    root: &Path,
+    located: &LocatedState,
+    gate_id: &str,
+    work_item: &str,
+) -> RuntimeResult<InputFingerprint> {
+    let selectors = GateRegistry::dependency_spec(gate_id)
+        .map(|specification| specification.selectors)
+        .unwrap_or(&[]);
+    if selectors.is_empty() {
+        return legacy_full_input_fingerprint(root, located);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"ae-sdd-authoritative-gate-input/v2\0");
+    hash_part(&mut hasher, located.relative.as_bytes());
+    hash_state_scope(&mut hasher, &located.value, IDENTITY_STATE_FIELDS)?;
+    for selector in selectors {
+        hash_part(&mut hasher, selector_label(*selector).as_bytes());
+        hash_state_scope(
+            &mut hasher,
+            &located.value,
+            selector_state_fields(*selector),
+        )?;
+        match selector {
+            GateInputSelector::ChangedPaths => {
+                hash_changed_paths(&mut hasher, root, &located.value)?;
+            }
+            GateInputSelector::EvidenceLedger => {
+                hash_evidence_scope(&mut hasher, root, located, work_item)?;
+            }
+            _ => {}
+        }
+    }
+    let mut inputs = workspace_inputs(root)?;
+    inputs.retain(|(relative, _)| {
+        selectors
+            .iter()
+            .any(|selector| selector_file_scope(*selector, relative))
+    });
+    for (relative, path) in inputs {
+        hash_part(&mut hasher, relative.as_bytes());
+        hash_file_content(&mut hasher, &path)?;
+    }
+    Ok(InputFingerprint::from_array(hasher.finalize().into()))
+}
+
+/// Legacy pre-selector fingerprint: the whole authoritative state plus every
+/// workspace input. Retained as the fail-closed fallback for Gates without a
+/// selector declaration.
+fn legacy_full_input_fingerprint(
+    root: &Path,
+    located: &LocatedState,
+) -> RuntimeResult<InputFingerprint> {
     let mut state = located.value.clone();
     if let Some(object) = state.as_object_mut() {
         object.remove("gateResults");
@@ -206,17 +381,226 @@ fn input_fingerprint(root: &Path, located: &LocatedState) -> RuntimeResult<Input
     }
     for (relative, path) in workspace_inputs(root)? {
         hash_part(&mut hasher, relative.as_bytes());
-        let metadata = fs::metadata(&path).map_err(|_| external("Gate input metadata changed"))?;
-        if metadata.len() <= HASH_CONTENT_LIMIT {
-            hash_part(
-                &mut hasher,
-                &fs::read(path).map_err(|_| external("Gate input became unreadable"))?,
-            );
-        } else {
-            hash_part(&mut hasher, &metadata.len().to_be_bytes());
-        }
+        hash_file_content(&mut hasher, &path)?;
     }
     Ok(InputFingerprint::from_array(hasher.finalize().into()))
+}
+
+/// State fields every Gate fingerprint binds: process identity and phase.
+/// Revision, fencing and last-mutation bookkeeping stay out because the
+/// `GateKey` already carries revision and fencing as independent dimensions.
+const IDENTITY_STATE_FIELDS: &[&str] = &[
+    "stateMachineName",
+    "currentWorkItem",
+    "phase",
+    "currentPhase",
+    "pausedFrom",
+    "scale",
+];
+
+fn selector_label(selector: GateInputSelector) -> &'static str {
+    match selector {
+        GateInputSelector::ProjectAssets => "project-assets",
+        GateInputSelector::Story => "story",
+        GateInputSelector::Constraints => "constraints",
+        GateInputSelector::ThinkingEngine => "thinking-engine",
+        GateInputSelector::ExecutionPlan => "execution-plan",
+        GateInputSelector::ChangedPaths => "changed-paths",
+        GateInputSelector::VerificationPlan => "verification-plan",
+        GateInputSelector::EvidenceLedger => "evidence-ledger",
+        GateInputSelector::ReviewBatch => "review-batch",
+        GateInputSelector::Toolchain => "toolchain",
+        GateInputSelector::Inventory => "inventory",
+    }
+}
+
+/// Authoritative state sections one selector contributes to the fingerprint.
+fn selector_state_fields(selector: GateInputSelector) -> &'static [&'static str] {
+    match selector {
+        GateInputSelector::ProjectAssets => &["documentPaths"],
+        GateInputSelector::Story => &[
+            "storyStates",
+            "activeStory",
+            "currentStory",
+            "documentPaths",
+            "storyReview",
+            "taskReview",
+        ],
+        GateInputSelector::Constraints | GateInputSelector::ThinkingEngine => &[],
+        GateInputSelector::ExecutionPlan => &[
+            "executionPlan",
+            "executionRuntime",
+            "routeDecision",
+            "selectedDesign",
+        ],
+        GateInputSelector::ChangedPaths => &[],
+        GateInputSelector::VerificationPlan => &["verificationPlan"],
+        GateInputSelector::EvidenceLedger => {
+            &["evidenceAuthority", "evidence", "evidenceFinalized"]
+        }
+        GateInputSelector::ReviewBatch => &[
+            "review",
+            "reviewSession",
+            "reviewLoop",
+            "inputFingerprint",
+            "rulesetFingerprint",
+            "policyDigest",
+            "inventoryGeneration",
+        ],
+        // Toolchain and inventory are independent `GateKey` dimensions; they
+        // contribute nothing extra to the input fingerprint.
+        GateInputSelector::Toolchain | GateInputSelector::Inventory => &[],
+    }
+}
+
+/// Workspace-relative file scope one selector contributes. Selectors without
+/// a file scope bind their inputs from state or dedicated hashers instead.
+fn selector_file_scope(selector: GateInputSelector, relative: &str) -> bool {
+    match selector {
+        GateInputSelector::ProjectAssets => {
+            relative.starts_with("ae-sdd-doc/")
+                || relative.starts_with(".ae-sdd/")
+                || matches!(relative, "Cargo.toml" | "pyproject.toml" | "package.json")
+        }
+        GateInputSelector::Story => {
+            relative.starts_with("ae-sdd-doc/Story/")
+                || relative.starts_with("ae-sdd-doc/Task/")
+                || relative.starts_with("ae-sdd-doc/TestCase/")
+        }
+        GateInputSelector::Constraints => relative.starts_with("constraints/"),
+        GateInputSelector::ThinkingEngine => relative.starts_with("source/"),
+        GateInputSelector::ExecutionPlan
+        | GateInputSelector::ChangedPaths
+        | GateInputSelector::VerificationPlan
+        | GateInputSelector::EvidenceLedger
+        | GateInputSelector::ReviewBatch
+        | GateInputSelector::Toolchain
+        | GateInputSelector::Inventory => false,
+    }
+}
+
+/// Upper bound for approved changed paths folded into one fingerprint.
+const CHANGED_PATH_LIMIT: usize = 1_024;
+
+/// Hashes the approved changed-path list plus each path's current content.
+/// A missing path hashes an explicit marker so a deleted source still busts
+/// every `ChangedPaths` Gate instead of silently reusing its cached outcome.
+fn hash_changed_paths(hasher: &mut Sha256, root: &Path, state: &Value) -> RuntimeResult<()> {
+    let mut paths: Vec<String> = state
+        .pointer("/executionPlan/changedPaths")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths.dedup();
+    if paths.len() > CHANGED_PATH_LIMIT {
+        return Err(external(
+            "approved changed paths exceed the fingerprint limit",
+        ));
+    }
+    for relative in paths {
+        hash_part(hasher, relative.as_bytes());
+        let path = root.join(&relative);
+        if path.is_file() {
+            hash_file_content(hasher, &path)?;
+        } else {
+            hash_part(hasher, b"<missing>");
+        }
+    }
+    Ok(())
+}
+
+/// Hashes the active Story's evidence directory (ledger, manifest, entries
+/// and snapshots) so an evidence mutation only busts EvidenceLedger Gates.
+fn hash_evidence_scope(
+    hasher: &mut Sha256,
+    root: &Path,
+    located: &LocatedState,
+    work_item: &str,
+) -> RuntimeResult<()> {
+    let Some(story) = active_story(&located.value, work_item) else {
+        hash_part(hasher, b"<no-active-story>");
+        return Ok(());
+    };
+    let directory = root
+        .join(".auto-engineering")
+        .join(story.as_str())
+        .join("evidence");
+    let mut files = Vec::new();
+    if directory.is_dir() {
+        collect_evidence_files(root, &directory, &mut files)?;
+        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files.dedup_by(|left, right| left.0 == right.0);
+    }
+    for (relative, path) in files {
+        hash_part(hasher, relative.as_bytes());
+        hash_file_content(hasher, &path)?;
+    }
+    Ok(())
+}
+
+/// Recursively collects every regular file under the Story evidence
+/// directory, including the `ledger.jsonl` truth that the generic source
+/// inventory extension filter does not cover.
+fn collect_evidence_files(
+    root: &Path,
+    directory: &Path,
+    output: &mut Vec<(String, PathBuf)>,
+) -> RuntimeResult<()> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|_| external("evidence directory is unreadable"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| external("evidence directory entry is unreadable"))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|_| external("evidence entry metadata is unreadable"))?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            collect_evidence_files(root, &path, output)?;
+        } else if metadata.is_file() {
+            if output.len() >= INPUT_FILE_LIMIT {
+                return Err(external("evidence inputs exceed the file limit"));
+            }
+            output.push((relative_string(root, &path)?, path));
+        }
+    }
+    Ok(())
+}
+
+/// Hashes one file the same bounded way the legacy inventory hash did.
+fn hash_file_content(hasher: &mut Sha256, path: &Path) -> RuntimeResult<()> {
+    let metadata = fs::metadata(path).map_err(|_| external("Gate input metadata changed"))?;
+    if metadata.len() <= HASH_CONTENT_LIMIT {
+        hash_part(
+            hasher,
+            &fs::read(path).map_err(|_| external("Gate input became unreadable"))?,
+        );
+    } else {
+        hash_part(hasher, &metadata.len().to_be_bytes());
+    }
+    Ok(())
+}
+
+/// Hashes the named authoritative state sections in canonical JSON form.
+fn hash_state_scope(hasher: &mut Sha256, state: &Value, fields: &[&str]) -> RuntimeResult<()> {
+    for field in fields {
+        hash_part(hasher, field.as_bytes());
+        match state.get(*field) {
+            Some(value) => hash_part(hasher, &canonical_json(value)?),
+            None => hash_part(hasher, b"<absent>"),
+        }
+    }
+    Ok(())
 }
 
 fn toolchain_digest(root: &Path) -> RuntimeResult<ToolchainDigest> {

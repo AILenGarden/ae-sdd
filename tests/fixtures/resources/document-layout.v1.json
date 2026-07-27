@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "resource-document-layout/v1",
+  "projectKey": "ae-sdd",
+  "documents": [
+    {
+      "kind": "story",
+      "canonical": "ae-sdd-doc/Story/STORY-AE-SDD-RESOURCE-CONTEXT-002.md",
+      "legacyCandidates": [
+        "docs/STORY-RESOURCE-CONTEXT-002.md",
+        "Story/STORY-AE-SDD-RESOURCE-CONTEXT-002.md"
+      ],
+      "declaredOverride": "docs/override/STORY-AE-SDD-RESOURCE-CONTEXT-002.md"
+    }
+  ]
+}

@@ -640,8 +640,8 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         OperationScope::WorkItem,
         true,
         true,
-        false,
-        false,
+        true,
+        true,
         false,
     ),
     method(
@@ -681,3 +681,65 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         false,
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use std::hint::black_box;
+
+    use super::*;
+
+    #[test]
+    fn private_registry_builders_execute_at_runtime() {
+        let direct: fn(bool, bool, bool, bool, bool) -> MethodRequirements =
+            black_box(MethodRequirements::direct);
+        let direct_requirements = direct(
+            black_box(true),
+            black_box(false),
+            black_box(true),
+            black_box(true),
+            black_box(false),
+        );
+        assert_eq!(
+            direct_requirements,
+            MethodRequirements {
+                requires_workspace: true,
+                requires_work_item: false,
+                writes: true,
+                requires_lease: false,
+                requires_revision: false,
+                requires_idempotency: true,
+                requires_confirmation: false,
+                source: RequirementSource::Method,
+            }
+        );
+
+        let typed_operation: fn() -> MethodRequirements =
+            black_box(MethodRequirements::typed_operation);
+        assert_eq!(
+            typed_operation(),
+            RpcMethod::OperationExecute.spec().requirements
+        );
+
+        let build_method: fn(
+            RpcMethod,
+            OperationScope,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ) -> MethodSpec = black_box(method);
+        assert_eq!(
+            build_method(
+                black_box(RpcMethod::RuntimeDrain),
+                black_box(OperationScope::Runtime),
+                black_box(false),
+                black_box(false),
+                black_box(true),
+                black_box(true),
+                black_box(true),
+            ),
+            *RpcMethod::RuntimeDrain.spec()
+        );
+    }
+}

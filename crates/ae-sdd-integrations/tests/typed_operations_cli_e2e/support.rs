@@ -1,18 +1,29 @@
+#![allow(dead_code)]
+
 #[allow(dead_code, unused_imports)]
 #[path = "../../../../bins/ae-sdd-cli/src/legacy/mod.rs"]
 mod legacy;
+
+// The authoritative Review input fingerprint spans locked state plus the
+// workspace source inventory, and the daemon implementation is reused so the
+// evidence manifest this fixture seals cannot drift from production hashing.
+// The `review_authority` module and its two siblings resolve `crate::` paths,
+// so every test crate that includes this file declares them at its own root.
+use crate::review_authority::authoritative_review_workspace_input_fingerprint;
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ae_sdd_domain::BootId;
-use ae_sdd_integrations::{NativeBusinessAdapter, SqliteRuntimePersistence};
+use ae_sdd_contracts::review::{ReviewAttemptV2, ReviewSessionV2};
+use ae_sdd_domain::{BootId, InputFingerprint};
+use ae_sdd_integrations::{NativeBusinessAdapter, SqliteRuntimePersistence, SystemClock};
 use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, HandshakeRequest, JsonRpcRequest, PROTOCOL_RANGE_V1,
     PROTOCOL_VERSION_V1, RequestParams, RpcMethod, SecretString, WorkspaceMode,
 };
+use ae_sdd_review::ReviewSupervisor;
 use ae_sdd_runtime::{
     BusinessOperationPort, ClockPort, ConnectionState, PersistencePort, ResolvedWorkspace,
     RuntimeConfig, RuntimeResult, RuntimeService, SessionResult, WorkspaceParityEvidence,
@@ -58,12 +69,23 @@ pub(super) struct Harness {
     pub(super) workspace_root: TempDir,
     _runtime_root: TempDir,
     database: std::path::PathBuf,
+    now_unix_ms: u64,
     pub(super) state_path: std::path::PathBuf,
     pub(super) document_path: std::path::PathBuf,
 }
 
 impl Harness {
     pub(super) fn new() -> Self {
+        Self::with_clock(Arc::new(FixedClock), 1_000)
+    }
+
+    pub(super) fn new_realtime() -> Self {
+        let clock = SystemClock;
+        let now_unix_ms = clock.now_unix_ms();
+        Self::with_clock(Arc::new(clock), now_unix_ms)
+    }
+
+    fn with_clock(clock: Arc<dyn ClockPort>, now_unix_ms: u64) -> Self {
         let workspace_root = TempDir::new().expect("workspace");
         prepare_workspace(&workspace_root);
         let runtime_root = TempDir::new().expect("runtime");
@@ -87,7 +109,7 @@ impl Harness {
             boot_id,
             endpoint_token.clone(),
             persistence_port,
-            Arc::new(FixedClock),
+            clock,
             Arc::new(TestResolver),
             business,
         ));
@@ -103,6 +125,7 @@ impl Harness {
             workspace_root,
             _runtime_root: runtime_root,
             database,
+            now_unix_ms,
             state_path,
             document_path,
         }
@@ -139,6 +162,10 @@ impl Harness {
             self.runtime.policy_digest().to_owned(),
             persistence,
         )
+    }
+
+    pub(super) fn host_credential(&self) -> String {
+        self.endpoint_token.clone()
     }
 }
 
@@ -204,7 +231,14 @@ fn prepare_workspace(root: &TempDir) {
             "phase":"coding",
             "currentPhase":"coding",
             "storyStates":{
-                "STORY-TYPED-E2E":{"phase":"coding","currentPhase":"coding"}
+                "STORY-TYPED-E2E":{
+                    "phase":"coding",
+                    "currentPhase":"coding",
+                    "currentStep":"coding",
+                    "completedSteps":[],
+                    "pendingOutputs":[],
+                    "codingRound":1
+                }
             },
             "documentPaths":{"STORY":"docs/story.md"}
         }))
@@ -245,7 +279,7 @@ pub(super) fn register_and_cut_over(
         source_revision: 1,
         legacy_digest: "a".repeat(64),
         rust_digest: "a".repeat(64),
-        observed_at_unix_ms: 1_000,
+        observed_at_unix_ms: harness.now_unix_ms,
     };
     let parity_digest = hex::encode(Sha256::digest(
         serde_json::to_vec(&parity).expect("parity serializes"),
@@ -275,13 +309,31 @@ pub(super) fn open_root(
     external_key: &str,
     agent_id: &str,
 ) -> SessionResult {
+    open_root_for_work_item(
+        harness,
+        cli,
+        workspace,
+        "STORY-TYPED-E2E",
+        external_key,
+        agent_id,
+    )
+}
+
+pub(super) fn open_root_for_work_item(
+    harness: &Harness,
+    cli: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    work_item_id: &str,
+    external_key: &str,
+    agent_id: &str,
+) -> SessionResult {
     let mut open = params(json!({
         "externalKey":external_key,
         "role":"root",
         "engaged":true,
     }));
     open.workspace_id = Some(workspace.workspace_id.clone());
-    open.work_item_id = Some("STORY-TYPED-E2E".to_owned());
+    open.work_item_id = Some(work_item_id.to_owned());
     open.agent_id = Some(agent_id.to_owned());
     open.idempotency_key = Some(format!("session-open-{external_key}"));
     serde_json::from_value(success(&call(
@@ -298,13 +350,259 @@ pub(super) fn identity(
     session: &SessionResult,
     agent_id: &str,
 ) -> CliIdentity {
+    identity_for_work_item(workspace, session, "STORY-TYPED-E2E", agent_id)
+}
+
+pub(super) fn identity_for_work_item(
+    workspace: &WorkspaceResult,
+    session: &SessionResult,
+    work_item_id: &str,
+    agent_id: &str,
+) -> CliIdentity {
     CliIdentity {
         workspace_id: workspace.workspace_id.clone(),
-        work_item_id: "STORY-TYPED-E2E".to_owned(),
+        work_item_id: work_item_id.to_owned(),
         session_id: session.session_id.clone(),
         agent_id: agent_id.to_owned(),
         capability_token: session.capability_token.clone(),
     }
+}
+
+#[allow(dead_code)]
+pub(super) fn open_review_lineage(
+    harness: &Harness,
+    cli: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    root_identity: &CliIdentity,
+    specialty: &str,
+    key: &str,
+) -> (SessionResult, SessionResult) {
+    let (author, mut reviewers) = open_review_lineage_for_specialties(
+        harness,
+        cli,
+        workspace,
+        root_identity,
+        &[specialty],
+        key,
+    );
+    (author, reviewers.remove(0))
+}
+
+/// Opens one Root -> Series -> {author, reviewer per specialty} lineage.
+///
+/// A review session binds the author and Series of its first contribution, so
+/// every specialty of one review must hang off the same Series; a second
+/// lineage is rejected as a lineage mismatch. The Series therefore carries the
+/// union of the specialty capabilities, because a child grant may never widen
+/// its parent.
+#[allow(dead_code)]
+pub(super) fn open_review_lineage_for_specialties(
+    harness: &Harness,
+    cli: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    root_identity: &CliIdentity,
+    specialties: &[&str],
+    key: &str,
+) -> (SessionResult, Vec<SessionResult>) {
+    let adapter_id = format!("{key}-host");
+    let mut host = harness.connection(ClientKind::HostAdapter);
+    let mut register = plain_params(json!({
+        "adapterId":adapter_id,
+        "capabilities":["create","attest"]
+    }));
+    register.capability_token = Some(harness.host_credential());
+    register.idempotency_key = Some(format!("{key}-host-register"));
+    assert_success(&call(
+        &harness.runtime,
+        &mut host,
+        RpcMethod::HostRegister,
+        register,
+    ));
+    let capabilities = specialties
+        .iter()
+        .map(|specialty| Value::String(format!("review.specialty.{specialty}")))
+        .collect::<Vec<_>>();
+    let series_key = format!("{key}-series");
+    let (series, series_delegation_id) = open_delegated_child(
+        harness,
+        cli,
+        &mut host,
+        workspace,
+        root_identity,
+        &adapter_id,
+        "series",
+        None,
+        json!({
+            // A child grant may never widen its parent, so the Series carries
+            // the lease release its Reviewer child needs.
+            "operations":["document.save","lease.acquire","lease.release","review.record"],
+            "capabilities":capabilities,
+            "paths":[{"kind":"project_root"}]
+        }),
+        &series_key,
+    );
+    let series_identity = identity_for_work_item(
+        workspace,
+        &series,
+        &root_identity.work_item_id,
+        &format!("{series_key}-agent"),
+    );
+    let author = open_delegated_child(
+        harness,
+        cli,
+        &mut host,
+        workspace,
+        &series_identity,
+        &adapter_id,
+        "task",
+        Some(&series_delegation_id),
+        json!({
+            "operations":["document.save"],
+            "capabilities":[],
+            "paths":[{"kind":"project_root"}]
+        }),
+        &format!("{key}-author"),
+    )
+    .0;
+    let reviewers = specialties
+        .iter()
+        .map(|specialty| {
+            open_delegated_child(
+                harness,
+                cli,
+                &mut host,
+                workspace,
+                &series_identity,
+                &adapter_id,
+                "reviewer",
+                Some(&series_delegation_id),
+                json!({
+                    // Tier 2+ hands the exclusive Work Item lease from one
+                    // specialty to the next, so a reviewer must be able to
+                    // release what it acquired.
+                    "operations":["lease.acquire","lease.release","review.record"],
+                    "capabilities":[format!("review.specialty.{specialty}")],
+                    "paths":[{"kind":"project_root"}]
+                }),
+                &reviewer_child_key(key, specialties, specialty),
+            )
+            .0
+        })
+        .collect();
+    (author, reviewers)
+}
+
+/// Delegation keys must be unique per child, so a multi-specialty lineage
+/// qualifies each reviewer while a single-specialty lineage keeps the original
+/// `{key}-reviewer` key its callers already depend on.
+pub(super) fn reviewer_child_key(key: &str, specialties: &[&str], specialty: &str) -> String {
+    if specialties.len() == 1 {
+        format!("{key}-reviewer")
+    } else {
+        format!("{key}-{specialty}-reviewer")
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_delegated_child(
+    harness: &Harness,
+    cli: &mut ConnectionState,
+    host: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    parent_identity: &CliIdentity,
+    adapter_id: &str,
+    child_role: &str,
+    parent_delegation_id: Option<&str>,
+    grant: Value,
+    key: &str,
+) -> (SessionResult, String) {
+    let child_session_id = Uuid::new_v4().to_string();
+    let ack_id = Uuid::new_v4().to_string();
+    let claim_id = Uuid::new_v4().to_string();
+    let state_bytes = fs::read(&harness.state_path).expect("delegation state");
+    let state: Value = serde_json::from_slice(&state_bytes).expect("delegation state JSON");
+    let input_revision = state["revision"].as_u64().expect("delegation revision");
+    let input_fingerprint = hex::encode(Sha256::digest(&state_bytes));
+    let deadline_unix_ms = harness.now_unix_ms.saturating_add(60_000);
+    let expires_at_unix_ms = harness.now_unix_ms.saturating_add(50_000);
+    let mut create = trusted_params(
+        parent_identity,
+        json!({
+            "childRole":child_role,
+            "parentDelegationId":parent_delegation_id,
+            "inputRevision":input_revision,
+            "inputFingerprint":input_fingerprint,
+            "deadlineUnixMs":deadline_unix_ms,
+            "adapterId":adapter_id,
+            "grant":grant
+        }),
+    );
+    create.idempotency_key = Some(format!("{key}-create"));
+    let created = success(&call(
+        &harness.runtime,
+        cli,
+        RpcMethod::DelegationCreate,
+        create,
+    ));
+    let delegation_id = created["delegationId"]
+        .as_str()
+        .expect("child delegation id")
+        .to_owned();
+    let action = success(&call(
+        &harness.runtime,
+        host,
+        RpcMethod::HostActionNext,
+        plain_params(json!({"adapterId":adapter_id})),
+    ));
+    let mut ack = plain_params(json!({
+        "adapterId":adapter_id,
+        "ack":{
+            "ackId":ack_id,
+            "actionId":action["actionId"],
+            "commandSeq":action["commandSeq"],
+            "outcome":"accepted",
+            "hostTaskId":format!("{key}-host-task"),
+            "sessionId":child_session_id
+        }
+    }));
+    ack.idempotency_key = Some(format!("{key}-ack"));
+    assert_success(&call(&harness.runtime, host, RpcMethod::HostActionAck, ack));
+    let mut accept = plain_params(json!({
+        "delegationId":delegation_id,
+        "claimId":claim_id,
+        "actionId":action["actionId"],
+        "childSessionId":child_session_id,
+        "expiresAtUnixMs":expires_at_unix_ms
+    }));
+    accept.workspace_id = Some(workspace.workspace_id.clone());
+    accept.work_item_id = Some(parent_identity.work_item_id.clone());
+    accept.idempotency_key = Some(format!("{key}-accept"));
+    assert_success(&call(
+        &harness.runtime,
+        cli,
+        RpcMethod::DelegationAccept,
+        accept,
+    ));
+    let agent_id = format!("{key}-agent");
+    let mut child_open = plain_params(json!({
+        "externalKey":format!("{key}-external"),
+        "role":child_role,
+        "engaged":true,
+        "delegationId":delegation_id
+    }));
+    child_open.workspace_id = Some(workspace.workspace_id.clone());
+    child_open.work_item_id = Some(parent_identity.work_item_id.clone());
+    child_open.agent_id = Some(agent_id);
+    child_open.session_id = Some(child_session_id);
+    child_open.idempotency_key = Some(format!("{key}-open"));
+    let session = serde_json::from_value(success(&call(
+        &harness.runtime,
+        cli,
+        RpcMethod::SessionOpen,
+        child_open,
+    )))
+    .expect("child session");
+    (session, delegation_id)
 }
 
 pub(super) fn invoke(
@@ -478,6 +776,10 @@ fn params(payload: Value) -> RequestParams<Value> {
     }
 }
 
+pub(super) fn plain_params(payload: Value) -> RequestParams<Value> {
+    params(payload)
+}
+
 fn confirmation() -> ConfirmationRef {
     confirmation_ref("confirmation-e2e", "user:test", "2026-07-23T00:00:00Z")
 }
@@ -546,4 +848,582 @@ pub(super) fn journal_snapshot(harness: &Harness) -> BTreeMap<String, Vec<u8>> {
             )
         })
         .collect()
+}
+
+/// Drives one clean `review.record` per required specialty until the Review
+/// reaches its terminal authority.
+///
+/// Hand-writing a completed `review` projection into project state is not a
+/// shortcut for this: the Review Gates deliberately reject state that has no
+/// matching SQLite projection (see
+/// `review_gate_e2e::valid_state_without_the_sqlite_projection_fails_every_review_gate`),
+/// because state alone is forgeable. Only the real operation writes the durable
+/// event and the projection together, so the fixture has to go through it.
+///
+/// The specialty set follows the tier the daemon derives from `state.scale`, so
+/// a caller that changes the scale automatically gets the matching reviewer
+/// count.
+///
+/// The caller must use [`Harness::new_realtime`]: `review.record` checks
+/// reviewer/Series/Root session liveness against the operation's observed
+/// timestamp, which is real wall-clock time, so lineage opened under the fixed
+/// test clock is already expired when the contribution is adjudicated.
+pub(super) fn install_completed_review_authority(
+    harness: &Harness,
+    cli: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    root_identity: &CliIdentity,
+    work_item_id: &str,
+    key: &str,
+) {
+    let scale = read_state_value(harness)["scale"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let specialties: &[&str] = match scale.as_str() {
+        "large" | "大" => &["be", "ar", "qa"],
+        "medium" | "中" => &["be", "ar"],
+        _ => &["general"],
+    };
+
+    // The completion milestone only closes after evidence.record and
+    // evidence.finalize, and the review must cite the evidence id those
+    // operations put in the ledger.
+    let evidence_id = close_evidence_milestones(harness, cli, workspace, root_identity, key);
+
+    let (_author, reviewers) = open_review_lineage_for_specialties(
+        harness,
+        cli,
+        workspace,
+        root_identity,
+        specialties,
+        key,
+    );
+
+    for (index, (specialty, reviewer)) in specialties.iter().zip(reviewers.iter()).enumerate() {
+        let lineage_key = format!("{key}-{specialty}");
+        // `open_delegated_child` registers each session under `{child key}-agent`.
+        let reviewer_identity = identity_for_work_item(
+            workspace,
+            reviewer,
+            work_item_id,
+            &format!("{}-agent", reviewer_child_key(key, specialties, specialty)),
+        );
+
+        let mut lease_request = operation_params(
+            &reviewer_identity,
+            "lease.acquire",
+            json!({"owner":{"role":"reviewer"},"ttlSeconds":300}),
+        );
+        lease_request.idempotency_key = Some(format!("{lineage_key}-lease"));
+        let lease = success(&call(
+            &harness.runtime,
+            cli,
+            RpcMethod::OperationExecute,
+            lease_request,
+        ));
+        let lease_id = lease["data"]["leaseId"]
+            .as_str()
+            .expect("reviewer lease id")
+            .to_owned();
+        let fencing = lease["data"]["fencingToken"]
+            .as_u64()
+            .expect("reviewer fencing token");
+
+        seal_review_evidence(harness, workspace, work_item_id);
+
+        let mut record = operation_params(
+            &reviewer_identity,
+            "review.record",
+            json!({
+                "status":"passed",
+                "findings":[],
+                "reviewedPaths":["src/lib.rs"],
+                "evidenceIds":[evidence_id.clone()]
+            }),
+        );
+        record.lease_id = Some(lease_id.clone());
+        record.fencing_token = Some(fencing);
+        record.expected_revision = Some(current_revision(harness));
+        record.idempotency_key = Some(format!("{lineage_key}-record"));
+        let recorded = success(&call(
+            &harness.runtime,
+            cli,
+            RpcMethod::OperationExecute,
+            record,
+        ));
+        let last = index + 1 == specialties.len();
+        // A batch is only adjudicated once every required specialty has
+        // contributed; before that the runtime keeps asking for the rest.
+        let retained = recorded["data"]["batch"]["retainedContributions"]
+            .as_array()
+            .map(Vec::len);
+        assert_eq!(
+            retained,
+            Some(index + 1),
+            "{specialty} contribution must be retained: {recorded}"
+        );
+        if last {
+            assert_eq!(
+                recorded["data"]["batch"]["latestStatus"], "VALID_CLEAN",
+                "the complete specialty set must produce a clean batch: {recorded}"
+            );
+        } else {
+            assert_eq!(
+                recorded["data"]["nextAction"]["kind"], "retry_missing",
+                "{specialty} contribution must leave the batch pending: {recorded}"
+            );
+        }
+
+        // Tier 2+ serializes specialties by handing the exclusive Work Item
+        // lease from one reviewer to the next, so each contribution releases.
+        let mut release = operation_params(
+            &reviewer_identity,
+            "lease.release",
+            json!({"owner":{"role":"reviewer"}}),
+        );
+        release.lease_id = Some(lease_id);
+        release.fencing_token = Some(fencing);
+        release.idempotency_key = Some(format!("{lineage_key}-release"));
+        assert_success(&call(
+            &harness.runtime,
+            cli,
+            RpcMethod::OperationExecute,
+            release,
+        ));
+
+        if last {
+            let state = read_state_value(harness);
+            assert_eq!(
+                state["reviewSession"]["status"], "completed",
+                "the final contribution must complete the review session: {state}"
+            );
+            assert!(
+                state["review"]["attempt"].is_object(),
+                "the terminal projection must carry the latest attempt: {state}"
+            );
+        }
+    }
+}
+
+/// Drives `evidence.record` then `evidence.finalize` as the Root, which is what
+/// advances the completion milestone `None -> ImplementationVerified ->
+/// ReviewReady`. Returns the daemon-derived evidence id the review must cite.
+///
+/// `Completed` may only be committed from `GovernanceClosed`, and that milestone
+/// is only reachable through this chain followed by `review.record`, so a
+/// completion fixture has to walk all three operations.
+fn close_evidence_milestones(
+    harness: &Harness,
+    cli: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    root_identity: &CliIdentity,
+    key: &str,
+) -> String {
+    let mut lease_request = operation_params(
+        root_identity,
+        "lease.acquire",
+        json!({"owner":{"role":"root"},"ttlSeconds":300}),
+    );
+    lease_request.idempotency_key = Some(format!("{key}-evidence-lease"));
+    let lease = success(&call(
+        &harness.runtime,
+        cli,
+        RpcMethod::OperationExecute,
+        lease_request,
+    ));
+    let lease_id = lease["data"]["leaseId"]
+        .as_str()
+        .expect("evidence lease id")
+        .to_owned();
+    let fencing = lease["data"]["fencingToken"]
+        .as_u64()
+        .expect("evidence fencing token");
+
+    let input = authoritative_input_fingerprint(harness, workspace);
+    let mut record = operation_params(
+        root_identity,
+        "evidence.record",
+        json!({
+            "artifactPath":"evidence/result.json",
+            "kind":"focused-test",
+            "inputFingerprint":input,
+            "exitCode":0
+        }),
+    );
+    record.lease_id = Some(lease_id.clone());
+    record.fencing_token = Some(fencing);
+    record.expected_revision = Some(current_revision(harness));
+    record.idempotency_key = Some(format!("{key}-evidence-record"));
+    let recorded = success(&call(
+        &harness.runtime,
+        cli,
+        RpcMethod::OperationExecute,
+        record,
+    ));
+    let evidence_id = recorded["data"]["evidenceId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("evidence.record returns its evidence id: {recorded}"))
+        .to_owned();
+
+    let mut finalize = operation_params(root_identity, "evidence.finalize", json!({}));
+    finalize.lease_id = Some(lease_id.clone());
+    finalize.fencing_token = Some(fencing);
+    finalize.expected_revision = Some(current_revision(harness));
+    finalize.idempotency_key = Some(format!("{key}-evidence-finalize"));
+    assert_success(&call(
+        &harness.runtime,
+        cli,
+        RpcMethod::OperationExecute,
+        finalize,
+    ));
+
+    let mut release = operation_params(
+        root_identity,
+        "lease.release",
+        json!({"owner":{"role":"root"}}),
+    );
+    release.lease_id = Some(lease_id);
+    release.fencing_token = Some(fencing);
+    release.idempotency_key = Some(format!("{key}-evidence-release"));
+    assert_success(&call(
+        &harness.runtime,
+        cli,
+        RpcMethod::OperationExecute,
+        release,
+    ));
+    evidence_id
+}
+
+fn read_state_value(harness: &Harness) -> Value {
+    serde_json::from_slice(&fs::read(&harness.state_path).expect("review state bytes"))
+        .expect("review state JSON")
+}
+
+/// Story document whose AC ids cover the plan verification matrix below.
+const TIER2_STORY_DOCUMENT: &str = "# Story\n\nAC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-7\nAC-8 AC-9 AC-10 AC-11 AC-12 AC-13 AC-14\n\n## verification\n";
+
+/// Installs the state and documents a Tier 2 review needs to close.
+///
+/// A Tier 2 clean batch is only sealed once the deterministic final proof
+/// (`G-CODEPLAN-SRC`, `G-14`, `G-08`) evaluates PASS, which requires an approved
+/// plan carrying the full 14-row verification matrix, AC ids that the Story
+/// document actually declares, and source reads that exist on disk.
+pub(super) fn install_tier2_review_prerequisites(
+    harness: &Harness,
+    work_item_id: &str,
+    story_id: &str,
+) {
+    let root = harness.workspace_root.path();
+    let story_path = format!("ae-sdd-doc/Story/{story_id}.md");
+    for (relative, body) in [
+        (story_path.as_str(), TIER2_STORY_DOCUMENT),
+        ("ae-sdd-doc/RA/review.md", "# RA\n"),
+        ("ae-sdd-doc/DR/review.md", "# DR\n"),
+    ] {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().expect("document parent")).expect("document directory");
+        fs::write(path, body).expect("review document");
+    }
+
+    let verification = (1..=14)
+        .map(|index| {
+            json!({
+                "id":format!("V-{index:03}"),
+                "acId":format!("AC-{index}"),
+                "boundary":"unit",
+                "command":"cargo test",
+                "expected":"pass"
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut state = read_state_value(harness);
+    state["executionPlan"] = json!({
+        "goal":"tier 2 review prerequisite fixture",
+        "changedPaths":["src/lib.rs"],
+        "verification":verification,
+        "risks":["fixture risk"],
+        "approved":true,
+        "sourceReads":[
+            "src/lib.rs",
+            "ae-sdd-doc/RA/review.md",
+            "ae-sdd-doc/DR/review.md",
+            story_path
+        ]
+    });
+    state["documentPaths"] = json!({"story":story_path});
+    // Completion is authorized from the `GovernanceClosed` milestone, and the
+    // milestone only advances for a Work Item that carries an execution runtime
+    // section. A code-reviewed item has executed, so the fixture seeds the
+    // cursor the daemon would have committed and lets the evidence and review
+    // operations earn the milestone from `none`.
+    state["executionRuntime"] = json!({
+        "schemaVersion":1,
+        "queueDigest":format!("sha256:{}", "1".repeat(64)),
+        "activeSliceOrdinal":1,
+        "completionMilestone":"none"
+    });
+    if let Some(story_state) = state
+        .pointer_mut(&format!("/storyStates/{work_item_id}"))
+        .and_then(Value::as_object_mut)
+    {
+        story_state.insert("docPath".to_owned(), json!(story_path));
+    }
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&state).expect("prerequisite state serializes"),
+    )
+    .expect("prerequisite state");
+}
+
+/// Computes the Review input fingerprint the daemon would derive from the
+/// current state plus workspace inventory.
+fn authoritative_input_fingerprint(harness: &Harness, workspace: &WorkspaceResult) -> String {
+    let state = read_state_value(harness);
+    // Only the canonical root and the locked state feed the fingerprint, so a
+    // minimal workspace projection is sufficient here.
+    let business = ae_sdd_runtime::BusinessWorkspace {
+        workspace_id: workspace.workspace_id.clone(),
+        canonical_root: fs::canonicalize(harness.workspace_root.path())
+            .expect("workspace canonicalizes")
+            .to_string_lossy()
+            .into_owned(),
+        project_key: workspace.project_key.clone(),
+        mode: WorkspaceMode::RustCanary,
+        agent_role: None,
+        agent_grant: None,
+        caller_kind: None,
+        inventory_generation: workspace.inventory_generation,
+    };
+    authoritative_review_workspace_input_fingerprint(&business, &state)
+        .expect("authoritative review input fingerprint")
+        .to_string()
+}
+
+/// Re-pins the active entries of the sealed manifest to the current Review
+/// input, patching the manifest `evidence.finalize` projected from the ledger
+/// rather than replacing it.
+///
+/// A clean contribution rejects an entry whose fingerprint is stale, and every
+/// accepted mutation can move the input, so the pin is refreshed before each
+/// contribution. Only `inputFingerprint` and `contentHash` change: the
+/// completion milestone binds the manifest through `verification_digest`, which
+/// excludes exactly this field so a re-pin cannot roll the milestone back.
+fn seal_review_evidence(harness: &Harness, workspace: &WorkspaceResult, work_item_id: &str) {
+    let input = authoritative_input_fingerprint(harness, workspace);
+    let path = harness.workspace_root.path().join(format!(
+        ".auto-engineering/{work_item_id}/evidence/manifest.json"
+    ));
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(&path).expect("finalized manifest bytes"))
+            .expect("finalized manifest JSON");
+    let entries = manifest["entries"]
+        .as_array_mut()
+        .expect("finalized manifest entries");
+    for entry in entries.iter_mut() {
+        let active = entry
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("active")
+            == "active";
+        if active {
+            entry["inputFingerprint"] = json!(input);
+        }
+    }
+    let mut canonical = manifest.clone();
+    canonical
+        .as_object_mut()
+        .expect("manifest object")
+        .retain(|key, _| key != "contentHash" && !key.starts_with('_'));
+    manifest["contentHash"] = json!(format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&canonical).expect("manifest canonical bytes")
+        ))
+    ));
+    fs::write(path, serde_json::to_vec(&manifest).expect("manifest JSON")).expect("manifest file");
+}
+
+fn current_revision(harness: &Harness) -> u64 {
+    read_state_value(harness)["revision"]
+        .as_u64()
+        .expect("state revision")
+}
+
+#[allow(dead_code)]
+fn install_hand_written_review_authority(
+    harness: &Harness,
+    root_session_id: &str,
+    inventory_generation: u64,
+    review_id: &str,
+) {
+    const RULESET: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+    let policy = RuntimeConfig::default().policy_digest;
+    let mut state: Value = serde_json::from_slice(
+        &fs::read(&harness.state_path).expect("review authority state bytes"),
+    )
+    .expect("review authority state JSON");
+    let input = review_input_fingerprint(&state).to_string();
+    let source_revision = state["revision"].as_u64().expect("source revision");
+    let batch_id = format!("{review_id}-batch");
+    let attempt_id = format!("{review_id}-attempt");
+    let session: ReviewSessionV2 = serde_json::from_value(json!({
+        "schemaVersion":"v2",
+        "reviewId":review_id,
+        "parentReviewId":null,
+        "tier":"tier2",
+        "requiredSpecialties":["be","ar"],
+        "authorSessionId":"00000000-0000-0000-0000-000000000099",
+        "rootSessionId":root_session_id,
+        "inputFingerprint":input,
+        "rulesetFingerprint":RULESET,
+        "policyDigest":policy,
+        "sourceRevision":source_revision,
+        "inventoryGeneration":inventory_generation,
+        "repairClass":"none",
+        "cleanPolicy":{"cleanTarget":1,"finalProofRequirement":"deterministic_gates"},
+        "budget":{
+            "maxAttempts":5,
+            "maxValidBatches":3,
+            "maxRemediations":2,
+            "maxWallClockMinutes":60
+        },
+        "counters":{
+            "attempts":0,
+            "validBatches":0,
+            "cleanStreak":0,
+            "remediations":0,
+            "infraFailures":0,
+            "protocolFailures":0
+        },
+        "status":"running",
+        "startedAt":"2026-07-25T10:00:00Z",
+        "deadlineAt":"2026-07-25T11:00:00Z",
+        "terminalAt":null
+    }))
+    .expect("review session fixture");
+    let attempt: ReviewAttemptV2 = serde_json::from_value(json!({
+        "schemaVersion":"v2",
+        "reviewId":review_id,
+        "batchId":batch_id,
+        "attemptId":attempt_id,
+        "attemptOrdinal":1,
+        "idempotencyKey":format!("{review_id}-attempt"),
+        "inputFingerprint":input,
+        "rulesetFingerprint":RULESET,
+        "contributions":[
+            clean_review_contribution(
+                &attempt_id, &input, RULESET, &policy, root_session_id, "be", 10,
+            ),
+            clean_review_contribution(
+                &attempt_id, &input, RULESET, &policy, root_session_id, "ar", 11,
+            )
+        ],
+        "observedAt":"2026-07-25T10:01:00Z",
+        "finalProof":{
+            "kind":"deterministic_gates",
+            "digest":policy,
+            "sourceRevision":source_revision,
+            "inputFingerprint":input,
+            "rulesetFingerprint":RULESET,
+            "observedAt":"2026-07-25T10:00:30Z"
+        },
+        "projectAuthority":{
+            "projectReceiptRef":".ae-sdd/evidence/review.json",
+            "activeManifestDigest":policy,
+            "stateReceiptRefDigest":policy,
+            "journalMutationId":format!("{review_id}-mutation")
+        },
+        "remediation":null
+    }))
+    .expect("review attempt fixture");
+    let evaluated = ReviewSupervisor::evaluate(&session, None, attempt).expect("review evaluates");
+    state["inputFingerprint"] = json!(input);
+    state["rulesetFingerprint"] = json!(RULESET);
+    state["policyDigest"] = json!(policy);
+    state["inventoryGeneration"] = json!(inventory_generation);
+    state["reviewSession"] =
+        serde_json::to_value(evaluated.next_session()).expect("review session serializes");
+    state["review"] = json!({
+        "status":"passed",
+        "findings":[],
+        "batch":evaluated.next_batch(),
+        "receipt":evaluated.exit_receipt().expect("review exit receipt")
+    });
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&state).expect("review state serializes"),
+    )
+    .expect("review state");
+}
+
+fn clean_review_contribution(
+    source_attempt_id: &str,
+    input: &str,
+    ruleset: &str,
+    policy: &str,
+    root_session_id: &str,
+    specialty: &str,
+    seed: u128,
+) -> Value {
+    json!({
+        "sourceAttemptId":source_attempt_id,
+        "reviewer":{
+            "agentRole":"reviewer",
+            "specialty":specialty,
+            "grantedSpecialties":[specialty],
+            "physicalSessionId":format!("00000000-0000-0000-0000-{seed:012x}"),
+            "rootSessionId":root_session_id,
+            "delegationId":format!("10000000-0000-0000-0000-{seed:012x}"),
+            "lineageDepth":2,
+            "attestationRef":format!(".ae-sdd/evidence/attestation-{seed}.json"),
+            "attestationDigest":policy,
+            "specialtyGrantDigest":policy
+        },
+        "outcome":"clean",
+        "findings":[],
+        "reportDigest":policy,
+        "contributionDigest":format!("{seed:064x}"),
+        "inputFingerprint":input,
+        "rulesetFingerprint":ruleset
+    })
+}
+
+fn review_input_fingerprint(state: &Value) -> InputFingerprint {
+    let mut authority = state.clone();
+    strip_review_derived_fields(&mut authority);
+    InputFingerprint::digest(serde_json::to_vec(&authority).expect("review input serializes"))
+}
+
+fn strip_review_derived_fields(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for field in [
+                "review",
+                "reviewSession",
+                "reviewLoop",
+                "gateResults",
+                "hookGuard",
+                "nextActions",
+                "inputFingerprint",
+                "rulesetFingerprint",
+                "policyDigest",
+                "inventoryGeneration",
+                "revision",
+                "lastFencingToken",
+                "lastMutation",
+            ] {
+                object.remove(field);
+            }
+            for child in object.values_mut() {
+                strip_review_derived_fields(child);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                strip_review_derived_fields(child);
+            }
+        }
+        _ => {}
+    }
 }

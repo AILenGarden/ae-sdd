@@ -17,7 +17,22 @@ const LEGACY_CLI: &[u8] = &[
     209, 202, 202, 201, 214, 138, 199, 204, 203, 138, 196, 192, 136, 214, 193, 193,
 ];
 const PYTHON_MODULE: &[u8] = &[213, 220, 209, 205, 202, 203, 133, 136, 200];
-const PYTHON_SOURCE: &[u8] = &[139, 213, 220, 165];
+
+// Part D: cutover markers for the 5 Python modules being migrated to Rust.
+// XOR-encoded with MARKER_KEY (0xa5) to match existing style.
+const REVIEW_LOOP_PY: &[u8] = &[
+    215, 192, 211, 204, 192, 210, 250, 201, 202, 202, 213, 139, 213, 220,
+];
+const REVIEW_BATCH_PY: &[u8] = &[
+    215, 192, 211, 204, 192, 210, 250, 199, 196, 209, 198, 205, 139, 213, 220,
+];
+const STATE_PY: &[u8] = &[214, 209, 196, 209, 192, 139, 213, 220];
+const UPDATE_GRAPH_PY: &[u8] = &[
+    208, 213, 193, 196, 209, 192, 250, 194, 215, 196, 213, 205, 139, 213, 220,
+];
+const DOCUMENT_STORAGE_PY: &[u8] = &[
+    193, 202, 198, 208, 200, 192, 203, 209, 250, 214, 209, 202, 215, 196, 198, 192, 139, 213, 220,
+];
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,14 +125,19 @@ pub fn verify_release(
     })
 }
 
-fn forbidden_markers() -> [(&'static str, &'static [u8]); 6] {
+fn forbidden_markers() -> [(&'static str, &'static [u8]); 10] {
     [
         ("python executable", PYTHON_EXE),
         ("python interpreter", USR_PYTHON),
         ("python interpreter", LOCAL_PYTHON),
         ("legacy CLI", LEGACY_CLI),
         ("Python subprocess", PYTHON_MODULE),
-        ("Python source fallback", PYTHON_SOURCE),
+        // Part D: cutover markers for migrated Python business modules.
+        ("review_loop.py runtime route", REVIEW_LOOP_PY),
+        ("review_batch.py runtime route", REVIEW_BATCH_PY),
+        ("state.py runtime route", STATE_PY),
+        ("update_graph.py runtime route", UPDATE_GRAPH_PY),
+        ("document_storage.py runtime route", DOCUMENT_STORAGE_PY),
     ]
 }
 
@@ -168,9 +188,12 @@ fn is_package_or_hook_config(path: &Path) -> bool {
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
+    // `cmd` and `bat` are the primary Windows launcher script types: a shim
+    // that shells out to a Python entry point lives there, not in `sh`/`ps1`.
+    // Omitting them let a `python.exe` launcher pass release verification.
     matches!(
         extension,
-        "json" | "toml" | "yaml" | "yml" | "sh" | "ps1" | "plist" | "service"
+        "json" | "toml" | "yaml" | "yml" | "sh" | "ps1" | "cmd" | "bat" | "plist" | "service"
     ) && !path.components().any(|component| {
         let value = component.as_os_str().to_string_lossy();
         matches!(
@@ -257,6 +280,24 @@ mod tests {
     }
 
     #[test]
+    fn source_extension_vocabulary_is_not_a_python_runtime_fallback() {
+        let root = fixture_root("source-extension-vocabulary");
+        for binary in REQUIRED_BINARIES {
+            fs::write(root.join(format!("{binary}.exe")), b"native rust binary")
+                .expect("fixture binary");
+        }
+        fs::write(
+            root.join("ae-sddd.exe"),
+            b"native source classifier: .rs\0.py\0.java\0",
+        )
+        .expect("classifier fixture");
+
+        let summary = verify_release(&root, &[]).expect("classifier vocabulary is not executable");
+        assert!(summary.findings.is_empty());
+        fs::remove_dir_all(root).expect("cleanup fixture");
+    }
+
+    #[test]
     fn verifier_binary_may_embed_forbidden_marker_vocabulary() {
         let root = fixture_root("verifier-vocabulary");
         for binary in REQUIRED_BINARIES {
@@ -271,6 +312,64 @@ mod tests {
 
         let summary = verify_release(&root, &[]).expect("verifier vocabulary is not runtime");
         assert_eq!(summary.scanned_files, 2);
+        fs::remove_dir_all(root).expect("cleanup fixture");
+    }
+
+    /// A Windows `.cmd` launcher that shells out to the Python entry point is a
+    /// logical fallback: the shipped `.exe` never runs. Before `cmd`/`bat`
+    /// joined the scanned extensions this shim passed verification silently.
+    #[test]
+    fn windows_cmd_launcher_delegating_to_python_is_a_forbidden_runtime() {
+        let root = fixture_root("windows-cmd-launcher");
+        for binary in REQUIRED_BINARIES {
+            fs::write(root.join(format!("{binary}.exe")), b"native rust binary")
+                .expect("fixture binary");
+        }
+        fs::write(
+            root.join("ae-sdd.cmd"),
+            b"@echo off\r\n\"python.exe\" \"D:\\repo\\tools\\bin\\ae-sdd\" %*\r\n",
+        )
+        .expect("launcher fixture");
+
+        let findings = match verify_release(&root, &[]) {
+            Err(ReleaseVerificationError::ForbiddenRuntime(findings)) => findings,
+            other => panic!("a python .cmd launcher must fail verification, got {other:?}"),
+        };
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.path.ends_with(".cmd")),
+            "the .cmd launcher must be the reported path: {findings:?}"
+        );
+        fs::remove_dir_all(root).expect("cleanup fixture");
+    }
+
+    /// The same extension widening must not start reporting launchers that only
+    /// invoke the native binaries.
+    #[test]
+    fn windows_cmd_launcher_invoking_the_native_binary_still_passes() {
+        let root = fixture_root("windows-cmd-native");
+        for binary in REQUIRED_BINARIES {
+            fs::write(root.join(format!("{binary}.exe")), b"native rust binary")
+                .expect("fixture binary");
+        }
+        fs::write(
+            root.join("ae-sdd.cmd"),
+            b"@echo off\r\n\"%~dp0ae-sdd.exe\" %*\r\n",
+        )
+        .expect("launcher fixture");
+        fs::write(
+            root.join("install.bat"),
+            b"@echo off\r\ncopy ae-sdd.exe %1\r\n",
+        )
+        .expect("installer fixture");
+
+        let summary = verify_release(&root, &[]).expect("native launchers pass");
+        assert!(summary.findings.is_empty(), "{:?}", summary.findings);
+        assert_eq!(
+            summary.scanned_files, 4,
+            "two binaries plus both Windows launchers must be scanned"
+        );
         fs::remove_dir_all(root).expect("cleanup fixture");
     }
 }

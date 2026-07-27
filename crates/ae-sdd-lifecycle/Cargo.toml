@@ -8,6 +8,16 @@ repository.workspace = true
 
 [dependencies]
 ae-sdd-contracts.workspace = true
+ae-sdd-domain.workspace = true
+ae-sdd-policy.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ae-sdd-protocol.workspace = true
+proptest.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

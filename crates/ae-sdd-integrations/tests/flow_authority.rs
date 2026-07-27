@@ -9,10 +9,10 @@ use ae_sdd_domain::{
 use ae_sdd_integrations::{NativeBusinessAdapter, SqliteRuntimePersistence};
 use ae_sdd_operations::OperationName;
 use ae_sdd_protocol::{
-    ConfirmationRef, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, WorkspaceMode,
+    ConfirmationRef, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode,
 };
 use ae_sdd_runtime::{
-    BusinessOperationPort, BusinessWorkspace, MemoryPersistence, PersistencePort,
+    BusinessOperationPort, BusinessWorkspace, MemoryPersistence, PersistencePort, RuntimeError,
 };
 use ae_sdd_store::{
     LeaseOwner, ProjectMutationStore, ProjectStorePaths, SqliteRuntimeRepository,
@@ -62,10 +62,18 @@ fn state(root: &TempDir) {
             "documentPaths":{"STORY":"ae-sdd-doc/Story/STORY-FLOW-001.md"},
             "nextActions":[{"kind":"poisoned-caller-projection"}],
             "gateResults":{"G-00":"PASS"},
+            "evidenceRefs":[{
+                "evidenceId":"evidence-flow-g00",
+                "verificationId":"G-00",
+                "path":".ae-sdd/evidence/flow-g00.json",
+                "digest":"0000000000000000000000000000000000000000000000000000000000000000",
+                "byteLength":1
+            }],
             "storyStates":{
                 "STORY-FLOW-001":{
                     "phase":"coding",
                     "currentPhase":"coding",
+                    "currentStep":"coding",
                     "nextActions":[{"kind":"also-poisoned"}]
                 }
             }
@@ -107,6 +115,20 @@ fn params(payload: Value, key: Option<&str>) -> RequestParams<Value> {
     }
 }
 
+fn lifecycle_confirmation(error: &RuntimeError) -> ConfirmationRef {
+    assert_eq!(error.code(), StableErrorCode::ConfirmationRequired);
+    let confirmation_id = error
+        .remediation()
+        .and_then(|value| value.split_whitespace().last())
+        .expect("lifecycle confirmation binding")
+        .to_owned();
+    ConfirmationRef {
+        confirmation_id,
+        approved_by: "user:test".to_owned(),
+        approved_at: "2026-07-23T03:00:00Z".to_owned(),
+    }
+}
+
 fn adapter(root: &TempDir) -> (NativeBusinessAdapter, Arc<MemoryPersistence>) {
     let event_store_id = EventStoreId::from_uuid(Uuid::from_u128(13));
     let persistence = Arc::new(MemoryPersistence::new(event_store_id));
@@ -142,6 +164,23 @@ fn snapshot_uses_nested_story_and_ignores_stored_next_actions() {
         projection["nextAction"]["kind"],
         "poisoned-caller-projection"
     );
+}
+
+#[test]
+fn non_root_agent_cannot_evaluate_an_authoritative_gate() {
+    let root = TempDir::new().expect("tempdir");
+    state(&root);
+    complete_project_assets(&root);
+    let (adapter, _) = adapter(&root);
+    let error = adapter
+        .execute(
+            RpcMethod::GateEvaluate,
+            &params(json!({"gateId":"G-00"}), Some("task-gate-evaluation")),
+            Some(&workspace(&root, Some(AgentRole::Task))),
+        )
+        .expect_err("Task agent must not record an authoritative Gate result");
+
+    assert_eq!(error.code(), StableErrorCode::RoleOperationForbidden);
 }
 
 #[test]
@@ -291,7 +330,7 @@ fn stored_pass_cannot_bypass_the_durable_transition_intent() {
     let persistence =
         Arc::new(SqliteRuntimePersistence::open(&database).expect("runtime persistence"));
     let event_store_id = persistence.event_store_id().expect("event store id");
-    let port: Arc<dyn PersistencePort> = persistence;
+    let port: Arc<dyn PersistencePort> = persistence.clone();
     let adapter = NativeBusinessAdapter::new(
         database.clone(),
         event_store_id,
@@ -333,19 +372,32 @@ fn stored_pass_cannot_bypass_the_durable_transition_intent() {
     request.expected_revision = Some(7);
     request.fencing_token = Some(lease.fencing_token().get());
     request.lease_id = Some(lease_id.to_string());
-    request.confirmation = Some(ConfirmationRef {
-        confirmation_id: "confirmation-1".to_owned(),
-        approved_by: "user:test".to_owned(),
-        approved_at: "2026-07-23T03:00:00Z".to_owned(),
-    });
-
+    let authority_path = root.path().join(".auto-engineering/flow-test/state.json");
+    let authority_before = fs::read(&authority_path).expect("state before transition");
+    let events_before = persistence
+        .latest_event_sequence()
+        .expect("event cursor before transition");
+    let confirmation_required = adapter
+        .execute(RpcMethod::OperationExecute, &request, Some(&trusted))
+        .expect_err("lifecycle operation must expose its confirmation binding");
+    request.confirmation = Some(lifecycle_confirmation(&confirmation_required));
     let error = adapter
         .execute(RpcMethod::OperationExecute, &request, Some(&trusted))
         .expect_err("stored PASS without a durable root intent must fail closed");
+    assert_eq!(error.code(), StableErrorCode::GateBlocked, "{error:?}");
     assert_eq!(
-        error.code(),
-        ae_sdd_protocol::StableErrorCode::GateBlocked,
-        "{error:?}"
+        error.message(),
+        "transition has no matching root intent with all required Gates recorded as PASS"
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("state after rejected transition"),
+        authority_before
+    );
+    assert_eq!(
+        persistence
+            .latest_event_sequence()
+            .expect("event cursor after rejected transition"),
+        events_before
     );
 }
 
@@ -359,7 +411,7 @@ fn fresh_native_gate_and_lease_commit_only_the_nested_story_phase() {
     let persistence =
         Arc::new(SqliteRuntimePersistence::open(&database).expect("runtime persistence"));
     let event_store_id = persistence.event_store_id().expect("event store id");
-    let port: Arc<dyn PersistencePort> = persistence;
+    let port: Arc<dyn PersistencePort> = persistence.clone();
     let adapter = NativeBusinessAdapter::new(
         database.clone(),
         event_store_id,
@@ -420,25 +472,36 @@ fn fresh_native_gate_and_lease_commit_only_the_nested_story_phase() {
     transition.expected_revision = Some(7);
     transition.fencing_token = Some(lease.fencing_token().get());
     transition.lease_id = Some(lease_id.to_string());
-    transition.confirmation = Some(ConfirmationRef {
-        confirmation_id: "confirmation-positive".to_owned(),
-        approved_by: "user:test".to_owned(),
-        approved_at: "2026-07-23T03:00:00Z".to_owned(),
-    });
+    let confirmation_required = adapter
+        .execute(RpcMethod::OperationExecute, &transition, Some(&trusted))
+        .expect_err("lifecycle operation must expose its confirmation binding");
+    transition.confirmation = Some(lifecycle_confirmation(&confirmation_required));
     let committed = adapter
         .execute(RpcMethod::OperationExecute, &transition, Some(&trusted))
         .expect("transition commit");
+    let authority_path = root.path().join(".auto-engineering/flow-test/state.json");
+    let authority_after_commit = fs::read(&authority_path).expect("state after transition commit");
+    let events_after_commit = persistence
+        .latest_event_sequence()
+        .expect("event cursor after transition commit");
     let replayed = adapter
         .execute(RpcMethod::OperationExecute, &transition, Some(&trusted))
         .expect("same transition replay");
-    let authority: Value = serde_json::from_slice(
-        &fs::read(root.path().join(".auto-engineering/flow-test/state.json")).expect("state bytes"),
-    )
-    .expect("state JSON");
+    let authority_after_replay = fs::read(&authority_path).expect("state after transition replay");
+    let authority: Value =
+        serde_json::from_slice(&authority_after_replay).expect("state JSON after replay");
 
+    assert_eq!(committed["changed"], true);
     assert_eq!(committed["revisionAfter"], 8);
     assert_eq!(replayed["changed"], false);
     assert_eq!(replayed["revisionAfter"], 8);
+    assert_eq!(authority_after_replay, authority_after_commit);
+    assert_eq!(
+        persistence
+            .latest_event_sequence()
+            .expect("event cursor after transition replay"),
+        events_after_commit
+    );
     assert_eq!(authority["revision"], 8);
     assert_eq!(
         authority["storyStates"]["STORY-FLOW-001"]["phase"],

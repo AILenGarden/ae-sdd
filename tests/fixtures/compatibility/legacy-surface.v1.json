@@ -725,6 +725,24 @@
       "disposition": "preserve"
     },
     {
+      "id": "execution.resume",
+      "source": "tools/lib/operations.py",
+      "owner": "ae-sdd-operations",
+      "disposition": "preserve"
+    },
+    {
+      "id": "execution.slice.record",
+      "source": "crates/ae-sdd-execution/src/plan.rs",
+      "owner": "ae-sdd-operations",
+      "disposition": "native-addition"
+    },
+    {
+      "id": "execution.slice.start",
+      "source": "crates/ae-sdd-execution/src/plan.rs",
+      "owner": "ae-sdd-operations",
+      "disposition": "native-addition"
+    },
+    {
       "id": "gate.check",
       "source": "tools/lib/operations.py",
       "owner": "ae-sdd-operations",
@@ -759,6 +777,18 @@
       "source": "tools/lib/operations.py",
       "owner": "ae-sdd-operations",
       "disposition": "preserve"
+    },
+    {
+      "id": "review.contribute",
+      "source": "crates/ae-sdd-review/src/supervisor.rs",
+      "owner": "ae-sdd-operations",
+      "disposition": "native-addition"
+    },
+    {
+      "id": "review.finalize",
+      "source": "crates/ae-sdd-review/src/supervisor.rs",
+      "owner": "ae-sdd-operations",
+      "disposition": "native-addition"
     },
     {
       "id": "review.record",

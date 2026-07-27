@@ -96,6 +96,10 @@ pub const NATIVE_ENTRYPOINTS: &[NativeEntrypointSpec] = &[
         entrypoint: "post-commit.distribute",
         kind: NativeJobKind::Distribute,
     },
+    NativeEntrypointSpec {
+        entrypoint: "post-commit.managed-instructions",
+        kind: NativeJobKind::Admin,
+    },
 ];
 
 #[must_use]

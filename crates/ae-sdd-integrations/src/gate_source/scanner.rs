@@ -25,17 +25,13 @@ impl GateInputSource for ProjectGateSource {
         predicate: PredicateKey,
     ) -> Result<PredicateEvidence, GateInputError> {
         let located = self.context.load_state().map_err(|_| input_error())?;
-        let satisfied = predicate_value(
-            predicate.as_str(),
-            &self.context.root,
-            &located.value,
-            self.context.work_item_id.as_str(),
-        )
-        .map_err(|_| input_error())?;
-        Ok(PredicateEvidence::new(
-            satisfied,
-            state_evidence(&located).into_iter().collect(),
-        ))
+        let verdict = predicate_value(predicate.as_str(), &self.context, &located)
+            .map_err(|_| input_error())?;
+        let mut evidence: Vec<_> = state_evidence(&located).into_iter().collect();
+        if let Some(denial) = verdict.denial.as_ref() {
+            evidence.extend(denial.evidence(&located));
+        }
+        Ok(PredicateEvidence::new(verdict.satisfied, evidence))
     }
 
     fn scanner_report(

@@ -17,14 +17,17 @@ impl RuntimeService {
             ));
         }
         let key = require_idempotency(params)?;
-        let scope = format!("workspace-register\0{}", resolved.canonical_root);
-        let digest = canonical_digest(&payload)?;
-        if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
-            return Ok(value);
-        }
-
-        let result = {
-            let mut state = self.lock_state()?;
+        let scope_digest = canonical_digest(&json!({
+            "domain":"workspace.register/v1",
+            "canonicalRoot":resolved.canonical_root,
+        }))?;
+        let request_digest = canonical_digest(&json!({
+            "canonicalRoot":resolved.canonical_root,
+            "projectKey":payload.project_key,
+            "mode":WorkspaceMode::Shadow,
+        }))?;
+        let (result, expected_mode, expected_generation) = {
+            let state = self.lock_state()?;
             if let Some(workspace_id) = state.workspace_by_root.get(&resolved.canonical_root) {
                 let existing = state
                     .workspaces
@@ -36,7 +39,11 @@ impl RuntimeService {
                         "canonical workspace root is registered to another project",
                     ));
                 }
-                existing.result.clone()
+                (
+                    existing.result.clone(),
+                    Some(existing.result.mode),
+                    Some(existing.result.inventory_generation),
+                )
             } else {
                 if state.workspaces.len() >= self.config.max_workspaces {
                     return Err(RuntimeError::new(
@@ -44,39 +51,78 @@ impl RuntimeService {
                         "workspace capacity is exhausted",
                     ));
                 }
-                let result = WorkspaceResult {
-                    workspace_id: Uuid::new_v4().to_string(),
-                    canonical_root: resolved.canonical_root.clone(),
-                    project_key: payload.project_key,
-                    mode: WorkspaceMode::Shadow,
-                    inventory_generation: 1,
-                };
-                state
-                    .workspace_by_root
-                    .insert(result.canonical_root.clone(), result.workspace_id.clone());
-                state.workspaces.insert(
-                    result.workspace_id.clone(),
-                    WorkspaceRecord {
-                        result: result.clone(),
+                (
+                    WorkspaceResult {
+                        workspace_id: Uuid::new_v4().to_string(),
+                        canonical_root: resolved.canonical_root.clone(),
+                        project_key: payload.project_key.clone(),
+                        mode: WorkspaceMode::Shadow,
+                        inventory_generation: 1,
                     },
-                );
-                result
+                    None,
+                    None,
+                )
             }
         };
         let value = to_value(&result)?;
-        self.persistence
-            .store_record("workspace/v1", &result.workspace_id, &value)?;
-        let (value, _) = self.commit_receipt_event(
-            &scope,
-            key,
-            digest,
-            value,
-            "workspace.registered",
-            Some(result.workspace_id.clone()),
-            None,
-            None,
-        )?;
-        Ok(value)
+        let now = self.clock.now_unix_ms();
+        let snapshot = self
+            .persistence
+            .commit_identity_bundle(RuntimeIdentityTransition {
+                operation: "workspace.register".to_owned(),
+                scope_digest,
+                idempotency_key: key.to_owned(),
+                request_digest,
+                expected_workspace_mode: expected_mode,
+                expected_inventory_generation: expected_generation,
+                expected_session_status: None,
+                expected_delegation_status: None,
+                expected_context_generation: None,
+                snapshot: RuntimeIdentitySnapshot {
+                    identity_kind: RuntimeIdentityKind::Workspace,
+                    workspace: RuntimeWorkspaceRecord {
+                        workspace_id: result.workspace_id.clone(),
+                        canonical_root: result.canonical_root.clone(),
+                        project_key: result.project_key.clone(),
+                        mode: result.mode,
+                        inventory_generation: result.inventory_generation,
+                        dirty: false,
+                        created_at_unix_ms: now,
+                        updated_at_unix_ms: now,
+                    },
+                    session: None,
+                    delegation: None,
+                    host_action: None,
+                    attestation: None,
+                    response: value,
+                    replayed: false,
+                },
+                committed_at_unix_ms: now,
+            })?;
+        let committed: WorkspaceResult = decode_value(snapshot.response.clone())?;
+        {
+            let mut state = self.lock_state()?;
+            state.workspace_by_root.insert(
+                committed.canonical_root.clone(),
+                committed.workspace_id.clone(),
+            );
+            state.workspaces.insert(
+                committed.workspace_id.clone(),
+                WorkspaceRecord {
+                    result: committed.clone(),
+                },
+            );
+        }
+        if !snapshot.replayed {
+            self.append_runtime_event(
+                "workspace.registered",
+                json!({"workspaceId":committed.workspace_id}),
+                Some(committed.workspace_id),
+                None,
+                None,
+            )?;
+        }
+        Ok(snapshot.response)
     }
 
     pub(super) fn workspace_snapshot(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
@@ -136,13 +182,15 @@ impl RuntimeService {
             *self.lifecycle.write().map_err(lock_error)? = DaemonLifecycle::Running;
             return Ok(value);
         }
-        let (result, invalidated_sessions) = {
+        let (result, expected_mode, expected_generation, invalidated_sessions) = {
             let mut state = self.lock_state()?;
-            let result = {
+            let (result, expected_mode, expected_generation) = {
                 let workspace = state
                     .workspaces
                     .get_mut(&workspace_id)
                     .ok_or_else(|| project_mismatch("workspace is not registered"))?;
+                let expected_mode = workspace.result.mode;
+                let expected_generation = workspace.result.inventory_generation;
                 let legal = matches!(
                     (workspace.result.mode, payload.target_mode),
                     (WorkspaceMode::Shadow, WorkspaceMode::RustCanary)
@@ -160,7 +208,7 @@ impl RuntimeService {
                     .inventory_generation
                     .checked_add(1)
                     .ok_or_else(|| schema_error("inventory generation overflow"))?;
-                workspace.result.clone()
+                (workspace.result.clone(), expected_mode, expected_generation)
             };
             let invalidated = state
                 .sessions
@@ -174,11 +222,52 @@ impl RuntimeService {
                     }
                 })
                 .collect::<Vec<_>>();
-            (result, invalidated)
+            (result, expected_mode, expected_generation, invalidated)
         };
         let value = to_value(&result)?;
+        let now = self.clock.now_unix_ms();
+        let created_at = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Workspace)?
+            .into_iter()
+            .map(|snapshot| snapshot.workspace)
+            .find(|workspace| workspace.workspace_id == workspace_id)
+            .map_or(now, |workspace| workspace.created_at_unix_ms);
         self.persistence
-            .store_record("workspace/v1", &workspace_id, &value)?;
+            .commit_identity_bundle(RuntimeIdentityTransition {
+                operation: "workspace.mode.transition".to_owned(),
+                scope_digest: canonical_digest(&json!({
+                    "domain":"workspace.mode.transition/v1",
+                    "workspaceId":workspace_id,
+                }))?,
+                idempotency_key: key.to_owned(),
+                request_digest: digest.clone(),
+                expected_workspace_mode: Some(expected_mode),
+                expected_inventory_generation: Some(expected_generation),
+                expected_session_status: None,
+                expected_delegation_status: None,
+                expected_context_generation: None,
+                snapshot: RuntimeIdentitySnapshot {
+                    identity_kind: RuntimeIdentityKind::Workspace,
+                    workspace: RuntimeWorkspaceRecord {
+                        workspace_id: result.workspace_id.clone(),
+                        canonical_root: result.canonical_root.clone(),
+                        project_key: result.project_key.clone(),
+                        mode: result.mode,
+                        inventory_generation: result.inventory_generation,
+                        dirty: false,
+                        created_at_unix_ms: created_at,
+                        updated_at_unix_ms: now,
+                    },
+                    session: None,
+                    delegation: None,
+                    host_action: None,
+                    attestation: None,
+                    response: value.clone(),
+                    replayed: false,
+                },
+                committed_at_unix_ms: now,
+            })?;
         let parity_value = to_value(&payload.parity)?;
         self.persistence
             .store_record("workspace-parity/v1", &workspace_id, &parity_value)?;

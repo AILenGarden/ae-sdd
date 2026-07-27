@@ -100,6 +100,11 @@ fn adapted_gate_params(
         "test-capability".to_owned(),
         "--work-item".to_owned(),
         WORK_ITEM.to_owned(),
+        // `gate.evaluate` persists its outcome, so the frozen method spec marks
+        // it as a writing method that requires an idempotency key. Derive a
+        // stable key from the command id to keep the assertion deterministic.
+        "--idempotency-key".to_owned(),
+        format!("legacy-gate-rpc-{}", command_id.replace(' ', "-")),
         if command_id.starts_with("gate ") {
             "--project".to_owned()
         } else {

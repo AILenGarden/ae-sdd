@@ -95,7 +95,7 @@ fn migration_is_repeatable_and_event_sequence_survives_restart() {
     );
     assert_eq!(
         first.pragma_value("user_version").expect("PRAGMA reads"),
-        "2"
+        "11"
     );
     let (_, first_event) = first
         .index_committed_mutation(
@@ -123,7 +123,7 @@ fn migration_is_repeatable_and_event_sequence_survives_restart() {
     assert_eq!(second_event.event_store_id, proposed);
     assert_eq!(
         reopened.pragma_value("user_version").expect("PRAGMA reads"),
-        "2"
+        "11"
     );
 }
 
@@ -146,7 +146,7 @@ fn lease_control_receipts_can_keep_the_project_revision_unchanged() {
     drop(repository);
 
     let reopened = SqliteRuntimeRepository::open(&database, event_store_id, &created_at)
-        .expect("version two migration is repeatable");
+        .expect("published migrations are repeatable");
     reopened
         .index_committed_mutation(
             &lease_control_receipt(workspace_id, work_item_id.clone(), "renew", 3),
@@ -155,7 +155,7 @@ fn lease_control_receipts_can_keep_the_project_revision_unchanged() {
         .expect("same-revision receipt commits after restart");
     assert_eq!(
         reopened.pragma_value("user_version").expect("PRAGMA reads"),
-        "2"
+        "11"
     );
 }
 

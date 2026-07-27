@@ -167,7 +167,54 @@ impl HostCoordinator {
         context_generation: Option<u64>,
         deadline_unix_ms: u64,
     ) -> RuntimeResult<HostActionPayload> {
+        self.enqueue_with_action_id(
+            &Uuid::new_v4().to_string(),
+            adapter_id,
+            kind,
+            delegation_id,
+            compact_id,
+            session_id,
+            context_generation,
+            deadline_unix_ms,
+        )
+    }
+
+    /// Creates a Host action with a caller-derived stable identity.
+    ///
+    /// Delegation creation uses this path so a crash between action persistence
+    /// and the typed identity commit cannot allocate a second Host command.
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_with_action_id(
+        &self,
+        action_id: &str,
+        adapter_id: &str,
+        kind: &str,
+        delegation_id: Option<String>,
+        compact_id: Option<String>,
+        session_id: Option<String>,
+        context_generation: Option<u64>,
+        deadline_unix_ms: u64,
+    ) -> RuntimeResult<HostActionPayload> {
         self.require_capabilities(adapter_id, &[kind])?;
+        if let Some(value) = self.persistence.load_record("host-action/v1", action_id)? {
+            let existing: HostActionPayload = serde_json::from_value(value)
+                .map_err(|_| malformed("durable host action is malformed"))?;
+            if existing.action_id != action_id
+                || existing.adapter_id != adapter_id
+                || existing.kind != kind
+                || existing.delegation_id != delegation_id
+                || existing.compact_id != compact_id
+                || existing.session_id != session_id
+                || existing.context_generation != context_generation
+                || existing.deadline_unix_ms != deadline_unix_ms
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::IdempotencyKeyReused,
+                    "stable host action identity was reused with different content",
+                ));
+            }
+            return Ok(existing);
+        }
         let command_seq = {
             let mut sequences = self.command_sequences.lock().map_err(lock_error)?;
             let value = sequences.entry(adapter_id.to_owned()).or_insert(0);
@@ -180,7 +227,7 @@ impl HostCoordinator {
             *value
         };
         let action = HostActionPayload {
-            action_id: Uuid::new_v4().to_string(),
+            action_id: action_id.to_owned(),
             adapter_id: adapter_id.to_owned(),
             command_seq,
             kind: kind.to_owned(),

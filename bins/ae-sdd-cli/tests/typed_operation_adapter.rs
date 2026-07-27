@@ -10,6 +10,8 @@ use legacy::{
     parse_rpc_invocation, resolve_command_id,
 };
 
+const VERIFICATION_PAYLOAD: &str = r#"{"toolsetJobId":"job-1","plan":{},"receiptId":"receipt-1","receiptDigest":"receipt-digest","sourceRevision":1,"planDigest":"plan-digest","methodologyDigest":"methodology-digest","policyDigest":"policy-digest","inputFingerprint":"input-fingerprint","changedPaths":["src/lib.rs"],"persist":true}"#;
+
 fn environment() -> impl Fn(&str) -> Option<String> {
     let values = BTreeMap::from([
         ("AE_SDD_AGENT_ID".to_owned(), "agent-root".to_owned()),
@@ -168,8 +170,8 @@ fn all_thirteen_typed_routes_build_registry_valid_operation_envelopes() {
         (
             "verify plan",
             &[
-                "--changed-paths",
-                "[\"src/lib.rs\"]",
+                "--payload-json",
+                VERIFICATION_PAYLOAD,
                 "--lease-id",
                 "00000000-0000-0000-0000-000000000003",
                 "--fencing-token",

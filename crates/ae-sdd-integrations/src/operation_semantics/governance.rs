@@ -82,40 +82,6 @@ pub(crate) fn approved_execution_plan(
     Ok(plan)
 }
 
-pub(crate) fn review(payload: &Value) -> Result<Value, &'static str> {
-    let object = payload
-        .as_object()
-        .ok_or("review payload must be an object")?;
-    let status = required_trimmed_string(object.get("status"), "review status is required")?;
-    if !matches!(status.as_str(), "pending" | "passed" | "changes_required") {
-        return Err("review status is not registered");
-    }
-    let findings = object
-        .get("findings")
-        .and_then(Value::as_array)
-        .ok_or("review findings must be an array")?;
-    if findings.iter().any(|finding| {
-        finding
-            .as_object()
-            .and_then(|value| value.get("severity"))
-            .and_then(Value::as_str)
-            .is_none_or(|severity| severity.trim().is_empty())
-    }) {
-        return Err("review findings must be objects with a non-empty severity");
-    }
-    if status == "passed" && !findings.is_empty() {
-        return Err("review status=passed requires empty findings");
-    }
-    if status == "changes_required" && findings.is_empty() {
-        return Err("review status=changes_required requires findings");
-    }
-
-    let mut review = Map::new();
-    review.insert("status".to_owned(), Value::String(status));
-    review.insert("findings".to_owned(), Value::Array(findings.clone()));
-    Ok(Value::Object(review))
-}
-
 fn required_trimmed_string(
     value: Option<&Value>,
     error: &'static str,

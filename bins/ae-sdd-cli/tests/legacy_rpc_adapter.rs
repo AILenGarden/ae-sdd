@@ -43,6 +43,9 @@ fn scanner_and_ra_batch_commands_map_to_exact_native_gate_ids() {
     let env = [
         ("AE_SDD_AGENT_ID", "root-agent"),
         ("AE_SDD_CAPABILITY_TOKEN", "capability"),
+        // `gate.evaluate` writes its outcome, so the method spec requires an
+        // idempotency key; the environment channel is the documented fallback.
+        ("AE_SDD_IDEMPOTENCY_KEY", "legacy-gate-adapter-fixture"),
     ];
     let mut coding = parsed_params(
         "gate coding-required",

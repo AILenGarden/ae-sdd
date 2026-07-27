@@ -171,70 +171,14 @@ pub(super) fn path_compliance_recorded(state: &Value) -> bool {
     })
 }
 
-pub(super) fn review_loop_passed(state: &Value) -> bool {
-    [state.get("reviewLoop"), state.get("reviewSession")]
-        .into_iter()
-        .flatten()
-        .any(|value| {
-            structured_status(Some(value), "passed") || structured_status(Some(value), "completed")
-        })
-}
-
-pub(super) fn reviewers_independent(state: &Value) -> bool {
-    let reviewers = state
-        .pointer("/review/reviewers")
-        .or_else(|| state.get("activeReviewers"))
-        .and_then(Value::as_array);
-    reviewers.is_some_and(|items| {
-        let sessions: BTreeSet<_> = items
-            .iter()
-            .filter(|item| {
-                item.get("role")
-                    .and_then(Value::as_str)
-                    .is_none_or(|role| role.eq_ignore_ascii_case("reviewer"))
-            })
-            .filter_map(|item| item.get("sessionId").and_then(Value::as_str))
-            .collect();
-        !sessions.is_empty() && sessions.len() == items.len()
-    })
-}
-
-pub(super) fn review_recorded(review: &Value) -> bool {
-    review
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| status != "pending")
-        && review.get("findings").is_some_and(Value::is_array)
-}
-
-pub(super) fn review_depth_valid(review: &Value) -> bool {
-    let findings = review.get("findings").and_then(Value::as_array);
-    review_recorded(review)
-        && findings.is_some_and(|items| {
-            !items.is_empty()
-                || (nonempty_string(review.get("zeroFindingsRationale"))
-                    && nonempty_array(review.get("evidenceIds")))
-        })
-}
-
-pub(super) fn automation_consensus(state: &Value) -> bool {
-    if state
+/// Automation consensus is only required while automation mode is enabled.
+/// The consensus itself is proven by authoritative Review authority, never by
+/// this flag.
+pub(super) fn automation_enabled(state: &Value) -> bool {
+    state
         .pointer("/automation/enabled")
         .and_then(Value::as_bool)
-        != Some(true)
-    {
-        return true;
-    }
-    state
-        .get("reviewConsensus")
-        .and_then(Value::as_object)
-        .is_some_and(|points| {
-            points.values().any(|value| {
-                value.get("passed").and_then(Value::as_bool) == Some(true)
-                    && nonempty_array(value.get("reviewers"))
-            })
-        })
-        && reviewers_independent(state)
+        == Some(true)
 }
 
 pub(super) fn context_complete(state: &Value, required: &[&str]) -> bool {

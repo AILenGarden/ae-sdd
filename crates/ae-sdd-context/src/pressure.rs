@@ -4,6 +4,10 @@ use thiserror::Error;
 
 pub const DEFAULT_HIGH_WATERMARK_PERMILLE: u16 = 800;
 pub const DEFAULT_LOW_WATERMARK_PERMILLE: u16 = 600;
+/// Frozen high watermark in basis points (80%).
+pub const DEFAULT_HIGH_WATERMARK_BPS: u16 = DEFAULT_HIGH_WATERMARK_PERMILLE * 10;
+/// Frozen recovery watermark in basis points (60%).
+pub const DEFAULT_LOW_WATERMARK_BPS: u16 = DEFAULT_LOW_WATERMARK_PERMILLE * 10;
 pub const DEFAULT_CONSECUTIVE_SAMPLES: u16 = 2;
 pub const DEFAULT_COOLDOWN_MS: u64 = 300_000;
 
@@ -91,7 +95,14 @@ impl PressureSample {
     #[must_use]
     pub fn permille(&self) -> u16 {
         let value = u128::from(self.used_tokens) * 1_000 / u128::from(self.context_window_tokens);
-        u16::try_from(value).expect("used tokens are bounded by context window")
+        u16::try_from(value).unwrap_or(u16::MAX)
+    }
+
+    /// Returns utilization in basis points (10000 = 100%).
+    #[must_use]
+    pub fn basis_points(&self) -> u16 {
+        let value = u128::from(self.used_tokens) * 10_000 / u128::from(self.context_window_tokens);
+        u16::try_from(value).unwrap_or(u16::MAX)
     }
 }
 
@@ -130,9 +141,21 @@ impl PressurePolicy {
         self.high_watermark_permille
     }
 
+    /// Returns the high watermark in basis points.
+    #[must_use]
+    pub const fn high_watermark_basis_points(self) -> u16 {
+        self.high_watermark_permille * 10
+    }
+
     #[must_use]
     pub const fn low_watermark_permille(self) -> u16 {
         self.low_watermark_permille
+    }
+
+    /// Returns the recovery watermark in basis points.
+    #[must_use]
+    pub const fn low_watermark_basis_points(self) -> u16 {
+        self.low_watermark_permille * 10
     }
 
     #[must_use]

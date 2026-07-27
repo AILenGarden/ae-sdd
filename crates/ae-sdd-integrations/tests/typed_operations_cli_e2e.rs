@@ -1,3 +1,16 @@
+// `support` seals evidence with the daemon's own authoritative Review input
+// fingerprint, which lives in `review_authority` and needs its two siblings to
+// resolve `crate::` paths.
+#[allow(dead_code)]
+#[path = "../src/gate_source/mod.rs"]
+mod gate_source;
+#[allow(dead_code)]
+#[path = "../src/persistence.rs"]
+mod persistence;
+#[allow(dead_code)]
+#[path = "../src/review_authority.rs"]
+mod review_authority;
+
 #[path = "typed_operations_cli_e2e/governance.rs"]
 mod governance;
 #[path = "typed_operations_cli_e2e/memory_jobs.rs"]
@@ -8,11 +21,191 @@ mod support;
 use std::collections::BTreeSet;
 use std::fs;
 
-use ae_sdd_protocol::ClientKind;
-use ae_sdd_runtime::PersistencePort;
+use ae_sdd_contracts::{BoundedText, ExecutionId, ExecutionStepId, SchemaVersion, WorkerId};
+use ae_sdd_domain::{
+    ArtifactDigest, ArtifactKind, ArtifactRef, EvidenceDigest, InputFingerprint,
+    ProjectRelativePath, WorkItemId,
+};
+use ae_sdd_execution::{ExecutionStep, VerificationExecutionPlan};
+use ae_sdd_protocol::{ClientKind, JobStatus, RpcMethod};
+use ae_sdd_runtime::{PersistencePort, RuntimeIdentityKind};
 use serde_json::{Value, json};
 
 use support::*;
+
+#[test]
+fn delegation_identity_bundle_satisfies_sqlite_action_and_attestation_joins() {
+    let harness = Harness::new();
+    let mut cli = harness.connection(ClientKind::Cli);
+    let workspace = register_and_cut_over(&harness, &mut cli);
+    let root = open_root(
+        &harness,
+        &mut cli,
+        &workspace,
+        "delegation-root",
+        "delegation-agent",
+    );
+    let root_identity = identity(&workspace, &root, "delegation-agent");
+
+    let mut host = harness.connection(ClientKind::HostAdapter);
+    let mut register = plain_params(json!({
+        "adapterId":"typed-delegation-host",
+        "capabilities":["create","attest"]
+    }));
+    register.capability_token = Some(harness.host_credential());
+    register.idempotency_key = Some("typed-delegation-host-register".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut host,
+        RpcMethod::HostRegister,
+        register,
+    ));
+
+    let mut create = trusted_params(
+        &root_identity,
+        json!({
+            "childRole":"series",
+            "parentDelegationId":null,
+            "inputRevision":1,
+            "inputFingerprint":"a".repeat(64),
+            "deadlineUnixMs":2_000,
+            "adapterId":"typed-delegation-host",
+            "grant":{"operations":[],"capabilities":[],"paths":[]}
+        }),
+    );
+    create.idempotency_key = Some("typed-delegation-create".to_owned());
+    let created = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::DelegationCreate,
+        create,
+    ));
+    let delegation_id = created["delegationId"]
+        .as_str()
+        .expect("delegation id")
+        .to_owned();
+    let created_snapshot = harness
+        .persistence
+        .list_identity_snapshots(RuntimeIdentityKind::Delegation)
+        .expect("typed delegation snapshots")
+        .into_iter()
+        .find(|snapshot| {
+            snapshot
+                .delegation
+                .as_ref()
+                .is_some_and(|delegation| delegation.delegation_id == delegation_id)
+        })
+        .expect("typed create snapshot");
+    assert_eq!(
+        created_snapshot
+            .delegation
+            .as_ref()
+            .expect("delegation")
+            .status,
+        "spawning"
+    );
+    assert!(created_snapshot.host_action.is_some());
+    assert!(created_snapshot.attestation.is_none());
+
+    let action = success(&call(
+        &harness.runtime,
+        &mut host,
+        RpcMethod::HostActionNext,
+        plain_params(json!({"adapterId":"typed-delegation-host"})),
+    ));
+    let child_session_id = "00000000-0000-0000-0000-000000000711";
+    let ack_id = "00000000-0000-0000-0000-000000000712";
+    let claim_id = "00000000-0000-0000-0000-000000000713";
+    let mut ack = plain_params(json!({
+        "adapterId":"typed-delegation-host",
+        "ack":{
+            "ackId":ack_id,
+            "actionId":action["actionId"],
+            "commandSeq":action["commandSeq"],
+            "outcome":"accepted",
+            "hostTaskId":"typed-host-task",
+            "sessionId":child_session_id
+        }
+    }));
+    ack.idempotency_key = Some("typed-delegation-ack".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut host,
+        RpcMethod::HostActionAck,
+        ack,
+    ));
+
+    let mut accept = plain_params(json!({
+        "delegationId":delegation_id,
+        "claimId":claim_id,
+        "actionId":action["actionId"],
+        "childSessionId":child_session_id,
+        "expiresAtUnixMs":1_900
+    }));
+    accept.workspace_id = Some(workspace.workspace_id.clone());
+    accept.work_item_id = Some("STORY-TYPED-E2E".to_owned());
+    accept.idempotency_key = Some("typed-delegation-accept".to_owned());
+    let accepted = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::DelegationAccept,
+        accept,
+    );
+    assert_eq!(success(&accepted)["status"], "running");
+
+    let accepted_snapshot = harness
+        .persistence
+        .list_identity_snapshots(RuntimeIdentityKind::Delegation)
+        .expect("typed delegation snapshots")
+        .into_iter()
+        .find(|snapshot| {
+            snapshot
+                .delegation
+                .as_ref()
+                .is_some_and(|delegation| delegation.delegation_id == delegation_id)
+        })
+        .expect("typed accept snapshot");
+    assert_eq!(
+        accepted_snapshot
+            .session
+            .as_ref()
+            .expect("opening child session")
+            .status,
+        "opening"
+    );
+    let attestation = accepted_snapshot
+        .attestation
+        .as_ref()
+        .expect("physical attestation");
+    assert_eq!(attestation.physical_session_id, child_session_id);
+    assert_eq!(attestation.host_ack_id, ack_id);
+    assert_ne!(attestation.claim_digest, claim_id);
+    let receipt_json = serde_json::to_string(&accepted_snapshot).expect("snapshot serializes");
+    assert!(!receipt_json.contains(claim_id));
+    assert!(!receipt_json.contains("claimId"));
+
+    harness
+        .runtime
+        .recover()
+        .expect("typed delegation recovers");
+    let mut child_open = plain_params(json!({
+        "externalKey":"typed-series-external",
+        "role":"series",
+        "engaged":true,
+        "delegationId":delegation_id
+    }));
+    child_open.workspace_id = Some(workspace.workspace_id.clone());
+    child_open.work_item_id = Some("STORY-TYPED-E2E".to_owned());
+    child_open.agent_id = Some("typed-series-agent".to_owned());
+    child_open.session_id = Some(child_session_id.to_owned());
+    child_open.idempotency_key = Some("typed-series-open".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::SessionOpen,
+        child_open,
+    ));
+}
 
 #[test]
 fn ops_execute_request_file_is_bound_to_registered_workspace_story_and_session() {
@@ -361,6 +554,79 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     );
     assert_eq!(manifest["entries"][0]["status"], "active");
     succeeded.insert("evidence finalize");
+
+    let verification_plan = typed_cli_verification_plan();
+    let verification_plan_value =
+        serde_json::to_value(&verification_plan).expect("verification plan serializes");
+    let verification_receipt = verification_plan
+        .receipt(
+            WorkerId::new("typed-e2e-worker").expect("worker id"),
+            JobStatus::Pass,
+            Some(0),
+            EvidenceDigest::digest(b"typed e2e stdout"),
+            EvidenceDigest::digest(b"typed e2e stderr"),
+            10,
+            20,
+            false,
+            false,
+        )
+        .expect("PASS verification receipt");
+    let mut receipt_job = trusted_params(
+        &first_identity,
+        json!({
+            "entrypoint": "toolset.receipt.record",
+            "arguments": {
+                "plan": verification_plan,
+                "receipt": verification_receipt,
+                "sourceRevision": 4,
+                "policyDigest": harness.runtime.policy_digest(),
+                "methodologyDigest": "2".repeat(64),
+                "inventoryGeneration": workspace.inventory_generation,
+                "leaseId": lease_id,
+                "fencingToken": fencing,
+            },
+            "deadlineUnixMs": 300_000,
+        }),
+    );
+    receipt_job.expected_revision = Some(4);
+    receipt_job.idempotency_key = Some("toolset-receipt-e2e".to_owned());
+    let submitted = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::JobSubmit,
+        receipt_job,
+    ));
+    assert_eq!(submitted["status"], "queued", "{submitted}");
+    assert!(
+        harness
+            .runtime
+            .run_one_pending_job()
+            .expect("toolset receipt job executes")
+    );
+    let completed = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::JobStatus,
+        trusted_params(&first_identity, json!({"jobId": submitted["jobId"]})),
+    ));
+    assert_eq!(completed["status"], "pass", "{completed}");
+    assert_eq!(completed["result"]["revisionBefore"], 4);
+    assert_eq!(completed["result"]["revisionAfter"], 5);
+
+    let verification_payload = serde_json::to_string(&json!({
+        "toolsetJobId": completed["jobId"],
+        "plan": verification_plan_value,
+        "receiptId": completed["result"]["receiptId"],
+        "receiptDigest": completed["result"]["receiptDigest"],
+        "sourceRevision": 5,
+        "planDigest": completed["result"]["planDigest"],
+        "methodologyDigest": completed["result"]["methodologyDigest"],
+        "policyDigest": completed["result"]["policyDigest"],
+        "inputFingerprint": completed["result"]["inputFingerprint"],
+        "changedPaths": ["src/lib.rs"],
+        "persist": true,
+    }))
+    .expect("verification payload serializes");
     let planned = invoke(
         &harness,
         &mut cli,
@@ -369,12 +635,12 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
         write_args(
             &lease_id,
             fencing,
-            4,
+            5,
             "verification-plan-e2e",
-            &["--changed-paths", "[\"src/lib.rs\"]"],
+            &["--payload-json", &verification_payload],
         ),
     );
-    assert_eq!(success(&planned)["revisionAfter"], 5);
+    assert_eq!(success(&planned)["revisionAfter"], 6);
     assert_eq!(
         success(&planned)["data"]["changeClass"],
         json!(["production-code"])
@@ -474,6 +740,39 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
         ]),
     );
     assert_eq!(stable_error(&denied_break), "ROLE_OPERATION_FORBIDDEN");
+}
+
+fn typed_cli_verification_plan() -> VerificationExecutionPlan {
+    let program = "tools/cargo.exe";
+    let program_ref = ArtifactRef::new(
+        ArtifactKind::new("verification-program").expect("program kind"),
+        ProjectRelativePath::new(program).expect("program path"),
+        ArtifactDigest::digest(program.as_bytes()),
+        1,
+    );
+    let step = ExecutionStep::new(
+        SchemaVersion::V1,
+        ExecutionStepId::new("typed-e2e-tests").expect("step id"),
+        program_ref,
+        vec![BoundedText::new("test").expect("argument")],
+        None,
+        Vec::new(),
+    )
+    .expect("execution step");
+    let binding = json!({
+        "storyId": "STORY-TYPED-E2E",
+        "workItem": "STORY-TYPED-E2E",
+        "changedPaths": ["src/lib.rs"],
+        "sinceFingerprint": "",
+    });
+    VerificationExecutionPlan::new(
+        SchemaVersion::V1,
+        ExecutionId::new("execution-typed-e2e").expect("execution id"),
+        WorkItemId::new("STORY-TYPED-E2E").expect("work item"),
+        InputFingerprint::digest(serde_json::to_vec(&binding).expect("binding serializes")),
+        vec![step],
+    )
+    .expect("verification execution plan")
 }
 
 #[test]

@@ -9,25 +9,52 @@ use serde_json::Value;
 
 use super::{
     contracts::{
-        automation_consensus, context_complete, document_storage_compliant, http_contract_valid,
+        automation_enabled, context_complete, document_storage_compliant, http_contract_valid,
         nonempty_object, path_compliance_recorded, plan_contract_complete, plan_story_aligned,
-        review_depth_valid, review_loop_passed, review_recorded, reviewers_independent,
         route_exempt, source_trace_complete, structured_coding_result, structured_status,
         structured_test_evidence, traceability_symmetric,
     },
-    key::{active_story, nested_phase, safe_document_path, workspace_inputs},
+    key::{
+        GateContext, LocatedState, ReviewAuthorityDenial, active_story, safe_document_path,
+        workspace_inputs,
+    },
 };
+
+/// One predicate outcome plus the structured reason an authoritative Review
+/// predicate refused. `denial` is only populated when `satisfied` is false.
+pub(super) struct PredicateVerdict {
+    pub(super) satisfied: bool,
+    pub(super) denial: Option<ReviewAuthorityDenial>,
+}
+
+impl PredicateVerdict {
+    const fn plain(satisfied: bool) -> Self {
+        Self {
+            satisfied,
+            denial: None,
+        }
+    }
+
+    /// Converts a Review authority denial into a failing predicate. A validator
+    /// error is never allowed to surface as PASS.
+    fn review(denial: Option<ReviewAuthorityDenial>) -> Self {
+        Self {
+            satisfied: denial.is_none(),
+            denial,
+        }
+    }
+}
 
 pub(super) fn predicate_value(
     predicate: &str,
-    root: &Path,
-    state: &Value,
-    work_item: &str,
-) -> RuntimeResult<bool> {
+    context: &GateContext,
+    located: &LocatedState,
+) -> RuntimeResult<PredicateVerdict> {
+    let root = context.root.as_path();
+    let state = &located.value;
+    let work_item = context.work_item_id.as_str();
     let story = active_story(state, work_item).map(|id| id.to_string());
     let plan = state.get("executionPlan").filter(|value| value.is_object());
-    let review = state.get("review").filter(|value| value.is_object());
-    let phase = nested_phase(state, story.as_deref()).unwrap_or_default();
     let value = match predicate {
         "project.assets.complete" => project_assets_complete(root),
         "document.dr.exists" => document_exists(root, state, story.as_deref(), "DR"),
@@ -44,7 +71,11 @@ pub(super) fn predicate_value(
         "http.scenario_manifest.valid" => plan.is_some_and(http_contract_valid),
         "test.evidence.exists" => structured_test_evidence(state, root),
         "coding.result.exists" => structured_coding_result(state),
-        "review.findings.recorded" => review.is_some_and(review_recorded),
+        "review.findings.recorded" => {
+            return Ok(PredicateVerdict::review(
+                context.review_authority_denial(located),
+            ));
+        }
         "traceability.full_chain.symmetric" => traceability_symmetric(state, plan),
         "coding_plan.story.aligned" => plan_story_aligned(root, state, plan, story.as_deref()),
         "coding_plan.source_trace.complete" => {
@@ -61,10 +92,19 @@ pub(super) fn predicate_value(
         "ra.derivatives.complete" => ra_text(root, state, story.as_deref())
             .is_some_and(|text| ra_derivatives_complete(&text)),
         "memory.configuration_path.consistent" => memory_paths_consistent(root),
-        "review.loop.exit_satisfied" => !phase.contains("review") || review_loop_passed(state),
-        "review.independence.valid" => !phase.contains("review") || reviewers_independent(state),
-        "review.depth.valid" => review.is_some_and(review_depth_valid),
-        "review.automation_consensus.valid_or_exempt" => automation_consensus(state),
+        "review.loop.exit_satisfied" | "review.independence.valid" | "review.depth.valid" => {
+            return Ok(PredicateVerdict::review(
+                context.review_authority_denial(located),
+            ));
+        }
+        "review.automation_consensus.valid_or_exempt" => {
+            if !automation_enabled(state) {
+                return Ok(PredicateVerdict::plain(true));
+            }
+            return Ok(PredicateVerdict::review(
+                context.review_authority_denial(located),
+            ));
+        }
         "context.dr.complete" => {
             context_complete(state, &["prd", "assets", "constraints", "standards"])
         }
@@ -82,7 +122,7 @@ pub(super) fn predicate_value(
             ));
         }
     };
-    Ok(value)
+    Ok(PredicateVerdict::plain(value))
 }
 
 fn project_assets_complete(root: &Path) -> bool {
@@ -142,8 +182,19 @@ pub(super) fn story_document(root: &Path, state: &Value, story: Option<&str>) ->
     state
         .pointer(&format!("/storyStates/{story}/docPath"))
         .and_then(Value::as_str)
-        .map(PathBuf::from)
-        .filter(|path| safe_document_path(root, path.to_string_lossy().as_ref()))
+        .filter(|value| safe_document_path(root, value))
+        // `safe_document_path` validates `root.join(value)`, so the resolved path
+        // must be returned too. Returning the raw relative `docPath` would make
+        // callers read it against the process working directory, which silently
+        // yields no document and lets a Gate fail for the wrong reason.
+        .map(|value| {
+            let path = Path::new(value);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                root.join(path)
+            }
+        })
         .or_else(|| {
             workspace_inputs(root)
                 .ok()?

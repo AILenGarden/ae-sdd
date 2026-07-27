@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -6,17 +6,18 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ae_sdd_contracts::execution_runtime::{ExecutionCapsuleV1, ExecutionSliceStatus};
+use ae_sdd_contracts::lifecycle::CompletionMilestoneInput;
 use ae_sdd_domain::{
-    AgentRole, ArtifactDigest, BootId, DesignRoute, EventStoreId, FencingToken, GateOutcome,
-    InputFingerprint, LeaseId, OperationId, ProcessPhase, ProjectKey, ProjectRelativePath,
-    RequestId, ResultDigest, ScopedGrant, SessionId, StateRevision, WorkItemId, WorkScale,
-    WorkspaceId,
+    AgentRole, ArtifactDigest, BootId, CompletionDigestSet, CompletionMilestone, DesignRoute,
+    EventStoreId, FencingToken, GateOutcome, InputFingerprint, LeaseId, OperationId, ProcessPhase,
+    ProjectKey, ProjectRelativePath, RequestId, ResultDigest, ScopedGrant, SessionId,
+    StateRevision, WorkItemId, WorkScale, WorkspaceId,
 };
 use ae_sdd_execution::CapsuleBuildOutcome;
 use ae_sdd_flow::{
     ExecutionCursor, FlowEnvironment, FlowInput, FlowSnapshot, NextAction, RouteSelection,
 };
-use ae_sdd_gates::GateRegistry;
+use ae_sdd_gates::{GateInputSelector, GateRegistry};
 use ae_sdd_operations::{
     Confirmation, ExecutionIdentity, OPERATION_REGISTRY, OperationBackend, OperationName,
     OperationRequest, OperationResponse, OperationService, OperationServiceError,
@@ -119,7 +120,26 @@ pub struct NativeBusinessAdapter {
     policy_digest: String,
     persistence: Arc<dyn PersistencePort>,
     flow: Arc<FlowSupervisor>,
+    /// Long-lived authoritative Gate runtimes, one per
+    /// (workspace, Work Item, policy, inventory) scope, so the scheduler key
+    /// cache and single-flight survive across operations. Entries bind their
+    /// construction scope; a policy or inventory drift simply misses the
+    /// cache and builds a fresh runtime.
+    gate_runtimes: Arc<std::sync::Mutex<BTreeMap<GateRuntimeScope, AuthoritativeGateRuntime>>>,
 }
+
+/// Cache scope of one long-lived authoritative Gate runtime.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct GateRuntimeScope {
+    workspace_id: String,
+    work_item_id: String,
+    policy_digest: String,
+    inventory_generation: u64,
+}
+
+/// Bound on cached Gate runtimes; a full map is cleared rather than grown
+/// unboundedly, which simply rebuilds the least-recent scopes on demand.
+const GATE_RUNTIME_CACHE_LIMIT: usize = 64;
 
 impl NativeBusinessAdapter {
     /// Creates an adapter that shares the daemon's durable event-store epoch.
@@ -139,6 +159,69 @@ impl NativeBusinessAdapter {
             policy_digest,
             persistence,
             flow,
+            gate_runtimes: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// Returns the long-lived authoritative Gate runtime for one workspace
+    /// and Work Item, building it on first use. The cached runtime carries no
+    /// fencing expectation: fencing stays a `GateKey` freshness dimension, so
+    /// a lease rotation changes the key and re-evaluates instead of trusting
+    /// a stale snapshot.
+    fn gate_runtime(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: &str,
+    ) -> RuntimeResult<AuthoritativeGateRuntime> {
+        let scope = GateRuntimeScope {
+            workspace_id: workspace.workspace_id.clone(),
+            work_item_id: work_item_id.to_owned(),
+            policy_digest: self.policy_digest.clone(),
+            inventory_generation: workspace.inventory_generation,
+        };
+        let mut runtimes = self
+            .gate_runtimes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(runtime) = runtimes.get(&scope) {
+            return Ok(runtime.clone());
+        }
+        let runtime = AuthoritativeGateRuntime::with_review_authority(
+            workspace,
+            work_item_id,
+            &self.policy_digest,
+            None,
+            self.review_gate_authority(workspace),
+        )?;
+        if runtimes.len() >= GATE_RUNTIME_CACHE_LIMIT {
+            runtimes.clear();
+        }
+        runtimes.insert(scope, runtime.clone());
+        Ok(runtime)
+    }
+
+    /// Drops cached Gate outcomes affected by committed mutations, mapped
+    /// from the operation's changed selectors. A missing runtime means no
+    /// Gate has been evaluated yet for this scope, so there is nothing to
+    /// invalidate.
+    fn invalidate_gate_selectors(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: &str,
+        selectors: &[GateInputSelector],
+    ) {
+        let scope = GateRuntimeScope {
+            workspace_id: workspace.workspace_id.clone(),
+            work_item_id: work_item_id.to_owned(),
+            policy_digest: self.policy_digest.clone(),
+            inventory_generation: workspace.inventory_generation,
+        };
+        let runtimes = self
+            .gate_runtimes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(runtime) = runtimes.get(&scope) {
+            runtime.invalidate_selectors(selectors);
         }
     }
 
@@ -508,21 +591,36 @@ impl NativeBusinessAdapter {
         gate_id: &str,
         idempotency_key: Option<&str>,
     ) -> RuntimeResult<Value> {
-        let gates = AuthoritativeGateRuntime::with_review_authority(
-            workspace,
-            work_item_id,
-            &self.policy_digest,
-            params.fencing_token,
-            self.review_gate_authority(workspace),
-        )?;
+        let gates = self.gate_runtime(workspace, work_item_id)?;
         let result = gates.evaluate(gate_id, Duration::from_millis(params.deadline_ms))?;
+        if params
+            .fencing_token
+            .is_some_and(|expected| expected != result.key().fencing_token().get())
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::StaleFencingToken,
+                "Gate snapshot fencing token is no longer authoritative",
+            ));
+        }
         let mut projection = gate_result_json(&result);
+        let stats = gates.stats();
+        projection
+            .as_object_mut()
+            .expect("Gate projection is an object")
+            .insert(
+                "scheduler".to_owned(),
+                json!({
+                    "gatesEvaluated": stats.gates_evaluated,
+                    "cacheHits": stats.cache_hits,
+                    "cacheMisses": stats.cache_misses,
+                }),
+            );
 
         let Some(required_gate) = required_gate(gate_id) else {
             return Ok(projection);
         };
         let located = read_state(workspace, work_item_id)?;
-        let input = flow_input(&located.value, work_item_id, self.event_store_id)?;
+        let input = flow_input(workspace, &located.value, work_item_id, self.event_store_id)?;
         let current = self
             .flow
             .project(&workspace.workspace_id, work_item_id, input)?;
@@ -644,12 +742,22 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                         let work_item_id = request.work_item_id.as_ref().ok_or_else(|| {
                             schema_error("workItemId is required for lifecycle preflight")
                         })?;
+                        // The preflight authorizes the same terminal transition
+                        // as the commit, so it needs the same milestone
+                        // projection or completion is denied before the
+                        // confirmation binding is ever issued.
+                        let completion = completion_projection(
+                            workspace,
+                            &backend.state.value,
+                            work_item_id.as_str(),
+                        )?;
                         let preflight = lifecycle_authority::preflight_lifecycle_confirmation(
                             &backend.state.value,
                             work_item_id.as_str(),
                             operation,
                             &request.payload,
                             expected_revision,
+                            completion,
                             role,
                             request.session_id,
                             system_time_unix_ms()?,
@@ -691,7 +799,8 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                 assert_expected_project_root(workspace, wire.expected_project_root.as_deref())?;
                 let located = read_state(workspace, work_item_id)?;
                 assert_story_scope(&located.value, work_item_id, wire.story.as_deref())?;
-                let input = flow_input(&located.value, work_item_id, self.event_store_id)?;
+                let input =
+                    flow_input(workspace, &located.value, work_item_id, self.event_store_id)?;
                 let decision = if method == RpcMethod::FlowNext {
                     if let Some(target) = wire.target_phase.as_deref() {
                         let role = workspace.agent_role.ok_or_else(|| {
@@ -778,7 +887,7 @@ impl BusinessOperationPort for NativeBusinessAdapter {
         let flow = self.flow.project(
             &workspace.workspace_id,
             work_item_id,
-            flow_input(&located.value, work_item_id, self.event_store_id)?,
+            flow_input(workspace, &located.value, work_item_id, self.event_store_id)?,
         )?;
         let flow_projection = FlowSupervisor::projection(&flow);
         let next_action = flow_projection
@@ -1834,6 +1943,7 @@ impl ProjectBackend<'_> {
             .as_ref()
             .ok_or_else(|| schema_error("workItemId is required"))?;
         let input = flow_input(
+            self.workspace,
             &self.state.value,
             work_item_id.as_str(),
             self.adapter.event_store_id,
@@ -1877,13 +1987,9 @@ impl ProjectBackend<'_> {
         if requested.len() > ae_sdd_gates::GATE_COUNT {
             return Err(schema_error("gateIds exceeds the registered Gate count"));
         }
-        let gates = AuthoritativeGateRuntime::with_review_authority(
-            self.workspace,
-            work_item_id.as_str(),
-            &self.adapter.policy_digest,
-            request.request().fencing_token.map(FencingToken::get),
-            self.adapter.review_gate_authority(self.workspace),
-        )?;
+        let gates = self
+            .adapter
+            .gate_runtime(self.workspace, work_item_id.as_str())?;
         let count = u64::try_from(requested.len()).unwrap_or(u64::MAX);
         let budget = self
             .deadline_ms
@@ -2455,6 +2561,13 @@ impl ProjectBackend<'_> {
             });
         }
         let committed = store.commit(mutation).map_err(store_error)?;
+        if !committed.replayed {
+            self.adapter.invalidate_gate_selectors(
+                self.workspace,
+                work_item_id.as_str(),
+                &[GateInputSelector::ReviewBatch],
+            );
+        }
         Ok(OperationResponse {
             changed: !committed.replayed,
             revision_before: Some(committed.receipt.revision_before),
@@ -2523,7 +2636,12 @@ impl ProjectBackend<'_> {
             && request
                 .known_context_revision()
                 .is_none_or(|revision| revision == context_revision);
-        let input = flow_input(state, work_item_id, self.adapter.event_store_id)?;
+        let input = flow_input(
+            self.workspace,
+            state,
+            work_item_id,
+            self.adapter.event_store_id,
+        )?;
         let decision =
             self.adapter
                 .flow
@@ -2563,7 +2681,12 @@ impl ProjectBackend<'_> {
             .work_item_id
             .as_ref()
             .ok_or_else(|| schema_error("workItemId is required"))?;
-        let input = flow_input(state, work_item_id.as_str(), self.adapter.event_store_id)?;
+        let input = flow_input(
+            self.workspace,
+            state,
+            work_item_id.as_str(),
+            self.adapter.event_store_id,
+        )?;
         let decision = self.adapter.flow.project(
             &self.workspace.workspace_id,
             work_item_id.as_str(),
@@ -2581,13 +2704,9 @@ impl ProjectBackend<'_> {
         let fencing = request.request().fencing_token.ok_or_else(|| {
             RuntimeError::new(StableErrorCode::LeaseRequired, "fencingToken is required")
         })?;
-        let gates = AuthoritativeGateRuntime::with_review_authority(
-            self.workspace,
-            work_item_id.as_str(),
-            &self.adapter.policy_digest,
-            Some(fencing.get()),
-            self.adapter.review_gate_authority(self.workspace),
-        )?;
+        let gates = self
+            .adapter
+            .gate_runtime(self.workspace, work_item_id.as_str())?;
         let count = u64::try_from(decision.required_gates().len()).unwrap_or(u64::MAX);
         let per_gate_ms = self
             .deadline_ms
@@ -2597,6 +2716,12 @@ impl ProjectBackend<'_> {
         for required in decision.required_gates() {
             let evaluated =
                 gates.evaluate(required.as_str(), Duration::from_millis(per_gate_ms))?;
+            if evaluated.key().fencing_token().get() != fencing.get() {
+                return Err(RuntimeError::new(
+                    StableErrorCode::StaleFencingToken,
+                    "Gate snapshot fencing token is no longer authoritative",
+                ));
+            }
             if !matches!(evaluated.outcome(), GateOutcome::Pass) {
                 return Err(RuntimeError::new(
                     StableErrorCode::GateBlocked,
@@ -2608,6 +2733,137 @@ impl ProjectBackend<'_> {
             }
         }
         Ok(Some((input, target)))
+    }
+
+    /// Advances the recorded completion milestone inside the post-image state
+    /// when the committed operation proves the next stage: a green
+    /// verification evidence record closes `ImplementationVerified`, evidence
+    /// finalization closes `ReviewReady`, and a Review aggregation closes
+    /// `GovernanceClosed`. The advance starts from the *effective* milestone
+    /// (the recorded value rolled back against currently observed digests),
+    /// so a stale input is never carried forward by a later operation. Work
+    /// Items without an approved execution runtime never grow a milestone.
+    fn advance_completion_milestone(
+        &self,
+        before: &Value,
+        after: &mut Value,
+        request: &ValidatedOperationRequest,
+        semantic: Option<&PreparedSemanticMutation>,
+    ) -> RuntimeResult<()> {
+        let operation = request.operation();
+        let governed = matches!(
+            operation,
+            OperationName::EvidenceRecord
+                | OperationName::EvidenceFinalize
+                | OperationName::ReviewRecord
+                | OperationName::ReviewFinalize
+        );
+        if !governed || before.get("executionRuntime").is_none() {
+            return Ok(());
+        }
+        if operation == OperationName::EvidenceRecord
+            && request
+                .request()
+                .payload
+                .get("exitCode")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                != 0
+        {
+            // A red verification never closes ImplementationVerified.
+            return Ok(());
+        }
+        let work_item_id = request
+            .request()
+            .work_item_id
+            .as_ref()
+            .ok_or_else(|| schema_error("workItemId is required"))?;
+        let Some((recorded, bound)) = completion_milestone_from_state(before)? else {
+            return Ok(());
+        };
+        let observed = observed_completion_digests(self.workspace, before, work_item_id.as_str())?;
+        let effective = recorded.invalidate(&bound, &observed);
+        let root = Path::new(&self.workspace.canonical_root);
+        let (next, code, verification, evidence, review_input, gate) =
+            match (operation, effective) {
+                (OperationName::EvidenceRecord, CompletionMilestone::None) => {
+                    let verification = semantic
+                        .and_then(|prepared| {
+                            prepared.targets.iter().find(|target| {
+                                target.relative_path.ends_with("evidence/manifest.json")
+                            })
+                        })
+                        .map(|target| verification_digest_from_manifest_bytes(&target.after_bytes))
+                        .transpose()?
+                        .ok_or_else(|| {
+                            schema_error("evidence record did not prepare a sealed manifest")
+                        })?;
+                    (
+                        CompletionMilestone::ImplementationVerified,
+                        Some(code_digest(root, after)?),
+                        Some(verification),
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                (OperationName::EvidenceFinalize, CompletionMilestone::ImplementationVerified) => (
+                    CompletionMilestone::ReviewReady,
+                    None,
+                    None,
+                    Some(evidence_authority_digest(after)),
+                    None,
+                    None,
+                ),
+                (
+                    OperationName::ReviewRecord | OperationName::ReviewFinalize,
+                    CompletionMilestone::ReviewReady,
+                ) => {
+                    // Governance closes only on a terminal clean Review: an
+                    // intermediate non-clean aggregation (for example the first
+                    // specialty of a multi-reviewer tier) leaves the milestone at
+                    // ReviewReady.
+                    let terminal_clean = after
+                        .pointer("/review/batch/latestStatus")
+                        .and_then(Value::as_str)
+                        == Some("VALID_CLEAN")
+                        && after
+                            .pointer("/reviewSession/status")
+                            .and_then(Value::as_str)
+                            == Some("completed");
+                    if !terminal_clean {
+                        return Ok(());
+                    }
+                    (
+                        CompletionMilestone::GovernanceClosed,
+                        None,
+                        None,
+                        None,
+                        Some(review_binding_digest(after)),
+                        Some(completion_gate_digest(after)),
+                    )
+                }
+                _ => return Ok(()),
+            };
+        let runtime_object = after
+            .get_mut("executionRuntime")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| schema_error("executionRuntime section is malformed"))?;
+        runtime_object.insert(
+            "completionMilestone".to_owned(),
+            Value::String(completion_milestone_wire(next).to_owned()),
+        );
+        runtime_object.insert(
+            "completionBound".to_owned(),
+            json!({
+                "codeDigest": digest_wire(code.unwrap_or(bound.code_digest())),
+                "verificationDigest": digest_wire(verification.unwrap_or(bound.verification_digest())),
+                "evidenceDigest": digest_wire(evidence.unwrap_or(bound.evidence_digest())),
+                "reviewInputDigest": digest_wire(review_input.unwrap_or(bound.review_input_digest())),
+                "gateDigest": digest_wire(gate.unwrap_or(bound.gate_digest())),
+            }),
+        );
+        Ok(())
     }
 
     /// Rebuilds this Work Item's Review projections from committed events.
@@ -2780,6 +3036,7 @@ impl ProjectBackend<'_> {
                 .and_then(lifecycle_authority::PermittedLifecycleMutation::target_phase),
         )?;
         apply_mutation(&mut after, request, semantic.as_ref())?;
+        self.advance_completion_milestone(&state, &mut after, request, semantic.as_ref())?;
         let revision_after = authority
             .revision()
             .checked_next()
@@ -2898,6 +3155,13 @@ impl ProjectBackend<'_> {
             });
         }
         let committed = store.commit(mutation).map_err(store_error)?;
+        if !committed.replayed {
+            self.adapter.invalidate_gate_selectors(
+                self.workspace,
+                work_item_id.as_str(),
+                mutation_gate_selectors(request.operation()),
+            );
+        }
         // A review aggregation response must never succeed without its durable
         // projection. The project mutation is already committed, so a
         // projection failure stays retryable under the same idempotency key.
@@ -3096,6 +3360,7 @@ fn state_matches(value: &Value, work_item: &str) -> bool {
 }
 
 fn flow_input(
+    workspace: &BusinessWorkspace,
     state: &Value,
     work_item_id: &str,
     event_store_id: EventStoreId,
@@ -3127,6 +3392,14 @@ fn flow_input(
             .ok_or_else(|| schema_error("paused Work Item is missing pausedFrom"))?;
         snapshot = snapshot.with_paused_from(parse_phase(paused_from)?);
     }
+    // The completion milestone recorded by evidence/review mutations enters
+    // the snapshot rolled back against the digests observed right now, so a
+    // stale input never keeps `GovernanceClosed` on any flow decision.
+    if let Some((milestone, bound)) = completion_milestone_from_state(state)? {
+        let observed = observed_completion_digests(workspace, state, work_item_id)?;
+        snapshot =
+            snapshot.with_completion_milestone(milestone.invalidate(&bound, &observed), bound);
+    }
     let scale = parse_scale(
         state
             .get("scale")
@@ -3149,6 +3422,304 @@ fn flow_input(
         environment = environment.with_execution_cursor(cursor);
     }
     Ok(FlowInput::new(snapshot, environment))
+}
+
+/// Reads the completion milestone and bound digest set recorded in the
+/// `executionRuntime` state section. Work Items without an approved execution
+/// runtime carry no milestone and stay on the plain phase wire, which keeps
+/// the completion chain strictly opt-in for execution-governed items.
+/// Projects the completion milestone recorded in state together with the
+/// freshly observed digests that decide whether it is still valid.
+///
+/// Completion is authorized from this projection, so every lifecycle path that
+/// can authorize a terminal transition must supply it; omitting it denies the
+/// transition as milestone-required.
+fn completion_projection(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+) -> RuntimeResult<Option<CompletionMilestoneInput>> {
+    match completion_milestone_from_state(state)? {
+        Some((milestone, bound)) => Ok(Some(CompletionMilestoneInput::new(
+            milestone,
+            bound,
+            observed_completion_digests(workspace, state, work_item_id)?,
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn completion_milestone_from_state(
+    state: &Value,
+) -> RuntimeResult<Option<(CompletionMilestone, CompletionDigestSet)>> {
+    let Some(runtime) = state.get("executionRuntime") else {
+        return Ok(None);
+    };
+    let milestone = match runtime.get("completionMilestone").and_then(Value::as_str) {
+        None | Some("none") => CompletionMilestone::None,
+        Some("implementation-verified") => CompletionMilestone::ImplementationVerified,
+        Some("review-ready") => CompletionMilestone::ReviewReady,
+        Some("governance-closed") => CompletionMilestone::GovernanceClosed,
+        Some(_) => {
+            return Err(schema_error(
+                "executionRuntime completionMilestone is unsupported",
+            ));
+        }
+    };
+    let bound = runtime
+        .get("completionBound")
+        .map(completion_bound_from_value)
+        .transpose()?
+        .unwrap_or(CompletionDigestSet::ZERO);
+    Ok(Some((milestone, bound)))
+}
+
+fn completion_bound_from_value(value: &Value) -> RuntimeResult<CompletionDigestSet> {
+    let digest = |field: &str| -> RuntimeResult<ArtifactDigest> {
+        let raw = value
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| schema_error("executionRuntime completionBound is incomplete"))?;
+        ArtifactDigest::from_str(raw.strip_prefix("sha256:").unwrap_or(raw))
+            .map_err(|_| schema_error("executionRuntime completionBound digest is malformed"))
+    };
+    Ok(CompletionDigestSet::new(
+        digest("codeDigest")?,
+        digest("verificationDigest")?,
+        digest("evidenceDigest")?,
+        digest("reviewInputDigest")?,
+        digest("gateDigest")?,
+    ))
+}
+
+/// Computes the completion input digests observed right now.
+///
+/// Every dimension is revision- and fencing-independent so unrelated
+/// committed mutations never roll the milestone: `code` binds the approved
+/// changed-path contents from the workspace, `verification` binds the active
+/// entries of the sealed evidence manifest, `evidence` binds the recorded
+/// evidence authority projection, and `reviewInput`/`gate` bind the Review
+/// and policy inputs written by the Review authority. The FlowRuntime rolls
+/// the recorded milestone back to the earliest point whose bound digest no
+/// longer matches, so a stale changed path can never keep `GovernanceClosed`.
+fn observed_completion_digests(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+) -> RuntimeResult<CompletionDigestSet> {
+    let root = Path::new(&workspace.canonical_root);
+    Ok(CompletionDigestSet::new(
+        code_digest(root, state)?,
+        verification_digest(root, state, work_item_id)?,
+        evidence_authority_digest(state),
+        review_binding_digest(state),
+        completion_gate_digest(state),
+    ))
+}
+
+/// Digest of the approved changed-path list plus each path's current
+/// content; a missing path hashes an explicit marker instead of vanishing.
+fn code_digest(root: &Path, state: &Value) -> RuntimeResult<ArtifactDigest> {
+    let mut paths: Vec<String> = state
+        .pointer("/executionPlan/changedPaths")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths.dedup();
+    let mut hasher = Sha256::new();
+    hasher.update(b"ae-sdd-completion-code/v1\0");
+    for relative in paths {
+        hash_part(&mut hasher, relative.as_bytes());
+        let path = root.join(&relative);
+        match fs::read(&path) {
+            Ok(bytes) => hash_part(&mut hasher, &bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                hash_part(&mut hasher, b"<missing>");
+            }
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+    Ok(ArtifactDigest::from_array(hasher.finalize().into()))
+}
+
+/// Digest of the active entries in the Story's sealed evidence manifest.
+fn verification_digest(
+    root: &Path,
+    state: &Value,
+    work_item_id: &str,
+) -> RuntimeResult<ArtifactDigest> {
+    let story = operation_story_id(state, work_item_id)?;
+    let path = root
+        .join(".auto-engineering")
+        .join(story)
+        .join("evidence/manifest.json");
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ArtifactDigest::digest(
+                b"ae-sdd-completion-verification/missing\0",
+            ));
+        }
+        Err(error) => return Err(io_error(error)),
+    };
+    verification_digest_from_manifest_bytes(&bytes)
+}
+
+/// Digest of the active entries in one sealed evidence manifest payload.
+///
+/// Each entry's `inputFingerprint` review-binding is excluded: it is re-sealed
+/// against the current Review input whenever a Review starts, which is exactly
+/// what the separate `reviewInput` milestone dimension tracks, so it must not
+/// also roll the verification dimension.
+fn verification_digest_from_manifest_bytes(bytes: &[u8]) -> RuntimeResult<ArtifactDigest> {
+    let manifest: Value = serde_json::from_slice(bytes)
+        .map_err(|_| schema_error("sealed evidence manifest is malformed"))?;
+    let active: Vec<Value> = manifest
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|entry| {
+                    entry
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("active")
+                        == "active"
+                })
+                .map(|entry| {
+                    let mut entry = entry.clone();
+                    if let Some(object) = entry.as_object_mut() {
+                        object.remove("inputFingerprint");
+                    }
+                    entry
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(ArtifactDigest::digest(
+        serde_json::to_vec(&canonical_value(&Value::Array(active)))
+            .map_err(|_| schema_error("active evidence entries are not canonicalizable"))?,
+    ))
+}
+
+/// Stable wire value of one completion milestone inside the
+/// `executionRuntime` state section.
+fn completion_milestone_wire(milestone: CompletionMilestone) -> &'static str {
+    match milestone {
+        CompletionMilestone::None => "none",
+        CompletionMilestone::ImplementationVerified => "implementation-verified",
+        CompletionMilestone::ReviewReady => "review-ready",
+        CompletionMilestone::GovernanceClosed => "governance-closed",
+    }
+}
+
+fn digest_wire(digest: ArtifactDigest) -> String {
+    format!("sha256:{digest}")
+}
+
+/// Gate input selectors whose dependent Gates must re-evaluate after one
+/// committed mutation of this operation.
+fn mutation_gate_selectors(operation: OperationName) -> &'static [GateInputSelector] {
+    match operation {
+        OperationName::DocumentSave
+        | OperationName::ExecutionSliceStart
+        | OperationName::ExecutionSliceRecord => &[GateInputSelector::ChangedPaths],
+        OperationName::EvidenceRecord | OperationName::EvidenceFinalize => {
+            &[GateInputSelector::EvidenceLedger]
+        }
+        OperationName::ReviewContribute
+        | OperationName::ReviewRecord
+        | OperationName::ReviewFinalize => &[GateInputSelector::ReviewBatch],
+        OperationName::ExecutionPlanSet | OperationName::ExecutionPlanApprove => {
+            &[GateInputSelector::ExecutionPlan]
+        }
+        _ => &[],
+    }
+}
+
+/// Digest of the recorded evidence authority projection (`None` when no
+/// evidence was ever recorded), stable across unrelated state mutations.
+fn evidence_authority_digest(state: &Value) -> ArtifactDigest {
+    digest_optional_section(state, "evidenceAuthority")
+}
+
+/// Digest of the Review input binding the Review authority wrote into state.
+fn review_binding_digest(state: &Value) -> ArtifactDigest {
+    digest_fields(
+        state,
+        &[
+            "inputFingerprint",
+            "rulesetFingerprint",
+            "policyDigest",
+            "inventoryGeneration",
+        ],
+        b"ae-sdd-completion-review-input/v1\0",
+    )
+}
+
+/// Digest of the final completion-Gate inputs: the Review binding plus the
+/// sealed evidence authority those Gates join at the terminal transition.
+fn completion_gate_digest(state: &Value) -> ArtifactDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ae-sdd-completion-gates/v1\0");
+    hash_part(&mut hasher, review_binding_digest(state).as_bytes());
+    hash_part(&mut hasher, evidence_authority_digest(state).as_bytes());
+    ArtifactDigest::from_array(hasher.finalize().into())
+}
+
+fn digest_optional_section(state: &Value, field: &str) -> ArtifactDigest {
+    match state.get(field) {
+        Some(value) => ArtifactDigest::digest(
+            serde_json::to_vec(&canonical_value(value))
+                .unwrap_or_else(|_| b"<uncanonicalizable>".to_vec()),
+        ),
+        None => ArtifactDigest::digest(format!("ae-sdd-completion-absent/{field}\0")),
+    }
+}
+
+fn digest_fields(state: &Value, fields: &[&str], domain: &[u8]) -> ArtifactDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    for field in fields {
+        hash_part(&mut hasher, field.as_bytes());
+        match state.get(*field) {
+            Some(value) => hash_part(
+                &mut hasher,
+                &serde_json::to_vec(&canonical_value(value))
+                    .unwrap_or_else(|_| b"<uncanonicalizable>".to_vec()),
+            ),
+            None => hash_part(&mut hasher, b"<absent>"),
+        }
+    }
+    ArtifactDigest::from_array(hasher.finalize().into())
+}
+
+fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+}
+
+fn canonical_value(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), canonical_value(value)))
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .collect::<Map<_, _>>(),
+        ),
+        Value::Array(array) => Value::Array(array.iter().map(canonical_value).collect()),
+        _ => value.clone(),
+    }
 }
 
 /// Reads the approved execution cursor observed in authoritative state.  The
@@ -3418,12 +3989,18 @@ fn prepare_semantic_mutation(
                 .request()
                 .expected_revision
                 .ok_or_else(|| schema_error("expectedRevision is required"))?;
+            // Completion is authorized from the milestone recorded in state,
+            // rolled back against freshly observed digests. Without this
+            // projection the lifecycle input carries no milestone at all and
+            // every `Completed` transition is denied as milestone-required.
+            let completion = completion_projection(workspace, state, work_item_id.as_str())?;
             let outcome = lifecycle_authority::prepare_lifecycle_mutation(
                 state,
                 work_item_id.as_str(),
                 request.operation(),
                 &request.request().payload,
                 expected_revision,
+                completion,
                 request.request().confirmation.as_ref(),
                 authority.actor_role.ok_or_else(|| {
                     RuntimeError::new(

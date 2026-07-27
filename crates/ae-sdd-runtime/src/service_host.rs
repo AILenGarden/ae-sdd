@@ -136,15 +136,32 @@ impl RuntimeService {
             identity.session_id,
             params.work_item_id.as_deref().unwrap_or("")
         );
-        let digest = canonical_digest(&payload)?;
+        let digest = canonical_digest(&json!({
+            "workspaceId":identity.workspace_id,
+            "parentSessionId":identity.session_id,
+            "parentRole":identity.role,
+            "workItemId":params.work_item_id,
+            "payload":payload,
+        }))?;
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
-        let projection = self.delegation.create(
+        let typed_scope_digest = canonical_digest(&json!({
+            "domain":"delegation.create/v1",
+            "workspaceId":identity.workspace_id,
+            "parentSessionId":identity.session_id,
+            "workItemId":params.work_item_id,
+        }))?;
+        let (projection, _) = self.delegation.create(
+            &identity.workspace_id,
             &identity.session_id,
             identity.role,
             &identity.grant,
             payload,
+            &typed_scope_digest,
+            key,
+            &digest,
+            self.clock.now_unix_ms(),
         )?;
         self.persistence.store_record(
             "delegation-memory/v1",
@@ -180,18 +197,35 @@ impl RuntimeService {
 
     pub(super) fn delegation_accept(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let payload: DelegationAcceptPayload = decode_value(params.payload.clone())?;
+        let workspace_id = require(&params.workspace_id, "workspaceId")?.to_owned();
         let key = require_idempotency(params)?;
         let scope = format!("delegation-accept\0{}", payload.delegation_id);
-        let digest = canonical_digest(&payload)?;
+        let digest = canonical_digest(&json!({
+            "workspaceId":workspace_id,
+            "workItemId":params.work_item_id,
+            "payload":payload,
+        }))?;
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
-        let projection = self.delegation.accept(
+        let typed_scope_digest = canonical_digest(&json!({
+            "domain":"delegation.accept/v1",
+            "workspaceId":workspace_id,
+            "delegationId":payload.delegation_id,
+        }))?;
+        let boot_id = self.boot_id.to_string();
+        let (projection, _) = self.delegation.accept(
+            &workspace_id,
+            params.work_item_id.as_deref(),
             &payload.delegation_id,
             &payload.claim_id,
             &payload.action_id,
             &payload.child_session_id,
             payload.expires_at_unix_ms,
+            &boot_id,
+            &typed_scope_digest,
+            key,
+            &digest,
             self.clock.now_unix_ms(),
         )?;
         let value = to_value(projection)?;

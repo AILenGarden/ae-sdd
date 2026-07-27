@@ -1,17 +1,13 @@
 use std::fs;
 
-use ae_sdd_domain::{AgentRole, OperationId, ProjectPathScope, ScopedGrant};
-use ae_sdd_protocol::{
-    ClientKind, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode,
-};
-use ae_sdd_runtime::{BusinessOperationPort, BusinessWorkspace};
+use ae_sdd_protocol::{ClientKind, RpcMethod};
 use serde_json::{Value, json};
 
 use super::support::*;
 
 #[test]
 fn governance_mutations_are_normalized_trusted_and_retry_safe() {
-    let harness = Harness::new();
+    let harness = Harness::new_realtime();
     let mut cli = harness.connection(ClientKind::Cli);
     let workspace = register_and_cut_over(&harness, &mut cli);
     let root = open_root(
@@ -153,47 +149,97 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
         "lease release",
         lease_args(lease_id, fencing, "release-before-review", false),
     ));
-    let reviewer_session = "00000000-0000-0000-0000-000000000901";
-    let reviewer_workspace = BusinessWorkspace {
-        workspace_id: workspace.workspace_id.clone(),
-        canonical_root: fs::canonicalize(harness.workspace_root.path())
-            .expect("workspace canonicalizes")
-            .to_string_lossy()
-            .into_owned(),
-        project_key: "typed-e2e".to_owned(),
-        mode: WorkspaceMode::RustCanary,
-        agent_role: Some(AgentRole::Reviewer),
-        agent_grant: Some(ScopedGrant::new(
-            [
-                OperationId::new("lease.acquire").expect("lease operation"),
-                OperationId::new("review.record").expect("review operation"),
-            ],
-            [],
-            [ProjectPathScope::ProjectRoot],
-        )),
-        caller_kind: Some(ClientKind::Cli),
-        inventory_generation: 1,
-    };
-    let adapter = harness.business_adapter();
-    let reviewer_lease = adapter
-        .execute(
-            RpcMethod::OperationExecute,
-            &direct_operation_params(
-                &workspace.workspace_id,
-                reviewer_session,
-                "lease.acquire",
-                json!({"owner":{"role":"reviewer"},"ttlSeconds":300}),
-                "reviewer-lease",
-            ),
-            Some(&reviewer_workspace),
-        )
-        .expect("reviewer lease");
+    let (author, reviewer) = open_review_lineage(
+        &harness,
+        &mut cli,
+        &workspace,
+        &identity,
+        "general",
+        "governance-review",
+    );
+    let mut review_state: Value = serde_json::from_slice(
+        &fs::read(&harness.state_path).expect("state before independent review"),
+    )
+    .expect("review state JSON");
+    review_state["scale"] = json!("small");
+    review_state["storyStates"]["STORY-TYPED-E2E"]["authorSessionId"] = json!(author.session_id);
+    review_state["review"] = json!({
+        "status":"passed",
+        "findings":[],
+        "zeroFindingsRationale":"legacy clean review",
+        "evidenceIds":["legacy-review-evidence"],
+    });
+    review_state["reviewLoop"] = json!({
+        "status":"passed",
+        "exitReason":"passed",
+        "cleanStreak":2,
+    });
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&review_state).expect("review state serializes"),
+    )
+    .expect("review state");
+    let reviewer_identity = identity_for_work_item(
+        &workspace,
+        &reviewer,
+        "STORY-TYPED-E2E",
+        "governance-review-reviewer-agent",
+    );
+    let mut reviewer_lease_request = operation_params(
+        &reviewer_identity,
+        "lease.acquire",
+        json!({"owner":{"role":"reviewer"},"ttlSeconds":300}),
+    );
+    reviewer_lease_request.idempotency_key = Some("reviewer-lease".to_owned());
+    let reviewer_lease = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        reviewer_lease_request,
+    ));
     let reviewer_lease_id = reviewer_lease["data"]["leaseId"]
         .as_str()
         .expect("reviewer lease id");
     let reviewer_fencing = reviewer_lease["data"]["fencingToken"]
         .as_u64()
         .expect("reviewer fencing");
+
+    let mut pending = operation_params(
+        &reviewer_identity,
+        "review.record",
+        json!({"status":"pending","findings":[]}),
+    );
+    bind_write(
+        &mut pending,
+        reviewer_lease_id,
+        reviewer_fencing,
+        3,
+        "record-pending-review",
+    );
+    let pending = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        pending,
+    ));
+    assert_eq!(pending["revisionAfter"], 4);
+    assert_eq!(pending["data"]["status"], "pending");
+    let pending_state = read_state(&harness);
+    assert_eq!(
+        pending_state["review"], pending["data"],
+        "a running review session must replace the previous terminal review"
+    );
+    assert_eq!(pending_state["review"]["batch"]["schemaVersion"], "v2");
+    assert_eq!(
+        pending_state["review"]["batch"]["latestStatus"],
+        "INVALID_INFRA"
+    );
+    assert!(pending_state["review"].get("receipt").is_none());
+    assert!(
+        pending_state.get("reviewLoop").is_none(),
+        "a daemon review session must invalidate the legacy review loop"
+    );
+    assert_eq!(pending_state["reviewSession"]["status"], "running");
 
     for (index, payload) in [
         json!({"status":"passed","findings":[{"severity":"P1"}]}),
@@ -204,33 +250,25 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
     .into_iter()
     .enumerate()
     {
-        let mut invalid = direct_operation_params(
-            &workspace.workspace_id,
-            reviewer_session,
-            "review.record",
-            payload,
-            &format!("invalid-review-{index}"),
-        );
+        let mut invalid = operation_params(&reviewer_identity, "review.record", payload);
         bind_write(
             &mut invalid,
             reviewer_lease_id,
             reviewer_fencing,
-            3,
+            4,
             &format!("invalid-review-{index}"),
         );
-        let error = adapter
-            .execute(
-                RpcMethod::OperationExecute,
-                &invalid,
-                Some(&reviewer_workspace),
-            )
-            .expect_err("invalid review must fail closed");
-        assert_eq!(error.code(), StableErrorCode::OperationSchemaInvalid);
+        let error = call(
+            &harness.runtime,
+            &mut cli,
+            RpcMethod::OperationExecute,
+            invalid,
+        );
+        assert_eq!(stable_error(&error), "OPERATION_SCHEMA_INVALID");
     }
 
-    let mut review = direct_operation_params(
-        &workspace.workspace_id,
-        reviewer_session,
+    let mut review = operation_params(
+        &reviewer_identity,
         "review.record",
         json!({
             "status":"changes_required",
@@ -238,34 +276,31 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
             "reviewedPaths":["src/lib.rs"],
             "evidenceIds":["E-1"],
         }),
-        "record-governed-review",
     );
     bind_write(
         &mut review,
         reviewer_lease_id,
         reviewer_fencing,
-        3,
+        4,
         "record-governed-review",
     );
-    let reviewed = adapter
-        .execute(
-            RpcMethod::OperationExecute,
-            &review,
-            Some(&reviewer_workspace),
-        )
-        .expect("review records");
-    assert_eq!(reviewed["revisionAfter"], 4);
+    let reviewed = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        review,
+    ));
+    assert_eq!(reviewed["revisionAfter"], 5);
     assert_eq!(reviewed["data"]["status"], "changes_required");
-    assert_eq!(
-        reviewed["data"].as_object().expect("review result").len(),
-        2
-    );
+    assert_eq!(reviewed["data"]["batch"]["latestStatus"], "VALID_FINDINGS");
+    assert_eq!(reviewed["data"]["nextAction"]["kind"], "remediate");
     let state: Value = serde_json::from_slice(
         &fs::read(&harness.state_path).expect("authoritative governance state"),
     )
     .expect("state JSON");
     assert_eq!(state["executionPlan"], approved["data"]);
     assert_eq!(state["review"], reviewed["data"]);
+    assert_eq!(state["reviewSession"]["status"], "remediation_required");
     assert!(!harness.workspace_root.path().join("CodeReview.md").exists());
 }
 
@@ -291,6 +326,34 @@ fn pause_transition_is_committed_and_replayed() {
         RpcMethod::FlowNext,
         intent,
     ));
+    let mut pending = operation_params(
+        &identity,
+        "state.transition",
+        json!({"targetPhase":"paused"}),
+    );
+    bind_write(
+        &mut pending,
+        &lease_id,
+        fencing,
+        1,
+        "pause-transition-commit",
+    );
+    let confirmation_required = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        pending,
+    );
+    assert_eq!(
+        stable_error(&confirmation_required),
+        "CONFIRMATION_REQUIRED",
+        "{confirmation_required}"
+    );
+    let binding = confirmation_required["error"]["data"]["remediation"]
+        .as_str()
+        .and_then(|value| value.split_whitespace().last())
+        .expect("pause remediation carries the engine binding")
+        .to_owned();
     let mut transition = operation_params(
         &identity,
         "state.transition",
@@ -304,7 +367,7 @@ fn pause_transition_is_committed_and_replayed() {
         "pause-transition-commit",
     );
     transition.confirmation = Some(confirmation_ref(
-        "pause-transition-confirmation",
+        &binding,
         "user:trusted",
         "2026-07-23T08:02:00Z",
     ));
@@ -322,19 +385,24 @@ fn pause_transition_is_committed_and_replayed() {
         wire,
     ));
     assert_eq!(committed["revisionAfter"], 2);
-    assert_eq!(committed["data"], json!({"phase":"paused"}));
+    assert_eq!(committed["data"]["phase"], "paused");
+    assert!(committed["data"]["planDigest"].is_string());
     assert_eq!(replay["changed"], false);
     let state = read_state(&harness);
     assert_eq!(state["storyStates"]["STORY-TYPED-E2E"]["phase"], "paused");
 }
 
 fn completed_transition_rechecks_all_required_gates() {
-    let harness = Harness::new();
+    // Real time is required: the review lineage the fixture below drives is
+    // only live when session expiry is measured against the clock the
+    // operations observe.
+    let harness = Harness::new_realtime();
     let mut state = read_state(&harness);
     state["storyStates"]["STORY-TYPED-E2E"]["phase"] = json!("code-reviewed");
     state["storyStates"]["STORY-TYPED-E2E"]["currentPhase"] = json!("code-reviewed");
     state["scale"] = json!("medium");
-    state["review"] = json!({"status":"passed","findings":[]});
+    // The review projection is installed by the real `review.record` operation
+    // below, so no hand-written `review` object is seeded here.
     state["executionPlan"] = json!({
         "goal":"complete",
         "changedPaths":["src/lib.rs"],
@@ -342,6 +410,29 @@ fn completed_transition_rechecks_all_required_gates() {
         "sourceReads":["ae-sdd-doc/RA/x.md","ae-sdd-doc/DR/x.md","ae-sdd-doc/Story/x.md"],
         "approved":true,
     });
+    state["evidenceRefs"] = json!([
+        {
+            "evidenceId":"complete-g00",
+            "verificationId":"G-00",
+            "path":".ae-sdd/evidence/complete-g00.json",
+            "digest":"0000000000000000000000000000000000000000000000000000000000000000",
+            "byteLength":1
+        },
+        {
+            "evidenceId":"complete-g12",
+            "verificationId":"G-12",
+            "path":".ae-sdd/evidence/complete-g12.json",
+            "digest":"1212121212121212121212121212121212121212121212121212121212121212",
+            "byteLength":1
+        },
+        {
+            "evidenceId":"complete-g13",
+            "verificationId":"G-13",
+            "path":".ae-sdd/evidence/complete-g13.json",
+            "digest":"1313131313131313131313131313131313131313131313131313131313131313",
+            "byteLength":1
+        }
+    ]);
     fs::write(
         &harness.state_path,
         serde_json::to_vec_pretty(&state).expect("completion state serializes"),
@@ -357,6 +448,15 @@ fn completed_transition_rechecks_all_required_gates() {
         "complete-agent",
     );
     let identity = identity(&workspace, &root, "complete-agent");
+    install_tier2_review_prerequisites(&harness, "STORY-TYPED-E2E", "STORY-TYPED-E2E");
+    install_completed_review_authority(
+        &harness,
+        &mut cli,
+        &workspace,
+        &identity,
+        "STORY-TYPED-E2E",
+        "complete-review",
+    );
     let (lease_id, fencing) = acquire_lease(&harness, &mut cli, &identity, "complete-lease");
 
     let mut intent = trusted_params(&identity, json!({"targetPhase":"completed"}));
@@ -379,10 +479,44 @@ fn completed_transition_rechecks_all_required_gates() {
         ));
         assert_eq!(result["outcome"]["kind"], "PASS", "{gate_id}: {result}");
     }
+    // The review authority above is earned through real contributions, so the
+    // completion writes against whatever revision those commits produced.
+    let revision = read_state(&harness)["revision"]
+        .as_u64()
+        .expect("state revision before completion");
     let mut complete = operation_params(&identity, "workitem.complete", json!({}));
-    bind_write(&mut complete, &lease_id, fencing, 1, "complete-workitem");
+    bind_write(
+        &mut complete,
+        &lease_id,
+        fencing,
+        revision,
+        "complete-workitem",
+    );
+    let confirmation_required = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        complete,
+    );
+    assert_eq!(
+        stable_error(&confirmation_required),
+        "CONFIRMATION_REQUIRED",
+        "{confirmation_required}"
+    );
+    let binding = confirmation_required["error"]["data"]["remediation"]
+        .as_str()
+        .and_then(|value| value.split_whitespace().last())
+        .expect("confirmation remediation carries the engine binding");
+    let mut complete = operation_params(&identity, "workitem.complete", json!({}));
+    bind_write(
+        &mut complete,
+        &lease_id,
+        fencing,
+        revision,
+        "complete-workitem",
+    );
     complete.confirmation = Some(confirmation_ref(
-        "complete-workitem-confirmation",
+        binding,
         "user:trusted",
         "2026-07-23T08:03:00Z",
     ));
@@ -392,8 +526,9 @@ fn completed_transition_rechecks_all_required_gates() {
         RpcMethod::OperationExecute,
         complete,
     ));
-    assert_eq!(completed["revisionAfter"], 2);
-    assert_eq!(completed["data"], json!({"phase":"completed"}));
+    assert_eq!(completed["revisionAfter"], revision + 1);
+    assert_eq!(completed["data"]["phase"], "completed");
+    assert!(completed["data"]["planDigest"].is_string());
     let state = read_state(&harness);
     assert_eq!(
         state["storyStates"]["STORY-TYPED-E2E"]["phase"],
@@ -448,29 +583,4 @@ fn bind_write(
 fn read_state(harness: &Harness) -> Value {
     serde_json::from_slice(&fs::read(&harness.state_path).expect("state bytes"))
         .expect("state JSON")
-}
-
-fn direct_operation_params(
-    workspace_id: &str,
-    session_id: &str,
-    operation: &str,
-    payload: Value,
-    idempotency_key: &str,
-) -> RequestParams<Value> {
-    RequestParams {
-        protocol_version: PROTOCOL_VERSION_V1.to_owned(),
-        workspace_id: Some(workspace_id.to_owned()),
-        agent_id: Some("reviewer-agent".to_owned()),
-        session_id: Some(session_id.to_owned()),
-        capability_token: None,
-        turn_id: None,
-        work_item_id: Some("STORY-TYPED-E2E".to_owned()),
-        lease_id: None,
-        fencing_token: None,
-        expected_revision: None,
-        idempotency_key: Some(idempotency_key.to_owned()),
-        confirmation: None,
-        deadline_ms: 10_000,
-        payload: json!({"operation":operation,"payload":payload}),
-    }
 }

@@ -9,12 +9,18 @@ repository.workspace = true
 [dependencies]
 ae-sdd-contracts.workspace = true
 ae-sdd-domain.workspace = true
+ae-sdd-execution.workspace = true
 ae-sdd-flow.workspace = true
 ae-sdd-gates.workspace = true
 ae-sdd-host.workspace = true
+ae-sdd-inventory.workspace = true
+ae-sdd-lifecycle.workspace = true
+ae-sdd-methodology.workspace = true
 ae-sdd-operations.workspace = true
 ae-sdd-policy.workspace = true
 ae-sdd-protocol.workspace = true
+ae-sdd-resources.workspace = true
+ae-sdd-review.workspace = true
 ae-sdd-runtime.workspace = true
 ae-sdd-scanners.workspace = true
 ae-sdd-store.workspace = true
@@ -32,6 +38,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+yaml-rust2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

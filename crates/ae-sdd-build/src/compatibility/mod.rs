@@ -10,6 +10,11 @@ pub use audit::audit_compatibility;
 
 pub const LEGACY_COMMAND_COUNT: usize = 113;
 pub const LEGACY_OPERATION_COUNT: usize = 18;
+/// Operations the Rust runtime introduced with no Python predecessor. They are
+/// inventoried as [`Disposition::NativeAddition`] and carry no differential
+/// oracle, but the registry comparison still demands an exact inventory record
+/// for every one of them.
+pub const NATIVE_ADDITION_OPERATION_COUNT: usize = 5;
 pub const LEGACY_GATE_COUNT: usize = 36;
 pub const LEGACY_SCANNER_COUNT: usize = 7;
 
@@ -114,6 +119,13 @@ pub struct SurfaceEntry {
     pub disposition: Disposition,
 }
 
+/// How one inventory entry relates to the legacy Python surface it came from.
+///
+/// Every variant except [`Disposition::NativeAddition`] describes a migration
+/// relationship against a Python original, so a differential oracle exists.
+/// `NativeAddition` marks a capability that the Rust runtime introduced with no
+/// Python predecessor: there is nothing to compare against, and claiming
+/// `Preserve` for it would assert an oracle parity that cannot be evaluated.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Disposition {
@@ -122,6 +134,7 @@ pub enum Disposition {
     BreakingFix,
     Replaced,
     RemovedDeprecated,
+    NativeAddition,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -213,11 +226,13 @@ pub struct ExpectedCounts {
 }
 
 impl ExpectedCounts {
+    /// Full inventory expectation: the migrated Python surface plus every
+    /// `native-addition` capability the Rust runtime added on top of it.
     #[must_use]
     pub const fn legacy() -> Self {
         Self {
             commands: LEGACY_COMMAND_COUNT,
-            operations: LEGACY_OPERATION_COUNT,
+            operations: LEGACY_OPERATION_COUNT + NATIVE_ADDITION_OPERATION_COUNT,
             gates: LEGACY_GATE_COUNT,
             scanners: LEGACY_SCANNER_COUNT,
         }

@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use ae_sdd_build::{
-    ExpectedCounts, HarnessBuildRequest, HookBenchmarkConfig, NativeJobRequest, OfflineRequest,
+    ExpectedCounts, HarnessBuildRequest, HookBenchmarkConfig, InstructionLanguage,
+    ManagedInstructionStatus, ManagedInstructionTarget, NativeJobRequest, OfflineRequest,
     PostCommitRequest, ServiceLifecycleRequest, ServiceOperation, audit_compatibility,
     benchmark_hook, execute_harness_build, execute_native_job, execute_offline,
     execute_post_commit, execute_service_lifecycle, generate_service_lifecycle_plan,
@@ -61,6 +62,15 @@ enum Command {
         allowed_roots: Vec<PathBuf>,
         #[arg(long)]
         commit: String,
+        /// Codex global instruction file; managed with the English L2 slice.
+        #[arg(long)]
+        codex_instructions: Option<PathBuf>,
+        /// Claude global instruction file; managed with the Chinese L2 slice.
+        #[arg(long)]
+        claude_instructions: Option<PathBuf>,
+        /// ZCode global instruction file; managed with the Chinese L2 slice.
+        #[arg(long)]
+        zcode_instructions: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -81,7 +91,7 @@ enum Command {
         manifest: PathBuf,
         #[arg(long, default_value_t = 113)]
         expected_commands: usize,
-        #[arg(long, default_value_t = 18)]
+        #[arg(long, default_value_t = 23)]
         expected_operations: usize,
         #[arg(long, default_value_t = 36)]
         expected_gates: usize,
@@ -122,6 +132,43 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
         std::process::exit(1);
+    }
+}
+
+/// Maps the explicit CLI instruction flags to managed targets.
+///
+/// The host-to-language mapping is fixed here on purpose: skill distribution
+/// directories such as `~/.codex/skills/ae-sdd` carry no reliable relationship
+/// to a global instruction file, so inferring paths from them is forbidden.
+/// Harness and Hermes intentionally have no flag; they remain package-only
+/// distribution targets.
+fn managed_instruction_targets(
+    codex: Option<PathBuf>,
+    claude: Option<PathBuf>,
+    zcode: Option<PathBuf>,
+) -> Vec<ManagedInstructionTarget> {
+    [
+        ("codex", InstructionLanguage::En, codex),
+        ("claude", InstructionLanguage::Zh, claude),
+        ("zcode", InstructionLanguage::Zh, zcode),
+    ]
+    .into_iter()
+    .filter_map(|(host, language, target_file)| {
+        target_file.map(|target_file| ManagedInstructionTarget {
+            host: host.to_owned(),
+            language,
+            target_file,
+        })
+    })
+    .collect()
+}
+
+const fn managed_status_label(status: ManagedInstructionStatus) -> &'static str {
+    match status {
+        ManagedInstructionStatus::Updated => "updated",
+        ManagedInstructionStatus::Unchanged => "unchanged",
+        ManagedInstructionStatus::MissingTarget => "missing-target",
+        ManagedInstructionStatus::MissingAnchor => "missing-anchor",
     }
 }
 
@@ -211,6 +258,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             targets,
             allowed_roots,
             commit,
+            codex_instructions,
+            claude_instructions,
+            zcode_instructions,
             json,
         } => {
             let execution = execute_post_commit(&PostCommitRequest {
@@ -220,6 +270,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 target_directories: targets,
                 allowed_roots,
                 commit_id: commit,
+                managed_instruction_targets: managed_instruction_targets(
+                    codex_instructions,
+                    claude_instructions,
+                    zcode_instructions,
+                ),
             })?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&execution)?);
@@ -230,6 +285,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     execution.distribute.replayed,
                     execution.verification.payload["verifiedFiles"]
                 );
+                if !execution.managed_instructions.is_empty() {
+                    let summary = execution
+                        .managed_instructions
+                        .iter()
+                        .map(|outcome| {
+                            format!("{}={}", outcome.host, managed_status_label(outcome.status))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    println!("managed instructions: {summary}");
+                }
             }
         }
         Command::Service {

@@ -6,8 +6,8 @@
 use std::collections::BTreeSet;
 
 use ae_sdd_domain::{
-    ArtifactDigest, ArtifactRef, ContextDigest, InputFingerprint, InventoryGeneration,
-    ProjectRelativePath, StateRevision, WorkItemId,
+    ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, InputFingerprint,
+    InventoryGeneration, ProjectRelativePath, StateRevision, WorkItemId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -46,6 +46,17 @@ pub enum ResourceContractError {
     /// Two references targeted the same path.
     #[error("context bundle contains duplicate artifact paths")]
     DuplicateArtifactPath,
+    /// A caller-provided bundle digest did not match canonical content.
+    #[error("context bundle digest does not match canonical content")]
+    ContextBundleDigestMismatch,
+    /// A caller-provided byte length did not match the referenced artifacts.
+    #[error("context bundle byte length mismatch: claimed {claimed}, actual {actual}")]
+    ContextBundleByteLengthMismatch {
+        /// Caller-provided length.
+        claimed: u64,
+        /// Canonically computed length.
+        actual: u64,
+    },
     /// A nested proof belonged to a different Work Item.
     #[error("resource contract Work Item does not match its nested reference")]
     WorkItemMismatch,
@@ -55,6 +66,12 @@ pub enum ResourceContractError {
     /// The proof did not bind the Story artifact into the context bundle.
     #[error("loaded context proof Story artifact is not present in the bundle")]
     StoryNotInBundle,
+    /// The proof did not bind another mandatory Coding artifact into the bundle.
+    #[error("loaded context proof required artifact {field} is not present in the bundle")]
+    RequiredArtifactNotInBundle {
+        /// Stable mandatory-artifact field name.
+        field: &'static str,
+    },
     /// A transaction had no operations.
     #[error("document transaction must contain at least one operation")]
     EmptyOperations,
@@ -67,6 +84,18 @@ pub enum ResourceContractError {
         /// Maximum accepted document size.
         max_bytes: u64,
     },
+    /// A document save operation did not reference any content bytes.
+    #[error("document save operation must reference non-empty staged content")]
+    EmptyDocumentContent,
+    /// A wire-level optional digest was not canonical lower-case SHA-256 hex.
+    #[error("document expected-before digest is not canonical")]
+    InvalidExpectedBeforeDigest,
+    /// A document plan's encoded digest did not match its canonical content.
+    #[error("document transaction plan digest does not match canonical content")]
+    DocumentPlanDigestMismatch,
+    /// A compatibility save operation could not construct its fixed artifact kind.
+    #[error("document save operation artifact kind is invalid")]
+    InvalidDocumentArtifactKind,
 }
 
 /// Content-addressed, bounded context input selected for one Work Item.
@@ -87,14 +116,13 @@ impl ContextBundleRef {
     /// Maximum byte budget accepted by this contract.
     pub const MAX_BYTES: u64 = MAX_CONTEXT_BYTES;
 
-    /// Constructs and validates a context bundle reference.
-    pub fn new(
+    /// Constructs a context bundle by canonicalizing references and computing
+    /// its byte length and digest inside the contract owner.
+    pub fn from_artifacts(
         schema_version: SchemaVersion,
         context_id: ContextBundleId,
         work_item_id: WorkItemId,
-        artifact_refs: Vec<ArtifactRef>,
-        bundle_digest: ContextDigest,
-        byte_length: u64,
+        mut artifact_refs: Vec<ArtifactRef>,
     ) -> Result<Self, ResourceContractError> {
         if artifact_refs.is_empty() {
             return Err(ResourceContractError::EmptyArtifacts);
@@ -105,11 +133,7 @@ impl ContextBundleRef {
                 max_items: MAX_CONTEXT_ARTIFACTS,
             });
         }
-        if byte_length == 0 || byte_length > MAX_CONTEXT_BYTES {
-            return Err(ResourceContractError::ContextByteBudgetExceeded {
-                max_bytes: MAX_CONTEXT_BYTES,
-            });
-        }
+        artifact_refs.sort_by(|left, right| left.path().as_str().cmp(right.path().as_str()));
         let mut paths = BTreeSet::new();
         if artifact_refs
             .iter()
@@ -117,6 +141,26 @@ impl ContextBundleRef {
         {
             return Err(ResourceContractError::DuplicateArtifactPath);
         }
+        let byte_length = artifact_refs.iter().try_fold(0_u64, |total, reference| {
+            total.checked_add(reference.byte_length())
+        });
+        let Some(byte_length) = byte_length else {
+            return Err(ResourceContractError::ContextByteBudgetExceeded {
+                max_bytes: MAX_CONTEXT_BYTES,
+            });
+        };
+        if byte_length == 0 || byte_length > MAX_CONTEXT_BYTES {
+            return Err(ResourceContractError::ContextByteBudgetExceeded {
+                max_bytes: MAX_CONTEXT_BYTES,
+            });
+        }
+        let bundle_digest = canonical_context_digest(
+            schema_version,
+            &context_id,
+            &work_item_id,
+            &artifact_refs,
+            byte_length,
+        );
         Ok(Self {
             schema_version,
             context_id,
@@ -125,6 +169,23 @@ impl ContextBundleRef {
             bundle_digest,
             byte_length,
         })
+    }
+
+    /// Constructs and validates a context bundle reference.
+    pub fn new(
+        schema_version: SchemaVersion,
+        context_id: ContextBundleId,
+        work_item_id: WorkItemId,
+        artifact_refs: Vec<ArtifactRef>,
+        _bundle_digest: ContextDigest,
+        _byte_length: u64,
+    ) -> Result<Self, ResourceContractError> {
+        Self::from_artifacts(schema_version, context_id, work_item_id, artifact_refs)
+    }
+
+    /// Returns the wire schema version.
+    pub const fn schema_version(&self) -> SchemaVersion {
+        self.schema_version
     }
 
     /// Returns the context identity.
@@ -151,6 +212,37 @@ impl ContextBundleRef {
     pub const fn byte_length(&self) -> u64 {
         self.byte_length
     }
+}
+
+fn canonical_context_digest(
+    schema_version: SchemaVersion,
+    context_id: &ContextBundleId,
+    work_item_id: &WorkItemId,
+    artifact_refs: &[ArtifactRef],
+    byte_length: u64,
+) -> ContextDigest {
+    fn push_field(target: &mut Vec<u8>, value: &[u8]) {
+        target.extend_from_slice(&(value.len() as u64).to_be_bytes());
+        target.extend_from_slice(value);
+    }
+
+    let mut canonical = Vec::new();
+    push_field(&mut canonical, b"ae-sdd/context-bundle/v1");
+    let schema_tag = match schema_version {
+        SchemaVersion::V1 => b"v1".as_slice(),
+    };
+    push_field(&mut canonical, schema_tag);
+    push_field(&mut canonical, context_id.as_str().as_bytes());
+    push_field(&mut canonical, work_item_id.as_str().as_bytes());
+    canonical.extend_from_slice(&(artifact_refs.len() as u64).to_be_bytes());
+    for reference in artifact_refs {
+        push_field(&mut canonical, reference.kind().as_str().as_bytes());
+        push_field(&mut canonical, reference.path().as_str().as_bytes());
+        canonical.extend_from_slice(reference.digest().as_bytes());
+        canonical.extend_from_slice(&reference.byte_length().to_be_bytes());
+    }
+    canonical.extend_from_slice(&byte_length.to_be_bytes());
+    ContextDigest::digest(canonical)
 }
 
 impl<'de> Deserialize<'de> for ContextBundleRef {
@@ -182,14 +274,22 @@ impl TryFrom<ContextBundleRefWire> for ContextBundleRef {
     type Error = ResourceContractError;
 
     fn try_from(value: ContextBundleRefWire) -> Result<Self, Self::Error> {
-        Self::new(
+        let canonical = Self::from_artifacts(
             value.schema_version,
             value.context_id,
             value.work_item_id,
             value.artifact_refs,
-            value.bundle_digest,
-            value.byte_length,
-        )
+        )?;
+        if canonical.byte_length != value.byte_length {
+            return Err(ResourceContractError::ContextBundleByteLengthMismatch {
+                claimed: value.byte_length,
+                actual: canonical.byte_length,
+            });
+        }
+        if canonical.bundle_digest != value.bundle_digest {
+            return Err(ResourceContractError::ContextBundleDigestMismatch);
+        }
+        Ok(canonical)
     }
 }
 
@@ -250,6 +350,19 @@ impl LoadedContextProof {
         {
             return Err(ResourceContractError::StoryNotInBundle);
         }
+        for (field, required) in [
+            ("constraintsRef", &constraints_ref),
+            ("thinkingEngineRef", &thinking_engine_ref),
+            ("verificationRef", &verification_ref),
+        ] {
+            if !context_ref
+                .artifact_refs()
+                .iter()
+                .any(|reference| reference == required)
+            {
+                return Err(ResourceContractError::RequiredArtifactNotInBundle { field });
+            }
+        }
         Ok(Self {
             schema_version,
             work_item_id,
@@ -271,6 +384,11 @@ impl LoadedContextProof {
         &self.work_item_id
     }
 
+    /// Returns the wire schema version.
+    pub const fn schema_version(&self) -> SchemaVersion {
+        self.schema_version
+    }
+
     /// Returns the context bundle reference.
     pub const fn context_ref(&self) -> &ContextBundleRef {
         &self.context_ref
@@ -279,6 +397,46 @@ impl LoadedContextProof {
     /// Returns the bundle digest bound into the proof.
     pub const fn bundle_digest(&self) -> ContextDigest {
         self.bundle_digest
+    }
+
+    /// Returns the exact Story artifact bound into the proof.
+    pub const fn story_ref(&self) -> &ArtifactRef {
+        &self.story_ref
+    }
+
+    /// Returns the exact project-constraints artifact bound into the proof.
+    pub const fn constraints_ref(&self) -> &ArtifactRef {
+        &self.constraints_ref
+    }
+
+    /// Returns the exact Thinking Engine artifact bound into the proof.
+    pub const fn thinking_engine_ref(&self) -> &ArtifactRef {
+        &self.thinking_engine_ref
+    }
+
+    /// Returns the exact verification-contract artifact bound into the proof.
+    pub const fn verification_ref(&self) -> &ArtifactRef {
+        &self.verification_ref
+    }
+
+    /// Returns the methodology selected for the Coding flow.
+    pub const fn methodology_ref(&self) -> &MethodologyRef {
+        &self.methodology_ref
+    }
+
+    /// Returns the project-state revision observed during computation.
+    pub const fn state_revision(&self) -> StateRevision {
+        self.state_revision
+    }
+
+    /// Returns the inventory generation observed during computation.
+    pub const fn inventory_generation(&self) -> InventoryGeneration {
+        self.inventory_generation
+    }
+
+    /// Returns the explicit computation timestamp supplied by the caller.
+    pub const fn computed_at_unix_ms(&self) -> u64 {
+        self.computed_at_unix_ms
     }
 }
 
@@ -372,10 +530,10 @@ pub enum DocumentTxnOperation {
     Save {
         /// Project-relative document path.
         path: ProjectRelativePath,
-        /// Digest of the content to be written by the future applier.
-        content_digest: ArtifactDigest,
-        /// Number of bytes in the content.
-        byte_length: u64,
+        /// Content-addressed staged input consumed by the future applier.
+        staged_content_ref: ArtifactRef,
+        /// Optional digest that must be observed before applying the save.
+        expected_before_digest: Option<ArtifactDigest>,
     },
     /// Finalize a document whose staged digest is already known.
     Finalize {
@@ -393,15 +551,31 @@ impl DocumentTxnOperation {
         content_digest: ArtifactDigest,
         byte_length: u64,
     ) -> Result<Self, ResourceContractError> {
-        if byte_length > MAX_DOCUMENT_BYTES {
+        let kind = ArtifactKind::new("document")
+            .map_err(|_| ResourceContractError::InvalidDocumentArtifactKind)?;
+        let staged_content_ref = ArtifactRef::new(kind, path.clone(), content_digest, byte_length);
+        Self::save_staged(path, staged_content_ref, None)
+    }
+
+    /// Constructs a bounded save operation over a content-addressed staged ref
+    /// and an optional compare-and-swap expectation.
+    pub fn save_staged(
+        path: ProjectRelativePath,
+        staged_content_ref: ArtifactRef,
+        expected_before_digest: Option<ArtifactDigest>,
+    ) -> Result<Self, ResourceContractError> {
+        if staged_content_ref.byte_length() == 0 {
+            return Err(ResourceContractError::EmptyDocumentContent);
+        }
+        if staged_content_ref.byte_length() > MAX_DOCUMENT_BYTES {
             return Err(ResourceContractError::DocumentByteBudgetExceeded {
                 max_bytes: MAX_DOCUMENT_BYTES,
             });
         }
         Ok(Self::Save {
             path,
-            content_digest,
-            byte_length,
+            staged_content_ref,
+            expected_before_digest,
         })
     }
 
@@ -413,9 +587,33 @@ impl DocumentTxnOperation {
         }
     }
 
-    fn path(&self) -> &ProjectRelativePath {
+    /// Returns the project-relative transaction target.
+    pub const fn path(&self) -> &ProjectRelativePath {
         match self {
             Self::Save { path, .. } | Self::Finalize { path, .. } => path,
+        }
+    }
+
+    /// Returns staged content for a save operation.
+    pub const fn staged_content_ref(&self) -> Option<&ArtifactRef> {
+        match self {
+            Self::Save {
+                staged_content_ref, ..
+            } => Some(staged_content_ref),
+            Self::Finalize { .. } => None,
+        }
+    }
+
+    /// Returns the compare-and-swap digest expected before the operation.
+    pub const fn expected_before_digest(&self) -> Option<ArtifactDigest> {
+        match self {
+            Self::Save {
+                expected_before_digest,
+                ..
+            } => *expected_before_digest,
+            Self::Finalize {
+                expected_digest, ..
+            } => Some(*expected_digest),
         }
     }
 }
@@ -432,15 +630,20 @@ impl<'de> Deserialize<'de> for DocumentTxnOperation {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 enum DocumentTxnOperationWire {
     /// Wire representation of [`DocumentTxnOperation::Save`].
     Save {
         #[serde(with = "serde_domain::project_relative_path")]
         path: ProjectRelativePath,
-        #[serde(with = "serde_domain::artifact_digest")]
-        content_digest: ArtifactDigest,
-        byte_length: u64,
+        #[serde(with = "serde_domain::artifact_ref")]
+        staged_content_ref: ArtifactRef,
+        expected_before_digest: Option<String>,
     },
     /// Wire representation of [`DocumentTxnOperation::Finalize`].
     Finalize {
@@ -458,9 +661,15 @@ impl TryFrom<DocumentTxnOperationWire> for DocumentTxnOperation {
         match value {
             DocumentTxnOperationWire::Save {
                 path,
-                content_digest,
-                byte_length,
-            } => Self::save(path, content_digest, byte_length),
+                staged_content_ref,
+                expected_before_digest,
+            } => {
+                let expected_before_digest = expected_before_digest
+                    .map(|value| value.parse())
+                    .transpose()
+                    .map_err(|_| ResourceContractError::InvalidExpectedBeforeDigest)?;
+                Self::save_staged(path, staged_content_ref, expected_before_digest)
+            }
             DocumentTxnOperationWire::Finalize {
                 path,
                 expected_digest,
@@ -474,12 +683,12 @@ impl From<DocumentTxnOperation> for DocumentTxnOperationWire {
         match value {
             DocumentTxnOperation::Save {
                 path,
-                content_digest,
-                byte_length,
+                staged_content_ref,
+                expected_before_digest,
             } => Self::Save {
                 path,
-                content_digest,
-                byte_length,
+                staged_content_ref,
+                expected_before_digest: expected_before_digest.map(|value| value.to_string()),
             },
             DocumentTxnOperation::Finalize {
                 path,
@@ -501,6 +710,7 @@ pub struct DocumentTxnPlan {
     work_item_id: WorkItemId,
     operations: Vec<DocumentTxnOperation>,
     input_fingerprint: InputFingerprint,
+    plan_digest: ArtifactDigest,
 }
 
 impl DocumentTxnPlan {
@@ -528,12 +738,20 @@ impl DocumentTxnPlan {
         {
             return Err(ResourceContractError::DuplicateOperationPath);
         }
+        let plan_digest = canonical_document_plan_digest(
+            schema_version,
+            &transaction_id,
+            &work_item_id,
+            &operations,
+            input_fingerprint,
+        );
         Ok(Self {
             schema_version,
             transaction_id,
             work_item_id,
             operations,
             input_fingerprint,
+            plan_digest,
         })
     }
 
@@ -560,6 +778,31 @@ impl DocumentTxnPlan {
     pub fn operations(&self) -> &[DocumentTxnOperation] {
         &self.operations
     }
+
+    /// Returns the wire schema version.
+    pub const fn schema_version(&self) -> SchemaVersion {
+        self.schema_version
+    }
+
+    /// Returns the transaction identity.
+    pub const fn transaction_id(&self) -> &DocumentTxnId {
+        &self.transaction_id
+    }
+
+    /// Returns the bound Work Item identity.
+    pub const fn work_item_id(&self) -> &WorkItemId {
+        &self.work_item_id
+    }
+
+    /// Returns the fingerprint of the inputs used to build this plan.
+    pub const fn input_fingerprint(&self) -> InputFingerprint {
+        self.input_fingerprint
+    }
+
+    /// Returns the canonical digest of the complete transaction plan.
+    pub const fn plan_digest(&self) -> ArtifactDigest {
+        self.plan_digest
+    }
 }
 
 impl<'de> Deserialize<'de> for DocumentTxnPlan {
@@ -583,19 +826,25 @@ struct DocumentTxnPlanWire {
     operations: Vec<DocumentTxnOperation>,
     #[serde(with = "serde_domain::input_fingerprint")]
     input_fingerprint: InputFingerprint,
+    #[serde(with = "serde_domain::artifact_digest")]
+    plan_digest: ArtifactDigest,
 }
 
 impl TryFrom<DocumentTxnPlanWire> for DocumentTxnPlan {
     type Error = ResourceContractError;
 
     fn try_from(value: DocumentTxnPlanWire) -> Result<Self, Self::Error> {
-        Self::new(
+        let plan = Self::new(
             value.schema_version,
             value.transaction_id,
             value.work_item_id,
             value.operations,
             value.input_fingerprint,
-        )
+        )?;
+        if plan.plan_digest != value.plan_digest {
+            return Err(ResourceContractError::DocumentPlanDigestMismatch);
+        }
+        Ok(plan)
     }
 }
 
@@ -607,6 +856,69 @@ impl From<DocumentTxnPlan> for DocumentTxnPlanWire {
             work_item_id: value.work_item_id,
             operations: value.operations,
             input_fingerprint: value.input_fingerprint,
+            plan_digest: value.plan_digest,
         }
     }
+}
+
+fn canonical_document_plan_digest(
+    schema_version: SchemaVersion,
+    transaction_id: &DocumentTxnId,
+    work_item_id: &WorkItemId,
+    operations: &[DocumentTxnOperation],
+    input_fingerprint: InputFingerprint,
+) -> ArtifactDigest {
+    fn push_field(target: &mut Vec<u8>, value: &[u8]) {
+        target.extend_from_slice(&(value.len() as u64).to_be_bytes());
+        target.extend_from_slice(value);
+    }
+
+    let mut canonical = Vec::new();
+    push_field(&mut canonical, b"ae-sdd/document-transaction-plan/v1");
+    let schema_tag = match schema_version {
+        SchemaVersion::V1 => b"v1".as_slice(),
+    };
+    push_field(&mut canonical, schema_tag);
+    push_field(&mut canonical, transaction_id.as_str().as_bytes());
+    push_field(&mut canonical, work_item_id.as_str().as_bytes());
+    canonical.extend_from_slice(input_fingerprint.as_bytes());
+    canonical.extend_from_slice(&(operations.len() as u64).to_be_bytes());
+    for operation in operations {
+        match operation {
+            DocumentTxnOperation::Save {
+                path,
+                staged_content_ref,
+                expected_before_digest,
+            } => {
+                push_field(&mut canonical, b"save");
+                push_field(&mut canonical, path.as_str().as_bytes());
+                push_field(
+                    &mut canonical,
+                    staged_content_ref.kind().as_str().as_bytes(),
+                );
+                push_field(
+                    &mut canonical,
+                    staged_content_ref.path().as_str().as_bytes(),
+                );
+                canonical.extend_from_slice(staged_content_ref.digest().as_bytes());
+                canonical.extend_from_slice(&staged_content_ref.byte_length().to_be_bytes());
+                match expected_before_digest {
+                    Some(digest) => {
+                        canonical.push(1);
+                        canonical.extend_from_slice(digest.as_bytes());
+                    }
+                    None => canonical.push(0),
+                }
+            }
+            DocumentTxnOperation::Finalize {
+                path,
+                expected_digest,
+            } => {
+                push_field(&mut canonical, b"finalize");
+                push_field(&mut canonical, path.as_str().as_bytes());
+                canonical.extend_from_slice(expected_digest.as_bytes());
+            }
+        }
+    }
+    ArtifactDigest::digest(canonical)
 }

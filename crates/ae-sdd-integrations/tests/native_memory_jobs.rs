@@ -49,6 +49,7 @@ fn workspace(
 
 fn identity(session: &str, role: AgentRole, key: &str) -> TrustedMemoryIdentity {
     TrustedMemoryIdentity {
+        job_id: format!("job-{session}"),
         boot_id: "memory-test-boot".to_owned(),
         session_id: session.to_owned(),
         root_session_id: if role == AgentRole::Root {
@@ -58,6 +59,9 @@ fn identity(session: &str, role: AgentRole, key: &str) -> TrustedMemoryIdentity 
         },
         delegation_id: (role != AgentRole::Root).then(|| format!("delegation-{session}")),
         context_generation: 3,
+        attestation_ref: format!("memory-test-attestation:{session}"),
+        attestation_digest: "a".repeat(64),
+        identity_digest: "b".repeat(64),
         idempotency_key: key.to_owned(),
     }
 }

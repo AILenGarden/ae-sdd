@@ -175,6 +175,16 @@ impl RouteInput {
         })
     }
 
+    /// Returns the frozen contract schema version.
+    pub const fn schema_version(&self) -> SchemaVersion {
+        self.schema_version
+    }
+
+    /// Returns the Work Item being classified.
+    pub const fn work_item_id(&self) -> &WorkItemId {
+        &self.work_item_id
+    }
+
     /// Returns the classification confidence in basis points.
     pub const fn classification_confidence_bps(&self) -> u16 {
         self.classification_confidence_bps
@@ -188,6 +198,11 @@ impl RouteInput {
     /// Returns the optional explicit user approval reference.
     pub const fn user_approval_ref(&self) -> Option<&ConfirmationRef> {
         self.user_approval_ref.as_ref()
+    }
+
+    /// Returns the input fingerprint bound to this classification request.
+    pub const fn input_fingerprint(&self) -> InputFingerprint {
+        self.input_fingerprint
     }
 }
 

@@ -1,5 +1,10 @@
 //! Native, bounded implementations for legacy `job.submit` entrypoints.
 
+// Part D WIRING-ONLY: `preflight` and `toolset` modules are owned by Part D.
+// C1 will add `mod preflight; mod toolset;`, extend ENTRYPOINTS, and wire the
+// dispatch `match` arms. Until then the modules compile-test independently
+// and must not be referenced by the dispatcher.
+
 mod assets;
 mod baseline;
 mod common;
@@ -10,16 +15,18 @@ mod memory;
 mod misc;
 mod perf;
 mod plugin;
+mod preflight;
+pub(super) mod toolset;
 
 use std::path::Path;
 
 use ae_sdd_runtime::{BoundJobIdentity, BusinessWorkspace, PersistencePort, RuntimeResult};
 use serde_json::Value;
 
-use common::{JobContext, mutation_rejected, unsupported};
+use common::{JobContext, mutation_rejected, schema_error, unsupported};
 
 /// Frozen legacy entrypoints routed through the daemon job scheduler.
-pub(super) const ENTRYPOINTS: [&str; 51] = [
+pub(super) const ENTRYPOINTS: [&str; 53] = [
     "assets.check",
     "assets.outline",
     "assets.query",
@@ -70,6 +77,8 @@ pub(super) const ENTRYPOINTS: [&str; 51] = [
     "state.register-review-consensus",
     "state.relocate",
     "state.write",
+    "toolset.receipt.record",
+    "toolset.required",
     "update-check",
 ];
 
@@ -79,6 +88,7 @@ pub(super) fn execute(
     _runtime_database: &Path,
     persistence: &dyn PersistencePort,
     identity: Option<&BoundJobIdentity>,
+    policy_digest: &str,
     entrypoint: &str,
     arguments: &Value,
 ) -> RuntimeResult<Value> {
@@ -96,6 +106,12 @@ pub(super) fn execute(
         );
     }
     let context = JobContext::new(workspace, work_item_id)?;
+    if matches!(entrypoint, "toolset.required" | "toolset.receipt.record") {
+        let identity = identity
+            .ok_or_else(|| schema_error("toolset jobs require daemon-bound session identity"))?;
+        context.required_work_item()?;
+        return toolset::execute(&context, identity, policy_digest, entrypoint, arguments);
+    }
     match entrypoint {
         "assets.check" | "assets.outline" | "assets.query" | "assets.read" | "assets.section"
         | "assets.stats" => assets::execute(&context, entrypoint, arguments),
@@ -147,7 +163,7 @@ mod tests {
             .iter()
             .copied()
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(ENTRYPOINTS.len(), 51);
+        assert_eq!(ENTRYPOINTS.len(), 53);
         assert_eq!(unique.len(), ENTRYPOINTS.len());
     }
 
@@ -164,10 +180,11 @@ mod tests {
                         | "doc.finalize"
                         | "perf.clear"
                         | "preflight.collect"
+                        | "toolset.receipt.record"
                 ) || entrypoint.starts_with("state.")
             })
             .count();
-        assert_eq!(writes, 15);
+        assert_eq!(writes, 16);
     }
 
     #[test]

@@ -26,13 +26,16 @@ fn artifact(kind: &str, path: &str, bytes: &[u8]) -> ArtifactRef {
 }
 
 fn context_ref() -> ContextBundleRef {
-    ContextBundleRef::new(
+    ContextBundleRef::from_artifacts(
         SchemaVersion::V1,
         ContextBundleId::new("ctx-001").expect("context id"),
         WorkItemId::new("STORY-001").expect("work item"),
-        vec![artifact("story", "design/STORY-001.md", b"story")],
-        ContextDigest::digest(b"context"),
-        64 * 1024,
+        vec![
+            artifact("story", "design/STORY-001.md", b"story"),
+            artifact("constraints", "constraints/api.md", b"constraints"),
+            artifact("thinking", "standards/thinking.md", b"thinking"),
+            artifact("verification", "design/verification.md", b"verification"),
+        ],
     )
     .expect("context ref")
 }
@@ -53,6 +56,217 @@ fn methodology_ref() -> MethodologyRef {
         ArtifactDigest::digest(b"catalog"),
     )
     .unwrap()
+}
+
+#[test]
+fn context_bundle_canonicalizes_artifacts_and_recomputes_identity() {
+    let story = artifact("story", "design/STORY-001.md", b"story");
+    let constraints = artifact("constraints", "constraints/api.md", b"constraints");
+    let work_item = WorkItemId::new("STORY-001").unwrap();
+
+    let first = ContextBundleRef::from_artifacts(
+        SchemaVersion::V1,
+        ContextBundleId::new("ctx-canonical").unwrap(),
+        work_item.clone(),
+        vec![story.clone(), constraints.clone()],
+    )
+    .unwrap();
+    let reordered = ContextBundleRef::from_artifacts(
+        SchemaVersion::V1,
+        ContextBundleId::new("ctx-canonical").unwrap(),
+        work_item,
+        vec![constraints.clone(), story.clone()],
+    )
+    .unwrap();
+
+    assert_eq!(first, reordered);
+    assert_eq!(first.schema_version(), SchemaVersion::V1);
+    assert_eq!(first.artifact_refs(), &[constraints, story]);
+    assert_eq!(first.byte_length(), 16);
+}
+
+#[test]
+fn context_bundle_rejects_caller_claims_that_do_not_match_canonical_content() {
+    let artifacts = vec![
+        artifact("story", "design/STORY-001.md", b"story"),
+        artifact("constraints", "constraints/api.md", b"constraints"),
+    ];
+    let canonical = ContextBundleRef::from_artifacts(
+        SchemaVersion::V1,
+        ContextBundleId::new("ctx-claims").unwrap(),
+        WorkItemId::new("STORY-001").unwrap(),
+        artifacts.clone(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        ContextBundleRef::new(
+            SchemaVersion::V1,
+            ContextBundleId::new("ctx-claims").unwrap(),
+            WorkItemId::new("STORY-001").unwrap(),
+            artifacts.clone(),
+            canonical.bundle_digest(),
+            canonical.byte_length(),
+        )
+        .unwrap(),
+        canonical
+    );
+    assert_eq!(
+        ContextBundleRef::new(
+            SchemaVersion::V1,
+            ContextBundleId::new("ctx-claims").unwrap(),
+            WorkItemId::new("STORY-001").unwrap(),
+            artifacts.clone(),
+            ContextDigest::digest(b"forged"),
+            canonical.byte_length(),
+        )
+        .unwrap(),
+        canonical
+    );
+    assert_eq!(
+        ContextBundleRef::new(
+            SchemaVersion::V1,
+            ContextBundleId::new("ctx-claims").unwrap(),
+            WorkItemId::new("STORY-001").unwrap(),
+            artifacts,
+            canonical.bundle_digest(),
+            canonical.byte_length() + 1,
+        )
+        .unwrap(),
+        canonical
+    );
+
+    let forged_wire = serde_json::to_string(&canonical).unwrap().replace(
+        &canonical.bundle_digest().to_string(),
+        &ContextDigest::digest(b"forged wire").to_string(),
+    );
+    assert!(serde_json::from_str::<ContextBundleRef>(&forged_wire).is_err());
+}
+
+#[test]
+fn loaded_context_proof_requires_all_four_contexts_and_exposes_freshness_inputs() {
+    let story = artifact("story", "design/STORY-001.md", b"story");
+    let constraints = artifact("constraints", "constraints/api.md", b"constraints");
+    let thinking = artifact("thinking", "standards/thinking.md", b"thinking");
+    let verification = artifact("verification", "design/verification.md", b"verification");
+    let work_item = WorkItemId::new("STORY-001").unwrap();
+    let context = ContextBundleRef::from_artifacts(
+        SchemaVersion::V1,
+        ContextBundleId::new("ctx-proof").unwrap(),
+        work_item.clone(),
+        vec![
+            verification.clone(),
+            story.clone(),
+            thinking.clone(),
+            constraints.clone(),
+        ],
+    )
+    .unwrap();
+    let methodology = methodology_ref();
+
+    let proof = LoadedContextProof::new(
+        SchemaVersion::V1,
+        work_item.clone(),
+        context,
+        story.clone(),
+        constraints.clone(),
+        thinking.clone(),
+        verification.clone(),
+        methodology.clone(),
+        StateRevision::new(7),
+        InventoryGeneration::new(3),
+        1_725_000_000_000,
+    )
+    .unwrap();
+
+    assert_eq!(proof.schema_version(), SchemaVersion::V1);
+    assert_eq!(proof.story_ref(), &story);
+    assert_eq!(proof.constraints_ref(), &constraints);
+    assert_eq!(proof.thinking_engine_ref(), &thinking);
+    assert_eq!(proof.verification_ref(), &verification);
+    assert_eq!(proof.methodology_ref(), &methodology);
+    assert_eq!(proof.state_revision(), StateRevision::new(7));
+    assert_eq!(proof.inventory_generation(), InventoryGeneration::new(3));
+    assert_eq!(proof.computed_at_unix_ms(), 1_725_000_000_000);
+
+    let incomplete = ContextBundleRef::from_artifacts(
+        SchemaVersion::V1,
+        ContextBundleId::new("ctx-incomplete").unwrap(),
+        work_item.clone(),
+        vec![story.clone()],
+    )
+    .unwrap();
+    assert!(
+        LoadedContextProof::new(
+            SchemaVersion::V1,
+            work_item,
+            incomplete,
+            story,
+            constraints,
+            thinking,
+            verification,
+            methodology,
+            StateRevision::new(7),
+            InventoryGeneration::new(3),
+            1_725_000_000_000,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn document_plan_binds_staged_content_cas_and_recomputed_plan_digest() {
+    let target = ProjectRelativePath::new("design/STORY-001.md").unwrap();
+    let staged = artifact(
+        "staged-document",
+        ".ae-sdd/staging/doc-txn-001/STORY-001.md",
+        b"new story",
+    );
+    let expected_before = ArtifactDigest::digest(b"old story");
+    let operation =
+        DocumentTxnOperation::save_staged(target.clone(), staged.clone(), Some(expected_before))
+            .unwrap();
+
+    assert_eq!(operation.path(), &target);
+    assert_eq!(operation.staged_content_ref(), Some(&staged));
+    assert_eq!(operation.expected_before_digest(), Some(expected_before));
+
+    let plan = DocumentTxnPlan::new(
+        SchemaVersion::V1,
+        DocumentTxnId::new("doc-txn-staged").unwrap(),
+        WorkItemId::new("STORY-001").unwrap(),
+        vec![operation],
+        InputFingerprint::digest(b"document plan staged"),
+    )
+    .unwrap();
+    let replay = DocumentTxnPlan::new(
+        SchemaVersion::V1,
+        DocumentTxnId::new("doc-txn-staged").unwrap(),
+        WorkItemId::new("STORY-001").unwrap(),
+        vec![DocumentTxnOperation::save_staged(target, staged, Some(expected_before)).unwrap()],
+        InputFingerprint::digest(b"document plan staged"),
+    )
+    .unwrap();
+
+    assert_eq!(plan, replay);
+    assert_eq!(plan.schema_version(), SchemaVersion::V1);
+    assert_eq!(plan.transaction_id().as_str(), "doc-txn-staged");
+    assert_eq!(plan.work_item_id().as_str(), "STORY-001");
+    assert_eq!(
+        plan.input_fingerprint(),
+        InputFingerprint::digest(b"document plan staged")
+    );
+    assert_eq!(plan.plan_digest(), replay.plan_digest());
+
+    let json = serde_json::to_string(&plan).unwrap();
+    assert!(json.contains("stagedContentRef"));
+    assert!(json.contains("expectedBeforeDigest"));
+    assert!(json.contains("planDigest"));
+    let forged = json.replace(
+        &plan.plan_digest().to_string(),
+        &ArtifactDigest::digest(b"forged plan").to_string(),
+    );
+    assert!(serde_json::from_str::<DocumentTxnPlan>(&forged).is_err());
 }
 
 #[test]

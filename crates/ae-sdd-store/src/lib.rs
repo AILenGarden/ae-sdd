@@ -31,4 +31,7 @@ pub use service::{
     LeaseControlPreview, LeaseControlRequest, MutationRequest, NoCommitFault, ProjectMutationStore,
     ProjectStorePaths,
 };
-pub use sqlite::{SQLITE_RUNTIME_BASE_MIGRATION, SqliteRuntimeRepository};
+pub use sqlite::{
+    RuntimeMigration, SQLITE_RUNTIME_BASE_MIGRATION, SQLITE_RUNTIME_MIGRATIONS,
+    SqliteRuntimeRepository,
+};

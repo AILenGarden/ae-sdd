@@ -66,6 +66,8 @@ pub enum ProjectRelativePathError {
     NonPortableCharacter,
     #[error("path segment must not end with a dot or space")]
     NonPortableSuffix,
+    #[error("path contains a Windows reserved device-name segment")]
+    ReservedDeviceName,
 }
 
 fn validate_path(value: &str) -> Result<(), ProjectRelativePathError> {
@@ -93,8 +95,33 @@ fn validate_path(value: &str) -> Result<(), ProjectRelativePathError> {
         if segment.ends_with('.') || segment.ends_with(' ') {
             return Err(ProjectRelativePathError::NonPortableSuffix);
         }
+        if is_windows_reserved_device_name(segment) {
+            return Err(ProjectRelativePathError::ReservedDeviceName);
+        }
     }
     Ok(())
+}
+
+fn is_windows_reserved_device_name(segment: &str) -> bool {
+    let stem = segment.split_once('.').map_or(segment, |(stem, _)| stem);
+    if ["CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$"]
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    {
+        return true;
+    }
+    let bytes = stem.as_bytes();
+    matches!(
+        bytes,
+        [first, second, third, digit]
+            if ((first.eq_ignore_ascii_case(&b'C')
+                && second.eq_ignore_ascii_case(&b'O')
+                && third.eq_ignore_ascii_case(&b'M'))
+                || (first.eq_ignore_ascii_case(&b'L')
+                    && second.eq_ignore_ascii_case(&b'P')
+                    && third.eq_ignore_ascii_case(&b'T')))
+                && matches!(digit, b'1'..=b'9')
+    )
 }
 
 #[cfg(test)]
@@ -128,5 +155,36 @@ mod tests {
 
         assert!(scope.contains(&child));
         assert!(!scope.contains(&sibling));
+    }
+
+    #[test]
+    fn project_relative_path_rejects_windows_device_names_in_every_segment() {
+        for invalid in [
+            "CON",
+            "con.txt",
+            "docs/PRN.md",
+            "AUX",
+            "nested/NUL/data",
+            "CLOCK$",
+            "conin$.log",
+            "CONOUT$",
+            "COM1",
+            "tools/com9.exe",
+            "LPT1.txt",
+            "nested/lpt9/output",
+        ] {
+            assert_eq!(
+                ProjectRelativePath::new(invalid),
+                Err(ProjectRelativePathError::ReservedDeviceName),
+                "accepted reserved Windows device path {invalid:?}"
+            );
+        }
+
+        for valid in ["console", "com0", "com10", "lpt0", "lpt10", "clock"] {
+            assert!(
+                ProjectRelativePath::new(valid).is_ok(),
+                "rejected valid lookalike path {valid:?}"
+            );
+        }
     }
 }
