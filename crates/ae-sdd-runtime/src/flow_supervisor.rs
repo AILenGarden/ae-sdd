@@ -398,6 +398,18 @@ fn next_action_value(action: &NextAction) -> Value {
             "targetPhase":phase_name(*target),
             "reason":reason.to_string(),
         }),
+        NextAction::ResumeApprovedExecution => json!({"kind":"resume-approved-execution"}),
+        NextAction::ExecuteApprovedSlice {
+            active_ordinal,
+            queue_digest,
+        } => json!({
+            "kind":"execute-approved-slice",
+            "activeOrdinal":active_ordinal,
+            "queueDigest":queue_digest.to_string(),
+        }),
+        NextAction::FinalizeExecutionEvidence => json!({"kind":"finalize-execution-evidence"}),
+        NextAction::CollectReviewContributions => json!({"kind":"collect-review-contributions"}),
+        NextAction::FinalizeGovernance => json!({"kind":"finalize-governance"}),
     }
 }
 
