@@ -18,7 +18,10 @@ ae-sdd/
 ├── crates/
 │   ├── ae-sdd-protocol/
 │   ├── ae-sdd-domain/
+│   ├── ae-sdd-contracts/
 │   ├── ae-sdd-policy/
+│   ├── ae-sdd-methodology/
+│   ├── ae-sdd-lifecycle/
 │   ├── ae-sdd-store/
 │   ├── ae-sdd-artifacts/
 │   ├── ae-sdd-operations/
@@ -33,10 +36,15 @@ ae-sdd/
 │   ├── ae-sdd-context/
 │   ├── ae-sdd-runtime/
 │   ├── ae-sdd-client/
+│   ├── ae-sdd-session/
+│   ├── ae-sdd-resources/
+│   ├── ae-sdd-review/
+│   ├── ae-sdd-execution/
 │   └── ae-sdd-build/
 ├── bins/
 │   ├── ae-sdd-daemon/            # package ae-sdd-daemon, binary ae-sddd, composition root
-│   └── ae-sdd-cli/               # package ae-sdd-cli, binary ae-sdd, thin CLI + Hook adapter
+│   ├── ae-sdd-cli/               # package ae-sdd-cli, binary ae-sdd, thin CLI + Hook adapter
+│   └── ae-sdd-worker/            # 隔离执行有界 verification/review/tool job；不拥有流程状态
 ├── migrations/                   # monotonic SQLite runtime migrations
 ├── tests/
 │   ├── contract/
@@ -61,7 +69,10 @@ ae-sdd/
 | --- | --- | --- |
 | `ae-sdd-protocol` | versioned RPC DTO、framing、capability、stable error 与 wire enums | socket I/O、policy、文件访问 |
 | `ae-sdd-domain` | state/phase/route/value object/invariant；共享 `AgentRole`、`AgentLineage`、`ScopedGrant` vocabulary | async runtime、数据库、文件、宿主 API |
+| `ae-sdd-contracts` | 跨 Part 冻结的 versioned DTO、port trait、大小上限与 extension contract；复用 domain/protocol owner 类型 | 流程编排、I/O、持久化、复制 domain/protocol 语义 owner |
 | `ae-sdd-policy` | 唯一 TransitionPolicy、Hook/Gate/role 规则 | Gate I/O、状态落盘、CLI parsing |
+| `ae-sdd-methodology` | 机器声明 Methodology Catalog 的纯编译、content digest、校验与 L1>L2>L3>L0 deterministic resolve | 从 Markdown 推断语义、filesystem/env/clock/random、物理 Agent 创建 |
+| `ae-sdd-lifecycle` | 基于 frozen input 与唯一 TransitionPolicy 生成生命周期 decision/mutation intent | 直接写 store、执行 host action、复制 phase table |
 | `ae-sdd-store` | lock/lease/CAS/fencing/idempotency/journal/atomic file/recovery | phase 路由与 Agent 语义 |
 | `ae-sdd-artifacts` | doc/assets/memory/evidence/resource 读取与 hash-addressed artifact | session transport、全局 transition |
 | `ae-sdd-operations` | typed operation registry 与 application orchestration | CLI UX、重复 policy table |
@@ -70,15 +81,20 @@ ae-sdd/
 | `ae-sdd-inventory` | selector/fingerprint/watch/reconcile/cache invalidation | 把 watcher event 当业务真相 |
 | `ae-sdd-integrations` | git/SQLite/toolchain/plugin/distributor/OS service 平台 adapter | domain/policy 规则 |
 | `ae-sdd-governance` | update graph、alignment audit | runtime transport |
-| `ae-sdd-flow` | pure reducer、nextAction、FlowSupervisor、event replay/checkpoint | LLM 语义工作、host I/O |
+| `ae-sdd-flow` | pure reducer、RouteEngine、SeriesPlanner、nextAction、FlowSupervisor、event replay/checkpoint | LLM 语义工作、host/store/filesystem I/O、物理 Agent 创建 |
 | `ae-sdd-delegation` | Delegation/capability/ChildResult lifecycle、claim 与 validation；使用 domain-owned role/lineage/grant value objects | host-specific session creation、复制 role/grant permission table |
 | `ae-sdd-host` | HostRuntimeAdapter trait、capability negotiation、action/ACK/attestation | policy、Gate、memory 内容 |
 | `ae-sdd-context` | role-aware projection/delta/budget/snapshot/rehydrate/CompactCycle | 伪造宿主 ACK、推进业务 phase |
 | `ae-sdd-runtime` | actor、scheduler、durable event/outbox、workspace/session/turn lifecycle | CLI rendering、方法论正文 |
 | `ae-sdd-client` | Named Pipe/UDS client、deadline/reconnect | 本地 Gate/state fallback |
+| `ae-sdd-session` | session bootstrap/binding 的 application contract 与纯状态决策 | 直接启动 daemon/host process、持久化实现 |
+| `ae-sdd-resources` | document/memory/context resource resolve 与 transaction plan 的 application owner | 绕过 artifact/store port 直接覆盖权威文件 |
+| `ae-sdd-review` | review session/findings/exit policy 的 application owner | 伪造 reviewer identity、直接执行外部工具 |
+| `ae-sdd-execution` | verification/tool execution plan 与 receipt 的 application owner | shell 拼接、无界输出、把 skipped/timeout 记为 PASS |
 | `ae-sdd-build` | library + `ae-sdd-build` bin；compile/init/install/distribute/harness/migrate admin jobs | 绕过 daemon/store 合同 |
 | `ae-sdd-daemon` / bin `ae-sddd` | RPC server、lifecycle、concrete adapter composition root | command UX 与业务规则定义 |
 | `ae-sdd-cli` / bin `ae-sdd` | 参数解析、client 调用、Hook stdin/stdout 映射 | policy/store/Gate/scanner 实现 |
+| `ae-sdd-worker` / bin | daemon 管理的隔离 job process、bounded stdin/stdout、deadline/cancel 映射 | 路由、phase、Gate truth、会话权威状态 |
 
 ## 三、crate 内部结构
 
@@ -104,10 +120,12 @@ src/
 ```text
 domain                     protocol
   ↑                           ↑
-policy                        │
-  ↑                           │
-flow/delegation/context/operations (application + inward ports)
-  ↑                           ↑
+contracts  (frozen cross-Part DTO/port boundary)
+  ↑
+policy + methodology
+  ↑
+flow/lifecycle/delegation/context/session/resources/review/execution/operations
+  ↑
 runtime (depends on inward contracts and port traits, never concrete adapters)
 
 store/artifacts/gates/scanners/inventory/host/integrations
@@ -120,6 +138,8 @@ ae-sdd-cli -> client -> protocol
 ```
 
 - `domain` 与 `policy` 必须保持无 I/O、无 Tokio、无 SQLite、无平台 API。
+- `contracts`、`methodology`、`flow` 与 `lifecycle` 的控制面路径必须保持纯确定性：不得读取 filesystem、environment、wall clock、random、process 或 global mutable state；所有事实必须经 typed input/port snapshot 显式传入。
+- frozen contract 的 owner 是 `ae-sdd-contracts`；并行 Part 不得各自修改共享 DTO/port。语义变化必须由协调者先提升 schema/version、更新 golden fixture 与所有消费者，再继续实现。
 - binary 是 composition root，可以装配具体 adapter；library 禁止反向依赖 binary。
 - `ae-sdd-runtime` 禁止依赖 store/integrations/OS concrete adapter；adapter crate 可以依赖拥有 port trait 的 inward crate以实现该 trait。`ae-sdd-host` 只拥有 host port/contract，宿主 concrete implementation 位于 integrations。
 - CLI/Hook 只依赖 `client + protocol` 以及必要的渲染模块，禁止依赖 store/gates/policy 的 concrete implementation。

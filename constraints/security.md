@@ -29,6 +29,7 @@
 
 - 所有项目路径必须先定位 approved root，再 canonicalize 已存在父级，并逐段拒绝越界 symlink、junction、mount/reparse point。
 - 新建目标必须验证 canonical parent；禁止仅通过字符串前缀判断 containment。
+- 所有跨平台 relative path 必须在 dry-run/plan 阶段拒绝 control character、`:`/Windows ADS、drive/UNC、空/`.`/`..` segment、trailing dot/space，以及 `CON/PRN/AUX/NUL/CLOCK$/COM1..9/LPT1..9` 等设备名；Apply 不得首次发现这些错误。
 - mutation 必须使用 staging/同目录临时文件、显式权限、fsync 和 atomic promote；禁止在验证完成前覆盖原文件。
 - plugin/artifact 路径禁止 `..`、绝对路径和跨 root link；content hash 必须在使用和 commit 前复核。
 - prompt、transcript、claim、endpoint secret、完整 stdout/stderr 和用户 credential 不得写入普通日志、SQLite 或 root ContextProjection。

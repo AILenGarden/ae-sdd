@@ -68,6 +68,9 @@ pub async fn execute_mutation(
 - 参与 idempotency/decision/artifact digest 的值必须先 canonicalize：稳定 field order、`BTreeMap`、规范 path、UTC time 和明确 null/empty 语义。
 - 浮点数不得用于 revision、deadline、size、token budget、event sequence 或 deterministic digest。
 - 重放同 command/event 必须返回旧 receipt/no-op 或稳定冲突，不能产生第二次 side effect。
+- `ae-sdd-methodology`、`ae-sdd-flow`、`ae-sdd-lifecycle` 的公开决策 API 只能接收 immutable typed input 并返回 frozen DTO/decision/mutation intent；禁止在纯控制面内部读取文件、环境变量、时钟、随机数、数据库或执行 side effect。
+- Methodology 的 activation、spawn policy、route predicate、required input、deliverable 与 Gate 必须来自 versioned machine-readable Catalog；禁止解析或猜测 Markdown 正文来生成运行时语义。
+- Methodology bundle、Series plan 与 lifecycle plan 的编码必须 byte-stable；集合先 canonical sort/deduplicate，digest 必须绑定 schema、完整语义字段和 content-addressed artifact metadata。
 
 ## 七、序列化与兼容
 
@@ -76,6 +79,8 @@ pub async fn execute_mutation(
 - 对未知必需 enum/operation 必须 fail closed；对 negotiated optional field 可忽略但必须保留 capability 语义。
 - 禁止把内部 error debug、SQLite row、absolute path、claim/token 或完整 stdout 直接 serialize 给 client。
 - frame、字符串、数组、map、嵌套深度和 ChildResult/ContextProjection 都必须在 decode 前后校验预算。
+- 跨 Part frozen DTO/port 的字段、枚举或错误码不得由单个 Part 原地改义；必须由合同 owner 提升 schema/version，并同时更新 fixture、golden digest、迁移和所有消费者。
+- content digest 只能表述“内容已绑定/可校验”；没有私钥签名、可信公钥和 trust-anchor 验证链时禁止在 API、日志或文档中称其为 signed artifact。
 
 ## 八、日志与 tracing
 

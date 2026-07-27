@@ -58,3 +58,10 @@ crates/ + bins/             -> 受约束的实现
 - 动态确认 Story 的每个 AC 都有真实验证入口；Test/Review 只记录实际 evidence 和 findings。
 - 针对当前 state revision 动态确认 `state.executionPlan` 用户批准与 G-CODEPLAN-SRC、G-14、G-08 PASS；静态文字不构成 PASS。
 - 动态确认 Monitor 排除项和 Python migration oracle 未被误算为 released Rust runtime。
+
+## Agent 执行约束
+
+- 所有 Agent 在首次写 Rust、schema、migration、build script 或测试前，必须通过 ae-sdd 加载本目录的当前 digest；对话中曾经读过旧副本不构成有效加载。
+- 多 Agent 并行时必须先冻结共享 contract 与 migration 编号，再分配互斥文件 owner；Part Agent 不得修改其他 Part 的 owned path。
+- pure control-plane crate 的 Review 必须检查 I/O/clock/random/global-state 依赖为 0，并用 replay/determinism test 证明相同输入产生 byte-identical decision。
+- 完成声明必须同时具备 `cargo fmt`、strict Clippy、目标 crate tests、workspace regression、真实 ae-sdd evidence 与无 blocker/major finding 的 Review；只编译成功不算完成。

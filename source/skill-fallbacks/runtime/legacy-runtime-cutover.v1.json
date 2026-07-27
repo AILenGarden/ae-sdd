@@ -10,7 +10,7 @@
     "Parent execution owner deletion authorization is missing"
   ],
   "requiredAudits": [
-    "ae-sdd-build compatibility-audit: 113 commands, 18 operations, 36 gates, 7 scanners, zero stub/non-PASS fallthrough",
+    "ae-sdd-build compatibility-audit: 113 commands, 23 operations, 36 gates, 7 scanners, zero stub/non-PASS fallthrough",
     "ae-sdd-build verify-release: ae-sdd, ae-sddd, ae-sdd-build and zero interpreter/script/local-fallback markers",
     "Actual Windows/macOS/Linux lifecycle, ACL, upgrade, rollback, and uninstall evidence"
   ],

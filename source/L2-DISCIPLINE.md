@@ -1,4 +1,8 @@
-<!-- ae-sdd L2 conversation discipline SSOT; injected by scripts/l2_inject.py -->
+<!-- ae-sdd L2 conversation discipline SSOT. Released injection authority is the
+     Rust `ae-sdd-build post-commit` managed-instruction stage, which replaces only
+     the `ae-sdd-l2-ssot` anchor range of each host's global instruction file.
+     `scripts/l2_inject.py` is migration/manual legacy tooling and a test oracle only;
+     it is not part of the released distribution chain. -->
 
 ## Process Artifact Policy
 
@@ -51,6 +55,44 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
 - harness 的计划批准不能替代 `state.executionPlan` 的用户确认。
 - `/ae-sdd-quick` 只能由用户显式指定，且不取消 Story-lite、计划确认和验证证据。
 - 路由未到合法终态、验证证据未落地、Review 未通过时不得声明完成。
+
+## 执行效率与范围纪律
+
+以下规则用于在强制工作流内优化执行效率，绝不豁免权威检查、gate、批准、测试证据
+和 Review。
+
+### 快速续接
+
+- 已存在经核验的交接结论与已批准的 executionPlan 时，直接从其续接。只刷新执行所
+  必需的易变权威，不重新生成或重新发现已完成的分析。
+- 除被 Gate 阻断外，最多经过一次权威刷新、一批定向源码查看和一次聚焦基线测试，
+  就要抵达第一个有范围的补丁。
+
+### 最短可验证切片
+
+- 遵循用户声明的优先级，实现能编译并产出聚焦证据的最小端到端切片。顺序为：
+  失败的聚焦测试 -> 最小补丁 -> 聚焦测试 -> 下一切片。
+- 除已批准的 AC、失败测试、Gate 或用户明确要求外，不扩散到遗留兼容、泛化架构、
+  历史恢复或无关加固。非阻断性加固单独登记。
+
+### 有界调查与输出
+
+- 脏 worktree 中禁止整仓 diff。使用 `rg`、scoped diff 和有界行读取；输出被截断
+  时立即收窄查询。
+- 避免过大的工具输出和不必要的上下文膨胀，二者会抬高延迟、token 消耗和请求超时
+  风险。
+
+### Agent 协同
+
+- 复用经核验的交接结论与 Agent 结果。显式分配路径归属，做互不冲突的实现，而不是
+  重复相邻分析。
+
+### 进度控制
+
+- 若连续三批调查型工具调用既没产出补丁、也没产出聚焦测试、也没识别出新阻断项，
+  则切换到最短可执行验证回路，或报告确切阻断项。
+- 用户改向或中止任务时，立即停止 subagent，仅回滚未完成的本地编辑，保持工作区
+  可编译。
 <!-- /SECTION:zh -->
 
 <!-- SECTION:en -->
@@ -102,6 +144,50 @@ small/micro: Route -> Requirement Analysis -> CodingPlan/Story-lite -> approved 
   and verification evidence.
 - Do not claim completion before the legal terminal state, finalized evidence, and
   a passing review.
+
+## Execution Efficiency and Scope Discipline
+
+These rules optimize execution within mandatory workflows. They never waive
+authoritative checks, gates, approvals, test evidence, or Review.
+
+### Fast resume
+
+- When a verified handoff and approved executionPlan exist, resume from them.
+  Refresh only volatile authority required for execution; do not regenerate or
+  rediscover completed analysis.
+- Unless blocked by a Gate, reach the first scoped patch after at most one
+  authority refresh, one targeted source-inspection batch, and one focused
+  baseline test.
+
+### Shortest verified slice
+
+- Follow the user's stated priority and implement the smallest end-to-end slice
+  that can compile and produce focused evidence. Use: failing focused test ->
+  minimal patch -> focused test -> next slice.
+- Do not expand into legacy compatibility, generalized architecture, historical
+  recovery, or unrelated hardening unless required by the approved AC, a
+  failing test, a Gate, or the user. Record non-blocking hardening separately.
+
+### Bounded investigation and output
+
+- In a dirty worktree, avoid repository-wide diffs. Use `rg`, scoped diffs, and
+  bounded line reads; if output truncates, narrow the query immediately.
+- Avoid oversized tool output and unnecessary context growth because they
+  increase latency, token use, and request-timeout risk.
+
+### Agent coordination
+
+- Reuse verified handoff findings and Agent results. Assign explicit path
+  ownership and work on non-conflicting implementation instead of duplicating
+  adjacent analysis.
+
+### Progress control
+
+- If three investigative tool batches produce no patch, focused test, or newly
+  identified blocker, switch to the shortest executable verification loop or
+  report the exact blocker.
+- When the user redirects or stops the task, stop subagents immediately and
+  leave the workspace compilable by reverting only incomplete local edits.
 <!-- /SECTION:en -->
 
 <!-- SECTION:redline11 -->

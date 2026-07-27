@@ -680,6 +680,31 @@
         {"path": "source/skill-fallbacks/skills/cross-cutting/document-storage-skill.full.md", "action": "只读资源 intent 清单含 DOC_DENSITY_STANDARD 与写入拒绝规则", "auto_checkable": false}
       ],
       "checks": ["UC-05", "UC-14"]
+    },
+    {
+      "id": "UG-32",
+      "name": "L2 托管指令注入变更",
+      "trigger": [
+        "source/L2-DISCIPLINE.md",
+        "crates/ae-sdd-build/src/managed_instructions.rs",
+        "crates/ae-sdd-build/src/post_commit.rs",
+        "crates/ae-sdd-build/src/main.rs",
+        ".githooks/post-commit"
+      ],
+      "trigger_condition": "修改 L2 纪律正文 SSOT、托管渲染器、post-commit 托管编排、CLI 指令文件参数或发布 hook 传参",
+      "affected": [
+        {"path": "crates/ae-sdd-build/src/managed_instructions.rs", "action": "语言切片、锚点定位、审计头与行尾契约保持纯函数且确定性（无 wall clock、无 git 调用）", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/post_commit.rs", "action": "托管同步排在 compile/verify/distribute 之后；四态上报与 fail-closed 语义同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/jobs/model.rs", "action": "NATIVE_ENTRYPOINTS 含 post-commit.managed-instructions 且 kind=Admin", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/src/main.rs", "action": "codex/claude/zcode 三个显式指令文件参数与语言映射同步；禁止从 skill 目录推断", "auto_checkable": true},
+        {"path": ".githooks/post-commit", "action": "传三个全局指令文件路径；不得出现 python 或 l2_inject；不得新增 harness/hermes 指令参数", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/tests/managed_instruction_sync.rs", "action": "更新/跳过/畸形/幂等/containment/包分发独立性端到端场景同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/tests/compatibility_routes.rs", "action": "L2 双语源结构断言与 Rust-only hook 断言同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-build/tests/migration_oracle.rs", "action": "Rust 与 scripts/l2_inject.py 常规注入语义对照（审计头归一化后）同步", "auto_checkable": true},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "post-commit 五阶段链路与 L2 注入权威边界同步", "auto_checkable": false},
+        {"path": "scripts/l2_inject.py", "action": "只作迁移 oracle 与手工兜底，禁止进入发布 hook 或 Rust 运行时", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-03", "UC-14"]
     }
   ]
 }

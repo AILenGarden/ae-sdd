@@ -55,8 +55,8 @@ Story 每个 AC 必须至少映射一个可执行验证入口和预期 evidence�
 
 ## 四、fixture 与 golden corpus
 
-- fixture 必须有稳定 ID、schema version、输入、预期 outcome、owner、来源和 `preserve | breaking-fix | removed-deprecated` 分类。
-- 113 command、18 operation、36 Gate、7 scanner 和工程工具必须由 parser/registry/runtime trace 三源 inventory 对齐，计数与映射由测试生成审计。
+- fixture 必须有稳定 ID、schema version、输入、预期 outcome、owner、来源和 `preserve | breaking-fix | removed-deprecated | native-addition` 分类；`native-addition` 专用于无 Python 前身的 Rust 原生能力，此类条目没有差分 oracle。
+- 113 command、23 operation（18 个迁移自 Python 面 + 5 个 `native-addition`）、36 Gate、7 scanner 和工程工具必须由 parser/registry/runtime trace 三源 inventory 对齐，计数与映射由测试生成审计。
 - golden 只存确定性输出；timestamp、absolute temp path、UUID、port/pipe name 必须 normalization 后比较。
 - 更新 golden 必须展示 semantic diff 并由 Story/DR 解释；禁止用 blanket accept 命令覆盖不理解的差异。
 - Python oracle 只能在 `migration_oracle` profile/read-only fixture 中运行；Rust canary/sole-writer test 禁止调用它。

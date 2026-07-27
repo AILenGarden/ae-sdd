@@ -108,8 +108,8 @@ request
 
 ## 五、数据权威与恢复
 
-- project state/artifact 与 state directory 下的 versioned mutation journal 是可移植业务权威；SQLite 只是 runtime metadata、cursor、cache、event/receipt 的可重建索引，不是 authoritative mutation journal。
-- SQLite/project 不一致时以 project revision/hash 为准重建 metadata；hash 改变但 revision 未增长时进入 `EXTERNAL_STATE_CONFLICT`，禁止自动覆盖。
+- project state（项目级 `state.db`）/artifact 与 state directory 下的 versioned mutation journal 是可移植业务权威；**用户级** SQLite 只是 runtime metadata、cursor、cache、event/receipt 的可重建索引，不是 authoritative mutation journal。
+- 用户级索引与 project 不一致时以 project revision/hash 为准重建 metadata；hash 改变但 revision 未增长时进入 `EXTERNAL_STATE_CONFLICT`，禁止自动覆盖。
 - daemon restart 后 running Gate 不得恢复为 PASS；未证明的 host action、delegation 和 compact cycle 必须恢复为可诊断中断状态。
 - watcher overflow 或 event cursor gap 必须 full reconcile/snapshot，不得猜增量。
 

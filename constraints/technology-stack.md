@@ -30,7 +30,7 @@ T1 已从 Rust 官方发布渠道安装并选定 `rustc 1.97.1` / `cargo 1.97.1`
 | 日志/追踪 | tracing + tracing-subscriber | 结构化字段；禁止记录 prompt、transcript、token、claim 或 secret 正文 |
 | ID/时间 | uuid + UTC RFC 3339 | daemon 生成内部 ID；duration/deadline 使用整数毫秒 |
 | digest/MAC/signature | SHA-256 + HMAC-SHA-256 + Ed25519（`ed25519-dalek` 2.x） | protocol/artifact digest 统一 64 位小写 hex；secret 比较 constant-time；离线只读 capability verification 必须非对称，boot private key 不落盘 |
-| runtime metadata | SQLite WAL，默认 `rusqlite` bundled | SQLite 只保存可恢复运行元数据；项目文件仍是业务真相 |
+| runtime metadata | SQLite WAL，默认 `rusqlite` bundled | **用户级** SQLite 只保存可恢复运行元数据；业务真相在项目内，载体为**项目级** SQLite（详见 `constraints/database.md` §零 与 `DR-AE-SDD-DAEMON-AUTHORITY-001` 决策 1） |
 | 文件监听 | `notify` 8.2.x 或经 DR 批准的等价跨平台 adapter | watcher 事件只用于失效提示，mutation 前必须重算内容 fingerprint；禁止选 9.x pre-release 进入首版 |
 | 平台 API | Tokio Named Pipe/UDS；Windows DACL/handle 边界使用最小 feature 的 `windows-sys` | 平台代码只存在于 integrations/client adapter，不得泄漏进 domain/policy；`unsafe` 限于单一审计模块 |
 

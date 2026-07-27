@@ -14,7 +14,7 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 | --- | --- | --- |
 | ae-sdd 能力语义、阶段含义、门禁语义 | `source/docs/ae-sdd-design.md` | 跟随展示，不重新定义 |
 | 实现分层、状态文件、Runtime Stats 存储规则 | `source/docs/ae-sdd-implementation-architecture.md` | 跟随解析，不另建数据契约 |
-| 项目当前状态 | `.ae-sdd/state.json` 与 `.auto-engineering/{workItemKey}/state.json` | 只读解析，派生展示状态 |
+| 项目当前状态 | 项目级 `.auto-engineering/state.db`（权威载体已由散装 `state.json` 迁移，见 `DR-AE-SDD-DAEMON-AUTHORITY-001` 决策 1） | ⚠️ **当前降级**：Monitor 仍按旧散装 JSON 布局直读（`apps/ae-sdd-monitor/src/workspace.js`），载体迁移后该路径失效，项目/任务状态无法展示。修复归独立 Work Item，方向为改走 daemon RPC 而非直读存储 |
 | Memory 状态 | `.ae-sdd/memory/**/*.jsonl` 与 `.ae-sdd/memory/.stage/*.json` | 只读聚合，展示项目/任务 memory 写入、活跃 scope 和阻断线索 |
 | 运行时观测数据 | `.ae-sdd/runtime-stats/*.jsonl` | 只读聚合，展示耗时/失败/最近事件 |
 | Gate 与硬判断 | `tools/bin/ae-sdd`、`tools/lib/gates.py`、CLI 输出 | 不执行，不裁决，只展示已有结果线索 |

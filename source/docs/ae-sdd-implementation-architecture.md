@@ -138,7 +138,8 @@ harness/                        派生适配层，不手工改生成物
 | Hook 层 | `gate_intercept.py` / `prompt_inject.py` / `stop_check.py` | 工具调用前、提示注入、响应后校验 | HARNESS 声明必须能追到实现 |
 | 源 SKILL 瘦身 | `scripts/slim_source_skills.py` / `source/skill-fallbacks/**` | 按标准识别源 SKILL 语义、渲染 slim entry、保留完整 fallback、校验模板一致性 | 已瘦身文件默认跳过；schema 升级必须从 fallback 重渲染，禁止二次摘要 |
 | Runtime 编译 | `scripts/compile_skill_runtime.py` / `tools/lib/runtime_verify.py` | 主入口 compact、全量子 SKILL bootloader、局部 runtime、fallback 原文生成与校验 | `SKILL.md`、`runtime/**`、`skills/**/*.md` 输出必须字节级幂等 |
-| 构建分发 | `scripts/build_dist.py` / `scripts/distribute.py` | source -> dist -> runtime 安装 | 不把手工改动写入 dist |
+| 构建分发（发布期） | `crates/ae-sdd-build`（`post_commit.rs` / `managed_instructions.rs`） | compile -> verify -> distribute -> 托管 L2 指令注入 | 见 §8.1；不把手工改动写入 dist；发布链路禁 Python |
+| 构建分发（遗留/手工） | `scripts/build_dist.py` / `scripts/distribute.py` / `scripts/l2_inject.py` | source -> dist -> runtime 安装 | 仅手工与迁移 oracle 用；不得进发布 hook |
 | RA 扫描作用域 | `scripts/ra_scan_scope.py` | formal RA 分类、root discovery、explicit file containment、excluded reason、结构化错误 | 四个 RA scanner 与 gates 必须共享；变更触发 UG-29 |
 | 运行时扫描器 | `scripts/*_scan.py` | 静态扫描，输出 JSON 契约；RA scanner 支持 repeatable `--file` 与 filtered `--root` | 新 scanner/helper 需入 build_dist 白名单 |
 
@@ -244,6 +245,48 @@ source/
 - 新增工具链模块放 `tools/lib/`，默认随 tools 复制。
 - 新增独立运行时脚本或被 scanner import 的共享 helper 放 `scripts/` 时，必须更新 `build_dist.py` 白名单；当前 RA scanner 依赖 `ra_scan_scope.py`，dist 缺失即构建失败。
 - 分发器只能安装编译后 package，不能直接安装 `source/`。
+
+### 8.1 Rust 发布期 post-commit 链路（当前真相）
+
+`.githooks/post-commit` 只调 `ae-sdd-build`，五个阶段顺序固定：
+
+```text
+git commit（功能性变更）
+  -> ae-sdd-build harness          # 生成 .harness/agent.md
+  -> ae-sdd-build post-commit
+       1 compile                   # source/ -> dist/ae-sdd/（含 L2-DISCIPLINE.md）
+       2 verify                    # 只读校验编译产物
+       3 distribute                # dist/ae-sdd/ -> 5 个 skill 目标目录
+       4 managed L2 instructions   # 锚点区间替换 3 个全局指令文件
+```
+
+L2 注入权威边界：
+
+| 角色 | 归属 |
+| --- | --- |
+| 正文 SSOT | `source/L2-DISCIPLINE.md`（发布期读编译产物 `dist/ae-sdd/L2-DISCIPLINE.md`） |
+| 发布期执行者 | `ae-sdd-build`（`crates/ae-sdd-build/src/managed_instructions.rs` 纯渲染 + `post_commit.rs` 编排） |
+| 落盘者 | 既有 native `Admin` job，entrypoint `post-commit.managed-instructions`，每 host 一次独立事务 |
+| `scripts/l2_inject.py` | 迁移/手工遗留工具与测试 oracle，不进发布 hook 与 Rust 运行时 |
+
+托管目标映射由 CLI 显式给出，禁止从 skill 目标目录字符串推断：
+
+| host | 语言 | 目标 | 注入 |
+| --- | --- | --- | --- |
+| codex | en | `$USER_HOME/.codex/AGENTS.md` | 是 |
+| claude | zh | `$USER_HOME/.claude/CLAUDE.md` | 是 |
+| zcode | zh | `$USER_HOME/.zcode/AGENTS.md` | 是 |
+| harness / hermes | — | — | 否，仅包分发 |
+
+不变量：
+
+- 只替换 `ae-sdd-l2-ssot` 锚点区间，区外字节与原行尾逐字节保留。
+- 目标文件缺失或无完整锚点报 `missing-target` / `missing-anchor` 跳过，绝不创建文件、绝不自动 bootstrap。
+- 锚点或 SSOT 标记畸形、越 allowed root、symlink、落盘失败一律 fail closed，进程非零，目标文件不变。
+- 审计头不含 wall clock，revision 由 `PostCommitRequest.commit_id` 注入，保证重放确定性。
+- 托管注入排在包分发之后：任何托管跳过或失败都不回滚已完成的 skill 包分发。
+- 跨 host 非原子：逐 host 事务保证单文件原子与回滚，所有 host 结果必须上报。
+- 变更 L2 正文、托管映射或渲染器时必须跑 `managed_instruction_sync`、`compatibility_routes`、`migration_oracle`（详见 `source/standards/update-graph.json` UG-32）。
 
 Runtime 编译数据流：
 

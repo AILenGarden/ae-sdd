@@ -2,18 +2,19 @@
 
 ## 摘要
 
-本文件定义 ae-sdd daemon 的 SQLite runtime metadata schema、migration、事务、索引和项目文件权威边界。项目业务状态不迁移到关系数据库。
-适用场景：新增/修改 runtime 表、repository、journal、cache、migration 或恢复逻辑。
+本文件定义 ae-sdd daemon 的 SQLite schema、migration、事务、索引和权威边界。业务状态存于**项目级** SQLite，随项目可移植；不迁移到远端或跨项目共享数据库。
+适用场景：新增/修改 runtime 表、项目状态表、repository、journal、cache、migration 或恢复逻辑。
 
 ---
 
 ## 零、数据权威边界
 
-- WorkItem `state.json`、lease、正式文档、memory、evidence、review 和 artifact 是项目内可移植业务真相。
-- SQLite 只保存 workspace/session/turn/delegation/host-action/context/compact/supervisor/job/event/cache/receipt index 等 daemon 运行元数据。
-- phase、executionPlan、plan approval、test evidence 或 review completion 禁止只存在 SQLite。
-- 每个 Work Item 的 authoritative mutation journal 固定在其 state directory 的 `mutation-journal/v1/<revision-after>-<mutation-id>.json`；它与 `state.json`、lease 和 artifact 同属 project truth。SQLite 丢失时必须能从 project files、COMMITTED journal/event payload 和宿主重新握手重建安全状态；无法证明的 running job/delegation/compact 一律不得恢复为成功。
-- SQLite 与 project file 冲突时以 project revision/hash 为准；hash 改变但 revision 未增长必须进入 `EXTERNAL_STATE_CONFLICT`，禁止自动覆盖。
+- WorkItem 状态（项目级 `state.db`）、lease、正式文档、memory、evidence、review 和 artifact 是项目内可移植业务真相。
+- **用户级** SQLite 只保存 workspace/session/turn/delegation/host-action/context/compact/supervisor/job/event/cache/receipt index 等 daemon 运行元数据，以及「workspace → 项目库路径」的跨 workspace 索引。
+- phase、executionPlan、plan approval、test evidence 或 review completion 禁止只存在**用户级** SQLite；它们属项目级业务真相。
+- 每个 Work Item 的 authoritative mutation journal 固定在其 state directory 的 `mutation-journal/v1/<revision-after>-<mutation-id>.json`；它与项目级 `state.db`、lease 和 artifact 同属 project truth。
+- **恢复方向按载体区分**：用户级 SQLite 丢失时必须能从 project files、COMMITTED journal/event payload 和宿主重新握手重建安全状态；项目级 `state.db` 损坏时从最近全量快照 + 其后 COMMITTED journal 重放重建（见 `DR-AE-SDD-DAEMON-AUTHORITY-001` 决策 4），不可静默重建空库。两种情况下，无法证明的 running job/delegation/compact 一律不得恢复为成功。
+- 项目级权威与用户级索引冲突时以项目 revision/hash 为准；hash 改变但 revision 未增长必须进入 `EXTERNAL_STATE_CONFLICT`，禁止自动覆盖。
 - SQLite 初始化时生成 immutable `event_store_id`；daemon restart 保持，DB 重建时轮换。外部 cursor 必须绑定 `event_store_id + event_seq`，禁止在新 DB 上误认旧序列。
 
 ## 一、技术与连接配置

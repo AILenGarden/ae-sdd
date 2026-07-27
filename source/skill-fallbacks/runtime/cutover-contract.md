@@ -19,8 +19,9 @@ mode and no client-side business fallback.
 
 ### `shadow -> rust-canary`
 
-- compatibility inventory contains exactly 113 CLI leaves, 18 operations, 36
-  Gates, and 7 scanners;
+- compatibility inventory contains exactly 113 CLI leaves, 23 operations (18
+  migrated from the Python surface plus 5 `native-addition` entries with no
+  Python predecessor), 36 Gates, and 7 scanners;
 - mapped Rust owner and native/golden evidence exist for every entry used by the
   selected workspace;
 - T4 daemon/Hook/FlowRuntime/delegation/context contracts pass;
