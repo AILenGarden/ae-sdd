@@ -1107,8 +1107,9 @@ const TIER2_STORY_DOCUMENT: &str = "# Story\n\nAC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-
 ///
 /// A Tier 2 clean batch is only sealed once the deterministic final proof
 /// (`G-CODEPLAN-SRC`, `G-14`, `G-08`) evaluates PASS, which requires an approved
-/// plan carrying the full 14-row verification matrix, AC ids that the Story
-/// document actually declares, and source reads that exist on disk.
+/// plan whose verification matrix covers every AC the Story document declares
+/// (this fixture uses 14 rows for its 14 ACs; no fixed row count is required),
+/// and source reads that exist on disk.
 pub(super) fn install_tier2_review_prerequisites(
     harness: &Harness,
     work_item_id: &str,

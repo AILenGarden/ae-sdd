@@ -7,6 +7,11 @@ use super::{
     predicate::{ac_ids, story_document},
 };
 
+/// Plan completeness for G-08: the approved plan contract is fully spelled out
+/// (goal, changed paths, risks, source reads and a verification matrix whose
+/// rows all carry their boundary/command/expectation). The Story-AC coverage
+/// count is enforced by the predicate through `plan_story_aligned`, never by a
+/// hardcoded verification-row count here.
 pub(super) fn plan_contract_complete(plan: &Value) -> bool {
     nonempty_string(plan.get("goal"))
         && nonempty_array(plan.get("changedPaths"))
@@ -14,7 +19,7 @@ pub(super) fn plan_contract_complete(plan: &Value) -> bool {
             .get("verification")
             .and_then(Value::as_array)
             .is_some_and(|items| {
-                items.len() >= 14
+                !items.is_empty()
                     && items.iter().all(|item| {
                         ["id", "acId", "boundary", "command", "expected"]
                             .iter()
@@ -22,6 +27,12 @@ pub(super) fn plan_contract_complete(plan: &Value) -> bool {
                     })
             })
         && nonempty_array(plan.get("risks"))
+        && plan
+            .get("sourceReads")
+            .and_then(Value::as_array)
+            .is_some_and(|reads| {
+                !reads.is_empty() && reads.iter().all(|read| nonempty_string(Some(read)))
+            })
         && plan.get("approved").and_then(Value::as_bool) == Some(true)
 }
 

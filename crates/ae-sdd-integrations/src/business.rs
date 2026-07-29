@@ -11,7 +11,7 @@ use ae_sdd_domain::{
     AgentRole, ArtifactDigest, BootId, CompletionDigestSet, CompletionMilestone, DesignRoute,
     EventStoreId, FencingToken, GateOutcome, InputFingerprint, LeaseId, OperationId, ProcessPhase,
     ProjectKey, ProjectRelativePath, RequestId, ResultDigest, ScopedGrant, SessionId,
-    StateRevision, WorkItemId, WorkScale, WorkspaceId,
+    StateRevision, StoryId, WorkItemId, WorkScale, WorkspaceId,
 };
 use ae_sdd_execution::CapsuleBuildOutcome;
 use ae_sdd_flow::{
@@ -4194,7 +4194,59 @@ fn apply_mutation(
                 semantic.ok_or_else(|| schema_error("lifecycle plan was not prepared"))?,
             )?;
         }
-        OperationName::DocumentSave => {}
+        OperationName::DocumentSave => {
+            if state.get("entryNode").and_then(Value::as_str) == Some("ROUTE") {
+                let intent = request.request().payload["intent"]
+                    .as_str()
+                    .ok_or_else(|| schema_error("intent is required"))?
+                    .to_owned();
+                // The Story identity comes from the caller-supplied `docId`,
+                // never from the ROUTE state machine identity — binding
+                // `activeStory` to the state machine name made every
+                // Story-scoped gate resolve the ROUTE machine as its Story.
+                let story_binding = if intent == "STORY" {
+                    request.request().payload["docId"]
+                        .as_str()
+                        .filter(|doc_id| doc_id.starts_with("STORY-"))
+                        .and_then(|doc_id| {
+                            StoryId::new(doc_id).ok().map(|_| {
+                                // Best-effort: without an authoritative STORY
+                                // destination mapping the docPath binding is
+                                // skipped instead of failing the mutation.
+                                (doc_id.to_owned(), document_path(state, "STORY").ok())
+                            })
+                        })
+                } else {
+                    None
+                };
+                let object = root_state_object_mut(state)?;
+                let documents = object
+                    .entry("routeDocuments")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .ok_or_else(|| schema_error("routeDocuments must be an object"))?;
+                documents.insert(intent.clone(), Value::Bool(true));
+                if let Some((story_id, doc_path)) = story_binding {
+                    object.insert("activeStory".to_owned(), Value::String(story_id.clone()));
+                    if let Some(doc_path) = doc_path {
+                        let stories = object
+                            .entry("storyStates")
+                            .or_insert_with(|| json!({}))
+                            .as_object_mut()
+                            .ok_or_else(|| schema_error("storyStates must be an object"))?;
+                        let entry = stories
+                            .entry(story_id)
+                            .or_insert_with(|| json!({}))
+                            .as_object_mut()
+                            .ok_or_else(|| schema_error("storyStates entry must be an object"))?;
+                        entry.insert(
+                            "docPath".to_owned(),
+                            Value::String(doc_path.as_str().to_owned()),
+                        );
+                    }
+                }
+            }
+        }
         _ => return Err(schema_error("mutation operation is not implemented")),
     }
     Ok(())
@@ -4686,5 +4738,44 @@ mod tests {
             .expect_err("same revision with different content must fail closed");
 
         assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
+    }
+
+    #[test]
+    fn route_story_save_binds_active_story_from_the_doc_id() {
+        let request = OperationRequest {
+            operation: OperationName::DocumentSave,
+            workspace_id: Some(WorkspaceId::from_uuid(uuid::Uuid::from_u128(1))),
+            project_key: Some(ProjectKey::new("ae-sdd").expect("project key")),
+            work_item_id: Some(WorkItemId::new("ROUTE-TEST-001").expect("work item")),
+            session_id: Some(SessionId::from_uuid(uuid::Uuid::from_u128(2))),
+            lease_id: Some(LeaseId::from_uuid(uuid::Uuid::from_u128(3))),
+            fencing_token: Some(FencingToken::new(1)),
+            expected_revision: Some(StateRevision::new(2)),
+            idempotency_key: Some("route-save-story-doc".into()),
+            confirmation: None,
+            dry_run: false,
+            payload: json!({
+                "intent":"STORY",
+                "contentFile":"story-input.md",
+                "docId":"STORY-ROUTE-TEST-001",
+            }),
+        };
+        let request = ValidatedOperationRequest::validate(request).expect("valid Story save");
+        let mut state = json!({
+            "entryNode":"ROUTE",
+            "stateMachineName":"ROUTE-TEST-001",
+            "activeStory":null,
+            "routeDocuments":{},
+            "documentPaths":{"STORY":"ae-sdd-doc/Story/ROUTE-TEST-001.md"}
+        });
+
+        apply_mutation(&mut state, &request, None).expect("Story scope commits");
+
+        assert_eq!(state["routeDocuments"]["STORY"], true);
+        assert_eq!(state["activeStory"], "STORY-ROUTE-TEST-001");
+        assert_eq!(
+            state["storyStates"]["STORY-ROUTE-TEST-001"]["docPath"],
+            "ae-sdd-doc/Story/ROUTE-TEST-001.md"
+        );
     }
 }

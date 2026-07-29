@@ -67,7 +67,14 @@ pub(super) fn predicate_value(
         "document.task.exists" => document_exists(root, state, story.as_deref(), "Task"),
         "review.task.passed" => structured_status(state.get("taskReview"), "passed"),
         "coding_plan.exists" => plan.is_some_and(nonempty_object),
-        "coding_plan.fourteen_gates.complete" => plan.is_some_and(plan_contract_complete),
+        // Beyond the plan contract itself, an active Story forces Story-AC
+        // coverage: every AC the Story declares must appear in the plan
+        // verification matrix. Story-less routes (micro/small scale) skip the
+        // coverage check so they are not blocked by a document they never had.
+        "coding_plan.fourteen_gates.complete" => {
+            plan.is_some_and(plan_contract_complete)
+                && (story.is_none() || plan_story_aligned(root, state, plan, story.as_deref()))
+        }
         "http.scenario_manifest.valid" => plan.is_some_and(http_contract_valid),
         "test.evidence.exists" => structured_test_evidence(state, root),
         "coding.result.exists" => structured_coding_result(state),
@@ -256,13 +263,16 @@ fn memory_paths_consistent(root: &Path) -> bool {
         .is_some_and(|path| !Path::new(&path).is_absolute() && root.join(path).exists())
 }
 
+/// Extracts the AC ids a document declares. Accepts every `AC-` token whose
+/// remainder carries at least one digit, so both numeric (`AC-1`, `AC-001`)
+/// and descriptive (`AC-NAME-01`) conventions are honored; pure-letter prose
+/// such as `AC-DC` is not an id and stays excluded.
 pub(super) fn ac_ids(text: &str) -> BTreeSet<String> {
     text.split(|character: char| !character.is_ascii_alphanumeric() && character != '-')
         .filter(|token| {
-            token.starts_with("AC-")
-                && token[3..]
-                    .chars()
-                    .all(|character| character.is_ascii_digit())
+            token.strip_prefix("AC-").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().any(|c| c.is_ascii_digit())
+            })
         })
         .map(str::to_owned)
         .collect()

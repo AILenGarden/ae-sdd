@@ -7,7 +7,10 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use super::{AuthoritativeGateRuntime, gate_result_json};
+use super::{
+    AuthoritativeGateRuntime, contracts::plan_contract_complete, gate_result_json,
+    predicate::ac_ids,
+};
 
 fn workspace(root: &Path) -> BusinessWorkspace {
     BusinessWorkspace {
@@ -83,4 +86,138 @@ fn state_revision_change_invalidates_a_recorded_pass() {
         panic!("revision drift must return STALE");
     };
     assert!(stale.changed().contains(&FreshnessDimension::StateRevision));
+}
+
+fn verification_row(index: u32) -> Value {
+    json!({
+        "id":format!("V-{index:03}"),
+        "acId":format!("AC-{index}"),
+        "boundary":"unit",
+        "command":"cargo test",
+        "expected":"pass"
+    })
+}
+
+fn approved_plan(verification: Vec<Value>) -> Value {
+    json!({
+        "goal":"implement the story",
+        "changedPaths":["src/lib.rs"],
+        "verification":verification,
+        "risks":["fixture risk"],
+        "approved":true,
+        "sourceReads":["src/lib.rs"]
+    })
+}
+
+fn complete_plan() -> Value {
+    approved_plan((1..=9).map(verification_row).collect())
+}
+
+#[test]
+fn plan_contract_complete_accepts_nine_complete_verification_rows() {
+    // Regression: G-08 is a plan-completeness check, not a row count; a Story
+    // with fewer than fourteen ACs must still pass.
+    assert!(plan_contract_complete(&complete_plan()));
+}
+
+#[test]
+fn plan_contract_complete_rejects_an_empty_verification_matrix() {
+    let plan = approved_plan(Vec::new());
+    assert!(!plan_contract_complete(&plan));
+}
+
+#[test]
+fn plan_contract_complete_rejects_a_row_with_an_empty_field() {
+    let mut verification: Vec<Value> = (1..=9).map(verification_row).collect();
+    verification[3]["expected"] = json!("");
+    assert!(!plan_contract_complete(&approved_plan(verification)));
+}
+
+#[test]
+fn plan_contract_complete_rejects_an_unapproved_plan() {
+    let mut plan = complete_plan();
+    plan["approved"] = json!(false);
+    assert!(!plan_contract_complete(&plan));
+}
+
+#[test]
+fn plan_contract_complete_rejects_missing_or_blank_source_reads() {
+    let mut missing = complete_plan();
+    missing.as_object_mut().expect("plan").remove("sourceReads");
+    assert!(!plan_contract_complete(&missing));
+
+    let mut empty = complete_plan();
+    empty["sourceReads"] = json!([]);
+    assert!(!plan_contract_complete(&empty));
+
+    let mut blank = complete_plan();
+    blank["sourceReads"] = json!(["  "]);
+    assert!(!plan_contract_complete(&blank));
+}
+
+/// Installs a Story document declaring `acs` and points the state at it.
+fn install_story(root: &Path, acs: &str) {
+    let path = root.join("ae-sdd-doc/Story/STORY-001.md");
+    fs::create_dir_all(path.parent().expect("story parent")).expect("story directory");
+    fs::write(path, format!("# Story\n\n{acs}\n")).expect("story document");
+}
+
+fn story_state(plan: Value) -> Value {
+    json!({
+        "executionPlan":plan,
+        "storyStates":{"STORY-001":{"docPath":"ae-sdd-doc/Story/STORY-001.md"}}
+    })
+}
+
+#[test]
+fn g08_passes_with_nine_rows_covering_every_story_ac() {
+    let temp = TempDir::new().expect("temp");
+    install_story(temp.path(), "AC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-7 AC-8 AC-9");
+    write_state(temp.path(), 1, story_state(complete_plan()));
+
+    let result = runtime(&temp)
+        .evaluate("G-08", Duration::from_secs(1))
+        .expect("Gate evaluation");
+    assert!(matches!(result.outcome(), GateOutcome::Pass));
+}
+
+#[test]
+fn g08_fails_when_the_plan_misses_a_story_ac() {
+    let temp = TempDir::new().expect("temp");
+    install_story(
+        temp.path(),
+        "AC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-7 AC-8 AC-9 AC-10",
+    );
+    write_state(temp.path(), 1, story_state(complete_plan()));
+
+    let result = runtime(&temp)
+        .evaluate("G-08", Duration::from_secs(1))
+        .expect("Gate evaluation");
+    assert!(matches!(result.outcome(), GateOutcome::Fail(_)));
+}
+
+#[test]
+fn g08_skips_story_coverage_without_an_active_story() {
+    let temp = TempDir::new().expect("temp");
+    write_state(
+        temp.path(),
+        1,
+        json!({"activeStory":null, "executionPlan":complete_plan()}),
+    );
+
+    let result = runtime(&temp)
+        .evaluate("G-08", Duration::from_secs(1))
+        .expect("Gate evaluation");
+    assert!(matches!(result.outcome(), GateOutcome::Pass));
+}
+
+#[test]
+fn ac_ids_accepts_descriptive_and_numeric_suffixes() {
+    let ids = ac_ids("AC-1 AC-001 AC-NAME-01 AC-DC AC-");
+
+    assert!(ids.contains("AC-1"));
+    assert!(ids.contains("AC-001"));
+    assert!(ids.contains("AC-NAME-01"));
+    assert!(!ids.contains("AC-DC"));
+    assert_eq!(ids.len(), 3);
 }

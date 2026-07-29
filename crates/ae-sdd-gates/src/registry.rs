@@ -150,7 +150,7 @@ const GATES: [GateSpec; GATE_COUNT] = [
         name: "CodingPlan 14 门禁通过",
         severity: GateSeverity::Blocker,
         scope: "before coding execute",
-        pass_condition: "CodingPlan 14 gates are present",
+        pass_condition: "Approved CodingPlan has complete goal/paths/risks/source-reads and a verification row for every Story AC",
         failure_action: "BLOCK",
         rule: predicate("coding_plan.fourteen_gates.complete"),
     },
