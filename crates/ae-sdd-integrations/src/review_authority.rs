@@ -1987,7 +1987,6 @@ fn validate_child_authority<'a>(
         || attestation.physical_session_id != child.session_id
         || attestation.grant != child.grant
         || !boots.permits(&attestation.accepted_boot_id)
-        || (admission.requires_live_ttl() && attestation.expires_at_unix_ms <= now_ms)
     {
         return Err(attestation_error(
             "child session, delegation, and physical attestation do not strictly join",

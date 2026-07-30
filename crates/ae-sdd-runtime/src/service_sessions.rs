@@ -854,7 +854,10 @@ impl RuntimeService {
                         )
                     })?;
                 if attestation.accepted_boot_id != self.boot_id.to_string()
-                    || attestation.expires_at_unix_ms <= self.clock.now_unix_ms()
+                    || self
+                        .delegation
+                        .deadline_unix_ms(session_id, delegation_id)?
+                        <= self.clock.now_unix_ms()
                     || attestation.grant.normalized()? != projection.grant.normalized()?
                 {
                     return Err(RuntimeError::new(

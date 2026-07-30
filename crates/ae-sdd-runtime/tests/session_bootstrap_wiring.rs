@@ -456,6 +456,176 @@ fn a_new_host_event_refreshes_a_delegated_session_without_losing_attestation_or_
     assert!(attestation.expires_at_unix_ms > first.expires_at_unix_ms);
 }
 
+/// Regression: a delegated child session must remain reopenable after the
+/// physical attestation's accept-time TTL snapshot has expired, as long as the
+/// delegation is still `running` and within its own `deadline_unix_ms`. The
+/// attestation's `expires_at_unix_ms` is an immutable digest anchor; the
+/// delegation deadline and the live session TTL are the real liveness bounds.
+#[test]
+fn delegated_session_survives_expired_attestation_ttl_while_within_delegation_deadline() {
+    // 90s session TTL (default), 100s attestation TTL snapshot, 1_000_000ms
+    // delegation deadline -> deadline far outlives the attestation snapshot.
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut host = harness.connection(ClientKind::HostAdapter);
+    let mut host_register = params(
+        json!({"adapterId":"host-attest-expiry","capabilities":["create","attest"]}),
+        1_000,
+    );
+    host_register.capability_token = Some(harness.host_credential());
+    host_register.idempotency_key = Some("host-attest-expiry-register".to_owned());
+    let _ = harness.call(&mut host, RpcMethod::HostRegister, host_register);
+
+    let mut hook = harness.connection(ClientKind::Hook);
+    let workspace = register_workspace(&harness, &mut hook, "attest-expiry");
+    let root = support::open_root_session(
+        &harness,
+        &mut hook,
+        &workspace,
+        "root-attest-expiry",
+        "root-attest-expiry-external",
+        Some("WORK"),
+    );
+    let mut create = session_params(
+        &workspace,
+        &root,
+        "root-attest-expiry",
+        json!({
+            "childRole":"series",
+            "parentDelegationId":null,
+            "inputRevision":1,
+            "inputFingerprint":"a".repeat(64),
+            "deadlineUnixMs":1_000_000,
+            "adapterId":"host-attest-expiry",
+            "grant":{"operations":[],"capabilities":[],"paths":[]}
+        }),
+        1_000,
+    );
+    create.work_item_id = Some("WORK".to_owned());
+    create.idempotency_key = Some("attest-expiry-create".to_owned());
+    let created = harness.call(&mut hook, RpcMethod::DelegationCreate, create);
+    let delegation_id = created["result"]["delegationId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("delegation.create failed: {created}"))
+        .to_owned();
+
+    let action = harness.call(
+        &mut host,
+        RpcMethod::HostActionNext,
+        params(json!({"adapterId":"host-attest-expiry"}), 1_000),
+    );
+    let action = &action["result"];
+    let child_session_id = "00000000-0000-0000-0000-000000000601";
+    let mut ack = params(
+        json!({
+            "adapterId":"host-attest-expiry",
+            "ack":{
+                "ackId":"00000000-0000-0000-0000-000000000602",
+                "actionId":action["actionId"],
+                "commandSeq":action["commandSeq"],
+                "outcome":"accepted",
+                "hostTaskId":"host-attest-expiry-task",
+                "sessionId":child_session_id
+            }
+        }),
+        1_000,
+    );
+    ack.idempotency_key = Some("attest-expiry-ack".to_owned());
+    let acked = harness.call(&mut host, RpcMethod::HostActionAck, ack);
+    assert!(acked.get("result").is_some(), "{acked}");
+
+    // Accept with a 100s attestation TTL snapshot (capped by delegation
+    // deadline), strictly shorter than the delegation deadline above.
+    let mut accept = params(
+        json!({
+            "delegationId":delegation_id,
+            "claimId":"00000000-0000-0000-0000-000000000603",
+            "actionId":action["actionId"],
+            "childSessionId":child_session_id,
+            "expiresAtUnixMs":100_000
+        }),
+        1_000,
+    );
+    accept.workspace_id = Some(workspace.workspace_id.clone());
+    accept.work_item_id = Some("WORK".to_owned());
+    accept.idempotency_key = Some("attest-expiry-accept".to_owned());
+    let accepted = harness.call(&mut hook, RpcMethod::DelegationAccept, accept);
+    assert_eq!(accepted["result"]["status"], "running", "{accepted}");
+
+    let delegated_open = |key: &str| {
+        let mut open = params(
+            json!({
+                "externalKey":"attest-expiry-external",
+                "role":"series",
+                "engaged":false,
+                "delegationId":delegation_id
+            }),
+            1_000,
+        );
+        open.workspace_id = Some(workspace.workspace_id.clone());
+        open.agent_id = Some("series-attest-expiry".to_owned());
+        open.session_id = Some(child_session_id.to_owned());
+        open.work_item_id = Some("WORK".to_owned());
+        open.idempotency_key = Some(key.to_owned());
+        open
+    };
+
+    // First open lands the delegated session.
+    let first = harness.call(
+        &mut hook,
+        RpcMethod::SessionOpen,
+        delegated_open("attest-expiry-open-1"),
+    );
+    assert!(
+        first.get("result").is_some(),
+        "first delegated open failed: {first}"
+    );
+
+    // Advance the clock past the attestation's 100s TTL snapshot, but keep it
+    // well inside the delegation's 1_000_000ms deadline.
+    let now_past_attestation_ttl = 150_000;
+    harness.clock.set(now_past_attestation_ttl);
+
+    // Sanity: the durable attestation snapshot really is expired at this clock.
+    let expired_attestation = harness
+        .persistence
+        .list_identity_snapshots(RuntimeIdentityKind::Delegation)
+        .expect("typed delegation snapshots")
+        .into_iter()
+        .find_map(|snapshot| snapshot.attestation)
+        .expect("physical delegation attestation");
+    assert_eq!(expired_attestation.expires_at_unix_ms, 100_000);
+    assert!(
+        expired_attestation.expires_at_unix_ms <= now_past_attestation_ttl,
+        "attestation TTL snapshot must be expired by this point"
+    );
+
+    // Reopen must succeed: attestation TTL snapshot no longer gates live
+    // operations; the delegation deadline is the authoritative upper bound.
+    let reopened = harness.call(
+        &mut hook,
+        RpcMethod::SessionOpen,
+        delegated_open("attest-expiry-open-2"),
+    );
+    assert!(
+        reopened.get("result").is_some(),
+        "delegated session reopen must succeed after attestation TTL expired but delegation deadline is still live: {reopened}"
+    );
+
+    // Negative control: once the clock crosses the delegation deadline, the
+    // reopened session must be rejected (the deadline upper bound still bites).
+    harness.clock.set(1_000_001);
+    let past_deadline = harness.call(
+        &mut hook,
+        RpcMethod::SessionOpen,
+        delegated_open("attest-expiry-open-3"),
+    );
+    assert_eq!(
+        stable_error(&past_deadline),
+        "DELEGATION_ATTESTATION_FAILED",
+        "delegated session reopen after the delegation deadline must fail: {past_deadline}"
+    );
+}
+
 #[test]
 fn heartbeat_replay_returns_the_receipt_with_a_current_capability() {
     let harness = Harness::new(RuntimeConfig::default());

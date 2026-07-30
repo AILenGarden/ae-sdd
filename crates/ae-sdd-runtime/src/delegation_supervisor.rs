@@ -748,6 +748,32 @@ impl DelegationSupervisor {
         Ok(project_delegation(&record))
     }
 
+    /// Reads the delegation's absolute deadline, gated by lineage access control.
+    ///
+    /// The `deadline_unix_ms` is the authoritative liveness upper bound for a
+    /// running delegation. Unlike the physical attestation's `expires_at_unix_ms`
+    /// (which is an immutable, accept-time TTL snapshot frozen into the
+    /// attestation digest), the deadline represents the delegation's own
+    /// activity window. Live callers (session open, job submission, review
+    /// contribution) must check the deadline to admit renewal of the same
+    /// accepted delegation after the ancestor session TTL has been refreshed.
+    pub fn deadline_unix_ms(
+        &self,
+        requester_session_id: &str,
+        delegation_id: &str,
+    ) -> RuntimeResult<u64> {
+        let record = self.load(delegation_id)?;
+        if record.parent_session_id != requester_session_id
+            && record.child_session_id.as_deref() != Some(requester_session_id)
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::RoleOperationForbidden,
+                "session is outside this delegation lineage",
+            ));
+        }
+        Ok(record.deadline_unix_ms)
+    }
+
     /// Moves a non-completed delegation to a terminal cancellation state.
     pub fn cancel(
         &self,
