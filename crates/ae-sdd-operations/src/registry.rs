@@ -4,7 +4,7 @@ use ae_sdd_protocol::OperationScope;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub const OPERATION_COUNT: usize = 23;
+pub const OPERATION_COUNT: usize = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
@@ -27,10 +27,12 @@ pub enum OperationName {
     ReviewContribute,
     ReviewFinalize,
     ReviewRecord,
+    RouteDecide,
     StateNextActions,
     StateTransition,
     VerificationPlan,
     WorkItemComplete,
+    WorkItemCreate,
     WorkItemGet,
 }
 
@@ -54,10 +56,12 @@ impl OperationName {
         Self::ReviewContribute,
         Self::ReviewFinalize,
         Self::ReviewRecord,
+        Self::RouteDecide,
         Self::StateNextActions,
         Self::StateTransition,
         Self::VerificationPlan,
         Self::WorkItemComplete,
+        Self::WorkItemCreate,
         Self::WorkItemGet,
     ];
 
@@ -82,10 +86,12 @@ impl OperationName {
             Self::ReviewContribute => "review.contribute",
             Self::ReviewFinalize => "review.finalize",
             Self::ReviewRecord => "review.record",
+            Self::RouteDecide => "route.decide",
             Self::StateNextActions => "state.next_actions",
             Self::StateTransition => "state.transition",
             Self::VerificationPlan => "verification.plan",
             Self::WorkItemComplete => "workitem.complete",
+            Self::WorkItemCreate => "workitem.create",
             Self::WorkItemGet => "workitem.get",
         }
     }
@@ -180,6 +186,49 @@ const fn spec(
     }
 }
 
+/// Spec for an operation that runs before its Work Item exists.
+///
+/// Every other operation in this registry acts on an already-resolvable Work
+/// Item, so `spec()` hardcodes `requires_work_item: true`. Creation cannot: the
+/// Work Item is its output, not its input. Lease and revision are likewise
+/// Work-Item-level preconditions with nothing to attach to yet, so the guard
+/// that remains is idempotency, which makes a retried create return the first
+/// result instead of a second directory.
+const fn workspace_spec(
+    operation: OperationName,
+    writes: bool,
+    requires_idempotency: bool,
+    fields: &'static [FieldSpec],
+) -> OperationSpec {
+    OperationSpec {
+        operation,
+        scope: OperationScope::Workspace,
+        requires_workspace: true,
+        requires_work_item: false,
+        writes,
+        requires_lease: false,
+        requires_revision: false,
+        requires_idempotency,
+        requires_confirmation: false,
+        fields,
+    }
+}
+
+/// The Work Item's business name MAY arrive as the request-level `workItemId`;
+/// a bootstrap caller has no Work Item yet and omits it, so the daemon mints
+/// `{entryNode}-{8 lowercase hex}` instead. That is why `workitem.create` is
+/// workspace-scoped and the payload carries only what shapes the new state.
+const WORKITEM_CREATE: &[FieldSpec] = &[
+    field("entryNode", FieldKind::String, true),
+    field("storyName", FieldKind::String, false),
+];
+const ROUTE_DECIDE: &[FieldSpec] = &[
+    field("requestedIntent", FieldKind::String, true),
+    field("availableArtifacts", FieldKind::Array, false),
+    field("impactFacts", FieldKind::Array, true),
+    field("classificationConfidenceBps", FieldKind::Integer, true),
+    field("userApprovalRef", FieldKind::Object, false),
+];
 const DOCUMENT_RESOLVE: &[FieldSpec] = &[
     field("intent", FieldKind::String, true),
     field("docId", FieldKind::String, false),
@@ -426,6 +475,15 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         REVIEW_RECORD,
     ),
     spec(
+        OperationName::RouteDecide,
+        true,
+        true,
+        true,
+        true,
+        false,
+        ROUTE_DECIDE,
+    ),
+    spec(
         OperationName::StateNextActions,
         false,
         false,
@@ -440,7 +498,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         true,
         true,
         true,
-        true,
+        false,
         STATE_TRANSITION,
     ),
     spec(
@@ -461,6 +519,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         true,
         NO_FIELDS,
     ),
+    workspace_spec(OperationName::WorkItemCreate, true, true, WORKITEM_CREATE),
     spec(
         OperationName::WorkItemGet,
         false,

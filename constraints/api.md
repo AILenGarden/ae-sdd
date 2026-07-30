@@ -92,6 +92,7 @@
 | --- | --- | --- | --- |
 | runtime | `runtime.handshake`, `runtime.status`, `runtime.drain` | daemon runtime | lifecycle/admin 权限分离 |
 | workspace | `workspace.register`, `workspace.snapshot` | WorkspaceActor | canonical root + project identity 幂等 |
+| workitem | `workitem.create`, `workitem.get`, `workitem.complete` | WorkItemActor | `workitem.create` workspace-scoped：`requiresWorkItem=false, requiresIdempotency=true, writes=true`；`entryNode` 仅 PRD/DR/STORY（BUG/CONFIG 拒绝）；可省略 `workItemId`，由 daemon 铸造 `{entryNode}-{8 位小写 hex}`（如 `STORY-3f9a2c1e`）；成功后持久绑定 `session.current_work_item` 并安装 project context projection |
 | session/hook | `session.open`, `session.heartbeat`, `session.close`, `hook.user_prompt`, `hook.pre_tool`, `hook.post_tool`, `hook.stop` | SessionActor/policy | hookEventId 去重；engaged fail closed |
 | flow | `flow.snapshot`, `flow.next` | FlowRuntime | 只读 deterministic decision；role-aware |
 | delegation | `delegation.create`, `delegation.status`, `delegation.accept`, `delegation.report`, `delegation.collect`, `delegation.cancel` | DelegationService | role/lineage/grant/physical attestation |
@@ -104,7 +105,7 @@
 
 ## 五、写请求与并发前置条件
 
-operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/work_item/session/delegation/host）、`requiresWorkspace`, `requiresWorkItem`, `writes`, `requiresLease`, `requiresRevision`, `requiresIdempotency`, `requiresConfirmation`。字段前置条件由 registry 决定，不得由 method 名称、payload 是否出现或“所有 write”猜测。runtime/workspace/session bootstrap 不得被 Work Item 前置条件锁死。
+operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/work_item/session/delegation/host）、`requiresWorkspace`, `requiresWorkItem`, `writes`, `requiresLease`, `requiresRevision`, `requiresIdempotency`, `requiresConfirmation`。字段前置条件由 registry 决定，不得由 method 名称、payload 是否出现或“所有 write”猜测。runtime/workspace/session bootstrap 不得被 Work Item 前置条件锁死。`operation.execute` 的准入前置条件从 payload 的 `operation` 解析到该 TypedOperation 的 registry `OperationSpec`（registry-resolved admission），不再套用 method 级 blanket 默认值；未注册 operation 保持原 method 级 fail-closed 行为。
 
 | 字段 | 约束 |
 | --- | --- |
@@ -138,6 +139,8 @@ operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/wor
 - ChildResult 禁止包含 transcript、源码全文、完整 stdout/stderr 或完整系列文档；超限内容必须成为 hash-addressed artifact ref。
 - root ContextProjection 默认最大 64 KiB；`context.get` 根据 `contextRevision + digest` 返回 full/delta/no-change，role/scope 由 trusted session 派生。
 - `compact.request` 只有匹配 session/generation 的宿主 ACK 和 rehydrate 完成后返回 `context-restored`；request dispatched 不等于成功。
+- advisory compact 仅是流程节点建议：系列边界（Root→Series delegation collect 提交）时 `delegation.collect` 响应可携带 `compactAdvice`，`flow.next` 可返回 advisory 的 `suggest-compact` action；它不启动 compact 周期、不改变 contextGeneration，宿主可忽略。
+- active compact 仍只能经 `compact.request` 或认证宿主 token-pressure 触发并由宿主执行；advisory compact 不得作为 compact 已发生或已授权的证据。
 - `host.pressure_report` 只接受 authenticated adapter 为具备 `observe_context_pressure` capability 的 session 提交的单调 sampleSeq、contextGeneration、usedTokens、contextWindowTokens、source 与 observedAt。自动 compact 默认需要同 generation 连续 2 个样本达到 800 permille high watermark，低于 600 permille 才解除滞回，并有 300 秒 cooldown；阈值属于 versioned policy，可配置但必须进入 policyDigest。
 - 缺少可信 token telemetry 时 daemon 只能返回 pressure unknown/manual remediation，不能用 projection bytes 伪装 token 使用率或宣称已主动 compact。
 
@@ -169,3 +172,18 @@ operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/wor
 - 禁止 method 使用位置参数数组、动态字符串 map 或未版本化 `serde_json::Value` 代替 typed DTO。
 - 禁止 client 通过自报 role、session lineage、WorkItem binding 或 ACK outcome 获得权限。
 - 禁止 protocol minor 在未 negotiation 时改变已有字段语义。
+
+## Bootstrap activation and session recovery
+
+`workspace.register` always creates or resolves a `Shadow` workspace. It must
+never create or promote `RustCanary`. Exact `/ae-sdd` activation uses the
+existing `workspace.mode_transition` RPC with the strict Hook-only payload
+`{"bootstrapActivation":true}` and command confirmation. That branch permits
+only `Shadow -> RustCanary`, emits `workspace.bootstrap_activated`, and cannot
+select a target mode, bypass later parity, enter sole-writer mode, or reverse a
+transition. Admin migration retains its drained/parity-checked contract.
+
+Each Host Hook event reopens `session.open` with an idempotency identity scoped
+to the external session plus the Hook event. A retry of the same event replays;
+a later event commits a refreshed durable expiry and boot capability while
+preserving Work Item, role, delegation, grant, and physical attestation.

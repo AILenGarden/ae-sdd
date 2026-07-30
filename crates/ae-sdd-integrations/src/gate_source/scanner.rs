@@ -1,11 +1,13 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use ae_sdd_domain::GateKey;
+use ae_sdd_domain::ProjectRelativePath;
 use ae_sdd_gates::{
     GateFreshnessSource, GateInputError, GateInputSource, PredicateEvidence, PredicateKey,
 };
 use ae_sdd_scanners::{
-    ScanReport, ScanRequest, ScannerEngine, ScannerId, ScannerRegistry, resolve_scan_scope,
+    ScanReport, ScanRequest, ScannerEngine, ScannerId, ScannerRegistry, classify_formal_ra,
+    resolve_scan_scope,
 };
 
 use super::{
@@ -39,15 +41,40 @@ impl GateInputSource for ProjectGateSource {
         _key: &GateKey,
         scanner: ScannerId,
     ) -> Result<ScanReport, GateInputError> {
-        let scope =
-            resolve_scan_scope(&self.context.root, ScannerRegistry::get(scanner).scope, &[])
+        let paths = if is_ra_scanner(scanner) {
+            let located = self.context.load_state().map_err(|_| input_error())?;
+            let relative = located
+                .value
+                .pointer("/documentPaths/RA")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| GateInputError::new(code("SCANNER_SCOPE_EMPTY"), false))?;
+            let relative = ProjectRelativePath::new(relative.to_owned())
                 .map_err(|_| GateInputError::new(code("SCANNER_SCOPE_FAILED"), false))?;
-        let paths: Vec<_> = scope
-            .files
-            .into_iter()
-            .map(|(relative, _)| relative)
-            .filter(|relative| !relative.as_str().starts_with("apps/ae-sdd-monitor/"))
-            .collect();
+            if !classify_formal_ra(&relative).accepted && !is_route_ra_path(&relative) {
+                return Err(GateInputError::new(code("SCANNER_SCOPE_FAILED"), false));
+            }
+            vec![relative]
+        } else {
+            let located = self.context.load_state().map_err(|_| input_error())?;
+            let changed_paths: BTreeSet<_> = located
+                .value
+                .pointer("/executionPlan/changedPaths")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .collect();
+            resolve_scan_scope(&self.context.root, ScannerRegistry::get(scanner).scope, &[])
+                .map_err(|_| GateInputError::new(code("SCANNER_SCOPE_FAILED"), false))?
+                .files
+                .into_iter()
+                .map(|(relative, _)| relative)
+                .filter(|relative| {
+                    changed_paths.contains(relative.as_str())
+                        && !relative.as_str().starts_with("apps/ae-sdd-monitor/")
+                })
+                .collect()
+        };
         if paths.is_empty() {
             return Err(GateInputError::new(code("SCANNER_SCOPE_EMPTY"), false));
         }
@@ -57,6 +84,28 @@ impl GateInputSource for ProjectGateSource {
         )
         .map_err(|_| GateInputError::new(code("SCANNER_EXECUTION_FAILED"), false))
     }
+}
+
+fn is_route_ra_path(path: &ProjectRelativePath) -> bool {
+    path.as_str()
+        .strip_prefix("ae-sdd-doc/RA/ROUTE-")
+        .and_then(|name| name.strip_suffix(".md"))
+        .is_some_and(|key| {
+            key.len() == 8
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+}
+
+const fn is_ra_scanner(scanner: ScannerId) -> bool {
+    matches!(
+        scanner,
+        ScannerId::RaAuthenticity
+            | ScannerId::RaFlowViolation
+            | ScannerId::RaDepth
+            | ScannerId::RaImplementation
+    )
 }
 
 pub(super) struct ProjectGateFreshness {

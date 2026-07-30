@@ -1,7 +1,9 @@
 use std::{fs, str::FromStr};
 
+use ae_sdd_contracts::{EvidenceLedgerEventKind, EvidenceLedgerEventV1};
 use ae_sdd_domain::{
-    AgentRole, FencingToken, InputFingerprint, LeaseId, PolicyDigest, ProjectKey, SessionId,
+    AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, EvidenceId, FencingToken,
+    InputFingerprint, LeaseId, PolicyDigest, ProjectKey, ProjectRelativePath, SessionId,
     StateRevision, WorkItemId, WorkspaceId,
 };
 use ae_sdd_operations::{OperationName, OperationRequest, ValidatedOperationRequest};
@@ -27,8 +29,9 @@ mod review_authority;
 use persistence::SqliteRuntimePersistence;
 
 use review_authority::{
-    AuthenticatedCaller, authoritative_review_workspace_input_fingerprint, prepare_review_record,
-    review_projection_write_from_state, select_or_start_session, validate_clean_contribution_depth,
+    AuthenticatedCaller, authoritative_review_workspace_input_fingerprint, prepare_review_finalize,
+    prepare_review_record, review_projection_write_from_state, review_session_reuses_lineage,
+    select_or_start_session, validate_clean_contribution_depth, validate_finalized_review_evidence,
 };
 
 const WORK_ITEM: &str = "STORY-REVIEW-AUTHORITY-001";
@@ -61,6 +64,13 @@ fn request(session_id: SessionId, revision: u64, payload: Value) -> ValidatedOpe
         .expect("valid review request")
 }
 
+fn finalize_request(session_id: SessionId, revision: u64) -> ValidatedOperationRequest {
+    let mut request = operation_request(session_id, revision, json!({}));
+    request.operation = OperationName::ReviewFinalize;
+    request.idempotency_key = Some("review-authority-finalize-1".into());
+    ValidatedOperationRequest::validate(request).expect("valid review.finalize request")
+}
+
 fn state() -> Value {
     json!({
         "stateMachineName":"PRD-REVIEW-AUTHORITY-001",
@@ -75,6 +85,37 @@ fn state() -> Value {
             WORK_ITEM:{"phase":"test-running","currentPhase":"test-running"}
         }
     })
+}
+
+#[test]
+fn terminal_receipt_provenance_does_not_change_review_input() {
+    let fixture = Fixture::new();
+    let mut state = state();
+    let before = authoritative_review_workspace_input_fingerprint(&fixture.workspace, &state)
+        .expect("baseline review input");
+
+    state["toolsetReceiptRef"] = json!({
+        "toolsetJobId":"job-final",
+        "receiptId":"receipt-final",
+        "committedRevision":8
+    });
+    state["finalVerificationBinding"] = json!({
+        "reviewId":"review-final",
+        "sourceRevision":7,
+        "inputFingerprint":before.to_string(),
+        "rulesetFingerprint":"2222222222222222222222222222222222222222222222222222222222222222",
+        "policyDigest":POLICY,
+        "inventoryGeneration":3,
+        "toolsetJobId":"job-final",
+        "receiptId":"receipt-final"
+    });
+
+    assert_eq!(
+        authoritative_review_workspace_input_fingerprint(&fixture.workspace, &state)
+            .expect("receipt-bound review input"),
+        before,
+        "daemon-owned terminal receipt provenance must not invalidate its Review input"
+    );
 }
 
 struct Fixture {
@@ -159,6 +200,38 @@ impl Fixture {
         fs::create_dir_all(path.parent().expect("manifest parent")).expect("manifest directory");
         fs::write(path, serde_json::to_vec(&manifest).expect("manifest JSON"))
             .expect("manifest file");
+    }
+
+    fn write_finalized_evidence_authority(
+        &self,
+        input: InputFingerprint,
+        evidence_id: &str,
+    ) -> Value {
+        self.write_finalized_manifest(&input.to_string(), evidence_id);
+        let evidence_dir = self
+            ._root
+            .path()
+            .join(format!(".auto-engineering/{WORK_ITEM}/evidence"));
+        let event = EvidenceLedgerEventV1::new(
+            1,
+            EvidenceId::new(evidence_id).expect("evidence id"),
+            EvidenceLedgerEventKind::Recorded,
+            "review-authority",
+            input,
+            vec![],
+            None,
+        )
+        .expect("ledger event");
+        let mut ledger_bytes = event.canonical_json();
+        ledger_bytes.push(b'\n');
+        fs::write(evidence_dir.join("ledger.jsonl"), &ledger_bytes).expect("ledger file");
+        let manifest_bytes = fs::read(evidence_dir.join("manifest.json")).expect("manifest bytes");
+        json!({
+            "ledgerRef":format!(".auto-engineering/{WORK_ITEM}/evidence/ledger.jsonl"),
+            "ledgerDigest":format!("sha256:{}", ArtifactDigest::digest(&ledger_bytes)),
+            "manifestRef":format!(".auto-engineering/{WORK_ITEM}/evidence/manifest.json"),
+            "manifestDigest":format!("sha256:{}", ArtifactDigest::digest(&manifest_bytes))
+        })
     }
 }
 
@@ -337,11 +410,111 @@ fn review_projection_and_commit_metadata_do_not_drift_locked_input() {
     projected["inventoryGeneration"] = json!(3);
     projected["reviewSession"] = json!({"schemaVersion":"v2"});
     projected["review"] = json!({"status":"pending","batch":{"schemaVersion":"v2"}});
+    projected["evidenceAuthority"] = json!({
+        "ledgerRef":".auto-engineering/WORK-001/evidence/ledger.jsonl",
+        "ledgerDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifestRef":".auto-engineering/WORK-001/evidence/manifest.json",
+        "manifestDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    });
 
     assert_eq!(
         authoritative_review_workspace_input_fingerprint(&fixture.workspace, &projected)
             .expect("projected input fingerprints"),
         expected
+    );
+}
+
+#[test]
+fn lifecycle_transition_projection_does_not_drift_locked_input() {
+    let fixture = Fixture::new();
+    let mut before = state();
+    before["currentStep"] = json!("test-running");
+    before["completedSteps"] = json!(["coding"]);
+    before["prdState"] = lifecycle_projection("test-running", &["coding"]);
+    before["drState"] = lifecycle_projection("test-running", &["coding"]);
+    before["drState"]["storyStates"] = json!({
+        "STORY-NESTED":lifecycle_projection("test-running", &["coding"])
+    });
+    before["drStates"] = json!({
+        "DR-NESTED":{
+            "phase":"test-running",
+            "currentPhase":"test-running",
+            "currentStep":"test-running",
+            "completedSteps":["coding"],
+            "storyStates":{
+                "STORY-DEEP":lifecycle_projection("test-running", &["coding"])
+            }
+        }
+    });
+    before["storyStates"][WORK_ITEM]["currentStep"] = json!("test-running");
+    before["storyStates"][WORK_ITEM]["completedSteps"] = json!(["coding"]);
+    let expected = authoritative_review_workspace_input_fingerprint(&fixture.workspace, &before)
+        .expect("review input before lifecycle transition");
+
+    let mut after = before;
+    after["phase"] = json!("code-reviewed");
+    after["currentPhase"] = json!("code-reviewed");
+    after["currentStep"] = json!("code-reviewed");
+    after["completedSteps"] = json!(["coding", "test-running"]);
+    after["prdState"] = lifecycle_projection("code-reviewed", &["coding", "test-running"]);
+    after["drState"]["phase"] = json!("code-reviewed");
+    after["drState"]["currentPhase"] = json!("code-reviewed");
+    after["drState"]["currentStep"] = json!("code-reviewed");
+    after["drState"]["completedSteps"] = json!(["coding", "test-running"]);
+    after["drState"]["storyStates"]["STORY-NESTED"] =
+        lifecycle_projection("code-reviewed", &["coding", "test-running"]);
+    after["drStates"]["DR-NESTED"]["phase"] = json!("code-reviewed");
+    after["drStates"]["DR-NESTED"]["currentPhase"] = json!("code-reviewed");
+    after["drStates"]["DR-NESTED"]["currentStep"] = json!("code-reviewed");
+    after["drStates"]["DR-NESTED"]["completedSteps"] = json!(["coding", "test-running"]);
+    after["drStates"]["DR-NESTED"]["storyStates"]["STORY-DEEP"] =
+        lifecycle_projection("code-reviewed", &["coding", "test-running"]);
+    after["storyStates"][WORK_ITEM]["phase"] = json!("code-reviewed");
+    after["storyStates"][WORK_ITEM]["currentPhase"] = json!("code-reviewed");
+    after["storyStates"][WORK_ITEM]["currentStep"] = json!("code-reviewed");
+    after["storyStates"][WORK_ITEM]["completedSteps"] = json!(["coding", "test-running"]);
+
+    assert_eq!(
+        authoritative_review_workspace_input_fingerprint(&fixture.workspace, &after)
+            .expect("review input after lifecycle transition"),
+        expected,
+        "a permitted phase transition must not invalidate the Review authority it unlocks"
+    );
+}
+
+fn lifecycle_projection(phase: &str, completed_steps: &[&str]) -> Value {
+    json!({
+        "phase":phase,
+        "currentPhase":phase,
+        "currentStep":phase,
+        "completedSteps":completed_steps
+    })
+}
+
+#[test]
+fn semantic_lifecycle_like_object_still_drifts_locked_input() {
+    let fixture = Fixture::new();
+    let mut before = state();
+    before["executionPlan"]["lifecycleLike"] = json!({
+        "phase":"test-running",
+        "currentPhase":"test-running",
+        "currentStep":"test-running",
+        "completedSteps":["coding"]
+    });
+    let expected = authoritative_review_workspace_input_fingerprint(&fixture.workspace, &before)
+        .expect("review input before semantic change");
+
+    let mut after = before;
+    after["executionPlan"]["lifecycleLike"]["phase"] = json!("code-reviewed");
+    after["executionPlan"]["lifecycleLike"]["currentPhase"] = json!("code-reviewed");
+    after["executionPlan"]["lifecycleLike"]["currentStep"] = json!("code-reviewed");
+    after["executionPlan"]["lifecycleLike"]["completedSteps"] = json!(["coding", "test-running"]);
+
+    assert_ne!(
+        authoritative_review_workspace_input_fingerprint(&fixture.workspace, &after)
+            .expect("review input after semantic change"),
+        expected,
+        "lifecycle-shaped semantic data outside authoritative lifecycle paths remains reviewed"
     );
 }
 
@@ -453,6 +626,260 @@ fn clean_review_accepts_only_scoped_existing_paths_and_fresh_active_evidence() {
 }
 
 #[test]
+fn clean_review_rejects_manifest_resealed_outside_the_state_evidence_authority() {
+    let fixture = Fixture::new();
+    fixture.write_source("src/lib.rs", "pub fn value() -> u8 { 1 }\n");
+    let mut state = state();
+    let current = authoritative_review_workspace_input_fingerprint(&fixture.workspace, &state)
+        .expect("current input fingerprint");
+    let stale = InputFingerprint::digest(b"stale-evidence-input");
+    state["evidenceAuthority"] =
+        fixture.write_finalized_evidence_authority(stale, "ev-authority-bound");
+
+    let manifest_path = fixture._root.path().join(format!(
+        ".auto-engineering/{WORK_ITEM}/evidence/manifest.json"
+    ));
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("sealed manifest bytes"))
+            .expect("sealed manifest JSON");
+    manifest["entries"][0]["inputFingerprint"] = json!(current.to_string());
+    manifest["contentHash"] = json!(manifest_content_hash(&manifest));
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&manifest).expect("tampered manifest JSON"),
+    )
+    .expect("tampered manifest file");
+
+    let payload = json!({
+        "status":"passed",
+        "findings":[],
+        "reviewedPaths":["src/lib.rs"],
+        "evidenceIds":["ev-authority-bound"]
+    });
+    let error = validate_clean_contribution_depth(
+        &fixture.workspace,
+        &state,
+        WORK_ITEM,
+        payload.as_object().expect("payload object"),
+        current,
+    )
+    .expect_err("disk evidence must remain bound to state.evidenceAuthority");
+
+    assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
+}
+
+#[test]
+fn terminal_receipt_rejects_an_unfinalized_evidence_ledger() {
+    let fixture = Fixture::new();
+    fixture.write_source("src/lib.rs", "pub fn value() -> u8 { 1 }\n");
+    let mut state = state();
+    let input = authoritative_review_workspace_input_fingerprint(&fixture.workspace, &state)
+        .expect("current input fingerprint");
+    state["evidenceAuthority"] =
+        fixture.write_finalized_evidence_authority(input, "ev-unfinalized-ledger");
+
+    let error = validate_finalized_review_evidence(&fixture.workspace, &state, WORK_ITEM, input)
+        .expect_err("a terminal receipt requires a finalized ledger event");
+
+    assert_eq!(error.code(), StableErrorCode::GateBlocked);
+}
+
+#[test]
+fn terminal_receipt_rejects_a_tampered_artifact_snapshot() {
+    let fixture = Fixture::new();
+    fixture.write_source("src/lib.rs", "pub fn value() -> u8 { 1 }\n");
+    let mut state = state();
+    let input = authoritative_review_workspace_input_fingerprint(&fixture.workspace, &state)
+        .expect("current input fingerprint");
+    let evidence_dir = fixture
+        ._root
+        .path()
+        .join(format!(".auto-engineering/{WORK_ITEM}/evidence"));
+    let snapshot_relative =
+        format!(".auto-engineering/{WORK_ITEM}/evidence/artifacts/focused-green.log");
+    let snapshot_path = fixture._root.path().join(&snapshot_relative);
+    fs::create_dir_all(snapshot_path.parent().expect("snapshot parent"))
+        .expect("snapshot directory");
+    let snapshot_bytes = b"focused verification passed\n";
+    fs::write(&snapshot_path, snapshot_bytes).expect("snapshot file");
+    let snapshot_digest = ArtifactDigest::digest(snapshot_bytes);
+    let artifact = ArtifactRef::new(
+        ArtifactKind::new("focused-test").expect("artifact kind"),
+        ProjectRelativePath::new(snapshot_relative.clone()).expect("snapshot path"),
+        snapshot_digest,
+        snapshot_bytes.len() as u64,
+    );
+    let evidence_id = "ev-terminal-artifact";
+    let mut manifest = json!({
+        "schemaVersion":1,
+        "storyId":WORK_ITEM,
+        "entries":[{
+            "evidenceId":evidence_id,
+            "kind":"focused-test",
+            "inputFingerprint":input.to_string(),
+            "status":"active",
+            "exitCode":0,
+            "reusable":true,
+            "artifacts":[{
+                "path":snapshot_relative,
+                "snapshotPath":snapshot_relative,
+                "sha256":format!("sha256:{snapshot_digest}"),
+                "byteLength":snapshot_bytes.len()
+            }]
+        }]
+    });
+    manifest["contentHash"] = json!(manifest_content_hash(&manifest));
+    let manifest_bytes = serde_json::to_vec(&manifest).expect("manifest JSON");
+    fs::write(evidence_dir.join("manifest.json"), &manifest_bytes).expect("manifest file");
+    let recorded = EvidenceLedgerEventV1::new(
+        1,
+        EvidenceId::new(evidence_id).expect("evidence id"),
+        EvidenceLedgerEventKind::Recorded,
+        "terminal-artifact",
+        input,
+        vec![artifact.clone()],
+        None,
+    )
+    .expect("recorded event");
+    let finalized = EvidenceLedgerEventV1::new(
+        2,
+        EvidenceId::new("ev-terminal-finalized").expect("finalized id"),
+        EvidenceLedgerEventKind::Finalized,
+        "",
+        InputFingerprint::digest(&manifest_bytes),
+        vec![ArtifactRef::new(
+            ArtifactKind::new("evidence-manifest").expect("manifest kind"),
+            ProjectRelativePath::new(format!(
+                ".auto-engineering/{WORK_ITEM}/evidence/manifest.json"
+            ))
+            .expect("manifest path"),
+            ArtifactDigest::digest(&manifest_bytes),
+            manifest_bytes.len() as u64,
+        )],
+        Some(recorded.event_digest()),
+    )
+    .expect("finalized event");
+    let mut ledger_bytes = recorded.canonical_json();
+    ledger_bytes.push(b'\n');
+    ledger_bytes.extend(finalized.canonical_json());
+    ledger_bytes.push(b'\n');
+    fs::write(evidence_dir.join("ledger.jsonl"), &ledger_bytes).expect("ledger file");
+    state["evidenceAuthority"] = json!({
+        "ledgerRef":format!(".auto-engineering/{WORK_ITEM}/evidence/ledger.jsonl"),
+        "ledgerDigest":format!("sha256:{}", ArtifactDigest::digest(&ledger_bytes)),
+        "manifestRef":format!(".auto-engineering/{WORK_ITEM}/evidence/manifest.json"),
+        "manifestDigest":format!("sha256:{}", ArtifactDigest::digest(&manifest_bytes))
+    });
+
+    validate_finalized_review_evidence(&fixture.workspace, &state, WORK_ITEM, input)
+        .expect("valid finalized evidence");
+    fs::write(&snapshot_path, b"tampered\n").expect("tamper snapshot");
+    let error = validate_finalized_review_evidence(&fixture.workspace, &state, WORK_ITEM, input)
+        .expect_err("a tampered snapshot must fail closed");
+
+    assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
+}
+
+#[test]
+fn review_finalize_rejects_evidence_removed_after_a_pending_contribution() {
+    let fixture = Fixture::new();
+    fixture.write_source("src/lib.rs", "pub fn value() -> u8 { 1 }\n");
+    let mut state = state();
+    let input = authoritative_review_workspace_input_fingerprint(&fixture.workspace, &state)
+        .expect("input fingerprint");
+    state["evidenceAuthority"] =
+        fixture.write_finalized_evidence_authority(input, "ev-finalize-bound");
+    let policy = PolicyDigest::from_str(POLICY).expect("policy digest");
+    let ruleset = InputFingerprint::digest(
+        format!(
+            "ae-sdd-review-ruleset/v2\0{policy}\0{}",
+            fixture.workspace.inventory_generation
+        )
+        .as_bytes(),
+    );
+    let observed =
+        ae_sdd_contracts::review::ReviewTimestamp::new("2026-07-26T00:00:00Z".to_owned())
+            .expect("review timestamp");
+    let (review_session, remediation) = select_or_start_session(
+        None,
+        None,
+        ae_sdd_contracts::review::ReviewTier::Tier1,
+        ae_sdd_contracts::review::ReviewRepairClass::None,
+        WORK_ITEM,
+        session(10),
+        session(1),
+        input,
+        ruleset,
+        policy,
+        7,
+        fixture.workspace.inventory_generation,
+        None,
+        &observed,
+    )
+    .expect("active review session");
+    assert!(remediation.is_none());
+    state["reviewSession"] = serde_json::to_value(&review_session).expect("session projection");
+    state["review"] = json!({
+        "status":"pending",
+        "findings":[],
+        "pendingContributions":[{
+            "sourceAttemptId":"attempt-pending",
+            "reviewer":{
+                "agentRole":"reviewer",
+                "specialty":"general",
+                "grantedSpecialties":["general"],
+                "physicalSessionId":"00000000-0000-0000-0000-000000000020",
+                "rootSessionId":"00000000-0000-0000-0000-000000000001",
+                "delegationId":"10000000-0000-0000-0000-000000000020",
+                "lineageDepth":2,
+                "attestationRef":"delegation:reviewer",
+                "attestationDigest":"3333333333333333333333333333333333333333333333333333333333333333",
+                "specialtyGrantDigest":"3333333333333333333333333333333333333333333333333333333333333333"
+            },
+            "outcome":"clean",
+            "findings":[],
+            "reportDigest":"3333333333333333333333333333333333333333333333333333333333333333",
+            "contributionDigest":"4444444444444444444444444444444444444444444444444444444444444444",
+            "inputFingerprint":input.to_string(),
+            "rulesetFingerprint":ruleset.to_string()
+        }]
+    });
+    let request = finalize_request(session(1), 7);
+    let caller = AuthenticatedCaller::new("root-agent", session(1), AgentRole::Root);
+
+    prepare_review_finalize(
+        &fixture.workspace,
+        &state,
+        WORK_ITEM,
+        &request,
+        &caller,
+        &fixture.persistence,
+        POLICY,
+        fixture.workspace.inventory_generation,
+        &UtcTimestamp::now(),
+    )
+    .expect("review.finalize accepts the state-bound pending contribution");
+    fs::remove_file(fixture._root.path().join(format!(
+        ".auto-engineering/{WORK_ITEM}/evidence/manifest.json"
+    )))
+    .expect("remove manifest after contribution");
+    let error = prepare_review_finalize(
+        &fixture.workspace,
+        &state,
+        WORK_ITEM,
+        &request,
+        &caller,
+        &fixture.persistence,
+        POLICY,
+        fixture.workspace.inventory_generation,
+        &UtcTimestamp::now(),
+    )
+    .expect_err("review.finalize must fail closed after evidence removal");
+
+    assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
+}
+
+#[test]
 fn remediation_drift_starts_child_session_with_parent_and_incremented_counter() {
     let session: ae_sdd_contracts::review::ReviewSessionV2 = serde_json::from_value(json!({
         "schemaVersion":"v2",
@@ -517,6 +944,19 @@ fn remediation_drift_starts_child_session_with_parent_and_incremented_counter() 
 
     let drifted_input = InputFingerprint::digest(b"changed-input");
     let plan = InputFingerprint::digest(b"committed-plan");
+    assert!(
+        !review_session_reuses_lineage(
+            &session,
+            drifted_input,
+            InputFingerprint::from_str(
+                "2222222222222222222222222222222222222222222222222222222222222222",
+            )
+            .expect("ruleset"),
+            PolicyDigest::from_str(POLICY).expect("policy"),
+            3,
+        ),
+        "input drift must admit a freshly authenticated review lineage"
+    );
     let (child, remediation) = select_or_start_session(
         Some(evaluated.next_session().clone()),
         Some(evaluated.next_batch()),

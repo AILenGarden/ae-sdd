@@ -151,10 +151,24 @@ pub struct SessionResult {
 pub struct HookPayload {
     /// Session-unique Hook event identity.
     pub hook_event_id: String,
-    /// Monotonic turn sequence.
-    pub turn_seq: u64,
+    /// Monotonic turn sequence, required only alongside an explicit `turnId`.
+    ///
+    /// A Hook subprocess holds no durable state and cannot know the sequence its
+    /// session is on, so an omitted value asks the daemon to allocate the turn.
+    #[serde(default)]
+    pub turn_seq: Option<u64>,
     /// Host-specific bounded payload.
     pub host_payload: Value,
+    /// Optional client-held context cursor for delivery negotiation.
+    ///
+    /// When both cursor fields name the exact daemon revision/digest, the
+    /// Hook response may omit the projection body even on a first delivery;
+    /// absent or stale cursors change nothing.
+    #[serde(default)]
+    pub known_revision: Option<u64>,
+    /// Optional client-held projection digest for delivery negotiation.
+    #[serde(default)]
+    pub known_digest: Option<String>,
 }
 
 /// Strict `hostPayload.executionEvent` decode target.
@@ -253,6 +267,22 @@ pub struct HookResult {
     /// unbound events so old clients can ignore the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_directive: Option<ExecutionHookDirective>,
+    /// Context delivery kind (`full` or `no_change`) when the decision
+    /// evaluated a cached projection; absent when no projection exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_kind: Option<String>,
+    /// Digest of the projection the context decision is based on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_digest: Option<String>,
+    /// Turn this event was recorded under, allocated when the host omitted one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// Monotonic sequence of `turnId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_seq: Option<u64>,
+    /// Work Item the event was attributed to; absent until routing binds one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
 }
 
 /// Canonical idempotency receipt persisted before returning success.
@@ -757,6 +787,18 @@ pub struct HostPressurePayload {
     pub observed_at_unix_ms: u64,
 }
 
+/// Bounded asset reference: path, kind and content digest, never the body.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AssetRefWire {
+    /// Reference kind (for example `constraints-index` or `methodology-skill`).
+    pub kind: String,
+    /// Canonical project-relative path.
+    pub path: String,
+    /// Lowercase hex SHA-256 of the referenced content.
+    pub sha256: String,
+}
+
 /// Delegation creation payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -775,6 +817,12 @@ pub struct DelegationCreatePayload {
     pub adapter_id: String,
     /// Parent-requested child scope, validated and narrowed by the daemon.
     pub grant: crate::ScopedGrantWire,
+    /// Optional bounded briefing the child series starts with.
+    #[serde(default)]
+    pub briefing: Option<String>,
+    /// Optional bounded asset references (no bodies) for the child series.
+    #[serde(default)]
+    pub asset_refs: Option<Vec<AssetRefWire>>,
 }
 
 /// Child physical claim payload.
@@ -1020,5 +1068,80 @@ impl ExecutionCheckpointRecord {
                 discard: stale,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn hook_payload_accepts_absent_and_present_known_context_cursor() {
+        let bare: HookPayload =
+            serde_json::from_value(json!({"hookEventId":"event","turnSeq":1,"hostPayload":{}}))
+                .expect("a payload without the negotiation cursor still decodes");
+        assert_eq!(bare.known_revision, None);
+        assert_eq!(bare.known_digest, None);
+
+        let negotiated: HookPayload = serde_json::from_value(json!({
+            "hookEventId":"event",
+            "turnSeq":1,
+            "hostPayload":{},
+            "knownRevision":3,
+            "knownDigest":"a".repeat(64),
+        }))
+        .expect("the negotiation cursor decodes");
+        assert_eq!(negotiated.known_revision, Some(3));
+        assert_eq!(negotiated.known_digest, Some("a".repeat(64)));
+    }
+
+    #[test]
+    fn delegation_create_payload_stays_wire_compatible_and_carries_a_briefing() {
+        let legacy = json!({
+            "childRole":"series",
+            "parentDelegationId":null,
+            "inputRevision":1,
+            "inputFingerprint":"f".repeat(64),
+            "deadlineUnixMs":2_000,
+            "adapterId":"host-a",
+            "grant":{"operations":["operation.execute"]},
+        });
+        let decoded: DelegationCreatePayload =
+            serde_json::from_value(legacy).expect("the legacy payload still decodes");
+        assert!(decoded.briefing.is_none());
+        assert!(decoded.asset_refs.is_none());
+
+        let enriched = json!({
+            "childRole":"series",
+            "parentDelegationId":null,
+            "inputRevision":1,
+            "inputFingerprint":"f".repeat(64),
+            "deadlineUnixMs":2_000,
+            "adapterId":"host-a",
+            "grant":{"operations":["operation.execute"]},
+            "briefing":"implement the assigned slice only",
+            "assetRefs":[{
+                "kind":"constraints-index",
+                "path":"constraints/README.md",
+                "sha256":"b".repeat(64),
+            }],
+        });
+        let decoded: DelegationCreatePayload =
+            serde_json::from_value(enriched).expect("the enriched payload decodes");
+        assert_eq!(
+            decoded.briefing.as_deref(),
+            Some("implement the assigned slice only")
+        );
+        let refs = decoded.asset_refs.expect("asset references decode");
+        assert_eq!(
+            refs,
+            vec![AssetRefWire {
+                kind: "constraints-index".to_owned(),
+                path: "constraints/README.md".to_owned(),
+                sha256: "b".repeat(64),
+            }]
+        );
     }
 }

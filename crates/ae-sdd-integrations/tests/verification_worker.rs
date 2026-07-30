@@ -35,19 +35,7 @@ const WORK_ITEM_ID: &str = "STORY-TYPED-E2E";
 fn native_trusted_job_commits_pass_receipt_manifest_and_state_atomically() {
     let mut fixture = ToolsetFixture::new();
     let plan = verification_plan();
-    let receipt = plan
-        .receipt(
-            WorkerId::new("worker-c1").expect("worker"),
-            JobStatus::Pass,
-            Some(0),
-            EvidenceDigest::digest(b"stdout"),
-            EvidenceDigest::digest(b"stderr"),
-            10,
-            20,
-            false,
-            false,
-        )
-        .expect("PASS receipt");
+    let receipt = passing_receipt(&plan);
     let plan_for_operation = serde_json::to_value(&plan).expect("plan value");
 
     let completed = fixture.submit(plan, receipt, "toolset-pass-job");
@@ -62,7 +50,7 @@ fn native_trusted_job_commits_pass_receipt_manifest_and_state_atomically() {
         .load_job(job_id)
         .expect("job lookup")
         .expect("typed job");
-    assert_eq!(persisted.source_revision, Some(2));
+    assert_eq!(persisted.source_revision, Some(1));
     assert_eq!(
         persisted.mutation_id.as_deref(),
         completed["result"]["mutationId"].as_str()
@@ -81,7 +69,12 @@ fn native_trusted_job_commits_pass_receipt_manifest_and_state_atomically() {
             .expect("state JSON");
     assert_eq!(state["revision"], 2);
     assert_eq!(state["toolsetReceiptRef"]["toolsetJobId"], job_id);
-    assert_eq!(state["toolsetReceiptRef"]["sourceRevision"], 2);
+    assert_eq!(state["toolsetReceiptRef"]["sourceRevision"], 1);
+    assert_eq!(state["toolsetReceiptRef"]["committedRevision"], 2);
+    assert!(
+        state.get("finalVerificationBinding").is_none(),
+        "a regular toolset PASS must not claim terminal Review provenance"
+    );
 
     let artifact_ref = state["toolsetReceiptRef"]["artifactRef"]
         .as_str()
@@ -94,7 +87,8 @@ fn native_trusted_job_commits_pass_receipt_manifest_and_state_atomically() {
     );
     let snapshot: Value = serde_json::from_slice(&artifact_bytes).expect("snapshot JSON");
     assert_eq!(snapshot["toolsetJobId"], job_id);
-    assert_eq!(snapshot["sourceRevision"], 2);
+    assert_eq!(snapshot["sourceRevision"], 1);
+    assert_eq!(snapshot["committedRevision"], 2);
     assert_eq!(
         snapshot["identityDigest"],
         persisted
@@ -149,6 +143,49 @@ fn native_trusted_job_commits_pass_receipt_manifest_and_state_atomically() {
 }
 
 #[test]
+fn final_verification_receipt_accepts_review_records_after_its_source_revision() {
+    let mut fixture = ToolsetFixture::new();
+    let first_plan = verification_plan();
+    let first = fixture.submit(
+        first_plan.clone(),
+        passing_receipt(&first_plan),
+        "toolset-first-pass-job",
+    );
+    assert_eq!(first["status"], "pass", "{first}");
+
+    // A Tier 3 Review keeps its input revision while clean reviewer records
+    // advance only the Review projection. The final verification receipt must
+    // bind that source revision and commit against the later state safely.
+    let final_plan = verification_plan();
+    let completed = fixture.submit(
+        final_plan.clone(),
+        passing_receipt(&final_plan),
+        "toolset-final-review-pass-job",
+    );
+    assert_eq!(completed["status"], "pass", "{completed}");
+    assert_eq!(completed["result"]["sourceRevision"], 1);
+    assert_eq!(completed["result"]["revisionBefore"], 2);
+    assert_eq!(completed["result"]["revisionAfter"], 3);
+
+    let job_id = completed["jobId"].as_str().expect("job id");
+    let persisted = fixture
+        .harness
+        .persistence
+        .load_job(job_id)
+        .expect("job lookup")
+        .expect("typed job");
+    assert_eq!(persisted.source_revision, Some(1));
+
+    let state: Value =
+        serde_json::from_slice(&fs::read(&fixture.harness.state_path).expect("committed state"))
+            .expect("state JSON");
+    assert_eq!(state["revision"], 3);
+    assert_eq!(state["toolsetReceiptRef"]["toolsetJobId"], job_id);
+    assert_eq!(state["toolsetReceiptRef"]["sourceRevision"], 1);
+    assert_eq!(state["toolsetReceiptRef"]["committedRevision"], 3);
+}
+
+#[test]
 fn non_pass_receipt_is_bounded_audit_only_and_does_not_mutate_project() {
     let mut fixture = ToolsetFixture::new();
     let before_state = fs::read(&fixture.harness.state_path).expect("state before FAIL");
@@ -199,6 +236,17 @@ impl ToolsetFixture {
         let harness = Harness::new();
         let mut connection = harness.connection(ClientKind::Cli);
         let workspace = register_and_cut_over(&harness, &mut connection);
+        let mut state: Value = serde_json::from_slice(
+            &fs::read(&harness.state_path).expect("fixture state before source binding"),
+        )
+        .expect("fixture state JSON");
+        state["inputFingerprint"] =
+            json!(InputFingerprint::digest(b"c1 verification input").to_string());
+        fs::write(
+            &harness.state_path,
+            serde_json::to_vec_pretty(&state).expect("fixture state with source binding"),
+        )
+        .expect("write fixture source binding");
         let root = open_root(
             &harness,
             &mut connection,
@@ -206,7 +254,19 @@ impl ToolsetFixture {
             "toolset-root",
             "toolset-agent",
         );
-        let identity = identity(&workspace, &root, "toolset-agent");
+        let root_identity = identity(&workspace, &root, "toolset-agent");
+        // `verification.plan` is semantic work, so the fixture drives it (and
+        // the receipt job whose lease proof binds the same session) through a
+        // delegated author task, never through the root orchestrator.
+        let (author, _reviewer) = open_review_lineage(
+            &harness,
+            &mut connection,
+            &workspace,
+            &root_identity,
+            "general",
+            "toolset-lineage",
+        );
+        let identity = identity(&workspace, &author, "toolset-lineage-author-agent");
         let acquired = success(&invoke(
             &harness,
             &mut connection,
@@ -214,7 +274,7 @@ impl ToolsetFixture {
             "lease acquire",
             args(&[
                 "--owner",
-                "{\"role\":\"root\"}",
+                "{\"role\":\"task\"}",
                 "--ttl-seconds",
                 "300",
                 "--idempotency-key",
@@ -338,4 +398,19 @@ fn verification_plan() -> VerificationExecutionPlan {
         vec![step],
     )
     .expect("verification plan")
+}
+
+fn passing_receipt(plan: &VerificationExecutionPlan) -> VerificationReceipt {
+    plan.receipt(
+        WorkerId::new("worker-c1").expect("worker"),
+        JobStatus::Pass,
+        Some(0),
+        EvidenceDigest::digest(b"stdout"),
+        EvidenceDigest::digest(b"stderr"),
+        10,
+        20,
+        false,
+        false,
+    )
+    .expect("PASS receipt")
 }

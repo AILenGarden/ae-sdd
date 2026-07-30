@@ -1,5 +1,5 @@
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,12 +8,16 @@ use ae_sdd_client::{
     ClientError, DaemonClient, HookClient, HookInvocation, HookOutcome, LocalIpcTransport,
     default_endpoint_manifest, default_state_dir,
 };
+use ae_sdd_domain::ArtifactDigest;
 use ae_sdd_operations::{OperationName, validate_operation_payload};
 use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, HookDecision, PROTOCOL_VERSION_V1, RequestParams, RpcMethod,
+    WorkspaceMode,
 };
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
+
+mod diagnostics;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
@@ -39,6 +43,11 @@ enum TopLevel {
         command: RuntimeCommand,
     },
     /// Invoke an exact registered JSON-RPC method with a full RequestParams object.
+    ///
+    /// For `host.register`, omit `capabilityToken` from the params: the client
+    /// binds the boot-scoped credential from the endpoint manifest in memory and
+    /// discards any supplied value, so the secret never belongs in argv, stdin
+    /// JSON, or shell history.
     Rpc {
         /// Exact protocol method, for example `workspace.snapshot`.
         #[arg(long)]
@@ -49,6 +58,15 @@ enum TopLevel {
         /// Endpoint manifest override.
         #[arg(long)]
         manifest: Option<PathBuf>,
+        /// Handshake identity for exact HostAdapter RPCs; defaults to ordinary CLI.
+        #[arg(long, value_enum, default_value_t = RpcClientKind::Cli)]
+        client_kind: RpcClientKind,
+        /// Full host.register RequestParams JSON, required to bind the same
+        /// connection before a HostAdapter method other than host.register.
+        /// Omit `capabilityToken`: the client binds the boot-scoped credential
+        /// from the endpoint manifest in memory and discards any supplied value.
+        #[arg(long)]
+        host_register_json: Option<String>,
         /// End-to-end local IPC timeout.
         #[arg(long, default_value_t = 30_000)]
         timeout_ms: u64,
@@ -83,6 +101,21 @@ enum TopLevel {
     /// Resolve one frozen legacy leaf command without a fallback branch.
     #[command(external_subcommand)]
     Legacy(Vec<String>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum RpcClientKind {
+    Cli,
+    HostAdapter,
+}
+
+impl From<RpcClientKind> for ClientKind {
+    fn from(value: RpcClientKind) -> Self {
+        match value {
+            RpcClientKind::Cli => Self::Cli,
+            RpcClientKind::HostAdapter => Self::HostAdapter,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -154,6 +187,35 @@ enum RuntimeCommand {
         #[arg(long, default_value_t = 200)]
         tail: usize,
     },
+    /// Query the daemon diagnostic tracks.
+    Trace {
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Which track to read: `trace`, `ops` or `all`.
+        #[arg(long, default_value = "all")]
+        track: diagnostics::TrackSelector,
+        /// Only records newer than this window, such as `30m`, `2h` or `7d`.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only records belonging to this turn.
+        #[arg(long)]
+        turn: Option<String>,
+        /// Only records belonging to this Hook event.
+        #[arg(long)]
+        hook: Option<String>,
+        /// Only records whose method, operation or site contains this text.
+        #[arg(long)]
+        name: Option<String>,
+        /// Only records that failed.
+        #[arg(long)]
+        failed: bool,
+        /// Maximum records to print.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Output shape: `lines`, `count` or `gaps`.
+        #[arg(long, default_value = "lines")]
+        format: diagnostics::OutputFormat,
+    },
 }
 
 #[derive(Deserialize)]
@@ -181,11 +243,58 @@ struct HostHookEvent {
     last_assistant_message: Option<String>,
     #[serde(default)]
     event_id: Option<String>,
+    /// Host session identity, preferred when opening the daemon session.
+    #[serde(default, alias = "sessionId")]
+    session_id: Option<String>,
+    /// Host thread identity, used when the event has no session identity.
+    #[serde(default, alias = "threadId")]
+    thread_id: Option<String>,
+    /// Host conversation identity, used when neither session nor thread exists.
+    #[serde(default, alias = "conversationId")]
+    conversation_id: Option<String>,
+    /// Host working directory, used as the workspace project root.
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+/// Host-supplied identity a Hook can bind a typed session from.
+struct HostIdentity {
+    external_key: String,
+    project_root: PathBuf,
 }
 
 struct ParsedHookRequest {
     request: Option<HookRequest>,
     host_input: bool,
+    /// Present when the host event carried enough identity to self-bind.
+    host_identity: Option<HostIdentity>,
+}
+
+/// Minimal `workspace.register` projection the Hook binding needs.
+///
+/// `mode` is the typed protocol enum rather than a string so the engaged rule
+/// cannot drift from the wire names it is derived from.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceBinding {
+    workspace_id: String,
+    mode: WorkspaceMode,
+}
+
+/// Minimal `session.open` projection the Hook binding needs.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionBinding {
+    session_id: String,
+    capability_token: String,
+}
+
+/// Trusted identity a Hook request is sent under.
+struct HookBinding {
+    workspace_id: String,
+    agent_id: String,
+    session_id: String,
+    capability_token: String,
 }
 
 /// Request document accepted by `ae-sdd resume-approved-plan --request <json>`.
@@ -229,6 +338,8 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             method,
             params_json,
             manifest,
+            client_kind,
+            host_register_json,
             timeout_ms,
         } => {
             let method = RpcMethod::from_str(&method).map_err(|error| error.to_string())?;
@@ -241,16 +352,54 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             let params: RequestParams<Value> = read_json_argument(&params_json)?;
             let recover_runtime = manifest.is_none()
                 && !matches!(method, RpcMethod::RuntimeStatus | RpcMethod::RuntimeDrain);
-            let client = client(manifest, ClientKind::Cli, timeout_ms)?;
-            let result: Value = call_with_runtime_recovery(
-                &client,
-                method,
-                params,
-                recover_runtime,
-                ClientKind::Cli,
-                timeout_ms,
-            )
-            .await?;
+            let client_kind = ClientKind::from(client_kind);
+            let client = client(manifest, client_kind, timeout_ms)?;
+            let result: Value = if client_kind == ClientKind::HostAdapter
+                && method != RpcMethod::HostRegister
+            {
+                let register_json = host_register_json.ok_or_else(|| {
+                    "HostAdapter RPCs after host.register require --host-register-json so registration and the target method share one connection".to_owned()
+                })?;
+                let register: RequestParams<Value> = read_json_argument(&register_json)?;
+                if recover_runtime {
+                    client
+                        .call_after_with_ensure(
+                            RpcMethod::HostRegister,
+                            register,
+                            method,
+                            params,
+                            || async {
+                                ensure_default_runtime(client_kind, timeout_ms)
+                                    .await
+                                    .map(|_| ())
+                                    .map_err(|_| ClientError::DaemonUnavailable)
+                            },
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?
+                } else {
+                    client
+                        .call_after(RpcMethod::HostRegister, register, method, params)
+                        .await
+                        .map_err(|error| error.to_string())?
+                }
+            } else {
+                if host_register_json.is_some() {
+                    return Err(
+                        "--host-register-json is valid only for HostAdapter RPCs after host.register"
+                            .to_owned(),
+                    );
+                }
+                call_with_runtime_recovery(
+                    &client,
+                    method,
+                    params,
+                    recover_runtime,
+                    client_kind,
+                    timeout_ms,
+                )
+                .await?
+            };
             print_json(&result)
         }
         TopLevel::Hook {
@@ -274,19 +423,46 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             let raw: Value = read_json_argument(&request_json)?;
             let parsed = parse_hook_request(&method, raw)?;
             let recover_runtime = manifest.is_none();
-            if parsed.host_input && !host_binding_available() {
-                if recover_runtime {
-                    let _ = ensure_default_runtime(ClientKind::Hook, timeout_ms).await;
-                }
-                return print_json(&host_fail_closed(
-                    method,
-                    "trusted hook session binding is unavailable",
-                ));
-            }
-            let request = parsed.request.ok_or_else(|| {
+            let mut request = parsed.request.ok_or_else(|| {
                 "host Hook event could not be converted to a typed request".to_owned()
             })?;
             let client = client(manifest, ClientKind::Hook, timeout_ms)?;
+            if parsed.host_input && (parsed.host_identity.is_some() || !host_binding_available()) {
+                // The daemon must exist before a binding can be resolved from it.
+                if recover_runtime {
+                    let _ = ensure_default_runtime(ClientKind::Hook, timeout_ms).await;
+                }
+                let Some(identity) = parsed.host_identity.as_ref() else {
+                    let reason = format!(
+                        "{}; the host event carried no usable session, thread, or conversation id to bind from",
+                        missing_binding_reason()
+                    );
+                    report_hook_fail_closed(method, &reason);
+                    return print_json(&host_fail_closed(method, &reason));
+                };
+                let bootstrap_activation = is_bootstrap_activation(method, &request);
+                let hook_event_id =
+                    request.params.idempotency_key.as_deref().ok_or_else(|| {
+                        "host Hook event lacks its idempotency identity".to_owned()
+                    })?;
+                match bind_host_session(
+                    &client,
+                    identity,
+                    hook_event_id,
+                    bootstrap_activation,
+                    timeout_ms,
+                )
+                .await
+                {
+                    Ok(binding) => apply_hook_binding(&mut request, &binding),
+                    Err(error) => {
+                        let reason =
+                            format!("trusted hook session binding could not be created: {error}");
+                        report_hook_fail_closed(method, &reason);
+                        return print_json(&host_fail_closed(method, &reason));
+                    }
+                }
+            }
             let invocation = HookInvocation {
                 method,
                 params: request.params,
@@ -398,9 +574,14 @@ const RESUME_PROJECTION_KEYS: [&str; 6] = [
 /// object or misses a required key fails closed instead of fabricating a
 /// projection the daemon never produced.
 pub fn render_resume_projection(data: &Value) -> Result<Value, String> {
-    let object = data
+    let response = data
         .as_object()
         .ok_or_else(|| "execution.resume response must be a JSON object".to_owned())?;
+    let object = response
+        .get("data")
+        .unwrap_or(data)
+        .as_object()
+        .ok_or_else(|| "execution.resume response data must be a JSON object".to_owned())?;
     for key in RESUME_PROJECTION_KEYS {
         if !object.contains_key(key) {
             return Err(format!("execution.resume response is missing `{key}`"));
@@ -419,6 +600,7 @@ fn parse_hook_request(method: &RpcMethod, raw: Value) -> Result<ParsedHookReques
             .map(|request| ParsedHookRequest {
                 request: Some(request),
                 host_input: false,
+                host_identity: None,
             })
             .map_err(|error| error.to_string());
     }
@@ -459,14 +641,25 @@ fn parse_hook_request(method: &RpcMethod, raw: Value) -> Result<ParsedHookReques
     params.turn_id = std::env::var("AE_SDD_TURN_ID").ok();
     params.work_item_id = std::env::var("AE_SDD_WORK_ITEM_ID").ok();
     params.idempotency_key = Some(event_id.clone());
-    params.payload = json!({
-        "hookEventId": event_id,
-        "turnSeq": std::env::var("AE_SDD_TURN_SEQ")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(1),
-        "hostPayload": params.payload,
-    });
+    // `turnSeq` travels only with an explicit host `turnId`. A Hook subprocess
+    // holds no durable state, so a hardcoded sequence would collide with the
+    // session's real turn on every event after the first; an omitted pair asks
+    // the daemon to allocate the turn it alone can order.
+    let mut payload = serde_json::Map::new();
+    payload.insert("hookEventId".to_owned(), Value::String(event_id.clone()));
+    if params.turn_id.is_some() {
+        payload.insert(
+            "turnSeq".to_owned(),
+            json!(
+                std::env::var("AE_SDD_TURN_SEQ")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(1)
+            ),
+        );
+    }
+    payload.insert("hostPayload".to_owned(), params.payload);
+    params.payload = Value::Object(payload);
     let request = HookRequest {
         params,
         engaged: std::env::var("AE_SDD_HOOK_ENGAGED")
@@ -476,53 +669,353 @@ fn parse_hook_request(method: &RpcMethod, raw: Value) -> Result<ParsedHookReques
         offline_capability: std::env::var("AE_SDD_CAPABILITY_TOKEN").ok(),
         now_unix_ms: now,
     };
+    // A host that names its conversation and working directory carries enough
+    // identity for the Hook to bind a typed session itself. The project root
+    // falls back to the process directory, which for a Hook subprocess is the
+    // host's own workspace.
+    let host_identity = host_external_key(&event).and_then(|external_key| {
+        let project_root = event
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_dir().ok())?;
+        Some(HostIdentity {
+            external_key: external_key.to_owned(),
+            project_root,
+        })
+    });
     Ok(ParsedHookRequest {
         request: Some(request),
         host_input: true,
+        host_identity,
     })
 }
 
-fn host_binding_available() -> bool {
+fn is_bootstrap_activation(method: RpcMethod, request: &HookRequest) -> bool {
+    method == RpcMethod::HookUserPrompt
+        && request
+            .params
+            .payload
+            .pointer("/hostPayload/prompt")
+            .and_then(Value::as_str)
+            .is_some_and(|prompt| prompt.trim() == "/ae-sdd")
+}
+
+/// Returns a stable host identity without treating an empty higher-priority ID
+/// as a reason to discard a usable lower-priority one.
+fn host_external_key(event: &HostHookEvent) -> Option<&str> {
     [
-        "AE_SDD_WORKSPACE_ID",
-        "AE_SDD_AGENT_ID",
-        "AE_SDD_SESSION_ID",
-        "AE_SDD_CAPABILITY_TOKEN",
-        "AE_SDD_TURN_ID",
-        "AE_SDD_WORK_ITEM_ID",
+        event.session_id.as_deref(),
+        event.thread_id.as_deref(),
+        event.conversation_id.as_deref(),
     ]
     .into_iter()
-    .all(|name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty()))
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty())
+}
+
+/// Environment variables that together form a trusted host Hook binding.
+const HOST_BINDING_VARIABLES: [&str; 6] = [
+    "AE_SDD_WORKSPACE_ID",
+    "AE_SDD_AGENT_ID",
+    "AE_SDD_SESSION_ID",
+    "AE_SDD_CAPABILITY_TOKEN",
+    "AE_SDD_TURN_ID",
+    "AE_SDD_WORK_ITEM_ID",
+];
+
+/// Default Agent identity for a host that does not name one.
+const DEFAULT_HOOK_AGENT_ID: &str = "host-hook";
+
+/// Binds a trusted typed session for one host Hook event.
+///
+/// `SessionStart` cannot hand a binding to later Hooks: each Hook is a separate
+/// host subprocess and can never export variables back to its parent. So the
+/// binding is re-resolved per event from the daemon, which is cheap because both
+/// calls are idempotent — `workspace.register` by canonical root and
+/// `session.open` by external key both return the existing record.
+///
+/// `turnId` and `workItemId` are deliberately not synthesized here: the turn is
+/// a durable monotonic sequence only the daemon can allocate, and the Work Item
+/// is a routing decision. Inventing either would fabricate business state.
+///
+/// Work Item binding is daemon-owned end to end: the daemon binds the session
+/// server-side (e.g. after a bootstrap `workitem.create`), and re-opening the
+/// same external key without a `workItemId` preserves that binding
+/// (`service_sessions.rs` only overwrites `current_work_item` when the request
+/// carries one). This function must therefore never send a `workItemId` it
+/// invented on `session.open`.
+async fn bind_host_session(
+    client: &DaemonClient,
+    identity: &HostIdentity,
+    hook_event_id: &str,
+    bootstrap_activation: bool,
+    timeout_ms: u64,
+) -> Result<HookBinding, String> {
+    let project_key = project_key_for(&identity.project_root);
+    let mut register = empty_params(
+        json!({
+            "projectRoot": identity.project_root.display().to_string(),
+            "projectKey": project_key,
+        }),
+        timeout_ms,
+    );
+    // The event-scoped key keeps same-event retries idempotent while allowing a
+    // later Hook to resolve the workspace's current mode and generation. A
+    // root-only key would replay the original Shadow registration after
+    // bootstrap activation and feed a stale projection into session.open.
+    register.idempotency_key = Some(workspace_registration_idempotency_key(
+        &identity.project_root,
+        hook_event_id,
+    ));
+    let workspace: WorkspaceBinding = client
+        .call(RpcMethod::WorkspaceRegister, register)
+        .await
+        .map_err(|error| format!("workspace.register failed: {error}"))?;
+
+    let workspace = if requires_bootstrap_activation(bootstrap_activation, workspace.mode) {
+        let now = now_unix_ms();
+        let mut activate = empty_params(json!({"bootstrapActivation":true}), timeout_ms);
+        activate.workspace_id = Some(workspace.workspace_id.clone());
+        activate.idempotency_key = Some(hook_identity_idempotency_key(
+            "workspace-activation",
+            &identity.project_root.display().to_string(),
+        ));
+        activate.confirmation = Some(ConfirmationRef {
+            confirmation_id: hook_identity_idempotency_key(
+                "command-confirmation",
+                &format!("{}:/ae-sdd", identity.external_key),
+            ),
+            approved_by: "user:/ae-sdd".to_owned(),
+            approved_at: now.to_string(),
+        });
+        client
+            .call(RpcMethod::WorkspaceModeTransition, activate)
+            .await
+            .map_err(|error| format!("workspace bootstrap activation failed: {error}"))?
+    } else {
+        workspace
+    };
+
+    // The daemon rejects an `engaged` claim that disagrees with its own
+    // workspace policy, so it is derived from the registered mode, never chosen.
+    let engaged = matches!(
+        workspace.mode,
+        WorkspaceMode::RustCanary | WorkspaceMode::RustSoleWriter
+    );
+    let agent_id = std::env::var("AE_SDD_AGENT_ID")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_HOOK_AGENT_ID.to_owned());
+    let mut open = empty_params(
+        json!({
+            "externalKey": identity.external_key,
+            "role": "root",
+            "engaged": engaged,
+        }),
+        timeout_ms,
+    );
+    open.workspace_id = Some(workspace.workspace_id.clone());
+    open.agent_id = Some(agent_id.clone());
+    open.idempotency_key = Some(session_open_idempotency_key(
+        &identity.external_key,
+        hook_event_id,
+    ));
+    let session: SessionBinding = client
+        .call(RpcMethod::SessionOpen, open)
+        .await
+        .map_err(|error| format!("session.open failed: {error}"))?;
+
+    Ok(HookBinding {
+        workspace_id: workspace.workspace_id,
+        agent_id,
+        session_id: session.session_id,
+        capability_token: session.capability_token,
+    })
+}
+
+/// Derives a stable project key from a workspace root.
+///
+/// A project key admits only `[A-Za-z0-9._:-]`, must start alphanumeric, and is
+/// bounded to 64 bytes. Every other byte is folded to `-`; long leaf names keep
+/// a readable prefix and a canonical-root digest suffix so truncation cannot
+/// collapse distinct workspaces.
+fn project_key_for(root: &Path) -> String {
+    let name = root
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut key: String = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || ".:-_".contains(character) {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if !key
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+    {
+        key.insert_str(0, "ws");
+    }
+    if key.len() <= 64 {
+        return key;
+    }
+
+    let digest = ArtifactDigest::digest(root.display().to_string().as_bytes()).to_string();
+    key.truncate(31);
+    format!("{key}-{}", &digest[..32])
+}
+
+/// Produces a stable identity-transition key within the runtime's 128-byte
+/// contract, even when the host identity itself occupies its full 128 bytes.
+fn hook_identity_idempotency_key(namespace: &str, identity: &str) -> String {
+    format!(
+        "hook-{namespace}-{}",
+        ArtifactDigest::digest(identity.as_bytes())
+    )
+}
+
+fn session_open_idempotency_key(external_key: &str, hook_event_id: &str) -> String {
+    hook_identity_idempotency_key("session", &format!("{external_key}\0{hook_event_id}"))
+}
+
+fn requires_bootstrap_activation(requested: bool, mode: WorkspaceMode) -> bool {
+    requested && mode == WorkspaceMode::Shadow
+}
+
+fn workspace_registration_idempotency_key(root: &Path, hook_event_id: &str) -> String {
+    hook_identity_idempotency_key("workspace", &format!("{}\0{hook_event_id}", root.display()))
+}
+
+/// Applies a freshly created binding to the Hook request.
+///
+/// The capability doubles as the offline proof so a daemon that dies between the
+/// binding and the Hook call still reaches the signed fail-closed path instead
+/// of an unbound one. `turnId` and `workItemId` stay absent: the daemon
+/// allocates the turn and resolves the Work Item from the session binding.
+fn apply_hook_binding(request: &mut HookRequest, binding: &HookBinding) {
+    request.params.workspace_id = Some(binding.workspace_id.clone());
+    request.params.agent_id = Some(binding.agent_id.clone());
+    request.params.session_id = Some(binding.session_id.clone());
+    request.params.capability_token = Some(binding.capability_token.clone());
+    request.offline_capability = Some(binding.capability_token.clone());
+}
+
+fn host_binding_available() -> bool {
+    missing_binding_variables(|name| std::env::var(name).ok()).is_empty()
+}
+
+/// Returns the binding variables the host did not inject, in registry order.
+///
+/// The resolver is injected so the rule is testable without mutating
+/// process-global environment state from concurrent tests.
+fn missing_binding_variables<F>(resolve: F) -> Vec<&'static str>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    HOST_BINDING_VARIABLES
+        .into_iter()
+        .filter(|name| !resolve(name).is_some_and(|value| !value.trim().is_empty()))
+        .collect()
+}
+
+/// Names the absent binding inputs so an unbound host event is diagnosable.
+///
+/// The generic phrasing alone cannot distinguish "the host injects nothing" from
+/// "one variable is missing", which is the difference between a broken host
+/// adapter and a single missing field.
+fn missing_binding_reason() -> String {
+    binding_reason(&missing_binding_variables(|name| std::env::var(name).ok()))
+}
+
+fn binding_reason(missing: &[&str]) -> String {
+    format!(
+        "trusted hook session binding is unavailable: missing {}",
+        missing.join(", ")
+    )
+}
+
+/// Writes one fail-closed diagnostic to stderr.
+///
+/// `additionalContext` is injected verbatim into the Agent's context, so the
+/// cause cannot travel on stdout without polluting the conversation. stderr is
+/// the host's debug channel and is never treated as Hook output.
+fn report_hook_fail_closed(method: RpcMethod, reason: &str) {
+    eprintln!("ae-sdd: {} fail-closed: {reason}", method.as_str());
+}
+
+/// Formats the stderr note for a Work Item the daemon bound during the Hook.
+///
+/// stdout carries the fixed per-method host JSON contract, so a daemon-minted
+/// binding cannot be added there; the note keeps it observable on the debug
+/// channel in the same style as `report_hook_fail_closed`.
+fn hook_work_item_note(method: RpcMethod, outcome: &HookOutcome) -> Option<String> {
+    outcome.work_item_id.as_deref().map(|work_item_id| {
+        format!(
+            "ae-sdd: {} bound workItemId: {work_item_id}",
+            method.as_str()
+        )
+    })
 }
 
 fn host_fail_closed(method: RpcMethod, reason: &str) -> Value {
     match method {
         RpcMethod::HookPreTool => json!({"decision":"deny","reason":reason}),
         RpcMethod::HookStop => json!({"decision":"block","reason":reason}),
-        RpcMethod::HookUserPrompt => json!({"additionalContext":""}),
-        RpcMethod::HookPostTool => json!({"decision":"allow"}),
+        // `additionalContext` stays empty so a failure never becomes Agent
+        // context; the sibling `reason` carries the cause for hosts that log
+        // the raw Hook response.
+        RpcMethod::HookUserPrompt => json!({"additionalContext":"","reason":reason}),
+        RpcMethod::HookPostTool => json!({"decision":"allow","reason":reason}),
         _ => json!({"decision":"deny","reason":reason}),
     }
 }
 
 fn print_host_outcome(method: RpcMethod, outcome: &HookOutcome) -> Result<(), String> {
+    let reason = outcome
+        .error_code
+        .map_or_else(|| "".to_owned(), |code| code.as_str().to_owned());
+    // An offline outcome carrying a stable code is a fail-closed decision the
+    // daemon never confirmed. Its cause belongs on stderr for every method,
+    // including the two whose host contract has no visible reason field.
+    if outcome.offline && !reason.is_empty() {
+        report_hook_fail_closed(method, &reason);
+    }
+    // A daemon-minted Work Item binding (e.g. after a bootstrap
+    // `workitem.create`) is observable on stderr only; the host JSON contract
+    // below keeps its exact shape either way.
+    if let Some(note) = hook_work_item_note(method, outcome) {
+        eprintln!("{note}");
+    }
     let value = match method {
         RpcMethod::HookPreTool => json!({
             "decision": if outcome.decision == HookDecision::Deny { "deny" } else { "allow" },
-            "reason": outcome.error_code.map_or_else(|| "".to_owned(), |code| code.as_str().to_owned()),
+            "reason": reason,
         }),
         RpcMethod::HookStop => json!({
             "decision": if outcome.decision == HookDecision::Block { "block" } else { "allow" },
-            "reason": outcome.error_code.map_or_else(|| "".to_owned(), |code| code.as_str().to_owned()),
+            "reason": reason,
         }),
         RpcMethod::HookUserPrompt => {
             let context = outcome.context.as_ref().map_or_else(
                 || "".to_owned(),
                 |value| serde_json::to_string(value).unwrap_or_default(),
             );
-            json!({"additionalContext": context.chars().take(65_536).collect::<String>()})
+            json!({
+                "additionalContext": context.chars().take(65_536).collect::<String>(),
+                "reason": reason,
+            })
         }
-        RpcMethod::HookPostTool => json!({"decision":"allow"}),
+        RpcMethod::HookPostTool => json!({"decision":"allow","reason":reason}),
         _ => host_fail_closed(method, "unsupported host Hook method"),
     };
     print_json(&value)
@@ -757,7 +1250,47 @@ async fn runtime(command: RuntimeCommand) -> Result<(), String> {
             }
             Ok(())
         }
+        RuntimeCommand::Trace {
+            state_dir,
+            track,
+            since,
+            turn,
+            hook,
+            name,
+            failed,
+            limit,
+            format,
+        } => {
+            let directory = state_dir
+                .map(Ok)
+                .unwrap_or_else(default_state_dir)
+                .map_err(|error| error.to_string())?;
+            let since_ms = match since {
+                Some(window) => {
+                    let span = diagnostics::parse_window(&window)?;
+                    Some(current_unix_ms()?.saturating_sub(span))
+                }
+                None => None,
+            };
+            let query = diagnostics::Query {
+                since_ms,
+                turn,
+                hook,
+                name,
+                failed,
+                limit,
+            };
+            diagnostics::run(&directory, track, format, &query)
+        }
     }
+}
+
+/// Returns the current wall clock in epoch milliseconds.
+fn current_unix_ms() -> Result<i64, String> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock is before the Unix epoch".to_owned())?;
+    i64::try_from(elapsed.as_millis()).map_err(|_| "system clock is out of range".to_owned())
 }
 
 async fn start_daemon(
@@ -954,4 +1487,377 @@ fn now_unix_ms() -> u64 {
         .map_or(0, |duration| {
             duration.as_millis().try_into().unwrap_or(u64::MAX)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_can_negotiate_the_host_adapter_client_kind_explicitly() {
+        let arguments = Arguments::try_parse_from([
+            "ae-sdd",
+            "rpc",
+            "--method",
+            "host.register",
+            "--params-json",
+            "{}",
+            "--client-kind",
+            "host-adapter",
+            "--host-register-json",
+            "{}",
+        ])
+        .expect("host adapter client kind parses");
+        let TopLevel::Rpc {
+            client_kind,
+            host_register_json,
+            ..
+        } = arguments.command
+        else {
+            panic!("rpc command expected");
+        };
+        assert_eq!(client_kind, RpcClientKind::HostAdapter);
+        assert_eq!(host_register_json.as_deref(), Some("{}"));
+    }
+
+    #[test]
+    fn a_binding_is_available_only_when_every_variable_carries_a_value() {
+        assert!(
+            missing_binding_variables(|name| Some(format!("{name}-value"))).is_empty(),
+            "a fully injected binding has nothing missing"
+        );
+        assert_eq!(
+            missing_binding_variables(|_| None),
+            HOST_BINDING_VARIABLES.to_vec(),
+            "an uninjected host reports every variable, not a generic failure"
+        );
+        // Whitespace is not a binding: a host that exports an empty variable
+        // must not be treated as trusted.
+        assert_eq!(
+            missing_binding_variables(|name| Some(if name == "AE_SDD_TURN_ID" {
+                "   ".to_owned()
+            } else {
+                "value".to_owned()
+            })),
+            vec!["AE_SDD_TURN_ID"]
+        );
+    }
+
+    #[test]
+    fn the_fail_closed_reason_names_the_absent_variables() {
+        let reason = binding_reason(&missing_binding_variables(|_| None));
+        for name in HOST_BINDING_VARIABLES {
+            assert!(
+                reason.contains(name),
+                "{name} must appear in the diagnostic reason: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_project_key_stays_within_the_identifier_alphabet() {
+        assert_eq!(project_key_for(Path::new(r"D:\Item\ae-sdd")), "ae-sdd");
+        // Spaces and other bytes outside the alphabet fold to `-`.
+        assert_eq!(
+            project_key_for(Path::new(r"C:\work\my project (v2)")),
+            "my-project--v2-"
+        );
+        // A key must start alphanumeric, so an unusable leading byte is
+        // prefixed rather than dropped, which would collide across roots.
+        assert_eq!(project_key_for(Path::new("/srv/.hidden")), "ws.hidden");
+        for key in [
+            project_key_for(Path::new("/srv/.hidden")),
+            project_key_for(Path::new(r"C:\work\my project (v2)")),
+        ] {
+            assert!(
+                key.chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric()),
+                "{key} must start alphanumeric"
+            );
+            assert!(
+                key.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || ".:-_".contains(c)),
+                "{key} must stay inside the identifier alphabet"
+            );
+            assert!(key.len() <= 64);
+        }
+    }
+
+    #[test]
+    fn long_project_names_stay_in_domain_bounds_without_colliding() {
+        let shared = "a".repeat(96);
+        let first = project_key_for(Path::new(&format!("{shared}-first")));
+        let second = project_key_for(Path::new(&format!("{shared}-second")));
+
+        assert!(
+            first.len() <= 64,
+            "ProjectKey is capped at 64 bytes: {first}"
+        );
+        assert!(
+            second.len() <= 64,
+            "ProjectKey is capped at 64 bytes: {second}"
+        );
+        assert_ne!(
+            first, second,
+            "the canonical root digest disambiguates long names"
+        );
+    }
+
+    #[test]
+    fn maximum_external_session_keys_produce_bounded_idempotency_keys() {
+        let maximum_external_key = "s".repeat(128);
+        let first = hook_identity_idempotency_key("session", &maximum_external_key);
+        let second = hook_identity_idempotency_key("session", &format!("{}t", "s".repeat(127)));
+
+        assert!(
+            first.len() <= 128,
+            "identity key exceeds runtime bound: {first}"
+        );
+        assert_ne!(
+            first, second,
+            "different external identities must not collide"
+        );
+    }
+
+    #[test]
+    fn each_hook_event_gets_a_refreshable_session_open_receipt() {
+        let first = session_open_idempotency_key("host-session", "event-1");
+        let retry = session_open_idempotency_key("host-session", "event-1");
+        let later = session_open_idempotency_key("host-session", "event-2");
+
+        assert_eq!(first, retry, "one Hook request must retry idempotently");
+        assert_ne!(
+            first, later,
+            "a later Hook event must commit a refreshed durable session after-image"
+        );
+        assert!(later.len() <= 128);
+    }
+
+    #[test]
+    fn repeated_ae_sdd_skips_activation_after_workspace_enrollment() {
+        assert!(requires_bootstrap_activation(true, WorkspaceMode::Shadow));
+        assert!(!requires_bootstrap_activation(
+            true,
+            WorkspaceMode::RustCanary
+        ));
+        assert!(!requires_bootstrap_activation(
+            true,
+            WorkspaceMode::RustSoleWriter
+        ));
+        assert!(!requires_bootstrap_activation(false, WorkspaceMode::Shadow));
+    }
+
+    #[test]
+    fn each_hook_event_refreshes_the_current_workspace_registration_projection() {
+        let root = Path::new(r"D:\Item\ae-sdd");
+        let first = workspace_registration_idempotency_key(root, "event-1");
+        let retry = workspace_registration_idempotency_key(root, "event-1");
+        let later = workspace_registration_idempotency_key(root, "event-2");
+
+        assert_eq!(first, retry, "one Hook request must retry idempotently");
+        assert_ne!(
+            first, later,
+            "a later Hook event must resolve the current workspace mode and generation"
+        );
+        assert!(later.len() <= 128);
+    }
+
+    #[test]
+    fn host_identity_accepts_codex_session_thread_and_conversation_ids() {
+        for (field, value) in [
+            ("session_id", "session-snake"),
+            ("sessionId", "session-camel"),
+            ("thread_id", "thread-snake"),
+            ("threadId", "thread-camel"),
+            ("conversation_id", "conversation-snake"),
+            ("conversationId", "conversation-camel"),
+        ] {
+            let mut event = serde_json::Map::from_iter([
+                ("hook_event_name".to_owned(), json!("user_prompt_submit")),
+                ("prompt".to_owned(), json!("/ae-sdd")),
+                ("cwd".to_owned(), json!(r"D:\\Item\\ae-sdd")),
+            ]);
+            event.insert(field.to_owned(), json!(value));
+            let parsed = parse_hook_request(&RpcMethod::HookUserPrompt, Value::Object(event))
+                .unwrap_or_else(|error| panic!("{field} must parse: {error}"));
+            assert_eq!(
+                parsed
+                    .host_identity
+                    .as_ref()
+                    .map(|identity| identity.external_key.as_str()),
+                Some(value),
+                "{field} must bootstrap the same trusted session identity"
+            );
+        }
+
+        let parsed = parse_hook_request(
+            &RpcMethod::HookUserPrompt,
+            json!({
+                "hook_event_name":"user_prompt_submit",
+                "prompt":"/ae-sdd",
+                "cwd":r"D:\\Item\\ae-sdd",
+                "session_id":"session",
+                "thread_id":"thread",
+                "conversation_id":"conversation",
+            }),
+        )
+        .expect("a multi-identity host event parses");
+        assert_eq!(
+            parsed
+                .host_identity
+                .as_ref()
+                .map(|identity| identity.external_key.as_str()),
+            Some("session"),
+            "session identity takes precedence over thread and conversation"
+        );
+    }
+
+    #[test]
+    fn only_the_exact_ae_sdd_prompt_requests_bootstrap_enrollment() {
+        let exact = parse_hook_request(
+            &RpcMethod::HookUserPrompt,
+            json!({
+                "hook_event_name":"user_prompt_submit",
+                "prompt":"/ae-sdd",
+                "cwd":r"D:\Item\ae-sdd",
+                "session_id":"session",
+            }),
+        )
+        .expect("exact command parses");
+        let ordinary = parse_hook_request(
+            &RpcMethod::HookUserPrompt,
+            json!({
+                "hook_event_name":"user_prompt_submit",
+                "prompt":"implement the story",
+                "cwd":r"D:\Item\ae-sdd",
+                "session_id":"session",
+            }),
+        )
+        .expect("ordinary prompt parses");
+        let prefixed = parse_hook_request(
+            &RpcMethod::HookUserPrompt,
+            json!({
+                "hook_event_name":"user_prompt_submit",
+                "prompt":"/ae-sdd extra",
+                "cwd":r"D:\Item\ae-sdd",
+                "session_id":"session",
+            }),
+        )
+        .expect("prefixed command parses");
+
+        assert!(is_bootstrap_activation(
+            RpcMethod::HookUserPrompt,
+            exact.request.as_ref().expect("request")
+        ));
+        assert!(!is_bootstrap_activation(
+            RpcMethod::HookUserPrompt,
+            ordinary.request.as_ref().expect("request")
+        ));
+        assert!(!is_bootstrap_activation(
+            RpcMethod::HookUserPrompt,
+            prefixed.request.as_ref().expect("request")
+        ));
+    }
+
+    /// A binding must never invent a turn or a Work Item: the turn is a durable
+    /// monotonic sequence only the daemon can order, and the Work Item is a
+    /// routing decision.
+    #[test]
+    fn applying_a_binding_sets_identity_but_never_turn_or_work_item() {
+        let mut request = HookRequest {
+            params: empty_params(json!({}), 250),
+            engaged: true,
+            offline_capability: None,
+            now_unix_ms: 0,
+        };
+        let binding = HookBinding {
+            workspace_id: "workspace-1".to_owned(),
+            agent_id: "agent-1".to_owned(),
+            session_id: "session-1".to_owned(),
+            capability_token: "capability-1".to_owned(),
+        };
+
+        apply_hook_binding(&mut request, &binding);
+
+        assert_eq!(request.params.workspace_id.as_deref(), Some("workspace-1"));
+        assert_eq!(request.params.agent_id.as_deref(), Some("agent-1"));
+        assert_eq!(request.params.session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            request.params.capability_token.as_deref(),
+            Some("capability-1")
+        );
+        // The capability doubles as the offline proof so a daemon that dies
+        // after binding still reaches the signed fail-closed path.
+        assert_eq!(request.offline_capability.as_deref(), Some("capability-1"));
+        assert!(request.params.turn_id.is_none());
+        assert!(request.params.work_item_id.is_none());
+    }
+
+    /// A daemon-bound Work Item must be observable without polluting stdout:
+    /// the host JSON contract shape is fixed per method, so the binding is
+    /// reported as one stderr diagnostic line, mirroring the fail-closed
+    /// diagnostics style.
+    #[test]
+    fn a_bound_work_item_is_a_stderr_note_never_host_output() {
+        let mut outcome = HookOutcome {
+            engaged: true,
+            decision: HookDecision::Allow,
+            context: None,
+            event_seq: 41,
+            offline: false,
+            error_code: None,
+            turn_id: Some("turn-7".to_owned()),
+            turn_seq: Some(7),
+            work_item_id: Some("WI-20260728-bootstrap".to_owned()),
+        };
+
+        let note = hook_work_item_note(RpcMethod::HookPostTool, &outcome)
+            .expect("a daemon-bound Work Item must be reported");
+        assert!(
+            note.contains("WI-20260728-bootstrap"),
+            "the note must name the bound Work Item: {note}"
+        );
+
+        outcome.work_item_id = None;
+        assert!(
+            hook_work_item_note(RpcMethod::HookPostTool, &outcome).is_none(),
+            "an outcome without a binding stays silent"
+        );
+    }
+
+    /// The host contract per method is a safety boundary. `user_prompt` must
+    /// keep an empty `additionalContext` so a failure never becomes Agent
+    /// context, while still exposing its cause on a sibling field.
+    #[test]
+    fn host_fail_closed_keeps_each_host_contract_and_exposes_the_reason() {
+        let reason = "binding unavailable";
+        let cases = [
+            (RpcMethod::HookPreTool, Some("deny")),
+            (RpcMethod::HookStop, Some("block")),
+            (RpcMethod::HookPostTool, Some("allow")),
+            (RpcMethod::HookUserPrompt, None),
+        ];
+
+        for (method, decision) in cases {
+            let value = host_fail_closed(method, reason);
+            assert_eq!(
+                value["reason"], reason,
+                "{method:?} must expose its fail-closed cause"
+            );
+            match decision {
+                Some(expected) => assert_eq!(value["decision"], expected, "{method:?}"),
+                None => {
+                    assert_eq!(
+                        value["additionalContext"], "",
+                        "a fail-closed prompt must inject no context"
+                    );
+                    assert!(
+                        value.get("decision").is_none(),
+                        "user_prompt has no host decision field"
+                    );
+                }
+            }
+        }
+    }
 }

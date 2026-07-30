@@ -51,6 +51,7 @@ pub struct TestBusiness {
     pub operation_delay_ms: AtomicU64,
     pub projection_bytes: AtomicUsize,
     pub pass_guard: AtomicUsize,
+    pub series_completed_calls: AtomicUsize,
     persistence: Mutex<Option<Arc<MemoryPersistence>>>,
 }
 
@@ -61,6 +62,7 @@ impl Default for TestBusiness {
             operation_delay_ms: AtomicU64::new(0),
             projection_bytes: AtomicUsize::new(0),
             pass_guard: AtomicUsize::new(0),
+            series_completed_calls: AtomicUsize::new(0),
             persistence: Mutex::new(None),
         }
     }
@@ -79,13 +81,24 @@ impl BusinessOperationPort for TestBusiness {
     fn execute(
         &self,
         _method: RpcMethod,
-        _params: &RequestParams<Value>,
+        params: &RequestParams<Value>,
         _workspace: Option<&BusinessWorkspace>,
     ) -> RuntimeResult<Value> {
         self.operation_calls.fetch_add(1, Ordering::AcqRel);
         let delay = self.operation_delay_ms.load(Ordering::Acquire);
         if delay > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+        // `workitem.create` is Workspace-scoped: the caller cannot name the
+        // Work Item it creates, so the business authority mints the business
+        // key and returns it in the result, echoing an explicit name when one
+        // was supplied.
+        if params.payload.get("operation").and_then(Value::as_str) == Some("workitem.create") {
+            let work_item_id = params
+                .work_item_id
+                .clone()
+                .unwrap_or_else(|| "WORK-MINTED".to_owned());
+            return Ok(json!({"ok":true,"data":{"workItemId":work_item_id}}));
         }
         Ok(json!({"ok":true}))
     }
@@ -139,6 +152,17 @@ impl BusinessOperationPort for TestBusiness {
         _arguments: &Value,
     ) -> RuntimeResult<Value> {
         Ok(json!({"outcome":"PASS"}))
+    }
+
+    fn record_series_completed(
+        &self,
+        _workspace: &BusinessWorkspace,
+        _work_item_id: &str,
+        _session_id: &str,
+        _idempotency_key: &str,
+    ) -> RuntimeResult<()> {
+        self.series_completed_calls.fetch_add(1, Ordering::AcqRel);
+        Ok(())
     }
 
     fn validate_delegation_artifacts(
@@ -330,6 +354,33 @@ pub fn register_workspace(
         request,
     )))
     .expect("workspace result decodes")
+}
+
+pub fn canary_workspace(harness: &Harness, suffix: &str) -> WorkspaceResult {
+    let mut connection = harness.connection(ClientKind::Admin);
+    let workspace = register_workspace(harness, &mut connection, suffix);
+    let confirmation = || ae_sdd_protocol::ConfirmationRef {
+        confirmation_id: format!("confirmation-{suffix}"),
+        approved_by: "user".to_owned(),
+        approved_at: "2026-01-01T00:00:00Z".to_owned(),
+    };
+    let mut drain = params(json!({"stop":false}), 1_000);
+    drain.idempotency_key = Some(format!("drain-{suffix}"));
+    drain.confirmation = Some(confirmation());
+    result(&harness.call(&mut connection, RpcMethod::RuntimeDrain, drain));
+    let mut transition = params(
+        parity_transition_payload(WorkspaceMode::RustCanary, 1_000),
+        1_000,
+    );
+    transition.workspace_id = Some(workspace.workspace_id.clone());
+    transition.idempotency_key = Some(format!("mode-{suffix}"));
+    transition.confirmation = Some(confirmation());
+    serde_json::from_value(result(&harness.call(
+        &mut connection,
+        RpcMethod::WorkspaceModeTransition,
+        transition,
+    )))
+    .expect("canary workspace result decodes")
 }
 
 pub fn open_root_session(

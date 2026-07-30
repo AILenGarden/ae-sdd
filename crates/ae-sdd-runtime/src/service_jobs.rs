@@ -61,7 +61,7 @@ fn job_identity_requirements(entrypoint: &str) -> JobIdentityRequirements {
 impl RuntimeService {
     pub(super) fn job_submit(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let workspace_id = require(&params.workspace_id, "workspaceId")?.to_owned();
-        let payload: JobSubmitPayload = decode_value(params.payload.clone())?;
+        let mut payload: JobSubmitPayload = decode_value(params.payload.clone())?;
         if payload.entrypoint.is_empty()
             || payload.entrypoint.len() > 128
             || payload.deadline_unix_ms <= self.clock.now_unix_ms()
@@ -69,6 +69,7 @@ impl RuntimeService {
         {
             return Err(schema_error("job entrypoint or deadline is invalid"));
         }
+        bind_finalized_receipt_lease(&payload.entrypoint, params, &mut payload.arguments)?;
         let identity = self.bind_job_identity(params, &payload.entrypoint)?;
         let session_id = identity.as_ref().map(|binding| binding.session_id.as_str());
         let key = require_idempotency(params)?;
@@ -605,6 +606,31 @@ fn assert_job_work_item(job: &RuntimeJobRecord, requested: Option<&str>) -> Runt
     }
 }
 
+fn bind_finalized_receipt_lease(
+    entrypoint: &str,
+    params: &RequestParams<Value>,
+    arguments: &mut Value,
+) -> RuntimeResult<()> {
+    if entrypoint != "toolset.receipt.record" || arguments.get("finalizedEvidence").is_none() {
+        return Ok(());
+    }
+    let lease_id = params
+        .lease_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| schema_error("finalized receipt job requires leaseId"))?;
+    let fencing_token = params
+        .fencing_token
+        .filter(|value| *value > 0)
+        .ok_or_else(|| schema_error("finalized receipt job requires a positive fencingToken"))?;
+    let object = arguments
+        .as_object_mut()
+        .ok_or_else(|| schema_error("finalized receipt arguments must be an object"))?;
+    object.insert("leaseId".to_owned(), Value::String(lease_id.to_owned()));
+    object.insert("fencingToken".to_owned(), json!(fencing_token));
+    Ok(())
+}
+
 fn job_source_binding(
     entrypoint: &str,
     params: &RequestParams<Value>,
@@ -613,22 +639,32 @@ fn job_source_binding(
     if !matches!(entrypoint, "toolset.required" | "toolset.receipt.record") {
         return Ok((None, None));
     }
-    let source_revision = params
+    let expected_revision = params
         .expected_revision
         .ok_or_else(|| schema_error("toolset job requires expectedRevision"))?;
-    if entrypoint == "toolset.receipt.record"
-        && arguments.get("sourceRevision").and_then(Value::as_u64) != Some(source_revision)
-    {
-        return Err(schema_error(
-            "toolset receipt sourceRevision does not match expectedRevision",
-        ));
-    }
+    let receipt_binding = arguments.get("finalizedEvidence").unwrap_or(arguments);
+    let source_revision = if entrypoint == "toolset.receipt.record" {
+        let declared = receipt_binding
+            .get("sourceRevision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| schema_error("toolset receipt sourceRevision is required"))?;
+        if arguments.get("finalizedEvidence").is_none() && declared != expected_revision {
+            return Err(schema_error(
+                "toolset receipt sourceRevision does not match expectedRevision",
+            ));
+        }
+        declared
+    } else {
+        expected_revision
+    };
     let input_fingerprint = if entrypoint == "toolset.required" {
         arguments.get("inputFingerprint")
     } else {
-        arguments
-            .get("plan")
-            .and_then(|plan| plan.get("inputFingerprint"))
+        receipt_binding.get("inputFingerprint").or_else(|| {
+            arguments
+                .get("plan")
+                .and_then(|plan| plan.get("inputFingerprint"))
+        })
     }
     .and_then(Value::as_str)
     .filter(|value| is_lower_hex_digest(value))
@@ -709,12 +745,12 @@ fn apply_project_receipt(record: &mut RuntimeJobRecord, value: &Value) -> Runtim
             "projectReceiptDigest must be canonical sha256 hex",
         ));
     }
-    let committed_revision = value
-        .get("revisionAfter")
-        .or_else(|| value.get("sourceRevision"))
+    let source_revision = value
+        .get("sourceRevision")
+        .or_else(|| value.get("revisionAfter"))
         .and_then(Value::as_u64)
         .ok_or_else(|| schema_error("toolset PASS result lacks committed sourceRevision"))?;
-    record.source_revision = Some(committed_revision);
+    record.source_revision = Some(source_revision);
     record.mutation_id = Some(mutation_id.to_owned());
     record.receipt_locator = Some(receipt_locator.to_owned());
     record.project_receipt_digest = Some(project_receipt_digest.to_owned());
@@ -734,4 +770,47 @@ fn is_lower_hex_digest(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finalized_receipt_job_binds_the_authenticated_outer_lease() {
+        let mut params = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: None,
+            agent_id: None,
+            session_id: None,
+            capability_token: None,
+            turn_id: None,
+            work_item_id: None,
+            lease_id: Some("trusted-lease".to_owned()),
+            fencing_token: Some(17),
+            expected_revision: None,
+            idempotency_key: None,
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: Value::Null,
+        };
+        let mut arguments = json!({
+            "finalizedEvidence": {"sourceRevision": 1},
+            "leaseId": "forged-lease",
+            "fencingToken": 99,
+        });
+
+        bind_finalized_receipt_lease("toolset.receipt.record", &params, &mut arguments)
+            .expect("outer lease binds");
+
+        assert_eq!(arguments["leaseId"], "trusted-lease");
+        assert_eq!(arguments["fencingToken"], 17);
+
+        params.lease_id = None;
+        assert!(
+            bind_finalized_receipt_lease("toolset.receipt.record", &params, &mut arguments)
+                .is_err(),
+            "the daemon-owned final receipt route requires an outer lease"
+        );
+    }
 }

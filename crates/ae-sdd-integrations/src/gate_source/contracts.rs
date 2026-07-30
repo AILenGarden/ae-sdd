@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
+use ae_sdd_domain::{ArtifactDigest, ProjectRelativePath};
 use serde_json::Value;
 
 use super::{
@@ -103,6 +104,9 @@ pub(super) fn structured_test_evidence(state: &Value, root: &Path) -> bool {
             })
     }) || (state.get("evidenceFinalized").and_then(Value::as_bool) == Some(true)
         && evidence_manifest_exists(root))
+        || state
+            .get("evidenceAuthority")
+            .is_some_and(|authority| evidence_authority_complete(authority, root))
 }
 
 pub(super) fn structured_coding_result(state: &Value) -> bool {
@@ -113,6 +117,56 @@ pub(super) fn structured_coding_result(state: &Value) -> bool {
             value.is_object()
                 && (nonempty_string(value.get("status")) || nonempty_array(value.get("artifacts")))
         })
+        || state.get("executionRuntime").is_some_and(|runtime| {
+            runtime.get("activeSliceStatus").and_then(Value::as_str) == Some("completed")
+                && authority_projection_complete(runtime, "capsuleRef", "capsuleDigest")
+                && authority_projection_complete(runtime, "ledgerRef", "ledgerDigest")
+        })
+}
+
+fn authority_projection_complete(authority: &Value, path: &str, digest: &str) -> bool {
+    authority
+        .get(path)
+        .and_then(Value::as_str)
+        .is_some_and(|path| ProjectRelativePath::new(path.to_owned()).is_ok())
+        && authority
+            .get(digest)
+            .and_then(Value::as_str)
+            .is_some_and(valid_authority_digest)
+}
+
+fn evidence_authority_complete(authority: &Value, root: &Path) -> bool {
+    if !authority_file_complete(authority, root, "manifestRef", "manifestDigest") {
+        return false;
+    }
+    match (
+        authority.get("ledgerRef").and_then(Value::as_str),
+        authority.get("ledgerDigest").and_then(Value::as_str),
+    ) {
+        (None, None) => true,
+        (Some(_), Some(_)) => authority_file_complete(authority, root, "ledgerRef", "ledgerDigest"),
+        _ => false,
+    }
+}
+
+fn authority_file_complete(authority: &Value, root: &Path, path: &str, digest: &str) -> bool {
+    let Some(path) = authority.get(path).and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(expected) = authority
+        .get(digest)
+        .and_then(Value::as_str)
+        .filter(|digest| valid_authority_digest(digest))
+    else {
+        return false;
+    };
+    safe_document_path(root, path)
+        && fs::read(root.join(path))
+            .is_ok_and(|bytes| expected == format!("sha256:{}", ArtifactDigest::digest(bytes)))
+}
+
+fn valid_authority_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(valid_digest)
 }
 
 pub(super) fn traceability_symmetric(state: &Value, plan: Option<&Value>) -> bool {

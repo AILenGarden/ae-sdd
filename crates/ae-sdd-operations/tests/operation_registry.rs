@@ -23,10 +23,12 @@ const NAMES: [&str; OPERATION_COUNT] = [
     "review.contribute",
     "review.finalize",
     "review.record",
+    "route.decide",
     "state.next_actions",
     "state.transition",
     "verification.plan",
     "workitem.complete",
+    "workitem.create",
     "workitem.get",
 ];
 
@@ -53,7 +55,10 @@ fn registry_is_exact_unique_and_bootstrap_flags_are_explicit() {
     assert!(transition.requires_lease);
     assert!(transition.requires_revision);
     assert!(transition.requires_idempotency);
-    assert!(transition.requires_confirmation);
+    assert!(
+        !transition.requires_confirmation,
+        "lifecycle policy owns phase-specific confirmation"
+    );
 }
 
 #[test]

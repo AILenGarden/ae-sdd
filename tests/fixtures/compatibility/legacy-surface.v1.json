@@ -797,6 +797,12 @@
       "disposition": "preserve"
     },
     {
+      "id": "route.decide",
+      "source": "crates/ae-sdd-integrations/src/business.rs",
+      "owner": "ae-sdd-operations",
+      "disposition": "native-addition"
+    },
+    {
       "id": "state.next_actions",
       "source": "tools/lib/operations.py",
       "owner": "ae-sdd-operations",
@@ -819,6 +825,12 @@
       "source": "tools/lib/operations.py",
       "owner": "ae-sdd-operations",
       "disposition": "preserve"
+    },
+    {
+      "id": "workitem.create",
+      "source": "crates/ae-sdd-operations/src/registry.rs",
+      "owner": "ae-sdd-operations",
+      "disposition": "native-addition"
     },
     {
       "id": "workitem.get",
