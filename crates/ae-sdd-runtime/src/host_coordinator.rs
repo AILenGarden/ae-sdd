@@ -195,6 +195,39 @@ impl HostCoordinator {
         context_generation: Option<u64>,
         deadline_unix_ms: u64,
     ) -> RuntimeResult<HostActionPayload> {
+        let action = self.stage_with_action_id(
+            action_id,
+            adapter_id,
+            kind,
+            delegation_id,
+            compact_id,
+            session_id,
+            context_generation,
+            deadline_unix_ms,
+        )?;
+        self.publish(&action)?;
+        Ok(action)
+    }
+
+    /// Durably stages an action without publishing it to its adapter queue.
+    ///
+    /// Callers that must commit other authoritative state before the host may
+    /// observe an action stage it first and publish only after that commit
+    /// succeeds. A staged-but-unpublished action is invisible to `next`, so a
+    /// failed commit cannot leave behind an action the host can acknowledge but
+    /// never claim.
+    #[allow(clippy::too_many_arguments)]
+    pub fn stage_with_action_id(
+        &self,
+        action_id: &str,
+        adapter_id: &str,
+        kind: &str,
+        delegation_id: Option<String>,
+        compact_id: Option<String>,
+        session_id: Option<String>,
+        context_generation: Option<u64>,
+        deadline_unix_ms: u64,
+    ) -> RuntimeResult<HostActionPayload> {
         self.require_capabilities(adapter_id, &[kind])?;
         if let Some(value) = self.persistence.load_record("host-action/v1", action_id)? {
             let existing: HostActionPayload = serde_json::from_value(value)
@@ -240,13 +273,28 @@ impl HostCoordinator {
         let value = serde_json::to_value(&action).map_err(canonical_error)?;
         self.persistence
             .store_record("host-action/v1", &action.action_id, &value)?;
-        self.queues
-            .lock()
-            .map_err(lock_error)?
-            .entry(adapter_id.to_owned())
-            .or_default()
-            .push_back(action.clone());
         Ok(action)
+    }
+
+    /// Publishes a durably staged action to its adapter queue.
+    ///
+    /// Publishing is idempotent: an action already queued, or already
+    /// acknowledged, is not enqueued a second time.
+    pub fn publish(&self, action: &HostActionPayload) -> RuntimeResult<()> {
+        if self.ack_for_action(&action.action_id)?.is_some() {
+            return Ok(());
+        }
+        let mut queues = self.queues.lock().map_err(lock_error)?;
+        let queue = queues.entry(action.adapter_id.clone()).or_default();
+        if queue
+            .iter()
+            .any(|queued| queued.action_id == action.action_id)
+        {
+            return Ok(());
+        }
+        queue.push_back(action.clone());
+        queue.make_contiguous().sort_by_key(|queued| queued.command_seq);
+        Ok(())
     }
 
     /// Returns the oldest unacknowledged action without consuming it.
@@ -287,6 +335,18 @@ impl HostCoordinator {
                 "host ACK does not correlate to adapter/action/command sequence",
             ));
         }
+        // One action carries at most one ACK. `recover` enforces this over the
+        // durable records, so accepting a second ACK under a fresh identity
+        // writes state the daemon refuses to load: the next restart fails
+        // permanently. Rejecting the write is what keeps the two paths agreeing.
+        if let Some(existing) = self.ack_for_action(&ack.action_id)?
+            && existing.ack_id != ack.ack_id
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::IdempotencyKeyReused,
+                "host action is already acknowledged under a different ACK identity",
+            ));
+        }
         let value = serde_json::to_value(&ack).map_err(canonical_error)?;
         self.persistence
             .store_record("host-ack/v1", &ack.ack_id, &value)?;
@@ -325,13 +385,29 @@ impl HostCoordinator {
 
     /// Reads an ACK correlated to an action, if present.
     pub fn ack_for_action(&self, action_id: &str) -> RuntimeResult<Option<HostAckPayload>> {
-        Ok(self
-            .acknowledgements
-            .lock()
-            .map_err(lock_error)?
+        // Selection must not depend on `ack_id` ordering. The map is keyed by
+        // `ack_id`, so a plain `find` would return whichever identity sorts
+        // first, letting a caller decide which of several ACKs wins by choosing
+        // its identifier. An accepted ACK carrying the host task binding is the
+        // only one that can establish physical proof, so prefer it.
+        let acknowledgements = self.acknowledgements.lock().map_err(lock_error)?;
+        let mut candidates = acknowledgements
             .values()
-            .find(|ack| ack.action_id == action_id)
-            .cloned())
+            .filter(|ack| ack.action_id == action_id)
+            .peekable();
+        let mut fallback = None;
+        for ack in candidates.by_ref() {
+            let usable = ack.outcome == "accepted"
+                && ack.host_task_id.is_some()
+                && ack.session_id.is_some();
+            if usable {
+                return Ok(Some(ack.clone()));
+            }
+            if fallback.is_none() {
+                fallback = Some(ack.clone());
+            }
+        }
+        Ok(fallback)
     }
 }
 
@@ -351,4 +427,203 @@ fn lock_error<T>(_error: std::sync::PoisonError<T>) -> RuntimeError {
         StableErrorCode::ExternalStateConflict,
         "runtime supervisor lock is poisoned",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::MemoryPersistence;
+    use ae_sdd_domain::EventStoreId;
+    use uuid::Uuid;
+
+    fn coordinator() -> HostCoordinator {
+        let persistence = Arc::new(MemoryPersistence::new(EventStoreId::from_uuid(
+            Uuid::from_u128(7),
+        )));
+        let coordinator = HostCoordinator::new(persistence);
+        coordinator
+            .register("host-a", &["create".to_owned(), "ack".to_owned()])
+            .expect("adapter registers");
+        coordinator
+    }
+
+    /// Staging is what makes the create path atomic from the host's point of
+    /// view: the action is durable, so its command sequence is fixed and its
+    /// digest can be committed alongside the delegation, but the host cannot see
+    /// it yet. If the commit then fails, nothing was ever offered.
+    #[test]
+    fn staging_an_action_does_not_offer_it_to_the_host() {
+        let coordinator = coordinator();
+        let action = coordinator
+            .stage_with_action_id(
+                "action-1",
+                "host-a",
+                "create",
+                Some("delegation-1".to_owned()),
+                None,
+                None,
+                None,
+                2_000,
+            )
+            .expect("action stages");
+
+        assert_eq!(action.command_seq, 1, "staging assigns the command sequence");
+        assert!(
+            coordinator.next("host-a").expect("queue reads").is_none(),
+            "a staged action must not be visible before its commit succeeds"
+        );
+        assert_eq!(
+            coordinator.action("action-1").expect("record reads").kind,
+            "create",
+            "a staged action must still be durable"
+        );
+    }
+
+    #[test]
+    fn publishing_a_staged_action_offers_it_exactly_once() {
+        let coordinator = coordinator();
+        let action = coordinator
+            .stage_with_action_id(
+                "action-1",
+                "host-a",
+                "create",
+                Some("delegation-1".to_owned()),
+                None,
+                None,
+                None,
+                2_000,
+            )
+            .expect("action stages");
+
+        coordinator.publish(&action).expect("first publish");
+        coordinator.publish(&action).expect("republish is tolerated");
+
+        let offered = coordinator
+            .next("host-a")
+            .expect("queue reads")
+            .expect("the published action is offered");
+        assert_eq!(offered.action_id, "action-1");
+
+        coordinator
+            .acknowledge(
+                "host-a",
+                HostAckPayload {
+                    ack_id: "ack-1".to_owned(),
+                    action_id: "action-1".to_owned(),
+                    command_seq: action.command_seq,
+                    outcome: "accepted".to_owned(),
+                    host_task_id: Some("task-1".to_owned()),
+                    session_id: Some("session-1".to_owned()),
+                },
+            )
+            .expect("ack consumes the queued action");
+
+        assert!(
+            coordinator.next("host-a").expect("queue reads").is_none(),
+            "a republished action must not be offered a second time"
+        );
+    }
+
+    /// `recover` admits at most one durable ACK per action, so the write path
+    /// must refuse a second one. Accepting it produced state the daemon could
+    /// not load: every subsequent start failed on the duplicate, which any host
+    /// could trigger by re-acknowledging under a fresh identity.
+    #[test]
+    fn a_second_ack_under_a_new_identity_is_refused() {
+        let coordinator = coordinator();
+        let action = coordinator
+            .enqueue_with_action_id(
+                "action-1",
+                "host-a",
+                "create",
+                Some("delegation-1".to_owned()),
+                None,
+                None,
+                None,
+                2_000,
+            )
+            .expect("action enqueues");
+        let ack = |ack_id: &str, host_task: Option<&str>| HostAckPayload {
+            ack_id: ack_id.to_owned(),
+            action_id: "action-1".to_owned(),
+            command_seq: action.command_seq,
+            outcome: "accepted".to_owned(),
+            host_task_id: host_task.map(str::to_owned),
+            session_id: Some("session-1".to_owned()),
+        };
+
+        coordinator
+            .acknowledge("host-a", ack("ack-first", None))
+            .expect("the first ack is recorded");
+        let error = coordinator
+            .acknowledge("host-a", ack("ack-second", Some("task-1")))
+            .expect_err("a competing ack identity must be refused");
+        assert_eq!(error.code(), StableErrorCode::IdempotencyKeyReused);
+
+        coordinator
+            .acknowledge("host-a", ack("ack-first", None))
+            .expect("replaying the same ack stays idempotent");
+        assert_eq!(
+            coordinator
+                .ack_for_action("action-1")
+                .expect("selection succeeds")
+                .expect("an ack exists")
+                .ack_id,
+            "ack-first",
+            "the recorded ack must remain the only one"
+        );
+    }
+
+    /// Durable records written before the write path was constrained can still
+    /// hold several ACKs for one action. Selection must not depend on `ack_id`
+    /// ordering there either: only an accepted ACK carrying the host task and
+    /// session bindings can establish physical proof.
+    #[test]
+    fn ack_selection_prefers_the_usable_ack_over_identity_order() {
+        let coordinator = coordinator();
+        let action = coordinator
+            .enqueue_with_action_id(
+                "action-1",
+                "host-a",
+                "create",
+                Some("delegation-1".to_owned()),
+                None,
+                None,
+                None,
+                2_000,
+            )
+            .expect("action enqueues");
+
+        // Seed the in-memory map directly: the write path now refuses a second
+        // ACK, but stores written before that constraint still carry pairs like
+        // this one, and `ack_for_action` has to pick correctly over them.
+        {
+            let mut acknowledgements = coordinator
+                .acknowledgements
+                .lock()
+                .expect("ack map is available");
+            for (ack_id, host_task) in [("aaaa-first", None), ("zzzz-last", Some("task-1"))] {
+                acknowledgements.insert(
+                    ack_id.to_owned(),
+                    HostAckPayload {
+                        ack_id: ack_id.to_owned(),
+                        action_id: "action-1".to_owned(),
+                        command_seq: action.command_seq,
+                        outcome: "accepted".to_owned(),
+                        host_task_id: host_task.map(str::to_owned),
+                        session_id: Some("session-1".to_owned()),
+                    },
+                );
+            }
+        }
+
+        let selected = coordinator
+            .ack_for_action("action-1")
+            .expect("selection succeeds")
+            .expect("an ack exists");
+        assert_eq!(
+            selected.ack_id, "zzzz-last",
+            "the usable ack must win even though its identity sorts last"
+        );
+    }
 }

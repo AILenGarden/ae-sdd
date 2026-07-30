@@ -3124,7 +3124,22 @@ fn range_error() -> RuntimeError {
     )
 }
 
-fn sqlite_error(_error: rusqlite::Error) -> RuntimeError {
+fn sqlite_error(error: rusqlite::Error) -> RuntimeError {
+    // A bare "operation failed" forces callers to read the migration files to
+    // learn which constraint they violated. Constraint messages name the table,
+    // column, or check involved and carry no row data, so they are safe to
+    // surface and are the only actionable part of the failure.
+    if let rusqlite::Error::SqliteFailure(failure, Some(message)) = &error
+        && matches!(
+            failure.code,
+            rusqlite::ErrorCode::ConstraintViolation | rusqlite::ErrorCode::TypeMismatch
+        )
+    {
+        return RuntimeError::new(
+            StableErrorCode::ExternalStateConflict,
+            format!("runtime SQLite constraint rejected the operation: {message}"),
+        );
+    }
     RuntimeError::new(
         StableErrorCode::ExternalStateConflict,
         "runtime SQLite operation failed",

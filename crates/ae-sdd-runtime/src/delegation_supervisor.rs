@@ -268,7 +268,11 @@ impl DelegationSupervisor {
         };
         let delegation_id = stable_uuid("delegation", scope_digest, idempotency_key);
         let action_id = stable_uuid("delegation-host-action", scope_digest, idempotency_key);
-        let action = self.host.enqueue_with_action_id(
+        // Stage, do not publish. The delegation record and this action must
+        // become visible together: publishing first lets a failed commit leave a
+        // queued action whose delegation does not exist, which the host can
+        // acknowledge but never claim.
+        let action = self.host.stage_with_action_id(
             &action_id,
             &payload.adapter_id,
             "create",
@@ -280,6 +284,7 @@ impl DelegationSupervisor {
         )?;
         let action_digest =
             canonical_wire_digest(&serde_json::to_value(&action).map_err(canonical_error)?)?;
+        let published_action = action.clone();
         let record = DurableDelegation {
             schema_version: "delegation/v1".to_owned(),
             delegation_id: delegation_id.clone(),
@@ -356,6 +361,10 @@ impl DelegationSupervisor {
                 committed_at_unix_ms: now_unix_ms,
             })?;
         self.save(&record)?;
+        // The authoritative commit succeeded, so the action may now become
+        // visible to its adapter. `publish` is idempotent, which keeps a replayed
+        // create from queueing the same action twice.
+        self.host.publish(&published_action)?;
         let projection = serde_json::from_value(committed.response).map_err(|_| {
             RuntimeError::new(
                 StableErrorCode::ExternalStateConflict,

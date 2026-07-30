@@ -154,7 +154,14 @@ impl RuntimeService {
                         "external session snapshot changed during bootstrap",
                     )
                 })?;
-                let recovered_root_label_drift = !session.active
+                // A session whose TTL has elapsed is recoverable exactly like one
+                // closed explicitly: `active` alone is not the liveness predicate,
+                // because nothing clears it on natural expiry. Treating expiry as
+                // inactive is what lets a root session be reattached under a new
+                // host-supplied agent label instead of deadlocking on turn mismatch.
+                let recoverable = !session.active
+                    || now >= session.result.expires_at_unix_ms;
+                let recovered_root_label_drift = recoverable
                     && session.result.role == WireAgentRole::Root
                     && payload.role == WireAgentRole::Root;
                 if session.result.role != payload.role
