@@ -206,6 +206,20 @@ pub trait BusinessOperationPort: Send + Sync {
         self.execute_bound_job(workspace, work_item_id, entrypoint, arguments)
     }
 
+    /// Records the collected Root-to-Series delegation boundary as a durable
+    /// flow event. Adapters without project-state authority cannot rebuild the
+    /// flow input, so the default is a no-op and the boundary stays advisory.
+    fn record_series_completed(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: &str,
+        session_id: &str,
+        idempotency_key: &str,
+    ) -> RuntimeResult<()> {
+        let _ = (workspace, work_item_id, session_id, idempotency_key);
+        Ok(())
+    }
+
     /// Validates bounded child artifact references against authoritative files.
     fn validate_delegation_artifacts(
         &self,

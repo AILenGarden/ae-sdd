@@ -506,13 +506,15 @@ mindmap
 
 ### 14.1 下游文档清单
 
-| # | 下游文档类型 | 文档 ID | 当前版本 | 路径 | 状态 | 上次重审时间 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | DR | DR-{ID} | v{N}.{m} | ae-sdd-doc/iterations/{date}/DR/{DR-ID}-vN.m.md | 🟢 通过 / 🟡 Review 中 / 🔴 阻断 | {YYYY-MM-DD} |
-| 2 | Story | STORY-{ID} | v{N} | ae-sdd-doc/iterations/{date}/Story/{STORY-ID}-vN.md | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
-| 3 | Task | Task-{ID} | — | ae-sdd-doc/iterations/{date}/Task/{Task-ID}/ | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
-| 4 | Coding 报告 | Coding-{ID} | r{N} | ae-sdd-doc/iterations/{date}/Coding/{Coding-ID}-rN.md | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
-| 5 | Code Review 报告 | CR-{ID} | vN.m | ae-sdd-doc/iterations/{date}/CR/CR-{ID}-vN.m.md | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
+> **🔴 权威来源：** 本清单必须镜像 daemon `flow.snapshot` 投影的 `documentTree`（PRD 下挂哪些 DR、每个 DR 下挂哪些 Story）；用户提供并经 `workitem.create providedDocuments` 采纳的文档同样必须入表，来源列标"用户指定采纳"。投影与本表不一致时，以 `documentTree` 为准修订本表。
+
+| # | 下游文档类型 | 文档 ID | 当前版本 | 路径 | 来源 | 状态 | 上次重审时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | DR | DR-{ID} | v{N}.{m} | ae-sdd-doc/iterations/{date}/DR/{DR-ID}-vN.m.md | ae-sdd 生成 / 用户指定采纳 | 🟢 通过 / 🟡 Review 中 / 🔴 阻断 | {YYYY-MM-DD} |
+| 2 | Story | STORY-{ID} | v{N} | ae-sdd-doc/iterations/{date}/Story/{STORY-ID}-vN.md | ae-sdd 生成 / 用户指定采纳 | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
+| 3 | Task | Task-{ID} | — | ae-sdd-doc/iterations/{date}/Task/{Task-ID}/ | ae-sdd 生成 / 用户指定采纳 | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
+| 4 | Coding 报告 | Coding-{ID} | r{N} | ae-sdd-doc/iterations/{date}/Coding/{Coding-ID}-rN.md | ae-sdd 生成 | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
+| 5 | Code Review 报告 | CR-{ID} | vN.m | ae-sdd-doc/iterations/{date}/CR/CR-{ID}-vN.m.md | ae-sdd 生成 | 🟢 / 🟡 / 🔴 | {YYYY-MM-DD} |
 
 ### 14.2 RA 维度 ↔ 下游章节 双向映射表
 
@@ -554,6 +556,8 @@ mindmap
 每次 RA 修订
     ↓
 第 1 步：在 §14.1 列出当前下游文档清单
+    ↓
+第 1-bis 步：用户提供文档经 workitem.create providedDocuments 采纳后必须入 §14.1 表（来源列=用户指定采纳），并以 daemon flow.snapshot 投影的 documentTree 为权威核对 PRD→DR→Story 父子关系
     ↓
 第 2 步：在 §14.2 反查受影响的 DR/Story/Task 章节
     ↓

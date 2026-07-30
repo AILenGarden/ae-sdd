@@ -40,6 +40,19 @@ fn host_registration_requires_the_boot_scoped_credential() {
 }
 
 #[test]
+fn host_registration_rejects_a_missing_credential() {
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut connection = harness.connection(ClientKind::HostAdapter);
+    let mut request = params(
+        json!({"adapterId":"host-a","capabilities":["compact","create","attest"]}),
+        1_000,
+    );
+    request.idempotency_key = Some("host-register-missing-credential".to_owned());
+    let rejected = harness.call(&mut connection, RpcMethod::HostRegister, request);
+    assert_eq!(stable_error(&rejected), "ENDPOINT_AUTH_FAILED");
+}
+
+#[test]
 fn durable_host_registration_recovers_and_rebinds_after_restart() {
     let persistence = Arc::new(MemoryPersistence::new(EventStoreId::from_uuid(
         Uuid::from_u128(91),

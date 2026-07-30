@@ -46,7 +46,7 @@ Legacy deletion is authorized only when all of these are true:
 2. T5 owner confirms tooling/build/install/distribute parity and compatibility audit PASS.
 3. `legacy-runtime-cutover.v1.json` has no `blocked`, `missing`, `stub`, or
    `non-pass-fallthrough` entry.
-4. `ae-sdd-build compatibility-audit` passes the 113/18/36/7 manifest.
+4. `ae-sdd-build compatibility-audit` passes the 113/24/36/7 manifest.
 5. `ae-sdd-build verify-release` reports three native binaries and zero Python,
    interpreter, legacy CLI, source fallback, or script-wrapper marker.
 6. The parent execution owner explicitly authorizes the recorded deletion set.

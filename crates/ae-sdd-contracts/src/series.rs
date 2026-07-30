@@ -72,9 +72,11 @@ impl ProcessSnapshot {
 }
 
 /// Typed impact severity used by deterministic Route classification.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImpactLevel {
+    /// Smallest single-spot impact; ranks below every ordinary level.
+    Micro,
     /// Localized, reversible impact.
     Low,
     /// Cross-module or moderately risky impact.

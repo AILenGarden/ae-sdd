@@ -23,6 +23,7 @@ pub(crate) struct LifecycleProjection {
     pub(crate) design_route: DesignRoute,
     pub(crate) confirmations: Vec<ConfirmationProjection>,
     pub(crate) evidence: Vec<EvidenceProjection>,
+    pub(crate) passed_gate_ids: Vec<String>,
     pub(crate) file_locks: Vec<FileLockSnapshot>,
     pub(crate) completion: Option<CompletionMilestoneInput>,
 }
@@ -49,11 +50,17 @@ impl LifecycleProjection {
                 byte_length: reference.byte_length(),
             })
             .collect();
+        let passed_gate_ids = input
+            .passed_gate_ids()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         Self {
             scale: input.scale(),
             design_route: input.design_route(),
             confirmations,
             evidence,
+            passed_gate_ids,
             file_locks: input.file_locks().to_vec(),
             completion: input.completion(),
         }

@@ -841,9 +841,9 @@ fn remediation_projection_fails_closed_when_the_parent_findings_batch_does_not_j
         .expect("parent batch downgrade applies");
     let removed = connection
         .execute(
-            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v2' \
+            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v3' \
              AND key=(SELECT ?1||':'||MAX(CAST(substr(key,length(?1)+2) AS INTEGER)) \
-                      FROM runtime_record_v1 WHERE namespace='review-projection-event/v2')",
+                      FROM runtime_record_v1 WHERE namespace='review-projection-event/v3')",
             rusqlite::params![WORKSPACE_ID],
         )
         .expect("child projection receipt removal applies");

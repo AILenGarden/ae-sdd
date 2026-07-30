@@ -51,6 +51,9 @@ impl RolePolicy {
     /// Returns whether a daemon-trusted role may perform the semantic operation.
     pub const fn permits(role: AgentRole, operation: RoleOperation) -> bool {
         match role {
+            // The root session is a pure orchestrator: it delegates every
+            // semantic work operation to the series/task lineage instead of
+            // executing it (see the Root Session Contract in source/SKILL.md).
             AgentRole::Root => matches!(
                 operation,
                 RoleOperation::SelectRoute
@@ -61,9 +64,6 @@ impl RolePolicy {
                     | RoleOperation::CollectChildResult
                     | RoleOperation::ReportProgress
                     | RoleOperation::ReadBoundedProjection
-                    | RoleOperation::ModifyAssignedPaths
-                    | RoleOperation::RunAssignedTests
-                    | RoleOperation::SubmitEvidence
             ),
             AgentRole::Series => matches!(
                 operation,
@@ -75,6 +75,9 @@ impl RolePolicy {
                     | RoleOperation::ReadBoundedProjection
                     | RoleOperation::ReadAuthorizedArtifacts
                     | RoleOperation::SubmitChildResult
+                    | RoleOperation::ModifyAssignedPaths
+                    | RoleOperation::RunAssignedTests
+                    | RoleOperation::SubmitEvidence
             ),
             AgentRole::Task => matches!(
                 operation,

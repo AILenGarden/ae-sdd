@@ -182,28 +182,33 @@ fn confirmation_is_bounded_and_canonical(id: &str, actor: &str, approved_at: &st
 fn classify_impacts(
     impacts: &[ImpactFact],
 ) -> Result<(WorkScale, DesignRoute, Vec<SeriesKind>), RouteEngineError> {
-    let highest = impacts.iter().fold(ImpactLevel::Low, |current, fact| {
-        match (current, fact.level) {
-            (ImpactLevel::High, _) | (_, ImpactLevel::High) => ImpactLevel::High,
-            (ImpactLevel::Medium, _) | (_, ImpactLevel::Medium) => ImpactLevel::Medium,
-            _ => ImpactLevel::Low,
-        }
-    });
+    let highest = impacts
+        .iter()
+        .map(|fact| fact.level)
+        .reduce(ImpactLevel::max);
     let (scale, route, names): (_, _, &[&str]) = match highest {
-        ImpactLevel::High => (
-            WorkScale::Large,
-            DesignRoute::Dr,
-            &["requirement-analysis", "design-review", "story"],
+        Some(ImpactLevel::Micro) => (
+            WorkScale::Micro,
+            DesignRoute::CodingPlan,
+            &["requirement-analysis", "coding-plan"],
         ),
-        ImpactLevel::Medium => (
+        // Missing facts keep the frozen low mapping: decide() holds the
+        // decision at AwaitUserApproval, so an empty submission never
+        // defaults to the micro route.
+        None | Some(ImpactLevel::Low) => (
+            WorkScale::Small,
+            DesignRoute::CodingPlan,
+            &["requirement-analysis", "coding-plan"],
+        ),
+        Some(ImpactLevel::Medium) => (
             WorkScale::Medium,
             DesignRoute::Story,
             &["requirement-analysis", "story"],
         ),
-        ImpactLevel::Low => (
-            WorkScale::Small,
-            DesignRoute::CodingPlan,
-            &["requirement-analysis", "coding-plan"],
+        Some(ImpactLevel::High) => (
+            WorkScale::Large,
+            DesignRoute::Dr,
+            &["requirement-analysis", "design-review", "story"],
         ),
     };
     let series = names
@@ -283,6 +288,9 @@ const fn impact_tag(value: ImpactLevel) -> u8 {
         ImpactLevel::Low => 0,
         ImpactLevel::Medium => 1,
         ImpactLevel::High => 2,
+        // Micro was added after the existing tags were frozen; it takes the
+        // next free tag so the frozen values are never renumbered.
+        ImpactLevel::Micro => 3,
     }
 }
 

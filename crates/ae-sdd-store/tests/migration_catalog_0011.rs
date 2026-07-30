@@ -216,6 +216,42 @@ fn migrated_review_projections_only_allow_clean_target_one() {
 }
 
 #[test]
+fn migrated_review_parent_is_a_durable_anchor_not_a_projection_foreign_key() {
+    for prefix in [0, 12] {
+        let root = TempDir::new().expect("temp root");
+        let path = root.path().join(format!("runtime-{prefix}.sqlite3"));
+        if prefix > 0 {
+            apply_prefix(&path, prefix);
+        }
+        drop(
+            SqliteRuntimeRepository::open(&path, event_store_id(prefix as u128 + 1), &now())
+                .expect("migration succeeds"),
+        );
+        let connection = Connection::open(&path).expect("inspect database");
+        let parent_fk_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('review_session_v2_projection') \
+                 WHERE \"table\"='review_session_v2_projection' AND \"from\"='parent_review_id'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("parent foreign key count");
+        assert_eq!(
+            parent_fk_count, 0,
+            "rebuildable parent projections may be unavailable after restart (prefix {prefix})"
+        );
+        let ddl: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='review_session_v2_projection'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("session table DDL");
+        assert!(ddl.contains("parent_review_id IS NULL OR parent_review_id<>review_id"));
+    }
+}
+
+#[test]
 fn corrupt_recorded_checksum_fails_closed() {
     let root = TempDir::new().expect("temp root");
     let path = root.path().join("runtime.sqlite3");

@@ -203,6 +203,7 @@ impl AuthorityFixture {
             "policyDigest":POLICY_DIGEST,
             "inputFingerprint":input_fingerprint,
             "sourceRevision":7,
+            "committedRevision":7,
             "inventoryGeneration":3,
             "identityDigest":"3333333333333333333333333333333333333333333333333333333333333333",
             "mutationId":mutation_id,
@@ -259,7 +260,8 @@ impl AuthorityFixture {
                 "manifestRef":manifest_ref,
                 "manifestDigest":manifest_digest,
                 "mutationId":mutation_id,
-                "sourceRevision":7
+                "sourceRevision":7,
+                "committedRevision":7
             }
         });
         let result = json!({
@@ -273,6 +275,8 @@ impl AuthorityFixture {
             "policyDigest":POLICY_DIGEST,
             "inputFingerprint":input_fingerprint,
             "sourceRevision":7,
+            "committedRevision":7,
+            "revisionAfter":7,
             "inventoryGeneration":3,
             "workItemId":WORK_ITEM_ID,
             "identityDigest":"3333333333333333333333333333333333333333333333333333333333333333",

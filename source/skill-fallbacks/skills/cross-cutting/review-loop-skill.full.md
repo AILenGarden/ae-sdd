@@ -42,7 +42,7 @@ Review 状态使用 `reviewSession`（`schemaVersion: 2`）持久化；`reviewLo
 | --- | --- | --- |
 | Tier 1 | 1 个 `VALID_CLEAN` | 1 个新 fingerprint `VALID_CLEAN` |
 | Tier 2 | 1 个 `VALID_CLEAN` + deterministic gates | 1 个新 fingerprint `VALID_CLEAN` + deterministic gates |
-| Tier 3 | 1 个 `VALID_CLEAN` + 全量最终验证 | 1 个新 fingerprint `VALID_CLEAN` + 全量最终验证 |
+| Tier 3 | 1 个 `VALID_CLEAN` + 增量最终验证 | 1 个新 fingerprint `VALID_CLEAN` + 增量最终验证 |
 
 `VALID_CLEAN` 只在 required reviewer 集完整时增加 `validBatches`/`cleanStreak`；`INVALID_*` 不改变 clean 结论。
 
@@ -51,7 +51,7 @@ Review 状态使用 `reviewSession`（`schemaVersion: 2`）持久化；`reviewLo
 | 防线 | 作用 |
 |---|---|
 | required reviewer 集 | Tier 决定必须到齐的角色（Tier 1 GENERAL；Tier 2 BE+AR；Tier 3 BE+AR+QA），缺角色即 `INVALID_PROTOCOL`，不计 clean |
-| `finalProofRequirement` | Tier 2 收尾必须现场跑 `G-CODEPLAN-SRC`/`G-14`/`G-08` 且全 PASS；Tier 3 必须存在唯一一条 PASS 的完整验证 job，且 digest 与 fingerprint 全部对齐 |
+| `finalProofRequirement` | Tier 2 收尾必须现场跑 `G-CODEPLAN-SRC`/`G-14`/`G-08` 且全 PASS；Tier 3 必须存在唯一一条 PASS 的增量最终验证 job（覆盖改动 crate/模块及对应测试文件；全量套件仅 release/分发门禁执行），且 digest 与 fingerprint 全部对齐 |
 
 修复后重新挖掘仍必须换 `inputFingerprint`：改了代码就是新一代输入，旧 clean streak 失效。
 

@@ -2033,6 +2033,14 @@
     },
     {
       "surface": "operation",
+      "id": "workitem.create",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/src/business.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
       "id": "execution.slice.record",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
       "evidence": "crates/ae-sdd-runtime/tests/service_dispatch_matrix.rs",

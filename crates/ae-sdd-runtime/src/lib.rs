@@ -8,6 +8,7 @@
 
 mod actor;
 mod config;
+pub mod diagnostics;
 mod error;
 mod grant;
 mod model;
@@ -20,7 +21,7 @@ pub use config::RuntimeConfig;
 pub use error::{RuntimeError, RuntimeResult};
 pub use grant::{GrantPathWire, ScopedGrantWire};
 pub use model::{
-    CompactAckPayload, CompactRequestPayload, CompactResult, ContextProjectPayload,
+    AssetRefWire, CompactAckPayload, CompactRequestPayload, CompactResult, ContextProjectPayload,
     ContextProjectResult, ContextProjectionInput, DaemonLifecycle, DelegationAcceptPayload,
     DelegationCreatePayload, DelegationReportPayload, DelegationResult, DurableEvent, EventBatch,
     EventSubscriptionPayload, ExecutionAuthorityCursor, ExecutionCheckpointRecord,

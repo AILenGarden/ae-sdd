@@ -469,7 +469,7 @@
         {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "同步 G-REVIEW-LOOP/G-CODE-1 policy outcome；STALLED、tampered、touched debt 不得伪装 PASS", "auto_checkable": true},
         {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "同步 batch schema、风险退出、失败角色重试和预算语义", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase3-review/code-review-skill.full.md", "action": "同步 canonical 聚合报告和 evidence manifest 引用", "auto_checkable": false},
-        {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "同步 VerificationPlan、evidence lookup 和最终全量只跑一次规则", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "同步 VerificationPlan、evidence lookup 和收口只做增量验证、全量套件仅 release 门禁规则", "auto_checkable": false},
         {"path": "crates/ae-sdd-review/tests/", "action": "覆盖状态转移、retry merge、fingerprint drift、budget 和 disposition", "auto_checkable": false},
         {"path": "crates/ae-sdd-integrations/tests/", "action": "覆盖 baseline integrity/touched debt、evidence freshness、alias ambiguity 和 provenance", "auto_checkable": false}
       ],

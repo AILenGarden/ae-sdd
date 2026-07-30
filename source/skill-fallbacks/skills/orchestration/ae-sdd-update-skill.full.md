@@ -179,7 +179,7 @@ ae-sdd 是一个**多子系统协同**的工程，不是单一文档集合：
 3. 新增/修改 CLI 子命令 → 同步 SKILL.md 命令引用（UC-03）+ 补对应 crate tests/
 4. 涉及能力语义变化 → 同步 source/docs/ae-sdd-design.md；涉及模块边界/数据流/缓存/进程/hook/build/分发变化 → 同步 source/docs/ae-sdd-implementation-architecture.md
 5. 跑 ae-sdd update-check → 全绿
-6. 跑 cargo test --workspace --locked
+6. 仅当改动涉及共享基础设施（ae-sdd-operations/ae-sdd-store/ops/lease CLI/Work Item scope/evidence lifecycle，即 operation-protocol §9.5 的例外范围）时跑 cargo test --workspace --locked；否则只跑受影响 crate 的增量测试。除此之外，全量套件一律只在 release/分发门禁执行。
 7. 确认未写 changelog，兼容性分类写入协议并由测试覆盖
 8. 如新增 plugin loader 类的跨 SKILL 加载机制 → 同步 update-graph.json 加 UG-XX 规则（如 UG-12 plugin-registry）+ 新建对应 cross-cutting 加载协议 SKILL（如 ae-sdd-plugin-loader-skill.md）
 ```

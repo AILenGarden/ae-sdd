@@ -875,6 +875,12 @@ pub struct DelegationResult {
     pub child_session_id: Option<String>,
     /// Bounded result digest, once reported.
     pub result_digest: Option<String>,
+    /// Optional bounded briefing the child series was created with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<String>,
+    /// Optional bounded asset references the child series was created with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_refs: Option<Vec<AssetRefWire>>,
 }
 
 /// Explicit compact request.

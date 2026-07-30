@@ -71,6 +71,10 @@ impl Fixture {
     }
 
     fn workspace(&self) -> BusinessWorkspace {
+        self.workspace_with_role(AgentRole::Task)
+    }
+
+    fn workspace_with_role(&self, role: AgentRole) -> BusinessWorkspace {
         let grant = ScopedGrant::new(
             OperationName::ALL
                 .into_iter()
@@ -84,7 +88,7 @@ impl Fixture {
             canonical_root: self.root.path().to_string_lossy().into_owned(),
             project_key: PROJECT_KEY.to_owned(),
             mode: WorkspaceMode::RustCanary,
-            agent_role: Some(AgentRole::Root),
+            agent_role: Some(role),
             agent_grant: Some(grant),
             caller_kind: None,
             inventory_generation: 5,
@@ -104,7 +108,7 @@ impl Fixture {
         let response = self
             .execute(
                 "lease.acquire",
-                json!({"owner":{"role":"root"},"ttlSeconds":300}),
+                json!({"owner":{"role":"task"},"ttlSeconds":300}),
                 key,
             )
             .expect("lease acquires");
@@ -271,6 +275,31 @@ fn record_payload(logical_key: &str, input: &str) -> Value {
         "summary": {"gate": "G-TEST"},
         "logicalKey": logical_key,
     })
+}
+
+#[test]
+fn root_role_is_denied_semantic_evidence_operations() {
+    let fixture = Fixture::new();
+    write_file(&fixture.root, "results/test.json", b"{\"pass\":true}\n");
+    let lease = fixture.acquire_lease("ledger-root-denied-lease");
+    let root_workspace = fixture.workspace_with_role(AgentRole::Root);
+
+    for (operation, payload) in [
+        ("evidence.record", record_payload("tests/core", INPUT_A)),
+        ("evidence.finalize", json!({})),
+    ] {
+        let mut request = fixture.request(operation, payload, "ledger-root-denied");
+        bind_write(&mut request, &lease, fixture.current_revision());
+        let error = fixture
+            .adapter
+            .execute(RpcMethod::OperationExecute, &request, Some(&root_workspace))
+            .expect_err("root orchestrator must not execute semantic work");
+        assert_eq!(
+            error.code(),
+            StableErrorCode::RoleOperationForbidden,
+            "{operation} must be delegated, not executed by root"
+        );
+    }
 }
 
 #[test]

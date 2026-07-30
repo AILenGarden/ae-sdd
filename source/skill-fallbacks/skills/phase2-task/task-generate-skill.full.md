@@ -220,7 +220,7 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 ae-sdd gates check --only G-TASK-CTX
 ```
 
-`G-TASK-CTX` 校验 `constraints/assets/Story/TestCase` 四类上下文已读齐（微链豁免 Story/TestCase；注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `paths.find_doc`）。未过 → **BLOCK，禁止进入 Task 生成**。注：本门禁覆盖上下文加载维度；TC-1~9/TR-1~7 内容审查项仍是 report-only（见本文件「门禁强度声明」）。
+`G-TASK-CTX` 校验 `constraints/assets/Story/TestCase` 四类上下文已读齐（微链豁免 Story/TestCase；注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_assets` API + `paths.find_doc`；约束直接读取 `constraints/` 目录，索引 `constraints/README.md`）。未过 → **BLOCK，禁止进入 Task 生成**。注：本门禁覆盖上下文加载维度；TC-1~9/TR-1~7 内容审查项仍是 report-only（见本文件「门禁强度声明」）。
 
 ***
 
@@ -228,9 +228,9 @@ ae-sdd gates check --only G-TASK-CTX
 
 ### 2.1 约束文档
 
-> **🆕 2026-06-10 解耦改造：** 不再直接读 `constraints/` 目录。通过 `document-storage-skill.get_constraints(projectKey)` 获取约束文档路径，约束随工程走，SKILL 不依赖约束在哪里。
+> **约束来源：** 约束 SSOT 即 `constraints/` 目录（索引 `constraints/README.md`），约束随工程走，SKILL 不写死约束文件清单。
 
-调用 `document-storage-skill.get_constraints(projectKey)`，从返回的 `ConstraintList` 中提取与当前 Task 相关的约束项，重点关注：
+直接读取 `constraints/` 目录下的约束文档（索引 `constraints/README.md`），提取与当前 Task 相关的约束项，重点关注：
 
 | 约束 name | 对 Task 生成的影响 |
 |---------|-----------------|
@@ -372,7 +372,7 @@ Task 文档按 WorkItem 分子目录存放，由 `ae-sdd doc resolve --intent TA
 - 全部 Task 文档（Task-0 ~ Task-N）
 - Story 主文档 + 补充说明
 - 测试用例文档
-- `document-storage-skill.get_constraints(projectKey)` 返回的全部约束文档
+- `constraints/` 目录下的全部约束文档（索引 `constraints/README.md`）
 - `templates/design/be-task-template.md`
 
 > **📍 Review Loop 公共协议：** 本节退出条件/循环上限/Plan-first 遵守 [`review-loop-skill.md`](../cross-cutting/review-loop-skill.md) 公共协议（v3.4.3），本节只列 Task Review 专属配置。
@@ -447,11 +447,11 @@ Task 文档按 WorkItem 分子目录存放，由 `ae-sdd doc resolve --intent TA
 **TR-4 约束合规性**
 | 检查项 | 判定标准 |
 |--------|---------|
-| TR-4.1 | 所有 Task 的实现方式不违反 `get_constraints(projectKey)` 返回的强制规则 |
+| TR-4.1 | 所有 Task 的实现方式不违反 `constraints/` 目录约束文档中的强制规则 |
 | TR-4.2 | 分层架构合规（无跨层调用、无反向依赖） |
 | TR-4.3 | 事务边界合规（无大事务，事务内无外部调用） |
 | TR-4.4 | 类型规范合规（ID 用 Long、金额用 BigDecimal 等） |
-| TR-4.5 | 🔴 分层职责归位：领域逻辑归 Domain、业务编排归 Application、Repository 只做存取。逐 Task 核对——Repository 类的方法是否都是存取语义（无状态流转/业务校验/编排）？业务规则是否写在 Domain 而非 Application？（依据 `get_constraints(projectKey)["project-structure"]` 分层职责红线） |
+| TR-4.5 | 🔴 分层职责归位：领域逻辑归 Domain、业务编排归 Application、Repository 只做存取。逐 Task 核对——Repository 类的方法是否都是存取语义（无状态流转/业务校验/编排）？业务规则是否写在 Domain 而非 Application？（依据 `constraints/project-structure.md` 分层职责红线） |
 
 **TR-5 实现可行性**
 | 检查项 | 判定标准 |
@@ -575,7 +575,7 @@ ae-sdd doc save --intent TASK_IMPL_PLAN --work-item {W} --story-id {S?} --doc-id
 | TestCase 文档路径 | 已生成 TestCase |
 | 当前 Task 基础信息 | Story 实现任务映射（任务名 + 层 + 依赖） |
 | 项目资产 | `ae-sdd assets read task-generate --project <projectKey>` — 返回 §3 + §4 + §5 + §8（分层/包路径/命名/CodePlan 输入索引）|
-| 约束文档 | `document-storage-skill.get_constraints(projectKey)`（不再直接写目录路径）|
+| 约束文档 | 直接读取 `constraints/` 目录（索引 `constraints/README.md`）|
 | CodingModel 路径 | `standards/thinking/be-coding-thinking-engine.md` |
 
 ### `CodingSkill.Plan(task-level)` 必须返回

@@ -59,6 +59,7 @@ struct ProjectToolsetReceipt {
     policy_digest: String,
     input_fingerprint: String,
     source_revision: u64,
+    committed_revision: u64,
     inventory_generation: u64,
     identity_digest: String,
     mutation_id: String,
@@ -87,6 +88,7 @@ struct ToolsetReceiptRef {
     manifest_digest: String,
     mutation_id: String,
     source_revision: u64,
+    committed_revision: u64,
 }
 
 /// Fully verified durable authority used to construct `verificationPlan`.
@@ -230,6 +232,7 @@ pub(crate) fn prepare_execution_plan_from_authority(
         project_digest,
         mutation_id,
         state_revision,
+        job.source_revision.ok_or_else(uncommitted_job_error)?,
     )?;
 
     let snapshot_bytes = read_project_file(workspace_root, locator, MAX_PROJECT_RECEIPT_BYTES)?;
@@ -339,7 +342,6 @@ fn validate_job(
         || job.workspace_id != workspace_id
         || job.work_item_id.as_deref() != Some(work_item_id)
         || job.entrypoint != "toolset.receipt.record"
-        || job.source_revision != Some(input.source_revision)
         || job.inventory_generation != inventory_generation
         || job.input_fingerprint.as_deref().is_none_or(|fingerprint| {
             normalize_input_fingerprint(fingerprint).ok()
@@ -373,7 +375,9 @@ fn validate_job(
         }
     }
     if result.get("validated").and_then(Value::as_bool) != Some(true)
-        || result.get("sourceRevision").and_then(Value::as_u64) != Some(input.source_revision)
+        || result.get("sourceRevision").and_then(Value::as_u64) != job.source_revision
+        || result.get("committedRevision").and_then(Value::as_u64) != Some(input.source_revision)
+        || result.get("revisionAfter").and_then(Value::as_u64) != Some(input.source_revision)
         || result.get("inventoryGeneration").and_then(Value::as_u64) != Some(inventory_generation)
         || result
             .get("inputFingerprint")
@@ -397,6 +401,7 @@ fn validate_state_ref(
     project_digest: &str,
     mutation_id: &str,
     state_revision: u64,
+    source_revision: u64,
 ) -> RuntimeResult<()> {
     validate_plain_digest(&state_ref.receipt_digest, "state receiptDigest")?;
     validate_plain_digest(
@@ -411,7 +416,8 @@ fn validate_state_ref(
         || state_ref.artifact_ref != locator
         || state_ref.project_receipt_digest != project_digest
         || state_ref.mutation_id != mutation_id
-        || state_ref.source_revision != state_revision
+        || state_ref.source_revision != source_revision
+        || state_ref.committed_revision != state_revision
     {
         return Err(external_conflict(
             "toolsetReceiptRef does not match the committed runtime job",
@@ -448,7 +454,8 @@ fn validate_project_receipt(
         || project.plan_digest != input.plan_digest
         || project.methodology_digest != input.methodology_digest
         || project.policy_digest != input.policy_digest
-        || project.source_revision != input.source_revision
+        || project.source_revision != job.source_revision.unwrap_or_default()
+        || project.committed_revision != input.source_revision
         || project.inventory_generation != inventory_generation
         || project.mutation_id != mutation_id
         || job.identity_digest.as_deref() != Some(project.identity_digest.as_str())
@@ -902,6 +909,7 @@ pub(crate) fn build_capsule_from_authority(
     state: &Value,
     work_item_id: &str,
     source_revision: StateRevision,
+    active_ordinal: u32,
     plan: &ApprovedPlanAuthority,
     bundle: &RequiredContextBundle,
     policy_digest: &str,
@@ -925,7 +933,7 @@ pub(crate) fn build_capsule_from_authority(
         queue_artifact_kind: artifact_kind("execution-queue")?,
         queue_artifact_path: locators.queue().clone(),
         slices: derive_slice_specs(plan.plan(), work_item_id)?,
-        active_ordinal: 1,
+        active_ordinal,
         budgets: ExecutionBudgetsV1::default(),
     };
     build_execution_capsule(&input).map_err(|error| match error {
@@ -980,6 +988,8 @@ pub(crate) fn execution_runtime_state_section(
         "ledgerRef": locators.ledger().as_str(),
         "ledgerDigest": format!("sha256:{ledger_digest}"),
         "activeSliceOrdinal": outcome.capsule().queue().active_ordinal(),
+        "activeSliceStatus": "pending",
+        "refactorCycle": "idle",
         "completionMilestone": "none",
     })
 }

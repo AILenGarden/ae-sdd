@@ -25,11 +25,12 @@ use uuid::Uuid;
 use super::host_coordinator::HostCoordinator;
 
 use crate::{
-    ContextProjectResult, ContextProjectionInput, DelegationCreatePayload, DelegationReportPayload,
-    DelegationResult, HostAckPayload, HostActionPayload, HostPressurePayload, PersistencePort,
-    RuntimeDelegationAttestationRecord, RuntimeDelegationHostActionRecord, RuntimeDelegationRecord,
-    RuntimeError, RuntimeIdentityKind, RuntimeIdentitySnapshot, RuntimeIdentityTransition,
-    RuntimeResult, RuntimeSessionRecord, RuntimeWorkspaceRecord, ScopedGrantWire, WireAgentRole,
+    AssetRefWire, ContextProjectResult, ContextProjectionInput, DelegationCreatePayload,
+    DelegationReportPayload, DelegationResult, HostAckPayload, HostActionPayload,
+    HostPressurePayload, PersistencePort, RuntimeDelegationAttestationRecord,
+    RuntimeDelegationHostActionRecord, RuntimeDelegationRecord, RuntimeError, RuntimeIdentityKind,
+    RuntimeIdentitySnapshot, RuntimeIdentityTransition, RuntimeResult, RuntimeSessionRecord,
+    RuntimeWorkspaceRecord, ScopedGrantWire, WireAgentRole,
 };
 
 /// Durable three-layer delegation lifecycle supervisor.
@@ -55,6 +56,12 @@ struct DurableDelegation {
     input_revision: u64,
     input_fingerprint: String,
     deadline_unix_ms: u64,
+    /// Optional bounded briefing the child series was created with.
+    #[serde(default)]
+    briefing: Option<String>,
+    /// Optional bounded asset references the child series was created with.
+    #[serde(default)]
+    asset_refs: Option<Vec<AssetRefWire>>,
     action_id: String,
     #[serde(default)]
     action_digest: String,
@@ -146,6 +153,8 @@ impl DelegationSupervisor {
                 input_revision: typed.input_revision,
                 input_fingerprint: typed.input_fingerprint.clone(),
                 deadline_unix_ms: typed.deadline_unix_ms,
+                briefing: projection.briefing.clone(),
+                asset_refs: projection.asset_refs.clone(),
                 action_id: binding.host_action_id.clone(),
                 action_digest: binding.action_digest.clone(),
                 created_at_unix_ms: typed.created_at_unix_ms,
@@ -283,6 +292,8 @@ impl DelegationSupervisor {
             input_revision: payload.input_revision,
             input_fingerprint: payload.input_fingerprint,
             deadline_unix_ms: payload.deadline_unix_ms,
+            briefing: payload.briefing,
+            asset_refs: payload.asset_refs,
             action_id: action.action_id.clone(),
             action_digest: action_digest.clone(),
             created_at_unix_ms: now_unix_ms,
@@ -932,6 +943,8 @@ fn project_delegation(record: &DurableDelegation) -> DelegationResult {
         action_id: record.action_id.clone(),
         child_session_id: record.child_session_id.clone(),
         result_digest: record.result_digest.clone(),
+        briefing: record.briefing.clone(),
+        asset_refs: record.asset_refs.clone(),
     }
 }
 
@@ -941,6 +954,8 @@ fn collect_projection(record: &DurableDelegation) -> Value {
         "delegationId": record.delegation_id,
         "status": record.status,
         "summary": record.summary,
+        "briefing": record.briefing,
+        "assetRefs": record.asset_refs,
         "resultDigest": record.result_digest,
         "outcome":result.get("outcome"),
         "findings":result.get("findings").cloned().unwrap_or_else(|| json!([])),

@@ -81,12 +81,22 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
   时立即收窄查询。
 - 避免过大的工具输出和不必要的上下文膨胀，二者会抬高延迟、token 消耗和请求超时
   风险。
-- 需要与基线对比时（判断某失败是否本次引入），用 `git worktree add <tmp> HEAD`
-  在隔离副本里跑，读完即 `git worktree remove`。禁止用 `git stash` 做基线对比：
-  它改写当前工作区，pathspec 命中未跟踪路径时会静默失败，随后的 `pop` 可能把无
-  关 stash 应用进来并注入冲突标记，有丢失未提交改动的风险。
-- 一条昂贵命令的输出只跑一次并落盘（`cmd > /tmp/x.log 2>&1`），后续统计一律读该
-  文件。禁止为换一个过滤角度而重跑同一条构建或测试命令。
+- 测试只跑增量：改动落在哪个 crate/模块，就只跑该 crate 的测试与对应测试文件。
+  禁止在开发回路与任务收口跑全量套件；全量套件只在 release/分发门禁执行。
+  基线对比只采集一次并落盘复用，不重复采集。
+- 一次 bash 调用内，同一条构建/测试/分发命令不得出现两次。昂贵命令输出一次落盘
+  （`cmd > /tmp/x.log 2>&1`），后续统计一律读该文件。有副作用的命令（分发、安装、
+  构建）尤其禁止为查看不同输出片段而重跑。
+- 调用前先判断命令是否改写共享状态，再决定隔离方式。需要与基线对比时（判断某失败
+  是否本次引入），用 `git worktree add <tmp> HEAD` 在隔离副本里跑，读完即
+  `git worktree remove`。`git stash` 不用于任何对比场景：它改写当前工作区，pathspec
+  命中未跟踪路径时会静默失败，随后的 `pop` 可能把无关 stash 应用进来并注入冲突
+  标记，有丢失未提交改动的风险。
+- 调用不熟悉的环境命令前，先读一次 `--help` 或脚本头部注释。有序流水线
+  （build → compile → install）先确认前置步骤，不靠失败反推顺序。怀疑缓存或状态时
+  用一次决定性检查，不做连续试探。
+- 修改常量、阈值或版本号前，先搜语义名 + 搜字面值，范围覆盖 `crates/`、`bins/`、
+  `migrations/`、`tests/`、`docs/`，一次拿全改动点。禁止靠编译失败逐个撞。
 
 ### Agent 协同
 
@@ -180,15 +190,30 @@ authoritative checks, gates, approvals, test evidence, or Review.
   bounded line reads; if output truncates, narrow the query immediately.
 - Avoid oversized tool output and unnecessary context growth because they
   increase latency, token use, and request-timeout risk.
-- To compare against a baseline (deciding whether a failure is pre-existing), run
-  it in an isolated copy via `git worktree add <tmp> HEAD` and `git worktree
-  remove` when done. Never use `git stash` for baseline comparison: it rewrites
-  the live worktree, fails silently when a pathspec hits untracked paths, and a
-  following `pop` can apply an unrelated stash with conflict markers, risking
-  loss of uncommitted work.
-- Run an expensive command once and persist its output (`cmd > /tmp/x.log 2>&1`),
-  then read that file for every later tally. Never re-run the same build or test
-  command just to filter its output differently.
+- Test incrementally: run only the tests of the crate/module the change lands in,
+  plus the matching test files. Never run a full suite inside the development
+  loop or at task closure; the full suite runs only at release/distribution
+  gates. Collect a baseline once, persist it, and reuse it; never re-collect.
+- Within a single bash call, the same build/test/distribution command must not
+  appear twice. Persist an expensive command's output once
+  (`cmd > /tmp/x.log 2>&1`) and read that file for every later tally. Commands
+  with side effects (distribution, install, build) must never be re-run just to
+  inspect a different slice of their output.
+- Decide whether a command mutates shared state before invoking it, then choose
+  the isolation. To compare against a baseline (deciding whether a failure is
+  pre-existing), run it in an isolated copy via `git worktree add <tmp> HEAD` and
+  `git worktree remove` when done. `git stash` is never used for comparison: it
+  rewrites the live worktree, fails silently when a pathspec hits untracked
+  paths, and a following `pop` can apply an unrelated stash with conflict
+  markers, risking loss of uncommitted work.
+- Read `--help` or the script header once before invoking an unfamiliar
+  environment command. For ordered pipelines (build → compile → install), confirm
+  prerequisites first instead of inferring order from failures. When suspecting
+  stale cache or state, run one decisive check rather than a probe sequence.
+- Before changing a constant, threshold, or version, search both the semantic
+  name and the literal value across `crates/`, `bins/`, `migrations/`, `tests/`,
+  and `docs/` to enumerate every site at once. Never discover them one compile
+  failure at a time.
 
 ### Agent coordination
 

@@ -11,8 +11,8 @@ use ae_sdd_policy::{
 };
 
 use crate::{
-    ExecutionCursor, FlowDecision, FlowError, FlowEvent, FlowEventKind, FlowInput, FlowSnapshot,
-    NextAction, SupervisorDegradation, SupervisorHealth, canonical,
+    CompactAdviceReason, ExecutionCursor, FlowDecision, FlowError, FlowEvent, FlowEventKind,
+    FlowInput, FlowSnapshot, NextAction, SupervisorDegradation, SupervisorHealth, canonical,
 };
 
 /// Pure deterministic flow reducer and replay entry point.
@@ -140,6 +140,9 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
         }
         FlowEventKind::TransitionRequested { actor_role, target } => {
             if let Some(pending) = decision.pending_transition {
+                if pending == *target && *actor_role == AgentRole::Root {
+                    return Ok(());
+                }
                 return Err(FlowError::TransitionAlreadyPending {
                     pending,
                     requested: *target,
@@ -382,6 +385,18 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
         FlowEventKind::BackgroundRecovered => {
             decision.health = SupervisorHealth::Healthy;
         }
+        FlowEventKind::SeriesCompleted => {
+            // Advisory only: pending transitions, execution slices, and
+            // completion-chain work keep owning the action. The suggestion
+            // never starts a compact cycle by itself.
+            if decision.pending_transition.is_none()
+                && decision.next_action == NextAction::AwaitAgentWork
+            {
+                decision.next_action = NextAction::SuggestCompact {
+                    reason: CompactAdviceReason::SeriesBoundary,
+                };
+            }
+        }
     }
     Ok(())
 }
@@ -560,6 +575,15 @@ fn encode_action(bytes: &mut Vec<u8>, action: &NextAction) {
         NextAction::FinalizeExecutionEvidence => bytes.push(11),
         NextAction::CollectReviewContributions => bytes.push(12),
         NextAction::FinalizeGovernance => bytes.push(13),
+        NextAction::SuggestCompact { reason } => {
+            bytes.extend_from_slice(&[14, compact_advice_reason_tag(*reason)]);
+        }
+    }
+}
+
+const fn compact_advice_reason_tag(reason: CompactAdviceReason) -> u8 {
+    match reason {
+        CompactAdviceReason::SeriesBoundary => 0,
     }
 }
 

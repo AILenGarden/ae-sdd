@@ -249,6 +249,97 @@ fn validate_semantics(
     {
         return Err(OperationRequestError::EmptyArray(field));
     }
+    if matches!(
+        (operation, field),
+        (OperationName::WorkItemCreate, "providedDocuments")
+    ) {
+        validate_provided_documents(value)?;
+    }
+    Ok(())
+}
+
+/// Maximum number of documents a single `workitem.create` may adopt.
+const MAX_PROVIDED_DOCUMENTS: usize = 64;
+
+/// Validates the JSON-level contract of a `workitem.create` adoption tree:
+/// entry shape, intent vocabulary, docId uniqueness, and parent references.
+/// Path traversal screening and file existence need the workspace root, so the
+/// create path enforces them separately.
+fn validate_provided_documents(value: &Value) -> Result<(), OperationRequestError> {
+    let invalid = |reason: &str| OperationRequestError::InvalidProvidedDocuments(reason.to_owned());
+    let entries = value
+        .as_array()
+        .ok_or_else(|| invalid("providedDocuments must be an array"))?;
+    if entries.len() > MAX_PROVIDED_DOCUMENTS {
+        return Err(invalid("providedDocuments is limited to 64 entries"));
+    }
+    let mut intents = Vec::with_capacity(entries.len());
+    let mut doc_ids = BTreeSet::new();
+    for entry in entries {
+        let entry = entry
+            .as_object()
+            .ok_or_else(|| invalid("each providedDocuments entry must be an object"))?;
+        if let Some(unknown) = entry.keys().find(|key| {
+            !matches!(
+                key.as_str(),
+                "intent" | "docId" | "path" | "parentDocId"
+            )
+        }) {
+            return Err(invalid(&format!(
+                "providedDocuments entry contains unknown field {unknown}"
+            )));
+        }
+        let intent = entry
+            .get("intent")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("providedDocuments.intent must be a string"))?;
+        if !matches!(intent, "PRD" | "DR" | "STORY") {
+            return Err(invalid("providedDocuments.intent must be PRD, DR, or STORY"));
+        }
+        let doc_id = entry
+            .get("docId")
+            .and_then(Value::as_str)
+            .filter(|doc_id| !doc_id.is_empty())
+            .ok_or_else(|| invalid("providedDocuments.docId must be non-empty text"))?;
+        if !doc_ids.insert(doc_id) {
+            return Err(invalid("providedDocuments.docId must be unique"));
+        }
+        if entry
+            .get("path")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return Err(invalid("providedDocuments.path must be non-empty text"));
+        }
+        let parent = entry.get("parentDocId");
+        if parent.is_some() && intent == "PRD" {
+            return Err(invalid("a PRD document cannot declare a parentDocId"));
+        }
+        if parent.is_some_and(|parent| {
+            parent.as_str().is_none_or(str::is_empty)
+        }) {
+            return Err(invalid("providedDocuments.parentDocId must be non-empty text"));
+        }
+        intents.push((intent, doc_id, parent.and_then(Value::as_str)));
+    }
+    for (intent, doc_id, parent) in &intents {
+        let Some(parent) = parent else {
+            continue;
+        };
+        let parent_intent = intents
+            .iter()
+            .find(|(_, parent_id, _)| parent_id == parent)
+            .map(|(intent, _, _)| *intent)
+            .ok_or_else(|| {
+                invalid("providedDocuments.parentDocId must reference a provided document")
+            })?;
+        let expected = if *intent == "STORY" { "DR" } else { "PRD" };
+        if parent_intent != expected {
+            return Err(invalid(&format!(
+                "providedDocuments.parentDocId of {doc_id} must reference a {expected} document"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -272,6 +363,8 @@ pub enum OperationRequestError {
     EmptyString(&'static str),
     #[error("operation payload array field {0} must not be empty")]
     EmptyArray(&'static str),
+    #[error("operation payload field providedDocuments is invalid: {0}")]
+    InvalidProvidedDocuments(String),
     #[error("lease TTL must be in 30..=3600 seconds")]
     InvalidLeaseTtl,
     #[error("failed to canonicalize operation payload: {0}")]

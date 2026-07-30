@@ -105,7 +105,7 @@ enum Command {
         manifest: PathBuf,
         #[arg(long, default_value_t = 113)]
         expected_commands: usize,
-        #[arg(long, default_value_t = 23)]
+        #[arg(long, default_value_t = 24)]
         expected_operations: usize,
         #[arg(long, default_value_t = 36)]
         expected_gates: usize,
@@ -533,12 +533,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string_pretty(&summary)?);
             } else {
                 println!(
-                    "hook benchmark: samples={} p50={}us p95={}us p99={}us max={}us errors={} receiptReplays={} engagedReplays={} allowDecisions={} cpuMillis={} rssBytes={}",
+                    "hook benchmark: samples={} p50={}us p95={}us p99={}us max={}us handshakeP95={}us (n={}) cachedReadP95={}us (n={}) errors={} receiptReplays={} engagedReplays={} allowDecisions={} cpuMillis={} rssBytes={}",
                     summary.samples,
                     summary.p50_micros,
                     summary.p95_micros,
                     summary.p99_micros,
                     summary.max_micros,
+                    summary.handshake_p95_micros,
+                    summary.handshake_samples,
+                    summary.cached_read_p95_micros,
+                    summary.cached_read_samples,
                     summary.error_count,
                     summary.receipt_replay_count,
                     summary.engaged_replay_count,

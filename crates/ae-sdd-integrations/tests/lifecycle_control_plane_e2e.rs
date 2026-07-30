@@ -59,32 +59,48 @@ fn complete_prd_commits_and_replays_one_exact_project_mutation() {
     );
     let identity = identity_for_work_item(&workspace, &root, PRD_ID, "lifecycle-agent");
 
-    // The milestone chain runs through the real operations: a green
-    // verification record closes ImplementationVerified, evidence
-    // finalization closes ReviewReady, and two reviewer records close
-    // GovernanceClosed. Hand-built review state can never do this because the
-    // Review Gate joins the durable SQLite projection written by the real
-    // review operations.
-    let (evidence_lease, evidence_fencing) =
-        acquire_lease(&harness, &mut cli, &identity, "lifecycle-evidence-lease");
+    // The milestone chain runs through the real operations: the delegated
+    // author task records and finalizes the green verification evidence, and
+    // two reviewer records close GovernanceClosed. Hand-built review state can
+    // never do this because the Review Gate joins the durable SQLite projection
+    // written by the real review operations.
+    const SPECIALTIES: [&str; 2] = ["be", "ar"];
+    let (author, reviewers) = open_review_lineage_for_specialties(
+        &harness,
+        &mut cli,
+        &workspace,
+        &identity,
+        &SPECIALTIES,
+        "lifecycle-prd",
+    );
+    let author_identity =
+        identity_for_work_item(&workspace, &author, PRD_ID, "lifecycle-prd-author-agent");
+    let (evidence_lease, evidence_fencing) = acquire_lease(
+        &harness,
+        &mut cli,
+        &author_identity,
+        "task",
+        "lifecycle-evidence-lease",
+    );
     let recorded_evidence = record_evidence(
         &harness,
         &mut cli,
-        &identity,
+        &author_identity,
         &evidence_lease,
         evidence_fencing,
     );
     finalize_evidence(
         &harness,
         &mut cli,
-        &identity,
+        &author_identity,
         &evidence_lease,
         evidence_fencing,
     );
     release_lease(
         &harness,
         &mut cli,
-        &identity,
+        &author_identity,
+        "task",
         &evidence_lease,
         evidence_fencing,
     );
@@ -101,12 +117,13 @@ fn complete_prd_commits_and_replays_one_exact_project_mutation() {
         &harness,
         &mut cli,
         &workspace,
-        &identity,
+        &reviewers,
         &recorded_evidence,
     );
     assert_eq!(completion_milestone(&harness), "governance-closed");
 
-    let (lease_id, fencing) = acquire_lease(&harness, &mut cli, &identity, "lifecycle-prd-lease");
+    let (lease_id, fencing) =
+        acquire_lease(&harness, &mut cli, &identity, "root", "lifecycle-prd-lease");
     record_completion_intent_and_gates(&harness, &mut cli, &identity, fencing);
 
     let completion_revision = current_revision(&harness);
@@ -311,10 +328,15 @@ fn release_lease(
     harness: &Harness,
     cli: &mut ae_sdd_runtime::ConnectionState,
     identity: &CliIdentity,
+    role_label: &str,
     lease_id: &str,
     fencing: u64,
 ) {
-    let mut release = operation_params(identity, "lease.release", json!({"owner":{"role":"root"}}));
+    let mut release = operation_params(
+        identity,
+        "lease.release",
+        json!({"owner":{"role":role_label}}),
+    );
     bind_write(
         &mut release,
         lease_id,
@@ -378,36 +400,26 @@ fn reseal_manifest_for_review(harness: &Harness, inventory_generation: u64) {
 }
 
 /// Drives one clean `review.record` per required tier-2 specialty through the
-/// real operation: each reviewer opens its own delegated lineage, appends its
+/// real operation: each reviewer of the already-open lineage appends its
 /// contribution and the adapter immediately finalizes it, so the durable
 /// event, the SQLite projection and the reviewer lineage all join.
 fn install_completed_review_authority(
     harness: &Harness,
     cli: &mut ae_sdd_runtime::ConnectionState,
     workspace: &ae_sdd_runtime::WorkspaceResult,
-    root_identity: &CliIdentity,
+    reviewers: &[ae_sdd_runtime::SessionResult],
     evidence_id: &str,
 ) {
-    // Every specialty of one review must hang off a single Root->Series
-    // lineage. Opening a Series per specialty makes the second contribution a
-    // different reviewer lineage than the one that opened the session, which
-    // the daemon rejects as a turn identity mismatch.
+    // Every specialty of one review hangs off the single Root->Series lineage
+    // the caller opened before driving the evidence milestones.
     const SPECIALTIES: [&str; 2] = ["be", "ar"];
-    let (_author, reviewers) = open_review_lineage_for_specialties(
-        harness,
-        cli,
-        workspace,
-        root_identity,
-        &SPECIALTIES,
-        "lifecycle-prd",
-    );
     for (specialty, reviewer) in SPECIALTIES.iter().zip(reviewers) {
         let lineage_key = format!("lifecycle-prd-{specialty}");
         // `open_delegated_child` registers the reviewer session under
         // `{child key}-agent`, and the reviewer child key is `{lineage}-reviewer`.
         let reviewer_identity = identity_for_work_item(
             workspace,
-            &reviewer,
+            reviewer,
             PRD_ID,
             &format!(
                 "{}-agent",
@@ -547,12 +559,13 @@ fn acquire_lease(
     harness: &Harness,
     cli: &mut ae_sdd_runtime::ConnectionState,
     identity: &CliIdentity,
+    role_label: &str,
     key: &str,
 ) -> (String, u64) {
     let mut request = operation_params(
         identity,
         "lease.acquire",
-        json!({"owner":{"role":"root"},"ttlSeconds":300}),
+        json!({"owner":{"role":role_label},"ttlSeconds":300}),
     );
     request.idempotency_key = Some(key.to_owned());
     let acquired = success(&call(

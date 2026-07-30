@@ -17,6 +17,11 @@
 //! `max_no_progress_batches` only patch, focused-test and blocker events
 //! remain admissible.  Broad verification is never allowed before the
 //! focused GREEN, and a completed slice denies every further event.
+//!
+//! Between the focused GREEN and evidence binding the checkpoint also tracks
+//! the slice refactor loop ([`RefactorCycleV1`]): once a refactor starts it
+//! must close with its re-observed focused GREEN before evidence may bind,
+//! while a slice without refactoring needs binds evidence directly.
 
 use std::collections::BTreeSet;
 
@@ -27,7 +32,7 @@ use crate::error::{ExecutionSupervisorError, ExecutionSupervisorFault};
 use crate::policy::{
     ExecutionAllowanceV1, ExecutionDecisionV1, ExecutionOutputDirectiveV1, ExecutionProgressKindV1,
 };
-use crate::slice::{ExecutionSliceEvent, transition_slice_status};
+use crate::slice::{ExecutionSliceEvent, RefactorCycleV1, transition_slice_status};
 
 /// Outcome of one focused verification run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,15 +141,16 @@ pub enum ExecutionToolEventV1 {
 
 /// Restartable supervisor checkpoint for the active slice.
 ///
-/// Tracks the slice status, the focused verification state, the frozen
-/// budgets and the investigation accounting (open batch plus consecutive
-/// no-progress batches) together with the identities of the last accepted
-/// progress events.  The per-batch file set is bounded by
+/// Tracks the slice status, the refactor loop, the focused verification
+/// state, the frozen budgets and the investigation accounting (open batch
+/// plus consecutive no-progress batches) together with the identities of the
+/// last accepted progress events.  The per-batch file set is bounded by
 /// `max_source_files_per_batch`, so the checkpoint footprint stays bounded
 /// by the frozen budgets.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionSupervisorCheckpointV1 {
     slice_status: ExecutionSliceStatus,
+    refactor_cycle: RefactorCycleV1,
     focused_test: FocusedTestStateV1,
     budgets: ExecutionBudgetsV1,
     no_progress_batches: u8,
@@ -157,11 +163,13 @@ pub struct ExecutionSupervisorCheckpointV1 {
 }
 
 impl ExecutionSupervisorCheckpointV1 {
-    /// Starts a fresh checkpoint for a slice: focused state `never`, all
-    /// investigation counters at zero and no recorded progress identities.
+    /// Starts a fresh checkpoint for a slice: focused state `never`, refactor
+    /// loop `idle`, all investigation counters at zero and no recorded
+    /// progress identities.
     pub fn new(slice_status: ExecutionSliceStatus, budgets: ExecutionBudgetsV1) -> Self {
         Self {
             slice_status,
+            refactor_cycle: RefactorCycleV1::Idle,
             focused_test: FocusedTestStateV1::Never,
             budgets,
             no_progress_batches: 0,
@@ -177,6 +185,11 @@ impl ExecutionSupervisorCheckpointV1 {
     /// Returns the tracked slice lifecycle status.
     pub const fn slice_status(&self) -> ExecutionSliceStatus {
         self.slice_status
+    }
+
+    /// Returns the tracked refactor-loop state of the slice.
+    pub const fn refactor_cycle(&self) -> RefactorCycleV1 {
+        self.refactor_cycle
     }
 
     /// Returns the tracked focused verification state.
@@ -343,10 +356,15 @@ impl ExecutionSupervisor {
                 Self::allow(next, progress, None)
             }
             ExecutionToolEventV1::Slice(slice_event) => {
-                match transition_slice_status(checkpoint.slice_status, *slice_event) {
-                    Ok(status) => {
+                match transition_slice_status(
+                    checkpoint.slice_status,
+                    checkpoint.refactor_cycle,
+                    *slice_event,
+                ) {
+                    Ok((status, refactor_cycle)) => {
                         let mut next = checkpoint.clone();
                         next.slice_status = status;
+                        next.refactor_cycle = refactor_cycle;
                         Self::record_progress(&mut next);
                         Self::allow(next, Some(ExecutionProgressKindV1::SliceAdvanced), None)
                     }
@@ -528,6 +546,7 @@ mod tests {
             ExecutionBudgetsV1::default(),
         );
         assert_eq!(checkpoint.focused_test(), FocusedTestStateV1::Never);
+        assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Idle);
         assert_eq!(checkpoint.no_progress_batches(), 0);
         assert_eq!(checkpoint.batch_calls(), 0);
         assert_eq!(checkpoint.batch_source_bytes(), 0);

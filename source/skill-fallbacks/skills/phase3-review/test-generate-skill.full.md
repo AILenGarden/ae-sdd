@@ -37,7 +37,7 @@ description: Test 系列 Step 2 generateSkill。Coding 完成后运行编译、�
 
 ### 1. 制定执行矩阵
 
-先运行 `ae-sdd verify plan --story {STORY-ID} --changed <paths>`，再从 TestCase 文档提取应跑用例。仅 Markdown 变化不得安排 Maven；生产代码变化先跑 focused/module 验证，稳定 implementation fingerprint 后只跑一次最终全量回归。
+先运行 `ae-sdd verify plan --story {STORY-ID} --changed <paths>`，再从 TestCase 文档提取应跑用例。仅 Markdown 变化不得安排 Maven；生产代码变化只跑 focused/module 增量验证：改动落在哪个 crate/模块，就只跑该 crate 的测试与对应测试文件。开发回路与任务收口禁止跑全量套件；全量回归只在 release/分发门禁执行。
 
 | 层级 | 必跑对象 | 证据 |
 |---|---|---|

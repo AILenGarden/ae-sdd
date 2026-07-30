@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, CompletionDigestSet, CompletionMilestone, DecisionDigest,
     DesignRoute, EvidenceRef, InputFingerprint, ProcessPhase, ProjectRelativePath, SessionId,
-    StateRevision, StoryId, WorkScale,
+    StateRevision, StoryId, VerificationId, WorkScale,
 };
 use ae_sdd_protocol::ConfirmationRef;
 use serde::{Deserialize, Serialize};
@@ -294,6 +294,9 @@ pub enum LifecycleInputError {
     /// The same Story identity appeared more than once.
     #[error("lifecycle input contains a duplicate Story summary")]
     DuplicateStory,
+    /// The same daemon Gate pass appeared more than once.
+    #[error("lifecycle input contains a duplicate Gate pass")]
+    DuplicateGatePass,
 }
 
 /// Complete, bounded input to the pure lifecycle planner.
@@ -311,6 +314,7 @@ pub struct LifecycleInput {
     prd_summary: Option<PrdSummary>,
     confirmation_refs: Vec<ConfirmationRef>,
     evidence_refs: Vec<EvidenceRef>,
+    passed_gate_ids: Vec<VerificationId>,
     file_locks: Vec<FileLockSnapshot>,
     completion: Option<CompletionMilestoneInput>,
     evaluation_unix_ms: u64,
@@ -365,6 +369,7 @@ impl LifecycleInput {
             prd_summary,
             confirmation_refs,
             evidence_refs,
+            passed_gate_ids: Vec::new(),
             file_locks,
             completion: None,
             evaluation_unix_ms,
@@ -378,6 +383,24 @@ impl LifecycleInput {
     pub const fn with_completion(mut self, completion: CompletionMilestoneInput) -> Self {
         self.completion = Some(completion);
         self
+    }
+
+    /// Binds fresh daemon-owned Gate passes to the lifecycle plan without
+    /// misrepresenting them as file-backed verification evidence.
+    pub fn with_passed_gate_ids(
+        mut self,
+        mut passed_gate_ids: Vec<VerificationId>,
+    ) -> Result<Self, LifecycleInputError> {
+        if passed_gate_ids.len() > MAX_LIFECYCLE_REFS {
+            return Err(LifecycleInputError::CollectionLimitExceeded);
+        }
+        let unique: BTreeSet<&VerificationId> = passed_gate_ids.iter().collect();
+        if unique.len() != passed_gate_ids.len() {
+            return Err(LifecycleInputError::DuplicateGatePass);
+        }
+        passed_gate_ids.sort();
+        self.passed_gate_ids = passed_gate_ids;
+        Ok(self)
     }
 
     /// Returns the optional completion-milestone freshness projection.
@@ -430,6 +453,11 @@ impl LifecycleInput {
         &self.evidence_refs
     }
 
+    /// Returns fresh Gate identities asserted by the daemon Flow authority.
+    pub fn passed_gate_ids(&self) -> &[VerificationId] {
+        &self.passed_gate_ids
+    }
+
     /// Returns the authoritative bounded file-lock projection.
     pub fn file_locks(&self) -> &[FileLockSnapshot] {
         &self.file_locks
@@ -477,6 +505,12 @@ struct LifecycleInputWire {
     confirmation_refs: Vec<ConfirmationRef>,
     #[serde(with = "serde_domain::evidence_refs")]
     evidence_refs: Vec<EvidenceRef>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        with = "serde_domain::verification_ids"
+    )]
+    passed_gate_ids: Vec<VerificationId>,
     file_locks: Vec<FileLockSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     completion: Option<CompletionMilestoneInput>,
@@ -505,6 +539,7 @@ impl TryFrom<LifecycleInputWire> for LifecycleInput {
             value.evaluation_unix_ms,
             value.input_fingerprint,
         )?;
+        let input = input.with_passed_gate_ids(value.passed_gate_ids)?;
         Ok(match value.completion {
             Some(completion) => input.with_completion(completion),
             None => input,
@@ -526,6 +561,7 @@ impl From<LifecycleInput> for LifecycleInputWire {
             prd_summary: value.prd_summary,
             confirmation_refs: value.confirmation_refs,
             evidence_refs: value.evidence_refs,
+            passed_gate_ids: value.passed_gate_ids,
             file_locks: value.file_locks,
             completion: value.completion,
             evaluation_unix_ms: value.evaluation_unix_ms,

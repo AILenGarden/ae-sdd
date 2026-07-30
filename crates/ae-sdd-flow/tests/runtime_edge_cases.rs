@@ -170,6 +170,29 @@ fn pending_gate_and_commit_invariants_reject_out_of_order_events() {
 }
 
 #[test]
+fn repeated_root_request_for_the_same_pending_transition_is_a_replay_noop() {
+    let initial = FlowRuntime::start(support::input());
+    let pending = FlowRuntime::apply(&initial, &support::transition_request(1, AgentRole::Root))
+        .expect("root transition becomes pending");
+
+    let replayed = FlowRuntime::apply(&pending, &support::transition_request(2, AgentRole::Root))
+        .expect("same root transition intent replays idempotently");
+
+    assert_eq!(replayed.pending_transition(), pending.pending_transition());
+    assert_eq!(replayed.required_gates(), pending.required_gates());
+    assert_eq!(replayed.passed_gates(), pending.passed_gates());
+    assert_eq!(replayed.next_action(), pending.next_action());
+    assert_eq!(
+        replayed
+            .last_cursor()
+            .expect("replayed event advances the cursor")
+            .sequence()
+            .get(),
+        2
+    );
+}
+
+#[test]
 fn pause_commit_records_the_exact_resume_phase() {
     let initial = FlowRuntime::start(support::input_at(ProcessPhase::Coding, 0));
     let pending = FlowRuntime::apply(
@@ -260,11 +283,7 @@ fn decision_digest_handles_every_phase_route_scale_fault_and_denial_shape() {
             ProcessPhase::RouteSelected,
         ),
         (
-            custom_input(
-                ProcessPhase::StoryGenerated,
-                WorkScale::Large,
-                DesignRoute::Dr,
-            ),
+            custom_input(ProcessPhase::DrGenerated, WorkScale::Large, DesignRoute::Dr),
             ProcessPhase::TestcaseGenerated,
         ),
         (
@@ -274,7 +293,7 @@ fn decision_digest_handles_every_phase_route_scale_fault_and_denial_shape() {
         (
             FlowInput::new(
                 FlowSnapshot::new(ProcessPhase::Paused, StateRevision::new(7), 0)
-                    .with_paused_from(ProcessPhase::StoryGenerated),
+                    .with_paused_from(ProcessPhase::TestcaseGenerated),
                 custom_input(ProcessPhase::Initialized, WorkScale::Large, DesignRoute::Dr)
                     .environment(),
             ),

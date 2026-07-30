@@ -409,7 +409,7 @@ fn all_eight_memory_commands_reach_the_trusted_daemon_namespace() {
             "--project",
             &project,
             "--sources",
-            "constraints=memory-source.md",
+            "constraints=constraints/memory-source.md",
             "--context-json",
             &context,
         ],
@@ -446,7 +446,10 @@ fn all_eight_memory_commands_reach_the_trusted_daemon_namespace() {
 
     for (index, (slice, content_args)) in [
         ("boot", vec!["--content", "replacement boot"]),
-        ("context", vec!["--content-file", "memory-content.md"]),
+        (
+            "context",
+            vec!["--content-file", "constraints/memory-content.md"],
+        ),
         ("pending", vec!["--content", "needle pending projection"]),
     ]
     .into_iter()
@@ -529,7 +532,7 @@ fn all_eight_memory_commands_reach_the_trusted_daemon_namespace() {
 
     let common_restored = harness.submit_bound_legacy(
         "memory common",
-        &["update", "--content-file", "memory-content.md"],
+        &["update", "--content-file", "constraints/memory-content.md"],
         MEMORY_WORK_ITEM,
         "memory-common-restore",
     );
@@ -608,20 +611,21 @@ fn memory_cli_inputs_and_compiler_fail_closed_at_native_bounds() {
     let root = TempDir::new().expect("tempdir");
     let mut harness = Harness::new(&root);
     prepare_memory_workspace(&root);
+    fs::create_dir_all(root.path().join("constraints")).expect("constraints dir");
     fs::write(
-        root.path().join("large-memory-source.md"),
+        root.path().join("constraints/large-memory-source.md"),
         (0..160)
             .map(|index| format!("must preserve unique constraint number {index:03}\n"))
             .collect::<String>(),
     )
     .expect("large common source");
     fs::write(
-        root.path().join("oversized-memory-source.md"),
+        root.path().join("constraints/oversized-memory-source.md"),
         vec![b'x'; 257 * 1024],
     )
     .expect("oversized source");
     fs::write(
-        root.path().join("binary-memory-source.md"),
+        root.path().join("constraints/binary-memory-source.md"),
         [0xff, 0xfe, 0xfd],
     )
     .expect("binary source");
@@ -662,7 +666,7 @@ fn memory_cli_inputs_and_compiler_fail_closed_at_native_bounds() {
             "--entity-id",
             "TRUNCATED",
             "--sources",
-            "large=large-memory-source.md",
+            "large=constraints/large-memory-source.md",
         ],
         MEMORY_TRUNCATED_WORK_ITEM,
         "memory-truncated-create",
@@ -703,7 +707,7 @@ fn memory_cli_inputs_and_compiler_fail_closed_at_native_bounds() {
     let sources_payload = serde_json::to_string(&json!({
         "entityType":"coding",
         "entityId":"ARRAY-SOURCES",
-        "sources":["one=memory-source.md","marker-only"]
+        "sources":["one=constraints/memory-source.md","marker-only"]
     }))
     .expect("array sources payload");
     let array_sources = harness.submit_bound_legacy(
@@ -840,7 +844,7 @@ fn memory_cli_inputs_and_compiler_fail_closed_at_native_bounds() {
                 "--entity-id",
                 "MISSING-SOURCE",
                 "--sources",
-                "source=missing.md",
+                "source=constraints/missing.md",
             ],
             StableErrorCode::ExternalStateConflict,
         ),
@@ -852,7 +856,7 @@ fn memory_cli_inputs_and_compiler_fail_closed_at_native_bounds() {
                 "--entity-id",
                 "LARGE-SOURCE",
                 "--sources",
-                "source=oversized-memory-source.md",
+                "source=constraints/oversized-memory-source.md",
             ],
             StableErrorCode::OperationSchemaInvalid,
         ),
@@ -864,7 +868,7 @@ fn memory_cli_inputs_and_compiler_fail_closed_at_native_bounds() {
                 "--entity-id",
                 "BINARY-SOURCE",
                 "--sources",
-                "source=binary-memory-source.md",
+                "source=constraints/binary-memory-source.md",
             ],
             StableErrorCode::OperationSchemaInvalid,
         ),
@@ -1349,13 +1353,14 @@ fn prepare_memory_workspace(root: &TempDir) {
     )
     .expect("memory state file");
     fs::write(root.path().join("memory-story.md"), "# Story\n").expect("memory Story");
+    fs::create_dir_all(root.path().join("constraints")).expect("constraints dir");
     fs::write(
-        root.path().join("memory-source.md"),
+        root.path().join("constraints/memory-source.md"),
         "must use durable receipts\nordinary transcript content\n",
     )
     .expect("memory source");
     fs::write(
-        root.path().join("memory-content.md"),
+        root.path().join("constraints/memory-content.md"),
         "needle content loaded through a bounded granted file\n",
     )
     .expect("memory content");

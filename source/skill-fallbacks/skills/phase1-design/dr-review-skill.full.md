@@ -216,7 +216,7 @@ DR ID：{DR-ID}
 ae-sdd gates check --only G-DR-CTX
 ```
 
-`G-DR-CTX` 校验 `constraints/assets/RA/PRD` 四类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API）。未过 → **BLOCK，禁止进入 Review**。注：本门禁只覆盖「上下文加载」维度，0-1/0-5~0-9 等 DR 产物结构审查项仍是 report-only（见本文件「门禁强度声明」）。
+`G-DR-CTX` 校验 `constraints/assets/RA/PRD` 四类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_assets` API；约束直接读取 `constraints/` 目录，索引 `constraints/README.md`）。未过 → **BLOCK，禁止进入 Review**。注：本门禁只覆盖「上下文加载」维度，0-1/0-5~0-9 等 DR 产物结构审查项仍是 report-only（见本文件「门禁强度声明」）。
 
 **准入记录：** 在 DR Review 报告顶部新增"准入检查记录"章节：
 

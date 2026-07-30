@@ -218,9 +218,16 @@ const fn workspace_spec(
 /// a bootstrap caller has no Work Item yet and omits it, so the daemon mints
 /// `{entryNode}-{8 lowercase hex}` instead. That is why `workitem.create` is
 /// workspace-scoped and the payload carries only what shapes the new state.
+///
+/// `providedDocuments` registers caller-owned PRD/DR/Story documents at create
+/// time. Each entry is an object: `intent` (`PRD`|`DR`|`STORY`), `docId`,
+/// project-relative `path`, and an optional `parentDocId` pointing at another
+/// entry (a Story to its DR, a DR to its PRD). Adoption only records the
+/// mapping; the daemon never writes to or copies the referenced files.
 const WORKITEM_CREATE: &[FieldSpec] = &[
     field("entryNode", FieldKind::String, true),
     field("storyName", FieldKind::String, false),
+    field("providedDocuments", FieldKind::Array, false),
 ];
 const ROUTE_DECIDE: &[FieldSpec] = &[
     field("requestedIntent", FieldKind::String, true),

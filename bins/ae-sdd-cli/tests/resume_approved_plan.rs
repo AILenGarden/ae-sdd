@@ -155,6 +155,22 @@ fn renders_full_and_no_change_projections() {
 }
 
 #[test]
+fn renders_projection_from_the_operation_execute_receipt() {
+    let response = json!({
+        "changed": true,
+        "data": daemon_full_response(),
+        "receiptDigest": "a".repeat(64),
+        "revisionBefore": 150,
+        "revisionAfter": 151
+    });
+
+    let rendered = cli_main::render_resume_projection(&response)
+        .expect("typed operation receipt data renders");
+    assert_eq!(rendered["projectionKind"], "full");
+    assert_eq!(rendered["nextAction"]["kind"], "execute-approved-slice");
+}
+
+#[test]
 fn rendered_projection_exposes_exactly_the_frozen_keys() {
     let mut response = daemon_full_response();
     response

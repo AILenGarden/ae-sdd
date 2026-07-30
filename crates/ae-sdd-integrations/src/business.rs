@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ae_sdd_contracts::execution_runtime::{ExecutionCapsuleV1, ExecutionSliceStatus};
 use ae_sdd_contracts::lifecycle::CompletionMilestoneInput;
 use ae_sdd_contracts::series::RouteInput;
-use ae_sdd_contracts::{BoundedText, ExecutionId, ExecutionStepId, SchemaVersion, WorkerId};
+use ae_sdd_contracts::{BoundedText, ExecutionId, ExecutionStepId, PrdId, SchemaVersion, WorkerId};
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, BootId, CompletionDigestSet,
     CompletionMilestone, DesignRoute, EventStoreId, EvidenceDigest, FencingToken, GateOutcome,
@@ -911,7 +911,7 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                             "targetPhase is forbidden until route.decide commits a route",
                         ));
                     }
-                    return Ok(projection);
+                    return Ok(with_document_tree(projection, &located.value));
                 }
                 let input =
                     flow_input(workspace, &located.value, work_item_id, self.event_store_id)?;
@@ -954,11 +954,14 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                     self.flow
                         .project(&workspace.workspace_id, work_item_id, input)?
                 };
-                Ok(decorate_route_handoff(
-                    FlowSupervisor::projection(&decision),
+                Ok(with_document_tree(
+                    decorate_route_handoff(
+                        FlowSupervisor::projection(&decision),
+                        &located.value,
+                        current_review_input_fingerprint(workspace, &located.value)?,
+                    )?,
                     &located.value,
-                    current_review_input_fingerprint(workspace, &located.value)?,
-                )?)
+                ))
             }
             RpcMethod::GateEvaluate => self.gate_evaluate(workspace, params),
             RpcMethod::JobSubmit | RpcMethod::JobStatus | RpcMethod::JobCancel => {
@@ -1017,6 +1020,7 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                     current_review_input_fingerprint(workspace, &located.value)?,
                 )?
             };
+        let flow_projection = with_document_tree(flow_projection, &located.value);
         let next_action = flow_projection
             .get("nextAction")
             .cloned()
@@ -3847,6 +3851,8 @@ fn create_work_item(
     if let Some(story_name) = story_name {
         state.insert("storyName".to_owned(), json!(story_name));
     }
+    let provided = provided_documents(workspace, &payload)?;
+    adopt_provided_documents(&mut state, &entry_node, &provided, &now)?;
 
     let directory = root.join(&state_machine_id);
     fs::create_dir_all(&directory).map_err(|error| io_error("create state directory", error))?;
@@ -3896,6 +3902,427 @@ fn create_work_item(
                  "stateUuid": state_uuid, "entryNode": entry_node,
                  "statePath": format!(".auto-engineering/{state_machine_id}/state.json")},
     }))
+}
+
+/// A caller-owned document a `workitem.create` payload registers for adoption.
+///
+/// Adoption only records the mapping in the new state: the file is never
+/// opened for content, copied, or written — the canonicalize below is the
+/// metadata-only containment proof the path contract requires.
+struct ProvidedDocument {
+    intent: ProvidedDocumentIntent,
+    doc_id: String,
+    path: ProjectRelativePath,
+    parent_doc_id: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProvidedDocumentIntent {
+    Prd,
+    Dr,
+    Story,
+}
+
+impl ProvidedDocumentIntent {
+    const fn document_paths_key(self) -> &'static str {
+        match self {
+            Self::Prd => "PRD",
+            Self::Dr => "DR",
+            Self::Story => "STORY",
+        }
+    }
+}
+
+/// Parses and screens the optional `providedDocuments` adoption tree.
+///
+/// The registry request layer already rejected malformed entries; what remains
+/// needs the workspace root: docId charset for the container that will key it,
+/// project-relative path form (the same traversal screen document.save uses),
+/// and proof that the path names an existing file inside this workspace.
+fn provided_documents(
+    workspace: &BusinessWorkspace,
+    payload: &Value,
+) -> RuntimeResult<Vec<ProvidedDocument>> {
+    let Some(documents) = payload.get("providedDocuments") else {
+        return Ok(Vec::new());
+    };
+    let entries = documents
+        .as_array()
+        .ok_or_else(|| schema_error("providedDocuments must be an array"))?;
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root = Path::new(&workspace.canonical_root);
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| io_error("resolve workspace root", error))?;
+    let mut provided = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let intent = match entry.get("intent").and_then(Value::as_str) {
+            Some("PRD") => ProvidedDocumentIntent::Prd,
+            Some("DR") => ProvidedDocumentIntent::Dr,
+            Some("STORY") => ProvidedDocumentIntent::Story,
+            _ => {
+                return Err(schema_error(
+                    "providedDocuments.intent must be PRD, DR, or STORY",
+                ));
+            }
+        };
+        let doc_id = entry
+            .get("docId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        // The docId becomes a container key (`prdState.prdId`, `drStates` key
+        // or `storyStates` key), and the lifecycle authority fail-closes on an
+        // id it cannot parse, so screen it before it reaches the state file.
+        let id_is_valid = match intent {
+            ProvidedDocumentIntent::Prd => PrdId::new(doc_id.clone()).is_ok(),
+            ProvidedDocumentIntent::Dr => WorkItemId::new(doc_id.clone()).is_ok(),
+            ProvidedDocumentIntent::Story => StoryId::new(doc_id.clone()).is_ok(),
+        };
+        if !id_is_valid {
+            return Err(schema_error(
+                "providedDocuments.docId is not a valid document identifier",
+            ));
+        }
+        let path = entry
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| schema_error("providedDocuments.path must be non-empty text"))?;
+        let path = ProjectRelativePath::new(path.to_owned()).map_err(domain_error)?;
+        let candidate = root.join(path.as_str());
+        let canonical = candidate.canonicalize().map_err(|_| {
+            schema_error("providedDocuments.path must name an existing workspace file")
+        })?;
+        if !canonical.starts_with(&canonical_root) || !canonical.is_file() {
+            return Err(schema_error(
+                "providedDocuments.path must stay inside the workspace and name a file",
+            ));
+        }
+        let parent_doc_id = entry
+            .get("parentDocId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        provided.push(ProvidedDocument {
+            intent,
+            doc_id,
+            path,
+            parent_doc_id,
+        });
+    }
+    Ok(provided)
+}
+
+/// Registers caller-provided documents in the freshly built state.
+///
+/// Adoption only records mappings: `documentPaths` takes the first provided
+/// path per intent (unprovided intents keep their minted defaults),
+/// `routeDocuments` marks each adopted series committed so a ROUTE handoff
+/// skips its generation, and the prd/dr/story containers gain their entries
+/// with generation-complete phases. The root phase jumps directly to the
+/// deepest adopted document's post-generation phase because the
+/// TransitionPolicy only ever advances one step; this write is the create-time
+/// initial value, not a transition.
+fn adopt_provided_documents(
+    state: &mut Map<String, Value>,
+    entry_node: &str,
+    provided: &[ProvidedDocument],
+    now: &str,
+) -> RuntimeResult<()> {
+    if provided.is_empty() {
+        return Ok(());
+    }
+    let has = |intent| provided.iter().any(|doc| doc.intent == intent);
+    // Deepest adopted document decides the initial phase. `dr-generated` is
+    // not a member of the STORY route chain, so a STORY-entry item that only
+    // adopts a DR falls back to the chain's deepest legal pre-Story phase.
+    let root_phase = if has(ProvidedDocumentIntent::Story) {
+        if entry_node == "STORY" {
+            "story-generated"
+        } else {
+            "dr-generated"
+        }
+    } else if has(ProvidedDocumentIntent::Dr) {
+        if entry_node == "STORY" {
+            "requirement-analyzed"
+        } else {
+            "dr-generated"
+        }
+    } else {
+        "initialized"
+    };
+
+    let paths = state
+        .get_mut("documentPaths")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| schema_error("documentPaths must be an object"))?;
+    for intent in [
+        ProvidedDocumentIntent::Prd,
+        ProvidedDocumentIntent::Dr,
+        ProvidedDocumentIntent::Story,
+    ] {
+        if let Some(doc) = provided.iter().find(|doc| doc.intent == intent) {
+            paths.insert(
+                intent.document_paths_key().to_owned(),
+                json!(doc.path.as_str()),
+            );
+        }
+    }
+    let routes = state
+        .get_mut("routeDocuments")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| schema_error("routeDocuments must be an object"))?;
+    for doc in provided {
+        routes.insert(
+            doc.intent.document_paths_key().to_owned(),
+            Value::Bool(true),
+        );
+        // The requirement-analysis series exists to produce the PRD, so an
+        // adopted PRD also commits the series key the handoff actually reads.
+        if doc.intent == ProvidedDocumentIntent::Prd {
+            routes.insert("RA".to_owned(), Value::Bool(true));
+        }
+    }
+
+    let singular_dr_id = state
+        .get("drState")
+        .and_then(|dr| dr.get("drId"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if let Some(prd) = provided
+        .iter()
+        .find(|doc| doc.intent == ProvidedDocumentIntent::Prd)
+    {
+        match state.get_mut("prdState") {
+            Some(existing) => {
+                // The existing container belongs to the Work Item itself:
+                // `prdId` must stay the business name or the lifecycle
+                // authority can no longer address the item, so the adopted
+                // document identity rides in `docId` alongside it.
+                let existing = existing
+                    .as_object_mut()
+                    .ok_or_else(|| schema_error("prdState must be an object"))?;
+                existing.insert("docId".to_owned(), json!(prd.doc_id));
+                existing.insert("docPath".to_owned(), json!(prd.path.as_str()));
+            }
+            None => {
+                state.insert(
+                    "prdState".to_owned(),
+                    json!({
+                        "prdId": prd.doc_id,
+                        "docId": prd.doc_id,
+                        "phase": root_phase,
+                        "docPath": prd.path.as_str(),
+                        "completedSteps": [],
+                        "lastUpdated": now,
+                    }),
+                );
+            }
+        }
+    }
+    for doc in provided
+        .iter()
+        .filter(|doc| doc.intent == ProvidedDocumentIntent::Dr)
+    {
+        if entry_node == "DR" && singular_dr_id.as_deref() == Some(doc.doc_id.as_str()) {
+            let dr = state
+                .get_mut("drState")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| schema_error("drState must be an object"))?;
+            dr.insert("docPath".to_owned(), json!(doc.path.as_str()));
+        } else {
+            let dr_states = state
+                .entry("drStates")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| schema_error("drStates must be an object"))?;
+            dr_states.insert(
+                doc.doc_id.clone(),
+                json!({
+                    "drId": doc.doc_id,
+                    "phase": "dr-generated",
+                    "docPath": doc.path.as_str(),
+                    "completedSteps": [],
+                    "lastUpdated": now,
+                    "storyStates": {},
+                }),
+            );
+        }
+    }
+    for doc in provided
+        .iter()
+        .filter(|doc| doc.intent == ProvidedDocumentIntent::Story)
+    {
+        let story = json!({
+            "phase": "story-generated",
+            "currentPhase": "story-generated",
+            "docPath": doc.path.as_str(),
+        });
+        let nested_in_singular = entry_node == "DR"
+            && doc.parent_doc_id.as_deref() == singular_dr_id.as_deref()
+            && doc.parent_doc_id.is_some();
+        if nested_in_singular {
+            let dr = state
+                .get_mut("drState")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| schema_error("drState must be an object"))?;
+            dr.entry("storyStates")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| schema_error("drState.storyStates must be an object"))?
+                .insert(doc.doc_id.clone(), story);
+        } else if let Some(parent) = doc.parent_doc_id.as_deref() {
+            // The request layer proved the parent is a provided DR, and the DR
+            // loop above registered every provided DR, so this entry exists.
+            state
+                .get_mut("drStates")
+                .and_then(Value::as_object_mut)
+                .and_then(|states| states.get_mut(parent))
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| {
+                    schema_error("providedDocuments.parentDocId has no registered DR entry")
+                })?
+                .get_mut("storyStates")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| schema_error("drStates.storyStates must be an object"))?
+                .insert(doc.doc_id.clone(), story);
+        } else {
+            state
+                .entry("storyStates")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| schema_error("storyStates must be an object"))?
+                .insert(doc.doc_id.clone(), story);
+        }
+    }
+
+    if entry_node == "DR"
+        && let Some(prd) = provided
+            .iter()
+            .find(|doc| doc.intent == ProvidedDocumentIntent::Prd)
+    {
+        state.insert("parentPrdId".to_owned(), json!(prd.doc_id));
+    }
+    if entry_node == "STORY"
+        && let Some(dr) = provided
+            .iter()
+            .find(|doc| doc.intent == ProvidedDocumentIntent::Dr)
+    {
+        state.insert("parentDrId".to_owned(), json!(dr.doc_id));
+    }
+
+    state.insert("phase".to_owned(), json!(root_phase));
+    state.insert("currentPhase".to_owned(), json!(root_phase));
+    // Container phases mirror the root: the lifecycle authority fail-closes
+    // when prdState disagrees with the top-level phase, and the singular
+    // drState is kept on the same rule so the two views cannot diverge.
+    if let Some(prd) = state.get_mut("prdState").and_then(Value::as_object_mut) {
+        prd.insert("phase".to_owned(), json!(root_phase));
+    }
+    if let Some(dr) = state.get_mut("drState").and_then(Value::as_object_mut) {
+        dr.insert("phase".to_owned(), json!(root_phase));
+    }
+    Ok(())
+}
+
+/// Derives the PRD → DR → Story document tree from the authoritative
+/// containers. This is a read-time projection: it is never persisted, so the
+/// state file stays the single owner of the mapping.
+fn derive_document_tree(state: &Value) -> Value {
+    let document_paths = state.get("documentPaths").and_then(Value::as_object);
+    let bound_path = |key: &str| {
+        document_paths
+            .and_then(|paths| paths.get(key))
+            .and_then(Value::as_str)
+    };
+    let story_node = |story_id: &str, story: &Value| {
+        json!({
+            "storyId": story_id,
+            "docPath": story.get("docPath").cloned().unwrap_or(Value::Null),
+            "phase": story.get("phase").cloned().unwrap_or(Value::Null),
+        })
+    };
+    let nested_stories = |dr: Option<&Value>| {
+        dr.and_then(|dr| dr.get("storyStates"))
+            .and_then(Value::as_object)
+            .map(|stories| {
+                stories
+                    .iter()
+                    .map(|(story_id, story)| story_node(story_id, story))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let prd = state
+        .get("prdState")
+        .and_then(Value::as_object)
+        .map(|prd| {
+            let doc_path = prd
+                .get("docPath")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| bound_path("PRD").map(str::to_owned))
+                .or_else(|| bound_path("RA").map(str::to_owned));
+            json!({
+                "docId": prd.get("docId").and_then(Value::as_str)
+                    .or_else(|| prd.get("prdId").and_then(Value::as_str)),
+                "docPath": doc_path,
+                "phase": prd.get("phase").cloned().unwrap_or(Value::Null),
+            })
+        });
+    let mut drs = Vec::new();
+    if let Some(dr) = state.get("drState").and_then(Value::as_object) {
+        let doc_path = dr
+            .get("docPath")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| bound_path("DR").map(str::to_owned));
+        drs.push(json!({
+            "drId": dr.get("drId").cloned().unwrap_or(Value::Null),
+            "docPath": doc_path,
+            "phase": dr.get("phase").cloned().unwrap_or(Value::Null),
+            "stories": nested_stories(state.get("drState")),
+        }));
+    }
+    if let Some(states) = state.get("drStates").and_then(Value::as_object) {
+        for (dr_id, dr) in states {
+            drs.push(json!({
+                "drId": dr_id,
+                "docPath": dr.get("docPath").cloned().unwrap_or(Value::Null),
+                "phase": dr.get("phase").cloned().unwrap_or(Value::Null),
+                "stories": nested_stories(Some(dr)),
+            }));
+        }
+    }
+    drs.sort_by(|left, right| {
+        left.get("drId")
+            .and_then(Value::as_str)
+            .cmp(&right.get("drId").and_then(Value::as_str))
+    });
+    let stories = state
+        .get("storyStates")
+        .and_then(Value::as_object)
+        .map(|stories| {
+            stories
+                .iter()
+                .map(|(story_id, story)| story_node(story_id, story))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "prd": prd,
+        "drs": drs,
+        "stories": stories,
+    })
+}
+
+/// Attaches the derived document tree to a flow projection value.
+fn with_document_tree(mut projection: Value, state: &Value) -> Value {
+    if let Some(object) = projection.as_object_mut() {
+        object.insert("documentTree".to_owned(), derive_document_tree(state));
+    }
+    projection
 }
 
 struct AnonymousCreateIdentity {

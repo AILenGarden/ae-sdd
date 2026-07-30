@@ -1497,7 +1497,7 @@ fn persist_review_projection_receipt(
     })?;
     let existing: Option<String> = transaction
         .query_row(
-            "SELECT value_json FROM runtime_record_v1 WHERE namespace='review-projection-event/v2' AND key=?1",
+            "SELECT value_json FROM runtime_record_v1 WHERE namespace='review-projection-event/v3' AND key=?1",
             params![key],
             |row| row.get(0),
         )
@@ -1513,7 +1513,7 @@ fn persist_review_projection_receipt(
     }
     transaction
         .execute(
-            "INSERT INTO runtime_record_v1(namespace,key,value_json) VALUES('review-projection-event/v2',?1,?2)",
+            "INSERT INTO runtime_record_v1(namespace,key,value_json) VALUES('review-projection-event/v3',?1,?2)",
             params![key, receipt_json],
         )
         .map_err(sqlite_error)?;
@@ -3216,7 +3216,7 @@ mod tests {
         let mut statement = connection
             .prepare(
                 "SELECT key||'='||value_json FROM runtime_record_v1 \
-                 WHERE namespace='review-projection-event/v2' ORDER BY key",
+                 WHERE namespace='review-projection-event/v3' ORDER BY key",
             )
             .expect("receipt select prepares");
         let receipts = statement
@@ -3224,7 +3224,7 @@ mod tests {
             .expect("receipt rows query")
             .map(|row| row.expect("receipt row decodes"))
             .collect::<Vec<_>>();
-        census.push(("review-projection-event/v2".to_owned(), receipts));
+        census.push(("review-projection-event/v3".to_owned(), receipts));
         census
     }
 
@@ -3626,7 +3626,7 @@ mod tests {
             "review_attempt_v2_projection",
             "review_effective_contribution_v2_projection",
             "review_exit_receipt_v2_projection",
-            "review-projection-event/v2",
+            "review-projection-event/v3",
         ] {
             let rows = census_rows(&after_replay, table);
             assert_eq!(
@@ -3644,6 +3644,31 @@ mod tests {
                 "{table} must stay empty for a clean Tier 1 attempt"
             );
         }
+    }
+
+    #[test]
+    fn terminal_child_projection_preserves_an_unavailable_parent_anchor() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let database = seeded_projection_database(&directory, 41);
+        let mut state = terminal_review_state();
+        state["reviewSession"]["parentReviewId"] = json!("review-parent-not-replayed");
+        let write = replay_projection_write(&state, 41);
+
+        upsert_review_authority_projection(&database, &write)
+            .expect("rebuildable projection does not require the parent event to be retained");
+
+        let projection = load_review_authority_projection(
+            &database,
+            REPLAY_WORKSPACE,
+            REPLAY_WORK_ITEM,
+            "review-replay",
+        )
+        .expect("projection loads")
+        .expect("projection exists");
+        assert_eq!(
+            projection.session["parentReviewId"],
+            json!("review-parent-not-replayed")
+        );
     }
 
     /// Reads SQLite's change counter as seen by an observer connection.

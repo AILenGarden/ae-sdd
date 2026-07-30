@@ -37,12 +37,12 @@ description: TestCase 系列 Step 2 generateSkill。采用有界风险驱动范�
 ae-sdd gates check --only G-TESTCASE-CTX
 ```
 
-`G-TESTCASE-CTX` 校验 `constraints/assets/Story` 三类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `paths.find_doc`）。未过 → **BLOCK，禁止进入生成**。
+`G-TESTCASE-CTX` 校验 `constraints/assets/Story` 三类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_assets` API + `paths.find_doc`；约束直接读取 `constraints/` 目录，索引 `constraints/README.md`）。未过 → **BLOCK，禁止进入生成**。
 
 **读取入口（v3.9.1 显式化）：**
 - Story：`ae-sdd doc resolve --intent STORY --story-id {S}`
 - 项目资产：`document-storage-skill.get_assets(projectKey)` + `ae-sdd assets read testcase --project <projectKey>`
-- 项目约束：`document-storage-skill.get_constraints(projectKey)` → `constraints/*.md`
+- 项目约束：直接读取 `constraints/` 目录（索引 `constraints/README.md`）→ `constraints/*.md`
 
 ## 输入
 

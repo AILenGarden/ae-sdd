@@ -14,7 +14,7 @@ pub const LEGACY_OPERATION_COUNT: usize = 18;
 /// inventoried as [`Disposition::NativeAddition`] and carry no differential
 /// oracle, but the registry comparison still demands an exact inventory record
 /// for every one of them.
-pub const NATIVE_ADDITION_OPERATION_COUNT: usize = 5;
+pub const NATIVE_ADDITION_OPERATION_COUNT: usize = 6;
 pub const LEGACY_GATE_COUNT: usize = 36;
 pub const LEGACY_SCANNER_COUNT: usize = 7;
 

@@ -133,7 +133,10 @@
 ## 八、保留、清理与隐私
 
 - runtime event、job、projection/cache 可按 versioned retention policy 清理；operation receipt、host/delegation/compact audit 在其引用有效期内不得提前删除。
+- Review session 的 `parent_review_id` 必须原样保存为业务 lineage 锚点，但不得外键依赖父 Review 投影行；父事件可能已按保留策略清理，或尚未在本次 daemon 世代重放。
 - cleanup 本身必须是有界 job、可取消、可审计，不得在 Hook request 中执行 VACUUM/大范围删除。
+- 本节只管 SQLite。daemon 诊断轨（Hook 留痕、节点变更、缺陷）是 state directory 下的
+  JSONL 文件，不入 SQLite，保留按字节轮转且无定时清理任务，规则见 `code-style.md` §八之二。
 - 禁止在 SQLite 存储 prompt、child transcript、源码、完整系列文档、endpoint token、claim token、credential 或无界 stdout/stderr。
 - artifact 正文应落在项目允许路径并以 hash ref 关联；root projection 只存有界摘要/引用。
 

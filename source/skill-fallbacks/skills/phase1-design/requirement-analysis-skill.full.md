@@ -226,12 +226,16 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
 |---------|---------|---------|
 | Phase 1 起点 | `ae-sdd-skill` 编排层自动触发 | 任何 |
 | 用户手动 | "分析需求" / "从 PRD 开始" / "需求拆解" / "需求分析" | 任何 |
-| 有 PRD 文件 | 用户提供文件路径 | PRD（直接走第零步）|
+| 有 PRD 文件 | 用户提供文件路径 | PRD（采纳登记 → 直接走第零步：daemon `workitem.create providedDocuments` 已登记且 `routeDocuments.PRD=true`，禁止重新沉淀/改写/重新生成 PRD 文档）|
 | 有 Issue 文件 | 用户提供文件路径 | Issue（直接走第零步）|
 | 无输入（对话需求 + 复杂）| 多轮对话 | 自动写 PRD → 进入第零步 |
 | 无输入（对话需求 + 简单）| 多轮对话 | 自动写 Issue → 进入第零步 |
 | BUG/配置类 | 用户描述 | 直接进第零步（用 Issue 模板）|
 | 重入（已有 RA）| 用户说"修改 RA" / "重做需求分析" | 修订（按 §重入 SOP）|
+| 用户提供 DR 文件 | 用户提供文件路径 | DR（本技能不生成 DR：daemon `workitem.create providedDocuments` 已登记且 `routeDocuments.DR=true`，第六步直接触发 dr-review 生成后阶段）|
+| 用户提供 Story 文件 | 用户提供文件路径 | Story（本技能不生成 Story：daemon `workitem.create providedDocuments` 已登记且 `routeDocuments.STORY=true`，第六步直接触发 story-review 生成后阶段）|
+
+> **采纳=只登记（🔴）：** 用户提供文档经 daemon `workitem.create providedDocuments` 采纳后，只登记 `documentPaths[intent]` 与关联树（prdState/drStates/storyStates），不读内容、不写入、不复制用户文件，也绝不为已采纳 intent 创建铸造默认文件；已采纳 intent 的初始相位在 create 时直接写入（DR 已提供 → `dr-generated`；STORY 已提供且 entryNode=STORY → `story-generated`；STORY 已提供且 entryNode=PRD/DR/ROUTE → `dr-generated`）。
 
 ---
 
@@ -288,7 +292,9 @@ ae-sdd memory exit --phase ra --story <STORY-ID>
 
 ```
 For each 输入类型：
-  ├─ 有 PRD 文件 → 直接进第零步（不再沉淀）
+  ├─ 有 PRD 文件 → 采纳登记（workitem.create providedDocuments 已登记，routeDocuments.PRD=true）→ 直接进第零步（不再沉淀；禁止改写/重新生成 PRD 文档，禁止再铸造默认 PRD 文件）
+  ├─ 有 DR 文件（用户提供）→ 采纳登记（routeDocuments.DR=true）→ RA 照常挖掘但不产出 DR；第六步直接触发 dr-review 生成后阶段
+  ├─ 有 Story 文件（用户提供）→ 采纳登记（routeDocuments.STORY=true）→ 不产出 Story；第六步直接触发 story-review 生成后阶段
   ├─ 有 Issue 文件 → 直接进第零步
   ├─ 对话需求 + 复杂（>3 个功能点）→ 多轮对话 → 写 PRD（prd-template）→ 进第零步
   ├─ 对话需求 + 简单（1-3 个功能点）→ 多轮对话 → 写 Issue（issue-template）→ 进第零步
@@ -1338,6 +1344,24 @@ else → 规模=小（默认）
 ## 第六步：确认并触发设计路径
 
 > **🔴 前置条件：** RA 文档已通过 `ae-sdd doc save --intent RA ...` 落地，且用户已确认 DR、Story 或 CodingPlan 路径。
+
+### 6.1 采纳分支（🔴 用户提供文档已登记时优先，跳过 generate 直进 review）
+
+> **来源：** daemon `workitem.create` 的 `providedDocuments` 采纳登记。已采纳 intent 在权威状态表现为 `routeDocuments[intent]=true`（handoff 自动跳过该 series 生成），初始相位已在 create 时写入根 phase。
+
+| 已采纳 intent（routeDocuments=true） | 跳过 | 直接进入（生成后阶段） |
+|--------------------------------------|------|------------------------|
+| DR（`routeDocuments.DR=true`，根 phase=`dr-generated`） | dr-generate-skill | dr-review-skill |
+| STORY（`routeDocuments.STORY=true`，entryNode=STORY → 根 phase=`story-generated`；entryNode=PRD/DR/ROUTE → 根 phase=`dr-generated`，story 层级由嵌套 storyStates 的 `story-generated` 表达） | story-generate-skill | story-review-skill |
+| PRD（`routeDocuments.PRD=true`） | PRD 沉淀/重写 | 第零步直接读取该 PRD（禁止改写/重新生成） |
+
+**文档路径取值（🔴 强制）：** 下游 SKILL 的文档路径必须取自 daemon `flow.snapshot` 投影的 `documentTree`（形状：`{"prd":{"docId","docPath","phase"}|null,"drs":[{"drId","docPath","phase","stories":[{"storyId","docPath","phase"}]}],"stories":[根级 story 同构]}`），不得本地扫描/猜测路径。`documentTree` 由 daemon 从 prdState/drStates/storyStates/documentPaths 投影派生，不落库。
+
+**采纳纪律（🔴）：** 采纳=只登记。本技能与下游 SKILL 绝不写入用户提供 path，也绝不为已采纳 intent 创建铸造默认文件。
+
+### 6.2 关联树登记（🔴 RA §14.1 必须镜像 documentTree）
+
+RA 完成（含每次修订）时，RA 文档 §14.1 下游文档清单必须反映权威状态表 `documentTree` 投影的内容：PRD 下挂哪些 DR、每个 DR 下挂哪些 Story（含用户提供并经 `workitem.create providedDocuments` 采纳的文档，§14.1 来源列标"用户指定采纳"）。`documentTree` 由 daemon 从 prdState/drStates/storyStates/documentPaths 权威投影提供（flow.snapshot / context projection，不落库）；本技能只读投影，不自行扫描仓库推断父子关系。投影与 RA §14.1 不一致时，以 `documentTree` 为准修订 RA。
 
 按 §5.3 设置 `routeDecision.selectedDesign`，再触发对应设计能力，并传入：
 

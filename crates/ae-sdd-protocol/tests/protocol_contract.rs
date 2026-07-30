@@ -160,20 +160,30 @@ fn method_precondition_flags_cover_bootstrap_hooks_and_typed_operations() {
             source: RequirementSource::Method,
         },
     );
-    assert_requirements(
+    // A Hook is Session-scoped, so it must not carry a Work Item precondition:
+    // `constraints/api.md` forbids locking session bootstrap behind Work Item
+    // requirements, and doing so made the first host turn unreachable.
+    for hook in [
+        RpcMethod::HookUserPrompt,
         RpcMethod::HookPreTool,
-        OperationScope::Session,
-        MethodRequirements {
-            requires_workspace: true,
-            requires_work_item: true,
-            writes: true,
-            requires_lease: false,
-            requires_revision: false,
-            requires_idempotency: true,
-            requires_confirmation: false,
-            source: RequirementSource::Method,
-        },
-    );
+        RpcMethod::HookPostTool,
+        RpcMethod::HookStop,
+    ] {
+        assert_requirements(
+            hook,
+            OperationScope::Session,
+            MethodRequirements {
+                requires_workspace: true,
+                requires_work_item: false,
+                writes: true,
+                requires_lease: false,
+                requires_revision: false,
+                requires_idempotency: true,
+                requires_confirmation: false,
+                source: RequirementSource::Method,
+            },
+        );
+    }
     assert_requirements(
         RpcMethod::RuntimeDrain,
         OperationScope::Runtime,

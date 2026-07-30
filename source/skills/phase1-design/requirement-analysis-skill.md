@@ -6,9 +6,9 @@ source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md
-source_fallback_sha256: 40cc21be5f1840c110802bc0614065e2dad42b8f0e1ec8a4b809f8874c2c4573
-source_original_bytes: 106687
-source_original_lines: 1869
+source_fallback_sha256: 54aaf2ceb71273af015e44cbcd3a8787985b5ccfa65763f9c78e7404846fdb48
+source_original_bytes: 110714
+source_original_lines: 1893
 source_semantic_inventory_sha256: db5b55aff613724effd549ea970fd6a23e27c1d6cfb14e5f0aa8bc53526f248e
 ---
 
@@ -27,9 +27,9 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - source: `skills/phase1-design/requirement-analysis-skill.md`
 - fallback: `skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md`
-- fallback_sha256: `40cc21be5f1840c110802bc0614065e2dad42b8f0e1ec8a4b809f8874c2c4573`
-- original_lines: 1869
-- original_bytes: 106687
+- fallback_sha256: `54aaf2ceb71273af015e44cbcd3a8787985b5ccfa65763f9c78e7404846fdb48`
+- original_lines: 1893
+- original_bytes: 110714
 - semantic_inventory_sha256: `db5b55aff613724effd549ea970fd6a23e27c1d6cfb14e5f0aa8bc53526f248e`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
@@ -48,6 +48,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 | resource_reference | inline_refs: 71; refs: .ae-plan/; .ae-sdd/tmp/RA-001-draft.md; .ae-sdd/tmp/{doc-id}-draft.md; +68 more; keyword_hits: 57 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
 | design_alignment | headings: L3:186 RAModel 决策记录模板（RA §0.5 必填）; L2:189 §0.5 RequirementAnalysisModel 决策记录; L3:396 0.5.2 需求风险预判表（RA §0.6 必填）; +23 more; keyword_hits: 390 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
 | fallback_only_detail | headings: L3:546 阶段 E.5：状态变更衍生规则强制追问（🔴 状态机需求必跑）; L3:653 阶段 G.5：状态变更衍生 AC 强制覆盖（🔴 状态机需求必跑）; L3:788 阶段 H.6：跨域级联效应 Checklist（🔴 状态变更类需求必跑）; keyword_hits: 115 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
+| adoption_registration | headings: L2:223 触发条件（含 L235 用户提供 DR 文件 / L236 用户提供 Story 文件行 + L238 采纳=只登记注记）; L3:291 -1.1 输入类型判定子流程（PRD/DR/Story 采纳登记分支）; L3:1348 6.1 采纳分支（🔴 用户提供文档已登记时优先，跳过 generate 直进 review）; L3:1362 6.2 关联树登记（🔴 RA §14.1 必须镜像 documentTree）; keyword_hits: providedDocuments / routeDocuments / documentTree / prdState / drStates / storyStates | source/templates/design/ra-template.md §14; daemon workitem.create providedDocuments 冻结契约 C1–C5 | Index adoption/routeDocuments/documentTree vocabulary and new section locations; full adoption wording stays in fallback. |
 
 ## Source Slimming SOP
 

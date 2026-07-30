@@ -114,7 +114,8 @@ pub enum ExecutionProgressKindV1 {
     NewBlocker,
     /// A new evidence ledger event was appended.
     NewEvidenceEvent,
-    /// The slice advanced to a next legal lifecycle status.
+    /// The slice advanced its lifecycle: a next legal status, or a refactor
+    /// loop opening/closing at the focused GREEN.
     SliceAdvanced,
 }
 

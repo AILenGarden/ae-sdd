@@ -432,11 +432,16 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         true,
         false,
     ),
+    // The four Hooks are Session-scoped: their trusted identity is the session
+    // capability, not a Work Item. Requiring `workItemId` locked the very
+    // bootstrap turn that is supposed to establish routing, so the first host
+    // event could never reach the daemon. The Work Item stays optional
+    // attribution resolved from the session binding when one exists.
     method(
         RpcMethod::HookUserPrompt,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -445,7 +450,7 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::HookPreTool,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -454,7 +459,7 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::HookPostTool,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -463,7 +468,7 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::HookStop,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,

@@ -39,6 +39,8 @@ pub const SQLITE_EXECUTION_SUPERVISOR_V1_MIGRATION: &str =
     include_str!("../../../migrations/0011_execution_supervisor_v1.sql");
 pub const SQLITE_REVIEW_CLEAN_TARGET_UNIFY_MIGRATION: &str =
     include_str!("../../../migrations/0012_review_clean_target_unify.sql");
+pub const SQLITE_REVIEW_PARENT_PROJECTION_ANCHOR_MIGRATION: &str =
+    include_str!("../../../migrations/0013_review_parent_projection_anchor.sql");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RuntimeMigration {
@@ -119,6 +121,11 @@ pub const SQLITE_RUNTIME_MIGRATIONS: &[RuntimeMigration] = &[
         version: 12,
         name: "0012_review_clean_target_unify",
         sql: SQLITE_REVIEW_CLEAN_TARGET_UNIFY_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 13,
+        name: "0013_review_parent_projection_anchor",
+        sql: SQLITE_REVIEW_PARENT_PROJECTION_ANCHOR_MIGRATION,
     },
 ];
 

@@ -1,4 +1,5 @@
 use ae_sdd_contracts::resource::ContextBundleRef;
+use ae_sdd_contracts::series::{ImpactFact, ImpactLevel};
 use ae_sdd_contracts::{
     IdempotencyKey, MethodologyRef, MethodologyResolution, MethodologyVariant, OverrideDisposition,
     OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode, RetryPolicy, RouteDecision,
@@ -136,4 +137,35 @@ fn series_plan_round_trips_with_bounded_context_and_grant_contracts() {
     let decoded: SeriesPlanDecision = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decoded, decision);
     assert!(!json.contains("C:\\"));
+}
+
+#[test]
+fn micro_impact_level_round_trips_the_wire_token() {
+    let fact = ImpactFact::new(
+        ReasonCode::new("impact.local_rename").expect("fact code"),
+        ImpactLevel::Micro,
+        None,
+    );
+
+    let json = serde_json::to_value(&fact).expect("serialize impact fact");
+    assert_eq!(json["level"], "micro");
+    let decoded: ImpactFact = serde_json::from_value(json).expect("deserialize impact fact");
+
+    assert_eq!(decoded, fact);
+    // The total order is frozen: micro ranks below every ordinary impact level.
+    assert!(ImpactLevel::Micro < ImpactLevel::Low);
+    assert!(ImpactLevel::Low < ImpactLevel::Medium);
+    assert!(ImpactLevel::Medium < ImpactLevel::High);
+}
+
+#[test]
+fn unknown_impact_level_token_fails_closed() {
+    for token in ["tiny", "Micro", "MICRO", "", "low "] {
+        assert!(
+            serde_json::from_value::<ImpactLevel>(serde_json::json!(token)).is_err(),
+            "unknown impact level token must be rejected: {token:?}"
+        );
+    }
+    let fact = serde_json::json!({"code":"impact.local_rename","level":"tiny"});
+    assert!(serde_json::from_value::<ImpactFact>(fact).is_err());
 }

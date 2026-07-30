@@ -1033,6 +1033,7 @@ mod tests {
         assert!(!is_unavailable(&ClientError::Remote {
             code: StableErrorCode::EndpointStale,
             message: "stale".to_owned(),
+            remediation: None,
         }));
     }
 

@@ -11,6 +11,7 @@ const LARGE_DR: &[ProcessPhase] = &[
     ProcessPhase::RouteSelected,
     ProcessPhase::RequirementAnalyzed,
     ProcessPhase::DrGenerated,
+    ProcessPhase::StoryGenerated,
     ProcessPhase::TestcaseGenerated,
     ProcessPhase::CodingProcess,
     ProcessPhase::Coding,

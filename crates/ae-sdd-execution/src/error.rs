@@ -6,7 +6,7 @@ use ae_sdd_domain::ExecutionSliceId;
 use ae_sdd_protocol::StableErrorCode;
 use thiserror::Error;
 
-use crate::slice::ExecutionSliceEvent;
+use crate::slice::{ExecutionSliceEvent, RefactorCycleV1};
 
 /// Specific reason a verification execution plan was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,11 +114,16 @@ pub enum ExecutionCapsuleBuildError {
 /// Error returned when an event does not legally advance the slice lifecycle.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ExecutionSliceTransitionError {
-    /// The event is not a legal transition from the current status.
-    #[error("illegal execution slice transition from {from:?} via {event:?}")]
+    /// The event is not a legal transition from the current status and
+    /// refactor-loop state.
+    #[error(
+        "illegal execution slice transition from {from:?} (refactor {refactor:?}) via {event:?}"
+    )]
     IllegalTransition {
         /// Current slice status.
         from: ExecutionSliceStatus,
+        /// Current refactor-loop state.
+        refactor: RefactorCycleV1,
         /// Rejected machine event.
         event: ExecutionSliceEvent,
     },

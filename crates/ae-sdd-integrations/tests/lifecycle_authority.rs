@@ -67,6 +67,156 @@ fn stale_revision_is_reported_as_revision_conflict_during_preflight() {
 }
 
 #[test]
+fn flat_route_root_can_plan_its_initial_lifecycle_transition() {
+    let state = json!({
+        "stateMachineName":"ROUTE-10b6bd28",
+        "entryNode":"ROUTE",
+        "activeStory":"ROUTE-10b6bd28",
+        "revision":140,
+        "scale":"large",
+        "selectedDesign":"DR",
+        "phase":"initialized",
+        "currentPhase":"initialized",
+        "currentStep":"initialized",
+        "completedSteps":[],
+        "pendingOutputs":[],
+        "codingRound":1,
+        "evidenceRefs":[{
+            "evidenceId":"route-g00",
+            "verificationId":"G-00",
+            "path":".ae-sdd/evidence/route-g00.json",
+            "digest":"0".repeat(64),
+            "byteLength":1
+        }]
+    });
+
+    let outcome = preflight_lifecycle_confirmation(
+        &state,
+        "ROUTE-10b6bd28",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"route-selected"}),
+        StateRevision::new(140),
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("a daemon-created flat ROUTE root is a lifecycle Work Item");
+
+    assert_eq!(
+        outcome.disposition(),
+        LifecycleAuthorityDisposition::Permitted
+    );
+    assert_eq!(
+        outcome
+            .into_permitted()
+            .expect("initial route transition is permitted")
+            .target_phase(),
+        Some(ProcessPhase::RouteSelected)
+    );
+}
+
+#[test]
+fn flat_route_transition_normalizes_a_missing_current_step() {
+    let state = json!({
+        "stateMachineName":"ROUTE-10b6bd28",
+        "entryNode":"ROUTE",
+        "activeStory":"ROUTE-10b6bd28",
+        "revision":140,
+        "scale":"large",
+        "selectedDesign":"DR",
+        "phase":"initialized",
+        "currentPhase":"initialized",
+        "evidenceRefs":[{
+            "evidenceId":"route-g00",
+            "verificationId":"G-00",
+            "path":".ae-sdd/evidence/route-g00.json",
+            "digest":"0".repeat(64),
+            "byteLength":1
+        }]
+    });
+
+    let permitted = prepare_lifecycle_mutation(
+        &state,
+        "ROUTE-10b6bd28",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"route-selected"}),
+        StateRevision::new(140),
+        None,
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("legacy flat ROUTE plans")
+    .into_permitted()
+    .expect("initial ROUTE transition is permitted");
+
+    let after = apply_exact_after_image(&state, "ROUTE-10b6bd28", &permitted)
+        .expect("missing progress fields are normalized");
+    assert_eq!(after["phase"], "route-selected");
+    assert_eq!(after["currentStep"], "route-selected");
+    assert_eq!(after["completedSteps"], json!(["initialized"]));
+}
+
+#[test]
+fn nested_dr_authority_is_not_shadowed_by_a_same_named_root_state() {
+    let state = json!({
+        "stateMachineName":"DR-C1-001",
+        "entryNode":"DR",
+        "revision":7,
+        "scale":"large",
+        "selectedDesign":"DR",
+        "phase":"initialized",
+        "currentPhase":"initialized",
+        "currentStep":"initialized",
+        "completedSteps":[],
+        "pendingOutputs":[],
+        "codingRound":1,
+        "evidenceRefs":[{
+            "evidenceId":"dr-g00",
+            "verificationId":"G-00",
+            "path":".ae-sdd/evidence/dr-g00.json",
+            "digest":"1".repeat(64),
+            "byteLength":1
+        }],
+        "drState":{
+            "drId":"DR-C1-001",
+            "phase":"initialized",
+            "currentPhase":"initialized",
+            "currentStep":"initialized",
+            "completedSteps":[],
+            "pendingOutputs":[],
+            "codingRound":1
+        }
+    });
+
+    let permitted = prepare_lifecycle_mutation(
+        &state,
+        "DR-C1-001",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"route-selected"}),
+        StateRevision::new(7),
+        None,
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("the nested DR is the authoritative Work Item")
+    .into_permitted()
+    .expect("the initial DR transition is permitted");
+
+    let after = apply_exact_after_image(&state, "DR-C1-001", &permitted)
+        .expect("the nested DR after-image is valid");
+
+    assert_eq!(after["phase"], "initialized");
+    assert_eq!(after["currentPhase"], "initialized");
+    assert_eq!(after["drState"]["phase"], "route-selected");
+    assert_eq!(after["drState"]["currentPhase"], "route-selected");
+}
+
+#[test]
 fn missing_nested_target_does_not_fall_back_to_the_root_state() {
     let state = json!({
         "stateMachineName":"PRD-C1-ROOT",

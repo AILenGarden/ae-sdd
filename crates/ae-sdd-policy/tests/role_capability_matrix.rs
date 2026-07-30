@@ -83,17 +83,35 @@ fn root_reads_bounded_projection_not_child_artifact_bodies() {
 }
 
 #[test]
-fn root_may_commit_bounded_child_artifacts_and_verification_evidence() {
-    assert!(RolePolicy::permits(
-        AgentRole::Root,
-        RoleOperation::ModifyAssignedPaths
-    ));
-    assert!(RolePolicy::permits(
-        AgentRole::Root,
-        RoleOperation::RunAssignedTests
-    ));
-    assert!(RolePolicy::permits(
-        AgentRole::Root,
+fn root_is_a_pure_orchestrator_without_semantic_work_permissions() {
+    for operation in [
+        RoleOperation::ModifyAssignedPaths,
+        RoleOperation::RunAssignedTests,
+        RoleOperation::SubmitEvidence,
+    ] {
+        assert!(
+            !RolePolicy::permits(AgentRole::Root, operation),
+            "root must delegate {operation:?} instead of executing it"
+        );
+    }
+}
+
+#[test]
+fn semantic_work_permissions_stay_with_series_and_task() {
+    for role in [AgentRole::Series, AgentRole::Task] {
+        for operation in [
+            RoleOperation::ModifyAssignedPaths,
+            RoleOperation::RunAssignedTests,
+            RoleOperation::SubmitEvidence,
+        ] {
+            assert!(
+                RolePolicy::permits(role, operation),
+                "{role:?} must keep {operation:?}"
+            );
+        }
+    }
+    assert!(!RolePolicy::permits(
+        AgentRole::Reviewer,
         RoleOperation::SubmitEvidence
     ));
 }

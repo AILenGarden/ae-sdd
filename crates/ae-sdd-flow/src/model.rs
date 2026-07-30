@@ -132,6 +132,8 @@ pub enum FlowEventKind {
     BackgroundFault(SupervisorFault),
     /// Recovery evidence cleared the current infrastructure degradation.
     BackgroundRecovered,
+    /// A Root-to-Series delegation result was collected at the parent.
+    SeriesCompleted,
 }
 
 /// A typed durable event and its immutable provenance.
@@ -420,6 +422,16 @@ pub enum SupervisorHealth {
     Degraded(SupervisorDegradation),
 }
 
+/// Reason attached to an advisory compact suggestion.
+///
+/// The suggestion never starts a compact cycle; active compact still requires
+/// authenticated host token pressure or a PreCompact trigger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompactAdviceReason {
+    /// A series sub-flow completed and its bounded child context is gone.
+    SeriesBoundary,
+}
+
 /// Side-effect-free action for the runtime/application layer to execute.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NextAction {
@@ -460,6 +472,8 @@ pub enum NextAction {
     CollectReviewContributions,
     /// Aggregate the Review and evaluate the final Gates for governance close.
     FinalizeGovernance,
+    /// Advise the host to compact after a series boundary; never executes one.
+    SuggestCompact { reason: CompactAdviceReason },
 }
 
 /// Durable pure decision that doubles as the next supervisor checkpoint.

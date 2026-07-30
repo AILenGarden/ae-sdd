@@ -216,7 +216,7 @@ DR 中所有非平凡实现点都必须先完成决策基线（与 story-generat
 ae-sdd gates check --only G-DR-CTX
 ```
 
-`G-DR-CTX` 校验 `constraints/assets/RA/PRD` 四类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `_iter_ra_files/_find_prd_files`）。未过 → **BLOCK，禁止进入生成**。
+`G-DR-CTX` 校验 `constraints/assets/RA/PRD` 四类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_assets` API + `_iter_ra_files/_find_prd_files`；约束直接读取 `constraints/` 目录，索引 `constraints/README.md`）。未过 → **BLOCK，禁止进入生成**。
 
 **第零步 产出：准入检查记录**
 

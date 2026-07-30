@@ -113,7 +113,7 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            max_workspaces: 10,
+            max_workspaces: 256,
             max_sessions: 100,
             work_item_mailbox_capacity: 64,
             max_work_item_actors: 1_024,

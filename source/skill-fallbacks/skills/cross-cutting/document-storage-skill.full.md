@@ -30,6 +30,7 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 > | .gitignore 自动维护 | §7 |
 > | 存量迁移 | §8 |
 > | 横切调用规范（调用矩阵）| §9 |
+> | 用户提供文档采纳（adoption/register）| §4.12 |
 
 > **🔴 兼容策略：** 旧路径（`design/`、`.ae-task/`、`.ae-plan/`、`.spec/iterations/`）保留但标记 deprecated，新文档**强制**使用新路径。详见 §1.6。
 
@@ -100,6 +101,8 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 > **🔴 SSOT：** 下表合并了原路径模板表与命名规则。**Task/Coding/Test/CR 使用 `{WORKITEM-ID}` 分桶**，它代表一次独立编码任务（PRD / BUG / OPT / Story 均可），而不是只能代表 Story。**设计类不带版本号（原地更新），事件类带版本号（保留历史）**——与 文档路由实现的路径模板表 一致。
 >
 > **🆕 v3.10.4 分桶键优先级（修复写读不一致）：** 当 `story_id` 非空时，Task/Coding/Test/CR/Story 子目录的分桶键优先取 `story_id`（与读取侧 `paths.list_docs` 硬编码的 `Task/{story_id}` 目录及既有文档树命名规范对齐）；`story_id` 为空时（BUG/OPT 无 Story）回退 `work_item_id`，保持 WorkItem 分桶兼容。即：`doc save --work-item Story-004 --story-id STORY-004-BE` 落到 `Coding/STORY-004-BE/`（非 `Coding/Story-004/`）。
+>
+> **🆕 用户提供文档采纳（adoption）：** 已通过 `workitem.create` 的 `providedDocuments` 采纳的 intent **不适用本节铸造路径模板**——daemon 只登记用户提供的既有 path（§4.12），绝不为该 intent 创建铸造默认文件；未提供的 intent 仍按本表铸造。
 
 | 文档类型 / intent | 路径模板 | 例子 | 版本策略 |
 |---------|---------|------|---------|
@@ -473,7 +476,7 @@ interface ResolvedPath {
 |-----|------|------|------|
 | `get_git_path()` | `projectKey` | `string`（项目根绝对路径）| 从 assets.md §1 读取 gitPath |
 | `get_service_root()` | `projectKey`, `serviceName` | `string`（微服务根 = `{gitPath}/{serviceName}`）| 微服务级定位 |
-| `get_constraints()` | `projectKey` | `ConstraintList`（约束文档名 → 完整路径映射）| 取代 SKILL 内写死的 `constraints/` 路径。定位：`{gitPath}/constraints/` 或 `docWorkspace/constraints/`（二者其一）|
+| ~~`get_constraints()`~~（已废弃，Rust 实现中无此 API） | — | — | 约束 SSOT 即 `constraints/` 目录（索引 `constraints/README.md`），Agent 直接读取对应约束文件 |
 | `get_thinking_engine()` | `projectKey` | `ThinkingEngineRef`（path / source / content / sha256）| 加载 CodingModel / 11 维思维引擎。优先项目覆盖，回退到 ae-sdd 自带 CodingModel |
 | `resolve_read_resource()` | `projectKey`, `intent` | `ReadResourceRef`（path / fullPath / source / content / sha256 / writable=false）| 读取模板、撰写指南等只读资源；项目覆盖优先，内置资源回退 |
 | `get_assets()` | `projectKey` | `AssetsRef`（项目资产文件路径列表）| 取代 SKILL 内写死的 `assets/{projectKey}/` 路径。复用 `paths.find_module_asset_files`（v4.1 支持 line 分组发现）|
@@ -645,6 +648,67 @@ interface ReadResourceRef {
 | `STORY_DOC_ID_MISMATCH` | 正式 Story 文件声明的 ID 与 state 逻辑 ID 不一致 | 修正文档元数据或绑定正确文件，不得猜测 |
 | `STORY_DOC_NAME_MISMATCH` | state 的 StoryName 与 boundPath basename 漂移 | 重新绑定同名正式文件，禁止静默信任冲突指针 |
 | `STORY_DOC_OUTSIDE_ROOTS` | boundPath 解析后位于 project/docWorkspace 根之外 | 修正 state 绑定到声明的文档根内，禁止读取仓外文件 |
+
+---
+
+### 🆕 4.12 用户提供文档的采纳（adoption/register）
+
+> **定位：** 用户在使用 ae-sdd 前已自备 PRD/DR/Story 文档时，`workitem.create` 通过可选字段 `providedDocuments` 做**采纳登记**：daemon 只把既有文档登记进权威状态并直进该文档的生成后阶段（review），不创建新文档、不读文件内容、不走生成流程。本节是采纳语义的唯一权威定义；`crates/**` 实现与本节逐字对齐。
+
+**与 `document.save`（`save_doc()`）的区别（🔴 最高优先级）：**
+
+| 维度 | `save_doc()` / document.save | 用户提供文档采纳（adoption） |
+|------|------------------------------|------------------------------|
+| 文件来源 | ae-sdd 生成内容并写入铸造路径 | 用户既有文件 |
+| 写盘行为 | 写入目标 path | 🔴 **只登记，绝不写入/复制/覆盖用户 path** |
+| 铸造默认文件 | 按 §1.3 模板铸造 | 🔴 已采纳 intent **绝不创建铸造默认文件**（§1.3 模板不适用） |
+| 内容读取 | 内容由生成流程产出 | 🔴 登记时**不读文件内容** |
+| 状态落点 | 文档文件 + STORING 索引（v3.10.1 ChangeLog 已禁用） | `documentPaths` / `routeDocuments` / 关联树字段（见 C2） |
+| 入口 | `ae-sdd doc save` CLI | `workitem.create` payload `providedDocuments` |
+
+**C1 payload 契约：** `workitem.create` 新增可选字段 `providedDocuments`（数组，≤64），元素形状：
+
+```json
+{"intent":"PRD"|"DR"|"STORY", "docId":"PRD-001", "path":"docs/PRD-001.md", "parentDocId":"DR-001"?}
+```
+
+| 校验规则 | 失败行为 |
+|---------|---------|
+| `path` 必须 project-relative，禁止 `..`/绝对路径（复用既有防穿越校验语义） | schema 错误 |
+| `path` 指向的文件必须已存在 | schema 错误 |
+| `parentDocId`：STORY→父 DR 的 docId；DR→父 PRD 的 docId；PRD 无 | — |
+| `parentDocId` 指向未提供的文档 | schema 错误 |
+| `intent` 非法 / `docId` 重复 | schema 错误 |
+
+**C2 create 时采纳语义（只登记，不读内容、不写入、不复制用户文件）：**
+
+- `documentPaths[intent]` = 该 intent 第一个 provided path；未提供的 intent 维持现有铸造默认值。
+- `routeDocuments[intent]=true`（每个 provided intent）→ handoff 跳过该 series 生成。
+- 关联树（必须满足 lifecycle 校验：`prdState.phase`==根 phase；`drStates` key==drId 且不与单数 `drState` 重复；`storyStates` key 合法 StoryId、`currentPhase`==phase）：
+  - PRD → `prdState` 补 `docPath`（无容器且校验允许时创建）。
+  - DR → `drStates[docId]={drId,phase:"dr-generated",docPath,completedSteps:[],lastUpdated,storyStates:{...}}`；entryNode=DR 且 provided DR 即本 item → 写单数 `drState.docPath`。
+  - STORY → `parentDocId` 匹配某提供/登记的 DR 时嵌套 `drStates[parent].storyStates[docId]`，否则根 `storyStates[docId]`；形状 `{phase:"story-generated",currentPhase:"story-generated",docPath}`。
+  - 跨 item 父子：entryNode=DR + provided PRD → 根 `parentPrdId=<prdDocId>`；entryNode=STORY + provided DR → 根 `parentDrId=<drDocId>`。
+
+**C3 初始 phase（create 时直接写入，不经 TransitionPolicy；必须是该 item 路由链合法成员；取『最深已提供文档』的生成后 phase；仅提供 PRD → 保持 `initialized`）：**
+
+| 已提供文档 | 根 phase |
+|-----------|---------|
+| DR 已提供 | `dr-generated` |
+| STORY 已提供且 entryNode=STORY | `story-generated` |
+| STORY 已提供且 entryNode=PRD/DR/ROUTE | `dr-generated`（LARGE_DR 链无 story-generated；story 层级由嵌套 `storyStates` 的 `story-generated` 表达） |
+
+容器镜像同步：`prdState.phase`=根 phase；`drStates` 条目=`dr-generated`；`storyStates` 条目=`story-generated`。若校验器对某组合 fail-closed，选该链合法最深 phase 并在报告中说明偏差。
+
+**C4 采纳=只登记：** 绝不写入用户 path；绝不为已采纳 intent 创建铸造默认文件。
+
+**C5 `documentTree` 投影：** `flow.snapshot` 与 context projection 新增派生字段 `documentTree`（投影时从 `prdState`/`drStates`/`storyStates`/`documentPaths` 派生，不落库）：
+
+```json
+{"prd":{"docId","docPath","phase"}|null,"drs":[{"drId","docPath","phase","stories":[{"storyId","docPath","phase"}]}],"stories":[根级 story 同构]}
+```
+
+🔴 状态表中的文档关联树由 daemon 投影权威提供，Agent 不得本地扫描文件自拼。
 
 ---
 

@@ -153,7 +153,7 @@ pub(crate) struct ClassifiedExecutionEvent {
 }
 
 impl ClassifiedExecutionEvent {
-    const fn class(&self) -> ExecutionHookToolClass {
+    pub(crate) const fn class(&self) -> ExecutionHookToolClass {
         self.class
     }
 
@@ -578,10 +578,15 @@ impl RuntimeService {
     /// to commit.  The `ae-sdd-policy` guard re-checks only its frozen
     /// broad-before-green boundary as a last-resort net — the supervisor
     /// reducer owns every progress and batch rule.
+    /// Arbitrates one Hook tool event against the session's execution binding.
+    ///
+    /// `work_item_id` is absent for a Hook whose session has no Work Item bound
+    /// yet. Such an event can match no binding, so it stays unclassified — the
+    /// same outcome an unbound shadow session already produced.
     pub(super) fn execution_hook_guard(
         &self,
         session_id: &str,
-        work_item_id: &str,
+        work_item_id: Option<&str>,
         method: RpcMethod,
         event: Option<&ClassifiedExecutionEvent>,
     ) -> RuntimeResult<ExecutionHookGuardOutcome> {
@@ -595,10 +600,12 @@ impl RuntimeService {
             });
         }
         let state = self.lock_state()?;
-        let binding = state
-            .execution_bindings
-            .get(session_id)
-            .filter(|binding| binding.work_item_id() == work_item_id);
+        let binding = work_item_id.and_then(|work_item_id| {
+            state
+                .execution_bindings
+                .get(session_id)
+                .filter(|binding| binding.work_item_id() == work_item_id)
+        });
         let (Some(binding), Some(event)) = (binding, event) else {
             return Ok(ExecutionHookGuardOutcome {
                 disposition: ExecutionHookDisposition::Unclassified,
@@ -669,7 +676,7 @@ impl RuntimeService {
     pub(super) fn record_execution_hook_event(
         &self,
         identity: &TrustedSession,
-        work_item_id: &str,
+        work_item_id: Option<&str>,
         outcome: &ExecutionHookGuardOutcome,
         event: Option<&ClassifiedExecutionEvent>,
     ) -> RuntimeResult<()> {
@@ -691,7 +698,7 @@ impl RuntimeService {
             execution_event_payload(outcome.disposition(), outcome.reason_code(), event),
             Some(identity.workspace_id.clone()),
             Some(identity.session_id.clone()),
-            Some(work_item_id.to_owned()),
+            work_item_id.map(str::to_owned),
         )?;
         Ok(())
     }

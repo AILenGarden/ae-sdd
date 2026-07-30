@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ae_sdd_domain::StoryId;
 use ae_sdd_runtime::{RuntimeError, RuntimeResult};
 use serde_json::Value;
 
@@ -59,7 +60,10 @@ pub(super) fn predicate_value(
         "project.assets.complete" => project_assets_complete(root),
         "document.dr.exists" => document_exists(root, state, story.as_deref(), "DR"),
         "document.story.exists" => document_exists(root, state, story.as_deref(), "Story"),
-        "review.story.passed" => structured_status(state.get("storyReview"), "passed"),
+        "review.story.passed" => {
+            structured_status(state.get("storyReview"), "passed")
+                || route_story_committed(root, state, work_item)
+        }
         "document.testcase.exists" => {
             verification_matrix(root, state, story.as_deref())
                 || document_exists(root, state, story.as_deref(), "TestCase")
@@ -112,12 +116,8 @@ pub(super) fn predicate_value(
                 context.review_authority_denial(located),
             ));
         }
-        "context.dr.complete" => {
-            context_complete(state, &["prd", "assets", "constraints", "standards"])
-        }
-        "context.story.complete" => {
-            context_complete(state, &["constraints", "assets", "sourceTrace"])
-        }
+        "context.dr.complete" => dr_context_complete(root, state, work_item),
+        "context.story.complete" => story_context_complete(root, state, work_item),
         "context.testcase.complete" => context_complete(state, &["story", "constraints", "assets"]),
         "context.task.complete" => {
             route_exempt(state) || context_complete(state, &["story", "constraints"])
@@ -144,6 +144,148 @@ fn project_assets_complete(root: &Path) -> bool {
         && ["Cargo.toml", "pyproject.toml", "package.json"]
             .iter()
             .any(|name| root.join(name).is_file())
+}
+
+fn dr_context_complete(root: &Path, state: &Value, work_item: &str) -> bool {
+    project_manifest_exists(root)
+        && indexed_constraints_complete(root)
+        && standards_complete(root)
+        && bound_document_exists(root, state, "RA")
+        && (is_route_state(state, work_item) || bound_document_exists(root, state, "PRD"))
+}
+
+fn project_manifest_exists(root: &Path) -> bool {
+    ["Cargo.toml", "pyproject.toml", "package.json"]
+        .iter()
+        .any(|name| safe_document_path(root, name))
+}
+
+fn indexed_constraints_complete(root: &Path) -> bool {
+    let directory = root.join("constraints");
+    if !safe_document_path(root, "constraints/README.md") {
+        return false;
+    }
+    let Ok(index) = fs::read_to_string(directory.join("README.md")) else {
+        return false;
+    };
+    let indexed: Vec<_> = index
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|entry| {
+            let path = entry.strip_prefix("constraints/").unwrap_or(entry);
+            (path.ends_with(".md") && !path.contains(['/', '\\']) && path != "README.md")
+                .then_some(path)
+        })
+        .collect();
+    !indexed.is_empty()
+        && indexed
+            .iter()
+            .all(|path| safe_document_path(root, &format!("constraints/{path}")))
+}
+
+fn standards_complete(root: &Path) -> bool {
+    fs::read_dir(root.join("source/standards"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| safe_document_path(root, &entry.path().to_string_lossy()))
+}
+
+fn bound_document_exists(root: &Path, state: &Value, kind: &str) -> bool {
+    let directory = match kind {
+        "STORY" => "Story",
+        _ => kind,
+    };
+    state
+        .pointer(&format!("/documentPaths/{kind}"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| {
+            let path = Path::new(value);
+            let mut components = path.components();
+            !path.is_absolute()
+                && components
+                    .next()
+                    .is_some_and(|part| part.as_os_str() == "ae-sdd-doc")
+                && components
+                    .next()
+                    .is_some_and(|part| part.as_os_str() == directory)
+                && components.all(|part| matches!(part, std::path::Component::Normal(_)))
+                && path.extension().is_some_and(|extension| extension == "md")
+                && canonical_document_in_kind(root, path, directory)
+        })
+}
+
+fn canonical_document_in_kind(root: &Path, path: &Path, kind: &str) -> bool {
+    let canonical_root = root.canonicalize();
+    let canonical_kind = root.join("ae-sdd-doc").join(kind).canonicalize();
+    let canonical_document = root.join(path).canonicalize();
+    canonical_root.is_ok_and(|root| {
+        canonical_kind.is_ok_and(|kind| {
+            kind.starts_with(&root)
+                && canonical_document
+                    .is_ok_and(|document| document.starts_with(kind) && document.is_file())
+        })
+    })
+}
+
+fn is_route_state(state: &Value, work_item: &str) -> bool {
+    state.get("entryNode").and_then(Value::as_str) == Some("ROUTE")
+        && state.get("stateMachineName").and_then(Value::as_str) == Some(work_item)
+        && work_item.strip_prefix("ROUTE-").is_some_and(|suffix| {
+            suffix.len() == 8
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+}
+
+fn route_story_committed(root: &Path, state: &Value, work_item: &str) -> bool {
+    is_route_state(state, work_item)
+        && route_document_committed(state, "STORY")
+        && bound_document_exists(root, state, "STORY")
+        && bound_story_authority(state)
+}
+
+fn bound_story_authority(state: &Value) -> bool {
+    let Some(story_id) = state.get("activeStory").and_then(Value::as_str) else {
+        return false;
+    };
+    story_id.starts_with("STORY-")
+        && StoryId::new(story_id.to_owned()).is_ok()
+        && state
+            .pointer(&format!("/storyStates/{story_id}/docPath"))
+            .and_then(Value::as_str)
+            == state
+                .pointer("/documentPaths/STORY")
+                .and_then(Value::as_str)
+}
+
+fn story_context_complete(root: &Path, state: &Value, work_item: &str) -> bool {
+    if !is_route_state(state, work_item) {
+        return context_complete(state, &["constraints", "assets", "sourceTrace"]);
+    }
+    let upstream_complete = route_document_committed(state, "RA")
+        && bound_document_exists(root, state, "RA")
+        && match state.get("selectedDesign").and_then(Value::as_str) {
+            Some("DR") => {
+                route_document_committed(state, "DR") && bound_document_exists(root, state, "DR")
+            }
+            Some("STORY") => true,
+            _ => false,
+        };
+    project_manifest_exists(root)
+        && indexed_constraints_complete(root)
+        && standards_complete(root)
+        && upstream_complete
+}
+
+fn route_document_committed(state: &Value, kind: &str) -> bool {
+    state
+        .pointer(&format!("/routeDocuments/{kind}"))
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 fn document_exists(root: &Path, state: &Value, story: Option<&str>, kind: &str) -> bool {

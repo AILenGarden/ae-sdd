@@ -11,6 +11,8 @@ mod persistence;
 #[path = "../src/review_authority.rs"]
 mod review_authority;
 
+#[path = "typed_operations_cli_e2e/bootstrap.rs"]
+mod bootstrap;
 #[path = "typed_operations_cli_e2e/governance.rs"]
 mod governance;
 #[path = "typed_operations_cli_e2e/memory_jobs.rs"]
@@ -329,13 +331,8 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
         ("gates check", args(&["--gate-ids", "[\"G-00\"]"])),
         ("lease status", Vec::new()),
     ] {
-        assert_success(&invoke(
-            &harness,
-            &mut cli,
-            &first_identity,
-            command,
-            arguments,
-        ));
+        let response = invoke(&harness, &mut cli, &first_identity, command, arguments);
+        assert!(response.get("result").is_some(), "{command}: {response}");
         succeeded.insert(command);
     }
 
@@ -380,6 +377,47 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     );
     assert_eq!(stable_error(&cross_session), "IDEMPOTENCY_KEY_REUSED");
 
+    // The root orchestrator holds no semantic-work permissions, so it releases
+    // its lease and every project mutation below runs through the delegated
+    // author task of a Root -> Series -> Task lineage.
+    assert_success(&invoke(
+        &harness,
+        &mut cli,
+        &first_identity,
+        "lease release",
+        lease_args(&lease_id, fencing, "lease-release-root-e2e", false, "root"),
+    ));
+    let (author, _reviewer) = open_review_lineage(
+        &harness,
+        &mut cli,
+        &workspace,
+        &first_identity,
+        "general",
+        "typed-lineage",
+    );
+    let author_identity = identity(&workspace, &author, "typed-lineage-author-agent");
+    let author_acquired = success(&invoke(
+        &harness,
+        &mut cli,
+        &author_identity,
+        "lease acquire",
+        args(&[
+            "--owner",
+            "{\"role\":\"task\"}",
+            "--ttl-seconds",
+            "300",
+            "--idempotency-key",
+            "lease-acquire-author-e2e",
+        ]),
+    ));
+    let lease_id = author_acquired["data"]["leaseId"]
+        .as_str()
+        .expect("author lease id")
+        .to_owned();
+    let fencing = author_acquired["data"]["fencingToken"]
+        .as_u64()
+        .expect("author fencing token");
+
     let before_state = fs::read(&harness.state_path).expect("state before dry-run");
     let before_document = fs::read(&harness.document_path).expect("document before dry-run");
     let lease_path = harness
@@ -395,7 +433,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let dry_run = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "doc save",
         write_args(
             &lease_id,
@@ -441,7 +479,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let saved = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "doc save",
         write_args(
             &lease_id,
@@ -461,7 +499,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let stale = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "evidence record",
         write_args(
             &lease_id,
@@ -480,7 +518,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let revision_conflict = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "evidence record",
         write_args(
             &lease_id,
@@ -512,7 +550,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let evidence = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "evidence record",
         evidence_arguments.clone(),
     );
@@ -525,7 +563,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let replayed_evidence = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "evidence record",
         evidence_arguments,
     );
@@ -535,7 +573,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let finalized = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "evidence finalize",
         write_args(&lease_id, fencing, 3, "evidence-finalize-e2e", &[]),
     );
@@ -572,7 +610,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
         )
         .expect("PASS verification receipt");
     let mut receipt_job = trusted_params(
-        &first_identity,
+        &author_identity,
         json!({
             "entrypoint": "toolset.receipt.record",
             "arguments": {
@@ -607,7 +645,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
         &harness.runtime,
         &mut cli,
         RpcMethod::JobStatus,
-        trusted_params(&first_identity, json!({"jobId": submitted["jobId"]})),
+        trusted_params(&author_identity, json!({"jobId": submitted["jobId"]})),
     ));
     assert_eq!(completed["status"], "pass", "{completed}");
     assert_eq!(completed["result"]["revisionBefore"], 4);
@@ -630,7 +668,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let planned = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "verify plan",
         write_args(
             &lease_id,
@@ -654,25 +692,25 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let renewed = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "lease renew",
-        lease_args(&lease_id, fencing, "lease-renew-e2e", true),
+        lease_args(&lease_id, fencing, "lease-renew-e2e", true, "task"),
     );
     assert_success(&renewed);
     succeeded.insert("lease renew");
     let active = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "lease status",
         Vec::new(),
     );
     assert_eq!(success(&active)["data"]["active"], true);
-    let release_arguments = lease_args(&lease_id, fencing, "lease-release-e2e", false);
+    let release_arguments = lease_args(&lease_id, fencing, "lease-release-e2e", false, "task");
     let released = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "lease release",
         release_arguments.clone(),
     );
@@ -680,7 +718,7 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
     let release_replay = invoke(
         &harness,
         &mut cli,
-        &first_identity,
+        &author_identity,
         "lease release",
         release_arguments,
     );

@@ -495,6 +495,31 @@ pub(crate) mod evidence_refs {
     }
 }
 
+pub(crate) mod verification_ids {
+    use super::*;
+
+    pub(crate) fn serialize<S>(value: &[VerificationId], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Vec<VerificationId>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<String>::deserialize(deserializer)?
+            .into_iter()
+            .map(|value| VerificationId::new(value).map_err(de::Error::custom))
+            .collect()
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DeliverableRequirementWire {

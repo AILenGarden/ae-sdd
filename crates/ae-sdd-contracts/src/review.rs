@@ -703,8 +703,14 @@ pub enum ReviewFinalProofKind {
     None,
     /// Tier 2 requires deterministic gate proof.
     DeterministicGates,
-    /// Tier 3 requires full verification proof.
-    FullVerification,
+    /// Tier 3 requires final verification proof: exactly one committed PASS
+    /// verification job bound to the session fingerprints. Under the
+    /// incremental-testing strategy the verification scope is incremental;
+    /// the full test suite runs only at release/distribution gates. The wire
+    /// name stays `full_verification` for backward compatibility with
+    /// persisted receipts and projections.
+    #[serde(rename = "full_verification")]
+    FinalVerification,
 }
 
 /// Outcome asserted by one daemon-attested reviewer contribution.
@@ -1266,7 +1272,7 @@ impl ReviewCleanPolicyV2 {
             },
             ReviewTier::Tier3 => Self {
                 clean_target: CLEAN_TARGET,
-                final_proof_requirement: ReviewFinalProofKind::FullVerification,
+                final_proof_requirement: ReviewFinalProofKind::FinalVerification,
             },
         }
     }
@@ -1388,7 +1394,7 @@ impl ReviewFinalProofV2 {
         }
     }
 
-    /// Constructs a bound deterministic or full-verification proof.
+    /// Constructs a bound deterministic or final-verification proof.
     pub fn bound(
         kind: ReviewFinalProofKind,
         digest: ArtifactDigest,
@@ -2677,7 +2683,7 @@ impl ReviewExitReceiptV2 {
             && match self.final_proof.kind() {
                 ReviewFinalProofKind::None => true,
                 ReviewFinalProofKind::DeterministicGates
-                | ReviewFinalProofKind::FullVerification => {
+                | ReviewFinalProofKind::FinalVerification => {
                     self.final_proof.digest().is_some()
                         && self.final_proof.source_revision() == Some(session.source_revision())
                         && self.final_proof.input_fingerprint() == Some(session.input_fingerprint())

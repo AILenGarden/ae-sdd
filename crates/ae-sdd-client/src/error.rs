@@ -1,33 +1,60 @@
 use ae_sdd_protocol::StableErrorCode;
-use thiserror::Error;
+use std::fmt;
 
 /// Client result.
 pub type ClientResult<T> = Result<T, ClientError>;
 
 /// Thin-client failure with stable daemon classification where available.
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ClientError {
     /// Endpoint manifest could not be read atomically or decoded.
-    #[error("endpoint manifest is unavailable or invalid")]
     EndpointManifest,
     /// Local Named Pipe/UDS connection or frame I/O failed.
-    #[error("local daemon is unavailable")]
     DaemonUnavailable,
     /// The daemon rejected the call with a stable wire code.
-    #[error("daemon rejected request: {code:?}: {message}")]
     Remote {
         /// Stable wire code.
         code: StableErrorCode,
         /// Redacted daemon message.
         message: String,
+        /// Redacted actionable remediation supplied by the daemon.
+        remediation: Option<String>,
     },
     /// Response was malformed or did not correlate to the request.
-    #[error("daemon response violates the negotiated protocol")]
     Protocol,
     /// Offline capability is malformed, stale, expired, or has an invalid signature.
-    #[error("offline session capability is invalid")]
     OfflineCapabilityInvalid,
 }
+
+impl fmt::Display for ClientError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EndpointManifest => {
+                formatter.write_str("endpoint manifest is unavailable or invalid")
+            }
+            Self::DaemonUnavailable => formatter.write_str("local daemon is unavailable"),
+            Self::Remote {
+                code,
+                message,
+                remediation,
+            } => {
+                write!(formatter, "daemon rejected request: {code:?}: {message}")?;
+                if let Some(remediation) = remediation {
+                    write!(formatter, "; remediation: {remediation}")?;
+                }
+                Ok(())
+            }
+            Self::Protocol => {
+                formatter.write_str("daemon response violates the negotiated protocol")
+            }
+            Self::OfflineCapabilityInvalid => {
+                formatter.write_str("offline session capability is invalid")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ClientError {}
 
 impl ClientError {
     /// Returns the stable code exposed to CLI/Hook policy.
@@ -38,6 +65,15 @@ impl ClientError {
             Self::Remote { code, .. } => *code,
             Self::Protocol => StableErrorCode::ProtocolVersionUnsupported,
             Self::OfflineCapabilityInvalid => StableErrorCode::SessionExpired,
+        }
+    }
+
+    /// Returns the daemon's redacted remediation when one was supplied.
+    #[must_use]
+    pub fn remediation(&self) -> Option<&str> {
+        match self {
+            Self::Remote { remediation, .. } => remediation.as_deref(),
+            _ => None,
         }
     }
 }
@@ -65,6 +101,7 @@ mod tests {
             ClientError::Remote {
                 code: StableErrorCode::SessionExpired,
                 message: "redacted".to_owned(),
+                remediation: None,
             }
             .stable_code(),
             StableErrorCode::SessionExpired
@@ -84,6 +121,7 @@ mod tests {
         let remote = ClientError::Remote {
             code: StableErrorCode::SessionExpired,
             message: "already-redacted".to_owned(),
+            remediation: None,
         };
         for error in [
             ClientError::EndpointManifest,
@@ -95,5 +133,20 @@ mod tests {
         }
         // The remote variant is the only one that surfaces daemon-supplied text.
         assert!(remote.to_string().contains("already-redacted"));
+    }
+
+    #[test]
+    fn remote_error_preserves_actionable_remediation() {
+        let remote = ClientError::Remote {
+            code: StableErrorCode::ConfirmationRequired,
+            message: "confirmation required".to_owned(),
+            remediation: Some("provide confirmation for binding lifecycle:abc".to_owned()),
+        };
+
+        assert_eq!(
+            remote.remediation(),
+            Some("provide confirmation for binding lifecycle:abc")
+        );
+        assert!(remote.to_string().contains("lifecycle:abc"));
     }
 }

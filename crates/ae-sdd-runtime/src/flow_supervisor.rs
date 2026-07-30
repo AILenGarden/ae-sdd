@@ -1,14 +1,16 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use ae_sdd_contracts::SeriesInput;
 use ae_sdd_domain::{
-    AgentRole, CancellationCode, ErrorCode, EventSequence, EventStoreId, FindingCode,
-    FreshnessDimension, GateCancellation, GateError, GateFailure, GateFinding, GateOutcome,
-    GateTimeout, InputFingerprint, ProcessPhase, StaleGate, StateRevision,
+    AgentRole, ArtifactDigest, CancellationCode, ErrorCode, EventSequence, EventStoreId,
+    FindingCode, FreshnessDimension, GateCancellation, GateError, GateFailure, GateFinding,
+    GateOutcome, GateTimeout, InputFingerprint, ProcessPhase, StaleGate, StateRevision,
 };
 use ae_sdd_flow::{
-    EventCursor, EventProvenance, FlowDecision, FlowEvent, FlowEventKind, FlowInput, FlowRuntime,
-    NextAction, SupervisorDegradation, SupervisorFault, SupervisorHealth,
+    CompactAdviceReason, ControlAction, ControlDecision, ControlPlaneRuntime, EventCursor,
+    EventProvenance, FlowDecision, FlowEvent, FlowEventKind, FlowInput, FlowRuntime, NextAction,
+    SupervisorDegradation, SupervisorFault, SupervisorHealth,
 };
 use ae_sdd_policy::RequiredGate;
 use ae_sdd_protocol::StableErrorCode;
@@ -162,6 +164,103 @@ impl FlowSupervisor {
             payload,
         )?;
         Ok(())
+    }
+
+    /// Persists a collected Root-to-Series delegation boundary and returns the
+    /// resulting reducer decision, which carries an advisory compact
+    /// suggestion whenever no real work owns the action.
+    pub fn record_series_completed(
+        &self,
+        boot_id: &str,
+        workspace_id: &str,
+        session_id: Option<&str>,
+        work_item_id: &str,
+        idempotency_key: &str,
+        input: FlowInput,
+    ) -> RuntimeResult<FlowDecision> {
+        let payload = json!({
+            "schemaVersion":"flow.series-completed/v1",
+            "idempotencyKey":idempotency_key,
+            "policyDigest":input.environment().policy_digest().to_string(),
+            "inputFingerprint":input.environment().input_fingerprint().to_string(),
+        });
+        self.append_idempotent_flow_event(
+            boot_id,
+            workspace_id,
+            session_id,
+            work_item_id,
+            "flow.series_completed",
+            idempotency_key,
+            payload,
+        )?;
+        self.project(workspace_id, work_item_id, input)
+    }
+
+    /// Runs the pure control plane over a frozen Series input and persists the
+    /// resulting delegation-oriented decision as a durable checkpoint.
+    pub fn decide_control(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        catalog_digest: ArtifactDigest,
+        input: &SeriesInput,
+    ) -> RuntimeResult<ControlDecision> {
+        let decision = ControlPlaneRuntime::next(catalog_digest, input).map_err(|error| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                format!("deterministic control-plane decision rejected frozen input: {error}"),
+            )
+        })?;
+        self.persist_control_checkpoint(workspace_id, work_item_id, &decision)?;
+        Ok(decision)
+    }
+
+    /// Reads the last durable control-plane checkpoint projection.
+    pub fn control_checkpoint(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+    ) -> RuntimeResult<Option<Value>> {
+        self.persistence.load_record(
+            "flow-control/v1",
+            &format!("{workspace_id}\0{work_item_id}"),
+        )
+    }
+
+    /// Converts a control decision into the bounded public delegation-oriented
+    /// projection; a `run-series` action directs the Root to delegate to a Series.
+    #[must_use]
+    pub fn control_projection(decision: &ControlDecision) -> Value {
+        let provenance = decision.provenance();
+        json!({
+            "schemaVersion":"flow-control/v1",
+            "action":control_action_value(decision.action()),
+            "provenance":{
+                "catalogDigest":provenance.catalog_digest().to_string(),
+                "routeDigest":provenance.route_digest().to_string(),
+                "seriesDigest":provenance.series_digest().to_string(),
+            },
+            "decisionDigest":decision.decision_digest().to_string(),
+        })
+    }
+
+    fn persist_control_checkpoint(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        decision: &ControlDecision,
+    ) -> RuntimeResult<()> {
+        let checkpoint = json!({
+            "schemaVersion":"flow-control-checkpoint/v1",
+            "workspaceId":workspace_id,
+            "workItemId":work_item_id,
+            "decision":Self::control_projection(decision),
+        });
+        self.persistence.store_record(
+            "flow-control/v1",
+            &format!("{workspace_id}\0{work_item_id}"),
+            &checkpoint,
+        )
     }
 
     /// Reads the last durable checkpoint projection.
@@ -362,6 +461,7 @@ fn flow_event_from_durable(event: &DurableEvent, input: FlowInput) -> RuntimeRes
                     .ok_or_else(|| malformed_event("transition revision is missing"))?,
             ),
         },
+        "flow.series_completed" => FlowEventKind::SeriesCompleted,
         "flow.prompt_accepted" => FlowEventKind::PromptAccepted,
         "flow.background_recovered" => FlowEventKind::BackgroundRecovered,
         "flow.background_fault" => FlowEventKind::BackgroundFault(parse_fault(
@@ -410,6 +510,63 @@ fn next_action_value(action: &NextAction) -> Value {
         NextAction::FinalizeExecutionEvidence => json!({"kind":"finalize-execution-evidence"}),
         NextAction::CollectReviewContributions => json!({"kind":"collect-review-contributions"}),
         NextAction::FinalizeGovernance => json!({"kind":"finalize-governance"}),
+        NextAction::SuggestCompact { reason } => json!({
+            "kind":"suggest-compact",
+            "reason":compact_advice_reason_name(*reason),
+            "advisory":true,
+        }),
+    }
+}
+
+fn compact_advice_reason_name(reason: CompactAdviceReason) -> &'static str {
+    match reason {
+        CompactAdviceReason::SeriesBoundary => "series-boundary",
+    }
+}
+
+fn control_action_value(action: &ControlAction) -> Value {
+    match action {
+        ControlAction::AwaitRouteApproval {
+            idempotency_key,
+            decision_id,
+        } => json!({
+            "kind":"await-route-approval",
+            "idempotencyKey":idempotency_key.as_str(),
+            "routeDecisionId":decision_id.as_str(),
+        }),
+        ControlAction::RunSeries {
+            idempotency_key,
+            plan,
+        } => json!({
+            "kind":"run-series",
+            "idempotencyKey":idempotency_key.as_str(),
+            "seriesId":plan.series_id().as_str(),
+            "planDigest":plan.plan_digest().to_string(),
+        }),
+        ControlAction::AwaitSeries {
+            idempotency_key,
+            series_id,
+        } => json!({
+            "kind":"await-series",
+            "idempotencyKey":idempotency_key.as_str(),
+            "seriesId":series_id.as_str(),
+        }),
+        ControlAction::CollectSeries {
+            idempotency_key,
+            series_id,
+        } => json!({
+            "kind":"collect-series",
+            "idempotencyKey":idempotency_key.as_str(),
+            "seriesId":series_id.as_str(),
+        }),
+        ControlAction::Complete {
+            idempotency_key,
+            projection_digest,
+        } => json!({
+            "kind":"complete",
+            "idempotencyKey":idempotency_key.as_str(),
+            "projectionDigest":projection_digest.to_string(),
+        }),
     }
 }
 
@@ -653,4 +810,289 @@ fn required_payload_string<'a>(value: &'a Value, field: &str) -> RuntimeResult<&
 
 fn malformed_event(message: &str) -> RuntimeError {
     RuntimeError::new(StableErrorCode::ExternalStateConflict, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use ae_sdd_contracts::{
+        ContextBundleId, IdempotencyKey, MethodologyRef, MethodologyResolution, MethodologyVariant,
+        OverrideDisposition, OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode,
+        RetryPolicy, RouteDecision, RouteDecisionId, RouteDisposition, SchemaVersion, SeriesId,
+        SeriesInput, SeriesKind, SeriesPlan, SkillId, resource::ContextBundleRef,
+    };
+    use ae_sdd_domain::{
+        ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, DecisionDigest,
+        DeliverableContract, DeliverableId, DeliverableRequirement, DesignRoute, OperationId,
+        ProjectPathScope, ProjectRelativePath, WorkItemId, WorkScale,
+    };
+    use ae_sdd_flow::{
+        CompactAdviceReason, ControlAction, EventCursor, EventProvenance, FlowEnvironment,
+        FlowRuntime, FlowSnapshot, RouteSelection,
+    };
+    use ae_sdd_policy::TransitionPolicy;
+
+    use crate::MemoryPersistence;
+
+    use super::*;
+
+    fn event_store() -> EventStoreId {
+        EventStoreId::from_str("00000000-0000-0000-0000-000000000111")
+            .expect("fixed event store ID is valid")
+    }
+
+    fn flow_input() -> FlowInput {
+        let snapshot = FlowSnapshot::new(ProcessPhase::Initialized, StateRevision::new(7), 0);
+        let environment = FlowEnvironment::new(
+            event_store(),
+            InputFingerprint::digest(b"work-item-input-v1"),
+            RouteSelection::new(WorkScale::Large, DesignRoute::Story),
+        );
+        FlowInput::new(snapshot, environment)
+    }
+
+    fn series_completed_event(sequence: u64) -> FlowEvent {
+        FlowEvent::new(
+            EventProvenance::new(
+                EventCursor::new(event_store(), EventSequence::new(sequence)),
+                TransitionPolicy::digest(),
+                InputFingerprint::digest(b"work-item-input-v1"),
+                InputFingerprint::digest(b"series-collected"),
+            ),
+            FlowEventKind::SeriesCompleted,
+        )
+    }
+
+    #[test]
+    fn suggest_compact_projection_marks_the_advice_advisory() {
+        let decision = FlowRuntime::replay(flow_input(), [series_completed_event(1)])
+            .expect("series boundary reduces");
+
+        let projection = FlowSupervisor::projection(&decision);
+
+        assert_eq!(
+            projection["nextAction"],
+            json!({"kind":"suggest-compact","reason":"series-boundary","advisory":true})
+        );
+    }
+
+    #[test]
+    fn recorded_series_completion_projects_the_advisory_action() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = flow_input();
+
+        let decision = supervisor
+            .record_series_completed(
+                "boot-1",
+                "workspace-1",
+                None,
+                "STORY-1",
+                "collect-series-1",
+                input,
+            )
+            .expect("series completion records");
+
+        assert_eq!(
+            decision.next_action(),
+            &NextAction::SuggestCompact {
+                reason: CompactAdviceReason::SeriesBoundary,
+            }
+        );
+
+        let replayed = supervisor
+            .record_series_completed(
+                "boot-1",
+                "workspace-1",
+                None,
+                "STORY-1",
+                "collect-series-1",
+                input,
+            )
+            .expect("same-key replay is idempotent");
+        assert_eq!(replayed, decision);
+    }
+
+    #[test]
+    fn control_decision_persists_a_delegation_oriented_checkpoint() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = series_input();
+        let catalog_digest = ArtifactDigest::digest(b"catalog-v1");
+
+        let decision = supervisor
+            .decide_control("workspace-1", "STORY-FLOW-001", catalog_digest, &input)
+            .expect("control decision");
+
+        assert!(matches!(decision.action(), ControlAction::RunSeries { .. }));
+
+        let checkpoint = supervisor
+            .control_checkpoint("workspace-1", "STORY-FLOW-001")
+            .expect("checkpoint reads")
+            .expect("checkpoint persists");
+        assert_eq!(
+            checkpoint["decision"]["action"]["kind"],
+            json!("run-series")
+        );
+        assert_eq!(
+            checkpoint["decision"]["decisionDigest"],
+            json!(decision.decision_digest().to_string())
+        );
+    }
+
+    #[test]
+    fn control_decision_rejects_a_foreign_catalog_snapshot() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = series_input();
+
+        let error = supervisor
+            .decide_control(
+                "workspace-1",
+                "STORY-FLOW-001",
+                ArtifactDigest::digest(b"catalog-v2"),
+                &input,
+            )
+            .expect_err("foreign catalog is rejected");
+
+        assert!(error.to_string().contains("Catalog digest mismatch"));
+    }
+
+    fn artifact(path: &str, contents: &[u8]) -> ArtifactRef {
+        ArtifactRef::new(
+            ArtifactKind::new("series-fixture").expect("artifact kind"),
+            ProjectRelativePath::new(path).expect("project-relative path"),
+            ArtifactDigest::digest(contents),
+            u64::try_from(contents.len()).expect("fixture length"),
+        )
+    }
+
+    fn candidate(
+        work_item_id: &WorkItemId,
+        kind: &str,
+        series_id: &str,
+        state_revision: StateRevision,
+        input_fingerprint: InputFingerprint,
+    ) -> (SeriesPlan, MethodologyResolution) {
+        let series_kind = SeriesKind::new(kind).expect("series kind");
+        let skill_id = SkillId::new(format!("phase.{kind}")).expect("skill id");
+        let methodology = MethodologyRef::new(
+            SchemaVersion::V1,
+            skill_id.clone(),
+            series_kind.clone(),
+            MethodologyVariant::new("builtin-v1").expect("variant"),
+            artifact(&format!("runtime/skills/{kind}/compact.md"), b"compact"),
+            None,
+            ArtifactDigest::digest(format!("entry:{kind}")),
+            ArtifactDigest::digest(b"catalog-v1"),
+        )
+        .expect("methodology ref");
+        let plan = SeriesPlan::new(
+            SchemaVersion::V1,
+            SeriesId::new(series_id).expect("series id"),
+            work_item_id.clone(),
+            None,
+            series_kind,
+            AgentRole::Series,
+            methodology.clone(),
+            ContextBundleRef::new(
+                SchemaVersion::V1,
+                ContextBundleId::new(format!("context-{series_id}")).expect("context id"),
+                work_item_id.clone(),
+                vec![artifact("ae-sdd-doc/Story/STORY-FLOW-001.md", b"story")],
+                ContextDigest::digest(format!("context:{kind}")),
+                5,
+            )
+            .expect("context ref"),
+            DeliverableContract::bounded_default([DeliverableRequirement::new(
+                DeliverableId::new(format!("deliverable-{kind}")).expect("deliverable id"),
+                ArtifactKind::new("document").expect("artifact kind"),
+                ProjectRelativePath::new(format!("ae-sdd-doc/{kind}.md"))
+                    .expect("deliverable path"),
+            )])
+            .expect("deliverable contract"),
+            vec![OperationId::new("document.save").expect("operation")],
+            vec![ProjectPathScope::Subtree(
+                ProjectRelativePath::new("ae-sdd-doc").expect("path scope"),
+            )],
+            Vec::new(),
+            state_revision,
+            input_fingerprint,
+            1_900_000_000_000,
+            RetryPolicy::new(2, 250, 2_000).expect("retry policy"),
+            DecisionDigest::digest(format!("plan:{kind}")),
+        )
+        .expect("series plan");
+        let resolution = MethodologyResolution::new(
+            SchemaVersion::V1,
+            methodology,
+            OverrideLayer::BuiltIn,
+            vec![OverrideTrace::new(
+                SchemaVersion::V1,
+                OverrideLayer::BuiltIn,
+                skill_id,
+                OverrideDisposition::Selected,
+                ReasonCode::new("methodology.builtin_selected").expect("reason"),
+                ArtifactDigest::digest(format!("entry:{kind}")),
+            )],
+            DecisionDigest::digest(format!("resolution:{kind}")),
+        )
+        .expect("resolution");
+        (plan, resolution)
+    }
+
+    fn series_input() -> SeriesInput {
+        let work_item_id = WorkItemId::new("STORY-FLOW-001").expect("work item");
+        let state_revision = StateRevision::new(7);
+        let input_fingerprint = InputFingerprint::digest(b"series input r7");
+        let (requirement_plan, requirement_resolution) = candidate(
+            &work_item_id,
+            "requirement-analysis",
+            "series-flow-ra-r7",
+            state_revision,
+            input_fingerprint,
+        );
+        let (story_plan, story_resolution) = candidate(
+            &work_item_id,
+            "story",
+            "series-flow-story-r7",
+            state_revision,
+            input_fingerprint,
+        );
+        let route = RouteDecision::new(
+            SchemaVersion::V1,
+            RouteDecisionId::new("route-flow-r7").expect("route id"),
+            work_item_id.clone(),
+            WorkScale::Medium,
+            DesignRoute::Story,
+            RouteDisposition::Approved,
+            vec![ReasonCode::new("route.medium_story").expect("reason")],
+            vec![
+                SeriesKind::new("requirement-analysis").expect("series kind"),
+                SeriesKind::new("story").expect("series kind"),
+            ],
+            InputFingerprint::digest(b"route input"),
+            None,
+            DecisionDigest::digest(b"route decision"),
+        )
+        .expect("route decision");
+        SeriesInput::new(
+            SchemaVersion::V1,
+            route,
+            ProcessSnapshot::new(
+                SchemaVersion::V1,
+                work_item_id,
+                ProcessPhase::RequirementAnalyzed,
+                None,
+                state_revision,
+                ArtifactDigest::digest(b"state r7"),
+            ),
+            Vec::new(),
+            vec![requirement_resolution, story_resolution],
+            vec![requirement_plan, story_plan],
+            AgentRole::Root,
+            state_revision,
+            input_fingerprint,
+            IdempotencyKey::new("series-next-flow-r7").expect("idempotency key"),
+        )
+        .expect("series input")
+    }
 }

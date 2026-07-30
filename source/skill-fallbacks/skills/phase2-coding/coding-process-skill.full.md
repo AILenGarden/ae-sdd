@@ -71,7 +71,7 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 | 参数 | 来源 |
 |------|------|
-| ① 项目约束文档 | `document-storage-skill.get_constraints(projectKey)` |
+| ① 项目约束文档 | 直接读取 `constraints/` 目录（索引 `constraints/README.md`） |
 | ② 技术约束 / CodingModel | `document-storage-skill.get_thinking_engine(projectKey)` |
 | ③ Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}`（微任务无）|
 | ④ TestCase 文档 | `ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}`（微任务无）|
@@ -100,7 +100,7 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 | 上下文 | 加载方式 | 缺失处置 |
 |--------|---------|---------|
-| ① 项目约束 | `document-storage-skill.get_constraints(projectKey)` 返回 9 项约束（清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
+| ① 项目约束 | 直接读取 `constraints/` 目录的约束文档（索引 `constraints/README.md`；清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
 | ② 技术约束 CodingModel | `document-storage-skill.get_thinking_engine(projectKey)`，产出 11 维决策（决策表见 [`coding-skill.md` §1](coding-skill.md)） | 任一维度结论空 → 停止，向上游追溯 |
 | ③ Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}` 定位后读取，提取涉及工程/主流程伪代码/实现任务映射/接口契约/数据模型/偏离声明（微任务跳过，须标"无 Story 上下文，独立决策"） | — |
 | ④ TestCase 文档 | `ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}` 定位后读取，提取场景清单/测试分层/预期输入输出（微任务跳过） | — |
@@ -219,7 +219,7 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 
 **收集输入：** 复核 §A1 已加载的 4 上下文（不重新加载，已在 CodeAnalysis 阶段通过 `document-storage-skill` 定位）：
 
-- 约束文档：`get_constraints(projectKey)` 返回的 9 项（关键规则见 [`coding-skill.md` §2](coding-skill.md)）
+- 约束文档：`constraints/` 目录下的约束文档（索引 `constraints/README.md`；关键规则见 [`coding-skill.md` §2](coding-skill.md)）
 - Story 文档：`ae-sdd doc resolve --intent STORY --story-id {S}`，提取涉及工程/主流程伪代码分层骨架/实现任务映射/接口契约/数据模型/偏离声明
 - 骨架分解（§A1.5）：CodingPlan 骨架（类名/包路径/方法签名/伪代码），替代原 Task 文档
 - 测试用例文档：`ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}`，提取场景清单/测试分层/Mock点/预期输入输出/错误码断言
@@ -318,7 +318,7 @@ cd {parent-project-root} && mvn compile
 
 **事务边界验证：** 事务内失败无污染/事务外操作不阻塞/调用链与 Story 一致。
 
-**所有测试 Pass：** `mvn test` → BUILD SUCCESS。
+**所有测试 Pass：** `mvn test -pl {受影响模块} -Dtest={受影响测试类}` → BUILD SUCCESS（开发回路与收口只做增量测试；全量 `mvn test` 仅 release/分发门禁执行）。
 
 ### §B5 Test 系列交接
 
@@ -518,7 +518,7 @@ Test 系列未通过时，按 `test-review-skill.md` 的缺陷分类回到 Test 
 | 条件 | 说明 |
 |------|------|
 | ✅ 编译通过 | `mvn compile` 无错误 |
-| ✅ 测试全部通过 | `mvn test` 所有用例 Pass |
+| ✅ 测试全部通过 | `mvn test -pl {受影响模块} -Dtest={受影响测试类}` 受影响用例全部 Pass（全量套件仅 release/分发门禁执行） |
 | ✅ 问题反馈闭环 | 异常路径中无 Open 状态的问题 |
 | ✅ 测试报告已出具 | 最终一轮测试报告已生成 |
 | ✅ 全切面一致性核查闸通过 | 无 🔴 漂移，核心落库路径有真实 DB 证据 |

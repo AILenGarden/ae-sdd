@@ -8,6 +8,7 @@
 //! crate so this boundary does not become an unstructured `common` module.
 
 pub mod compact;
+pub mod diagnostics;
 pub mod error;
 pub mod evidence;
 pub mod execution;
@@ -23,6 +24,10 @@ pub mod series;
 pub mod session;
 mod value;
 
+pub use diagnostics::{
+    BugKind, BugRecord, BugRepeatRecord, DIAGNOSTICS_DIR, DiagnosticRecord, DiagnosticTrack,
+    DroppedRecord, HookInRecord, HookOutRecord, NodeRecord,
+};
 pub use error::{
     ContractValidationError, ControlPlaneError, ControlPlaneErrorCode, Remediation, RetryClass,
 };

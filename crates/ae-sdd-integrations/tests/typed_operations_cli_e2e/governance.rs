@@ -147,7 +147,7 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
         &mut cli,
         &identity,
         "lease release",
-        lease_args(lease_id, fencing, "release-before-review", false),
+        lease_args(lease_id, fencing, "release-before-review", false, "root"),
     ));
     let (author, reviewer) = open_review_lineage(
         &harness,

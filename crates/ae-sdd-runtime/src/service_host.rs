@@ -1,5 +1,7 @@
 use super::*;
 
+use ae_sdd_domain::DEFAULT_CHILD_SUMMARY_MAX_BYTES;
+
 impl RuntimeService {
     pub(super) fn host_register(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let credential = params.capability_token.as_deref().ok_or_else(|| {
@@ -130,6 +132,18 @@ impl RuntimeService {
     pub(super) fn delegation_create(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
         let payload: DelegationCreatePayload = decode_value(params.payload.clone())?;
+        // Schema bounds are validated before any host capability check so an
+        // oversized briefing fails closed as a schema error, never as an
+        // unrelated capability denial.
+        if payload
+            .briefing
+            .as_deref()
+            .is_some_and(|briefing| briefing.len() > DEFAULT_CHILD_SUMMARY_MAX_BYTES as usize)
+        {
+            return Err(schema_error(
+                "delegation briefing must be within 8192 bytes",
+            ));
+        }
         let key = require_idempotency(params)?;
         let scope = format!(
             "delegation-create\0{}\0{}",
@@ -353,7 +367,40 @@ impl RuntimeService {
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
-        let value = self.delegation.collect(&identity.session_id, id)?;
+        let record = self
+            .persistence
+            .load_record("delegation/v1", id)?
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ChildResultInvalid,
+                    "collected delegation record is missing",
+                )
+            })?;
+        let series_boundary = is_series_boundary(&record);
+        let mut value = self.delegation.collect(&identity.session_id, id)?;
+        if series_boundary {
+            let workspace = self.business_workspace_for(&identity)?;
+            // A delegation-stable key, not the per-request idempotency key, makes
+            // the boundary enter the flow event stream exactly once even when a
+            // collector replays the collect under a fresh idempotency identity.
+            let boundary_key = format!("series-boundary\0{id}");
+            self.business.record_series_completed(
+                &workspace,
+                params.work_item_id.as_deref().unwrap_or(""),
+                &identity.session_id,
+                &boundary_key,
+            )?;
+        }
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "compactAdvice".to_owned(),
+                if series_boundary {
+                    json!({"kind":"suggest-compact","reason":"series-boundary","advisory":true})
+                } else {
+                    Value::Null
+                },
+            );
+        }
         self.commit_receipt_event(
             &scope,
             key,
@@ -758,4 +805,35 @@ struct DelegationCancelPayload {
 
 fn default_cancellation_reason() -> String {
     "user-abort".to_owned()
+}
+
+/// A collected delegation marks a series boundary only when the Root spawned
+/// a Series child directly; deeper lineage never triggers the advice.
+fn is_series_boundary(record: &Value) -> bool {
+    record.get("childRole").and_then(Value::as_str) == Some("series")
+        && record.get("parentDelegationId").is_none_or(Value::is_null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_to_series_record_is_a_compact_boundary() {
+        assert!(is_series_boundary(
+            &json!({"childRole":"series","parentDelegationId":null})
+        ));
+        assert!(is_series_boundary(&json!({"childRole":"series"})));
+    }
+
+    #[test]
+    fn deeper_or_other_role_records_are_not_boundaries() {
+        assert!(!is_series_boundary(
+            &json!({"childRole":"series","parentDelegationId":"delegation-parent"})
+        ));
+        assert!(!is_series_boundary(
+            &json!({"childRole":"task","parentDelegationId":null})
+        ));
+        assert!(!is_series_boundary(&json!({"childRole":"reviewer"})));
+    }
 }

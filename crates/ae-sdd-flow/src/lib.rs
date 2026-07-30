@@ -19,9 +19,9 @@ pub use control::{
 };
 pub use error::FlowError;
 pub use model::{
-    EventCursor, EventProvenance, ExecutionCursor, FlowDecision, FlowEnvironment, FlowEvent,
-    FlowEventKind, FlowInput, FlowSnapshot, NextAction, RouteSelection, SupervisorDegradation,
-    SupervisorFault, SupervisorHealth,
+    CompactAdviceReason, EventCursor, EventProvenance, ExecutionCursor, FlowDecision,
+    FlowEnvironment, FlowEvent, FlowEventKind, FlowInput, FlowSnapshot, NextAction, RouteSelection,
+    SupervisorDegradation, SupervisorFault, SupervisorHealth,
 };
 pub use route::{DEFAULT_ROUTE_CONFIDENCE_THRESHOLD_BPS, RouteEngine, RouteEngineError};
 pub use runtime::FlowRuntime;

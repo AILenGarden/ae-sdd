@@ -63,6 +63,45 @@ inference never override daemon state.
 | Compact | `compact.request`, `compact.status` | Track snapshot, host request, correlated ACK, and rehydrate |
 | Host | `host.register`, `host.capabilities`, `host.action_next`, `host.action_ack`, `host.pressure_report` | Bridge native spawn/send/wait/cancel/compact and authenticated pressure telemetry |
 
+## Provided Documents Adoption
+
+When the caller already has PRD/DR/Story documents, `workitem.create` accepts an
+optional `providedDocuments` array (at most 64 entries) instead of minting new
+document paths:
+
+```json
+{"intent":"PRD"|"DR"|"STORY", "docId":"PRD-001", "path":"docs/PRD-001.md", "parentDocId":"DR-001"?}
+```
+
+- `path` must be project-relative, reject `..`/absolute forms under the existing
+  traversal validation, and name an existing file. `parentDocId` links STORY to
+  its parent DR and DR to its parent PRD (PRD has none). Invalid `intent`,
+  duplicate `docId`, or a `parentDocId` naming no provided document is a schema
+  error.
+- Adoption is register-only: the daemon never reads, writes, or copies the user
+  file and never mints the default document for an adopted intent.
+  `documentPaths[intent]` records the first provided path of that intent (intents
+  without one keep the existing minted default) and
+  `routeDocuments[intent]=true` makes the handoff skip that series' generation.
+- At create the daemon also writes the association tree into authoritative state
+  (`prdState.docPath`, `drStates[docId]` entries with nested `storyStates`,
+  root-level `storyStates`, cross-item `parentPrdId`/`parentDrId`) and writes the
+  initial phase directly, outside TransitionPolicy: the deepest provided
+  document's post-generation phase (`dr-generated`, or `story-generated` when a
+  STORY entry node provides the story; PRD-only keeps `initialized`). Flow
+  therefore resumes at review, not generation.
+- `flow.snapshot` and the context projection add a derived `documentTree` field,
+  computed at projection time from `prdState`/`drStates`/`storyStates`/
+  `documentPaths` and never persisted:
+
+```json
+{"prd":{"docId","docPath","phase"}|null,"drs":[{"drId","docPath","phase","stories":[{"storyId","docPath","phase"}]}],"stories":[root-level stories, same shape]}
+```
+
+The document association tree in the status table is authoritatively provided by
+this daemon projection; the Agent must not scan project files to assemble one
+locally.
+
 ## Declared Routes
 
 The Agent supplies intent and available facts; `FlowRuntime` selects and advances

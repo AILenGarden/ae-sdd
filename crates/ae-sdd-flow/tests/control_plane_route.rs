@@ -1,8 +1,8 @@
 use ae_sdd_contracts::{
-    BoundedText, ReasonCode, SchemaVersion,
+    BoundedText, ReasonCode, SchemaVersion, SeriesKind,
     series::{ImpactFact, ImpactLevel, RouteDecisionError, RouteDisposition, RouteInput},
 };
-use ae_sdd_domain::{InputFingerprint, WorkItemId, WorkScale};
+use ae_sdd_domain::{DesignRoute, InputFingerprint, WorkItemId, WorkScale};
 use ae_sdd_flow::{RouteEngine, RouteEngineError};
 use ae_sdd_protocol::ConfirmationRef;
 
@@ -206,8 +206,16 @@ fn impact_fact_permutation_preserves_binding_and_decision_digest() {
         ImpactLevel::Low,
         Some(ae_sdd_domain::ArtifactDigest::digest(b"storage evidence")),
     );
-    let forward = route_input(9_000, vec![first_fact.clone(), second_fact.clone()]);
-    let reversed = route_input(9_000, vec![second_fact, first_fact]);
+    let micro_fact = ImpactFact::new(
+        ReasonCode::new("impact.local_rename").expect("impact code"),
+        ImpactLevel::Micro,
+        Some(ae_sdd_domain::ArtifactDigest::digest(b"rename evidence")),
+    );
+    let forward = route_input(
+        9_000,
+        vec![first_fact.clone(), second_fact.clone(), micro_fact.clone()],
+    );
+    let reversed = route_input(9_000, vec![micro_fact, second_fact, first_fact]);
     let engine = RouteEngine::default();
 
     let forward_binding = engine.approval_binding(&forward).expect("forward binding");
@@ -222,6 +230,146 @@ fn impact_fact_permutation_preserves_binding_and_decision_digest() {
     assert_eq!(
         forward_decision.decision_digest(),
         reversed_decision.decision_digest()
+    );
+    // The higher level still wins when micro participates in the fact set.
+    assert_eq!(forward_decision.scale(), WorkScale::Medium);
+}
+
+#[test]
+fn all_micro_facts_select_the_micro_coding_plan_route() {
+    let impacts = vec![
+        ImpactFact::new(
+            ReasonCode::new("impact.local_rename").expect("impact code"),
+            ImpactLevel::Micro,
+            None,
+        ),
+        ImpactFact::new(
+            ReasonCode::new("impact.comment_tweak").expect("impact code"),
+            ImpactLevel::Micro,
+            None,
+        ),
+    ];
+
+    let decision = RouteEngine::default()
+        .decide(&route_input(9_000, impacts))
+        .expect("route decision");
+
+    assert_eq!(decision.scale(), WorkScale::Micro);
+    assert_eq!(decision.design_route(), DesignRoute::CodingPlan);
+    assert_eq!(decision.disposition(), RouteDisposition::Approved);
+    let series: Vec<&str> = decision
+        .required_series()
+        .iter()
+        .map(SeriesKind::as_str)
+        .collect();
+    assert_eq!(series, ["requirement-analysis", "coding-plan"]);
+}
+
+#[test]
+fn micro_never_dominates_higher_impact_levels() {
+    let engine = RouteEngine::default();
+    for (level, scale) in [
+        (ImpactLevel::Low, WorkScale::Small),
+        (ImpactLevel::Medium, WorkScale::Medium),
+        (ImpactLevel::High, WorkScale::Large),
+    ] {
+        let micro_fact = ImpactFact::new(
+            ReasonCode::new("impact.local_rename").expect("impact code"),
+            ImpactLevel::Micro,
+            None,
+        );
+        let higher_fact = ImpactFact::new(
+            ReasonCode::new("impact.scope").expect("impact code"),
+            level,
+            None,
+        );
+        let forward = route_input(9_000, vec![micro_fact.clone(), higher_fact.clone()]);
+        let reversed = route_input(9_000, vec![higher_fact, micro_fact]);
+
+        let forward_decision = engine.decide(&forward).expect("forward decision");
+        let reversed_decision = engine.decide(&reversed).expect("reversed decision");
+
+        assert_eq!(forward_decision.scale(), scale);
+        assert_eq!(forward_decision, reversed_decision);
+        assert_eq!(
+            forward_decision.decision_digest(),
+            reversed_decision.decision_digest()
+        );
+    }
+}
+
+#[test]
+fn conflicting_micro_facts_wait_for_approval_instead_of_selecting_micro() {
+    let code = ReasonCode::new("impact.boundary").expect("impact code");
+    let impacts = vec![
+        ImpactFact::new(code.clone(), ImpactLevel::Micro, None),
+        ImpactFact::new(code, ImpactLevel::Medium, None),
+    ];
+
+    let decision = RouteEngine::default()
+        .decide(&route_input(9_000, impacts))
+        .expect("route decision");
+
+    assert_eq!(decision.disposition(), RouteDisposition::AwaitUserApproval);
+    assert_eq!(decision.scale(), WorkScale::Medium);
+}
+
+#[test]
+fn existing_impact_mappings_and_decision_digests_are_unchanged() {
+    let engine = RouteEngine::default();
+    let cases: [(ImpactLevel, WorkScale, DesignRoute, &[&str], &str); 3] = [
+        (
+            ImpactLevel::Low,
+            WorkScale::Small,
+            DesignRoute::CodingPlan,
+            &["requirement-analysis", "coding-plan"],
+            "3d6a977aa6227f1b16f76da1d93dd1ecd2e3be51e82b48d32ccc803435bc9080",
+        ),
+        (
+            ImpactLevel::Medium,
+            WorkScale::Medium,
+            DesignRoute::Story,
+            &["requirement-analysis", "story"],
+            "fcff5bd87e5ff17c72d6c4f1ff5943297aae872eefe24162c6037ef63edf369c",
+        ),
+        (
+            ImpactLevel::High,
+            WorkScale::Large,
+            DesignRoute::Dr,
+            &["requirement-analysis", "design-review", "story"],
+            "c9158b4706a06bf46592fc513d495adf73899aae3432b8d840eda8525243800c",
+        ),
+    ];
+    for (level, scale, design_route, series, digest) in cases {
+        let decision = engine
+            .decide(&route_input(
+                9_000,
+                vec![ImpactFact::new(
+                    ReasonCode::new("impact.scope").expect("impact code"),
+                    level,
+                    None,
+                )],
+            ))
+            .expect("route decision");
+        assert_eq!(decision.scale(), scale);
+        assert_eq!(decision.design_route(), design_route);
+        let names: Vec<&str> = decision
+            .required_series()
+            .iter()
+            .map(SeriesKind::as_str)
+            .collect();
+        assert_eq!(names, series);
+        assert_eq!(decision.decision_digest().to_string(), digest);
+    }
+    // Missing facts keep the frozen low mapping and never default to micro.
+    let missing = engine
+        .decide(&route_input(9_000, Vec::new()))
+        .expect("route decision");
+    assert_eq!(missing.disposition(), RouteDisposition::AwaitUserApproval);
+    assert_eq!(missing.scale(), WorkScale::Small);
+    assert_eq!(
+        missing.decision_digest().to_string(),
+        "ab0732b90c76c219004782b0a957a95a537a36d9aa267c5d948999c9e9c54844"
     );
 }
 

@@ -113,6 +113,75 @@ impl Fixture {
         )
     }
 
+    fn acquire_lease(&self, key: &str) -> (String, u64) {
+        let request = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: Some(Uuid::from_u128(11).to_string()),
+            agent_id: Some("agent-root".to_owned()),
+            session_id: Some(Uuid::from_u128(12).to_string()),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: Some(WORK_ITEM_ID.to_owned()),
+            lease_id: None,
+            fencing_token: None,
+            expected_revision: None,
+            idempotency_key: Some(key.to_owned()),
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({
+                "operation": "lease.acquire",
+                "payload": {"owner":{"role":"root"},"ttlSeconds":300},
+            }),
+        };
+        let response = self
+            .adapter
+            .execute(
+                RpcMethod::OperationExecute,
+                &request,
+                Some(&self.workspace()),
+            )
+            .expect("lease acquisition succeeds");
+        (
+            response["data"]["leaseId"]
+                .as_str()
+                .expect("lease id")
+                .to_owned(),
+            response["data"]["fencingToken"]
+                .as_u64()
+                .expect("fencing token"),
+        )
+    }
+
+    fn slice_operation(
+        &self,
+        operation: &str,
+        payload: Value,
+        lease: &(String, u64),
+        key: &str,
+    ) -> Result<Value, RuntimeError> {
+        let request = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: Some(Uuid::from_u128(11).to_string()),
+            agent_id: Some("agent-root".to_owned()),
+            session_id: Some(Uuid::from_u128(12).to_string()),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: Some(WORK_ITEM_ID.to_owned()),
+            lease_id: Some(lease.0.clone()),
+            fencing_token: Some(lease.1),
+            expected_revision: self.state()["revision"].as_u64(),
+            idempotency_key: Some(key.to_owned()),
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({"operation":operation,"payload":payload}),
+        };
+        self.adapter.execute(
+            RpcMethod::OperationExecute,
+            &request,
+            Some(&self.workspace()),
+        )
+    }
+
     fn state(&self) -> Value {
         let bytes = fs::read(
             self.root
@@ -463,4 +532,197 @@ fn verification_drift_fails_closed_without_rewriting_artifacts() {
         fixture.execution_artifact("capsule.json"),
         capsule_after_first
     );
+}
+
+#[test]
+fn slice_start_validates_the_authoritative_cursor_without_writing_on_mismatch() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest");
+    let lease = fixture.acquire_lease("slice-start-lease");
+    let before = fixture.state_bytes();
+
+    let wrong_ordinal = fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":2,"queueDigest":queue_digest}),
+            &lease,
+            "slice-start-wrong-ordinal",
+        )
+        .expect_err("a stale ordinal must fail closed");
+    assert_eq!(wrong_ordinal.code(), StableErrorCode::ExecutionSliceInvalid);
+    assert_eq!(fixture.state_bytes(), before);
+
+    let wrong_digest = fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":1,"queueDigest":"0".repeat(64)}),
+            &lease,
+            "slice-start-wrong-digest",
+        )
+        .expect_err("a stale queue digest must fail closed");
+    assert_eq!(wrong_digest.code(), StableErrorCode::ExecutionCapsuleStale);
+    assert_eq!(fixture.state_bytes(), before);
+}
+
+#[test]
+fn completed_slice_advances_the_authoritative_capsule_one_ordinal() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let first_capsule_digest = resumed["data"]["capsuleDigest"]
+        .as_str()
+        .expect("capsule digest")
+        .to_owned();
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest")
+        .to_owned();
+    let lease = fixture.acquire_lease("slice-progress-lease");
+
+    let started = fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":1,"queueDigest":queue_digest}),
+            &lease,
+            "slice-1-start",
+        )
+        .expect("active slice starts");
+    assert_eq!(started["data"]["status"], "running");
+    assert_eq!(
+        fixture.state()["executionRuntime"]["activeSliceStatus"],
+        "running"
+    );
+
+    let direct_completion = fixture
+        .slice_operation(
+            "execution.slice.record",
+            json!({
+                "sliceId":"slice-V-EFF-003",
+                "status":"completed",
+                "progressDigest":"1".repeat(64),
+            }),
+            &lease,
+            "slice-1-false-complete",
+        )
+        .expect_err("running cannot jump directly to completed");
+    assert_eq!(
+        direct_completion.code(),
+        StableErrorCode::ExecutionSliceInvalid
+    );
+
+    for (index, status) in [
+        "red-observed",
+        "patched",
+        "focused-green",
+        "evidence-bound",
+        "completed",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fixture
+            .slice_operation(
+                "execution.slice.record",
+                json!({
+                    "sliceId":"slice-V-EFF-003",
+                    "status":status,
+                    "progressDigest":format!("{:064x}", index + 1),
+                }),
+                &lease,
+                &format!("slice-1-{status}"),
+            )
+            .unwrap_or_else(|error| panic!("{status} commits: {error:?}"));
+    }
+
+    let state = fixture.state();
+    assert_eq!(state["executionRuntime"]["activeSliceOrdinal"], 2);
+    assert_eq!(state["executionRuntime"]["activeSliceStatus"], "pending");
+    assert_ne!(
+        state["executionRuntime"]["capsuleDigest"],
+        first_capsule_digest
+    );
+    let next = fixture.resume(json!({})).expect("next capsule resumes");
+    assert_eq!(next["data"]["capsule"]["queue"]["activeOrdinal"], 2);
+    assert_eq!(next["data"]["nextAction"]["kind"], "execute-approved-slice");
+    assert_eq!(next["data"]["nextAction"]["activeOrdinal"], 2);
+}
+
+#[test]
+fn final_completed_slice_closes_the_execution_cursor() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest")
+        .to_owned();
+    let lease = fixture.acquire_lease("final-slice-lease");
+
+    complete_slice(
+        &fixture,
+        &lease,
+        1,
+        "slice-V-EFF-003",
+        &queue_digest,
+        "final-first",
+    );
+    complete_slice(
+        &fixture,
+        &lease,
+        2,
+        "slice-V-EFF-001b",
+        &queue_digest,
+        "final-second",
+    );
+
+    let state = fixture.state();
+    assert_eq!(state["executionRuntime"]["activeSliceOrdinal"], 2);
+    assert_eq!(state["executionRuntime"]["activeSliceStatus"], "completed");
+    let terminal = fixture.resume(json!({})).expect("terminal capsule resumes");
+    assert_ne!(
+        terminal["data"]["nextAction"]["kind"],
+        "execute-approved-slice"
+    );
+}
+
+fn complete_slice(
+    fixture: &Fixture,
+    lease: &(String, u64),
+    ordinal: u32,
+    slice_id: &str,
+    queue_digest: &str,
+    key_prefix: &str,
+) {
+    fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":ordinal,"queueDigest":queue_digest}),
+            lease,
+            &format!("{key_prefix}-start"),
+        )
+        .unwrap_or_else(|error| panic!("slice {ordinal} starts: {error:?}"));
+    for (index, status) in [
+        "red-observed",
+        "patched",
+        "focused-green",
+        "evidence-bound",
+        "completed",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fixture
+            .slice_operation(
+                "execution.slice.record",
+                json!({
+                    "sliceId":slice_id,
+                    "status":status,
+                    "progressDigest":format!("{:064x}", ordinal * 10 + index as u32),
+                }),
+                lease,
+                &format!("{key_prefix}-{status}"),
+            )
+            .unwrap_or_else(|error| panic!("slice {ordinal} {status} commits: {error:?}"));
+    }
 }

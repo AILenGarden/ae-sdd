@@ -12,6 +12,7 @@ use ae_sdd_domain::{
 };
 use ae_sdd_lifecycle::LifecycleEngine;
 use ae_sdd_operations::{Confirmation, OperationName};
+use ae_sdd_policy::RequiredGate;
 use ae_sdd_protocol::{ConfirmationRef, StableErrorCode};
 use ae_sdd_runtime::{RuntimeError, RuntimeResult};
 use serde_json::{Map, Value, json};
@@ -272,8 +273,9 @@ fn apply_resume(target: &mut Map<String, Value>, source: ProcessPhase) {
 fn apply_transition(target: &mut Map<String, Value>, phase: ProcessPhase) -> RuntimeResult<()> {
     let previous_step = target
         .get("currentStep")
+        .or_else(|| target.get("phase"))
         .and_then(Value::as_str)
-        .ok_or_else(|| schema_error("currentStep must be a string"))?
+        .ok_or_else(|| schema_error("currentStep or phase must be a string"))?
         .to_owned();
     let mut completed_steps = Vec::new();
     if let Some(existing) = target.get("completedSteps") {
@@ -373,6 +375,8 @@ const fn is_coding_or_later(phase: ProcessPhase) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn prepare_lifecycle_mutation(
     state: &Value,
     work_item_id: &str,
@@ -384,6 +388,35 @@ pub(crate) fn prepare_lifecycle_mutation(
     actor_role: AgentRole,
     _authenticated_session_id: Option<SessionId>,
     evaluation_unix_ms: u64,
+) -> RuntimeResult<LifecycleOutcome> {
+    prepare_lifecycle_mutation_with_gate_passes(
+        state,
+        work_item_id,
+        operation,
+        payload,
+        expected_revision,
+        completion,
+        confirmation,
+        actor_role,
+        _authenticated_session_id,
+        evaluation_unix_ms,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_lifecycle_mutation_with_gate_passes(
+    state: &Value,
+    work_item_id: &str,
+    operation: OperationName,
+    payload: &Value,
+    expected_revision: StateRevision,
+    completion: Option<CompletionMilestoneInput>,
+    confirmation: Option<&Confirmation>,
+    actor_role: AgentRole,
+    _authenticated_session_id: Option<SessionId>,
+    evaluation_unix_ms: u64,
+    passed_gates: &[RequiredGate],
 ) -> RuntimeResult<LifecycleOutcome> {
     let state_revision = StateRevision::new(required_u64(state, "revision")?);
     if state_revision != expected_revision {
@@ -451,6 +484,7 @@ pub(crate) fn prepare_lifecycle_mutation(
         "workItemId": work_item_id,
         "operation": operation.as_str(),
         "payload": payload,
+        "passedGateIds": passed_gates.iter().map(|gate| gate.as_str()).collect::<Vec<_>>(),
     }))
     .map_err(|_| schema_error("lifecycle input could not be canonicalized"))?;
     let story_summaries = project_story_summaries(state)?;
@@ -481,6 +515,13 @@ pub(crate) fn prepare_lifecycle_mutation(
             .ok_or_else(|| schema_error("authoritative design route is missing"))?,
     )?;
     let evidence_refs = project_evidence_refs(state)?;
+    let passed_gate_ids = passed_gates
+        .iter()
+        .map(|gate| {
+            VerificationId::new(gate.as_str())
+                .map_err(|_| schema_error("daemon Gate id is invalid"))
+        })
+        .collect::<RuntimeResult<Vec<_>>>()?;
     let file_locks = project_file_locks(state)?;
     let build_input = |confirmation_refs| {
         LifecycleInput::new(
@@ -499,6 +540,7 @@ pub(crate) fn prepare_lifecycle_mutation(
             evaluation_unix_ms,
             InputFingerprint::digest(&fingerprint_bytes),
         )
+        .and_then(|input| input.with_passed_gate_ids(passed_gate_ids.clone()))
         .map(|input| match completion {
             Some(completion) => input.with_completion(completion),
             None => input,
@@ -568,6 +610,8 @@ pub(crate) fn prepare_lifecycle_mutation(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn preflight_lifecycle_confirmation(
     state: &Value,
     work_item_id: &str,
@@ -593,13 +637,42 @@ pub(crate) fn preflight_lifecycle_confirmation(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
+pub(crate) fn preflight_lifecycle_confirmation_with_gate_passes(
+    state: &Value,
+    work_item_id: &str,
+    operation: OperationName,
+    payload: &Value,
+    expected_revision: StateRevision,
+    completion: Option<CompletionMilestoneInput>,
+    actor_role: AgentRole,
+    authenticated_session_id: Option<SessionId>,
+    evaluation_unix_ms: u64,
+    passed_gates: &[RequiredGate],
+) -> RuntimeResult<LifecycleOutcome> {
+    prepare_lifecycle_mutation_with_gate_passes(
+        state,
+        work_item_id,
+        operation,
+        payload,
+        expected_revision,
+        completion,
+        None,
+        actor_role,
+        authenticated_session_id,
+        evaluation_unix_ms,
+        passed_gates,
+    )
+}
+
 fn work_item_view<'a>(state: &'a Value, work_item_id: &str) -> RuntimeResult<&'a Value> {
     let stories = merged_story_views(state)?;
     if let Some(prd) = nested_prd_view(state)? {
         if required_str(prd, "prdId")? == work_item_id {
             return Ok(prd);
         }
-    } else if is_flat_prd_root(state, work_item_id) {
+    } else if is_flat_prd_root(state, work_item_id) || is_flat_route_root(state, work_item_id) {
         return Ok(state);
     }
     if let Some(dr) = singular_dr_view(state)?
@@ -634,7 +707,8 @@ fn work_item_object_mut<'a>(
     drop(stories);
     let nested_prd = nested_prd_view(state)?
         .is_some_and(|prd| prd.get("prdId").and_then(Value::as_str) == Some(work_item_id));
-    let flat_prd = !nested_prd && is_flat_prd_root(state, work_item_id);
+    let flat_root = !nested_prd
+        && (is_flat_prd_root(state, work_item_id) || is_flat_route_root(state, work_item_id));
     let singular_dr = singular_dr_view(state)?
         .is_some_and(|dr| dr.get("drId").and_then(Value::as_str) == Some(work_item_id));
     let mapped_dr = dr_states(state)?.is_some_and(|states| states.contains_key(work_item_id));
@@ -645,7 +719,7 @@ fn work_item_object_mut<'a>(
             .and_then(Value::as_object_mut)
             .ok_or_else(|| schema_error("prdState must be an object"));
     }
-    if flat_prd {
+    if flat_root {
         return state
             .as_object_mut()
             .ok_or_else(|| schema_error("authoritative state must be an object"));
@@ -735,6 +809,12 @@ fn is_flat_prd_root(state: &Value, work_item_id: &str) -> bool {
     state.get("prdState").is_none()
         && state.get("stateMachineName").and_then(Value::as_str) == Some(work_item_id)
         && state.get("prdCompletion").is_some_and(Value::is_object)
+}
+
+fn is_flat_route_root(state: &Value, work_item_id: &str) -> bool {
+    state.get("prdState").is_none()
+        && state.get("entryNode").and_then(Value::as_str) == Some("ROUTE")
+        && state.get("stateMachineName").and_then(Value::as_str) == Some(work_item_id)
 }
 
 fn singular_dr_view(state: &Value) -> RuntimeResult<Option<&Value>> {

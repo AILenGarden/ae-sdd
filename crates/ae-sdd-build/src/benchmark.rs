@@ -14,9 +14,29 @@ use thiserror::Error;
 
 mod setup;
 
-use setup::{BenchmarkWorkspace, cached_hook_call, prepare_cached_hook, validate_controlled_hook};
+use setup::{
+    BenchmarkWorkspace, cached_context_read, cached_hook_call, hook_context_digest,
+    invalidated_hook_call, prepare_cached_hook, validate_controlled_hook, warm_handshake_call,
+};
 
 const MAX_HOOK_P95_MICROS: u64 = 50_000;
+/// `constraints/testing.md` warm handshake p95 budget.
+const MAX_HANDSHAKE_P95_MICROS: u64 = 50_000;
+/// `constraints/testing.md` cached read p95 budget.
+const MAX_CACHED_READ_P95_MICROS: u64 = 100_000;
+/// `constraints/testing.md` invalidated non-external Hook p95 budget.
+const MAX_INVALIDATED_HOOK_P95_MICROS: u64 = 250_000;
+/// Sample count for the handshake and cached-read probes. Small relative to the
+/// Hook loop because each sample opens a fresh connection.
+const HANDSHAKE_SAMPLES: u64 = 200;
+const CACHED_READ_SAMPLES: u64 = 200;
+/// Sample count for the invalidated probe. Each sample rewrites the on-disk
+/// state and waits for the daemon context worker to reproject, so samples cost
+/// at least one worker period each and cannot be scaled like the cached loop.
+const INVALIDATED_SAMPLES: u64 = 40;
+/// Bound on context-worker polls per invalidated sample. The daemon worker
+/// period is 100 ms; this tolerates a slow reprojection without hanging.
+const INVALIDATED_POLL_LIMIT: u32 = 60;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RPC_TIMEOUT: Duration = Duration::from_secs(2);
 const HOOK_DEADLINE_MS: u64 = 250;
@@ -99,6 +119,19 @@ pub struct HookBenchmarkSummary {
     pub p95_micros: u64,
     pub p99_micros: u64,
     pub max_micros: u64,
+    /// Warm `runtime.status` p95, gated by `MAX_HANDSHAKE_P95_MICROS`.
+    pub handshake_p95_micros: u64,
+    pub handshake_samples: u64,
+    /// Warm `context.get` p95, gated by `MAX_CACHED_READ_P95_MICROS`.
+    pub cached_read_p95_micros: u64,
+    pub cached_read_samples: u64,
+    /// Invalidated `hook.user_prompt` p50/p95/max, gated by
+    /// `MAX_INVALIDATED_HOOK_P95_MICROS`. Each sample is the round trip that
+    /// first observed a reprojected body after an on-disk state move.
+    pub invalidated_hook_p50_micros: u64,
+    pub invalidated_hook_p95_micros: u64,
+    pub invalidated_hook_max_micros: u64,
+    pub invalidated_hook_samples: u64,
     pub elapsed_micros: u64,
     pub error_count: u64,
     pub receipt_replay_count: u64,
@@ -186,12 +219,51 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
         }
     }
     let elapsed_micros = u64::try_from(benchmark_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+
+    // Warm handshake probe. Runs after the Hook loop so the daemon is fully
+    // warm; a cold first connection would measure startup, not handshake.
+    let mut handshake_latencies = Vec::with_capacity(
+        usize::try_from(HANDSHAKE_SAMPLES).map_err(|_| BenchmarkError::InvalidSampleCount)?,
+    );
+    for _ in 0..HANDSHAKE_SAMPLES {
+        let started = Instant::now();
+        warm_handshake_call(&admin_client)?;
+        handshake_latencies.push(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+    }
+    handshake_latencies.sort_unstable();
+    let handshake_p95_micros = percentile(&handshake_latencies, 95);
+
+    // Cached read probe. One priming call so the projection cache is populated,
+    // then measure steady-state reads.
+    cached_context_read(&hook_client, &session)?;
+    let mut cached_read_latencies = Vec::with_capacity(
+        usize::try_from(CACHED_READ_SAMPLES).map_err(|_| BenchmarkError::InvalidSampleCount)?,
+    );
+    for _ in 0..CACHED_READ_SAMPLES {
+        let started = Instant::now();
+        cached_context_read(&hook_client, &session)?;
+        cached_read_latencies
+            .push(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+    }
+    cached_read_latencies.sort_unstable();
+    let cached_read_p95_micros = percentile(&cached_read_latencies, 95);
+
+    // Invalidated probe. Runs last because it moves the on-disk state the
+    // cached loop depends on.
+    let mut invalidated_latencies = invalidated_hook_latencies(
+        &hook_client,
+        &session,
+        &benchmark_workspace,
+        &endpoint.policy_digest,
+    )?;
+    invalidated_latencies.sort_unstable();
+
     let final_metrics = metrics.sample()?;
     peak_rss = peak_rss.max(final_metrics.rss_bytes);
     latencies.sort_unstable();
 
     let summary = HookBenchmarkSummary {
-        schema_version: "ae-sdd-hook-benchmark/v3",
+        schema_version: "ae-sdd-hook-benchmark/v4",
         benchmark: "engaged-authoritative-cached-hook-rpc-receipt-replay",
         build_profile: "release",
         operating_system: std::env::consts::OS,
@@ -208,6 +280,14 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
         p50_micros: percentile(&latencies, 50),
         p95_micros: percentile(&latencies, 95),
         p99_micros: percentile(&latencies, 99),
+        handshake_p95_micros,
+        handshake_samples: HANDSHAKE_SAMPLES,
+        cached_read_p95_micros,
+        cached_read_samples: CACHED_READ_SAMPLES,
+        invalidated_hook_p50_micros: percentile(&invalidated_latencies, 50),
+        invalidated_hook_p95_micros: percentile(&invalidated_latencies, 95),
+        invalidated_hook_max_micros: invalidated_latencies.last().copied().unwrap_or_default(),
+        invalidated_hook_samples: INVALIDATED_SAMPLES,
         max_micros: latencies.last().copied().unwrap_or_default(),
         elapsed_micros,
         error_count,
@@ -230,7 +310,58 @@ pub fn benchmark_hook(config: HookBenchmarkConfig) -> Result<HookBenchmarkSummar
             maximum_micros: MAX_HOOK_P95_MICROS,
         });
     }
+    if summary.handshake_p95_micros > MAX_HANDSHAKE_P95_MICROS {
+        return Err(BenchmarkError::HandshakeP95BudgetExceeded {
+            actual_micros: summary.handshake_p95_micros,
+            maximum_micros: MAX_HANDSHAKE_P95_MICROS,
+        });
+    }
+    if summary.cached_read_p95_micros > MAX_CACHED_READ_P95_MICROS {
+        return Err(BenchmarkError::CachedReadP95BudgetExceeded {
+            actual_micros: summary.cached_read_p95_micros,
+            maximum_micros: MAX_CACHED_READ_P95_MICROS,
+        });
+    }
+    if summary.invalidated_hook_p95_micros > MAX_INVALIDATED_HOOK_P95_MICROS {
+        return Err(BenchmarkError::P95BudgetExceeded {
+            actual_micros: summary.invalidated_hook_p95_micros,
+            maximum_micros: MAX_INVALIDATED_HOOK_P95_MICROS,
+        });
+    }
     Ok(summary)
+}
+
+/// Invalidated Hook probe. Each sample moves the on-disk authoritative state
+/// to a fresh revision, then polls `hook.user_prompt` with unique event ids
+/// until the engaged session reports the recomputed projection digest. The
+/// recorded latency is the round trip that first observed the reprojected
+/// body, per the `invalidated_hook_*` summary contract.
+fn invalidated_hook_latencies(
+    client: &DaemonClient,
+    session: &setup::HookSession,
+    workspace: &BenchmarkWorkspace,
+    policy_digest: &str,
+) -> Result<Vec<u64>, BenchmarkError> {
+    let mut latencies = Vec::with_capacity(
+        usize::try_from(INVALIDATED_SAMPLES).map_err(|_| BenchmarkError::InvalidSampleCount)?,
+    );
+    for sample in 0..INVALIDATED_SAMPLES {
+        // The prepared state sits at revision 1, so the first move is 2.
+        let fingerprint = workspace.write_authoritative_state_at(policy_digest, sample + 2)?;
+        let mut observed = None;
+        for poll in 0..INVALIDATED_POLL_LIMIT {
+            let event_id = format!("benchmark-invalidated-{sample}-{poll}");
+            let started = Instant::now();
+            let result = invalidated_hook_call(client, session, &event_id)?;
+            if hook_context_digest(&result) == Some(fingerprint.as_str()) {
+                observed = Some(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        latencies.push(observed.ok_or(BenchmarkError::AuthoritativeContextMismatch)?);
+    }
+    Ok(latencies)
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -586,6 +717,16 @@ pub enum BenchmarkError {
     RoundTripFailures(u64),
     #[error("hook benchmark p95 {actual_micros}us exceeds {maximum_micros}us")]
     P95BudgetExceeded {
+        actual_micros: u64,
+        maximum_micros: u64,
+    },
+    #[error("warm handshake p95 {actual_micros}us exceeds {maximum_micros}us")]
+    HandshakeP95BudgetExceeded {
+        actual_micros: u64,
+        maximum_micros: u64,
+    },
+    #[error("cached read p95 {actual_micros}us exceeds {maximum_micros}us")]
+    CachedReadP95BudgetExceeded {
         actual_micros: u64,
         maximum_micros: u64,
     },

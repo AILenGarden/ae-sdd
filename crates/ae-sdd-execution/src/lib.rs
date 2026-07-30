@@ -41,7 +41,7 @@ pub use policy::{
     shell_executable_blocklist,
 };
 pub use receipt::validate_against_plan;
-pub use slice::{ExecutionSliceEvent, transition_slice_status};
+pub use slice::{ExecutionSliceEvent, RefactorCycleV1, transition_slice_status};
 pub use supervisor::{
     ExecutionSupervisor, ExecutionSupervisorCheckpointV1, ExecutionToolEventV1,
     ExecutionToolOutputV1, FocusedTestOutcomeV1, FocusedTestStateV1,

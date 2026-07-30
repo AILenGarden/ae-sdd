@@ -99,6 +99,7 @@ fn every_supported_route_authorizes_only_adjacent_steps() {
         ProcessPhase::RouteSelected,
         ProcessPhase::RequirementAnalyzed,
         ProcessPhase::DrGenerated,
+        ProcessPhase::StoryGenerated,
         ProcessPhase::TestcaseGenerated,
         ProcessPhase::CodingProcess,
         ProcessPhase::Coding,
@@ -188,12 +189,12 @@ fn transition_denials_preserve_typed_context_and_actionable_messages() {
         ))
         .expect_err("small Story route is unsupported"),
         TransitionPolicy::authorize(context(
-            ProcessPhase::StoryGenerated,
+            ProcessPhase::DrGenerated,
             ProcessPhase::TestcaseGenerated,
             WorkScale::Large,
             DesignRoute::Dr,
         ))
-        .expect_err("StoryGenerated is outside the large DR route"),
+        .expect_err("skipping StoryGenerated on the large DR route is illegal"),
         TransitionPolicy::authorize(context(
             ProcessPhase::Initialized,
             ProcessPhase::RequirementAnalyzed,

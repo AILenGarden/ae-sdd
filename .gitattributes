@@ -10,3 +10,5 @@ Cargo.lock           text eol=lf
 harness/.harness/*   text eol=lf
 # PowerShell 脚本保持 LF
 *.ps1                text eol=lf
+# migration SQL 保持 LF（include_str! 内嵌字节参与 sha256 校验，CRLF 会破坏 store 启动校验）
+migrations/*.sql     text eol=lf
