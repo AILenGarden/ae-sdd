@@ -270,6 +270,19 @@ pub trait HostRuntimeAdapter: Send + Sync {
     fn dispatch(&self, action: &HostAction) -> Result<HostAck, HostAdapterError>;
 }
 
+// Contract added at commit fda... (ROUTE-a4574dca U-2):
+//
+// The ae-sdd review sub-flow (`G-REVIEW-DEPTH` and any later review gates
+// that read `state.reviewSession`) requires the host runtime to be able to
+// spawn a physically isolated child process with its own agentId and own
+// daemon connection, declare the issued identity itself, and execute
+// `review.record` from that child. The daemon never creates this child; it
+// only inspects the resulting `state.reviewSession`. A host that cannot
+// satisfy this requirement cannot complete any route that ends with a review
+// gate. ROUTE-a4574dca RA §6 U-2 records this as a handoff to a future D-7/D-8
+// that explicitly widens this trait with a review capability or adds it to
+// the host adapter onboarding standard.
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum HostAdapterError {
     #[error("host rejected action dispatch: {0}")]
