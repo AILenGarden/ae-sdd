@@ -185,6 +185,7 @@ impl ExecutionHarness {
                 endpoint_token: SecretString::new(self.token.clone()),
                 expected_boot_id: self.runtime.boot_id().to_string(),
                 expected_policy_digest: self.runtime.policy_digest().to_owned(),
+                adapter_id: None,
             })
             .expect("handshake serializes"),
         );

@@ -231,7 +231,7 @@ impl DelegationSupervisor {
         let grant =
             crate::grant::validate_child_grant(parent_grant, payload.child_role, &payload.grant)?;
         self.host
-            .require_capabilities(&payload.adapter_id, &["create", "attest"])?;
+            .require_registered(&payload.adapter_id)?;
         let workspace = self.typed_workspace(workspace_id)?;
         let parent = self.typed_session(parent_session_id)?;
         if parent.workspace_id != workspace_id || parent.role != parent_role {
@@ -818,6 +818,66 @@ impl DelegationSupervisor {
         Ok(project_delegation(&record))
     }
 
+    /// Extends a running delegation's deadline within the configured bound.
+    ///
+    /// The liveness judgement itself is correct and stays untouched; what was
+    /// missing is a way to express a legitimate extension. Without it a long
+    /// series that outlives its original deadline can only be cancelled and
+    /// rebuilt, discarding work that was already done.
+    ///
+    /// Only the parent may renew: a child that could extend its own deadline
+    /// would hold its grant for as long as it liked. The bound is a total
+    /// lifetime measured from creation, so repeated renewals cannot walk the
+    /// deadline forward without limit.
+    pub fn renew(
+        &self,
+        parent_session_id: &str,
+        delegation_id: &str,
+        deadline_unix_ms: u64,
+        max_lifetime_ms: u64,
+        now_unix_ms: u64,
+    ) -> RuntimeResult<DelegationResult> {
+        let mut record = self.load(delegation_id)?;
+        if record.parent_session_id != parent_session_id {
+            return Err(RuntimeError::new(
+                StableErrorCode::RoleOperationForbidden,
+                "only the parent session may renew this delegation",
+            ));
+        }
+        if record.status != "running" {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "only a running delegation can be renewed",
+            ));
+        }
+        if deadline_unix_ms <= now_unix_ms {
+            return Err(RuntimeError::new(
+                StableErrorCode::OperationSchemaInvalid,
+                "renewed delegation deadline must be in the future",
+            ));
+        }
+        // The bound is measured from creation, not from the current deadline.
+        // A deadline-relative bound would move every time it was granted, so
+        // repeated renewals could walk the deadline forward without limit;
+        // `created_at_unix_ms` never changes and survives rehydration.
+        let ceiling = record.created_at_unix_ms.saturating_add(max_lifetime_ms);
+        if deadline_unix_ms > ceiling {
+            return Err(RuntimeError::new(
+                StableErrorCode::OperationSchemaInvalid,
+                "renewed delegation deadline exceeds the permitted lifetime",
+            ));
+        }
+        if deadline_unix_ms < record.deadline_unix_ms {
+            return Err(RuntimeError::new(
+                StableErrorCode::OperationSchemaInvalid,
+                "renewal cannot shorten a delegation deadline",
+            ));
+        }
+        record.deadline_unix_ms = deadline_unix_ms;
+        self.save(&record)?;
+        Ok(project_delegation(&record))
+    }
+
     /// Returns the staged result and any durable artifact receipt for completion orchestration.
     pub fn completion_material(
         &self,
@@ -947,6 +1007,7 @@ fn project_delegation(record: &DurableDelegation) -> DelegationResult {
     DelegationResult {
         delegation_id: record.delegation_id.clone(),
         status: record.status.clone(),
+        deadline_unix_ms: record.deadline_unix_ms,
         grant: record.grant.clone(),
         child_role: record.child_role,
         action_id: record.action_id.clone(),

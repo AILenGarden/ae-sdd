@@ -78,12 +78,12 @@ pub enum RpcMethod {
     /// Cancel a scoped delegation.
     #[serde(rename = "delegation.cancel")]
     DelegationCancel,
+    /// Extend the deadline of a running delegation.
+    #[serde(rename = "delegation.renew")]
+    DelegationRenew,
     /// Register an authenticated host runtime adapter.
     #[serde(rename = "host.register")]
     HostRegister,
-    /// Read the authenticated adapter capability matrix.
-    #[serde(rename = "host.capabilities")]
-    HostCapabilities,
     /// Pull the next durable host action.
     #[serde(rename = "host.action_next")]
     HostActionNext,
@@ -152,8 +152,8 @@ impl RpcMethod {
         Self::DelegationReport,
         Self::DelegationCollect,
         Self::DelegationCancel,
+        Self::DelegationRenew,
         Self::HostRegister,
-        Self::HostCapabilities,
         Self::HostActionNext,
         Self::HostActionAck,
         Self::HostPressureReport,
@@ -195,8 +195,8 @@ impl RpcMethod {
             Self::DelegationReport => "delegation.report",
             Self::DelegationCollect => "delegation.collect",
             Self::DelegationCancel => "delegation.cancel",
+            Self::DelegationRenew => "delegation.renew",
             Self::HostRegister => "host.register",
-            Self::HostCapabilities => "host.capabilities",
             Self::HostActionNext => "host.action_next",
             Self::HostActionAck => "host.action_ack",
             Self::HostPressureReport => "host.pressure_report",
@@ -546,21 +546,21 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         false,
     ),
     method(
+        RpcMethod::DelegationRenew,
+        OperationScope::Delegation,
+        true,
+        true,
+        true,
+        true,
+        false,
+    ),
+    method(
         RpcMethod::HostRegister,
         OperationScope::Host,
         false,
         false,
         true,
         true,
-        false,
-    ),
-    method(
-        RpcMethod::HostCapabilities,
-        OperationScope::Host,
-        false,
-        false,
-        false,
-        false,
         false,
     ),
     method(

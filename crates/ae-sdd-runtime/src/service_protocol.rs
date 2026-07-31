@@ -29,6 +29,15 @@ impl RuntimeService {
             )
             .with_remediation("atomically reread the endpoint manifest and reconnect"));
         }
+        // A host that names itself becomes addressable here. The token checked
+        // above is the same one explicit registration required, so nothing is
+        // trusted that was not trusted before -- what is gone is the need for
+        // someone to remember a separate registration call after install.
+        if request.client_kind == ClientKind::HostAdapter
+            && let Some(adapter_id) = request.adapter_id.as_deref()
+        {
+            self.host.register(adapter_id)?;
+        }
         let public_key = self.capability_signer.public_key();
         let capabilities = [
             "event-cursor-v1",

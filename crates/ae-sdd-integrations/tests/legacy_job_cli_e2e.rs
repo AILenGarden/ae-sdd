@@ -1410,6 +1410,7 @@ fn connection(runtime: &RuntimeService, client_kind: ClientKind) -> ConnectionSt
         endpoint_token: SecretString::new(ENDPOINT_TOKEN.to_owned()),
         expected_boot_id: runtime.boot_id().to_string(),
         expected_policy_digest: runtime.policy_digest().to_owned(),
+        adapter_id: None,
     };
     assert_result(raw_call(
         runtime,

@@ -23,8 +23,7 @@ impl RuntimeService {
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
-        self.host
-            .register(&payload.adapter_id, &payload.capabilities)?;
+        self.host.register(&payload.adapter_id)?;
         let value = to_value(payload)?;
         self.commit_receipt_event(
             &scope,
@@ -37,24 +36,6 @@ impl RuntimeService {
             None,
         )
         .map(|(value, _)| value)
-    }
-
-    pub(super) fn host_capabilities(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
-        let adapter_id = params
-            .payload
-            .get("adapterId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| schema_error("adapterId is required"))?;
-        let value = self
-            .persistence
-            .load_record("host-adapter/v1", adapter_id)?
-            .ok_or_else(|| {
-                RuntimeError::new(
-                    StableErrorCode::HostCapabilityUnsupported,
-                    "host adapter is not registered",
-                )
-            })?;
-        Ok(value)
     }
 
     pub(super) fn host_action_next(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
@@ -110,7 +91,7 @@ impl RuntimeService {
         let identity = self.session_identity(params, false)?;
         let payload: HostPressurePayload = decode_value(params.payload.clone())?;
         self.host
-            .require_capabilities(&payload.adapter_id, &["pressure"])?;
+            .require_registered(&payload.adapter_id)?;
         let session_id = SessionId::from_str(&identity.session_id)
             .map_err(|_| schema_error("sessionId is not a UUID"))?;
         let decision = self.context.observe_pressure(session_id, &payload)?;
@@ -448,6 +429,36 @@ impl RuntimeService {
         .map(|(value, _)| value)
     }
 
+    pub(super) fn delegation_renew(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
+        let identity = self.session_identity(params, false)?;
+        let payload: DelegationRenewPayload = decode_value(params.payload.clone())?;
+        let id = payload.delegation_id.as_str();
+        let key = require_idempotency(params)?;
+        let scope = format!("delegation-renew\0{}", id);
+        let digest = canonical_digest(&payload)?;
+        if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
+            return Ok(value);
+        }
+        let value = to_value(self.delegation.renew(
+            &identity.session_id,
+            id,
+            payload.deadline_unix_ms,
+            self.config.max_delegation_lifetime_ms,
+            self.clock.now_unix_ms(),
+        )?)?;
+        self.commit_receipt_event(
+            &scope,
+            key,
+            digest,
+            value,
+            "delegation.renewed",
+            Some(identity.workspace_id),
+            Some(identity.session_id),
+            params.work_item_id.clone(),
+        )
+        .map(|(value, _)| value)
+    }
+
     pub(super) fn compact_request(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
         let payload: CompactRequestPayload = decode_value(params.payload.clone())?;
@@ -623,7 +634,7 @@ impl RuntimeService {
         deadline_unix_ms: u64,
         adapter_id: &str,
     ) -> RuntimeResult<CompactResult> {
-        self.host.require_capabilities(adapter_id, &["compact"])?;
+        self.host.require_registered(adapter_id)?;
         {
             let state = self.lock_state()?;
             let session = state.sessions.get(session_id).ok_or_else(session_expired)?;
@@ -801,6 +812,13 @@ struct DelegationCancelPayload {
     delegation_id: String,
     #[serde(default = "default_cancellation_reason")]
     reason: String,
+}
+
+#[derive(Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DelegationRenewPayload {
+    delegation_id: String,
+    deadline_unix_ms: u64,
 }
 
 fn default_cancellation_reason() -> String {

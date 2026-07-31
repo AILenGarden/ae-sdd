@@ -33,8 +33,8 @@ const METHOD_NAMES: [&str; METHOD_COUNT] = [
     "delegation.report",
     "delegation.collect",
     "delegation.cancel",
+    "delegation.renew",
     "host.register",
-    "host.capabilities",
     "host.action_next",
     "host.action_ack",
     "host.pressure_report",
@@ -389,6 +389,7 @@ fn secret_debug_is_redacted_through_handshake_request() {
             endpoint_token: SecretString::new("wire-secret"),
             expected_boot_id: "boot-1".to_owned(),
             expected_policy_digest: "a".repeat(64),
+            adapter_id: None,
         },
     );
 

@@ -11,7 +11,7 @@ use ae_sdd_contracts::compact::CompactRequest;
 use ae_sdd_domain::{HostActionId, SessionId};
 use ae_sdd_host::{
     HostAck, HostAckOutcome, HostAction, HostActionError, HostActionKind, HostAdapterError,
-    HostAdapterId, HostCapabilitySet, HostRuntimeAdapter, HostTaskId,
+    HostAdapterId, HostRuntimeAdapter, HostTaskId,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -96,11 +96,6 @@ impl HostAckSummary {
 /// Supervisor-level error for `register`/`dispatch`/`cancel`/`compact`.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum HostSupervisorError {
-    /// The injected adapter's capability matrix does not include the
-    /// capability the requested action requires. Detected by a Port-side
-    /// precheck before `HostRuntimeAdapter::dispatch` is ever called.
-    #[error("host adapter lacks a required native capability")]
-    CapabilityUnsupported,
     /// Dispatch exceeded its internal deadline; delivery is unconfirmed.
     #[error("host action dispatch timed out")]
     Timeout,
@@ -112,9 +107,6 @@ pub enum HostSupervisorError {
     /// this granularity cannot be dispatched yet.
     #[error("host task-scoped cancellation is not supported in this build")]
     CancelTargetUnsupported,
-    /// `register`'s capability matrix was empty.
-    #[error("host adapter capability set is empty")]
-    InvalidCapabilitySet,
     /// Wraps a `HostActionError` raised either by internal `HostAction`
     /// construction (e.g. `CompactBindingRequired`) or by ACK correlation
     /// validation (`AckCorrelationMismatch`). Never exposes a bare
@@ -126,10 +118,6 @@ pub enum HostSupervisorError {
 impl From<HostAdapterError> for HostSupervisorError {
     fn from(value: HostAdapterError) -> Self {
         match value {
-            // Unsupported is intercepted by the Port-side precheck before
-            // `adapter.dispatch` is ever called; this arm exists only so the
-            // match stays exhaustive against future `HostAdapterError` growth.
-            HostAdapterError::Unsupported(_) => Self::CapabilityUnsupported,
             HostAdapterError::Timeout => Self::Timeout,
             HostAdapterError::Unavailable | HostAdapterError::Rejected(_) => Self::Unavailable,
         }
@@ -139,11 +127,9 @@ impl From<HostAdapterError> for HostSupervisorError {
 /// SPI-2 supervisor wrapping a single injected `HostRuntimeAdapter`.
 ///
 /// `register` only maintains a local declaration set (`registered_adapters`)
-/// for future C1 multi-adapter routing; it never mutates the injected
-/// adapter's own capability set, and `dispatch`/`cancel`/`compact` never read
-/// `registered_adapters` — their capability precheck always reads the
-/// injected adapter's `capabilities()` directly. See SPI-2 in the Story doc
-/// ("register 与 dispatch 判定的关系") for the full rationale.
+/// for future C1 multi-adapter routing. Nothing prechecks what the injected
+/// adapter can do: whether an errand succeeded is reported by the host as an
+/// ACK outcome, which is the only account of it that can be verified.
 pub struct HostSupervisor<A: HostRuntimeAdapter> {
     adapter: A,
     registered_adapters: Mutex<BTreeSet<HostAdapterId>>,
@@ -159,17 +145,8 @@ impl<A: HostRuntimeAdapter> HostSupervisor<A> {
         }
     }
 
-    /// Registers `adapter_id`'s declared capability matrix in the Port-local
-    /// declaration set. Does not affect the injected adapter's own
-    /// `capabilities()` — see the type-level doc comment.
-    pub fn register(
-        &self,
-        adapter_id: &HostAdapterId,
-        capabilities: &HostCapabilitySet,
-    ) -> Result<(), HostSupervisorError> {
-        if *capabilities == HostCapabilitySet::default() {
-            return Err(HostSupervisorError::InvalidCapabilitySet);
-        }
+    /// Records `adapter_id` in the Port-local declaration set.
+    pub fn register(&self, adapter_id: &HostAdapterId) -> Result<(), HostSupervisorError> {
         self.registered_adapters
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -241,13 +218,6 @@ impl<A: HostRuntimeAdapter> HostSupervisor<A> {
     }
 
     fn dispatch_checked(&self, action: &HostAction) -> Result<HostAckSummary, HostSupervisorError> {
-        if !self
-            .adapter
-            .capabilities()
-            .supports(action.kind().required_capability())
-        {
-            return Err(HostSupervisorError::CapabilityUnsupported);
-        }
         let ack = self.adapter.dispatch(action)?;
         ack.validate_for(action)?;
         Ok(HostAckSummary::from_ack(&ack))
@@ -261,7 +231,6 @@ mod tests {
     use ae_sdd_domain::{
         ArtifactDigest, ArtifactKind, ArtifactRef, CompactId, ContextGeneration, HostAckId,
     };
-    use ae_sdd_host::HostCapability;
     use std::sync::Mutex as StdMutex;
 
     use super::*;
@@ -270,17 +239,12 @@ mod tests {
 
     struct StubAdapter {
         adapter_id: HostAdapterId,
-        capabilities: HostCapabilitySet,
         response: StdMutex<StubResponse>,
     }
 
     impl HostRuntimeAdapter for StubAdapter {
         fn adapter_id(&self) -> &HostAdapterId {
             &self.adapter_id
-        }
-
-        fn capabilities(&self) -> &HostCapabilitySet {
-            &self.capabilities
         }
 
         fn dispatch(&self, action: &HostAction) -> Result<HostAck, HostAdapterError> {
@@ -306,25 +270,12 @@ mod tests {
     }
 
     fn supervisor_with(
-        capabilities: HostCapabilitySet,
         response: impl FnMut(&HostAction) -> Result<HostAck, HostAdapterError> + Send + 'static,
     ) -> HostSupervisor<StubAdapter> {
         HostSupervisor::new(StubAdapter {
             adapter_id: adapter_id("stub-adapter"),
-            capabilities,
             response: StdMutex::new(Box::new(response)),
         })
-    }
-
-    fn full_capabilities() -> HostCapabilitySet {
-        HostCapabilitySet::new([
-            HostCapability::Create,
-            HostCapability::Send,
-            HostCapability::Wait,
-            HostCapability::Cancel,
-            HostCapability::Attest,
-            HostCapability::Compact,
-        ])
     }
 
     fn wait_action(adapter: &HostAdapterId) -> HostAction {
@@ -344,73 +295,15 @@ mod tests {
     }
 
     #[test]
-    fn register_rejects_empty_capability_set() {
-        let supervisor = supervisor_with(full_capabilities(), accept);
-        let outcome =
-            supervisor.register(&adapter_id("new-adapter"), &HostCapabilitySet::default());
-        assert_eq!(outcome, Err(HostSupervisorError::InvalidCapabilitySet));
-    }
-
-    #[test]
-    fn register_accepts_non_empty_capability_set_and_is_idempotent() {
-        let supervisor = supervisor_with(full_capabilities(), accept);
-        let capabilities = HostCapabilitySet::new([HostCapability::Send]);
-        assert_eq!(
-            supervisor.register(&adapter_id("new-adapter"), &capabilities),
-            Ok(())
-        );
-        assert_eq!(
-            supervisor.register(&adapter_id("new-adapter"), &capabilities),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn register_does_not_affect_injected_adapter_capability_precheck() {
-        // The injected adapter only supports Wait; registering a different
-        // adapter_id with a full capability set must not let a Wait dispatch
-        // succeed for a capability the injected adapter itself lacks.
-        let supervisor = supervisor_with(HostCapabilitySet::new([HostCapability::Wait]), accept);
-        supervisor
-            .register(&adapter_id("other-adapter"), &full_capabilities())
-            .expect("registration itself succeeds");
-
-        let action = HostAction::new(
-            HostActionId::from_uuid(Uuid::new_v4()),
-            adapter_id("stub-adapter"),
-            1,
-            HostActionKind::Compact,
-            None,
-            Some(CompactId::from_uuid(Uuid::new_v4())),
-            Some(SessionId::from_uuid(Uuid::new_v4())),
-            Some(ContextGeneration::new(1)),
-            1,
-            [0_u8; 32],
-        )
-        .expect("valid action");
-
-        assert_eq!(
-            supervisor.dispatch(&action),
-            Err(HostSupervisorError::CapabilityUnsupported)
-        );
-    }
-
-    #[test]
-    fn dispatch_rejects_unsupported_capability_without_calling_adapter() {
-        let supervisor = supervisor_with(HostCapabilitySet::new([HostCapability::Send]), |_| {
-            panic!("adapter.dispatch must not be called when the precheck rejects")
-        });
-        let action = wait_action(&adapter_id("stub-adapter"));
-
-        assert_eq!(
-            supervisor.dispatch(&action),
-            Err(HostSupervisorError::CapabilityUnsupported)
-        );
+    fn register_records_an_addressable_adapter_and_is_idempotent() {
+        let supervisor = supervisor_with(accept);
+        assert_eq!(supervisor.register(&adapter_id("new-adapter")), Ok(()));
+        assert_eq!(supervisor.register(&adapter_id("new-adapter")), Ok(()));
     }
 
     #[test]
     fn dispatch_maps_timeout() {
-        let supervisor = supervisor_with(full_capabilities(), |_| Err(HostAdapterError::Timeout));
+        let supervisor = supervisor_with(|_| Err(HostAdapterError::Timeout));
         let action = wait_action(&adapter_id("stub-adapter"));
 
         assert_eq!(
@@ -421,7 +314,7 @@ mod tests {
 
     #[test]
     fn dispatch_maps_host_rejection_to_ok_summary_not_err() {
-        let supervisor = supervisor_with(full_capabilities(), |action| {
+        let supervisor = supervisor_with(|action| {
             Ok(HostAck::new(
                 HostAckId::from_uuid(Uuid::new_v4()),
                 action.action_id(),
@@ -448,7 +341,7 @@ mod tests {
 
     #[test]
     fn dispatch_rejects_ack_correlation_mismatch() {
-        let supervisor = supervisor_with(full_capabilities(), |_action| {
+        let supervisor = supervisor_with(|_action| {
             Ok(HostAck::new(
                 HostAckId::from_uuid(Uuid::new_v4()),
                 HostActionId::from_uuid(Uuid::new_v4()), // mismatched action_id
@@ -472,7 +365,7 @@ mod tests {
 
     #[test]
     fn cancel_host_task_target_is_rejected_without_constructing_an_action() {
-        let supervisor = supervisor_with(full_capabilities(), |_| {
+        let supervisor = supervisor_with(|_| {
             panic!("adapter.dispatch must not be called for an unsupported cancel target")
         });
         let target = LocalCancelTarget::HostTask(HostTaskId::new("task-1").expect("host task id"));
@@ -483,7 +376,7 @@ mod tests {
 
     #[test]
     fn cancel_session_target_dispatches_and_returns_summary() {
-        let supervisor = supervisor_with(full_capabilities(), accept);
+        let supervisor = supervisor_with(accept);
         let session_id = SessionId::from_uuid(Uuid::new_v4());
         let target = LocalCancelTarget::Session(session_id);
 
@@ -517,7 +410,7 @@ mod tests {
 
     #[test]
     fn compact_converts_adapter_id_and_dispatches() {
-        let supervisor = supervisor_with(full_capabilities(), accept);
+        let supervisor = supervisor_with(accept);
         let request = compact_request("stub-adapter");
 
         let summary = supervisor.compact(&request).expect("compact dispatches");
@@ -525,16 +418,4 @@ mod tests {
         assert_eq!(summary.command_seq(), request.next_generation().get());
     }
 
-    #[test]
-    fn compact_rejects_unsupported_capability_without_calling_adapter() {
-        let supervisor = supervisor_with(HostCapabilitySet::new([HostCapability::Send]), |_| {
-            panic!("adapter.dispatch must not be called when the precheck rejects")
-        });
-        let request = compact_request("stub-adapter");
-
-        assert_eq!(
-            supervisor.compact(&request),
-            Err(HostSupervisorError::CapabilityUnsupported)
-        );
-    }
 }

@@ -264,6 +264,13 @@ impl Harness {
     }
 
     pub fn connection(&self, kind: ClientKind) -> ConnectionState {
+        self.connection_as(kind, None)
+    }
+
+    /// Handshakes as `kind`, optionally naming the adapter this connection
+    /// speaks for. Naming it is what makes the host addressable, so a host
+    /// connection built this way needs no separate registration call.
+    pub fn connection_as(&self, kind: ClientKind, adapter_id: Option<&str>) -> ConnectionState {
         let mut connection = ConnectionState::default();
         let response = self.raw(
             &mut connection,
@@ -275,6 +282,7 @@ impl Harness {
                 endpoint_token: SecretString::new(self.token.clone()),
                 expected_boot_id: self.runtime.boot_id().to_string(),
                 expected_policy_digest: self.runtime.policy_digest().to_owned(),
+                adapter_id: adapter_id.map(str::to_owned),
             })
             .expect("handshake serializes"),
         );

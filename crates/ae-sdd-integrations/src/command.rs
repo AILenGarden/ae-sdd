@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use ae_sdd_domain::HostAckId;
 use ae_sdd_host::{
-    HostAck, HostAckOutcome, HostAction, HostAdapterError, HostAdapterId, HostCapability,
-    HostCapabilitySet, HostRuntimeAdapter,
+    HostAck, HostAckOutcome, HostAction, HostActionKind, HostAdapterError, HostAdapterId,
+    HostRuntimeAdapter,
 };
 use uuid::Uuid;
 
@@ -295,7 +295,6 @@ impl ServiceAdapter {
 /// Host process adapter with a fixed executable and capability matrix.
 pub struct HostProcessAdapter {
     adapter_id: HostAdapterId,
-    capabilities: HostCapabilitySet,
     executable: PathBuf,
     runner: BoundedCommandRunner,
 }
@@ -305,13 +304,11 @@ impl HostProcessAdapter {
     #[must_use]
     pub fn new(
         adapter_id: HostAdapterId,
-        capabilities: HostCapabilitySet,
         executable: impl Into<PathBuf>,
         runner: BoundedCommandRunner,
     ) -> Self {
         Self {
             adapter_id,
-            capabilities,
             executable: executable.into(),
             runner,
         }
@@ -323,21 +320,9 @@ impl HostRuntimeAdapter for HostProcessAdapter {
         &self.adapter_id
     }
 
-    fn capabilities(&self) -> &HostCapabilitySet {
-        &self.capabilities
-    }
-
     fn dispatch(&self, action: &HostAction) -> Result<HostAck, HostAdapterError> {
-        if !self
-            .capabilities
-            .supports(action.kind().required_capability())
-        {
-            return Err(HostAdapterError::Unsupported(
-                action.kind().required_capability(),
-            ));
-        }
         let arguments = vec![
-            capability_name(action.kind().required_capability()).to_owned(),
+            action_verb(action.kind()).to_owned(),
             "--action-id".to_owned(),
             action.action_id().to_string(),
             "--command-seq".to_owned(),
@@ -373,15 +358,19 @@ impl HostRuntimeAdapter for HostProcessAdapter {
     }
 }
 
-const fn capability_name(value: HostCapability) -> &'static str {
+/// Subcommand the host executable is invoked with for an errand.
+///
+/// This used to be derived from the capability enum, which quietly made that
+/// enum serve two unrelated purposes: gating dispatch and naming the CLI verb.
+/// Only the verb was ever load-bearing.
+const fn action_verb(value: HostActionKind) -> &'static str {
     match value {
-        HostCapability::Create => "create",
-        HostCapability::Send => "send",
-        HostCapability::Wait => "wait",
-        HostCapability::Cancel => "cancel",
-        HostCapability::Attest => "attest",
-        HostCapability::Compact => "compact",
-        HostCapability::PressureTelemetry => "pressure",
+        HostActionKind::Create => "create",
+        HostActionKind::Send => "send",
+        HostActionKind::Wait => "wait",
+        HostActionKind::Cancel => "cancel",
+        HostActionKind::Attest => "attest",
+        HostActionKind::Compact => "compact",
     }
 }
 

@@ -29,6 +29,14 @@ pub struct HandshakeRequest {
     pub expected_boot_id: String,
     /// Policy digest read from the same manifest snapshot as the token.
     pub expected_policy_digest: String,
+    /// Adapter this connection speaks for, when the caller is a host adapter.
+    ///
+    /// Naming it here is what makes the host reachable: the token proving this
+    /// handshake is the same one that used to gate explicit registration, so an
+    /// installed host is addressable from its first connection with no separate
+    /// registration step to remember. Other client kinds leave it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_id: Option<String>,
 }
 
 /// Negotiated resource limits that let clients fail fast before sending work.

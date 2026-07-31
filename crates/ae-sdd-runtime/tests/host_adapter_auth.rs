@@ -85,10 +85,16 @@ fn durable_host_registration_recovers_and_rebinds_after_restart() {
     ));
     assert_eq!(rebound["adapterId"], "host-a");
 
-    let capabilities = result(&second.call(
+    // What recovery has to restore is the ability to address the adapter. An
+    // errand pull proves that directly: it is refused outright for an adapter
+    // the daemon cannot reach.
+    let pulled = second.call(
         &mut second_connection,
-        RpcMethod::HostCapabilities,
+        RpcMethod::HostActionNext,
         params(json!({"adapterId":"host-a"}), 1_000),
-    ));
-    assert_eq!(capabilities["capabilities"][0], "compact");
+    );
+    assert!(
+        pulled.get("error").is_none(),
+        "a recovered adapter stays addressable: {pulled}"
+    );
 }

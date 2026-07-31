@@ -595,6 +595,7 @@ impl RuntimeService {
             let response = self.handshake(&handshake)?;
             connection.handshaken = true;
             connection.client_kind = Some(handshake.client_kind);
+            connection.adapter_id = handshake.adapter_id;
             return encode_success(request.id, response);
         }
 
@@ -661,7 +662,6 @@ impl RuntimeService {
             RpcMethod::ContextGet => self.context_get(params),
             RpcMethod::ContextProject => self.context_project(params),
             RpcMethod::HostRegister => self.host_register(params),
-            RpcMethod::HostCapabilities => self.host_capabilities(params),
             RpcMethod::HostActionNext => self.host_action_next(params),
             RpcMethod::HostActionAck => self.host_action_ack(params),
             RpcMethod::HostPressureReport => self.host_pressure(params),
@@ -671,6 +671,7 @@ impl RuntimeService {
             RpcMethod::DelegationReport => self.delegation_report(params),
             RpcMethod::DelegationCollect => self.delegation_collect(params),
             RpcMethod::DelegationCancel => self.delegation_cancel(params),
+            RpcMethod::DelegationRenew => self.delegation_renew(params),
             RpcMethod::CompactRequest => self.compact_request(params),
             RpcMethod::CompactStatus => self.compact_status(params),
             RpcMethod::FlowSnapshot
@@ -832,7 +833,6 @@ fn authorize_client_kind(client_kind: Option<ClientKind>, method: RpcMethod) -> 
             matches!(client_kind, Some(ClientKind::Admin | ClientKind::Hook))
         }
         RpcMethod::HostRegister
-        | RpcMethod::HostCapabilities
         | RpcMethod::HostActionNext
         | RpcMethod::HostActionAck => client_kind == Some(ClientKind::HostAdapter),
         RpcMethod::JobSubmit | RpcMethod::JobStatus | RpcMethod::JobCancel => {
@@ -857,8 +857,7 @@ fn authorize_host_connection(
 ) -> RuntimeResult<()> {
     let host_bound = matches!(
         method,
-        RpcMethod::HostCapabilities
-            | RpcMethod::HostActionNext
+        RpcMethod::HostActionNext
             | RpcMethod::HostActionAck
             | RpcMethod::HostPressureReport
     );

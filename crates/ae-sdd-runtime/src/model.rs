@@ -717,13 +717,20 @@ pub struct ContextProjectResult {
     pub byte_length: usize,
 }
 
-/// Trusted host adapter registration payload.
+/// Host adapter addressing payload.
+///
+/// Registration only names a recipient. Hosts built against the older shape
+/// also send `capabilities`; that field is accepted and dropped rather than
+/// rejected, because such a host has done nothing wrong and the declaration was
+/// never verifiable in the first place. It is not echoed back, so nothing reads
+/// as though the daemon had acted on it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct HostRegisterPayload {
     /// Stable adapter identity.
     pub adapter_id: String,
-    /// Exact supported capability names.
+    /// Accepted for compatibility and never stored, read, or returned.
+    #[serde(default, skip_serializing)]
     pub capabilities: Vec<String>,
 }
 
@@ -865,6 +872,12 @@ pub struct DelegationResult {
     pub delegation_id: String,
     /// Lifecycle state.
     pub status: String,
+    /// Authoritative liveness upper bound, as extended by `delegation.renew`.
+    ///
+    /// Exposed so a caller can confirm a renewal actually took effect rather
+    /// than inferring it from the absence of an error.
+    #[serde(default)]
+    pub deadline_unix_ms: u64,
     /// Canonical daemon-validated scoped grant for the physical child.
     pub grant: crate::ScopedGrantWire,
     /// Child role.

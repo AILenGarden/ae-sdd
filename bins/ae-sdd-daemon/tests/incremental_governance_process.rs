@@ -682,7 +682,7 @@ impl HostAdapter {
             adapter_id: adapter_id.to_owned(),
             register_key: register_key.to_owned(),
         };
-        adapter.call(RpcMethod::HostCapabilities, json!({})).await;
+        adapter.call(RpcMethod::HostActionNext, json!({})).await;
         adapter
     }
 

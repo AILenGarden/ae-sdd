@@ -31,7 +31,11 @@ use crate::{
 /// Durable Host action queue with exact ACK correlation.
 pub struct HostCoordinator {
     persistence: Arc<dyn PersistencePort>,
-    registrations: Mutex<BTreeMap<String, BTreeSet<String>>>,
+    /// Adapter IDs the daemon knows how to address. Membership answers "is
+    /// there such a recipient", not "is that recipient permitted": the daemon
+    /// posts errands and learns what a host could actually do from the ACK
+    /// outcome.
+    registrations: Mutex<BTreeSet<String>>,
     queues: Mutex<BTreeMap<String, VecDeque<HostActionPayload>>>,
     acknowledgements: Mutex<BTreeMap<String, HostAckPayload>>,
     command_sequences: Mutex<BTreeMap<String, u64>>,
@@ -43,7 +47,7 @@ impl HostCoordinator {
     pub fn new(persistence: Arc<dyn PersistencePort>) -> Self {
         Self {
             persistence,
-            registrations: Mutex::new(BTreeMap::new()),
+            registrations: Mutex::new(BTreeSet::new()),
             queues: Mutex::new(BTreeMap::new()),
             acknowledgements: Mutex::new(BTreeMap::new()),
             command_sequences: Mutex::new(BTreeMap::new()),
@@ -51,21 +55,14 @@ impl HostCoordinator {
     }
 
     /// Restores durable adapter registrations, ACKs, command sequences, and pending queues.
+    ///
+    /// Records written before capabilities were dropped still carry the field.
+    /// It is ignored rather than rejected: the row's only remaining purpose is
+    /// to name a reachable adapter, so an old row is a perfectly good one.
     pub fn recover(&self) -> RuntimeResult<()> {
-        let mut registrations = BTreeMap::new();
-        for (adapter_id, value) in self.persistence.list_records("host-adapter/v1")? {
-            let capabilities = value
-                .get("capabilities")
-                .and_then(Value::as_array)
-                .ok_or_else(|| malformed("durable host adapter capabilities are malformed"))?
-                .iter()
-                .map(|item| {
-                    item.as_str()
-                        .map(str::to_owned)
-                        .ok_or_else(|| malformed("durable host adapter capability is not a string"))
-                })
-                .collect::<RuntimeResult<BTreeSet<_>>>()?;
-            registrations.insert(adapter_id, capabilities);
+        let mut registrations = BTreeSet::new();
+        for (adapter_id, _) in self.persistence.list_records("host-adapter/v1")? {
+            registrations.insert(adapter_id);
         }
 
         let mut acknowledgements = BTreeMap::new();
@@ -86,7 +83,7 @@ impl HostCoordinator {
         for (action_id, value) in self.persistence.list_records("host-action/v1")? {
             let action: HostActionPayload = serde_json::from_value(value)
                 .map_err(|_| malformed("durable host action is malformed"))?;
-            if action.action_id != action_id || !registrations.contains_key(&action.adapter_id) {
+            if action.action_id != action_id || !registrations.contains(&action.adapter_id) {
                 return Err(malformed(
                     "durable host action identity or adapter registration is inconsistent",
                 ));
@@ -117,40 +114,46 @@ impl HostCoordinator {
         Ok(())
     }
 
-    /// Registers the authenticated capability matrix for an adapter.
-    pub fn register(&self, adapter_id: &str, capabilities: &[String]) -> RuntimeResult<()> {
-        if adapter_id.is_empty() || capabilities.iter().any(String::is_empty) {
+    /// Records an adapter as addressable.
+    ///
+    /// This is bookkeeping for delivery, not a grant. Nothing here is checked
+    /// against what the host can really do, because nothing could be: the host
+    /// runs the errand in its own process and reports back.
+    pub fn register(&self, adapter_id: &str) -> RuntimeResult<()> {
+        if adapter_id.is_empty() {
             return Err(RuntimeError::new(
                 StableErrorCode::HostCapabilityUnsupported,
-                "host adapter identity or capability is empty",
+                "host adapter identity is empty",
             ));
         }
-        self.registrations.lock().map_err(lock_error)?.insert(
-            adapter_id.to_owned(),
-            capabilities.iter().cloned().collect(),
-        );
+        self.registrations
+            .lock()
+            .map_err(lock_error)?
+            .insert(adapter_id.to_owned());
         self.persistence.store_record(
             "host-adapter/v1",
             adapter_id,
-            &json!({"schemaVersion":"host-adapter/v1","capabilities":capabilities}),
+            &json!({"schemaVersion":"host-adapter/v1"}),
         )
     }
 
-    /// Verifies that an authenticated adapter supports every required capability.
-    pub fn require_capabilities(&self, adapter_id: &str, required: &[&str]) -> RuntimeResult<()> {
-        let registrations = self.registrations.lock().map_err(lock_error)?;
-        let capabilities = registrations.get(adapter_id).ok_or_else(|| {
-            RuntimeError::new(
-                StableErrorCode::HostCapabilityUnsupported,
-                "host adapter is not registered",
-            )
-        })?;
-        if required.iter().all(|item| capabilities.contains(*item)) {
+    /// Ensures the daemon has somewhere to deliver an errand for `adapter_id`.
+    ///
+    /// A failure here means the recipient is unknown, so the errand could not
+    /// be delivered at all. The ID is named in the message because with several
+    /// hosts attached, "not registered" alone does not say which one is missing.
+    pub fn require_registered(&self, adapter_id: &str) -> RuntimeResult<()> {
+        if self
+            .registrations
+            .lock()
+            .map_err(lock_error)?
+            .contains(adapter_id)
+        {
             Ok(())
         } else {
             Err(RuntimeError::new(
                 StableErrorCode::HostCapabilityUnsupported,
-                "host adapter lacks a required native capability",
+                format!("host adapter {adapter_id} is not registered"),
             ))
         }
     }
@@ -228,7 +231,7 @@ impl HostCoordinator {
         context_generation: Option<u64>,
         deadline_unix_ms: u64,
     ) -> RuntimeResult<HostActionPayload> {
-        self.require_capabilities(adapter_id, &[kind])?;
+        self.require_registered(adapter_id)?;
         if let Some(value) = self.persistence.load_record("host-action/v1", action_id)? {
             let existing: HostActionPayload = serde_json::from_value(value)
                 .map_err(|_| malformed("durable host action is malformed"))?;
@@ -442,9 +445,37 @@ mod tests {
         )));
         let coordinator = HostCoordinator::new(persistence);
         coordinator
-            .register("host-a", &["create".to_owned(), "ack".to_owned()])
+            .register("host-a")
             .expect("adapter registers");
         coordinator
+    }
+
+    /// A row written before capabilities were dropped still carries them. All
+    /// the row is for is naming a reachable adapter, so an old one is a
+    /// perfectly good one -- rejecting it would strand a daemon on restart over
+    /// a field nothing reads.
+    #[test]
+    fn a_record_still_carrying_capabilities_recovers_as_addressable() {
+        let persistence = Arc::new(MemoryPersistence::new(EventStoreId::from_uuid(
+            Uuid::from_u128(11),
+        )));
+        persistence
+            .store_record(
+                "host-adapter/v1",
+                "host-legacy",
+                &json!({
+                    "schemaVersion":"host-adapter/v1",
+                    "capabilities":["create","attest","ack"]
+                }),
+            )
+            .expect("legacy record stores");
+
+        let coordinator = HostCoordinator::new(persistence);
+        coordinator.recover().expect("legacy record recovers");
+
+        coordinator
+            .require_registered("host-legacy")
+            .expect("a recovered adapter is addressable");
     }
 
     /// Staging is what makes the create path atomic from the host's point of

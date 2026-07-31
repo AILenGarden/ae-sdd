@@ -19,6 +19,9 @@ static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub struct DaemonClient {
     manifest_path: PathBuf,
     client_kind: ClientKind,
+    /// Adapter this client speaks for, sent with every handshake so the
+    /// reconnect that precedes each call re-establishes addressing on its own.
+    adapter_id: Option<String>,
     transport: Arc<dyn ClientTransport>,
     timeout: Duration,
 }
@@ -64,6 +67,7 @@ impl DaemonClient {
                 endpoint_token: SecretString::new(manifest.endpoint_token.expose_secret()),
                 expected_boot_id: manifest.boot_id.clone(),
                 expected_policy_digest: manifest.policy_digest.clone(),
+                adapter_id: self.adapter_id.clone(),
             },
         );
         let prerequisite = JsonRpcRequest::new(
@@ -140,9 +144,20 @@ impl DaemonClient {
         Self {
             manifest_path: manifest_path.into(),
             client_kind,
+            adapter_id: None,
             transport,
             timeout,
         }
+    }
+
+    /// Names the adapter this client speaks for.
+    ///
+    /// Host adapters set this so each handshake carries their identity; other
+    /// client kinds have no adapter to name and leave it unset.
+    #[must_use]
+    pub fn with_adapter_id(mut self, adapter_id: impl Into<String>) -> Self {
+        self.adapter_id = Some(adapter_id.into());
+        self
     }
 
     /// Endpoint manifest path used for each atomic reconnect snapshot.
@@ -175,6 +190,7 @@ impl DaemonClient {
                 endpoint_token: SecretString::new(manifest.endpoint_token.expose_secret()),
                 expected_boot_id: manifest.boot_id.clone(),
                 expected_policy_digest: manifest.policy_digest.clone(),
+                adapter_id: self.adapter_id.clone(),
             },
         );
         let request = JsonRpcRequest::new(request_id.clone(), method, params);
@@ -266,8 +282,7 @@ fn bind_host_credential(
 fn is_host_followup(method: RpcMethod) -> bool {
     matches!(
         method,
-        RpcMethod::HostCapabilities
-            | RpcMethod::HostActionNext
+        RpcMethod::HostActionNext
             | RpcMethod::HostActionAck
             | RpcMethod::HostPressureReport
     )
