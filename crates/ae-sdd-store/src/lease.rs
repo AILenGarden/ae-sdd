@@ -177,6 +177,49 @@ impl LeaseLedger {
         self.end(proof, now, "released")
     }
 
+    /// Releases the active lease owned by `owner`, if any.
+    ///
+    /// Differs from `release` in that the caller need not hold a `LeaseProof`;
+    /// it is the correct entry point when a session closure is tearing down
+    /// all leases that session owned. Replaces the previous behaviour in
+    /// which an orphaned lease could permanently block `lease.acquire` on its
+    /// work item.
+    ///
+    /// Takes `now_ms` rather than a `UtcTimestamp` so the runtime can drive
+    /// the call from its injected `ClockPort` (which exposes Unix milliseconds)
+    /// without taking a hard dependency on `jiff`.
+    ///
+    /// Returns the tombstone if a release occurred, `None` if no active lease
+    /// matched.
+    pub fn release_by_owner(
+        &mut self,
+        owner: &LeaseOwner,
+        now_ms: u64,
+    ) -> Result<Option<LeaseTombstone>, StoreError> {
+        let now = UtcTimestamp::from_unix_ms(now_ms);
+        self.expire_if_needed(&now);
+        let Some(active) = self.active.take() else {
+            return Ok(None);
+        };
+        if active.owner != *owner {
+            // Wrong owner cannot release someone else's lease. Put the
+            // record back so the active lease stays intact and the call
+            // surfaces as `None` to the caller — the owner filter is the
+            // observable signal of the no-match case.
+            self.active = Some(active);
+            return Ok(None);
+        }
+        let tombstone = LeaseTombstone {
+            lease_id: active.lease_id,
+            owner: active.owner,
+            fencing_token: active.fencing_token,
+            ended_at: now,
+            reason: "session-closed".into(),
+        };
+        self.tombstones.push(tombstone.clone());
+        Ok(Some(tombstone))
+    }
+
     pub fn break_active(
         &mut self,
         actor: LeaseOwner,
@@ -662,6 +705,71 @@ mod tests {
       ],
       "releasedAt": "2026-07-27T01:13:57Z"
     }"#;
+
+    #[test]
+    fn release_by_owner_releases_only_when_owner_matches() {
+        let mut ledger = LeaseLedger::empty(FencingToken::new(7));
+        let owner = LeaseOwner::new("session-a").expect("owner is valid");
+        let other = LeaseOwner::new("session-b").expect("other is valid");
+        ledger
+            .acquire(
+                lease(1),
+                owner.clone(),
+                UtcTimestamp::from_unix_ms(0),
+                UtcTimestamp::from_unix_ms(120_000),
+            )
+            .expect("acquire");
+
+        let tombstone = ledger
+            .release_by_owner(&other, 60_000)
+            .expect("no ownership mismatch is an error");
+        assert!(tombstone.is_none(), "wrong owner must not release anything");
+        assert!(
+            ledger.active().is_some(),
+            "the active lease must remain when the owner does not match"
+        );
+
+        let tombstone = ledger
+            .release_by_owner(&owner, 60_000)
+            .expect("releasing the matching owner succeeds")
+            .expect("a tombstone is produced");
+        assert_eq!(tombstone.reason.as_ref(), "session-closed");
+        assert_eq!(tombstone.lease_id, lease(1));
+        assert!(ledger.active().is_none());
+        assert_eq!(ledger.tombstones().len(), 1);
+    }
+
+    #[test]
+    fn release_by_owner_after_expiry_is_a_noop() {
+        let mut ledger = LeaseLedger::empty(FencingToken::new(7));
+        let owner = LeaseOwner::new("session-a").expect("owner is valid");
+        // Acquire and release both use the same Unix-millisecond epoch so
+        // the sweep-vs-release boundary is unambiguous regardless of the
+        // fixture time.
+        ledger
+            .acquire(
+                lease(1),
+                owner.clone(),
+                UtcTimestamp::from_unix_ms(0),
+                UtcTimestamp::from_unix_ms(10),
+            )
+            .expect("acquire");
+        let initial_tombstones = ledger.tombstones().len();
+
+        let tombstone = ledger
+            .release_by_owner(&owner, 20)
+            .expect("release after expiry is well-defined");
+        assert!(
+            tombstone.is_none(),
+            "the sweep already happened; release_by_owner must report no-op"
+        );
+        assert!(ledger.active().is_none());
+        assert_eq!(
+            ledger.tombstones().len(),
+            initial_tombstones + 1,
+            "the sweep itself produced exactly one new tombstone"
+        );
+    }
 
     #[test]
     fn python_written_ledger_stays_readable_and_keeps_its_fencing_generation() {
