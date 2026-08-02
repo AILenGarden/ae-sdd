@@ -832,9 +832,9 @@ fn authorize_client_kind(client_kind: Option<ClientKind>, method: RpcMethod) -> 
         RpcMethod::WorkspaceModeTransition => {
             matches!(client_kind, Some(ClientKind::Admin | ClientKind::Hook))
         }
-        RpcMethod::HostRegister
-        | RpcMethod::HostActionNext
-        | RpcMethod::HostActionAck => client_kind == Some(ClientKind::HostAdapter),
+        RpcMethod::HostRegister | RpcMethod::HostActionNext | RpcMethod::HostActionAck => {
+            client_kind == Some(ClientKind::HostAdapter)
+        }
         RpcMethod::JobSubmit | RpcMethod::JobStatus | RpcMethod::JobCancel => {
             matches!(client_kind, Some(ClientKind::Cli | ClientKind::Admin))
         }
@@ -857,9 +857,7 @@ fn authorize_host_connection(
 ) -> RuntimeResult<()> {
     let host_bound = matches!(
         method,
-        RpcMethod::HostActionNext
-            | RpcMethod::HostActionAck
-            | RpcMethod::HostPressureReport
+        RpcMethod::HostActionNext | RpcMethod::HostActionAck | RpcMethod::HostPressureReport
     );
     if !host_bound {
         return Ok(());

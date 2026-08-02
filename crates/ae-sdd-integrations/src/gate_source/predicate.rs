@@ -64,10 +64,10 @@ pub(super) fn predicate_value(
             structured_status(state.get("storyReview"), "passed")
                 || route_story_committed(root, state, work_item)
         }
-        "document.testcase.exists" => {
-            verification_matrix(root, state, story.as_deref())
-                || document_exists(root, state, story.as_deref(), "TestCase")
-        }
+        // Existence is decided by the document itself. Scanning the Story for
+        // `AC-`/`verification` substrings made any Story with acceptance
+        // criteria stand in for a TestCase that was never written.
+        "document.testcase.exists" => document_exists(root, state, story.as_deref(), "TestCase"),
         "document.task.exists" => document_exists(root, state, story.as_deref(), "Task"),
         "review.task.passed" => structured_status(state.get("taskReview"), "passed"),
         "coding_plan.exists" => plan.is_some_and(nonempty_object),
@@ -289,41 +289,86 @@ fn route_document_committed(state: &Value, kind: &str) -> bool {
 }
 
 fn document_exists(root: &Path, state: &Value, story: Option<&str>, kind: &str) -> bool {
-    if kind == "Story"
-        && story
-            .and_then(|id| state.pointer(&format!("/storyStates/{id}/docPath")))
-            .and_then(Value::as_str)
-            .is_some_and(|path| safe_document_path(root, path))
-    {
-        return true;
+    if let Some(field) = per_story_binding_field(kind) {
+        // A per-Story Spec is decided by the active Story's own binding.
+        // `ae-sdd-design.md` requires an independent `Story -> TestCase ->
+        // CodingPlan` subchain per Story and a TestCase receipt bound to Story
+        // identity, so a sibling's document must never answer for this one.
+        // Returning early on a present binding is not enough: when the Story
+        // has no binding the route-level `documentPaths` entry below would
+        // still match by substring and let one TestCase satisfy every Story.
+        if let Some(story) = story {
+            if let Some(bound) = state
+                .pointer(&format!("/storyStates/{story}/{field}"))
+                .and_then(Value::as_str)
+            {
+                return safe_document_path(root, bound);
+            }
+            if kind == "TestCase" {
+                return canonical_document_scan(root, state, Some(story), kind);
+            }
+        }
     }
     let needle = kind.to_ascii_lowercase();
-    state
+    // A binding for this kind is authoritative: if `documentPaths` names the
+    // document, then that path decides existence. Scanning the directory when
+    // the bound file is absent would accept another Work Item's document and
+    // leave the Gate unable to report a missing one.
+    let mut bound = state
         .get("documentPaths")
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
         .filter_map(|(_, value)| value.as_str())
-        .any(|path| path.to_ascii_lowercase().contains(&needle) && safe_document_path(root, path))
-        || workspace_inputs(root).is_ok_and(|files| {
-            files.into_iter().any(|(path, _)| {
-                let lower = path.to_ascii_lowercase();
-                lower.ends_with(".md")
-                    && (lower.contains(&format!("ae-sdd-doc/{needle}/"))
-                        || lower.contains(&format!("/{needle}/")))
-                    && story.is_none_or(|id| {
-                        lower.contains(&id.to_ascii_lowercase()) || kind == "RA" || kind == "DR"
-                    })
-            })
-        })
+        .filter(|path| path.to_ascii_lowercase().contains(&needle))
+        .peekable();
+    if bound.peek().is_some() {
+        return bound.any(|path| safe_document_path(root, path));
+    }
+    canonical_document_scan(root, state, story, kind)
 }
 
-fn verification_matrix(root: &Path, state: &Value, story: Option<&str>) -> bool {
-    story_document(root, state, story)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .is_some_and(|text| {
-            text.contains("verification") || text.contains("验证矩阵") || text.contains("AC-")
+/// Specs that belong to one Story rather than to the Work Item, keyed by the
+/// `storyStates` field carrying that Story's binding. `ae-sdd-design.md` §过程产物模型
+/// makes both Story and TestCase per-Story; a route-level binding cannot
+/// express one path per Story and must not be consulted for them.
+fn per_story_binding_field(kind: &str) -> Option<&'static str> {
+    match kind {
+        "Story" => Some("docPath"),
+        "TestCase" => Some("testCasePath"),
+        _ => None,
+    }
+}
+
+/// Scans the canonical directory for a document of this kind.
+///
+/// The directory is not always the kind spelled lowercase: a TestCase lives
+/// under `ae-sdd-doc/Test/`, so deriving it from the kind made canonical
+/// documents invisible to Work Items created before `documentPaths` carried
+/// their binding.
+fn canonical_document_scan(root: &Path, _state: &Value, story: Option<&str>, kind: &str) -> bool {
+    let directory = canonical_document_directory(kind);
+    workspace_inputs(root).is_ok_and(|files| {
+        files.into_iter().any(|(path, _)| {
+            let lower = path.to_ascii_lowercase();
+            lower.ends_with(".md")
+                && (lower.contains(&format!("ae-sdd-doc/{directory}/"))
+                    || lower.contains(&format!("/{directory}/")))
+                && story.is_none_or(|id| {
+                    lower.contains(&id.to_ascii_lowercase()) || kind == "RA" || kind == "DR"
+                })
         })
+    })
+}
+
+/// Maps a document kind to the directory it canonically lives in, per
+/// `ae-sdd-doc/STORING.md`. Only `TestCase` diverges from its own lowercased
+/// name; the rest are returned verbatim so the mapping stays auditable.
+fn canonical_document_directory(kind: &str) -> String {
+    match kind {
+        "TestCase" => "test".to_owned(),
+        other => other.to_ascii_lowercase(),
+    }
 }
 
 pub(super) fn story_document(root: &Path, state: &Value, story: Option<&str>) -> Option<PathBuf> {
@@ -358,7 +403,22 @@ pub(super) fn story_document(root: &Path, state: &Value, story: Option<&str>) ->
         })
 }
 
+/// Reads the RA document this Work Item is bound to.
+///
+/// `documentPaths/RA` is the authoritative binding and is tried first, which is
+/// the same resolution the RA scanners use. Directory search is only a fallback
+/// for a state that carries no mapping yet: the RA directory holds one document
+/// per Work Item, so picking a file by name order would grade a stranger's RA
+/// and report the verdict as if it were this one's.
 fn ra_text(root: &Path, state: &Value, story: Option<&str>) -> Option<String> {
+    let bound = state
+        .pointer("/documentPaths/RA")
+        .and_then(Value::as_str)
+        .filter(|path| safe_document_path(root, path))
+        .and_then(|path| fs::read_to_string(root.join(path)).ok());
+    if bound.is_some() {
+        return bound;
+    }
     workspace_inputs(root)
         .ok()?
         .into_iter()

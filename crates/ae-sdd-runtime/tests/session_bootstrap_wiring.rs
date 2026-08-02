@@ -11,7 +11,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use support::{Harness, params, register_workspace, session_params, stable_error};
+use support::{
+    Harness, create_root_series_delegation, params, register_workspace, session_params,
+    stable_error,
+};
 
 fn session_open_params(
     workspace: &WorkspaceResult,
@@ -328,25 +331,18 @@ fn a_new_host_event_refreshes_a_delegated_session_without_losing_attestation_or_
         "root-refresh-external",
         Some("WORK"),
     );
-    let mut create = session_params(
+    let created = create_root_series_delegation(
+        &harness,
+        &mut hook,
         &workspace,
         &root,
         "root-refresh-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":100_000,
-            "adapterId":"host-refresh",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "delegated-refresh-create",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("delegated-refresh-create".to_owned());
-    let created = harness.call(&mut hook, RpcMethod::DelegationCreate, create);
-    let delegation_id = created["result"]["delegationId"]
+    let delegation_id = created["delegationId"]
         .as_str()
         .unwrap_or_else(|| panic!("delegation.create failed: {created}"))
         .to_owned();
@@ -379,7 +375,7 @@ fn a_new_host_event_refreshes_a_delegated_session_without_losing_attestation_or_
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000000503",
+            "claimId":action["claimId"],
             "actionId":action["actionId"],
             "childSessionId":child_session_id,
             "expiresAtUnixMs":100_000
@@ -485,28 +481,24 @@ fn delegated_session_survives_expired_attestation_ttl_while_within_delegation_de
         "root-attest-expiry-external",
         Some("WORK"),
     );
-    let mut create = session_params(
+    let created = create_root_series_delegation(
+        &harness,
+        &mut hook,
         &workspace,
         &root,
         "root-attest-expiry",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":1_000_000,
-            "adapterId":"host-attest-expiry",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "attest-expiry-create",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("attest-expiry-create".to_owned());
-    let created = harness.call(&mut hook, RpcMethod::DelegationCreate, create);
-    let delegation_id = created["result"]["delegationId"]
+    let delegation_id = created["delegationId"]
         .as_str()
         .unwrap_or_else(|| panic!("delegation.create failed: {created}"))
         .to_owned();
+    let delegation_deadline = created["deadlineUnixMs"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("delegation.create lacks deadline: {created}"));
 
     let action = harness.call(
         &mut host,
@@ -538,7 +530,7 @@ fn delegated_session_survives_expired_attestation_ttl_while_within_delegation_de
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000000603",
+            "claimId":action["claimId"],
             "actionId":action["actionId"],
             "childSessionId":child_session_id,
             "expiresAtUnixMs":100_000
@@ -613,7 +605,7 @@ fn delegated_session_survives_expired_attestation_ttl_while_within_delegation_de
 
     // Negative control: once the clock crosses the delegation deadline, the
     // reopened session must be rejected (the deadline upper bound still bites).
-    harness.clock.set(1_000_001);
+    harness.clock.set(delegation_deadline.saturating_add(1));
     let past_deadline = harness.call(
         &mut hook,
         RpcMethod::SessionOpen,

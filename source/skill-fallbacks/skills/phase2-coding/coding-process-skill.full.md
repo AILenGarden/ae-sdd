@@ -107,21 +107,18 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 > 项目资产读取已下沉到 §A2 调用 coding-skill 能力的内部步骤（要素1），不在本表重复列为独立上下文。
 
-### §A1.4 🆕 v3.10.2 micro 意图分流前置门（OPTIMIZE/CODE_REVIEW entry_node）
+### §A1.4 流程深度由权威 `EngineeringRoute` 决定，本 SKILL 不自行分流
 
-> **适用场景：** `/ae-sdd 优化这部分实现`（entryNode=OPTIMIZE）或误入本 SKILL 的 CODE_REVIEW。本门在 §A1.5 骨架分解之前判定，按意图裁剪流程深度。
+> **统一 intake（D-01/F-11）：** 本节曾按 `entry_node`（OPTIMIZE/CODE_REVIEW）在 SKILL 内部裁剪流程深度。该模型已删除，原因有二：
+>
+> 1. **入口不再决定流程起点。** 统一 intake 下 `ROUTE` 是唯一主流程起点，`entryNode` 的 PRD/DR/STORY 只是输入与 Spec binding 提示。`workitem.create` 接受的集合是 ROUTE/PRD/DR/STORY，`OPTIMIZE`/`CODE_REVIEW` 不在其中，按它们分流的前置门没有可判定的输入。
+>
+>    **两个同名字段要分清：** `OPTIMIZE`/`CODE_REVIEW` 这两个串仍存在于 legacy `classify` job（`jobs/misc.rs` 按 intent 关键词分类），但那是 job 结果 JSON 里的**建议值**，与 `workitem.create` 校验的 payload 字段是两个独立面，没有代码或文档把前者接到后者。本 SKILL 走的是后者，所以拿不到那两个值。legacy 通道本身的去留见 D-14。
+> 2. **裁剪深度不是 SKILL 的权限。** Requirement Analysis 是每个任务的第一个业务 Series；权威 `EngineeringRoute` 在 RA 闭合其材料冲突之后才冻结，并由 `FlowRuntime` 下发。SKILL 侧自行"免 Story/TestCase"或放行 `initialized→coding` 跨步跳跃，等于在 RA 之前替路线做决定。
 
-| entry_node | 流程裁剪 | 说明 |
-|-----------|---------|------|
-| **OPTIMIZE** | §A1 仅加载 ①②项目约束 + 用户指定代码（免 Story/TestCase）；**跳过 §A1.5 骨架分解**；直 §A2 CodeAnalysis（基于给定代码）→ §A3 轻量 CodePlan → §A4 审核 → §B Execute | 微-优化：目标是对**已有代码**做优化/重构，无需从 Story 派生骨架 |
-| **CODE_REVIEW** | **交棒 code-review-skill**，本 SKILL 不接管 | 微-审查：审查是只读出结论，不进 CodingProcess |
-| 其他（BUG/CONFIG/PRD/RA/None） | 走完整 §A1.5→§A2→§A3→§A4 | 原行为不变 |
+**本 SKILL 的实际契约：** 接受 `FlowRuntime` 已冻结的路线与其规定的输入，按 §A1.5→§A2→§A3→§A4 执行。是否存在 Story/TestCase 由路线决定并体现在下发的输入里，不由本节推断。
 
-**OPTIMIZE 路径 §A1 加载调整：** 上下文表 ③ Story / ④ TestCase 标"无 Story 上下文，独立决策"（与微任务一致），新增**⑤ 用户指定代码范围**（必读：用户指明的文件/类/方法）。
-
-**OPTIMIZE 路径 §A2 调整：** CodeAnalysis 输入从"§A1.5 骨架"改为"用户指定代码现状"，输出"优化后骨架 + 改动点清单"。
-
-> **gate 协同：** OPTIMIZE/CODE_REVIEW + scale=微 时，gate_intercept 跨步跳跃已放行（initialized→coding / initialized→code-reviewed）。本门只管"流程深度裁剪"，state 流转仍由 SKILL.md 状态机子链表定义。
+> 若用户意图是对既有代码做优化或重构，它同样先经 RA 产出权威路线，再由路线决定落到哪条链；这不是绕过 RA 的独立入口。
 
 ### §A1.5 骨架分解（🆕 v3.10.0 从 task-generate-skill 合并）
 
@@ -238,10 +235,15 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 
 | 任务规模 | 生成依据 | 流程深度 |
 |---------|---------|---------|
-| **大任务** | Story + TestCase + CodingPlan（含骨架分解）| 全流程 |
-| **中任务** | Story + TestCase + CodingPlan | 全流程 |
-| **小任务** | Story + TestCase + 完整 CodingPlan | 全流程 |
-| **微任务** | Work Item 轻量 CodingPlan（无 Story/TestCase；类骨架按需）| 全流程 |
+| **大任务** | RA → DR → N×(Story → TestCase → CodingPlan)（含骨架分解）| 全流程 |
+| **中任务** | RA → Story → TestCase → CodingPlan | 全流程 |
+| **小任务** | RA → 完整 CodingPlan（无 Story，故无 TestCase）| 全流程 |
+| **微任务** | RA → 经批准的紧凑 `state.executionPlan`（不落独立 CodingPlan Markdown）| 全流程 |
+
+> **口径以 `source/SKILL.md` §Declared Routes 为准。** 三点易错处：
+> 小任务此前被写成"Story + TestCase + 完整 CodingPlan"，与权威路线冲突——小任务无 Story，因此不产生 TestCase；
+> 微任务不落独立 CodingPlan Markdown，只用经批准的 `state.executionPlan`；
+> 凡存在 Story，每个 Story 各跑独立 `Story → TestCase → CodingPlan` 子链，其 TestCase receipt 绑定该 Story identity，同路线其他 Story 的 TestCase 不能替它作答。TestCase 既非可选，也不取决于验证矩阵复杂度。
 
 **生成规则：**
 - **骨架填肉，按序展开**：CodingPlan §A1.5 骨架给方法签名+伪代码，按 [`coding-skill.md` §4 骨架展开规则](coding-skill.md) "填肉"，不自行发挥结构

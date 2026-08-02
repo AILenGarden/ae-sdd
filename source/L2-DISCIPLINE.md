@@ -25,14 +25,22 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
 ### 极简合法链
 
 ```text
-大：Route -> Requirement Analysis -> DR/Story/CodingPlan -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
-中：Route -> Requirement Analysis -> Story/CodingPlan -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
-小/微：Route -> Requirement Analysis -> CodingPlan/Story-lite -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
+大：RA -> DR -> N x (Story -> TestCase -> CodingPlan) -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
+中：RA -> Story -> TestCase -> CodingPlan -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
+小：RA -> CodingPlan -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
+微：RA -> executionPlan(用户确认) -> Coding -> Test evidence -> Review findings
 ```
 
+- RA 是所有任务（含自更新）的首个业务 Series；Hook 只记录 provisional `BootstrapAssessment`，
+  权威 `EngineeringRoute` 在 RA 关闭输入冲突后才冻结，不得在 RA 前固化最终路线。
 - RA、DR、Story 是核心设计文档；路由需要时必须存在，不得用过程报告替代。
 - Story 必须包含接口/字段/主流程/数据模型、AC 和验证矩阵。
-- 仅当验证矩阵复杂到不适合内嵌 Story 时，才允许独立 TestCase。
+- 凡存在 Story，必须对每个 Story 执行独立的 `Story -> TestCase -> CodingPlan` 子链，
+  且 TestCase receipt 绑定该 Story identity——同路线其他 Story 的 TestCase 不能替它作答。
+  TestCase 既非可选，也不取决于验证矩阵复杂度；无 Story 的小/微任务不创建 TestCase。
+- 微任务不创建独立 CodingPlan Markdown，只使用经批准的 `state.executionPlan`。
+
+> 术语与路线语义以 `source/docs/ae-sdd-design.md` §2、§过程产物模型 为准。
 - Task 仅用于大型并行拆分，不是默认流程节点。
 - 编码前必须通过 G-CODEPLAN-SRC、G-14、G-08，并获得用户对紧凑计划的确认。
 - 测试只记录真实 evidence；Review 只记录 status/findings。
@@ -53,7 +61,7 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
 - 任一 blocker gate 失败后立即停止写入，报告 gate ID，并执行规定修复路径。
 - ae-sdd 不可用时不得降级为自由编码；先修复运行环境。
 - harness 的计划批准不能替代 `state.executionPlan` 的用户确认。
-- `/ae-sdd-quick` 只能由用户显式指定，且不取消 Story-lite、计划确认和验证证据。
+- `/ae-sdd-quick` 只能由用户显式指定，且不取消该规模所需的 Spec 子链、计划确认和验证证据。
 - 路由未到合法终态、验证证据未落地、Review 未通过时不得声明完成。
 
 ## 执行效率与范围纪律
@@ -127,15 +135,25 @@ constraints are in scope. Routing authority belongs to ae-sdd and the user.
 ### Minimal legal routes
 
 ```text
-large: Route -> Requirement Analysis -> DR/Story/CodingPlan -> approved executionPlan -> Coding -> Test evidence -> Review findings
-medium: Route -> Requirement Analysis -> Story/CodingPlan -> approved executionPlan -> Coding -> Test evidence -> Review findings
-small/micro: Route -> Requirement Analysis -> CodingPlan/Story-lite -> approved executionPlan -> Coding -> Test evidence -> Review findings
+large: RA -> DR -> N x (Story -> TestCase -> CodingPlan) -> approved executionPlan -> Coding -> Test evidence -> Review findings
+medium: RA -> Story -> TestCase -> CodingPlan -> approved executionPlan -> Coding -> Test evidence -> Review findings
+small: RA -> CodingPlan -> approved executionPlan -> Coding -> Test evidence -> Review findings
+micro: RA -> approved compact executionPlan -> Coding -> Test evidence -> Review findings
 ```
 
+- RA is the first business Series for every task, self-update included. The Hook
+  records only a provisional `BootstrapAssessment`; the authoritative
+  `EngineeringRoute` is frozen once RA closes its input conflicts, never before.
 - RA, DR, and Story are the core design documents. Required upstream documents
   must exist and cannot be replaced by process reports.
 - Story contains contracts, fields, main flow, data model, AC, and a verification matrix.
-- A standalone TestCase is optional and allowed only for a genuinely complex matrix.
+- Wherever a Story exists, each Story runs its own independent
+  `Story -> TestCase -> CodingPlan` subchain and its TestCase receipt binds that
+  Story's identity, so a sibling's TestCase never satisfies it. TestCase is
+  neither optional nor conditional on matrix complexity; the small and micro
+  routes have no Story and therefore no TestCase.
+- Micro creates no separate CodingPlan Markdown and uses the approved
+  `state.executionPlan` alone.
 - Task is optional and reserved for large parallel decomposition.
 - Before Coding, G-CODEPLAN-SRC, G-14, and G-08 must pass and the user must approve
   the compact `state.executionPlan`.
@@ -149,14 +167,14 @@ small/micro: Route -> Requirement Analysis -> CodingPlan/Story-lite -> approved 
 | Project constraints | `get_constraints(projectKey)` | stop and update project assets |
 | Technical CodingModel | `get_thinking_engine(projectKey)` | stop and fill every dimension |
 | Story | `doc resolve --intent STORY` | stop and generate/update Story |
-| Verification contract | Story matrix; optional TestCase for complex cases | stop and map every AC to verification |
+| Verification contract | Story matrix plus that Story's own TestCase | stop and map every AC to verification |
 
 ### Hard constraints
 
 - Fail closed on every blocker gate. Report the gate ID and follow its remediation.
 - If ae-sdd or its state is unavailable, repair the environment before coding.
 - Harness plan approval does not replace user approval of `state.executionPlan`.
-- Only the user may select `/ae-sdd-quick`; it still requires Story-lite, plan approval,
+- Only the user may select `/ae-sdd-quick`; it still requires the size's Spec subchain, plan approval,
   and verification evidence.
 - Do not claim completion before the legal terminal state, finalized evidence, and
   a passing review.

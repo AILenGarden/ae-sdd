@@ -22,7 +22,8 @@ use ae_sdd_runtime::RuntimeConfig;
 use serde_json::{Value, json};
 
 use support::{
-    Harness, open_root_session, params, register_workspace, result, session_params, stable_error,
+    Harness, create_root_series_delegation, open_root_session, params, register_workspace, result,
+    stable_error,
 };
 
 const ADAPTER: &str = "host-a";
@@ -64,25 +65,17 @@ fn a_successful_create_still_publishes_its_action() {
         Some("WORK"),
     );
 
-    let mut create = session_params(
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-valid",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("create-valid".to_owned());
-    let delegation =
-        result(&harness.call(&mut root_connection, RpcMethod::DelegationCreate, create));
 
     let action = next_action(&harness, &mut host);
     assert_eq!(
@@ -106,25 +99,17 @@ fn a_second_ack_identity_for_one_action_is_refused() {
         Some("WORK"),
     );
 
-    let mut create = session_params(
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-for-ack",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("create-for-ack".to_owned());
-    let delegation =
-        result(&harness.call(&mut root_connection, RpcMethod::DelegationCreate, create));
     let delegation_id = delegation["delegationId"]
         .as_str()
         .expect("delegation id")

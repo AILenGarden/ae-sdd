@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use support::{
-    Harness, TestClock, TestResolver, open_root_session, params, register_workspace, result,
-    session_params, stable_error,
+    Harness, TestClock, TestResolver, create_root_series_delegation, flow_decision_digest,
+    open_root_session, params, register_workspace, result, session_params, stable_error,
 };
 
 #[derive(Default)]
@@ -147,6 +147,7 @@ struct AcceptedDelegation {
     root: SessionResult,
     delegation_id: String,
     child_session_id: String,
+    input_fingerprint: String,
 }
 
 fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
@@ -171,24 +172,18 @@ fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
         &format!("delegation-root-{suffix}"),
         Some("WORK"),
     );
-    let mut create = session_params(
+    let create_key = format!("delegation-create-{suffix}");
+    let created = create_root_series_delegation(
+        &harness,
+        &mut connection,
         &workspace,
         &root,
         "delegation-root",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":"host-delegation",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        &create_key,
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some(format!("delegation-create-{suffix}"));
-    let created = result(&harness.call(&mut connection, RpcMethod::DelegationCreate, create));
     let delegation_id = created["delegationId"]
         .as_str()
         .expect("delegation ID")
@@ -225,7 +220,7 @@ fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000009303",
+            "claimId":action["claimId"],
             "actionId":action_id,
             "childSessionId":child_session_id,
             "expiresAtUnixMs":1_900,
@@ -245,6 +240,7 @@ fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
         root,
         delegation_id,
         child_session_id,
+        input_fingerprint: flow_decision_digest(&create_key),
     }
 }
 
@@ -256,7 +252,7 @@ fn child_report(
     DelegationReportPayload {
         delegation_id: fixture.delegation_id.clone(),
         input_revision: 1,
-        input_fingerprint: "a".repeat(64),
+        input_fingerprint: fixture.input_fingerprint.clone(),
         summary: summary.into(),
         result,
     }
@@ -1732,7 +1728,7 @@ fn delegation_cancel_and_spawn_depth_fail_closed() {
         StableErrorCode::ChildResultInvalid
     );
 
-    let mut invalid_depth = session_params(
+    let mut caller_selected_child_role = session_params(
         &fixture.workspace,
         &fixture.root,
         "delegation-root",
@@ -1747,15 +1743,15 @@ fn delegation_cancel_and_spawn_depth_fail_closed() {
         }),
         1_000,
     );
-    invalid_depth.work_item_id = Some("WORK".to_owned());
-    invalid_depth.idempotency_key = Some("invalid-spawn-depth".to_owned());
+    caller_selected_child_role.work_item_id = Some("WORK".to_owned());
+    caller_selected_child_role.idempotency_key = Some("invalid-spawn-depth".to_owned());
     assert_eq!(
         stable_error(&fixture.harness.call(
             &mut fixture.connection,
             RpcMethod::DelegationCreate,
-            invalid_depth,
+            caller_selected_child_role,
         )),
-        StableErrorCode::RunDepthExceeded.as_str()
+        StableErrorCode::OperationSchemaInvalid.as_str()
     );
 
     let missing = supervisor

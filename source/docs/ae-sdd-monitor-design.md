@@ -76,24 +76,24 @@ Monitor 不参与 ae-sdd 决策，不执行 gate，不写入 state，不替代 C
 
 ## 5. 状态投影
 
-Monitor 的展示状态是派生值，不是 ae-sdd 的新增状态机字段。
+Monitor 的展示状态是 daemon 权威 state/event 的只读派生值，不是 ae-sdd 的新增状态机字段，也不能反向推进流程。
 
 | 派生状态 | 条件 |
 | --- | --- |
 | `invalid` | 缺少 `state.json` 或读取/解析出错 |
-| `paused` | `state.phase == "paused"` |
-| `completed` | `state.phase == "completed"` |
+| `paused` | typed projection 为 `paused/awaiting_user`；旧 state 回退检查 `state.phase == "paused"` |
+| `completed` | daemon 完成不变量已满足；旧 state 的 `phase == "completed"` 只能显示为兼容状态，不能单独证明完成 |
 | `blocked` | 最近 Runtime Stats 事件退出码非 0，且失败仍是最新线索 |
 | `active` | `state.activeAgents` 非空，或最近 24 小时有 state/runtime 活动 |
 | `idle` | 可读但近期无活动 |
 | `unknown` | 兜底状态 |
 
-进度条依据 ae-sdd 当前阶段链派生。Monitor 内置阶段链只是展示投影，必须跟随 `tools/lib/state.py:PHASE_FLOWS` 和 `routeDecision.selectedDesign`：所有可变更任务展示 Route、Requirement Analysis，之后按 DR/Story/CodingPlan 动态裁剪设计节点；旧 phase 不在当前链时仍作为兼容节点展示。
+进度条依据 daemon 的 `currentMainNode/currentSeriesId/currentSeriesRunId/currentSubNode` 和 ordered Series plans 派生。所有任务显示 `Bootstrap Assessment -> Requirement Analysis -> Engineering Route`；之后按规模显示 micro executionPlan、small CodingPlan、medium `Story -> TestCase -> CodingPlan`，或 large `DR -> N x (Story -> TestCase -> CodingPlan)`。Monitor 不维护第二份权威阶段链；旧 `PHASE_FLOWS/routeDecision.selectedDesign/phase` 只作为迁移兼容投影，并明确标注 legacy。
 
 活跃任务汇总是另一个派生投影，不新增 ae-sdd 字段。来源包括：
 
-- 根 state 的 `activeWorkItem`、`currentWorkItem`、`currentStory`、`currentTask`。
-- 根 state 的 `activeAgents[]`，按 `txnName`、`workItemId`、`taskId`、`storyId` 或 `agentId` 归并。
+- daemon projection 的 `workItemId/flowRunId/currentSeriesRunId/currentSubNode`。
+- delegation projection，按 `seriesRunId/delegationId/sessionId` 归并；显示 Story/TestCase/CodingPlan binding，但不把 Agent tree 当作流程树。
 - `.auto-engineering/{workItemKey}/state.json` 中未处于 `completed` 或 `invalid` 的工作项；优先使用 state 内的 `workItemKey` 作为展示 ID，并保留 `workItemId`/`workItemName` 作为辅助信息；当旧 state 缺少这些字段时，必须从目录名 `{ID}--{name}` 回退推导。
 
 同一个任务从多个来源出现时，Monitor 必须合并展示来源，而不是重复多行或只保留第一项。
@@ -171,10 +171,10 @@ Monitor 必须时刻跟随 ae-sdd 主设计与实现架构，具体闭环由 `so
 
 - `ae-sdd-design.md` 改了状态机、阶段语义、门禁语义或用户可见流程。
 - `ae-sdd-implementation-architecture.md` 改了 `.ae-sdd/`、`.auto-engineering/`、Memory 或 Runtime Stats 存储约定。
-- `tools/lib/state.py` 改了 `PHASE_FLOWS`、`scale`、`entryNode` 或 state 字段。
-- `tools/lib/memory_store.py` 或 `tools/lib/memory_gate.py` 改了 memory 存储路径、JSONL 字段、`.stage` 生命周期语义或阻断条件。
-- `tools/lib/runtime_stats.py` 改了 JSONL 字段、脱敏策略或事件含义。
-- `tools/bin/ae-sdd` 改了会影响状态/性能诊断的命令输出契约。
+- `ae-sdd-contracts/ae-sdd-flow/ae-sdd-runtime` 改了 WorkItem/FlowRun/SeriesRun、SeriesPlan、progress event、projection 或 scale route。
+- `ae-sdd-context/ae-sdd-artifacts` 改了 memory/context projection、fingerprint 或 compact 生命周期。
+- daemon Runtime Stats/telemetry 改了字段、脱敏策略或事件含义。
+- `bins/ae-sdd-cli` 或 daemon RPC 改了会影响状态/性能诊断的输出契约。
 - `apps/ae-sdd-monitor/**` 改了解析、展示、打包或安装行为。
 
 同步动作：

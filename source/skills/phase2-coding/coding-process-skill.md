@@ -55,7 +55,7 @@ CodePlan->Coding->验证->异常追溯全流程编排：加载4上下文 -> 骨�
 | state_data | headings: L2:93 Phase A：CodeAnalysis（产出 CodePlan）; L2:175 Phase B：Execute（按 CodePlan 写代码）; L2:356 Phase C：异常追溯（报错时实时追溯链 A1-A6）; keyword_hits: 44 | source/docs/ae-sdd-design.md §3/§15/§19; crates/ae-sdd-store/src (StateAuthority) | Index state/config vocabulary; use CLI state output as execution truth. |
 | output_doc_contract | headings: L2:21 📦 文档存放前置调用（🔴 横切依赖）; L2:93 Phase A：CodeAnalysis（产出 CodePlan）; L3:146 §A3 产出统一版 CodePlan + 跑门禁; keyword_hits: 75 | source/docs/ae-sdd-design.md §7; source/templates/** | Index document/output obligations; load fallback before generating exact long-form artifacts. |
 | resource_reference | inline_refs: 27; refs: ../phase3-review/test-generate-skill.md; ../phase3-review/test-review-skill.md; /ae-sdd 优化这部分实现; +24 more; keyword_hits: 61 | source/standards/**; source/templates/**; source/skills/** | Preserve referenced paths in the slim entry; copied fallback remains the semantic anchor. |
-| design_alignment | headings: L3:95 §A1 加载 4 上下文（🔴 强制，缺一停止）; L3:108 §A1.4 🆕 v3.10.2 micro 意图分流前置门（OPTIMIZE/CODE_REVIEW entry_node）; L3:124 §A1.5 骨架分解（🆕 v3.10.0 从 task-generate-skill 合并）; +14 more; keyword_hits: 149 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
+| design_alignment | headings: L3:95 §A1 加载 4 上下文（🔴 强制，缺一停止）; L3:108 §A1.4 流程深度由权威 `EngineeringRoute` 决定，本 SKILL 不自行分流; L3:124 §A1.5 骨架分解（🆕 v3.10.0 从 task-generate-skill 合并）; +14 more; keyword_hits: 149 | source/docs/ae-sdd-design.md; source/docs/ae-sdd-implementation-architecture.md; source/docs/skill-runtime-compiler.md | Index the alignment surface; update design docs before changing behavior. |
 | fallback_only_detail | headings: L3:181 §B0.5 Spec 变更确认（🔴 强制，先于工程预检）; keyword_hits: 18 | source/skill-fallbacks/**; source/CHANGELOG/** | Do not summarize aggressively; keep only the location signal and rely on fallback for exact detail. |
 
 ## Source Slimming SOP
@@ -76,7 +76,7 @@ CodePlan->Coding->验证->异常追溯全流程编排：加载4上下文 -> 骨�
 | 2 | 62 | CodingProcess.Run 对外契约 |
 | 2 | 93 | Phase A：CodeAnalysis（产出 CodePlan） |
 | 3 | 95 | §A1 加载 4 上下文（🔴 强制，缺一停止） |
-| 3 | 108 | §A1.4 🆕 v3.10.2 micro 意图分流前置门（OPTIMIZE/CODE_REVIEW entry_node） |
+| 3 | 108 | §A1.4 流程深度由权威 `EngineeringRoute` 决定，本 SKILL 不自行分流 |
 | 3 | 124 | §A1.5 骨架分解（🆕 v3.10.0 从 task-generate-skill 合并） |
 | 3 | 137 | §A2 调用 coding-skill 能力做 CodeAnalysis |
 | 3 | 146 | §A3 产出统一版 CodePlan + 跑门禁 |

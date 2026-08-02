@@ -80,15 +80,23 @@ pub(super) fn plan_story_aligned(
     !story_acs.is_empty() && story_acs.is_subset(&plan_acs)
 }
 
+/// A plan's source trace is complete only when *every* declared read still
+/// resolves. Accepting any single surviving entry let a sibling answer for a
+/// deleted or relocated file, so a plan tracing several sources kept passing
+/// while its trace rotted — the failure `hash_source_reads` exists to surface.
+/// A non-string entry is treated as unresolvable rather than skipped, so a
+/// malformed `sourceReads` cannot pass by omission.
 pub(super) fn source_trace_complete(root: &Path, plan: &Value) -> bool {
     plan.get("sourceReads")
         .and_then(Value::as_array)
         .is_some_and(|reads| {
             !reads.is_empty()
-                && reads.iter().filter_map(Value::as_str).any(|path| {
-                    let candidate = Path::new(path);
-                    (candidate.is_absolute() && candidate.is_file())
-                        || root.join(candidate).is_file()
+                && reads.iter().all(|entry| {
+                    entry.as_str().is_some_and(|path| {
+                        let candidate = Path::new(path);
+                        (candidate.is_absolute() && candidate.is_file())
+                            || root.join(candidate).is_file()
+                    })
                 })
         })
 }

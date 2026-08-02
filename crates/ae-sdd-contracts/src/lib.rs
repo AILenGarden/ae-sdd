@@ -9,31 +9,50 @@
 
 pub mod compact;
 pub mod diagnostics;
+pub mod document;
+pub mod engineering_route;
 pub mod error;
 pub mod evidence;
 pub mod execution;
 pub mod execution_runtime;
 pub mod host;
+pub mod instruction;
+pub mod intake;
 pub mod lifecycle;
 pub mod methodology;
 pub mod ports;
+pub mod provenance;
 pub mod resource;
 pub mod review;
+pub mod run_graph;
 mod serde_domain;
 pub mod series;
 pub mod session;
+pub mod supervision;
 mod value;
 
 pub use diagnostics::{
     BugKind, BugRecord, BugRepeatRecord, DIAGNOSTICS_DIR, DiagnosticRecord, DiagnosticTrack,
     DroppedRecord, HookInRecord, HookOutRecord, NodeRecord,
 };
+pub use document::{DocumentVersionError, DocumentVersionId, SpecKind};
+pub use engineering_route::{EngineeringRoute, EngineeringRouteError, RequirementAnalysisEvidence};
 pub use error::{
     ContractValidationError, ControlPlaneError, ControlPlaneErrorCode, Remediation, RetryClass,
 };
 pub use evidence::{
     EvidenceLedgerError, EvidenceLedgerEventKind, EvidenceLedgerEventV1, MAX_LEDGER_ARTIFACT_REFS,
     MAX_LEDGER_EVENTS,
+};
+pub use instruction::{
+    ContextProjectionRef, InstructionEnvelope, InstructionError, InstructionIdentity,
+    InstructionTransaction, SkillRef,
+};
+pub use intake::{
+    AssessmentFact, BootstrapAssessment, BootstrapAssessmentError, ConflictDimension, InputSource,
+    MAX_ASSESSMENT_FACTS, MAX_ASSESSMENT_QUESTIONS, MAX_ASSESSMENT_UNCERTAINTIES,
+    MAX_CONFLICT_SOURCES, RequirementConflict, RequirementConflictError, RequirementSourceRef,
+    TaskKind,
 };
 pub use lifecycle::{
     ConfirmationRequirement, EventIntent, FileLockSnapshot, LifecycleCommand, LifecycleDisposition,
@@ -46,17 +65,21 @@ pub use methodology::{
     MethodologyRefError, MethodologyResolution, MethodologyResolutionError, OverrideDisposition,
     OverrideLayer, OverrideTrace, ProjectScope,
 };
+pub use provenance::FingerprintInputs;
+pub use run_graph::{FlowRunProjection, RunGraphError, SeriesRunProjection};
 pub use series::{
-    ImpactFact, ImpactLevel, MAX_IMPACT_FACTS, MAX_REQUIRED_SERIES, MAX_ROUTE_ARTIFACTS,
-    MAX_ROUTE_REASON_CODES, MAX_SERIES_GRANT_ITEMS, ProcessSnapshot, RetryPolicy, RouteDecision,
-    RouteDecisionError, RouteDisposition, RouteInput, RouteInputError, SeriesInput,
-    SeriesInputError, SeriesPlan, SeriesPlanDecision, SeriesPlanError, SeriesReceipt,
-    SeriesReceiptError, SeriesReceiptStatus,
+    ImpactFact, ImpactLevel, MAIN_NODE_SERIES_KINDS, MAX_IMPACT_FACTS, MAX_REQUIRED_SERIES,
+    MAX_ROUTE_ARTIFACTS, MAX_ROUTE_REASON_CODES, MAX_SERIES_GRANT_ITEMS, ProcessSnapshot,
+    RetryPolicy, RouteDecision, RouteDecisionError, RouteDisposition, RouteInput, RouteInputError,
+    SERIES_ACTIVITIES, SERIES_SUB_NODES, SeriesActivity, SeriesInput, SeriesInputError,
+    SeriesLifecycleState, SeriesPlan, SeriesPlanDecision, SeriesPlanError, SeriesReceipt,
+    SeriesReceiptError, SeriesReceiptStatus, SeriesSubNode,
 };
+pub use supervision::{RequirementRulingEvent, SeriesProgressEvent, SupervisionEventError};
 pub use value::{
-    AdapterId, BoundedText, ContextBundleId, ContractValueError, DocumentTxnId, ExecutionId,
-    ExecutionStepId, ExternalSessionKey, HostTaskId, IdempotencyKey, LogicalKey, LogicalNamespace,
-    MessageKey, MethodologyVariant, MutationIntentId, OperationName, PrdId, ReasonCode, ReviewId,
-    ReviewerRole, RouteDecisionId, RuntimeModuleKey, RuntimeModuleName, SchemaVersion, SeriesId,
-    SeriesKind, SkillId, VerificationContractId, WorkerId,
+    AdapterId, BoundedText, ContextBundleId, ContractValueError, DocumentId, DocumentTxnId,
+    ExecutionId, ExecutionStepId, ExternalSessionKey, HostTaskId, IdempotencyKey, LogicalKey,
+    LogicalNamespace, MessageKey, MethodologyVariant, MutationIntentId, OperationName, PrdId,
+    ReasonCode, ReviewId, ReviewerRole, RouteDecisionId, RuntimeModuleKey, RuntimeModuleName,
+    SchemaVersion, SeriesId, SeriesKind, SkillId, SpecGraphId, VerificationContractId, WorkerId,
 };

@@ -441,6 +441,116 @@ fn story_review_accepts_an_atomically_committed_route_story() {
     );
 }
 
+/// `G-04` asserts a TestCase *document* exists. Reading the Story for the
+/// substring `AC-`/`verification` made every Story with acceptance criteria
+/// prove the existence of a document that was never written, so the Gate could
+/// never report the missing TestCase it exists to guard.
+#[test]
+fn testcase_existence_rejects_a_story_that_merely_mentions_acceptance_criteria() {
+    let temp = TempDir::new().expect("temp");
+    install_route_story_context(temp.path());
+    write_state(temp.path(), 1, route_story_state());
+    // The fixture Story carries `AC-01`; no TestCase document is installed.
+    assert!(
+        !temp.path().join("ae-sdd-doc/Test").exists(),
+        "the fixture must not carry a TestCase document"
+    );
+
+    let runtime = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "ROUTE-10b6bd28",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime");
+    let result = runtime
+        .evaluate("G-04", Duration::from_secs(1))
+        .expect("TestCase existence Gate evaluation");
+
+    assert!(
+        matches!(result.outcome(), GateOutcome::Fail(_)),
+        "a Story mentioning AC- must not satisfy TestCase existence: {}",
+        gate_result_json(&result)
+    );
+}
+
+/// Work Items created before `documentPaths` carried a `TESTCASE` binding fall
+/// back to scanning the tree. The scan derived its directory from the kind
+/// (`testcase`), but the canonical directory is `Test/`, so a real TestCase
+/// document in its canonical location was invisible and the Gate could never be
+/// satisfied for those Work Items.
+#[test]
+fn testcase_existence_finds_a_canonical_document_without_a_documentpaths_binding() {
+    let temp = TempDir::new().expect("temp");
+    install_route_story_context(temp.path());
+    // Canonical TestCase documents are named for the Work Item that owns them,
+    // which is the Story when a Story owns the sub-chain.
+    let testcase = temp
+        .path()
+        .join("ae-sdd-doc/Test/STORY-ROUTE-10b6bd28/STORY-ROUTE-10b6bd28-testcase.md");
+    fs::create_dir_all(testcase.parent().expect("TestCase parent")).expect("TestCase directory");
+    fs::write(testcase, "# TestCase\n").expect("TestCase document");
+    // Legacy shape: no TESTCASE key in documentPaths.
+    let state = route_story_state();
+    assert!(
+        state["documentPaths"].get("TESTCASE").is_none(),
+        "this fixture must reproduce the pre-binding state shape"
+    );
+    write_state(temp.path(), 1, state);
+
+    let runtime = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "ROUTE-10b6bd28",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime");
+    let result = runtime
+        .evaluate("G-04", Duration::from_secs(1))
+        .expect("TestCase existence Gate evaluation");
+
+    assert!(
+        matches!(result.outcome(), GateOutcome::Pass),
+        "a canonical Test/<id>/<id>-testcase.md must be found without a binding: {}",
+        gate_result_json(&result)
+    );
+}
+
+/// The same Gate must still pass once the bound TestCase document is present.
+#[test]
+fn testcase_existence_accepts_a_bound_testcase_document() {
+    let temp = TempDir::new().expect("temp");
+    install_route_story_context(temp.path());
+    // TestCase binds the owning Story, not the route: Test/<story>/<story>-testcase.md
+    let testcase = temp
+        .path()
+        .join("ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md");
+    fs::create_dir_all(testcase.parent().expect("TestCase parent")).expect("TestCase directory");
+    fs::write(testcase, "# TestCase\n").expect("TestCase document");
+    let mut state = route_story_state();
+    state["activeStory"] = json!("STORY-001-BE");
+    state["storyStates"]["STORY-001-BE"]["testCasePath"] =
+        json!("ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md");
+    write_state(temp.path(), 1, state);
+
+    let runtime = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "ROUTE-10b6bd28",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime");
+    let result = runtime
+        .evaluate("G-04", Duration::from_secs(1))
+        .expect("TestCase existence Gate evaluation");
+
+    assert!(
+        matches!(result.outcome(), GateOutcome::Pass),
+        "a bound TestCase document must satisfy the Gate: {}",
+        gate_result_json(&result)
+    );
+}
+
 #[test]
 fn story_context_uses_route_project_truth_instead_of_loaded_context_flags() {
     let temp = TempDir::new().expect("temp");
@@ -896,4 +1006,386 @@ fn ac_ids_accepts_descriptive_and_numeric_suffixes() {
     assert!(ids.contains("AC-NAME-01"));
     assert!(!ids.contains("AC-DC"));
     assert_eq!(ids.len(), 3);
+}
+
+/// The RA directory accumulates one document per Work Item, so "some RA exists"
+/// and "this Work Item's RA is complete" are different questions. Scanner Gates
+/// already answer the second by reading `documentPaths/RA`; a predicate that
+/// instead takes the alphabetically first file in the directory grades a
+/// stranger's document, and its verdict says nothing about this Work Item
+/// either way.
+#[test]
+fn ra_predicates_grade_the_bound_document_not_the_first_in_the_directory() {
+    let temp = TempDir::new().expect("temp");
+    let directory = temp.path().join("ae-sdd-doc/RA");
+    fs::create_dir_all(&directory).expect("RA directory");
+
+    // Sorts first, belongs to another Work Item, and would fail G-RA-3: it
+    // carries the model and enough headings for G-RA-2 but no RA-G decisions.
+    let mut foreign = String::from("# RA: another Work Item\n\nRequirementAnalysisModel\n");
+    for index in 0..12 {
+        foreign.push_str(&format!("\n## Section {index}\n\ntext\n"));
+    }
+    fs::write(directory.join("AAA-OTHER-WORK-ITEM.md"), &foreign).expect("foreign RA");
+
+    // This Work Item's RA satisfies both predicates.
+    let mut bound = String::from("# RA: ROUTE-bound\n\nRequirementAnalysisModel\n");
+    for index in 0..12 {
+        bound.push_str(&format!("\n## Section {index}\n\ntext\n"));
+    }
+    for index in 1..=16 {
+        bound.push_str(&format!("\n- RA-G{index:02} PASS\n"));
+    }
+    fs::write(directory.join("ROUTE-bound.md"), &bound).expect("bound RA");
+
+    write_state(
+        temp.path(),
+        1,
+        json!({
+            "stateMachineName":"ROUTE-bound",
+            "entryNode":"ROUTE",
+            "documentPaths":{"RA":"ae-sdd-doc/RA/ROUTE-bound.md"}
+        }),
+    );
+
+    let runtime = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "ROUTE-bound",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime");
+
+    let result = runtime
+        .evaluate("G-RA-3", Duration::from_secs(1))
+        .expect("G-RA-3 evaluation");
+    assert!(
+        matches!(result.outcome(), GateOutcome::Pass),
+        "G-RA-3 must grade the bound RA, not the first file in the directory: {}",
+        gate_result_json(&result)
+    );
+}
+
+/// `G-01` exists to answer one question: does *this* Work Item have a DR. Once
+/// `documentPaths` names the document, that name is the answer; scanning the DR
+/// directory would accept a neighbouring Work Item's file and leave the Gate
+/// unable to ever report a missing DR.
+#[test]
+fn dr_existence_follows_the_binding_and_ignores_other_work_items_documents() {
+    let temp = TempDir::new().expect("temp");
+    let directory = temp.path().join("ae-sdd-doc/DR");
+    fs::create_dir_all(&directory).expect("DR directory");
+    fs::write(
+        directory.join("DR-ANOTHER-WORK-ITEM-001.md"),
+        "# DR: another Work Item\n",
+    )
+    .expect("foreign DR");
+
+    let state = json!({
+        "stateMachineName":"ROUTE-bound",
+        "entryNode":"ROUTE",
+        "documentPaths":{"DR":"ae-sdd-doc/DR/ROUTE-bound.md"}
+    });
+    write_state(temp.path(), 1, state.clone());
+
+    let evaluate = |temp: &TempDir| {
+        AuthoritativeGateRuntime::new(
+            &workspace(temp.path()),
+            "ROUTE-bound",
+            &ae_sdd_policy::policy_digest().to_string(),
+            Some(3),
+        )
+        .expect("runtime")
+        .evaluate("G-01", Duration::from_secs(1))
+        .expect("G-01 evaluation")
+    };
+
+    let missing = evaluate(&temp);
+    assert!(
+        !matches!(missing.outcome(), GateOutcome::Pass),
+        "G-01 must not pass while the bound DR is absent: {}",
+        gate_result_json(&missing)
+    );
+
+    // Writing the bound document is the only thing that may flip the Gate.
+    fs::write(directory.join("ROUTE-bound.md"), "# DR: ROUTE-bound\n").expect("bound DR");
+    let present = evaluate(&temp);
+    assert!(
+        matches!(present.outcome(), GateOutcome::Pass),
+        "G-01 must pass once the bound DR exists: {}",
+        gate_result_json(&present)
+    );
+}
+
+/// State that carries no binding at all still has to fall back to the directory,
+/// so the authority rule above must not turn legacy Work Items into hard blocks.
+#[test]
+fn dr_existence_still_falls_back_to_the_directory_without_a_binding() {
+    let temp = TempDir::new().expect("temp");
+    let directory = temp.path().join("ae-sdd-doc/DR");
+    fs::create_dir_all(&directory).expect("DR directory");
+    fs::write(directory.join("DR-LEGACY-001.md"), "# DR: legacy\n").expect("legacy DR");
+
+    write_state(
+        temp.path(),
+        1,
+        json!({"stateMachineName":"LEGACY-001","documentPaths":{}}),
+    );
+
+    let result = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "LEGACY-001",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime")
+    .evaluate("G-01", Duration::from_secs(1))
+    .expect("G-01 evaluation");
+
+    assert!(
+        matches!(result.outcome(), GateOutcome::Pass),
+        "unbound state must keep the directory fallback: {}",
+        gate_result_json(&result)
+    );
+}
+
+/// A document-existence Gate must not keep passing once its bound document is
+/// deleted. The Gate key hashed only state fields, so removing the file left
+/// `inputFingerprint` unchanged and the scheduler reused the stale PASS — a
+/// Blocker Gate satisfied by a document that no longer exists.
+#[test]
+fn testcase_existence_stops_passing_once_the_bound_document_is_deleted() {
+    let temp = TempDir::new().expect("temp");
+    install_route_story_context(temp.path());
+    let testcase = temp
+        .path()
+        .join("ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md");
+    fs::create_dir_all(testcase.parent().expect("TestCase parent")).expect("TestCase directory");
+    fs::write(&testcase, "# TestCase\n").expect("TestCase document");
+    let mut state = route_story_state();
+    state["activeStory"] = json!("STORY-001-BE");
+    state["storyStates"]["STORY-001-BE"]["testCasePath"] =
+        json!("ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md");
+    write_state(temp.path(), 1, state);
+
+    let runtime = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "ROUTE-10b6bd28",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime");
+    let first = runtime
+        .evaluate("G-04", Duration::from_secs(1))
+        .expect("first evaluation");
+    assert!(
+        matches!(first.outcome(), GateOutcome::Pass),
+        "the bound document is present: {}",
+        gate_result_json(&first)
+    );
+
+    // Nothing in the authoritative state changes: only the document goes away.
+    fs::remove_file(&testcase).expect("delete the bound TestCase document");
+    let second = runtime
+        .evaluate("G-04", Duration::from_secs(1))
+        .expect("second evaluation");
+    assert!(
+        matches!(second.outcome(), GateOutcome::Fail(_)),
+        "deleting the bound document must not leave a stale PASS: {}",
+        gate_result_json(&second)
+    );
+}
+
+/// `G-CODEPLAN-SRC` asserts that a CodingPlan's `sourceReads` name a file that
+/// exists, so deleting that file must fail the Gate. Its selectors hashed the
+/// `executionPlan` state and the `changedPaths` files only, so a `sourceReads`
+/// entry outside those scopes never entered `inputFingerprint` and the Gate
+/// reused a stale PASS after the file was gone.
+#[test]
+fn source_trace_stops_passing_once_the_read_source_is_deleted() {
+    let temp = TempDir::new().expect("temp");
+    install_route_story_context(temp.path());
+    // The traced source sits outside `changedPaths` and outside every other
+    // declared file scope, which is what made the staleness observable.
+    let traced = temp.path().join("source/method-source.md");
+    fs::create_dir_all(traced.parent().expect("source parent")).expect("source directory");
+    fs::write(&traced, "# method source\n").expect("traced source");
+    let mut state = route_story_state();
+    state["executionPlan"] = json!({
+        "goal":"implement the story",
+        "changedPaths":["src/lib.rs"],
+        "verification":[],
+        "risks":["fixture risk"],
+        "approved":true,
+        "sourceReads":["source/method-source.md"]
+    });
+    write_state(temp.path(), 1, state);
+
+    let runtime = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "ROUTE-10b6bd28",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime");
+    let first = runtime
+        .evaluate("G-CODEPLAN-SRC", Duration::from_secs(1))
+        .expect("first evaluation");
+    assert!(
+        matches!(first.outcome(), GateOutcome::Pass),
+        "the traced source is present: {}",
+        gate_result_json(&first)
+    );
+
+    fs::remove_file(&traced).expect("delete the traced source");
+    let second = runtime
+        .evaluate("G-CODEPLAN-SRC", Duration::from_secs(1))
+        .expect("second evaluation");
+    assert!(
+        matches!(second.outcome(), GateOutcome::Fail(_)),
+        "deleting the traced source must not leave a stale PASS: {}",
+        gate_result_json(&second)
+    );
+}
+
+/// TestCase is a per-Story Spec: `ae-sdd-design.md` requires an independent
+/// `Story -> TestCase -> CodingPlan` subchain for every Story, and a TestCase
+/// receipt must bind Story identity. A route-level `documentPaths.TESTCASE`
+/// cannot express that — one flat key holds one path for N Stories, and the
+/// bound branch matches by substring with no Story filter, so one Story's
+/// TestCase satisfied `G-04` for every other Story on the route.
+#[test]
+fn testcase_existence_is_scoped_to_the_active_story() {
+    let temp = TempDir::new().expect("temp");
+    install_route_story_context(temp.path());
+    let owned = temp
+        .path()
+        .join("ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md");
+    fs::create_dir_all(owned.parent().expect("TestCase parent")).expect("TestCase directory");
+    fs::write(
+        &owned,
+        "# TestCase STORY-001-BE
+",
+    )
+    .expect("owned TestCase");
+
+    let story_states = json!({
+        "STORY-001-BE":{
+            "phase":"initialized",
+            "docPath":"ae-sdd-doc/Story/ROUTE-10b6bd28.md",
+            "testCasePath":"ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md"
+        },
+        // The second Story has no TestCase of its own.
+        "STORY-002-BE":{
+            "phase":"initialized",
+            "docPath":"ae-sdd-doc/Story/ROUTE-10b6bd28.md"
+        }
+    });
+    let digest = ae_sdd_policy::policy_digest().to_string();
+
+    let mut state = route_story_state();
+    state["storyStates"] = story_states.clone();
+    state["activeStory"] = json!("STORY-001-BE");
+    write_state(temp.path(), 1, state);
+    let satisfied =
+        AuthoritativeGateRuntime::new(&workspace(temp.path()), "ROUTE-10b6bd28", &digest, Some(3))
+            .expect("runtime")
+            .evaluate("G-04", Duration::from_secs(1))
+            .expect("owning Story evaluation");
+    assert!(
+        matches!(satisfied.outcome(), GateOutcome::Pass),
+        "the Story that owns a TestCase passes: {}",
+        gate_result_json(&satisfied)
+    );
+
+    // Same route, same files: only the active Story changes.
+    let borrowed_temp = TempDir::new().expect("temp");
+    install_route_story_context(borrowed_temp.path());
+    let borrowed_owned = borrowed_temp
+        .path()
+        .join("ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md");
+    fs::create_dir_all(borrowed_owned.parent().expect("TestCase parent"))
+        .expect("TestCase directory");
+    fs::write(
+        &borrowed_owned,
+        "# TestCase STORY-001-BE
+",
+    )
+    .expect("owned TestCase");
+    let mut other = route_story_state();
+    other["storyStates"] = story_states;
+    other["activeStory"] = json!("STORY-002-BE");
+    // The route-level binding is what makes the borrow possible: the bound
+    // branch matches `documentPaths` by substring and applies no Story filter,
+    // so this one path answers for every Story on the route.
+    other["documentPaths"]["TESTCASE"] =
+        json!("ae-sdd-doc/Test/STORY-001-BE/STORY-001-BE-testcase.md");
+    write_state(borrowed_temp.path(), 1, other);
+    let borrowed = AuthoritativeGateRuntime::new(
+        &workspace(borrowed_temp.path()),
+        "ROUTE-10b6bd28",
+        &digest,
+        Some(3),
+    )
+    .expect("runtime")
+    .evaluate("G-04", Duration::from_secs(1))
+    .expect("borrowing Story evaluation");
+    assert!(
+        matches!(borrowed.outcome(), GateOutcome::Fail(_)),
+        "a Story without its own TestCase must not borrow another's: {}",
+        gate_result_json(&borrowed)
+    );
+}
+
+/// `G-CODEPLAN-SRC` asserts the plan's source trace is *complete*, but the
+/// predicate accepted any single surviving entry. A plan tracing several
+/// sources therefore kept passing after one was deleted or relocated: the
+/// fingerprint moved, the Gate re-evaluated, and the surviving sibling
+/// answered for the missing file. F-09's test could not catch this because it
+/// declared a single `sourceReads` entry, where "any" and "all" coincide.
+#[test]
+fn source_trace_requires_every_declared_read_to_survive() {
+    let temp = TempDir::new().expect("temp");
+    install_route_story_context(temp.path());
+    let kept = temp.path().join("source/kept-source.md");
+    let removed = temp.path().join("source/removed-source.md");
+    fs::create_dir_all(kept.parent().expect("source parent")).expect("source directory");
+    fs::write(&kept, "# kept\n").expect("kept source");
+    fs::write(&removed, "# removed\n").expect("removed source");
+    let mut state = route_story_state();
+    state["executionPlan"] = json!({
+        "goal":"implement the story",
+        "changedPaths":["src/lib.rs"],
+        "verification":[],
+        "risks":["fixture risk"],
+        "approved":true,
+        "sourceReads":["source/kept-source.md","source/removed-source.md"]
+    });
+    write_state(temp.path(), 1, state);
+
+    let runtime = AuthoritativeGateRuntime::new(
+        &workspace(temp.path()),
+        "ROUTE-10b6bd28",
+        &ae_sdd_policy::policy_digest().to_string(),
+        Some(3),
+    )
+    .expect("runtime");
+    let both = runtime
+        .evaluate("G-CODEPLAN-SRC", Duration::from_secs(1))
+        .expect("first evaluation");
+    assert!(
+        matches!(both.outcome(), GateOutcome::Pass),
+        "every traced source is present: {}",
+        gate_result_json(&both)
+    );
+
+    fs::remove_file(&removed).expect("delete one traced source");
+    let partial = runtime
+        .evaluate("G-CODEPLAN-SRC", Duration::from_secs(1))
+        .expect("second evaluation");
+    assert!(
+        matches!(partial.outcome(), GateOutcome::Fail(_)),
+        "one surviving sibling must not answer for a missing traced source: {}",
+        gate_result_json(&partial)
+    );
 }

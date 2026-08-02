@@ -144,7 +144,11 @@ fn path_must_be_non_empty_text() {
 
 #[test]
 fn parent_doc_id_must_reference_a_provided_document_of_the_parent_series() {
-    let dangling = create_payload(json!([story("STORY-001", "docs/STORY-001.md", Some("DR-404"))]));
+    let dangling = create_payload(json!([story(
+        "STORY-001",
+        "docs/STORY-001.md",
+        Some("DR-404")
+    )]));
     assert!(matches!(
         validate_operation_payload(OperationName::WorkItemCreate, &dangling),
         Err(OperationRequestError::InvalidProvidedDocuments(_))

@@ -1,5 +1,5 @@
 use ae_sdd_contracts::{
-    BoundedText, ReasonCode, SchemaVersion, SeriesKind,
+    BoundedText, ReasonCode, SchemaVersion, SeriesKind, SpecKind, TaskKind,
     series::{ImpactFact, ImpactLevel, RouteDecisionError, RouteDisposition, RouteInput},
 };
 use ae_sdd_domain::{DesignRoute, InputFingerprint, WorkItemId, WorkScale};
@@ -20,6 +20,7 @@ fn route_input_with_approval(
         WorkItemId::new("STORY-FLOW-001").expect("work item"),
         ReasonCode::new("entry.feature").expect("entry node"),
         BoundedText::new("implement the typed control-plane flow").expect("bounded intent"),
+        TaskKind::Implementation,
         Vec::new(),
         impacts,
         confidence_bps,
@@ -235,6 +236,12 @@ fn impact_fact_permutation_preserves_binding_and_decision_digest() {
     assert_eq!(forward_decision.scale(), WorkScale::Medium);
 }
 
+/// §7.1 line 342 gives micro the route `RA -> executionPlan -> Coding` and states
+/// its minimum persisted artifacts are "RA Spec + daemon state 中经批准的
+/// `executionPlan`；不要求独立 CodingPlan Markdown". Delegating a CodingPlan Series
+/// here produced exactly the Spec the design says must not be required, and left
+/// micro with the same `requiredSeries` as small — so the two tiers became
+/// indistinguishable from the decision alone.
 #[test]
 fn all_micro_facts_select_the_micro_coding_plan_route() {
     let impacts = vec![
@@ -262,7 +269,21 @@ fn all_micro_facts_select_the_micro_coding_plan_route() {
         .iter()
         .map(SeriesKind::as_str)
         .collect();
-    assert_eq!(series, ["requirement-analysis", "coding-plan"]);
+    assert_eq!(
+        series,
+        ["requirement-analysis"],
+        "§7.1 line 342 does not require a standalone CodingPlan for micro"
+    );
+    assert_eq!(
+        decision.required_spec_kinds(),
+        [SpecKind::RequirementAnalysis],
+        "micro binds the RA Spec only; the approved executionPlan is its plan"
+    );
+    assert_eq!(
+        decision.design_route(),
+        DesignRoute::CodingPlan,
+        "design *depth* stays the shallowest tier even though no CodingPlan Spec is          required: `DesignRoute` and `requiredSpecKinds` answer different questions"
+    );
 }
 
 #[test]
@@ -314,33 +335,81 @@ fn conflicting_micro_facts_wait_for_approval_instead_of_selecting_micro() {
     assert_eq!(decision.scale(), WorkScale::Medium);
 }
 
+/// Pins the impact-to-route mapping and each route's `decisionDigest`.
+///
+/// The four expected rows are transcribed from the §7.1 table, not from what the
+/// code happened to produce: micro `RA -> executionPlan -> Coding` (no CodingPlan
+/// Spec), small `RA -> CodingPlan`, medium `RA -> Story -> TestCase -> CodingPlan`,
+/// large `RA -> DR -> N x (Story -> TestCase -> CodingPlan)`.
+///
+/// All four digests moved on 2026-08-02 when `taskKind` and `requiredSpecKinds`
+/// entered `digest_route`, and medium/large moved additionally because
+/// `coding-plan` joined their `requiredSeries`. `digest_route` folds each list as
+/// count-then-elements, so any list change necessarily moves the digest. A digest
+/// moving *without* a matching change here is a real regression; treat a surprise
+/// diff as one until proven otherwise.
 #[test]
-fn existing_impact_mappings_and_decision_digests_are_unchanged() {
+fn impact_mappings_and_decision_digests_stay_pinned() {
     let engine = RouteEngine::default();
-    let cases: [(ImpactLevel, WorkScale, DesignRoute, &[&str], &str); 3] = [
+    let cases: [(
+        ImpactLevel,
+        WorkScale,
+        DesignRoute,
+        &[&str],
+        &[SpecKind],
+        &str,
+    ); 4] = [
+        (
+            ImpactLevel::Micro,
+            WorkScale::Micro,
+            DesignRoute::CodingPlan,
+            &["requirement-analysis"],
+            &[SpecKind::RequirementAnalysis],
+            "b087c87c4b7009fdd894589691c0373a6b19232d03f5ac610b1029d5b4410f86",
+        ),
         (
             ImpactLevel::Low,
             WorkScale::Small,
             DesignRoute::CodingPlan,
             &["requirement-analysis", "coding-plan"],
-            "3d6a977aa6227f1b16f76da1d93dd1ecd2e3be51e82b48d32ccc803435bc9080",
+            &[SpecKind::RequirementAnalysis, SpecKind::CodingPlan],
+            "f48a40ea13aea1acc4f7a9a6a1c2f4fb7600610303896f6f61008e9c4b596c10",
         ),
         (
             ImpactLevel::Medium,
             WorkScale::Medium,
             DesignRoute::Story,
-            &["requirement-analysis", "story"],
-            "fcff5bd87e5ff17c72d6c4f1ff5943297aae872eefe24162c6037ef63edf369c",
+            &["requirement-analysis", "story", "testcase", "coding-plan"],
+            &[
+                SpecKind::RequirementAnalysis,
+                SpecKind::Story,
+                SpecKind::TestCase,
+                SpecKind::CodingPlan,
+            ],
+            "354d47fe9c27f4354a95f233734f72e931b74b62e65a93cff7d7cbd624319908",
         ),
         (
             ImpactLevel::High,
             WorkScale::Large,
             DesignRoute::Dr,
-            &["requirement-analysis", "design-review", "story"],
-            "c9158b4706a06bf46592fc513d495adf73899aae3432b8d840eda8525243800c",
+            &[
+                "requirement-analysis",
+                "design-review",
+                "story",
+                "testcase",
+                "coding-plan",
+            ],
+            &[
+                SpecKind::RequirementAnalysis,
+                SpecKind::DesignReview,
+                SpecKind::Story,
+                SpecKind::TestCase,
+                SpecKind::CodingPlan,
+            ],
+            "90d5a2be7b8fb140c9f392ed19117791bb72d145fa7200072f4c77d1f7b1b696",
         ),
     ];
-    for (level, scale, design_route, series, digest) in cases {
+    for (level, scale, design_route, series, spec_kinds, digest) in cases {
         let decision = engine
             .decide(&route_input(
                 9_000,
@@ -358,7 +427,17 @@ fn existing_impact_mappings_and_decision_digests_are_unchanged() {
             .iter()
             .map(SeriesKind::as_str)
             .collect();
-        assert_eq!(names, series);
+        assert_eq!(names, series, "{level:?} requiredSeries matches §7.1");
+        assert_eq!(
+            decision.required_spec_kinds(),
+            spec_kinds,
+            "{level:?} requiredSpecKinds matches the §7.1 最低持久化设计产物 column"
+        );
+        assert_eq!(
+            decision.task_kind(),
+            TaskKind::Implementation,
+            "the decision freezes the task kind it was given, it does not invent one"
+        );
         assert_eq!(decision.decision_digest().to_string(), digest);
     }
     // Missing facts keep the frozen low mapping and never default to micro.
@@ -369,7 +448,7 @@ fn existing_impact_mappings_and_decision_digests_are_unchanged() {
     assert_eq!(missing.scale(), WorkScale::Small);
     assert_eq!(
         missing.decision_digest().to_string(),
-        "ab0732b90c76c219004782b0a957a95a537a36d9aa267c5d948999c9e9c54844"
+        "074932c8b3738fd177015c8fc1a5a3ce5af6a7aaeb2251a520f37b76f4e07707"
     );
 }
 
@@ -396,5 +475,53 @@ fn route_engine_configuration_and_errors_are_explicit() {
         RouteEngineError::DecisionContract(RouteDecisionError::MissingReason),
     ] {
         assert!(!error.to_string().is_empty());
+    }
+}
+
+/// The baseline flow is `RA → DR → N × (Story → TestCase → CodingPlan)`, so a
+/// route that requires a Story requires its TestCase too. `classify_impacts`
+/// omitted `testcase`, and the handoff gates that Series behind
+/// `requires("testcase")` reading this very field — so a medium or large route
+/// went straight from Story to CodingPlan and no delegation ever produced a
+/// TestCase. Backfilling stored state patched existing Work Items only; new
+/// ones need the mapping itself fixed.
+#[test]
+fn story_bearing_routes_require_a_testcase_series() {
+    let engine = RouteEngine::default();
+    for (level, expected) in [
+        (
+            ImpactLevel::Medium,
+            vec!["requirement-analysis", "story", "testcase", "coding-plan"],
+        ),
+        (
+            ImpactLevel::High,
+            vec![
+                "requirement-analysis",
+                "design-review",
+                "story",
+                "testcase",
+                "coding-plan",
+            ],
+        ),
+    ] {
+        let decision = engine
+            .decide(&route_input(
+                9_000,
+                vec![ImpactFact::new(
+                    ReasonCode::new("impact.scope").expect("impact code"),
+                    level,
+                    None,
+                )],
+            ))
+            .expect("route decision");
+        let names: Vec<&str> = decision
+            .required_series()
+            .iter()
+            .map(SeriesKind::as_str)
+            .collect();
+        assert_eq!(
+            names, expected,
+            "a route that requires a Story must require its TestCase: {level:?}"
+        );
     }
 }

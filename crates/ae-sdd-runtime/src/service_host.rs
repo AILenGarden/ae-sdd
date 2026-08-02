@@ -1,6 +1,38 @@
 use super::*;
 
+use crate::{RootSeriesDelegationPayload, grant::semantic_series_grant};
 use ae_sdd_domain::DEFAULT_CHILD_SUMMARY_MAX_BYTES;
+
+const DEFAULT_SERIES_DELEGATION_TTL_MS: u64 = 30 * 60 * 1_000;
+
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FlowDelegationIntent {
+    schema_version: String,
+    workspace_id: String,
+    work_item_id: String,
+    decision_digest: String,
+    series_kind: String,
+    state_revision: u64,
+    input_fingerprint: String,
+    required_artifacts: Vec<String>,
+    /// The `seriesRunId` this attempt replaces, when the flow decided a retry.
+    ///
+    /// `#[serde(default)]` keeps intents committed before this field readable.
+    #[serde(default)]
+    retry_of_series_run_id: Option<String>,
+    /// The Flow Run this attempt belongs to (§4.2 `FR -> Series Run`).
+    ///
+    /// Taken from the committed flow decision rather than from the caller: a Root
+    /// that could name the Flow Run could attach an attempt to a run it does not
+    /// belong to, which would corrupt the execution tree that line 767 requires
+    /// stay uncontaminated across retries.
+    ///
+    /// Optional because state written before run identity existed carries none, and
+    /// D-03 item 6 forbids substituting a blank for missing data.
+    #[serde(default)]
+    flow_run_id: Option<String>,
+}
 
 impl RuntimeService {
     pub(super) fn host_register(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
@@ -90,8 +122,7 @@ impl RuntimeService {
     pub(super) fn host_pressure(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
         let payload: HostPressurePayload = decode_value(params.payload.clone())?;
-        self.host
-            .require_registered(&payload.adapter_id)?;
+        self.host.require_registered(&payload.adapter_id)?;
         let session_id = SessionId::from_str(&identity.session_id)
             .map_err(|_| schema_error("sessionId is not a UUID"))?;
         let decision = self.context.observe_pressure(session_id, &payload)?;
@@ -112,7 +143,12 @@ impl RuntimeService {
 
     pub(super) fn delegation_create(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
         let identity = self.session_identity(params, false)?;
-        let payload: DelegationCreatePayload = decode_value(params.payload.clone())?;
+        let payload = if identity.role == WireAgentRole::Root {
+            let reference: RootSeriesDelegationPayload = decode_value(params.payload.clone())?;
+            self.root_series_delegation_payload(params, &identity, &reference)?
+        } else {
+            decode_value(params.payload.clone())?
+        };
         // Schema bounds are validated before any host capability check so an
         // oversized briefing fails closed as a schema error, never as an
         // unrelated capability denial.
@@ -513,6 +549,178 @@ impl RuntimeService {
             })
     }
 
+    fn capture_flow_delegation_intent(
+        &self,
+        params: &RequestParams<Value>,
+        result: &Value,
+    ) -> RuntimeResult<()> {
+        let action_kind = result.pointer("/nextAction/kind").and_then(Value::as_str);
+        let workspace_id = require(&params.workspace_id, "workspaceId")?.to_owned();
+        let work_item_id = require(&params.work_item_id, "workItemId")?.to_owned();
+        let decision_digest = result
+            .get("decisionDigest")
+            .and_then(Value::as_str)
+            .ok_or_else(|| schema_error("delegate-series flow decision lacks decisionDigest"))?
+            .to_owned();
+        let (series_kind, required_artifacts) = match action_kind {
+            Some("delegate-series") => {
+                let series_kind = result
+                    .pointer("/nextAction/seriesKind")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| schema_error("delegate-series flow decision lacks seriesKind"))?
+                    .to_owned();
+                let required_artifacts = result
+                    .pointer("/nextAction/requiredArtifacts")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        schema_error("delegate-series flow decision lacks requiredArtifacts")
+                    })?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_owned)
+                            .ok_or_else(|| schema_error("requiredArtifacts must contain strings"))
+                    })
+                    .collect::<RuntimeResult<Vec<_>>>()?;
+                (series_kind, required_artifacts)
+            }
+            Some("await-agent-work") => match result.get("phase").and_then(Value::as_str) {
+                Some("coding") => ("coding".to_owned(), Vec::new()),
+                Some("test-running") => ("testing".to_owned(), Vec::new()),
+                _ => return Ok(()),
+            },
+            Some("execute-approved-slice")
+                if result.get("phase").and_then(Value::as_str) == Some("coding") =>
+            {
+                ("coding".to_owned(), Vec::new())
+            }
+            _ => return Ok(()),
+        };
+        let state_revision = result
+            .get("stateRevision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| schema_error("delegate-series flow decision lacks stateRevision"))?;
+        let intent = FlowDelegationIntent {
+            schema_version: "flow-delegation-intent/v1".to_owned(),
+            workspace_id: workspace_id.clone(),
+            work_item_id: work_item_id.clone(),
+            // `ae-sdd-daemon-audit-report.md` F-10: these are two different
+            // proofs. The decision digest proves *which* decision the daemon
+            // made; the input fingerprint proves *what state, documents and
+            // rules* it stood on. Copying the digest here collapsed both into
+            // one, so a Spec edit or state advance under an unchanged decision
+            // became undetectable. The flow decision already carries its own
+            // `inputFingerprint`; fall back to the digest only for pre-F-10
+            // decisions that never emitted one.
+            input_fingerprint: result
+                .get("inputFingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or(&decision_digest)
+                .to_owned(),
+            decision_digest: decision_digest.clone(),
+            series_kind,
+            state_revision,
+            retry_of_series_run_id: result
+                .get("retryOfSeriesRunId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            // Captured from the committed decision so the attempt is attached to the
+            // Flow Run the daemon was actually on, not one a caller could name.
+            flow_run_id: result
+                .get("flowRunId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            required_artifacts,
+        };
+        self.persistence.store_record(
+            "flow-delegation-intent/v1",
+            &flow_delegation_intent_key(&workspace_id, &work_item_id, &decision_digest),
+            &to_value(intent)?,
+        )
+    }
+
+    fn root_series_delegation_payload(
+        &self,
+        params: &RequestParams<Value>,
+        identity: &TrustedSession,
+        reference: &RootSeriesDelegationPayload,
+    ) -> RuntimeResult<DelegationCreatePayload> {
+        let work_item_id = require(&params.work_item_id, "workItemId")?;
+        let value = self
+            .persistence
+            .load_record(
+                "flow-delegation-intent/v1",
+                &flow_delegation_intent_key(
+                    &identity.workspace_id,
+                    work_item_id,
+                    &reference.flow_decision_digest,
+                ),
+            )?
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::DelegationAttestationFailed,
+                    "Root delegation reference does not name a committed flow intent",
+                )
+            })?;
+        let intent: FlowDelegationIntent = decode_value(value)?;
+        // F-10: the fingerprint is deliberately *not* compared against the
+        // decision digest. Requiring equality was the read half of the same
+        // conflation — it forced every committed intent to carry a fingerprint
+        // that proved nothing beyond the decision it already named, and it would
+        // now reject any intent carrying a genuine input fingerprint. The
+        // fingerprint is still bound: it is committed with the intent and
+        // re-checked by the delegation supervisor against the child record.
+        if intent.workspace_id != identity.workspace_id
+            || intent.work_item_id != work_item_id
+            || intent.decision_digest != reference.flow_decision_digest
+            || intent.input_fingerprint.is_empty()
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "committed flow delegation intent has inconsistent authority bindings",
+            ));
+        }
+        let deadline_unix_ms = self
+            .clock
+            .now_unix_ms()
+            .checked_add(DEFAULT_SERIES_DELEGATION_TTL_MS)
+            .ok_or_else(|| schema_error("Series delegation deadline overflow"))?;
+        let briefing = if intent.required_artifacts.is_empty() {
+            format!("Execute the daemon-committed {} Series", intent.series_kind)
+        } else {
+            format!(
+                "Execute the daemon-committed {} Series and produce {}",
+                intent.series_kind,
+                intent.required_artifacts.join(", ")
+            )
+        };
+        Ok(DelegationCreatePayload {
+            child_role: WireAgentRole::Series,
+            parent_delegation_id: None,
+            input_revision: intent.state_revision,
+            input_fingerprint: intent.input_fingerprint,
+            deadline_unix_ms,
+            // Retry lineage is authority, not a root preference. It is read from
+            // the committed flow intent for the same reason role, grant, revision
+            // and deadline are: a root that could name its own predecessor could
+            // forge a retry chain, or attach this attempt to a run in another
+            // Work Item. The daemon still mints the new run identity itself.
+            retry_of_series_run_id: intent.retry_of_series_run_id.clone(),
+            // Same reasoning as the retry lineage: the Flow Run comes from the
+            // committed intent, never from the root payload.
+            flow_run_id: intent.flow_run_id.clone(),
+            series_id: crate::supervisor::series_identity(
+                &intent.work_item_id,
+                &intent.series_kind,
+            ),
+            adapter_id: self.host.delegation_adapter()?,
+            grant: semantic_series_grant(),
+            briefing: Some(briefing),
+            asset_refs: None,
+        })
+    }
+
     pub(super) fn authoritative_business(
         &self,
         method: RpcMethod,
@@ -579,6 +787,9 @@ impl RuntimeService {
             )
         {
             self.refresh_work_item_contexts(workspace_id, work_item_id)?;
+        }
+        if method == RpcMethod::FlowNext {
+            self.capture_flow_delegation_intent(params, &result)?;
         }
         Ok(result)
     }
@@ -798,6 +1009,14 @@ impl RuntimeService {
         )?;
         Ok(())
     }
+}
+
+fn flow_delegation_intent_key(
+    workspace_id: &str,
+    work_item_id: &str,
+    decision_digest: &str,
+) -> String {
+    format!("{workspace_id}\0{work_item_id}\0{decision_digest}")
 }
 
 #[derive(Deserialize, serde::Serialize)]

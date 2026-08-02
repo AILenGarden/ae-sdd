@@ -175,6 +175,52 @@ impl NativeBusinessAdapter {
 
     /// Returns the long-lived authoritative Gate runtime for one workspace
     /// and Work Item, building it on first use. The cached runtime carries no
+    /// Writes the `flow_run/v1` projection for a freshly created Work Item.
+    ///
+    /// D-03 item 5 and `ae-sdd-daemon-design.md` §4.2 require the execution flow
+    /// tree be separately queryable from the Spec graph and the delegation tree,
+    /// and line 767 adds that the three must not pollute each other across Series
+    /// retries. Before this, a Flow Run existed only as a `flowRunId` string inside
+    /// `state.json`, so "list the runs of this Work Item" had no answer at all.
+    ///
+    /// Keyed by `FlowRunId` rather than Work Item precisely because §4.1 lets one
+    /// Work Item run many times: a Work Item key would hold only the newest run.
+    ///
+    /// A replay reports the identity the first create minted, so the upsert is
+    /// idempotent and does not fabricate a second run for one Hook event
+    /// (§7 rule 9). Legacy state carries no `flowRunId`; the response omits the
+    /// field in that case and this writes nothing, because D-03 item 6 forbids
+    /// inventing an identity for data that never had one.
+    fn record_flow_run_projection(
+        &self,
+        workspace_id: &str,
+        response: &Value,
+    ) -> RuntimeResult<()> {
+        let data = match response.get("data") {
+            Some(data) => data,
+            None => return Ok(()),
+        };
+        let (Some(flow_run_id), Some(work_item_id)) = (
+            data.get("flowRunId").and_then(Value::as_str),
+            data.get("stateMachineName").and_then(Value::as_str),
+        ) else {
+            return Ok(());
+        };
+        let projection = json!({
+            "schemaVersion": "flow_run/v1",
+            "workspaceId": workspace_id,
+            "flowRunId": flow_run_id,
+            "workItemId": work_item_id,
+            "entryNode": data.get("entryNode").cloned().unwrap_or(Value::Null),
+            "statePath": data.get("statePath").cloned().unwrap_or(Value::Null),
+        });
+        self.persistence.store_record(
+            "flow_run/v1",
+            &format!("{workspace_id}\0{flow_run_id}"),
+            &projection,
+        )
+    }
+
     /// fencing expectation: fencing stays a `GateKey` freshness dimension, so
     /// a lease rotation changes the key and re-evaluates instead of trusting
     /// a stale snapshot.
@@ -778,7 +824,9 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                 // guarantees the backend enforces; this one is guarded instead
                 // by exclusive-create on the state file itself.
                 if operation == OperationName::WorkItemCreate {
-                    return create_work_item(workspace, &request);
+                    let response = create_work_item(workspace, &request)?;
+                    self.record_flow_run_projection(&workspace.workspace_id, &response)?;
+                    return Ok(response);
                 }
                 let backend = ProjectBackend::open(self, workspace, params)?;
                 assert_story_scope(
@@ -3795,6 +3843,15 @@ fn create_work_item(
     state.insert("stateMachineId".to_owned(), json!(state_machine_id));
     state.insert("stateMachineName".to_owned(), json!(work_item_id));
     state.insert("stateUuid".to_owned(), json!(state_uuid));
+    // `ae-sdd-daemon-design.md` §4.1: the identity of one main-flow run,
+    // distinct from the Work Item that may run many times. It is minted here
+    // (§5.3 mints it once the bootstrap assessment validates) as a *time
+    // ordered* v7 so runs sort by creation. A retry must not reuse it; the
+    // sortability caveat is recorded in `host_coordinator.rs` — v7 orders by
+    // millisecond, so same-millisecond runs must be ordered by `eventSeq`
+    // rather than by identity.
+    let flow_run_id = Uuid::now_v7().to_string();
+    state.insert("flowRunId".to_owned(), json!(flow_run_id));
     state.insert("parentPrdId".to_owned(), Value::Null);
     state.insert("parentDrId".to_owned(), Value::Null);
     state.insert("activeStory".to_owned(), Value::Null);
@@ -3806,6 +3863,12 @@ fn create_work_item(
             "RA":format!("ae-sdd-doc/RA/{work_item_id}.md"),
             "DR":format!("ae-sdd-doc/DR/{work_item_id}.md"),
             "STORY":format!("ae-sdd-doc/Story/{work_item_id}.md"),
+            // TESTCASE is deliberately absent: a TestCase belongs to one Story,
+            // and no Story exists at Work Item creation. `document_path`
+            // derives `Test/{story}/{story}-testcase.md` from the active Story
+            // and records it on `storyStates[story].testCasePath`. A route-level
+            // key here would name one path for N Stories and let one Story's
+            // TestCase satisfy `G-04` for its siblings.
             "CODING_PLAN":format!("ae-sdd-doc/Coding/{work_item_id}/{work_item_id}-CodingPlan.md"),
         }),
     );
@@ -3897,9 +3960,14 @@ fn create_work_item(
         "revisionBefore": Value::Null,
         "revisionAfter": Value::Null,
         "receiptDigest": Value::Null,
+        // `flowRunId` is reported because it is minted inside this function and was
+        // otherwise unreachable: §4.2 requires `Work Item -> Flow Run`, and the run
+        // identity existed only inside `state.json`, so the execution flow tree had
+        // no queryable root. D-03 item 5 needs it here to write `flow_run/v1`.
         "data": {"workItemId": work_item_id, "stateMachineId": state_machine_id,
                  "stateMachineName": work_item_id,
                  "stateUuid": state_uuid, "entryNode": entry_node,
+                 "flowRunId": flow_run_id,
                  "statePath": format!(".auto-engineering/{state_machine_id}/state.json")},
     }))
 }
@@ -4254,23 +4322,20 @@ fn derive_document_tree(state: &Value) -> Value {
             })
             .unwrap_or_default()
     };
-    let prd = state
-        .get("prdState")
-        .and_then(Value::as_object)
-        .map(|prd| {
-            let doc_path = prd
-                .get("docPath")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .or_else(|| bound_path("PRD").map(str::to_owned))
-                .or_else(|| bound_path("RA").map(str::to_owned));
-            json!({
-                "docId": prd.get("docId").and_then(Value::as_str)
-                    .or_else(|| prd.get("prdId").and_then(Value::as_str)),
-                "docPath": doc_path,
-                "phase": prd.get("phase").cloned().unwrap_or(Value::Null),
-            })
-        });
+    let prd = state.get("prdState").and_then(Value::as_object).map(|prd| {
+        let doc_path = prd
+            .get("docPath")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| bound_path("PRD").map(str::to_owned))
+            .or_else(|| bound_path("RA").map(str::to_owned));
+        json!({
+            "docId": prd.get("docId").and_then(Value::as_str)
+                .or_else(|| prd.get("prdId").and_then(Value::as_str)),
+            "docPath": doc_path,
+            "phase": prd.get("phase").cloned().unwrap_or(Value::Null),
+        })
+    });
     let mut drs = Vec::new();
     if let Some(dr) = state.get("drState").and_then(Value::as_object) {
         let doc_path = dr
@@ -4435,15 +4500,31 @@ fn created_work_item_response(state: &Value) -> RuntimeResult<Value> {
     let state_machine_id = string("stateMachineId")?;
     let state_uuid = string("stateUuid")?;
     let entry_node = string("entryNode")?;
+    // A replay must report the Flow Run the first create minted, never a fresh
+    // one: §7 rule 9 requires that 同一 Hook event 重放不会重复创建 Work Item、
+    // Flow Run。 Read through the compatibility reader rather than `string`, since
+    // state written before `flowRunId` existed legitimately has none and D-03
+    // item 6 forbids materialising a blank identity for missing data. The field is
+    // therefore omitted rather than emitted empty, so a caller can tell "this run
+    // predates run identity" from "this run has identity ''".
+    let flow_run_id = flow_run_identity(state);
+    let mut data = json!({
+        "workItemId": work_item_id,
+        "stateMachineId": state_machine_id,
+        "stateMachineName": work_item_id,
+        "stateUuid": state_uuid,
+        "entryNode": entry_node,
+        "statePath": format!(".auto-engineering/{state_machine_id}/state.json"),
+    });
+    if let Some(flow_run_id) = flow_run_id {
+        data["flowRunId"] = json!(flow_run_id);
+    }
     Ok(json!({
         "changed": true,
         "revisionBefore": Value::Null,
         "revisionAfter": Value::Null,
         "receiptDigest": Value::Null,
-        "data": {"workItemId": work_item_id, "stateMachineId": state_machine_id,
-                 "stateMachineName": work_item_id,
-                 "stateUuid": state_uuid, "entryNode": entry_node,
-                 "statePath": format!(".auto-engineering/{state_machine_id}/state.json")},
+        "data": data,
     }))
 }
 
@@ -4469,6 +4550,28 @@ fn existing_state_directory(root: &Path, work_item: &str) -> RuntimeResult<bool>
         }
     }
     Ok(false)
+}
+
+/// Reads the flow run identity out of an authoritative state, tolerating states
+/// written before `flowRunId` existed.
+///
+/// D-03 requires a legacy compat read that never "隐式重建为空状态". Absence is
+/// reported as absence for a reason: a Work Item created before this field
+/// existed has no minted run identity, so returning a fresh UUID here would
+/// fabricate one — it would assert a run that never happened, and would answer
+/// differently on every call, which `ae-sdd-daemon-design.md` §4.1 forbids
+/// ("同一 run 恢复后保持不变"). A backfill is a *mutation*, not a read.
+///
+/// Returns `None` for legacy state, and `None` for a malformed value rather than
+/// guessing: a non-string `flowRunId` is not a usable identity either way, and
+/// the caller that needs one must mint and commit it explicitly.
+#[must_use]
+pub fn flow_run_identity(state: &Value) -> Option<String> {
+    state
+        .get("flowRunId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn read_state(workspace: &BusinessWorkspace, work_item: &str) -> RuntimeResult<LocatedState> {
@@ -4641,7 +4744,7 @@ fn route_pending_projection(state: &Value, work_item_id: &str) -> RuntimeResult<
         "nextAction":{
             "kind":"analyze-route",
             "workItemId":work_item_id,
-            "requiredFacts":["requestedIntent","impactFacts","classificationConfidenceBps"],
+            "requiredFacts":["requestedIntent","taskKind","impactFacts","classificationConfidenceBps"],
             "submit":{
                 "method":"operation.execute",
                 "operation":"route.decide",
@@ -4685,6 +4788,20 @@ fn decorate_route_handoff(
     state: &Value,
     current_review_input: Option<InputFingerprint>,
 ) -> RuntimeResult<Value> {
+    // The Flow Run this decision belongs to. `FlowSupervisor::projection` cannot
+    // supply it: the flow crate has no run identity at all, and the identity lives
+    // in project state, which only this adapter can read.
+    //
+    // Carried on the decision because a Series Run projection has to name its Flow
+    // Run to keep §4.2's execution tree connected, and the delegation that starts
+    // the attempt is derived from this decision. Omitted rather than blanked when
+    // absent, so state predating run identity stays distinguishable from a run
+    // whose identity is empty (D-03 item 6).
+    if let (Some(flow_run_id), Some(object)) =
+        (flow_run_identity(state), projection.as_object_mut())
+    {
+        object.insert("flowRunId".to_owned(), json!(flow_run_id));
+    }
     let next_action = if projection
         .pointer("/nextAction/kind")
         .and_then(Value::as_str)
@@ -4872,10 +4989,16 @@ fn route_handoff_action(state: &Value) -> RuntimeResult<Option<Value>> {
     if requires("design-review") && !committed("DR") {
         return Ok(Some(delegate("design-review", &["DR"])));
     }
-    if requires("story") && (!committed("STORY") || !committed("CODING_PLAN")) {
-        return Ok(Some(delegate("story", &["STORY", "CODING_PLAN"])));
+    // Story, TestCase and CodingPlan are independent Series in that order. A
+    // single `story` series owning `["STORY","CODING_PLAN"]` meant no delegation
+    // ever produced a TestCase, so the plan was written straight off the Story.
+    if requires("story") && !committed("STORY") {
+        return Ok(Some(delegate("story", &["STORY"])));
     }
-    if !requires("story") && !committed("CODING_PLAN") {
+    if requires("testcase") && !committed("TESTCASE") {
+        return Ok(Some(delegate("testcase", &["TESTCASE"])));
+    }
+    if !committed("CODING_PLAN") {
         return Ok(Some(delegate("coding-plan", &["CODING_PLAN"])));
     }
 
@@ -5383,6 +5506,10 @@ fn prepare_route_decision(
     let payload = &request.request().payload;
     let fingerprint_payload = json!({
         "requestedIntent":payload.get("requestedIntent"),
+        // §5.5 freezes `taskKind` on the decision, so it is part of what the route
+        // was decided *from*: two submissions differing only in task kind are
+        // different inputs and must not share a fingerprint.
+        "taskKind":payload.get("taskKind"),
         "availableArtifacts":payload.get("availableArtifacts").cloned().unwrap_or_else(|| json!([])),
         "impactFacts":payload.get("impactFacts"),
         "classificationConfidenceBps":payload.get("classificationConfidenceBps"),
@@ -5399,6 +5526,7 @@ fn prepare_route_decision(
         "workItemId":work_item_id.as_str(),
         "entryNode":"entry.route",
         "requestedIntent":payload.get("requestedIntent").cloned().unwrap_or(Value::Null),
+        "taskKind":payload.get("taskKind").cloned().unwrap_or(Value::Null),
         "availableArtifacts":payload.get("availableArtifacts").cloned().unwrap_or_else(|| json!([])),
         "impactFacts":payload.get("impactFacts").cloned().unwrap_or(Value::Null),
         "classificationConfidenceBps":payload.get("classificationConfidenceBps").cloned().unwrap_or(Value::Null),
@@ -6204,6 +6332,24 @@ fn apply_mutation(
                         Ok::<_, RuntimeError>(phase.to_owned())
                     })
                     .transpose()?;
+                // Resolved before the mutable borrow below, since both read
+                // `state`: a TestCase's destination is derived from the active
+                // Story and recorded on that Story's entry.
+                let testcase_binding = if intent == "TESTCASE" {
+                    let destination = document_path(state, "TESTCASE")?;
+                    let story = state
+                        .get("activeStory")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            schema_error(
+                                "a TestCase requires an active Story: it is a per-Story Spec",
+                            )
+                        })?
+                        .to_owned();
+                    Some((story, destination.as_str().to_owned()))
+                } else {
+                    None
+                };
                 let object = root_state_object_mut(state)?;
                 let documents = object
                     .entry("routeDocuments")
@@ -6249,6 +6395,23 @@ fn apply_mutation(
                             Value::String(doc_path.as_str().to_owned()),
                         );
                     }
+                }
+                // A TestCase records its destination on the owning Story, which
+                // is what `document.testcase.exists` reads. Without this the
+                // Gate would fall back to scanning and a sibling Story's
+                // document could answer for this one.
+                if let Some((story, destination)) = testcase_binding {
+                    let stories = object
+                        .entry("storyStates")
+                        .or_insert_with(|| json!({}))
+                        .as_object_mut()
+                        .ok_or_else(|| schema_error("storyStates must be an object"))?;
+                    stories
+                        .entry(story)
+                        .or_insert_with(|| json!({}))
+                        .as_object_mut()
+                        .ok_or_else(|| schema_error("storyStates entry must be an object"))?
+                        .insert("testCasePath".to_owned(), Value::String(destination));
                 }
             }
         }
@@ -6343,6 +6506,29 @@ fn document_target(
 }
 
 fn document_path(state: &Value, intent: &str) -> RuntimeResult<ProjectRelativePath> {
+    // TestCase belongs to one Story, so its destination is derived from the
+    // active Story rather than read from the route-level `documentPaths`:
+    // `ae-sdd-design.md` requires an independent `Story -> TestCase ->
+    // CodingPlan` subchain per Story, and one flat key cannot name N paths.
+    // A Story-level binding already recorded in `storyStates` wins, so a
+    // relocated document keeps its destination.
+    if intent == "TESTCASE" {
+        if let Some(story) = state.get("activeStory").and_then(Value::as_str) {
+            if let Some(bound) = state
+                .pointer(&format!("/storyStates/{story}/testCasePath"))
+                .and_then(Value::as_str)
+            {
+                return ProjectRelativePath::new(bound.to_owned()).map_err(domain_error);
+            }
+            return ProjectRelativePath::new(format!(
+                "ae-sdd-doc/Test/{story}/{story}-testcase.md"
+            ))
+            .map_err(domain_error);
+        }
+        return Err(schema_error(
+            "a TestCase requires an active Story: it is a per-Story Spec",
+        ));
+    }
     let value = state
         .get("documentPaths")
         .and_then(Value::as_object)
@@ -6938,10 +7124,16 @@ mod tests {
             })
         );
 
+        // The chain follows `LARGE_DR` in `ae-sdd-policy/src/transition.rs`:
+        // `dr-generated -> story-generated -> testcase-generated`. This table
+        // previously jumped straight from DR to TestCase, which contradicted
+        // both that authority and `ae-sdd-design.md`'s
+        // `RA -> DR -> N x (Story -> TestCase -> CodingPlan)`.
         for (current, expected) in [
             ("route-selected", "requirement-analyzed"),
             ("requirement-analyzed", "dr-generated"),
-            ("dr-generated", "testcase-generated"),
+            ("dr-generated", "story-generated"),
+            ("story-generated", "testcase-generated"),
             ("testcase-generated", "coding-process"),
             ("coding-process", "coding"),
         ] {
@@ -6961,6 +7153,65 @@ mod tests {
         assert_eq!(
             resume["submit"],
             json!({"method":"operation.execute","operation":"execution.resume"})
+        );
+    }
+
+    /// Bundling `["STORY","CODING_PLAN"]` into one `story` series skipped
+    /// TestCase entirely: no delegation ever produced it, so the plan was
+    /// written straight off the Story. The baseline requires an independent
+    /// TestCase Series between the two whenever a Story exists.
+    #[test]
+    fn route_handoff_requests_story_testcase_and_plan_as_independent_series() {
+        let mut state = json!({
+            "entryNode":"ROUTE",
+            "routeApproved":true,
+            "phase":"initialized",
+            "scale":"large",
+            "selectedDesign":"DR",
+            "routeDecision":{
+                "designRoute":"dr",
+                "requiredSeries":["requirement-analysis","design-review","story","testcase"]
+            },
+            "routeDocuments":{"RA":true,"DR":true},
+            "executionPlan":{"goal":"","approved":false}
+        });
+
+        let story = route_handoff_action(&state)
+            .expect("valid route state")
+            .expect("Story action");
+        assert_eq!(story["seriesKind"], "story");
+        assert_eq!(
+            story["requiredArtifacts"],
+            json!(["STORY"]),
+            "the Story series must not also own the CodingPlan"
+        );
+
+        state["routeDocuments"]["STORY"] = Value::Bool(true);
+        let testcase = route_handoff_action(&state)
+            .expect("valid route state")
+            .expect("TestCase action");
+        assert_eq!(
+            testcase["seriesKind"], "testcase",
+            "TestCase must be requested once the Story is committed"
+        );
+        assert_eq!(testcase["requiredArtifacts"], json!(["TESTCASE"]));
+
+        state["routeDocuments"]["TESTCASE"] = Value::Bool(true);
+        let plan = route_handoff_action(&state)
+            .expect("valid route state")
+            .expect("CodingPlan action");
+        assert_eq!(
+            plan["seriesKind"], "coding-plan",
+            "the CodingPlan follows TestCase as its own series"
+        );
+        assert_eq!(plan["requiredArtifacts"], json!(["CODING_PLAN"]));
+
+        state["routeDocuments"]["CODING_PLAN"] = Value::Bool(true);
+        assert_eq!(
+            route_handoff_action(&state)
+                .expect("valid route state")
+                .expect("plan preparation")["kind"],
+            "prepare-execution-plan"
         );
     }
 

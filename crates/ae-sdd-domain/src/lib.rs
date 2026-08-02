@@ -7,6 +7,7 @@ mod ids;
 mod lifecycle;
 mod path;
 mod refs;
+mod time;
 
 pub use counter::{
     ContextGeneration, ContextRevision, EventSequence, FencingToken, InventoryGeneration,
@@ -31,11 +32,13 @@ pub use gate::{
 pub use ids::{
     ArtifactKind, BootId, CancellationCode, CapabilityId, ClaimId, CompactId, ContextProjectionId,
     DelegationId, DeliverableId, ErrorCode, EventStoreId, EvidenceId, ExecutionSliceId,
-    FindingCode, GateId, HostAckId, HostActionId, JobId, LeaseId, OperationId, ProjectKey,
-    RequestId, SessionId, StoryId, TurnId, VerificationId, WorkItemId, WorkspaceId,
+    FindingCode, FlowRunId, GateId, HostAckId, HostActionId, InstructionId, JobId, LeaseId,
+    OperationId, ProjectKey, RequestId, SeriesRunId, SessionId, StoryId, TurnId, VerificationId,
+    WorkItemId, WorkspaceId,
 };
 pub use lifecycle::{
     CompletionDigestSet, CompletionMilestone, DesignRoute, ProcessPhase, WorkScale,
 };
 pub use path::{ProjectRelativePath, ProjectRelativePathError};
 pub use refs::{ArtifactRef, EvidenceRef};
+pub use time::EpochMillis;

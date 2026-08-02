@@ -105,18 +105,28 @@ locally.
 ## Declared Routes
 
 The Agent supplies intent and available facts; `FlowRuntime` selects and advances
-the route. The current methodology declares these minimum routes:
+the route. Requirement Analysis is the *first* business Series for every task,
+including self-update: the Hook records only a provisional `BootstrapAssessment`,
+and the authoritative `EngineeringRoute` is frozen after RA closes its input
+conflicts. The current methodology declares these minimum routes:
 
 | Size | Required design chain before Coding |
 | --- | --- |
-| large | Route -> Requirement Analysis -> DR/Story/CodingPlan -> approved `executionPlan` |
-| medium | Route -> Requirement Analysis -> Story/CodingPlan -> approved `executionPlan` |
-| small/micro | Route -> Requirement Analysis -> CodingPlan or Story-lite -> approved `executionPlan` |
+| large | RA -> DR -> N x (Story -> TestCase -> CodingPlan) -> approved `executionPlan` |
+| medium | RA -> Story -> TestCase -> CodingPlan -> approved `executionPlan` |
+| small | RA -> CodingPlan -> approved `executionPlan` |
+| micro | RA -> approved compact `state.executionPlan` |
 
-Requirement Analysis occurs after routing. Its conclusion may select DR, Story,
-or a compact `state.executionPlan`. RA, DR, and Story remain the core design
-documents; TestCase is optional for a genuinely complex verification matrix.
-Only the user can approve `executionPlan` or explicitly select the quick route.
+Wherever a Story exists, every Story runs its own independent
+`Story -> TestCase -> CodingPlan` subchain and its TestCase receipt binds that
+Story's identity — a sibling's TestCase never satisfies it. TestCase is neither
+optional nor conditional on matrix complexity, and it does not appear on the
+micro or small routes, which have no Story. Micro creates no separate CodingPlan
+Markdown; it uses the approved `state.executionPlan` alone. Only the user can
+approve `executionPlan`.
+
+> Terminology and route semantics follow `source/docs/ae-sdd-design.md` §2 and
+> §过程产物模型; this file only states how an Agent drives them.
 
 ## Hook Activation Semantics
 

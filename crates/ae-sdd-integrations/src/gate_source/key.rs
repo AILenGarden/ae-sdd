@@ -337,6 +337,9 @@ fn input_fingerprint(
             GateInputSelector::ChangedPaths => {
                 hash_changed_paths(&mut hasher, root, &located.value)?;
             }
+            GateInputSelector::ExecutionPlan => {
+                hash_source_reads(&mut hasher, root, &located.value)?;
+            }
             GateInputSelector::EvidenceLedger => {
                 hash_evidence_scope(&mut hasher, root, located, work_item)?;
             }
@@ -465,7 +468,11 @@ fn selector_file_scope(selector: GateInputSelector, relative: &str) -> bool {
         GateInputSelector::Story => {
             relative.starts_with("ae-sdd-doc/Story/")
                 || relative.starts_with("ae-sdd-doc/Task/")
-                || relative.starts_with("ae-sdd-doc/TestCase/")
+                // The canonical TestCase directory is `Test/` (`STORING.md`), not
+                // `TestCase/`. Scoping the wrong directory left the TestCase
+                // document out of the fingerprint, so deleting it did not change
+                // the Gate key and `G-04` reused a stale PASS.
+                || relative.starts_with("ae-sdd-doc/Test/")
         }
         GateInputSelector::Constraints => relative.starts_with("constraints/"),
         GateInputSelector::ThinkingEngine => relative.starts_with("source/"),
@@ -507,6 +514,52 @@ fn hash_changed_paths(hasher: &mut Sha256, root: &Path, state: &Value) -> Runtim
     for relative in paths {
         hash_part(hasher, relative.as_bytes());
         let path = root.join(&relative);
+        if path.is_file() {
+            hash_file_content(hasher, &path)?;
+        } else {
+            hash_part(hasher, b"<missing>");
+        }
+    }
+    Ok(())
+}
+
+/// Folds the plan's traced sources into the fingerprint.
+///
+/// `G-CODEPLAN-SRC` passes only while a `sourceReads` entry names a file that
+/// exists, so that file's presence is a Gate input. `sourceReads` may name any
+/// path, and the declared file scopes cover only fixed directories, so the
+/// paths are read from the plan itself — the same approach `hash_changed_paths`
+/// takes. Without this a traced source could be deleted and the Gate would
+/// reuse its stale PASS.
+fn hash_source_reads(hasher: &mut Sha256, root: &Path, state: &Value) -> RuntimeResult<()> {
+    let mut paths: Vec<String> = state
+        .pointer("/executionPlan/sourceReads")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths.dedup();
+    if paths.len() > CHANGED_PATH_LIMIT {
+        return Err(external(
+            "approved source reads exceed the fingerprint limit",
+        ));
+    }
+    for relative in paths {
+        hash_part(hasher, relative.as_bytes());
+        // `source_trace_complete` accepts an absolute path or one relative to
+        // the workspace root, so the fingerprint must resolve it the same way.
+        let candidate = Path::new(&relative);
+        let path = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            root.join(candidate)
+        };
         if path.is_file() {
             hash_file_content(hasher, &path)?;
         } else {

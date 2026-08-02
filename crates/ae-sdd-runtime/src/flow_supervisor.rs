@@ -820,7 +820,8 @@ mod tests {
         ContextBundleId, IdempotencyKey, MethodologyRef, MethodologyResolution, MethodologyVariant,
         OverrideDisposition, OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode,
         RetryPolicy, RouteDecision, RouteDecisionId, RouteDisposition, SchemaVersion, SeriesId,
-        SeriesInput, SeriesKind, SeriesPlan, SkillId, resource::ContextBundleRef,
+        SeriesInput, SeriesKind, SeriesPlan, SkillId, SpecKind, TaskKind,
+        resource::ContextBundleRef,
     };
     use ae_sdd_domain::{
         ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, DecisionDigest,
@@ -1061,6 +1062,7 @@ mod tests {
             SchemaVersion::V1,
             RouteDecisionId::new("route-flow-r7").expect("route id"),
             work_item_id.clone(),
+            TaskKind::Implementation,
             WorkScale::Medium,
             DesignRoute::Story,
             RouteDisposition::Approved,
@@ -1069,6 +1071,7 @@ mod tests {
                 SeriesKind::new("requirement-analysis").expect("series kind"),
                 SeriesKind::new("story").expect("series kind"),
             ],
+            vec![SpecKind::RequirementAnalysis, SpecKind::Story],
             InputFingerprint::digest(b"route input"),
             None,
             DecisionDigest::digest(b"route decision"),

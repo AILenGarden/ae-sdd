@@ -18,7 +18,8 @@ use ae_sdd_runtime::RuntimeConfig;
 use serde_json::{Value, json};
 
 use support::{
-    Harness, open_root_session, params, register_workspace, result, session_params, stable_error,
+    Harness, create_root_series_delegation, flow_decision_digest, open_root_session, params,
+    register_workspace, result, session_params, stable_error,
 };
 
 const ADAPTER: &str = "host-fresh";
@@ -42,28 +43,17 @@ fn a_freshly_connected_host_completes_the_delegation_chain() {
         Some("WORK"),
     );
 
-    let mut create = session_params(
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":5_000,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "fresh-create",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("fresh-create".to_owned());
-    let delegation = result(&harness.call(
-        &mut root_connection,
-        RpcMethod::DelegationCreate,
-        create,
-    ));
     let delegation_id = delegation["delegationId"]
         .as_str()
         .expect("delegation id")
@@ -94,7 +84,7 @@ fn a_freshly_connected_host_completes_the_delegation_chain() {
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000000603",
+            "claimId":action["claimId"],
             "actionId":action["actionId"],
             "childSessionId":CHILD,
             "expiresAtUnixMs":4_900
@@ -104,21 +94,17 @@ fn a_freshly_connected_host_completes_the_delegation_chain() {
     accept.workspace_id = Some(workspace.workspace_id.clone());
     accept.work_item_id = Some("WORK".to_owned());
     accept.idempotency_key = Some("fresh-accept".to_owned());
-    let accepted = result(&harness.call(
-        &mut root_connection,
-        RpcMethod::DelegationAccept,
-        accept,
-    ));
+    let accepted = result(&harness.call(&mut root_connection, RpcMethod::DelegationAccept, accept));
     assert_eq!(
         accepted["status"], "running",
         "the chain must complete with no registration step"
     );
 }
 
-/// S4-4: with several hosts attached, "not registered" alone does not say which
-/// recipient is missing, so the ID belongs in the message.
+/// S4-4: Root does not choose a Host recipient. With no Host attached, the
+/// daemon must fail closed instead of accepting caller-supplied authority.
 #[test]
-fn an_unknown_recipient_is_named_in_the_error() {
+fn delegation_fails_when_no_host_is_attached() {
     let harness = Harness::new(RuntimeConfig::default());
     let mut root_connection = harness.connection(ClientKind::Hook);
     let workspace = register_workspace(&harness, &mut root_connection, "unknown");
@@ -131,19 +117,27 @@ fn an_unknown_recipient_is_named_in_the_error() {
         Some("WORK"),
     );
 
+    let decision_digest = flow_decision_digest("unknown-create");
+    harness.business.set_flow_next_result(json!({
+        "schemaVersion":"flow-decision/v1",
+        "decisionDigest":decision_digest,
+        "stateRevision":1,
+        "phase":"initialized",
+        "nextAction":{
+            "kind":"delegate-series",
+            "seriesKind":"requirement-analysis",
+            "requiredArtifacts":["RA"]
+        }
+    }));
+    let mut next = session_params(&workspace, &root, "root-agent", json!({}), 1_000);
+    next.work_item_id = Some("WORK".to_owned());
+    result(&harness.call(&mut root_connection, RpcMethod::FlowNext, next));
+
     let mut create = session_params(
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"b".repeat(64),
-            "deadlineUnixMs":5_000,
-            "adapterId":"host-absent",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
+        json!({"flowDecisionDigest":decision_digest}),
         1_000,
     );
     create.work_item_id = Some("WORK".to_owned());
@@ -154,8 +148,8 @@ fn an_unknown_recipient_is_named_in_the_error() {
         .as_str()
         .unwrap_or_else(|| panic!("{response}"));
     assert!(
-        message.contains("host-absent"),
-        "the missing recipient must be named: {message}"
+        message.contains("no Host adapter is attached"),
+        "the missing Host must be explicit: {message}"
     );
 }
 
@@ -195,4 +189,3 @@ fn the_capability_matrix_method_no_longer_exists() {
         "an unknown method must fail to decode rather than acquire a default profile"
     );
 }
-

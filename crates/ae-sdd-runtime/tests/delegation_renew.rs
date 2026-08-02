@@ -18,7 +18,8 @@ use ae_sdd_runtime::RuntimeConfig;
 use serde_json::{Value, json};
 
 use support::{
-    Harness, open_root_session, params, register_workspace, result, session_params, stable_error,
+    Harness, create_root_series_delegation, open_root_session, params, register_workspace, result,
+    session_params, stable_error,
 };
 
 const ADAPTER: &str = "host-a";
@@ -35,7 +36,7 @@ struct Fixture {
 
 /// Drives create → ACK → accept so the delegation is `running`, which is the
 /// only state renewal applies to.
-fn running_delegation(suffix: &str, deadline_unix_ms: u64) -> Fixture {
+fn running_delegation(suffix: &str, _deadline_unix_ms: u64) -> Fixture {
     let harness = Harness::new(RuntimeConfig::default());
     let mut host = harness.connection(ClientKind::HostAdapter);
     let mut register = params(
@@ -57,25 +58,20 @@ fn running_delegation(suffix: &str, deadline_unix_ms: u64) -> Fixture {
         Some("WORK"),
     );
 
-    let mut create = session_params(
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":deadline_unix_ms,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        &format!("create-{suffix}"),
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some(format!("create-{suffix}"));
-    let delegation =
-        result(&harness.call(&mut root_connection, RpcMethod::DelegationCreate, create));
+    let deadline_unix_ms = delegation["deadlineUnixMs"]
+        .as_u64()
+        .expect("daemon-derived deadline");
     let delegation_id = delegation["delegationId"]
         .as_str()
         .expect("delegation id")
@@ -106,7 +102,7 @@ fn running_delegation(suffix: &str, deadline_unix_ms: u64) -> Fixture {
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000000503",
+            "claimId":action["claimId"],
             "actionId":action["actionId"],
             "childSessionId":CHILD,
             "expiresAtUnixMs":deadline_unix_ms - 100
@@ -140,9 +136,11 @@ fn renew(fixture: &mut Fixture, deadline: u64, key: &str) -> Value {
     );
     request.work_item_id = Some("WORK".to_owned());
     request.idempotency_key = Some(key.to_owned());
-    fixture
-        .harness
-        .call(&mut fixture.root_connection, RpcMethod::DelegationRenew, request)
+    fixture.harness.call(
+        &mut fixture.root_connection,
+        RpcMethod::DelegationRenew,
+        request,
+    )
 }
 
 #[test]
@@ -158,6 +156,20 @@ fn parent_extends_the_deadline_and_liveness_follows_the_new_value() {
     // Past the original deadline but inside the renewed one: the delegation is
     // still live, which is the whole point of renewal.
     fixture.harness.clock.set(fixture.created_deadline + 1_000);
+    let mut reopen = params(
+        json!({"externalKey":"root-external","role":"root","engaged":false}),
+        1_000,
+    );
+    reopen.workspace_id = Some(fixture.workspace.workspace_id.clone());
+    reopen.agent_id = Some("root-agent".to_owned());
+    reopen.work_item_id = Some("WORK".to_owned());
+    reopen.idempotency_key = Some("renew-happy-root-refresh".to_owned());
+    fixture.root = serde_json::from_value(result(&fixture.harness.call(
+        &mut fixture.root_connection,
+        RpcMethod::SessionOpen,
+        reopen,
+    )))
+    .expect("root refresh after the original delegation deadline");
     let status = result(&{
         let mut request = session_params(
             &fixture.workspace,
@@ -167,9 +179,11 @@ fn parent_extends_the_deadline_and_liveness_follows_the_new_value() {
             1_000,
         );
         request.work_item_id = Some("WORK".to_owned());
-        fixture
-            .harness
-            .call(&mut fixture.root_connection, RpcMethod::DelegationStatus, request)
+        fixture.harness.call(
+            &mut fixture.root_connection,
+            RpcMethod::DelegationStatus,
+            request,
+        )
     });
     assert_eq!(status["status"], "running");
     assert_eq!(status["deadlineUnixMs"], extended);
@@ -194,10 +208,13 @@ fn a_non_parent_session_cannot_renew() {
     child_open.session_id = Some(CHILD.to_owned());
     child_open.work_item_id = Some("WORK".to_owned());
     child_open.idempotency_key = Some("child-open".to_owned());
-    let child: ae_sdd_runtime::SessionResult = serde_json::from_value(result(&fixture
-        .harness
-        .call(&mut fixture.root_connection, RpcMethod::SessionOpen, child_open)))
-    .expect("child session decodes");
+    let child: ae_sdd_runtime::SessionResult =
+        serde_json::from_value(result(&fixture.harness.call(
+            &mut fixture.root_connection,
+            RpcMethod::SessionOpen,
+            child_open,
+        )))
+        .expect("child session decodes");
 
     let mut request = session_params(
         &fixture.workspace,
@@ -211,9 +228,11 @@ fn a_non_parent_session_cannot_renew() {
     );
     request.work_item_id = Some("WORK".to_owned());
     request.idempotency_key = Some("renew-as-child".to_owned());
-    let response = fixture
-        .harness
-        .call(&mut fixture.root_connection, RpcMethod::DelegationRenew, request);
+    let response = fixture.harness.call(
+        &mut fixture.root_connection,
+        RpcMethod::DelegationRenew,
+        request,
+    );
     assert_eq!(
         stable_error(&response),
         "ROLE_OPERATION_FORBIDDEN",
@@ -225,7 +244,11 @@ fn a_non_parent_session_cannot_renew() {
 fn a_deadline_in_the_past_or_beyond_the_lifetime_bound_is_refused() {
     let mut fixture = running_delegation("renew-bounds", 5_000);
 
-    let past = fixture.harness.clock.0.load(std::sync::atomic::Ordering::Acquire);
+    let past = fixture
+        .harness
+        .clock
+        .0
+        .load(std::sync::atomic::Ordering::Acquire);
     let response = renew(&mut fixture, past, "renew-past");
     assert_eq!(
         stable_error(&response),
@@ -276,25 +299,17 @@ fn only_a_running_delegation_can_be_renewed() {
         "root-external",
         Some("WORK"),
     );
-    let mut create = session_params(
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":5_000,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-state",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("create-state".to_owned());
-    let delegation =
-        result(&harness.call(&mut root_connection, RpcMethod::DelegationCreate, create));
 
     let mut request = session_params(
         &workspace,
@@ -325,9 +340,11 @@ fn renewal_leaves_the_attestation_and_grant_untouched() {
             1_000,
         );
         request.work_item_id = Some("WORK".to_owned());
-        fixture
-            .harness
-            .call(&mut fixture.root_connection, RpcMethod::DelegationStatus, request)
+        fixture.harness.call(
+            &mut fixture.root_connection,
+            RpcMethod::DelegationStatus,
+            request,
+        )
     });
 
     let extended = fixture.created_deadline + 60_000;

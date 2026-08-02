@@ -282,9 +282,7 @@ fn bind_host_credential(
 fn is_host_followup(method: RpcMethod) -> bool {
     matches!(
         method,
-        RpcMethod::HostActionNext
-            | RpcMethod::HostActionAck
-            | RpcMethod::HostPressureReport
+        RpcMethod::HostActionNext | RpcMethod::HostActionAck | RpcMethod::HostPressureReport
     )
 }
 

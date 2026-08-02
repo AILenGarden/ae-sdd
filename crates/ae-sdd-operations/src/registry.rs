@@ -229,8 +229,15 @@ const WORKITEM_CREATE: &[FieldSpec] = &[
     field("storyName", FieldKind::String, false),
     field("providedDocuments", FieldKind::Array, false),
 ];
+/// `taskKind` is required because §5.5 makes it one of the six facts the route
+/// decision freezes. It arrives as an input rather than being inferred: §5.3 keeps
+/// `BootstrapAssessment.task_kind_proposal` provisional until RA closes, so the
+/// caller reports what the assessment proposed and the decision promotes it. A
+/// route engine that invented the value would be fabricating the authoritative
+/// fact instead of freezing a reported one.
 const ROUTE_DECIDE: &[FieldSpec] = &[
     field("requestedIntent", FieldKind::String, true),
+    field("taskKind", FieldKind::String, true),
     field("availableArtifacts", FieldKind::Array, false),
     field("impactFacts", FieldKind::Array, true),
     field("classificationConfidenceBps", FieldKind::Integer, true),

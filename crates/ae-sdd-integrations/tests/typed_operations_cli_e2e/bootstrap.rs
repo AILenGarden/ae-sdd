@@ -302,6 +302,7 @@ fn ae_sdd_hook_bootstraps_route_and_exposes_the_requirement_analysis_handoff() {
             "operation":"route.decide",
             "payload":{
                 "requestedIntent":"repair the host bootstrap control plane",
+                "taskKind":"self_update",
                 "impactFacts":[{"code":"impact.cross_module","level":"medium"}],
                 "classificationConfidenceBps":9000
             },
@@ -627,10 +628,15 @@ fn a_caller_supplied_create_name_still_round_trips() {
     );
 }
 
-/// An ordinary typed `route.decide` whose only facts are `micro` must commit
-/// the micro scale on the normal RA/CodingPlan chain. This is not the explicit
-/// quick command: the committed state binds no user approval and carries no
-/// quick marker, and the flow handoff still delegates requirement-analysis.
+/// An ordinary typed `route.decide` whose only facts are `micro` must commit the
+/// micro scale at the shallowest design depth. This is not the explicit quick
+/// command: the committed state binds no user approval and carries no quick
+/// marker, and the flow handoff still delegates requirement-analysis.
+///
+/// `designRoute` stays `coding_plan` while `requiredSeries` and
+/// `requiredSpecKinds` carry RA alone — the two answer different questions.
+/// §7.1 line 342 requires no standalone CodingPlan Markdown for micro, so a
+/// CodingPlan Series here would produce the Spec the design excludes.
 #[test]
 fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
     let harness = Harness::new();
@@ -693,6 +699,7 @@ fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
             "operation":"route.decide",
             "payload":{
                 "requestedIntent":"rename one local helper and its comment",
+                "taskKind":"implementation",
                 "impactFacts":[{"code":"impact.local_rename","level":"micro"}],
                 "classificationConfidenceBps":9000
             },
@@ -722,10 +729,22 @@ fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
         routed["data"]["decision"]["designRoute"], "coding_plan",
         "{routed}"
     );
+    // §7.1 line 342: micro runs `RA -> executionPlan -> Coding` and 不要求独立
+    // CodingPlan Markdown, so no CodingPlan Series is delegated. The approved
+    // `executionPlan` in daemon state carries the plan instead.
     assert_eq!(
         routed["data"]["decision"]["requiredSeries"],
-        json!(["requirement-analysis", "coding-plan"]),
+        json!(["requirement-analysis"]),
         "{routed}"
+    );
+    assert_eq!(
+        routed["data"]["decision"]["requiredSpecKinds"],
+        json!(["requirement_analysis"]),
+        "micro binds the RA Spec only: {routed}"
+    );
+    assert_eq!(
+        routed["data"]["decision"]["taskKind"], "implementation",
+        "the decision freezes the reported task kind: {routed}"
     );
     // An ordinary approved micro route binds no user approval: there is no
     // approval shortcut behind the classification.

@@ -4,7 +4,9 @@
 
 ## 过程状态与文档边界
 
-`document_storage` 对 retired intent 保留 resolve/read 兼容，但 save/finalize 返回 E012；新写入只允许核心文档和显式可选文档。`state.json` 除 `executionPlan` 与 `review` 外，持有 `routeDecision` 与 `requirementSpec`，分别记录路由事实和需求说明书引用。新任务阶段为 `route-selected -> requirement-analyzed`，之后由 `routeDecision.selectedDesign` 选择 DR/Story/CodingPlan；旧 phase 仍兼容读取。evidence manifest 持有测试/交付证据。文档索引写入 `ae-sdd-doc/index.json`，不更新历史 `STORING.md`。
+目标流程语义以 [`ae-sdd-design.md`](ae-sdd-design.md) 和 [`ae-sdd-daemon-design.md`](ae-sdd-daemon-design.md) 为准：统一 intake 后记录 provisional `BootstrapAssessment`，所有任务先创建 RA SeriesRun，RA 完成并关闭冲突后才冻结 `EngineeringRoute`。规模子链为 micro `executionPlan`、small `CodingPlan`、medium `Story -> TestCase -> CodingPlan`、large `DR -> N x (Story -> TestCase -> CodingPlan)`；self-update 也先 RA。`state` 保存 execution projection、批准和稳定引用，Spec 正文由 document storage 以 `DocumentId/DocumentVersionId/contentDigest` 管理，测试/交付证据进入 evidence manifest。
+
+当前生产实现仍保留 `route-selected -> requirement-analyzed`、`routeDecision.selectedDesign=DR|STORY|CODING_PLAN`、entryNode/nested state 和路径型文档索引。这些是本轮迁移基线，不是目标 authority；详见 [`ae-sdd-daemon-audit-report.md`](ae-sdd-daemon-audit-report.md)。旧 phase/state 仅兼容读取，不能据此继续扩展新流程。
 
 ## 当前 Rust Runtime 实现基线
 
@@ -123,7 +125,7 @@ harness/                        派生适配层，不手工改生成物
 | daemon 入口 | `bins/ae-sdd-daemon/src/main.rs` | 单例守护、allowed-root 准入、endpoint manifest 发布、actor 装配 | 新 RPC method 必须先定 owner/schema/权限/deadline，见 `constraints/api.md` |
 | 协议层 | `crates/ae-sdd-protocol` | frame、handshake、capability token、RpcMethod 注册表、wire DTO | 字段变更须同步 operation schema digest 与 compatibility manifest |
 | 传输与 IPC | `crates/ae-sdd-integrations`（`ipc.rs` / `endpoint.rs`） | Named Pipe/UDS、endpoint token、连接准入 | 禁 TCP listener；token 不入日志/SQLite |
-| 状态机 | `crates/ae-sdd-flow` + `crates/ae-sdd-policy/src/transition.rs` | phase、route、series 调度、合法 transition 判定 | 改 phase 链需同步 gates/policy/tests |
+| 流程控制 | `crates/ae-sdd-flow` + `crates/ae-sdd-policy/src/transition.rs` | 目标为 BootstrapAssessment、RA-first EngineeringRoute、typed SeriesPlan/SeriesRun 与合法 subnode transition；当前静态 phase/route 链是迁移基线 | 改流程须同步 contracts/gates/policy/store/context/delegation/tests，Story 分支固定 `Story -> TestCase -> CodingPlan` |
 | StateStore | `crates/ae-sdd-store`（`authority.rs` / `lease.rs` / `journal.rs`） | allowed-root、lease、fencing、revision CAS、idempotency、mutation journal、atomic persistence | 所有 mutation 必须经此层；并发/过期/损坏需 fail-closed 测试 |
 | Typed operations | `crates/ae-sdd-operations/src/registry.rs` | 23 个 operation 的 registry、schema、describe/execute | 新 operation 必须有 schema、稳定错误码、测试，并同步 manifest 计数 |
 | 门禁 | `crates/ae-sdd-gates`（`registry.rs` / `evaluator.rs` / `scheduler.rs`） | 36 个 Gate 注册表、DAG、有界调度、G-RA 单一 RA resolver | 改门禁需同步 UC-02/UC-03 与 focused tests；G-RA-1~6/FLOW 不得各自猜 RA |
@@ -197,7 +199,7 @@ harness/                        派生适配层，不手工改生成物
 | `.ae-sdd/state.json` | 不再作为 active state、mirror 或 fallback；旧项目残留文件只能视为历史数据，不得参与新状态解析 |
 | `.ae-sdd/session-context/` | 会话级 work-item 绑定缓存；`UserPromptSubmit` 从当前 prompt/cwd 解析真实 work-item 并写入，`PreToolUse` 只用同一 session key 读取，禁止跨会话共享 |
 | `.ae-sdd/.hook-activity/` | session 级 turn token；只记录激活时间、最近时间和来源，不保存 prompt 正文；Stop 成功或普通新 prompt 清理；不参与 Work Item lease |
-| `.auto-engineering/{workItemKey}/state.json` | work item 独立状态机；新建入口为 `operation.execute workitem.create`（workspace-scoped；`entryNode` 仅 PRD/DR/STORY；可省略 `workItemId`，由 daemon 铸造 `{entryNode}-{8 位小写 hex}` 业务键，响应 `data.workItemId` 为可寻址业务键、`data.stateMachineId` 为带 UUID 前缀的目录身份），目录名为 R6 顶层名（🆕 v3.10.1 带随机 UUID 前缀，如 `{uuid}-PRD-001`）；v3.11.3 可保存 StoryName/docPath 正文指针 |
+| `.auto-engineering/{workItemKey}/state.json` | Work Item 业务状态、committed event/projection 与稳定 artifact refs。当前 `entryNode=PRD/DR/STORY`、`stateMachine*`、nested state 和 UUID 前缀命名保留为迁移兼容；目标由统一 intake 铸造 WorkItemId/FlowRunId，文档类别只形成 Spec binding hint，不决定路线 |
 | `.ae-sdd/memory/` | 分区 compact 记忆；task(L1) 默认任务级、project(L2) 跨任务复用，UserPromptSubmit 任务优先注入并只用 project 补充 |
 | `.ae-sdd/plugins/` | 项目层插件注册 |
 | `.ae-sdd/cache/` | 工具链缓存，新增缓存优先放这里 |
@@ -212,9 +214,11 @@ harness/                        派生适配层，不手工改生成物
 
 Hook activation 与 Work Item state/lease 解耦：`prompt_inject` 仅在显式 `/ae-sdd` turn 创建 `.ae-sdd/.hook-activity/<session-hash>.json`，普通 prompt 先清理残留 token 后直接返回空 payload；`gate_intercept` 只对 active token 执行 phase/path/memory 门禁，并允许明确的 ae-sdd 写流程入口启动当前 turn；Stop CLI 在 active token 下执行 `stop_check`，成功或 fail-open 释放 token，阻断重试保留 token。旧 `.session-engaged` 文件不再作为激活依据。
 
-`crates/ae-sdd-domain/src/lifecycle.rs` 与 `crates/ae-sdd-flow` 保留状态字段、phase 流程和终态不变量；`crates/ae-sdd-store`（`authority.rs` / `lease.rs` / `journal.rs`）是所有 Work Item mutation 的唯一并发所有者。store 在构造、锁、lease、state 与临时替换文件处校验 resolved path 仍位于 allowed root；独占创建在事务锁内完成，已有 state 不覆盖。mutation 在同一 Work Item 锁内二次读取 lease/state，检查 fencing token 与 revision CAS，先写 `mutation-journal/v1` PREPARED entry，再用临时文件 + fsync + atomic replace 写回，最后落 COMMITTED receipt；lease 过期接管会递增 fencing token，重复 idempotency key 返回原结果。`phase`/`history` 表示生命周期主状态；`currentPhase`、`currentStep`、`completedSteps`、`pendingOutputs`、`codingRound` 是工作流投影字段，不能独立滞留在旧步骤。写入生命周期 phase 时必须级联同步投影，落盘前执行终态不变量校验。Story 正文绑定在嵌套 state 使用 `storyStates[storyId].storyName/docPath`，扁平兼容 state 使用 `storyName/storyDocPath`；绑定经短租约 mutation 写入，重复绑定不增加 revision。
+`crates/ae-sdd-store`（`authority.rs` / `lease.rs` / `journal.rs`）继续作为所有 Work Item mutation 的唯一并发所有者。store 在构造、锁、lease、state 与临时替换文件处校验 resolved path 仍位于 allowed root；独占创建在事务锁内完成，已有 state 不覆盖。mutation 在同一 Work Item 锁内二次读取 lease/state，检查 fencing token 与 revision CAS，先写 PREPARED journal，再用临时文件 + fsync + atomic replace 写回，最后落 COMMITTED receipt；lease 过期接管递增 fencing token，重复 idempotency key 返回原结果。这些能力原样保留。
 
-`routeDecision.selectedDesign` 的合法值为 `DR`、`STORY`、`CODING_PLAN`。读取侧必须先折叠 `-`、`_` 和空格再比较（`business.rs::normalize_route` 与 `lifecycle_authority.rs::normalize` 共用同一规则），否则分类器写出的 `CODING_PLAN` 会被判为非法路由。
+目标 reducer 从 committed event 投影 `currentMainNode/currentSeriesId/currentSeriesRunId/currentSubNode/pendingActions/pendingOutputs`；旧 `phase/history/currentPhase/currentStep/storyStates/storyName/docPath` 仅兼容读取或 UI projection。Spec binding 必须迁移为 DocumentId/DocumentVersionId 引用，执行流程树、Spec graph 与 delegation tree 分开持久化/投影。
+
+当前兼容字段 `routeDecision.selectedDesign` 的合法值仍是 `DR`、`STORY`、`CODING_PLAN`，读取侧继续规范化 `-`、`_` 和空格以读取旧 state。新写路径不得用该三值枚举表达完整路线；EngineeringRoute 必须输出 ordered typed Series plans，能区分 executionPlan、独立 CodingPlan、`Story -> TestCase -> CodingPlan`、`DR -> N` 个 Story 分支和 Update Series。
 
 新增项目侧文件必须说明是否可删、是否进入版本控制、是否参与 gate。
 

@@ -59,12 +59,16 @@ const G_DR: &[RequiredGate] = &[
     RequiredGate::G01,
     RequiredGate::GDrContext,
 ];
+// `GReviewDepth` is deliberately absent: it validates the v2 Tier 3 Review
+// authority, whose final proof must bind to a toolset verification receipt from
+// real test execution. A document phase has no code to execute, so requiring it
+// here made `StoryGenerated` unreachable for `scale=large` (which derives Tier 3
+// unconditionally). It stays required in `G_REVIEW`, where that receipt exists.
 const G_STORY: &[RequiredGate] = &[
     RequiredGate::G00,
     RequiredGate::G02,
     RequiredGate::G03,
     RequiredGate::GStoryContext,
-    RequiredGate::GReviewDepth,
 ];
 const G_TESTCASE: &[RequiredGate] = &[
     RequiredGate::G00,
@@ -382,6 +386,57 @@ mod tests {
             design_route: DesignRoute::Story,
             paused_from: None,
         }
+    }
+
+    /// `G-REVIEW-DEPTH` validates the v2 Tier 3 Review authority, which binds a
+    /// final proof to a *toolset verification receipt* produced by real test
+    /// execution. A document phase has no code to execute, so requiring it at
+    /// `StoryGenerated` made the phase structurally unreachable for large work
+    /// (`scale=large` derives Tier 3 unconditionally). It stays required at
+    /// `Review`, where that receipt genuinely exists.
+    #[test]
+    fn story_entry_gates_exclude_the_execution_review_depth_gate() {
+        // The live Work Item that surfaced this is scale=large / route=DR, which
+        // is exactly the combination that derives Tier 3 and therefore demands a
+        // toolset receipt.
+        let story = TransitionPolicy::authorize(TransitionContext {
+            actor_role: AgentRole::Root,
+            current: ProcessPhase::DrGenerated,
+            target: ProcessPhase::StoryGenerated,
+            scale: WorkScale::Large,
+            design_route: DesignRoute::Dr,
+            paused_from: None,
+        })
+        .expect("dr -> story transition is legal on the large DR route");
+
+        assert!(
+            !story.required_gates().contains(&RequiredGate::GReviewDepth),
+            "a document phase must not demand execution-time verification material"
+        );
+        for expected in [
+            RequiredGate::G00,
+            RequiredGate::G02,
+            RequiredGate::G03,
+            RequiredGate::GStoryContext,
+        ] {
+            assert!(
+                story.required_gates().contains(&expected),
+                "{expected:?} must stay required at StoryGenerated"
+            );
+        }
+
+        let review = TransitionPolicy::authorize(context(
+            AgentRole::Root,
+            ProcessPhase::TestRunning,
+            ProcessPhase::CodeReviewed,
+        ))
+        .expect("test-running -> code-reviewed transition is legal");
+        assert!(
+            review
+                .required_gates()
+                .contains(&RequiredGate::GReviewDepth),
+            "review depth must remain enforced where a toolset receipt exists"
+        );
     }
 
     #[test]

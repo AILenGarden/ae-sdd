@@ -279,12 +279,10 @@ fn validate_provided_documents(value: &Value) -> Result<(), OperationRequestErro
         let entry = entry
             .as_object()
             .ok_or_else(|| invalid("each providedDocuments entry must be an object"))?;
-        if let Some(unknown) = entry.keys().find(|key| {
-            !matches!(
-                key.as_str(),
-                "intent" | "docId" | "path" | "parentDocId"
-            )
-        }) {
+        if let Some(unknown) = entry
+            .keys()
+            .find(|key| !matches!(key.as_str(), "intent" | "docId" | "path" | "parentDocId"))
+        {
             return Err(invalid(&format!(
                 "providedDocuments entry contains unknown field {unknown}"
             )));
@@ -294,7 +292,9 @@ fn validate_provided_documents(value: &Value) -> Result<(), OperationRequestErro
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("providedDocuments.intent must be a string"))?;
         if !matches!(intent, "PRD" | "DR" | "STORY") {
-            return Err(invalid("providedDocuments.intent must be PRD, DR, or STORY"));
+            return Err(invalid(
+                "providedDocuments.intent must be PRD, DR, or STORY",
+            ));
         }
         let doc_id = entry
             .get("docId")
@@ -315,10 +315,10 @@ fn validate_provided_documents(value: &Value) -> Result<(), OperationRequestErro
         if parent.is_some() && intent == "PRD" {
             return Err(invalid("a PRD document cannot declare a parentDocId"));
         }
-        if parent.is_some_and(|parent| {
-            parent.as_str().is_none_or(str::is_empty)
-        }) {
-            return Err(invalid("providedDocuments.parentDocId must be non-empty text"));
+        if parent.is_some_and(|parent| parent.as_str().is_none_or(str::is_empty)) {
+            return Err(invalid(
+                "providedDocuments.parentDocId must be non-empty text",
+            ));
         }
         intents.push((intent, doc_id, parent.and_then(Value::as_str)));
     }

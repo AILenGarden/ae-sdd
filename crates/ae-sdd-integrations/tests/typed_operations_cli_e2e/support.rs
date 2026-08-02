@@ -523,15 +523,28 @@ fn open_delegated_child(
 ) -> (SessionResult, String) {
     let child_session_id = Uuid::new_v4().to_string();
     let ack_id = Uuid::new_v4().to_string();
-    let claim_id = Uuid::new_v4().to_string();
     let state_bytes = fs::read(&harness.state_path).expect("delegation state");
     let state: Value = serde_json::from_slice(&state_bytes).expect("delegation state JSON");
     let input_revision = state["revision"].as_u64().expect("delegation revision");
     let input_fingerprint = hex::encode(Sha256::digest(&state_bytes));
     let deadline_unix_ms = harness.now_unix_ms.saturating_add(60_000);
     let expires_at_unix_ms = harness.now_unix_ms.saturating_add(50_000);
-    let mut create = trusted_params(
-        parent_identity,
+    let create_payload = if parent_delegation_id.is_none() {
+        let flow = success(&call(
+            &harness.runtime,
+            cli,
+            RpcMethod::FlowNext,
+            trusted_params(parent_identity, json!({})),
+        ));
+        let kind = flow["nextAction"]["kind"].as_str();
+        assert!(
+            kind == Some("delegate-series")
+                || (kind == Some("await-agent-work")
+                    && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
+            "Root flow decision is not delegable: {flow}"
+        );
+        json!({"flowDecisionDigest":flow["decisionDigest"]})
+    } else {
         json!({
             "childRole":child_role,
             "parentDelegationId":parent_delegation_id,
@@ -540,8 +553,9 @@ fn open_delegated_child(
             "deadlineUnixMs":deadline_unix_ms,
             "adapterId":adapter_id,
             "grant":grant
-        }),
-    );
+        })
+    };
+    let mut create = trusted_params(parent_identity, create_payload);
     create.idempotency_key = Some(format!("{key}-create"));
     let created = success(&call(
         &harness.runtime,
@@ -574,7 +588,7 @@ fn open_delegated_child(
     assert_success(&call(&harness.runtime, host, RpcMethod::HostActionAck, ack));
     let mut accept = plain_params(json!({
         "delegationId":delegation_id,
-        "claimId":claim_id,
+        "claimId":action["claimId"],
         "actionId":action["actionId"],
         "childSessionId":child_session_id,
         "expiresAtUnixMs":expires_at_unix_ms

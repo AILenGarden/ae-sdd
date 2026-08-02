@@ -56,6 +56,37 @@ struct DurableDelegation {
     input_revision: u64,
     input_fingerprint: String,
     deadline_unix_ms: u64,
+    /// `ae-sdd-daemon-design.md` §4.1 / audit F-06: the identity of *this
+    /// attempt* at the logical Series. A `DelegationId` cannot stand in for it —
+    /// a retry produces a new delegation but stays the same logical Series, so
+    /// without a separate run identity the two attempts are only distinguishable
+    /// as unrelated delegations.
+    ///
+    /// `#[serde(default)]` so records written before this field remain readable;
+    /// D-03 forbids treating missing data as an empty rebuild, and an older
+    /// record legitimately has no attempt identity rather than a blank one.
+    #[serde(default)]
+    series_run_id: String,
+    /// The stable logical Series every attempt of it shares.
+    ///
+    /// Separate from `series_run_id` so "all attempts of this Series" is answerable
+    /// from a stored field rather than a walk of `retry_of` edges. The lookup itself
+    /// lives in the `series_run/v1` projection, which is keyed per attempt.
+    #[serde(default)]
+    series_id: String,
+    /// The Flow Run this attempt belongs to (§4.2 `FR -> Series Run`).
+    ///
+    /// `#[serde(default)]` so delegations written before run identity remain
+    /// readable; absent means "this delegation predates Flow Run identity", which
+    /// D-03 item 6 requires stay distinct from an empty identity.
+    #[serde(default)]
+    flow_run_id: Option<String>,
+    /// The `seriesRunId` this attempt replaces, absent on a first attempt.
+    ///
+    /// F-06 requires this to survive so "this Series was retried twice" is still
+    /// answerable after a restart.
+    #[serde(default)]
+    retry_of: Option<String>,
     /// Optional bounded briefing the child series was created with.
     #[serde(default)]
     briefing: Option<String>,
@@ -65,6 +96,9 @@ struct DurableDelegation {
     action_id: String,
     #[serde(default)]
     action_digest: String,
+    /// Digest of the daemon-issued, boot-local claim and its authority binding.
+    #[serde(default)]
+    claim_digest: String,
     #[serde(default)]
     created_at_unix_ms: u64,
     status: String,
@@ -79,6 +113,39 @@ struct DurableDelegation {
     artifact_receipt: Option<Value>,
     #[serde(default)]
     cleanup_receipt: Option<Value>,
+}
+
+/// Derives the *stable* logical Series identity.
+///
+/// D-03 item 3 separates this from the per-attempt run: every retry of one Series
+/// must resolve to the same value here, so it is derived from the facts that
+/// identify the Series rather than from anything attempt-specific.
+///
+/// Scope caveat: the flow decision currently names only a `seriesKind`, so this
+/// derives from Work Item plus kind. `ae-sdd-daemon-design.md` §7 runs Story and
+/// TestCase Series once *per Story*, which this cannot yet distinguish — those
+/// Series would collide on one identity. The extra dimension is deliberately not
+/// invented here, because the flow does not emit a Story target yet and a
+/// fabricated one would be wrong in a way no test could catch. When the target
+/// arrives it joins this derivation.
+pub(crate) fn series_identity(work_item_id: &str, series_kind: &str) -> String {
+    let digest =
+        Sha256::digest(format!("ae-sdd/series/v1:{work_item_id}:{series_kind}").as_bytes());
+    Uuid::from_slice(&digest[..16])
+        .expect("sha256 yields at least 16 bytes")
+        .to_string()
+}
+
+/// Derives the attempt identity from the daemon-issued delegation id.
+///
+/// Deterministic so an idempotent replay of one `delegation.create` yields the
+/// same attempt rather than a second phantom run, and namespaced so it can never
+/// collide with a delegation id in a query.
+fn series_run_identity(delegation_id: &str) -> String {
+    let digest = Sha256::digest(format!("ae-sdd/series-run/v1:{delegation_id}").as_bytes());
+    Uuid::from_slice(&digest[..16])
+        .expect("sha256 yields at least 16 bytes")
+        .to_string()
 }
 
 impl DelegationSupervisor {
@@ -148,6 +215,24 @@ impl DelegationSupervisor {
                 root_session_id: typed.root_session_id.clone(),
                 parent_session_id: typed.parent_session_id.clone(),
                 parent_delegation_id: typed.parent_delegation_id.clone(),
+                // Reconstructed from a typed projection, so it derives the same
+                // attempt identity the create path would have. The projection
+                // carries no retry edge, and inventing one would assert a
+                // predecessor that may not exist — D-03 forbids filling missing
+                // data with a fabricated value.
+                series_run_id: series_run_identity(&typed.delegation_id),
+                // A typed projection carries no Series kind, so the stable Series
+                // is genuinely unknown on this path. Left empty rather than
+                // derived from a guess: D-03 forbids substituting fabricated data
+                // for missing data, and a wrong Series id would silently merge two
+                // unrelated Series into one query result.
+                series_id: String::new(),
+                retry_of: None,
+                // Absent for the same reason `series_id` is empty: a typed
+                // projection carries no Flow Run, and attaching this attempt to a
+                // guessed run would put it in the wrong branch of §4.2's execution
+                // tree. `None` records "unknown", which is the truth here.
+                flow_run_id: None,
                 child_role: typed.role,
                 grant: grant.clone(),
                 input_revision: typed.input_revision,
@@ -157,6 +242,7 @@ impl DelegationSupervisor {
                 asset_refs: projection.asset_refs.clone(),
                 action_id: binding.host_action_id.clone(),
                 action_digest: binding.action_digest.clone(),
+                claim_digest: String::new(),
                 created_at_unix_ms: typed.created_at_unix_ms,
                 status: typed.status.clone(),
                 child_session_id: typed.child_session_id.clone(),
@@ -230,8 +316,7 @@ impl DelegationSupervisor {
         }
         let grant =
             crate::grant::validate_child_grant(parent_grant, payload.child_role, &payload.grant)?;
-        self.host
-            .require_registered(&payload.adapter_id)?;
+        self.host.require_registered(&payload.adapter_id)?;
         let workspace = self.typed_workspace(workspace_id)?;
         let parent = self.typed_session(parent_session_id)?;
         if parent.workspace_id != workspace_id || parent.role != parent_role {
@@ -284,6 +369,16 @@ impl DelegationSupervisor {
         )?;
         let action_digest =
             canonical_wire_digest(&serde_json::to_value(&action).map_err(canonical_error)?)?;
+        let claim_id = Uuid::new_v4().to_string();
+        let claim_digest = delegation_claim_digest(
+            &claim_id,
+            workspace_id,
+            &delegation_id,
+            &action.action_id,
+            payload.child_role,
+            parent_session_id,
+            payload.deadline_unix_ms,
+        )?;
         let published_action = action.clone();
         let record = DurableDelegation {
             schema_version: "delegation/v1".to_owned(),
@@ -297,10 +392,20 @@ impl DelegationSupervisor {
             input_revision: payload.input_revision,
             input_fingerprint: payload.input_fingerprint,
             deadline_unix_ms: payload.deadline_unix_ms,
+            // Each delegation *is* one physical attempt, so the run identity is
+            // minted here rather than supplied: a caller that could choose it
+            // could make a retry masquerade as the attempt it replaces. Derived
+            // from the daemon-issued delegation id so it is deterministic under
+            // idempotent replay of the same create.
+            series_run_id: series_run_identity(&delegation_id),
+            series_id: payload.series_id,
+            retry_of: payload.retry_of_series_run_id,
+            flow_run_id: payload.flow_run_id,
             briefing: payload.briefing,
             asset_refs: payload.asset_refs,
             action_id: action.action_id.clone(),
             action_digest: action_digest.clone(),
+            claim_digest,
             created_at_unix_ms: now_unix_ms,
             status: "spawning".to_owned(),
             child_session_id: None,
@@ -361,6 +466,8 @@ impl DelegationSupervisor {
                 committed_at_unix_ms: now_unix_ms,
             })?;
         self.save(&record)?;
+        self.host
+            .attach_claim(&published_action.action_id, claim_id)?;
         // The authoritative commit succeeded, so the action may now become
         // visible to its adapter. `publish` is idempotent, which keeps a replayed
         // create from queueing the same action twice.
@@ -432,6 +539,20 @@ impl DelegationSupervisor {
             .ok_or_else(|| attestation_error("host ACK is required before child claim"))?;
         let action = host_action_from_wire(&action_wire)?;
         let ack = host_ack_from_wire(&action_wire.adapter_id, &ack_wire)?;
+        let supplied_claim_digest = delegation_claim_digest(
+            claim_id,
+            workspace_id,
+            delegation_id,
+            action_id,
+            record.child_role,
+            &record.parent_session_id,
+            record.deadline_unix_ms,
+        )?;
+        if record.claim_digest.is_empty() || record.claim_digest != supplied_claim_digest {
+            return Err(attestation_error(
+                "child claim was not issued by the daemon for this delegation",
+            ));
+        }
         let claim = ChildClaim::new(
             ClaimId::from_str(claim_id).map_err(|_| attestation_error("invalid claim identity"))?,
             DelegationId::from_str(delegation_id)
@@ -999,7 +1120,81 @@ impl DelegationSupervisor {
     fn save(&self, record: &DurableDelegation) -> RuntimeResult<()> {
         let value = serde_json::to_value(record).map_err(canonical_error)?;
         self.persistence
-            .store_record("delegation/v1", &record.delegation_id, &value)
+            .store_record("delegation/v1", &record.delegation_id, &value)?;
+        self.save_series_run_projection(record)
+    }
+
+    /// Mirrors the delegation into the `series_run/v1` projection.
+    ///
+    /// D-03 item 5 and §4.2 require the execution flow tree be queryable apart from
+    /// the delegation tree, and line 767 requires Series retries not pollute it.
+    /// The delegation record cannot serve that query itself: it is keyed by
+    /// `delegationId`, so "every attempt of this Series" means listing all
+    /// delegations and filtering. This projection is keyed by `seriesRunId` and
+    /// carries `seriesId`, which is what makes the query direct.
+    ///
+    /// Written from `save` rather than only at create so the projection tracks the
+    /// attempt as it advances. §7 rule 18 requires a restart not resurrect an
+    /// unproven `running` Series as `completed`, which is only checkable if the
+    /// in-progress state is durable rather than inferred at the end.
+    ///
+    /// Skipped entirely when the delegation carries no Series identity — the typed
+    /// reconstruction path has neither a Series kind nor a Flow Run, and writing a
+    /// projection keyed on an empty identity would merge unrelated Series into one
+    /// row. Absent stays absent (D-03 item 6).
+    fn save_series_run_projection(&self, record: &DurableDelegation) -> RuntimeResult<()> {
+        if record.series_run_id.is_empty() || record.series_id.is_empty() {
+            return Ok(());
+        }
+        // `attemptOrdinal` is deliberately absent rather than guessed. The record
+        // knows only its immediate predecessor, so the ordinal would require walking
+        // the chain, and a fabricated 1 would claim a first attempt for every retry.
+        let projection = json!({
+            "schemaVersion": "series_run/v1",
+            "workspaceId": record.workspace_id,
+            "seriesRunId": record.series_run_id,
+            "seriesId": record.series_id,
+            "flowRunId": record.flow_run_id,
+            "retryOf": record.retry_of,
+            "delegationId": record.delegation_id,
+            "lifecycleState": series_lifecycle_state(&record.status),
+            "childRole": format!("{:?}", record.child_role).to_lowercase(),
+            "inputRevision": record.input_revision,
+            "inputFingerprint": record.input_fingerprint,
+            "createdAtUnixMs": record.created_at_unix_ms,
+        });
+        self.persistence.store_record(
+            "series_run/v1",
+            &format!("{}\0{}", record.workspace_id, record.series_run_id),
+            &projection,
+        )
+    }
+}
+
+/// Projects a delegation status onto the §11.2 conceptual lifecycle vocabulary.
+///
+/// The two vocabularies exist because they answer different questions: a delegation
+/// status describes the *Agent handoff*, while §11.2 describes the *Series*. Writing
+/// the mapping down once keeps them from drifting, the same reason
+/// `SeriesLifecycleState::to_receipt_status` exists.
+///
+/// `memory-cleaned` maps to `completed` rather than a state of its own: cleanup
+/// happens after the Series already reached a terminal outcome, so it says nothing
+/// about the Series. `opening` and `spawning` both precede a child claim, which
+/// §11.2 calls `spawn_requested` — and §7 rule 13 requires that a Series not show
+/// as `running` before the child claims it, so neither may map to `running`.
+fn series_lifecycle_state(status: &str) -> &'static str {
+    match status {
+        "opening" | "spawning" => "spawn_requested",
+        "running" => "running",
+        "result-staged" => "result_staged",
+        "artifacts-validated" => "validated",
+        "completed" | "memory-cleaned" => "completed",
+        "cancelled" => "cancelled",
+        // An unrecognised status is reported as unknown rather than coerced into a
+        // plausible neighbour: a new delegation status silently reading as `running`
+        // would let a supervisor believe an attempt is live when it is not.
+        _ => "unknown",
     }
 }
 
@@ -1073,6 +1268,28 @@ fn may_spawn(parent: WireAgentRole, child: WireAgentRole) -> bool {
                 WireAgentRole::Task | WireAgentRole::Reviewer
             )
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn delegation_claim_digest(
+    claim_id: &str,
+    workspace_id: &str,
+    delegation_id: &str,
+    action_id: &str,
+    child_role: WireAgentRole,
+    parent_session_id: &str,
+    deadline_unix_ms: u64,
+) -> RuntimeResult<String> {
+    canonical_wire_digest(&json!({
+        "domain":"delegation-issued-claim/v1",
+        "claimId":claim_id,
+        "workspaceId":workspace_id,
+        "delegationId":delegation_id,
+        "actionId":action_id,
+        "childRole":child_role,
+        "parentSessionId":parent_session_id,
+        "deadlineUnixMs":deadline_unix_ms,
+    }))
 }
 
 fn host_action_from_wire(value: &HostActionPayload) -> RuntimeResult<HostAction> {

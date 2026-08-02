@@ -758,6 +758,22 @@ pub struct HostActionPayload {
     pub deadline_unix_ms: u64,
 }
 
+/// Boot-local Host delivery envelope.
+///
+/// The durable action is flattened for wire compatibility. A create action
+/// additionally carries the daemon-issued child claim exactly once on the
+/// trusted Host lane; the raw claim is never part of the persisted action.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostActionDeliveryPayload {
+    /// Durable action fields.
+    #[serde(flatten)]
+    pub action: HostActionPayload,
+    /// Opaque child bootstrap claim, present only for a fresh create delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_id: Option<String>,
+}
+
 /// Host ACK wire payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -820,6 +836,30 @@ pub struct DelegationCreatePayload {
     pub input_fingerprint: String,
     /// Absolute claim/report deadline.
     pub deadline_unix_ms: u64,
+    /// The `seriesRunId` this attempt replaces, when the create is a retry.
+    ///
+    /// Audit F-06 requires a retry to create a new run and a new delegation while
+    /// preserving `retryOf`. Only the prior *run* is named here; the new run
+    /// identity is minted by the daemon so a caller cannot forge continuity.
+    #[serde(default)]
+    pub retry_of_series_run_id: Option<String>,
+    /// The stable logical Series this delegation is an attempt of.
+    ///
+    /// Computed by the daemon from the committed flow intent, which is the only
+    /// place that holds both the Work Item and the Series kind.
+    #[serde(default)]
+    pub series_id: String,
+    /// The Flow Run this attempt belongs to (`ae-sdd-daemon-design.md` §4.2).
+    ///
+    /// Read from the committed flow intent, never from the caller: line 767 requires
+    /// the execution tree stay uncontaminated across retries, which a root-supplied
+    /// run identity could violate by attaching an attempt to another run.
+    ///
+    /// `Option` because project state written before run identity existed carries
+    /// none. D-03 item 6 forbids reading missing data as an empty value, so an older
+    /// delegation legitimately has no Flow Run rather than a blank one.
+    #[serde(default)]
+    pub flow_run_id: Option<String>,
     /// Host adapter selected by policy.
     pub adapter_id: String,
     /// Parent-requested child scope, validated and narrowed by the daemon.
@@ -830,6 +870,18 @@ pub struct DelegationCreatePayload {
     /// Optional bounded asset references (no bodies) for the child series.
     #[serde(default)]
     pub asset_refs: Option<Vec<AssetRefWire>>,
+}
+
+/// Root request for one daemon-planned Series delegation.
+///
+/// All authority-bearing fields live in the committed flow intent. The Root
+/// echoes only its digest and cannot choose role, grant, revision, adapter, or
+/// deadline.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RootSeriesDelegationPayload {
+    /// Digest returned by the authoritative `flow.next` decision.
+    pub flow_decision_digest: String,
 }
 
 /// Child physical claim payload.

@@ -417,5 +417,4 @@ mod tests {
         assert_eq!(summary.session_id(), Some(request.session_id()));
         assert_eq!(summary.command_seq(), request.next_generation().get());
     }
-
 }

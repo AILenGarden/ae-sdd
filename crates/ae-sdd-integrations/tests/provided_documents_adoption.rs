@@ -1,10 +1,14 @@
 use std::fs;
 use std::sync::Arc;
 
-use ae_sdd_domain::{AgentRole, BootId, EventStoreId};
+use ae_sdd_domain::{AgentRole, BootId, EventStoreId, OperationId, ProjectPathScope, ScopedGrant};
 use ae_sdd_integrations::NativeBusinessAdapter;
-use ae_sdd_protocol::{PROTOCOL_VERSION_V1, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode};
-use ae_sdd_runtime::{BusinessOperationPort, BusinessWorkspace, MemoryPersistence, PersistencePort};
+use ae_sdd_protocol::{
+    PROTOCOL_VERSION_V1, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode,
+};
+use ae_sdd_runtime::{
+    BusinessOperationPort, BusinessWorkspace, MemoryPersistence, PersistencePort,
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -107,7 +111,11 @@ fn story(doc_id: &str, path: &str, parent: Option<&str>) -> Value {
     }
 }
 
-fn flow_snapshot(adapter: &NativeBusinessAdapter, workspace: &BusinessWorkspace, work_item: &str) -> Value {
+fn flow_snapshot(
+    adapter: &NativeBusinessAdapter,
+    workspace: &BusinessWorkspace,
+    work_item: &str,
+) -> Value {
     adapter
         .execute(
             RpcMethod::FlowSnapshot,
@@ -151,8 +159,7 @@ fn provided_documents_are_adopted_into_the_authoritative_tree() {
     assert_eq!(state["documentPaths"]["DR"], "docs/DR-001.md");
     assert_eq!(state["documentPaths"]["STORY"], "docs/STORY-001.md");
     assert_eq!(
-        state["documentPaths"]["RA"],
-        "ae-sdd-doc/RA/PRD-ADOPT-001.md",
+        state["documentPaths"]["RA"], "ae-sdd-doc/RA/PRD-ADOPT-001.md",
         "unprovided intents keep their minted defaults"
     );
     assert_eq!(state["routeDocuments"]["PRD"], true);
@@ -217,8 +224,7 @@ fn provided_documents_are_adopted_into_the_authoritative_tree() {
         )
         .expect("context projection succeeds");
     assert_eq!(
-        context.projection["flow"]["documentTree"]["prd"]["docId"],
-        "PRD-001",
+        context.projection["flow"]["documentTree"]["prd"]["docId"], "PRD-001",
         "the context projection exposes the same document tree"
     );
 }
@@ -311,8 +317,7 @@ fn dr_and_story_entries_fill_their_parent_links() {
     assert_eq!(state["drState"]["docPath"], "docs/DR-ADOPT-004.md");
     assert_eq!(state["drState"]["phase"], "dr-generated");
     assert_eq!(
-        state["drState"]["storyStates"]["STORY-001"]["docPath"],
-        "docs/STORY-001.md",
+        state["drState"]["storyStates"]["STORY-001"]["docPath"], "docs/STORY-001.md",
         "a Story whose parent is the item's own DR nests under drState"
     );
     assert!(
@@ -427,15 +432,302 @@ fn a_route_intake_skips_adopted_series_in_its_handoff() {
         "designRoute":"dr",
         "requiredSeries":["requirement-analysis","design-review","story"]
     });
-    fs::write(&state_path, serde_json::to_vec_pretty(&state).expect("state JSON"))
-        .expect("commit route decision fixture");
+    fs::write(
+        &state_path,
+        serde_json::to_vec_pretty(&state).expect("state JSON"),
+    )
+    .expect("commit route decision fixture");
 
     let snapshot = flow_snapshot(&adapter, &workspace, "ROUTE-ADOPT-001");
     assert_eq!(snapshot["nextAction"]["kind"], "delegate-series");
     assert_eq!(
-        snapshot["nextAction"]["seriesKind"], "story",
-        "adopted RA/DR series are skipped; the Story series is only delegated \
-         for the un-adoptable CODING_PLAN artifact"
+        snapshot["nextAction"]["seriesKind"], "coding-plan",
+        "adopted RA/DR/STORY series are skipped; only the un-adoptable \
+         CODING_PLAN artifact is still delegated, and it owns its own series \
+         now that Story/TestCase/CodingPlan are no longer bundled"
     );
     assert_eq!(snapshot["documentTree"]["drs"][0]["drId"], "DR-001");
+}
+
+/// `ae-sdd-daemon-design.md` §4.1 makes `FlowRunId` the identity of one main-flow
+/// run: minted by the daemon as a time-ordered UUID, never reused by a retry,
+/// preserved across recovery of the same run. §5.3 mints it right after the
+/// bootstrap assessment is validated.
+///
+/// The created state carried no such field, so nothing could name "this run" as
+/// distinct from the Work Item. Every run of one Work Item was indistinguishable,
+/// which is exactly what the retry and recovery rules need to tell apart.
+#[test]
+fn workitem_create_mints_a_time_ordered_flow_run_id() {
+    let root = TempDir::new().expect("temp dir");
+    let workspace = workspace(&root);
+    let adapter = adapter(&root);
+
+    let response = create(
+        &adapter,
+        &workspace,
+        "FLOWRUN-001",
+        json!({"entryNode":"ROUTE"}),
+    );
+    let state = read_state(&root, &response);
+
+    let flow_run_id = state["flowRunId"]
+        .as_str()
+        .expect("a created Work Item must name its first flow run");
+    let parsed = Uuid::parse_str(flow_run_id).expect("flowRunId must be a UUID");
+    assert_eq!(
+        parsed.get_version_num(),
+        7,
+        "§4.1 requires a time-ordered UUID so runs sort by creation, not v4"
+    );
+
+    let second = create(
+        &adapter,
+        &workspace,
+        "FLOWRUN-002",
+        json!({"entryNode":"ROUTE"}),
+    );
+    let second_state = read_state(&root, &second);
+    assert_ne!(
+        second_state["flowRunId"], state["flowRunId"],
+        "each run instance gets its own identity"
+    );
+}
+
+/// D-03 requires a legacy-state compat read that "禁止缺失数据时隐式重建为空状态".
+///
+/// A Work Item created before `flowRunId` existed genuinely has no recorded run
+/// identity. Two behaviours are both wrong: failing the read would strand every
+/// existing workspace, and minting an id on read would *fabricate* one — it would
+/// claim a run that was never minted, and would hand back a different answer on
+/// every read, breaking §4.1's "preserved across recovery of the same run".
+///
+/// The compat read must therefore report absence as absence.
+#[test]
+fn legacy_state_without_a_flow_run_id_reads_as_absent_not_as_a_fresh_identity() {
+    let root = TempDir::new().expect("temp dir");
+    let workspace = workspace(&root);
+    let adapter = adapter(&root);
+
+    let response = create(
+        &adapter,
+        &workspace,
+        "LEGACY-001",
+        json!({"entryNode":"ROUTE"}),
+    );
+    let state_path = root.path().join(
+        response["data"]["statePath"]
+            .as_str()
+            .expect("statePath is reported"),
+    );
+
+    // Roll the file back to its pre-`flowRunId` shape, which is exactly what an
+    // existing workspace has on disk today.
+    let mut state: Value =
+        serde_json::from_slice(&fs::read(&state_path).expect("state")).expect("json");
+    state
+        .as_object_mut()
+        .expect("state is an object")
+        .remove("flowRunId")
+        .expect("the created state had one to remove");
+    fs::write(&state_path, serde_json::to_vec(&state).expect("encode")).expect("write");
+
+    let first = ae_sdd_integrations::flow_run_identity(&state);
+    let second = ae_sdd_integrations::flow_run_identity(&state);
+
+    assert_eq!(
+        first, None,
+        "a legacy Work Item has no run identity, and the reader must not invent one"
+    );
+    assert_eq!(
+        first, second,
+        "repeated reads of one legacy state must agree; a minted-on-read id would not"
+    );
+
+    // And the read must still succeed end to end, not strand the workspace.
+    let mut authorised = workspace.clone();
+    authorised.agent_role = Some(AgentRole::Root);
+    authorised.agent_grant = Some(ScopedGrant::new(
+        [OperationId::new("workitem.get").expect("operation id")],
+        [],
+        [ProjectPathScope::ProjectRoot],
+    ));
+    let reread = adapter
+        .execute(
+            RpcMethod::OperationExecute,
+            &params(
+                Some("LEGACY-001"),
+                json!({"operation":"workitem.get","payload":{}}),
+                Some("legacy-get"),
+            ),
+            Some(&authorised),
+        )
+        .expect("a legacy state without flowRunId must still be readable");
+    assert_eq!(
+        reread["data"]["currentPhase"], "initialized",
+        "the legacy state's own phase must survive the read: {reread}"
+    );
+    assert!(
+        reread["data"]["flowRunId"].is_null(),
+        "and the read must not backfill a run identity it never minted: {reread}"
+    );
+}
+
+/// F-11 / D-01: `constraints/api.md` and the implementation disagreed on which
+/// `entryNode` values exist. The constraint said "仅 PRD/DR/STORY" while the
+/// `/ae-sdd` bootstrap created `entryNode=ROUTE`, so the declared API contract and
+/// the shipped behaviour described two different intake models.
+///
+/// This pins the set the unified intake actually accepts. It is a behavioural
+/// check rather than a doc parse: the constraint is prose, but a drift in either
+/// direction — losing `ROUTE`, or re-admitting the `BUG`/`CONFIG` micro entries
+/// that need a flat state this path does not build — now fails here with the
+/// constraint named.
+#[test]
+fn unified_intake_accepts_exactly_the_declared_entry_nodes() {
+    for accepted in ["ROUTE", "PRD", "DR", "STORY"] {
+        let root = TempDir::new().expect("temp dir");
+        let workspace = workspace(&root);
+        let adapter = adapter(&root);
+        let response = adapter.execute(
+            RpcMethod::OperationExecute,
+            &params(
+                Some(&format!("{accepted}-INTAKE-001")),
+                json!({"operation":"workitem.create","payload":{"entryNode":accepted}}),
+                Some(&format!("intake-{accepted}")),
+            ),
+            Some(&workspace),
+        );
+        assert!(
+            response.is_ok(),
+            "`constraints/api.md` declares {accepted} a valid entry node: {response:?}"
+        );
+    }
+
+    for rejected in ["BUG", "CONFIG"] {
+        let root = TempDir::new().expect("temp dir");
+        let workspace = workspace(&root);
+        let adapter = adapter(&root);
+        let response = adapter.execute(
+            RpcMethod::OperationExecute,
+            &params(
+                Some(&format!("{rejected}-INTAKE-001")),
+                json!({"operation":"workitem.create","payload":{"entryNode":rejected}}),
+                Some(&format!("intake-{rejected}")),
+            ),
+            Some(&workspace),
+        );
+        assert!(
+            response.is_err(),
+            "{rejected} runs the micro chain on a flat state, which this path does \
+             not build; accepting it would write a skeleton no reader expects"
+        );
+    }
+}
+
+/// Builds an adapter while keeping the persistence handle, so the test can query
+/// the runtime record namespaces the adapter writes.
+fn adapter_with_persistence(root: &TempDir) -> (NativeBusinessAdapter, Arc<MemoryPersistence>) {
+    let event_store_id = EventStoreId::from_uuid(Uuid::from_u128(22));
+    let persistence = Arc::new(MemoryPersistence::new(event_store_id));
+    let port: Arc<dyn PersistencePort> = Arc::clone(&persistence) as Arc<dyn PersistencePort>;
+    let adapter = NativeBusinessAdapter::new(
+        root.path().join("runtime.sqlite3"),
+        event_store_id,
+        BootId::from_uuid(Uuid::from_u128(23)),
+        "0".repeat(64),
+        port,
+    );
+    (adapter, persistence)
+}
+
+/// D-03 item 5 and §4.2: the execution flow tree must be separately queryable.
+///
+/// Before the `flow_run/v1` projection a Flow Run existed only as a string inside
+/// `state.json`, so "list the runs of this Work Item" had no answer — the run
+/// identity was minted and then became unreachable. §1.2 goal 4 requires each of
+/// the three relation families be independently queryable, and line 767 adds that
+/// they must not pollute one another.
+#[test]
+fn a_created_work_item_publishes_a_queryable_flow_run_projection() {
+    let root = TempDir::new().expect("temp dir");
+    let workspace = workspace(&root);
+    let (adapter, persistence) = adapter_with_persistence(&root);
+
+    let response = create(
+        &adapter,
+        &workspace,
+        "FLOWPROJ-001",
+        json!({"entryNode":"ROUTE"}),
+    );
+    let flow_run_id = response["data"]["flowRunId"]
+        .as_str()
+        .expect("the create response must report the run it minted");
+
+    let records = persistence
+        .list_records("flow_run/v1")
+        .expect("flow_run namespace is listable");
+    assert_eq!(
+        records.len(),
+        1,
+        "one create yields exactly one Flow Run projection"
+    );
+
+    let (key, projection) = &records[0];
+    assert!(
+        key.contains(flow_run_id),
+        "the projection is keyed by FlowRunId, not by Work Item: §4.1 lets one \
+         Work Item run many times, so a Work Item key would hold only the newest"
+    );
+    assert_eq!(projection["flowRunId"], json!(flow_run_id));
+    assert_eq!(projection["workItemId"], json!("FLOWPROJ-001"));
+    assert_eq!(projection["schemaVersion"], json!("flow_run/v1"));
+    assert_eq!(
+        projection["workspaceId"], workspace.workspace_id,
+        "the projection is workspace-scoped so two workspaces cannot collide"
+    );
+}
+
+/// §7 rule 9: 同一 Hook event 重放不会重复创建 Work Item、Flow Run。
+///
+/// Exercised through the *anonymous* create (`workItemId` omitted), which is the
+/// `/ae-sdd` bootstrap path and the only one that replays: a named duplicate is
+/// rejected as `ScopeAmbiguous` instead. Replay returns a different function's
+/// response (`created_work_item_response`), so it is a genuinely separate chance
+/// to mint a second run — without reading the stored identity back it would report
+/// a fresh one and the namespace would grow a phantom run per replayed Hook.
+#[test]
+fn replaying_a_create_does_not_publish_a_second_flow_run() {
+    let root = TempDir::new().expect("temp dir");
+    let workspace = workspace(&root);
+    let (adapter, persistence) = adapter_with_persistence(&root);
+
+    let anonymous = |key: &str| {
+        adapter
+            .execute(
+                RpcMethod::OperationExecute,
+                &params(
+                    None,
+                    json!({"operation":"workitem.create","payload":{"entryNode":"ROUTE"}}),
+                    Some(key),
+                ),
+                Some(&workspace),
+            )
+            .expect("anonymous workitem.create succeeds")
+    };
+    let first = anonymous("bootstrap-replay");
+    let second = anonymous("bootstrap-replay");
+
+    assert_eq!(
+        first["data"]["flowRunId"], second["data"]["flowRunId"],
+        "a replay must report the run the first create minted, not a new one"
+    );
+    assert_eq!(
+        persistence
+            .list_records("flow_run/v1")
+            .expect("listable")
+            .len(),
+        1,
+        "a replayed create must not add a phantom Flow Run"
+    );
 }

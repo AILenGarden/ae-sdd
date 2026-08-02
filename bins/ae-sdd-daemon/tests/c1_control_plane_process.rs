@@ -2087,7 +2087,7 @@ async fn open_review_lineage(
     root: &Identity,
     key: &str,
 ) -> ReviewLineage {
-    let adapter_id = format!("{key}-host");
+    let adapter_id = "codex".to_owned();
     let host = HostAdapter::register(state_dir, &adapter_id, &format!("{key}-host-register")).await;
 
     let (series, series_delegation) = open_delegated_child(
@@ -2166,15 +2166,31 @@ async fn open_delegated_child(
         .expect("delegation input revision");
     let input_fingerprint = InputFingerprint::digest(&state_bytes).to_string();
     let now = now_unix_ms();
-    let mut create = parent.params(json!({
-        "childRole":child_role,
-        "parentDelegationId":parent_delegation_id,
-        "inputRevision":input_revision,
-        "inputFingerprint":input_fingerprint,
-        "deadlineUnixMs":now.saturating_add(600_000),
-        "adapterId":adapter_id,
-        "grant":grant,
-    }));
+    let create_payload = if parent_delegation_id.is_none() {
+        let flow = cli
+            .call::<Value>(RpcMethod::FlowNext, parent.params(json!({})))
+            .await
+            .unwrap_or_else(|error| panic!("{key} flow decision is available: {error:?}"));
+        let kind = flow["nextAction"]["kind"].as_str();
+        assert!(
+            kind == Some("delegate-series")
+                || (kind == Some("await-agent-work")
+                    && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
+            "{key} flow decision is not delegable: {flow}"
+        );
+        json!({"flowDecisionDigest":flow["decisionDigest"]})
+    } else {
+        json!({
+            "childRole":child_role,
+            "parentDelegationId":parent_delegation_id,
+            "inputRevision":input_revision,
+            "inputFingerprint":input_fingerprint,
+            "deadlineUnixMs":now.saturating_add(600_000),
+            "adapterId":adapter_id,
+            "grant":grant,
+        })
+    };
+    let mut create = parent.params(create_payload);
     create.idempotency_key = Some(format!("{key}-create"));
     let created = cli
         .call::<Value>(RpcMethod::DelegationCreate, create)
@@ -2203,7 +2219,7 @@ async fn open_delegated_child(
 
     let mut accept = params(json!({
         "delegationId":delegation_id,
-        "claimId":Uuid::new_v4().to_string(),
+        "claimId":action["claimId"],
         "actionId":action["actionId"],
         "childSessionId":child_session_id,
         "expiresAtUnixMs":now.saturating_add(500_000),

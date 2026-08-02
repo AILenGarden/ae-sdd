@@ -13,7 +13,9 @@ use legacy::{
 };
 use serde_json::{Value, json};
 
-use support::{Harness, open_root_session, params, register_workspace, result, session_params};
+use support::{
+    Harness, create_root_series_delegation, open_root_session, params, register_workspace, result,
+};
 
 fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
     let values = values
@@ -74,24 +76,17 @@ fn review_abort_alias_cancels_one_attested_delegation_and_records_reason() {
         "legacy-root",
         Some("WORK"),
     );
-    let mut create = session_params(
+    let created = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":"host-legacy",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "legacy-delegation-create",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("legacy-delegation-create".to_owned());
-    let created = result(&harness.call(&mut root_connection, RpcMethod::DelegationCreate, create));
     let delegation_id = created["delegationId"]
         .as_str()
         .expect("delegation id")

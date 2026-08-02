@@ -18,7 +18,7 @@ pub mod resources;
 mod review_authority;
 mod watcher;
 
-pub use business::NativeBusinessAdapter;
+pub use business::{NativeBusinessAdapter, flow_run_identity};
 pub use command::{
     BoundedCommandOutput, BoundedCommandRunner, GitAdapter, HostProcessAdapter, ServiceAdapter,
     ToolchainAdapter,

@@ -3,13 +3,14 @@ use ae_sdd_contracts::{
     OverrideDisposition, OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode, RetryPolicy,
     RouteDecision, RouteDecisionId, RouteDisposition, SchemaVersion, SeriesId, SeriesInput,
     SeriesKind, SeriesPlan, SeriesPlanDecision, SeriesReceipt, SeriesReceiptStatus, SkillId,
-    resource::ContextBundleRef,
+    SpecKind, TaskKind, resource::ContextBundleRef,
 };
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, DecisionDigest,
     DelegationId, DeliverableContract, DeliverableId, DeliverableRequirement, DesignRoute,
     EventSequence, InputFingerprint, OperationId, ProcessPhase, ProjectPathScope,
-    ProjectRelativePath, ResultDigest, SessionId, StateRevision, WorkItemId, WorkScale,
+    ProjectRelativePath, ResultDigest, SeriesRunId, SessionId, StateRevision, WorkItemId,
+    WorkScale,
 };
 use ae_sdd_flow::{
     ControlAction, ControlPlaneError, ControlPlaneRuntime, SeriesPlanner, SeriesPlannerError,
@@ -97,6 +98,17 @@ fn candidate(
     (plan, resolution)
 }
 
+/// A fixed physical attempt id for receipts under test.
+///
+/// §9.1 line 452 requires the Series transaction define `seriesId/seriesRunId/
+/// workItemId`; these tests exercise one attempt, so a single constant keeps the
+/// receipts comparable while still naming the attempt.
+fn series_run_id() -> SeriesRunId {
+    "00000000-0000-0000-0000-0000000000a1"
+        .parse::<SeriesRunId>()
+        .expect("series run id")
+}
+
 fn series_input() -> SeriesInput {
     series_input_with_receipts(Vec::new())
 }
@@ -147,6 +159,7 @@ fn series_input_with_order(
         SchemaVersion::V1,
         RouteDecisionId::new("route-flow-r7").expect("route id"),
         work_item_id.clone(),
+        TaskKind::Implementation,
         WorkScale::Medium,
         DesignRoute::Story,
         RouteDisposition::Approved,
@@ -155,6 +168,7 @@ fn series_input_with_order(
             SeriesKind::new("requirement-analysis").expect("series kind"),
             SeriesKind::new("story").expect("series kind"),
         ],
+        vec![SpecKind::RequirementAnalysis, SpecKind::Story],
         InputFingerprint::digest(b"route input"),
         None,
         DecisionDigest::digest(b"route decision"),
@@ -206,6 +220,7 @@ fn running_series_is_awaited_without_duplicate_dispatch() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         plan.plan_digest(),
         SeriesReceiptStatus::Running,
         StateRevision::new(7),
@@ -254,6 +269,7 @@ fn staged_series_without_validation_or_cleanup_is_not_collectable() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         plan.plan_digest(),
         SeriesReceiptStatus::ResultStaged,
         StateRevision::new(7),
@@ -286,6 +302,7 @@ fn staged_series_is_collectable_only_after_validation_and_cleanup() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         plan.plan_digest(),
         SeriesReceiptStatus::ResultStaged,
         StateRevision::new(7),
@@ -328,6 +345,7 @@ fn collected_series_advances_to_the_next_route_candidate() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         plan.plan_digest(),
         SeriesReceiptStatus::Collected,
         StateRevision::new(7),
@@ -369,6 +387,7 @@ fn all_collected_series_complete_with_a_deterministic_projection_digest() {
             SeriesReceipt::new(
                 SchemaVersion::V1,
                 plan.series_id().clone(),
+                series_run_id(),
                 plan.plan_digest(),
                 SeriesReceiptStatus::Collected,
                 StateRevision::new(7),
@@ -409,11 +428,13 @@ fn unapproved_route_never_dispatches_a_series() {
         SchemaVersion::V1,
         RouteDecisionId::new("route-flow-await").expect("route id"),
         work_item_id.clone(),
+        TaskKind::Implementation,
         WorkScale::Large,
         DesignRoute::Dr,
         RouteDisposition::AwaitUserApproval,
         vec![ReasonCode::new("route.approval_required").expect("reason")],
         vec![SeriesKind::new("requirement-analysis").expect("series kind")],
+        vec![SpecKind::RequirementAnalysis],
         InputFingerprint::digest(b"route awaiting approval"),
         None,
         DecisionDigest::digest(b"route awaiting approval"),
@@ -461,6 +482,7 @@ fn orphan_receipt_is_rejected_instead_of_ignored() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         SeriesId::new("series-orphan-r7").expect("series id"),
+        series_run_id(),
         DecisionDigest::digest(b"orphan plan"),
         SeriesReceiptStatus::Running,
         StateRevision::new(7),
@@ -489,6 +511,7 @@ fn receipt_reusing_a_series_id_for_another_plan_is_rejected() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         DecisionDigest::digest(b"different plan"),
         SeriesReceiptStatus::Running,
         StateRevision::new(7),
@@ -517,6 +540,7 @@ fn receipt_from_another_state_revision_is_rejected_as_stale() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         plan.plan_digest(),
         SeriesReceiptStatus::Running,
         StateRevision::new(6),
@@ -545,6 +569,7 @@ fn receipt_from_another_input_fingerprint_is_rejected_as_stale() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         plan.plan_digest(),
         SeriesReceiptStatus::Running,
         StateRevision::new(7),
@@ -609,6 +634,7 @@ fn cancelled_required_series_is_a_terminal_planner_error() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         plan.series_id().clone(),
+        series_run_id(),
         plan.plan_digest(),
         SeriesReceiptStatus::Cancelled,
         StateRevision::new(7),
@@ -649,6 +675,7 @@ fn downstream_receipt_plan_conflict_is_rejected_before_dispatch() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         downstream.series_id().clone(),
+        series_run_id(),
         DecisionDigest::digest(b"wrong downstream plan"),
         SeriesReceiptStatus::Running,
         StateRevision::new(7),
@@ -677,6 +704,7 @@ fn downstream_terminal_receipt_halts_before_new_dispatch() {
     let receipt = SeriesReceipt::new(
         SchemaVersion::V1,
         downstream.series_id().clone(),
+        series_run_id(),
         downstream.plan_digest(),
         SeriesReceiptStatus::Failed,
         StateRevision::new(7),
@@ -709,6 +737,7 @@ fn complete_projection_digest_ignores_candidate_and_receipt_permutation() {
             SeriesReceipt::new(
                 SchemaVersion::V1,
                 plan.series_id().clone(),
+                series_run_id(),
                 plan.plan_digest(),
                 SeriesReceiptStatus::Collected,
                 StateRevision::new(7),

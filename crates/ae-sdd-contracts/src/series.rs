@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, ArtifactRef, DecisionDigest, DelegationId, DeliverableContract,
     DesignRoute, EventSequence, InputFingerprint, OperationId, ProcessPhase, ProjectPathScope,
-    ResultDigest, SessionId, StateRevision, StoryId, WorkItemId, WorkScale,
+    ResultDigest, SeriesRunId, SessionId, StateRevision, StoryId, WorkItemId, WorkScale,
 };
 use ae_sdd_protocol::ConfirmationRef;
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,175 @@ use thiserror::Error;
 
 use crate::{
     BoundedText, IdempotencyKey, MethodologyRef, MethodologyResolution, ReasonCode,
-    RouteDecisionId, SchemaVersion, SeriesId, SeriesKind, resource::ContextBundleRef, serde_domain,
+    RouteDecisionId, SchemaVersion, SeriesId, SeriesKind, SpecKind, intake::TaskKind,
+    resource::ContextBundleRef, serde_domain,
 };
+
+/// The frozen main-node vocabulary from `ae-sdd-daemon-design.md` §11.1, in
+/// flow order. These values *are* the logical `SeriesKind`s, so
+/// `currentMainNode` and `SeriesPlan.requiredSeries` draw from one list.
+///
+/// Two spellings are deliberately absent. `dr` is a [`DesignRoute`] value — a
+/// different axis — and the Series producing a DR document is `design-review`.
+/// The `{kind}-generate`/`-review`/`-update` split is a *sub-node* activity
+/// inside one Series, not a Series identity.
+///
+/// §11.1 states that rule against `routePredicates`, but the observed drift was
+/// in `seriesKind`: every predicate value in the frozen catalog was already a
+/// legal main node, while 13 of 15 Series entries spelled `seriesKind` as
+/// `{kind}-generate`. Both fields must draw from this list; only one had
+/// actually diverged.
+pub const MAIN_NODE_SERIES_KINDS: [&str; 8] = [
+    "requirement-analysis",
+    "design-review",
+    "story",
+    "testcase",
+    "coding-plan",
+    "coding",
+    "test",
+    "review",
+];
+
+/// The Series sub-node vocabulary, frozen here as the typed contract.
+///
+/// `ae-sdd-daemon-design.md` §11.1 lists these five values with "例如", so the
+/// design document presents them as illustrative rather than closed, and states
+/// no traversal order. The closure and the order are decided *here*: §11.2
+/// requires that concrete enumerations live in the typed contract rather than
+/// being copied from the conceptual text as unversioned strings, so a reader
+/// needing the authoritative list must find it in code. Extending this array is
+/// a contract change, not a documentation change.
+///
+/// These are activities *inside* one Series, not Series identities. That
+/// distinction is the reason `{kind}-generate`/`-review`/`-update` must never
+/// appear in [`MAIN_NODE_SERIES_KINDS`]: generating and reviewing a Story are
+/// two sub-nodes of the `story` Series, not two Series.
+///
+/// §11.1 does fix who may advance them: the main node moves only by FlowRuntime
+/// transition, while a sub-node advances on a valid Series event and still
+/// requires daemon validation.
+pub const SERIES_SUB_NODES: [&str; 5] = [
+    "resolve-spec",
+    "collect-context",
+    "draft",
+    "validate",
+    "await-user",
+];
+
+/// The frozen methodology-slice activity vocabulary.
+///
+/// This is the third axis, and it exists because the other two cannot express
+/// what a catalog entry is. A main node says *which* Series
+/// ([`MAIN_NODE_SERIES_KINDS`]); a sub-node says *where inside* one Series
+/// execution is ([`SERIES_SUB_NODES`]); an activity says *which skill role*
+/// serves that Series.
+///
+/// Three Story skills — generate, review, update — all serve the one `story`
+/// main node. Reusing [`SERIES_SUB_NODES`] here cannot separate them: both
+/// `story-generate` and `story-update` would map to `draft`, so
+/// `(seriesKind, subNode)` would not be unique and slice selection would fall
+/// back to catalog order. `(seriesKind, activity)` is unique across the frozen
+/// catalog.
+///
+/// `execute` covers a Series whose skill is the whole Series rather than one
+/// role within it (`requirement-analysis`, `coding`).
+pub const SERIES_ACTIVITIES: [&str; 5] = ["generate", "review", "update", "fix", "execute"];
+
+/// A skill role within one Series, parsed from [`SERIES_ACTIVITIES`].
+///
+/// This is an enum rather than a validated string because the vocabulary is
+/// closed and frozen: an unrecognised activity is a contract violation, not a
+/// value to carry forward.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SeriesActivity {
+    /// Produces the Series' primary artifact.
+    Generate,
+    /// Reviews an artifact this Series already produced.
+    Review,
+    /// Revises an artifact after review.
+    Update,
+    /// Remediates findings raised against an artifact.
+    Fix,
+    /// The skill is the whole Series rather than one role inside it.
+    Execute,
+}
+
+impl SeriesActivity {
+    /// Returns the frozen wire encoding.
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Generate => "generate",
+            Self::Review => "review",
+            Self::Update => "update",
+            Self::Fix => "fix",
+            Self::Execute => "execute",
+        }
+    }
+
+    /// Parses a frozen wire value.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "generate" => Some(Self::Generate),
+            "review" => Some(Self::Review),
+            "update" => Some(Self::Update),
+            "fix" => Some(Self::Fix),
+            "execute" => Some(Self::Execute),
+            _ => None,
+        }
+    }
+}
+
+/// A position inside one Series, parsed from [`SERIES_SUB_NODES`].
+///
+/// Kept as a separate axis from [`SeriesActivity`] because the two answer
+/// different questions and §11.1 keeps them apart: a sub-node is *where* a
+/// Series currently is, an activity is *which skill role* serves it. Collapsing
+/// them would make `draft` ambiguous between "the drafting position" and "the
+/// generating role", which is the confusion that produced `story-generate` as a
+/// `seriesKind`.
+///
+/// Serialized in `kebab-case`, matching the wire values in
+/// [`SERIES_SUB_NODES`] — `resolve-spec`, not `resolvespec`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SeriesSubNode {
+    /// Binding this Series to an existing Spec or reserving a new one (§8.1).
+    ResolveSpec,
+    /// Gathering the minimum premise context for the transaction (§9.2).
+    CollectContext,
+    /// Producing the Series' primary artifact.
+    Draft,
+    /// Checking the draft against the transaction and Gates.
+    Validate,
+    /// Blocked pending a user decision (§12.1).
+    AwaitUser,
+}
+
+impl SeriesSubNode {
+    /// Returns the frozen wire encoding.
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::ResolveSpec => "resolve-spec",
+            Self::CollectContext => "collect-context",
+            Self::Draft => "draft",
+            Self::Validate => "validate",
+            Self::AwaitUser => "await-user",
+        }
+    }
+
+    /// Parses a frozen wire value.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "resolve-spec" => Some(Self::ResolveSpec),
+            "collect-context" => Some(Self::CollectContext),
+            "draft" => Some(Self::Draft),
+            "validate" => Some(Self::Validate),
+            "await-user" => Some(Self::AwaitUser),
+            _ => None,
+        }
+    }
+}
 
 /// Maximum number of available artifacts supplied to Route classification.
 pub const MAX_ROUTE_ARTIFACTS: usize = 64;
@@ -136,6 +303,15 @@ pub struct RouteInput {
     work_item_id: WorkItemId,
     entry_node: ReasonCode,
     requested_intent: BoundedText<4096>,
+    /// The task kind proposed for this route.
+    ///
+    /// Carried as an *input* because §5.5 requires the decision freeze a
+    /// `taskKind`, and §5.3 keeps `BootstrapAssessment.task_kind_proposal`
+    /// provisional until RA closes. The engine is pure: if the kind were not an
+    /// input, `decide` could only invent it, which would make the frozen
+    /// authoritative fact a fabrication rather than a promotion of what the
+    /// assessment reported.
+    task_kind: TaskKind,
     available_artifacts: Vec<ArtifactRef>,
     impact_facts: Vec<ImpactFact>,
     classification_confidence_bps: u16,
@@ -151,6 +327,7 @@ impl RouteInput {
         work_item_id: WorkItemId,
         entry_node: ReasonCode,
         requested_intent: BoundedText<4096>,
+        task_kind: TaskKind,
         available_artifacts: Vec<ArtifactRef>,
         impact_facts: Vec<ImpactFact>,
         classification_confidence_bps: u16,
@@ -169,6 +346,7 @@ impl RouteInput {
             work_item_id,
             entry_node,
             requested_intent,
+            task_kind,
             available_artifacts,
             impact_facts,
             classification_confidence_bps,
@@ -195,6 +373,11 @@ impl RouteInput {
     /// Returns typed impact facts.
     pub fn impact_facts(&self) -> &[ImpactFact] {
         &self.impact_facts
+    }
+
+    /// Returns the proposed task kind the decision will freeze.
+    pub const fn task_kind(&self) -> TaskKind {
+        self.task_kind
     }
 
     /// Returns the optional explicit user approval reference.
@@ -227,6 +410,8 @@ struct RouteInputWire {
     work_item_id: WorkItemId,
     entry_node: ReasonCode,
     requested_intent: BoundedText<4096>,
+    #[serde(with = "serde_domain::task_kind")]
+    task_kind: TaskKind,
     #[serde(with = "serde_domain::artifact_refs")]
     available_artifacts: Vec<ArtifactRef>,
     impact_facts: Vec<ImpactFact>,
@@ -246,6 +431,7 @@ impl TryFrom<RouteInputWire> for RouteInput {
             value.work_item_id,
             value.entry_node,
             value.requested_intent,
+            value.task_kind,
             value.available_artifacts,
             value.impact_facts,
             value.classification_confidence_bps,
@@ -262,6 +448,7 @@ impl From<RouteInput> for RouteInputWire {
             work_item_id: value.work_item_id,
             entry_node: value.entry_node,
             requested_intent: value.requested_intent,
+            task_kind: value.task_kind,
             available_artifacts: value.available_artifacts,
             impact_facts: value.impact_facts,
             classification_confidence_bps: value.classification_confidence_bps,
@@ -297,6 +484,15 @@ pub enum RouteDecisionError {
     /// A Series kind appeared more than once.
     #[error("route decision contains a duplicate Series kind")]
     DuplicateSeries,
+    /// No Spec kind was required by the route.
+    ///
+    /// §5.4 makes RA the mandatory Series at every scale, so no route can require
+    /// zero Spec documents.
+    #[error("route decision must require at least one Spec kind")]
+    MissingSpecKinds,
+    /// A Spec kind appeared more than once.
+    #[error("route decision contains a duplicate Spec kind")]
+    DuplicateSpecKind,
     /// A collection exceeded its frozen v1 size budget.
     #[error("route decision exceeds a frozen v1 collection limit")]
     CollectionLimitExceeded,
@@ -306,6 +502,12 @@ pub enum RouteDecisionError {
 pub const MAX_ROUTE_REASON_CODES: usize = 32;
 /// Maximum number of required Series carried by one route decision.
 pub const MAX_REQUIRED_SERIES: usize = 32;
+/// Maximum number of required Spec kinds carried by one route decision.
+///
+/// `SpecKind` has five values, so a well-formed list cannot exceed five once
+/// duplicates are refused. The limit exists to bound a hostile payload before the
+/// duplicate check allocates, matching how the Series limit is applied.
+pub const MAX_REQUIRED_SPEC_KINDS: usize = 8;
 
 /// Deterministic route decision exchanged between route and Series ownership.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -314,11 +516,25 @@ pub struct RouteDecision {
     schema_version: SchemaVersion,
     decision_id: RouteDecisionId,
     work_item_id: WorkItemId,
+    /// The task nature frozen at route time (§5.5's first frozen fact).
+    ///
+    /// Frozen here rather than left on the intake proposal because
+    /// `BootstrapAssessment` carries it as `task_kind_proposal` — a *proposal* that
+    /// §5.3 keeps provisional until RA closes. Without freezing it onto the
+    /// decision, the authoritative task kind exists nowhere once RA has closed.
+    task_kind: TaskKind,
     scale: WorkScale,
     design_route: DesignRoute,
     disposition: RouteDisposition,
     reason_codes: Vec<ReasonCode>,
     required_series: Vec<SeriesKind>,
+    /// Spec documents this route requires be bound (§5.5's fifth frozen fact).
+    ///
+    /// Distinct from `required_series`, not a restatement of it: §7.1 line 342
+    /// gives a micro task Coding work with *no* standalone CodingPlan Spec, so one
+    /// list cannot carry both facts. Kept as a separate field for that reason even
+    /// where the two happen to agree.
+    required_spec_kinds: Vec<SpecKind>,
     input_fingerprint: InputFingerprint,
     approval_binding_digest: Option<ArtifactDigest>,
     decision_digest: DecisionDigest,
@@ -331,11 +547,13 @@ impl RouteDecision {
         schema_version: SchemaVersion,
         decision_id: RouteDecisionId,
         work_item_id: WorkItemId,
+        task_kind: TaskKind,
         scale: WorkScale,
         design_route: DesignRoute,
         disposition: RouteDisposition,
         reason_codes: Vec<ReasonCode>,
         required_series: Vec<SeriesKind>,
+        required_spec_kinds: Vec<SpecKind>,
         input_fingerprint: InputFingerprint,
         approval_binding_digest: Option<ArtifactDigest>,
         decision_digest: DecisionDigest,
@@ -346,8 +564,14 @@ impl RouteDecision {
         if required_series.is_empty() {
             return Err(RouteDecisionError::MissingSeries);
         }
+        // §5.4 makes RA 所有规模的必经 Series, so every route requires at least the
+        // RA Spec. An empty list would let a decision claim no document need exist.
+        if required_spec_kinds.is_empty() {
+            return Err(RouteDecisionError::MissingSpecKinds);
+        }
         if reason_codes.len() > MAX_ROUTE_REASON_CODES
             || required_series.len() > MAX_REQUIRED_SERIES
+            || required_spec_kinds.len() > MAX_REQUIRED_SPEC_KINDS
         {
             return Err(RouteDecisionError::CollectionLimitExceeded);
         }
@@ -355,15 +579,21 @@ impl RouteDecision {
         if unique_series.len() != required_series.len() {
             return Err(RouteDecisionError::DuplicateSeries);
         }
+        let unique_spec_kinds: BTreeSet<&SpecKind> = required_spec_kinds.iter().collect();
+        if unique_spec_kinds.len() != required_spec_kinds.len() {
+            return Err(RouteDecisionError::DuplicateSpecKind);
+        }
         Ok(Self {
             schema_version,
             decision_id,
             work_item_id,
+            task_kind,
             scale,
             design_route,
             disposition,
             reason_codes,
             required_series,
+            required_spec_kinds,
             input_fingerprint,
             approval_binding_digest,
             decision_digest,
@@ -405,6 +635,19 @@ impl RouteDecision {
         &self.required_series
     }
 
+    /// Returns the frozen task kind (§5.5's first frozen fact).
+    pub const fn task_kind(&self) -> TaskKind {
+        self.task_kind
+    }
+
+    /// Returns the Spec kinds this route requires be bound.
+    ///
+    /// Read this, not [`Self::required_series`], to answer "which documents must
+    /// exist": §7.1 line 342 gives micro a Coding Series with no CodingPlan Spec.
+    pub fn required_spec_kinds(&self) -> &[SpecKind] {
+        &self.required_spec_kinds
+    }
+
     /// Returns the input fingerprint bound to the decision.
     pub const fn input_fingerprint(&self) -> InputFingerprint {
         self.input_fingerprint
@@ -434,6 +677,8 @@ struct RouteDecisionWire {
     decision_id: RouteDecisionId,
     #[serde(with = "serde_domain::work_item_id")]
     work_item_id: WorkItemId,
+    #[serde(with = "serde_domain::task_kind")]
+    task_kind: TaskKind,
     #[serde(with = "serde_domain::work_scale")]
     scale: WorkScale,
     #[serde(with = "serde_domain::design_route")]
@@ -441,6 +686,7 @@ struct RouteDecisionWire {
     disposition: RouteDisposition,
     reason_codes: Vec<ReasonCode>,
     required_series: Vec<SeriesKind>,
+    required_spec_kinds: Vec<SpecKind>,
     #[serde(with = "serde_domain::input_fingerprint")]
     input_fingerprint: InputFingerprint,
     #[serde(
@@ -487,11 +733,13 @@ impl TryFrom<RouteDecisionWire> for RouteDecision {
             value.schema_version,
             value.decision_id,
             value.work_item_id,
+            value.task_kind,
             value.scale,
             value.design_route,
             value.disposition,
             value.reason_codes,
             value.required_series,
+            value.required_spec_kinds,
             value.input_fingerprint,
             value.approval_binding_digest,
             value.decision_digest,
@@ -505,11 +753,13 @@ impl From<RouteDecision> for RouteDecisionWire {
             schema_version: value.schema_version,
             decision_id: value.decision_id,
             work_item_id: value.work_item_id,
+            task_kind: value.task_kind,
             scale: value.scale,
             design_route: value.design_route,
             disposition: value.disposition,
             reason_codes: value.reason_codes,
             required_series: value.required_series,
+            required_spec_kinds: value.required_spec_kinds,
             input_fingerprint: value.input_fingerprint,
             approval_binding_digest: value.approval_binding_digest,
             decision_digest: value.decision_digest,
@@ -940,6 +1190,14 @@ pub enum SeriesReceiptError {
 pub struct SeriesReceipt {
     schema_version: SchemaVersion,
     series_id: SeriesId,
+    /// The physical attempt this receipt reports on.
+    ///
+    /// §9.1 line 452 requires the Series transaction define `seriesId/seriesRunId/
+    /// workItemId`. A receipt keyed only by `SeriesId` cannot say *which attempt*
+    /// produced the result, so §4.1's retry — a new `SeriesRunId` under the same
+    /// `SeriesId` — yielded two receipts that looked like restatements of one fact.
+    /// §11.4 then has to mark one stale, which requires telling them apart.
+    series_run_id: SeriesRunId,
     plan_digest: DecisionDigest,
     status: SeriesReceiptStatus,
     source_revision: StateRevision,
@@ -960,6 +1218,7 @@ impl SeriesReceipt {
     pub fn new(
         schema_version: SchemaVersion,
         series_id: SeriesId,
+        series_run_id: SeriesRunId,
         plan_digest: DecisionDigest,
         status: SeriesReceiptStatus,
         source_revision: StateRevision,
@@ -993,6 +1252,7 @@ impl SeriesReceipt {
         Ok(Self {
             schema_version,
             series_id,
+            series_run_id,
             plan_digest,
             status,
             source_revision,
@@ -1011,6 +1271,14 @@ impl SeriesReceipt {
     /// Returns the Series identity.
     pub const fn series_id(&self) -> &SeriesId {
         &self.series_id
+    }
+
+    /// Returns the physical attempt this receipt reports on.
+    ///
+    /// Read this, not [`Self::series_id`], to attribute a result to an attempt:
+    /// a retry shares the `SeriesId` and differs only here.
+    pub const fn series_run_id(&self) -> &SeriesRunId {
+        &self.series_run_id
     }
 
     /// Returns the lifecycle status.
@@ -1047,6 +1315,8 @@ impl<'de> Deserialize<'de> for SeriesReceipt {
 struct SeriesReceiptWire {
     schema_version: SchemaVersion,
     series_id: SeriesId,
+    #[serde(with = "serde_domain::series_run_id")]
+    series_run_id: SeriesRunId,
     #[serde(with = "serde_domain::decision_digest")]
     plan_digest: DecisionDigest,
     status: SeriesReceiptStatus,
@@ -1097,6 +1367,7 @@ impl TryFrom<SeriesReceiptWire> for SeriesReceipt {
         Self::new(
             value.schema_version,
             value.series_id,
+            value.series_run_id,
             value.plan_digest,
             value.status,
             value.source_revision,
@@ -1118,6 +1389,7 @@ impl From<SeriesReceipt> for SeriesReceiptWire {
         Self {
             schema_version: value.schema_version,
             series_id: value.series_id,
+            series_run_id: value.series_run_id,
             plan_digest: value.plan_digest,
             status: value.status,
             source_revision: value.source_revision,
@@ -1558,5 +1830,219 @@ mod optional_process_phase {
                 _ => Err(de::Error::custom("unknown process phase")),
             })
             .transpose()
+    }
+}
+
+/// The conceptual Series lifecycle of `ae-sdd-daemon-design.md` §11.2.
+///
+/// §11.2 closes with a direct instruction: "具体状态枚举属于 typed contract；实现
+/// 不得直接复制本图文本作为未版本化字符串状态机." This enum is that typed
+/// contract, which is why the states are variants rather than the diagram's
+/// strings.
+///
+/// Distinct from [`SeriesReceiptStatus`], which is a deliberately coarser
+/// *durable projection*: a receipt reports six observable outcomes, while this
+/// graph carries the eleven non-terminal positions a Series moves through.
+/// Collapsing them would lose the distinction between "planned but unbound" and
+/// "bound and ready", which is exactly what §8.1's spec-binding step decides.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeriesLifecycleState {
+    /// A plan exists.
+    Planned,
+    /// Waiting for the Spec binding of §8.1 to resolve or reserve a document.
+    AwaitingSpecBinding,
+    /// Bound and dispatchable.
+    Ready,
+    /// A spawn was requested of the Host adapter.
+    SpawnRequested,
+    /// A child claimed the delegation.
+    Claimed,
+    /// Physical Agent work is in progress.
+    Running,
+    /// Blocked pending a user ruling (§6.2 rule 4, §12.1).
+    AwaitingUser,
+    /// Blocked pending a Gate outcome.
+    AwaitingGate,
+    /// A further attempt is being prepared.
+    Retrying,
+    /// Results are staged for validation.
+    ResultStaged,
+    /// Results passed daemon validation.
+    Validated,
+    /// The Series closed successfully.
+    Completed,
+    /// Terminated by a bounded failure.
+    Failed,
+    /// Terminated by cancellation.
+    Cancelled,
+    /// Superseded because its inputs moved.
+    Stale,
+    /// Terminated by an interruption such as a daemon restart.
+    Interrupted,
+}
+
+impl SeriesLifecycleState {
+    /// The four *failure* terminals of §11.2 line 597, which every non-terminal
+    /// state can reach.
+    ///
+    /// `Completed` is terminal too but is deliberately not here: line 597 grants
+    /// every 非终态 an edge to these four, and §10 line 670 requires a Series be
+    /// in a 合法终态 to be collected, so `Completed` is a legal terminal that must
+    /// *not* acquire an edge to `Failed`. Putting it in this array would let a
+    /// collected Series later report failure.
+    pub const FAILURE_TERMINAL: [Self; 4] = [
+        Self::Failed,
+        Self::Cancelled,
+        Self::Stale,
+        Self::Interrupted,
+    ];
+
+    /// Whether this state admits no further transition.
+    ///
+    /// §11.2 phrases the escape hatch as "任意非终态 -> failed | cancelled |
+    /// stale | interrupted", so terminality is what decides which states may
+    /// still move at all. Answering it from a list rather than per-call-site
+    /// keeps one definition of "done".
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Cancelled | Self::Stale | Self::Interrupted
+        )
+    }
+
+    /// Returns the frozen wire encoding.
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::AwaitingSpecBinding => "awaiting_spec_binding",
+            Self::Ready => "ready",
+            Self::SpawnRequested => "spawn_requested",
+            Self::Claimed => "claimed",
+            Self::Running => "running",
+            Self::AwaitingUser => "awaiting_user",
+            Self::AwaitingGate => "awaiting_gate",
+            Self::Retrying => "retrying",
+            Self::ResultStaged => "result_staged",
+            Self::Validated => "validated",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Stale => "stale",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    /// Parses a frozen wire value.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "planned" => Some(Self::Planned),
+            "awaiting_spec_binding" => Some(Self::AwaitingSpecBinding),
+            "ready" => Some(Self::Ready),
+            "spawn_requested" => Some(Self::SpawnRequested),
+            "claimed" => Some(Self::Claimed),
+            "running" => Some(Self::Running),
+            "awaiting_user" => Some(Self::AwaitingUser),
+            "awaiting_gate" => Some(Self::AwaitingGate),
+            "retrying" => Some(Self::Retrying),
+            "result_staged" => Some(Self::ResultStaged),
+            "validated" => Some(Self::Validated),
+            "completed" => Some(Self::Completed),
+            "failed" => Some(Self::Failed),
+            "cancelled" => Some(Self::Cancelled),
+            "stale" => Some(Self::Stale),
+            "interrupted" => Some(Self::Interrupted),
+            _ => None,
+        }
+    }
+}
+
+impl SeriesLifecycleState {
+    /// The states reachable from `self` in one step.
+    ///
+    /// The spine follows §11.2's diagram order. Two ambiguities in that diagram
+    /// are resolved from elsewhere in the design rather than by preference:
+    ///
+    /// `awaiting_user` and `awaiting_gate` return to `running`, because both are
+    /// blocks on a physical attempt that is still alive — §6.2 rule 4 holds the
+    /// flow until a ruling arrives, and holding implies resuming.
+    ///
+    /// `retrying` goes to `spawn_requested`, not back to `running`. §4.1 fixes
+    /// that a retry mints a new `SeriesRunId` while keeping the same `SeriesId`,
+    /// so the current physical attempt is over and a fresh one must be spawned
+    /// and claimed. Returning to `running` would let one `SeriesRunId` cover two
+    /// attempts, which is the conflation §4.1 exists to prevent.
+    ///
+    /// Every non-terminal state additionally reaches all four terminal states,
+    /// per §11.2 line 597.
+    #[must_use]
+    pub fn next_states(self) -> Vec<Self> {
+        if self.is_terminal() {
+            return Vec::new();
+        }
+        let mut next = match self {
+            Self::Planned => vec![Self::AwaitingSpecBinding],
+            Self::AwaitingSpecBinding => vec![Self::Ready],
+            Self::Ready => vec![Self::SpawnRequested],
+            Self::SpawnRequested => vec![Self::Claimed],
+            Self::Claimed => vec![Self::Running],
+            Self::Running => vec![
+                Self::AwaitingUser,
+                Self::AwaitingGate,
+                Self::Retrying,
+                Self::ResultStaged,
+            ],
+            Self::AwaitingUser | Self::AwaitingGate => vec![Self::Running],
+            Self::Retrying => vec![Self::SpawnRequested],
+            Self::ResultStaged => vec![Self::Validated],
+            Self::Validated => vec![Self::Completed],
+            Self::Completed => Vec::new(),
+            Self::Failed | Self::Cancelled | Self::Stale | Self::Interrupted => Vec::new(),
+        };
+        next.extend_from_slice(&Self::FAILURE_TERMINAL);
+        next.sort();
+        next.dedup();
+        next
+    }
+
+    /// Whether `self -> candidate` is a legal single step.
+    pub fn can_advance_to(self, candidate: Self) -> bool {
+        self.next_states().contains(&candidate)
+    }
+}
+
+impl SeriesLifecycleState {
+    /// Projects this conceptual state onto the durable [`SeriesReceiptStatus`].
+    ///
+    /// Two enums describing one lifecycle drift apart unless the mapping between
+    /// them is written down once. This is that mapping, and it is deliberately
+    /// lossy in one direction only: several conceptual states share a receipt
+    /// status, but every conceptual state has exactly one.
+    ///
+    /// `Validated` maps to `Collected` rather than a status of its own because
+    /// §11.4 treats validation and collection as one durable outcome — a receipt
+    /// exists once results are collected, and `artifact_validation_passed`
+    /// already carries whether validation succeeded.
+    ///
+    /// `Stale` and `Interrupted` both map to `Cancelled`: neither produced a
+    /// result, and `SeriesReceiptStatus` has no variant for them. That is a real
+    /// loss of detail, recorded here rather than hidden — a caller needing to
+    /// distinguish a superseded Series from an interrupted one must read the
+    /// conceptual state, not the receipt.
+    pub const fn to_receipt_status(self) -> SeriesReceiptStatus {
+        match self {
+            Self::Planned | Self::AwaitingSpecBinding | Self::Ready | Self::SpawnRequested => {
+                SeriesReceiptStatus::Planned
+            }
+            Self::Claimed
+            | Self::Running
+            | Self::AwaitingUser
+            | Self::AwaitingGate
+            | Self::Retrying => SeriesReceiptStatus::Running,
+            Self::ResultStaged => SeriesReceiptStatus::ResultStaged,
+            Self::Validated | Self::Completed => SeriesReceiptStatus::Collected,
+            Self::Failed => SeriesReceiptStatus::Failed,
+            Self::Cancelled | Self::Stale | Self::Interrupted => SeriesReceiptStatus::Cancelled,
+        }
     }
 }

@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use ae_sdd_contracts::{
-    ReasonCode, RouteDecisionId, SchemaVersion, SeriesKind,
+    ReasonCode, RouteDecisionId, SchemaVersion, SeriesKind, SpecKind, TaskKind,
     series::{
         ImpactFact, ImpactLevel, RouteDecision, RouteDecisionError, RouteDisposition, RouteInput,
     },
@@ -43,7 +43,8 @@ impl RouteEngine {
     /// Computes a deterministic route without reading prose, files, or globals.
     pub fn decide(&self, input: &RouteInput) -> Result<RouteDecision, RouteEngineError> {
         let identity = route_identity(input);
-        let (scale, design_route, required_series) = classify_impacts(input.impact_facts())?;
+        let (scale, design_route, required_series, required_spec_kinds) =
+            classify_impacts(input.impact_facts())?;
         let low_confidence = input.classification_confidence_bps() < self.minimum_confidence_bps;
         let high_impact = input
             .impact_facts()
@@ -93,10 +94,12 @@ impl RouteEngine {
             &identity,
             input.impact_facts(),
             self.minimum_confidence_bps,
+            input.task_kind(),
             scale,
             design_route,
             disposition,
             &required_series,
+            &required_spec_kinds,
         );
         let decision_id = RouteDecisionId::new(format!("route:{decision_digest}"))
             .map_err(|_| RouteEngineError::InvariantViolation)?;
@@ -105,11 +108,13 @@ impl RouteEngine {
             identity.schema_version,
             decision_id,
             identity.work_item_id,
+            input.task_kind(),
             scale,
             design_route,
             disposition,
             reason_codes,
             required_series,
+            required_spec_kinds,
             identity.input_fingerprint,
             approval_matches.then_some(approval_binding),
             decision_digest,
@@ -124,15 +129,18 @@ impl RouteEngine {
     /// cannot approve a different candidate by changing only approval fields.
     pub fn approval_binding(&self, input: &RouteInput) -> Result<ArtifactDigest, RouteEngineError> {
         let identity = route_identity(input);
-        let (scale, design_route, required_series) = classify_impacts(input.impact_facts())?;
+        let (scale, design_route, required_series, required_spec_kinds) =
+            classify_impacts(input.impact_facts())?;
         let digest = digest_route(
             &identity,
             input.impact_facts(),
             self.minimum_confidence_bps,
+            input.task_kind(),
             scale,
             design_route,
             RouteDisposition::AwaitUserApproval,
             &required_series,
+            &required_spec_kinds,
         );
         Ok(ArtifactDigest::from_array(digest.into_array()))
     }
@@ -179,18 +187,30 @@ fn confirmation_is_bounded_and_canonical(id: &str, actor: &str, approved_at: &st
             .is_ok_and(|timestamp| timestamp.to_string() == approved_at)
 }
 
+/// The §7.1 four-tier mapping, returned as the scale, design depth, Series to run
+/// and Spec documents that must be bound.
+///
+/// `required_series` and `required_spec_kinds` are returned separately because
+/// §5.5 freezes them as two facts. They are *not* interchangeable even where they
+/// agree: a Series is work to run, a Spec kind is a document that must exist.
 fn classify_impacts(
     impacts: &[ImpactFact],
-) -> Result<(WorkScale, DesignRoute, Vec<SeriesKind>), RouteEngineError> {
+) -> Result<(WorkScale, DesignRoute, Vec<SeriesKind>, Vec<SpecKind>), RouteEngineError> {
     let highest = impacts
         .iter()
         .map(|fact| fact.level)
         .reduce(ImpactLevel::max);
-    let (scale, route, names): (_, _, &[&str]) = match highest {
+    let (scale, route, names, spec_kinds): (_, _, &[&str], &[SpecKind]) = match highest {
+        // §7.1 line 342 spells the micro route `RA -> executionPlan -> Coding`, and
+        // its persisted-artifact column states 不要求独立 CodingPlan Markdown: the
+        // approved `executionPlan` in daemon state *is* the plan. Delegating a
+        // CodingPlan Series here produced the Spec the design says must not be
+        // required, and left micro indistinguishable from small.
         Some(ImpactLevel::Micro) => (
             WorkScale::Micro,
             DesignRoute::CodingPlan,
-            &["requirement-analysis", "coding-plan"],
+            &["requirement-analysis"],
+            &[SpecKind::RequirementAnalysis],
         ),
         // Missing facts keep the frozen low mapping: decide() holds the
         // decision at AwaitUserApproval, so an empty submission never
@@ -199,23 +219,54 @@ fn classify_impacts(
             WorkScale::Small,
             DesignRoute::CodingPlan,
             &["requirement-analysis", "coding-plan"],
+            &[SpecKind::RequirementAnalysis, SpecKind::CodingPlan],
         ),
+        // A route that requires a Story requires its TestCase: the baseline
+        // flow is `RA -> DR -> N x (Story -> TestCase -> CodingPlan)`, and the
+        // handoff gates the TestCase Series behind `requires("testcase")`
+        // reading this field. Omitting it sent medium and large routes straight
+        // from Story to CodingPlan with no TestCase ever delegated.
+        //
+        // §7.1 line 344 ends the medium route at `... -> CodingPlan -> Coding`, so
+        // the CodingPlan Series belongs here too. Without it the route stopped at
+        // TestCase and no Coding work was ever planned from an approved plan Spec —
+        // the same class of gap as the missing TestCase above.
         Some(ImpactLevel::Medium) => (
             WorkScale::Medium,
             DesignRoute::Story,
-            &["requirement-analysis", "story"],
+            &["requirement-analysis", "story", "testcase", "coding-plan"],
+            &[
+                SpecKind::RequirementAnalysis,
+                SpecKind::Story,
+                SpecKind::TestCase,
+                SpecKind::CodingPlan,
+            ],
         ),
+        // §7.1 line 345: `RA -> DR -> N x (Story -> TestCase -> CodingPlan)`.
         Some(ImpactLevel::High) => (
             WorkScale::Large,
             DesignRoute::Dr,
-            &["requirement-analysis", "design-review", "story"],
+            &[
+                "requirement-analysis",
+                "design-review",
+                "story",
+                "testcase",
+                "coding-plan",
+            ],
+            &[
+                SpecKind::RequirementAnalysis,
+                SpecKind::DesignReview,
+                SpecKind::Story,
+                SpecKind::TestCase,
+                SpecKind::CodingPlan,
+            ],
         ),
     };
     let series = names
         .iter()
         .map(|name| SeriesKind::new(*name).map_err(|_| RouteEngineError::InvariantViolation))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok((scale, route, series))
+    Ok((scale, route, series, spec_kinds.to_vec()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -223,16 +274,22 @@ fn digest_route(
     identity: &RouteIdentity,
     impacts: &[ImpactFact],
     threshold: u16,
+    task_kind: TaskKind,
     scale: WorkScale,
     route: DesignRoute,
     disposition: RouteDisposition,
     required_series: &[SeriesKind],
+    required_spec_kinds: &[SpecKind],
 ) -> DecisionDigest {
     let mut bytes = Vec::with_capacity(512);
     bytes.extend_from_slice(b"ae-sdd-route-decision/v1\0");
     encode_text(&mut bytes, identity.work_item_id.as_str());
     bytes.extend_from_slice(identity.input_fingerprint.as_bytes());
     bytes.extend_from_slice(&threshold.to_be_bytes());
+    // The task kind is one of §5.5's frozen facts, so it belongs in the digest:
+    // two decisions differing only in task kind are different decisions, and the
+    // digest is what a user confirmation binds to.
+    encode_text(&mut bytes, task_kind.as_wire());
     bytes.push(scale_tag(scale));
     bytes.push(route_tag(route));
     bytes.push(disposition_tag(disposition));
@@ -274,6 +331,14 @@ fn digest_route(
     bytes.extend_from_slice(&(required_series.len() as u64).to_be_bytes());
     for series in required_series {
         encode_text(&mut bytes, series.as_str());
+    }
+    // Digested separately from `required_series` rather than folded in, so a route
+    // that runs the same Series but requires a different Spec set cannot collide.
+    // That is exactly the micro/small pair: identical design depth, different
+    // required Specs.
+    bytes.extend_from_slice(&(required_spec_kinds.len() as u64).to_be_bytes());
+    for spec_kind in required_spec_kinds {
+        encode_text(&mut bytes, spec_kind.as_wire());
     }
     DecisionDigest::digest(bytes)
 }

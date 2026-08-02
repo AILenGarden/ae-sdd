@@ -92,11 +92,11 @@
 | --- | --- | --- | --- |
 | runtime | `runtime.handshake`, `runtime.status`, `runtime.drain` | daemon runtime | lifecycle/admin 权限分离 |
 | workspace | `workspace.register`, `workspace.snapshot` | WorkspaceActor | canonical root + project identity 幂等 |
-| workitem | `workitem.create`, `workitem.get`, `workitem.complete` | WorkItemActor | `workitem.create` workspace-scoped：`requiresWorkItem=false, requiresIdempotency=true, writes=true`；`entryNode` 仅 PRD/DR/STORY（BUG/CONFIG 拒绝）；可省略 `workItemId`，由 daemon 铸造 `{entryNode}-{8 位小写 hex}`（如 `STORY-3f9a2c1e`）；成功后持久绑定 `session.current_work_item` 并安装 project context projection |
+| workitem | `workitem.create`, `workitem.get`, `workitem.complete` | WorkItemActor | `workitem.create` workspace-scoped：`requiresWorkItem=false, requiresIdempotency=true, writes=true`；`entryNode` 仅 ROUTE/PRD/DR/STORY（BUG/CONFIG 拒绝）；统一 intake 下 `ROUTE` 是唯一的主流程起点，`/ae-sdd` bootstrap 即创建 `entryNode=ROUTE`；PRD/DR/STORY 不再决定主流程起点，只作为输入与 Spec binding 提示，声明既有 Spec 容器布局；可省略 `workItemId`，由 daemon 铸造 `{entryNode}-{8 位小写 hex}`（如 `STORY-3f9a2c1e`）；成功后持久绑定 `session.current_work_item` 并安装 project context projection |
 | session/hook | `session.open`, `session.heartbeat`, `session.close`, `hook.user_prompt`, `hook.pre_tool`, `hook.post_tool`, `hook.stop` | SessionActor/policy | hookEventId 去重；engaged fail closed |
 | flow | `flow.snapshot`, `flow.next` | FlowRuntime | 只读 deterministic decision；role-aware |
 | delegation | `delegation.create`, `delegation.status`, `delegation.accept`, `delegation.report`, `delegation.collect`, `delegation.cancel` | DelegationService | role/lineage/grant/physical attestation |
-| host | `host.register`, `host.capabilities`, `host.action_next`, `host.action_ack`, `host.pressure_report` | HostRuntimeAdapter boundary | authenticated adapter；ACK 不等于 child claim；sample 与 generation 相关 |
+| host | `host.register`, `host.action_next`, `host.action_ack`, `host.pressure_report` | HostRuntimeAdapter boundary | authenticated adapter；ACK 不等于 child claim；sample 与 generation 相关 |
 | context/compact | `context.get`, `context.project`, `compact.request`, `compact.status` | ContextService/CompactManager | revision/delta/budget/pressure；ACK+rehydrate |
 | operation/gate | `operation.describe`, `operation.execute`, `gate.evaluate` | Operations/WorkItemActor | typed operation；fresh PASS only |
 | event/job | `events.subscribe`, `job.status`, `job.cancel` | runtime scheduler | ordered cursor；bounded subscriber |
@@ -133,8 +133,11 @@ operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/wor
 
 ## 七、Delegation、ChildResult 与 context
 
-- `delegation.create` 的 role/lineage/grants 由 daemon 从 parent capability 派生；client 只能提交 assignment intent。
-- host action ACK 必须关联 `adapterId/actionId/commandSeq/requestDigest`；只有 child 使用一次性 claim 并通过 session attestation 后才能进入 running。
+- Root 调用 `delegation.create` 的 payload 固定为 `{"flowDecisionDigest":"<lowercase sha256>"}`，不得提交 `childRole`、`parentDelegationId`、`inputRevision`、`inputFingerprint`、`deadlineUnixMs`、`adapterId`、`grant` 或 `briefing`。digest 必须引用同 workspace/workItem 下已提交且可委派的 `flow.next` 决策；daemon 从该 intent 派生 Series role、空 parent lineage、revision/fingerprint、deadline、Host adapter、grant 与 briefing。当前可委派决策包括显式 `delegate-series`、`coding/test-running + await-agent-work` 以及 `coding + execute-approved-slice`；其他 action 必须 fail closed。
+- Series 调用 `delegation.create` 创建 Task/Reviewer 时仍提交完整 scoped child payload，但 daemon 必须校验 parent lineage、角色深度以及 grant 是 parent grant 的真子集；Task/Reviewer 禁止继续委派。
+- daemon 为每个 create action 生成一次性 opaque `claimId`。durable delegation/attestation 只保存绑定 workspaceId、delegationId、actionId、childRole、parentSessionId、deadline 的 claim digest；raw claim 只通过同 boot 的 `host.action_next` delivery 交给 Host，禁止出现在 Root create response、durable Host action、日志或 recovery 数据中。daemon restart 后未交付/未接受的 raw claim 不恢复，旧 create delivery必须 fail closed 并重新派发。
+- host action ACK 必须关联 `adapterId/actionId/commandSeq/requestDigest`；只有 child 使用 Host 交付的 claim 并通过 session attestation 后才能进入 running。caller 自造 UUID 或不匹配 claim 必须返回 `DELEGATION_ATTESTATION_FAILED`。
+- PID 不是 delegation/session/claim 的通用 wire identity，Root/Child 不得被要求提交 PID。具体 HostAdapter 可把它能从自身进程 API 可信观察到的 PID 作为可选、adapter-specific attestation evidence，但不得用 Agent 自报 PID替代 daemon claim、Host connection binding 或 child claim acceptance。
 - ChildResult canonical payload 默认最大 64 KiB、summary 最大 8 KiB；必须包含 delegationId、outcome、summary、findings、deliverables(path/hash/kind)、evidenceRefs、requestedAction、memorySnapshotHash。
 - ChildResult 禁止包含 transcript、源码全文、完整 stdout/stderr 或完整系列文档；超限内容必须成为 hash-addressed artifact ref。
 - root ContextProjection 默认最大 64 KiB；`context.get` 根据 `contextRevision + digest` 返回 full/delta/no-change，role/scope 由 trusted session 派生。

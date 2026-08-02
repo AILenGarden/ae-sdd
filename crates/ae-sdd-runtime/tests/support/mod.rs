@@ -52,6 +52,7 @@ pub struct TestBusiness {
     pub projection_bytes: AtomicUsize,
     pub pass_guard: AtomicUsize,
     pub series_completed_calls: AtomicUsize,
+    flow_next_result: Mutex<Option<Value>>,
     persistence: Mutex<Option<Arc<MemoryPersistence>>>,
 }
 
@@ -63,6 +64,7 @@ impl Default for TestBusiness {
             projection_bytes: AtomicUsize::new(0),
             pass_guard: AtomicUsize::new(0),
             series_completed_calls: AtomicUsize::new(0),
+            flow_next_result: Mutex::new(None),
             persistence: Mutex::new(None),
         }
     }
@@ -75,12 +77,16 @@ impl TestBusiness {
             ..Self::default()
         }
     }
+
+    pub fn set_flow_next_result(&self, value: Value) {
+        *self.flow_next_result.lock().expect("flow next result lock") = Some(value);
+    }
 }
 
 impl BusinessOperationPort for TestBusiness {
     fn execute(
         &self,
-        _method: RpcMethod,
+        method: RpcMethod,
         params: &RequestParams<Value>,
         _workspace: Option<&BusinessWorkspace>,
     ) -> RuntimeResult<Value> {
@@ -88,6 +94,15 @@ impl BusinessOperationPort for TestBusiness {
         let delay = self.operation_delay_ms.load(Ordering::Acquire);
         if delay > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+        if method == RpcMethod::FlowNext
+            && let Some(result) = self
+                .flow_next_result
+                .lock()
+                .expect("flow next result lock")
+                .clone()
+        {
+            return Ok(result);
         }
         // `workitem.create` is Workspace-scoped: the caller cannot name the
         // Work Item it creates, so the business authority mints the business
@@ -341,6 +356,50 @@ pub fn stable_error(response: &Value) -> &str {
     response["error"]["data"]["stableCode"]
         .as_str()
         .unwrap_or_else(|| panic!("{response}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_root_series_delegation(
+    harness: &Harness,
+    connection: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    root: &SessionResult,
+    agent_id: &str,
+    work_item_id: &str,
+    series_kind: &str,
+    required_artifacts: &[&str],
+    key: &str,
+) -> Value {
+    let decision_digest = flow_decision_digest(key);
+    harness.business.set_flow_next_result(json!({
+        "schemaVersion":"flow-decision/v1",
+        "decisionDigest":decision_digest,
+        "stateRevision":1,
+        "phase":"initialized",
+        "nextAction":{
+            "kind":"delegate-series",
+            "seriesKind":series_kind,
+            "requiredArtifacts":required_artifacts,
+        }
+    }));
+    let mut next = session_params(workspace, root, agent_id, json!({}), 1_000);
+    next.work_item_id = Some(work_item_id.to_owned());
+    result(&harness.call(connection, RpcMethod::FlowNext, next));
+
+    let mut create = session_params(
+        workspace,
+        root,
+        agent_id,
+        json!({"flowDecisionDigest":decision_digest}),
+        1_000,
+    );
+    create.work_item_id = Some(work_item_id.to_owned());
+    create.idempotency_key = Some(key.to_owned());
+    result(&harness.call(connection, RpcMethod::DelegationCreate, create))
+}
+
+pub fn flow_decision_digest(key: &str) -> String {
+    hex::encode(Sha256::digest(key.as_bytes()))
 }
 
 pub fn register_workspace(
