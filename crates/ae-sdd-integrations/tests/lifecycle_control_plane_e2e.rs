@@ -18,7 +18,15 @@ mod review_authority;
 use std::fs;
 use std::path::Path;
 
-use ae_sdd_domain::{AgentRole, ProjectPathScope, ScopedGrant};
+use ae_sdd_contracts::{
+    DocumentId, EngineeringRoute, ReasonCode, ReceiptStatus, RequirementAnalysisEvidence,
+    RouteApprovalReceipt, RouteBindingInput, RouteDecision, RouteDecisionId, RouteDisposition,
+    RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind, SpecKind, TaskKind,
+};
+use ae_sdd_domain::{
+    AgentRole, ArtifactDigest, DecisionDigest, DesignRoute, ProjectPathScope, ScopedGrant,
+    StateRevision, WorkItemId, WorkScale,
+};
 use ae_sdd_protocol::{ClientKind, RpcMethod, WorkspaceMode};
 use ae_sdd_runtime::{BusinessWorkspace, PersistencePort};
 use review_authority::authoritative_review_workspace_input_fingerprint;
@@ -46,18 +54,18 @@ fn complete_prd_commits_and_replays_one_exact_project_mutation() {
     // full verification matrix, a Story that declares those AC ids and source
     // reads that exist. Seeded before the child snapshot so the completion
     // assertion compares against the state the review starts from.
-    let child_before = read_state(&harness)["storyStates"].clone();
     let mut cli = harness.connection(ClientKind::Cli);
     let workspace = register_and_cut_over(&harness, &mut cli);
-    let root = open_root_for_work_item(
+    let story_root = open_root_for_work_item(
         &harness,
         &mut cli,
         &workspace,
-        PRD_ID,
+        STORY_ID,
         "lifecycle-prd-root",
         "lifecycle-agent",
     );
-    let identity = identity_for_work_item(&workspace, &root, PRD_ID, "lifecycle-agent");
+    let story_identity =
+        identity_for_work_item(&workspace, &story_root, STORY_ID, "lifecycle-agent");
 
     // The milestone chain runs through the real operations: the delegated
     // author task records and finalizes the green verification evidence, and
@@ -69,12 +77,23 @@ fn complete_prd_commits_and_replays_one_exact_project_mutation() {
         &harness,
         &mut cli,
         &workspace,
-        &identity,
+        &story_identity,
         &SPECIALTIES,
         "lifecycle-prd",
     );
+    let root = open_root_for_work_item(
+        &harness,
+        &mut cli,
+        &workspace,
+        PRD_ID,
+        "lifecycle-prd-root",
+        "lifecycle-agent",
+    );
+    let identity = identity_for_work_item(&workspace, &root, PRD_ID, "lifecycle-agent");
+    mark_story_completed(&harness);
+    let child_before = read_state(&harness)["storyStates"].clone();
     let author_identity =
-        identity_for_work_item(&workspace, &author, PRD_ID, "lifecycle-prd-author-agent");
+        identity_for_work_item(&workspace, &author, STORY_ID, "lifecycle-prd-author-agent");
     let (evidence_lease, evidence_fencing) = acquire_lease(
         &harness,
         &mut cli,
@@ -420,7 +439,7 @@ fn install_completed_review_authority(
         let reviewer_identity = identity_for_work_item(
             workspace,
             reviewer,
-            PRD_ID,
+            STORY_ID,
             &format!(
                 "{}-agent",
                 reviewer_child_key("lifecycle-prd", &SPECIALTIES, specialty)
@@ -622,13 +641,18 @@ fn write_prd_state(harness: &Harness) {
             })
         })
         .collect();
+    let engineering_route = frozen_engineering_route();
+    let route_decision = engineering_route["decision"].clone();
     let state = json!({
         "stateMachineName":PRD_ID,
-        "activeStory":PRD_ID,
+        "activeStory":STORY_ID,
         "revision":1,
         "lastFencingToken":0,
+        "entryNode":"ROUTE",
+        "engineeringRoute":engineering_route,
+        "routeApproved":true,
+        "routeDecision":route_decision,
         "scale":"medium",
-        "selectedDesign":"Story",
         "phase":"code-reviewed",
         "currentPhase":"code-reviewed",
         "currentStep":"code-reviewed",
@@ -663,10 +687,10 @@ fn write_prd_state(harness: &Harness) {
         "documentPaths":{"story":STORY_DOC},
         "storyStates":{
             STORY_ID:{
-                "phase":"completed",
-                "currentPhase":"completed",
-                "currentStep":"completed",
-                "completedSteps":["code-reviewed"],
+                "phase":"route-selected",
+                "currentPhase":"route-selected",
+                "currentStep":"route-selected",
+                "completedSteps":["requirement-analyzed"],
                 "pendingOutputs":{},
                 "codingRound":1,
                 "docPath":STORY_DOC,
@@ -709,6 +733,73 @@ fn write_prd_state(harness: &Harness) {
         serde_json::to_vec_pretty(&state).expect("PRD state serializes"),
     )
     .expect("PRD state");
+}
+
+fn mark_story_completed(harness: &Harness) {
+    let mut state = read_state(harness);
+    let story = state
+        .pointer_mut(&format!("/storyStates/{STORY_ID}"))
+        .and_then(Value::as_object_mut)
+        .expect("active Story state");
+    story.insert("phase".to_owned(), json!("completed"));
+    story.insert("currentPhase".to_owned(), json!("completed"));
+    story.insert("currentStep".to_owned(), json!("completed"));
+    story.insert("completedSteps".to_owned(), json!(["code-reviewed"]));
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&state).expect("completed Story state serializes"),
+    )
+    .expect("completed Story state");
+}
+
+fn frozen_engineering_route() -> Value {
+    let evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new(PRD_ID).expect("work item id"),
+        SeriesId::new("SERIES-RA-C1-E2E").expect("series id"),
+        DocumentId::new("DOC-RA-C1-E2E").expect("document id"),
+        1,
+        ArtifactDigest::digest(b"C1 lifecycle RA content"),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"C1 lifecycle RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"C1 lifecycle scale evidence"),
+        ArtifactDigest::digest(b"C1 lifecycle RA closure receipts"),
+    );
+    let binding = RouteBindingInput::new(evidence, RouteMappingVersion::V1);
+    let decision = RouteDecision::new(
+        SchemaVersion::V2,
+        RouteDecisionId::new("route-c1-e2e-r1").expect("route decision id"),
+        WorkItemId::new(PRD_ID).expect("work item id"),
+        TaskKind::Implementation,
+        WorkScale::Medium,
+        DesignRoute::Story,
+        RouteDisposition::Approved,
+        vec![ReasonCode::new("route.ra-closed").expect("reason")],
+        vec![
+            SeriesKind::new("story").expect("series kind"),
+            SeriesKind::new("testcase").expect("series kind"),
+            SeriesKind::new("coding-plan").expect("series kind"),
+        ],
+        vec![SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        binding.fingerprint(),
+        None,
+        DecisionDigest::digest(b"C1 lifecycle route decision"),
+    )
+    .expect("route decision");
+    let approval = RouteApprovalReceipt::new(
+        "route:c1-e2e-r1".to_owned(),
+        "user:test".to_owned(),
+        "2026-07-25T00:00:00Z".to_owned(),
+        binding.ra_evidence().document_id().clone(),
+        binding.ra_evidence().version(),
+        *binding.ra_evidence().ra_content_digest(),
+        binding.ra_evidence().scale(),
+        decision.decision_digest(),
+    );
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[])
+        .expect("verified RA and bound approval freeze the route");
+    serde_json::to_value(route).expect("engineering route JSON")
 }
 
 fn write_document(harness: &Harness, relative: &str, content: &str) {

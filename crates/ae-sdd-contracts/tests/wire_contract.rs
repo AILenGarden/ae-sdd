@@ -1,6 +1,6 @@
 use ae_sdd_contracts::{
-    MethodologyRef, MethodologyVariant, ReasonCode, RouteDecision, RouteDecisionId,
-    RouteDisposition, SchemaVersion, SeriesKind, SkillId, SpecKind, TaskKind,
+    MethodologyRef, MethodologyVariant, ReasonCode, RouteDecision, RouteDecisionError,
+    RouteDecisionId, RouteDisposition, SchemaVersion, SeriesKind, SkillId, SpecKind, TaskKind,
 };
 use ae_sdd_domain::{
     ArtifactDigest, ArtifactKind, ArtifactRef, DecisionDigest, DesignRoute, InputFingerprint,
@@ -71,8 +71,12 @@ fn route_decision_round_trips_using_domain_owned_scale_and_digests() {
     let decoded: RouteDecision = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decoded, decision);
 
-    let micro = json.replace("\"large\"", "\"micro\"");
-    let decoded_micro: RouteDecision = serde_json::from_str(&micro).expect("micro is supported");
+    let mut micro: serde_json::Value = serde_json::from_str(&json).expect("route JSON");
+    micro["scale"] = serde_json::json!("micro");
+    micro["requiredSeries"] = serde_json::json!([]);
+    micro["requiredSpecKinds"] = serde_json::json!([]);
+    let decoded_micro: RouteDecision =
+        serde_json::from_value(micro).expect("micro is supported with no post-route work");
     assert_eq!(decoded_micro.scale(), WorkScale::Micro);
 }
 
@@ -93,8 +97,8 @@ fn a_route_decision_carries_all_six_frozen_facts() {
         DesignRoute::CodingPlan,
         RouteDisposition::Approved,
         vec![ReasonCode::new("route.classified").expect("reason code")],
-        vec![SeriesKind::new("requirement-analysis").expect("series kind")],
-        vec![SpecKind::RequirementAnalysis],
+        vec![],
+        vec![],
         InputFingerprint::digest(b"six frozen facts"),
         None,
         DecisionDigest::digest(b"six frozen facts"),
@@ -117,10 +121,8 @@ fn a_route_decision_carries_all_six_frozen_facts() {
         );
     }
     assert_eq!(decision.task_kind(), TaskKind::SelfUpdate);
-    assert_eq!(
-        decision.required_spec_kinds(),
-        [SpecKind::RequirementAnalysis]
-    );
+    assert!(decision.required_series().is_empty());
+    assert!(decision.required_spec_kinds().is_empty());
     assert_eq!(
         serde_json::from_value::<RouteDecision>(encoded.clone()).expect("round trip"),
         decision
@@ -139,15 +141,49 @@ fn a_route_decision_carries_all_six_frozen_facts() {
         );
     }
 
-    let no_specs = serde_json::json!({"requiredSpecKinds": []});
-    let mut empty = encoded;
-    empty.as_object_mut().expect("object").insert(
-        "requiredSpecKinds".to_owned(),
-        no_specs["requiredSpecKinds"].clone(),
-    );
+    let mut repeated = encoded;
+    repeated["requiredSeries"] = serde_json::json!(["requirement-analysis"]);
+    repeated["requiredSpecKinds"] = serde_json::json!(["requirement_analysis"]);
     assert!(
-        serde_json::from_value::<RouteDecision>(empty).is_err(),
+        serde_json::from_value::<RouteDecision>(repeated).is_err(),
         "§5.4 makes RA mandatory at every scale, so zero required Specs must be refused"
+    );
+}
+
+#[test]
+fn only_micro_allows_empty_post_route_requirements() {
+    let build = |scale, series, specs| {
+        RouteDecision::new(
+            SchemaVersion::V2,
+            RouteDecisionId::new("route-empty-lists").expect("route id"),
+            WorkItemId::new("ROUTE-EMPTY-LISTS").expect("work item"),
+            TaskKind::Implementation,
+            scale,
+            DesignRoute::CodingPlan,
+            RouteDisposition::Approved,
+            vec![ReasonCode::new("route.classified").expect("reason")],
+            series,
+            specs,
+            InputFingerprint::digest(b"route binding"),
+            None,
+            DecisionDigest::digest(b"route candidate"),
+        )
+    };
+
+    assert!(build(WorkScale::Micro, vec![], vec![]).is_ok());
+    for scale in [WorkScale::Small, WorkScale::Medium, WorkScale::Large] {
+        assert_eq!(
+            build(scale, vec![], vec![]),
+            Err(RouteDecisionError::MissingSeries)
+        );
+    }
+    assert_eq!(
+        build(
+            WorkScale::Micro,
+            vec![SeriesKind::new("coding-plan").expect("series")],
+            vec![SpecKind::CodingPlan],
+        ),
+        Err(RouteDecisionError::MicroMustBeEmpty)
     );
 }
 

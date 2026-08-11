@@ -379,7 +379,7 @@ fn dr_and_story_entries_fill_their_parent_links() {
 }
 
 #[test]
-fn a_route_intake_skips_adopted_series_in_its_handoff() {
+fn a_route_intake_does_not_treat_adopted_documents_as_verified_ra() {
     let root = TempDir::new().expect("tempdir");
     provide(&root, "docs/PRD-001.md", "# PRD\n");
     provide(&root, "docs/DR-001.md", "# DR\n");
@@ -401,15 +401,16 @@ fn a_route_intake_skips_adopted_series_in_its_handoff() {
         }),
     );
     let state = read_state(&root, &response);
-    assert_eq!(state["phase"], "dr-generated");
-    assert_eq!(state["routeDocuments"]["RA"], true);
+    assert_eq!(state["phase"], "initialized");
+    assert_eq!(state["currentPhase"], "initialized");
+    assert!(state["routeDocuments"].get("RA").is_none());
     assert_eq!(state["routeDocuments"]["DR"], true);
     assert_eq!(state["routeDocuments"]["STORY"], true);
 
-    // Before route.decide the projection is the route-analysis action, and it
-    // still carries the adopted document tree.
+    // Adopted legacy markers do not replace a collected, validated RA receipt.
     let snapshot = flow_snapshot(&adapter, &workspace, "ROUTE-ADOPT-001");
-    assert_eq!(snapshot["nextAction"]["kind"], "analyze-route");
+    assert_eq!(snapshot["nextAction"]["kind"], "delegate-series");
+    assert_eq!(snapshot["nextAction"]["seriesKind"], "requirement-analysis");
     assert_eq!(snapshot["documentTree"]["prd"]["docId"], "PRD-001");
     assert_eq!(snapshot["documentTree"]["drs"][0]["drId"], "DR-001");
     assert_eq!(
@@ -417,8 +418,8 @@ fn a_route_intake_skips_adopted_series_in_its_handoff() {
         "STORY-001"
     );
 
-    // Commit a route decision covering all three series; the handoff must not
-    // delegate the adopted requirement-analysis or design-review series.
+    // Legacy route fields are not an RA receipt, route candidate, approval, or
+    // frozen EngineeringRoute and therefore cannot bypass Requirement Analysis.
     let relative = response["data"]["statePath"]
         .as_str()
         .expect("statePath")
@@ -441,10 +442,8 @@ fn a_route_intake_skips_adopted_series_in_its_handoff() {
     let snapshot = flow_snapshot(&adapter, &workspace, "ROUTE-ADOPT-001");
     assert_eq!(snapshot["nextAction"]["kind"], "delegate-series");
     assert_eq!(
-        snapshot["nextAction"]["seriesKind"], "coding-plan",
-        "adopted RA/DR/STORY series are skipped; only the un-adoptable \
-         CODING_PLAN artifact is still delegated, and it owns its own series \
-         now that Story/TestCase/CodingPlan are no longer bundled"
+        snapshot["nextAction"]["seriesKind"], "requirement-analysis",
+        "provided documents and legacy route fields cannot replace a verified RA receipt"
     );
     assert_eq!(snapshot["documentTree"]["drs"][0]["drId"], "DR-001");
 }
@@ -623,6 +622,31 @@ fn unified_intake_accepts_exactly_the_declared_entry_nodes() {
              not build; accepting it would write a skeleton no reader expects"
         );
     }
+}
+
+#[test]
+fn a_direct_dr_request_is_preserved_on_the_unified_route_intake() {
+    let root = TempDir::new().expect("temp dir");
+    let workspace = workspace(&root);
+    let adapter = adapter(&root);
+
+    let response = create(
+        &adapter,
+        &workspace,
+        "ROUTE-DR-INTENT-001",
+        json!({"entryNode":"ROUTE","requestedIntent":"DR"}),
+    );
+    let state = read_state(&root, &response);
+
+    assert_eq!(state["requestedIntent"], "DR");
+    assert!(state.get("routeCandidate").is_none());
+    assert!(state.get("engineeringRoute").is_none());
+
+    let projection = flow_snapshot(&adapter, &workspace, "ROUTE-DR-INTENT-001");
+    assert_eq!(
+        projection["nextAction"]["seriesKind"], "requirement-analysis",
+        "requested DR must not bypass verified RA and route approval: {projection}"
+    );
 }
 
 /// Builds an adapter while keeping the persistence handle, so the test can query

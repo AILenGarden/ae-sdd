@@ -8,8 +8,8 @@ use crate::{RoleAuthorizationError, RoleOperation, RolePolicy};
 
 const LARGE_DR: &[ProcessPhase] = &[
     ProcessPhase::Initialized,
-    ProcessPhase::RouteSelected,
     ProcessPhase::RequirementAnalyzed,
+    ProcessPhase::RouteSelected,
     ProcessPhase::DrGenerated,
     ProcessPhase::StoryGenerated,
     ProcessPhase::TestcaseGenerated,
@@ -21,8 +21,8 @@ const LARGE_DR: &[ProcessPhase] = &[
 ];
 const STORY: &[ProcessPhase] = &[
     ProcessPhase::Initialized,
-    ProcessPhase::RouteSelected,
     ProcessPhase::RequirementAnalyzed,
+    ProcessPhase::RouteSelected,
     ProcessPhase::StoryGenerated,
     ProcessPhase::TestcaseGenerated,
     ProcessPhase::CodingProcess,
@@ -33,8 +33,8 @@ const STORY: &[ProcessPhase] = &[
 ];
 const CODING_PLAN: &[ProcessPhase] = &[
     ProcessPhase::Initialized,
-    ProcessPhase::RouteSelected,
     ProcessPhase::RequirementAnalyzed,
+    ProcessPhase::RouteSelected,
     ProcessPhase::CodingProcess,
     ProcessPhase::Coding,
     ProcessPhase::TestRunning,
@@ -44,16 +44,17 @@ const CODING_PLAN: &[ProcessPhase] = &[
 
 const G_NONE: &[RequiredGate] = &[];
 const G_00: &[RequiredGate] = &[RequiredGate::G00];
-const G_RA: &[RequiredGate] = &[
-    RequiredGate::G00,
+/// RA-first: entering RequirementAnalyzed requires only the four RA content
+/// gates. G-00, G-RA-5/6, and G-RA-FLOW-VIOLATION are no longer in this set.
+const G_REQUIREMENT_ANALYZED: &[RequiredGate] = &[
     RequiredGate::GRa1,
     RequiredGate::GRa2,
     RequiredGate::GRa3,
     RequiredGate::GRa4,
-    RequiredGate::GRa5,
-    RequiredGate::GRa6,
-    RequiredGate::GRaFlowViolation,
 ];
+/// RA-first: the route is frozen at the RouteSelected boundary, gated only by
+/// the RA -> Route binding gate.
+const G_ROUTE_SELECTED: &[RequiredGate] = &[RequiredGate::GRaFlowViolation];
 const G_DR: &[RequiredGate] = &[
     RequiredGate::G00,
     RequiredGate::G01,
@@ -200,6 +201,11 @@ impl TransitionPolicy {
     ///
     /// Only a root Agent may request the global transition. Pause is a
     /// meta-transition; resume must return to the exact recorded phase.
+    ///
+    /// RA-first: the `Initialized -> RequirementAnalyzed` step is route-less;
+    /// it does not consult `route_chain` and requires only `G_REQUIREMENT_ANALYZED`.
+    /// Every other transition still walks the selected route chain, whose first
+    /// post-Initialized step is `RequirementAnalyzed`.
     pub fn authorize(
         context: TransitionContext,
     ) -> Result<TransitionPermit, TransitionPolicyError> {
@@ -227,6 +233,15 @@ impl TransitionPolicy {
             }
             return Ok(TransitionPermit {
                 required_gates: G_NONE,
+            });
+        }
+
+        // RA-first first step: Initialized -> RequirementAnalyzed needs no route.
+        if context.current == ProcessPhase::Initialized
+            && context.target == ProcessPhase::RequirementAnalyzed
+        {
+            return Ok(TransitionPermit {
+                required_gates: G_REQUIREMENT_ANALYZED,
             });
         }
 
@@ -294,8 +309,8 @@ fn required_gates(
     target: ProcessPhase,
 ) -> &'static [RequiredGate] {
     match target {
-        ProcessPhase::RouteSelected => G_00,
-        ProcessPhase::RequirementAnalyzed => G_RA,
+        ProcessPhase::RouteSelected => G_ROUTE_SELECTED,
+        ProcessPhase::RequirementAnalyzed => G_REQUIREMENT_ANALYZED,
         ProcessPhase::DrGenerated => G_DR,
         ProcessPhase::StoryGenerated => G_STORY,
         ProcessPhase::TestcaseGenerated => G_NONE,

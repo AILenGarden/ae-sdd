@@ -370,7 +370,6 @@ fn series_boundary_collect_records_the_flow_event_once() {
         1,
         "the series boundary must enter the flow event stream exactly once"
     );
-
     let mut replay = collect(&mut life, "delegation-collect");
     legacy::adapt_passthrough_request("review collect", RpcMethod::DelegationCollect, &mut replay)
         .expect("review collect alias adapts");

@@ -1,9 +1,10 @@
 use ae_sdd_contracts::{
     AssessmentFact, BootstrapAssessment, BootstrapAssessmentError, BoundedText, ConflictDimension,
     DocumentId, DocumentVersionError, DocumentVersionId, EngineeringRoute, EngineeringRouteError,
-    FingerprintInputs, InputSource, ReasonCode, RequirementAnalysisEvidence, RequirementConflict,
-    RequirementConflictError, RequirementSourceRef, RouteDecisionId, SchemaVersion, SeriesId,
-    SeriesKind, SpecGraphId, SpecKind, TaskKind,
+    FingerprintInputs, InputSource, ReasonCode, ReceiptStatus, RequirementAnalysisEvidence,
+    RequirementConflict, RequirementConflictError, RequirementSourceRef, RouteApprovalReceipt,
+    RouteBindingInput, RouteDecisionId, RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind,
+    SpecGraphId, SpecKind, TaskKind,
     series::{RouteDecision, RouteDisposition},
 };
 use ae_sdd_domain::{
@@ -237,17 +238,27 @@ fn material_dimensions_block_routing_and_other_does_not() {
 
 fn ra_evidence() -> RequirementAnalysisEvidence {
     RequirementAnalysisEvidence::new(
+        WorkItemId::new("ROUTE-001").expect("work item id"),
         SeriesId::new("SERIES-RA-001").expect("series id"),
         DocumentId::new("DOC-RA-001").expect("document id"),
         2,
         ArtifactDigest::digest(b"ra content"),
         StateRevision::new(7),
+        ArtifactDigest::digest(b"collected RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"six-dimension scale evidence"),
+        ArtifactDigest::digest(b"G-RA-1..4 closure receipts"),
     )
 }
 
-fn route_decision() -> RouteDecision {
+fn route_binding() -> RouteBindingInput {
+    RouteBindingInput::new(ra_evidence(), RouteMappingVersion::V1)
+}
+
+fn route_decision(binding: &RouteBindingInput) -> RouteDecision {
     RouteDecision::new(
-        SchemaVersion::V1,
+        SchemaVersion::V2,
         RouteDecisionId::new("route-ROUTE-001-r1").expect("decision id"),
         WorkItemId::new("ROUTE-001").expect("work item id"),
         TaskKind::Implementation,
@@ -256,21 +267,29 @@ fn route_decision() -> RouteDecision {
         RouteDisposition::Approved,
         vec![ReasonCode::new("route.ra-closed").expect("reason")],
         vec![
-            SeriesKind::new("requirement-analysis").expect("series kind"),
             SeriesKind::new("story").expect("series kind"),
             SeriesKind::new("testcase").expect("series kind"),
+            SeriesKind::new("coding-plan").expect("series kind"),
         ],
-        vec![
-            SpecKind::RequirementAnalysis,
-            SpecKind::Story,
-            SpecKind::TestCase,
-            SpecKind::CodingPlan,
-        ],
-        InputFingerprint::digest(b"ra-bound facts"),
+        vec![SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        binding.fingerprint(),
         None,
         DecisionDigest::digest(b"decision"),
     )
     .expect("route decision")
+}
+
+fn route_approval(binding: &RouteBindingInput, decision: &RouteDecision) -> RouteApprovalReceipt {
+    RouteApprovalReceipt::new(
+        "route:approved-r1".to_owned(),
+        "user:owner".to_owned(),
+        "2026-08-10T00:00:00Z".to_owned(),
+        binding.ra_evidence().document_id().clone(),
+        binding.ra_evidence().version(),
+        *binding.ra_evidence().ra_content_digest(),
+        binding.ra_evidence().scale(),
+        decision.decision_digest(),
+    )
 }
 
 /// §6.2 rule 4 sends the flow to `awaiting_user` on a material conflict and
@@ -286,10 +305,14 @@ fn a_route_cannot_freeze_while_a_material_conflict_is_open() {
     )
     .expect("conflict");
 
+    let binding = route_binding();
+    let decision = route_decision(&binding);
+    let approval = route_approval(&binding, &decision);
     let error = EngineeringRoute::freeze(
-        SchemaVersion::V1,
-        route_decision(),
-        ra_evidence(),
+        SchemaVersion::V2,
+        &binding,
+        decision,
+        &approval,
         &[blocking],
     )
     .expect_err("a security conflict must block the freeze");
@@ -313,9 +336,11 @@ fn a_route_freezes_over_non_material_conflicts_and_carries_its_ra_evidence() {
     )
     .expect("conflict");
 
-    let route =
-        EngineeringRoute::freeze(SchemaVersion::V1, route_decision(), ra_evidence(), &[nit])
-            .expect("a non-material conflict must not block the freeze");
+    let binding = route_binding();
+    let decision = route_decision(&binding);
+    let approval = route_approval(&binding, &decision);
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[nit])
+        .expect("a non-material conflict must not block the freeze");
 
     assert_eq!(
         route.evidence().series_id().as_str(),
@@ -325,7 +350,7 @@ fn a_route_freezes_over_non_material_conflicts_and_carries_its_ra_evidence() {
     assert_eq!(
         route.decision().required_series().len(),
         3,
-        "the RA-first chain survives the freeze"
+        "post-route planning excludes the already collected RA Series"
     );
 }
 
@@ -618,11 +643,17 @@ fn ra_closure_evidence_names_a_complete_document_version() {
     // Same Series and same digest, different document: the evidence must no longer
     // be interchangeable, which is the whole reason `document_id` was added.
     let other_document = RequirementAnalysisEvidence::new(
+        WorkItemId::new("ROUTE-001").expect("work item id"),
         SeriesId::new("SERIES-RA-001").expect("series id"),
         DocumentId::new("DOC-RA-002").expect("document id"),
         2,
         ArtifactDigest::digest(b"ra content"),
         StateRevision::new(7),
+        ArtifactDigest::digest(b"collected RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"six-dimension scale evidence"),
+        ArtifactDigest::digest(b"G-RA-1..4 closure receipts"),
     );
     assert_ne!(other_document, evidence);
     assert_ne!(
@@ -725,19 +756,26 @@ fn a_prd_source_names_a_complete_document_version() {
 /// that no conflict was open.
 #[test]
 fn engineering_route_wire_restores_evidence_binding_but_not_conflict_freedom() {
-    let route = EngineeringRoute::freeze(
-        SchemaVersion::V1,
-        route_decision(),
+    let binding = RouteBindingInput::new(
         RequirementAnalysisEvidence::new(
+            WorkItemId::new("ROUTE-001").expect("work item id"),
             SeriesId::new("SER-RA-1").expect("series id"),
             DocumentId::new("DOC-RA-1").expect("document id"),
             1,
             ArtifactDigest::digest(b"ra"),
             StateRevision::new(7),
+            ArtifactDigest::digest(b"receipt"),
+            ReceiptStatus::Verified,
+            WorkScale::Medium,
+            ArtifactDigest::digest(b"scale evidence"),
+            ArtifactDigest::digest(b"closure"),
         ),
-        &[],
-    )
-    .expect("route freezes with no open conflicts");
+        RouteMappingVersion::V1,
+    );
+    let decision = route_decision(&binding);
+    let approval = route_approval(&binding, &decision);
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[])
+        .expect("route freezes with no open conflicts");
 
     let encoded = serde_json::to_value(&route).expect("serialize route");
     assert_eq!(
@@ -751,14 +789,19 @@ fn engineering_route_wire_restores_evidence_binding_but_not_conflict_freedom() {
          cannot re-check BlockingConflictOpen"
     );
 
-    let mut unbound = encoded;
+    let mut unbound = encoded.clone();
     unbound["decision"]["inputFingerprint"] =
         serde_json::json!(InputFingerprint::digest(b"").to_string());
     let err = serde_json::from_value::<EngineeringRoute>(unbound).unwrap_err();
     assert!(
-        err.to_string().contains("not bound"),
-        "EvidenceNotBound reads a stored field, so the wire must enforce it; got: {err}"
+        err.to_string().contains("fingerprint"),
+        "the wire must recompute the RA binding fingerprint; got: {err}"
     );
+
+    let mut approval_tampered = encoded;
+    approval_tampered["approvalReceipt"]["boundVersion"] = serde_json::json!(99);
+    let err = serde_json::from_value::<EngineeringRoute>(approval_tampered).unwrap_err();
+    assert!(err.to_string().contains("approval"), "got: {err}");
 }
 
 /// D-02 item 4 freezes the *independent* computation of the two proof

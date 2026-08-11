@@ -501,19 +501,28 @@ pub(crate) fn prepare_lifecycle_mutation_with_gate_passes(
         state_revision,
         ArtifactDigest::digest(&state_bytes),
     );
-    let scale = parse_scale(
-        state
-            .get("scale")
-            .and_then(Value::as_str)
-            .ok_or_else(|| schema_error("authoritative scale is missing"))?,
-    )?;
-    let design_route = parse_design_route(
-        state
-            .pointer("/routeDecision/selectedDesign")
-            .or_else(|| state.get("selectedDesign"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| schema_error("authoritative design route is missing"))?,
-    )?;
+    let route_less_ra_transition = phase == ProcessPhase::Initialized
+        && target_phase == Some(ProcessPhase::RequirementAnalyzed);
+    let frozen_decision = state.pointer("/engineeringRoute/decision");
+    let scale = match frozen_decision
+        .and_then(|decision| decision.get("scale"))
+        .or_else(|| state.get("scale"))
+        .and_then(Value::as_str)
+    {
+        Some(value) => parse_scale(value)?,
+        None if route_less_ra_transition => WorkScale::Micro,
+        None => return Err(schema_error("authoritative scale is missing")),
+    };
+    let design_route = match frozen_decision
+        .and_then(|decision| decision.get("designRoute"))
+        .or_else(|| state.pointer("/routeDecision/selectedDesign"))
+        .or_else(|| state.get("selectedDesign"))
+        .and_then(Value::as_str)
+    {
+        Some(value) => parse_design_route(value)?,
+        None if route_less_ra_transition => DesignRoute::CodingPlan,
+        None => return Err(schema_error("authoritative design route is missing")),
+    };
     let evidence_refs = project_evidence_refs(state)?;
     let passed_gate_ids = passed_gates
         .iter()

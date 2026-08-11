@@ -6,7 +6,7 @@ use ae_sdd_domain::{
 };
 use ae_sdd_flow::{
     ExecutionCursor, FlowEnvironment, FlowEventKind, FlowInput, FlowRuntime, FlowSnapshot,
-    NextAction, RouteSelection,
+    NextAction, RouteLifecycle, RouteSelection,
 };
 use support::{event, event_store};
 
@@ -19,7 +19,7 @@ fn execution_input(phase: ProcessPhase, cursor: ExecutionCursor) -> FlowInput {
     let environment = FlowEnvironment::new(
         event_store(),
         InputFingerprint::digest(b"work-item-input-v1"),
-        RouteSelection::new(WorkScale::Large, DesignRoute::Story),
+        RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
     )
     .with_execution_cursor(cursor);
     FlowInput::new(snapshot, environment)

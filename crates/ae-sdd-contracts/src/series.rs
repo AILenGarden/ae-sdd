@@ -490,6 +490,9 @@ pub enum RouteDecisionError {
     /// zero Spec documents.
     #[error("route decision must require at least one Spec kind")]
     MissingSpecKinds,
+    /// A micro route repeated post-route work that RA has already completed.
+    #[error("micro route must have empty required Series and Spec kind lists")]
+    MicroMustBeEmpty,
     /// A Spec kind appeared more than once.
     #[error("route decision contains a duplicate Spec kind")]
     DuplicateSpecKind,
@@ -561,13 +564,17 @@ impl RouteDecision {
         if reason_codes.is_empty() {
             return Err(RouteDecisionError::MissingReason);
         }
-        if required_series.is_empty() {
+        let micro = scale == WorkScale::Micro;
+        if !micro && required_series.is_empty() {
             return Err(RouteDecisionError::MissingSeries);
         }
         // §5.4 makes RA 所有规模的必经 Series, so every route requires at least the
         // RA Spec. An empty list would let a decision claim no document need exist.
-        if required_spec_kinds.is_empty() {
+        if !micro && required_spec_kinds.is_empty() {
             return Err(RouteDecisionError::MissingSpecKinds);
+        }
+        if micro && (!required_series.is_empty() || !required_spec_kinds.is_empty()) {
+            return Err(RouteDecisionError::MicroMustBeEmpty);
         }
         if reason_codes.len() > MAX_ROUTE_REASON_CODES
             || required_series.len() > MAX_REQUIRED_SERIES
@@ -1432,6 +1439,190 @@ pub enum SeriesInputError {
     /// Candidate plan and Methodology resolution did not refer to the same entry.
     #[error("Series candidate plan does not match its Methodology resolution")]
     MethodologyMismatch,
+    /// Pre-route RA planning is only valid before route selection.
+    #[error("Requirement Analysis planning requires Initialized or RequirementAnalyzed phase")]
+    InvalidRequirementAnalysisPhase,
+    /// The pre-route plan must be the single Requirement Analysis Series.
+    #[error("Requirement Analysis input contains a non-RA plan or receipt binding")]
+    InvalidRequirementAnalysisBinding,
+}
+
+/// Route-less deterministic input for initial or correction Requirement Analysis.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    try_from = "RequirementAnalysisSeriesInputWire",
+    into = "RequirementAnalysisSeriesInputWire"
+)]
+pub struct RequirementAnalysisSeriesInput {
+    schema_version: SchemaVersion,
+    work_item_id: WorkItemId,
+    process_snapshot: ProcessSnapshot,
+    provisional_intake_fingerprint: InputFingerprint,
+    methodology_resolution: MethodologyResolution,
+    candidate_plan: SeriesPlan,
+    existing_receipt: Option<SeriesReceipt>,
+    role: AgentRole,
+    state_revision: StateRevision,
+    input_fingerprint: InputFingerprint,
+    idempotency_key: IdempotencyKey,
+}
+
+impl RequirementAnalysisSeriesInput {
+    /// Constructs a route-less RA planning input and freezes all freshness bindings.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        schema_version: SchemaVersion,
+        work_item_id: WorkItemId,
+        process_snapshot: ProcessSnapshot,
+        provisional_intake_fingerprint: InputFingerprint,
+        methodology_resolution: MethodologyResolution,
+        candidate_plan: SeriesPlan,
+        existing_receipt: Option<SeriesReceipt>,
+        role: AgentRole,
+        state_revision: StateRevision,
+        input_fingerprint: InputFingerprint,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<Self, SeriesInputError> {
+        if role != AgentRole::Root {
+            return Err(SeriesInputError::InvalidRole);
+        }
+        if !matches!(
+            process_snapshot.phase,
+            ProcessPhase::Initialized | ProcessPhase::RequirementAnalyzed
+        ) {
+            return Err(SeriesInputError::InvalidRequirementAnalysisPhase);
+        }
+        if process_snapshot.work_item_id != work_item_id
+            || candidate_plan.work_item_id != work_item_id
+        {
+            return Err(SeriesInputError::WorkItemMismatch);
+        }
+        if process_snapshot.state_revision != state_revision
+            || candidate_plan.source_revision != state_revision
+        {
+            return Err(SeriesInputError::RevisionMismatch);
+        }
+        let is_ra = candidate_plan.series_kind.as_str() == "requirement-analysis"
+            && methodology_resolution.methodology_ref() == &candidate_plan.methodology_ref
+            && candidate_plan.input_fingerprint == input_fingerprint;
+        let receipt_is_bound = existing_receipt.as_ref().is_none_or(|receipt| {
+            receipt.series_id == candidate_plan.series_id
+                && receipt.plan_digest == candidate_plan.plan_digest
+                && receipt.source_revision == state_revision
+                && receipt.input_fingerprint == input_fingerprint
+        });
+        if !is_ra || !receipt_is_bound {
+            return Err(SeriesInputError::InvalidRequirementAnalysisBinding);
+        }
+        Ok(Self {
+            schema_version,
+            work_item_id,
+            process_snapshot,
+            provisional_intake_fingerprint,
+            methodology_resolution,
+            candidate_plan,
+            existing_receipt,
+            role,
+            state_revision,
+            input_fingerprint,
+            idempotency_key,
+        })
+    }
+
+    /// Returns the single RA candidate plan.
+    pub const fn candidate_plan(&self) -> &SeriesPlan {
+        &self.candidate_plan
+    }
+
+    /// Returns the optional receipt for the same RA plan.
+    pub const fn existing_receipt(&self) -> Option<&SeriesReceipt> {
+        self.existing_receipt.as_ref()
+    }
+
+    /// Returns the selected RA methodology resolution.
+    pub const fn methodology_resolution(&self) -> &MethodologyResolution {
+        &self.methodology_resolution
+    }
+
+    /// Returns the provisional intake facts fingerprint.
+    pub const fn provisional_intake_fingerprint(&self) -> InputFingerprint {
+        self.provisional_intake_fingerprint
+    }
+
+    /// Returns the replay identity.
+    pub const fn idempotency_key(&self) -> &IdempotencyKey {
+        &self.idempotency_key
+    }
+}
+
+impl<'de> Deserialize<'de> for RequirementAnalysisSeriesInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        RequirementAnalysisSeriesInputWire::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RequirementAnalysisSeriesInputWire {
+    schema_version: SchemaVersion,
+    #[serde(with = "serde_domain::work_item_id")]
+    work_item_id: WorkItemId,
+    process_snapshot: ProcessSnapshot,
+    #[serde(with = "serde_domain::input_fingerprint")]
+    provisional_intake_fingerprint: InputFingerprint,
+    methodology_resolution: MethodologyResolution,
+    candidate_plan: SeriesPlan,
+    existing_receipt: Option<SeriesReceipt>,
+    #[serde(with = "serde_domain::agent_role")]
+    role: AgentRole,
+    #[serde(with = "serde_domain::state_revision")]
+    state_revision: StateRevision,
+    #[serde(with = "serde_domain::input_fingerprint")]
+    input_fingerprint: InputFingerprint,
+    idempotency_key: IdempotencyKey,
+}
+
+impl TryFrom<RequirementAnalysisSeriesInputWire> for RequirementAnalysisSeriesInput {
+    type Error = SeriesInputError;
+
+    fn try_from(value: RequirementAnalysisSeriesInputWire) -> Result<Self, Self::Error> {
+        Self::new(
+            value.schema_version,
+            value.work_item_id,
+            value.process_snapshot,
+            value.provisional_intake_fingerprint,
+            value.methodology_resolution,
+            value.candidate_plan,
+            value.existing_receipt,
+            value.role,
+            value.state_revision,
+            value.input_fingerprint,
+            value.idempotency_key,
+        )
+    }
+}
+
+impl From<RequirementAnalysisSeriesInput> for RequirementAnalysisSeriesInputWire {
+    fn from(value: RequirementAnalysisSeriesInput) -> Self {
+        Self {
+            schema_version: value.schema_version,
+            work_item_id: value.work_item_id,
+            process_snapshot: value.process_snapshot,
+            provisional_intake_fingerprint: value.provisional_intake_fingerprint,
+            methodology_resolution: value.methodology_resolution,
+            candidate_plan: value.candidate_plan,
+            existing_receipt: value.existing_receipt,
+            role: value.role,
+            state_revision: value.state_revision,
+            input_fingerprint: value.input_fingerprint,
+            idempotency_key: value.idempotency_key,
+        }
+    }
 }
 
 /// Complete deterministic input to `SeriesPlanner::next`.

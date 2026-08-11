@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ae_sdd_domain::StoryId;
+use ae_sdd_contracts::{
+    EngineeringRoute, RequirementConflict, RouteApprovalReceipt, RouteDecision,
+};
+use ae_sdd_domain::{ArtifactDigest, StoryId};
 use ae_sdd_runtime::{RuntimeError, RuntimeResult};
 use serde_json::Value;
 
@@ -12,13 +15,14 @@ use super::{
     contracts::{
         automation_enabled, context_complete, document_storage_compliant, http_contract_valid,
         nonempty_object, path_compliance_recorded, plan_contract_complete, plan_story_aligned,
-        route_exempt, source_trace_complete, structured_coding_result, structured_status,
+        source_trace_complete, structured_coding_result, structured_status,
         structured_test_evidence, traceability_symmetric,
     },
     key::{
         GateContext, LocatedState, ReviewAuthorityDenial, active_story, safe_document_path,
         workspace_inputs,
     },
+    ra_binding::{authoritative_ra_text, route_binding_input, verified_ra_evidence},
 };
 
 /// One predicate outcome plus the structured reason an authoritative Review
@@ -94,14 +98,8 @@ pub(super) fn predicate_value(
         }
         "document.storage.compliant" => document_storage_compliant(root, state),
         "source.output_paths.compliant" => path_compliance_recorded(state),
-        "document.ra.exists_or_exempt" => {
-            document_exists(root, state, story.as_deref(), "RA") || route_exempt(state)
-        }
-        "ra.dimensions.complete" => {
-            ra_text(root, state, story.as_deref()).is_some_and(|text| ra_dimensions_complete(&text))
-        }
-        "ra.derivatives.complete" => ra_text(root, state, story.as_deref())
-            .is_some_and(|text| ra_derivatives_complete(&text)),
+        "ra.srs.bound" => ra_srs_bound(root, state, work_item),
+        "ra.route.binding" => ra_route_binding(root, state, work_item),
         "memory.configuration_path.consistent" => memory_paths_consistent(root),
         "review.loop.exit_satisfied" | "review.independence.valid" | "review.depth.valid" => {
             return Ok(PredicateVerdict::review(
@@ -119,9 +117,7 @@ pub(super) fn predicate_value(
         "context.dr.complete" => dr_context_complete(root, state, work_item),
         "context.story.complete" => story_context_complete(root, state, work_item),
         "context.testcase.complete" => context_complete(state, &["story", "constraints", "assets"]),
-        "context.task.complete" => {
-            route_exempt(state) || context_complete(state, &["story", "constraints"])
-        }
+        "context.task.complete" => context_complete(state, &["story", "constraints"]),
         _ => {
             return Err(RuntimeError::new(
                 ae_sdd_protocol::StableErrorCode::GateError,
@@ -405,47 +401,87 @@ pub(super) fn story_document(root: &Path, state: &Value, story: Option<&str>) ->
 
 /// Reads the RA document this Work Item is bound to.
 ///
-/// `documentPaths/RA` is the authoritative binding and is tried first, which is
-/// the same resolution the RA scanners use. Directory search is only a fallback
-/// for a state that carries no mapping yet: the RA directory holds one document
-/// per Work Item, so picking a file by name order would grade a stranger's RA
-/// and report the verdict as if it were this one's.
-fn ra_text(root: &Path, state: &Value, story: Option<&str>) -> Option<String> {
-    let bound = state
-        .pointer("/documentPaths/RA")
-        .and_then(Value::as_str)
-        .filter(|path| safe_document_path(root, path))
-        .and_then(|path| fs::read_to_string(root.join(path)).ok());
-    if bound.is_some() {
-        return bound;
+/// `documentPaths/RA` is the only authoritative binding, matching the RA scanner
+/// resolver. Missing or invalid mappings fail closed; directory order must never
+/// select another Work Item's document.
+fn ra_srs_bound(root: &Path, state: &Value, work_item: &str) -> bool {
+    let Some(evidence) = verified_ra_evidence(state) else {
+        return false;
+    };
+    let Some(text) = authoritative_ra_text(root, state) else {
+        return false;
+    };
+    evidence.work_item_id().as_str() == work_item
+        && ArtifactDigest::digest(text.as_bytes()) == *evidence.ra_content_digest()
+}
+
+fn ra_route_binding(root: &Path, state: &Value, work_item: &str) -> bool {
+    if !ra_srs_bound(root, state, work_item) {
+        return false;
     }
-    workspace_inputs(root)
-        .ok()?
-        .into_iter()
-        .find_map(|(relative, absolute)| {
-            let lower = relative.to_ascii_lowercase();
-            (lower.contains("ae-sdd-doc/ra/")
-                && story.is_none_or(|id| {
-                    lower.contains(&id.trim_start_matches("STORY-").to_ascii_lowercase())
-                }))
-            .then(|| fs::read_to_string(absolute).ok())
-            .flatten()
-        })
-        .or_else(|| document_exists(root, state, story, "RA").then(String::new))
-}
-
-fn ra_dimensions_complete(text: &str) -> bool {
-    text.lines()
-        .filter(|line| line.trim_start().starts_with("##"))
-        .count()
-        >= 8
-        && text.contains("RequirementAnalysisModel")
-}
-
-fn ra_derivatives_complete(text: &str) -> bool {
-    text.contains("RA-G")
-        && text.contains("RequirementAnalysisModel")
-        && text.matches("##").count() >= 10
+    let phase = state
+        .get("currentPhase")
+        .or_else(|| state.get("phase"))
+        .and_then(Value::as_str);
+    if !matches!(
+        phase,
+        Some("requirement-analyzed" | "requirement_analyzed" | "route-selected" | "route_selected")
+    ) {
+        return false;
+    }
+    let Some(binding) = route_binding_input(state) else {
+        return false;
+    };
+    let Some(candidate) = state
+        .get("routeCandidate")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<RouteDecision>(value).ok())
+    else {
+        return false;
+    };
+    if candidate.work_item_id().as_str() != work_item
+        || candidate.scale() != binding.ra_evidence().scale()
+        || candidate.input_fingerprint() != binding.fingerprint()
+    {
+        return false;
+    }
+    let Some(approval) = state
+        .get("routeApprovalReceipt")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<RouteApprovalReceipt>(value).ok())
+    else {
+        return false;
+    };
+    if !approval.binds(binding.ra_evidence(), candidate.decision_digest()) {
+        return false;
+    }
+    let conflicts = match state.get("routeBlockingConflicts") {
+        Some(value) => {
+            let Ok(conflicts) = serde_json::from_value::<Vec<RequirementConflict>>(value.clone())
+            else {
+                return false;
+            };
+            conflicts
+        }
+        None => Vec::new(),
+    };
+    if conflicts.iter().any(RequirementConflict::blocks_routing) {
+        return false;
+    }
+    if matches!(phase, Some("route-selected" | "route_selected")) {
+        let Some(frozen) = state
+            .get("engineeringRoute")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<EngineeringRoute>(value).ok())
+        else {
+            return false;
+        };
+        frozen.decision() == &candidate
+            && frozen.evidence() == binding.ra_evidence()
+            && frozen.approval_receipt() == &approval
+    } else {
+        state.get("engineeringRoute").is_none()
+    }
 }
 
 fn memory_paths_consistent(root: &Path) -> bool {

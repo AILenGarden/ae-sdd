@@ -80,6 +80,13 @@ uuid_id!(CompactId, "CompactId");
 uuid_id!(ContextProjectionId, "ContextProjectionId");
 uuid_id!(JobId, "JobId");
 uuid_id!(ClaimId, "ClaimId");
+// `ae-sdd-daemon-design.md` §9.4: the daemon-minted UUID that records one
+// host-bound delegation's liveness bookkeeping. It is never an attestation
+// identity (the `ClaimId` chain owns authentication); it only answers "is the
+// binding this delegation opened still alive, or has it been
+// released/preempted/expired?". Minted deterministically alongside the
+// delegation so an idempotent replay of the same create recovers the same id.
+uuid_id!(HostExecutionBindingId, "HostExecutionBindingId");
 
 fn validate_string_id(
     kind: &'static str,

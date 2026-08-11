@@ -8,6 +8,7 @@ mod endpoint;
 mod error;
 mod execution_authority;
 mod gate_source;
+pub mod host_bridge;
 mod host_supervisor;
 mod ipc;
 mod lifecycle_authority;

@@ -174,6 +174,7 @@ impl BusinessOperationPort for TestBusiness {
         _workspace: &BusinessWorkspace,
         _work_item_id: &str,
         _session_id: &str,
+        _delegation_id: &str,
         _idempotency_key: &str,
     ) -> RuntimeResult<()> {
         self.series_completed_calls.fetch_add(1, Ordering::AcqRel);
@@ -279,30 +280,103 @@ impl Harness {
     }
 
     pub fn connection(&self, kind: ClientKind) -> ConnectionState {
-        self.connection_as(kind, None)
+        self.connection_handshake_only(kind, None)
     }
 
-    /// Handshakes as `kind`, optionally naming the adapter this connection
-    /// speaks for. Naming it is what makes the host addressable, so a host
-    /// connection built this way needs no separate registration call.
+    /// Handshakes as `kind` and, when `adapter_id` is given, attaches it with
+    /// a real, explicit `host.register` call right after -- the handshake
+    /// itself attaches nothing. This is the helper existing runtime tests
+    /// use when they want an already-attached host connection; it performs
+    /// the same two RPCs a real HostAdapter bridge performs, just back to
+    /// back instead of across a real reconnect.
     pub fn connection_as(&self, kind: ClientKind, adapter_id: Option<&str>) -> ConnectionState {
+        let mut connection = self.connection_handshake_only(kind, adapter_id);
+        if let Some(adapter_id) = adapter_id {
+            let mut register = params(json!({"adapterId": adapter_id}), 1_000);
+            register.capability_token = Some(self.host_credential());
+            register.idempotency_key = Some(format!("connection-as-register-{adapter_id}"));
+            let response = self.call(&mut connection, RpcMethod::HostRegister, register);
+            assert!(response.get("result").is_some(), "{response}");
+        }
+        connection
+    }
+
+    /// Handshakes as `kind` and returns the connection with nothing attached,
+    /// regardless of `adapter_id`.
+    ///
+    /// `HandshakeRequest.adapter_id` is `#[serde(skip_serializing)]`, so
+    /// building the request as a typed struct and serializing it -- as this
+    /// helper used to do -- can never put `adapterId` on the wire at all,
+    /// modern client or legacy. That made a "legacy client still sends
+    /// `adapterId`" test vacuous: it would pass by never exercising the
+    /// decode-only field in the first place. This helper instead serializes
+    /// the struct for its other fields, then splices a raw `adapterId` key
+    /// into the resulting JSON object when `adapter_id` is given, which is
+    /// exactly what a pre-C2 client's request bytes looked like on the wire.
+    pub fn connection_handshake_only(
+        &self,
+        kind: ClientKind,
+        adapter_id: Option<&str>,
+    ) -> ConnectionState {
         let mut connection = ConnectionState::default();
-        let response = self.raw(
-            &mut connection,
-            RpcMethod::RuntimeHandshake,
-            serde_json::to_value(HandshakeRequest {
-                protocol_range: PROTOCOL_RANGE_V1.to_owned(),
-                client_build: "test/client".to_owned(),
-                client_kind: kind,
-                endpoint_token: SecretString::new(self.token.clone()),
-                expected_boot_id: self.runtime.boot_id().to_string(),
-                expected_policy_digest: self.runtime.policy_digest().to_owned(),
-                adapter_id: adapter_id.map(str::to_owned),
-            })
-            .expect("handshake serializes"),
-        );
+        let mut request = serde_json::to_value(HandshakeRequest {
+            protocol_range: PROTOCOL_RANGE_V1.to_owned(),
+            client_build: "test/client".to_owned(),
+            client_kind: kind,
+            endpoint_token: SecretString::new(self.token.clone()),
+            expected_boot_id: self.runtime.boot_id().to_string(),
+            expected_policy_digest: self.runtime.policy_digest().to_owned(),
+            adapter_id: None,
+        })
+        .expect("handshake serializes");
+        if let Some(adapter_id) = adapter_id {
+            request
+                .as_object_mut()
+                .expect("handshake request serializes as an object")
+                .insert("adapterId".to_owned(), json!(adapter_id));
+        }
+        let response = self.raw(&mut connection, RpcMethod::RuntimeHandshake, request);
         assert!(response.get("result").is_some(), "{response}");
         connection
+    }
+
+    /// Proves that `connection` has no adapter identity bound to it: an
+    /// [`RpcMethod::HostPressureReport`] naming `adapter_id` must be refused
+    /// by the connection-scoped check in `authorize_host_connection`
+    /// (`connection.adapter_id.as_deref() != Some(requested)`), not by
+    /// anything durable in `HostCoordinator`. `connection.adapter_id` is set
+    /// only by an explicit, successful `host.register` on the same
+    /// connection, so this is a direct proof, not an inference through
+    /// `delegation.create`'s policy-selecting `codex`-default/`len() == 1`
+    /// branches. `workspace_id` only satisfies the envelope-level admission
+    /// check that runs before authorization; it need not be the workspace
+    /// this delegation eventually uses.
+    pub fn assert_connection_has_no_adapter_bound(
+        &self,
+        connection: &mut ConnectionState,
+        adapter_id: &str,
+        workspace_id: &str,
+    ) {
+        let mut request = params(
+            json!({
+                "adapterId": adapter_id,
+                "contextGeneration": 0,
+                "sampleSeq": 1,
+                "usedTokens": 0,
+                "contextWindowTokens": 1,
+                "observedAtUnixMs": 1,
+            }),
+            1_000,
+        );
+        request.workspace_id = Some(workspace_id.to_owned());
+        request.idempotency_key = Some(format!("assert-no-adapter-bound-{adapter_id}"));
+        let response = self.call(connection, RpcMethod::HostPressureReport, request);
+        assert_eq!(
+            stable_error(&response),
+            "ENDPOINT_AUTH_FAILED",
+            "a connection with nothing bound to it must be refused before any durable \
+             registration state is even consulted: {response}"
+        );
     }
 
     pub fn call(

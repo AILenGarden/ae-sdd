@@ -18,7 +18,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ae_sdd_client::{ClientTransport, DaemonClient, LocalIpcTransport};
-use ae_sdd_domain::InputFingerprint;
+use ae_sdd_contracts::{
+    DocumentId, EngineeringRoute, ReasonCode, ReceiptStatus, RequirementAnalysisEvidence,
+    RouteApprovalReceipt, RouteBindingInput, RouteDecision, RouteDecisionId, RouteDisposition,
+    RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind, SpecKind, TaskKind,
+};
+use ae_sdd_domain::{
+    ArtifactDigest, DecisionDigest, DesignRoute, InputFingerprint, StateRevision, WorkItemId,
+    WorkScale,
+};
 use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, WorkspaceMode,
 };
@@ -257,7 +265,9 @@ fn prepare_workspace(root: &Path) -> PathBuf {
         "stateMachineName": "PRD-GOV-PROCESS",
         "activeStory": WORK_ITEM_ID,
         "revision": 1, "lastFencingToken": 0,
-        "scale": "medium", "selectedDesign": "Story",
+        "entryNode": "ROUTE",
+        "engineeringRoute": frozen_engineering_route(),
+        "scale": "medium",
         "phase": "code-reviewed", "currentPhase": "code-reviewed",
         "currentStep": "code-reviewed",
         "documentPaths": {"story": STORY_DOC},
@@ -284,6 +294,56 @@ fn prepare_workspace(root: &Path) -> PathBuf {
     bytes.push(b'\n');
     fs::write(&state_path, bytes).expect("state fixture");
     state_path
+}
+
+fn frozen_engineering_route() -> Value {
+    let evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new(WORK_ITEM_ID).expect("work item id"),
+        SeriesId::new("SERIES-RA-GOV-PROCESS").expect("series id"),
+        DocumentId::new("DOC-RA-GOV-PROCESS").expect("document id"),
+        1,
+        ArtifactDigest::digest(b"governance process RA content"),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"governance process RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"governance process scale evidence"),
+        ArtifactDigest::digest(b"governance process RA closure receipts"),
+    );
+    let binding = RouteBindingInput::new(evidence, RouteMappingVersion::V1);
+    let decision = RouteDecision::new(
+        SchemaVersion::V2,
+        RouteDecisionId::new("route-gov-process-r1").expect("route decision id"),
+        WorkItemId::new(WORK_ITEM_ID).expect("work item id"),
+        TaskKind::Implementation,
+        WorkScale::Medium,
+        DesignRoute::Story,
+        RouteDisposition::Approved,
+        vec![ReasonCode::new("route.ra-closed").expect("reason")],
+        vec![
+            SeriesKind::new("story").expect("series kind"),
+            SeriesKind::new("testcase").expect("series kind"),
+            SeriesKind::new("coding-plan").expect("series kind"),
+        ],
+        vec![SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        binding.fingerprint(),
+        None,
+        DecisionDigest::digest(b"governance process route decision"),
+    )
+    .expect("route decision");
+    let approval = RouteApprovalReceipt::new(
+        "route:gov-process-r1".to_owned(),
+        "user:test".to_owned(),
+        "2026-07-27T02:00:00Z".to_owned(),
+        binding.ra_evidence().document_id().clone(),
+        binding.ra_evidence().version(),
+        *binding.ra_evidence().ra_content_digest(),
+        binding.ra_evidence().scale(),
+        decision.decision_digest(),
+    );
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[])
+        .expect("verified RA and bound approval freeze the route");
+    serde_json::to_value(route).expect("engineering route JSON")
 }
 
 // ─── Daemon process ──────────────────────────────────────────────────
@@ -572,7 +632,7 @@ async fn open_delegated_child(
     workspace: &WorkspaceResult,
     parent: &Identity,
     state_path: &Path,
-    adapter_id: &str,
+    _adapter_id: &str,
     child_role: &str,
     parent_delegation_id: Option<&str>,
     grant: Value,
@@ -607,7 +667,6 @@ async fn open_delegated_child(
             "inputRevision":input_revision,
             "inputFingerprint":input_fingerprint,
             "deadlineUnixMs":now.saturating_add(600_000),
-            "adapterId":adapter_id,
             "grant":grant,
         })
     };

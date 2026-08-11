@@ -570,6 +570,19 @@ impl RuntimeService {
                 .ok_or_else(session_expired)?;
             let previous = session.clone();
             session.active = false;
+            // §9.4 attach point 4: an explicit session close ends the child's
+            // binding along with the session. Root sessions carry no
+            // delegation_id and resolve to a no-op. Releasing here (before the
+            // identity commit) means a failed commit rolls the binding back to
+            // its prior state too — `release_by_delegation` is idempotent, so a
+            // later retry does not double-stamp.
+            if let Some(delegation_id) = previous.delegation_id.as_deref() {
+                self.delegation.bindings().release_by_delegation(
+                    delegation_id,
+                    crate::host_execution_binding::released_reason::SESSION_CLOSED,
+                    self.clock.now_unix_ms(),
+                )?;
+            }
             (to_value(&session.result)?, previous)
         };
         let committed = match self.commit_session_identity(

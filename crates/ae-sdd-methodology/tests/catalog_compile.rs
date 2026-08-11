@@ -3,6 +3,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+use ae_sdd_contracts::{MethodologyQuery, ProjectScope, SchemaVersion, SeriesKind, SkillId};
+use ae_sdd_domain::ProjectKey;
 use ae_sdd_domain::ProjectRelativePath;
 use ae_sdd_methodology::{
     EXPECTED_BUILTIN_ENTRY_COUNT, MethodologyAssetSource, MethodologyCatalog, MethodologyError,
@@ -102,4 +104,35 @@ fn production_catalog_compiles_byte_stably_and_opens_without_fallback_reads() {
         verify_builtin_coverage(&wrong),
         Err(MethodologyError::CoverageMismatch("deprecated identities"))
     ));
+}
+
+#[test]
+fn requirement_analysis_compiles_and_resolves_without_route_facts() {
+    let mut value: serde_json::Value = serde_json::from_slice(&source_catalog()).unwrap();
+    let entry = value["entries"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["seriesKind"] == "requirement-analysis")
+        .unwrap();
+    entry["routePredicates"] = serde_json::json!([]);
+    let source = serde_json::to_vec(&value).unwrap();
+    let assets = source_assets(&source);
+    let bundle = compile_catalog(&source, &assets)
+        .expect("pre-route RA entry must compile without route predicates");
+    let catalog = MethodologyCatalog::open(bundle, &assets, vec![]).unwrap();
+    let query = MethodologyQuery::new(
+        SchemaVersion::V1,
+        SeriesKind::new("requirement-analysis").unwrap(),
+        ProjectScope::new(SchemaVersion::V1, ProjectKey::new("ae-sdd").unwrap(), None),
+        Some(SkillId::new("phase1-design.requirement-analysis").unwrap()),
+        catalog.catalog_digest(),
+        None,
+    );
+    let first = catalog.resolve_physical(&query).unwrap();
+    let second = catalog.resolve_physical(&query).unwrap();
+    assert_eq!(
+        first, second,
+        "pre-route RA resolution must be deterministic"
+    );
 }

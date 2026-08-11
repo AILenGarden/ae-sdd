@@ -109,8 +109,8 @@ harness/                        派生适配层，不手工改生成物
   -> ae-sdd-cli 读取受保护 endpoint manifest + runtime.handshake
   -> Named Pipe/UDS 送入 ae-sddd（薄 client 不做业务判断）
   -> RuntimeService 校验 role/lineage/schema/lease/revision/fencing/idempotency
-  -> ae-sdd-gates: G-RA 共用单一 RA resolver（state raDocPath 优先，latest formal fallback）
-       -> ae-sdd-scanners 提供 7 个扫描器的 authoritative scope 与运行时扫描
+  -> ae-sdd-integrations: authoritative RA resolver 只解析当前 Work Item `/documentPaths/RA`
+       -> ae-sdd-gates/scanners 消费 RequirementAnalysis / RouteBinding typed selector
   -> ae-sdd-store: mutation journal PREPARED -> atomic replace -> COMMITTED
   -> 结构化 JSON 经同一连接回传，CLI 只做输出转换
 ```
@@ -128,8 +128,8 @@ harness/                        派生适配层，不手工改生成物
 | 流程控制 | `crates/ae-sdd-flow` + `crates/ae-sdd-policy/src/transition.rs` | 目标为 BootstrapAssessment、RA-first EngineeringRoute、typed SeriesPlan/SeriesRun 与合法 subnode transition；当前静态 phase/route 链是迁移基线 | 改流程须同步 contracts/gates/policy/store/context/delegation/tests，Story 分支固定 `Story -> TestCase -> CodingPlan` |
 | StateStore | `crates/ae-sdd-store`（`authority.rs` / `lease.rs` / `journal.rs`） | allowed-root、lease、fencing、revision CAS、idempotency、mutation journal、atomic persistence | 所有 mutation 必须经此层；并发/过期/损坏需 fail-closed 测试 |
 | Typed operations | `crates/ae-sdd-operations/src/registry.rs` | 23 个 operation 的 registry、schema、describe/execute | 新 operation 必须有 schema、稳定错误码、测试，并同步 manifest 计数 |
-| 门禁 | `crates/ae-sdd-gates`（`registry.rs` / `evaluator.rs` / `scheduler.rs`） | 36 个 Gate 注册表、DAG、有界调度、G-RA 单一 RA resolver | 改门禁需同步 UC-02/UC-03 与 focused tests；G-RA-1~6/FLOW 不得各自猜 RA |
-| 扫描器 | `crates/ae-sdd-scanners`（`registry.rs` / `scope.rs`） | 7 个扫描器、authoritative scope、JSON 报告契约 | scope 判定必须由 gates 与全部 RA scanner 共享 |
+| 门禁 | `crates/ae-sdd-gates`（`registry.rs` / `evaluator.rs` / `scheduler.rs`） | Gate 注册表、DAG、有界调度、RequirementAnalysis/RouteBinding selector 依赖 | 改门禁需同步 UC-02/UC-03 与 focused tests；G-RA-1~6/FLOW 不得各自猜 RA |
+| 扫描器 | `crates/ae-sdd-scanners`（`registry.rs` / `ra_specification.rs`） | bounded SRS v2 Core/Applicability/Closure 扫描与 JSON finding 契约 | 不选择文件、不读取 state；只消费 resolver 提供的单文件 bytes |
 | 诊断检查 | `crates/ae-sdd-integrations/src/jobs/diagnostics/` | `update-check`（UG 查询 + UC 语义检查）、`iteration-check`（IC-1~4）、doc-storage gate | 见 §11 实现度；新增 UC 必须同步 `update-graph.json` |
 | 文档与资源 | `crates/ae-sdd-resources`（`document.rs` / `assets.rs` / `resolver.rs`） | intent 驱动的文档 resolve/read/save/finalize、`.assets.md` 读取、outline/section/query/stats | 只读 intent 禁止写入；禁止 fuzzy Story ID 选择；缓存变更需测试失效路径 |
 | 生命周期 | `crates/ae-sdd-lifecycle` + `crates/ae-sdd-integrations/src/lifecycle_authority.rs` | WorkItem/Story/PRD typed 生命周期、projection、校验 | 新 intent 必须有 validation 与 focused test |
@@ -177,8 +177,8 @@ harness/                        派生适配层，不手工改生成物
 - scanner 输出 JSON 必须包含项目根 `root`、`status`、`scannedPaths`、顶层统计、同值 `reportStats` 和 `findings[]`；G-CODE-1 对路径安全/唯一性/scope 覆盖、exit/status、finding schema 及全部计数执行 fail-closed attestation。production eligibility 与 scanner 枚举使用同一文本代码边界：Java/Kotlin/XML/YAML/properties 加 `.py/.js/.ts`，生成目录、虚拟环境/site-packages、`__tests__` 和常规 Python/JS/TS test/spec 命名在两侧均排除。scanner 的自身规则常量不参与业务判定；业务代码同 URI 不豁免，真实 pom metadata 由 `ae-sdd-scanners::parser` 的有界 XML 解析确认（拒绝 DTD 与畸形输入）；不提供通用 inline suppression。
 - `test-authenticity` scanner 在逐行规则之外执行文件级 HTTP 判定：MockMvc/application-context-bound WebTestClient 产生 `mock-http-boundary`；真实端口 marker 与内部 Service/Repository/Mapper/Application mock bean 共现产生 `http-internal-mock`。外部 Client stub 不被误分类为内部主链，但只可生成 supplemental evidence。
 - Coding scanner 仅在 XML 解析确认真实 Maven POM 根元素后豁免标准 `xmlns`/`xsi`/`schemaLocation` 元数据 URL；Java 或 XML 中的实际外部 endpoint 仍按 `hardcoded-external-url` 阻断。
-- G-RA-1~6/FLOW 共用 `_resolve_selected_ra()`：合法 `state.raDocPath`/active Story `raDocPath` 优先，否则从 `resolve_ra_scan_scope(root).files` 选择统一 latest formal RA。scanner gate 必须传 `--file <selected>`，details 必须包含 `selected_file`、`selection_source`、`scope_mode`；selected RA 自身有 blocker 时仍 fail closed。
-- RA scanner 显式 `--file` 是 caller-authoritative scope，但仍要求项目根 containment、普通 Markdown 文件和存在性；错误以 exit 2 + `INVALID_RA_SCAN_SCOPE` JSON 返回。未传 file 的 root audit 排除 `references/templates/CHANGELOG/dist`、依赖/缓存和 GeneratePlan/Impact/ReverseIssues/Review/Report 等 event sidecar，同时保留 canonical `ae-sdd-doc/RA` 与 legacy `design/**/RA-*`。
+- G-RA-1~6/FLOW 共用 `crates/ae-sdd-integrations/src/gate_source/ra_binding.rs`：只读 `/documentPaths/RA` 标量，要求 `ae-sdd-doc/RA/` 前缀、单个 `.md` 普通路径、`Component::Normal` 和 `safe_document_path` containment。禁止 Story fallback、目录宽扫、首文件命中与空正文 existence fallback。
+- `RequirementAnalysis` selector hash Work Item、精确 path/bytes、validated receipt/source revision；`RouteBinding` hash candidate/approval/scale evidence/closure receipt/frozen route/blocking conflicts。scanner 不接受 root audit 作为 Work Item Gate 的替代 scope。
 - 新增 scanner 必须注册进 `ae-sdd-scanners::registry` 并同步 `compatibility-audit` 计数。
 - scanner 在 daemon 进程内以有界方式运行（文件数、事件数、字节数均有上限），不 spawn 子进程 CLI。
 - Review Batch、baseline、VerificationPlan 和 evidence 由 `ae-sdd-review`、`ae-sdd-execution` 与 `ae-sdd-contracts::evidence` 提供；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。

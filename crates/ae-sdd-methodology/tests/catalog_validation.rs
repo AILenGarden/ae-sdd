@@ -230,9 +230,13 @@ fn activation_partitions_the_catalog_into_series_and_capabilities() {
             .as_array()
             .map_or(0, |values| values.len());
         match entry["activation"].as_str() {
+            Some("workflow") if entry["seriesKind"] == "requirement-analysis" => assert_eq!(
+                predicates, 0,
+                "pre-route requirement-analysis must not require routePredicates"
+            ),
             Some("workflow") => assert!(
                 predicates > 0,
-                "{skill} is a Series, so it must carry routePredicates"
+                "post-route {skill} is a Series, so it must carry routePredicates"
             ),
             Some("capability" | "deprecated") => assert_eq!(
                 predicates, 0,
@@ -267,5 +271,70 @@ fn every_frozen_main_node_resolves_to_at_least_one_slice() {
     assert!(
         stranded.is_empty(),
         "every frozen main node needs a resolvable slice; stranded: {stranded:?}"
+    );
+}
+
+/// RA-first: the requirement-analysis entry must be runnable before any
+/// RouteDecision exists. Its only hard input is `requested-intent`; project
+/// constraints and thinking-engine are optional context that the pre-route
+/// planner may inject when available, never prerequisites that block RA from
+/// starting. It still declares exactly one deliverable kind.
+#[test]
+fn requirement_analysis_entry_runs_before_route_decision() {
+    let source = production_source();
+    let value: serde_json::Value = serde_json::from_slice(&source).expect("catalog JSON");
+    let entry = value["entries"]
+        .as_array()
+        .expect("entries array")
+        .iter()
+        .find(|entry| entry["seriesKind"].as_str() == Some("requirement-analysis"))
+        .expect("requirement-analysis entry exists");
+
+    assert_eq!(
+        value["catalogVersion"], "2.0.0",
+        "catalogVersion must identify the RA-first catalog contract"
+    );
+    assert!(
+        entry["routePredicates"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "pre-route RA must not depend on a RouteDecision predicate"
+    );
+
+    let required_inputs: Vec<&str> = entry["requiredInputs"]
+        .as_array()
+        .expect("requiredInputs array")
+        .iter()
+        .map(|value| value.as_str().expect("input key"))
+        .collect();
+    assert_eq!(
+        required_inputs,
+        ["requested-intent"],
+        "RA must only require requested-intent so it can run before route/constraints/engine exist; got {required_inputs:?}"
+    );
+
+    let deliverables: Vec<&str> = entry["deliverableKinds"]
+        .as_array()
+        .expect("deliverableKinds array")
+        .iter()
+        .map(|value| value.as_str().expect("deliverable kind"))
+        .collect();
+    assert_eq!(
+        deliverables,
+        ["requirement-analysis"],
+        "RA must declare a single deliverable kind; got {deliverables:?}"
+    );
+
+    // The entry version must be bumped to mark the RA-first contract change.
+    let version = entry["version"].as_str().expect("version");
+    let major: u8 = version
+        .split('.')
+        .next()
+        .expect("semver major")
+        .parse()
+        .expect("numeric major");
+    assert!(
+        major >= 2,
+        "requirement-analysis entry version must be >= 2.0.0 after the generality refactor; got {version}"
     );
 }

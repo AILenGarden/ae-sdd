@@ -1,9 +1,9 @@
 use ae_sdd_contracts::{
     ContextBundleId, IdempotencyKey, MethodologyRef, MethodologyResolution, MethodologyVariant,
-    OverrideDisposition, OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode, RetryPolicy,
-    RouteDecision, RouteDecisionId, RouteDisposition, SchemaVersion, SeriesId, SeriesInput,
-    SeriesKind, SeriesPlan, SeriesPlanDecision, SeriesReceipt, SeriesReceiptStatus, SkillId,
-    SpecKind, TaskKind, resource::ContextBundleRef,
+    OverrideDisposition, OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode,
+    RequirementAnalysisSeriesInput, RetryPolicy, RouteDecision, RouteDecisionId, RouteDisposition,
+    SchemaVersion, SeriesId, SeriesInput, SeriesKind, SeriesPlan, SeriesPlanDecision,
+    SeriesReceipt, SeriesReceiptStatus, SkillId, SpecKind, TaskKind, resource::ContextBundleRef,
 };
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, DecisionDigest,
@@ -111,6 +111,78 @@ fn series_run_id() -> SeriesRunId {
 
 fn series_input() -> SeriesInput {
     series_input_with_receipts(Vec::new())
+}
+
+fn requirement_analysis_input() -> RequirementAnalysisSeriesInput {
+    let work_item_id = WorkItemId::new("ROUTE-FLOW-RA-001").expect("work item");
+    let state_revision = StateRevision::new(3);
+    let input_fingerprint = InputFingerprint::digest(b"pre-route RA input r3");
+    let (plan, resolution) = candidate(
+        &work_item_id,
+        "requirement-analysis",
+        "series-flow-pre-route-ra-r3",
+        state_revision,
+        input_fingerprint,
+    );
+    RequirementAnalysisSeriesInput::new(
+        SchemaVersion::V1,
+        work_item_id.clone(),
+        ProcessSnapshot::new(
+            SchemaVersion::V1,
+            work_item_id,
+            ProcessPhase::Initialized,
+            None,
+            state_revision,
+            ArtifactDigest::digest(b"pre-route state r3"),
+        ),
+        InputFingerprint::digest(b"provisional intake facts r3"),
+        resolution,
+        plan,
+        None,
+        AgentRole::Root,
+        state_revision,
+        input_fingerprint,
+        IdempotencyKey::new("series-next-pre-route-ra-r3").expect("idempotency key"),
+    )
+    .expect("pre-route RA input")
+}
+
+#[test]
+fn pre_route_requirement_analysis_dispatches_without_a_route() {
+    let input = requirement_analysis_input();
+
+    let decision = SeriesPlanner::next_requirement_analysis(&input)
+        .expect("pre-route RA planning does not require a RouteDecision");
+
+    match decision {
+        SeriesPlanDecision::RunSeries { plan, .. } => {
+            assert_eq!(plan.series_kind().as_str(), "requirement-analysis");
+            assert_eq!(plan.series_id().as_str(), "series-flow-pre-route-ra-r3");
+        }
+        other => panic!("expected RunSeries, got {other:?}"),
+    }
+    let wire = serde_json::to_value(input).expect("pre-route input wire");
+    assert!(wire.get("route").is_none());
+    assert!(wire.get("scale").is_none());
+    assert!(wire.get("designRoute").is_none());
+}
+
+#[test]
+fn pre_route_control_provenance_uses_a_planning_basis_instead_of_a_route() {
+    let input = requirement_analysis_input();
+    let catalog_digest = input
+        .methodology_resolution()
+        .methodology_ref()
+        .catalog_digest();
+
+    let decision = ControlPlaneRuntime::next_requirement_analysis(catalog_digest, &input)
+        .expect("pre-route control decision");
+
+    assert!(matches!(decision.action(), ControlAction::RunSeries { .. }));
+    assert_eq!(
+        decision.provenance().route_digest(),
+        DecisionDigest::digest(b"pre-route-ra")
+    );
 }
 
 fn series_input_with_receipts(existing_receipts: Vec<SeriesReceipt>) -> SeriesInput {

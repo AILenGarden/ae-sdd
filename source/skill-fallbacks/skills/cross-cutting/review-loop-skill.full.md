@@ -10,11 +10,11 @@ description: |
 # Review Loop — 公共协议（所有 review 节点的 loop 骨架）
 
 > **🔴 核心洞察（v3.4.3）：**
-> - 所有 review 节点（RA 挖掘 / Story Review / DR Review / Code Review / Task Review / Proposal 循环 / Story Generate 自检）**共享同一套 loop 骨架**：挖掘缺陷 → 判定 → 出 Plan → 修复 → 再挖掘 → … → 退出
+> - 所有 review 节点（Story Review / DR Review / Code Review / Task Review / Proposal 循环 / Story Generate 自检）**共享同一套 loop 骨架**：挖掘缺陷 → 判定 → 出 Plan → 修复 → 再挖掘 → … → 退出
 > - 之前各 SKILL 各写各的退出条件/循环上限/暂停规则，导致**全仓阈值不一致**（1 轮/2 轮混用）+ **矛盾并存**（退出条件 vs 每 2 轮暂停）+ **安全漏洞**（task-generate TR 无循环上限）
 > - 本协议统一 loop 骨架，各 review SKILL 只写"我这一节的检查项是什么 + Plan 载体用什么"
 >
-> **🆕 v3.5.8 扩展（2026-06-27）：** 本协议覆盖范围**向上游延伸到 RA**（requirement-analysis-skill）。RA 是全链路事实源头，之前只有"16 道闸一次性终检"而无反复挖掘闭环，导致 AI 跑一遍 16 道闸就交差、8 维度挖掘是否穷尽无收敛判据（实测案例：2026-06-27 自我修订建议书诊断的"RA 多轮挖掘流程未执行"系统性漏洞）。本次把 RA 第七步纳入本协议，与 DR Review 同等机制。
+> **🆕 RA correction 触发条件：** RA 不再使用固定挖掘循环。RA correction 只由 blocking gap、用户补充或 Gate finding 触发（详见 [`requirement-analysis-skill.md`](../phase1-design/requirement-analysis-skill.md) §7 correction 与重入）。本协议的 loop 骨架仍适用于下游 review 节点（Story/DR/Code/Task Review）。
 
 ---
 
@@ -102,7 +102,6 @@ Review 状态使用 `reviewSession`（`schemaVersion: 2`）持久化；`reviewLo
 
 | 节点 | 检查项/阶段定义 | Plan 载体 | 专属硬门禁 | SKILL 位置 |
 |---|---|---|---|---|
-| 🆕 **RA 挖掘循环**（v3.5.8）| RAModel 12 维 + 8 维度并行挖掘（A-H 阶段）+ 5 问自检；循环对象 = "缺口 + 8 维度挖掘是否穷尽"（不仅缺口维度）| RAGeneratePlan（已有，复用）| RA-G01~RA-G16（已有，复用） | [`requirement-analysis-skill.md` §第七步](../phase1-design/requirement-analysis-skill.md) |
 | Story Review | A-E 5 阶段（DR-Story一致性 / AC完整性 / 业务逻辑覆盖 / 数据模型与接口契约 / 模板与约束）+ F-Stage 前端契约 | Proposal | C8 数据视角总览 | [`story-review-skill.md`](../phase1-design/story-review-skill.md) |
 | DR Review | A-E 5 阶段（业务价值 / 架构合理性 / 接口契约 / 数据模型与不变量 / Story 拆分）| DR Review UpdatePlan | DR Approved 状态 | [`dr-review-skill.md`](../phase1-design/dr-review-skill.md) |
 | Code Review | A-F 6 阶段（业务逻辑 / 分层职责 / DB 逻辑链 / 测试真实性 / 项目资产合规 / 跨文档引用）| CodeReviewUpdatePlan / Proposal | 7 道闸 | [`code-review-skill.md`](../phase3-review/code-review-skill.md) |

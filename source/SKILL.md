@@ -57,7 +57,7 @@ inference never override daemon state.
 | Session/Hook | `session.open`, `session.heartbeat`, `session.close`, `hook.user_prompt`, `hook.pre_tool`, `hook.post_tool`, `hook.stop` | Bind physical session and turn; return a host-compatible decision |
 | Flow | `flow.snapshot`, `flow.next` | Return the committed process projection and legal `nextAction` |
 | Delegation | `delegation.create`, `delegation.status`, `delegation.accept`, `delegation.report`, `delegation.collect`, `delegation.cancel` | Create and attest physical child work; validate bounded results |
-| Operations/Gates | `operation.describe`, `operation.execute` (incl. `workitem.create`, `route.decide`), `gate.evaluate` | Execute typed reads or guarded mutations; `/ae-sdd` invokes daemon-owned `workitem.create(entryNode=ROUTE)` idempotently and binds the session; `route.decide` accepts typed intent/impact/confidence facts and persists the `RouteEngine` decision under revision, lease, and idempotency authority; non-PASS never becomes PASS |
+| Operations/Gates | `operation.describe`, `operation.execute` (incl. `workitem.create`, `route.decide`), `gate.evaluate` | Execute typed reads or guarded mutations; `/ae-sdd` invokes daemon-owned `workitem.create(entryNode=ROUTE)` idempotently and binds the session; after RA closes, `route.decide` derives a candidate from the verified SRS receipt and scale evidence, while `RouteSelected` freezes authority only after the bound approval Gate passes; non-PASS never becomes PASS |
 | Events/Jobs | `events.subscribe`, `job.submit`, `job.status`, `job.cancel` | Submit, observe, and cancel authorized bounded background work |
 | Context | `context.get`, `context.project` | Return role-aware full, delta, or no-change projections |
 | Compact | `compact.request`, `compact.status` | Track snapshot, host request, correlated ACK, and rehydrate |
@@ -107,8 +107,12 @@ locally.
 The Agent supplies intent and available facts; `FlowRuntime` selects and advances
 the route. Requirement Analysis is the *first* business Series for every task,
 including self-update: the Hook records only a provisional `BootstrapAssessment`,
-and the authoritative `EngineeringRoute` is frozen after RA closes its input
-conflicts. The current methodology declares these minimum routes:
+and RA produces exactly one adaptive `ae-sdd-ra-srs/v2` SRS. `G-RA-1..4` close
+the content receipt at `RequirementAnalyzed`; `G-RA-FLOW-VIOLATION` validates
+the SRS/receipt/scale/candidate/approval binding before the authoritative
+`EngineeringRoute` is frozen at `RouteSelected`. `G-RA-5/6` remain real
+compatibility diagnostics but are not automatic transition Gates. The current
+methodology declares these minimum routes:
 
 | Size | Required design chain before Coding |
 | --- | --- |

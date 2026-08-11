@@ -56,6 +56,21 @@ impl RuntimeService {
         // cannot know its session's monotonic sequence, so the daemon allocates
         // it when absent and validates it when the host does supply one.
         let identity = self.session_identity(params, false)?;
+        // §9.4 attach point 5: every Hook event refreshes the binding's
+        // last_interaction_unix_ms, which is the heartbeat signal for liveness
+        // and the 12h hard-timeout sweep. Root sessions have no delegation and
+        // short-circuit inside refresh_interaction; the lookup is one lock
+        // acquire when a delegation is present.
+        if identity.role != WireAgentRole::Root {
+            let delegation_id = self
+                .lock_state()?
+                .sessions
+                .get(&identity.session_id)
+                .and_then(|session| session.delegation_id.clone());
+            self.delegation
+                .bindings()
+                .refresh_interaction(delegation_id.as_deref(), self.clock.now_unix_ms())?;
+        }
         let payload: HookPayload = decode_value(params.payload.clone())?;
         if serde_json::to_vec(&payload).map_err(canonical_error)?.len() > 65_536 {
             return Err(schema_error(

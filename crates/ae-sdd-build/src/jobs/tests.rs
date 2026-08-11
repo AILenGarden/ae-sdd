@@ -130,3 +130,48 @@ fn harness_is_bounded_and_contains_source_digests() {
     assert!(output.contains("sha256="));
     fs::remove_dir_all(root).expect("cleanup");
 }
+
+#[test]
+fn compile_rejects_catalog_fallback_that_disagrees_with_slim_entry() {
+    let root = fixture("source-slim-catalog-binding");
+    let source = root.join("source");
+    fs::create_dir_all(source.join("standards/runtime")).expect("catalog directory");
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nname: root\nsource_slimmed: true\nsource_fallback: skill-fallbacks/SKILL.full.md\n---\n\n# Root slim entry\n",
+    )
+    .expect("slim entry");
+    fs::write(
+        source.join("standards/runtime/methodology-catalog.v1.json"),
+        r#"{
+  "entries": [
+    {
+      "compactRef": "SKILL.md",
+      "fallbackRef": "skill-fallbacks/other.full.md"
+    }
+  ]
+}"#,
+    )
+    .expect("catalog");
+    let request = NativeJobRequest {
+        schema_version: JOB_SCHEMA.to_owned(),
+        entrypoint: "compile".to_owned(),
+        actor: "test-agent".to_owned(),
+        reason: "validate slim fallback binding".to_owned(),
+        idempotency_key: "compile-source-slim-binding-001".to_owned(),
+        mode: ExecutionMode::DryRun,
+        allowed_roots: vec![root.clone()],
+        job: JobInput::Compile(CompileInput {
+            source_directory: source,
+            output_directory: root.join("compiled"),
+            generated_configs: Vec::new(),
+        }),
+    };
+
+    let error = execute_native_job(&request).expect_err("mismatched fallback is rejected");
+    assert!(matches!(
+        error,
+        JobError::InvalidSource(ref message) if message.contains("catalog fallback mismatch")
+    ));
+    fs::remove_dir_all(root).expect("cleanup");
+}

@@ -4,7 +4,7 @@ use ae_sdd_domain::{
     AgentRole, DesignRoute, EventStoreId, GateOutcome, InputFingerprint, ProcessPhase,
     StateRevision, WorkScale,
 };
-use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteSelection};
+use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteLifecycle, RouteSelection};
 use ae_sdd_policy::RequiredGate;
 use ae_sdd_runtime::{FlowSupervisor, MemoryPersistence, PersistencePort};
 use uuid::Uuid;
@@ -19,7 +19,10 @@ fn same_flow_event_is_deduplicated_and_conflicting_reuse_fails_closed() {
         FlowEnvironment::new(
             store_id,
             InputFingerprint::digest(b"event-dedup-input"),
-            RouteSelection::new(WorkScale::Small, DesignRoute::CodingPlan),
+            RouteLifecycle::Frozen(RouteSelection::new(
+                WorkScale::Small,
+                DesignRoute::CodingPlan,
+            )),
         ),
     );
     let first = supervisor

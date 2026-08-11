@@ -270,16 +270,6 @@ pub(super) fn context_complete(state: &Value, required: &[&str]) -> bool {
     })
 }
 
-pub(super) fn route_exempt(state: &Value) -> bool {
-    state
-        .get("scale")
-        .and_then(Value::as_str)
-        .is_some_and(|scale| {
-            matches!(scale.to_ascii_lowercase().as_str(), "micro" | "small")
-                || matches!(scale, "微" | "小")
-        })
-}
-
 pub(super) fn structured_status(value: Option<&Value>, expected: &str) -> bool {
     value
         .and_then(|item| item.get("status"))

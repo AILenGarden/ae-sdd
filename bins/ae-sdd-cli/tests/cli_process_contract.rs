@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::json;
@@ -124,6 +125,9 @@ fn daemon_executable() -> Option<PathBuf> {
 
 struct DaemonGuard {
     manifest: PathBuf,
+    cleanup_root: PathBuf,
+    authority_root: PathBuf,
+    work_item_id: Option<String>,
 }
 
 impl Drop for DaemonGuard {
@@ -137,6 +141,23 @@ impl Drop for DaemonGuard {
                 .stderr(Stdio::null())
                 .status();
         }
+        if let Some(work_item_id) = &self.work_item_id {
+            let suffix = format!("-{work_item_id}");
+            if let Ok(entries) = fs::read_dir(self.authority_root.join(".auto-engineering")) {
+                for entry in entries.flatten() {
+                    let is_owned_directory =
+                        entry.file_type().is_ok_and(|file_type| file_type.is_dir())
+                            && entry
+                                .file_name()
+                                .to_str()
+                                .is_some_and(|name| name.ends_with(&suffix));
+                    if is_owned_directory {
+                        let _ = fs::remove_dir_all(entry.path());
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(&self.cleanup_root);
     }
 }
 
@@ -646,10 +667,15 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
         eprintln!("skipping live legacy RPC coverage: no ae-sddd executable is available");
         return;
     };
-    let state_dir = sandbox().join("live-legacy-rpc-state");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after Unix epoch")
+        .as_nanos();
+    let state_dir = sandbox().join(format!("live-legacy-rpc-state-{nonce}"));
     fs::create_dir_all(&state_dir).expect("live daemon state dir");
     let endpoint_manifest = state_dir.join("endpoint.v1.json");
-    let root = repository_root().display().to_string();
+    let project_root = repository_root();
+    let root = project_root.display().to_string();
     let start = run_cli(
         &[
             "runtime".into(),
@@ -672,15 +698,18 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
         "start isolated daemon: {}",
         text(&start.stderr)
     );
-    let _guard = DaemonGuard {
+    let mut guard = DaemonGuard {
         manifest: endpoint_manifest.clone(),
+        cleanup_root: state_dir.clone(),
+        authority_root: project_root,
+        work_item_id: None,
     };
 
     let register_params = json!({
         "protocolVersion":"1.0",
         "idempotencyKey":"cli-process-workspace-register",
         "deadlineMs":5000,
-        "payload":{"projectRoot":root,"projectKey":"cli-process-contract"}
+        "payload":{"projectRoot":root,"projectKey":"ae-sdd"}
     });
     let register = run_cli(
         &[
@@ -707,18 +736,50 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
         .as_str()
         .expect("workspace.register returns workspaceId")
         .to_owned();
-    let work_item_id = "PRD-AE-SDD-RUST-DAEMON-001";
+    let bootstrap_event = json!({
+        "hook_event_name":"UserPromptSubmit",
+        "prompt":"/ae-sdd",
+        "event_id":format!("cli-process-route-bootstrap-{nonce}"),
+        "session_id":format!("cli-process-contract-{nonce}"),
+        "cwd":root
+    });
+    let bootstrapped = run_cli(
+        &[
+            "hook".into(),
+            "--method".into(),
+            "hook.user_prompt".into(),
+            "--request-json".into(),
+            bootstrap_event.to_string(),
+            "--manifest".into(),
+            endpoint_manifest.display().to_string(),
+            "--timeout-ms".into(),
+            "5000".into(),
+        ],
+        None,
+    );
+    assert!(
+        bootstrapped.status.success(),
+        "bootstrap ROUTE work item: {}",
+        text(&bootstrapped.stderr)
+    );
+    let bootstrap_stderr = text(&bootstrapped.stderr);
+    let work_item_id = bootstrap_stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ae-sdd: hook.user_prompt bound workItemId: "))
+        .expect("/ae-sdd reports its daemon-minted workItemId")
+        .to_owned();
+    guard.work_item_id = Some(work_item_id.clone());
+
     let open_session_params = json!({
         "protocolVersion":"1.0",
         "workspaceId":workspace_id,
-        "workItemId":work_item_id,
-        "agentId":"cli-process-root",
-        "idempotencyKey":"cli-process-session-open",
+        "agentId":"host-hook",
+        "idempotencyKey":"cli-process-session-reopen",
         "deadlineMs":5000,
         "payload":{
-            "externalKey":"cli-process-contract",
+            "externalKey":format!("cli-process-contract-{nonce}"),
             "role":"root",
-            "engaged":false
+            "engaged":true
         }
     });
     let open_session = run_cli(
@@ -737,7 +798,7 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
     );
     assert!(
         open_session.status.success(),
-        "open isolated root session: {}",
+        "reopen isolated root session: {}",
         text(&open_session.stderr)
     );
     let session: serde_json::Value =
@@ -853,11 +914,11 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
             "--workspace-id".into(),
             workspace_id.clone(),
             "--work-item-id".into(),
-            work_item_id.into(),
+            work_item_id.clone(),
             "--session-id".into(),
             session_id.clone(),
             "--agent-id".into(),
-            "cli-process-root".into(),
+            "host-hook".into(),
             "--capability-token".into(),
             capability_token.clone(),
             "--idempotency-key".into(),

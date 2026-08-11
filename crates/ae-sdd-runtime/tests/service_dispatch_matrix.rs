@@ -7,7 +7,7 @@ use ae_sdd_domain::{
     AgentRole, BootId, DesignRoute, EventStoreId, InputFingerprint, ProcessPhase, StateRevision,
     WorkScale,
 };
-use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteSelection};
+use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteLifecycle, RouteSelection};
 use ae_sdd_protocol::{
     ClientKind, HandshakeRequest, JsonRpcRequest, PROTOCOL_RANGE_V1, RequestParams, RpcMethod,
     SecretString, StableErrorCode, WorkspaceMode,
@@ -413,7 +413,7 @@ fn flow_input(store_id: EventStoreId) -> FlowInput {
         FlowEnvironment::new(
             store_id,
             InputFingerprint::digest(b"service-dispatch-matrix"),
-            RouteSelection::new(WorkScale::Large, DesignRoute::Dr),
+            RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Dr)),
         ),
     )
 }
@@ -1738,7 +1738,6 @@ fn delegation_cancel_and_spawn_depth_fail_closed() {
             "inputRevision":1,
             "inputFingerprint":"a".repeat(64),
             "deadlineUnixMs":2_000,
-            "adapterId":"host-delegation",
             "grant":{"operations":[],"capabilities":[],"paths":[]}
         }),
         1_000,

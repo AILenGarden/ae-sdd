@@ -7,12 +7,13 @@ use ae_sdd_runtime::{PersistencePort, RuntimeConfig};
 use serde_json::json;
 
 use support::{
-    Harness, open_root_session, register_workspace, result, session_params, stable_error,
+    Harness, open_root_session, params, register_workspace, result, session_params, stable_error,
 };
 
 const ADAPTER: &str = "host-series-intent";
 const WORK_ITEM: &str = "WORK";
 const DECISION: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const RETRY_CHILD: &str = "00000000-0000-0000-0000-000000001201";
 
 #[test]
 fn root_references_committed_flow_intent_instead_of_supplying_authority_fields() {
@@ -269,7 +270,7 @@ fn committed_intent_preserves_a_fingerprint_distinct_from_the_decision_digest() 
 #[test]
 fn a_series_retry_gets_a_new_run_identity_that_still_names_what_it_replaces() {
     let harness = Harness::new(RuntimeConfig::default());
-    let _host = harness.connection_as(ClientKind::HostAdapter, Some(ADAPTER));
+    let mut host = harness.connection_as(ClientKind::HostAdapter, Some(ADAPTER));
     let mut root_connection = harness.connection(ClientKind::Hook);
     let workspace = register_workspace(&harness, &mut root_connection, "series-retry");
     let root = open_root_session(
@@ -333,6 +334,54 @@ fn a_series_retry_gets_a_new_run_identity_that_still_names_what_it_replaces() {
         first_record["delegationId"].as_str(),
         "the attempt identity must be its own key, not an alias of the delegation          edge: {first_record}"
     );
+
+    // ROUTE-C: the per-root-session concurrency guard is gone, so a retry
+    // could in principle open while the first attempt is still `spawning`.
+    // This test still accepts the first attempt before retrying, because the
+    // point under test is the *run identity* change across attempts, not the
+    // concurrency model — keeping the sequence linear keeps the assertion
+    // honest about what it is proving.
+    let action = result(&harness.call(
+        &mut host,
+        RpcMethod::HostActionNext,
+        params(json!({"adapterId":ADAPTER}), 1_000),
+    ));
+    let claim_id = action["claimId"]
+        .as_str()
+        .expect("Host delivery carries the daemon-issued claim")
+        .to_owned();
+    let mut ack = params(
+        json!({
+            "adapterId":ADAPTER,
+            "ack": {
+                "ackId":"00000000-0000-0000-0000-000000001202",
+                "actionId":action["actionId"],
+                "commandSeq":action["commandSeq"],
+                "outcome":"accepted",
+                "hostTaskId":"host-task-series-retry",
+                "sessionId":RETRY_CHILD
+            }
+        }),
+        1_000,
+    );
+    ack.idempotency_key = Some("series-retry-ack".to_owned());
+    let _ = result(&harness.call(&mut host, RpcMethod::HostActionAck, ack));
+
+    let mut accept = params(
+        json!({
+            "delegationId":first["delegationId"],
+            "claimId":claim_id,
+            "actionId":action["actionId"],
+            "childSessionId":RETRY_CHILD,
+            "expiresAtUnixMs":4_900
+        }),
+        1_000,
+    );
+    accept.workspace_id = Some(workspace.workspace_id.clone());
+    accept.work_item_id = Some(WORK_ITEM.to_owned());
+    accept.idempotency_key = Some("series-retry-accept".to_owned());
+    let accepted = result(&harness.call(&mut root_connection, RpcMethod::DelegationAccept, accept));
+    assert_eq!(accepted["status"], "running");
 
     // Retry lineage is authority, so it arrives on the flow decision — a root
     // cannot name its own predecessor. Re-running `flow.next` with the retry edge

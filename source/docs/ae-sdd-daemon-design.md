@@ -62,7 +62,9 @@ daemon 必须实现以下目标：
   裁决自更新、DR、`Story -> TestCase -> CodingPlan`、独立 CodingPlan 或 executionPlan 路线。
 
 因此，“先分类再 RA”与“所有业务流程先走 RA”并不冲突：分类只是启动证据，RA 才是首个业务 Series；
-在 RA 完成前，daemon 不得把预估规模固化为最终设计路线。
+在 RA 完成前，daemon 不得把预估规模固化为最终设计路线。权威主线固定为
+`Initialized -> RequirementAnalyzed -> RouteSelected`：前者运行/修订 RA，中间态只持有已闭合 RA
+evidence 和 route candidate，后者才对外暴露 frozen EngineeringRoute。
 
 ### 2.2 daemon 是流程权威，Agent 是语义执行者
 
@@ -251,27 +253,19 @@ daemon 校验该报告后创建或定位 Work Item，并铸造本次 `FlowRunId`
 
 ### 5.4 步骤 2：执行 RA
 
-daemon 为 RA 生成独立 `SeriesPlan`、`SeriesId` 和 `SeriesRunId`，并先解决 RA Spec 的绑定：
-
-- 用户选择采用既有 RA 时，绑定既有 `DocumentId` 和本次读取的内容版本。
-- 用户选择新建时，预留新的 `DocumentId` 和受控输出位置。
-- 既有 RA 只覆盖部分新增需求时，RA Series 必须生成同一文档的新版本或显式补充文档，不能静默沿用旧结论。
-
-RA 是所有规模的必经 Series。微任务可采用紧凑 RA 模板，但不得跳过来源核对、范围、风险、
-验收目标和规模事实。
+daemon 为 RA 生成独立 `SeriesPlan`、`SeriesId` 和 `SeriesRunId`，并把当前 Work Item 的唯一
+`documentPaths/RA` 绑定为 `ae-sdd-ra-srs/v2`。首次分析创建该文档；既有内容不足或输入变化时只创建
+同一文档 identity 的新 revision。禁止补充第二份 RA 文档、目录猜测或 silent reuse。所有规模使用同一
+自适应 SRS；条件章节由 applicability 决定是否出现。
 
 ### 5.5 步骤 3：工程路由
 
-RA 产出经校验后，daemon 才冻结：
-
-- `taskKind`
-- `finalScale`
-- `selectedDesign`
-- `requiredSeries`
-- `requiredSpecKinds`
-- 路由依据与 decision digest
-
-用户批准后，route decision 才能成为后续 SeriesPlan 和 `state.executionPlan` 的前置事实。
+RA 产出和 collected receipt 通过 `G-RA-1~4` 后，daemon 先进入 `RequirementAnalyzed`，再从
+`RequirementAnalysisEvidence` 的 scale、scale evidence 和 receipt binding 产生非权威 route candidate。
+用户批准必须绑定当前 SRS digest 与 candidate；随后 `G-RA-FLOW-VIOLATION` 重算 `RouteBinding`。
+只有该 Gate PASS，daemon 才在同一 mutation 中冻结 `taskKind/finalScale/selectedDesign/requiredSeries/
+requiredSpecKinds/decisionDigest` 并进入 `RouteSelected`。任一 revision/digest/binding 变化均使旧 candidate、
+approval 和 Gate PASS stale。
 
 ### 5.6 步骤 4：循环执行子 Series
 
@@ -316,20 +310,11 @@ DR 批准后并行多个 Story 分支，但同一分支内的 `Story -> TestCase
 
 ### 6.3 RA 的最低输出
 
-RA Series 至少输出：
-
-- 任务目标和用户价值
-- 范围与非范围
-- 需求条目及来源追踪
-- 原型/Demo 行为提取
-- PRD 规则提取
-- 未决问题和冲突裁决
-- 影响面与风险
-- 可验证验收目标
-- 任务类型事实
-- 规模判定事实
-- 推荐设计路线及理由
-- RA Spec 的 artifact ref、`DocumentId` 和内容 digest
+RA Series 只输出一份自适应 SRS：身份/来源、问题/目标/非目标、范围、七维 applicability、带 REF 的
+REQ、覆盖 REQ 的 AC、约束/假设/冲突/风险/GAP，以及纯需求六维 scale evidence。`analysisState=complete`
+要求 blocking GAP 为 0。任务类型、技术方案和推荐工程路线不写入 SRS；daemon 从验证后的 evidence
+另行派生 candidate。Series result 只携带该 SRS 的 artifact ref、`DocumentId`、version、content digest
+和 source revision。
 
 ---
 
@@ -339,12 +324,12 @@ RA Series 至少输出：
 
 | 规模 | 判定基线 | RA 后实现路线 | 最低持久化设计产物 |
 | --- | --- | --- | --- |
-| 微任务 | 单文件内几行局部改动；目标单一；不改变共享合同、数据结构或安全边界 | `RA -> executionPlan -> Coding -> Test -> Review` | RA Spec + daemon state 中经批准的 `executionPlan`；不要求独立 CodingPlan Markdown |
-| 小任务 | 不超过 3 个文件，或单一任务几十行改动；影响局部且可由一个原子计划覆盖 | `RA -> CodingPlan -> Coding -> Test -> Review` | RA Spec + CodingPlan Spec |
-| 中任务 | 一个业务/技术系列内的改动，例如不超过 3 个相关接口的逻辑变更 | `RA -> Story -> TestCase -> CodingPlan -> Coding -> Test -> Review` | RA Spec + Story Spec + TestCase Spec + CodingPlan Spec |
-| 大任务 | 多个中任务或多个相互协作系列的集合 | `RA -> DR -> N x (Story -> TestCase -> CodingPlan) -> Coding -> Test -> Review` | RA Spec + DR Spec + 每个 Story 对应的 Story/TestCase/CodingPlan Spec |
+| 微任务 | 六维最高分 1 | `executionPlan -> Coding -> Test -> Review` | RA Spec + daemon state 中经批准的 `executionPlan`；不要求独立 CodingPlan Markdown |
+| 小任务 | 六维最高分 2 | `CodingPlan -> Coding -> Test -> Review` | RA Spec + CodingPlan Spec |
+| 中任务 | 六维最高分 3 | `Story -> TestCase -> CodingPlan -> Coding -> Test -> Review` | RA Spec + Story Spec + TestCase Spec + CodingPlan Spec |
+| 大任务 | 六维最高分 4 | `DR -> N x (Story -> TestCase -> CodingPlan) -> Coding -> Test -> Review` | RA Spec + DR Spec + 每个 Story 对应的 Story/TestCase/CodingPlan Spec |
 
-文件数和行数是快速信号，不是唯一裁决依据。“3 个接口”是中任务示例，不是绕过风险判定的硬上限。
+六维依次是可观察行为/场景、参与方/权限/业务域、状态/数据语义/不变量、外部契约/协调、质量安全合规可用性、兼容迁移回滚运行影响。规模取最高分；文件、类、表、接口数量和预计人天不得参与裁定。证据不足降低 confidence，不得降低 scale 规避路线。
 
 ### 7.2 最高影响维度原则
 
@@ -509,6 +494,94 @@ sequenceDiagram
 - child capability 必须是 parent grant 的真子集。
 - reviewer 与被审 worker 必须物理隔离。
 - root 只接收有界 `ChildResult`；完整 Spec 正文通过 artifact ref 管理，不回灌 root transcript。
+
+### 9.4 会话绑定的 Host 执行模型
+
+Host 侧的 Create 不通过“能力声明 + 候选池选择”决定由谁执行；daemon 直接把 Create 绑定到发起
+请求的 root session，子 Agent 通过一次性关联凭据向 daemon 证明自己就是被期望创建的对象，daemon
+靠证据而非信任声明确认绑定成立。这一模型取代按适配器名称挑选候选的旧路径：Host 侧不再“选择
+一个适配器”，而是“验证发起 Create 的会话与后续接管的 worker 持有同一枚 daemon 铸造的一次性
+凭据”。
+
+Create 发起方（root session）与接管方（子 Agent，Claude Code 场景下即 `SubagentStart` 之后的子
+worker）是同进程内的并发 worker（A2 模型），不存在独立的操作系统进程边界可供证明，因此绑定
+身份不依赖 PID 或任何操作系统进程标识。
+
+**绑定身份**：daemon 铸造一枚独立的 `HostExecutionBindingId`（UUID），与 `DelegationId`/
+`action_id` 同一批产生，作为“当前存活绑定”的记账凭证——它不是身份证明，只回答“当初 root 报备
+的那个绑定记录是否还处于存活状态”。真正的接管权仍然来自既有 `claim_id` + `PhysicalSessionProof`
+链条的保密性，这条认证边界不变；`HostExecutionBindingId` 只承载存活判定边界，两者分离，不得
+混为同一道校验。
+
+**上报与凭据回传的时序**：
+
+1. root 调用 Create，daemon 完成 stage/publish（A2 模型下这就是“发起”本身，不存在独立 host
+   进程 spawn 步骤）。daemon 在这一步铸造 `HostExecutionBindingId`，与 `DelegationId`/`action_id`
+   同批产生。
+2. daemon 不需要 root 上报任何进程凭证——A2 模型下发起方与接管方之间没有进程边界要跨越，root
+   发起的调用本身就是同步的，不存在“进程已经起来但还没人知道它是谁”的时间差。
+3. daemon 在 Create 响应中回传关联凭据（`DelegationId`/一次性 `claim_id`），与既有
+   `delegation.create` 响应形状完全一致，不新增字段。
+4. root 将该凭据经不可被第三方读取的信道单向注入子 worker（例如仅子 worker 自己进程内可读的
+   位置），不得以明文、可枚举或可预测的方式传递，也不能退化为公开可猜测的 `workItemId`。
+5. 子 Agent 携带该凭据向 daemon 发起一次性 claim + attestation（即 §9.3 既有步骤，不变）。
+
+**认证边界与存活判定的边界必须分离**：真正的接管权来自第 5 步凭据（`claim_id`）的保密性，没有
+这个凭据，无论自报什么都换不来接管权。`HostExecutionBindingId` 本身不参与认证，只服务于后续的
+存活判定与抢占决策（见下一段），回答“当初 root 报备的那个绑定记录是否还存活”，不回答“这次连接
+过来的是不是它”；两者不得混为同一道校验。
+
+**存活判定与抢占**：daemon 记录每个绑定的最后交互时间，由该子会话触发的每一次 Hook 事件
+（`hook.user_prompt`/`hook.pre_tool`/`hook.post_tool`/`hook.stop`）刷新，不需要额外的专用心跳
+RPC——四个 Hook 方法本身已经过 `session_identity()` 校验并确定归属会话，daemon 处理时顺带刷新
+即可。这与既有 `session.heartbeat`（延长 session 本身的 TTL）是两件独立的事，互不替代。
+
+由此产生一个已知的、接受的假阳性：`hook.pre_tool` 到配对的 `hook.post_tool` 之间若单次工具调用
+耗时超过 30 分钟，子 Agent 期间不产生任何 Hook 事件，会被计入静默窗口。这里不为此新增“挂起工具
+调用”状态跟踪——超过 30 分钟的单次调用本身已经足够慢，允许其绑定被判定为可抢占是可接受的
+结果；即使原进程其实仍在正常工作，下面的抢占分支 3 已经提供了兜底：原子 Agent 可以上报 root
+释放并重新认领，不会被直接杀掉或误伤为失败。
+
+当另一个申请方要求认领同一绑定时：
+
+1. 绑定台账中该 `HostExecutionBindingId` 的记录状态为 `released` 或 `expired` → 允许新申请方
+   直接认领。UUID 本身不携带存活语义，不存在“判定死亡”这一步，存活语义完全由绑定台账的状态
+   字段和最后交互时间戳承载。
+2. 原绑定仍处于 `active` 状态，但最后交互时间距今超过 30 分钟 → 判定为失联，允许新申请方认领
+   并顶替，原记录标记为 `preempted`（不是物理删除，保留审计轨迹）。
+3. 原绑定仍 `active` 且在 30 分钟窗口内 → 拒绝新认领；申请方需上报其 root session，由 root
+   显式释放后，新申请方才能重试认领。
+
+**释放**：绑定释放复用既有按 owner 匹配、幂等、无匹配即视为无操作的释放语义，但归属独立的
+host-execution 绑定台账，不与 Work Item 的 lease/fencing 账本混用——二者是不同的锁域，互不
+借用对方的 fencing 生成。
+
+**硬超时兜底**：会话关闭未通知 daemon 释放时，绑定在 12 小时后无条件超时回收为 `expired`，
+防止无限占用。
+
+以上四条（UUID 绑定身份、凭据信道保密性、抢占优先级、释放语义与硬超时）是该模型成立的必要
+条件，缺一不可；具体 wire 字段、RPC method 和存储表仍需在对应 constraints 与正式 DR 中冻结后
+才能实现。
+
+**候选设计（设计已定案，尚未获得实施批准，不构成当前生效机制的一部分）：子 Agent 主动认领
+（Child Self-Claim）**。以上模型里第 5 步"子 Agent 携带一次性凭据向 daemon 发起 claim +
+attestation"，当前落地为 `SubagentStart` 之后由 root 代理调用 `delegation.accept`，因为 Claude
+Code 的 `SubagentStart` 事件 payload 没有任何自由字段可以携带调用方选定的关联值，只能靠"同一
+root session 同一时刻至多一条 `spawning` delegation"这一协议层限制
+（`ConcurrentDelegationPending`）来保证 FIFO 出队不产生歧义。替代设计是：不依赖 `SubagentStart`
+事件做认领，而是让 root 把 `delegation.create` 返回的一次性 `claim_id` 通过 Task 工具的启动
+指令直接转交给子 Agent，由子 Agent 自己主动发起一次显式调用（新增方法 `delegation.child_claim`，
+与既有 `delegation.accept` 并存而非替换，见对应 Plan 文档 §2.3.1）完成认领——这不改变"daemon
+靠证据而非信任声明确认绑定成立"的既有信任基础（daemon 校验的仍然是不可预测的 `claim_id` 是否
+匹配，不采信任何 LLM 自称的身份内容），只是把出示凭据的一方从 root 换成子 Agent 本身。若此设计
+落地，"同一 root session 同一时刻至多一条 `spawning` delegation"这一限制的存在理由将不再成立，
+`reject_concurrent_pending_create` 应随之整体删除，为支持单个 root 会话并发创建多个子 Agent
+提供了一条现实路径。该设计的四个配套问题（新增协议方法还是复用 `delegation.accept`、凭据经
+prompt 传递的信道保密性、`SubagentStart` fail-closed 校验是否仍保留为纵深防御、依赖子 Agent
+配合执行指令的失败模式）均已在对应 Plan 文档 §2.3 给出结论（新增方法并存、结构化参数位传递、
+保留 fail-closed 作为纵深防御、失败模式由既有 `delegation.status`/`delegation.cancel` 兜底），
+设计层面不再有未决项；仍需按黄金法则新建独立 Work Item / Route 取得批准的 `state.executionPlan`
+后才能编码实现。
 
 ---
 
@@ -742,7 +815,7 @@ daemon 重启或 Agent 重连后：
 | route + RA + SeriesPlan | 已有 route decision、SeriesPlan/Receipt 和 FlowSupervisor 基础 | 将启动评估与 RA 后权威工程路由显式拆开，证明 RA 是首个业务 Series |
 | 四档规模与 Plan-first | 全局设计已有大/中/小/微和 executionPlan Gate | 冻结本文规模事实、升级规则与最低 Spec 映射 |
 | Story/TestCase/CodingPlan 子链 | 已有 TestCase 方法、模板和部分 phase 基础 | 建立按 Story 一一绑定的独立 typed Series，并强制 `Story -> TestCase -> CodingPlan` |
-| Delegation + HostAdapter | 已有 delegation、grant、Host ACK、claim/attestation 设计基础 | 冻结 SeriesRun、重试和进度事件的端到端合同 |
+| Delegation + HostAdapter | 已有 delegation、grant、Host ACK、claim/attestation 设计基础 | 冻结 SeriesRun、重试和进度事件的端到端合同；将现有候选池式适配器选择替换为 §9.4 会话绑定模型 |
 | ContextProjection | 已有角色化、有界 projection 基础 | 增加按 Series 的前提文档集合与缺失项表达 |
 | 文档存取 | 已有 intent-based resolve/save/finalize 和 path/digest | 增加稳定 `DocumentId`、DocumentVersion 和 Spec graph 聚合 |
 | Spec 挂靠 | 现有 state 支持 Story binding 和嵌套 Work Item | 增加按 `DocumentId` 查询/建图/挂靠 Work Item 的 typed operation |

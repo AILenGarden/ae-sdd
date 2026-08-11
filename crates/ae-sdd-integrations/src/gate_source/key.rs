@@ -18,6 +18,7 @@ use ae_sdd_store::UtcTimestamp;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use super::ra_binding::{AuthoritativeRaPath, authoritative_ra_path};
 use super::{external, schema};
 
 const INPUT_FILE_LIMIT: usize = 20_000;
@@ -343,7 +344,18 @@ fn input_fingerprint(
             GateInputSelector::EvidenceLedger => {
                 hash_evidence_scope(&mut hasher, root, located, work_item)?;
             }
-            _ => {}
+            GateInputSelector::RequirementAnalysis => {
+                hash_requirement_analysis(&mut hasher, root, &located.value)?;
+            }
+            GateInputSelector::ProjectAssets
+            | GateInputSelector::Story
+            | GateInputSelector::Constraints
+            | GateInputSelector::ThinkingEngine
+            | GateInputSelector::VerificationPlan
+            | GateInputSelector::ReviewBatch
+            | GateInputSelector::Toolchain
+            | GateInputSelector::Inventory
+            | GateInputSelector::RouteBinding => {}
         }
     }
     let mut inputs = workspace_inputs(root)?;
@@ -414,6 +426,8 @@ fn selector_label(selector: GateInputSelector) -> &'static str {
         GateInputSelector::ReviewBatch => "review-batch",
         GateInputSelector::Toolchain => "toolchain",
         GateInputSelector::Inventory => "inventory",
+        GateInputSelector::RequirementAnalysis => "requirement-analysis",
+        GateInputSelector::RouteBinding => "route-binding",
     }
 }
 
@@ -453,6 +467,19 @@ fn selector_state_fields(selector: GateInputSelector) -> &'static [&'static str]
         // Toolchain and inventory are independent `GateKey` dimensions; they
         // contribute nothing extra to the input fingerprint.
         GateInputSelector::Toolchain | GateInputSelector::Inventory => &[],
+        // RequirementAnalysis binds the single RA path plus its validated
+        // receipt. The file bytes are hashed in `input_fingerprint`; here we
+        // expose the state pointers that, when changed, must bust RA gates.
+        GateInputSelector::RequirementAnalysis => &[],
+        // RouteBinding binds the route candidate, approval, evidence and open
+        // conflicts — all state, no file scope.
+        GateInputSelector::RouteBinding => &[
+            "routeCandidate",
+            "routeApprovalReceipt",
+            "engineeringRoute",
+            "routeBlockingConflicts",
+            "scaleEvidenceDigest",
+        ],
     }
 }
 
@@ -482,7 +509,9 @@ fn selector_file_scope(selector: GateInputSelector, relative: &str) -> bool {
         | GateInputSelector::EvidenceLedger
         | GateInputSelector::ReviewBatch
         | GateInputSelector::Toolchain
-        | GateInputSelector::Inventory => false,
+        | GateInputSelector::Inventory
+        | GateInputSelector::RequirementAnalysis
+        | GateInputSelector::RouteBinding => false,
     }
 }
 
@@ -652,6 +681,37 @@ fn hash_state_scope(hasher: &mut Sha256, state: &Value, fields: &[&str]) -> Runt
             Some(value) => hash_part(hasher, &canonical_json(value)?),
             None => hash_part(hasher, b"<absent>"),
         }
+    }
+    Ok(())
+}
+
+/// Hashes the single bound RA document plus its validated receipt.
+///
+/// The path authority is `/documentPaths/RA` only — no directory scan, no story
+/// fallback, no `route_exempt`. A missing/escaped/invalid path hashes an
+/// explicit marker so the gate fails closed instead of silently reusing a
+/// cached PASS. Foreign project assets and other Work Items' RA documents do
+/// not contribute to this fingerprint. Task 11 owns the authoritative resolver
+/// shared with predicates/scanners; this hasher is the fingerprint-side twin.
+fn hash_requirement_analysis(hasher: &mut Sha256, root: &Path, state: &Value) -> RuntimeResult<()> {
+    hash_part(hasher, b"ra-path");
+    match authoritative_ra_path(root, state) {
+        AuthoritativeRaPath::Bound { relative, absolute } => {
+            hash_part(hasher, relative.as_bytes());
+            if absolute.is_file() {
+                hash_file_content(hasher, &absolute)?;
+            } else {
+                hash_part(hasher, b"<missing>");
+            }
+        }
+        AuthoritativeRaPath::Escape => hash_part(hasher, b"<escape>"),
+        AuthoritativeRaPath::Invalid => hash_part(hasher, b"<invalid>"),
+        AuthoritativeRaPath::Missing => hash_part(hasher, b"<missing>"),
+    }
+    hash_part(hasher, b"ra-receipt");
+    match state.pointer("/seriesReceipts/RA") {
+        Some(receipt) => hash_part(hasher, &canonical_json(receipt)?),
+        None => hash_part(hasher, b"<absent>"),
     }
     Ok(())
 }

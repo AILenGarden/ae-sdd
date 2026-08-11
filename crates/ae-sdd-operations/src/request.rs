@@ -204,6 +204,29 @@ fn validate_payload(spec: &OperationSpec, payload: &Value) -> Result<(), Operati
             Some(_) => return Err(OperationRequestError::PayloadFieldType(field.name)),
         }
     }
+    if spec.operation == OperationName::WorkItemCreate {
+        validate_workitem_create(object)?;
+    }
+    Ok(())
+}
+
+fn validate_workitem_create(
+    payload: &serde_json::Map<String, Value>,
+) -> Result<(), OperationRequestError> {
+    let Some(requested_intent) = payload.get("requestedIntent").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let entry_node = payload
+        .get("entryNode")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    let normalized = requested_intent.trim().to_ascii_uppercase();
+    if entry_node != Some("ROUTE") || !matches!(normalized.as_str(), "DR" | "STORY" | "CODING_PLAN")
+    {
+        return Err(OperationRequestError::InvalidRequestedIntent(
+            requested_intent.to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -365,6 +388,10 @@ pub enum OperationRequestError {
     EmptyArray(&'static str),
     #[error("operation payload field providedDocuments is invalid: {0}")]
     InvalidProvidedDocuments(String),
+    #[error(
+        "operation payload requestedIntent must be DR, STORY, or CODING_PLAN and requires entryNode=ROUTE: {0}"
+    )]
+    InvalidRequestedIntent(String),
     #[error("lease TTL must be in 30..=3600 seconds")]
     InvalidLeaseTtl,
     #[error("failed to canonicalize operation payload: {0}")]

@@ -36,7 +36,10 @@ pub use diagnostics::{
     DroppedRecord, HookInRecord, HookOutRecord, NodeRecord,
 };
 pub use document::{DocumentVersionError, DocumentVersionId, SpecKind};
-pub use engineering_route::{EngineeringRoute, EngineeringRouteError, RequirementAnalysisEvidence};
+pub use engineering_route::{
+    EngineeringRoute, EngineeringRouteError, ReceiptStatus, RequirementAnalysisEvidence,
+    RouteApprovalReceipt, RouteBindingInput, RouteMappingVersion,
+};
 pub use error::{
     ContractValidationError, ControlPlaneError, ControlPlaneErrorCode, Remediation, RetryClass,
 };
@@ -70,10 +73,11 @@ pub use run_graph::{FlowRunProjection, RunGraphError, SeriesRunProjection};
 pub use series::{
     ImpactFact, ImpactLevel, MAIN_NODE_SERIES_KINDS, MAX_IMPACT_FACTS, MAX_REQUIRED_SERIES,
     MAX_ROUTE_ARTIFACTS, MAX_ROUTE_REASON_CODES, MAX_SERIES_GRANT_ITEMS, ProcessSnapshot,
-    RetryPolicy, RouteDecision, RouteDecisionError, RouteDisposition, RouteInput, RouteInputError,
-    SERIES_ACTIVITIES, SERIES_SUB_NODES, SeriesActivity, SeriesInput, SeriesInputError,
-    SeriesLifecycleState, SeriesPlan, SeriesPlanDecision, SeriesPlanError, SeriesReceipt,
-    SeriesReceiptError, SeriesReceiptStatus, SeriesSubNode,
+    RequirementAnalysisSeriesInput, RetryPolicy, RouteDecision, RouteDecisionError,
+    RouteDisposition, RouteInput, RouteInputError, SERIES_ACTIVITIES, SERIES_SUB_NODES,
+    SeriesActivity, SeriesInput, SeriesInputError, SeriesLifecycleState, SeriesPlan,
+    SeriesPlanDecision, SeriesPlanError, SeriesReceipt, SeriesReceiptError, SeriesReceiptStatus,
+    SeriesSubNode,
 };
 pub use supervision::{RequirementRulingEvent, SeriesProgressEvent, SupervisionEventError};
 pub use value::{

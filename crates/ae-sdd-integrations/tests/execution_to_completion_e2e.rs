@@ -14,7 +14,15 @@
 
 use std::{fs, path::Path, sync::Arc};
 
-use ae_sdd_domain::{AgentRole, BootId, CapabilityId, OperationId, ProjectPathScope, ScopedGrant};
+use ae_sdd_contracts::{
+    DocumentId, EngineeringRoute, ReasonCode, ReceiptStatus, RequirementAnalysisEvidence,
+    RouteApprovalReceipt, RouteBindingInput, RouteDecision, RouteDecisionId, RouteDisposition,
+    RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind, SpecKind, TaskKind,
+};
+use ae_sdd_domain::{
+    AgentRole, ArtifactDigest, BootId, CapabilityId, DecisionDigest, DesignRoute, OperationId,
+    ProjectPathScope, ScopedGrant, StateRevision, WorkItemId, WorkScale,
+};
 use ae_sdd_gates::{GateRegistry, GateSchedulerStats};
 use ae_sdd_integrations::{NativeBusinessAdapter, SqliteRuntimePersistence};
 use ae_sdd_protocol::{
@@ -206,6 +214,9 @@ impl Fixture {
         key: &str,
     ) -> Result<Value, ae_sdd_runtime::RuntimeError> {
         let mut params = operation_params(agent, session, operation, payload, key);
+        if operation == "review.contribute" {
+            params.work_item_id = Some(STORY.to_owned());
+        }
         params.expected_revision = Some(self.revision());
         self.adapter
             .execute(RpcMethod::OperationExecute, &params, Some(workspace))
@@ -263,11 +274,12 @@ fn execution_plan() -> Value {
 fn initial_state() -> Value {
     json!({
         "stateMachineName":WORK_ITEM,
-        "activeStory":WORK_ITEM,
+        "activeStory":STORY,
         "revision":1,
         "lastFencingToken":0,
+        "entryNode":"ROUTE",
+        "engineeringRoute":frozen_engineering_route(),
         "scale":"medium",
-        "selectedDesign":"Story",
         "phase":"code-reviewed",
         "currentPhase":"code-reviewed",
         "currentStep":"code-reviewed",
@@ -305,6 +317,56 @@ fn initial_state() -> Value {
             "byteLength":1
         }]
     })
+}
+
+fn frozen_engineering_route() -> Value {
+    let evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new(WORK_ITEM).expect("work item id"),
+        SeriesId::new("SERIES-RA-E2E-COMPLETION").expect("series id"),
+        DocumentId::new("DOC-RA-E2E-COMPLETION").expect("document id"),
+        1,
+        ArtifactDigest::digest(b"e2e completion RA content"),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"e2e completion RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"e2e completion scale evidence"),
+        ArtifactDigest::digest(b"e2e completion RA closure receipts"),
+    );
+    let binding = RouteBindingInput::new(evidence, RouteMappingVersion::V1);
+    let decision = RouteDecision::new(
+        SchemaVersion::V2,
+        RouteDecisionId::new("route-e2e-completion-r1").expect("route decision id"),
+        WorkItemId::new(WORK_ITEM).expect("work item id"),
+        TaskKind::Implementation,
+        WorkScale::Medium,
+        DesignRoute::Story,
+        RouteDisposition::Approved,
+        vec![ReasonCode::new("route.ra-closed").expect("reason")],
+        vec![
+            SeriesKind::new("story").expect("series kind"),
+            SeriesKind::new("testcase").expect("series kind"),
+            SeriesKind::new("coding-plan").expect("series kind"),
+        ],
+        vec![SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        binding.fingerprint(),
+        None,
+        DecisionDigest::digest(b"e2e completion route decision"),
+    )
+    .expect("route decision");
+    let approval = RouteApprovalReceipt::new(
+        "route:e2e-completion-r1".to_owned(),
+        "user:test".to_owned(),
+        "2026-07-27T02:00:00Z".to_owned(),
+        binding.ra_evidence().document_id().clone(),
+        binding.ra_evidence().version(),
+        *binding.ra_evidence().ra_content_digest(),
+        binding.ra_evidence().scale(),
+        decision.decision_digest(),
+    );
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[])
+        .expect("verified RA and bound approval freeze the route");
+    serde_json::to_value(route).expect("engineering route JSON")
 }
 
 fn write_workspace(root: &Path, state_path: &Path) {
@@ -686,6 +748,11 @@ fn session_record(
     delegation_id: Option<&str>,
     grant: ScopedGrantWire,
 ) -> RuntimeSessionRecord {
+    let current_work_item = if matches!(role, WireAgentRole::Task | WireAgentRole::Reviewer) {
+        STORY
+    } else {
+        WORK_ITEM
+    };
     RuntimeSessionRecord {
         session_id: session_id.to_owned(),
         agent_id: agent_id.to_owned(),
@@ -696,7 +763,7 @@ fn session_record(
         parent_session_id: parent_session_id.map(str::to_owned),
         delegation_id: delegation_id.map(str::to_owned),
         engaged: true,
-        current_work_item: Some(WORK_ITEM.to_owned()),
+        current_work_item: Some(current_work_item.to_owned()),
         grant,
         context_generation: 0,
         expires_at_unix_ms: 4_102_444_800_000,
@@ -991,6 +1058,7 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
         json!({}),
         &format!("{key_prefix}-review-finalize"),
     );
+    finalize.work_item_id = Some(STORY.to_owned());
     finalize.lease_id = Some(lease.0.clone());
     finalize.fencing_token = Some(lease.1);
     finalize.expected_revision = Some(fixture.revision());

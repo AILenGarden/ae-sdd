@@ -242,7 +242,7 @@ G-00 项目资产门卫每次 SKILL 启动前验证资产存在；G-RA 系列在
 
 G-02 与 G-14 通过 `document_storage.resolve_story_document()` 共享 Story 正文解析。已绑定 `docPath` 优先，随后是精确非 glob StoryName，只有没有 StoryName 时才兼容 Story 类别的 `{STORY-ID}.md`；Task/Coding/Test/CR 同名文件不参与。正式文件必须由正文 `Story ID` 元数据反校验。多候选、元数据缺失/漂移和非法 basename 全部 fail closed，不做模糊猜测。
 
-G-RA-1~6 与 G-RA-FLOW-VIOLATION 通过 `_resolve_selected_ra()` 共享当前 Work Item 的 RA 正文。合法 `state.raDocPath` 或 `storyStates[activeStory].raDocPath` 优先；没有 binding 时，只在 formal RA candidates 中沿用统一的 latest version/mtime fallback。Work Item 门禁把解析出的单一文件作为 `--file` 传给 scanner，`--root` 仅用于相对路径和 containment；因此 `references/`、templates、CHANGELOG、`dist/`、GeneratePlan/Impact/ReverseIssues 等 RA-like 文档既不会锁住当前流程，也不能替代 selected RA 自身的真实性、深度、流程或实现完整性检查。根目录全量审计仍保留，但使用同一 formal candidate 分类器，不再使用各 scanner 独立的宽泛 `rglob`。
+G-RA-1~6 与 G-RA-FLOW-VIOLATION 通过同一个 authoritative RA resolver 读取当前 Work Item 的 `/documentPaths/RA` 标量。resolver 只接受 `ae-sdd-doc/RA/` 下的单个普通 Markdown 文件并执行 containment 校验；没有 Story fallback、目录猜测、首文件命中或“任意 RA 存在”退路。`RequirementAnalysis` selector 精确绑定 Work Item、RA path/bytes、已验证 receipt 与 source revision；`RouteBinding` 另外绑定 candidate、approval、scale evidence、closure receipt、frozen route 和 blocking conflicts。无明确 binding 或任一 digest 不一致均 fail closed。
 
 上下文加载准入门禁（G-DR-CTX / G-STORY-CTX / G-TESTCASE-CTX / G-TASK-CTX）复用注册表式 `_check_context_loaded`。目标依赖固定为：DR 查 RA；Story 查 RA 和适用 DR；TestCase 必须查唯一 Story；Story 路线的 CodingPlan 必须查该 Story 及其已批准 TestCase；Task 只从已批准计划派生。微/小路线因不存在 Story 可对 TestCase 依赖返回 `not_applicable`，但不得伪造已完成 TestCase。现有 gate registry 尚未完整表达 CodingPlan 的 Story-TestCase 绑定，属于待补 typed 校验。
 
@@ -254,11 +254,13 @@ G-RA-1~6 与 G-RA-FLOW-VIOLATION 通过 `_resolve_selected_ra()` 共享当前 Wo
 | 统一评估入口 | `gate.evaluate` RPC → `crates/ae-sdd-gates/src/evaluator.rs` |
 | 单个门禁定向检查 | 同一 RPC 指定 gate id；重 Gate 经 `scheduler.rs` 有界排队 |
 | G-00 资产门卫 | `ae-sdd-gates` G-00 check；不通过时用 assets 相关 operation 生成/修复 baseline 资产再校验 |
-| G-RA-1~4 需求分析门卫 | `ae-sdd-gates` + `ae-sdd-scanners` 的 `ra-authenticity` scanner（G-RA-4） |
-| G-RA-5 机械派生深度 | `ae-sdd-gates` + `ra-depth` scanner |
-| G-RA-6 实现视角完整性 | `ae-sdd-gates` + `ra-implementation` scanner（I1~I7） |
-| G-RA-FLOW-VIOLATION | `ae-sdd-gates` + `ra-flow-violation` scanner（R1~R3 规则） |
-| G-RA authoritative scope | `crates/ae-sdd-scanners/src/scope.rs` 单一 resolver；G-RA-1~6/FLOW details 统一报告 `selected_file/selection_source/scope_mode`，四个 RA scanner 共享同一 scope 判定 |
+| G-RA-1 | 当前 Work Item 的唯一 v2 SRS 与 collected/validated RA receipt 在 DocumentId/version/content digest/source revision 上精确一致 |
+| G-RA-2 | 有界 `RaCore` scanner 校验 SRS Core、ID 唯一性和 placeholder/结构边界 |
+| G-RA-3 | 有界 `RaApplicability` scanner 校验七维判定、applicable 章节和 unknown GAP 闭合 |
+| G-RA-4 | 有界 `RaClosure` scanner 校验 REQ-REF、REQ-AC、blocking GAP 与六维 scale evidence |
+| G-RA-5 / G-RA-6 | 分别转发 G-RA-3 / G-RA-4 的真实结果并给 replacement diagnostic；不进入自动 required set |
+| G-RA-FLOW-VIOLATION | `RequirementAnalysis + RouteBinding` predicate；验证 RA-first、approval、receipt/digest/scale/candidate binding 后才允许 freeze route |
+| G-RA authoritative scope | `crates/ae-sdd-integrations/src/gate_source/ra_binding.rs` 统一 resolver；key/predicate/scanner adapter 禁止各自猜 RA |
 | G-CODE-1 Coding 真实性 | `ae-sdd-gates` + `coding-authenticity` scanner（AP-1~AP-6 反模式） |
 | G-09 测试真实性 | `ae-sdd-gates` + `test-authenticity` scanner（8 类禁止手段）；可信 work-item scope 优先取 `VerificationPlan.changedPaths`，兼容 state changed paths，无 scope 时全仓严格扫描 |
 | G-13 全链路对称性 | 当前仍含 `entryNode` 分支；目标改为按 EngineeringRoute 校验 DR 可选性，以及每个 Story 的 `Story -> TestCase -> CodingPlan` 完整链 |
@@ -460,7 +462,7 @@ CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策�
 
 防止 LLM 伪造测试通过、伪造需求分析内容、伪造设计-实现对齐的静态扫描器，作为不可绕过的硬门禁运行时依赖。输出统一 JSON 契约，BLOCKER=0 才算通过。
 
-**⚠️ 文档滞后修正**：原文档标题写"3 个静态扫描器"，实际共 6 个扫描器（测试/Coding/RA真实性 3个 + RA流程违规/RA机械派生深度/RA实现视角完整性 3个），外加 2 个对齐验证工具（AA全维对齐验证器 + IC迭代检查器）。
+RA SRS 使用三个有界结构 scanner；route freeze 使用 typed predicate，不再以关键词 scanner 代替状态、receipt 与 route binding 校验。
 
 ### 实现
 
@@ -468,11 +470,11 @@ CodingModel 11 维决策（嵌入每个 Task 文档）：并发控制/幂等策�
 | --- | --- |
 | 测试真实性扫描（⑥.10/G-09硬门禁） | `test-authenticity` scanner：通用假测试规则 + `mock-http-boundary` + `http-internal-mock` + Surefire XML；由 G-09 消费 |
 | Coding 真实性扫描（G-CODE-1） | `coding-authenticity` scanner：AP-1~AP-6 反模式库；由 G-CODE-1 触发 |
-| RA 真实性扫描（G-RA-4） | `ra-authenticity` scanner：8 类禁止规则（vague-ellipsis/no-evidence/fabricated-field等） |
-| RA 流程违规审计（G-RA-FLOW-VIOLATION） | `ra-flow-violation` scanner：R1~R3 规则（12维决策记录/8维度挖掘/缺口管理） |
-| RA 机械派生深度（G-RA-5） | `ra-depth` scanner：验证每条规则 R 机械追问 6 问 → 衍生 R′ |
-| RA 实现视角完整性（G-RA-6） | `ra-implementation` scanner：I1~I7 检查 |
-| RA 扫描作用域 | `ae-sdd-scanners/src/scope.rs`：formal RA candidate 分类、explicit file containment、稳定排序、excluded reason 和结构化错误；四个 RA scanner 共享 |
+| RA Core（G-RA-2） | `RaCore` scanner：v2 Core、唯一 ID、placeholder 与结构/大小边界 |
+| RA applicability（G-RA-3/G-RA-5） | `RaApplicability` scanner：七维状态与条件章节/GAP 一致性；G-RA-5 是兼容入口 |
+| RA closure（G-RA-4/G-RA-6） | `RaClosure` scanner：traceability、blocking GAP、analysisState 与六维 scale；G-RA-6 是兼容入口 |
+| RA flow binding | `G-RA-FLOW-VIOLATION` typed predicate 校验 `RequirementAnalysis + RouteBinding`，不扫描 prose 关键词 |
+| RA 扫描作用域 | integrations authoritative resolver 只解析 `/documentPaths/RA`，scanner 接收已经选择且通过 containment 的单文件 bytes |
 | 外挂内容安全扫描（插件加载防护） | `plugin-content` scanner：PC-001~PC-010（危险删除/任意命令执行/远程脚本执行等），由 `ae-sdd-methodology` 的 plugin 加载路径调用 |
 | 设计-实现对齐验证器（AA） | 原 Python 实现已删除，**当前无承接实现**。反向对账"doc 承诺门禁↔gates 注册↔实现真实性"这一覆盖面目前空缺 |
 | 设计-实现一致性迭代检查（IC） | `ae-sdd-integrations/src/jobs/diagnostics/iteration.rs`：IC-1~IC-4 机器粗筛（report-only 不阻断），CLI `ae-sdd iteration-check` |

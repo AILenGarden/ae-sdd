@@ -7,18 +7,20 @@ use ae_sdd_domain::{
 };
 use ae_sdd_flow::{
     ExecutionCursor, FlowEnvironment, FlowEventKind, FlowInput, FlowRuntime, FlowSnapshot,
-    NextAction, RouteSelection,
+    NextAction, RouteLifecycle, RouteSelection,
 };
 use proptest::prelude::*;
 
-use support::{commit, event, event_store, gate, input, transition_request};
+use support::{commit_to, event, event_store, gate_for, input, transition_request};
+
+use ae_sdd_policy::RequiredGate;
 
 fn execution_input(status: ExecutionSliceStatus) -> FlowInput {
     let snapshot = FlowSnapshot::new(ProcessPhase::Coding, StateRevision::new(7), 0);
     let environment = FlowEnvironment::new(
         event_store(),
         InputFingerprint::digest(b"work-item-input-v1"),
-        RouteSelection::new(WorkScale::Large, DesignRoute::Story),
+        RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
     )
     .with_execution_cursor(ExecutionCursor::new(
         1,
@@ -30,18 +32,24 @@ fn execution_input(status: ExecutionSliceStatus) -> FlowInput {
 
 #[test]
 fn reordered_complete_log_has_identical_decision_and_next_action() {
+    // RA-first: the first transition (Initialized -> RequirementAnalyzed)
+    // requires G-RA-1..4. Supply all four PASS events then commit.
     let ordered = vec![
         transition_request(4, AgentRole::Root),
-        gate(9, GateOutcome::Pass),
-        commit(17, 8),
+        gate_for(5, RequiredGate::GRa1, GateOutcome::Pass),
+        gate_for(6, RequiredGate::GRa2, GateOutcome::Pass),
+        gate_for(7, RequiredGate::GRa3, GateOutcome::Pass),
+        gate_for(8, RequiredGate::GRa4, GateOutcome::Pass),
+        commit_to(17, 8, ProcessPhase::RequirementAnalyzed),
     ];
-    let reordered = vec![ordered[2].clone(), ordered[0].clone(), ordered[1].clone()];
+    let mut reordered = ordered.clone();
+    reordered.reverse();
 
     let first = FlowRuntime::replay(input(), ordered).expect("ordered log is valid");
     let second = FlowRuntime::replay(input(), reordered).expect("reordered log is valid");
 
     assert_eq!(first, second);
-    assert_eq!(first.snapshot().phase(), ProcessPhase::RouteSelected);
+    assert_eq!(first.snapshot().phase(), ProcessPhase::RequirementAnalyzed);
 }
 
 #[test]

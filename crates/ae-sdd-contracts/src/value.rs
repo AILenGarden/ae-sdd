@@ -9,6 +9,9 @@ pub enum SchemaVersion {
     /// First stable contract schema.
     #[serde(rename = "v1")]
     V1,
+    /// RA-derived route binding and frozen engineering route contract.
+    #[serde(rename = "v2")]
+    V2,
 }
 
 /// Error returned when a published string value is not canonical.

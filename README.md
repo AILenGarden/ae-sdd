@@ -30,10 +30,15 @@ collects bounded child results, and reports progress. RA, DR, Story, Coding,
 Test, and Review series run in independent physical Agent sessions. Root never
 imports child transcripts or unbounded source/test payloads.
 
-Route precedes Requirement Analysis. RA then selects the required DR, Story, or
-compact `state.executionPlan` depth. Coding requires the declared upstream
-contexts, AC-to-verification mapping, blocker Gate PASS, and explicit user plan
-approval.
+The Hook records only a provisional `BootstrapAssessment`. Requirement Analysis
+is the first business Series and produces exactly one adaptive
+`ae-sdd-ra-srs/v2` SRS. Only a verified RA receipt, closed `G-RA-1..4` evidence,
+and explicit approval bound to that SRS allow the daemon to freeze the
+authoritative `EngineeringRoute`. The resulting large,
+medium, small, or micro route selects the required DR, Story -> TestCase ->
+CodingPlan chain, CodingPlan, or compact `state.executionPlan` depth. Coding
+requires the declared upstream contexts, AC-to-verification mapping, blocker
+Gate PASS, and explicit user plan approval.
 
 ## Native Binaries
 
@@ -124,9 +129,8 @@ dist/                   generated release/package outputs
 apps/ae-sdd-monitor/    excluded from this runtime Work Item
 ```
 
-`tools/` and `scripts/` are retained temporarily as a read-only migration oracle.
-They are not release inputs or runtime fallbacks. Their exact deletion gate is
-recorded in
+Any retained migration-oracle material is not a release input or runtime
+fallback. Its exact deletion gate is recorded in
 [`source/skill-fallbacks/runtime/cutover-contract.md`](source/skill-fallbacks/runtime/cutover-contract.md)
 and the 160-path machine manifest beside it.
 

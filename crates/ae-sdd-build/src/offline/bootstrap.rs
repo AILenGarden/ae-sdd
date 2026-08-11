@@ -181,6 +181,17 @@ fn hook_manifest(host: &str, executable: &str) -> Result<String, OfflineError> {
             }]}]),
         );
     }
+    // Claude Code has a native `SubagentStart` lifecycle event (ROUTE-702d576a
+    // Task 0/1: Create actuation A2, child admission B2); no other host has a
+    // live-verified equivalent, so the mapping stays Claude-only until a host
+    // passes its own actuation/admission matrix (Plan §0.7). Emitting it for
+    // an unverified host would claim support the daemon cannot back.
+    if host == "claude" {
+        hooks.insert(
+            "SubagentStart".to_owned(),
+            serde_json::json!([{"hooks":[{"type":"command","command":command("subagent_start")}]}]),
+        );
+    }
     hooks.insert(
         "PreToolUse".to_owned(),
         serde_json::json!([{"matcher":"Write|Edit|MultiEdit|Bash","hooks":[{"type":"command","command":command("pre_tool")}]}]),
@@ -254,6 +265,23 @@ mod tests {
         assert!(claude.contains("runtime ensure --quiet"));
         assert!(codex.contains("runtime ensure --quiet"));
         assert!(!hermes.contains("SessionStart"));
+    }
+
+    /// `SubagentStart` binds a physical child claim (ROUTE-702d576a Task 2):
+    /// Claude Code has a native `SubagentStart` lifecycle event, but no host
+    /// exposes an equivalent live-verified event yet, so the mapping stays
+    /// Claude-only until Codex passes its own actuation/admission matrix
+    /// (Plan §0.7). Emitting it for every host would claim support the daemon
+    /// cannot back with live evidence.
+    #[test]
+    fn subagent_start_is_emitted_only_for_claude() {
+        let claude = hook_manifest("claude", "ae-sdd").expect("Claude hook manifest");
+        let codex = hook_manifest("codex", "ae-sdd").expect("Codex hook manifest");
+        let hermes = hook_manifest("hermes", "ae-sdd").expect("Hermes hook manifest");
+        assert!(claude.contains("SubagentStart"));
+        assert!(claude.contains("hook --method hook.subagent_start --request-json -"));
+        assert!(!codex.contains("SubagentStart"));
+        assert!(!hermes.contains("SubagentStart"));
     }
 
     #[test]

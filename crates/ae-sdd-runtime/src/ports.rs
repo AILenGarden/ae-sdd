@@ -214,9 +214,16 @@ pub trait BusinessOperationPort: Send + Sync {
         workspace: &BusinessWorkspace,
         work_item_id: &str,
         session_id: &str,
+        delegation_id: &str,
         idempotency_key: &str,
     ) -> RuntimeResult<()> {
-        let _ = (workspace, work_item_id, session_id, idempotency_key);
+        let _ = (
+            workspace,
+            work_item_id,
+            session_id,
+            delegation_id,
+            idempotency_key,
+        );
         Ok(())
     }
 

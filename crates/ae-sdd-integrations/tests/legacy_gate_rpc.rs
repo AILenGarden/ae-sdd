@@ -5,7 +5,10 @@ mod legacy;
 use std::fs;
 use std::sync::Arc;
 
-use ae_sdd_domain::{AgentRole, BootId, EventStoreId};
+use ae_sdd_contracts::{DocumentId, ReceiptStatus, RequirementAnalysisEvidence, SeriesId};
+use ae_sdd_domain::{
+    AgentRole, ArtifactDigest, BootId, EventStoreId, StateRevision, WorkItemId, WorkScale,
+};
 use ae_sdd_integrations::NativeBusinessAdapter;
 use ae_sdd_protocol::{PROTOCOL_VERSION_V1, RequestParams, RpcMethod, WorkspaceMode};
 use ae_sdd_runtime::{
@@ -23,7 +26,8 @@ const WORK_ITEM: &str = "STORY-AE-SDD-RUST-DAEMON-001";
 // `ae-sdd-doc/` holds live Work Item documents and is gitignored, so a clean
 // checkout cannot compile a test that reads from it. Keep a tracked copy of a
 // G-14-satisfying RA under `tests/fixtures/` instead.
-const VALID_RA: &str = include_str!("../../../tests/fixtures/gates/valid-ra.v1.md");
+const VALID_RA: &str =
+    include_str!("../../../tests/fixtures/gates/ra-v2/large-distributed-migration.md");
 
 fn setup(coding_source: &str) -> (TempDir, NativeBusinessAdapter, BusinessWorkspace) {
     setup_with_ra(coding_source, VALID_RA)
@@ -36,6 +40,27 @@ fn setup_with_ra(
     let root = TempDir::new().expect("workspace tempdir");
     let state_directory = root.path().join(".auto-engineering/legacy-gate");
     fs::create_dir_all(&state_directory).expect("state directory");
+    let source = root.path().join("src/lib.rs");
+    fs::create_dir_all(source.parent().expect("source parent")).expect("source directory");
+    fs::write(source, coding_source).expect("source write");
+    let ra = root
+        .path()
+        .join("ae-sdd-doc/RA/RA-AE-SDD-RUST-DAEMON-001.md");
+    fs::create_dir_all(ra.parent().expect("RA parent")).expect("RA directory");
+    fs::write(ra, ra_source).expect("RA write");
+    let ra_evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new(WORK_ITEM).expect("work item"),
+        SeriesId::new("SERIES-RA-LEGACY-GATE").expect("series"),
+        DocumentId::new("DOC-RA-LEGACY-GATE").expect("document"),
+        1,
+        ArtifactDigest::digest(ra_source.as_bytes()),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"verified legacy RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Large,
+        ArtifactDigest::digest(b"legacy scale evidence"),
+        ArtifactDigest::digest(b"legacy closure receipt set"),
+    );
     fs::write(
         state_directory.join("state.json"),
         serde_json::to_vec_pretty(&json!({
@@ -46,6 +71,8 @@ fn setup_with_ra(
             "scale":"large",
             "selectedDesign":"DR",
             "currentPhase":"requirement-analyzed",
+            "documentPaths":{"RA":"ae-sdd-doc/RA/RA-AE-SDD-RUST-DAEMON-001.md"},
+            "seriesReceipts":{"RA":ra_evidence},
             "storyStates":{
                 (WORK_ITEM):{"currentPhase":"requirement-analyzed"}
             }
@@ -53,14 +80,6 @@ fn setup_with_ra(
         .expect("state JSON"),
     )
     .expect("state write");
-    let source = root.path().join("src/lib.rs");
-    fs::create_dir_all(source.parent().expect("source parent")).expect("source directory");
-    fs::write(source, coding_source).expect("source write");
-    let ra = root
-        .path()
-        .join("ae-sdd-doc/RA/RA-AE-SDD-RUST-DAEMON-001.md");
-    fs::create_dir_all(ra.parent().expect("RA parent")).expect("RA directory");
-    fs::write(ra, ra_source).expect("RA write");
     fs::write(root.path().join("Cargo.toml"), "[workspace]\n").expect("Cargo.toml");
 
     let event_store_id = EventStoreId::from_uuid(Uuid::from_u128(900));
@@ -168,11 +187,9 @@ fn direct_params(payload: Value, workspace: &BusinessWorkspace) -> RequestParams
 }
 
 #[test]
-fn six_legacy_gate_entrypoints_reach_native_gate_runtime_and_pass() {
+fn legacy_ra_content_entrypoints_reach_native_gate_runtime_and_pass() {
     let (root, adapter, workspace) = setup("pub fn answer() -> u32 { 42 }\n");
     for command_id in [
-        "flow-violation-scan",
-        "gate coding-required",
         "gate ra-required",
         "ra-authenticity-scan",
         "ra-depth-scan",
@@ -188,6 +205,20 @@ fn six_legacy_gate_entrypoints_reach_native_gate_runtime_and_pass() {
 }
 
 #[test]
+fn legacy_flow_violation_entrypoint_fails_closed_without_route_binding() {
+    let (root, adapter, workspace) = setup("pub fn answer() -> u32 { 42 }\n");
+    let params = adapted_gate_params("flow-violation-scan", &root, &workspace);
+    let result = adapter
+        .execute(RpcMethod::GateEvaluate, &params, Some(&workspace))
+        .expect("Gate evaluation returns typed outcome");
+    assert_ne!(result["outcome"]["kind"], "PASS", "{result}");
+    assert_eq!(
+        result["outcome"]["findings"][0]["code"], "G-RA-FLOW-VIOLATION-FAILED",
+        "{result}"
+    );
+}
+
+#[test]
 fn coding_gate_failure_remains_typed_non_pass_and_cli_failure() {
     let (_root, adapter, workspace) = setup("const TOKEN: &str = \"secret-value\";\n");
     let result = adapter
@@ -198,7 +229,7 @@ fn coding_gate_failure_remains_typed_non_pass_and_cli_failure() {
         )
         .expect("Gate evaluation returns typed outcome");
 
-    assert_eq!(result["outcome"]["kind"], "FAIL");
+    assert_ne!(result["outcome"]["kind"], "PASS", "{result}");
     assert!(
         validate_passthrough_result("gate coding-required", RpcMethod::GateEvaluate, &result,)
             .is_err(),

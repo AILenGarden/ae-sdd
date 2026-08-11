@@ -9,6 +9,10 @@ mod offline;
 mod post_commit;
 mod release;
 mod service;
+mod source_slim;
+mod source_slim_frontmatter;
+mod source_slim_renderer;
+mod source_slim_security;
 
 pub use benchmark::{
     BenchmarkError, EXECUTION_EFFICIENCY_P0, ExecutionEfficiencyBenchmarkSummary,
@@ -59,4 +63,8 @@ pub use service::{
     ServicePermissionPolicy, ServicePlatform, execute_service_lifecycle,
     execute_service_lifecycle_with_runner, generate_service_lifecycle_plan,
     inspect_service_descriptor, materialize_service_descriptor,
+};
+pub use source_slim::{
+    SOURCE_SLIM_SCHEMA, SourceSlimEntry, SourceSlimError, SourceSlimExecution, SourceSlimMode,
+    SourceSlimRequest, execute_source_slim,
 };

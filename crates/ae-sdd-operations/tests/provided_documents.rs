@@ -39,6 +39,7 @@ fn workitem_create_exposes_provided_documents_as_an_optional_array() {
         fields,
         vec![
             ("entryNode", FieldKind::String, true),
+            ("requestedIntent", FieldKind::String, false),
             ("storyName", FieldKind::String, false),
             ("providedDocuments", FieldKind::Array, false),
         ]
@@ -62,6 +63,37 @@ fn a_complete_provided_documents_tree_is_accepted() {
 fn provided_documents_is_optional() {
     validate_operation_payload(OperationName::WorkItemCreate, &json!({"entryNode":"DR"}))
         .expect("workitem.create keeps working without providedDocuments");
+}
+
+#[test]
+fn a_route_intake_accepts_a_requested_design_intent() {
+    validate_operation_payload(
+        OperationName::WorkItemCreate,
+        &json!({"entryNode":"ROUTE","requestedIntent":"DR"}),
+    )
+    .expect("a direct DR request remains a hint on the unified ROUTE intake");
+}
+
+#[test]
+fn a_route_intake_rejects_an_unknown_requested_design_intent() {
+    assert!(matches!(
+        validate_operation_payload(
+            OperationName::WorkItemCreate,
+            &json!({"entryNode":"ROUTE","requestedIntent":"PRD"}),
+        ),
+        Err(OperationRequestError::InvalidRequestedIntent(_))
+    ));
+}
+
+#[test]
+fn a_requested_design_intent_requires_the_unified_route_entry() {
+    assert!(matches!(
+        validate_operation_payload(
+            OperationName::WorkItemCreate,
+            &json!({"entryNode":"DR","requestedIntent":"DR"}),
+        ),
+        Err(OperationRequestError::InvalidRequestedIntent(_))
+    ));
 }
 
 #[test]

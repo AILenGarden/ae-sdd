@@ -1,7 +1,7 @@
 mod support;
 
 use ae_sdd_domain::{DesignRoute, InputFingerprint, ProcessPhase, StateRevision, WorkScale};
-use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteSelection};
+use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteLifecycle, RouteSelection};
 use ae_sdd_protocol::{ClientKind, ConfirmationRef, RpcMethod, WorkspaceMode};
 use ae_sdd_runtime::RuntimeConfig;
 use serde_json::json;
@@ -96,7 +96,10 @@ fn admits_one_hundred_agents_across_bounded_workspaces_and_rejects_overflow() {
             FlowEnvironment::new(
                 store_id,
                 InputFingerprint::digest(format!("workspace-{index}").as_bytes()),
-                RouteSelection::new(WorkScale::Small, DesignRoute::CodingPlan),
+                RouteLifecycle::Frozen(RouteSelection::new(
+                    WorkScale::Small,
+                    DesignRoute::CodingPlan,
+                )),
             ),
         );
         harness

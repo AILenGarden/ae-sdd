@@ -230,6 +230,7 @@ fn canonical_context_digest(
     push_field(&mut canonical, b"ae-sdd/context-bundle/v1");
     let schema_tag = match schema_version {
         SchemaVersion::V1 => b"v1".as_slice(),
+        SchemaVersion::V2 => b"v2".as_slice(),
     };
     push_field(&mut canonical, schema_tag);
     push_field(&mut canonical, context_id.as_str().as_bytes());
@@ -877,6 +878,7 @@ fn canonical_document_plan_digest(
     push_field(&mut canonical, b"ae-sdd/document-transaction-plan/v1");
     let schema_tag = match schema_version {
         SchemaVersion::V1 => b"v1".as_slice(),
+        SchemaVersion::V2 => b"v2".as_slice(),
     };
     push_field(&mut canonical, schema_tag);
     push_field(&mut canonical, transaction_id.as_str().as_bytes());

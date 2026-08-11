@@ -23,9 +23,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::host_coordinator::HostCoordinator;
+use crate::host_execution_binding::{HOST_EXECUTION_BINDING_V1, HostExecutionBindingLedger};
 
 use crate::{
-    AssetRefWire, ContextProjectResult, ContextProjectionInput, DelegationCreatePayload,
+    AssetRefWire, ClockPort, ContextProjectResult, ContextProjectionInput, DelegationCreatePayload,
     DelegationReportPayload, DelegationResult, HostAckPayload, HostActionPayload,
     HostPressurePayload, PersistencePort, RuntimeDelegationAttestationRecord,
     RuntimeDelegationHostActionRecord, RuntimeDelegationRecord, RuntimeError, RuntimeIdentityKind,
@@ -37,6 +38,13 @@ use crate::{
 pub struct DelegationSupervisor {
     persistence: Arc<dyn PersistencePort>,
     host: Arc<HostCoordinator>,
+    /// UUID host-execution binding ledger (§9.4). Shared with `RuntimeService`
+    /// so the Hook fast path and session-close can refresh/release the same
+    /// in-memory state without an extra durability hop.
+    bindings: Arc<HostExecutionBindingLedger>,
+    /// Injected clock so collect/cancel (which have no `now` parameter today)
+    /// can stamp `released_at_unix_ms` without changing their call signatures.
+    clock: Arc<dyn ClockPort>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -128,7 +136,7 @@ struct DurableDelegation {
 /// invented here, because the flow does not emit a Story target yet and a
 /// fabricated one would be wrong in a way no test could catch. When the target
 /// arrives it joins this derivation.
-pub(crate) fn series_identity(work_item_id: &str, series_kind: &str) -> String {
+pub fn series_identity(work_item_id: &str, series_kind: &str) -> String {
     let digest =
         Sha256::digest(format!("ae-sdd/series/v1:{work_item_id}:{series_kind}").as_bytes());
     Uuid::from_slice(&digest[..16])
@@ -151,8 +159,26 @@ fn series_run_identity(delegation_id: &str) -> String {
 impl DelegationSupervisor {
     /// Creates a supervisor over durable records and Host action coordination.
     #[must_use]
-    pub fn new(persistence: Arc<dyn PersistencePort>, host: Arc<HostCoordinator>) -> Self {
-        Self { persistence, host }
+    pub fn new(
+        persistence: Arc<dyn PersistencePort>,
+        host: Arc<HostCoordinator>,
+        clock: Arc<dyn ClockPort>,
+    ) -> Self {
+        let bindings = Arc::new(HostExecutionBindingLedger::empty());
+        bindings.attach_persistence(Arc::clone(&persistence));
+        Self {
+            persistence,
+            host,
+            bindings,
+            clock,
+        }
+    }
+
+    /// Read-only access to the binding ledger, for the Hook fast path and
+    /// session-close to refresh/release on the same in-memory map.
+    #[must_use]
+    pub(crate) fn bindings(&self) -> &HostExecutionBindingLedger {
+        &self.bindings
     }
 
     /// Rebuilds the operational delegation projection from typed identity rows.
@@ -303,6 +329,7 @@ impl DelegationSupervisor {
         parent_role: WireAgentRole,
         parent_grant: &ScopedGrant,
         payload: DelegationCreatePayload,
+        adapter_id: &str,
         scope_digest: &str,
         idempotency_key: &str,
         request_digest: &str,
@@ -316,7 +343,7 @@ impl DelegationSupervisor {
         }
         let grant =
             crate::grant::validate_child_grant(parent_grant, payload.child_role, &payload.grant)?;
-        self.host.require_registered(&payload.adapter_id)?;
+        self.host.require_registered(adapter_id)?;
         let workspace = self.typed_workspace(workspace_id)?;
         let parent = self.typed_session(parent_session_id)?;
         if parent.workspace_id != workspace_id || parent.role != parent_role {
@@ -324,6 +351,13 @@ impl DelegationSupervisor {
                 "delegation parent does not match its typed session identity",
             ));
         }
+        // §2.4: the per-root-session "at most one spawning delegation" guard
+        // (`reject_concurrent_pending_create`) is removed. With Child Self-Claim
+        // (Plan §2) the child presents a precise `claim_id`, so FIFO queue
+        // disambiguation is no longer the concurrency model — each delegation
+        // is keyed by its own id and claimed independently. ROUTE-A's binding
+        // ledger is the new liveness authority; `claim_or_preempt` replaces
+        // the queue-position heuristic.
         let root_session_id = match parent_role {
             WireAgentRole::Root if payload.parent_delegation_id.is_none() => {
                 parent_session_id.to_owned()
@@ -353,13 +387,18 @@ impl DelegationSupervisor {
         };
         let delegation_id = stable_uuid("delegation", scope_digest, idempotency_key);
         let action_id = stable_uuid("delegation-host-action", scope_digest, idempotency_key);
+        // §9.4: the daemon-minted binding identity is derived from the same
+        // (scope, idempotency) material as the delegation/action ids, so an
+        // idempotent replay of create recovers the same binding id rather than
+        // orphaning a duplicate row.
+        let binding_id = stable_uuid("host-execution-binding", scope_digest, idempotency_key);
         // Stage, do not publish. The delegation record and this action must
         // become visible together: publishing first lets a failed commit leave a
         // queued action whose delegation does not exist, which the host can
         // acknowledge but never claim.
         let action = self.host.stage_with_action_id(
             &action_id,
-            &payload.adapter_id,
+            adapter_id,
             "create",
             Some(delegation_id.clone()),
             None,
@@ -438,7 +477,7 @@ impl DelegationSupervisor {
                     delegation: Some(RuntimeDelegationRecord {
                         delegation_id: delegation_id.clone(),
                         workspace_id: workspace_id.to_owned(),
-                        root_session_id,
+                        root_session_id: root_session_id.clone(),
                         parent_session_id: parent_session_id.to_owned(),
                         child_session_id: None,
                         parent_delegation_id: record.parent_delegation_id.clone(),
@@ -453,7 +492,7 @@ impl DelegationSupervisor {
                     }),
                     host_action: Some(RuntimeDelegationHostActionRecord {
                         workspace_id: workspace_id.to_owned(),
-                        delegation_id,
+                        delegation_id: delegation_id.clone(),
                         host_action_id: action.action_id,
                         parent_session_id: parent_session_id.to_owned(),
                         action_digest,
@@ -466,6 +505,18 @@ impl DelegationSupervisor {
                 committed_at_unix_ms: now_unix_ms,
             })?;
         self.save(&record)?;
+        // §9.4 attach point 1: the delegation row is durable, so the binding
+        // ledger may now record the spawning binding. Persisting after the
+        // delegation save keeps a failed binding write from orphaning an action
+        // whose delegation is missing; persisting before `attach_claim`/
+        // `publish` keeps the binding durable before either becomes visible.
+        self.bindings.spawn(
+            &binding_id,
+            workspace_id,
+            &root_session_id,
+            &delegation_id,
+            now_unix_ms,
+        )?;
         self.host
             .attach_claim(&published_action.action_id, claim_id)?;
         // The authoritative commit succeeded, so the action may now become
@@ -693,6 +744,10 @@ impl DelegationSupervisor {
                 committed_at_unix_ms: now_unix_ms,
             })?;
         self.save(&record)?;
+        // §9.4 attach point 2: the binding transitions spawning → active in
+        // lockstep with the delegation's spawning → running. Idempotent under
+        // accept replay: a binding already `active` is left untouched.
+        self.bindings.activate(delegation_id, now_unix_ms)?;
         let projection = serde_json::from_value(committed.response).map_err(|_| {
             RuntimeError::new(
                 StableErrorCode::ExternalStateConflict,
@@ -868,6 +923,14 @@ impl DelegationSupervisor {
         }
         record.status = "completed".to_owned();
         self.save(&record)?;
+        // §9.4 attach point 3a: the happy terminal. A completed delegation never
+        // resumes, so its host-execution binding is released for reuse. The
+        // `collected` reason distinguishes this path from cancellation/close.
+        self.bindings.release_by_delegation(
+            delegation_id,
+            "collected",
+            self.clock.now_unix_ms(),
+        )?;
         Ok(collect_projection(&record))
     }
 
@@ -936,6 +999,14 @@ impl DelegationSupervisor {
         }
         record.status = "cancelled".to_owned();
         self.save(&record)?;
+        // §9.4 attach point 3b: the unhappy terminal. Cancellation is terminal
+        // for the binding just as collect is, so the binding is released with
+        // the `cancelled` reason to keep the audit trail honest.
+        self.bindings.release_by_delegation(
+            delegation_id,
+            "cancelled",
+            self.clock.now_unix_ms(),
+        )?;
         Ok(project_delegation(&record))
     }
 

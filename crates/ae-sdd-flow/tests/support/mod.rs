@@ -8,7 +8,7 @@ use ae_sdd_domain::{
 };
 use ae_sdd_flow::{
     EventCursor, EventProvenance, FlowEnvironment, FlowEvent, FlowEventKind, FlowInput,
-    FlowSnapshot, RouteSelection,
+    FlowSnapshot, RouteLifecycle, RouteSelection,
 };
 use ae_sdd_policy::{RequiredGate, TransitionPolicy};
 
@@ -31,7 +31,7 @@ pub fn input_at(phase: ProcessPhase, correction_count: u64) -> FlowInput {
     let environment = FlowEnvironment::new(
         event_store(),
         InputFingerprint::digest(b"work-item-input-v1"),
-        RouteSelection::new(WorkScale::Large, DesignRoute::Story),
+        RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
     );
     FlowInput::new(snapshot, environment)
 }
@@ -60,7 +60,9 @@ pub fn event_in_store(
 }
 
 pub fn transition_request(sequence: u64, role: AgentRole) -> FlowEvent {
-    transition_request_to(sequence, role, ProcessPhase::RouteSelected)
+    // RA-first: the default transition target is RequirementAnalyzed (the legal
+    // first step out of Initialized), previously RouteSelected.
+    transition_request_to(sequence, role, ProcessPhase::RequirementAnalyzed)
 }
 
 pub fn transition_request_to(sequence: u64, role: AgentRole, target: ProcessPhase) -> FlowEvent {
@@ -75,7 +77,8 @@ pub fn transition_request_to(sequence: u64, role: AgentRole, target: ProcessPhas
 }
 
 pub fn gate(sequence: u64, outcome: GateOutcome) -> FlowEvent {
-    gate_for(sequence, RequiredGate::G00, outcome)
+    // RA-first: the default required Gate for the first transition is G-RA-1.
+    gate_for(sequence, RequiredGate::GRa1, outcome)
 }
 
 pub fn gate_for(sequence: u64, gate: RequiredGate, outcome: GateOutcome) -> FlowEvent {
@@ -87,7 +90,7 @@ pub fn gate_for(sequence: u64, gate: RequiredGate, outcome: GateOutcome) -> Flow
 }
 
 pub fn commit(sequence: u64, revision: u64) -> FlowEvent {
-    commit_to(sequence, revision, ProcessPhase::RouteSelected)
+    commit_to(sequence, revision, ProcessPhase::RequirementAnalyzed)
 }
 
 pub fn commit_to(sequence: u64, revision: u64, phase: ProcessPhase) -> FlowEvent {

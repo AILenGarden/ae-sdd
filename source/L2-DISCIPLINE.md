@@ -6,11 +6,13 @@
 
 ## Process Artifact Policy
 
-RA, DR, and Story are the only core design documents. Proposal, GeneratePlan,
-CodingPlan Markdown, CodingReport, TestReport, CodeReview report, and other
-process reports are retired for new writes. Historical files remain read-only.
-Execution plans live in `state.executionPlan`, tests live in evidence manifests,
-and review results live in `state.review.status/findings`. Never write a changelog.
+RA, DR, Story, TestCase, and CodingPlan are persistent design Specs selected by
+the approved route. Proposal, GeneratePlan, CodingReport, TestReport, CodeReview
+report, and other process reports are retired for new writes. Historical files
+remain read-only. `state.executionPlan` is the user-approved execution projection;
+it does not replace a CodingPlan required by the small or Story routes. Tests live
+in evidence manifests and review results live in `state.review.status/findings`.
+Never write a changelog.
 
 <!-- SECTION:zh -->
 ## ae-sdd 强制工作流
@@ -54,7 +56,7 @@ Migration、构建脚本或其他工程制品，必须在实现规划或首次�
 | 技术约束 CodingModel | `get_thinking_engine(projectKey)` | 停止并补齐空维度 |
 | 需求说明书 | `doc resolve --intent RA` | 停止并生成/更新 RA |
 | Story（按分析路径） | `doc resolve --intent STORY` | 仅当分析选择 Story 时生成/更新 |
-| 验证契约 | Story 验证矩阵；复杂时可引用 TestCase | 停止并补齐 AC 到验证映射 |
+| 验证契约 | Story 验证矩阵及该 Story 绑定的 TestCase；无 Story 路线按 RA/CodingPlan 验证 | 停止并补齐 AC 到验证映射 |
 
 ### 硬约束
 

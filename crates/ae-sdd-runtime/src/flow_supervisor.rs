@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use ae_sdd_contracts::SeriesInput;
+use ae_sdd_contracts::{RequirementAnalysisSeriesInput, SeriesInput};
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, CancellationCode, ErrorCode, EventSequence, EventStoreId,
     FindingCode, FreshnessDimension, GateCancellation, GateError, GateFailure, GateFinding,
@@ -211,6 +211,25 @@ impl FlowSupervisor {
                 format!("deterministic control-plane decision rejected frozen input: {error}"),
             )
         })?;
+        self.persist_control_checkpoint(workspace_id, work_item_id, &decision)?;
+        Ok(decision)
+    }
+
+    /// Runs the pure pre-route RA control path and persists its checkpoint.
+    pub fn decide_requirement_analysis_control(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        catalog_digest: ArtifactDigest,
+        input: &RequirementAnalysisSeriesInput,
+    ) -> RuntimeResult<ControlDecision> {
+        let decision = ControlPlaneRuntime::next_requirement_analysis(catalog_digest, input)
+            .map_err(|error| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    format!("deterministic pre-route RA decision rejected frozen input: {error}"),
+                )
+            })?;
         self.persist_control_checkpoint(workspace_id, work_item_id, &decision)?;
         Ok(decision)
     }
@@ -819,9 +838,9 @@ mod tests {
     use ae_sdd_contracts::{
         ContextBundleId, IdempotencyKey, MethodologyRef, MethodologyResolution, MethodologyVariant,
         OverrideDisposition, OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode,
-        RetryPolicy, RouteDecision, RouteDecisionId, RouteDisposition, SchemaVersion, SeriesId,
-        SeriesInput, SeriesKind, SeriesPlan, SkillId, SpecKind, TaskKind,
-        resource::ContextBundleRef,
+        RequirementAnalysisSeriesInput, RetryPolicy, RouteDecision, RouteDecisionId,
+        RouteDisposition, SchemaVersion, SeriesId, SeriesInput, SeriesKind, SeriesPlan, SkillId,
+        SpecKind, TaskKind, resource::ContextBundleRef,
     };
     use ae_sdd_domain::{
         ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, DecisionDigest,
@@ -830,7 +849,7 @@ mod tests {
     };
     use ae_sdd_flow::{
         CompactAdviceReason, ControlAction, EventCursor, EventProvenance, FlowEnvironment,
-        FlowRuntime, FlowSnapshot, RouteSelection,
+        FlowRuntime, FlowSnapshot, RouteLifecycle, RouteSelection,
     };
     use ae_sdd_policy::TransitionPolicy;
 
@@ -848,7 +867,7 @@ mod tests {
         let environment = FlowEnvironment::new(
             event_store(),
             InputFingerprint::digest(b"work-item-input-v1"),
-            RouteSelection::new(WorkScale::Large, DesignRoute::Story),
+            RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
         );
         FlowInput::new(snapshot, environment)
     }
@@ -937,6 +956,33 @@ mod tests {
         assert_eq!(
             checkpoint["decision"]["decisionDigest"],
             json!(decision.decision_digest().to_string())
+        );
+    }
+
+    #[test]
+    fn pre_route_requirement_analysis_control_persists_without_route_input() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = requirement_analysis_series_input();
+        let catalog_digest = ArtifactDigest::digest(b"catalog-v1");
+
+        let decision = supervisor
+            .decide_requirement_analysis_control(
+                "workspace-1",
+                "ROUTE-FLOW-RA-001",
+                catalog_digest,
+                &input,
+            )
+            .expect("pre-route control decision");
+
+        assert!(matches!(decision.action(), ControlAction::RunSeries { .. }));
+        let checkpoint = supervisor
+            .control_checkpoint("workspace-1", "ROUTE-FLOW-RA-001")
+            .expect("checkpoint reads")
+            .expect("checkpoint persists");
+        assert_eq!(checkpoint["decision"]["action"]["kind"], "run-series");
+        assert_eq!(
+            checkpoint["decision"]["provenance"]["routeDigest"],
+            DecisionDigest::digest(b"pre-route-ra").to_string()
         );
     }
 
@@ -1097,5 +1143,39 @@ mod tests {
             IdempotencyKey::new("series-next-flow-r7").expect("idempotency key"),
         )
         .expect("series input")
+    }
+
+    fn requirement_analysis_series_input() -> RequirementAnalysisSeriesInput {
+        let work_item_id = WorkItemId::new("ROUTE-FLOW-RA-001").expect("work item");
+        let state_revision = StateRevision::new(3);
+        let input_fingerprint = InputFingerprint::digest(b"pre-route RA input r3");
+        let (plan, resolution) = candidate(
+            &work_item_id,
+            "requirement-analysis",
+            "series-flow-pre-route-ra-r3",
+            state_revision,
+            input_fingerprint,
+        );
+        RequirementAnalysisSeriesInput::new(
+            SchemaVersion::V1,
+            work_item_id.clone(),
+            ProcessSnapshot::new(
+                SchemaVersion::V1,
+                work_item_id,
+                ProcessPhase::Initialized,
+                None,
+                state_revision,
+                ArtifactDigest::digest(b"pre-route state r3"),
+            ),
+            InputFingerprint::digest(b"provisional intake facts r3"),
+            resolution,
+            plan,
+            None,
+            AgentRole::Root,
+            state_revision,
+            input_fingerprint,
+            IdempotencyKey::new("series-next-pre-route-ra-r3").expect("idempotency key"),
+        )
+        .expect("pre-route RA input")
     }
 }

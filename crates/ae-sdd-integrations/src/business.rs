@@ -7,8 +7,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ae_sdd_contracts::execution_runtime::{ExecutionCapsuleV1, ExecutionSliceStatus};
 use ae_sdd_contracts::lifecycle::CompletionMilestoneInput;
-use ae_sdd_contracts::series::RouteInput;
-use ae_sdd_contracts::{BoundedText, ExecutionId, ExecutionStepId, PrdId, SchemaVersion, WorkerId};
+use ae_sdd_contracts::{
+    BoundedText, DocumentId, EngineeringRoute, ExecutionId, ExecutionStepId, PrdId, ReceiptStatus,
+    RequirementAnalysisEvidence, RequirementConflict, RouteApprovalReceipt, RouteBindingInput,
+    RouteDecision, RouteMappingVersion, SchemaVersion, SeriesId, TaskKind, WorkerId,
+};
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, BootId, CompletionDigestSet,
     CompletionMilestone, DesignRoute, EventStoreId, EvidenceDigest, FencingToken, GateOutcome,
@@ -22,7 +25,7 @@ use ae_sdd_execution::{
 };
 use ae_sdd_flow::{
     ExecutionCursor, FlowEnvironment, FlowInput, FlowSnapshot, NextAction, RouteEngine,
-    RouteSelection,
+    RouteLifecycle, RouteSelection,
 };
 use ae_sdd_gates::{GateInputSelector, GateRegistry};
 use ae_sdd_operations::{
@@ -31,12 +34,13 @@ use ae_sdd_operations::{
     OperationServiceError, ValidatedOperationRequest, validate_operation_payload,
 };
 use ae_sdd_policy::{RequiredGate, RoleOperation, RolePolicy, TransitionContext, TransitionPolicy};
-use ae_sdd_protocol::JobStatus;
 use ae_sdd_protocol::{ClientKind, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode};
+use ae_sdd_protocol::{ConfirmationRef, JobStatus};
 use ae_sdd_runtime::{
     BoundJobIdentity, BusinessOperationPort, BusinessWorkspace, ContextProjectionInput,
-    DurableEvent, FlowSupervisor, PersistencePort, RuntimeError, RuntimeResult,
+    DurableEvent, FlowSupervisor, PersistencePort, RuntimeError, RuntimeResult, series_identity,
 };
+use ae_sdd_scanners::parse_ra_specification;
 use ae_sdd_store::{
     AuthoritySnapshot, CommitFaultPort, CommitPoint, CommittedMutation, IdempotencyKey,
     JournalEvent, LeaseControlAction, LeaseControlRequest, LeaseLedger, LeaseOwner, LeaseProof,
@@ -48,6 +52,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+use crate::gate_source::ra_binding::{AuthoritativeRaPath, authoritative_ra_path};
 
 use crate::operation_semantics::{evidence, governance, verification};
 use crate::persistence::{
@@ -150,6 +156,34 @@ struct GateRuntimeScope {
 /// Bound on cached Gate runtimes; a full map is cleared rather than grown
 /// unboundedly, which simply rebuilds the least-recent scopes on demand.
 const GATE_RUNTIME_CACHE_LIMIT: usize = 64;
+
+#[cfg(test)]
+type RaCollectionTestHook = Box<dyn FnOnce() + Send>;
+
+#[cfg(test)]
+static RA_COLLECTION_TEST_HOOK: std::sync::OnceLock<
+    std::sync::Mutex<Option<RaCollectionTestHook>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn install_ra_collection_test_hook(hook: impl FnOnce() + Send + 'static) {
+    *RA_COLLECTION_TEST_HOOK
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .expect("RA collection test hook lock") = Some(Box::new(hook));
+}
+
+#[cfg(test)]
+fn run_ra_collection_test_hook() {
+    if let Some(hook) = RA_COLLECTION_TEST_HOOK
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .expect("RA collection test hook lock")
+        .take()
+    {
+        hook();
+    }
+}
 
 impl NativeBusinessAdapter {
     /// Creates an adapter that shares the daemon's durable event-store epoch.
@@ -779,6 +813,372 @@ impl NativeBusinessAdapter {
             Ok(Vec::new())
         }
     }
+
+    fn commit_requirement_analysis_evidence(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: &str,
+        session_id: &str,
+        delegation_id: &str,
+        record: &Value,
+    ) -> RuntimeResult<()> {
+        if record.get("workspaceId").and_then(Value::as_str) != Some(&workspace.workspace_id)
+            || record.get("rootSessionId").and_then(Value::as_str) != Some(session_id)
+            || record.get("parentSessionId").and_then(Value::as_str) != Some(session_id)
+            || !record.get("parentDelegationId").is_none_or(Value::is_null)
+            || record.get("childRole").and_then(Value::as_str) != Some("series")
+            || record.get("status").and_then(Value::as_str) != Some("completed")
+        {
+            return Err(child_result_error(
+                "RA collection is not a completed Root-to-Series delegation",
+            ));
+        }
+        let result = record
+            .get("result")
+            .and_then(Value::as_object)
+            .ok_or_else(|| child_result_error("completed RA result is missing"))?;
+        if result.get("outcome").and_then(Value::as_str) != Some("succeeded") {
+            return Err(child_result_error(
+                "only a succeeded RA Series may create verified evidence",
+            ));
+        }
+        let result_digest = record
+            .get("resultDigest")
+            .and_then(Value::as_str)
+            .ok_or_else(|| child_result_error("completed RA result digest is missing"))?;
+        let computed_result_digest = ResultDigest::digest(
+            serde_json::to_vec(result)
+                .map_err(|_| child_result_error("completed RA result is not canonical JSON"))?,
+        )
+        .to_string();
+        let artifact_receipt = record
+            .get("artifactReceipt")
+            .and_then(Value::as_object)
+            .ok_or_else(|| child_result_error("RA artifact validation receipt is missing"))?;
+        let cleanup_receipt = record
+            .get("cleanupReceipt")
+            .and_then(Value::as_object)
+            .ok_or_else(|| child_result_error("RA memory cleanup receipt is missing"))?;
+        let memory_snapshot_digest = result
+            .get("memorySnapshotDigest")
+            .and_then(Value::as_str)
+            .ok_or_else(|| child_result_error("RA result memory snapshot digest is missing"))?;
+        if artifact_receipt
+            .get("schemaVersion")
+            .and_then(Value::as_str)
+            != Some("delegation-artifact-validation/v1")
+            || artifact_receipt.get("delegationId").and_then(Value::as_str) != Some(delegation_id)
+            || artifact_receipt.get("resultDigest").and_then(Value::as_str) != Some(result_digest)
+            || result_digest != computed_result_digest
+            || cleanup_receipt.get("schemaVersion").and_then(Value::as_str)
+                != Some("delegation-memory-cleanup/v1")
+            || cleanup_receipt.get("delegationId").and_then(Value::as_str) != Some(delegation_id)
+            || cleanup_receipt
+                .get("memorySnapshotDigest")
+                .and_then(Value::as_str)
+                != Some(memory_snapshot_digest)
+            || !cleanup_receipt
+                .get("cleanupDigest")
+                .and_then(Value::as_str)
+                .is_some_and(is_lowercase_digest)
+            || cleanup_receipt
+                .get("cleanedAtUnixMs")
+                .and_then(Value::as_u64)
+                .is_none_or(|value| value == 0)
+        {
+            return Err(child_result_error(
+                "RA completion receipts do not bind the collected delegation result",
+            ));
+        }
+
+        let located = read_state(workspace, work_item_id)?;
+        let (ra_relative, ra_absolute) =
+            match authoritative_ra_path(Path::new(&workspace.canonical_root), &located.value) {
+                AuthoritativeRaPath::Bound { relative, absolute } => (relative, absolute),
+                AuthoritativeRaPath::Missing => {
+                    return Err(child_result_error("authoritative RA path is missing"));
+                }
+                AuthoritativeRaPath::Invalid | AuthoritativeRaPath::Escape => {
+                    return Err(child_result_error(
+                        "authoritative RA path is invalid or escapes the workspace",
+                    ));
+                }
+            };
+        let ra_bytes = fs::read(&ra_absolute)
+            .map_err(|error| io_error("read collected RA document", error))?;
+        let ra_digest = ArtifactDigest::digest(&ra_bytes);
+        let artifact = artifact_receipt
+            .get("artifacts")
+            .and_then(Value::as_array)
+            .and_then(|artifacts| {
+                artifacts.iter().find(|artifact| {
+                    artifact.get("path").and_then(Value::as_str) == Some(ra_relative.as_str())
+                })
+            })
+            .ok_or_else(|| {
+                child_result_error("RA receipt does not contain the authoritative SRS artifact")
+            })?;
+        let deliverables = result
+            .get("deliverables")
+            .and_then(Value::as_array)
+            .ok_or_else(|| child_result_error("RA result deliverables must be an array"))?;
+        let artifact_matches_deliverable = deliverables.iter().any(|deliverable| {
+            ["id", "kind", "path", "digest", "byteLength"]
+                .into_iter()
+                .all(|field| deliverable.get(field) == artifact.get(field))
+        });
+        if artifact.get("digest").and_then(Value::as_str) != Some(ra_digest.to_string().as_str())
+            || artifact.get("byteLength").and_then(Value::as_u64)
+                != Some(u64::try_from(ra_bytes.len()).unwrap_or(u64::MAX))
+            || !artifact_matches_deliverable
+        {
+            return Err(child_result_error(
+                "RA receipt artifact does not match the result deliverable and authoritative SRS bytes",
+            ));
+        }
+        let ra_text = std::str::from_utf8(&ra_bytes)
+            .map_err(|_| child_result_error("authoritative RA document is not UTF-8"))?;
+        let index = parse_ra_specification(ra_text).map_err(|findings| {
+            child_result_error(&format!(
+                "authoritative RA document failed bounded SRS validation ({} findings)",
+                findings.len()
+            ))
+        })?;
+        let scale = index
+            .scale
+            .ok_or_else(|| child_result_error("validated RA document has no scale"))?;
+        let source_revision = StateRevision::new(
+            record
+                .get("inputRevision")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| child_result_error("RA source revision is missing"))?,
+        );
+        let series_id = SeriesId::new(
+            record
+                .get("seriesId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| child_result_error("RA Series identity is missing"))?,
+        )
+        .map_err(|_| child_result_error("RA Series identity is invalid"))?;
+        let previous = requirement_analysis_evidence(&located.value)?;
+        let document_id = previous
+            .as_ref()
+            .map_or_else(
+                || DocumentId::new(format!("RA:{work_item_id}")),
+                |evidence| Ok(evidence.document_id().clone()),
+            )
+            .map_err(|_| child_result_error("RA document identity is invalid"))?;
+        let version = previous.as_ref().map_or(1, |evidence| {
+            if evidence.ra_content_digest() == &ra_digest {
+                evidence.version()
+            } else {
+                evidence.version().saturating_add(1)
+            }
+        });
+        if version == u32::MAX
+            && previous
+                .as_ref()
+                .is_some_and(|evidence| evidence.ra_content_digest() != &ra_digest)
+        {
+            return Err(child_result_error("RA document version overflow"));
+        }
+
+        let receipt_binding = json!({
+            "schemaVersion":"ra-series-receipt-binding/v1",
+            "delegationId":delegation_id,
+            "seriesId":series_id.as_str(),
+            "resultDigest":result_digest,
+            "artifactReceipt":artifact_receipt,
+            "cleanupReceipt":record.get("cleanupReceipt"),
+        });
+        let receipt_bytes = serde_json::to_vec(&receipt_binding)
+            .map_err(|_| child_result_error("RA receipt binding could not be serialized"))?;
+        let ra_receipt_digest = ArtifactDigest::digest(receipt_bytes);
+        let scale_bytes = serde_json::to_vec(&json!({
+            "schemaVersion":"ra-scale-evidence/v1",
+            "scale":format!("{scale:?}").to_lowercase(),
+            "confidence":index.confidence,
+            "scores":index.scale_scores,
+            "rubricScale":index
+                .rubric_scale
+                .map(|value| format!("{value:?}").to_lowercase()),
+        }))
+        .map_err(|_| child_result_error("RA scale evidence could not be serialized"))?;
+        let scale_evidence_digest = ArtifactDigest::digest(scale_bytes);
+        let closure_bytes = serde_json::to_vec(&json!({
+            "schemaVersion":"ra-closure-receipt-set/v1",
+            "contentDigest":ra_digest.to_string(),
+            "sourceRevision":source_revision.get(),
+            "scannerReceipts":["G-RA-2:PASS","G-RA-3:PASS","G-RA-4:PASS"],
+            "artifactReceiptDigest":ra_receipt_digest.to_string(),
+            "scaleEvidenceDigest":scale_evidence_digest.to_string(),
+        }))
+        .map_err(|_| child_result_error("RA closure receipt set could not be serialized"))?;
+        let evidence = RequirementAnalysisEvidence::new(
+            WorkItemId::new(work_item_id).map_err(domain_error)?,
+            series_id,
+            document_id,
+            version,
+            ra_digest,
+            source_revision,
+            ra_receipt_digest,
+            ReceiptStatus::Verified,
+            scale,
+            scale_evidence_digest,
+            ArtifactDigest::digest(closure_bytes),
+        );
+        if previous.as_ref() == Some(&evidence) {
+            return Ok(());
+        }
+
+        #[cfg(test)]
+        run_ra_collection_test_hook();
+        let before_bytes = fs::read(&located.absolute)
+            .map_err(|error| io_error("read authoritative state", error))?;
+        let authority = StateAuthority::inspect(&before_bytes).map_err(store_error)?;
+        let fresh_value: Value = serde_json::from_slice(&before_bytes)
+            .map_err(|_| schema_error("authoritative state is not valid JSON"))?;
+        let fresh_state = authoritative_state_snapshot(&fresh_value, &before_bytes)?;
+        let fresh_previous = requirement_analysis_evidence(&fresh_state)?;
+        if fresh_previous != previous {
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "RA evidence authority changed during Series collection",
+            ));
+        }
+        let fresh_ra = authoritative_ra_path(Path::new(&workspace.canonical_root), &fresh_state);
+        if !matches!(
+            fresh_ra,
+            AuthoritativeRaPath::Bound { ref relative, ref absolute }
+                if relative == &ra_relative
+                    && fs::read(absolute)
+                        .is_ok_and(|bytes| ArtifactDigest::digest(bytes) == ra_digest)
+        ) {
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "authoritative RA binding changed during Series collection",
+            ));
+        }
+        let paths = ProjectStorePaths::new(&workspace.canonical_root, located.relative.clone())
+            .map_err(store_error)?;
+        let repository = SqliteRuntimeRepository::open(
+            &self.database,
+            self.event_store_id,
+            &UtcTimestamp::now(),
+        )
+        .map_err(store_error)?;
+        let store = ProjectMutationStore::with_faults(
+            paths,
+            StdDurableFileSystem,
+            StdCrossProcessLock,
+            repository,
+            ProcessAbortCommitFault::Disarmed,
+        );
+        store.recover(UtcTimestamp::now()).map_err(store_error)?;
+        let lease_bytes = fs::read(store.paths().lease_path())
+            .map_err(|error| io_error("read active RA collection lease", error))?;
+        let ledger = LeaseLedger::from_json(&lease_bytes).map_err(store_error)?;
+        let active = ledger.active().ok_or_else(|| {
+            RuntimeError::new(
+                StableErrorCode::LeaseRequired,
+                "RA collection requires the root session's active project lease",
+            )
+        })?;
+        if active.owner().as_str() != session_id {
+            return Err(RuntimeError::new(
+                StableErrorCode::RoleOperationForbidden,
+                "RA collection lease belongs to another session",
+            ));
+        }
+        let lease_proof = LeaseProof::from(active);
+        store
+            .validate_lease_proof(&lease_proof, &UtcTimestamp::now())
+            .map_err(store_error)?;
+
+        let revision_after = authority
+            .revision()
+            .checked_next()
+            .map_err(|_| child_result_error("state revision overflow during RA collection"))?;
+        let mut after = fresh_state;
+        let object = root_state_object_mut(&mut after)?;
+        object
+            .entry("seriesReceipts")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| schema_error("seriesReceipts must be an object"))?
+            .insert(
+                "RA".to_owned(),
+                serde_json::to_value(&evidence)
+                    .map_err(|_| child_result_error("RA evidence could not be serialized"))?,
+            );
+        object.insert("revision".to_owned(), Value::from(revision_after.get()));
+        object.insert(
+            "lastFencingToken".to_owned(),
+            Value::from(lease_proof.fencing_token.get()),
+        );
+        object.insert(
+            "lastMutation".to_owned(),
+            json!({
+                "operation":"series.collect",
+                "idempotencyKey":format!("series-collect:{delegation_id}"),
+                "revisionBefore":authority.revision().get(),
+                "revisionAfter":revision_after.get(),
+            }),
+        );
+        let after_bytes = serde_json::to_vec_pretty(&after)
+            .map_err(|_| child_result_error("RA evidence state could not be serialized"))?;
+        let evidence_value = serde_json::to_value(&evidence)
+            .map_err(|_| child_result_error("RA evidence event could not be serialized"))?;
+        let event_bytes = serde_json::to_vec(&json!({
+            "operation":"series.collect",
+            "delegationId":delegation_id,
+            "data":{"requirementAnalysisEvidence":evidence_value},
+        }))
+        .map_err(|_| child_result_error("RA collection event could not be serialized"))?;
+        let payload_bytes = serde_json::to_vec(&receipt_binding)
+            .map_err(|_| child_result_error("RA collection payload could not be serialized"))?;
+        let result_bytes = serde_json::to_vec(&evidence)
+            .map_err(|_| child_result_error("RA collection result could not be serialized"))?;
+        let committed = store
+            .commit(MutationRequest {
+                mutation_id: RequestId::from_uuid(Uuid::new_v4()),
+                workspace_id: parse(&workspace.workspace_id, "workspaceId")?,
+                work_item_id: WorkItemId::new(work_item_id).map_err(domain_error)?,
+                operation: OperationId::new("series.collect").map_err(domain_error)?,
+                idempotency_key: IdempotencyKey::new(format!("series-collect:{delegation_id}"))
+                    .map_err(store_error)?,
+                canonical_payload_digest: InputFingerprint::digest(payload_bytes),
+                expected_authority: authority,
+                lease_proof,
+                targets: vec![
+                    MutationTarget::new(
+                        located.relative,
+                        Some(ArtifactDigest::digest(&before_bytes)),
+                        after_bytes,
+                    )
+                    .map_err(store_error)?,
+                ],
+                event: JournalEvent {
+                    boot_id: self.boot_id,
+                    session_id: Some(parse(session_id, "sessionId")?),
+                    event_type: "series.collect".to_owned().into_boxed_str(),
+                    schema_version: 1,
+                    payload: RuntimeEventPayload::InlineJson(event_bytes),
+                },
+                result_digest: ResultDigest::digest(result_bytes),
+                prepared_at: UtcTimestamp::now(),
+                committed_at: UtcTimestamp::now(),
+            })
+            .map_err(store_error)?;
+        if !committed.replayed {
+            self.invalidate_gate_selectors(
+                workspace,
+                work_item_id,
+                &[GateInputSelector::RequirementAnalysis],
+            );
+        }
+        Ok(())
+    }
 }
 
 impl BusinessOperationPort for NativeBusinessAdapter {
@@ -1188,6 +1588,43 @@ impl BusinessOperationPort for NativeBusinessAdapter {
             &prepared_arguments,
             result,
         )
+    }
+
+    fn record_series_completed(
+        &self,
+        workspace: &BusinessWorkspace,
+        work_item_id: &str,
+        session_id: &str,
+        delegation_id: &str,
+        idempotency_key: &str,
+    ) -> RuntimeResult<()> {
+        let record = self
+            .persistence
+            .load_record("delegation/v1", delegation_id)?
+            .ok_or_else(|| child_result_error("completed delegation record is missing"))?;
+        let is_ra = record.get("seriesId").and_then(Value::as_str)
+            == Some(series_identity(work_item_id, "requirement-analysis").as_str());
+        if is_ra {
+            self.commit_requirement_analysis_evidence(
+                workspace,
+                work_item_id,
+                session_id,
+                delegation_id,
+                &record,
+            )?;
+        }
+
+        let located = read_state(workspace, work_item_id)?;
+        let input = flow_input(workspace, &located.value, work_item_id, self.event_store_id)?;
+        self.flow.record_series_completed(
+            &self.boot_id.to_string(),
+            &workspace.workspace_id,
+            Some(session_id),
+            work_item_id,
+            idempotency_key,
+            input,
+        )?;
+        Ok(())
     }
 
     fn validate_delegation_artifacts(
@@ -3431,6 +3868,12 @@ impl ProjectBackend<'_> {
         )?;
         let mut after = state.clone();
         apply_mutation(&mut after, request, semantic.as_ref())?;
+        if transition
+            .as_ref()
+            .is_some_and(|(_, target, _)| *target == ProcessPhase::RouteSelected)
+        {
+            freeze_route_projection(self.workspace, &state, &mut after, work_item_id.as_str())?;
+        }
         self.advance_completion_milestone(&state, &mut after, request, semantic.as_ref())?;
         let revision_after = authority
             .revision()
@@ -3782,6 +4225,11 @@ fn create_work_item(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let requested_intent = payload
+        .get("requestedIntent")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_uppercase);
 
     if let Some(identity) = bootstrap_identity.as_ref()
         && let Some(existing) = find_anonymous_create(&root, &identity.idempotency_key_digest)?
@@ -3820,6 +4268,9 @@ fn create_work_item(
     state.insert("stateModel".to_owned(), json!("nested"));
     state.insert("processPolicy".to_owned(), json!("compact"));
     state.insert("entryNode".to_owned(), json!(entry_node));
+    if let Some(requested_intent) = requested_intent {
+        state.insert("requestedIntent".to_owned(), json!(requested_intent));
+    }
     match entry_node.as_str() {
         "PRD" | "DR" => {
             state.insert("scale".to_owned(), json!("large"));
@@ -4086,12 +4537,11 @@ fn provided_documents(
 ///
 /// Adoption only records mappings: `documentPaths` takes the first provided
 /// path per intent (unprovided intents keep their minted defaults),
-/// `routeDocuments` marks each adopted series committed so a ROUTE handoff
-/// skips its generation, and the prd/dr/story containers gain their entries
-/// with generation-complete phases. The root phase jumps directly to the
-/// deepest adopted document's post-generation phase because the
-/// TransitionPolicy only ever advances one step; this write is the create-time
-/// initial value, not a transition.
+/// `routeDocuments` records adopted PRD/DR/Story artifacts, and their containers
+/// gain generation-complete phases. A ROUTE intake remains `initialized` and
+/// never receives an RA marker: provided documents are RA inputs, not the typed
+/// verified SRS receipt. Legacy non-ROUTE entry nodes retain their create-time
+/// phase projection for compatibility.
 fn adopt_provided_documents(
     state: &mut Map<String, Value>,
     entry_node: &str,
@@ -4105,7 +4555,9 @@ fn adopt_provided_documents(
     // Deepest adopted document decides the initial phase. `dr-generated` is
     // not a member of the STORY route chain, so a STORY-entry item that only
     // adopts a DR falls back to the chain's deepest legal pre-Story phase.
-    let root_phase = if has(ProvidedDocumentIntent::Story) {
+    let root_phase = if entry_node == "ROUTE" {
+        "initialized"
+    } else if has(ProvidedDocumentIntent::Story) {
         if entry_node == "STORY" {
             "story-generated"
         } else {
@@ -4146,9 +4598,9 @@ fn adopt_provided_documents(
             doc.intent.document_paths_key().to_owned(),
             Value::Bool(true),
         );
-        // The requirement-analysis series exists to produce the PRD, so an
-        // adopted PRD also commits the series key the handoff actually reads.
-        if doc.intent == ProvidedDocumentIntent::Prd {
+        // Legacy non-ROUTE chains treated an adopted PRD as their historical RA
+        // marker. ROUTE uses the typed SRS receipt and must never inherit it.
+        if entry_node != "ROUTE" && doc.intent == ProvidedDocumentIntent::Prd {
             routes.insert("RA".to_owned(), Value::Bool(true));
         }
     }
@@ -4686,37 +5138,44 @@ fn flow_input(
         snapshot =
             snapshot.with_completion_milestone(milestone.invalidate(&bound, &observed), bound);
     }
-    let scale = parse_scale(
-        state
-            .get("scale")
+    let route = if state.get("entryNode").and_then(Value::as_str) == Some("ROUTE") {
+        let frozen = state.pointer("/engineeringRoute/decision");
+        let candidate = state.get("routeCandidate");
+        let route_value = frozen.or(candidate);
+        let scale = route_value
+            .and_then(|value| value.get("scale"))
             .and_then(Value::as_str)
-            .ok_or_else(|| schema_error("authoritative route scale is missing"))?,
-    )?;
-    let route = state
-        .get("routeDecision")
-        .and_then(|value| {
-            value
-                .get("designRoute")
-                .or_else(|| value.get("selectedDesign"))
-        })
-        .or_else(|| state.get("selectedDesign"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| schema_error("authoritative selectedDesign is missing"))?;
-    let fingerprint = authoritative_input_fingerprint(state)?;
-    let mut environment = FlowEnvironment::new(
-        event_store_id,
-        fingerprint,
-        RouteSelection::new(scale, parse_route(route)?),
-    );
-    if let Some(cursor) = execution_cursor_from_state(state)? {
-        environment = environment.with_execution_cursor(cursor);
-    }
-    Ok(FlowInput::new(snapshot, environment))
-}
-
-fn route_selection_missing(state: &Value) -> bool {
-    state.get("scale").and_then(Value::as_str).is_none()
-        || state
+            .map(parse_scale)
+            .transpose()?;
+        let design = route_value
+            .and_then(|value| value.get("designRoute"))
+            .and_then(Value::as_str)
+            .map(parse_route)
+            .transpose()?;
+        match (scale, design) {
+            (None, None) => RouteLifecycle::Pending,
+            (Some(scale), Some(route)) => {
+                let selection = RouteSelection::new(scale, route);
+                if frozen.is_some() {
+                    RouteLifecycle::Frozen(selection)
+                } else {
+                    RouteLifecycle::Candidate(selection)
+                }
+            }
+            _ => {
+                return Err(schema_error(
+                    "authoritative route selection is only partially present",
+                ));
+            }
+        }
+    } else {
+        let scale = parse_scale(
+            state
+                .get("scale")
+                .and_then(Value::as_str)
+                .ok_or_else(|| schema_error("authoritative route scale is missing"))?,
+        )?;
+        let design = state
             .get("routeDecision")
             .and_then(|value| {
                 value
@@ -4725,7 +5184,19 @@ fn route_selection_missing(state: &Value) -> bool {
             })
             .or_else(|| state.get("selectedDesign"))
             .and_then(Value::as_str)
-            .is_none()
+            .ok_or_else(|| schema_error("authoritative selectedDesign is missing"))?;
+        RouteLifecycle::Frozen(RouteSelection::new(scale, parse_route(design)?))
+    };
+    let fingerprint = authoritative_input_fingerprint(state)?;
+    let mut environment = FlowEnvironment::new(event_store_id, fingerprint, route);
+    if let Some(cursor) = execution_cursor_from_state(state)? {
+        environment = environment.with_execution_cursor(cursor);
+    }
+    Ok(FlowInput::new(snapshot, environment))
+}
+
+fn route_selection_missing(state: &Value) -> bool {
+    state.get("routeCandidate").is_none() && state.get("engineeringRoute").is_none()
 }
 
 fn route_pending_projection(state: &Value, work_item_id: &str) -> RuntimeResult<Value> {
@@ -4734,40 +5205,85 @@ fn route_pending_projection(state: &Value, work_item_id: &str) -> RuntimeResult<
             "authoritative route selection is missing outside a ROUTE intake",
         ));
     }
+    let phase = state
+        .get("currentPhase")
+        .or_else(|| state.get("phase"))
+        .and_then(Value::as_str);
+    if phase != Some("initialized") {
+        return Err(RuntimeError::new(
+            StableErrorCode::ExternalStateConflict,
+            "ROUTE state lost its route authority after Requirement Analysis began",
+        ));
+    }
     let revision = state
         .get("revision")
         .and_then(Value::as_u64)
         .ok_or_else(|| schema_error("authoritative state revision is missing"))?;
-    Ok(json!({
+    let input_fingerprint = authoritative_input_fingerprint(state)?.to_string();
+    let next_action = json!({
+        "kind":"delegate-series",
+        "workItemId":work_item_id,
+        "seriesKind":"requirement-analysis",
+        "requiredArtifacts":["RA"],
+        "submit":{
+            "method":"delegation.create",
+            "role":"series",
+            "taskKind":"requirement-analysis"
+        }
+    });
+    let decision_binding = canonical_value(&json!({
+        "schemaVersion":"flow-decision/v1",
         "phase":"initialized",
         "stateRevision":revision,
-        "nextAction":{
-            "kind":"analyze-route",
-            "workItemId":work_item_id,
-            "requiredFacts":["requestedIntent","taskKind","impactFacts","classificationConfidenceBps"],
-            "submit":{
-                "method":"operation.execute",
-                "operation":"route.decide",
-                "requiresExpectedRevision":true,
-                "requiresIdempotencyKey":true
-            }
-        }
+        "inputFingerprint":input_fingerprint,
+        "nextAction":next_action,
+    }));
+    let decision_bytes = serde_json::to_vec(&decision_binding)
+        .map_err(|_| schema_error("route flow decision could not be canonicalized"))?;
+    let decision_digest = ArtifactDigest::digest(decision_bytes).to_string();
+    Ok(json!({
+        "schemaVersion":"flow-decision/v1",
+        "phase":"initialized",
+        "stateRevision":revision,
+        "inputFingerprint":input_fingerprint,
+        "decisionDigest":decision_digest,
+        "nextAction":next_action,
     }))
 }
 
 fn route_control_projection(state: &Value, work_item_id: &str) -> RuntimeResult<Option<Value>> {
+    if state.get("entryNode").and_then(Value::as_str) != Some("ROUTE") {
+        return Ok(None);
+    }
     if route_selection_missing(state) {
         return route_pending_projection(state, work_item_id).map(Some);
     }
-    if state.get("routeApproved").and_then(Value::as_bool) == Some(false) {
+    if state.get("routeApproved").and_then(Value::as_bool) == Some(false)
+        && state.get("routeApprovalReceipt").is_none()
+    {
+        let phase = parse_phase(
+            state
+                .get("currentPhase")
+                .or_else(|| state.get("phase"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| schema_error("pending route approval phase is missing"))?,
+        )?;
+        if phase == ProcessPhase::Initialized {
+            return route_pending_projection(state, work_item_id).map(Some);
+        }
+        if phase != ProcessPhase::RequirementAnalyzed {
+            return Err(schema_error(
+                "route approval is only valid after Requirement Analysis",
+            ));
+        }
         let confirmation_id = state
             .get("routeApprovalConfirmationId")
             .and_then(Value::as_str)
             .ok_or_else(|| schema_error("pending route approval binding is missing"))?;
         return Ok(Some(json!({
-            "phase":"initialized",
+            "phase":"requirement_analyzed",
             "stateRevision":state.get("revision"),
-            "routeDecision":state.get("routeDecision"),
+            "routeCandidate":state.get("routeCandidate"),
             "nextAction":{
                 "kind":"approve-route",
                 "confirmationId":confirmation_id,
@@ -4983,9 +5499,6 @@ fn route_handoff_action(state: &Value) -> RuntimeResult<Option<Value>> {
         })
     };
 
-    if requires("requirement-analysis") && !committed("RA") {
-        return Ok(Some(delegate("requirement-analysis", &["RA"])));
-    }
     if requires("design-review") && !committed("DR") {
         return Ok(Some(delegate("design-review", &["DR"])));
     }
@@ -5031,7 +5544,16 @@ fn route_handoff_action(state: &Value) -> RuntimeResult<Option<Value>> {
             .and_then(Value::as_str)
             .ok_or_else(|| schema_error("approved ROUTE intake is missing its current phase"))?,
     )?;
-    if phase < ProcessPhase::Coding {
+    if matches!(
+        phase,
+        ProcessPhase::Initialized
+            | ProcessPhase::RequirementAnalyzed
+            | ProcessPhase::RouteSelected
+            | ProcessPhase::DrGenerated
+            | ProcessPhase::StoryGenerated
+            | ProcessPhase::TestcaseGenerated
+            | ProcessPhase::CodingProcess
+    ) {
         let scale = parse_scale(
             state
                 .get("scale")
@@ -5073,8 +5595,8 @@ fn next_route_phase(
     design_route: DesignRoute,
 ) -> RuntimeResult<&'static str> {
     [
-        "route-selected",
         "requirement-analyzed",
+        "route-selected",
         "dr-generated",
         "story-generated",
         "testcase-generated",
@@ -5485,6 +6007,7 @@ fn strip_derived_runtime_fields(value: &mut Value) {
 }
 
 fn prepare_route_decision(
+    workspace: &BusinessWorkspace,
     state: &Value,
     request: &ValidatedOperationRequest,
 ) -> RuntimeResult<Value> {
@@ -5493,9 +6016,19 @@ fn prepare_route_decision(
             "route.decide is only valid for a ROUTE intake Work Item",
         ));
     }
-    if state.get("routeApproved").and_then(Value::as_bool) == Some(true) {
+    if state.get("engineeringRoute").is_some() {
         return Err(schema_error(
-            "route.decide cannot replace an already committed route decision",
+            "route.decide cannot replace an already frozen route",
+        ));
+    }
+    let phase = state
+        .get("currentPhase")
+        .or_else(|| state.get("phase"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| schema_error("authoritative Work Item phase is missing"))?;
+    if parse_phase(phase)? != ProcessPhase::RequirementAnalyzed {
+        return Err(schema_error(
+            "route.decide requires Requirement Analysis to be complete",
         ));
     }
     let work_item_id = request
@@ -5503,66 +6036,166 @@ fn prepare_route_decision(
         .work_item_id
         .as_ref()
         .ok_or_else(|| schema_error("workItemId is required"))?;
-    let payload = &request.request().payload;
-    let fingerprint_payload = json!({
-        "requestedIntent":payload.get("requestedIntent"),
-        // §5.5 freezes `taskKind` on the decision, so it is part of what the route
-        // was decided *from*: two submissions differing only in task kind are
-        // different inputs and must not share a fingerprint.
-        "taskKind":payload.get("taskKind"),
-        "availableArtifacts":payload.get("availableArtifacts").cloned().unwrap_or_else(|| json!([])),
-        "impactFacts":payload.get("impactFacts"),
-        "classificationConfidenceBps":payload.get("classificationConfidenceBps"),
-    });
-    let fingerprint = InputFingerprint::digest(
-        serde_json::to_vec(&json!({
-            "workItemId":work_item_id.as_str(),
-            "routeFacts":fingerprint_payload,
-        }))
-        .map_err(|_| schema_error("route input fingerprint could not be computed"))?,
-    );
-    let input: RouteInput = serde_json::from_value(json!({
-        "schemaVersion":SchemaVersion::V1,
-        "workItemId":work_item_id.as_str(),
-        "entryNode":"entry.route",
-        "requestedIntent":payload.get("requestedIntent").cloned().unwrap_or(Value::Null),
-        "taskKind":payload.get("taskKind").cloned().unwrap_or(Value::Null),
-        "availableArtifacts":payload.get("availableArtifacts").cloned().unwrap_or_else(|| json!([])),
-        "impactFacts":payload.get("impactFacts").cloned().unwrap_or(Value::Null),
-        "classificationConfidenceBps":payload.get("classificationConfidenceBps").cloned().unwrap_or(Value::Null),
-        "inputFingerprint":fingerprint.to_string(),
-        "userApprovalRef":payload.get("userApprovalRef").cloned().unwrap_or(Value::Null),
-    }))
-    .map_err(|error| schema_error(&format!("route input is invalid: {error}")))?;
-    let engine = RouteEngine::default();
-    let approval_confirmation_id = format!(
-        "route:{}",
-        engine
-            .approval_binding(&input)
-            .map_err(|error| schema_error(&format!("route approval binding failed: {error}")))?
-    );
-    let decision = engine
-        .decide(&input)
+    let binding = load_ra_route_binding(workspace, state, work_item_id.as_str())?;
+    let task_kind = request
+        .request()
+        .payload
+        .get("taskKind")
+        .and_then(Value::as_str)
+        .and_then(TaskKind::from_wire)
+        .ok_or_else(|| schema_error("taskKind is invalid"))?;
+    let decision = RouteEngine::default()
+        .decide_from_evidence_for_task_kind(
+            &binding,
+            work_item_id.clone(),
+            SchemaVersion::V2,
+            task_kind,
+        )
         .map_err(|error| schema_error(&format!("route decision failed: {error}")))?;
-    let scale = match decision.scale() {
+    let approval_confirmation_id = format!("route:{}", decision.decision_digest());
+    let approval = route_confirmation(request)
+        .map(|confirmation| {
+            if confirmation.confirmation_id != approval_confirmation_id {
+                return Err(schema_error(
+                    "route approval does not bind the current candidate",
+                ));
+            }
+            Ok(RouteApprovalReceipt::new(
+                confirmation.confirmation_id,
+                confirmation.approved_by,
+                confirmation.approved_at,
+                binding.ra_evidence().document_id().clone(),
+                binding.ra_evidence().version(),
+                *binding.ra_evidence().ra_content_digest(),
+                binding.ra_evidence().scale(),
+                decision.decision_digest(),
+            ))
+        })
+        .transpose()?;
+    let requires_user_approval = approval.is_none();
+    Ok(json!({
+        "routeCandidate":decision,
+        "routeApprovalReceipt":approval,
+        "requiresUserApproval":requires_user_approval,
+        "approvalConfirmationId":approval_confirmation_id,
+    }))
+}
+
+fn route_confirmation(request: &ValidatedOperationRequest) -> Option<ConfirmationRef> {
+    request
+        .request()
+        .confirmation
+        .clone()
+        .map(|confirmation| ConfirmationRef {
+            confirmation_id: confirmation.confirmation_id().to_owned(),
+            approved_by: confirmation.approved_by().to_owned(),
+            approved_at: confirmation.approved_at().to_owned(),
+        })
+}
+
+fn load_ra_route_binding(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+) -> RuntimeResult<RouteBindingInput> {
+    let evidence: RequirementAnalysisEvidence = serde_json::from_value(
+        state
+            .pointer("/seriesReceipts/RA")
+            .cloned()
+            .ok_or_else(|| schema_error("verified RA Series receipt is required"))?,
+    )
+    .map_err(|error| schema_error(&format!("RA Series receipt is invalid: {error}")))?;
+    if evidence.work_item_id().as_str() != work_item_id
+        || evidence.ra_receipt_status() != ReceiptStatus::Verified
+    {
+        return Err(schema_error(
+            "RA Series receipt is not verified for this Work Item",
+        ));
+    }
+    let absolute = match authoritative_ra_path(Path::new(&workspace.canonical_root), state) {
+        AuthoritativeRaPath::Bound { absolute, .. } => absolute,
+        AuthoritativeRaPath::Missing => {
+            return Err(schema_error("documentPaths/RA is required"));
+        }
+        AuthoritativeRaPath::Invalid | AuthoritativeRaPath::Escape => {
+            return Err(schema_error(
+                "documentPaths/RA is outside the RA authority scope",
+            ));
+        }
+    };
+    let content = fs::read(absolute)
+        .map_err(|_| schema_error("bound RA document is missing or unreadable"))?;
+    if ArtifactDigest::digest(content) != *evidence.ra_content_digest() {
+        return Err(schema_error("RA document content digest is stale"));
+    }
+    Ok(RouteBindingInput::new(evidence, RouteMappingVersion::V1))
+}
+
+fn freeze_route_projection(
+    workspace: &BusinessWorkspace,
+    before: &Value,
+    after: &mut Value,
+    work_item_id: &str,
+) -> RuntimeResult<()> {
+    let binding = load_ra_route_binding(workspace, before, work_item_id)?;
+    let candidate: RouteDecision = serde_json::from_value(
+        before
+            .get("routeCandidate")
+            .cloned()
+            .ok_or_else(|| schema_error("route candidate is required"))?,
+    )
+    .map_err(|error| schema_error(&format!("route candidate is invalid: {error}")))?;
+    let approval: RouteApprovalReceipt = serde_json::from_value(
+        before
+            .get("routeApprovalReceipt")
+            .cloned()
+            .ok_or_else(|| schema_error("route approval receipt is required"))?,
+    )
+    .map_err(|error| schema_error(&format!("route approval receipt is invalid: {error}")))?;
+    let conflicts: Vec<RequirementConflict> = before
+        .get("routeBlockingConflicts")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| schema_error(&format!("route conflicts are invalid: {error}")))?
+        .unwrap_or_default();
+    let route = EngineeringRoute::freeze(
+        SchemaVersion::V2,
+        &binding,
+        candidate,
+        &approval,
+        &conflicts,
+    )
+    .map_err(|error| schema_error(&format!("route freeze failed: {error}")))?;
+    let scale = match route.decision().scale() {
         WorkScale::Large => "large",
         WorkScale::Medium => "medium",
         WorkScale::Small => "small",
         WorkScale::Micro => "micro",
     };
-    let selected_design = match decision.design_route() {
+    let selected_design = match route.decision().design_route() {
         DesignRoute::Dr => "DR",
         DesignRoute::Story => "STORY",
         DesignRoute::CodingPlan => "CODING_PLAN",
     };
-    let approved = decision.is_approved();
-    Ok(json!({
-        "decision":decision,
-        "scale":scale,
-        "selectedDesign":selected_design,
-        "approved":approved,
-        "approvalConfirmationId":approval_confirmation_id,
-    }))
+    let object = root_state_object_mut(after)?;
+    object.insert(
+        "routeDecision".to_owned(),
+        serde_json::to_value(route.decision())
+            .map_err(|_| schema_error("route decision could not be serialized"))?,
+    );
+    object.insert(
+        "engineeringRoute".to_owned(),
+        serde_json::to_value(route)
+            .map_err(|_| schema_error("engineering route could not be serialized"))?,
+    );
+    object.insert("scale".to_owned(), Value::String(scale.to_owned()));
+    object.insert(
+        "selectedDesign".to_owned(),
+        Value::String(selected_design.to_owned()),
+    );
+    object.insert("routeApproved".to_owned(), Value::Bool(true));
+    Ok(())
 }
 
 fn prepare_execution_slice_mutation(
@@ -5858,7 +6491,7 @@ fn prepare_semantic_mutation(
         .ok_or_else(|| schema_error("workItemId is required"))?;
     match request.operation() {
         OperationName::RouteDecide => Ok(Some(PreparedSemanticMutation::plain(
-            prepare_route_decision(state, request)?,
+            prepare_route_decision(workspace, state, request)?,
         ))),
         OperationName::ExecutionSliceStart | OperationName::ExecutionSliceRecord => {
             prepare_execution_slice_mutation(workspace, state, request, authority).map(Some)
@@ -6196,13 +6829,19 @@ fn apply_mutation(
         OperationName::RouteDecide => {
             let prepared = prepared_data(semantic, "route decision was not prepared")?;
             let object = root_state_object_mut(state)?;
-            object.insert("routeDecision".to_owned(), prepared["decision"].clone());
-            object.insert("scale".to_owned(), prepared["scale"].clone());
             object.insert(
-                "selectedDesign".to_owned(),
-                prepared["selectedDesign"].clone(),
+                "routeCandidate".to_owned(),
+                prepared["routeCandidate"].clone(),
             );
-            object.insert("routeApproved".to_owned(), prepared["approved"].clone());
+            if !prepared["routeApprovalReceipt"].is_null() {
+                object.insert(
+                    "routeApprovalReceipt".to_owned(),
+                    prepared["routeApprovalReceipt"].clone(),
+                );
+            } else {
+                object.remove("routeApprovalReceipt");
+            }
+            object.insert("routeApproved".to_owned(), Value::Bool(false));
             object.insert(
                 "routeApprovalConfirmationId".to_owned(),
                 prepared["approvalConfirmationId"].clone(),
@@ -6993,6 +7632,22 @@ fn schema_error(message: &str) -> RuntimeError {
     RuntimeError::new(StableErrorCode::OperationSchemaInvalid, message)
 }
 
+fn requirement_analysis_evidence(
+    state: &Value,
+) -> RuntimeResult<Option<RequirementAnalysisEvidence>> {
+    state
+        .pointer("/seriesReceipts/RA")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "authoritative RA evidence is malformed",
+            )
+        })
+}
+
 fn authoritative_state_snapshot(cached: &Value, fresh_bytes: &[u8]) -> RuntimeResult<Value> {
     let fresh: Value = serde_json::from_slice(fresh_bytes).map_err(|_| {
         RuntimeError::new(
@@ -7030,6 +7685,221 @@ fn authoritative_state_snapshot(cached: &Value, fresh_bytes: &[u8]) -> RuntimeRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route_decide_request(
+        work_item: &str,
+        confirmation: Option<Confirmation>,
+    ) -> ValidatedOperationRequest {
+        route_decide_request_for_task_kind(work_item, "implementation", confirmation)
+    }
+
+    fn route_decide_request_for_task_kind(
+        work_item: &str,
+        task_kind: &str,
+        confirmation: Option<Confirmation>,
+    ) -> ValidatedOperationRequest {
+        ValidatedOperationRequest::validate(OperationRequest {
+            operation: OperationName::RouteDecide,
+            workspace_id: Some(WorkspaceId::from_uuid(uuid::Uuid::from_u128(1))),
+            project_key: Some(ProjectKey::new("ae-sdd").expect("project key")),
+            work_item_id: Some(WorkItemId::new(work_item).expect("work item")),
+            session_id: Some(SessionId::from_uuid(uuid::Uuid::from_u128(2))),
+            lease_id: Some(LeaseId::from_uuid(uuid::Uuid::from_u128(3))),
+            fencing_token: Some(FencingToken::new(1)),
+            expected_revision: Some(StateRevision::new(7)),
+            idempotency_key: Some("route-decide-unit".into()),
+            confirmation,
+            dry_run: false,
+            payload: json!({"taskKind":task_kind}),
+        })
+        .expect("valid route decision request")
+    }
+
+    #[test]
+    fn route_candidate_is_non_authoritative_until_bound_approval_is_atomically_frozen() {
+        let root = tempfile::tempdir().expect("workspace root");
+        let workspace = creation_workspace(root.path());
+        let work_item = "ROUTE-RA-FREEZE-001";
+        let relative = format!("ae-sdd-doc/RA/{work_item}.md");
+        let content = b"# Requirement Specification\n\nverified RA content\n";
+        let absolute = root.path().join(&relative);
+        fs::create_dir_all(absolute.parent().expect("RA parent")).expect("RA directory");
+        fs::write(&absolute, content).expect("RA document");
+        let evidence = RequirementAnalysisEvidence::new(
+            WorkItemId::new(work_item).expect("work item"),
+            ae_sdd_contracts::SeriesId::new("SERIES-RA-FREEZE-001").expect("series"),
+            ae_sdd_contracts::DocumentId::new("DOC-RA-FREEZE-001").expect("document"),
+            2,
+            ArtifactDigest::digest(content),
+            StateRevision::new(7),
+            ArtifactDigest::digest(b"verified RA receipt"),
+            ReceiptStatus::Verified,
+            WorkScale::Small,
+            ArtifactDigest::digest(b"scale evidence"),
+            ArtifactDigest::digest(b"G-RA-1..4 receipts"),
+        );
+        let mut state = json!({
+            "entryNode":"ROUTE",
+            "phase":"requirement-analyzed",
+            "currentPhase":"requirement-analyzed",
+            "documentPaths":{"RA":relative},
+            "seriesReceipts":{"RA":evidence},
+        });
+
+        let request = route_decide_request(work_item, None);
+        let candidate = prepare_route_decision(&workspace, &state, &request)
+            .expect("verified RA produces a candidate");
+        assert!(candidate["routeApprovalReceipt"].is_null());
+        apply_mutation(
+            &mut state,
+            &request,
+            Some(&PreparedSemanticMutation::plain(candidate.clone())),
+        )
+        .expect("candidate projection");
+        assert_eq!(state["routeApproved"], false);
+        assert!(state.get("engineeringRoute").is_none());
+
+        let confirmation = Confirmation::new(
+            candidate["approvalConfirmationId"]
+                .as_str()
+                .expect("confirmation binding"),
+            "user:owner",
+            "2026-08-10T00:00:00Z",
+        )
+        .expect("confirmation");
+        let approved_request = route_decide_request(work_item, Some(confirmation));
+        let approved = prepare_route_decision(&workspace, &state, &approved_request)
+            .expect("bound approval is collected");
+        apply_mutation(
+            &mut state,
+            &approved_request,
+            Some(&PreparedSemanticMutation::plain(approved)),
+        )
+        .expect("approval projection");
+        assert_eq!(state["routeApproved"], false);
+        assert!(state.get("routeApprovalReceipt").is_some());
+
+        let replacement_request =
+            route_decide_request_for_task_kind(work_item, "self_update", None);
+        let replacement = prepare_route_decision(&workspace, &state, &replacement_request)
+            .expect("a new candidate may replace an unfrozen candidate");
+        let mut replaced = state.clone();
+        apply_mutation(
+            &mut replaced,
+            &replacement_request,
+            Some(&PreparedSemanticMutation::plain(replacement)),
+        )
+        .expect("replacement candidate projection");
+        assert!(replaced.get("routeApprovalReceipt").is_none());
+        assert_eq!(
+            route_control_projection(&replaced, work_item)
+                .expect("replacement route projection")
+                .expect("replacement requires approval")["nextAction"]["kind"],
+            "approve-route"
+        );
+
+        let mut after = state.clone();
+        after["phase"] = json!("route-selected");
+        after["currentPhase"] = json!("route-selected");
+        freeze_route_projection(&workspace, &state, &mut after, work_item)
+            .expect("the RouteSelected mutation freezes the approved candidate");
+
+        assert_eq!(after["routeApproved"], true);
+        assert_eq!(after["scale"], "small");
+        assert_eq!(after["selectedDesign"], "CODING_PLAN");
+        assert_eq!(
+            after["engineeringRoute"]["decision"],
+            after["routeCandidate"]
+        );
+        assert!(state.get("engineeringRoute").is_none());
+    }
+
+    #[test]
+    fn route_candidate_rejects_a_bound_ra_symlink_that_escapes_the_workspace() {
+        let root = tempfile::tempdir().expect("workspace root");
+        let outside = tempfile::tempdir().expect("outside root");
+        let workspace = creation_workspace(root.path());
+        let work_item = "ROUTE-RA-ESCAPE-001";
+        let relative = format!("ae-sdd-doc/RA/{work_item}.md");
+        let content = b"# Requirement Specification\n\noutside RA content\n";
+        let outside_document = outside.path().join("outside-ra.md");
+        fs::write(&outside_document, content).expect("outside RA");
+        let link = root.path().join(&relative);
+        fs::create_dir_all(link.parent().expect("RA parent")).expect("RA directory");
+
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&outside_document, &link);
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside_document, &link);
+        if let Err(error) = linked {
+            assert!(
+                matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+                ) || error.raw_os_error() == Some(1314),
+                "unexpected symlink setup failure: {error}"
+            );
+            return;
+        }
+
+        let evidence = RequirementAnalysisEvidence::new(
+            WorkItemId::new(work_item).expect("work item"),
+            ae_sdd_contracts::SeriesId::new("SERIES-RA-ESCAPE-001").expect("series"),
+            ae_sdd_contracts::DocumentId::new("DOC-RA-ESCAPE-001").expect("document"),
+            2,
+            ArtifactDigest::digest(content),
+            StateRevision::new(7),
+            ArtifactDigest::digest(b"verified RA receipt"),
+            ReceiptStatus::Verified,
+            WorkScale::Small,
+            ArtifactDigest::digest(b"scale evidence"),
+            ArtifactDigest::digest(b"G-RA-1..4 receipts"),
+        );
+        let state = json!({
+            "entryNode":"ROUTE",
+            "phase":"requirement-analyzed",
+            "currentPhase":"requirement-analyzed",
+            "documentPaths":{"RA":relative},
+            "seriesReceipts":{"RA":evidence},
+        });
+
+        let error =
+            prepare_route_decision(&workspace, &state, &route_decide_request(work_item, None))
+                .expect_err("an RA symlink escape must fail closed");
+        assert_eq!(error.code(), StableErrorCode::OperationSchemaInvalid);
+    }
+
+    #[test]
+    fn route_approval_cannot_be_forged_in_the_operation_payload() {
+        let request = OperationRequest {
+            operation: OperationName::RouteDecide,
+            workspace_id: Some(WorkspaceId::from_uuid(uuid::Uuid::from_u128(1))),
+            project_key: Some(ProjectKey::new("ae-sdd").expect("project key")),
+            work_item_id: Some(WorkItemId::new("ROUTE-RA-APPROVAL-001").expect("work item")),
+            session_id: Some(SessionId::from_uuid(uuid::Uuid::from_u128(2))),
+            lease_id: Some(LeaseId::from_uuid(uuid::Uuid::from_u128(3))),
+            fencing_token: Some(FencingToken::new(1)),
+            expected_revision: Some(StateRevision::new(7)),
+            idempotency_key: Some("route-approval-forgery".into()),
+            confirmation: None,
+            dry_run: false,
+            payload: json!({
+                "taskKind":"implementation",
+                "userApprovalRef":{
+                    "confirmationId":"forged",
+                    "approvedBy":"caller",
+                    "approvedAt":"2026-08-10T00:00:00Z"
+                }
+            }),
+        };
+
+        let error = ValidatedOperationRequest::validate(request)
+            .expect_err("approval data belongs only in the verified confirmation channel");
+        assert!(matches!(
+            error,
+            OperationRequestError::UnknownPayloadField(field) if field == "userApprovalRef"
+        ));
+    }
 
     #[test]
     fn parse_route_reads_back_every_spelling_classify_can_write() {
@@ -7072,14 +7942,6 @@ mod tests {
         assert_eq!(
             route_handoff_action(&state)
                 .expect("valid route state")
-                .expect("fresh route action")["seriesKind"],
-            "requirement-analysis"
-        );
-
-        state["routeDocuments"]["RA"] = Value::Bool(true);
-        assert_eq!(
-            route_handoff_action(&state)
-                .expect("valid route state")
                 .expect("DR action")["seriesKind"],
             "design-review"
         );
@@ -7114,12 +7976,13 @@ mod tests {
             .expect("valid route state")
             .expect("approved route phase handoff");
         assert_eq!(advance["kind"], "advance-route-phase");
-        assert_eq!(advance["targetPhase"], "route-selected");
+        // RA-first: the first post-handoff advance target is requirement-analyzed.
+        assert_eq!(advance["targetPhase"], "requirement-analyzed");
         assert_eq!(
             advance["submit"],
             json!({
                 "method":"flow.next",
-                "arguments":{"targetPhase":"route-selected"},
+                "arguments":{"targetPhase":"requirement-analyzed"},
                 "requiresIdempotencyKey":true
             })
         );
@@ -7130,8 +7993,8 @@ mod tests {
         // both that authority and `ae-sdd-design.md`'s
         // `RA -> DR -> N x (Story -> TestCase -> CodingPlan)`.
         for (current, expected) in [
-            ("route-selected", "requirement-analyzed"),
-            ("requirement-analyzed", "dr-generated"),
+            ("requirement-analyzed", "route-selected"),
+            ("route-selected", "dr-generated"),
             ("dr-generated", "story-generated"),
             ("story-generated", "testcase-generated"),
             ("testcase-generated", "coding-process"),
@@ -7589,7 +8452,11 @@ mod tests {
     fn creation_workspace(root: &std::path::Path) -> BusinessWorkspace {
         BusinessWorkspace {
             workspace_id: "ws-create-test".to_owned(),
-            canonical_root: root.to_string_lossy().into_owned(),
+            canonical_root: root
+                .canonicalize()
+                .expect("canonical workspace root")
+                .to_string_lossy()
+                .into_owned(),
             project_key: "ae-sdd".to_owned(),
             mode: WorkspaceMode::RustSoleWriter,
             agent_role: None,
@@ -7616,6 +8483,285 @@ mod tests {
             dry_run: false,
             payload,
         }
+    }
+
+    #[test]
+    fn collected_ra_series_commits_verified_requirement_analysis_evidence() {
+        let root = tempfile::TempDir::new().expect("workspace root");
+        let mut workspace = creation_workspace(root.path());
+        workspace.workspace_id = Uuid::from_u128(8_100).to_string();
+        let work_item = "ROUTE-RA-COLLECT-001";
+        create_work_item(
+            &workspace,
+            &creation_request(work_item, json!({"entryNode":"ROUTE"})),
+        )
+        .expect("ROUTE creation succeeds");
+
+        let located = read_state(&workspace, work_item).expect("created state resolves");
+        let ra_relative = located.value["documentPaths"]["RA"]
+            .as_str()
+            .expect("RA path")
+            .to_owned();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/gates/ra-v2/small-cli-library.md");
+        let ra_bytes = fs::read(fixture).expect("valid SRS fixture");
+        let ra_path = root.path().join(&ra_relative);
+        fs::create_dir_all(ra_path.parent().expect("RA parent")).expect("RA directory");
+        fs::write(&ra_path, &ra_bytes).expect("authoritative RA document");
+
+        let event_store_id = EventStoreId::from_uuid(Uuid::from_u128(8_101));
+        let persistence = Arc::new(ae_sdd_runtime::MemoryPersistence::new(event_store_id));
+        let persistence_port: Arc<dyn PersistencePort> = persistence.clone();
+        let database = root.path().join("runtime.sqlite3");
+        let adapter = NativeBusinessAdapter::new(
+            database.clone(),
+            event_store_id,
+            BootId::from_uuid(Uuid::from_u128(8_102)),
+            ae_sdd_policy::policy_digest().to_hex(),
+            persistence_port,
+        );
+        let session_id = Uuid::from_u128(8_103).to_string();
+        let paths = ProjectStorePaths::new(&workspace.canonical_root, located.relative.clone())
+            .expect("project store paths");
+        let repository =
+            SqliteRuntimeRepository::open(&database, event_store_id, &UtcTimestamp::now())
+                .expect("runtime repository");
+        let store =
+            ProjectMutationStore::new(paths, StdDurableFileSystem, StdCrossProcessLock, repository);
+        let now = UtcTimestamp::now();
+        store
+            .acquire_lease(
+                LeaseId::from_uuid(Uuid::from_u128(8_104)),
+                LeaseOwner::new(session_id.clone()).expect("lease owner"),
+                now.clone(),
+                add_seconds_from(&now, 300).expect("lease expiry"),
+            )
+            .expect("active root lease");
+
+        let delegation_id = Uuid::from_u128(8_105).to_string();
+        let digest = ArtifactDigest::digest(&ra_bytes).to_string();
+        let result = json!({
+            "outcome":"succeeded",
+            "findings":[],
+            "deliverables":[{
+                "id":"requirement-analysis",
+                "kind":"document",
+                "path":ra_relative,
+                "digest":digest,
+                "byteLength":ra_bytes.len()
+            }],
+            "requestedAction":null,
+            "memorySnapshotDigest":"c".repeat(64)
+        });
+        let result_digest =
+            ResultDigest::digest(serde_json::to_vec(&result).expect("RA result serializes"))
+                .to_string();
+        persistence
+            .store_record(
+                "delegation/v1",
+                &delegation_id,
+                &json!({
+                    "schemaVersion":"delegation/v1",
+                    "delegationId":delegation_id,
+                    "workspaceId":workspace.workspace_id,
+                    "rootSessionId":session_id,
+                    "parentSessionId":session_id,
+                    "parentDelegationId":null,
+                    "childRole":"series",
+                    "inputRevision":1,
+                    "inputFingerprint":"a".repeat(64),
+                    "seriesRunId":Uuid::from_u128(8_106).to_string(),
+                    "seriesId":series_identity(work_item, "requirement-analysis"),
+                    "flowRunId":Uuid::from_u128(8_108).to_string(),
+                    "status":"completed",
+                    "childSessionId":Uuid::from_u128(8_109).to_string(),
+                    "resultDigest":result_digest,
+                    "result":result,
+                    "artifactReceipt":{
+                        "schemaVersion":"delegation-artifact-validation/v1",
+                        "delegationId":delegation_id,
+                        "resultDigest":result_digest,
+                        "artifacts":[{
+                            "id":"requirement-analysis",
+                            "kind":"document",
+                            "path":ra_relative,
+                            "digest":digest,
+                            "byteLength":ra_bytes.len()
+                        }]
+                    },
+                    "cleanupReceipt":{
+                        "schemaVersion":"delegation-memory-cleanup/v1",
+                        "delegationId":delegation_id,
+                        "memorySnapshotDigest":"c".repeat(64),
+                        "cleanupDigest":"d".repeat(64),
+                        "cleanedAtUnixMs":1
+                    }
+                }),
+            )
+            .expect("completed RA delegation record");
+
+        let state_path = located.absolute.clone();
+        install_ra_collection_test_hook(move || {
+            let mut concurrent: Value = serde_json::from_slice(
+                &fs::read(&state_path).expect("state before concurrent mutation"),
+            )
+            .expect("state JSON");
+            let revision = concurrent["revision"]
+                .as_u64()
+                .expect("state revision before concurrent mutation");
+            concurrent["revision"] = Value::from(revision + 1);
+            concurrent["concurrentMarker"] = Value::Bool(true);
+            fs::write(
+                &state_path,
+                serde_json::to_vec_pretty(&concurrent).expect("concurrent state JSON"),
+            )
+            .expect("concurrent authoritative mutation");
+        });
+
+        adapter
+            .record_series_completed(
+                &workspace,
+                work_item,
+                &session_id,
+                &delegation_id,
+                &format!("series-boundary\0{delegation_id}"),
+            )
+            .expect("RA collection commits project evidence");
+
+        let after = read_state(&workspace, work_item).expect("state after RA collection");
+        let evidence: RequirementAnalysisEvidence =
+            serde_json::from_value(after.value["seriesReceipts"]["RA"].clone())
+                .expect("typed RA evidence");
+        assert_eq!(evidence.work_item_id().as_str(), work_item);
+        assert_eq!(evidence.ra_content_digest().to_string(), digest);
+        assert_eq!(evidence.ra_receipt_status(), ReceiptStatus::Verified);
+        assert_eq!(evidence.scale(), WorkScale::Small);
+        assert_eq!(after.value["concurrentMarker"], true);
+
+        let forged_id = Uuid::from_u128(8_110).to_string();
+        let mut forged = persistence
+            .load_record("delegation/v1", &delegation_id)
+            .expect("delegation lookup")
+            .expect("delegation record");
+        forged["delegationId"] = json!(forged_id);
+        forged["seriesRunId"] = json!(Uuid::from_u128(8_111).to_string());
+        forged["resultDigest"] = json!("e".repeat(64));
+        forged["artifactReceipt"]["delegationId"] = json!(forged_id);
+        forged["artifactReceipt"]["resultDigest"] = json!("e".repeat(64));
+        forged["cleanupReceipt"]["delegationId"] = json!(forged_id);
+        persistence
+            .store_record("delegation/v1", &forged_id, &forged)
+            .expect("forged delegation record");
+        let revision_before_forgery = after.value["revision"].clone();
+        let error = adapter
+            .record_series_completed(
+                &workspace,
+                work_item,
+                &session_id,
+                &forged_id,
+                &format!("series-boundary\0{forged_id}"),
+            )
+            .expect_err("a forged result digest must not create verified RA evidence");
+        assert_eq!(error.code(), StableErrorCode::ChildResultInvalid);
+        let unchanged = read_state(&workspace, work_item).expect("state after rejected forgery");
+        assert_eq!(unchanged.value["revision"], revision_before_forgery);
+
+        let receipt_only_id = Uuid::from_u128(8_112).to_string();
+        let mut receipt_only = persistence
+            .load_record("delegation/v1", &delegation_id)
+            .expect("delegation lookup")
+            .expect("delegation record");
+        receipt_only["delegationId"] = json!(receipt_only_id);
+        receipt_only["seriesRunId"] = json!(Uuid::from_u128(8_113).to_string());
+        receipt_only["result"]["deliverables"] = json!([]);
+        let receipt_only_digest = ResultDigest::digest(
+            serde_json::to_vec(&receipt_only["result"]).expect("receipt-only result serializes"),
+        )
+        .to_string();
+        receipt_only["resultDigest"] = json!(receipt_only_digest);
+        receipt_only["artifactReceipt"]["delegationId"] = json!(receipt_only_id);
+        receipt_only["artifactReceipt"]["resultDigest"] = json!(receipt_only_digest);
+        receipt_only["cleanupReceipt"]["delegationId"] = json!(receipt_only_id);
+        persistence
+            .store_record("delegation/v1", &receipt_only_id, &receipt_only)
+            .expect("receipt-only delegation record");
+        let error = adapter
+            .record_series_completed(
+                &workspace,
+                work_item,
+                &session_id,
+                &receipt_only_id,
+                &format!("series-boundary\0{receipt_only_id}"),
+            )
+            .expect_err("an artifact absent from result deliverables must be rejected");
+        assert_eq!(error.code(), StableErrorCode::ChildResultInvalid);
+
+        let wrong_schema_id = Uuid::from_u128(8_116).to_string();
+        let mut wrong_schema = persistence
+            .load_record("delegation/v1", &delegation_id)
+            .expect("delegation lookup")
+            .expect("delegation record");
+        wrong_schema["delegationId"] = json!(wrong_schema_id);
+        wrong_schema["seriesRunId"] = json!(Uuid::from_u128(8_117).to_string());
+        wrong_schema["artifactReceipt"]["schemaVersion"] =
+            json!("delegation-artifact-validation/v2");
+        wrong_schema["artifactReceipt"]["delegationId"] = json!(wrong_schema_id);
+        wrong_schema["cleanupReceipt"]["delegationId"] = json!(wrong_schema_id);
+        persistence
+            .store_record("delegation/v1", &wrong_schema_id, &wrong_schema)
+            .expect("wrong-schema delegation record");
+        let error = adapter
+            .record_series_completed(
+                &workspace,
+                work_item,
+                &session_id,
+                &wrong_schema_id,
+                &format!("series-boundary\0{wrong_schema_id}"),
+            )
+            .expect_err("an unknown artifact receipt schema must be rejected");
+        assert_eq!(error.code(), StableErrorCode::ChildResultInvalid);
+
+        let malformed_id = Uuid::from_u128(8_114).to_string();
+        let mut malformed_record = persistence
+            .load_record("delegation/v1", &delegation_id)
+            .expect("delegation lookup")
+            .expect("delegation record");
+        malformed_record["delegationId"] = json!(malformed_id);
+        malformed_record["seriesRunId"] = json!(Uuid::from_u128(8_115).to_string());
+        malformed_record["artifactReceipt"]["delegationId"] = json!(malformed_id);
+        malformed_record["cleanupReceipt"]["delegationId"] = json!(malformed_id);
+        persistence
+            .store_record("delegation/v1", &malformed_id, &malformed_record)
+            .expect("replacement delegation record");
+        let malformed_state_path = read_state(&workspace, work_item)
+            .expect("state before malformed authority")
+            .absolute;
+        let mut malformed_state: Value = serde_json::from_slice(
+            &fs::read(&malformed_state_path).expect("state before malformed authority"),
+        )
+        .expect("state JSON");
+        malformed_state["revision"] = Value::from(
+            malformed_state["revision"]
+                .as_u64()
+                .expect("state revision")
+                + 1,
+        );
+        malformed_state["seriesReceipts"]["RA"] = json!({"malformed":true});
+        fs::write(
+            &malformed_state_path,
+            serde_json::to_vec_pretty(&malformed_state).expect("malformed state JSON"),
+        )
+        .expect("install malformed RA authority");
+        let error = adapter
+            .record_series_completed(
+                &workspace,
+                work_item,
+                &session_id,
+                &malformed_id,
+                &format!("series-boundary\0{malformed_id}"),
+            )
+            .expect_err("malformed RA authority must fail closed");
+        assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
     }
 
     fn anonymous_creation_request(entry_node: &str, key: &str) -> OperationRequest {
@@ -7695,25 +8841,95 @@ mod tests {
             "ae-sdd-doc/Coding/ROUTE-CREATE-UNIT-002/ROUTE-CREATE-UNIT-002-CodingPlan.md"
         );
 
-        let missing = flow_input(
+        let pending = flow_input(
             &workspace,
             &state,
             work_item,
             EventStoreId::from_uuid(Uuid::from_u128(41)),
         )
-        .expect_err("route selection must not default to large/DR");
-        assert_eq!(missing.code(), StableErrorCode::OperationSchemaInvalid);
+        .expect("pre-route RA must not require a route selection");
+        assert_eq!(pending.environment().route(), RouteLifecycle::Pending);
 
         let projection = route_pending_projection(&state, work_item)
             .expect("a fresh ROUTE item must expose a typed analysis action");
-        assert_eq!(projection["nextAction"]["kind"], "analyze-route");
+        assert_eq!(projection["nextAction"]["kind"], "delegate-series");
         assert_eq!(
-            projection["nextAction"]["submit"]["method"],
-            "operation.execute"
+            projection["nextAction"]["seriesKind"],
+            "requirement-analysis"
         );
         assert_eq!(
-            projection["nextAction"]["submit"]["operation"],
-            "route.decide"
+            projection["nextAction"]["submit"]["method"],
+            "delegation.create"
+        );
+        assert_eq!(
+            projection["inputFingerprint"],
+            authoritative_input_fingerprint(&state)
+                .expect("authoritative fingerprint")
+                .to_string()
+        );
+        let decision_digest = projection["decisionDigest"]
+            .as_str()
+            .expect("a delegable projection carries a decision digest");
+        assert_eq!(decision_digest.len(), 64);
+        assert!(decision_digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn a_premature_route_candidate_cannot_bypass_requirement_analysis() {
+        let state = json!({
+            "entryNode":"ROUTE",
+            "revision":3,
+            "phase":"initialized",
+            "currentPhase":"initialized",
+            "routeApproved":false,
+            "routeApprovalConfirmationId":"route:premature",
+            "routeCandidate":{"scale":"large","designRoute":"dr"}
+        });
+
+        let projection = route_control_projection(&state, "ROUTE-PREMATURE-001")
+            .expect("projection")
+            .expect("RA action");
+
+        assert_eq!(projection["nextAction"]["kind"], "delegate-series");
+        assert_eq!(
+            projection["nextAction"]["seriesKind"],
+            "requirement-analysis"
+        );
+    }
+
+    #[test]
+    fn a_later_route_phase_without_route_authority_fails_closed() {
+        let state = json!({
+            "entryNode":"ROUTE",
+            "revision":5,
+            "phase":"requirement_analyzed",
+            "currentPhase":"requirement_analyzed",
+            "routeApproved":true
+        });
+
+        let error = route_control_projection(&state, "ROUTE-MISSING-AUTHORITY-001")
+            .expect_err("a later phase must not restart Requirement Analysis");
+        assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
+    }
+
+    #[test]
+    fn a_bound_route_approval_exposes_the_candidate_to_transition_planning() {
+        let state = json!({
+            "entryNode":"ROUTE",
+            "revision":4,
+            "phase":"requirement_analyzed",
+            "currentPhase":"requirement_analyzed",
+            "routeApproved":false,
+            "routeApprovalConfirmationId":"route:bound",
+            "routeApprovalReceipt":{"confirmationId":"route:bound"},
+            "routeCandidate":{"scale":"small","designRoute":"coding_plan"}
+        });
+
+        assert!(
+            route_control_projection(&state, "ROUTE-BOUND-001")
+                .expect("projection")
+                .is_none(),
+            "a collected approval must proceed through FlowRuntime to RouteSelected"
         );
     }
 

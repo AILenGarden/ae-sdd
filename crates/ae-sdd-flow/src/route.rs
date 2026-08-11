@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use ae_sdd_contracts::{
-    ReasonCode, RouteDecisionId, SchemaVersion, SeriesKind, SpecKind, TaskKind,
+    ReasonCode, RouteBindingInput, RouteDecisionId, SchemaVersion, SeriesKind, SpecKind, TaskKind,
     series::{
         ImpactFact, ImpactLevel, RouteDecision, RouteDecisionError, RouteDisposition, RouteInput,
     },
@@ -38,6 +38,76 @@ impl RouteEngine {
         Ok(Self {
             minimum_confidence_bps,
         })
+    }
+
+    /// Derives a route candidate solely from verified RA evidence.
+    ///
+    /// This convenience entry preserves the ordinary implementation task kind.
+    /// Call [`Self::decide_from_evidence_for_task_kind`] when the upstream intake
+    /// froze a different task kind; task kind never changes the RA scale mapping
+    /// or the route-binding fingerprint.
+    pub fn decide_from_evidence(
+        &self,
+        binding: &RouteBindingInput,
+        work_item_id: WorkItemId,
+        schema_version: SchemaVersion,
+    ) -> Result<RouteDecision, RouteEngineError> {
+        self.decide_from_evidence_for_task_kind(
+            binding,
+            work_item_id,
+            schema_version,
+            TaskKind::Implementation,
+        )
+    }
+
+    /// Derives a route candidate from RA evidence while preserving task kind as
+    /// an orthogonal frozen fact.
+    pub fn decide_from_evidence_for_task_kind(
+        &self,
+        binding: &RouteBindingInput,
+        work_item_id: WorkItemId,
+        schema_version: SchemaVersion,
+        task_kind: TaskKind,
+    ) -> Result<RouteDecision, RouteEngineError> {
+        if schema_version != SchemaVersion::V2 {
+            return Err(RouteEngineError::SchemaVersionMismatch);
+        }
+        if binding.ra_evidence().work_item_id() != &work_item_id {
+            return Err(RouteEngineError::EvidenceWorkItemMismatch);
+        }
+        let scale = binding.ra_evidence().scale();
+        let (design_route, required_series, required_spec_kinds) = classify_scale(scale)?;
+        let input_fingerprint = binding.fingerprint();
+        let decision_digest = digest_evidence_route(
+            &work_item_id,
+            input_fingerprint,
+            task_kind,
+            scale,
+            design_route,
+            &required_series,
+            &required_spec_kinds,
+        );
+        let decision_id = RouteDecisionId::new(format!("route:{decision_digest}"))
+            .map_err(|_| RouteEngineError::InvariantViolation)?;
+        RouteDecision::new(
+            schema_version,
+            decision_id,
+            work_item_id,
+            task_kind,
+            scale,
+            design_route,
+            RouteDisposition::Approved,
+            vec![
+                ReasonCode::new("route.ra_scale_classified")
+                    .map_err(|_| RouteEngineError::InvariantViolation)?,
+            ],
+            required_series,
+            required_spec_kinds,
+            input_fingerprint,
+            None,
+            decision_digest,
+        )
+        .map_err(RouteEngineError::DecisionContract)
     }
 
     /// Computes a deterministic route without reading prose, files, or globals.
@@ -206,20 +276,15 @@ fn classify_impacts(
         // approved `executionPlan` in daemon state *is* the plan. Delegating a
         // CodingPlan Series here produced the Spec the design says must not be
         // required, and left micro indistinguishable from small.
-        Some(ImpactLevel::Micro) => (
-            WorkScale::Micro,
-            DesignRoute::CodingPlan,
-            &["requirement-analysis"],
-            &[SpecKind::RequirementAnalysis],
-        ),
+        Some(ImpactLevel::Micro) => (WorkScale::Micro, DesignRoute::CodingPlan, &[], &[]),
         // Missing facts keep the frozen low mapping: decide() holds the
         // decision at AwaitUserApproval, so an empty submission never
         // defaults to the micro route.
         None | Some(ImpactLevel::Low) => (
             WorkScale::Small,
             DesignRoute::CodingPlan,
-            &["requirement-analysis", "coding-plan"],
-            &[SpecKind::RequirementAnalysis, SpecKind::CodingPlan],
+            &["coding-plan"],
+            &[SpecKind::CodingPlan],
         ),
         // A route that requires a Story requires its TestCase: the baseline
         // flow is `RA -> DR -> N x (Story -> TestCase -> CodingPlan)`, and the
@@ -234,27 +299,15 @@ fn classify_impacts(
         Some(ImpactLevel::Medium) => (
             WorkScale::Medium,
             DesignRoute::Story,
-            &["requirement-analysis", "story", "testcase", "coding-plan"],
-            &[
-                SpecKind::RequirementAnalysis,
-                SpecKind::Story,
-                SpecKind::TestCase,
-                SpecKind::CodingPlan,
-            ],
+            &["story", "testcase", "coding-plan"],
+            &[SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
         ),
         // §7.1 line 345: `RA -> DR -> N x (Story -> TestCase -> CodingPlan)`.
         Some(ImpactLevel::High) => (
             WorkScale::Large,
             DesignRoute::Dr,
+            &["design-review", "story", "testcase", "coding-plan"],
             &[
-                "requirement-analysis",
-                "design-review",
-                "story",
-                "testcase",
-                "coding-plan",
-            ],
-            &[
-                SpecKind::RequirementAnalysis,
                 SpecKind::DesignReview,
                 SpecKind::Story,
                 SpecKind::TestCase,
@@ -267,6 +320,66 @@ fn classify_impacts(
         .map(|name| SeriesKind::new(*name).map_err(|_| RouteEngineError::InvariantViolation))
         .collect::<Result<Vec<_>, _>>()?;
     Ok((scale, route, series, spec_kinds.to_vec()))
+}
+
+fn classify_scale(
+    scale: WorkScale,
+) -> Result<(DesignRoute, Vec<SeriesKind>, Vec<SpecKind>), RouteEngineError> {
+    let (route, names, spec_kinds): (_, &[&str], &[SpecKind]) = match scale {
+        WorkScale::Micro => (DesignRoute::CodingPlan, &[], &[]),
+        WorkScale::Small => (
+            DesignRoute::CodingPlan,
+            &["coding-plan"],
+            &[SpecKind::CodingPlan],
+        ),
+        WorkScale::Medium => (
+            DesignRoute::Story,
+            &["story", "testcase", "coding-plan"],
+            &[SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        ),
+        WorkScale::Large => (
+            DesignRoute::Dr,
+            &["design-review", "story", "testcase", "coding-plan"],
+            &[
+                SpecKind::DesignReview,
+                SpecKind::Story,
+                SpecKind::TestCase,
+                SpecKind::CodingPlan,
+            ],
+        ),
+    };
+    let series = names
+        .iter()
+        .map(|name| SeriesKind::new(*name).map_err(|_| RouteEngineError::InvariantViolation))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((route, series, spec_kinds.to_vec()))
+}
+
+fn digest_evidence_route(
+    work_item_id: &WorkItemId,
+    input_fingerprint: InputFingerprint,
+    task_kind: TaskKind,
+    scale: WorkScale,
+    route: DesignRoute,
+    required_series: &[SeriesKind],
+    required_spec_kinds: &[SpecKind],
+) -> DecisionDigest {
+    let mut bytes = Vec::with_capacity(256);
+    bytes.extend_from_slice(b"ae-sdd-route-candidate/v2\0");
+    encode_text(&mut bytes, work_item_id.as_str());
+    bytes.extend_from_slice(input_fingerprint.as_bytes());
+    encode_text(&mut bytes, task_kind.as_wire());
+    bytes.push(scale_tag(scale));
+    bytes.push(route_tag(route));
+    bytes.extend_from_slice(&(required_series.len() as u64).to_be_bytes());
+    for series in required_series {
+        encode_text(&mut bytes, series.as_str());
+    }
+    bytes.extend_from_slice(&(required_spec_kinds.len() as u64).to_be_bytes());
+    for spec_kind in required_spec_kinds {
+        encode_text(&mut bytes, spec_kind.as_wire());
+    }
+    DecisionDigest::digest(bytes)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -394,6 +507,10 @@ pub enum RouteEngineError {
     ContractEncoding,
     /// A confirmation exceeded its bounds or was not canonical UTC RFC3339.
     InvalidConfirmation,
+    /// RA evidence belongs to a different Work Item.
+    EvidenceWorkItemMismatch,
+    /// RA-derived routing requires the v2 contract.
+    SchemaVersionMismatch,
     /// A compile-time-known contract value was unexpectedly invalid.
     InvariantViolation,
     /// The frozen route-decision contract rejected the computed decision.
@@ -409,6 +526,12 @@ impl fmt::Display for RouteEngineError {
             Self::ContractEncoding => formatter.write_str("RouteInput wire identity is invalid"),
             Self::InvalidConfirmation => {
                 formatter.write_str("route confirmation is unbounded or non-canonical")
+            }
+            Self::EvidenceWorkItemMismatch => {
+                formatter.write_str("RA evidence belongs to a different Work Item")
+            }
+            Self::SchemaVersionMismatch => {
+                formatter.write_str("RA-derived routing requires schema v2")
             }
             Self::InvariantViolation => {
                 formatter.write_str("built-in route vocabulary violates its frozen contract")

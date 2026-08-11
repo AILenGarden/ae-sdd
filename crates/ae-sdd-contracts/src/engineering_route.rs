@@ -1,16 +1,8 @@
-//! The authoritative engineering route, frozen only after RA closes.
-//!
-//! `ae-sdd-daemon-design.md` §2 and §5.4 split intake from routing: the Hook
-//! records a *provisional* [`crate::BootstrapAssessment`], RA runs as the first
-//! business Series for every scale, and only then is the route frozen. This
-//! module makes that ordering unforgeable — an `EngineeringRoute` cannot be
-//! constructed without evidence that RA actually closed, and cannot be frozen
-//! while a route-blocking [`crate::RequirementConflict`] is open.
-//!
-//! Without this, "route-first" survives as a convention that any caller can
-//! quietly break by building a route decision straight from the assessment.
+//! RA-derived route evidence and the authoritative frozen engineering route.
 
-use ae_sdd_domain::{ArtifactDigest, InputFingerprint, StateRevision};
+use ae_sdd_domain::{
+    ArtifactDigest, DecisionDigest, InputFingerprint, StateRevision, WorkItemId, WorkScale,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -21,71 +13,92 @@ use crate::{
     series::RouteDecision,
 };
 
-/// Evidence that the RA Series closed and produced a Spec.
-///
-/// §5.4 requires RA to bind a `DocumentId` and a content version, so a route
-/// cannot cite "RA ran" without naming what RA produced.
-/// Derived directly rather than via `try_from`, because [`Self::new`] is
-/// infallible: there is no constructor guard for deserialization to skip.
+/// Verification state of the collected RA Series receipt.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptStatus {
+    /// The Series result and cleanup receipts were collected.
+    Collected,
+    /// The collected result was also validated as the bound SRS.
+    Verified,
+}
+
+/// Evidence that the RA Series closed over one exact SRS and scale decision.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequirementAnalysisEvidence {
+    #[serde(with = "serde_domain::work_item_id")]
+    work_item_id: WorkItemId,
     series_id: SeriesId,
-    /// The RA document this evidence is about.
-    ///
-    /// The struct doc above already states §5.4 requires binding a `DocumentId`;
-    /// without the field, closure evidence proved only "some RA content had this
-    /// digest", not *which logical document* it belongs to. Two Work Items whose RA
-    /// happened to share content would produce interchangeable evidence.
     document_id: DocumentId,
-    /// 1-based content version, completing the §4.1 line 132 triple together with
-    /// `document_id` and the existing `ra_content_digest`.
-    ///
-    /// A raw `u32` for the same reason as `RequirementSourceRef::Prd`:
-    /// [`DocumentVersionId`] carries no serde derive. [`Self::document_version`]
-    /// assembles it.
     version: u32,
     #[serde(with = "serde_domain::artifact_digest")]
     ra_content_digest: ArtifactDigest,
     #[serde(with = "serde_domain::state_revision")]
     source_revision: StateRevision,
+    #[serde(with = "serde_domain::artifact_digest")]
+    ra_receipt_digest: ArtifactDigest,
+    ra_receipt_status: ReceiptStatus,
+    #[serde(with = "serde_domain::work_scale")]
+    scale: WorkScale,
+    #[serde(with = "serde_domain::artifact_digest")]
+    scale_evidence_digest: ArtifactDigest,
+    #[serde(with = "serde_domain::artifact_digest")]
+    closure_receipt_set_digest: ArtifactDigest,
 }
 
 impl RequirementAnalysisEvidence {
-    /// Builds RA closure evidence.
-    pub const fn new(
+    /// Builds a complete RA-to-route evidence binding.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        work_item_id: WorkItemId,
         series_id: SeriesId,
         document_id: DocumentId,
         version: u32,
         ra_content_digest: ArtifactDigest,
         source_revision: StateRevision,
+        ra_receipt_digest: ArtifactDigest,
+        ra_receipt_status: ReceiptStatus,
+        scale: WorkScale,
+        scale_evidence_digest: ArtifactDigest,
+        closure_receipt_set_digest: ArtifactDigest,
     ) -> Self {
         Self {
+            work_item_id,
             series_id,
             document_id,
             version,
             ra_content_digest,
             source_revision,
+            ra_receipt_digest,
+            ra_receipt_status,
+            scale,
+            scale_evidence_digest,
+            closure_receipt_set_digest,
         }
     }
 
-    /// Returns the RA Series that produced this evidence.
+    /// Returns the Work Item bound to this RA result.
+    pub const fn work_item_id(&self) -> &WorkItemId {
+        &self.work_item_id
+    }
+
+    /// Returns the RA Series identity.
     pub const fn series_id(&self) -> &SeriesId {
         &self.series_id
     }
 
-    /// Returns the logical RA document this evidence binds.
+    /// Returns the bound SRS document identity.
     pub const fn document_id(&self) -> &DocumentId {
         &self.document_id
     }
 
-    /// The exact RA document version this closure evidence stands on.
-    ///
-    /// This is what the two added fields are for: a route citing "RA ran" must name
-    /// *which version* it read, or a later RA revision leaves the citation pointing
-    /// at content that no longer exists — the §5.4 line 258 case where an existing
-    /// RA covers only part of the new requirements and must produce a new version
-    /// rather than being silently reused.
+    /// Returns the bound SRS version.
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// Reconstructs the complete document-version identity.
     pub fn document_version(&self) -> Result<DocumentVersionId, DocumentVersionError> {
         DocumentVersionId::derive(
             self.document_id.clone(),
@@ -94,71 +107,207 @@ impl RequirementAnalysisEvidence {
         )
     }
 
-    /// Returns the digest of the RA content the route was frozen against.
+    /// Returns the exact SRS content digest.
     pub const fn ra_content_digest(&self) -> &ArtifactDigest {
         &self.ra_content_digest
     }
 
-    /// Returns the state revision RA closed at.
+    /// Returns the state revision from which the evidence was projected.
     pub const fn source_revision(&self) -> StateRevision {
         self.source_revision
     }
+
+    /// Returns the collected RA Series receipt digest.
+    pub const fn ra_receipt_digest(&self) -> ArtifactDigest {
+        self.ra_receipt_digest
+    }
+
+    /// Returns the validation status of the RA receipt.
+    pub const fn ra_receipt_status(&self) -> ReceiptStatus {
+        self.ra_receipt_status
+    }
+
+    /// Returns the SRS-derived scale.
+    pub const fn scale(&self) -> WorkScale {
+        self.scale
+    }
+
+    /// Returns the digest of the six-dimension scale evidence.
+    pub const fn scale_evidence_digest(&self) -> ArtifactDigest {
+        self.scale_evidence_digest
+    }
+
+    /// Returns the digest binding the G-RA-1 through G-RA-4 receipts.
+    pub const fn closure_receipt_set_digest(&self) -> ArtifactDigest {
+        self.closure_receipt_set_digest
+    }
 }
 
-/// Why an engineering route could not be frozen.
+/// Versioned mapping from an RA scale to downstream engineering depth.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteMappingVersion {
+    /// Initial SRS scale to route-depth mapping.
+    V1,
+}
+
+/// Complete typed basis used to derive and verify a route candidate.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RouteBindingInput {
+    ra_evidence: RequirementAnalysisEvidence,
+    mapping_version: RouteMappingVersion,
+}
+
+impl RouteBindingInput {
+    /// Creates a complete route binding from verified RA evidence.
+    pub const fn new(
+        ra_evidence: RequirementAnalysisEvidence,
+        mapping_version: RouteMappingVersion,
+    ) -> Self {
+        Self {
+            ra_evidence,
+            mapping_version,
+        }
+    }
+
+    /// Returns the verified RA evidence.
+    pub const fn ra_evidence(&self) -> &RequirementAnalysisEvidence {
+        &self.ra_evidence
+    }
+
+    /// Returns the mapping revision used for classification.
+    pub const fn mapping_version(&self) -> RouteMappingVersion {
+        self.mapping_version
+    }
+
+    /// Recomputes the exact RA-derived route input fingerprint.
+    pub fn fingerprint(&self) -> InputFingerprint {
+        let evidence = &self.ra_evidence;
+        let mut bytes = Vec::with_capacity(384);
+        bytes.extend_from_slice(b"ae-sdd-route-binding/v1\0");
+        encode_text(&mut bytes, evidence.work_item_id.as_str());
+        encode_text(&mut bytes, evidence.series_id.as_str());
+        encode_text(&mut bytes, evidence.document_id.as_str());
+        bytes.extend_from_slice(&evidence.version.to_be_bytes());
+        bytes.extend_from_slice(evidence.ra_content_digest.as_bytes());
+        bytes.extend_from_slice(&evidence.source_revision.get().to_be_bytes());
+        bytes.extend_from_slice(evidence.ra_receipt_digest.as_bytes());
+        bytes.push(match evidence.ra_receipt_status {
+            ReceiptStatus::Collected => 0,
+            ReceiptStatus::Verified => 1,
+        });
+        bytes.push(scale_tag(evidence.scale));
+        bytes.extend_from_slice(evidence.scale_evidence_digest.as_bytes());
+        bytes.extend_from_slice(evidence.closure_receipt_set_digest.as_bytes());
+        bytes.push(match self.mapping_version {
+            RouteMappingVersion::V1 => 0,
+        });
+        InputFingerprint::digest(bytes)
+    }
+}
+
+/// User approval bound to one exact SRS version and route candidate.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RouteApprovalReceipt {
+    confirmation_id: String,
+    approved_by: String,
+    approved_at: String,
+    bound_document_id: DocumentId,
+    bound_version: u32,
+    #[serde(with = "serde_domain::artifact_digest")]
+    bound_content_digest: ArtifactDigest,
+    #[serde(with = "serde_domain::work_scale")]
+    bound_scale: WorkScale,
+    #[serde(with = "serde_domain::decision_digest")]
+    bound_route_candidate_digest: DecisionDigest,
+}
+
+impl RouteApprovalReceipt {
+    /// Creates a user approval bound to one document version and candidate.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        confirmation_id: String,
+        approved_by: String,
+        approved_at: String,
+        bound_document_id: DocumentId,
+        bound_version: u32,
+        bound_content_digest: ArtifactDigest,
+        bound_scale: WorkScale,
+        bound_route_candidate_digest: DecisionDigest,
+    ) -> Self {
+        Self {
+            confirmation_id,
+            approved_by,
+            approved_at,
+            bound_document_id,
+            bound_version,
+            bound_content_digest,
+            bound_scale,
+            bound_route_candidate_digest,
+        }
+    }
+
+    /// Returns whether this receipt binds the exact evidence and candidate.
+    pub fn binds(
+        &self,
+        evidence: &RequirementAnalysisEvidence,
+        route_candidate_digest: DecisionDigest,
+    ) -> bool {
+        !self.confirmation_id.trim().is_empty()
+            && !self.approved_by.trim().is_empty()
+            && !self.approved_at.trim().is_empty()
+            && self.bound_document_id == evidence.document_id
+            && self.bound_version == evidence.version
+            && self.bound_content_digest == evidence.ra_content_digest
+            && self.bound_scale == evidence.scale
+            && self.bound_route_candidate_digest == route_candidate_digest
+    }
+}
+
+/// Why a candidate could not be frozen as route authority.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum EngineeringRouteError {
-    /// §6.2 rule 4: a material conflict must send the flow to `awaiting_user`
-    /// instead of freezing a route.
+    /// A material RA conflict remains open.
     #[error("cannot freeze a route while a {} conflict is open", dimension.as_wire())]
     BlockingConflictOpen {
-        /// The dimension that blocked the freeze.
+        /// Conflict dimension that prevents routing.
         dimension: ConflictDimension,
     },
-    /// The decision was not fingerprinted against the RA revision it cites.
-    #[error("route decision fingerprint is not bound to the cited RA evidence")]
-    EvidenceNotBound,
+    /// Candidate fingerprint does not match the typed RA binding.
+    #[error("route decision fingerprint does not match the RA binding")]
+    FingerprintMismatch,
+    /// User approval does not bind the exact SRS and candidate.
+    #[error("route approval receipt is not bound to the RA document and candidate")]
+    ApprovalUnbound,
+    /// Route freeze was attempted with an older schema.
+    #[error("engineering route requires schema v2")]
+    SchemaVersionMismatch,
 }
 
-/// The authoritative route for a Work Item, frozen after RA.
-///
-/// This is the counterpart to [`crate::BootstrapAssessment`]: the assessment is
-/// a proposal that stays `provisional`, and this type is authority. Holding an
-/// instance is itself proof that RA closed with no route-blocking conflict.
-/// Deserialization re-checks `EvidenceNotBound` but *cannot* re-check
-/// `BlockingConflictOpen`, and that asymmetry is deliberate rather than an
-/// oversight.
-///
-/// [`Self::freeze`] takes `open_conflicts` as an external parameter and never
-/// stores it, so a decoded value carries no record of the conflict set that
-/// authorised it. `EvidenceNotBound` is different: it reads
-/// `decision.input_fingerprint()`, a stored field, so the wire can enforce it.
-///
-/// The consequence a reader needs: decoding an `EngineeringRoute` proves RA
-/// evidence is bound, but it does **not** re-prove that no route-blocking
-/// conflict was open. That check lives at the freeze boundary, and a caller
-/// reconstructing a route from bytes must not treat decode success as
-/// re-authorisation.
+/// Authoritative route, constructible only after the RA binding Gate passes.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "EngineeringRouteWire", into = "EngineeringRouteWire")]
 pub struct EngineeringRoute {
     schema_version: SchemaVersion,
     decision: RouteDecision,
     evidence: RequirementAnalysisEvidence,
+    approval_receipt: RouteApprovalReceipt,
 }
 
 impl EngineeringRoute {
-    /// Freezes a route, rejecting any state that §6.2 rule 4 forbids routing in.
-    ///
-    /// `open_conflicts` is the full conflict set RA recorded. A single
-    /// route-blocking dimension is enough to refuse the freeze; non-material
-    /// conflicts are recorded elsewhere and do not block.
+    /// Validates the candidate, approval, and conflicts before freezing authority.
     pub fn freeze(
         schema_version: SchemaVersion,
+        binding_input: &RouteBindingInput,
         decision: RouteDecision,
-        evidence: RequirementAnalysisEvidence,
+        approval_receipt: &RouteApprovalReceipt,
         open_conflicts: &[RequirementConflict],
     ) -> Result<Self, EngineeringRouteError> {
+        if schema_version != SchemaVersion::V2 {
+            return Err(EngineeringRouteError::SchemaVersionMismatch);
+        }
         if let Some(blocking) = open_conflicts
             .iter()
             .find(|conflict| conflict.blocks_routing())
@@ -167,17 +316,25 @@ impl EngineeringRoute {
                 dimension: blocking.dimension(),
             });
         }
-        if decision.input_fingerprint() == InputFingerprint::digest(b"") {
-            return Err(EngineeringRouteError::EvidenceNotBound);
+        let evidence = binding_input.ra_evidence();
+        if decision.work_item_id() != evidence.work_item_id()
+            || decision.scale() != evidence.scale()
+            || decision.input_fingerprint() != binding_input.fingerprint()
+        {
+            return Err(EngineeringRouteError::FingerprintMismatch);
+        }
+        if !approval_receipt.binds(evidence, decision.decision_digest()) {
+            return Err(EngineeringRouteError::ApprovalUnbound);
         }
         Ok(Self {
             schema_version,
             decision,
-            evidence,
+            evidence: evidence.clone(),
+            approval_receipt: approval_receipt.clone(),
         })
     }
 
-    /// Returns the contract schema version.
+    /// Returns the frozen route schema version.
     pub const fn schema_version(&self) -> SchemaVersion {
         self.schema_version
     }
@@ -187,25 +344,24 @@ impl EngineeringRoute {
         &self.decision
     }
 
-    /// Returns the RA evidence that authorised this freeze.
+    /// Returns the RA evidence that authorized this route.
     pub const fn evidence(&self) -> &RequirementAnalysisEvidence {
         &self.evidence
     }
+
+    /// Returns the user approval bound at the freeze boundary.
+    pub const fn approval_receipt(&self) -> &RouteApprovalReceipt {
+        &self.approval_receipt
+    }
 }
 
-/// Wire form of [`EngineeringRoute`].
-///
-/// Deserialization passes an empty conflict slice to [`EngineeringRoute::freeze`]
-/// because the conflict set is not part of the encoding. That is safe only
-/// because it cannot *weaken* the guard: an empty slice means "no blocking
-/// conflict found here", and the real check already ran at the original freeze.
-/// It would be unsafe to invent a conflict set, which is why none is fabricated.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EngineeringRouteWire {
     schema_version: SchemaVersion,
     decision: RouteDecision,
     evidence: RequirementAnalysisEvidence,
+    approval_receipt: RouteApprovalReceipt,
 }
 
 impl From<EngineeringRoute> for EngineeringRouteWire {
@@ -214,6 +370,7 @@ impl From<EngineeringRoute> for EngineeringRouteWire {
             schema_version: value.schema_version,
             decision: value.decision,
             evidence: value.evidence,
+            approval_receipt: value.approval_receipt,
         }
     }
 }
@@ -222,6 +379,27 @@ impl TryFrom<EngineeringRouteWire> for EngineeringRoute {
     type Error = EngineeringRouteError;
 
     fn try_from(value: EngineeringRouteWire) -> Result<Self, Self::Error> {
-        Self::freeze(value.schema_version, value.decision, value.evidence, &[])
+        let binding = RouteBindingInput::new(value.evidence, RouteMappingVersion::V1);
+        Self::freeze(
+            value.schema_version,
+            &binding,
+            value.decision,
+            &value.approval_receipt,
+            &[],
+        )
+    }
+}
+
+fn encode_text(bytes: &mut Vec<u8>, value: &str) {
+    bytes.extend_from_slice(&(value.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+const fn scale_tag(scale: WorkScale) -> u8 {
+    match scale {
+        WorkScale::Large => 0,
+        WorkScale::Medium => 1,
+        WorkScale::Small => 2,
+        WorkScale::Micro => 3,
     }
 }

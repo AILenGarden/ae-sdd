@@ -69,6 +69,10 @@ pub enum StableErrorCode {
     HostAckRejected,
     /// Host ACK, child claim, physical identity, or lineage attestation failed.
     DelegationAttestationFailed,
+    /// A root session already has an unclaimed Create pending; the host
+    /// lifecycle event carries no field that could disambiguate a second
+    /// concurrent one.
+    ConcurrentDelegationPending,
     /// A bounded child result violates its schema, path, hash, or deliverable contract.
     ChildResultInvalid,
     /// A bounded child result or summary exceeds its byte budget.
@@ -139,6 +143,7 @@ impl StableErrorCode {
         Self::HostAckTimeout,
         Self::HostAckRejected,
         Self::DelegationAttestationFailed,
+        Self::ConcurrentDelegationPending,
         Self::ChildResultInvalid,
         Self::ChildResultTooLarge,
         Self::ContextRevisionStale,
@@ -192,6 +197,7 @@ impl StableErrorCode {
             Self::HostAckTimeout => "HOST_ACK_TIMEOUT",
             Self::HostAckRejected => "HOST_ACK_REJECTED",
             Self::DelegationAttestationFailed => "DELEGATION_ATTESTATION_FAILED",
+            Self::ConcurrentDelegationPending => "CONCURRENT_DELEGATION_PENDING",
             Self::ChildResultInvalid => "CHILD_RESULT_INVALID",
             Self::ChildResultTooLarge => "CHILD_RESULT_TOO_LARGE",
             Self::ContextRevisionStale => "CONTEXT_REVISION_STALE",
@@ -246,6 +252,7 @@ impl StableErrorCode {
             Self::HostAckTimeout => -32_053,
             Self::HostAckRejected => -32_054,
             Self::DelegationAttestationFailed => -32_055,
+            Self::ConcurrentDelegationPending => -32_056,
             Self::ChildResultInvalid => -32_060,
             Self::ChildResultTooLarge => -32_061,
             Self::ContextRevisionStale => -32_062,
@@ -291,6 +298,7 @@ impl StableErrorCode {
                 | Self::SessionExpired
                 | Self::HostAckTimeout
                 | Self::HostAckRejected
+                | Self::ConcurrentDelegationPending
                 | Self::ChildResultInvalid
                 | Self::ChildResultTooLarge
                 | Self::ContextRevisionStale

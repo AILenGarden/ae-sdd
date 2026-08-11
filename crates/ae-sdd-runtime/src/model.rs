@@ -860,8 +860,6 @@ pub struct DelegationCreatePayload {
     /// delegation legitimately has no Flow Run rather than a blank one.
     #[serde(default)]
     pub flow_run_id: Option<String>,
-    /// Host adapter selected by policy.
-    pub adapter_id: String,
     /// Parent-requested child scope, validated and narrowed by the daemon.
     pub grant: crate::ScopedGrantWire,
     /// Optional bounded briefing the child series starts with.
@@ -1176,7 +1174,6 @@ mod tests {
             "inputRevision":1,
             "inputFingerprint":"f".repeat(64),
             "deadlineUnixMs":2_000,
-            "adapterId":"host-a",
             "grant":{"operations":["operation.execute"]},
         });
         let decoded: DelegationCreatePayload =
@@ -1190,7 +1187,6 @@ mod tests {
             "inputRevision":1,
             "inputFingerprint":"f".repeat(64),
             "deadlineUnixMs":2_000,
-            "adapterId":"host-a",
             "grant":{"operations":["operation.execute"]},
             "briefing":"implement the assigned slice only",
             "assetRefs":[{

@@ -1,4 +1,11 @@
-/// The exact seven legacy scanner identities migrated from `scripts/*_scan.py`.
+/// The exact native scanner identities migrated from `scripts/*_scan.py`.
+///
+/// Task 6 (RA generality refactor) adds `RaCore`, `RaApplicability`, and
+/// `RaClosure`, which all share the single `parse_ra_specification` parser and
+/// filter its findings by rule-id prefix. The legacy `RaAuthenticity`,
+/// `RaFlowViolation`, `RaDepth`, and `RaImplementation` ids remain as
+/// deprecated direct diagnostics; the Gate registry no longer references them
+/// after Task 7.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScannerId {
     CodingAuthenticity,
@@ -7,6 +14,9 @@ pub enum ScannerId {
     RaFlowViolation,
     RaDepth,
     RaImplementation,
+    RaCore,
+    RaApplicability,
+    RaClosure,
     PluginContent,
 }
 
@@ -19,6 +29,9 @@ impl ScannerId {
             Self::RaFlowViolation => "ra-flow-violation",
             Self::RaDepth => "ra-depth",
             Self::RaImplementation => "ra-implementation",
+            Self::RaCore => "ra-core",
+            Self::RaApplicability => "ra-applicability",
+            Self::RaClosure => "ra-closure",
             Self::PluginContent => "plugin-content",
         }
     }
@@ -39,7 +52,7 @@ pub struct ScannerSpec {
     pub scope: ScanScopeKind,
 }
 
-pub const SCANNER_COUNT: usize = 7;
+pub const SCANNER_COUNT: usize = 10;
 
 const SCANNERS: [ScannerSpec; SCANNER_COUNT] = [
     ScannerSpec {
@@ -73,6 +86,21 @@ const SCANNERS: [ScannerSpec; SCANNER_COUNT] = [
         scope: ScanScopeKind::FormalRa,
     },
     ScannerSpec {
+        id: ScannerId::RaCore,
+        legacy_source: "scripts/ra_core_scan.py",
+        scope: ScanScopeKind::FormalRa,
+    },
+    ScannerSpec {
+        id: ScannerId::RaApplicability,
+        legacy_source: "scripts/ra_applicability_scan.py",
+        scope: ScanScopeKind::FormalRa,
+    },
+    ScannerSpec {
+        id: ScannerId::RaClosure,
+        legacy_source: "scripts/ra_closure_scan.py",
+        scope: ScanScopeKind::FormalRa,
+    },
+    ScannerSpec {
         id: ScannerId::PluginContent,
         legacy_source: "scripts/plugin_content_scan.py",
         scope: ScanScopeKind::Plugin,
@@ -101,7 +129,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_exactly_seven_unique_native_scanners() {
+    fn registry_has_exactly_ten_unique_native_scanners() {
         assert_eq!(ScannerRegistry::all().len(), SCANNER_COUNT);
         assert_eq!(
             ScannerRegistry::all()

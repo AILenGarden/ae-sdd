@@ -255,6 +255,20 @@ struct HostHookEvent {
     /// Host working directory, used as the workspace project root.
     #[serde(default)]
     cwd: Option<String>,
+    /// `SubagentStart`/`SubagentStop` child identity, minted in-process by the
+    /// host (`crypto.randomBytes`), never caller-supplied. ROUTE-702d576a
+    /// Task 1 Q4/Q5: this is the only field that makes the event correlation
+    /// non-forgeable; a missing value means the event cannot be trusted at all.
+    #[serde(default, alias = "agentId")]
+    agent_id: Option<String>,
+    /// `SubagentStart`/`SubagentStop` agent type name (must name a registered
+    /// agent definition on the host side, never a caller-chosen identifier).
+    /// Not part of the correlation key (`(session_id, agent_id)`, Task 1 Q4);
+    /// kept here so the Admission slice can read it without widening this
+    /// struct again, but it is not consulted by the Host payload RED slice.
+    #[serde(default, alias = "agentType")]
+    #[allow(dead_code)]
+    agent_type: Option<String>,
 }
 
 /// Host-supplied identity a Hook can bind a typed session from.
@@ -408,6 +422,17 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             manifest,
             timeout_ms,
         } => {
+            // `hook.subagent_start` is a CLI-local translation, not a protocol
+            // `RpcMethod` (ROUTE-702d576a Task 2: Plan §Task 2 requires proving
+            // the existing `delegation.accept`/`session.open` contracts cannot
+            // safely express this before any new method is frozen). It is
+            // intercepted here, before `RpcMethod::from_str`, so an unverified
+            // field is never read as identity and a missing one fails closed
+            // in the same host JSON shape as the four registered Hooks.
+            if method == "hook.subagent_start" {
+                let raw: Value = read_json_argument(&request_json)?;
+                return print_json(&subagent_start_fail_closed(raw));
+            }
             let method = RpcMethod::from_str(&method).map_err(|error| error.to_string())?;
             if !matches!(
                 method,
@@ -690,6 +715,71 @@ fn parse_hook_request(method: &RpcMethod, raw: Value) -> Result<ParsedHookReques
         request: Some(request),
         host_input: true,
         host_identity,
+    })
+}
+
+/// Validates a `SubagentStart` event's identity fields and fails closed on
+/// any missing one, without ever reading prompt or transcript content as a
+/// substitute identity (ROUTE-702d576a Task 2 Host payload RED).
+///
+/// This is intentionally CLI-local shape validation only, and stays that way
+/// permanently -- this is not a placeholder for later Admission code. The
+/// daemon design (`source/docs/ae-sdd-daemon-design.md` §9.3) has `Host` --
+/// not `Child` -- as the party that receives the daemon-issued `claimId`
+/// (delivered only through `host.action_next`); the sequence diagram's
+/// `Child->>Daemon: one-time claim + attestation` is the step *after* Host
+/// hands the claim to the child, not something the child can originate on
+/// its own. In the A2 model the "Host" role is root's own connection, so
+/// `delegation.accept` and the child's `session.open` are root-side
+/// orchestration (root already holds the claim from its own
+/// `host.action_next`/`host.action_ack` sequence). A `SubagentStart` hook
+/// subprocess never receives a `claimId` in its payload and must not
+/// attempt to originate accept or session.open itself.
+fn subagent_start_fail_closed(raw: Value) -> Value {
+    let deny = |reason: String| json!({"decision":"deny","reason":reason});
+    let event: HostHookEvent = match serde_json::from_value(raw) {
+        Ok(event) => event,
+        Err(error) => {
+            return deny(format!(
+                "SubagentStart payload could not be parsed: {error}"
+            ));
+        }
+    };
+    if event.hook_event_name.as_deref() != Some("SubagentStart") {
+        return deny("hook.subagent_start requires a SubagentStart hook_event_name".to_owned());
+    }
+    let Some(agent_id) = event
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return deny(
+            "SubagentStart event carries no agent_id; the host-minted child identity is absent"
+                .to_owned(),
+        );
+    };
+    let Some(session_id) = event
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return deny(
+            "SubagentStart event carries no session_id; the parent correlation is absent"
+                .to_owned(),
+        );
+    };
+    // Both fields are validated above and intentionally unused past this
+    // point: this event carries no claimId, so accept/session.open cannot be
+    // originated here (see the function doc). The event's own identity is
+    // well-formed; whether it correlates to a real pending delegation is
+    // root's own `host.action_next`/`accept` sequence to determine, not this
+    // hook's.
+    let _ = (agent_id, session_id);
+    json!({
+        "decision":"deny",
+        "reason":"hook.subagent_start validates event shape only; delegation.accept and session.open are root-side orchestration and are not performed by this hook"
     })
 }
 

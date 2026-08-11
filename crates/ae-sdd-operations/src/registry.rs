@@ -226,6 +226,7 @@ const fn workspace_spec(
 /// mapping; the daemon never writes to or copies the referenced files.
 const WORKITEM_CREATE: &[FieldSpec] = &[
     field("entryNode", FieldKind::String, true),
+    field("requestedIntent", FieldKind::String, false),
     field("storyName", FieldKind::String, false),
     field("providedDocuments", FieldKind::Array, false),
 ];
@@ -236,12 +237,11 @@ const WORKITEM_CREATE: &[FieldSpec] = &[
 /// route engine that invented the value would be fabricating the authoritative
 /// fact instead of freezing a reported one.
 const ROUTE_DECIDE: &[FieldSpec] = &[
-    field("requestedIntent", FieldKind::String, true),
+    field("requestedIntent", FieldKind::String, false),
     field("taskKind", FieldKind::String, true),
     field("availableArtifacts", FieldKind::Array, false),
-    field("impactFacts", FieldKind::Array, true),
-    field("classificationConfidenceBps", FieldKind::Integer, true),
-    field("userApprovalRef", FieldKind::Object, false),
+    field("impactFacts", FieldKind::Array, false),
+    field("classificationConfidenceBps", FieldKind::Integer, false),
 ];
 const DOCUMENT_RESOLVE: &[FieldSpec] = &[
     field("intent", FieldKind::String, true),

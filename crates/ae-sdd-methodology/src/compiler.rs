@@ -153,8 +153,11 @@ fn compile_entry(
 ) -> Result<CompiledMethodologyEntry, MethodologyError> {
     validate_semver("version", &source.version)?;
     validate_activation(source.activation, source.spawn_policy)?;
+    let pre_route_ra =
+        source.activation == Activation::Workflow && source.series_kind == "requirement-analysis";
     if source.activation == Activation::Workflow
-        && (source.route_predicates.is_empty() || source.deliverable_kinds.is_empty())
+        && ((!pre_route_ra && source.route_predicates.is_empty())
+            || source.deliverable_kinds.is_empty())
     {
         return Err(MethodologyError::IncompleteWorkflow);
     }

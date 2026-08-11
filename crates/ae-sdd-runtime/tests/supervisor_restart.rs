@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ae_sdd_domain::{
     AgentRole, DesignRoute, EventStoreId, InputFingerprint, ProcessPhase, StateRevision, WorkScale,
 };
-use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteSelection};
+use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteLifecycle, RouteSelection};
 use ae_sdd_runtime::{FlowSupervisor, MemoryPersistence};
 use uuid::Uuid;
 
@@ -13,7 +13,10 @@ fn input(store_id: EventStoreId) -> FlowInput {
         FlowEnvironment::new(
             store_id,
             InputFingerprint::digest(b"supervisor-restart-input"),
-            RouteSelection::new(WorkScale::Small, DesignRoute::CodingPlan),
+            RouteLifecycle::Frozen(RouteSelection::new(
+                WorkScale::Small,
+                DesignRoute::CodingPlan,
+            )),
         ),
     )
 }

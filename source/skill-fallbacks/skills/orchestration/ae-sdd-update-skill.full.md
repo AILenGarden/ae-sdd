@@ -65,9 +65,9 @@ description: 规范各 SKILL 的内容边界与维护规则。ae-sdd-skill 退�
 | `dr-update-skill.md` | DR 文档更新 / DR 缺陷修复 | 流程编排、其他文档规则 |
 | `story-update-skill.md` | Story 文档更新 / Story 缺陷修复 | 流程编排、Task 规则 |
 | `state.review.status/findings` | Review 结论与结构化发现 | 长篇过程报告 |
-| `state.executionPlan` | 用户确认的紧凑执行计划 | CodingPlan/CodingReport Markdown |
+| `state.executionPlan` | 用户确认的执行投影；micro 的唯一计划载体 | CodingReport Markdown；small/Story 路线所需的正式 CodingPlan Spec |
 | `templates/design/*.md` | DR / Story / Task / Story Review 逻辑汇总等空白模板 | 具体 Story 的填充内容 |
-| `templates/testcase/*.md` | 复杂场景才使用的可选 TestCase 模板 | 默认测试报告 |
+| `templates/testcase/*.md` | Story 路线必需的 TestCase 模板；与对应 Story identity 绑定 | 默认测试报告 |
 
 ---
 
@@ -574,7 +574,7 @@ Agent 完成任何 `source/` 或 `tools/` 改动后，**必须**执行以下两�
 
 **第 1 步：查询连带项**（改了什么 → 该同步什么）
 ```bash
-ae-sdd update-check --affected crates/ae-sdd-gates/src/registry.rs,ae-sdd ra-authenticity-scan
+ae-sdd update-check --affected crates/ae-sdd-gates/src/registry.rs
 ```
 或程序化调用：
 ```text
@@ -824,10 +824,10 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] `document-storage-skill.md` 🆕 2026-06-10 包含 `§1.3 路径模板`（重任务 `design/` / 小任务 `Task/` / 微任务 `Plan/`）
 - [ ] `templates/coding/be-codereview-template.md` 9 章节齐全
 - [ ] Story Review 旧版计划模板若保留，则仅作为历史兼容壳，不再作为运行时输入
-- [ ] 🆕 v3.2 `requirement-analysis-skill.md` 包含 `## 🔴 RequirementAnalysisModel（12 维需求分析决策模型）` + `## 第七步：16 道 RA 质量闸`
-- [ ] 🆕 v3.2 `templates/design/ra-template.md` 包含 §6.5 衍生规则登记表 + §8.5 衍生 AC 登记表 + §8.6 衍生覆盖率 + §9-bis 业务模式匹配表 + §9-ter 跨域级联效应表 + §13 RA-G01~16 质量闸自检
-- [ ] 🆕 v3.2 `crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 包含 G-RA-1~G-RA-4（RA 文档存在 / 8 维度完整 / 衍生章节完整 / 真实性扫描通过）+ CHECK_FUNCS 注册 + check_all G-RA-4 特判
-- [ ] 🆕 v3.2 `ae-sdd ra-authenticity-scan` 存在，8 类禁止规则（vague-ellipsis / no-evidence / fabricated-field / hidden-conflict / masked-gap / placeholder-fill / assumed-no-derivative / missing-timeliness）+ JSON 输出契约与 test_authenticity_scan.py 一致
+- [ ] 🆕 v3.2（已于 RA 通用性改造刷新）`requirement-analysis-skill.full.md` 声明唯一 `intent=RA` 自适应 SRS；不再要求 RequirementAnalysisModel 12 维 / 8 维度挖掘 / RA-G01~16 / I1-I7 / R/R' / 六类业务模式 / 下游关联矩阵 / 固定三轮 / 每步确认
+- [ ] 🆕 v3.2（已于 RA 通用性改造刷新）`templates/design/ra-template.md` 声明 `ae-sdd-ra-srs/v2` schema + Core §0~§7 + 七个 applicability key + REQ/AC/REF/GAP + 纯需求六维 scale（取最高分）
+- [ ] 🆕 v3.2（已于 RA 通用性改造刷新）`crates/ae-sdd-gates/src/registry.rs` 的 `G-RA-1~4` 分别校验精确文档/receipt、SRS Core、applicability、traceability/closure/scale；`gate ra-required` 只批量执行这四项
+- [ ] 🆕 v3.2（已于 RA 通用性改造刷新）`ae-sdd-scanners` 注册有界 `RaCore` / `RaApplicability` / `RaClosure` scanner，Rust focused tests 覆盖 v2 正例与 duplicate/escape/placeholder/byte/dimension/range/max/reference/analysisState 反例
 - [ ] 🆕 v3.2 `crates/ae-sdd-gates/src/registry.rs` check_g13 接入 RA 层（六层追溯：RA ↔ DR ↔ Story ↔ Task ↔ Coding Report ↔ CodeReview），RA 为可选层不阻断
 - [ ] 🆕 v3.2 `SKILL.md` 含 `## 🛡️ G-RA 需求分析准入门卫` 章节 + 智能路由表 G-RA 门禁列
 - [ ] 🆕 v3.2+ `tools/lib/update_graph.py` 存在，含 UC-01~UC-07 + UC-14~UC-20 原生检查、`check_all`/`summarize`；`alignment_audit.py` 注入 UC-08~UC-13
@@ -853,8 +853,8 @@ ae-sdd iteration-check [--project <仓库根>] [--json]
 - [ ] 🆕 v3.2.5 本文件 `## 更新依赖图谱` 章节含"前置——设计意图确认"引用块
 - [ ] 🆕 v3.4.0 `crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-14 / G-CODEPLAN-SRC / G-DOC-STORAGE（22 门禁）+ CHECK_FUNCS 注册 + check_g14/check_g_codeplan_src/check_g_doc_storage 实现
 - [ ] 🆕 v3.5.7 `crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-DOC-CONSISTENCY（25 门禁）+ CHECK_FUNCS 注册 + check_g_doc_consistency 实现（项目侧记忆-配置路径一致性，防旧记忆劫持 config docWorkspacePath）；`source/SKILL.md` 含 §🛡️ G-DOC-CONSISTENCY 门禁章节；`crates/ae-sdd-gates/tests/gate_truth_table.rs` 含 TestGDocConsistency 4 用例
-- [ ] 🆕 v3.5.9 `ae-sdd ra-depth-scan` 存在（5 条机械派生规则 D1-D5：§6.5 主规则机械派生 / §8.5 R'→AC 链接 / §8.6 覆盖率真实重算 / §9-ter 五问覆盖 / §9-bis 业务模式六选一）；`crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-RA-5（26 门禁）+ `check_ra_depth` + `check_all` G-RA-5 特判分支；`source/SKILL.md` frontmatter version ≥ v3.5.9 + G-RA 规则表含 G-RA-5 + §🛠️ 工具速查含 `ra-depth-scan` 子命令；`source/skills/phase1-design/requirement-analysis-skill.md` §阶段 E.5/G.5/H.5/H.6 顶部含 G-RA-5 红框 + 7.1 RA-G08/09/12 判定 SOP 升级 + 禁止事项第 22 条 + 执行清单 8.5/10.5/11.6 补 G-RA-5；`tools/tests/test_ra_depth_scan.py` 存在（≥6 用例覆盖 D1-D5）；`crates/ae-sdd-gates/tests/gate_truth_table.rs` TestCheckAll 断言 26 + TestGRA5 ≥2 用例；`scripts/build_dist.py` runtime_scripts 白名单含 ra_depth_scan.py；`tools/bin/ae-sdd` 含 `cmd_ra_depth_scan` + argparse `ra-depth-scan`；`source/standards/update-graph.json` 含 UG-14 规则；`source/CHANGELOG/` 含 `2026-06-27-v3.5.9-ra-derivation-depth-gate.md`
-- [ ] 🆕 v3.6.0 `ae-sdd ra-implementation-scan` 存在（I1-I7：数据源清单 / 数据流链路 / 术语定义不变量 / 现有实现复用证据 / 高成本难实现设计反驳 / 开发者疑问答复 / DR 生成交接包）；`crates/ae-sdd-gates/src/registry.rs` GATE_REGISTRY 含 G-RA-6（29 门禁）+ `check_ra_implementation` + `check_all` G-RA-6 特判分支；`tools/bin/ae-sdd` 含 `cmd_ra_implementation_scan` + argparse `ra-implementation-scan` + `gate ra-required` 覆盖 G-RA-1~6 + FLOW；`source/skills/phase1-design/requirement-analysis-skill.md` 含第一步 ter + RAGeneratePlan §2.5 + 禁止事项 #23；`source/templates/design/ra-template.md` 含 §9-quater 七要素表；`tools/tests/test_ra_implementation_scan.py` 与 `crates/ae-sdd-gates/tests/gate_truth_table.rs::TestGRA6` 存在；`scripts/build_dist.py` runtime_scripts 白名单含 ra_implementation_scan.py；`source/standards/update-graph.json` 含 UG-18；`source/CHANGELOG/` 含 `2026-06-30-v3.6.0-ra-implementation-view-gate.md`
+- [ ] 🆕 v3.5.9（已于 RA 通用性改造重定性）`G-RA-5` 保留注册但作为 `G-RA-3` 真实适用性检查的兼容入口，不再检查 D1-D5 机械派生 / R→R' / 六类业务模式 / 强制时效；不进入任何 phase 自动 required set；旧 `ra-depth-scan` CLI 返回真实诊断并标注 replacement gate
+- [ ] 🆕 v3.6.0（已于 RA 通用性改造重定性）`G-RA-6` 保留注册但作为 `G-RA-4` 真实 closure 检查的兼容入口，不再检查 I1-I7 / DR handoff；不进入任何 phase 自动 required set；旧 `ra-implementation-scan` CLI 返回真实诊断并标注 replacement gate
 - [ ] 🆕 v3.4.0 `tools/lib/session.py` 存在，entry token 管理（enter/read_session/has_valid_entry_token/confirm_phase/is_phase_confirmed）
 - [ ] 🆕 v3.4.0 `tools/bin/ae-sdd` 含 `enter` / `state confirm` / `gate doc-storage` 3 个新子命令
 - [ ] 🆕 v3.4.0 `tools/lib/gate_intercept.py` 含关卡2（_PRODUCT_PATTERNS + _PRODUCT_PHASE_MAP + _check_product_landing）+ 关卡3（coding phase 写 src/ 须 task-reviewed 确认）

@@ -2186,7 +2186,6 @@ async fn open_delegated_child(
             "inputRevision":input_revision,
             "inputFingerprint":input_fingerprint,
             "deadlineUnixMs":now.saturating_add(600_000),
-            "adapterId":adapter_id,
             "grant":grant,
         })
     };

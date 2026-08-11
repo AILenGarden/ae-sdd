@@ -1,6 +1,14 @@
 use std::{fs, path::Path, time::Duration};
 
-use ae_sdd_domain::{ArtifactDigest, FreshnessDimension, GateOutcome, GateResult};
+use ae_sdd_contracts::{
+    DocumentId, EngineeringRoute, ReceiptStatus, RequirementAnalysisEvidence, RouteApprovalReceipt,
+    RouteBindingInput, RouteMappingVersion, SchemaVersion, SeriesId,
+};
+use ae_sdd_domain::{
+    ArtifactDigest, FreshnessDimension, GateOutcome, GateResult, StateRevision, WorkItemId,
+    WorkScale,
+};
+use ae_sdd_flow::RouteEngine;
 use ae_sdd_protocol::WorkspaceMode;
 use ae_sdd_runtime::BusinessWorkspace;
 use serde_json::{Value, json};
@@ -106,7 +114,78 @@ fn install_dr_context(root: &Path) {
     fs::write(standards.join("operation-protocol.md"), "# Protocol\n").expect("standard");
     let ra = root.join("ae-sdd-doc/RA/ROUTE-10b6bd28.md");
     fs::create_dir_all(ra.parent().expect("RA parent")).expect("RA directory");
-    fs::write(ra, "# Requirement Analysis\n").expect("RA document");
+    fs::write(ra, minimal_v2_srs()).expect("RA document");
+}
+
+/// A minimal but structurally complete `ae-sdd-ra-srs/v2` document that the
+/// bounded parser accepts. Used by gate_source tests that need an RA fixture
+/// to pass the new RA content scanners.
+fn minimal_v2_srs() -> String {
+    "\
+# 需求规格说明书：测试用最小 SRS
+
+## 0. 文档与需求身份
+| 字段 | 值 |
+| --- | --- |
+| Schema | ae-sdd-ra-srs/v2 |
+| RA ID | RA-TEST-001 |
+| Work Item | ROUTE-bound |
+| Revision | 1 |
+| Analysis state | complete |
+| Scale | micro |
+| Scale confidence | 90 |
+
+### 0.1 来源与实际使用的上下文
+| REF ID | 类型 | 引用/摘要 | Digest/版本 | 用途 |
+| --- | --- | --- | --- | --- |
+| REF-001 | 对话 | 测试输入 | v1 | 输入 |
+
+## 1. 问题、目标与非目标
+测试用最小 SRS，验证 bound RA 被 G-RA-2 识别。
+
+## 2. 范围
+- In Scope：测试。
+- Out of Scope：其余。
+
+## 3. 适用性判定
+| 条件维度 | 状态 | 依据 | 目标章节/处置 |
+| --- | --- | --- | --- |
+| participants | not_applicable | 无新参与方 | §3 |
+| scenarios | not_applicable | 无独立场景 | §3 |
+| state_lifecycle | not_applicable | 无状态变更 | §3 |
+| data_semantics | not_applicable | 无数据语义变更 | §3 |
+| external_contracts | not_applicable | 无外部契约 | §3 |
+| quality_security_compliance | not_applicable | 无 | §3 |
+| compatibility_migration_operations | not_applicable | 无 | §3 |
+
+## 4. 需求清单
+| REQ ID | 规范性需求 | 优先级 | Source refs | 依赖/冲突 |
+| --- | --- | --- | --- | --- |
+| REQ-001 | 测试需求 | P0 | REF-001 | 无 |
+
+## 5. 验收与追溯
+| AC ID | 覆盖 REQ | 验收类型 | 可执行/可观察判定 |
+| --- | --- | --- | --- |
+| AC-001 | REQ-001 | operational | 可观察 |
+
+## 6. 约束、假设、冲突、风险与未决
+| ID | 类型 | 内容 | 严重度 | 状态/处置 |
+| --- | --- | --- | --- | --- |
+| A-001 | 假设 | 测试假设 | 中 | 已确认 |
+
+## 7. 规模裁定
+| 需求维度 | 评分 1-4 | 证据 |
+| --- | --- | --- |
+| 可观察行为与场景广度 | 1 | 测试 |
+| 参与方、权限或业务域广度 | 1 | 测试 |
+| 状态、数据语义与不变量复杂度 | 1 | 测试 |
+| 外部契约与协调范围 | 1 | 测试 |
+| 性能、安全、合规、可用性等质量风险 | 1 | 测试 |
+| 兼容、迁移、回滚和运行影响 | 1 | 测试 |
+
+最高分 = 1 -> Scale = micro。
+"
+    .to_owned()
 }
 
 #[test]
@@ -639,11 +718,7 @@ fn ra_scanner_ignores_unrelated_ra_documents() {
     let temp = TempDir::new().expect("temp");
     let ra_dir = temp.path().join("ae-sdd-doc/RA");
     fs::create_dir_all(&ra_dir).expect("RA directory");
-    fs::write(
-        ra_dir.join("ROUTE-10b6bd28.md"),
-        "# Current RA\n\nEvery deadline is bounded to 30 seconds.\n",
-    )
-    .expect("current RA");
+    fs::write(ra_dir.join("ROUTE-10b6bd28.md"), minimal_v2_srs()).expect("current RA");
     fs::write(
         ra_dir.join("unrelated.md"),
         "# Historical RA\n\nThis unrelated document says \u{7acb}\u{5373}.\n",
@@ -660,6 +735,173 @@ fn ra_scanner_ignores_unrelated_ra_documents() {
         .expect("RA Gate evaluation");
 
     assert!(matches!(result.outcome(), GateOutcome::Pass));
+}
+
+#[test]
+fn ra_gate_key_ignores_foreign_mapping_but_tracks_bound_bytes() {
+    let temp = TempDir::new().expect("temp");
+    let ra_dir = temp.path().join("ae-sdd-doc/RA");
+    fs::create_dir_all(&ra_dir).expect("RA directory");
+    let bound = ra_dir.join("WI-001.md");
+    fs::write(&bound, minimal_v2_srs()).expect("bound RA");
+    fs::write(ra_dir.join("foreign.md"), "# foreign\n").expect("foreign RA");
+    write_state(
+        temp.path(),
+        1,
+        json!({"documentPaths":{
+            "RA":"ae-sdd-doc/RA/WI-001.md",
+            "FOREIGN_RA":"ae-sdd-doc/RA/foreign.md"
+        }}),
+    );
+    let first = runtime(&temp).snapshot_key("G-RA-2").expect("first key");
+
+    write_state(
+        temp.path(),
+        1,
+        json!({"documentPaths":{
+            "RA":"ae-sdd-doc/RA/WI-001.md",
+            "FOREIGN_RA":"ae-sdd-doc/RA/other.md"
+        }}),
+    );
+    let foreign_changed = runtime(&temp)
+        .snapshot_key("G-RA-2")
+        .expect("foreign-changed key");
+    assert_eq!(
+        first.input(),
+        foreign_changed.input(),
+        "foreign document mappings are outside RequirementAnalysis authority"
+    );
+
+    fs::write(&bound, format!("{}\n", minimal_v2_srs())).expect("changed bound RA");
+    let bound_changed = runtime(&temp)
+        .snapshot_key("G-RA-2")
+        .expect("bound-changed key");
+    assert_ne!(
+        first.input(),
+        bound_changed.input(),
+        "the exact bound RA bytes must invalidate the Gate key"
+    );
+}
+
+fn install_route_binding_state(root: &Path, phase: &str) {
+    let document = root.join("ae-sdd-doc/RA/WI-001.md");
+    fs::create_dir_all(document.parent().expect("RA parent")).expect("RA directory");
+    let text = minimal_v2_srs();
+    fs::write(&document, &text).expect("RA document");
+    let evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new("WI-001").expect("work item"),
+        SeriesId::new("SERIES-RA-WI-001").expect("series"),
+        DocumentId::new("DOC-RA-WI-001").expect("document"),
+        1,
+        ArtifactDigest::digest(text.as_bytes()),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"verified RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Small,
+        ArtifactDigest::digest(b"scale evidence"),
+        ArtifactDigest::digest(b"closure receipt set"),
+    );
+    let binding = RouteBindingInput::new(evidence.clone(), RouteMappingVersion::V1);
+    let candidate = RouteEngine::default()
+        .decide_from_evidence(
+            &binding,
+            WorkItemId::new("WI-001").expect("work item"),
+            SchemaVersion::V2,
+        )
+        .expect("route candidate");
+    let approval = RouteApprovalReceipt::new(
+        format!("route:{}", candidate.decision_digest()),
+        "user".to_owned(),
+        "2026-08-10T00:00:00Z".to_owned(),
+        evidence.document_id().clone(),
+        evidence.version(),
+        *evidence.ra_content_digest(),
+        evidence.scale(),
+        candidate.decision_digest(),
+    );
+    let frozen = matches!(phase, "route-selected" | "route_selected").then(|| {
+        EngineeringRoute::freeze(
+            SchemaVersion::V2,
+            &binding,
+            candidate.clone(),
+            &approval,
+            &[],
+        )
+        .expect("frozen route")
+    });
+    let mut state = json!({
+        "phase":phase,
+        "currentPhase":phase,
+        "documentPaths":{"RA":"ae-sdd-doc/RA/WI-001.md"},
+        "seriesReceipts":{"RA":evidence},
+        "routeCandidate":candidate,
+        "routeApprovalReceipt":approval,
+        "routeBlockingConflicts":[],
+    });
+    if let Some(frozen) = frozen {
+        state["engineeringRoute"] = json!(frozen);
+    }
+    write_state(root, 1, state);
+}
+
+#[test]
+fn flow_violation_gate_recomputes_the_typed_ra_route_binding() {
+    let temp = TempDir::new().expect("temp");
+    install_route_binding_state(temp.path(), "requirement_analyzed");
+    let pass = runtime(&temp)
+        .evaluate("G-RA-FLOW-VIOLATION", Duration::from_secs(1))
+        .expect("binding Gate");
+    assert!(matches!(pass.outcome(), GateOutcome::Pass));
+
+    install_route_binding_state(temp.path(), "initialized");
+    let route_before_ra = runtime(&temp)
+        .evaluate("G-RA-FLOW-VIOLATION", Duration::from_secs(1))
+        .expect("binding Gate");
+    assert!(matches!(route_before_ra.outcome(), GateOutcome::Fail(_)));
+
+    install_route_binding_state(temp.path(), "requirement_analyzed");
+    fs::write(
+        temp.path().join("ae-sdd-doc/RA/WI-001.md"),
+        "stale document bytes",
+    )
+    .expect("stale RA");
+    let stale = runtime(&temp)
+        .evaluate("G-RA-FLOW-VIOLATION", Duration::from_secs(1))
+        .expect("binding Gate");
+    assert!(matches!(stale.outcome(), GateOutcome::Fail(_)));
+
+    install_route_binding_state(temp.path(), "requirement_analyzed");
+    let state_path = temp.path().join(".auto-engineering/work-item/state.json");
+    let mut state: Value =
+        serde_json::from_slice(&fs::read(&state_path).expect("state bytes")).expect("state JSON");
+    state["routeBlockingConflicts"] = json!({"malformed":true});
+    fs::write(&state_path, serde_json::to_vec(&state).expect("state JSON"))
+        .expect("malformed conflict state");
+    let malformed_conflicts = runtime(&temp)
+        .evaluate("G-RA-FLOW-VIOLATION", Duration::from_secs(1))
+        .expect("binding Gate");
+    assert!(matches!(
+        malformed_conflicts.outcome(),
+        GateOutcome::Fail(_)
+    ));
+
+    install_route_binding_state(temp.path(), "route-selected");
+    let frozen = runtime(&temp)
+        .evaluate("G-RA-FLOW-VIOLATION", Duration::from_secs(1))
+        .expect("frozen binding Gate");
+    assert!(matches!(frozen.outcome(), GateOutcome::Pass));
+    let mut state: Value =
+        serde_json::from_slice(&fs::read(&state_path).expect("state bytes")).expect("state JSON");
+    state["routeApprovalReceipt"]["approvedBy"] = json!("different-user");
+    fs::write(&state_path, serde_json::to_vec(&state).expect("state JSON"))
+        .expect("mismatched approval state");
+    let mismatched_approval = runtime(&temp)
+        .evaluate("G-RA-FLOW-VIOLATION", Duration::from_secs(1))
+        .expect("frozen binding Gate");
+    assert!(matches!(
+        mismatched_approval.outcome(),
+        GateOutcome::Fail(_)
+    ));
 }
 
 #[test]
@@ -1020,23 +1262,18 @@ fn ra_predicates_grade_the_bound_document_not_the_first_in_the_directory() {
     let directory = temp.path().join("ae-sdd-doc/RA");
     fs::create_dir_all(&directory).expect("RA directory");
 
-    // Sorts first, belongs to another Work Item, and would fail G-RA-3: it
-    // carries the model and enough headings for G-RA-2 but no RA-G decisions.
+    // Sorts first, belongs to another Work Item, and carries the legacy shape:
+    // it has the model and enough headings but no v2 schema, so a v2 scanner
+    // would reject it. The fingerprint must not even consider this file.
     let mut foreign = String::from("# RA: another Work Item\n\nRequirementAnalysisModel\n");
     for index in 0..12 {
         foreign.push_str(&format!("\n## Section {index}\n\ntext\n"));
     }
     fs::write(directory.join("AAA-OTHER-WORK-ITEM.md"), &foreign).expect("foreign RA");
 
-    // This Work Item's RA satisfies both predicates.
-    let mut bound = String::from("# RA: ROUTE-bound\n\nRequirementAnalysisModel\n");
-    for index in 0..12 {
-        bound.push_str(&format!("\n## Section {index}\n\ntext\n"));
-    }
-    for index in 1..=16 {
-        bound.push_str(&format!("\n- RA-G{index:02} PASS\n"));
-    }
-    fs::write(directory.join("ROUTE-bound.md"), &bound).expect("bound RA");
+    // This Work Item's RA is a valid v2 SRS that the new bounded parser accepts.
+    let bound = minimal_v2_srs();
+    fs::write(directory.join("RA-ROUTE-bound.md"), &bound).expect("bound RA");
 
     write_state(
         temp.path(),
@@ -1044,7 +1281,7 @@ fn ra_predicates_grade_the_bound_document_not_the_first_in_the_directory() {
         json!({
             "stateMachineName":"ROUTE-bound",
             "entryNode":"ROUTE",
-            "documentPaths":{"RA":"ae-sdd-doc/RA/ROUTE-bound.md"}
+            "documentPaths":{"RA":"ae-sdd-doc/RA/RA-ROUTE-bound.md"}
         }),
     );
 
@@ -1057,11 +1294,11 @@ fn ra_predicates_grade_the_bound_document_not_the_first_in_the_directory() {
     .expect("runtime");
 
     let result = runtime
-        .evaluate("G-RA-3", Duration::from_secs(1))
-        .expect("G-RA-3 evaluation");
+        .evaluate("G-RA-2", Duration::from_secs(1))
+        .expect("G-RA-2 evaluation");
     assert!(
         matches!(result.outcome(), GateOutcome::Pass),
-        "G-RA-3 must grade the bound RA, not the first file in the directory: {}",
+        "G-RA-2 must grade the bound v2 SRS, not a foreign file: {}",
         gate_result_json(&result)
     );
 }

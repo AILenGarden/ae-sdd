@@ -327,6 +327,7 @@ fn resolution_digest(
         &mut encoded,
         match request.schema_version {
             SchemaVersion::V1 => b"v1",
+            SchemaVersion::V2 => b"v2",
         },
     );
     push(&mut encoded, request.project_key.as_str().as_bytes());

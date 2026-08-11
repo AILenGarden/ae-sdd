@@ -161,6 +161,12 @@ impl RuntimeService {
                 "delegation briefing must be within 8192 bytes",
             ));
         }
+        // The Host adapter is daemon-owned addressing, never a wire input: the
+        // payload no longer carries `adapterId`, so both the Root and the nested
+        // Series→Task path resolve it here from the registered adapters. This
+        // intentionally runs after the schema bound check so an oversized
+        // briefing still surfaces as a schema error rather than a host denial.
+        let adapter_id = self.host.delegation_adapter()?;
         let key = require_idempotency(params)?;
         let scope = format!(
             "delegation-create\0{}\0{}",
@@ -189,6 +195,7 @@ impl RuntimeService {
             identity.role,
             &identity.grant,
             payload,
+            &adapter_id,
             &typed_scope_digest,
             key,
             &digest,
@@ -266,6 +273,63 @@ impl RuntimeService {
             digest,
             value,
             "delegation.accepted",
+            params.workspace_id.clone(),
+            Some(payload.child_session_id),
+            params.work_item_id.clone(),
+        )
+        .map(|(value, _)| value)
+    }
+
+    /// Child self-claim entry point (Plan §2). Semantically a sibling of
+    /// `delegation.accept` — same payload shape, same supervisor path, same
+    /// idempotency treatment — that differs only in *who* is presenting the
+    /// one-time `claim_id`. Splitting it into its own wire method keeps the
+    /// host-native A2 path (the child itself) distinct from the A1 path (an
+    /// external host adapter ACKing on the child's behalf) without forcing
+    /// `delegation.accept` to carry a mode flag.
+    pub(super) fn delegation_child_claim(
+        &self,
+        params: &RequestParams<Value>,
+    ) -> RuntimeResult<Value> {
+        let payload: DelegationAcceptPayload = decode_value(params.payload.clone())?;
+        let workspace_id = require(&params.workspace_id, "workspaceId")?.to_owned();
+        let key = require_idempotency(params)?;
+        let scope = format!("delegation-child-claim\0{}", payload.delegation_id);
+        let digest = canonical_digest(&json!({
+            "workspaceId":workspace_id,
+            "workItemId":params.work_item_id,
+            "payload":payload,
+        }))?;
+        if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
+            return Ok(value);
+        }
+        let typed_scope_digest = canonical_digest(&json!({
+            "domain":"delegation.child_claim/v1",
+            "workspaceId":workspace_id,
+            "delegationId":payload.delegation_id,
+        }))?;
+        let boot_id = self.boot_id.to_string();
+        let (projection, _) = self.delegation.accept(
+            &workspace_id,
+            params.work_item_id.as_deref(),
+            &payload.delegation_id,
+            &payload.claim_id,
+            &payload.action_id,
+            &payload.child_session_id,
+            payload.expires_at_unix_ms,
+            &boot_id,
+            &typed_scope_digest,
+            key,
+            &digest,
+            self.clock.now_unix_ms(),
+        )?;
+        let value = to_value(projection)?;
+        self.commit_receipt_event(
+            &scope,
+            key,
+            digest,
+            value,
+            "delegation.child_claimed",
             params.workspace_id.clone(),
             Some(payload.child_session_id),
             params.work_item_id.clone(),
@@ -405,6 +469,7 @@ impl RuntimeService {
                 &workspace,
                 params.work_item_id.as_deref().unwrap_or(""),
                 &identity.session_id,
+                id,
                 &boundary_key,
             )?;
         }
@@ -714,7 +779,6 @@ impl RuntimeService {
                 &intent.work_item_id,
                 &intent.series_kind,
             ),
-            adapter_id: self.host.delegation_adapter()?,
             grant: semantic_series_grant(),
             briefing: Some(briefing),
             asset_refs: None,

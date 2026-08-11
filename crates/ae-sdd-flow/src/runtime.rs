@@ -148,12 +148,31 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
                     requested: *target,
                 });
             }
+            let current = decision.snapshot.phase();
+            let route = decision.environment.route();
+            if current == ProcessPhase::RequirementAnalyzed
+                && *target == ProcessPhase::RouteSelected
+                && !matches!(route, crate::RouteLifecycle::Candidate(_))
+            {
+                return Err(FlowError::RouteCandidateMissing { target: *target });
+            }
+            if phase_consumes_frozen_route(current)
+                && *target != ProcessPhase::Paused
+                && !matches!(route, crate::RouteLifecycle::Frozen(_))
+            {
+                return Err(FlowError::RouteNotFrozen { target: *target });
+            }
+            let selection = decision.environment.route().selection().unwrap_or_else(|| {
+                // TransitionPolicy ignores these sentinels for the route-less
+                // Initialized -> RequirementAnalyzed edge.
+                crate::RouteSelection::new(WorkScale::Micro, DesignRoute::CodingPlan)
+            });
             let context = TransitionContext {
                 actor_role: *actor_role,
                 current: decision.snapshot.phase(),
                 target: *target,
-                scale: decision.environment.route().scale(),
-                design_route: decision.environment.route().design_route(),
+                scale: selection.scale(),
+                design_route: selection.design_route(),
                 paused_from: decision.snapshot.paused_from(),
             };
             match TransitionPolicy::authorize(context) {
@@ -401,6 +420,21 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
     Ok(())
 }
 
+const fn phase_consumes_frozen_route(phase: ProcessPhase) -> bool {
+    matches!(
+        phase,
+        ProcessPhase::RouteSelected
+            | ProcessPhase::DrGenerated
+            | ProcessPhase::StoryGenerated
+            | ProcessPhase::TestcaseGenerated
+            | ProcessPhase::CodingProcess
+            | ProcessPhase::Coding
+            | ProcessPhase::TestRunning
+            | ProcessPhase::CodeReviewed
+            | ProcessPhase::Completed
+    )
+}
+
 /// Derives the execution-surface action for the policy-owned execution phase.
 ///
 /// An open approved slice keeps executing; anything else leaves the caller's
@@ -465,8 +499,19 @@ fn digest_decision(previous: Option<DecisionDigest>, decision: &FlowDecision) ->
     bytes.extend_from_slice(decision.environment.event_store_id().as_uuid().as_bytes());
     bytes.extend_from_slice(decision.environment.policy_digest().as_bytes());
     bytes.extend_from_slice(decision.environment.input_fingerprint().as_bytes());
-    bytes.push(scale_tag(decision.environment.route().scale()));
-    bytes.push(route_tag(decision.environment.route().design_route()));
+    match decision.environment.route() {
+        crate::RouteLifecycle::Pending => bytes.push(0),
+        crate::RouteLifecycle::Candidate(selection) => {
+            bytes.push(1);
+            bytes.push(scale_tag(selection.scale()));
+            bytes.push(route_tag(selection.design_route()));
+        }
+        crate::RouteLifecycle::Frozen(selection) => {
+            bytes.push(2);
+            bytes.push(scale_tag(selection.scale()));
+            bytes.push(route_tag(selection.design_route()));
+        }
+    }
     bytes.push(phase_tag(decision.snapshot.phase()));
     encode_optional_phase(&mut bytes, decision.snapshot.paused_from());
     bytes.extend_from_slice(&decision.snapshot.state_revision().get().to_be_bytes());

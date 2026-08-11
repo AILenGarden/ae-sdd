@@ -274,59 +274,11 @@ fn ae_sdd_hook_bootstraps_route_and_exposes_the_requirement_analysis_handoff() {
         .unwrap_or_else(|| panic!("/ae-sdd must return its daemon-minted Work Item: {prompt}"))
         .to_owned();
     assert!(work_item_id.starts_with("ROUTE-"), "{prompt}");
-    assert_eq!(prompt["context"]["nextAction"]["kind"], "analyze-route");
-
-    let mut acquire = session_params(
-        &workspace,
-        &session,
-        "bootstrap-route-agent",
-        json!({
-            "operation":"lease.acquire",
-            "payload":{"owner":{"role":"root"},"ttlSeconds":300},
-        }),
+    assert_eq!(prompt["context"]["nextAction"]["kind"], "delegate-series");
+    assert_eq!(
+        prompt["context"]["nextAction"]["seriesKind"],
+        "requirement-analysis"
     );
-    acquire.work_item_id = Some(work_item_id.clone());
-    acquire.idempotency_key = Some("bootstrap-route-lease".to_owned());
-    let lease = success(&call(
-        &harness.runtime,
-        &mut hook_connection,
-        RpcMethod::OperationExecute,
-        acquire,
-    ));
-
-    let mut decide = session_params(
-        &workspace,
-        &session,
-        "bootstrap-route-agent",
-        json!({
-            "operation":"route.decide",
-            "payload":{
-                "requestedIntent":"repair the host bootstrap control plane",
-                "taskKind":"self_update",
-                "impactFacts":[{"code":"impact.cross_module","level":"medium"}],
-                "classificationConfidenceBps":9000
-            },
-        }),
-    );
-    decide.work_item_id = Some(work_item_id.clone());
-    decide.lease_id = Some(
-        lease["data"]["leaseId"]
-            .as_str()
-            .expect("lease id")
-            .parse()
-            .expect("typed lease id"),
-    );
-    decide.fencing_token = lease["data"]["fencingToken"].as_u64();
-    decide.expected_revision = Some(0);
-    decide.idempotency_key = Some("bootstrap-route-decide".to_owned());
-    let routed = success(&call(
-        &harness.runtime,
-        &mut hook_connection,
-        RpcMethod::OperationExecute,
-        decide,
-    ));
-    assert_eq!(routed["data"]["scale"], "medium", "{routed}");
-    assert_eq!(routed["data"]["selectedDesign"], "STORY", "{routed}");
 
     let mut next = session_params(&workspace, &session, "bootstrap-route-agent", json!({}));
     next.work_item_id = Some(work_item_id);
@@ -628,17 +580,11 @@ fn a_caller_supplied_create_name_still_round_trips() {
     );
 }
 
-/// An ordinary typed `route.decide` whose only facts are `micro` must commit the
-/// micro scale at the shallowest design depth. This is not the explicit quick
-/// command: the committed state binds no user approval and carries no quick
-/// marker, and the flow handoff still delegates requirement-analysis.
-///
-/// `designRoute` stays `coding_plan` while `requiredSeries` and
-/// `requiredSpecKinds` carry RA alone — the two answer different questions.
-/// §7.1 line 342 requires no standalone CodingPlan Markdown for micro, so a
-/// CodingPlan Series here would produce the Spec the design excludes.
+/// Even an intake that looks micro cannot freeze a route before authoritative
+/// Requirement Analysis has closed. The pre-route flow must keep delegating RA
+/// and reject the legacy intake-driven `route.decide` shortcut.
 #[test]
-fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
+fn ordinary_micro_facts_cannot_skip_requirement_analysis() {
     let harness = Harness::new();
     let mut cli = harness.connection(ClientKind::Cli);
     let workspace = register_and_cut_over(&harness, &mut cli);
@@ -716,41 +662,16 @@ fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
     decide.fencing_token = lease["data"]["fencingToken"].as_u64();
     decide.expected_revision = Some(0);
     decide.idempotency_key = Some("bootstrap-micro-decide".to_owned());
-    let routed = success(&call(
+    let rejected = call(
         &harness.runtime,
         &mut hook_connection,
         RpcMethod::OperationExecute,
         decide,
-    ));
-    assert_eq!(routed["data"]["scale"], "micro", "{routed}");
-    assert_eq!(routed["data"]["selectedDesign"], "CODING_PLAN", "{routed}");
-    assert_eq!(routed["data"]["approved"], true, "{routed}");
-    assert_eq!(
-        routed["data"]["decision"]["designRoute"], "coding_plan",
-        "{routed}"
     );
-    // §7.1 line 342: micro runs `RA -> executionPlan -> Coding` and 不要求独立
-    // CodingPlan Markdown, so no CodingPlan Series is delegated. The approved
-    // `executionPlan` in daemon state carries the plan instead.
+    assert_eq!(stable_error(&rejected), "OPERATION_SCHEMA_INVALID");
     assert_eq!(
-        routed["data"]["decision"]["requiredSeries"],
-        json!(["requirement-analysis"]),
-        "{routed}"
-    );
-    assert_eq!(
-        routed["data"]["decision"]["requiredSpecKinds"],
-        json!(["requirement_analysis"]),
-        "micro binds the RA Spec only: {routed}"
-    );
-    assert_eq!(
-        routed["data"]["decision"]["taskKind"], "implementation",
-        "the decision freezes the reported task kind: {routed}"
-    );
-    // An ordinary approved micro route binds no user approval: there is no
-    // approval shortcut behind the classification.
-    assert!(
-        routed["data"]["decision"]["approvalBindingDigest"].is_null(),
-        "{routed}"
+        rejected["error"]["message"], "route.decide requires Requirement Analysis to be complete",
+        "{rejected}"
     );
 
     // The daemon mints the state directory as `{stateUuid}-{workItemId}`, so
@@ -765,18 +686,13 @@ fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(&format!("-{work_item_id}")))
         })
-        .expect("committed route state directory")
+        .expect("pre-route state directory")
         .join("state.json");
-    let state: Value =
-        serde_json::from_slice(&fs::read(&state_path).expect("committed route state"))
-            .expect("committed route state JSON");
-    assert_eq!(state["scale"], "micro", "{state}");
-    assert_eq!(state["selectedDesign"], "CODING_PLAN", "{state}");
-    assert_eq!(state["routeApproved"], true, "{state}");
-    assert!(
-        !state.to_string().contains("quick"),
-        "the committed ordinary micro route carries no quick marker: {state}"
-    );
+    let state: Value = serde_json::from_slice(&fs::read(&state_path).expect("pre-route state"))
+        .expect("pre-route state JSON");
+    assert_eq!(state["phase"], "initialized", "{state}");
+    assert!(state.get("routeDecision").is_none(), "{state}");
+    assert_ne!(state["routeApproved"], true, "{state}");
 
     let mut next = session_params(&workspace, &session, "bootstrap-micro-agent", json!({}));
     next.work_item_id = Some(work_item_id);

@@ -11,6 +11,7 @@ mod config;
 pub mod diagnostics;
 mod error;
 mod grant;
+mod host_execution_binding;
 mod model;
 mod ports;
 mod service;
@@ -41,7 +42,9 @@ pub use ports::{
     PersistencePort, RejectingBusinessPort, ResolvedWorkspace, WorkspaceResolverPort,
 };
 pub use service::{ConnectionState, ExecutionSessionBinding, RuntimeService};
-pub use supervisor::{ContextCache, DelegationSupervisor, FlowSupervisor, HostCoordinator};
+pub use supervisor::{
+    ContextCache, DelegationSupervisor, FlowSupervisor, HostCoordinator, series_identity,
+};
 
 /// Runtime build identity.
 pub const RUNTIME_BUILD: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));

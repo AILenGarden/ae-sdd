@@ -147,8 +147,14 @@ logs, child scratch memory, or another role's projection.
 
 ## Route And Document Contract
 
-Route always precedes Requirement Analysis. Analysis determines whether the
-design continues through DR, Story, or directly to a compact execution plan.
+The Hook records only a provisional `BootstrapAssessment`; Requirement Analysis
+is the first business Series and produces one adaptive `ae-sdd-ra-srs/v2` SRS.
+`G-RA-1..4` close its verified content receipt at `RequirementAnalyzed`.
+`G-RA-FLOW-VIOLATION` then validates the SRS, receipt, scale evidence, route
+candidate, and approval binding before the daemon freezes the authoritative
+`EngineeringRoute` at `RouteSelected`, then selects whether the
+design continues through DR, Story, TestCase, CodingPlan, or a compact execution
+plan.
 
 | Route | Core design requirement |
 | --- | --- |
@@ -159,7 +165,8 @@ design continues through DR, Story, or directly to a compact execution plan.
 
 RA is the first business Series for every task; the Hook records only a
 provisional `BootstrapAssessment` and the authoritative `EngineeringRoute` is
-frozen after RA closes its input conflicts.
+frozen only after the SRS-bound route Gate passes. `G-RA-5/6` are compatibility
+diagnostics and are not part of an automatic required set.
 
 RA, DR, and Story use templates resolved by the runtime. Story contains
 contracts, fields, main flow, data model, acceptance criteria, and an AC-to-test
