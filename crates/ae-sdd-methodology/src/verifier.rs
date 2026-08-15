@@ -73,8 +73,11 @@ pub(crate) fn verify_entry_metadata(
 ) -> Result<(), MethodologyError> {
     validate_semver("version", entry.version.as_str())?;
     validate_activation(entry.activation, entry.spawn_policy)?;
+    let pre_route_ra = entry.activation == Activation::Workflow
+        && entry.series_kind.as_str() == "requirement-analysis";
     if entry.activation == Activation::Workflow
-        && (entry.route_predicates.is_empty() || entry.deliverable_kinds.is_empty())
+        && ((!pre_route_ra && entry.route_predicates.is_empty())
+            || entry.deliverable_kinds.is_empty())
     {
         return Err(MethodologyError::IncompleteWorkflow);
     }

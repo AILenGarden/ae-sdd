@@ -94,10 +94,11 @@ fn every_required_gate_has_a_unique_stable_registry_identifier() {
 
 #[test]
 fn every_supported_route_authorizes_only_adjacent_steps() {
+    // RA-first: every chain is Initialized -> RequirementAnalyzed -> RouteSelected -> downstream.
     let large_dr = [
         ProcessPhase::Initialized,
-        ProcessPhase::RouteSelected,
         ProcessPhase::RequirementAnalyzed,
+        ProcessPhase::RouteSelected,
         ProcessPhase::DrGenerated,
         ProcessPhase::StoryGenerated,
         ProcessPhase::TestcaseGenerated,
@@ -109,8 +110,8 @@ fn every_supported_route_authorizes_only_adjacent_steps() {
     ];
     let story = [
         ProcessPhase::Initialized,
-        ProcessPhase::RouteSelected,
         ProcessPhase::RequirementAnalyzed,
+        ProcessPhase::RouteSelected,
         ProcessPhase::StoryGenerated,
         ProcessPhase::TestcaseGenerated,
         ProcessPhase::CodingProcess,
@@ -121,8 +122,8 @@ fn every_supported_route_authorizes_only_adjacent_steps() {
     ];
     let coding_plan = [
         ProcessPhase::Initialized,
-        ProcessPhase::RouteSelected,
         ProcessPhase::RequirementAnalyzed,
+        ProcessPhase::RouteSelected,
         ProcessPhase::CodingProcess,
         ProcessPhase::Coding,
         ProcessPhase::TestRunning,
@@ -195,13 +196,14 @@ fn transition_denials_preserve_typed_context_and_actionable_messages() {
             DesignRoute::Dr,
         ))
         .expect_err("skipping StoryGenerated on the large DR route is illegal"),
+        // RA-first: Initialized -> RouteSelected is now illegal before RA closes.
         TransitionPolicy::authorize(context(
             ProcessPhase::Initialized,
-            ProcessPhase::RequirementAnalyzed,
+            ProcessPhase::RouteSelected,
             WorkScale::Large,
             DesignRoute::Dr,
         ))
-        .expect_err("skipped transition is illegal"),
+        .expect_err("Initialized -> RouteSelected must be denied before RA"),
         TransitionPolicy::authorize(TransitionContext {
             actor_role: AgentRole::Root,
             current: ProcessPhase::Paused,
@@ -235,4 +237,54 @@ fn transition_denials_preserve_typed_context_and_actionable_messages() {
     })
     .expect("flow may resume to its exact recorded phase");
     assert!(resume.required_gates().is_empty());
+}
+
+/// Task 8: RA-first ordering. Initialized -> RequirementAnalyzed is the legal
+/// first step and requires only G-RA-1..4 (no G-00, no G-RA-5/6/FLOW). A route
+/// cannot be selected before RA closes.
+#[test]
+fn initialized_to_requirement_analyzed_is_legal_without_a_route() {
+    let permit = TransitionPolicy::authorize(context(
+        ProcessPhase::Initialized,
+        ProcessPhase::RequirementAnalyzed,
+        WorkScale::Large,
+        DesignRoute::Dr,
+    ))
+    .expect("Initialized -> RequirementAnalyzed is the RA-first first step");
+    assert_eq!(
+        permit.required_gates(),
+        [
+            RequiredGate::GRa1,
+            RequiredGate::GRa2,
+            RequiredGate::GRa3,
+            RequiredGate::GRa4,
+        ]
+    );
+}
+
+#[test]
+fn initialized_to_route_selected_is_illegal_before_ra() {
+    let denial = TransitionPolicy::authorize(context(
+        ProcessPhase::Initialized,
+        ProcessPhase::RouteSelected,
+        WorkScale::Large,
+        DesignRoute::Dr,
+    ))
+    .expect_err("Initialized -> RouteSelected must be denied before RA");
+    assert!(matches!(
+        denial,
+        TransitionPolicyError::IllegalTransition { .. }
+    ));
+}
+
+#[test]
+fn requirement_analyzed_to_route_selected_requires_only_flow_gate() {
+    let permit = TransitionPolicy::authorize(context(
+        ProcessPhase::RequirementAnalyzed,
+        ProcessPhase::RouteSelected,
+        WorkScale::Large,
+        DesignRoute::Dr,
+    ))
+    .expect("RequirementAnalyzed -> RouteSelected is the RA-first route freeze step");
+    assert_eq!(permit.required_gates(), [RequiredGate::GRaFlowViolation]);
 }

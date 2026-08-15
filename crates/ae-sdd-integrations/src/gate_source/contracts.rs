@@ -22,9 +22,10 @@ pub(super) fn plan_contract_complete(plan: &Value) -> bool {
             .is_some_and(|items| {
                 !items.is_empty()
                     && items.iter().all(|item| {
-                        ["id", "acId", "boundary", "command", "expected"]
+                        ["id", "acId", "boundary", "expected"]
                             .iter()
                             .all(|field| nonempty_string(item.get(*field)))
+                            && verification_command_complete(item.get("command"))
                     })
             })
         && nonempty_array(plan.get("risks"))
@@ -35,6 +36,19 @@ pub(super) fn plan_contract_complete(plan: &Value) -> bool {
                 !reads.is_empty() && reads.iter().all(|read| nonempty_string(Some(read)))
             })
         && plan.get("approved").and_then(Value::as_bool) == Some(true)
+}
+
+fn verification_command_complete(value: Option<&Value>) -> bool {
+    value.is_some_and(|value| match value {
+        Value::String(command) => !command.trim().is_empty(),
+        Value::Array(commands) => {
+            !commands.is_empty()
+                && commands
+                    .iter()
+                    .all(|command| nonempty_string(Some(command)))
+        }
+        _ => false,
+    })
 }
 
 pub(super) fn http_contract_valid(plan: &Value) -> bool {
@@ -80,15 +94,23 @@ pub(super) fn plan_story_aligned(
     !story_acs.is_empty() && story_acs.is_subset(&plan_acs)
 }
 
+/// A plan's source trace is complete only when *every* declared read still
+/// resolves. Accepting any single surviving entry let a sibling answer for a
+/// deleted or relocated file, so a plan tracing several sources kept passing
+/// while its trace rotted — the failure `hash_source_reads` exists to surface.
+/// A non-string entry is treated as unresolvable rather than skipped, so a
+/// malformed `sourceReads` cannot pass by omission.
 pub(super) fn source_trace_complete(root: &Path, plan: &Value) -> bool {
     plan.get("sourceReads")
         .and_then(Value::as_array)
         .is_some_and(|reads| {
             !reads.is_empty()
-                && reads.iter().filter_map(Value::as_str).any(|path| {
-                    let candidate = Path::new(path);
-                    (candidate.is_absolute() && candidate.is_file())
-                        || root.join(candidate).is_file()
+                && reads.iter().all(|entry| {
+                    entry.as_str().is_some_and(|path| {
+                        let candidate = Path::new(path);
+                        (candidate.is_absolute() && candidate.is_file())
+                            || root.join(candidate).is_file()
+                    })
                 })
         })
 }
@@ -260,16 +282,6 @@ pub(super) fn context_complete(state: &Value, required: &[&str]) -> bool {
             })
         })
     })
-}
-
-pub(super) fn route_exempt(state: &Value) -> bool {
-    state
-        .get("scale")
-        .and_then(Value::as_str)
-        .is_some_and(|scale| {
-            matches!(scale.to_ascii_lowercase().as_str(), "micro" | "small")
-                || matches!(scale, "微" | "小")
-        })
 }
 
 pub(super) fn structured_status(value: Option<&Value>, expected: &str) -> bool {

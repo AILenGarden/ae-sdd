@@ -489,11 +489,14 @@ impl RuntimeService {
                         "child job lacks a durable physical attestation",
                     )
                 })?;
-            if attestation.accepted_boot_id != self.boot_id.to_string()
-                || self
-                    .delegation
-                    .deadline_unix_ms(&identity.session_id, delegation_id)?
-                    <= self.clock.now_unix_ms()
+            // The physical attestation records the boot that accepted the
+            // child. Current-boot authority comes from the validated session
+            // capability; the durable delegation identity, deadline, and
+            // exact grant continue to bind the job after a daemon restart.
+            if self
+                .delegation
+                .deadline_unix_ms(&identity.session_id, delegation_id)?
+                <= self.clock.now_unix_ms()
                 || attestation.grant != grant
             {
                 return Err(RuntimeError::new(

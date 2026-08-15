@@ -147,6 +147,22 @@ pub enum ExecutionSupervisorFault {
     SliceCompleted,
 }
 
+/// Error returned when a durable execution-supervisor after-image cannot be
+/// reconstructed through the domain validation boundary.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum ExecutionSupervisorAfterImageError {
+    /// One retained source path is not a canonical project-relative path.
+    #[error("execution checkpoint after-image contains an invalid project-relative path")]
+    InvalidProjectRelativePath,
+    /// One retained semantic digest is not canonical lower-case SHA-256 hex.
+    #[error("execution checkpoint after-image contains an invalid artifact digest")]
+    InvalidArtifactDigest,
+    /// Bounded counters or collections cannot have been produced by the
+    /// supervisor reducer under the frozen budgets.
+    #[error("execution checkpoint after-image violates supervisor invariants")]
+    InvalidCheckpointInvariant,
+}
+
 /// Rejection returned by the pure execution supervisor inside
 /// `ExecutionDecisionV1::Deny` and `ExecutionDecisionV1::RequireProgress`.
 ///

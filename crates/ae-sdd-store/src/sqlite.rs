@@ -41,6 +41,10 @@ pub const SQLITE_REVIEW_CLEAN_TARGET_UNIFY_MIGRATION: &str =
     include_str!("../../../migrations/0012_review_clean_target_unify.sql");
 pub const SQLITE_REVIEW_PARENT_PROJECTION_ANCHOR_MIGRATION: &str =
     include_str!("../../../migrations/0013_review_parent_projection_anchor.sql");
+pub const SQLITE_HOST_EXECUTION_BINDING_V1_MIGRATION: &str =
+    include_str!("../../../migrations/0014_host_execution_binding_v1.sql");
+pub const SQLITE_SERIES_REVIEW_AUTHORITY_V1_MIGRATION: &str =
+    include_str!("../../../migrations/0015_series_review_authority_v1.sql");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RuntimeMigration {
@@ -126,6 +130,16 @@ pub const SQLITE_RUNTIME_MIGRATIONS: &[RuntimeMigration] = &[
         version: 13,
         name: "0013_review_parent_projection_anchor",
         sql: SQLITE_REVIEW_PARENT_PROJECTION_ANCHOR_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 14,
+        name: "0014_host_execution_binding_v1",
+        sql: SQLITE_HOST_EXECUTION_BINDING_V1_MIGRATION,
+    },
+    RuntimeMigration {
+        version: 15,
+        name: "0015_series_review_authority_v1",
+        sql: SQLITE_SERIES_REVIEW_AUTHORITY_V1_MIGRATION,
     },
 ];
 

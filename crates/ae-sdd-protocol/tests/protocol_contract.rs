@@ -30,6 +30,7 @@ const METHOD_NAMES: [&str; METHOD_COUNT] = [
     "delegation.create",
     "delegation.status",
     "delegation.accept",
+    "delegation.child_claim",
     "delegation.report",
     "delegation.collect",
     "delegation.cancel",
@@ -482,9 +483,18 @@ fn stable_errors_have_exact_wire_names_unique_numbers_and_no_combined_codes() {
     assert!(names.contains("EXECUTION_PROGRESS_REQUIRED"));
     assert!(names.contains("EXECUTION_RESOURCE_BUSY"));
     assert!(names.contains("EXECUTION_BUDGET_EXCEEDED"));
+    assert!(names.contains("CONCURRENT_DELEGATION_PENDING"));
     assert_eq!(
         serde_json::to_value(StableErrorCode::IdempotencyKeyReused).unwrap(),
         json!("IDEMPOTENCY_KEY_REUSED")
+    );
+    // A2 host-native delegation (single-pending-create invariant) reuses the
+    // headroom left inside the -32050..-32055 delegation-lifecycle group
+    // rather than opening a new group, consistent with the existing
+    // per-group headroom pattern (-32040/041 -> 050, -32070..072 -> 080).
+    assert_eq!(
+        StableErrorCode::ConcurrentDelegationPending.json_rpc_code(),
+        -32_056
     );
 
     let retryable = HashSet::from([
@@ -517,6 +527,7 @@ fn stable_errors_have_exact_wire_names_unique_numbers_and_no_combined_codes() {
         StableErrorCode::ExecutionProgressRequired,
         StableErrorCode::ExecutionResourceBusy,
         StableErrorCode::ExecutionBudgetExceeded,
+        StableErrorCode::ConcurrentDelegationPending,
     ]);
     for code in StableErrorCode::ALL {
         assert_eq!(

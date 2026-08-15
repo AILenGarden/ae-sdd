@@ -187,6 +187,27 @@ impl RouteSelection {
     }
 }
 
+/// Authority state of the engineering route observed by the flow reducer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RouteLifecycle {
+    /// Requirement analysis has not produced a route candidate.
+    Pending,
+    /// A candidate exists but has not crossed the route-binding Gate.
+    Candidate(RouteSelection),
+    /// The route-binding Gate passed and downstream phases may consume it.
+    Frozen(RouteSelection),
+}
+
+impl RouteLifecycle {
+    /// Returns the candidate or frozen selection, if one exists.
+    pub const fn selection(self) -> Option<RouteSelection> {
+        match self {
+            Self::Pending => None,
+            Self::Candidate(selection) | Self::Frozen(selection) => Some(selection),
+        }
+    }
+}
+
 /// Compact approved-execution cursor bound to one flow environment.
 ///
 /// The cursor carries only the active slice ordinal, the approved queue
@@ -196,6 +217,7 @@ impl RouteSelection {
 pub struct ExecutionCursor {
     active_ordinal: u32,
     queue_digest: ArtifactDigest,
+    capsule_digest: ArtifactDigest,
     active_slice_status: ExecutionSliceStatus,
 }
 
@@ -204,11 +226,13 @@ impl ExecutionCursor {
     pub const fn new(
         active_ordinal: u32,
         queue_digest: ArtifactDigest,
+        capsule_digest: ArtifactDigest,
         active_slice_status: ExecutionSliceStatus,
     ) -> Self {
         Self {
             active_ordinal,
             queue_digest,
+            capsule_digest,
             active_slice_status,
         }
     }
@@ -221,6 +245,11 @@ impl ExecutionCursor {
     /// Returns the digest of the approved slice queue.
     pub const fn queue_digest(self) -> ArtifactDigest {
         self.queue_digest
+    }
+
+    /// Returns the digest of the approved execution capsule generation.
+    pub const fn capsule_digest(self) -> ArtifactDigest {
+        self.capsule_digest
     }
 
     /// Returns the machine status of the active slice.
@@ -328,7 +357,7 @@ pub struct FlowEnvironment {
     event_store_id: EventStoreId,
     policy_digest: PolicyDigest,
     input_fingerprint: InputFingerprint,
-    route: RouteSelection,
+    route: RouteLifecycle,
     execution_cursor: Option<ExecutionCursor>,
 }
 
@@ -337,7 +366,7 @@ impl FlowEnvironment {
     pub fn new(
         event_store_id: EventStoreId,
         input_fingerprint: InputFingerprint,
-        route: RouteSelection,
+        route: RouteLifecycle,
     ) -> Self {
         Self {
             event_store_id,
@@ -369,8 +398,8 @@ impl FlowEnvironment {
         self.input_fingerprint
     }
 
-    /// Returns the selected route.
-    pub const fn route(self) -> RouteSelection {
+    /// Returns the route authority lifecycle.
+    pub const fn route(self) -> RouteLifecycle {
         self.route
     }
 
@@ -465,6 +494,9 @@ pub enum NextAction {
     ExecuteApprovedSlice {
         active_ordinal: u32,
         queue_digest: ArtifactDigest,
+        capsule_digest: ArtifactDigest,
+        active_slice_status: ExecutionSliceStatus,
+        next_slice_transition: ExecutionSliceStatus,
     },
     /// Finalize the execution evidence ledger for the verified implementation.
     FinalizeExecutionEvidence,

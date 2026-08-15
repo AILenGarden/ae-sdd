@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use ae_sdd_domain::ResultDigest;
 use ae_sdd_operations::Confirmation;
 use serde_json::{Map, Value};
 
@@ -58,6 +59,10 @@ pub(crate) fn approved_execution_plan(
         .get("executionPlan")
         .cloned()
         .ok_or("executionPlan does not exist")?;
+    if plan.get("approved").and_then(Value::as_bool) != Some(false) {
+        return Err("executionPlan is not awaiting approval");
+    }
+    let binding = execution_plan_confirmation_binding(&plan)?;
     let object = plan
         .as_object_mut()
         .ok_or("executionPlan must be an object")?;
@@ -70,6 +75,10 @@ pub(crate) fn approved_execution_plan(
         object.get("verification"),
         "executionPlan verification is required",
     )?;
+    let expected_confirmation = format!("plan:{binding}");
+    if confirmation.confirmation_id() != expected_confirmation {
+        return Err("execution plan approval confirmation does not bind the current plan");
+    }
     object.insert("approved".to_owned(), Value::Bool(true));
     object.insert(
         "approvedAt".to_owned(),
@@ -80,6 +89,12 @@ pub(crate) fn approved_execution_plan(
         Value::String(confirmation.approved_by().to_owned()),
     );
     Ok(plan)
+}
+
+fn execution_plan_confirmation_binding(plan: &Value) -> Result<String, &'static str> {
+    let bytes = serde_json::to_vec(plan)
+        .map_err(|_| "executionPlan could not be canonicalized for approval")?;
+    Ok(ResultDigest::digest(bytes).to_string())
 }
 
 fn required_trimmed_string(

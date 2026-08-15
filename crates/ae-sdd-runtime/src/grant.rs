@@ -176,6 +176,21 @@ fn root_delegation_envelope() -> ScopedGrant {
     ScopedGrant::new(operations, capabilities, [ProjectPathScope::ProjectRoot])
 }
 
+pub(crate) fn semantic_series_grant() -> ScopedGrantWire {
+    let operations = OperationName::ALL
+        .into_iter()
+        .filter(|operation| role_may_receive(WireAgentRole::Series, *operation))
+        .filter_map(|operation| OperationId::new(operation.as_str()).ok());
+    let capabilities = REVIEW_SPECIALTY_CAPABILITIES
+        .into_iter()
+        .filter_map(|capability| CapabilityId::new(capability).ok());
+    ScopedGrantWire::from_domain(&ScopedGrant::new(
+        operations,
+        capabilities,
+        [ProjectPathScope::ProjectRoot],
+    ))
+}
+
 pub(crate) fn validate_child_grant(
     parent: &ScopedGrant,
     child_role: WireAgentRole,

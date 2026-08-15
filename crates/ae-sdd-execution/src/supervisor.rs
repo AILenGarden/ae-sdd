@@ -27,8 +27,11 @@ use std::collections::BTreeSet;
 
 use ae_sdd_contracts::execution_runtime::{ExecutionBudgetsV1, ExecutionSliceStatus};
 use ae_sdd_domain::{ArtifactDigest, ArtifactRef, ProjectRelativePath};
+use serde::{Deserialize, Serialize};
 
-use crate::error::{ExecutionSupervisorError, ExecutionSupervisorFault};
+use crate::error::{
+    ExecutionSupervisorAfterImageError, ExecutionSupervisorError, ExecutionSupervisorFault,
+};
 use crate::policy::{
     ExecutionAllowanceV1, ExecutionDecisionV1, ExecutionOutputDirectiveV1, ExecutionProgressKindV1,
 };
@@ -44,7 +47,8 @@ pub enum FocusedTestOutcomeV1 {
 }
 
 /// Supervisor-tracked focused verification state for the active slice.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FocusedTestStateV1 {
     /// The focused verification has not run yet.
     Never,
@@ -160,6 +164,106 @@ pub struct ExecutionSupervisorCheckpointV1 {
     last_patch_digest: Option<ArtifactDigest>,
     last_evidence_digest: Option<ArtifactDigest>,
     last_blocker: Option<(Box<str>, ArtifactDigest)>,
+}
+
+/// Validated wire after-image for durably repairing one Hook execution
+/// transition. Domain paths and digests are encoded as canonical strings and
+/// are revalidated when converted back into a checkpoint.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionSupervisorAfterImageV1 {
+    slice_status: ExecutionSliceStatus,
+    refactor_cycle: RefactorCycleV1,
+    focused_test: FocusedTestStateV1,
+    budgets: ExecutionBudgetsV1,
+    no_progress_batches: u8,
+    batch_calls: u8,
+    batch_source_bytes: u64,
+    batch_files: Vec<Box<str>>,
+    last_patch_digest: Option<Box<str>>,
+    last_evidence_digest: Option<Box<str>>,
+    last_blocker: Option<(Box<str>, Box<str>)>,
+}
+
+impl From<&ExecutionSupervisorCheckpointV1> for ExecutionSupervisorAfterImageV1 {
+    fn from(checkpoint: &ExecutionSupervisorCheckpointV1) -> Self {
+        Self {
+            slice_status: checkpoint.slice_status,
+            refactor_cycle: checkpoint.refactor_cycle,
+            focused_test: checkpoint.focused_test,
+            budgets: checkpoint.budgets,
+            no_progress_batches: checkpoint.no_progress_batches,
+            batch_calls: checkpoint.batch_calls,
+            batch_source_bytes: checkpoint.batch_source_bytes,
+            batch_files: checkpoint
+                .batch_files
+                .iter()
+                .map(|path| Box::<str>::from(path.as_str()))
+                .collect(),
+            last_patch_digest: checkpoint
+                .last_patch_digest
+                .map(|digest| digest.to_string().into_boxed_str()),
+            last_evidence_digest: checkpoint
+                .last_evidence_digest
+                .map(|digest| digest.to_string().into_boxed_str()),
+            last_blocker: checkpoint
+                .last_blocker
+                .as_ref()
+                .map(|(code, digest)| (code.clone(), digest.to_string().into_boxed_str())),
+        }
+    }
+}
+
+impl TryFrom<ExecutionSupervisorAfterImageV1> for ExecutionSupervisorCheckpointV1 {
+    type Error = ExecutionSupervisorAfterImageError;
+
+    fn try_from(after_image: ExecutionSupervisorAfterImageV1) -> Result<Self, Self::Error> {
+        let encoded_batch_file_count = after_image.batch_files.len();
+        let batch_files = after_image
+            .batch_files
+            .into_iter()
+            .map(ProjectRelativePath::new)
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|_| ExecutionSupervisorAfterImageError::InvalidProjectRelativePath)?;
+        if batch_files.len() != encoded_batch_file_count
+            || batch_files.len() > usize::from(after_image.budgets.max_source_files_per_batch())
+            || after_image.batch_source_bytes
+                > u64::from(after_image.budgets.max_source_read_bytes_per_batch())
+            || after_image.batch_calls >= after_image.budgets.inspection_calls_per_batch()
+            || after_image.no_progress_batches > after_image.budgets.max_no_progress_batches()
+            || (after_image.batch_calls == 0
+                && (after_image.batch_source_bytes != 0 || !batch_files.is_empty()))
+        {
+            return Err(ExecutionSupervisorAfterImageError::InvalidCheckpointInvariant);
+        }
+        let parse_digest = |value: Box<str>| {
+            value
+                .parse::<ArtifactDigest>()
+                .map_err(|_| ExecutionSupervisorAfterImageError::InvalidArtifactDigest)
+        };
+        Ok(Self {
+            slice_status: after_image.slice_status,
+            refactor_cycle: after_image.refactor_cycle,
+            focused_test: after_image.focused_test,
+            budgets: after_image.budgets,
+            no_progress_batches: after_image.no_progress_batches,
+            batch_calls: after_image.batch_calls,
+            batch_source_bytes: after_image.batch_source_bytes,
+            batch_files,
+            last_patch_digest: after_image
+                .last_patch_digest
+                .map(parse_digest)
+                .transpose()?,
+            last_evidence_digest: after_image
+                .last_evidence_digest
+                .map(parse_digest)
+                .transpose()?,
+            last_blocker: after_image
+                .last_blocker
+                .map(|(code, digest)| Ok((code, parse_digest(digest)?)))
+                .transpose()?,
+        })
+    }
 }
 
 impl ExecutionSupervisorCheckpointV1 {
@@ -554,5 +658,74 @@ mod tests {
         assert_eq!(checkpoint.last_patch_digest(), None);
         assert_eq!(checkpoint.last_evidence_digest(), None);
         assert_eq!(checkpoint.last_blocker(), None);
+    }
+
+    #[test]
+    fn checkpoint_after_image_round_trips_for_durable_hook_repair() {
+        let checkpoint = ExecutionSupervisorCheckpointV1 {
+            slice_status: ExecutionSliceStatus::Blocked,
+            refactor_cycle: RefactorCycleV1::Open,
+            focused_test: FocusedTestStateV1::Green,
+            budgets: ExecutionBudgetsV1::default(),
+            no_progress_batches: 2,
+            batch_calls: 3,
+            batch_source_bytes: 4_096,
+            batch_files: [
+                ProjectRelativePath::new("crates/ae-sdd-runtime/src/service.rs")
+                    .expect("valid source path"),
+                ProjectRelativePath::new("crates/ae-sdd-runtime/src/ports.rs")
+                    .expect("valid source path"),
+            ]
+            .into_iter()
+            .collect(),
+            last_patch_digest: Some(ArtifactDigest::digest(b"patch")),
+            last_evidence_digest: Some(ArtifactDigest::digest(b"evidence")),
+            last_blocker: Some((
+                Box::from("WAITING_FOR_REVIEW"),
+                ArtifactDigest::digest(b"blocker"),
+            )),
+        };
+        let wire = serde_json::to_value(ExecutionSupervisorAfterImageV1::from(&checkpoint))
+            .expect("after-image serializes");
+        let after_image: ExecutionSupervisorAfterImageV1 =
+            serde_json::from_value(wire).expect("after-image deserializes");
+        let restored =
+            ExecutionSupervisorCheckpointV1::try_from(after_image).expect("after-image validates");
+        assert_eq!(restored, checkpoint);
+    }
+
+    #[test]
+    fn checkpoint_after_image_revalidates_domain_strings() {
+        let checkpoint = ExecutionSupervisorCheckpointV1::new(
+            ExecutionSliceStatus::Running,
+            ExecutionBudgetsV1::default(),
+        );
+        let mut wire = serde_json::to_value(ExecutionSupervisorAfterImageV1::from(&checkpoint))
+            .expect("after-image serializes");
+        wire["batchFiles"] = serde_json::json!(["../escape"]);
+        let after_image: ExecutionSupervisorAfterImageV1 =
+            serde_json::from_value(wire).expect("wire shape remains valid");
+        assert_eq!(
+            ExecutionSupervisorCheckpointV1::try_from(after_image),
+            Err(ExecutionSupervisorAfterImageError::InvalidProjectRelativePath)
+        );
+    }
+
+    #[test]
+    fn checkpoint_after_image_rejects_impossible_budget_counters() {
+        let checkpoint = ExecutionSupervisorCheckpointV1::new(
+            ExecutionSliceStatus::Running,
+            ExecutionBudgetsV1::default(),
+        );
+        let mut wire = serde_json::to_value(ExecutionSupervisorAfterImageV1::from(&checkpoint))
+            .expect("after-image serializes");
+        wire["batchCalls"] =
+            serde_json::json!(ExecutionBudgetsV1::default().inspection_calls_per_batch());
+        let after_image: ExecutionSupervisorAfterImageV1 =
+            serde_json::from_value(wire).expect("wire shape remains valid");
+        assert_eq!(
+            ExecutionSupervisorCheckpointV1::try_from(after_image),
+            Err(ExecutionSupervisorAfterImageError::InvalidCheckpointInvariant)
+        );
     }
 }

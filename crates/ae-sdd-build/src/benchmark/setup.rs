@@ -443,6 +443,7 @@ impl Drop for BenchmarkWorkspace {
     }
 }
 
+#[cfg(test)]
 pub(super) fn authoritative_state(policy_digest: &str) -> Result<(Value, String), BenchmarkError> {
     authoritative_state_at(policy_digest, 1)
 }

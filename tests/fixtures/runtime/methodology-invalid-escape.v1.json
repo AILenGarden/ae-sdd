@@ -4,16 +4,27 @@
   "entries": [
     {
       "skillId": "phase1-design.escape",
-      "seriesKind": "escape",
+      "seriesKind": "requirement-analysis",
+      "activity": "execute",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "../outside.md",
       "fallbackRef": null,
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "escape" }],
-      "requiredInputs": ["requested-intent"],
-      "deliverableKinds": ["invalid"],
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "escape"
+        }
+      ],
+      "requiredInputs": [
+        "requested-intent"
+      ],
+      "deliverableKinds": [
+        "invalid"
+      ],
       "requiredGates": [],
       "toolDependencies": []
     }

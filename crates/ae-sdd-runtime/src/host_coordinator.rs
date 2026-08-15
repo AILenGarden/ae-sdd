@@ -24,8 +24,8 @@ use uuid::Uuid;
 
 use crate::{
     ContextProjectResult, ContextProjectionInput, DelegationCreatePayload, DelegationReportPayload,
-    DelegationResult, HostAckPayload, HostActionPayload, HostPressurePayload, PersistencePort,
-    RuntimeError, RuntimeResult, WireAgentRole,
+    DelegationResult, HostAckPayload, HostActionDeliveryPayload, HostActionPayload,
+    HostPressurePayload, PersistencePort, RuntimeError, RuntimeResult, WireAgentRole,
 };
 
 /// Durable Host action queue with exact ACK correlation.
@@ -36,7 +36,15 @@ pub struct HostCoordinator {
     /// posts errands and learns what a host could actually do from the ACK
     /// outcome.
     registrations: Mutex<BTreeSet<String>>,
+    /// Adapter IDs that registered during the current boot.
+    ///
+    /// A durable row in `registrations` proves an adapter was once addressable;
+    /// only a `register` call this boot proves a Host is attached now. Delivery
+    /// targets are chosen from this set so a stale row cannot capture routing.
+    attached: Mutex<BTreeSet<String>>,
     queues: Mutex<BTreeMap<String, VecDeque<HostActionPayload>>>,
+    /// Raw child claims exist only for the current boot and only until Host ACK.
+    claims: Mutex<BTreeMap<String, String>>,
     acknowledgements: Mutex<BTreeMap<String, HostAckPayload>>,
     command_sequences: Mutex<BTreeMap<String, u64>>,
 }
@@ -48,7 +56,9 @@ impl HostCoordinator {
         Self {
             persistence,
             registrations: Mutex::new(BTreeSet::new()),
+            attached: Mutex::new(BTreeSet::new()),
             queues: Mutex::new(BTreeMap::new()),
+            claims: Mutex::new(BTreeMap::new()),
             acknowledgements: Mutex::new(BTreeMap::new()),
             command_sequences: Mutex::new(BTreeMap::new()),
         }
@@ -111,6 +121,7 @@ impl HostCoordinator {
         *self.acknowledgements.lock().map_err(lock_error)? = acknowledgements;
         *self.command_sequences.lock().map_err(lock_error)? = command_sequences;
         *self.queues.lock().map_err(lock_error)? = queues;
+        self.claims.lock().map_err(lock_error)?.clear();
         Ok(())
     }
 
@@ -127,6 +138,10 @@ impl HostCoordinator {
             ));
         }
         self.registrations
+            .lock()
+            .map_err(lock_error)?
+            .insert(adapter_id.to_owned());
+        self.attached
             .lock()
             .map_err(lock_error)?
             .insert(adapter_id.to_owned());
@@ -156,6 +171,39 @@ impl HostCoordinator {
                 format!("host adapter {adapter_id} is not registered"),
             ))
         }
+    }
+
+    /// Selects the daemon-owned recipient for a delegation.
+    ///
+    /// Codex is the policy default when present. A deployment with exactly one
+    /// attached Host is also unambiguous; every other shape fails closed.
+    ///
+    /// Candidates are the Hosts attached during this boot, not every durable
+    /// row. A Host re-registers after each daemon start, so a recovered row
+    /// whose process is gone names an unreachable recipient: selecting it would
+    /// queue work nobody drains, and a stale `codex` row would do so
+    /// permanently while shadowing every live Host.
+    pub fn delegation_adapter(&self) -> RuntimeResult<String> {
+        let registrations = self.attached.lock().map_err(lock_error)?;
+        if registrations.contains("codex") {
+            return Ok("codex".to_owned());
+        }
+        if registrations.len() == 1 {
+            return registrations.iter().next().cloned().ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::HostCapabilityUnsupported,
+                    "no Host adapter is attached for delegation",
+                )
+            });
+        }
+        Err(RuntimeError::new(
+            StableErrorCode::HostCapabilityUnsupported,
+            if registrations.is_empty() {
+                "no Host adapter is attached for delegation"
+            } else {
+                "several Host adapters are attached and policy selected none"
+            },
+        ))
     }
 
     /// Creates and durably enqueues a correlated host action.
@@ -296,18 +344,55 @@ impl HostCoordinator {
             return Ok(());
         }
         queue.push_back(action.clone());
-        queue.make_contiguous().sort_by_key(|queued| queued.command_seq);
+        queue
+            .make_contiguous()
+            .sort_by_key(|queued| queued.command_seq);
         Ok(())
     }
 
     /// Returns the oldest unacknowledged action without consuming it.
-    pub fn next(&self, adapter_id: &str) -> RuntimeResult<Option<HostActionPayload>> {
-        Ok(self
+    pub fn next(&self, adapter_id: &str) -> RuntimeResult<Option<HostActionDeliveryPayload>> {
+        let action = self
             .queues
             .lock()
             .map_err(lock_error)?
             .get(adapter_id)
-            .and_then(|queue| queue.front().cloned()))
+            .and_then(|queue| queue.front().cloned());
+        let Some(action) = action else {
+            return Ok(None);
+        };
+        let claim_id = self
+            .claims
+            .lock()
+            .map_err(lock_error)?
+            .get(&action.action_id)
+            .cloned();
+        if action.kind == "create" && claim_id.is_none() {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "pending create action has no boot-local child claim",
+            ));
+        }
+        Ok(Some(HostActionDeliveryPayload { action, claim_id }))
+    }
+
+    /// Attaches a raw child claim to a durable create action for Host delivery.
+    ///
+    /// The claim map is deliberately not recovered or persisted. Boot rotation
+    /// invalidates undelivered child bootstrap authority fail-closed.
+    pub fn attach_claim(&self, action_id: &str, claim_id: String) -> RuntimeResult<()> {
+        let action = self.action(action_id)?;
+        if action.kind != "create" {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "child claim can attach only to a create action",
+            ));
+        }
+        self.claims
+            .lock()
+            .map_err(lock_error)?
+            .insert(action_id.to_owned(), claim_id);
+        Ok(())
     }
 
     /// Records one ACK idempotently after exact action/adapter/sequence correlation.
@@ -332,10 +417,26 @@ impl HostCoordinator {
             ));
         }
         let action = self.action(&ack.action_id)?;
+        if !matches!(ack.outcome.as_str(), "accepted" | "rejected") {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "unknown host ACK outcome",
+            ));
+        }
         if action.adapter_id != adapter_id || action.command_seq != ack.command_seq {
             return Err(RuntimeError::new(
                 StableErrorCode::DelegationAttestationFailed,
                 "host ACK does not correlate to adapter/action/command sequence",
+            ));
+        }
+        if action.kind == "create"
+            && ack.outcome == "accepted"
+            && (ack.host_task_id.as_deref().is_none_or(str::is_empty)
+                || ack.session_id.as_deref().is_none_or(str::is_empty))
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "accepted create ACK requires hostTaskId and child sessionId",
             ));
         }
         // One action carries at most one ACK. `recover` enforces this over the
@@ -357,6 +458,10 @@ impl HostCoordinator {
             .lock()
             .map_err(lock_error)?
             .insert(ack.ack_id.clone(), ack);
+        self.claims
+            .lock()
+            .map_err(lock_error)?
+            .remove(&action.action_id);
         if let Some(queue) = self.queues.lock().map_err(lock_error)?.get_mut(adapter_id)
             && queue
                 .front()
@@ -400,9 +505,8 @@ impl HostCoordinator {
             .peekable();
         let mut fallback = None;
         for ack in candidates.by_ref() {
-            let usable = ack.outcome == "accepted"
-                && ack.host_task_id.is_some()
-                && ack.session_id.is_some();
+            let usable =
+                ack.outcome == "accepted" && ack.host_task_id.is_some() && ack.session_id.is_some();
             if usable {
                 return Ok(Some(ack.clone()));
             }
@@ -444,10 +548,62 @@ mod tests {
             Uuid::from_u128(7),
         )));
         let coordinator = HostCoordinator::new(persistence);
+        coordinator.register("host-a").expect("adapter registers");
         coordinator
-            .register("host-a")
-            .expect("adapter registers");
+    }
+
+    /// A durable row proves an adapter was once addressable, never that a Host
+    /// is attached right now. A Host must re-register after every daemon boot,
+    /// so recovery alone must not make an adapter eligible to receive work --
+    /// otherwise one dead row captures delegation routing forever and every
+    /// live Host becomes unreachable.
+    #[test]
+    fn a_recovered_adapter_is_addressable_but_not_delegable() {
+        let persistence = Arc::new(MemoryPersistence::new(EventStoreId::from_uuid(
+            Uuid::from_u128(12),
+        )));
+        persistence
+            .store_record(
+                "host-adapter/v1",
+                "codex",
+                &json!({"schemaVersion":"host-adapter/v1"}),
+            )
+            .expect("dead codex row stores");
+
+        let coordinator = HostCoordinator::new(persistence);
+        coordinator.recover().expect("dead row recovers");
+
         coordinator
+            .require_registered("codex")
+            .expect("a recovered adapter stays addressable for queue continuity");
+        assert!(
+            coordinator.delegation_adapter().is_err(),
+            "a recovered-only adapter must not receive delegations: no Host is attached"
+        );
+
+        coordinator
+            .register("claude-code")
+            .expect("a live Host attaches");
+        assert_eq!(
+            coordinator
+                .delegation_adapter()
+                .expect("the live Host is selectable"),
+            "claude-code",
+            "the only attached Host wins even while a dead codex row is recovered"
+        );
+    }
+
+    /// Codex keeps its policy default, but only when actually attached.
+    #[test]
+    fn attached_codex_remains_the_policy_default() {
+        let coordinator = coordinator();
+        coordinator.register("codex").expect("codex attaches");
+
+        assert_eq!(
+            coordinator.delegation_adapter().expect("codex is selected"),
+            "codex",
+            "an attached codex stays the default among several live Hosts"
+        );
     }
 
     /// A row written before capabilities were dropped still carries them. All
@@ -498,7 +654,10 @@ mod tests {
             )
             .expect("action stages");
 
-        assert_eq!(action.command_seq, 1, "staging assigns the command sequence");
+        assert_eq!(
+            action.command_seq, 1,
+            "staging assigns the command sequence"
+        );
         assert!(
             coordinator.next("host-a").expect("queue reads").is_none(),
             "a staged action must not be visible before its commit succeeds"
@@ -526,14 +685,20 @@ mod tests {
             )
             .expect("action stages");
 
+        coordinator
+            .attach_claim("action-1", "claim-1".to_owned())
+            .expect("create claim attaches");
         coordinator.publish(&action).expect("first publish");
-        coordinator.publish(&action).expect("republish is tolerated");
+        coordinator
+            .publish(&action)
+            .expect("republish is tolerated");
 
         let offered = coordinator
             .next("host-a")
             .expect("queue reads")
             .expect("the published action is offered");
-        assert_eq!(offered.action_id, "action-1");
+        assert_eq!(offered.action.action_id, "action-1");
+        assert_eq!(offered.claim_id.as_deref(), Some("claim-1"));
 
         coordinator
             .acknowledge(
@@ -584,7 +749,7 @@ mod tests {
         };
 
         coordinator
-            .acknowledge("host-a", ack("ack-first", None))
+            .acknowledge("host-a", ack("ack-first", Some("task-1")))
             .expect("the first ack is recorded");
         let error = coordinator
             .acknowledge("host-a", ack("ack-second", Some("task-1")))
@@ -592,7 +757,7 @@ mod tests {
         assert_eq!(error.code(), StableErrorCode::IdempotencyKeyReused);
 
         coordinator
-            .acknowledge("host-a", ack("ack-first", None))
+            .acknowledge("host-a", ack("ack-first", Some("task-1")))
             .expect("replaying the same ack stays idempotent");
         assert_eq!(
             coordinator
@@ -656,5 +821,39 @@ mod tests {
             selected.ack_id, "zzzz-last",
             "the usable ack must win even though its identity sorts last"
         );
+    }
+
+    /// `FlowRunId` is specified as a time-ordered UUID v7 (DR decision 1), so the
+    /// feature has to be reachable from the layer that is allowed a clock at all.
+    /// The second half pins the accepted cost: v7 orders by millisecond, so ids
+    /// minted inside one millisecond are *not* guaranteed to sort monotonically
+    /// and callers must order by `eventSeq` instead of by identity.
+    #[test]
+    fn uuid_v7_is_available_and_orders_across_milliseconds_only() {
+        let first = Uuid::now_v7();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let later = Uuid::now_v7();
+
+        assert_eq!(first.get_version_num(), 7, "must mint v7, not v4");
+        assert!(
+            first.to_string() < later.to_string(),
+            "v7 must sort by time across milliseconds: {first} !< {later}"
+        );
+
+        let burst: Vec<String> = (0..16).map(|_| Uuid::now_v7().to_string()).collect();
+        let mut sorted = burst.clone();
+        sorted.sort();
+        assert_eq!(
+            burst.len(),
+            burst
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            "same-millisecond ids must still be unique"
+        );
+        // Deliberately no assertion that `burst == sorted`: within one millisecond
+        // the random tail decides order. Asserting monotonicity here would encode
+        // a guarantee v7 does not make.
+        let _ = sorted;
     }
 }

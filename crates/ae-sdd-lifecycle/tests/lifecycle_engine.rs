@@ -626,11 +626,14 @@ fn gate_evidence_is_required_for_policy_gates() {
 
 #[test]
 fn daemon_gate_pass_satisfies_policy_without_file_evidence() {
+    // RA-first: RouteSelected is now the second step (after RequirementAnalyzed)
+    // and requires only G-RA-FLOW-VIOLATION. The transition starts from
+    // RequirementAnalyzed, not Initialized.
     let input = input(
         LifecycleCommand::Transition {
             target_phase: ProcessPhase::RouteSelected,
         },
-        ProcessPhase::Initialized,
+        ProcessPhase::RequirementAnalyzed,
         None,
         AgentRole::Root,
         WorkScale::Large,
@@ -641,7 +644,9 @@ fn daemon_gate_pass_satisfies_policy_without_file_evidence() {
         Vec::new(),
         Vec::new(),
     )
-    .with_passed_gate_ids(vec![VerificationId::new("G-00").expect("Gate id")])
+    .with_passed_gate_ids(vec![
+        VerificationId::new("G-RA-FLOW-VIOLATION").expect("Gate id"),
+    ])
     .expect("bounded daemon Gate pass");
 
     assert_eq!(

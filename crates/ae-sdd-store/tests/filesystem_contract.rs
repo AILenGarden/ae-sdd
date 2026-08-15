@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use ae_sdd_store::{
-    CrossProcessLockPort, DurableFileSystem, InMemoryFileSystem, StdDurableFileSystem, StoreError,
+    CrossProcessLockPort, DurableFileSystem, InMemoryFileSystem, StdCrossProcessLock,
+    StdDurableFileSystem, StoreError,
 };
 
 #[test]
@@ -52,6 +53,24 @@ fn in_memory_filesystem_implements_durable_io_and_exclusive_locking() {
         .lock_exclusive(&root.join("state.lock"))
         .expect("dropping the guard releases the lock");
     drop(reacquired);
+
+    let nonblocking = filesystem
+        .try_lock_exclusive(&root.join("state.lock"))
+        .expect("nonblocking lock attempt succeeds")
+        .expect("unheld in-memory lock is acquired");
+    assert!(
+        filesystem
+            .try_lock_exclusive(&root.join("state.lock"))
+            .expect("contended nonblocking lock is a normal outcome")
+            .is_none()
+    );
+    drop(nonblocking);
+    assert!(
+        filesystem
+            .try_lock_exclusive(&root.join("state.lock"))
+            .expect("released in-memory lock can be retried")
+            .is_some()
+    );
 }
 
 #[test]
@@ -96,5 +115,49 @@ fn standard_filesystem_round_trips_sorted_files_and_maps_io_errors() {
     assert!(matches!(
         filesystem.sync_directory(&temp.path().join("missing")),
         Err(StoreError::Io { .. })
+    ));
+    assert!(matches!(
+        filesystem.list_files(&first),
+        Err(StoreError::Io { path, .. }) if path == first
+    ));
+    assert!(matches!(
+        filesystem.create_dir_all(&first),
+        Err(StoreError::Io { path, .. }) if path == first
+    ));
+    assert!(matches!(
+        filesystem.write_atomic_durable(&data_dir, b"not-a-directory"),
+        Err(StoreError::Io { path, .. }) if path == data_dir
+    ));
+    assert!(matches!(
+        filesystem.remove_file_durable(&data_dir),
+        Err(StoreError::Io { path, .. }) if path == data_dir
+    ));
+}
+
+#[test]
+fn standard_nonblocking_lock_reports_contention_and_recovers_after_release() {
+    let temp = tempfile::tempdir().expect("temporary directory is created");
+    let lock = StdCrossProcessLock;
+    let path = temp.path().join("locks/state.lock");
+
+    let first = lock
+        .try_lock_exclusive(&path)
+        .expect("first nonblocking lock attempt succeeds")
+        .expect("unheld operating-system lock is acquired");
+    assert!(
+        lock.try_lock_exclusive(&path)
+            .expect("contention is reported without an I/O failure")
+            .is_none()
+    );
+    drop(first);
+    assert!(
+        lock.try_lock_exclusive(&path)
+            .expect("released operating-system lock can be retried")
+            .is_some()
+    );
+
+    assert!(matches!(
+        lock.try_lock_exclusive(temp.path()),
+        Err(StoreError::Io { path: failed, .. }) if failed == temp.path()
     ));
 }

@@ -4,12 +4,14 @@
 
 mod engine;
 mod parser;
+mod ra_specification;
 mod registry;
 mod report;
 mod scope;
 
 pub use engine::{ScanRequest, ScannerEngine};
 pub use parser::{ParseError, ParserKind, SourceParserRegistry};
+pub use ra_specification::{Applicability, RaLens, RaSpecificationIndex, parse_ra_specification};
 pub use registry::{SCANNER_COUNT, ScanScopeKind, ScannerId, ScannerRegistry, ScannerSpec};
 pub use report::{FindingSeverity, ScanError, ScanReport, ScanStatus, ScannerFinding};
 pub use scope::{

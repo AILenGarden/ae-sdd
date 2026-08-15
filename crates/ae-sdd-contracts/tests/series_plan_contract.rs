@@ -4,7 +4,7 @@ use ae_sdd_contracts::{
     IdempotencyKey, MethodologyRef, MethodologyResolution, MethodologyVariant, OverrideDisposition,
     OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode, RetryPolicy, RouteDecision,
     RouteDecisionId, RouteDisposition, SchemaVersion, SeriesId, SeriesInput, SeriesKind,
-    SeriesPlan, SeriesPlanDecision, SkillId,
+    SeriesPlan, SeriesPlanDecision, SkillId, SpecKind, TaskKind,
 };
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, DecisionDigest,
@@ -77,11 +77,13 @@ fn series_plan_round_trips_with_bounded_context_and_grant_contracts() {
         SchemaVersion::V1,
         RouteDecisionId::new("route-STORY-001-r7").expect("route id"),
         WorkItemId::new("STORY-001").expect("work item id"),
+        TaskKind::Implementation,
         WorkScale::Large,
         DesignRoute::Dr,
         RouteDisposition::Approved,
         vec![ReasonCode::new("route.large-dr").expect("reason")],
         vec![SeriesKind::new("requirement-analysis").expect("series kind")],
+        vec![SpecKind::RequirementAnalysis],
         InputFingerprint::digest(b"route input"),
         Some(ArtifactDigest::digest(b"approval binding")),
         DecisionDigest::digest(b"route decision"),

@@ -6,14 +6,14 @@ use ae_sdd_gates::{
     GateFreshnessSource, GateInputError, GateInputSource, PredicateEvidence, PredicateKey,
 };
 use ae_sdd_scanners::{
-    ScanReport, ScanRequest, ScannerEngine, ScannerId, ScannerRegistry, classify_formal_ra,
-    resolve_scan_scope,
+    ScanReport, ScanRequest, ScannerEngine, ScannerId, ScannerRegistry, resolve_scan_scope,
 };
 
 use super::{
     code, input_error,
     key::{GateContext, state_evidence},
     predicate::predicate_value,
+    ra_binding::{AuthoritativeRaPath, authoritative_ra_path},
 };
 
 pub(super) struct ProjectGateSource {
@@ -43,16 +43,17 @@ impl GateInputSource for ProjectGateSource {
     ) -> Result<ScanReport, GateInputError> {
         let paths = if is_ra_scanner(scanner) {
             let located = self.context.load_state().map_err(|_| input_error())?;
-            let relative = located
-                .value
-                .pointer("/documentPaths/RA")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| GateInputError::new(code("SCANNER_SCOPE_EMPTY"), false))?;
+            let relative = match authoritative_ra_path(&self.context.root, &located.value) {
+                AuthoritativeRaPath::Bound { relative, .. } => relative,
+                AuthoritativeRaPath::Missing => {
+                    return Err(GateInputError::new(code("SCANNER_SCOPE_EMPTY"), false));
+                }
+                AuthoritativeRaPath::Invalid | AuthoritativeRaPath::Escape => {
+                    return Err(GateInputError::new(code("SCANNER_SCOPE_FAILED"), false));
+                }
+            };
             let relative = ProjectRelativePath::new(relative.to_owned())
                 .map_err(|_| GateInputError::new(code("SCANNER_SCOPE_FAILED"), false))?;
-            if !classify_formal_ra(&relative).accepted && !is_route_ra_path(&relative) {
-                return Err(GateInputError::new(code("SCANNER_SCOPE_FAILED"), false));
-            }
             vec![relative]
         } else {
             let located = self.context.load_state().map_err(|_| input_error())?;
@@ -86,18 +87,6 @@ impl GateInputSource for ProjectGateSource {
     }
 }
 
-fn is_route_ra_path(path: &ProjectRelativePath) -> bool {
-    path.as_str()
-        .strip_prefix("ae-sdd-doc/RA/ROUTE-")
-        .and_then(|name| name.strip_suffix(".md"))
-        .is_some_and(|key| {
-            key.len() == 8
-                && key
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-}
-
 const fn is_ra_scanner(scanner: ScannerId) -> bool {
     matches!(
         scanner,
@@ -105,6 +94,9 @@ const fn is_ra_scanner(scanner: ScannerId) -> bool {
             | ScannerId::RaFlowViolation
             | ScannerId::RaDepth
             | ScannerId::RaImplementation
+            | ScannerId::RaCore
+            | ScannerId::RaApplicability
+            | ScannerId::RaClosure
     )
 }
 

@@ -166,6 +166,18 @@ pub enum BootstrapError {
         /// Digest projected by `runtime.status`, or a missing/invalid marker.
         observed: String,
     },
+    /// A ready daemon differs from the executable explicitly selected by the caller.
+    #[error(
+        "daemon executable mismatch: expected {expected}, observed {observed}",
+        expected = .expected.display(),
+        observed = .observed.display()
+    )]
+    DaemonExecutableMismatch {
+        /// Canonical path explicitly selected by the caller.
+        expected: PathBuf,
+        /// Canonical path reported by the ready daemon.
+        observed: PathBuf,
+    },
     /// An allowed workspace root exists but is not a directory.
     #[error("allowed workspace root is not a directory: {path}", path = .0.display())]
     AllowedRootNotDirectory(PathBuf),
@@ -289,6 +301,27 @@ fn ready_result(
     disposition: BootstrapDisposition,
     options: &BootstrapOptions,
 ) -> Result<BootstrapResult, BootstrapError> {
+    if let Some(selected) = &options.daemon {
+        let expected = std::fs::canonicalize(selected).map_err(|source| BootstrapError::Io {
+            action: "canonicalize explicitly selected daemon executable",
+            path: selected.clone(),
+            source,
+        })?;
+        let observed_value = status
+            .get("daemonPath")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing-daemon-path>");
+        let observed_raw = PathBuf::from(observed_value);
+        let observed =
+            std::fs::canonicalize(&observed_raw).map_err(|source| BootstrapError::Io {
+                action: "canonicalize ready daemon executable",
+                path: observed_raw,
+                source,
+            })?;
+        if expected != observed {
+            return Err(BootstrapError::DaemonExecutableMismatch { expected, observed });
+        }
+    }
     if let Some(expected) = &options.policy_digest {
         let observed = status.get("policyDigest").and_then(Value::as_str);
         if observed != Some(expected.as_str()) {
@@ -1073,6 +1106,33 @@ mod tests {
                 expected: value,
                 ..
             } if value == expected
+        ));
+    }
+
+    #[test]
+    fn explicit_daemon_path_mismatch_fails_closed() {
+        let temp = TestDirectory::new();
+        let selected = temp.0.join("selected-daemon");
+        let serving = temp.0.join("serving-daemon");
+        std::fs::write(&selected, b"selected").expect("selected daemon fixture");
+        std::fs::write(&serving, b"serving").expect("serving daemon fixture");
+        let options = BootstrapOptions {
+            daemon: Some(selected.clone()),
+            ..BootstrapOptions::default()
+        };
+
+        let error = ready_result(
+            json!({"daemonPath": serving}),
+            BootstrapDisposition::Reused,
+            &options,
+        )
+        .expect_err("a different serving executable must be rejected");
+
+        assert!(matches!(
+            error,
+            BootstrapError::DaemonExecutableMismatch { expected, observed }
+                if expected == std::fs::canonicalize(selected).unwrap()
+                    && observed == std::fs::canonicalize(serving).unwrap()
         ));
     }
 

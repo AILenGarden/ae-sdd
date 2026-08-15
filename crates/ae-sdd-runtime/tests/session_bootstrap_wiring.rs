@@ -11,7 +11,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use support::{Harness, params, register_workspace, session_params, stable_error};
+use support::{
+    Harness, create_root_series_delegation, params, register_workspace, session_params,
+    stable_error,
+};
 
 fn session_open_params(
     workspace: &WorkspaceResult,
@@ -328,25 +331,18 @@ fn a_new_host_event_refreshes_a_delegated_session_without_losing_attestation_or_
         "root-refresh-external",
         Some("WORK"),
     );
-    let mut create = session_params(
+    let created = create_root_series_delegation(
+        &harness,
+        &mut hook,
         &workspace,
         &root,
         "root-refresh-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":100_000,
-            "adapterId":"host-refresh",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "delegated-refresh-create",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("delegated-refresh-create".to_owned());
-    let created = harness.call(&mut hook, RpcMethod::DelegationCreate, create);
-    let delegation_id = created["result"]["delegationId"]
+    let delegation_id = created["delegationId"]
         .as_str()
         .unwrap_or_else(|| panic!("delegation.create failed: {created}"))
         .to_owned();
@@ -379,7 +375,7 @@ fn a_new_host_event_refreshes_a_delegated_session_without_losing_attestation_or_
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000000503",
+            "claimId":action["claimId"],
             "actionId":action["actionId"],
             "childSessionId":child_session_id,
             "expiresAtUnixMs":100_000
@@ -405,7 +401,6 @@ fn a_new_host_event_refreshes_a_delegated_session_without_losing_attestation_or_
         open.workspace_id = Some(workspace.workspace_id.clone());
         open.agent_id = Some("series-refresh-agent".to_owned());
         open.session_id = Some(child_session_id.to_owned());
-        open.work_item_id = Some("WORK".to_owned());
         open.idempotency_key = Some(key.to_owned());
         open
     };
@@ -485,28 +480,24 @@ fn delegated_session_survives_expired_attestation_ttl_while_within_delegation_de
         "root-attest-expiry-external",
         Some("WORK"),
     );
-    let mut create = session_params(
+    let created = create_root_series_delegation(
+        &harness,
+        &mut hook,
         &workspace,
         &root,
         "root-attest-expiry",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":1_000_000,
-            "adapterId":"host-attest-expiry",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "attest-expiry-create",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("attest-expiry-create".to_owned());
-    let created = harness.call(&mut hook, RpcMethod::DelegationCreate, create);
-    let delegation_id = created["result"]["delegationId"]
+    let delegation_id = created["delegationId"]
         .as_str()
         .unwrap_or_else(|| panic!("delegation.create failed: {created}"))
         .to_owned();
+    let delegation_deadline = created["deadlineUnixMs"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("delegation.create lacks deadline: {created}"));
 
     let action = harness.call(
         &mut host,
@@ -538,7 +529,7 @@ fn delegated_session_survives_expired_attestation_ttl_while_within_delegation_de
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000000603",
+            "claimId":action["claimId"],
             "actionId":action["actionId"],
             "childSessionId":child_session_id,
             "expiresAtUnixMs":100_000
@@ -613,7 +604,7 @@ fn delegated_session_survives_expired_attestation_ttl_while_within_delegation_de
 
     // Negative control: once the clock crosses the delegation deadline, the
     // reopened session must be rejected (the deadline upper bound still bites).
-    harness.clock.set(1_000_001);
+    harness.clock.set(delegation_deadline.saturating_add(1));
     let past_deadline = harness.call(
         &mut hook,
         RpcMethod::SessionOpen,
@@ -708,6 +699,237 @@ fn new_boot_reuses_session_id_but_issues_only_a_current_boot_capability() {
 
     assert_eq!(initial["sessionId"], reopened["sessionId"]);
     assert_ne!(initial["capabilityToken"], reopened["capabilityToken"]);
+}
+
+#[test]
+fn delegated_series_session_reattaches_after_daemon_restart() {
+    let first = Harness::new(RuntimeConfig::default());
+    let mut host = first.connection(ClientKind::HostAdapter);
+    let mut host_register = params(
+        json!({"adapterId":"restart-series-host","capabilities":["create","attest"]}),
+        1_000,
+    );
+    host_register.capability_token = Some(first.host_credential());
+    host_register.idempotency_key = Some("restart-series-host-register".to_owned());
+    assert!(
+        first
+            .call(&mut host, RpcMethod::HostRegister, host_register)
+            .get("result")
+            .is_some()
+    );
+
+    let mut hook = first.connection(ClientKind::Hook);
+    let workspace = register_workspace(&first, &mut hook, "restart-series");
+    let root = support::open_root_session(
+        &first,
+        &mut hook,
+        &workspace,
+        "restart-root-agent",
+        "restart-root-external",
+        Some("WORK"),
+    );
+    let created = create_root_series_delegation(
+        &first,
+        &mut hook,
+        &workspace,
+        &root,
+        "restart-root-agent",
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "restart-series-create",
+    );
+    let delegation_id = created["delegationId"]
+        .as_str()
+        .expect("delegation id")
+        .to_owned();
+    let action = first.call(
+        &mut host,
+        RpcMethod::HostActionNext,
+        params(json!({"adapterId":"restart-series-host"}), 1_000),
+    );
+    let action = &action["result"];
+    let child_session_id = "00000000-0000-0000-0000-000000000701";
+    let mut ack = params(
+        json!({"adapterId":"restart-series-host","ack":{"ackId":"00000000-0000-0000-0000-000000000702","actionId":action["actionId"],"commandSeq":action["commandSeq"],"outcome":"accepted","hostTaskId":"restart-series-task","sessionId":child_session_id}}),
+        1_000,
+    );
+    ack.idempotency_key = Some("restart-series-ack".to_owned());
+    assert!(
+        first
+            .call(&mut host, RpcMethod::HostActionAck, ack)
+            .get("result")
+            .is_some()
+    );
+    let mut accept = params(
+        json!({"delegationId":delegation_id,"claimId":action["claimId"],"actionId":action["actionId"],"childSessionId":child_session_id,"expiresAtUnixMs":900_000}),
+        1_000,
+    );
+    accept.workspace_id = Some(workspace.workspace_id.clone());
+    accept.idempotency_key = Some("restart-series-accept".to_owned());
+    assert!(
+        first
+            .call(&mut hook, RpcMethod::DelegationAccept, accept)
+            .get("result")
+            .is_some()
+    );
+
+    let mut mismatched_open = params(
+        json!({"externalKey":"restart-series-external","role":"series","engaged":false,"delegationId":delegation_id}),
+        1_000,
+    );
+    mismatched_open.workspace_id = Some(workspace.workspace_id.clone());
+    mismatched_open.agent_id = Some("restart-series-agent".to_owned());
+    mismatched_open.session_id = Some(child_session_id.to_owned());
+    mismatched_open.work_item_id = Some("OTHER-WORK".to_owned());
+    mismatched_open.idempotency_key = Some("restart-series-open-first".to_owned());
+    let rejected = first.call(&mut hook, RpcMethod::SessionOpen, mismatched_open);
+    assert_eq!(
+        stable_error(&rejected),
+        "DELEGATION_ATTESTATION_FAILED",
+        "an explicit child Work Item is only an equality assertion: {rejected}"
+    );
+    assert!(
+        first
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Session)
+            .expect("typed session snapshots after rejected open")
+            .into_iter()
+            .filter_map(|snapshot| snapshot.session)
+            .all(|session| session.session_id != child_session_id),
+        "a Work Item mismatch must fail before session identity mutation"
+    );
+
+    let mut open = params(
+        json!({"externalKey":"restart-series-external","role":"series","engaged":false,"delegationId":delegation_id}),
+        1_000,
+    );
+    open.workspace_id = Some(workspace.workspace_id.clone());
+    open.agent_id = Some("restart-series-agent".to_owned());
+    open.session_id = Some(child_session_id.to_owned());
+    open.idempotency_key = Some("restart-series-open-first".to_owned());
+    let first_open = first.call(&mut hook, RpcMethod::SessionOpen, open);
+    assert!(first_open.get("result").is_some(), "{first_open}");
+
+    let second = Harness::with_persistence(
+        RuntimeConfig::default(),
+        first.persistence.clone(),
+        12,
+        "restart-boot-token".to_owned(),
+    );
+    second.runtime.recover().expect("restart recovery");
+    let mut reopened = params(
+        json!({"externalKey":"restart-series-external","role":"series","engaged":false,"delegationId":delegation_id}),
+        1_000,
+    );
+    reopened.workspace_id = Some(workspace.workspace_id.clone());
+    reopened.agent_id = Some("restart-series-agent".to_owned());
+    reopened.session_id = Some(child_session_id.to_owned());
+    reopened.idempotency_key = Some("restart-series-open-after-restart".to_owned());
+    let response = second.call(
+        &mut second.connection(ClientKind::Hook),
+        RpcMethod::SessionOpen,
+        reopened,
+    );
+    assert!(
+        response.get("result").is_some(),
+        "series session should reattach after daemon restart: {response}"
+    );
+    assert_ne!(
+        first_open["result"]["capabilityToken"], response["result"]["capabilityToken"],
+        "reattachment must issue current-boot authority"
+    );
+    let durable = second
+        .persistence
+        .list_identity_snapshots(RuntimeIdentityKind::Session)
+        .expect("typed sessions after restart reattachment")
+        .into_iter()
+        .filter_map(|snapshot| snapshot.session)
+        .filter(|session| session.session_id == child_session_id)
+        .max_by_key(|session| session.updated_at_unix_ms)
+        .expect("reattached child session is durable");
+    assert_eq!(durable.current_work_item.as_deref(), Some("WORK"));
+
+    let mut wrong_session = params(
+        json!({"externalKey":"restart-series-external","role":"series","engaged":false,"delegationId":delegation_id}),
+        1_000,
+    );
+    wrong_session.workspace_id = Some(workspace.workspace_id.clone());
+    wrong_session.agent_id = Some("restart-series-agent".to_owned());
+    wrong_session.session_id = Some("00000000-0000-0000-0000-000000000703".to_owned());
+    wrong_session.work_item_id = Some("WORK".to_owned());
+    wrong_session.idempotency_key = Some("restart-series-open-wrong-session".to_owned());
+    assert_eq!(
+        stable_error(&second.call(
+            &mut second.connection(ClientKind::Hook),
+            RpcMethod::SessionOpen,
+            wrong_session,
+        )),
+        "DELEGATION_ATTESTATION_FAILED"
+    );
+
+    let mut missing_session = params(
+        json!({"externalKey":"restart-series-external","role":"series","engaged":false,"delegationId":delegation_id}),
+        1_000,
+    );
+    missing_session.workspace_id = Some(workspace.workspace_id.clone());
+    missing_session.agent_id = Some("restart-series-agent".to_owned());
+    missing_session.work_item_id = Some("WORK".to_owned());
+    missing_session.idempotency_key = Some("restart-series-open-missing-session".to_owned());
+    assert_eq!(
+        stable_error(&second.call(
+            &mut second.connection(ClientKind::Hook),
+            RpcMethod::SessionOpen,
+            missing_session,
+        )),
+        "DELEGATION_ATTESTATION_FAILED"
+    );
+
+    for (key, delegation) in [
+        (
+            "restart-series-open-wrong-delegation",
+            Some(Uuid::new_v4().to_string()),
+        ),
+        ("restart-series-open-missing-delegation", None),
+    ] {
+        let mut payload =
+            json!({"externalKey":"restart-series-external","role":"series","engaged":false});
+        if let Some(delegation) = delegation {
+            payload["delegationId"] = Value::String(delegation);
+        }
+        let mut wrong_delegation = params(payload, 1_000);
+        wrong_delegation.workspace_id = Some(workspace.workspace_id.clone());
+        wrong_delegation.agent_id = Some("restart-series-agent".to_owned());
+        wrong_delegation.session_id = Some(child_session_id.to_owned());
+        wrong_delegation.work_item_id = Some("WORK".to_owned());
+        wrong_delegation.idempotency_key = Some(key.to_owned());
+        assert_eq!(
+            stable_error(&second.call(
+                &mut second.connection(ClientKind::Hook),
+                RpcMethod::SessionOpen,
+                wrong_delegation,
+            )),
+            "DELEGATION_ATTESTATION_FAILED"
+        );
+    }
+
+    let mut wrong_agent = params(
+        json!({"externalKey":"restart-series-external","role":"series","engaged":false,"delegationId":delegation_id}),
+        1_000,
+    );
+    wrong_agent.workspace_id = Some(workspace.workspace_id.clone());
+    wrong_agent.agent_id = Some("competing-series-agent".to_owned());
+    wrong_agent.session_id = Some(child_session_id.to_owned());
+    wrong_agent.work_item_id = Some("WORK".to_owned());
+    wrong_agent.idempotency_key = Some("restart-series-open-wrong-agent".to_owned());
+    assert_eq!(
+        stable_error(&second.call(
+            &mut second.connection(ClientKind::Hook),
+            RpcMethod::SessionOpen,
+            wrong_agent,
+        )),
+        "TURN_IDENTITY_MISMATCH"
+    );
 }
 
 #[test]

@@ -6,7 +6,7 @@ use ae_sdd_domain::{
 };
 use ae_sdd_flow::{
     EventCursor, EventProvenance, FlowEnvironment, FlowError, FlowEvent, FlowEventKind, FlowInput,
-    FlowRuntime, FlowSnapshot, NextAction, RouteSelection, SupervisorFault,
+    FlowRuntime, FlowSnapshot, NextAction, RouteLifecycle, RouteSelection, SupervisorFault,
 };
 use ae_sdd_policy::{RequiredGate, TransitionPolicy};
 
@@ -30,9 +30,76 @@ fn custom_input(phase: ProcessPhase, scale: WorkScale, route: DesignRoute) -> Fl
         FlowEnvironment::new(
             support::event_store(),
             InputFingerprint::digest(b"work-item-input-v1"),
-            RouteSelection::new(scale, route),
+            RouteLifecycle::Frozen(RouteSelection::new(scale, route)),
         ),
     )
+}
+
+fn input_with_route_lifecycle(phase: ProcessPhase, route: RouteLifecycle) -> FlowInput {
+    FlowInput::new(
+        FlowSnapshot::new(phase, StateRevision::new(7), 0),
+        FlowEnvironment::new(
+            support::event_store(),
+            InputFingerprint::digest(b"work-item-input-v1"),
+            route,
+        ),
+    )
+}
+
+#[test]
+fn pending_route_cannot_cross_the_route_freeze_boundary() {
+    let initial = FlowRuntime::start(input_with_route_lifecycle(
+        ProcessPhase::RequirementAnalyzed,
+        RouteLifecycle::Pending,
+    ));
+
+    assert_eq!(
+        FlowRuntime::apply(
+            &initial,
+            &support::transition_request_to(1, AgentRole::Root, ProcessPhase::RouteSelected),
+        ),
+        Err(FlowError::RouteCandidateMissing {
+            target: ProcessPhase::RouteSelected,
+        })
+    );
+}
+
+#[test]
+fn frozen_route_can_cross_the_route_freeze_boundary() {
+    let initial = FlowRuntime::start(input_with_route_lifecycle(
+        ProcessPhase::RequirementAnalyzed,
+        RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
+    ));
+
+    let pending = FlowRuntime::apply(
+        &initial,
+        &support::transition_request_to(1, AgentRole::Root, ProcessPhase::RouteSelected),
+    )
+    .expect("an already frozen authoritative route can enter RouteSelected");
+
+    assert_eq!(
+        pending.pending_transition(),
+        Some(ProcessPhase::RouteSelected)
+    );
+    assert_eq!(pending.required_gates(), &[RequiredGate::GRaFlowViolation]);
+}
+
+#[test]
+fn candidate_route_cannot_enter_a_downstream_phase() {
+    let initial = FlowRuntime::start(input_with_route_lifecycle(
+        ProcessPhase::RouteSelected,
+        RouteLifecycle::Candidate(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
+    ));
+
+    assert_eq!(
+        FlowRuntime::apply(
+            &initial,
+            &support::transition_request_to(1, AgentRole::Root, ProcessPhase::StoryGenerated),
+        ),
+        Err(FlowError::RouteNotFrozen {
+            target: ProcessPhase::StoryGenerated,
+        })
+    );
 }
 
 #[test]
@@ -112,7 +179,7 @@ fn pending_gate_and_commit_invariants_reject_out_of_order_events() {
     assert!(matches!(
         FlowRuntime::apply(
             &pending,
-            &support::transition_request_to(2, AgentRole::Root, ProcessPhase::RequirementAnalyzed),
+            &support::transition_request_to(2, AgentRole::Root, ProcessPhase::RouteSelected),
         ),
         Err(FlowError::TransitionAlreadyPending { .. })
     ));
@@ -132,23 +199,40 @@ fn pending_gate_and_commit_invariants_reject_out_of_order_events() {
     assert!(matches!(
         FlowRuntime::apply(
             &pending,
-            &support::commit_to(2, 8, ProcessPhase::RequirementAnalyzed)
+            &support::commit_to(2, 8, ProcessPhase::RouteSelected)
         ),
         Err(FlowError::UnexpectedTransitionCommit { .. })
     ));
     assert_eq!(
         FlowRuntime::apply(&pending, &support::commit(2, 8)),
         Err(FlowError::TransitionNotReady {
-            target: ProcessPhase::RouteSelected,
+            target: ProcessPhase::RequirementAnalyzed,
         })
     );
 
     let ready = FlowRuntime::apply(&pending, &support::gate(2, GateOutcome::Pass))
-        .expect("required Gate passes");
+        .expect("first required Gate passes");
+    let ready = FlowRuntime::apply(
+        &ready,
+        &support::gate_for(3, RequiredGate::GRa2, GateOutcome::Pass),
+    )
+    .expect("G-RA-2 passes");
+    let ready = FlowRuntime::apply(
+        &ready,
+        &support::gate_for(4, RequiredGate::GRa3, GateOutcome::Pass),
+    )
+    .expect("G-RA-3 passes");
+    let ready = FlowRuntime::apply(
+        &ready,
+        &support::gate_for(5, RequiredGate::GRa4, GateOutcome::Pass),
+    )
+    .expect("G-RA-4 passes");
     assert!(matches!(
-        FlowRuntime::apply(&ready, &support::commit(3, 7)),
+        FlowRuntime::apply(&ready, &support::commit(6, 7)),
         Err(FlowError::NonMonotonicStateRevision { .. })
     ));
+    FlowRuntime::apply(&ready, &support::commit(7, 8))
+        .expect("complete Gate set authorizes the transition commit");
 
     let overflow_start = FlowRuntime::start(support::input_with_corrections(u64::MAX));
     let overflow_pending = FlowRuntime::apply(
@@ -286,9 +370,10 @@ fn decision_digest_handles_every_phase_route_scale_fault_and_denial_shape() {
             custom_input(ProcessPhase::DrGenerated, WorkScale::Large, DesignRoute::Dr),
             ProcessPhase::TestcaseGenerated,
         ),
+        // RA-first: Initialized -> RouteSelected is now illegal (RA must run first).
         (
             custom_input(ProcessPhase::Initialized, WorkScale::Large, DesignRoute::Dr),
-            ProcessPhase::RequirementAnalyzed,
+            ProcessPhase::RouteSelected,
         ),
         (
             FlowInput::new(

@@ -197,7 +197,11 @@ impl RuntimeService {
         );
         let context = Arc::new(ContextCache::new(config.max_context_projection_bytes));
         let host = Arc::new(HostCoordinator::new(Arc::clone(&persistence)));
-        let delegation = DelegationSupervisor::new(Arc::clone(&persistence), Arc::clone(&host));
+        let delegation = DelegationSupervisor::new(
+            Arc::clone(&persistence),
+            Arc::clone(&host),
+            Arc::clone(&clock),
+        );
         let flow = FlowSupervisor::new(Arc::clone(&persistence));
         Self {
             config,
@@ -264,6 +268,9 @@ impl RuntimeService {
         state.jobs.clear();
         state.job_queue.clear();
         state.execution_bindings.clear();
+        // §9.4: rebuild the host-execution binding ledger from durable rows so
+        // a daemon restart observes the same liveness state it left behind.
+        self.delegation.bindings().recover(&*self.persistence)?;
         for snapshot in workspace_snapshots {
             let workspace = snapshot.workspace;
             let result = WorkspaceResult {
@@ -595,7 +602,10 @@ impl RuntimeService {
             let response = self.handshake(&handshake)?;
             connection.handshaken = true;
             connection.client_kind = Some(handshake.client_kind);
-            connection.adapter_id = handshake.adapter_id;
+            // `adapter_id` is decode-only here: a HostAdapter connection is
+            // attached solely by an explicit `host.register` call further
+            // down this dispatch, never as a side effect of the handshake
+            // that merely proves the boot credential.
             return encode_success(request.id, response);
         }
 
@@ -668,6 +678,7 @@ impl RuntimeService {
             RpcMethod::DelegationCreate => self.delegation_create(params),
             RpcMethod::DelegationStatus => self.delegation_status(params),
             RpcMethod::DelegationAccept => self.delegation_accept(params),
+            RpcMethod::DelegationChildClaim => self.delegation_child_claim(params),
             RpcMethod::DelegationReport => self.delegation_report(params),
             RpcMethod::DelegationCollect => self.delegation_collect(params),
             RpcMethod::DelegationCancel => self.delegation_cancel(params),
@@ -808,7 +819,10 @@ fn requires_session_capability(method: RpcMethod) -> bool {
     matches!(
         method.spec().scope,
         OperationScope::Session | OperationScope::WorkItem | OperationScope::Delegation
-    ) && !matches!(method, RpcMethod::SessionOpen | RpcMethod::DelegationAccept)
+    ) && !matches!(
+        method,
+        RpcMethod::SessionOpen | RpcMethod::DelegationAccept | RpcMethod::DelegationChildClaim
+    )
 }
 
 fn is_admin_lease_break(
@@ -832,9 +846,9 @@ fn authorize_client_kind(client_kind: Option<ClientKind>, method: RpcMethod) -> 
         RpcMethod::WorkspaceModeTransition => {
             matches!(client_kind, Some(ClientKind::Admin | ClientKind::Hook))
         }
-        RpcMethod::HostRegister
-        | RpcMethod::HostActionNext
-        | RpcMethod::HostActionAck => client_kind == Some(ClientKind::HostAdapter),
+        RpcMethod::HostRegister | RpcMethod::HostActionNext | RpcMethod::HostActionAck => {
+            client_kind == Some(ClientKind::HostAdapter)
+        }
         RpcMethod::JobSubmit | RpcMethod::JobStatus | RpcMethod::JobCancel => {
             matches!(client_kind, Some(ClientKind::Cli | ClientKind::Admin))
         }
@@ -857,9 +871,7 @@ fn authorize_host_connection(
 ) -> RuntimeResult<()> {
     let host_bound = matches!(
         method,
-        RpcMethod::HostActionNext
-            | RpcMethod::HostActionAck
-            | RpcMethod::HostPressureReport
+        RpcMethod::HostActionNext | RpcMethod::HostActionAck | RpcMethod::HostPressureReport
     );
     if !host_bound {
         return Ok(());

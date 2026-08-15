@@ -4,10 +4,10 @@ use ae_sdd_build::{
     ExpectedCounts, HarnessBuildRequest, HookBenchmarkConfig, InstructionLanguage,
     ManagedInstructionStatus, ManagedInstructionTarget, NativeJobRequest, OfflineRequest,
     PostCommitRequest, RegistryResolution, ServiceLifecycleRequest, ServiceOperation,
-    audit_compatibility, benchmark_hook, execute_harness_build, execute_native_job,
-    execute_offline, execute_post_commit, execute_service_lifecycle,
-    generate_service_lifecycle_plan, inspect_service_descriptor, materialize_service_descriptor,
-    resolve_registry, verify_release,
+    SourceSlimMode, SourceSlimRequest, audit_compatibility, benchmark_hook, execute_harness_build,
+    execute_native_job, execute_offline, execute_post_commit, execute_service_lifecycle,
+    execute_source_slim, generate_service_lifecycle_plan, inspect_service_descriptor,
+    materialize_service_descriptor, resolve_registry, verify_release,
 };
 use clap::{Parser, Subcommand};
 
@@ -47,6 +47,24 @@ enum Command {
         allowed_roots: Vec<PathBuf>,
         #[arg(long)]
         dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Refresh or validate a selected source SKILL slim entry from its fallback.
+    SourceSlim {
+        #[arg(long, required = true)]
+        source: PathBuf,
+        #[arg(long = "skill", required = true)]
+        skills: Vec<PathBuf>,
+        #[arg(
+            long,
+            visible_alias = "upgrade",
+            conflicts_with = "validate",
+            required_unless_present = "validate"
+        )]
+        refresh: bool,
+        #[arg(long, conflicts_with = "refresh", required_unless_present = "refresh")]
+        validate: bool,
         #[arg(long)]
         json: bool,
     },
@@ -105,11 +123,11 @@ enum Command {
         manifest: PathBuf,
         #[arg(long, default_value_t = 113)]
         expected_commands: usize,
-        #[arg(long, default_value_t = 24)]
+        #[arg(long, default_value_t = 25)]
         expected_operations: usize,
         #[arg(long, default_value_t = 36)]
         expected_gates: usize,
-        #[arg(long, default_value_t = 7)]
+        #[arg(long, default_value_t = 10)]
         expected_scanners: usize,
         #[arg(long)]
         json: bool,
@@ -302,6 +320,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     execution.changes.len(),
                     execution.plan_digest
+                );
+            }
+        }
+        Command::SourceSlim {
+            source,
+            skills,
+            refresh,
+            validate: _,
+            json,
+        } => {
+            let mode = if refresh {
+                SourceSlimMode::Refresh
+            } else {
+                SourceSlimMode::Validate
+            };
+            let execution = execute_source_slim(&SourceSlimRequest {
+                source_root: source,
+                skills,
+                mode,
+            })?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&execution)?);
+            } else {
+                let changed = execution
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.changed)
+                    .count();
+                println!(
+                    "source slim {}: entries={} changed={changed}",
+                    execution.mode.as_str(),
+                    execution.entries.len(),
                 );
             }
         }

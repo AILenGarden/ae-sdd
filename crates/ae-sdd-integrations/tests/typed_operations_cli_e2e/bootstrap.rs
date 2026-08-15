@@ -23,11 +23,535 @@
 //! would have traded the bootstrap deadlock for a broken explicit flow.
 
 use ae_sdd_protocol::{ClientKind, RequestParams, RpcMethod};
-use ae_sdd_runtime::{PersistencePort, RuntimeIdentityKind, SessionResult, WorkspaceResult};
+use ae_sdd_runtime::{
+    BusinessWorkspace, PersistencePort, RuntimeIdentityKind, SessionResult, WorkspaceResult,
+};
 use serde_json::{Value, json};
 use std::fs;
 
 use super::support::*;
+
+#[test]
+fn execution_slice_remains_valid_after_successful_evidence_record() {
+    let harness = Harness::new_realtime();
+    let root = harness.workspace_root.path();
+    fs::write(
+        root.join("ae-sdd-doc/Story/story.md"),
+        "# Story\n\nAC-09: evidence progression preserves the execution capsule.\n",
+    )
+    .expect("story fixture");
+    fs::write(root.join("constraints/README.md"), "# constraints index\n")
+        .expect("constraints index fixture");
+    let thinking_engine = root.join("source/standards/thinking/be-coding-thinking-engine.md");
+    fs::create_dir_all(thinking_engine.parent().expect("thinking engine parent"))
+        .expect("thinking engine directory");
+    fs::write(&thinking_engine, "# coding thinking engine\n").expect("thinking engine fixture");
+
+    let mut state: Value = serde_json::from_slice(
+        &fs::read(&harness.state_path).expect("initial execution state bytes"),
+    )
+    .expect("initial execution state JSON");
+    state["executionPlan"] = json!({
+        "goal":"keep a committed execution capsule valid after successful evidence",
+        "changedPaths":["src/lib.rs"],
+        "verification":[{
+            "id":"V-AC09",
+            "acId":"AC-09",
+            "boundary":"execution capsule evidence progression",
+            "command":"cargo test -p ae-sdd-integrations --test typed_operations_cli_e2e bootstrap::execution_slice_remains_valid_after_successful_evidence_record -- --nocapture",
+            "expected":"evidence-bound slice progression succeeds after evidence.record"
+        }],
+        "risks":[],
+        "sourceReads":[
+            "constraints/README.md",
+            "ae-sdd-doc/Story/story.md",
+            "src/lib.rs"
+        ],
+        "approved":true,
+        "approvedAt":"2026-08-11T00:00:00Z",
+        "approvedBy":"user:test"
+    });
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&state).expect("execution state serializes"),
+    )
+    .expect("execution state fixture");
+
+    let mut cli = harness.connection(ClientKind::Cli);
+    let workspace = register_and_cut_over(&harness, &mut cli);
+    let session = open_root(
+        &harness,
+        &mut cli,
+        &workspace,
+        "capsule-evidence-root",
+        "capsule-evidence-agent",
+    );
+    let root_identity = identity(&workspace, &session, "capsule-evidence-agent");
+    let (author, _) = open_review_lineage(
+        &harness,
+        &mut cli,
+        &workspace,
+        &root_identity,
+        "general",
+        "capsule-evidence",
+    );
+    let author_identity = identity_for_work_item(
+        &workspace,
+        &author,
+        "STORY-TYPED-E2E",
+        "capsule-evidence-author-agent",
+    );
+
+    let mut resume = operation_params(&root_identity, "execution.resume", json!({}));
+    resume.idempotency_key = Some("capsule-evidence-resume".to_owned());
+    let resumed = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        resume,
+    ));
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest")
+        .to_owned();
+
+    let mut root_lease = operation_params(
+        &root_identity,
+        "lease.acquire",
+        json!({"owner":{"role":"root"},"ttlSeconds":300}),
+    );
+    root_lease.idempotency_key = Some("capsule-evidence-root-lease".to_owned());
+    let root_lease = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        root_lease,
+    ));
+    let root_lease_id = root_lease["data"]["leaseId"]
+        .as_str()
+        .expect("root lease id")
+        .to_owned();
+    let root_fencing = root_lease["data"]["fencingToken"]
+        .as_u64()
+        .expect("root fencing token");
+
+    let revision = || {
+        serde_json::from_slice::<Value>(
+            &fs::read(&harness.state_path).expect("current execution state"),
+        )
+        .expect("current execution state JSON")["revision"]
+            .as_u64()
+            .expect("current execution revision")
+    };
+    let mut start = operation_params(
+        &root_identity,
+        "execution.slice.start",
+        json!({"activeOrdinal":1,"queueDigest":queue_digest}),
+    );
+    start.lease_id = Some(root_lease_id.clone());
+    start.fencing_token = Some(root_fencing);
+    start.expected_revision = Some(revision());
+    start.idempotency_key = Some("capsule-evidence-slice-start".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        start,
+    ));
+    for (index, status) in ["red-observed", "patched", "focused-green"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut record = operation_params(
+            &root_identity,
+            "execution.slice.record",
+            json!({
+                "sliceId":"slice-V-AC09",
+                "status":status,
+                "progressDigest":format!("{:064x}", index + 1)
+            }),
+        );
+        record.lease_id = Some(root_lease_id.clone());
+        record.fencing_token = Some(root_fencing);
+        record.expected_revision = Some(revision());
+        record.idempotency_key = Some(format!("capsule-evidence-slice-{status}"));
+        assert_success(&call(
+            &harness.runtime,
+            &mut cli,
+            RpcMethod::OperationExecute,
+            record,
+        ));
+    }
+
+    let mut release = operation_params(
+        &root_identity,
+        "lease.release",
+        json!({"owner":{"role":"root"}}),
+    );
+    release.lease_id = Some(root_lease_id);
+    release.fencing_token = Some(root_fencing);
+    release.idempotency_key = Some("capsule-evidence-root-release".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        release,
+    ));
+
+    let mut author_lease = operation_params(
+        &author_identity,
+        "lease.acquire",
+        json!({"owner":{"role":"task"},"ttlSeconds":300}),
+    );
+    author_lease.idempotency_key = Some("capsule-evidence-author-lease".to_owned());
+    let author_lease = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        author_lease,
+    ));
+    let author_lease_id = author_lease["data"]["leaseId"]
+        .as_str()
+        .expect("author lease id")
+        .to_owned();
+    let author_fencing = author_lease["data"]["fencingToken"]
+        .as_u64()
+        .expect("author fencing token");
+    let current_state: Value =
+        serde_json::from_slice(&fs::read(&harness.state_path).expect("state before evidence"))
+            .expect("state before evidence JSON");
+    let business = BusinessWorkspace {
+        workspace_id: workspace.workspace_id.clone(),
+        canonical_root: fs::canonicalize(root)
+            .expect("workspace canonicalizes")
+            .to_string_lossy()
+            .into_owned(),
+        project_key: workspace.project_key.clone(),
+        mode: ae_sdd_protocol::WorkspaceMode::RustCanary,
+        agent_role: None,
+        agent_grant: None,
+        caller_kind: None,
+        inventory_generation: workspace.inventory_generation,
+    };
+    let input_fingerprint =
+        crate::review_authority::authoritative_review_workspace_input_fingerprint(
+            &business,
+            &current_state,
+        )
+        .expect("authoritative evidence input")
+        .to_string();
+    let mut evidence = operation_params(
+        &author_identity,
+        "evidence.record",
+        json!({
+            "artifactPath":"evidence/result.json",
+            "kind":"focused-test",
+            "inputFingerprint":input_fingerprint,
+            "exitCode":0
+        }),
+    );
+    evidence.lease_id = Some(author_lease_id.clone());
+    evidence.fencing_token = Some(author_fencing);
+    evidence.expected_revision = Some(revision());
+    evidence.idempotency_key = Some("capsule-evidence-record".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        evidence,
+    ));
+    let state_after_evidence: Value =
+        serde_json::from_slice(&fs::read(&harness.state_path).expect("state after evidence"))
+            .expect("state after evidence JSON");
+    assert_eq!(
+        state_after_evidence["executionRuntime"]["completionMilestone"],
+        "implementation-verified"
+    );
+
+    let mut release = operation_params(
+        &author_identity,
+        "lease.release",
+        json!({"owner":{"role":"task"}}),
+    );
+    release.lease_id = Some(author_lease_id);
+    release.fencing_token = Some(author_fencing);
+    release.idempotency_key = Some("capsule-evidence-author-release".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        release,
+    ));
+
+    let mut root_lease = operation_params(
+        &root_identity,
+        "lease.acquire",
+        json!({"owner":{"role":"root"},"ttlSeconds":300}),
+    );
+    root_lease.idempotency_key = Some("capsule-evidence-root-reacquire".to_owned());
+    let root_lease = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        root_lease,
+    ));
+    let mut evidence_bound = operation_params(
+        &root_identity,
+        "execution.slice.record",
+        json!({
+            "sliceId":"slice-V-AC09",
+            "status":"evidence-bound",
+            "progressDigest":"4".repeat(64)
+        }),
+    );
+    evidence_bound.lease_id = Some(
+        root_lease["data"]["leaseId"]
+            .as_str()
+            .expect("reacquired root lease id")
+            .to_owned(),
+    );
+    evidence_bound.fencing_token = root_lease["data"]["fencingToken"].as_u64();
+    evidence_bound.expected_revision = Some(revision());
+    evidence_bound.idempotency_key = Some("capsule-evidence-bound".to_owned());
+    let progressed = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        evidence_bound,
+    ));
+    assert_eq!(progressed["data"]["status"], "evidence-bound");
+}
+
+#[test]
+fn amended_execution_plan_reseeds_the_execution_capsule() {
+    let harness = Harness::new_realtime();
+    let root = harness.workspace_root.path();
+    fs::write(
+        root.join("ae-sdd-doc/Story/story.md"),
+        "# Story\n\nAC-10: an amended plan replaces its execution capsule.\n",
+    )
+    .expect("story fixture");
+    fs::write(root.join("constraints/README.md"), "# constraints index\n")
+        .expect("constraints index fixture");
+    let thinking_engine = root.join("source/standards/thinking/be-coding-thinking-engine.md");
+    fs::create_dir_all(thinking_engine.parent().expect("thinking engine parent"))
+        .expect("thinking engine directory");
+    fs::write(&thinking_engine, "# coding thinking engine\n").expect("thinking engine fixture");
+
+    let initial_plan = json!({
+        "goal":"seed the first execution capsule",
+        "changedPaths":["src/lib.rs"],
+        "verification":[{
+            "id":"V-INITIAL",
+            "acId":"AC-10",
+            "boundary":"execution capsule amendment",
+            "command":"cargo test initial",
+            "expected":"initial capsule is seeded"
+        }],
+        "risks":["fixture risk"],
+        "sourceReads":[
+            "constraints/README.md",
+            "ae-sdd-doc/Story/story.md",
+            "src/lib.rs"
+        ],
+        "approved":true,
+        "approvedAt":"2026-08-11T00:00:00Z",
+        "approvedBy":"user:test"
+    });
+    let mut state: Value = serde_json::from_slice(
+        &fs::read(&harness.state_path).expect("initial amendment state bytes"),
+    )
+    .expect("initial amendment state JSON");
+    state["entryNode"] = json!("ROUTE");
+    state["projectKey"] = json!("typed-e2e");
+    state["stateMachineName"] = json!("STORY-TYPED-E2E");
+    state["routeApproved"] = json!(true);
+    state["engineeringRoute"] = json!("story");
+    state["routeDecision"] = json!({"designRoute":"story","requiredSeries":[]});
+    state["routeDocuments"] = json!({"CODING_PLAN":true});
+    state["executionPlan"] = initial_plan;
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&state).expect("amendment state serializes"),
+    )
+    .expect("amendment state fixture");
+
+    let mut cli = harness.connection(ClientKind::Cli);
+    let workspace = register_and_cut_over(&harness, &mut cli);
+    let session = open_root(
+        &harness,
+        &mut cli,
+        &workspace,
+        "capsule-amendment-root",
+        "capsule-amendment-agent",
+    );
+    let identity = identity(&workspace, &session, "capsule-amendment-agent");
+    let mut resume = operation_params(&identity, "execution.resume", json!({}));
+    resume.idempotency_key = Some("capsule-amendment-initial-resume".to_owned());
+    let initial = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        resume,
+    ));
+    let initial_capsule_digest = initial["data"]["capsuleDigest"]
+        .as_str()
+        .expect("initial capsule digest")
+        .to_owned();
+
+    let mut acquire = operation_params(
+        &identity,
+        "lease.acquire",
+        json!({"owner":{"role":"root"},"ttlSeconds":300}),
+    );
+    acquire.idempotency_key = Some("capsule-amendment-lease".to_owned());
+    let lease = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        acquire,
+    ));
+    let lease_id = lease["data"]["leaseId"]
+        .as_str()
+        .expect("amendment lease id")
+        .to_owned();
+    let fencing = lease["data"]["fencingToken"]
+        .as_u64()
+        .expect("amendment fencing token");
+    let revision = || {
+        serde_json::from_slice::<Value>(
+            &fs::read(&harness.state_path).expect("current amendment state"),
+        )
+        .expect("current amendment state JSON")["revision"]
+            .as_u64()
+            .expect("current amendment revision")
+    };
+
+    let amended_plan = json!({
+        "goal":"seed the amended execution capsule",
+        "changedPaths":["Cargo.toml"],
+        "verification":[{
+            "id":"V-AMENDED",
+            "acId":"AC-10",
+            "boundary":"execution capsule amendment",
+            "command":"cargo test amended",
+            "expected":"amended capsule is seeded"
+        }],
+        "risks":["fixture risk"],
+        "sourceReads":[
+            "constraints/README.md",
+            "ae-sdd-doc/Story/story.md",
+            "Cargo.toml"
+        ]
+    });
+    let mut set_plan = operation_params(&identity, "execution.plan.set", amended_plan);
+    set_plan.lease_id = Some(lease_id.clone());
+    set_plan.fencing_token = Some(fencing);
+    set_plan.expected_revision = Some(revision());
+    set_plan.idempotency_key = Some("capsule-amendment-plan-set".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        set_plan,
+    ));
+    let state_after_set: Value =
+        serde_json::from_slice(&fs::read(&harness.state_path).expect("state after plan amendment"))
+            .expect("state after plan amendment JSON");
+    assert!(
+        state_after_set.get("executionRuntime").is_none(),
+        "changing the plan must invalidate the capsule bound to the old plan: {state_after_set}"
+    );
+
+    let projected = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::FlowSnapshot,
+        trusted_params(&identity, json!({})),
+    ));
+    let approval = &projected["nextAction"];
+    assert_eq!(approval["kind"], "approve-execution-plan", "{projected}");
+    let confirmation_id = approval["confirmationId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("approval action must carry confirmationId: {projected}"))
+        .to_owned();
+
+    let mut stale_approve = operation_params(
+        &identity,
+        "execution.plan.approve",
+        json!({"approvedBy":"payload-is-not-authority"}),
+    );
+    stale_approve.lease_id = Some(lease_id.clone());
+    stale_approve.fencing_token = Some(fencing);
+    stale_approve.expected_revision = Some(revision());
+    stale_approve.idempotency_key = Some("capsule-amendment-stale-plan-approve".to_owned());
+    stale_approve.confirmation = Some(confirmation_ref(
+        "capsule-amendment-user-approval",
+        "user:test",
+        "2026-08-11T00:01:00Z",
+    ));
+    let state_before_stale_approval =
+        fs::read(&harness.state_path).expect("state before stale plan approval");
+    let rejected = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        stale_approve,
+    );
+    assert_eq!(stable_error(&rejected), "OPERATION_SCHEMA_INVALID");
+    assert_eq!(
+        fs::read(&harness.state_path).expect("state after stale plan approval"),
+        state_before_stale_approval,
+        "a stale confirmation must not mutate authoritative state"
+    );
+
+    let mut approve = operation_params(
+        &identity,
+        "execution.plan.approve",
+        json!({"approvedBy":"payload-is-not-authority"}),
+    );
+    approve.lease_id = Some(lease_id.clone());
+    approve.fencing_token = Some(fencing);
+    approve.expected_revision = Some(revision());
+    approve.idempotency_key = Some("capsule-amendment-plan-approve".to_owned());
+    approve.confirmation = Some(confirmation_ref(
+        &confirmation_id,
+        "user:test",
+        "2026-08-11T00:01:00Z",
+    ));
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        approve,
+    ));
+
+    let mut release =
+        operation_params(&identity, "lease.release", json!({"owner":{"role":"root"}}));
+    release.lease_id = Some(lease_id);
+    release.fencing_token = Some(fencing);
+    release.idempotency_key = Some("capsule-amendment-lease-release".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        release,
+    ));
+
+    let mut resume = operation_params(&identity, "execution.resume", json!({}));
+    resume.idempotency_key = Some("capsule-amendment-second-resume".to_owned());
+    let amended = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        resume,
+    ));
+    assert_ne!(amended["data"]["capsuleDigest"], initial_capsule_digest);
+    assert_eq!(
+        amended["data"]["capsule"]["activeSlice"]["focusedVerificationId"],
+        "V-AMENDED"
+    );
+}
 
 #[test]
 fn fresh_workspace_bootstrap_requires_explicit_hook_activation() {
@@ -242,6 +766,39 @@ fn assert_minted_shape(minted: &str) {
 #[test]
 fn ae_sdd_hook_bootstraps_route_and_exposes_the_requirement_analysis_handoff() {
     let harness = Harness::new();
+    let ra_skill = harness
+        .workspace_root
+        .path()
+        .join("source/skills/phase1-design/requirement-analysis-skill.md");
+    fs::create_dir_all(ra_skill.parent().expect("RA skill parent")).expect("RA skill directory");
+    fs::write(&ra_skill, "# Requirement Analysis methodology\n").expect("RA skill fixture");
+    let ra_fallback = harness
+        .workspace_root
+        .path()
+        .join("source/skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md");
+    fs::create_dir_all(ra_fallback.parent().expect("RA fallback parent"))
+        .expect("RA fallback directory");
+    fs::write(&ra_fallback, "# Requirement Analysis fallback\n").expect("RA fallback fixture");
+    fs::write(
+        harness.workspace_root.path().join("source/SKILL.md"),
+        "# ae-sdd methodology entry\n",
+    )
+    .expect("methodology entry fixture");
+    let catalog = harness
+        .workspace_root
+        .path()
+        .join("source/standards/runtime/methodology-catalog.v1.json");
+    fs::create_dir_all(catalog.parent().expect("catalog parent")).expect("catalog directory");
+    fs::write(
+        &catalog,
+        r#"{"schemaVersion":"ae-sdd-methodology-catalog/v1","catalogVersion":"1.0.0","entries":[{"skillId":"phase1-design.requirement-analysis","seriesKind":"requirement-analysis","activity":"execute","variant":"test-v1","version":"2.0.0","activation":"workflow","spawnPolicy":"physical_series","compactRef":"skills/phase1-design/requirement-analysis-skill.md","fallbackRef":"skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md","routePredicates":[],"requiredInputs":["requested-intent"],"deliverableKinds":["requirement-analysis"],"requiredGates":[],"toolDependencies":["document-storage"]}]}"#,
+    )
+    .expect("methodology catalog fixture");
+    fs::write(
+        harness.workspace_root.path().join("constraints/README.md"),
+        "# authoritative constraints index\n",
+    )
+    .expect("constraints index fixture");
     let mut cli = harness.connection(ClientKind::Cli);
     let workspace = register_and_cut_over(&harness, &mut cli);
     let mut hook_connection = harness.connection(ClientKind::Hook);
@@ -274,61 +831,48 @@ fn ae_sdd_hook_bootstraps_route_and_exposes_the_requirement_analysis_handoff() {
         .unwrap_or_else(|| panic!("/ae-sdd must return its daemon-minted Work Item: {prompt}"))
         .to_owned();
     assert!(work_item_id.starts_with("ROUTE-"), "{prompt}");
-    assert_eq!(prompt["context"]["nextAction"]["kind"], "analyze-route");
-
-    let mut acquire = session_params(
-        &workspace,
-        &session,
-        "bootstrap-route-agent",
-        json!({
-            "operation":"lease.acquire",
-            "payload":{"owner":{"role":"root"},"ttlSeconds":300},
-        }),
+    assert_eq!(prompt["context"]["nextAction"]["kind"], "delegate-series");
+    assert_eq!(
+        prompt["context"]["nextAction"]["seriesKind"],
+        "requirement-analysis"
     );
-    acquire.work_item_id = Some(work_item_id.clone());
-    acquire.idempotency_key = Some("bootstrap-route-lease".to_owned());
-    let lease = success(&call(
-        &harness.runtime,
-        &mut hook_connection,
-        RpcMethod::OperationExecute,
-        acquire,
-    ));
-
-    let mut decide = session_params(
-        &workspace,
-        &session,
-        "bootstrap-route-agent",
-        json!({
-            "operation":"route.decide",
-            "payload":{
-                "requestedIntent":"repair the host bootstrap control plane",
-                "impactFacts":[{"code":"impact.cross_module","level":"medium"}],
-                "classificationConfidenceBps":9000
-            },
-        }),
+    let asset_refs = prompt["context"]["assetRefs"]
+        .as_array()
+        .unwrap_or_else(|| panic!("bootstrap context must carry bounded asset refs: {prompt}"));
+    let methodology = asset_refs
+        .iter()
+        .find(|asset| asset["kind"] == "methodology-skill")
+        .unwrap_or_else(|| panic!("RA handoff must reference its methodology skill: {prompt}"));
+    assert_eq!(
+        methodology["path"],
+        "source/skills/phase1-design/requirement-analysis-skill.md"
     );
-    decide.work_item_id = Some(work_item_id.clone());
-    decide.lease_id = Some(
-        lease["data"]["leaseId"]
-            .as_str()
-            .expect("lease id")
-            .parse()
-            .expect("typed lease id"),
+    assert_eq!(
+        methodology["sha256"].as_str().map(str::len),
+        Some(64),
+        "{methodology}"
     );
-    decide.fencing_token = lease["data"]["fencingToken"].as_u64();
-    decide.expected_revision = Some(0);
-    decide.idempotency_key = Some("bootstrap-route-decide".to_owned());
-    let routed = success(&call(
-        &harness.runtime,
-        &mut hook_connection,
-        RpcMethod::OperationExecute,
-        decide,
-    ));
-    assert_eq!(routed["data"]["scale"], "medium", "{routed}");
-    assert_eq!(routed["data"]["selectedDesign"], "STORY", "{routed}");
+    for (kind, path) in [
+        (
+            "methodology-fallback",
+            "source/skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md",
+        ),
+        ("methodology-entry", "source/SKILL.md"),
+        (
+            "methodology-catalog",
+            "source/standards/runtime/methodology-catalog.v1.json",
+        ),
+    ] {
+        let reference = asset_refs
+            .iter()
+            .find(|asset| asset["kind"] == kind)
+            .unwrap_or_else(|| panic!("RA handoff must reference {kind}: {prompt}"));
+        assert_eq!(reference["path"], path);
+        assert_eq!(reference["sha256"].as_str().map(str::len), Some(64));
+    }
 
     let mut next = session_params(&workspace, &session, "bootstrap-route-agent", json!({}));
-    next.work_item_id = Some(work_item_id);
+    next.work_item_id = Some(work_item_id.clone());
     let flow = success(&call(
         &harness.runtime,
         &mut hook_connection,
@@ -339,6 +883,71 @@ fn ae_sdd_hook_bootstraps_route_and_exposes_the_requirement_analysis_handoff() {
     assert_eq!(
         flow["nextAction"]["seriesKind"], "requirement-analysis",
         "{flow}"
+    );
+    let decision_digest = flow["decisionDigest"]
+        .as_str()
+        .unwrap_or_else(|| panic!("delegate-series decision must carry its digest: {flow}"));
+
+    let mut host = harness.connection(ClientKind::HostAdapter);
+    let mut register = plain_params(json!({
+        "adapterId":"bootstrap-route-host",
+        "capabilities":["create","attest"]
+    }));
+    register.capability_token = Some(harness.host_credential());
+    register.idempotency_key = Some("bootstrap-route-host-register".to_owned());
+    assert_success(&call(
+        &harness.runtime,
+        &mut host,
+        RpcMethod::HostRegister,
+        register,
+    ));
+
+    let mut create = session_params(
+        &workspace,
+        &session,
+        "bootstrap-route-agent",
+        json!({"flowDecisionDigest":decision_digest}),
+    );
+    create.work_item_id = Some(work_item_id.clone());
+    create.idempotency_key = Some("bootstrap-route-ra-create".to_owned());
+    let created = success(&call(
+        &harness.runtime,
+        &mut hook_connection,
+        RpcMethod::DelegationCreate,
+        create,
+    ));
+    assert_eq!(created["childRole"], "series", "{created}");
+    let delegation_asset_refs = created["assetRefs"].as_array().unwrap_or_else(|| {
+        panic!("RA delegation must carry authoritative methodology refs: {created}")
+    });
+    assert!(
+        delegation_asset_refs.iter().any(|asset| {
+            asset["kind"] == "methodology-skill"
+                && asset["path"] == "source/skills/phase1-design/requirement-analysis-skill.md"
+                && asset["sha256"]
+                    .as_str()
+                    .is_some_and(|digest| digest.len() == 64)
+        }),
+        "RA delegation must preserve the projected methodology skill: {created}"
+    );
+
+    let mut replay = session_params(
+        &workspace,
+        &session,
+        "bootstrap-route-agent",
+        json!({"flowDecisionDigest":decision_digest}),
+    );
+    replay.work_item_id = Some(work_item_id);
+    replay.idempotency_key = Some("bootstrap-route-ra-create".to_owned());
+    let replayed = success(&call(
+        &harness.runtime,
+        &mut hook_connection,
+        RpcMethod::DelegationCreate,
+        replay,
+    ));
+    assert_eq!(
+        replayed, created,
+        "same flow intent must replay byte-stably"
     );
 }
 
@@ -627,12 +1236,11 @@ fn a_caller_supplied_create_name_still_round_trips() {
     );
 }
 
-/// An ordinary typed `route.decide` whose only facts are `micro` must commit
-/// the micro scale on the normal RA/CodingPlan chain. This is not the explicit
-/// quick command: the committed state binds no user approval and carries no
-/// quick marker, and the flow handoff still delegates requirement-analysis.
+/// Even an intake that looks micro cannot freeze a route before authoritative
+/// Requirement Analysis has closed. The pre-route flow must keep delegating RA
+/// and reject the legacy intake-driven `route.decide` shortcut.
 #[test]
-fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
+fn ordinary_micro_facts_cannot_skip_requirement_analysis() {
     let harness = Harness::new();
     let mut cli = harness.connection(ClientKind::Cli);
     let workspace = register_and_cut_over(&harness, &mut cli);
@@ -693,6 +1301,7 @@ fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
             "operation":"route.decide",
             "payload":{
                 "requestedIntent":"rename one local helper and its comment",
+                "taskKind":"implementation",
                 "impactFacts":[{"code":"impact.local_rename","level":"micro"}],
                 "classificationConfidenceBps":9000
             },
@@ -709,29 +1318,16 @@ fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
     decide.fencing_token = lease["data"]["fencingToken"].as_u64();
     decide.expected_revision = Some(0);
     decide.idempotency_key = Some("bootstrap-micro-decide".to_owned());
-    let routed = success(&call(
+    let rejected = call(
         &harness.runtime,
         &mut hook_connection,
         RpcMethod::OperationExecute,
         decide,
-    ));
-    assert_eq!(routed["data"]["scale"], "micro", "{routed}");
-    assert_eq!(routed["data"]["selectedDesign"], "CODING_PLAN", "{routed}");
-    assert_eq!(routed["data"]["approved"], true, "{routed}");
-    assert_eq!(
-        routed["data"]["decision"]["designRoute"], "coding_plan",
-        "{routed}"
     );
+    assert_eq!(stable_error(&rejected), "OPERATION_SCHEMA_INVALID");
     assert_eq!(
-        routed["data"]["decision"]["requiredSeries"],
-        json!(["requirement-analysis", "coding-plan"]),
-        "{routed}"
-    );
-    // An ordinary approved micro route binds no user approval: there is no
-    // approval shortcut behind the classification.
-    assert!(
-        routed["data"]["decision"]["approvalBindingDigest"].is_null(),
-        "{routed}"
+        rejected["error"]["message"], "route.decide requires Requirement Analysis to be complete",
+        "{rejected}"
     );
 
     // The daemon mints the state directory as `{stateUuid}-{workItemId}`, so
@@ -746,18 +1342,13 @@ fn ordinary_micro_facts_commit_the_micro_coding_plan_route() {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(&format!("-{work_item_id}")))
         })
-        .expect("committed route state directory")
+        .expect("pre-route state directory")
         .join("state.json");
-    let state: Value =
-        serde_json::from_slice(&fs::read(&state_path).expect("committed route state"))
-            .expect("committed route state JSON");
-    assert_eq!(state["scale"], "micro", "{state}");
-    assert_eq!(state["selectedDesign"], "CODING_PLAN", "{state}");
-    assert_eq!(state["routeApproved"], true, "{state}");
-    assert!(
-        !state.to_string().contains("quick"),
-        "the committed ordinary micro route carries no quick marker: {state}"
-    );
+    let state: Value = serde_json::from_slice(&fs::read(&state_path).expect("pre-route state"))
+        .expect("pre-route state JSON");
+    assert_eq!(state["phase"], "initialized", "{state}");
+    assert!(state.get("routeDecision").is_none(), "{state}");
+    assert_ne!(state["routeApproved"], true, "{state}");
 
     let mut next = session_params(&workspace, &session, "bootstrap-micro-agent", json!({}));
     next.work_item_id = Some(work_item_id);

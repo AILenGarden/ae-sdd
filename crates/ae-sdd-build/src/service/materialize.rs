@@ -6,7 +6,7 @@ use super::{
     ServiceDescriptorState, ServiceDescriptorStatus, ServiceError, ServiceLifecyclePlan,
     ServiceMaterialization, ServicePermissionAssertion,
 };
-use crate::service::render::digest;
+use crate::service::render::{descriptor_bytes, digest};
 
 const MAX_DESCRIPTOR_BYTES: u64 = 1024 * 1024;
 
@@ -30,14 +30,14 @@ pub fn materialize_service_descriptor(
         .ok_or(ServiceError::InvalidPath("descriptorPath"))?;
     create_private_directory(parent, plan)?;
 
-    let bytes = plan.descriptor_contents.as_bytes();
+    let bytes = descriptor_bytes(plan.platform, &plan.descriptor_contents);
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_DESCRIPTOR_BYTES {
         return Err(ServiceError::DescriptorTooLarge);
     }
     let created = match read_descriptor(&plan.descriptor_path)? {
         Some(existing) if digest(&existing) == plan.descriptor_digest => false,
         _ => {
-            atomic_write(&plan.descriptor_path, bytes)?;
+            atomic_write(&plan.descriptor_path, &bytes)?;
             protect_private_file(&plan.descriptor_path, plan)?;
             true
         }

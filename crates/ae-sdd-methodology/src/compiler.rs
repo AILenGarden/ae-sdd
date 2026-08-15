@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use ae_sdd_contracts::{BoundedText, MethodologyVariant, SeriesKind, SkillId};
+use ae_sdd_contracts::{
+    BoundedText, MAIN_NODE_SERIES_KINDS, MethodologyVariant, SeriesActivity, SeriesKind, SkillId,
+};
 use ae_sdd_domain::{ArtifactDigest, ArtifactKind, ArtifactRef, ProjectRelativePath};
 use serde::Deserialize;
 
@@ -48,6 +50,13 @@ struct SourceCatalogWire {
 struct SourceEntryWire {
     skill_id: String,
     series_kind: String,
+    /// Skill role serving `series_kind`, absent for non-Series entries.
+    ///
+    /// The schema requires this for `activation: workflow` and the compiler
+    /// enforces the same rule, so `None` here means a capability or deprecated
+    /// entry rather than an unvalidated Series.
+    #[serde(default)]
+    activity: Option<String>,
     variant: String,
     version: String,
     activation: Activation,
@@ -144,8 +153,11 @@ fn compile_entry(
 ) -> Result<CompiledMethodologyEntry, MethodologyError> {
     validate_semver("version", &source.version)?;
     validate_activation(source.activation, source.spawn_policy)?;
+    let pre_route_ra =
+        source.activation == Activation::Workflow && source.series_kind == "requirement-analysis";
     if source.activation == Activation::Workflow
-        && (source.route_predicates.is_empty() || source.deliverable_kinds.is_empty())
+        && ((!pre_route_ra && source.route_predicates.is_empty())
+            || source.deliverable_kinds.is_empty())
     {
         return Err(MethodologyError::IncompleteWorkflow);
     }
@@ -186,12 +198,8 @@ fn compile_entry(
                 value: error.to_string(),
             }
         })?,
-        series_kind: SeriesKind::new(source.series_kind).map_err(|error| {
-            MethodologyError::InvalidField {
-                field: "seriesKind",
-                value: error.to_string(),
-            }
-        })?,
+        series_kind: series_kind_for(&source.series_kind, source.activation)?,
+        activity: activity_for(source.activity.as_deref(), source.activation)?,
         variant: MethodologyVariant::new(source.variant).map_err(|error| {
             MethodologyError::InvalidField {
                 field: "variant",
@@ -330,6 +338,55 @@ pub(crate) fn validate_semver(field: &'static str, value: &str) -> Result<(), Me
             field,
             value: "invalid semantic version".to_owned(),
         })
+    }
+}
+
+/// Validates `seriesKind`, additionally requiring a frozen main node for Series.
+///
+/// A well-formed portable id is not enough for `activation: workflow`. The
+/// resolver selects slices by exact `series_kind` equality against the main node
+/// `FlowRuntime` asks for, so a Series spelled `story-generate` would leave the
+/// `story` main node unresolvable while still compiling cleanly.
+fn series_kind_for(value: &str, activation: Activation) -> Result<SeriesKind, MethodologyError> {
+    let kind = SeriesKind::new(value).map_err(|error| MethodologyError::InvalidField {
+        field: "seriesKind",
+        value: error.to_string(),
+    })?;
+    if activation == Activation::Workflow && !MAIN_NODE_SERIES_KINDS.contains(&kind.as_str()) {
+        return Err(MethodologyError::InvalidField {
+            field: "seriesKind",
+            value: format!("{value} is not a frozen main node"),
+        });
+    }
+    Ok(kind)
+}
+
+/// Validates `activity` against the activation it accompanies.
+///
+/// Series must name a role so `(seriesKind, activity)` stays unique; non-Series
+/// entries must not, because they have no Series to hold a role within.
+fn activity_for(
+    value: Option<&str>,
+    activation: Activation,
+) -> Result<Option<SeriesActivity>, MethodologyError> {
+    match (value, activation) {
+        (Some(raw), Activation::Workflow) => {
+            SeriesActivity::from_wire(raw)
+                .map(Some)
+                .ok_or_else(|| MethodologyError::InvalidField {
+                    field: "activity",
+                    value: format!("{raw} is not a frozen activity"),
+                })
+        }
+        (None, Activation::Workflow) => Err(MethodologyError::InvalidField {
+            field: "activity",
+            value: "a Series entry must name its activity".to_owned(),
+        }),
+        (Some(raw), _) => Err(MethodologyError::InvalidField {
+            field: "activity",
+            value: format!("a non-Series entry must not carry an activity, found {raw}"),
+        }),
+        (None, _) => Ok(None),
     }
 }
 

@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ae_sdd_domain::StoryId;
+use ae_sdd_contracts::{
+    EngineeringRoute, RequirementConflict, RouteApprovalReceipt, RouteDecision,
+};
+use ae_sdd_domain::{ArtifactDigest, StoryId};
 use ae_sdd_runtime::{RuntimeError, RuntimeResult};
 use serde_json::Value;
 
@@ -12,13 +15,14 @@ use super::{
     contracts::{
         automation_enabled, context_complete, document_storage_compliant, http_contract_valid,
         nonempty_object, path_compliance_recorded, plan_contract_complete, plan_story_aligned,
-        route_exempt, source_trace_complete, structured_coding_result, structured_status,
+        source_trace_complete, structured_coding_result, structured_status,
         structured_test_evidence, traceability_symmetric,
     },
     key::{
         GateContext, LocatedState, ReviewAuthorityDenial, active_story, safe_document_path,
         workspace_inputs,
     },
+    ra_binding::{authoritative_ra_text, route_binding_input, verified_ra_evidence},
 };
 
 /// One predicate outcome plus the structured reason an authoritative Review
@@ -64,10 +68,10 @@ pub(super) fn predicate_value(
             structured_status(state.get("storyReview"), "passed")
                 || route_story_committed(root, state, work_item)
         }
-        "document.testcase.exists" => {
-            verification_matrix(root, state, story.as_deref())
-                || document_exists(root, state, story.as_deref(), "TestCase")
-        }
+        // Existence is decided by the document itself. Scanning the Story for
+        // `AC-`/`verification` substrings made any Story with acceptance
+        // criteria stand in for a TestCase that was never written.
+        "document.testcase.exists" => document_exists(root, state, story.as_deref(), "TestCase"),
         "document.task.exists" => document_exists(root, state, story.as_deref(), "Task"),
         "review.task.passed" => structured_status(state.get("taskReview"), "passed"),
         "coding_plan.exists" => plan.is_some_and(nonempty_object),
@@ -94,14 +98,8 @@ pub(super) fn predicate_value(
         }
         "document.storage.compliant" => document_storage_compliant(root, state),
         "source.output_paths.compliant" => path_compliance_recorded(state),
-        "document.ra.exists_or_exempt" => {
-            document_exists(root, state, story.as_deref(), "RA") || route_exempt(state)
-        }
-        "ra.dimensions.complete" => {
-            ra_text(root, state, story.as_deref()).is_some_and(|text| ra_dimensions_complete(&text))
-        }
-        "ra.derivatives.complete" => ra_text(root, state, story.as_deref())
-            .is_some_and(|text| ra_derivatives_complete(&text)),
+        "ra.srs.bound" => ra_srs_bound(root, state, work_item),
+        "ra.route.binding" => ra_route_binding(root, state, work_item),
         "memory.configuration_path.consistent" => memory_paths_consistent(root),
         "review.loop.exit_satisfied" | "review.independence.valid" | "review.depth.valid" => {
             return Ok(PredicateVerdict::review(
@@ -116,12 +114,22 @@ pub(super) fn predicate_value(
                 context.review_authority_denial(located),
             ));
         }
-        "context.dr.complete" => dr_context_complete(root, state, work_item),
+        "context.dr.complete" => {
+            let missing = dr_context_missing(root, state, work_item);
+            if missing.is_empty() {
+                return Ok(PredicateVerdict::plain(true));
+            }
+            return Ok(PredicateVerdict {
+                satisfied: false,
+                denial: Some(ReviewAuthorityDenial::context(
+                    "DR_CONTEXT_INCOMPLETE",
+                    format!("missing required DR context: {}", missing.join(", ")),
+                )),
+            });
+        }
         "context.story.complete" => story_context_complete(root, state, work_item),
         "context.testcase.complete" => context_complete(state, &["story", "constraints", "assets"]),
-        "context.task.complete" => {
-            route_exempt(state) || context_complete(state, &["story", "constraints"])
-        }
+        "context.task.complete" => context_complete(state, &["story", "constraints"]),
         _ => {
             return Err(RuntimeError::new(
                 ae_sdd_protocol::StableErrorCode::GateError,
@@ -146,12 +154,24 @@ fn project_assets_complete(root: &Path) -> bool {
             .any(|name| root.join(name).is_file())
 }
 
-fn dr_context_complete(root: &Path, state: &Value, work_item: &str) -> bool {
-    project_manifest_exists(root)
-        && indexed_constraints_complete(root)
-        && standards_complete(root)
-        && bound_document_exists(root, state, "RA")
-        && (is_route_state(state, work_item) || bound_document_exists(root, state, "PRD"))
+fn dr_context_missing(root: &Path, state: &Value, work_item: &str) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if !project_manifest_exists(root) {
+        missing.push("project-manifest");
+    }
+    if !indexed_constraints_complete(root) {
+        missing.push("constraints-index");
+    }
+    if !standards_complete(root) {
+        missing.push("standards");
+    }
+    if !bound_document_exists(root, state, "RA") {
+        missing.push("ra-document");
+    }
+    if !is_route_state(state, work_item) && !bound_document_exists(root, state, "PRD") {
+        missing.push("prd-document");
+    }
+    missing
 }
 
 fn project_manifest_exists(root: &Path) -> bool {
@@ -289,41 +309,86 @@ fn route_document_committed(state: &Value, kind: &str) -> bool {
 }
 
 fn document_exists(root: &Path, state: &Value, story: Option<&str>, kind: &str) -> bool {
-    if kind == "Story"
-        && story
-            .and_then(|id| state.pointer(&format!("/storyStates/{id}/docPath")))
-            .and_then(Value::as_str)
-            .is_some_and(|path| safe_document_path(root, path))
-    {
-        return true;
+    if let Some(field) = per_story_binding_field(kind) {
+        // A per-Story Spec is decided by the active Story's own binding.
+        // `ae-sdd-design.md` requires an independent `Story -> TestCase ->
+        // CodingPlan` subchain per Story and a TestCase receipt bound to Story
+        // identity, so a sibling's document must never answer for this one.
+        // Returning early on a present binding is not enough: when the Story
+        // has no binding the route-level `documentPaths` entry below would
+        // still match by substring and let one TestCase satisfy every Story.
+        if let Some(story) = story {
+            if let Some(bound) = state
+                .pointer(&format!("/storyStates/{story}/{field}"))
+                .and_then(Value::as_str)
+            {
+                return safe_document_path(root, bound);
+            }
+            if kind == "TestCase" {
+                return canonical_document_scan(root, state, Some(story), kind);
+            }
+        }
     }
     let needle = kind.to_ascii_lowercase();
-    state
+    // A binding for this kind is authoritative: if `documentPaths` names the
+    // document, then that path decides existence. Scanning the directory when
+    // the bound file is absent would accept another Work Item's document and
+    // leave the Gate unable to report a missing one.
+    let mut bound = state
         .get("documentPaths")
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
         .filter_map(|(_, value)| value.as_str())
-        .any(|path| path.to_ascii_lowercase().contains(&needle) && safe_document_path(root, path))
-        || workspace_inputs(root).is_ok_and(|files| {
-            files.into_iter().any(|(path, _)| {
-                let lower = path.to_ascii_lowercase();
-                lower.ends_with(".md")
-                    && (lower.contains(&format!("ae-sdd-doc/{needle}/"))
-                        || lower.contains(&format!("/{needle}/")))
-                    && story.is_none_or(|id| {
-                        lower.contains(&id.to_ascii_lowercase()) || kind == "RA" || kind == "DR"
-                    })
-            })
-        })
+        .filter(|path| path.to_ascii_lowercase().contains(&needle))
+        .peekable();
+    if bound.peek().is_some() {
+        return bound.any(|path| safe_document_path(root, path));
+    }
+    canonical_document_scan(root, state, story, kind)
 }
 
-fn verification_matrix(root: &Path, state: &Value, story: Option<&str>) -> bool {
-    story_document(root, state, story)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .is_some_and(|text| {
-            text.contains("verification") || text.contains("验证矩阵") || text.contains("AC-")
+/// Specs that belong to one Story rather than to the Work Item, keyed by the
+/// `storyStates` field carrying that Story's binding. `ae-sdd-design.md` §过程产物模型
+/// makes both Story and TestCase per-Story; a route-level binding cannot
+/// express one path per Story and must not be consulted for them.
+fn per_story_binding_field(kind: &str) -> Option<&'static str> {
+    match kind {
+        "Story" => Some("docPath"),
+        "TestCase" => Some("testCasePath"),
+        _ => None,
+    }
+}
+
+/// Scans the canonical directory for a document of this kind.
+///
+/// The directory is not always the kind spelled lowercase: a TestCase lives
+/// under `ae-sdd-doc/Test/`, so deriving it from the kind made canonical
+/// documents invisible to Work Items created before `documentPaths` carried
+/// their binding.
+fn canonical_document_scan(root: &Path, _state: &Value, story: Option<&str>, kind: &str) -> bool {
+    let directory = canonical_document_directory(kind);
+    workspace_inputs(root).is_ok_and(|files| {
+        files.into_iter().any(|(path, _)| {
+            let lower = path.to_ascii_lowercase();
+            lower.ends_with(".md")
+                && (lower.contains(&format!("ae-sdd-doc/{directory}/"))
+                    || lower.contains(&format!("/{directory}/")))
+                && story.is_none_or(|id| {
+                    lower.contains(&id.to_ascii_lowercase()) || kind == "RA" || kind == "DR"
+                })
         })
+    })
+}
+
+/// Maps a document kind to the directory it canonically lives in, per
+/// `ae-sdd-doc/STORING.md`. Only `TestCase` diverges from its own lowercased
+/// name; the rest are returned verbatim so the mapping stays auditable.
+fn canonical_document_directory(kind: &str) -> String {
+    match kind {
+        "TestCase" => "test".to_owned(),
+        other => other.to_ascii_lowercase(),
+    }
 }
 
 pub(super) fn story_document(root: &Path, state: &Value, story: Option<&str>) -> Option<PathBuf> {
@@ -358,34 +423,90 @@ pub(super) fn story_document(root: &Path, state: &Value, story: Option<&str>) ->
         })
 }
 
-fn ra_text(root: &Path, state: &Value, story: Option<&str>) -> Option<String> {
-    workspace_inputs(root)
-        .ok()?
-        .into_iter()
-        .find_map(|(relative, absolute)| {
-            let lower = relative.to_ascii_lowercase();
-            (lower.contains("ae-sdd-doc/ra/")
-                && story.is_none_or(|id| {
-                    lower.contains(&id.trim_start_matches("STORY-").to_ascii_lowercase())
-                }))
-            .then(|| fs::read_to_string(absolute).ok())
-            .flatten()
-        })
-        .or_else(|| document_exists(root, state, story, "RA").then(String::new))
+/// Reads the RA document this Work Item is bound to.
+///
+/// `documentPaths/RA` is the only authoritative binding, matching the RA scanner
+/// resolver. Missing or invalid mappings fail closed; directory order must never
+/// select another Work Item's document.
+fn ra_srs_bound(root: &Path, state: &Value, work_item: &str) -> bool {
+    let Some(evidence) = verified_ra_evidence(state) else {
+        return false;
+    };
+    let Some(text) = authoritative_ra_text(root, state) else {
+        return false;
+    };
+    evidence.work_item_id().as_str() == work_item
+        && ArtifactDigest::digest(text.as_bytes()) == *evidence.ra_content_digest()
 }
 
-fn ra_dimensions_complete(text: &str) -> bool {
-    text.lines()
-        .filter(|line| line.trim_start().starts_with("##"))
-        .count()
-        >= 8
-        && text.contains("RequirementAnalysisModel")
-}
-
-fn ra_derivatives_complete(text: &str) -> bool {
-    text.contains("RA-G")
-        && text.contains("RequirementAnalysisModel")
-        && text.matches("##").count() >= 10
+fn ra_route_binding(root: &Path, state: &Value, work_item: &str) -> bool {
+    if !ra_srs_bound(root, state, work_item) {
+        return false;
+    }
+    let phase = state
+        .get("currentPhase")
+        .or_else(|| state.get("phase"))
+        .and_then(Value::as_str);
+    if !matches!(
+        phase,
+        Some("requirement-analyzed" | "requirement_analyzed" | "route-selected" | "route_selected")
+    ) {
+        return false;
+    }
+    let Some(binding) = route_binding_input(state) else {
+        return false;
+    };
+    let Some(candidate) = state
+        .get("routeCandidate")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<RouteDecision>(value).ok())
+    else {
+        return false;
+    };
+    if candidate.work_item_id().as_str() != work_item
+        || candidate.scale() != binding.ra_evidence().scale()
+        || candidate.input_fingerprint() != binding.fingerprint()
+    {
+        return false;
+    }
+    let Some(approval) = state
+        .get("routeApprovalReceipt")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<RouteApprovalReceipt>(value).ok())
+    else {
+        return false;
+    };
+    if !approval.binds(binding.ra_evidence(), candidate.decision_digest()) {
+        return false;
+    }
+    let conflicts = match state.get("routeBlockingConflicts") {
+        Some(value) => {
+            let Ok(conflicts) = serde_json::from_value::<Vec<RequirementConflict>>(value.clone())
+            else {
+                return false;
+            };
+            conflicts
+        }
+        None => Vec::new(),
+    };
+    if conflicts.iter().any(RequirementConflict::blocks_routing) {
+        return false;
+    }
+    let frozen_value = state.get("engineeringRoute");
+    let frozen = frozen_value
+        .cloned()
+        .and_then(|value| serde_json::from_value::<EngineeringRoute>(value).ok());
+    if frozen_value.is_some() && frozen.is_none() {
+        return false;
+    }
+    match frozen {
+        Some(frozen) => {
+            frozen.decision() == &candidate
+                && frozen.evidence() == binding.ra_evidence()
+                && frozen.approval_receipt() == &approval
+        }
+        None => !matches!(phase, Some("route-selected" | "route_selected")),
+    }
 }
 
 fn memory_paths_consistent(root: &Path) -> bool {

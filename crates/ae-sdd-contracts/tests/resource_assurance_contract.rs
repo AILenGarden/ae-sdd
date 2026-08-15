@@ -3,6 +3,7 @@ use ae_sdd_contracts::execution::{
 };
 use ae_sdd_contracts::resource::{
     ContextBundleRef, DocumentTxnOperation, DocumentTxnPlan, LoadedContextProof,
+    ResourceContractError,
 };
 use ae_sdd_contracts::review::{
     ReviewBudget, ReviewExitDisposition, ReviewExitReceipt, ReviewSession, ReviewStatus, ReviewTier,
@@ -342,6 +343,84 @@ fn loaded_context_proof_binds_required_inputs_and_document_plan_is_typed() {
     assert_eq!(
         serde_json::from_str::<DocumentTxnPlan>(&plan_json).unwrap(),
         plan
+    );
+}
+
+#[test]
+fn document_plan_v2_delete_round_trips_and_rejects_v1() {
+    let target = ProjectRelativePath::new("ae-sdd-doc/Story/STORY-001.md").unwrap();
+    let draft = ProjectRelativePath::new(".hermes/draft-STORY-001.md").unwrap();
+    let expected_draft = ArtifactDigest::digest(b"draft");
+    let save = DocumentTxnOperation::save(
+        target.clone(),
+        ArtifactDigest::digest(b"saved story"),
+        b"saved story".len() as u64,
+    )
+    .unwrap();
+    let delete = DocumentTxnOperation::delete(draft.clone(), expected_draft);
+
+    assert_eq!(
+        DocumentTxnPlan::new(
+            SchemaVersion::V1,
+            DocumentTxnId::new("doc-txn-delete-v1").unwrap(),
+            WorkItemId::new("STORY-001").unwrap(),
+            vec![delete.clone()],
+            InputFingerprint::digest(b"v1 delete"),
+        ),
+        Err(ResourceContractError::DeleteRequiresV2)
+    );
+
+    let plan = DocumentTxnPlan::new(
+        SchemaVersion::V2,
+        DocumentTxnId::new("doc-txn-delete-v2").unwrap(),
+        WorkItemId::new("STORY-001").unwrap(),
+        vec![save.clone(), delete.clone()],
+        InputFingerprint::digest(b"v2 delete"),
+    )
+    .unwrap();
+    let encoded = serde_json::to_value(&plan).unwrap();
+    assert_eq!(encoded["operations"][1]["kind"], "delete");
+    assert_eq!(encoded["operations"][1]["path"], draft.as_str());
+    assert_eq!(
+        encoded["operations"][1]["expectedBeforeDigest"],
+        expected_draft.to_string()
+    );
+    assert_eq!(
+        serde_json::from_value::<DocumentTxnPlan>(encoded).unwrap(),
+        plan
+    );
+
+    let replay = DocumentTxnPlan::new(
+        SchemaVersion::V2,
+        DocumentTxnId::new("doc-txn-delete-v2").unwrap(),
+        WorkItemId::new("STORY-001").unwrap(),
+        vec![save.clone(), delete],
+        InputFingerprint::digest(b"v2 delete"),
+    )
+    .unwrap();
+    assert_eq!(replay.plan_digest(), plan.plan_digest());
+
+    let changed_delete =
+        DocumentTxnOperation::delete(draft.clone(), ArtifactDigest::digest(b"changed draft"));
+    let changed = DocumentTxnPlan::new(
+        SchemaVersion::V2,
+        DocumentTxnId::new("doc-txn-delete-v2").unwrap(),
+        WorkItemId::new("STORY-001").unwrap(),
+        vec![save.clone(), changed_delete],
+        InputFingerprint::digest(b"v2 delete"),
+    )
+    .unwrap();
+    assert_ne!(changed.plan_digest(), plan.plan_digest());
+
+    assert_eq!(
+        DocumentTxnPlan::new(
+            SchemaVersion::V2,
+            DocumentTxnId::new("doc-txn-duplicate-v2").unwrap(),
+            WorkItemId::new("STORY-001").unwrap(),
+            vec![save, DocumentTxnOperation::delete(target, expected_draft)],
+            InputFingerprint::digest(b"duplicate target"),
+        ),
+        Err(ResourceContractError::DuplicateOperationPath)
     );
 }
 

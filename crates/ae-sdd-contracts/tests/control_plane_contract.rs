@@ -4,7 +4,7 @@ use ae_sdd_contracts::{
     LogicalNamespace, MethodologyQuery, MethodologyRef, MethodologyResolution, MethodologyVariant,
     MutationIntent, MutationIntentId, MutationOperation, MutationTarget, OverrideDisposition,
     OverrideLayer, OverrideTrace, ProcessSnapshot, ProjectScope, ReasonCode, RouteInput,
-    SchemaVersion, SeriesKind, SkillId,
+    SchemaVersion, SeriesKind, SkillId, TaskKind,
 };
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, DecisionDigest, DesignRoute,
@@ -88,6 +88,7 @@ fn route_input_is_bounded_and_uses_typed_facts_only() {
         WorkItemId::new("STORY-001").expect("work item id"),
         ReasonCode::new("route.entry.standard").expect("entry node"),
         BoundedText::<4096>::new("Move workflow control into the daemon").expect("intent"),
+        TaskKind::Implementation,
         vec![artifact("ae-sdd-doc/RA/RA-001.md", b"ra")],
         vec![ImpactFact::new(
             ReasonCode::new("impact.cross-agent-concurrency").expect("fact code"),
@@ -109,6 +110,7 @@ fn route_input_is_bounded_and_uses_typed_facts_only() {
             WorkItemId::new("STORY-001").expect("work item id"),
             ReasonCode::new("route.entry.standard").expect("entry node"),
             BoundedText::<4096>::new("intent").expect("intent"),
+            TaskKind::Implementation,
             Vec::new(),
             Vec::new(),
             10_001,

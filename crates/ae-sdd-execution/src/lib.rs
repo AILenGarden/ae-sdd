@@ -32,7 +32,8 @@ pub use capsule::{
 };
 pub use error::{
     ExecutionCapsuleBuildError, ExecutionPolicyError, ExecutionPolicyFault,
-    ExecutionSliceTransitionError, ExecutionSupervisorError, ExecutionSupervisorFault,
+    ExecutionSliceTransitionError, ExecutionSupervisorAfterImageError, ExecutionSupervisorError,
+    ExecutionSupervisorFault,
 };
 pub use plan::{ToolsetPort, ToolsetQuery, ToolsetRequirement};
 pub use policy::{
@@ -43,8 +44,8 @@ pub use policy::{
 pub use receipt::validate_against_plan;
 pub use slice::{ExecutionSliceEvent, RefactorCycleV1, transition_slice_status};
 pub use supervisor::{
-    ExecutionSupervisor, ExecutionSupervisorCheckpointV1, ExecutionToolEventV1,
-    ExecutionToolOutputV1, FocusedTestOutcomeV1, FocusedTestStateV1,
+    ExecutionSupervisor, ExecutionSupervisorAfterImageV1, ExecutionSupervisorCheckpointV1,
+    ExecutionToolEventV1, ExecutionToolOutputV1, FocusedTestOutcomeV1, FocusedTestStateV1,
 };
 
 /// Re-export of frozen contract types so consumers depend only on this crate.

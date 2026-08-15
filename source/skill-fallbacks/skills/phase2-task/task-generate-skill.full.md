@@ -149,7 +149,7 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 
 > **2026-06-10 增强：** 任务规模分级后，本 SKILL 支持两种输入模式。
 
-### 1.A 有 Story 上级文档（重/小任务场景）
+### 1.A 有 Story 上级文档（中/大任务场景）
 
 从 Story 的「实现任务映射」章节提取：
 
@@ -158,11 +158,14 @@ ae-sdd memory exit --phase coding-plan --story <STORY-ID>
 - Task 间的依赖关系
 - Task 文档链接（判断是否已存在）
 
-### 1.B 无 Story 上级文档（微任务 / 小任务入口）
+### 1.B 无 Story 上级文档（由权威路线判定，非独立入口）
 
-> **触发条件：** 用户说"加个 XX" / "出个 Task" / BUG修复 / 逻辑调整，任务规模判定 = 微任务或小任务。
-> **微任务**（BUG/改逻辑/调整代码）从 Task 系列入，直接到本 SKILL 生成轻量 Task 文档，不需要 Story 上级文档。
-> **小任务**（已有 Story）虽有 Story 上级但也走 TaskGenerateSkill。
+> **统一 intake（D-01/F-11）：** 本节曾把"微任务 / 小任务"写成从 Task 系列直接进入的入口，并称小任务"已有 Story"。两处都与权威路线冲突，已改正：
+>
+> - **没有"从 Task 系列入"这条路。** Requirement Analysis 是每个任务的第一个业务 Series，规模裁定是 RA 的产出而不是它的前提。本 SKILL 在权威 `EngineeringRoute` 冻结之后才被调度。
+> - **小任务没有 Story。** 权威路线是 `RA → CodingPlan`；微任务是 `RA → 经批准的紧凑 state.executionPlan`。凡存在 Story 的路线（中/大任务），每个 Story 各跑独立 `Story → TestCase → CodingPlan` 子链。
+>
+> **本节真正描述的是：** 当路线判定本次没有 Story 上级文档时，Task 分解需要哪些输入。触发与规模判定都不在本 SKILL 手里。
 > - 任务简述（一句话）
 > - 涉及工程 / 服务名缩写
 > - 涉及文件范围（已知改哪些文件 / 函数 / 模块）

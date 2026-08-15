@@ -4,6 +4,14 @@ impl RuntimeService {
     /// Returns the current lifecycle projection.
     pub fn status(&self) -> RuntimeResult<RuntimeStatus> {
         let state = self.lock_state()?;
+        let daemon_path = std::env::current_exe()
+            .and_then(std::fs::canonicalize)
+            .map_err(|error| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    format!("failed to resolve daemon executable identity: {error}"),
+                )
+            })?;
         Ok(RuntimeStatus {
             lifecycle: self.lifecycle()?,
             boot_id: self.boot_id.to_string(),
@@ -12,6 +20,7 @@ impl RuntimeService {
             workspace_count: state.workspaces.len(),
             session_count: state.sessions.values().filter(|item| item.active).count(),
             policy_digest: self.config.policy_digest.clone(),
+            daemon_path: daemon_path.to_string_lossy().into_owned(),
         })
     }
 

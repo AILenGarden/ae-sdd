@@ -375,7 +375,7 @@ fn shared_capability_fixture_uses_protocol_canonical_claims_and_negative_cases()
 }
 
 #[test]
-fn protocol_method_fixture_matches_the_exact_37_method_registry() {
+fn protocol_method_fixture_matches_the_exact_38_method_registry() {
     let path = repository_root().join("tests/fixtures/protocol/rpc-methods.v1.json");
     let fixture: RpcMethodsFixture =
         serde_json::from_slice(&std::fs::read(path).expect("method fixture"))
@@ -566,7 +566,7 @@ fn member_manifests_inherit_every_dependency_from_the_workspace() {
                     dependency_section = trimmed.ends_with("dependencies]");
                     continue;
                 }
-                if dependency_section && !trimmed.is_empty() && !trimmed.starts_with('#') {
+                if dependency_section && trimmed.contains('=') && !trimmed.starts_with('#') {
                     assert!(
                         trimmed.contains(".workspace = true")
                             || trimmed.contains("workspace = true"),
@@ -806,7 +806,12 @@ fn build_cli_post_commit_compatibility_release_and_benchmark_paths_are_safe()
         .output()
         .expect("debug benchmark CLI");
     assert!(!debug_only.status.success());
-    assert!(String::from_utf8_lossy(&debug_only.stderr).contains("release build"));
+    let benchmark_error = String::from_utf8_lossy(&debug_only.stderr);
+    if cfg!(debug_assertions) {
+        assert!(benchmark_error.contains("release build"));
+    } else {
+        assert!(benchmark_error.contains("endpoint manifest"));
+    }
 
     let config = HookBenchmarkConfig::new(0, 1, "hdr")?
         .with_manifest(missing_manifest)

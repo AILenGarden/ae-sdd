@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -102,6 +103,31 @@ impl ProjectStorePaths {
         self.workspace_root.join(relative.as_str())
     }
 
+    fn resolve_mutation_target(
+        &self,
+        relative: &ProjectRelativePath,
+    ) -> Result<PathBuf, StoreError> {
+        let mut current = self.workspace_root.clone();
+        for component in Path::new(relative.as_str()).components() {
+            current.push(component.as_os_str());
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if path_metadata_is_redirect(&metadata) => {
+                    return Err(StoreError::InvalidJournal {
+                        reason: format!(
+                            "mutation target traverses a symlink, junction, or reparse point: {}",
+                            relative.as_str()
+                        )
+                        .into_boxed_str(),
+                    });
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => return Err(StoreError::io(&current, error)),
+            }
+        }
+        Ok(self.resolve(relative))
+    }
+
     fn journal_path(&self, revision: StateRevision, mutation_id: RequestId) -> PathBuf {
         self.journal_dir()
             .join(format!("{}-{}.json", revision.get(), mutation_id))
@@ -117,6 +143,19 @@ impl ProjectStorePaths {
             self.journal_dir.as_str()
         ))?)
     }
+}
+
+#[cfg(windows)]
+fn path_metadata_is_redirect(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn path_metadata_is_redirect(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -423,13 +462,13 @@ where
                 json!(target.after_digest().to_string()),
             );
         }
-        let descriptor = TargetDescriptor {
-            path: target.path().clone(),
-            before_digest: target.before_digest(),
-            after_digest: target.after_digest(),
-            byte_length: u64::try_from(target.after_bytes().len()).unwrap_or(u64::MAX),
-            staged_ref: self.paths.staged_ref(request.mutation_id, 0)?,
-        };
+        let descriptor = TargetDescriptor::write(
+            target.path().clone(),
+            target.before_digest(),
+            target.after_digest(),
+            u64::try_from(target.after_bytes().len()).unwrap_or(u64::MAX),
+            self.paths.staged_ref(request.mutation_id, 0)?,
+        );
         let result_bytes =
             serde_json::to_vec(&data).map_err(|error| StoreError::InvalidJournal {
                 reason: format!("lease control result could not be serialized: {error}")
@@ -470,15 +509,25 @@ where
             .write_atomic_durable(&journal_path, &journal.to_canonical_json()?)?;
         self.faults.reached(CommitPoint::AfterPreparedJournal)?;
 
-        let staged_path = self.paths.resolve(&journal.target_files[0].staged_ref);
+        let (_, _, staged_ref) =
+            journal.target_files[0]
+                .write_after()
+                .ok_or_else(|| StoreError::InvalidJournal {
+                    reason: "lease mutation target must be a write".into(),
+                })?;
+        let staged_path = self.paths.resolve_mutation_target(staged_ref)?;
         self.files
             .write_atomic_durable(&staged_path, target.after_bytes())?;
         self.faults.reached(CommitPoint::AfterStagedTargets)?;
-        self.revalidate_before_replace(std::slice::from_ref(&target))?;
+        self.revalidate_before_replace(
+            std::slice::from_ref(&target),
+            authority.revision(),
+            &BTreeSet::new(),
+        )?;
         self.files
             .write_atomic_durable(&self.paths.lease_path(), target.after_bytes())?;
         self.faults.reached(CommitPoint::AfterTargetReplace(0))?;
-        self.verify_after_replace(&journal.target_files)?;
+        self.verify_after_replace(&journal.target_files, authority.revision())?;
 
         journal.commit(request.committed_at.clone())?;
         self.files
@@ -503,6 +552,31 @@ where
     }
 
     pub fn commit(&self, request: MutationRequest) -> Result<CommittedMutation, StoreError> {
+        self.commit_internal(request, None)
+    }
+
+    pub fn commit_with_delete_outcome(
+        &self,
+        request: MutationRequest,
+        delete_path: ProjectRelativePath,
+        already_absent_event: JournalEvent,
+        already_absent_result_digest: ResultDigest,
+    ) -> Result<CommittedMutation, StoreError> {
+        self.commit_internal(
+            request,
+            Some((
+                delete_path,
+                already_absent_event,
+                already_absent_result_digest,
+            )),
+        )
+    }
+
+    fn commit_internal(
+        &self,
+        mut request: MutationRequest,
+        delete_outcome: Option<(ProjectRelativePath, JournalEvent, ResultDigest)>,
+    ) -> Result<CommittedMutation, StoreError> {
         let _guard = self.locks.lock_exclusive(&self.paths.lock_path())?;
         self.files.create_dir_all(&self.paths.journal_dir())?;
 
@@ -540,7 +614,22 @@ where
                 .map_err(|error| StoreError::InvalidState {
                     reason: error.to_string().into_boxed_str(),
                 })?;
-        let (ordered_targets, descriptors) = self.validate_targets(&request, observed)?;
+        let (ordered_targets, descriptors, initially_absent_deletes) =
+            self.validate_targets(&request, observed)?;
+        if let Some((path, already_absent_event, already_absent_result_digest)) = delete_outcome {
+            if !ordered_targets
+                .iter()
+                .any(|target| target.is_delete() && target.path() == &path)
+            {
+                return Err(StoreError::InvalidJournal {
+                    reason: "delete outcome path is not a mutation delete target".into(),
+                });
+            }
+            if initially_absent_deletes.contains(path.as_str()) {
+                request.event = already_absent_event;
+                request.result_digest = already_absent_result_digest;
+            }
+        }
         let mut journal = MutationJournalEntry::prepared(
             request.mutation_id,
             request.workspace_id,
@@ -562,26 +651,76 @@ where
         self.faults.reached(CommitPoint::AfterPreparedJournal)?;
 
         for (target, descriptor) in ordered_targets.iter().zip(&journal.target_files) {
-            let staged_path = self.paths.resolve(&descriptor.staged_ref);
-            self.files
-                .write_atomic_durable(&staged_path, target.after_bytes())?;
+            match (target, descriptor) {
+                (
+                    MutationTarget::Write { after_bytes, .. },
+                    TargetDescriptor::Write { staged_ref, .. },
+                ) => {
+                    let staged_path = self.paths.resolve_mutation_target(staged_ref)?;
+                    self.files.write_atomic_durable(&staged_path, after_bytes)?;
+                }
+                (MutationTarget::Delete { .. }, TargetDescriptor::Delete { .. }) => {}
+                _ => {
+                    return Err(StoreError::InvalidJournal {
+                        reason: "mutation target and journal descriptor kinds differ".into(),
+                    });
+                }
+            }
         }
         self.faults.reached(CommitPoint::AfterStagedTargets)?;
 
-        self.revalidate_before_replace(&ordered_targets)?;
+        self.revalidate_before_replace(
+            &ordered_targets,
+            observed.revision(),
+            &initially_absent_deletes,
+        )?;
         for (index, (target, descriptor)) in ordered_targets
             .iter()
             .zip(&journal.target_files)
             .enumerate()
         {
-            self.files.write_atomic_durable(
-                &self.paths.resolve(&descriptor.path),
-                target.after_bytes(),
-            )?;
+            match (target, descriptor) {
+                (
+                    MutationTarget::Write { after_bytes, .. },
+                    TargetDescriptor::Write { path, .. },
+                ) => self.files.write_atomic_durable(
+                    &self.paths.resolve_mutation_target(path)?,
+                    after_bytes,
+                )?,
+                (
+                    MutationTarget::Delete {
+                        path: target_path,
+                        expected_before_digest,
+                    },
+                    TargetDescriptor::Delete { path, .. },
+                ) => {
+                    let resolved = self.paths.resolve_mutation_target(path)?;
+                    if initially_absent_deletes.contains(target_path.as_str()) {
+                        if let Some(current) = self.files.read(&resolved)? {
+                            return Err(StoreError::ExternalStateConflict {
+                                revision: observed.revision(),
+                                expected_digest: *expected_before_digest,
+                                observed_digest: ArtifactDigest::digest(current),
+                            });
+                        }
+                    } else if !self.files.remove_file_durable(&resolved)? {
+                        return Err(StoreError::ExternalStateConflict {
+                            revision: observed.revision(),
+                            expected_digest: *expected_before_digest,
+                            observed_digest: ArtifactDigest::digest([]),
+                        });
+                    }
+                }
+                _ => {
+                    return Err(StoreError::InvalidJournal {
+                        reason: "mutation target and journal descriptor kinds differ".into(),
+                    });
+                }
+            }
             self.faults
                 .reached(CommitPoint::AfterTargetReplace(index))?;
         }
-        self.verify_after_replace(&journal.target_files)?;
+        self.verify_after_replace(&journal.target_files, revision_after)?;
 
         journal.commit(request.committed_at.clone())?;
         self.files
@@ -625,6 +764,21 @@ where
         )
     }
 
+    /// Locates a committed mutation by its idempotency key without applying
+    /// the payload/operation/work-item binding checks. Callers that need to
+    /// authenticate a replay (for example, lifecycle confirmation) can inspect
+    /// the committed result before those checks reject a stale transport
+    /// envelope. No mutation or receipt is created by this lookup.
+    pub fn committed_by_idempotency_key(
+        &self,
+        workspace_id: WorkspaceId,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<Option<CommittedMutation>, StoreError> {
+        let _guard = self.locks.lock_exclusive(&self.paths.lock_path())?;
+        self.files.create_dir_all(&self.paths.journal_dir())?;
+        self.lookup_committed_by_key(workspace_id, idempotency_key)
+    }
+
     /// Runs the complete mutation preflight under the project lock without
     /// staging files, appending events, or storing an idempotency receipt.
     pub fn validate_mutation(&self, request: &MutationRequest) -> Result<(), StoreError> {
@@ -659,7 +813,7 @@ where
                 .map_err(|error| StoreError::InvalidState {
                     reason: error.to_string().into_boxed_str(),
                 })?;
-        let (_, descriptors) = self.validate_targets(request, observed)?;
+        let (_, descriptors, _) = self.validate_targets(request, observed)?;
         MutationJournalEntry::prepared(
             request.mutation_id,
             request.workspace_id,
@@ -703,15 +857,45 @@ where
             let mut after_count = 0_usize;
             let mut pending = Vec::new();
             for descriptor in &entry.target_files {
-                let target_path = self.paths.resolve(&descriptor.path);
-                let current = self.files.read(&target_path)?;
-                let current_digest = current.as_deref().map(ArtifactDigest::digest);
-                if current_digest == Some(descriptor.after_digest) {
-                    after_count += 1;
-                } else if current_digest == descriptor.before_digest {
-                    pending.push(descriptor.clone());
-                } else {
-                    return Err(StoreError::JournalConflict { path: target_path });
+                match descriptor {
+                    TargetDescriptor::Write {
+                        path,
+                        before_digest,
+                        after_digest,
+                        ..
+                    } => {
+                        let target_path = self.paths.resolve_mutation_target(path)?;
+                        let current = self.files.read(&target_path)?;
+                        let current_digest = current.as_deref().map(ArtifactDigest::digest);
+                        if current_digest == Some(*after_digest) {
+                            after_count += 1;
+                        } else if current_digest == *before_digest {
+                            pending.push(descriptor.clone());
+                        } else {
+                            return Err(StoreError::JournalConflict { path: target_path });
+                        }
+                    }
+                    TargetDescriptor::Delete {
+                        path,
+                        expected_before_digest,
+                    } => {
+                        let target_path = self.paths.resolve_mutation_target(path)?;
+                        match self.files.read(&target_path)? {
+                            None => after_count += 1,
+                            Some(current)
+                                if ArtifactDigest::digest(&current) == *expected_before_digest =>
+                            {
+                                pending.push(descriptor.clone());
+                            }
+                            Some(current) => {
+                                return Err(StoreError::ExternalStateConflict {
+                                    revision: entry.revision_before,
+                                    expected_digest: *expected_before_digest,
+                                    observed_digest: ArtifactDigest::digest(current),
+                                });
+                            }
+                        }
+                    }
                 }
             }
 
@@ -727,22 +911,50 @@ where
             }
 
             for descriptor in &pending {
-                let staged_path = self.paths.resolve(&descriptor.staged_ref);
-                let staged =
-                    self.files
-                        .read(&staged_path)?
-                        .ok_or_else(|| StoreError::JournalConflict {
-                            path: staged_path.clone(),
+                match descriptor {
+                    TargetDescriptor::Write {
+                        path: target,
+                        after_digest,
+                        byte_length,
+                        staged_ref,
+                        ..
+                    } => {
+                        let staged_path = self.paths.resolve_mutation_target(staged_ref)?;
+                        let staged = self.files.read(&staged_path)?.ok_or_else(|| {
+                            StoreError::JournalConflict {
+                                path: staged_path.clone(),
+                            }
                         })?;
-                if ArtifactDigest::digest(&staged) != descriptor.after_digest
-                    || u64::try_from(staged.len()).unwrap_or(u64::MAX) != descriptor.byte_length
-                {
-                    return Err(StoreError::JournalConflict { path: staged_path });
+                        if ArtifactDigest::digest(&staged) != *after_digest
+                            || u64::try_from(staged.len()).unwrap_or(u64::MAX) != *byte_length
+                        {
+                            return Err(StoreError::JournalConflict { path: staged_path });
+                        }
+                        self.files.write_atomic_durable(
+                            &self.paths.resolve_mutation_target(target)?,
+                            &staged,
+                        )?;
+                    }
+                    TargetDescriptor::Delete {
+                        path: target,
+                        expected_before_digest,
+                    } => {
+                        let target_path = self.paths.resolve_mutation_target(target)?;
+                        if let Some(current) = self.files.read(&target_path)? {
+                            let observed = ArtifactDigest::digest(&current);
+                            if observed != *expected_before_digest {
+                                return Err(StoreError::ExternalStateConflict {
+                                    revision: entry.revision_before,
+                                    expected_digest: *expected_before_digest,
+                                    observed_digest: observed,
+                                });
+                            }
+                            self.files.remove_file_durable(&target_path)?;
+                        }
+                    }
                 }
-                self.files
-                    .write_atomic_durable(&self.paths.resolve(&descriptor.path), &staged)?;
             }
-            self.verify_after_replace(&entry.target_files)?;
+            self.verify_after_replace(&entry.target_files, entry.revision_after)?;
             entry.commit(now.clone())?;
             self.files
                 .write_atomic_durable(&path, &entry.to_canonical_json()?)?;
@@ -801,19 +1013,30 @@ where
         idempotency_key: &IdempotencyKey,
         payload_digest: InputFingerprint,
     ) -> Result<Option<CommittedMutation>, StoreError> {
+        let Some(committed) = self.lookup_committed_by_key(workspace_id, idempotency_key)? else {
+            return Ok(None);
+        };
+        if committed.receipt.payload_digest != payload_digest
+            || &committed.receipt.work_item_id != work_item_id
+            || &committed.receipt.operation != operation
+        {
+            return Err(StoreError::IdempotencyKeyReused {
+                expected: committed.receipt.payload_digest,
+                observed: payload_digest,
+            });
+        }
+        Ok(Some(committed))
+    }
+
+    fn lookup_committed_by_key(
+        &self,
+        workspace_id: WorkspaceId,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<Option<CommittedMutation>, StoreError> {
         if let Some((receipt, event)) = self
             .repository
             .operation_receipt(workspace_id, idempotency_key.as_str())?
         {
-            if receipt.payload_digest != payload_digest
-                || &receipt.work_item_id != work_item_id
-                || &receipt.operation != operation
-            {
-                return Err(StoreError::IdempotencyKeyReused {
-                    expected: receipt.payload_digest,
-                    observed: payload_digest,
-                });
-            }
             return Ok(Some(CommittedMutation {
                 journal_path: self
                     .paths
@@ -838,15 +1061,6 @@ where
             {
                 continue;
             }
-            if entry.canonical_payload_digest != payload_digest
-                || &entry.work_item_id != work_item_id
-                || &entry.operation != operation
-            {
-                return Err(StoreError::IdempotencyKeyReused {
-                    expected: entry.canonical_payload_digest,
-                    observed: payload_digest,
-                });
-            }
             let receipt = entry.operation_receipt(idempotency_key.clone())?;
             let committed_at = receipt.committed_at.clone();
             let event =
@@ -868,26 +1082,44 @@ where
         &self,
         request: &MutationRequest,
         before: AuthoritySnapshot,
-    ) -> Result<(Vec<MutationTarget>, Vec<TargetDescriptor>), StoreError> {
+    ) -> Result<(Vec<MutationTarget>, Vec<TargetDescriptor>, BTreeSet<String>), StoreError> {
         if request.targets.is_empty() {
             return Err(StoreError::InvalidJournal {
                 reason: "mutation has no targets".into(),
             });
         }
         let mut paths = BTreeSet::new();
+        let mut initially_absent_deletes = BTreeSet::new();
         let mut targets = request.targets.clone();
         for target in &targets {
-            if !paths.insert(target.path().clone()) {
+            #[cfg(windows)]
+            let target_path_key = target.path().as_str().to_ascii_lowercase();
+            #[cfg(not(windows))]
+            let target_path_key = target.path().as_str().to_owned();
+            if !paths.insert(target_path_key) {
                 return Err(StoreError::InvalidJournal {
                     reason: "mutation contains duplicate target paths".into(),
                 });
             }
-            let current = self.files.read(&self.paths.resolve(target.path()))?;
+            let path = self.paths.resolve_mutation_target(target.path())?;
+            let current = self.files.read(&path)?;
             let current_digest = current.as_deref().map(ArtifactDigest::digest);
             if current_digest != target.before_digest() {
-                return Err(StoreError::JournalConflict {
-                    path: self.paths.resolve(target.path()),
-                });
+                if target.is_delete() {
+                    if current.is_none() {
+                        initially_absent_deletes.insert(target.path().as_str().to_owned());
+                        continue;
+                    }
+                    return Err(StoreError::ExternalStateConflict {
+                        revision: before.revision(),
+                        expected_digest: target
+                            .before_digest()
+                            .expect("delete targets always bind a digest"),
+                        observed_digest: current_digest
+                            .unwrap_or_else(|| ArtifactDigest::digest([])),
+                    });
+                }
+                return Err(StoreError::JournalConflict { path });
             }
         }
         let state_target = targets
@@ -905,7 +1137,12 @@ where
                     .unwrap_or_else(|| ArtifactDigest::digest([])),
             });
         }
-        let after_state = StateAuthority::inspect(state_target.after_bytes())?;
+        let after_state =
+            StateAuthority::inspect(state_target.write_bytes().ok_or_else(|| {
+                StoreError::InvalidJournal {
+                    reason: "authoritative state target must be a write".into(),
+                }
+            })?)?;
         StateAuthority::verify_successor(before, after_state, request.lease_proof.fencing_token)?;
 
         targets.sort_by(|left, right| {
@@ -918,23 +1155,51 @@ where
         let descriptors = targets
             .iter()
             .enumerate()
-            .map(|(index, target)| {
-                Ok(TargetDescriptor {
-                    path: target.path().clone(),
-                    before_digest: target.before_digest(),
-                    after_digest: target.after_digest(),
-                    byte_length: u64::try_from(target.after_bytes().len()).unwrap_or(u64::MAX),
-                    staged_ref: self.paths.staged_ref(request.mutation_id, index)?,
-                })
+            .map(|(index, target)| match target {
+                MutationTarget::Write {
+                    path,
+                    before_digest,
+                    after_bytes,
+                } => Ok(TargetDescriptor::write(
+                    path.clone(),
+                    *before_digest,
+                    ArtifactDigest::digest(after_bytes),
+                    u64::try_from(after_bytes.len()).unwrap_or(u64::MAX),
+                    self.paths.staged_ref(request.mutation_id, index)?,
+                )),
+                MutationTarget::Delete {
+                    path,
+                    expected_before_digest,
+                } => Ok(TargetDescriptor::delete(
+                    path.clone(),
+                    *expected_before_digest,
+                )),
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
-        Ok((targets, descriptors))
+        Ok((targets, descriptors, initially_absent_deletes))
     }
 
-    fn revalidate_before_replace(&self, targets: &[MutationTarget]) -> Result<(), StoreError> {
+    fn revalidate_before_replace(
+        &self,
+        targets: &[MutationTarget],
+        revision: StateRevision,
+        initially_absent_deletes: &BTreeSet<String>,
+    ) -> Result<(), StoreError> {
         for target in targets {
-            let path = self.paths.resolve(target.path());
+            let path = self.paths.resolve_mutation_target(target.path())?;
             let current = self.files.read(&path)?;
+            if target.is_delete() && initially_absent_deletes.contains(target.path().as_str()) {
+                if let Some(current) = current {
+                    return Err(StoreError::ExternalStateConflict {
+                        revision,
+                        expected_digest: target
+                            .before_digest()
+                            .expect("delete targets always bind a digest"),
+                        observed_digest: ArtifactDigest::digest(current),
+                    });
+                }
+                continue;
+            }
             if current.as_deref().map(ArtifactDigest::digest) != target.before_digest() {
                 if target.path() == self.paths.state_file() {
                     let observed = current
@@ -951,23 +1216,61 @@ where
                         });
                     }
                 }
+                if target.is_delete() {
+                    return Err(StoreError::ExternalStateConflict {
+                        revision,
+                        expected_digest: target
+                            .before_digest()
+                            .expect("delete targets always bind a digest"),
+                        observed_digest: current
+                            .as_deref()
+                            .map(ArtifactDigest::digest)
+                            .unwrap_or_else(|| ArtifactDigest::digest([])),
+                    });
+                }
                 return Err(StoreError::JournalConflict { path });
             }
         }
         Ok(())
     }
 
-    fn verify_after_replace(&self, targets: &[TargetDescriptor]) -> Result<(), StoreError> {
+    fn verify_after_replace(
+        &self,
+        targets: &[TargetDescriptor],
+        revision: StateRevision,
+    ) -> Result<(), StoreError> {
         for target in targets {
-            let path = self.paths.resolve(&target.path);
-            let current = self
-                .files
-                .read(&path)?
-                .ok_or_else(|| StoreError::JournalConflict { path: path.clone() })?;
-            if ArtifactDigest::digest(&current) != target.after_digest
-                || u64::try_from(current.len()).unwrap_or(u64::MAX) != target.byte_length
-            {
-                return Err(StoreError::JournalConflict { path });
+            match target {
+                TargetDescriptor::Write {
+                    path,
+                    after_digest,
+                    byte_length,
+                    ..
+                } => {
+                    let path = self.paths.resolve_mutation_target(path)?;
+                    let current = self
+                        .files
+                        .read(&path)?
+                        .ok_or_else(|| StoreError::JournalConflict { path: path.clone() })?;
+                    if ArtifactDigest::digest(&current) != *after_digest
+                        || u64::try_from(current.len()).unwrap_or(u64::MAX) != *byte_length
+                    {
+                        return Err(StoreError::JournalConflict { path });
+                    }
+                }
+                TargetDescriptor::Delete {
+                    path,
+                    expected_before_digest,
+                } => {
+                    let path = self.paths.resolve_mutation_target(path)?;
+                    if let Some(current) = self.files.read(&path)? {
+                        return Err(StoreError::ExternalStateConflict {
+                            revision,
+                            expected_digest: *expected_before_digest,
+                            observed_digest: ArtifactDigest::digest(current),
+                        });
+                    }
+                }
             }
         }
         Ok(())

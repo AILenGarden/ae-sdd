@@ -25,7 +25,7 @@
 | 设计文档 | `source/docs/ae-sdd-design.md`、`source/docs/ae-sdd-implementation-architecture.md`、`source/docs/skill-runtime-compiler.md` | 能力边界、实现边界、编译契约 |
 | 工具事实 | `crates/**`、`bins/ae-sdd-cli` | gate/state/CLI 的执行真相 |
 
-当 slim entry 与 fallback 冲突时，先检查 `source_fallback_sha256`。fallback 哈希正确时，以 fallback 为完整语义来源；执行 gate/state 时，CLI 输出仍高于任何 SKILL 文字。
+当 slim entry 与 fallback 冲突时，先检查 `source_fallback_sha256`。该哈希基于去 BOM、统一 LF 的 canonical UTF-8 内容；哈希正确时，以 fallback 为完整语义来源；执行 gate/state 时，CLI 输出仍高于任何 SKILL 文字。
 
 ## 3. 语义识别清单
 
@@ -48,20 +48,22 @@
 ## 4. SOP
 
 1. 发现源文件：只处理 `source/SKILL.md` 与 `source/skills/**/*.md`。
-2. 判定状态：已有 `source_slimmed: true` 的文件默认跳过；只有 schema 过旧时才允许 `--upgrade`。
-3. 读取语义输入：未瘦身文件用当前原文；已瘦身升级必须读取 `source_fallback`，禁止从 slim entry 二次瘦身。
-4. 复制 fallback：未瘦身文件先写入 `source/skill-fallbacks/**`，不得覆盖已有 fallback。
+2. 选择条目：调用方必须显式传入每个目标 `--skill`；禁止为了修复一个 fallback 而遍历并改写整棵 `source/skills/`。
+3. 读取语义输入：已有 slim entry 的 refresh 必须读取 `skill-fallbacks/**` 下的 `source_fallback`；fallback 不得自引用、不得已经标记 `source_slimmed: true`，禁止从 slim entry 二次瘦身；非 root 的未瘦身入口不属于此命令的写入范围。首次处理 `source/SKILL.md` 是唯一例外：`--refresh` 只能从固定 `skill-fallbacks/SKILL.full.md` 建立 slim entry，而建立前的 `--validate` 必须失败。输入在哈希、渲染和校验前统一为去 BOM、LF 换行的 canonical UTF-8 内容。
+4. 复制 fallback：首次瘦身时先写入 `source/skill-fallbacks/**`，不得覆盖已有 fallback。
 5. 语义识别：按 §3 分类识别 frontmatter、heading、关键词、inline references。
 6. 模板渲染：按 `source/templates/skill/source-skill-slim-entry-template.md` 输出 slim entry。
-7. 机器校验：校验 fallback 哈希、schema、标准路径、模板路径、必备 section、语义 inventory hash、模板重渲染一致性。
-8. 编译：运行 `ae-sdd-build native-job` 的 compile 作业，让 runtime fallback 从源 fallback 取得完整语义。
-9. 验证：运行 `ae-sdd runtime verify`、`ae-sdd update-check --only UC-15` 和相关单元测试。
+7. 机器校验：使用 `ae-sdd-build source-slim --source source --skill <relative-entry> --validate` 校验 fallback 哈希、schema、标准路径、模板路径、必备 section、语义 inventory hash 与 canonical-byte 重渲染一致性。
+8. refresh：使用 `ae-sdd-build source-slim --source source --skill <relative-entry> --refresh`；它只写入与渲染结果不同的目标条目。
+9. 编译与验证：按 native build/release 作业重建 runtime，并运行 `cargo test -p ae-sdd-build --test source_slim` 和适用的 release 验证。
 
 ## 5. 禁止事项
 
 - 禁止手工删除源 SKILL 大段内容后再补一个短说明。
 - 禁止没有 fallback 就写 `source_slimmed: true`。
+- 禁止把 `source_fallback` 指向 `skill-fallbacks/**` 之外的路径、自身或已 slim 的入口。
 - 禁止从已经瘦身的入口再次摘要、改写或“再瘦一遍”。
+- 禁止手工修改由 `source-slim` 生成的 section；`--upgrade` 仅是历史兼容别名，新的调用必须使用 `--refresh`。
 - 禁止把 slim entry 当成完整语义来源参与 runtime fallback。
 - 禁止只更新源 SKILL 而不同步设计文档、模板或本标准。
 - 禁止在 slim entry 中隐藏关键 gate、命令、状态字段或文档产物契约。
@@ -71,9 +73,9 @@
 一次源 SKILL 瘦身完成，必须同时满足：
 
 - 每个 slim entry 有 `source_slim_schema: ae-sdd-source-slim/v2`。
-- 每个 `source_fallback_sha256` 与 `source/skill-fallbacks/**` 实际内容一致。
-- 每个 slim entry 与模板重渲染结果字节一致。
+- 每个 `source_fallback_sha256` 与 `source/skill-fallbacks/**` 的 canonical UTF-8 内容一致。
+- 每个 slim entry 与模板重渲染结果 canonical-byte 一致。
+- 对已修改 fallback 的每个指定 entry，`source-slim --refresh` 后 `source-slim --validate` 均通过。
 - `## Semantic Inventory` 至少能追到身份/触发语义，并按内容覆盖工作流、门禁、工具、状态、文档、资源或设计对齐语义。
 - 编译后的 `dist/ae-sdd/runtime/**/fallback/SKILL.full.md` 来自源 fallback，而不是 slim entry。
-- `ae-sdd runtime verify --path dist/ae-sdd` 通过。
-- `ae-sdd update-check --only UC-15 --json` 通过。
+- 对应 native runtime/release 验证通过。

@@ -43,7 +43,10 @@ fn register_without_capability_token_succeeds() {
     );
     let result = parse_success_json(&output, "host.register without capabilityToken");
     assert_eq!(result["adapterId"], "hra-register-no-token");
-    assert_eq!(result["capabilities"], json!(["create", "attest"]));
+    assert!(
+        result.get("capabilities").is_none(),
+        "ignored compatibility capabilities must not be echoed: {result}"
+    );
 
     stop_daemon(&manifest);
     wait_for_manifest_removal(&manifest);
@@ -252,12 +255,9 @@ fn endpoint_token_stays_out_of_cli_output_and_input() {
 /// session capabilities travel in params — and the boot credential must not
 /// leak into any CLI output along the way.
 ///
-/// The chain opens its sessions without a `workItemId`: an explicit Work Item
-/// makes `session.open` resolve the project authority state directory
-/// (`.auto-engineering/*/state.json`), and fabricating that state is the
-/// daemon process tests' job, not this credential regression's. The two
-/// delegation calls carry the Work Item their admission contract requires;
-/// neither resolves it against project files.
+/// Root-to-Series delegation consumes a daemon-committed `flow.next` intent,
+/// so this process test bootstraps a real ROUTE Work Item through the Hook
+/// boundary before exercising the physical Host chain.
 #[test]
 fn physical_delegation_chain_needs_no_endpoint_credential() {
     let Some(daemon) = daemon_executable() else {
@@ -267,24 +267,24 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
         return;
     };
     let state = IsolatedState::new("delegation-chain");
+    let project_root = state.path().join("ae-sdd");
+    fs::create_dir_all(&project_root).expect("isolated project root is created");
     let manifest = state.manifest();
     let cleanup = DaemonCleanup::new(manifest.clone());
-    let ensured = run_command(ensure_command(&daemon, state.path()), None);
+    let ensured = run_command(
+        ensure_command_for_root(&daemon, state.path(), &project_root),
+        None,
+    );
     parse_success_json(&ensured, "runtime ensure");
     let (_, endpoint_token) = read_manifest_boot_and_token(&manifest);
 
     let suffix = format!("{:08x}", (nonce() as u32) ^ std::process::id());
     let key = format!("hra-chain-{suffix}");
-    let project_key = format!("hra-chain-{suffix}");
-    // Only an opaque routing identity here: `delegation.create`/`accept`
-    // require the envelope field, and resolving it against project authority
-    // state is the daemon process tests' job, not this credential regression's.
-    let work_item_id = format!("STORY-HRA-{suffix}");
+    let hook_external_key = format!("{key}-hook-session");
     let adapter_id = format!("{key}-host");
-    let root_agent = format!("{key}-root");
+    let root_agent = "host-hook";
     let child_agent = format!("{key}-series-agent");
     let child_session_id = test_uuid(1);
-    let claim_id = test_uuid(2);
     let ack_id = test_uuid(3);
     let now = now_unix_ms();
     let mut transcripts: Vec<(&'static str, Output)> = vec![("runtime ensure", ensured)];
@@ -297,8 +297,8 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
             "cli",
             &params_json(
                 json!({
-                    "projectRoot": repository_root(),
-                    "projectKey": project_key,
+                    "projectRoot": project_root,
+                    "projectKey": "ae-sdd",
                 }),
                 Some(&format!("{key}-workspace")),
             ),
@@ -313,8 +313,44 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
         .to_owned();
     transcripts.push(("workspace.register", output));
 
-    // Root session. A shadow workspace means the daemon policy is disengaged,
-    // so `engaged` must be false.
+    // The authenticated Hook performs the single bootstrap enrollment and
+    // creates the authoritative ROUTE Work Item used by `flow.next`.
+    let mut hook = cli_command();
+    hook.args(["hook", "--method", "hook.user_prompt", "--request-json"])
+        .arg(
+            json!({
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": "/ae-sdd",
+                "event_id": format!("{key}-bootstrap"),
+                "session_id": hook_external_key,
+                "cwd": project_root,
+            })
+            .to_string(),
+        )
+        .arg("--manifest")
+        .arg(&manifest)
+        .args(["--timeout-ms", "10000"]);
+    let output = run_command(hook, None);
+    assert!(
+        output.status.success(),
+        "ROUTE bootstrap failed:\n{}",
+        command_diagnostics(&output)
+    );
+    let hook_stderr = String::from_utf8_lossy(&output.stderr);
+    let work_item_id = hook_stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ae-sdd: hook.user_prompt bound workItemId: "))
+        .unwrap_or_else(|| {
+            panic!(
+                "/ae-sdd did not report its daemon-minted workItemId:\n{}",
+                command_diagnostics(&output)
+            )
+        })
+        .to_owned();
+    transcripts.push(("hook.user_prompt", output));
+
+    // Reopen the Hook-owned Root session and recover its daemon-minted
+    // capability for the remaining ordinary CLI requests.
     let output = run_command(
         rpc_command(
             &manifest,
@@ -327,9 +363,9 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
                 "idempotencyKey": format!("{key}-open-root"),
                 "deadlineMs": 10_000,
                 "payload": {
-                    "externalKey": format!("{key}-root-external"),
+                    "externalKey": hook_external_key,
                     "role": "root",
-                    "engaged": false,
+                    "engaged": true,
                 },
             }))
             .expect("root session.open params serialize"),
@@ -348,6 +384,35 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
         .to_owned();
     transcripts.push(("root session.open", output));
 
+    // Commit the authoritative delegation intent and retain only its digest;
+    // every authority-bearing child field is derived by the daemon.
+    let output = run_command(
+        rpc_command(
+            &manifest,
+            "flow.next",
+            "cli",
+            &serde_json::to_string(&json!({
+                "protocolVersion": "1.0",
+                "workspaceId": workspace_id,
+                "agentId": root_agent,
+                "sessionId": root_session_id,
+                "capabilityToken": root_capability,
+                "workItemId": work_item_id,
+                "deadlineMs": 10_000,
+                "payload": {},
+            }))
+            .expect("flow.next params serialize"),
+            None,
+        ),
+        None,
+    );
+    let flow = parse_success_json(&output, "flow.next");
+    let flow_decision_digest = flow["decisionDigest"]
+        .as_str()
+        .expect("flow.next returns decisionDigest")
+        .to_owned();
+    transcripts.push(("flow.next", output));
+
     // host.register with no caller-supplied credential.
     let register = host_register_params(&adapter_id, &format!("{key}-host-register"));
     let output = run_command(
@@ -357,6 +422,56 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
     let registered = parse_success_json(&output, "chain host.register");
     assert_eq!(registered["adapterId"], adapter_id);
     transcripts.push(("host.register", output));
+
+    // A second attached Host makes global adapter selection ambiguous. Reopen
+    // the Root with an explicit durable binding before creating delegation;
+    // delegation.create itself remains caller-clean and carries no adapter ID.
+    let other_adapter_id = format!("{key}-other-host");
+    let other_register =
+        host_register_params(&other_adapter_id, &format!("{key}-other-host-register"));
+    let output = run_command(
+        rpc_command(
+            &manifest,
+            "host.register",
+            "host-adapter",
+            &other_register,
+            None,
+        ),
+        None,
+    );
+    let registered = parse_success_json(&output, "second chain host.register");
+    assert_eq!(registered["adapterId"], other_adapter_id);
+    transcripts.push(("second host.register", output));
+
+    let output = run_command(
+        rpc_command(
+            &manifest,
+            "session.open",
+            "cli",
+            &serde_json::to_string(&json!({
+                "protocolVersion": "1.0",
+                "workspaceId": workspace_id,
+                "agentId": root_agent,
+                "idempotencyKey": format!("{key}-bind-root-host"),
+                "deadlineMs": 10_000,
+                "payload": {
+                    "externalKey": hook_external_key,
+                    "role": "root",
+                    "engaged": true,
+                    "hostAdapterId": adapter_id,
+                },
+            }))
+            .expect("bound root session.open params serialize"),
+            None,
+        ),
+        None,
+    );
+    let rebound_root = parse_success_json(&output, "bound root session.open");
+    let root_capability = rebound_root["capabilityToken"]
+        .as_str()
+        .expect("rebound root session capability")
+        .to_owned();
+    transcripts.push(("bound root session.open", output));
 
     // delegation.create under the root session's daemon-minted capability.
     let output = run_command(
@@ -374,25 +489,7 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
                 "idempotencyKey": format!("{key}-create"),
                 "deadlineMs": 10_000,
                 "payload": {
-                    "childRole": "series",
-                    "parentDelegationId": null,
-                    "inputRevision": 1,
-                    "inputFingerprint": "ab".repeat(32),
-                    "deadlineUnixMs": now.saturating_add(600_000),
-                    "adapterId": adapter_id,
-                    "grant": {
-                        "operations": [
-                            "document.save",
-                            "evidence.finalize",
-                            "evidence.record",
-                            "lease.acquire",
-                            "lease.release",
-                            "review.record",
-                            "verification.plan",
-                        ],
-                        "capabilities": ["review.specialty.general"],
-                        "paths": [{"kind": "project_root"}],
-                    },
+                    "flowDecisionDigest": flow_decision_digest,
                 },
             }))
             .expect("delegation.create params serialize"),
@@ -422,6 +519,9 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
     assert_eq!(action["kind"], "create");
     assert_eq!(action["delegationId"], delegation_id);
     let action_id = action["actionId"].as_str().expect("host action id");
+    let claim_id = action["claimId"]
+        .as_str()
+        .expect("Host delivery carries the daemon-issued claim");
     let command_seq = action["commandSeq"].as_u64().expect("command seq");
     transcripts.push(("host.action_next", output));
 
@@ -500,7 +600,7 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
                 "payload": {
                     "externalKey": format!("{key}-series-external"),
                     "role": "series",
-                    "engaged": false,
+                    "engaged": true,
                     "delegationId": delegation_id,
                 },
             }))
@@ -537,17 +637,21 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
 
 fn ensure_command(daemon: &Path, state_dir: &Path) -> Command {
     let root = repository_root();
+    ensure_command_for_root(daemon, state_dir, &root)
+}
+
+fn ensure_command_for_root(daemon: &Path, state_dir: &Path, project_root: &Path) -> Command {
     let mut command = cli_command();
     command
-        .current_dir(&root)
+        .current_dir(project_root)
         .args(["runtime", "ensure", "--daemon"])
         .arg(daemon)
         .arg("--state-dir")
         .arg(state_dir)
         .arg("--allowed-root")
-        .arg(&root)
+        .arg(project_root)
         .arg("--project-root")
-        .arg(&root)
+        .arg(project_root)
         .arg("--timeout-ms")
         .arg(STARTUP_TIMEOUT_MS);
     command

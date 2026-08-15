@@ -135,6 +135,24 @@ fn scan_document(
         ScannerId::RaFlowViolation => scan_ra_flow(path, text, findings),
         ScannerId::RaDepth => scan_ra_depth(path, text, findings),
         ScannerId::RaImplementation => scan_ra_implementation(path, text, findings),
+        ScannerId::RaCore => crate::ra_specification::scan_ra_v2(
+            path,
+            text,
+            crate::ra_specification::LensCheck::Core,
+            findings,
+        ),
+        ScannerId::RaApplicability => crate::ra_specification::scan_ra_v2(
+            path,
+            text,
+            crate::ra_specification::LensCheck::Applicability,
+            findings,
+        ),
+        ScannerId::RaClosure => crate::ra_specification::scan_ra_v2(
+            path,
+            text,
+            crate::ra_specification::LensCheck::Closure,
+            findings,
+        ),
         ScannerId::PluginContent => scan_plugin_document(path, text, findings),
     }
 }
@@ -189,7 +207,12 @@ fn line_rules(scanner: ScannerId) -> &'static [LineRule] {
                 rule(FindingSeverity::Warn, "PC-009-hardcoded-output-path", r"design/story/be/|design/testcase/be/|\.ae-project/assets\.md|life-team-project-docs/|\.ae-task/|\.ae-plan/|\.spec/iterations/", "Output paths must be resolved through document storage."),
             ]
         }),
-        ScannerId::RaFlowViolation | ScannerId::RaDepth | ScannerId::RaImplementation => &[],
+        ScannerId::RaFlowViolation
+        | ScannerId::RaDepth
+        | ScannerId::RaImplementation
+        | ScannerId::RaCore
+        | ScannerId::RaApplicability
+        | ScannerId::RaClosure => &[],
     }
 }
 

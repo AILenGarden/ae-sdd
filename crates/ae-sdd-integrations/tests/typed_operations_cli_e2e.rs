@@ -63,17 +63,15 @@ fn delegation_identity_bundle_satisfies_sqlite_action_and_attestation_joins() {
         register,
     ));
 
+    let flow = success(&call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::FlowNext,
+        trusted_params(&root_identity, json!({})),
+    ));
     let mut create = trusted_params(
         &root_identity,
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":"typed-delegation-host",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
+        json!({"flowDecisionDigest":flow["decisionDigest"]}),
     );
     create.idempotency_key = Some("typed-delegation-create".to_owned());
     let created = success(&call(
@@ -115,9 +113,12 @@ fn delegation_identity_bundle_satisfies_sqlite_action_and_attestation_joins() {
         RpcMethod::HostActionNext,
         plain_params(json!({"adapterId":"typed-delegation-host"})),
     ));
+    let claim_id = action["claimId"]
+        .as_str()
+        .expect("daemon-issued Host claim")
+        .to_owned();
     let child_session_id = "00000000-0000-0000-0000-000000000711";
     let ack_id = "00000000-0000-0000-0000-000000000712";
-    let claim_id = "00000000-0000-0000-0000-000000000713";
     let mut ack = plain_params(json!({
         "adapterId":"typed-delegation-host",
         "ack":{
@@ -183,7 +184,7 @@ fn delegation_identity_bundle_satisfies_sqlite_action_and_attestation_joins() {
     assert_eq!(attestation.host_ack_id, ack_id);
     assert_ne!(attestation.claim_digest, claim_id);
     let receipt_json = serde_json::to_string(&accepted_snapshot).expect("snapshot serializes");
-    assert!(!receipt_json.contains(claim_id));
+    assert!(!receipt_json.contains(&claim_id));
     assert!(!receipt_json.contains("claimId"));
 
     harness

@@ -118,6 +118,16 @@ impl Fixture {
             "ae-sdd-doc/Story/STORY-REVIEW-CONTRIBUTION-001.md",
             STORY_DOCUMENT,
         );
+        write_source(
+            workspace_root.path(),
+            "ae-sdd-doc/RA/review-contribution.md",
+            "# RA review-contribution\n",
+        );
+        write_source(
+            workspace_root.path(),
+            "ae-sdd-doc/DR/review-contribution.md",
+            "# DR review-contribution\n",
+        );
 
         let runtime_root = TempDir::new().expect("runtime tempdir");
         let database = runtime_root.path().join("runtime.sqlite3");
@@ -247,6 +257,7 @@ fn initial_state(scale: &str) -> Value {
         "revision":7,
         "lastFencingToken":0,
         "scale":scale,
+        "selectedDesign":"DR",
         "phase":"test-running",
         "currentPhase":"test-running",
         "inputFingerprint":INPUT,
@@ -518,6 +529,7 @@ fn commit_child_identity(
             delegation: Some(RuntimeDelegationRecord {
                 delegation_id: delegation_id.to_owned(),
                 workspace_id: WORKSPACE_ID.to_owned(),
+                work_item_id: session.current_work_item.clone(),
                 root_session_id: ROOT_SESSION.to_owned(),
                 parent_session_id: parent_session_id.to_owned(),
                 child_session_id: Some(session_id.to_owned()),

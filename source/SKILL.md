@@ -57,7 +57,7 @@ inference never override daemon state.
 | Session/Hook | `session.open`, `session.heartbeat`, `session.close`, `hook.user_prompt`, `hook.pre_tool`, `hook.post_tool`, `hook.stop` | Bind physical session and turn; return a host-compatible decision |
 | Flow | `flow.snapshot`, `flow.next` | Return the committed process projection and legal `nextAction` |
 | Delegation | `delegation.create`, `delegation.status`, `delegation.accept`, `delegation.report`, `delegation.collect`, `delegation.cancel` | Create and attest physical child work; validate bounded results |
-| Operations/Gates | `operation.describe`, `operation.execute` (incl. `workitem.create`, `route.decide`), `gate.evaluate` | Execute typed reads or guarded mutations; `/ae-sdd` invokes daemon-owned `workitem.create(entryNode=ROUTE)` idempotently and binds the session; `route.decide` accepts typed intent/impact/confidence facts and persists the `RouteEngine` decision under revision, lease, and idempotency authority; non-PASS never becomes PASS |
+| Operations/Gates | `operation.describe`, `operation.execute` (incl. `workitem.create`, `route.decide`), `gate.evaluate` | Execute typed reads or guarded mutations; `/ae-sdd` invokes daemon-owned `workitem.create(entryNode=ROUTE)` idempotently and binds the session; after RA closes, `route.decide` derives a candidate from the verified SRS receipt and scale evidence, while `RouteSelected` freezes authority only after the bound approval Gate passes; non-PASS never becomes PASS |
 | Events/Jobs | `events.subscribe`, `job.submit`, `job.status`, `job.cancel` | Submit, observe, and cancel authorized bounded background work |
 | Context | `context.get`, `context.project` | Return role-aware full, delta, or no-change projections |
 | Compact | `compact.request`, `compact.status` | Track snapshot, host request, correlated ACK, and rehydrate |
@@ -105,18 +105,32 @@ locally.
 ## Declared Routes
 
 The Agent supplies intent and available facts; `FlowRuntime` selects and advances
-the route. The current methodology declares these minimum routes:
+the route. Requirement Analysis is the *first* business Series for every task,
+including self-update: the Hook records only a provisional `BootstrapAssessment`,
+and RA produces exactly one adaptive `ae-sdd-ra-srs/v2` SRS. `G-RA-1..4` close
+the content receipt at `RequirementAnalyzed`; `G-RA-FLOW-VIOLATION` validates
+the SRS/receipt/scale/candidate/approval binding before the authoritative
+`EngineeringRoute` is frozen at `RouteSelected`. `G-RA-5/6` remain real
+compatibility diagnostics but are not automatic transition Gates. The current
+methodology declares these minimum routes:
 
 | Size | Required design chain before Coding |
 | --- | --- |
-| large | Route -> Requirement Analysis -> DR/Story/CodingPlan -> approved `executionPlan` |
-| medium | Route -> Requirement Analysis -> Story/CodingPlan -> approved `executionPlan` |
-| small/micro | Route -> Requirement Analysis -> CodingPlan or Story-lite -> approved `executionPlan` |
+| large | RA -> DR -> N x (Story -> TestCase -> CodingPlan) -> approved `executionPlan` |
+| medium | RA -> Story -> TestCase -> CodingPlan -> approved `executionPlan` |
+| small | RA -> CodingPlan -> approved `executionPlan` |
+| micro | RA -> approved compact `state.executionPlan` |
 
-Requirement Analysis occurs after routing. Its conclusion may select DR, Story,
-or a compact `state.executionPlan`. RA, DR, and Story remain the core design
-documents; TestCase is optional for a genuinely complex verification matrix.
-Only the user can approve `executionPlan` or explicitly select the quick route.
+Wherever a Story exists, every Story runs its own independent
+`Story -> TestCase -> CodingPlan` subchain and its TestCase receipt binds that
+Story's identity — a sibling's TestCase never satisfies it. TestCase is neither
+optional nor conditional on matrix complexity, and it does not appear on the
+micro or small routes, which have no Story. Micro creates no separate CodingPlan
+Markdown; it uses the approved `state.executionPlan` alone. Only the user can
+approve `executionPlan`.
+
+> Terminology and route semantics follow `source/docs/ae-sdd-design.md` §2 and
+> §过程产物模型; this file only states how an Agent drives them.
 
 ## Hook Activation Semantics
 

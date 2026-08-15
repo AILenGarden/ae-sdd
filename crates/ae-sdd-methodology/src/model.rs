@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use ae_sdd_contracts::{BoundedText, MethodologyVariant, SeriesKind, SkillId};
+use ae_sdd_contracts::{BoundedText, MethodologyVariant, SeriesActivity, SeriesKind, SkillId};
 use ae_sdd_domain::{ArtifactDigest, ArtifactKind, ArtifactRef, ProjectRelativePath};
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +81,8 @@ impl RoutePredicate {
 pub struct CompiledMethodologyEntry {
     pub(crate) skill_id: SkillId,
     pub(crate) series_kind: SeriesKind,
+    /// Skill role within `series_kind`; `None` for non-Series entries.
+    pub(crate) activity: Option<SeriesActivity>,
     pub(crate) variant: MethodologyVariant,
     pub(crate) version: BoundedText<32>,
     pub(crate) activation: Activation,
@@ -104,6 +106,15 @@ impl CompiledMethodologyEntry {
     /// Returns the Series kind selected by routing.
     pub const fn series_kind(&self) -> &SeriesKind {
         &self.series_kind
+    }
+
+    /// Returns the skill role within [`Self::series_kind`].
+    ///
+    /// `(series_kind, activity)` is unique across Series entries, so this is
+    /// what lets a resolver pick one of several slices serving the same main
+    /// node instead of taking whichever the catalog happens to list first.
+    pub const fn activity(&self) -> Option<SeriesActivity> {
+        self.activity
     }
 
     /// Returns the compiled Methodology variant.
@@ -205,6 +216,8 @@ impl ArtifactMetadataWire {
 pub(crate) struct CompiledEntryWire {
     skill_id: String,
     series_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    activity: Option<SeriesActivity>,
     variant: String,
     version: String,
     activation: Activation,
@@ -240,6 +253,7 @@ impl CompiledEntryWire {
         Self {
             skill_id: value.skill_id.to_string(),
             series_kind: value.series_kind.to_string(),
+            activity: value.activity,
             variant: value.variant.to_string(),
             version: value.version.to_string(),
             activation: value.activation,
@@ -276,6 +290,7 @@ impl CompiledEntryWire {
                     value: error.to_string(),
                 }
             })?,
+            activity: self.activity,
             variant: MethodologyVariant::new(self.variant).map_err(|error| {
                 MethodologyError::InvalidField {
                     field: "variant",
@@ -317,6 +332,9 @@ impl CompiledEntryWire {
 pub(crate) struct EntryDigestWire {
     skill_id: String,
     series_kind: String,
+    /// Covered by the digest because it distinguishes otherwise-identical
+    /// entries: three Story slices share a `seriesKind` and differ only here.
+    activity: Option<SeriesActivity>,
     variant: String,
     version: String,
     activation: Activation,
@@ -335,6 +353,7 @@ impl EntryDigestWire {
         Self {
             skill_id: value.skill_id.to_string(),
             series_kind: value.series_kind.to_string(),
+            activity: value.activity,
             variant: value.variant.to_string(),
             version: value.version.to_string(),
             activation: value.activation,

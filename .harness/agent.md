@@ -1,6 +1,6 @@
 # ae-sdd Agent Harness
 
-<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/SKILL.md" sha256="8ee76295c3e7caccc89ea20a9bc2ee5cda8d5fe3e7e9042c44576a03732a6b4d" -->
+<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/SKILL.md" sha256="6de602571e92849b02a67b9f00421690afb7eb52ee41cfa983cdeee98bfdf096" -->
 ---
 name: ae-sdd
 version: 4.0.0
@@ -60,7 +60,7 @@ inference never override daemon state.
 | Session/Hook | `session.open`, `session.heartbeat`, `session.close`, `hook.user_prompt`, `hook.pre_tool`, `hook.post_tool`, `hook.stop` | Bind physical session and turn; return a host-compatible decision |
 | Flow | `flow.snapshot`, `flow.next` | Return the committed process projection and legal `nextAction` |
 | Delegation | `delegation.create`, `delegation.status`, `delegation.accept`, `delegation.report`, `delegation.collect`, `delegation.cancel` | Create and attest physical child work; validate bounded results |
-| Operations/Gates | `operation.describe`, `operation.execute` (incl. `workitem.create`, `route.decide`), `gate.evaluate` | Execute typed reads or guarded mutations; `/ae-sdd` invokes daemon-owned `workitem.create(entryNode=ROUTE)` idempotently and binds the session; `route.decide` accepts typed intent/impact/confidence facts and persists the `RouteEngine` decision under revision, lease, and idempotency authority; non-PASS never becomes PASS |
+| Operations/Gates | `operation.describe`, `operation.execute` (incl. `workitem.create`, `route.decide`), `gate.evaluate` | Execute typed reads or guarded mutations; `/ae-sdd` invokes daemon-owned `workitem.create(entryNode=ROUTE)` idempotently and binds the session; after RA closes, `route.decide` derives a candidate from the verified SRS receipt and scale evidence, while `RouteSelected` freezes authority only after the bound approval Gate passes; non-PASS never becomes PASS |
 | Events/Jobs | `events.subscribe`, `job.submit`, `job.status`, `job.cancel` | Submit, observe, and cancel authorized bounded background work |
 | Context | `context.get`, `context.project` | Return role-aware full, delta, or no-change projections |
 | Compact | `compact.request`, `compact.status` | Track snapshot, host request, correlated ACK, and rehydrate |
@@ -108,18 +108,32 @@ locally.
 ## Declared Routes
 
 The Agent supplies intent and available facts; `FlowRuntime` selects and advances
-the route. The current methodology declares these minimum routes:
+the route. Requirement Analysis is the *first* business Series for every task,
+including self-update: the Hook records only a provisional `BootstrapAssessment`,
+and RA produces exactly one adaptive `ae-sdd-ra-srs/v2` SRS. `G-RA-1..4` close
+the content receipt at `RequirementAnalyzed`; `G-RA-FLOW-VIOLATION` validates
+the SRS/receipt/scale/candidate/approval binding before the authoritative
+`EngineeringRoute` is frozen at `RouteSelected`. `G-RA-5/6` remain real
+compatibility diagnostics but are not automatic transition Gates. The current
+methodology declares these minimum routes:
 
 | Size | Required design chain before Coding |
 | --- | --- |
-| large | Route -> Requirement Analysis -> DR/Story/CodingPlan -> approved `executionPlan` |
-| medium | Route -> Requirement Analysis -> Story/CodingPlan -> approved `executionPlan` |
-| small/micro | Route -> Requirement Analysis -> CodingPlan or Story-lite -> approved `executionPlan` |
+| large | RA -> DR -> N x (Story -> TestCase -> CodingPlan) -> approved `executionPlan` |
+| medium | RA -> Story -> TestCase -> CodingPlan -> approved `executionPlan` |
+| small | RA -> CodingPlan -> approved `executionPlan` |
+| micro | RA -> approved compact `state.executionPlan` |
 
-Requirement Analysis occurs after routing. Its conclusion may select DR, Story,
-or a compact `state.executionPlan`. RA, DR, and Story remain the core design
-documents; TestCase is optional for a genuinely complex verification matrix.
-Only the user can approve `executionPlan` or explicitly select the quick route.
+Wherever a Story exists, every Story runs its own independent
+`Story -> TestCase -> CodingPlan` subchain and its TestCase receipt binds that
+Story's identity — a sibling's TestCase never satisfies it. TestCase is neither
+optional nor conditional on matrix complexity, and it does not appear on the
+micro or small routes, which have no Story. Micro creates no separate CodingPlan
+Markdown; it uses the approved `state.executionPlan` alone. Only the user can
+approve `executionPlan`.
+
+> Terminology and route semantics follow `source/docs/ae-sdd-design.md` §2 and
+> §过程产物模型; this file only states how an Agent drives them.
 
 ## Hook Activation Semantics
 
@@ -209,7 +223,7 @@ real verification evidence is finalized, and review status/findings are
 committed. No Proposal, CodingReport, TestReport, CodeReview report, or changelog
 file is created by the runtime workflow.
 
-<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/HARNESS.md" sha256="9c6c73e51c118d6bc05ad57c8e1dd820416f1b77d046a7f290bb496b5cd9a829" -->
+<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/HARNESS.md" sha256="089e08aeac87edd017dcbe20bd74af413549cce4d7355c73a8e370e10e50f5b1" -->
 # ae-sdd Agent Harness
 
 This Harness connects an Agent host to the Rust ae-sdd daemon. It does not embed
@@ -253,14 +267,29 @@ routing decision, so the daemon allocates the former and resolves the latter fro
 the session binding. A host event that carries no `sessionId`, or whose binding
 cannot be created, stays fail-closed and reports the exact cause on stderr.
 
-A fresh `/ae-sdd` session therefore starts unbound: the first Hook self-binds
-workspace and session but carries no Work Item, and its response deliberately
-reports no `workItemId`. The bootstrap branch belongs to the Agent, not the
-Hook: the Agent calls `operation.execute` with `workitem.create`
-(`{entryNode, idempotencyKey}`, no `workItemId`; `entryNode` must be PRD, DR,
-or STORY, and when the caller omits the name the daemon mints
-`{entryNode}-{8 lowercase hex}`, e.g. `STORY-3f9a2c1e`). On success the daemon
-durably binds `session.current_work_item`, installs the project context
+A fresh session therefore starts unbound: an ordinary Hook self-binds workspace
+and session but carries no Work Item, and its response deliberately reports no
+`workItemId`.
+
+Command-level bootstrap is daemon-owned. A `hook.user_prompt` whose `prompt`
+trims to exactly `/ae-sdd`, arriving on a session that has no Work Item, makes
+the daemon perform intake itself: under the already trusted Hook session it
+issues `workitem.create` with `{"entryNode":"ROUTE"}` and idempotency key
+`hook-bootstrap-{sessionId}`, then durably binds the result. The Hook invents
+neither a Work Item identity nor a route decision, and the Agent does not call
+`workitem.create` for this path. Repeating `/ae-sdd` on the bound session is
+idempotent: the binding already resolves, so no second Work Item is created.
+The Hook response carries `workItemId` and an `analyze-route` next action.
+
+An Agent may still call `operation.execute` with `workitem.create` explicitly
+for a document entry node (`{entryNode, idempotencyKey}`, no `workItemId`),
+which is the path the `providedDocuments` adoption below uses. `entryNode` must
+be ROUTE, PRD, DR, or STORY; BUG and CONFIG run the flat micro chain. When the
+caller omits the name the daemon mints `{entryNode}-{8 lowercase hex}`, e.g.
+`STORY-3f9a2c1e`.
+
+On success — whether the daemon bootstrapped it or the Agent created it — the
+daemon durably binds `session.current_work_item`, installs the project context
 projection, and returns `data.workItemId` as the resolvable business key
 (`data.stateMachineId` is the uuid-prefixed directory identity). Later Hooks
 then attribute automatically and their responses carry `workItemId`;
@@ -386,10 +415,15 @@ re-registers before consuming any new action.
 
 ## Process Contract
 
-Route precedes Requirement Analysis. RA then selects DR, Story, or compact
-`executionPlan` depth. Coding begins only after required upstream documents,
-verification mapping, blocker Gates, and explicit user plan approval are
-committed. Testing records real evidence. Review records status/findings only.
+The Hook records only a provisional `BootstrapAssessment`; Requirement Analysis
+is the first business Series and produces one adaptive `ae-sdd-ra-srs/v2` SRS.
+Only after `G-RA-1..4` close a verified receipt and the SRS-bound route approval
+Gate passes may the daemon freeze the authoritative `EngineeringRoute` at
+`RouteSelected` and select the required DR, Story,
+TestCase, CodingPlan, or compact `executionPlan` depth. Coding begins only after
+required upstream documents, verification mapping, blocker Gates, and explicit
+user plan approval are committed. Testing records real evidence. Review records
+status/findings only.
 
 Documents the user already supplied take the adoption path instead of the
 generation path: `workitem.create.providedDocuments` registers them at intake,

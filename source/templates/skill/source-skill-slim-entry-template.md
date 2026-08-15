@@ -2,7 +2,7 @@
 
 > **适用场景：** SKILL 源文件瘦身（slimming）产出的精简入口模板，是 slim entry 的权威结构；任何 slim entry 都必须与本模板重渲染结果一致。
 
-This template is the authoritative structure for source slim entries; every slim entry must stay byte-consistent with it.
+This template is the authoritative structure for source slim entries; every slim entry must stay canonical-byte-consistent with it.
 
 ```markdown
 ---
@@ -12,8 +12,8 @@ source_slim_schema: ae-sdd-source-slim/v2
 source_slim_standard: standards/skill-source-slimming-standard.md
 source_slim_template: templates/skill/source-skill-slim-entry-template.md
 source_fallback: {fallback path}
-source_fallback_sha256: {sha256 of full fallback text}
-source_original_bytes: {byte count}
+source_fallback_sha256: {sha256 of canonical full fallback text (UTF-8, LF, no BOM)}
+source_original_bytes: {canonical byte count}
 source_original_lines: {line count}
 source_semantic_inventory_sha256: {sha256 of semantic inventory JSON}
 ---
@@ -26,7 +26,8 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 - Use this slim entry first for routing, scope, semantic inventory, and resource discovery.
 - Load `{fallback path}` before executing any step whose exact wording is not represented in the semantic inventory below.
-- Do not run source slimming again when `source_slimmed: true` is present; use `--upgrade` only to re-render from the fallback with a newer schema.
+- Do not hand-edit generated slim sections. Refresh from the fallback with `ae-sdd-build source-slim --source {source root} --skill {source path} --refresh`.
+- Validate canonical rendered bytes with `ae-sdd-build source-slim --source {source root} --skill {source path} --validate`.
 - When compiling, runtime fallback must come from `{fallback path}`, not this slim entry.
 
 ## Summary
@@ -35,7 +36,7 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 - fallback: `{fallback path}`
 - fallback_sha256: `{sha256}`
 - original_lines: {line count}
-- original_bytes: {byte count}
+- original_bytes: {canonical byte count}
 - semantic_inventory_sha256: `{sha256}`
 - standard: `standards/skill-source-slimming-standard.md`
 - template: `templates/skill/source-skill-slim-entry-template.md`
@@ -51,8 +52,8 @@ This source SKILL has been slimmed by the standard source-slimming pipeline. The
 
 1. Read the full source or the recorded fallback as the only semantic input.
 2. Identify semantic categories before slimming: identity/trigger, workflow/route, gates/constraints, tools/API, state/data, output contracts, resources, design alignment, and fallback-only detail.
-3. Render this entry from `templates/skill/source-skill-slim-entry-template.md`; do not hand-edit generated slim sections.
-4. Validate `source_fallback_sha256`, required sections, and `source_semantic_inventory_sha256`.
+3. Render this entry through the native `ae-sdd-build source-slim` command; do not hand-edit generated slim sections.
+4. Validate `source_fallback_sha256`, required sections, `source_semantic_inventory_sha256`, and canonical-byte equality.
 5. Rebuild compiled runtime and run runtime verification after any source SKILL slimming change.
 
 ## Headings

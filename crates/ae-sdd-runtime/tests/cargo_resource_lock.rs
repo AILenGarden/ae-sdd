@@ -32,8 +32,8 @@ use ae_sdd_protocol::{
 };
 use ae_sdd_runtime::{
     BusinessOperationPort, BusinessWorkspace, ConnectionState, ContextProjectionInput,
-    MemoryPersistence, RuntimeConfig, RuntimeResult, RuntimeService, SessionResult,
-    WorkspaceResult,
+    ExecutionResourceLeaseOutcomeV1, ExecutionResourceLeaseRequestV1, MemoryPersistence,
+    PersistencePort, RuntimeConfig, RuntimeResult, RuntimeService, SessionResult, WorkspaceResult,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -49,6 +49,50 @@ const HEX_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 const TTL_MS: u64 = 300_000;
 const RETRY_AFTER_MS: u64 = 1_000;
 const QUEUE_CAPACITY: usize = 8;
+
+#[test]
+fn durable_cargo_lease_survives_boot_change_until_ttl() {
+    let persistence = MemoryPersistence::new(EventStoreId::from_uuid(Uuid::from_u128(90)));
+    let request = |boot: &str, session: &str, now_unix_ms| ExecutionResourceLeaseRequestV1 {
+        resource: "cargo".to_owned(),
+        boot_id: boot.to_owned(),
+        session_id: session.to_owned(),
+        now_unix_ms,
+        ttl_ms: 500,
+        retry_after_ms: RETRY_AFTER_MS,
+    };
+    assert_eq!(
+        persistence
+            .acquire_execution_resource_lease(&request("boot-a", "session-a", 1_000))
+            .expect("first boot acquires"),
+        ExecutionResourceLeaseOutcomeV1::Granted
+    );
+    assert_eq!(
+        persistence
+            .acquire_execution_resource_lease(&request("boot-b", "session-a", 1_001))
+            .expect("new boot observes durable owner"),
+        ExecutionResourceLeaseOutcomeV1::Deferred {
+            retry_after_ms: RETRY_AFTER_MS
+        }
+    );
+    persistence
+        .release_execution_resource_lease("cargo", "boot-a", "wrong-session")
+        .expect("mismatched release is ignored");
+    assert_eq!(
+        persistence
+            .acquire_execution_resource_lease(&request("boot-b", "session-b", 1_499))
+            .expect("lease remains active"),
+        ExecutionResourceLeaseOutcomeV1::Deferred {
+            retry_after_ms: RETRY_AFTER_MS
+        }
+    );
+    assert_eq!(
+        persistence
+            .acquire_execution_resource_lease(&request("boot-b", "session-b", 1_500))
+            .expect("expired lease can be replaced"),
+        ExecutionResourceLeaseOutcomeV1::Granted
+    );
+}
 
 struct TempLockDir(PathBuf);
 
@@ -432,6 +476,7 @@ impl BusinessOperationPort for ResumeBusiness {
 struct LockHarness {
     runtime: Arc<RuntimeService>,
     clock: Arc<TestClock>,
+    persistence: Arc<MemoryPersistence>,
     token: String,
 }
 
@@ -451,7 +496,7 @@ impl LockHarness {
             config,
             BootId::from_uuid(Uuid::from_u128(92)),
             token.clone(),
-            persistence,
+            persistence.clone(),
             clock.clone(),
             Arc::new(TestResolver),
             business,
@@ -459,6 +504,7 @@ impl LockHarness {
         Self {
             runtime,
             clock,
+            persistence,
             token,
         }
     }
@@ -770,6 +816,163 @@ fn concurrent_cargo_pretool_defers_the_second_session_with_retry_after_ms() {
     assert!(
         retry["executionDirective"].get("retryAfterMs").is_none(),
         "the granted retry carries no retry hint: {retry}"
+    );
+}
+
+#[test]
+fn failed_hook_receipt_releases_the_new_cargo_lease_before_retry() {
+    let harness = LockHarness::new(|_| {});
+    let mut connection = harness.connection(ClientKind::Hook);
+    let (first_workspace, first) = engaged_session(&harness, &mut connection, "receipt-first");
+    let (second_workspace, second) = engaged_session(&harness, &mut connection, "receipt-second");
+    resume_execution(&harness, &mut connection, &first_workspace, &first);
+    resume_execution(&harness, &mut connection, &second_workspace, &second);
+    harness.persistence.fail_commit_event_and_receipt_after(1);
+
+    let failed = harness.call(
+        &mut connection,
+        RpcMethod::HookPreTool,
+        hook_request(
+            &first_workspace,
+            &first,
+            "cargo-receipt-failure",
+            focused_test_event(),
+        ),
+    );
+    assert_eq!(
+        failed["error"]["data"]["stableCode"], "EXTERNAL_STATE_CONFLICT",
+        "{failed}"
+    );
+
+    let second_pre = result(&harness.call(
+        &mut connection,
+        RpcMethod::HookPreTool,
+        hook_request(
+            &second_workspace,
+            &second,
+            "cargo-after-receipt-failure",
+            focused_test_event(),
+        ),
+    ));
+    assert_eq!(second_pre["decision"], "allow", "{second_pre}");
+}
+
+#[test]
+fn receipt_failure_releases_a_same_session_lease_regranted_after_ttl() {
+    let harness = LockHarness::new(|config| config.cargo_lock_ttl_ms = 50);
+    let mut connection = harness.connection(ClientKind::Hook);
+    let (first_workspace, first) = engaged_session(&harness, &mut connection, "regrant-first");
+    let (second_workspace, second) = engaged_session(&harness, &mut connection, "regrant-second");
+    resume_execution(&harness, &mut connection, &first_workspace, &first);
+    resume_execution(&harness, &mut connection, &second_workspace, &second);
+
+    let initial = result(&harness.call(
+        &mut connection,
+        RpcMethod::HookPreTool,
+        hook_request(
+            &first_workspace,
+            &first,
+            "cargo-before-ttl",
+            focused_test_event(),
+        ),
+    ));
+    assert_eq!(initial["decision"], "allow", "{initial}");
+    harness.clock.set(1_051);
+    harness.persistence.fail_commit_event_and_receipt_after(1);
+
+    let failed = harness.call(
+        &mut connection,
+        RpcMethod::HookPreTool,
+        hook_request(
+            &first_workspace,
+            &first,
+            "cargo-after-ttl-regrant",
+            focused_test_event(),
+        ),
+    );
+    assert_eq!(
+        failed["error"]["data"]["stableCode"], "EXTERNAL_STATE_CONFLICT",
+        "{failed}"
+    );
+
+    let second_pre = result(&harness.call(
+        &mut connection,
+        RpcMethod::HookPreTool,
+        hook_request(
+            &second_workspace,
+            &second,
+            "cargo-after-failed-regrant",
+            focused_test_event(),
+        ),
+    ));
+    assert_eq!(second_pre["decision"], "allow", "{second_pre}");
+}
+
+#[test]
+fn replay_repairs_a_failed_secondary_execution_event_exactly_once() {
+    let harness = LockHarness::new(|_| {});
+    let mut connection = harness.connection(ClientKind::Hook);
+    let (workspace, session) = engaged_session(&harness, &mut connection, "secondary-repair");
+    resume_execution(&harness, &mut connection, &workspace, &session);
+    harness.persistence.fail_commit_event_and_receipt_after(2);
+    let request = || {
+        hook_request(
+            &workspace,
+            &session,
+            "secondary-repair-event",
+            focused_test_event(),
+        )
+    };
+
+    let failed = harness.call(&mut connection, RpcMethod::HookPreTool, request());
+    assert_eq!(
+        failed["error"]["data"]["stableCode"], "EXTERNAL_STATE_CONFLICT",
+        "{failed}"
+    );
+
+    let replay = result(&harness.call(&mut connection, RpcMethod::HookPreTool, request()));
+    assert_eq!(replay["replayed"], true, "{replay}");
+    let execution_events = harness
+        .persistence
+        .events_after(0, 1_000)
+        .expect("events load")
+        .into_iter()
+        .filter(|event| event.kind == "execution.tool")
+        .count();
+    assert_eq!(execution_events, 1, "secondary event is repaired once");
+}
+
+#[test]
+fn later_hook_cannot_cross_an_unfinalized_execution_bundle() {
+    let harness = LockHarness::new(|_| {});
+    let mut connection = harness.connection(ClientKind::Hook);
+    let (workspace, session) = engaged_session(&harness, &mut connection, "pending-barrier");
+    resume_execution(&harness, &mut connection, &workspace, &session);
+    harness.persistence.fail_commit_event_and_receipt_after(2);
+
+    let failed = harness.call(
+        &mut connection,
+        RpcMethod::HookPreTool,
+        hook_request(
+            &workspace,
+            &session,
+            "pending-original",
+            focused_test_event(),
+        ),
+    );
+    assert_eq!(
+        failed["error"]["data"]["stableCode"], "EXTERNAL_STATE_CONFLICT",
+        "{failed}"
+    );
+
+    let crossed = harness.call(
+        &mut connection,
+        RpcMethod::HookPreTool,
+        hook_request(&workspace, &session, "pending-later", focused_test_event()),
+    );
+    assert_eq!(
+        crossed["error"]["data"]["stableCode"], "EXTERNAL_STATE_CONFLICT",
+        "a later Hook must wait for the original durable transition: {crossed}"
     );
 }
 

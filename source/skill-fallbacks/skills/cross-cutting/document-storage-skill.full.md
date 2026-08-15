@@ -5,7 +5,7 @@ description: 文档存放横切 SKILL — 所有 SKILL 写入文档前必调。�
 
 # Document Storage — 文档存放标准 Skill（AE 体系横切依赖）
 
-> **v3.12 写入策略（最高优先级）：** RA/DR/Story 是核心可写文档。Proposal、GeneratePlan、CodingReport、TestReport、CodeReview 报告、ReviewCompare、SourceTrace、ComplianceReport 和 STORING.md 停止新写入；历史可读，新写入 fail closed 并返回 state/evidence 替代方案。TestCase/Task 仅在复杂矩阵或大型并行任务显式 opt-in。任何时候都不写 changelog。
+> **当前写入策略（最高优先级）：** RA、DR、Story、TestCase 与 CodingPlan 是按工程路线选用的可写 Spec。Proposal、GeneratePlan、CodingReport、TestReport、CodeReview 报告、ReviewCompare、SourceTrace、ComplianceReport 和 STORING.md 停止新写入；历史可读，新写入 fail closed 并返回 state/evidence 替代方案。存在 Story 时必须保存该 Story 绑定的 TestCase 与 CodingPlan；Task 仅可用于大型并行拆分。任何时候都不写 changelog。
 
 > **🔴 核心定位：** 本 SKILL 是 AE 体系的"**横切依赖**"，**任何 SKILL 在生成/更新文档前都必须先调用本 SKILL** 确定：
 > 1. 文档存哪里（统一目录 §1.2：`{文档工作区根}/ae-sdd-doc/`）
@@ -1435,4 +1435,4 @@ SKILL 流程
 - 向后兼容：旧 state 目录无 UUID 前缀仍可读（精确匹配 + 内容匹配兜底）。
 # v3.12 过程文档写入策略
 
-RA、DR、Story 是核心可写文档。Proposal、GeneratePlan、CodingReport、TestReport、CodeReview 报告、ReviewCompare、SourceTrace、ComplianceReport 和 STORING.md 均为 retired write intent：历史可读，新写入必须 fail closed 并返回 state/evidence 替代方案。TestCase、Task 等仅在复杂矩阵/大型并行任务显式 opt-in。任何时候都不写 changelog。
+RA、DR、Story、TestCase 与 CodingPlan 是按工程路线选用的可写 Spec。Proposal、GeneratePlan、CodingReport、TestReport、CodeReview 报告、ReviewCompare、SourceTrace、ComplianceReport 和 STORING.md 均为 retired write intent：历史可读，新写入必须 fail closed 并返回 state/evidence 替代方案。存在 Story 时必须保存其绑定 TestCase 与 CodingPlan；Task 仅用于大型并行拆分。任何时候都不写 changelog。

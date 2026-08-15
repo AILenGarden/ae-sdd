@@ -41,14 +41,29 @@ routing decision, so the daemon allocates the former and resolves the latter fro
 the session binding. A host event that carries no `sessionId`, or whose binding
 cannot be created, stays fail-closed and reports the exact cause on stderr.
 
-A fresh `/ae-sdd` session therefore starts unbound: the first Hook self-binds
-workspace and session but carries no Work Item, and its response deliberately
-reports no `workItemId`. The bootstrap branch belongs to the Agent, not the
-Hook: the Agent calls `operation.execute` with `workitem.create`
-(`{entryNode, idempotencyKey}`, no `workItemId`; `entryNode` must be PRD, DR,
-or STORY, and when the caller omits the name the daemon mints
-`{entryNode}-{8 lowercase hex}`, e.g. `STORY-3f9a2c1e`). On success the daemon
-durably binds `session.current_work_item`, installs the project context
+A fresh session therefore starts unbound: an ordinary Hook self-binds workspace
+and session but carries no Work Item, and its response deliberately reports no
+`workItemId`.
+
+Command-level bootstrap is daemon-owned. A `hook.user_prompt` whose `prompt`
+trims to exactly `/ae-sdd`, arriving on a session that has no Work Item, makes
+the daemon perform intake itself: under the already trusted Hook session it
+issues `workitem.create` with `{"entryNode":"ROUTE"}` and idempotency key
+`hook-bootstrap-{sessionId}`, then durably binds the result. The Hook invents
+neither a Work Item identity nor a route decision, and the Agent does not call
+`workitem.create` for this path. Repeating `/ae-sdd` on the bound session is
+idempotent: the binding already resolves, so no second Work Item is created.
+The Hook response carries `workItemId` and an `analyze-route` next action.
+
+An Agent may still call `operation.execute` with `workitem.create` explicitly
+for a document entry node (`{entryNode, idempotencyKey}`, no `workItemId`),
+which is the path the `providedDocuments` adoption below uses. `entryNode` must
+be ROUTE, PRD, DR, or STORY; BUG and CONFIG run the flat micro chain. When the
+caller omits the name the daemon mints `{entryNode}-{8 lowercase hex}`, e.g.
+`STORY-3f9a2c1e`.
+
+On success — whether the daemon bootstrapped it or the Agent created it — the
+daemon durably binds `session.current_work_item`, installs the project context
 projection, and returns `data.workItemId` as the resolvable business key
 (`data.stateMachineId` is the uuid-prefixed directory identity). Later Hooks
 then attribute automatically and their responses carry `workItemId`;
@@ -174,10 +189,15 @@ re-registers before consuming any new action.
 
 ## Process Contract
 
-Route precedes Requirement Analysis. RA then selects DR, Story, or compact
-`executionPlan` depth. Coding begins only after required upstream documents,
-verification mapping, blocker Gates, and explicit user plan approval are
-committed. Testing records real evidence. Review records status/findings only.
+The Hook records only a provisional `BootstrapAssessment`; Requirement Analysis
+is the first business Series and produces one adaptive `ae-sdd-ra-srs/v2` SRS.
+Only after `G-RA-1..4` close a verified receipt and the SRS-bound route approval
+Gate passes may the daemon freeze the authoritative `EngineeringRoute` at
+`RouteSelected` and select the required DR, Story,
+TestCase, CodingPlan, or compact `executionPlan` depth. Coding begins only after
+required upstream documents, verification mapping, blocker Gates, and explicit
+user plan approval are committed. Testing records real evidence. Review records
+status/findings only.
 
 Documents the user already supplied take the adoption path instead of the
 generation path: `workitem.create.providedDocuments` registers them at intake,

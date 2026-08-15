@@ -11,6 +11,7 @@ mod config;
 pub mod diagnostics;
 mod error;
 mod grant;
+mod host_execution_binding;
 mod model;
 mod ports;
 mod service;
@@ -26,21 +27,26 @@ pub use model::{
     DelegationCreatePayload, DelegationReportPayload, DelegationResult, DurableEvent, EventBatch,
     EventSubscriptionPayload, ExecutionAuthorityCursor, ExecutionCheckpointRecord,
     ExecutionCheckpointRecovery, ExecutionCheckpointRecoveryInput, ExecutionCheckpointScope,
-    ExecutionHookDirective, ExecutionHookDirectiveDecision, ExecutionHookEvent, HookPayload,
-    HookResult, HostAckPayload, HostActionPayload, HostPressurePayload, HostRegisterPayload,
-    IdempotencyReceipt, RuntimeDelegationAttestationRecord, RuntimeDelegationHostActionRecord,
-    RuntimeDelegationRecord, RuntimeIdentityKind, RuntimeIdentitySnapshot,
-    RuntimeIdentityTransition, RuntimeJobRecord, RuntimeJobStatus, RuntimeJobTransition,
-    RuntimeSessionRecord, RuntimeStatus, RuntimeWorkspaceRecord, SessionOpenPayload, SessionResult,
-    WireAgentRole, WorkspaceModeTransitionPayload, WorkspaceParityEvidence,
-    WorkspaceRegisterPayload, WorkspaceResult,
+    ExecutionHookDirective, ExecutionHookDirectiveDecision, ExecutionHookEvent,
+    ExecutionResourceLeaseOutcomeV1, ExecutionResourceLeaseRecordV1,
+    ExecutionResourceLeaseRequestV1, HookPayload, HookResult, HostAckPayload,
+    HostActionDeliveryPayload, HostActionPayload, HostPressurePayload, HostRegisterPayload,
+    IdempotencyReceipt, PreparedExecutionHookV1, RootSeriesDelegationPayload,
+    RuntimeDelegationAttestationRecord, RuntimeDelegationHostActionRecord, RuntimeDelegationRecord,
+    RuntimeIdentityKind, RuntimeIdentitySnapshot, RuntimeIdentityTransition, RuntimeJobRecord,
+    RuntimeJobStatus, RuntimeJobTransition, RuntimeSessionRecord, RuntimeStatus,
+    RuntimeWorkspaceRecord, SessionOpenPayload, SessionResult, WireAgentRole,
+    WorkspaceModeTransitionPayload, WorkspaceParityEvidence, WorkspaceRegisterPayload,
+    WorkspaceResult,
 };
 pub use ports::{
     BoundJobIdentity, BusinessOperationPort, BusinessWorkspace, ClockPort, MemoryPersistence,
     PersistencePort, RejectingBusinessPort, ResolvedWorkspace, WorkspaceResolverPort,
 };
 pub use service::{ConnectionState, ExecutionSessionBinding, RuntimeService};
-pub use supervisor::{ContextCache, DelegationSupervisor, FlowSupervisor, HostCoordinator};
+pub use supervisor::{
+    ContextCache, DelegationSupervisor, FlowSupervisor, HostCoordinator, series_identity,
+};
 
 /// Runtime build identity.
 pub const RUNTIME_BUILD: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));

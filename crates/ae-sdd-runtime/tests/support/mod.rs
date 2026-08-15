@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex};
 use ae_sdd_domain::{AgentRole, BootId, EventStoreId};
 use ae_sdd_protocol::{
     ClientKind, HandshakeRequest, JsonRpcRequest, PROTOCOL_RANGE_V1, PROTOCOL_VERSION_V1,
-    RequestParams, RpcMethod, SecretString, WorkspaceMode,
+    RequestParams, RpcMethod, SecretString, StableErrorCode, WorkspaceMode,
 };
 use ae_sdd_runtime::{
     BusinessOperationPort, BusinessWorkspace, ClockPort, ConnectionState, ContextProjectionInput,
-    MemoryPersistence, PersistencePort, ResolvedWorkspace, RuntimeConfig, RuntimeResult,
-    RuntimeService, SessionResult, WorkspaceParityEvidence, WorkspaceResolverPort, WorkspaceResult,
+    MemoryPersistence, PersistencePort, ResolvedWorkspace, RuntimeConfig, RuntimeError,
+    RuntimeResult, RuntimeService, SessionResult, WorkspaceParityEvidence, WorkspaceResolverPort,
+    WorkspaceResult,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -51,7 +52,9 @@ pub struct TestBusiness {
     pub operation_delay_ms: AtomicU64,
     pub projection_bytes: AtomicUsize,
     pub pass_guard: AtomicUsize,
+    pub artifact_validation_calls: AtomicUsize,
     pub series_completed_calls: AtomicUsize,
+    flow_next_result: Mutex<Option<Value>>,
     persistence: Mutex<Option<Arc<MemoryPersistence>>>,
 }
 
@@ -62,7 +65,9 @@ impl Default for TestBusiness {
             operation_delay_ms: AtomicU64::new(0),
             projection_bytes: AtomicUsize::new(0),
             pass_guard: AtomicUsize::new(0),
+            artifact_validation_calls: AtomicUsize::new(0),
             series_completed_calls: AtomicUsize::new(0),
+            flow_next_result: Mutex::new(None),
             persistence: Mutex::new(None),
         }
     }
@@ -75,12 +80,16 @@ impl TestBusiness {
             ..Self::default()
         }
     }
+
+    pub fn set_flow_next_result(&self, value: Value) {
+        *self.flow_next_result.lock().expect("flow next result lock") = Some(value);
+    }
 }
 
 impl BusinessOperationPort for TestBusiness {
     fn execute(
         &self,
-        _method: RpcMethod,
+        method: RpcMethod,
         params: &RequestParams<Value>,
         _workspace: Option<&BusinessWorkspace>,
     ) -> RuntimeResult<Value> {
@@ -88,6 +97,15 @@ impl BusinessOperationPort for TestBusiness {
         let delay = self.operation_delay_ms.load(Ordering::Acquire);
         if delay > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+        if method == RpcMethod::FlowNext
+            && let Some(result) = self
+                .flow_next_result
+                .lock()
+                .expect("flow next result lock")
+                .clone()
+        {
+            return Ok(result);
         }
         // `workitem.create` is Workspace-scoped: the caller cannot name the
         // Work Item it creates, so the business authority mints the business
@@ -159,6 +177,7 @@ impl BusinessOperationPort for TestBusiness {
         _workspace: &BusinessWorkspace,
         _work_item_id: &str,
         _session_id: &str,
+        _delegation_id: &str,
         _idempotency_key: &str,
     ) -> RuntimeResult<()> {
         self.series_completed_calls.fetch_add(1, Ordering::AcqRel);
@@ -171,6 +190,18 @@ impl BusinessOperationPort for TestBusiness {
         delegation_id: &str,
         result: &Value,
     ) -> RuntimeResult<Value> {
+        self.artifact_validation_calls
+            .fetch_add(1, Ordering::AcqRel);
+        if result
+            .get("deliverables")
+            .and_then(Value::as_array)
+            .is_some_and(|deliverables| deliverables.iter().any(|item| !item.is_object()))
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "child deliverable must be an object",
+            ));
+        }
         Ok(json!({
             "schemaVersion":"delegation-artifact-validation/v1",
             "delegationId":delegation_id,
@@ -264,30 +295,103 @@ impl Harness {
     }
 
     pub fn connection(&self, kind: ClientKind) -> ConnectionState {
-        self.connection_as(kind, None)
+        self.connection_handshake_only(kind, None)
     }
 
-    /// Handshakes as `kind`, optionally naming the adapter this connection
-    /// speaks for. Naming it is what makes the host addressable, so a host
-    /// connection built this way needs no separate registration call.
+    /// Handshakes as `kind` and, when `adapter_id` is given, attaches it with
+    /// a real, explicit `host.register` call right after -- the handshake
+    /// itself attaches nothing. This is the helper existing runtime tests
+    /// use when they want an already-attached host connection; it performs
+    /// the same two RPCs a real HostAdapter bridge performs, just back to
+    /// back instead of across a real reconnect.
     pub fn connection_as(&self, kind: ClientKind, adapter_id: Option<&str>) -> ConnectionState {
+        let mut connection = self.connection_handshake_only(kind, adapter_id);
+        if let Some(adapter_id) = adapter_id {
+            let mut register = params(json!({"adapterId": adapter_id}), 1_000);
+            register.capability_token = Some(self.host_credential());
+            register.idempotency_key = Some(format!("connection-as-register-{adapter_id}"));
+            let response = self.call(&mut connection, RpcMethod::HostRegister, register);
+            assert!(response.get("result").is_some(), "{response}");
+        }
+        connection
+    }
+
+    /// Handshakes as `kind` and returns the connection with nothing attached,
+    /// regardless of `adapter_id`.
+    ///
+    /// `HandshakeRequest.adapter_id` is `#[serde(skip_serializing)]`, so
+    /// building the request as a typed struct and serializing it -- as this
+    /// helper used to do -- can never put `adapterId` on the wire at all,
+    /// modern client or legacy. That made a "legacy client still sends
+    /// `adapterId`" test vacuous: it would pass by never exercising the
+    /// decode-only field in the first place. This helper instead serializes
+    /// the struct for its other fields, then splices a raw `adapterId` key
+    /// into the resulting JSON object when `adapter_id` is given, which is
+    /// exactly what a pre-C2 client's request bytes looked like on the wire.
+    pub fn connection_handshake_only(
+        &self,
+        kind: ClientKind,
+        adapter_id: Option<&str>,
+    ) -> ConnectionState {
         let mut connection = ConnectionState::default();
-        let response = self.raw(
-            &mut connection,
-            RpcMethod::RuntimeHandshake,
-            serde_json::to_value(HandshakeRequest {
-                protocol_range: PROTOCOL_RANGE_V1.to_owned(),
-                client_build: "test/client".to_owned(),
-                client_kind: kind,
-                endpoint_token: SecretString::new(self.token.clone()),
-                expected_boot_id: self.runtime.boot_id().to_string(),
-                expected_policy_digest: self.runtime.policy_digest().to_owned(),
-                adapter_id: adapter_id.map(str::to_owned),
-            })
-            .expect("handshake serializes"),
-        );
+        let mut request = serde_json::to_value(HandshakeRequest {
+            protocol_range: PROTOCOL_RANGE_V1.to_owned(),
+            client_build: "test/client".to_owned(),
+            client_kind: kind,
+            endpoint_token: SecretString::new(self.token.clone()),
+            expected_boot_id: self.runtime.boot_id().to_string(),
+            expected_policy_digest: self.runtime.policy_digest().to_owned(),
+            adapter_id: None,
+        })
+        .expect("handshake serializes");
+        if let Some(adapter_id) = adapter_id {
+            request
+                .as_object_mut()
+                .expect("handshake request serializes as an object")
+                .insert("adapterId".to_owned(), json!(adapter_id));
+        }
+        let response = self.raw(&mut connection, RpcMethod::RuntimeHandshake, request);
         assert!(response.get("result").is_some(), "{response}");
         connection
+    }
+
+    /// Proves that `connection` has no adapter identity bound to it: an
+    /// [`RpcMethod::HostPressureReport`] naming `adapter_id` must be refused
+    /// by the connection-scoped check in `authorize_host_connection`
+    /// (`connection.adapter_id.as_deref() != Some(requested)`), not by
+    /// anything durable in `HostCoordinator`. `connection.adapter_id` is set
+    /// only by an explicit, successful `host.register` on the same
+    /// connection, so this is a direct proof, not an inference through
+    /// `delegation.create`'s policy-selecting `codex`-default/`len() == 1`
+    /// branches. `workspace_id` only satisfies the envelope-level admission
+    /// check that runs before authorization; it need not be the workspace
+    /// this delegation eventually uses.
+    pub fn assert_connection_has_no_adapter_bound(
+        &self,
+        connection: &mut ConnectionState,
+        adapter_id: &str,
+        workspace_id: &str,
+    ) {
+        let mut request = params(
+            json!({
+                "adapterId": adapter_id,
+                "contextGeneration": 0,
+                "sampleSeq": 1,
+                "usedTokens": 0,
+                "contextWindowTokens": 1,
+                "observedAtUnixMs": 1,
+            }),
+            1_000,
+        );
+        request.workspace_id = Some(workspace_id.to_owned());
+        request.idempotency_key = Some(format!("assert-no-adapter-bound-{adapter_id}"));
+        let response = self.call(connection, RpcMethod::HostPressureReport, request);
+        assert_eq!(
+            stable_error(&response),
+            "ENDPOINT_AUTH_FAILED",
+            "a connection with nothing bound to it must be refused before any durable \
+             registration state is even consulted: {response}"
+        );
     }
 
     pub fn call(
@@ -341,6 +445,50 @@ pub fn stable_error(response: &Value) -> &str {
     response["error"]["data"]["stableCode"]
         .as_str()
         .unwrap_or_else(|| panic!("{response}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_root_series_delegation(
+    harness: &Harness,
+    connection: &mut ConnectionState,
+    workspace: &WorkspaceResult,
+    root: &SessionResult,
+    agent_id: &str,
+    work_item_id: &str,
+    series_kind: &str,
+    required_artifacts: &[&str],
+    key: &str,
+) -> Value {
+    let decision_digest = flow_decision_digest(key);
+    harness.business.set_flow_next_result(json!({
+        "schemaVersion":"flow-decision/v1",
+        "decisionDigest":decision_digest,
+        "stateRevision":1,
+        "phase":"initialized",
+        "nextAction":{
+            "kind":"delegate-series",
+            "seriesKind":series_kind,
+            "requiredArtifacts":required_artifacts,
+        }
+    }));
+    let mut next = session_params(workspace, root, agent_id, json!({}), 1_000);
+    next.work_item_id = Some(work_item_id.to_owned());
+    result(&harness.call(connection, RpcMethod::FlowNext, next));
+
+    let mut create = session_params(
+        workspace,
+        root,
+        agent_id,
+        json!({"flowDecisionDigest":decision_digest}),
+        1_000,
+    );
+    create.work_item_id = Some(work_item_id.to_owned());
+    create.idempotency_key = Some(key.to_owned());
+    result(&harness.call(connection, RpcMethod::DelegationCreate, create))
+}
+
+pub fn flow_decision_digest(key: &str) -> String {
+    hex::encode(Sha256::digest(key.as_bytes()))
 }
 
 pub fn register_workspace(

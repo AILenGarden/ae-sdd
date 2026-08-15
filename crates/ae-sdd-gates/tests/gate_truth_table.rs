@@ -98,3 +98,59 @@ fn scanner_backed_gate_turns_blockers_into_business_failure() {
     assert!(matches!(outcome, GateOutcome::Fail(_)));
     assert_eq!(GateTruth::judge(&outcome).correction_delta(), 1);
 }
+
+/// Task 7: G-RA-2/3/4 bind the new RaCore/RaApplicability/RaClosure scanners,
+/// G-RA-FLOW-VIOLATION binds a predicate, and every RA gate selector is
+/// `RequirementAnalysis` (with FLOW-VIOLATION additionally binding RouteBinding).
+#[test]
+fn ra_content_gates_bind_new_scanners_and_requirement_analysis_selector() {
+    use ae_sdd_gates::GateInputSelector;
+
+    assert_eq!(
+        GateRegistry::get("G-RA-2").unwrap().rule,
+        NativeGateRule::Scanner(ScannerId::RaCore)
+    );
+    assert_eq!(
+        GateRegistry::get("G-RA-3").unwrap().rule,
+        NativeGateRule::Scanner(ScannerId::RaApplicability)
+    );
+    assert_eq!(
+        GateRegistry::get("G-RA-4").unwrap().rule,
+        NativeGateRule::Scanner(ScannerId::RaClosure)
+    );
+    assert!(matches!(
+        GateRegistry::get("G-RA-FLOW-VIOLATION").unwrap().rule,
+        NativeGateRule::Predicate(_)
+    ));
+    // G-RA-5/6 are compatibility aliases bound to the real G-RA-3/G-RA-4 scanners.
+    assert_eq!(
+        GateRegistry::get("G-RA-5").unwrap().rule,
+        NativeGateRule::Scanner(ScannerId::RaApplicability)
+    );
+    assert_eq!(
+        GateRegistry::get("G-RA-6").unwrap().rule,
+        NativeGateRule::Scanner(ScannerId::RaClosure)
+    );
+
+    for id in ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4", "G-RA-5", "G-RA-6"] {
+        let spec = GateRegistry::dependency_spec(id).unwrap();
+        assert_eq!(
+            spec.selectors,
+            &[GateInputSelector::RequirementAnalysis],
+            "{id} must bind only the RequirementAnalysis selector"
+        );
+    }
+
+    let flow = GateRegistry::dependency_spec("G-RA-FLOW-VIOLATION").unwrap();
+    assert_eq!(
+        flow.selectors,
+        &[
+            GateInputSelector::RequirementAnalysis,
+            GateInputSelector::RouteBinding
+        ]
+    );
+    assert!(
+        flow.prerequisites.is_empty(),
+        "G-RA-FLOW-VIOLATION must not declare a cross-phase prerequisite"
+    );
+}

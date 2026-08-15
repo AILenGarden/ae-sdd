@@ -18,7 +18,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ae_sdd_client::{ClientTransport, DaemonClient, LocalIpcTransport};
-use ae_sdd_domain::InputFingerprint;
+use ae_sdd_contracts::{
+    DocumentId, EngineeringRoute, ReasonCode, ReceiptStatus, RequirementAnalysisEvidence,
+    RouteApprovalReceipt, RouteBindingInput, RouteDecision, RouteDecisionId, RouteDisposition,
+    RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind, SpecKind, TaskKind,
+};
+use ae_sdd_domain::{
+    ArtifactDigest, DecisionDigest, DesignRoute, InputFingerprint, StateRevision, WorkItemId,
+    WorkScale,
+};
 use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, WorkspaceMode,
 };
@@ -257,7 +265,9 @@ fn prepare_workspace(root: &Path) -> PathBuf {
         "stateMachineName": "PRD-GOV-PROCESS",
         "activeStory": WORK_ITEM_ID,
         "revision": 1, "lastFencingToken": 0,
-        "scale": "medium", "selectedDesign": "Story",
+        "entryNode": "ROUTE",
+        "engineeringRoute": frozen_engineering_route(),
+        "scale": "medium",
         "phase": "code-reviewed", "currentPhase": "code-reviewed",
         "currentStep": "code-reviewed",
         "documentPaths": {"story": STORY_DOC},
@@ -275,6 +285,7 @@ fn prepare_workspace(root: &Path) -> PathBuf {
         "executionRuntime": {
             "schemaVersion": 1,
             "queueDigest": format!("sha256:{}", "0".repeat(64)),
+            "capsuleDigest": format!("sha256:{}", "1".repeat(64)),
             "activeSliceOrdinal": 0,
             "completionMilestone": "none"
         },
@@ -284,6 +295,56 @@ fn prepare_workspace(root: &Path) -> PathBuf {
     bytes.push(b'\n');
     fs::write(&state_path, bytes).expect("state fixture");
     state_path
+}
+
+fn frozen_engineering_route() -> Value {
+    let evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new(WORK_ITEM_ID).expect("work item id"),
+        SeriesId::new("SERIES-RA-GOV-PROCESS").expect("series id"),
+        DocumentId::new("DOC-RA-GOV-PROCESS").expect("document id"),
+        1,
+        ArtifactDigest::digest(b"governance process RA content"),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"governance process RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"governance process scale evidence"),
+        ArtifactDigest::digest(b"governance process RA closure receipts"),
+    );
+    let binding = RouteBindingInput::new(evidence, RouteMappingVersion::V1);
+    let decision = RouteDecision::new(
+        SchemaVersion::V2,
+        RouteDecisionId::new("route-gov-process-r1").expect("route decision id"),
+        WorkItemId::new(WORK_ITEM_ID).expect("work item id"),
+        TaskKind::Implementation,
+        WorkScale::Medium,
+        DesignRoute::Story,
+        RouteDisposition::Approved,
+        vec![ReasonCode::new("route.ra-closed").expect("reason")],
+        vec![
+            SeriesKind::new("story").expect("series kind"),
+            SeriesKind::new("testcase").expect("series kind"),
+            SeriesKind::new("coding-plan").expect("series kind"),
+        ],
+        vec![SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        binding.fingerprint(),
+        None,
+        DecisionDigest::digest(b"governance process route decision"),
+    )
+    .expect("route decision");
+    let approval = RouteApprovalReceipt::new(
+        "route:gov-process-r1".to_owned(),
+        "user:test".to_owned(),
+        "2026-07-27T02:00:00Z".to_owned(),
+        binding.ra_evidence().document_id().clone(),
+        binding.ra_evidence().version(),
+        *binding.ra_evidence().ra_content_digest(),
+        binding.ra_evidence().scale(),
+        decision.decision_digest(),
+    );
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[])
+        .expect("verified RA and bound approval freeze the route");
+    serde_json::to_value(route).expect("engineering route JSON")
 }
 
 // ─── Daemon process ──────────────────────────────────────────────────
@@ -529,7 +590,7 @@ async fn open_task_lineage(
     state_path: &Path,
     key: &str,
 ) -> Identity {
-    let adapter_id = format!("{key}-host");
+    let adapter_id = "codex".to_owned();
     let host = HostAdapter::register(state_dir, &adapter_id, &format!("{key}-host-register")).await;
     let grant = json!({
         "operations":["document.save","evidence.finalize","evidence.record","lease.acquire","lease.release"],
@@ -572,7 +633,7 @@ async fn open_delegated_child(
     workspace: &WorkspaceResult,
     parent: &Identity,
     state_path: &Path,
-    adapter_id: &str,
+    _adapter_id: &str,
     child_role: &str,
     parent_delegation_id: Option<&str>,
     grant: Value,
@@ -586,15 +647,31 @@ async fn open_delegated_child(
         .expect("delegation input revision");
     let input_fingerprint = InputFingerprint::digest(&state_bytes).to_string();
     let now = now_unix_ms();
-    let mut create = parent.params(json!({
-        "childRole":child_role,
-        "parentDelegationId":parent_delegation_id,
-        "inputRevision":input_revision,
-        "inputFingerprint":input_fingerprint,
-        "deadlineUnixMs":now.saturating_add(600_000),
-        "adapterId":adapter_id,
-        "grant":grant,
-    }));
+    let create_payload = if parent_delegation_id.is_none() {
+        let flow = cli
+            .call::<Value>(RpcMethod::FlowNext, parent.params(json!({})))
+            .await
+            .unwrap_or_else(|error| panic!("{key} flow decision is available: {error:?}"));
+        let kind = flow["nextAction"]["kind"].as_str();
+        assert!(
+            kind == Some("delegate-series")
+                || (kind == Some("execute-approved-slice") && flow["phase"] == "coding")
+                || (kind == Some("await-agent-work")
+                    && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
+            "{key} flow decision is not delegable: {flow}"
+        );
+        json!({"flowDecisionDigest":flow["decisionDigest"]})
+    } else {
+        json!({
+            "childRole":child_role,
+            "parentDelegationId":parent_delegation_id,
+            "inputRevision":input_revision,
+            "inputFingerprint":input_fingerprint,
+            "deadlineUnixMs":now.saturating_add(600_000),
+            "grant":grant,
+        })
+    };
+    let mut create = parent.params(create_payload);
     create.idempotency_key = Some(format!("{key}-create"));
     let created = cli
         .call::<Value>(RpcMethod::DelegationCreate, create)
@@ -623,7 +700,7 @@ async fn open_delegated_child(
 
     let mut accept = params(json!({
         "delegationId":delegation_id,
-        "claimId":Uuid::new_v4().to_string(),
+        "claimId":action["claimId"],
         "actionId":action["actionId"],
         "childSessionId":child_session_id,
         "expiresAtUnixMs":now.saturating_add(500_000),

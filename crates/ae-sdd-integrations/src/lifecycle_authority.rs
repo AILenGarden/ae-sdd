@@ -501,19 +501,33 @@ pub(crate) fn prepare_lifecycle_mutation_with_gate_passes(
         state_revision,
         ArtifactDigest::digest(&state_bytes),
     );
-    let scale = parse_scale(
-        state
-            .get("scale")
-            .and_then(Value::as_str)
-            .ok_or_else(|| schema_error("authoritative scale is missing"))?,
-    )?;
-    let design_route = parse_design_route(
-        state
-            .pointer("/routeDecision/selectedDesign")
-            .or_else(|| state.get("selectedDesign"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| schema_error("authoritative design route is missing"))?,
-    )?;
+    let route_less_ra_transition = phase == ProcessPhase::Initialized
+        && target_phase == Some(ProcessPhase::RequirementAnalyzed);
+    let frozen_decision = state.pointer("/engineeringRoute/decision");
+    let approved_candidate = (target_phase == Some(ProcessPhase::RouteSelected))
+        .then(|| state.get("routeCandidate"))
+        .flatten();
+    let scale = match frozen_decision
+        .and_then(|decision| decision.get("scale"))
+        .or_else(|| approved_candidate.and_then(|decision| decision.get("scale")))
+        .or_else(|| state.get("scale"))
+        .and_then(Value::as_str)
+    {
+        Some(value) => parse_scale(value)?,
+        None if route_less_ra_transition => WorkScale::Micro,
+        None => return Err(schema_error("authoritative scale is missing")),
+    };
+    let design_route = match frozen_decision
+        .and_then(|decision| decision.get("designRoute"))
+        .or_else(|| approved_candidate.and_then(|decision| decision.get("designRoute")))
+        .or_else(|| state.pointer("/routeDecision/selectedDesign"))
+        .or_else(|| state.get("selectedDesign"))
+        .and_then(Value::as_str)
+    {
+        Some(value) => parse_design_route(value)?,
+        None if route_less_ra_transition => DesignRoute::CodingPlan,
+        None => return Err(schema_error("authoritative design route is missing")),
+    };
     let evidence_refs = project_evidence_refs(state)?;
     let passed_gate_ids = passed_gates
         .iter()
@@ -550,6 +564,8 @@ pub(crate) fn prepare_lifecycle_mutation_with_gate_passes(
     let unsigned_input = build_input(Vec::new())?;
     let unsigned_plan = LifecycleEngine::plan(&unsigned_input)
         .map_err(|_| schema_error("lifecycle engine rejected the projected contract"))?;
+    let confirmation_required = operation.spec().requires_confirmation
+        || unsigned_plan.disposition() == LifecycleDisposition::AwaitingConfirmation;
     let (input, plan) = if let Some(confirmation) = confirmation {
         let confirmation_refs = vec![ConfirmationRef {
             confirmation_id: confirmation.confirmation_id().to_owned(),
@@ -586,27 +602,83 @@ pub(crate) fn prepare_lifecycle_mutation_with_gate_passes(
         .filter_map(|item| item.get("code").and_then(Value::as_str))
         .map(str::to_owned)
         .collect();
-    let confirmation_binding = Some(
-        plan_value
-            .pointer("/confirmationRequirement/bindingDigest")
-            .and_then(Value::as_str)
-            .ok_or_else(|| schema_error("lifecycle plan is missing its binding digest"))?
-            .to_owned(),
-    );
+    let confirmation_binding = plan_value
+        .pointer("/confirmationRequirement/bindingDigest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| schema_error("lifecycle plan is missing its binding digest"))?
+        .to_owned();
+    let confirmation_digest = confirmation
+        .map(confirmation_authority_digest)
+        .transpose()?;
     let data = json!({
         "phase": target_phase.map(phase_wire),
         "planDigest": plan.plan_digest().to_string(),
+        "confirmationRequired": confirmation_required,
+        "confirmationBinding": confirmation_binding,
+        "confirmationDigest": confirmation_digest,
     });
     Ok(LifecycleOutcome {
         disposition,
         intents,
         remediation,
-        confirmation_binding,
+        confirmation_binding: Some(confirmation_binding),
         target_phase,
         data,
         input,
         plan_digest: plan.plan_digest(),
     })
+}
+
+#[allow(dead_code)]
+pub(crate) fn validate_committed_replay_confirmation(
+    data: &Value,
+    confirmation: Option<&Confirmation>,
+) -> RuntimeResult<()> {
+    let required = data
+        .get("confirmationRequired")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| schema_error("committed lifecycle receipt lacks confirmation policy"))?;
+    let binding = data
+        .get("confirmationBinding")
+        .and_then(Value::as_str)
+        .ok_or_else(|| schema_error("committed lifecycle receipt lacks confirmation binding"))?;
+    let committed_digest = match data.get("confirmationDigest") {
+        Some(Value::String(value)) => Some(value.as_str()),
+        Some(Value::Null) => None,
+        _ => {
+            return Err(schema_error(
+                "committed lifecycle receipt lacks confirmation authority",
+            ));
+        }
+    };
+    if required && confirmation.is_none() {
+        return Err(RuntimeError::new(
+            StableErrorCode::ConfirmationRequired,
+            "lifecycle replay requires its committed confirmation",
+        )
+        .with_remediation(format!(
+            "provide lifecycle confirmation for binding {binding}"
+        )));
+    }
+    let replay_digest = confirmation
+        .map(confirmation_authority_digest)
+        .transpose()?;
+    if replay_digest.as_deref() != committed_digest {
+        return Err(schema_error(
+            "lifecycle replay confirmation does not match committed authority",
+        ));
+    }
+    Ok(())
+}
+
+fn confirmation_authority_digest(confirmation: &Confirmation) -> RuntimeResult<String> {
+    let bytes = serde_json::to_vec(&json!({
+        "confirmationId": confirmation.confirmation_id(),
+        "approvedBy": confirmation.approved_by(),
+        "approvedAt": confirmation.approved_at(),
+    }))
+    .map_err(|_| schema_error("lifecycle confirmation could not be canonicalized"))?;
+    Ok(ArtifactDigest::digest(bytes).to_string())
 }
 
 #[allow(clippy::too_many_arguments)]

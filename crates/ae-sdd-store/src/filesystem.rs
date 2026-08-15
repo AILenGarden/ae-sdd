@@ -16,6 +16,7 @@ use crate::StoreError;
 pub trait DurableFileSystem: Send + Sync {
     fn read(&self, path: &Path) -> Result<Option<Vec<u8>>, StoreError>;
     fn write_atomic_durable(&self, path: &Path, bytes: &[u8]) -> Result<(), StoreError>;
+    fn remove_file_durable(&self, path: &Path) -> Result<bool, StoreError>;
     fn create_dir_all(&self, path: &Path) -> Result<(), StoreError>;
     fn sync_directory(&self, path: &Path) -> Result<(), StoreError>;
     fn list_files(&self, path: &Path) -> Result<Vec<PathBuf>, StoreError>;
@@ -61,6 +62,20 @@ impl DurableFileSystem for StdDurableFileSystem {
         self.sync_directory(parent)
     }
 
+    fn remove_file_durable(&self, path: &Path) -> Result<bool, StoreError> {
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                let parent = path.parent().ok_or_else(|| StoreError::InvalidJournal {
+                    reason: "durable removal target must have a parent directory".into(),
+                })?;
+                self.sync_directory(parent)?;
+                Ok(true)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(StoreError::io(path, error)),
+        }
+    }
+
     fn create_dir_all(&self, path: &Path) -> Result<(), StoreError> {
         std::fs::create_dir_all(path).map_err(|error| StoreError::io(path, error))?;
         if let Some(parent) = path.parent() {
@@ -103,11 +118,17 @@ fn sync_directory(path: &Path) -> Result<(), StoreError> {
 
 #[cfg(windows)]
 fn sync_directory(path: &Path) -> Result<(), StoreError> {
-    // Atomicwrites uses MoveFileExW with WRITE_THROUGH and REPLACE_EXISTING.
-    // A directory handle cannot be opened through safe std APIs on Windows;
-    // forcing a metadata read still makes a missing/replaced directory fail closed.
-    std::fs::metadata(path)
-        .map(|_| ())
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    // Windows requires backup semantics to open a directory and write access
+    // for FlushFileBuffers, which is what File::sync_all invokes.
+    OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .and_then(|directory| directory.sync_all())
         .map_err(|error| StoreError::io(path, error))
 }
 
@@ -192,6 +213,19 @@ impl DurableFileSystem for InMemoryFileSystem {
             .expect("in-memory filesystem lock is not poisoned")
             .insert(path.to_path_buf(), bytes.to_vec());
         Ok(())
+    }
+
+    fn remove_file_durable(&self, path: &Path) -> Result<bool, StoreError> {
+        let removed = self
+            .files
+            .write()
+            .expect("in-memory filesystem lock is not poisoned")
+            .remove(path)
+            .is_some();
+        if removed && let Some(parent) = path.parent() {
+            self.sync_directory(parent)?;
+        }
+        Ok(removed)
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<(), StoreError> {

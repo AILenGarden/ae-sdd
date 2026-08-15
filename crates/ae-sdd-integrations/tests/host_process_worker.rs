@@ -103,11 +103,7 @@ fn compact_dispatches_through_a_real_subprocess_and_accepts_on_exit_zero() {
     let temp_dir = TempDir::new().expect("temp dir");
     let script = exit_code_script(temp_dir.path(), 0);
     let runner = BoundedCommandRunner::new(4096);
-    let adapter = HostProcessAdapter::new(
-        adapter_id("stub-adapter"),
-        script,
-        runner,
-    );
+    let adapter = HostProcessAdapter::new(adapter_id("stub-adapter"), script, runner);
     let supervisor = HostSupervisor::new(adapter);
     let request = compact_request(SessionId::from_uuid(Uuid::new_v4()));
 
@@ -125,11 +121,7 @@ fn compact_maps_a_real_nonzero_exit_to_ok_rejected_summary() {
     let temp_dir = TempDir::new().expect("temp dir");
     let script = exit_code_script(temp_dir.path(), 3);
     let runner = BoundedCommandRunner::new(4096);
-    let adapter = HostProcessAdapter::new(
-        adapter_id("stub-adapter"),
-        script,
-        runner,
-    );
+    let adapter = HostProcessAdapter::new(adapter_id("stub-adapter"), script, runner);
     let supervisor = HostSupervisor::new(adapter);
     let request = compact_request(SessionId::from_uuid(Uuid::new_v4()));
 

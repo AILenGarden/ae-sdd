@@ -18,6 +18,7 @@ use ae_sdd_store::UtcTimestamp;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use super::ra_binding::{AuthoritativeRaPath, authoritative_ra_path};
 use super::{external, schema};
 
 const INPUT_FILE_LIMIT: usize = 20_000;
@@ -78,6 +79,7 @@ pub(super) struct GateContext {
 pub(super) struct ReviewAuthorityDenial {
     code: &'static str,
     message: String,
+    evidence_id: &'static str,
 }
 
 impl ReviewAuthorityDenial {
@@ -85,6 +87,15 @@ impl ReviewAuthorityDenial {
         Self {
             code,
             message: message.into(),
+            evidence_id: "review-authority-denied",
+        }
+    }
+
+    pub(super) fn context(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            evidence_id: "dr-context-missing",
         }
     }
 
@@ -93,7 +104,7 @@ impl ReviewAuthorityDenial {
     pub(super) fn evidence(&self, located: &LocatedState) -> Option<EvidenceRef> {
         let bytes = self.message.as_bytes();
         Some(EvidenceRef::new(
-            EvidenceId::new("review-authority-denied").ok()?,
+            EvidenceId::new(self.evidence_id).ok()?,
             VerificationId::new(denial_verification_id(self.code, &self.message)).ok()?,
             ProjectRelativePath::new(located.relative.clone()).ok()?,
             EvidenceDigest::digest(bytes),
@@ -337,10 +348,24 @@ fn input_fingerprint(
             GateInputSelector::ChangedPaths => {
                 hash_changed_paths(&mut hasher, root, &located.value)?;
             }
+            GateInputSelector::ExecutionPlan => {
+                hash_source_reads(&mut hasher, root, &located.value)?;
+            }
             GateInputSelector::EvidenceLedger => {
                 hash_evidence_scope(&mut hasher, root, located, work_item)?;
             }
-            _ => {}
+            GateInputSelector::RequirementAnalysis => {
+                hash_requirement_analysis(&mut hasher, root, &located.value)?;
+            }
+            GateInputSelector::ProjectAssets
+            | GateInputSelector::Story
+            | GateInputSelector::Constraints
+            | GateInputSelector::ThinkingEngine
+            | GateInputSelector::VerificationPlan
+            | GateInputSelector::ReviewBatch
+            | GateInputSelector::Toolchain
+            | GateInputSelector::Inventory
+            | GateInputSelector::RouteBinding => {}
         }
     }
     let mut inputs = workspace_inputs(root)?;
@@ -411,6 +436,8 @@ fn selector_label(selector: GateInputSelector) -> &'static str {
         GateInputSelector::ReviewBatch => "review-batch",
         GateInputSelector::Toolchain => "toolchain",
         GateInputSelector::Inventory => "inventory",
+        GateInputSelector::RequirementAnalysis => "requirement-analysis",
+        GateInputSelector::RouteBinding => "route-binding",
     }
 }
 
@@ -450,6 +477,19 @@ fn selector_state_fields(selector: GateInputSelector) -> &'static [&'static str]
         // Toolchain and inventory are independent `GateKey` dimensions; they
         // contribute nothing extra to the input fingerprint.
         GateInputSelector::Toolchain | GateInputSelector::Inventory => &[],
+        // RequirementAnalysis binds the single RA path plus its validated
+        // receipt. The file bytes are hashed in `input_fingerprint`; here we
+        // expose the state pointers that, when changed, must bust RA gates.
+        GateInputSelector::RequirementAnalysis => &[],
+        // RouteBinding binds the route candidate, approval, evidence and open
+        // conflicts — all state, no file scope.
+        GateInputSelector::RouteBinding => &[
+            "routeCandidate",
+            "routeApprovalReceipt",
+            "engineeringRoute",
+            "routeBlockingConflicts",
+            "scaleEvidenceDigest",
+        ],
     }
 }
 
@@ -465,7 +505,11 @@ fn selector_file_scope(selector: GateInputSelector, relative: &str) -> bool {
         GateInputSelector::Story => {
             relative.starts_with("ae-sdd-doc/Story/")
                 || relative.starts_with("ae-sdd-doc/Task/")
-                || relative.starts_with("ae-sdd-doc/TestCase/")
+                // The canonical TestCase directory is `Test/` (`STORING.md`), not
+                // `TestCase/`. Scoping the wrong directory left the TestCase
+                // document out of the fingerprint, so deleting it did not change
+                // the Gate key and `G-04` reused a stale PASS.
+                || relative.starts_with("ae-sdd-doc/Test/")
         }
         GateInputSelector::Constraints => relative.starts_with("constraints/"),
         GateInputSelector::ThinkingEngine => relative.starts_with("source/"),
@@ -475,7 +519,9 @@ fn selector_file_scope(selector: GateInputSelector, relative: &str) -> bool {
         | GateInputSelector::EvidenceLedger
         | GateInputSelector::ReviewBatch
         | GateInputSelector::Toolchain
-        | GateInputSelector::Inventory => false,
+        | GateInputSelector::Inventory
+        | GateInputSelector::RequirementAnalysis
+        | GateInputSelector::RouteBinding => false,
     }
 }
 
@@ -507,6 +553,52 @@ fn hash_changed_paths(hasher: &mut Sha256, root: &Path, state: &Value) -> Runtim
     for relative in paths {
         hash_part(hasher, relative.as_bytes());
         let path = root.join(&relative);
+        if path.is_file() {
+            hash_file_content(hasher, &path)?;
+        } else {
+            hash_part(hasher, b"<missing>");
+        }
+    }
+    Ok(())
+}
+
+/// Folds the plan's traced sources into the fingerprint.
+///
+/// `G-CODEPLAN-SRC` passes only while a `sourceReads` entry names a file that
+/// exists, so that file's presence is a Gate input. `sourceReads` may name any
+/// path, and the declared file scopes cover only fixed directories, so the
+/// paths are read from the plan itself — the same approach `hash_changed_paths`
+/// takes. Without this a traced source could be deleted and the Gate would
+/// reuse its stale PASS.
+fn hash_source_reads(hasher: &mut Sha256, root: &Path, state: &Value) -> RuntimeResult<()> {
+    let mut paths: Vec<String> = state
+        .pointer("/executionPlan/sourceReads")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths.dedup();
+    if paths.len() > CHANGED_PATH_LIMIT {
+        return Err(external(
+            "approved source reads exceed the fingerprint limit",
+        ));
+    }
+    for relative in paths {
+        hash_part(hasher, relative.as_bytes());
+        // `source_trace_complete` accepts an absolute path or one relative to
+        // the workspace root, so the fingerprint must resolve it the same way.
+        let candidate = Path::new(&relative);
+        let path = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            root.join(candidate)
+        };
         if path.is_file() {
             hash_file_content(hasher, &path)?;
         } else {
@@ -603,6 +695,37 @@ fn hash_state_scope(hasher: &mut Sha256, state: &Value, fields: &[&str]) -> Runt
     Ok(())
 }
 
+/// Hashes the single bound RA document plus its validated receipt.
+///
+/// The path authority is `/documentPaths/RA` only — no directory scan, no story
+/// fallback, no `route_exempt`. A missing/escaped/invalid path hashes an
+/// explicit marker so the gate fails closed instead of silently reusing a
+/// cached PASS. Foreign project assets and other Work Items' RA documents do
+/// not contribute to this fingerprint. Task 11 owns the authoritative resolver
+/// shared with predicates/scanners; this hasher is the fingerprint-side twin.
+fn hash_requirement_analysis(hasher: &mut Sha256, root: &Path, state: &Value) -> RuntimeResult<()> {
+    hash_part(hasher, b"ra-path");
+    match authoritative_ra_path(root, state) {
+        AuthoritativeRaPath::Bound { relative, absolute } => {
+            hash_part(hasher, relative.as_bytes());
+            if absolute.is_file() {
+                hash_file_content(hasher, &absolute)?;
+            } else {
+                hash_part(hasher, b"<missing>");
+            }
+        }
+        AuthoritativeRaPath::Escape => hash_part(hasher, b"<escape>"),
+        AuthoritativeRaPath::Invalid => hash_part(hasher, b"<invalid>"),
+        AuthoritativeRaPath::Missing => hash_part(hasher, b"<missing>"),
+    }
+    hash_part(hasher, b"ra-receipt");
+    match state.pointer("/seriesReceipts/RA") {
+        Some(receipt) => hash_part(hasher, &canonical_json(receipt)?),
+        None => hash_part(hasher, b"<absent>"),
+    }
+    Ok(())
+}
+
 fn toolchain_digest(root: &Path) -> RuntimeResult<ToolchainDigest> {
     digest_named(root, &["rust-toolchain.toml", "Cargo.lock", "Cargo.toml"])
         .map(ToolchainDigest::from_array)
@@ -676,6 +799,7 @@ fn collect_inputs(
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             if EXCLUDED_DIRS.contains(&name.as_str())
+                || (directory == root && name.starts_with("target-"))
                 || name == ".auto-engineering"
                 || relative.eq_ignore_ascii_case("apps/ae-sdd-monitor")
             {

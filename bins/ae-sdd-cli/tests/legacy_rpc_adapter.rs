@@ -82,8 +82,11 @@ fn scanner_and_ra_batch_commands_map_to_exact_native_gate_ids() {
     );
     adapt_passthrough_request("gate ra-required", RpcMethod::GateEvaluate, &mut batch)
         .expect("RA batch adapts");
-    assert_eq!(batch.payload["gateIds"].as_array().map(Vec::len), Some(7));
-    assert_eq!(batch.payload["gateIds"][3], "G-RA-4");
+    assert_eq!(
+        batch.payload["gateIds"],
+        json!(["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"]),
+        "the RA content batch must exclude compatibility aliases and the route-binding Gate"
+    );
 }
 
 #[test]

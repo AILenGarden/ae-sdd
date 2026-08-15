@@ -22,7 +22,8 @@ use ae_sdd_runtime::RuntimeConfig;
 use serde_json::{Value, json};
 
 use support::{
-    Harness, open_root_session, params, register_workspace, result, session_params, stable_error,
+    Harness, create_root_series_delegation, open_root_session, params, register_workspace, result,
+    stable_error,
 };
 
 const ADAPTER: &str = "host-a";
@@ -64,31 +65,245 @@ fn a_successful_create_still_publishes_its_action() {
         Some("WORK"),
     );
 
-    let mut create = session_params(
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-valid",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("create-valid".to_owned());
-    let delegation =
-        result(&harness.call(&mut root_connection, RpcMethod::DelegationCreate, create));
 
     let action = next_action(&harness, &mut host);
     assert_eq!(
         action["delegationId"], delegation["delegationId"],
         "a committed create must publish its own action"
     );
+}
+
+#[test]
+fn accepted_host_ack_returns_exact_child_binding() {
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut host = host_connection(&harness);
+    let mut root_connection = harness.connection(ClientKind::Hook);
+    let workspace = register_workspace(&harness, &mut root_connection, "ack-recovery-facts");
+    let root = open_root_session(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        "root-agent",
+        "root-external",
+        Some("WORK"),
+    );
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        &root,
+        "root-agent",
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-for-ack-recovery",
+    );
+    let action = next_action(&harness, &mut host);
+    let ack_payload = json!({
+        "adapterId":ADAPTER,
+        "ack": {
+            "ackId":"00000000-0000-0000-0000-000000000402",
+            "actionId":action["actionId"],
+            "commandSeq":action["commandSeq"],
+            "outcome":"accepted",
+            "hostTaskId":"/root/requirement_analysis_series",
+            "sessionId":"00000000-0000-0000-0000-000000000403"
+        }
+    });
+    let mut ack = params(ack_payload.clone(), 1_000);
+    ack.idempotency_key = Some("ack-recovery-facts".to_owned());
+    let accepted = result(&harness.call(&mut host, RpcMethod::HostActionAck, ack));
+
+    assert_eq!(accepted["actionId"], action["actionId"]);
+    assert_eq!(accepted["delegationId"], delegation["delegationId"]);
+    assert_eq!(accepted["ackId"], "00000000-0000-0000-0000-000000000402");
+    assert_eq!(accepted["outcome"], "accepted");
+    assert_eq!(accepted["hostTaskId"], "/root/requirement_analysis_series");
+    assert_eq!(
+        accepted["childSessionId"],
+        "00000000-0000-0000-0000-000000000403"
+    );
+    assert!(
+        accepted.get("claimId").is_none(),
+        "boot-local claims must never enter a durable ACK response: {accepted}"
+    );
+
+    let mut replay = params(ack_payload, 1_000);
+    replay.idempotency_key = Some("ack-recovery-facts".to_owned());
+    let replayed = result(&harness.call(&mut host, RpcMethod::HostActionAck, replay));
+    assert_eq!(
+        replayed, accepted,
+        "ACK receipt replay must preserve recovery facts"
+    );
+}
+
+#[test]
+fn unknown_ack_outcome_does_not_consume_the_create_action() {
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut host = host_connection(&harness);
+    let mut root_connection = harness.connection(ClientKind::Hook);
+    let workspace = register_workspace(&harness, &mut root_connection, "ack-outcome-validation");
+    let root = open_root_session(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        "root-agent",
+        "root-external",
+        Some("WORK"),
+    );
+    let _ = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        &root,
+        "root-agent",
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-for-outcome-validation",
+    );
+    let action = next_action(&harness, &mut host);
+    let child_session_id = "00000000-0000-0000-0000-000000000406";
+    let mut unknown = params(
+        json!({
+            "adapterId":ADAPTER,
+            "ack": {
+                "ackId":"00000000-0000-0000-0000-000000000407",
+                "actionId":action["actionId"],
+                "commandSeq":action["commandSeq"],
+                "outcome":"maybe",
+                "hostTaskId":"host-task-unknown",
+                "sessionId":child_session_id
+            }
+        }),
+        1_000,
+    );
+    unknown.idempotency_key = Some("ack-outcome-unknown".to_owned());
+    let rejected = harness.call(&mut host, RpcMethod::HostActionAck, unknown);
+    assert_eq!(stable_error(&rejected), "DELEGATION_ATTESTATION_FAILED");
+
+    let mut accepted = params(
+        json!({
+            "adapterId":ADAPTER,
+            "ack": {
+                "ackId":"00000000-0000-0000-0000-000000000408",
+                "actionId":action["actionId"],
+                "commandSeq":action["commandSeq"],
+                "outcome":"accepted",
+                "hostTaskId":"host-task-valid",
+                "sessionId":child_session_id
+            }
+        }),
+        1_000,
+    );
+    accepted.idempotency_key = Some("ack-outcome-valid".to_owned());
+    let accepted = result(&harness.call(&mut host, RpcMethod::HostActionAck, accepted));
+    assert_eq!(accepted["outcome"], "accepted");
+}
+
+#[test]
+fn rejected_create_ack_moves_the_delegation_to_a_terminal_state() {
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut host = host_connection(&harness);
+    let mut root_connection = harness.connection(ClientKind::Hook);
+    let workspace = register_workspace(&harness, &mut root_connection, "ack-rejected-terminal");
+    let root = open_root_session(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        "root-agent",
+        "root-external",
+        Some("WORK"),
+    );
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        &root,
+        "root-agent",
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-for-rejection",
+    );
+    let action = next_action(&harness, &mut host);
+    let mut rejected = params(
+        json!({
+            "adapterId":ADAPTER,
+            "ack": {"ackId":"00000000-0000-0000-0000-000000000409","actionId":action["actionId"],"commandSeq":action["commandSeq"],"outcome":"rejected"}
+        }),
+        1_000,
+    );
+    rejected.idempotency_key = Some("ack-rejected".to_owned());
+    let ack = result(&harness.call(&mut host, RpcMethod::HostActionAck, rejected));
+    assert_eq!(ack["outcome"], "rejected");
+    assert_eq!(
+        harness
+            .runtime
+            .delegation_supervisor()
+            .status(
+                &root.session_id,
+                delegation["delegationId"].as_str().expect("delegation id")
+            )
+            .expect("delegation status")
+            .status,
+        "cancelled"
+    );
+}
+
+#[test]
+fn accepted_create_ack_requires_the_complete_child_binding() {
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut host = host_connection(&harness);
+    let mut root_connection = harness.connection(ClientKind::Hook);
+    let workspace = register_workspace(&harness, &mut root_connection, "ack-binding-required");
+    let root = open_root_session(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        "root-agent",
+        "root-external",
+        Some("WORK"),
+    );
+    let _ = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        &root,
+        "root-agent",
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-for-ack-binding",
+    );
+    let action = next_action(&harness, &mut host);
+    let mut incomplete = params(
+        json!({
+            "adapterId":ADAPTER,
+            "ack": {
+                "ackId":"00000000-0000-0000-0000-000000000404",
+                "actionId":action["actionId"],
+                "commandSeq":action["commandSeq"],
+                "outcome":"accepted",
+                "sessionId":"00000000-0000-0000-0000-000000000405"
+            }
+        }),
+        1_000,
+    );
+    incomplete.idempotency_key = Some("ack-binding-incomplete".to_owned());
+    let rejected = harness.call(&mut host, RpcMethod::HostActionAck, incomplete);
+    assert_eq!(stable_error(&rejected), "DELEGATION_ATTESTATION_FAILED");
 }
 
 #[test]
@@ -106,25 +321,17 @@ fn a_second_ack_identity_for_one_action_is_refused() {
         Some("WORK"),
     );
 
-    let mut create = session_params(
+    let delegation = create_root_series_delegation(
+        &harness,
+        &mut root_connection,
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        "create-for-ack",
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("create-for-ack".to_owned());
-    let delegation =
-        result(&harness.call(&mut root_connection, RpcMethod::DelegationCreate, create));
     let delegation_id = delegation["delegationId"]
         .as_str()
         .expect("delegation id")
@@ -132,9 +339,7 @@ fn a_second_ack_identity_for_one_action_is_refused() {
     let action = next_action(&harness, &mut host);
     let child_session_id = "00000000-0000-0000-0000-000000000401";
 
-    // First ACK omits the host task binding, so it cannot establish physical
-    // proof. Its identity sorts before the usable ACK that follows.
-    let mut incomplete = params(
+    let mut first = params(
         json!({
             "adapterId":ADAPTER,
             "ack": {
@@ -142,13 +347,14 @@ fn a_second_ack_identity_for_one_action_is_refused() {
                 "actionId":action["actionId"],
                 "commandSeq":action["commandSeq"],
                 "outcome":"accepted",
+                "hostTaskId":"host-task-first",
                 "sessionId":child_session_id
             }
         }),
         1_000,
     );
-    incomplete.idempotency_key = Some("ack-incomplete".to_owned());
-    let _ = result(&harness.call(&mut host, RpcMethod::HostActionAck, incomplete));
+    first.idempotency_key = Some("ack-first".to_owned());
+    let _ = result(&harness.call(&mut host, RpcMethod::HostActionAck, first));
 
     let mut complete = params(
         json!({
@@ -184,6 +390,7 @@ fn a_second_ack_identity_for_one_action_is_refused() {
                 "actionId":action["actionId"],
                 "commandSeq":action["commandSeq"],
                 "outcome":"accepted",
+                "hostTaskId":"host-task-first",
                 "sessionId":child_session_id
             }
         }),

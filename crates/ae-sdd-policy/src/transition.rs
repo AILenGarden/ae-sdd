@@ -8,8 +8,8 @@ use crate::{RoleAuthorizationError, RoleOperation, RolePolicy};
 
 const LARGE_DR: &[ProcessPhase] = &[
     ProcessPhase::Initialized,
-    ProcessPhase::RouteSelected,
     ProcessPhase::RequirementAnalyzed,
+    ProcessPhase::RouteSelected,
     ProcessPhase::DrGenerated,
     ProcessPhase::StoryGenerated,
     ProcessPhase::TestcaseGenerated,
@@ -21,8 +21,8 @@ const LARGE_DR: &[ProcessPhase] = &[
 ];
 const STORY: &[ProcessPhase] = &[
     ProcessPhase::Initialized,
-    ProcessPhase::RouteSelected,
     ProcessPhase::RequirementAnalyzed,
+    ProcessPhase::RouteSelected,
     ProcessPhase::StoryGenerated,
     ProcessPhase::TestcaseGenerated,
     ProcessPhase::CodingProcess,
@@ -33,8 +33,8 @@ const STORY: &[ProcessPhase] = &[
 ];
 const CODING_PLAN: &[ProcessPhase] = &[
     ProcessPhase::Initialized,
-    ProcessPhase::RouteSelected,
     ProcessPhase::RequirementAnalyzed,
+    ProcessPhase::RouteSelected,
     ProcessPhase::CodingProcess,
     ProcessPhase::Coding,
     ProcessPhase::TestRunning,
@@ -44,27 +44,32 @@ const CODING_PLAN: &[ProcessPhase] = &[
 
 const G_NONE: &[RequiredGate] = &[];
 const G_00: &[RequiredGate] = &[RequiredGate::G00];
-const G_RA: &[RequiredGate] = &[
-    RequiredGate::G00,
+/// RA-first: entering RequirementAnalyzed requires only the four RA content
+/// gates. G-00, G-RA-5/6, and G-RA-FLOW-VIOLATION are no longer in this set.
+const G_REQUIREMENT_ANALYZED: &[RequiredGate] = &[
     RequiredGate::GRa1,
     RequiredGate::GRa2,
     RequiredGate::GRa3,
     RequiredGate::GRa4,
-    RequiredGate::GRa5,
-    RequiredGate::GRa6,
-    RequiredGate::GRaFlowViolation,
 ];
+/// RA-first: the route is frozen at the RouteSelected boundary, gated only by
+/// the RA -> Route binding gate.
+const G_ROUTE_SELECTED: &[RequiredGate] = &[RequiredGate::GRaFlowViolation];
 const G_DR: &[RequiredGate] = &[
     RequiredGate::G00,
     RequiredGate::G01,
     RequiredGate::GDrContext,
 ];
+// `GReviewDepth` is deliberately absent: it validates the v2 Tier 3 Review
+// authority, whose final proof must bind to a toolset verification receipt from
+// real test execution. A document phase has no code to execute, so requiring it
+// here made `StoryGenerated` unreachable for `scale=large` (which derives Tier 3
+// unconditionally). It stays required in `G_REVIEW`, where that receipt exists.
 const G_STORY: &[RequiredGate] = &[
     RequiredGate::G00,
     RequiredGate::G02,
     RequiredGate::G03,
     RequiredGate::GStoryContext,
-    RequiredGate::GReviewDepth,
 ];
 const G_TESTCASE: &[RequiredGate] = &[
     RequiredGate::G00,
@@ -196,6 +201,11 @@ impl TransitionPolicy {
     ///
     /// Only a root Agent may request the global transition. Pause is a
     /// meta-transition; resume must return to the exact recorded phase.
+    ///
+    /// RA-first: the `Initialized -> RequirementAnalyzed` step is route-less;
+    /// it does not consult `route_chain` and requires only `G_REQUIREMENT_ANALYZED`.
+    /// Every other transition still walks the selected route chain, whose first
+    /// post-Initialized step is `RequirementAnalyzed`.
     pub fn authorize(
         context: TransitionContext,
     ) -> Result<TransitionPermit, TransitionPolicyError> {
@@ -223,6 +233,15 @@ impl TransitionPolicy {
             }
             return Ok(TransitionPermit {
                 required_gates: G_NONE,
+            });
+        }
+
+        // RA-first first step: Initialized -> RequirementAnalyzed needs no route.
+        if context.current == ProcessPhase::Initialized
+            && context.target == ProcessPhase::RequirementAnalyzed
+        {
+            return Ok(TransitionPermit {
+                required_gates: G_REQUIREMENT_ANALYZED,
             });
         }
 
@@ -290,8 +309,8 @@ fn required_gates(
     target: ProcessPhase,
 ) -> &'static [RequiredGate] {
     match target {
-        ProcessPhase::RouteSelected => G_00,
-        ProcessPhase::RequirementAnalyzed => G_RA,
+        ProcessPhase::RouteSelected => G_ROUTE_SELECTED,
+        ProcessPhase::RequirementAnalyzed => G_REQUIREMENT_ANALYZED,
         ProcessPhase::DrGenerated => G_DR,
         ProcessPhase::StoryGenerated => G_STORY,
         ProcessPhase::TestcaseGenerated => G_NONE,
@@ -382,6 +401,57 @@ mod tests {
             design_route: DesignRoute::Story,
             paused_from: None,
         }
+    }
+
+    /// `G-REVIEW-DEPTH` validates the v2 Tier 3 Review authority, which binds a
+    /// final proof to a *toolset verification receipt* produced by real test
+    /// execution. A document phase has no code to execute, so requiring it at
+    /// `StoryGenerated` made the phase structurally unreachable for large work
+    /// (`scale=large` derives Tier 3 unconditionally). It stays required at
+    /// `Review`, where that receipt genuinely exists.
+    #[test]
+    fn story_entry_gates_exclude_the_execution_review_depth_gate() {
+        // The live Work Item that surfaced this is scale=large / route=DR, which
+        // is exactly the combination that derives Tier 3 and therefore demands a
+        // toolset receipt.
+        let story = TransitionPolicy::authorize(TransitionContext {
+            actor_role: AgentRole::Root,
+            current: ProcessPhase::DrGenerated,
+            target: ProcessPhase::StoryGenerated,
+            scale: WorkScale::Large,
+            design_route: DesignRoute::Dr,
+            paused_from: None,
+        })
+        .expect("dr -> story transition is legal on the large DR route");
+
+        assert!(
+            !story.required_gates().contains(&RequiredGate::GReviewDepth),
+            "a document phase must not demand execution-time verification material"
+        );
+        for expected in [
+            RequiredGate::G00,
+            RequiredGate::G02,
+            RequiredGate::G03,
+            RequiredGate::GStoryContext,
+        ] {
+            assert!(
+                story.required_gates().contains(&expected),
+                "{expected:?} must stay required at StoryGenerated"
+            );
+        }
+
+        let review = TransitionPolicy::authorize(context(
+            AgentRole::Root,
+            ProcessPhase::TestRunning,
+            ProcessPhase::CodeReviewed,
+        ))
+        .expect("test-running -> code-reviewed transition is legal");
+        assert!(
+            review
+                .required_gates()
+                .contains(&RequiredGate::GReviewDepth),
+            "review depth must remain enforced where a toolset receipt exists"
+        );
     }
 
     #[test]

@@ -18,21 +18,30 @@ use ae_sdd_runtime::RuntimeConfig;
 use serde_json::{Value, json};
 
 use support::{
-    Harness, open_root_session, params, register_workspace, result, session_params, stable_error,
+    Harness, flow_decision_digest, open_root_session, params, register_workspace, result,
+    session_params, stable_error,
 };
 
 const ADAPTER: &str = "host-fresh";
 const CHILD: &str = "00000000-0000-0000-0000-000000000601";
 
-/// Drives create → action_next → ack → accept without ever calling
-/// `host.register`, which is the whole claim of S4-1.
+/// C2/B1: a HostAdapter handshake alone must attach nothing. Handshake's
+/// former implicit `host.register(adapter_id)` side effect is gone, so
+/// `delegation_adapter()` must fail closed exactly as it does with no host
+/// connected at all -- attaching is now only ever the explicit
+/// `host.register` call further down this same test.
 #[test]
-fn a_freshly_connected_host_completes_the_delegation_chain() {
+fn handshake_alone_attaches_no_host() {
     let harness = Harness::new(RuntimeConfig::default());
-    let mut host = harness.connection_as(ClientKind::HostAdapter, Some(ADAPTER));
-
+    let mut host = harness.connection_handshake_only(ClientKind::HostAdapter, Some(ADAPTER));
     let mut root_connection = harness.connection(ClientKind::Hook);
-    let workspace = register_workspace(&harness, &mut root_connection, "fresh");
+    let workspace = register_workspace(&harness, &mut root_connection, "handshake-only");
+
+    // Direct proof, not an inference through delegation.create's policy
+    // selection: the connection this handshake just completed -- carrying a
+    // legacy `adapterId` on the wire -- has nothing bound to it yet.
+    harness.assert_connection_has_no_adapter_bound(&mut host, ADAPTER, &workspace.workspace_id);
+
     let root = open_root_session(
         &harness,
         &mut root_connection,
@@ -42,27 +51,67 @@ fn a_freshly_connected_host_completes_the_delegation_chain() {
         Some("WORK"),
     );
 
+    let decision_digest = flow_decision_digest("handshake-only-create");
+    harness.business.set_flow_next_result(json!({
+        "schemaVersion":"flow-decision/v1",
+        "decisionDigest":decision_digest,
+        "stateRevision":1,
+        "phase":"initialized",
+        "nextAction":{
+            "kind":"delegate-series",
+            "seriesKind":"requirement-analysis",
+            "requiredArtifacts":["RA"]
+        }
+    }));
+    let mut next = session_params(&workspace, &root, "root-agent", json!({}), 1_000);
+    next.work_item_id = Some("WORK".to_owned());
+    result(&harness.call(&mut root_connection, RpcMethod::FlowNext, next));
+
     let mut create = session_params(
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":5_000,
-            "adapterId":ADAPTER,
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
+        json!({"flowDecisionDigest":decision_digest}),
         1_000,
     );
     create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some("fresh-create".to_owned());
+    create.idempotency_key = Some("handshake-only-create".to_owned());
+    let response = harness.call(&mut root_connection, RpcMethod::DelegationCreate, create);
+    assert_eq!(
+        stable_error(&response),
+        "HOST_CAPABILITY_UNSUPPORTED",
+        "the handshake alone (adapterId={ADAPTER:?} on the wire) must not have attached anything: {response}"
+    );
+    let message = response["error"]["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{response}"));
+    assert!(
+        message.contains("no Host adapter is attached"),
+        "handshake must leave the daemon exactly as unattached as no connection at all: {message}"
+    );
+
+    // Only now does the pre-existing, still-supported explicit host.register
+    // path attach the connection; the rest of this test is the original S4-1
+    // claim unchanged (create -> action_next -> ack -> accept with no
+    // *implicit* registration anywhere in the chain).
+    let mut register = params(json!({"adapterId":ADAPTER}), 1_000);
+    register.capability_token = Some(harness.host_credential());
+    register.idempotency_key = Some("handshake-only-register".to_owned());
+    let _: Value = result(&harness.call(&mut host, RpcMethod::HostRegister, register));
+
+    let mut retry_create = session_params(
+        &workspace,
+        &root,
+        "root-agent",
+        json!({"flowDecisionDigest":decision_digest}),
+        1_000,
+    );
+    retry_create.work_item_id = Some("WORK".to_owned());
+    retry_create.idempotency_key = Some("handshake-only-create".to_owned());
     let delegation = result(&harness.call(
         &mut root_connection,
         RpcMethod::DelegationCreate,
-        create,
+        retry_create,
     ));
     let delegation_id = delegation["delegationId"]
         .as_str()
@@ -94,7 +143,7 @@ fn a_freshly_connected_host_completes_the_delegation_chain() {
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000000603",
+            "claimId":action["claimId"],
             "actionId":action["actionId"],
             "childSessionId":CHILD,
             "expiresAtUnixMs":4_900
@@ -104,21 +153,17 @@ fn a_freshly_connected_host_completes_the_delegation_chain() {
     accept.workspace_id = Some(workspace.workspace_id.clone());
     accept.work_item_id = Some("WORK".to_owned());
     accept.idempotency_key = Some("fresh-accept".to_owned());
-    let accepted = result(&harness.call(
-        &mut root_connection,
-        RpcMethod::DelegationAccept,
-        accept,
-    ));
+    let accepted = result(&harness.call(&mut root_connection, RpcMethod::DelegationAccept, accept));
     assert_eq!(
         accepted["status"], "running",
-        "the chain must complete with no registration step"
+        "the chain must complete with no *implicit* registration step"
     );
 }
 
-/// S4-4: with several hosts attached, "not registered" alone does not say which
-/// recipient is missing, so the ID belongs in the message.
+/// S4-4: Root does not choose a Host recipient. With no Host attached, the
+/// daemon must fail closed instead of accepting caller-supplied authority.
 #[test]
-fn an_unknown_recipient_is_named_in_the_error() {
+fn delegation_fails_when_no_host_is_attached() {
     let harness = Harness::new(RuntimeConfig::default());
     let mut root_connection = harness.connection(ClientKind::Hook);
     let workspace = register_workspace(&harness, &mut root_connection, "unknown");
@@ -131,19 +176,27 @@ fn an_unknown_recipient_is_named_in_the_error() {
         Some("WORK"),
     );
 
+    let decision_digest = flow_decision_digest("unknown-create");
+    harness.business.set_flow_next_result(json!({
+        "schemaVersion":"flow-decision/v1",
+        "decisionDigest":decision_digest,
+        "stateRevision":1,
+        "phase":"initialized",
+        "nextAction":{
+            "kind":"delegate-series",
+            "seriesKind":"requirement-analysis",
+            "requiredArtifacts":["RA"]
+        }
+    }));
+    let mut next = session_params(&workspace, &root, "root-agent", json!({}), 1_000);
+    next.work_item_id = Some("WORK".to_owned());
+    result(&harness.call(&mut root_connection, RpcMethod::FlowNext, next));
+
     let mut create = session_params(
         &workspace,
         &root,
         "root-agent",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"b".repeat(64),
-            "deadlineUnixMs":5_000,
-            "adapterId":"host-absent",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
+        json!({"flowDecisionDigest":decision_digest}),
         1_000,
     );
     create.work_item_id = Some("WORK".to_owned());
@@ -154,8 +207,8 @@ fn an_unknown_recipient_is_named_in_the_error() {
         .as_str()
         .unwrap_or_else(|| panic!("{response}"));
     assert!(
-        message.contains("host-absent"),
-        "the missing recipient must be named: {message}"
+        message.contains("no Host adapter is attached"),
+        "the missing Host must be explicit: {message}"
     );
 }
 
@@ -195,4 +248,3 @@ fn the_capability_matrix_method_no_longer_exists() {
         "an unknown method must fail to decode rather than acquire a default profile"
     );
 }
-

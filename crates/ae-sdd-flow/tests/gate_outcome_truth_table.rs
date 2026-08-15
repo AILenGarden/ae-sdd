@@ -30,9 +30,13 @@ fn decision(outcome: GateOutcome) -> ae_sdd_flow::FlowDecision {
 fn only_fail_corrects_and_infrastructure_outcomes_only_degrade_health() {
     let pass = decision(GateOutcome::Pass);
     assert_eq!(pass.snapshot().correction_count(), 0);
+    // RA-first: the first transition (Initialized -> RequirementAnalyzed) has
+    // four required gates (G-RA-1..4); a single PASS only partially satisfies
+    // the set, so the runtime asks for more gate evaluation rather than
+    // applying the transition immediately.
     assert!(matches!(
         pass.next_action(),
-        NextAction::ApplyTransition { .. }
+        NextAction::EvaluateGates { .. }
     ));
 
     let failed = decision(fail());

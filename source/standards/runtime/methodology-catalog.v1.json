@@ -1,6 +1,6 @@
 {
   "schemaVersion": "ae-sdd-methodology-catalog/v1",
-  "catalogVersion": "1.0.0",
+  "catalogVersion": "2.0.0",
   "entries": [
     {
       "skillId": "cross-cutting.ae-sdd-plugin-loader",
@@ -12,7 +12,9 @@
       "compactRef": "skills/cross-cutting/ae-sdd-plugin-loader-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/ae-sdd-plugin-loader-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["plugin-registry"],
+      "requiredInputs": [
+        "plugin-registry"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
       "toolDependencies": []
@@ -27,10 +29,14 @@
       "compactRef": "skills/cross-cutting/agent-orchestration-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/agent-orchestration-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["series-plan"],
+      "requiredInputs": [
+        "series-plan"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["host-adapter"]
+      "toolDependencies": [
+        "host-adapter"
+      ]
     },
     {
       "skillId": "cross-cutting.ai-agent-self-audit-checklist",
@@ -42,7 +48,9 @@
       "compactRef": "skill-fallbacks/skills/cross-cutting/ai-agent-self-audit-checklist.full.md",
       "fallbackRef": null,
       "routePredicates": [],
-      "requiredInputs": ["requested-intent"],
+      "requiredInputs": [
+        "requested-intent"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
       "toolDependencies": []
@@ -57,10 +65,14 @@
       "compactRef": "skills/cross-cutting/database-tool-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/database-tool-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["database-profile"],
+      "requiredInputs": [
+        "database-profile"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["database"]
+      "toolDependencies": [
+        "database"
+      ]
     },
     {
       "skillId": "cross-cutting.document-storage",
@@ -72,10 +84,14 @@
       "compactRef": "skills/cross-cutting/document-storage-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/document-storage-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["document-intent"],
+      "requiredInputs": [
+        "document-intent"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["document-store"]
+      "toolDependencies": [
+        "document-store"
+      ]
     },
     {
       "skillId": "cross-cutting.git-insight",
@@ -87,10 +103,14 @@
       "compactRef": "skills/cross-cutting/git-insight-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/git-insight-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["repository-snapshot"],
+      "requiredInputs": [
+        "repository-snapshot"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["git"]
+      "toolDependencies": [
+        "git"
+      ]
     },
     {
       "skillId": "cross-cutting.memory-management",
@@ -102,10 +122,14 @@
       "compactRef": "skills/cross-cutting/memory-management-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/memory-management-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["context-generation"],
+      "requiredInputs": [
+        "context-generation"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["memory-store"]
+      "toolDependencies": [
+        "memory-store"
+      ]
     },
     {
       "skillId": "cross-cutting.postman-tool",
@@ -117,10 +141,14 @@
       "compactRef": "skills/cross-cutting/postman-tool-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/postman-tool-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["postman-profile"],
+      "requiredInputs": [
+        "postman-profile"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["postman"]
+      "toolDependencies": [
+        "postman"
+      ]
     },
     {
       "skillId": "cross-cutting.project-assets-update",
@@ -132,10 +160,14 @@
       "compactRef": "skills/cross-cutting/project-assets-update-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/project-assets-update-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["project-assets"],
+      "requiredInputs": [
+        "project-assets"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["asset-index"]
+      "toolDependencies": [
+        "asset-index"
+      ]
     },
     {
       "skillId": "cross-cutting.proposal",
@@ -162,10 +194,14 @@
       "compactRef": "skills/cross-cutting/review-loop-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/review-loop-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["review-session"],
+      "requiredInputs": [
+        "review-session"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["review-supervisor"]
+      "toolDependencies": [
+        "review-supervisor"
+      ]
     },
     {
       "skillId": "cross-cutting.toolset-orchestration",
@@ -177,10 +213,14 @@
       "compactRef": "skills/cross-cutting/toolset-orchestration-skill.md",
       "fallbackRef": "skill-fallbacks/skills/cross-cutting/toolset-orchestration-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["tool-requirements"],
+      "requiredInputs": [
+        "tool-requirements"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["toolset-broker"]
+      "toolDependencies": [
+        "toolset-broker"
+      ]
     },
     {
       "skillId": "orchestration.ae-sdd-install",
@@ -192,10 +232,14 @@
       "compactRef": "skills/orchestration/ae-sdd-install-skill.md",
       "fallbackRef": "skill-fallbacks/skills/orchestration/ae-sdd-install-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["release-manifest"],
+      "requiredInputs": [
+        "release-manifest"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["install-helper"]
+      "toolDependencies": [
+        "install-helper"
+      ]
     },
     {
       "skillId": "orchestration.ae-sdd-update",
@@ -207,145 +251,284 @@
       "compactRef": "skills/orchestration/ae-sdd-update-skill.md",
       "fallbackRef": "skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["update-manifest"],
+      "requiredInputs": [
+        "update-manifest"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["update-helper"]
+      "toolDependencies": [
+        "update-helper"
+      ]
     },
     {
       "skillId": "phase1-design.dr-generate",
-      "seriesKind": "dr-generate",
+      "seriesKind": "design-review",
+      "activity": "generate",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/dr-generate-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/dr-generate-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "dr-generate" }],
-      "requiredInputs": ["requirement-analysis", "project-constraints", "thinking-engine"],
-      "deliverableKinds": ["design-record"],
-      "requiredGates": ["G-14"],
-      "toolDependencies": ["document-storage"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "design-review"
+        }
+      ],
+      "requiredInputs": [
+        "requirement-analysis",
+        "project-constraints",
+        "thinking-engine"
+      ],
+      "deliverableKinds": [
+        "design-record"
+      ],
+      "requiredGates": [
+        "G-14"
+      ],
+      "toolDependencies": [
+        "document-storage"
+      ]
     },
     {
       "skillId": "phase1-design.dr-review",
-      "seriesKind": "dr-review",
+      "seriesKind": "design-review",
+      "activity": "review",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/dr-review-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/dr-review-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "dr-review" }],
-      "requiredInputs": ["design-record", "project-constraints", "thinking-engine"],
-      "deliverableKinds": ["review-finding"],
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "design-review"
+        }
+      ],
+      "requiredInputs": [
+        "design-record",
+        "project-constraints",
+        "thinking-engine"
+      ],
+      "deliverableKinds": [
+        "review-finding"
+      ],
       "requiredGates": [],
-      "toolDependencies": ["review-supervisor"]
+      "toolDependencies": [
+        "review-supervisor"
+      ]
     },
     {
       "skillId": "phase1-design.dr-update",
-      "seriesKind": "dr-update",
+      "seriesKind": "design-review",
+      "activity": "update",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/dr-update-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/dr-update-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "dr-update" }],
-      "requiredInputs": ["design-record", "review-finding"],
-      "deliverableKinds": ["design-record"],
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "design-review"
+        }
+      ],
+      "requiredInputs": [
+        "design-record",
+        "review-finding"
+      ],
+      "deliverableKinds": [
+        "design-record"
+      ],
       "requiredGates": [],
-      "toolDependencies": ["document-storage"]
+      "toolDependencies": [
+        "document-storage"
+      ]
     },
     {
       "skillId": "phase1-design.requirement-analysis",
       "seriesKind": "requirement-analysis",
+      "activity": "execute",
       "variant": "builtin-v1",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/requirement-analysis-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "requirement-analysis" }],
-      "requiredInputs": ["requested-intent", "project-constraints", "thinking-engine"],
-      "deliverableKinds": ["requirement-analysis"],
+      "routePredicates": [],
+      "requiredInputs": [
+        "requested-intent"
+      ],
+      "deliverableKinds": [
+        "requirement-analysis"
+      ],
       "requiredGates": [],
-      "toolDependencies": ["document-storage"]
+      "toolDependencies": [
+        "document-storage"
+      ]
     },
     {
       "skillId": "phase1-design.story-generate",
-      "seriesKind": "story-generate",
+      "seriesKind": "story",
+      "activity": "generate",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/story-generate-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/story-generate-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "story-generate" }],
-      "requiredInputs": ["requirement-analysis", "project-constraints", "thinking-engine"],
-      "deliverableKinds": ["story"],
-      "requiredGates": ["G-14"],
-      "toolDependencies": ["document-storage"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "story"
+        }
+      ],
+      "requiredInputs": [
+        "requirement-analysis",
+        "project-constraints",
+        "thinking-engine"
+      ],
+      "deliverableKinds": [
+        "story"
+      ],
+      "requiredGates": [
+        "G-14"
+      ],
+      "toolDependencies": [
+        "document-storage"
+      ]
     },
     {
       "skillId": "phase1-design.story-review",
-      "seriesKind": "story-review",
+      "seriesKind": "story",
+      "activity": "review",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/story-review-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/story-review-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "story-review" }],
-      "requiredInputs": ["story", "project-constraints", "thinking-engine"],
-      "deliverableKinds": ["review-finding"],
-      "requiredGates": ["G-14"],
-      "toolDependencies": ["review-supervisor"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "story"
+        }
+      ],
+      "requiredInputs": [
+        "story",
+        "project-constraints",
+        "thinking-engine"
+      ],
+      "deliverableKinds": [
+        "review-finding"
+      ],
+      "requiredGates": [
+        "G-14"
+      ],
+      "toolDependencies": [
+        "review-supervisor"
+      ]
     },
     {
       "skillId": "phase1-design.story-update",
-      "seriesKind": "story-update",
+      "seriesKind": "story",
+      "activity": "update",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/story-update-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/story-update-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "story-update" }],
-      "requiredInputs": ["story", "review-finding"],
-      "deliverableKinds": ["story"],
-      "requiredGates": ["G-14"],
-      "toolDependencies": ["document-storage"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "story"
+        }
+      ],
+      "requiredInputs": [
+        "story",
+        "review-finding"
+      ],
+      "deliverableKinds": [
+        "story"
+      ],
+      "requiredGates": [
+        "G-14"
+      ],
+      "toolDependencies": [
+        "document-storage"
+      ]
     },
     {
       "skillId": "phase1-design.testcase-generate",
-      "seriesKind": "testcase-generate",
+      "seriesKind": "testcase",
+      "activity": "generate",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/testcase-generate-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/testcase-generate-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "testcase-generate" }],
-      "requiredInputs": ["story", "verification-contract"],
-      "deliverableKinds": ["test-case"],
-      "requiredGates": ["G-08"],
-      "toolDependencies": ["document-storage"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "testcase"
+        }
+      ],
+      "requiredInputs": [
+        "story",
+        "verification-contract"
+      ],
+      "deliverableKinds": [
+        "test-case"
+      ],
+      "requiredGates": [
+        "G-08"
+      ],
+      "toolDependencies": [
+        "document-storage"
+      ]
     },
     {
       "skillId": "phase1-design.testcase-review",
-      "seriesKind": "testcase-review",
+      "seriesKind": "testcase",
+      "activity": "review",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase1-design/testcase-review-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase1-design/testcase-review-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "testcase-review" }],
-      "requiredInputs": ["test-case", "story"],
-      "deliverableKinds": ["review-finding"],
-      "requiredGates": ["G-08"],
-      "toolDependencies": ["review-supervisor"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "testcase"
+        }
+      ],
+      "requiredInputs": [
+        "test-case",
+        "story"
+      ],
+      "deliverableKinds": [
+        "review-finding"
+      ],
+      "requiredGates": [
+        "G-08"
+      ],
+      "toolDependencies": [
+        "review-supervisor"
+      ]
     },
     {
       "skillId": "phase2-coding.coding-process",
@@ -357,10 +540,15 @@
       "compactRef": "skills/phase2-coding/coding-process-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase2-coding/coding-process-skill.full.md",
       "routePredicates": [],
-      "requiredInputs": ["route-decision", "series-receipts"],
+      "requiredInputs": [
+        "route-decision",
+        "series-receipts"
+      ],
       "deliverableKinds": [],
       "requiredGates": [],
-      "toolDependencies": ["flow-runtime"]
+      "toolDependencies": [
+        "flow-runtime"
+      ]
     },
     {
       "skillId": "phase2-coding.coding-report",
@@ -380,92 +568,191 @@
     {
       "skillId": "phase2-coding.coding",
       "seriesKind": "coding",
+      "activity": "execute",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase2-coding/coding-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase2-coding/coding-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "coding" }],
-      "requiredInputs": ["project-constraints", "thinking-engine", "story", "verification-contract"],
-      "deliverableKinds": ["source-change"],
-      "requiredGates": ["G-CODEPLAN-SRC", "G-14", "G-08"],
-      "toolDependencies": ["code-editor", "build-worker"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "coding"
+        }
+      ],
+      "requiredInputs": [
+        "project-constraints",
+        "thinking-engine",
+        "story",
+        "verification-contract"
+      ],
+      "deliverableKinds": [
+        "source-change"
+      ],
+      "requiredGates": [
+        "G-CODEPLAN-SRC",
+        "G-14",
+        "G-08"
+      ],
+      "toolDependencies": [
+        "code-editor",
+        "build-worker"
+      ]
     },
     {
       "skillId": "phase2-task.task-generate",
-      "seriesKind": "task-generate",
+      "seriesKind": "coding-plan",
+      "activity": "generate",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase2-task/task-generate-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase2-task/task-generate-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "task-generate" }],
-      "requiredInputs": ["story", "parallel-decomposition"],
-      "deliverableKinds": ["task-plan"],
-      "requiredGates": ["G-14"],
-      "toolDependencies": ["document-storage"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "coding-plan"
+        }
+      ],
+      "requiredInputs": [
+        "story",
+        "parallel-decomposition"
+      ],
+      "deliverableKinds": [
+        "task-plan"
+      ],
+      "requiredGates": [
+        "G-14"
+      ],
+      "toolDependencies": [
+        "document-storage"
+      ]
     },
     {
       "skillId": "phase3-review.code-review",
-      "seriesKind": "code-review",
+      "seriesKind": "review",
+      "activity": "review",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase3-review/code-review-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase3-review/code-review-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "code-review" }],
-      "requiredInputs": ["source-change", "story", "verification-receipt"],
-      "deliverableKinds": ["review-finding"],
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "review"
+        }
+      ],
+      "requiredInputs": [
+        "source-change",
+        "story",
+        "verification-receipt"
+      ],
+      "deliverableKinds": [
+        "review-finding"
+      ],
       "requiredGates": [],
-      "toolDependencies": ["review-supervisor"]
+      "toolDependencies": [
+        "review-supervisor"
+      ]
     },
     {
       "skillId": "phase3-review.sonar-issue-fix",
-      "seriesKind": "sonar-issue-fix",
+      "seriesKind": "review",
+      "activity": "fix",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase3-review/sonar-issue-fix-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase3-review/sonar-issue-fix-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "sonar-issue-fix" }],
-      "requiredInputs": ["sonar-finding", "source-change"],
-      "deliverableKinds": ["source-change"],
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "review"
+        }
+      ],
+      "requiredInputs": [
+        "sonar-finding",
+        "source-change"
+      ],
+      "deliverableKinds": [
+        "source-change"
+      ],
       "requiredGates": [],
-      "toolDependencies": ["sonar", "code-editor"]
+      "toolDependencies": [
+        "sonar",
+        "code-editor"
+      ]
     },
     {
       "skillId": "phase3-review.test-generate",
-      "seriesKind": "test-generate",
+      "seriesKind": "test",
+      "activity": "generate",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase3-review/test-generate-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase3-review/test-generate-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "test-generate" }],
-      "requiredInputs": ["source-change", "verification-contract"],
-      "deliverableKinds": ["test-evidence"],
-      "requiredGates": ["G-08"],
-      "toolDependencies": ["build-worker"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "test"
+        }
+      ],
+      "requiredInputs": [
+        "source-change",
+        "verification-contract"
+      ],
+      "deliverableKinds": [
+        "test-evidence"
+      ],
+      "requiredGates": [
+        "G-08"
+      ],
+      "toolDependencies": [
+        "build-worker"
+      ]
     },
     {
       "skillId": "phase3-review.test-review",
-      "seriesKind": "test-review",
+      "seriesKind": "test",
+      "activity": "review",
       "variant": "builtin-v1",
       "version": "1.0.0",
       "activation": "workflow",
       "spawnPolicy": "physical_series",
       "compactRef": "skills/phase3-review/test-review-skill.md",
       "fallbackRef": "skill-fallbacks/skills/phase3-review/test-review-skill.full.md",
-      "routePredicates": [{ "fact": "required-series", "operator": "contains", "value": "test-review" }],
-      "requiredInputs": ["test-evidence", "verification-contract"],
-      "deliverableKinds": ["review-finding"],
-      "requiredGates": ["G-08"],
-      "toolDependencies": ["review-supervisor"]
+      "routePredicates": [
+        {
+          "fact": "required-series",
+          "operator": "contains",
+          "value": "test"
+        }
+      ],
+      "requiredInputs": [
+        "test-evidence",
+        "verification-contract"
+      ],
+      "deliverableKinds": [
+        "review-finding"
+      ],
+      "requiredGates": [
+        "G-08"
+      ],
+      "toolDependencies": [
+        "review-supervisor"
+      ]
     }
   ]
 }

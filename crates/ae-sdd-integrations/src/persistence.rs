@@ -7,11 +7,13 @@ use ae_sdd_contracts::review::{
 use ae_sdd_domain::{EventStoreId, InputFingerprint};
 use ae_sdd_protocol::StableErrorCode;
 use ae_sdd_runtime::{
-    DurableEvent, ExecutionCheckpointRecord, ExecutionCheckpointScope, GrantPathWire,
-    IdempotencyReceipt, PersistencePort, RuntimeDelegationAttestationRecord,
-    RuntimeDelegationRecord, RuntimeError, RuntimeIdentityKind, RuntimeIdentitySnapshot,
-    RuntimeIdentityTransition, RuntimeJobRecord, RuntimeJobStatus, RuntimeJobTransition,
-    RuntimeResult, RuntimeSessionRecord, RuntimeWorkspaceRecord, ScopedGrantWire, WireAgentRole,
+    DurableEvent, ExecutionCheckpointRecord, ExecutionCheckpointScope,
+    ExecutionResourceLeaseOutcomeV1, ExecutionResourceLeaseRecordV1,
+    ExecutionResourceLeaseRequestV1, GrantPathWire, IdempotencyReceipt, PersistencePort,
+    PreparedExecutionHookV1, RuntimeDelegationAttestationRecord, RuntimeDelegationRecord,
+    RuntimeError, RuntimeIdentityKind, RuntimeIdentitySnapshot, RuntimeIdentityTransition,
+    RuntimeJobRecord, RuntimeJobStatus, RuntimeJobTransition, RuntimeResult, RuntimeSessionRecord,
+    RuntimeWorkspaceRecord, ScopedGrantWire, WireAgentRole,
 };
 use ae_sdd_store::{RuntimeRepository, SqliteRuntimeRepository, UtcTimestamp};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -2330,6 +2332,92 @@ impl PersistencePort for SqliteRuntimePersistence {
         Ok((event, receipt))
     }
 
+    fn commit_prepared_execution_hook(
+        &self,
+        event: DurableEvent,
+        mut receipt: IdempotencyReceipt,
+        record: PreparedExecutionHookV1,
+    ) -> RuntimeResult<(DurableEvent, IdempotencyReceipt, PreparedExecutionHookV1)> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        let existing_json: Option<String> = transaction
+            .query_row(
+                "SELECT value_json FROM runtime_record_v1 WHERE namespace='prepared-execution-hook/v1' AND key=?1",
+                [&record.session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sqlite_error)?;
+        if let Some(existing_json) = existing_json {
+            let existing: PreparedExecutionHookV1 =
+                serde_json::from_str(&existing_json).map_err(canonical_error)?;
+            if !existing.completed
+                && (existing.hook_event_id != record.hook_event_id
+                    || existing.request_digest != record.request_digest)
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "another execution Hook transition is still pending for this session",
+                ));
+            }
+            if !existing.completed {
+                let existing_receipt = load_receipt_tx(&transaction, &receipt.scope, &receipt.key)?
+                    .ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::ExternalStateConflict,
+                            "prepared execution Hook record lacks its receipt",
+                        )
+                    })?;
+                if existing_receipt.request_digest != receipt.request_digest {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "prepared execution Hook receipt conflicts with its record",
+                    ));
+                }
+                let existing_event = load_event_tx(&transaction, existing_receipt.event_seq)?
+                    .ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::ExternalStateConflict,
+                            "prepared execution Hook receipt lacks its event",
+                        )
+                    })?;
+                transaction.commit().map_err(sqlite_error)?;
+                return Ok((existing_event, existing_receipt, existing));
+            }
+        }
+        if let Some(existing) = load_receipt_tx(&transaction, &receipt.scope, &receipt.key)? {
+            if existing.request_digest != receipt.request_digest {
+                return Err(RuntimeError::new(
+                    StableErrorCode::IdempotencyKeyReused,
+                    "idempotency key was reused with a different payload",
+                ));
+            }
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "execution receipt exists without an active prepared Hook record",
+            ));
+        }
+        let event = insert_event(&transaction, self.repository.event_store_id(), event)?;
+        receipt.event_seq = event.event_seq;
+        transaction
+            .execute(
+                "INSERT INTO runtime_generic_receipt_v1(scope,key,request_digest,response_json,event_seq) VALUES(?1,?2,?3,?4,?5)",
+                params![receipt.scope, receipt.key, receipt.request_digest, receipt.response_json, to_i64(receipt.event_seq)?],
+            )
+            .map_err(sqlite_error)?;
+        let record_json = serde_json::to_string(&record).map_err(canonical_error)?;
+        transaction
+            .execute(
+                "INSERT INTO runtime_record_v1(namespace,key,value_json) VALUES('prepared-execution-hook/v1',?1,?2) ON CONFLICT(namespace,key) DO UPDATE SET value_json=excluded.value_json",
+                params![record.session_id, record_json],
+            )
+            .map_err(sqlite_error)?;
+        transaction.commit().map_err(sqlite_error)?;
+        Ok((event, receipt, record))
+    }
+
     fn events_after(&self, after: u64, limit: usize) -> RuntimeResult<Vec<DurableEvent>> {
         let connection = self.connection()?;
         let mut statement = connection
@@ -2431,6 +2519,115 @@ impl PersistencePort for SqliteRuntimePersistence {
             )
             .map_err(sqlite_error)?;
         mirror_typed_runtime_record(&transaction, namespace, key, value)?;
+        transaction.commit().map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn delete_record(&self, namespace: &str, key: &str) -> RuntimeResult<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        transaction
+            .execute(
+                "DELETE FROM runtime_record_v1 WHERE namespace=?1 AND key=?2",
+                params![namespace, key],
+            )
+            .map_err(sqlite_error)?;
+        transaction.commit().map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn acquire_execution_resource_lease(
+        &self,
+        request: &ExecutionResourceLeaseRequestV1,
+    ) -> RuntimeResult<ExecutionResourceLeaseOutcomeV1> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        let existing_json: Option<String> = transaction
+            .query_row(
+                "SELECT value_json FROM runtime_record_v1 WHERE namespace='execution-resource-lease/v1' AND key=?1",
+                [&request.resource],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sqlite_error)?;
+        if let Some(existing_json) = existing_json {
+            let existing: ExecutionResourceLeaseRecordV1 =
+                serde_json::from_str(&existing_json).map_err(canonical_error)?;
+            if existing.schema_version != "execution-resource-lease/v1"
+                || existing.resource != request.resource
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "durable execution resource lease is malformed",
+                ));
+            }
+            if existing.expires_at_unix_ms > request.now_unix_ms {
+                let outcome = if existing.boot_id == request.boot_id
+                    && existing.session_id == request.session_id
+                {
+                    ExecutionResourceLeaseOutcomeV1::Reentered
+                } else {
+                    ExecutionResourceLeaseOutcomeV1::Deferred {
+                        retry_after_ms: request.retry_after_ms,
+                    }
+                };
+                transaction.commit().map_err(sqlite_error)?;
+                return Ok(outcome);
+            }
+        }
+        let record = ExecutionResourceLeaseRecordV1 {
+            schema_version: "execution-resource-lease/v1".to_owned(),
+            resource: request.resource.clone(),
+            boot_id: request.boot_id.clone(),
+            session_id: request.session_id.clone(),
+            acquired_at_unix_ms: request.now_unix_ms,
+            expires_at_unix_ms: request.now_unix_ms.saturating_add(request.ttl_ms),
+        };
+        let value_json = serde_json::to_string(&record).map_err(canonical_error)?;
+        transaction
+            .execute(
+                "INSERT INTO runtime_record_v1(namespace,key,value_json) VALUES('execution-resource-lease/v1',?1,?2) ON CONFLICT(namespace,key) DO UPDATE SET value_json=excluded.value_json",
+                params![request.resource, value_json],
+            )
+            .map_err(sqlite_error)?;
+        transaction.commit().map_err(sqlite_error)?;
+        Ok(ExecutionResourceLeaseOutcomeV1::Granted)
+    }
+
+    fn release_execution_resource_lease(
+        &self,
+        resource: &str,
+        boot_id: &str,
+        session_id: &str,
+    ) -> RuntimeResult<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        let existing_json: Option<String> = transaction
+            .query_row(
+                "SELECT value_json FROM runtime_record_v1 WHERE namespace='execution-resource-lease/v1' AND key=?1",
+                [resource],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sqlite_error)?;
+        if let Some(existing_json) = existing_json {
+            let existing: ExecutionResourceLeaseRecordV1 =
+                serde_json::from_str(&existing_json).map_err(canonical_error)?;
+            if existing.boot_id == boot_id && existing.session_id == session_id {
+                transaction
+                    .execute(
+                        "DELETE FROM runtime_record_v1 WHERE namespace='execution-resource-lease/v1' AND key=?1",
+                        [resource],
+                    )
+                    .map_err(sqlite_error)?;
+            }
+        }
         transaction.commit().map_err(sqlite_error)?;
         Ok(())
     }
@@ -3186,6 +3383,144 @@ mod tests {
     const REPLAY_RULESET: &str = "2222222222222222222222222222222222222222222222222222222222222222";
     const REPLAY_POLICY: &str = "3333333333333333333333333333333333333333333333333333333333333333";
     const REPLAY_BOOT: &str = "00000000-0000-0000-0000-0000000000e1";
+
+    fn prepared_execution_fixture() -> PreparedExecutionHookV1 {
+        PreparedExecutionHookV1 {
+            schema_version: "prepared-execution-hook/v1".to_owned(),
+            workspace_id: "workspace-atomic".to_owned(),
+            session_id: "session-atomic".to_owned(),
+            hook_event_id: "hook-atomic".to_owned(),
+            request_digest: "a".repeat(64),
+            hook_scope: "hook\0workspace-atomic\0session-atomic".to_owned(),
+            hook_kind: "hook.hook_post_tool".to_owned(),
+            response_json: "{\"decision\":\"allow\"}".to_owned(),
+            work_item_id: Some("WORK-ATOMIC".to_owned()),
+            delivered_context_digest: None,
+            turn_id: "turn-atomic".to_owned(),
+            turn_seq: 1,
+            checkpoint_after_image: None,
+            cargo_lease_required: false,
+            completed: false,
+        }
+    }
+
+    fn execution_bundle_event(
+        persistence: &SqliteRuntimePersistence,
+        payload: Value,
+    ) -> DurableEvent {
+        DurableEvent {
+            event_store_id: persistence
+                .event_store_id()
+                .expect("event store id")
+                .to_string(),
+            event_seq: 0,
+            boot_id: REPLAY_BOOT.to_owned(),
+            kind: "execution.tool".to_owned(),
+            workspace_id: None,
+            session_id: None,
+            work_item_id: None,
+            payload,
+            payload_digest: REPLAY_INPUT.to_owned(),
+        }
+    }
+
+    fn execution_bundle_receipt() -> IdempotencyReceipt {
+        IdempotencyReceipt {
+            scope: "execution-hook\0workspace-atomic\0session-atomic".to_owned(),
+            key: "hook-atomic".to_owned(),
+            request_digest: "a".repeat(64),
+            response_json: "{\"recorded\":true}".to_owned(),
+            event_seq: 0,
+        }
+    }
+
+    #[test]
+    fn prepared_execution_bundle_rolls_back_all_rows_when_event_insert_fails() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let database = directory.path().join("runtime.db");
+        let persistence =
+            SqliteRuntimePersistence::open(&database).expect("runtime database opens");
+        let oversized = json!({"body":"x".repeat(65_537)});
+
+        let error = persistence
+            .commit_prepared_execution_hook(
+                execution_bundle_event(&persistence, oversized),
+                execution_bundle_receipt(),
+                prepared_execution_fixture(),
+            )
+            .expect_err("oversized event rejects the whole transaction");
+        assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
+        assert!(
+            persistence
+                .load_receipt(
+                    "execution-hook\0workspace-atomic\0session-atomic",
+                    "hook-atomic"
+                )
+                .expect("receipt lookup")
+                .is_none()
+        );
+        assert!(
+            persistence
+                .load_record("prepared-execution-hook/v1", "session-atomic")
+                .expect("record lookup")
+                .is_none()
+        );
+
+        let (_, receipt, record) = persistence
+            .commit_prepared_execution_hook(
+                execution_bundle_event(&persistence, json!({"class":"focused-test"})),
+                execution_bundle_receipt(),
+                prepared_execution_fixture(),
+            )
+            .expect("valid bundle commits");
+        assert!(receipt.event_seq > 0);
+        assert_eq!(record, prepared_execution_fixture());
+    }
+
+    #[test]
+    fn durable_cargo_lease_blocks_a_reopened_runtime_until_ttl() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let database = directory.path().join("runtime.db");
+        {
+            let first =
+                SqliteRuntimePersistence::open(&database).expect("first runtime database opens");
+            assert_eq!(
+                first
+                    .acquire_execution_resource_lease(&ExecutionResourceLeaseRequestV1 {
+                        resource: "cargo".to_owned(),
+                        boot_id: "boot-before-crash".to_owned(),
+                        session_id: "session-a".to_owned(),
+                        now_unix_ms: 1_000,
+                        ttl_ms: 500,
+                        retry_after_ms: 25,
+                    })
+                    .expect("first runtime acquires"),
+                ExecutionResourceLeaseOutcomeV1::Granted
+            );
+        }
+        let reopened =
+            SqliteRuntimePersistence::open(&database).expect("reopened runtime database opens");
+        let request = |now_unix_ms| ExecutionResourceLeaseRequestV1 {
+            resource: "cargo".to_owned(),
+            boot_id: "boot-after-crash".to_owned(),
+            session_id: "session-a".to_owned(),
+            now_unix_ms,
+            ttl_ms: 500,
+            retry_after_ms: 25,
+        };
+        assert_eq!(
+            reopened
+                .acquire_execution_resource_lease(&request(1_001))
+                .expect("reopened runtime checks durable lease"),
+            ExecutionResourceLeaseOutcomeV1::Deferred { retry_after_ms: 25 }
+        );
+        assert_eq!(
+            reopened
+                .acquire_execution_resource_lease(&request(1_500))
+                .expect("reopened runtime replaces expired lease"),
+            ExecutionResourceLeaseOutcomeV1::Granted
+        );
+    }
 
     /// Table/row census used to prove an exact replay changed nothing.
     ///

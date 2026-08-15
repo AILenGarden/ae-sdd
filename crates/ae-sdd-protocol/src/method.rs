@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::OperationScope;
 
 /// Number of RPC methods frozen by protocol v1.
-pub const METHOD_COUNT: usize = 37;
+pub const METHOD_COUNT: usize = 38;
 
 /// Exact protocol-v1 RPC method identifier.
 ///
@@ -69,6 +69,13 @@ pub enum RpcMethod {
     /// Accept a claimed delegation from a child session.
     #[serde(rename = "delegation.accept")]
     DelegationAccept,
+    /// Child self-claim: the child itself presents the one-time claim (Plan §2).
+    /// Semantically a sibling of `delegation.accept` routed to the same
+    /// supervisor path; exists as its own wire method so the host-native (A2)
+    /// path keeps a distinct entry point when an external host adapter (A1)
+    /// reuses `delegation.accept`.
+    #[serde(rename = "delegation.child_claim")]
+    DelegationChildClaim,
     /// Submit a bounded child result.
     #[serde(rename = "delegation.report")]
     DelegationReport,
@@ -149,6 +156,7 @@ impl RpcMethod {
         Self::DelegationCreate,
         Self::DelegationStatus,
         Self::DelegationAccept,
+        Self::DelegationChildClaim,
         Self::DelegationReport,
         Self::DelegationCollect,
         Self::DelegationCancel,
@@ -192,6 +200,7 @@ impl RpcMethod {
             Self::DelegationCreate => "delegation.create",
             Self::DelegationStatus => "delegation.status",
             Self::DelegationAccept => "delegation.accept",
+            Self::DelegationChildClaim => "delegation.child_claim",
             Self::DelegationReport => "delegation.report",
             Self::DelegationCollect => "delegation.collect",
             Self::DelegationCancel => "delegation.cancel",
@@ -513,7 +522,16 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::DelegationAccept,
         OperationScope::Delegation,
         true,
+        false,
         true,
+        true,
+        false,
+    ),
+    method(
+        RpcMethod::DelegationChildClaim,
+        OperationScope::Delegation,
+        true,
+        false,
         true,
         true,
         false,

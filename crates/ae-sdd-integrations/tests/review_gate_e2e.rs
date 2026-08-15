@@ -115,6 +115,20 @@ impl Fixture {
             "ae-sdd-doc/Story/STORY-REVIEW-GATE-001.md",
             STORY_DOCUMENT,
         );
+        // The plan traces these two as well. They went uncreated while
+        // `source_trace_complete` accepted any single surviving entry, which is
+        // the leniency `G-CODEPLAN-SRC` exists to reject: a plan must not claim
+        // to have read a file that is not there.
+        write_source(
+            workspace_root.path(),
+            "ae-sdd-doc/RA/review-gate.md",
+            "# RA review-gate\n",
+        );
+        write_source(
+            workspace_root.path(),
+            "ae-sdd-doc/DR/review-gate.md",
+            "# DR review-gate\n",
+        );
 
         let runtime_root = TempDir::new().expect("runtime tempdir");
         let database = runtime_root.path().join("runtime.sqlite3");
@@ -600,6 +614,7 @@ fn commit_child_identity(
             delegation: Some(RuntimeDelegationRecord {
                 delegation_id: delegation_id.to_owned(),
                 workspace_id: WORKSPACE_ID.to_owned(),
+                work_item_id: Some(WORK_ITEM.to_owned()),
                 root_session_id: ROOT_SESSION.to_owned(),
                 parent_session_id: parent_session_id.to_owned(),
                 child_session_id: Some(session_id.to_owned()),

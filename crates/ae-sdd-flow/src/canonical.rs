@@ -41,6 +41,7 @@ pub(crate) fn execution_cursor(bytes: &mut Vec<u8>, cursor: Option<ExecutionCurs
             bytes.push(1);
             bytes.extend_from_slice(&cursor.active_ordinal().to_be_bytes());
             bytes.extend_from_slice(cursor.queue_digest().as_bytes());
+            bytes.extend_from_slice(cursor.capsule_digest().as_bytes());
             bytes.push(execution_slice_status_tag(cursor.active_slice_status()));
         }
         None => bytes.push(0),
@@ -49,7 +50,7 @@ pub(crate) fn execution_cursor(bytes: &mut Vec<u8>, cursor: Option<ExecutionCurs
 
 /// Stable explicit numbering of the frozen slice-machine statuses; these tags
 /// are part of the decision digest format and must never be renumbered.
-const fn execution_slice_status_tag(status: ExecutionSliceStatus) -> u8 {
+pub(crate) const fn execution_slice_status_tag(status: ExecutionSliceStatus) -> u8 {
     match status {
         ExecutionSliceStatus::Pending => 0,
         ExecutionSliceStatus::Running => 1,

@@ -30,5 +30,5 @@ pub use transition::{
 /// daemon manifests must publish this value rather than a placeholder digest.
 #[must_use]
 pub fn policy_digest() -> PolicyDigest {
-    PolicyDigest::digest(b"ae-sdd-policy/v5:transition+gate+role+hook-guard+completion")
+    PolicyDigest::digest(b"ae-sdd-policy/v6:transition+gate+role+hook-guard+completion+ra-first")
 }

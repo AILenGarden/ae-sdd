@@ -17,9 +17,10 @@ use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, JobStatus, PROTOCOL_VERSION_V1, RequestParams, RpcMethod,
     StableErrorCode, WorkspaceMode,
 };
+#[cfg(debug_assertions)]
+use ae_sdd_runtime::RuntimeJobStatus;
 use ae_sdd_runtime::{
-    PersistencePort, RuntimeJobRecord, RuntimeJobStatus, SessionResult, WorkspaceParityEvidence,
-    WorkspaceResult,
+    PersistencePort, RuntimeJobRecord, SessionResult, WorkspaceParityEvidence, WorkspaceResult,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -30,7 +31,9 @@ const PROJECT_KEY: &str = "c1-process-e2e";
 const AGENT_ID: &str = "c1-process-root";
 const EXTERNAL_SESSION_KEY: &str = "c1-process-root-session";
 const COMMIT_ABORT_ENV: &str = "AE_SDD_TEST_COMMIT_ABORT_AT";
+#[cfg(debug_assertions)]
 const ABORT_AFTER_PREPARED: &str = "after_prepared";
+#[cfg(debug_assertions)]
 const ABORT_AFTER_REPLACE_0: &str = "after_replace_0";
 const REVIEW_WORK_ITEM_ID: &str = "STORY-C1-REVIEW-PROCESS";
 const REVIEW_PROJECT_KEY: &str = "c1-review-process";
@@ -151,6 +154,8 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         .to_owned();
     let completed = wait_for_job(&cli, &first_lineage.author, &job_id).await;
     assert_eq!(completed["status"], "pass", "{completed}");
+    assert_eq!(completed["result"]["sourceRevision"], 1);
+    assert_eq!(completed["result"]["committedRevision"], 2);
     assert_eq!(completed["result"]["revisionBefore"], 1);
     assert_eq!(completed["result"]["revisionAfter"], 2);
 
@@ -173,7 +178,7 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         "plan":plan_value,
         "receiptId":completed["result"]["receiptId"],
         "receiptDigest":completed["result"]["receiptDigest"],
-        "sourceRevision":completed["result"]["sourceRevision"],
+        "sourceRevision":completed["result"]["committedRevision"],
         "planDigest":completed["result"]["planDigest"],
         "methodologyDigest":completed["result"]["methodologyDigest"],
         "policyDigest":completed["result"]["policyDigest"],
@@ -311,6 +316,7 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
     );
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
     let fixture = Fixture::new();
@@ -450,6 +456,7 @@ async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
     restarted.crash();
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_completes_partial_replace_but_keeps_runtime_job_non_pass() {
     let fixture = Fixture::new();
@@ -617,6 +624,7 @@ async fn daemon_process_completes_partial_replace_but_keeps_runtime_job_non_pass
 /// Scenario 1: the daemon dies right after the PREPARED journal, before any
 /// target was replaced. Restart must abort the unapplied mutation, and the retry
 /// must produce exactly one committed mutation, one event, and one projection.
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_aborts_unapplied_review_record_then_commits_once() {
     let policy_digest = "b".repeat(64);
@@ -701,6 +709,7 @@ async fn daemon_process_aborts_unapplied_review_record_then_commits_once() {
 /// journal was committed and before the SQLite projection was written. Restart
 /// must recover project state and the journal, and the same-key replay must
 /// restore the projection before reporting success.
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_recovers_replaced_review_record_and_restores_projection() {
     let policy_digest = "b".repeat(64);
@@ -944,6 +953,7 @@ async fn daemon_process_repairs_deleted_review_projection_on_same_key_replay() {
 }
 
 /// State captured after a real daemon died inside a `review.record` commit.
+#[cfg(debug_assertions)]
 struct CrashedReviewRecord {
     workspace: WorkspaceResult,
     review_key: String,
@@ -959,6 +969,7 @@ struct CrashedReviewRecord {
 /// `lease.acquire` still commits: a delegated reviewer session is bound to the
 /// accepting daemon boot, so a reviewer-owned lease cannot be carried across a
 /// restart and must be acquired on the same boot that records the review.
+#[cfg(debug_assertions)]
 async fn crash_during_review_record(
     fixture: &Fixture,
     policy_digest: &str,
@@ -1008,7 +1019,7 @@ async fn crash_during_review_record(
     let state_before = fs::read(&fixture.state_path).expect("state before the review crash");
 
     let review_key = format!("{key}-review");
-    let _ = cli
+    let outcome = cli
         .call::<Value>(
             RpcMethod::OperationExecute,
             review_record_request(
@@ -1020,6 +1031,15 @@ async fn crash_during_review_record(
             ),
         )
         .await;
+    if let Err(error) = &outcome {
+        assert_eq!(
+            error.stable_code(),
+            StableErrorCode::DaemonUnavailable,
+            "review.record was rejected before reaching the armed commit point: {error:?}"
+        );
+    } else {
+        panic!("review.record committed instead of reaching the armed commit point: {outcome:?}");
+    }
     daemon.wait_for_crash(&fixture.runtime_dir).await;
 
     CrashedReviewRecord {
@@ -1032,6 +1052,7 @@ async fn crash_during_review_record(
 
 /// Re-establishes a reviewer lineage plus lease on the current daemon boot and
 /// retries `review.record` under `review_key`.
+#[cfg(debug_assertions)]
 async fn retry_review_record(
     cli: &DaemonClient,
     admin: &DaemonClient,
@@ -1087,6 +1108,7 @@ async fn retry_review_record(
 ///
 /// A delegated reviewer session cannot be revived on a later boot, so its lease
 /// can only be reclaimed through the confirmed Admin `lease.break` path.
+#[cfg(debug_assertions)]
 async fn break_orphaned_lease(
     admin: &DaemonClient,
     workspace: &WorkspaceResult,
@@ -1111,6 +1133,7 @@ async fn break_orphaned_lease(
 }
 
 /// Exactly one projection row per Review Batch v2 table.
+#[cfg(debug_assertions)]
 fn one_row_per_review_projection() -> ReviewProjectionCounts {
     ReviewProjectionCounts {
         sessions: 1,
@@ -1123,6 +1146,7 @@ fn one_row_per_review_projection() -> ReviewProjectionCounts {
     }
 }
 
+#[cfg(debug_assertions)]
 struct CrashedToolsetReceipt {
     workspace: WorkspaceResult,
     plan: Value,
@@ -1132,6 +1156,7 @@ struct CrashedToolsetReceipt {
     event_store_id: String,
 }
 
+#[cfg(debug_assertions)]
 async fn crash_during_toolset_receipt(
     fixture: &Fixture,
     policy_digest: &str,
@@ -1219,7 +1244,9 @@ async fn crash_during_toolset_receipt(
             RpcMethod::JobSubmit,
             job_submit_request(&lineage.author, payload, 1, submission_key),
         )
-        .await;
+        .await
+        .expect("toolset receipt job is admitted before waiting for the commit abort");
+    assert_eq!(submission["status"], "queued", "{submission}");
     daemon.wait_for_crash(&fixture.runtime_dir).await;
 
     let persisted = persisted_job_by_submission_key(&fixture.runtime_dir, submission_key);
@@ -1230,9 +1257,7 @@ async fn crash_during_toolset_receipt(
     );
     assert!(persisted.result.is_none());
     assert!(persisted.error_code.is_none());
-    if let Ok(response) = submission {
-        assert_eq!(response["jobId"], persisted.job_id);
-    }
+    assert_eq!(submission["jobId"], persisted.job_id);
 
     CrashedToolsetReceipt {
         workspace,
@@ -1244,6 +1269,7 @@ async fn crash_during_toolset_receipt(
     }
 }
 
+#[cfg(debug_assertions)]
 fn toolset_receipt_job_payload(
     plan: Value,
     receipt: Value,
@@ -1269,13 +1295,14 @@ fn toolset_receipt_job_payload(
     })
 }
 
+#[cfg(debug_assertions)]
 fn verification_payload_from_job(job: &Value, plan: Value) -> Value {
     json!({
         "toolsetJobId":job["jobId"],
         "plan":plan,
         "receiptId":job["result"]["receiptId"],
         "receiptDigest":job["result"]["receiptDigest"],
-        "sourceRevision":job["result"]["sourceRevision"],
+        "sourceRevision":job["result"]["committedRevision"],
         "planDigest":job["result"]["planDigest"],
         "methodologyDigest":job["result"]["methodologyDigest"],
         "policyDigest":job["result"]["policyDigest"],
@@ -1304,6 +1331,7 @@ fn persisted_job_by_submission_key(state_dir: &Path, submission_key: &str) -> Ru
 /// open passes the `job.status` session check. The stale diagnosis therefore
 /// reads the row through a read-only SQLite connection that never blocks the
 /// live writer, and shapes it like the wire job for the shared assertions.
+#[cfg(debug_assertions)]
 fn live_job_wire(fixture: &Fixture, job_id: &str) -> Value {
     let connection = rusqlite::Connection::open_with_flags(
         fixture.database(),
@@ -1341,6 +1369,7 @@ fn live_job_wire(fixture: &Fixture, job_id: &str) -> Value {
     })
 }
 
+#[cfg(debug_assertions)]
 fn assert_session_expired_job(job: &Value) {
     assert_eq!(job["status"], "stale", "{job}");
     assert_eq!(
@@ -1352,6 +1381,7 @@ fn assert_session_expired_job(job: &Value) {
     assert!(job["finishedAtUnixMs"].as_u64().is_some(), "{job}");
 }
 
+#[cfg(debug_assertions)]
 fn read_project_receipt(root: &Path, state: &Value) -> Value {
     let relative = state["toolsetReceiptRef"]["artifactRef"]
         .as_str()
@@ -1362,6 +1392,7 @@ fn read_project_receipt(root: &Path, state: &Value) -> Value {
     .expect("project receipt JSON")
 }
 
+#[cfg(debug_assertions)]
 fn single_journal_with_status(
     journals: &BTreeMap<String, Vec<u8>>,
     operation: &str,
@@ -1384,6 +1415,7 @@ fn single_journal_with_status(
     journal
 }
 
+#[cfg(debug_assertions)]
 fn assert_journal_status_count(
     journals: &BTreeMap<String, Vec<u8>>,
     operation: &str,
@@ -1404,6 +1436,7 @@ fn assert_journal_status_count(
     );
 }
 
+#[cfg(debug_assertions)]
 fn assert_target_progress(
     root: &Path,
     journal: &Value,
@@ -1535,6 +1568,7 @@ impl DaemonProcess {
         Self::start_inner(state_dir, allowed_root, policy_digest, None).await
     }
 
+    #[cfg(debug_assertions)]
     async fn start_with_commit_abort(
         state_dir: &Path,
         allowed_root: &Path,
@@ -1603,8 +1637,9 @@ impl DaemonProcess {
     /// was merely slow". The failure text therefore carries how long the daemon
     /// stayed alive, how many polls elapsed, and the daemon log, so the next
     /// occurrence is diagnosable from the test output alone.
+    #[cfg(debug_assertions)]
     async fn wait_for_crash(&mut self, state_dir: &Path) {
-        const BUDGET: Duration = Duration::from_secs(15);
+        const BUDGET: Duration = Duration::from_secs(30);
         let started = Instant::now();
         let deadline = started + BUDGET;
         let mut polls = 0_u32;
@@ -2087,7 +2122,7 @@ async fn open_review_lineage(
     root: &Identity,
     key: &str,
 ) -> ReviewLineage {
-    let adapter_id = format!("{key}-host");
+    let adapter_id = "codex".to_owned();
     let host = HostAdapter::register(state_dir, &adapter_id, &format!("{key}-host-register")).await;
 
     let (series, series_delegation) = open_delegated_child(
@@ -2152,7 +2187,7 @@ async fn open_delegated_child(
     host: &HostAdapter,
     workspace: &WorkspaceResult,
     parent: &Identity,
-    adapter_id: &str,
+    _adapter_id: &str,
     child_role: &str,
     parent_delegation_id: Option<&str>,
     grant: Value,
@@ -2166,15 +2201,30 @@ async fn open_delegated_child(
         .expect("delegation input revision");
     let input_fingerprint = InputFingerprint::digest(&state_bytes).to_string();
     let now = now_unix_ms();
-    let mut create = parent.params(json!({
-        "childRole":child_role,
-        "parentDelegationId":parent_delegation_id,
-        "inputRevision":input_revision,
-        "inputFingerprint":input_fingerprint,
-        "deadlineUnixMs":now.saturating_add(600_000),
-        "adapterId":adapter_id,
-        "grant":grant,
-    }));
+    let create_payload = if parent_delegation_id.is_none() {
+        let flow = cli
+            .call::<Value>(RpcMethod::FlowNext, parent.params(json!({})))
+            .await
+            .unwrap_or_else(|error| panic!("{key} flow decision is available: {error:?}"));
+        let kind = flow["nextAction"]["kind"].as_str();
+        assert!(
+            kind == Some("delegate-series")
+                || (kind == Some("await-agent-work")
+                    && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
+            "{key} flow decision is not delegable: {flow}"
+        );
+        json!({"flowDecisionDigest":flow["decisionDigest"]})
+    } else {
+        json!({
+            "childRole":child_role,
+            "parentDelegationId":parent_delegation_id,
+            "inputRevision":input_revision,
+            "inputFingerprint":input_fingerprint,
+            "deadlineUnixMs":now.saturating_add(600_000),
+            "grant":grant,
+        })
+    };
+    let mut create = parent.params(create_payload);
     create.idempotency_key = Some(format!("{key}-create"));
     let created = cli
         .call::<Value>(RpcMethod::DelegationCreate, create)
@@ -2203,7 +2253,7 @@ async fn open_delegated_child(
 
     let mut accept = params(json!({
         "delegationId":delegation_id,
-        "claimId":Uuid::new_v4().to_string(),
+        "claimId":action["claimId"],
         "actionId":action["actionId"],
         "childSessionId":child_session_id,
         "expiresAtUnixMs":now.saturating_add(500_000),
@@ -2428,7 +2478,7 @@ fn delete_review_projections(database: &Path) {
     // short-circuit on an exact receipt and leave the rows missing.
     transaction
         .execute(
-            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v2'",
+            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v3'",
             [],
         )
         .expect("review projection receipts are removable");

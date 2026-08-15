@@ -8,6 +8,7 @@ mod endpoint;
 mod error;
 mod execution_authority;
 mod gate_source;
+pub mod host_bridge;
 mod host_supervisor;
 mod ipc;
 mod lifecycle_authority;
@@ -18,7 +19,7 @@ pub mod resources;
 mod review_authority;
 mod watcher;
 
-pub use business::NativeBusinessAdapter;
+pub use business::{NativeBusinessAdapter, flow_run_identity};
 pub use command::{
     BoundedCommandOutput, BoundedCommandRunner, GitAdapter, HostProcessAdapter, ServiceAdapter,
     ToolchainAdapter,

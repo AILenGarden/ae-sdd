@@ -1083,6 +1083,24 @@
       "disposition": "preserve"
     },
     {
+      "id": "ra-applicability-scan",
+      "source": "crates/ae-sdd-scanners/src/ra_specification.rs",
+      "owner": "ae-sdd-scanners",
+      "disposition": "native-addition"
+    },
+    {
+      "id": "ra-closure-scan",
+      "source": "crates/ae-sdd-scanners/src/ra_specification.rs",
+      "owner": "ae-sdd-scanners",
+      "disposition": "native-addition"
+    },
+    {
+      "id": "ra-core-scan",
+      "source": "crates/ae-sdd-scanners/src/ra_specification.rs",
+      "owner": "ae-sdd-scanners",
+      "disposition": "native-addition"
+    },
+    {
       "id": "ra-depth-scan",
       "source": "scripts/ra_depth_scan.py",
       "owner": "ae-sdd-scanners",

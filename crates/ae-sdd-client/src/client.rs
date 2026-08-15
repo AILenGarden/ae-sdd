@@ -282,9 +282,7 @@ fn bind_host_credential(
 fn is_host_followup(method: RpcMethod) -> bool {
     matches!(
         method,
-        RpcMethod::HostActionNext
-            | RpcMethod::HostActionAck
-            | RpcMethod::HostPressureReport
+        RpcMethod::HostActionNext | RpcMethod::HostActionAck | RpcMethod::HostPressureReport
     )
 }
 
@@ -640,6 +638,7 @@ mod limits_tests {
             RpcMethod::DelegationCreate,
             RpcMethod::DelegationStatus,
             RpcMethod::DelegationAccept,
+            RpcMethod::DelegationChildClaim,
             RpcMethod::DelegationReport,
             RpcMethod::DelegationCollect,
             RpcMethod::DelegationCancel,
@@ -681,6 +680,7 @@ fn required_capability(method: RpcMethod) -> Option<&'static str> {
         RpcMethod::DelegationCreate
         | RpcMethod::DelegationStatus
         | RpcMethod::DelegationAccept
+        | RpcMethod::DelegationChildClaim
         | RpcMethod::DelegationReport
         | RpcMethod::DelegationCollect
         | RpcMethod::DelegationCancel => Some("physical-delegation-v1"),

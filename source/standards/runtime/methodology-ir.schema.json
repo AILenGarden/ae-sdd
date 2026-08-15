@@ -59,6 +59,7 @@
       "properties": {
         "skillId": { "$ref": "#/$defs/portableId" },
         "seriesKind": { "$ref": "#/$defs/portableId" },
+        "activity": { "enum": ["generate", "review", "update", "fix", "execute"] },
         "variant": { "$ref": "#/$defs/portableId" },
         "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
         "activation": { "enum": ["workflow", "capability", "deprecated"] },
@@ -104,10 +105,23 @@
         {
           "if": { "properties": { "activation": { "const": "workflow" } } },
           "then": {
+            "required": ["activity"],
             "properties": {
               "spawnPolicy": { "const": "physical_series" },
               "routePredicates": { "minItems": 1 },
-              "deliverableKinds": { "minItems": 1 }
+              "deliverableKinds": { "minItems": 1 },
+              "seriesKind": {
+                "enum": [
+                  "requirement-analysis",
+                  "design-review",
+                  "story",
+                  "testcase",
+                  "coding-plan",
+                  "coding",
+                  "test",
+                  "review"
+                ]
+              }
             }
           }
         },

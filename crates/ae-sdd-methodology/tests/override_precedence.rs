@@ -43,6 +43,7 @@ fn override_entry(
         "entries": [{
             "skillId": skill_id,
             "seriesKind": "coding",
+            "activity": "execute",
             "variant": variant,
             "version": "1.0.0",
             "activation": "workflow",

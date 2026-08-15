@@ -137,12 +137,18 @@ fn compile_methodology_bundle(
     else {
         return Ok(None);
     };
-    let assets = InventoryAssets(
-        inventory
-            .iter()
-            .map(|(relative, _, bytes, _)| (display_path(relative), bytes.as_slice()))
-            .collect(),
-    );
+    let asset_values = inventory
+        .iter()
+        .map(|(relative, _, bytes, _)| (display_path(relative), bytes.as_slice()))
+        .collect::<BTreeMap<_, _>>();
+    crate::source_slim::validate_catalog_fallback_bindings(catalog, &asset_values).map_err(
+        |error| {
+            JobError::InvalidSource(format!(
+                "invalid source-slim catalog fallback binding: {error}"
+            ))
+        },
+    )?;
+    let assets = InventoryAssets(asset_values);
     let bundle = compile_catalog(catalog, &assets)
         .and_then(|bundle| {
             verify_builtin_coverage(&bundle)?;
