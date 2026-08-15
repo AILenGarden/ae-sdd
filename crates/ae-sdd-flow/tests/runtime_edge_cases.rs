@@ -65,6 +65,26 @@ fn pending_route_cannot_cross_the_route_freeze_boundary() {
 }
 
 #[test]
+fn frozen_route_can_cross_the_route_freeze_boundary() {
+    let initial = FlowRuntime::start(input_with_route_lifecycle(
+        ProcessPhase::RequirementAnalyzed,
+        RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
+    ));
+
+    let pending = FlowRuntime::apply(
+        &initial,
+        &support::transition_request_to(1, AgentRole::Root, ProcessPhase::RouteSelected),
+    )
+    .expect("an already frozen authoritative route can enter RouteSelected");
+
+    assert_eq!(
+        pending.pending_transition(),
+        Some(ProcessPhase::RouteSelected)
+    );
+    assert_eq!(pending.required_gates(), &[RequiredGate::GRaFlowViolation]);
+}
+
+#[test]
 fn candidate_route_cannot_enter_a_downstream_phase() {
     let initial = FlowRuntime::start(input_with_route_lifecycle(
         ProcessPhase::RouteSelected,

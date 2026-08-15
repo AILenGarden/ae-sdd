@@ -22,9 +22,10 @@ pub(super) fn plan_contract_complete(plan: &Value) -> bool {
             .is_some_and(|items| {
                 !items.is_empty()
                     && items.iter().all(|item| {
-                        ["id", "acId", "boundary", "command", "expected"]
+                        ["id", "acId", "boundary", "expected"]
                             .iter()
                             .all(|field| nonempty_string(item.get(*field)))
+                            && verification_command_complete(item.get("command"))
                     })
             })
         && nonempty_array(plan.get("risks"))
@@ -35,6 +36,19 @@ pub(super) fn plan_contract_complete(plan: &Value) -> bool {
                 !reads.is_empty() && reads.iter().all(|read| nonempty_string(Some(read)))
             })
         && plan.get("approved").and_then(Value::as_bool) == Some(true)
+}
+
+fn verification_command_complete(value: Option<&Value>) -> bool {
+    value.is_some_and(|value| match value {
+        Value::String(command) => !command.trim().is_empty(),
+        Value::Array(commands) => {
+            !commands.is_empty()
+                && commands
+                    .iter()
+                    .all(|command| nonempty_string(Some(command)))
+        }
+        _ => false,
+    })
 }
 
 pub(super) fn http_contract_valid(plan: &Value) -> bool {

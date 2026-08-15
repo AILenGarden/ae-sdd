@@ -26,6 +26,7 @@ fn methodology_source_catalog_is_complete_explicit_and_contained() {
     );
 
     let mut ids = BTreeSet::new();
+    let mut route_less_workflows = Vec::new();
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../source");
     for entry in entries {
         let id = entry["skillId"].as_str().expect("skillId");
@@ -35,7 +36,10 @@ fn methodology_source_catalog_is_complete_explicit_and_contained() {
         match activation {
             "workflow" => {
                 assert_eq!(spawn_policy, "physical_series");
-                assert!(!entry["routePredicates"].as_array().unwrap().is_empty());
+                let route_predicates = entry["routePredicates"].as_array().unwrap();
+                if route_predicates.is_empty() {
+                    route_less_workflows.push(id);
+                }
                 assert!(!entry["deliverableKinds"].as_array().unwrap().is_empty());
             }
             "capability" => assert_eq!(spawn_policy, "inline"),
@@ -51,6 +55,11 @@ fn methodology_source_catalog_is_complete_explicit_and_contained() {
             }
         }
     }
+    assert_eq!(
+        route_less_workflows,
+        ["phase1-design.requirement-analysis"],
+        "RA-first requires exactly one pre-route workflow"
+    );
 
     for (activation, expected_count) in [
         ("workflow", 15_usize),

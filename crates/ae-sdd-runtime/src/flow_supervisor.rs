@@ -1,7 +1,9 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use ae_sdd_contracts::{RequirementAnalysisSeriesInput, SeriesInput};
+use ae_sdd_contracts::{
+    RequirementAnalysisSeriesInput, SeriesInput, execution_runtime::ExecutionSliceStatus,
+};
 use ae_sdd_domain::{
     AgentRole, ArtifactDigest, CancellationCode, ErrorCode, EventSequence, EventStoreId,
     FindingCode, FreshnessDimension, GateCancellation, GateError, GateFailure, GateFinding,
@@ -87,6 +89,28 @@ impl FlowSupervisor {
             "policyDigest":input.environment().policy_digest().to_string(),
             "inputFingerprint":input.environment().input_fingerprint().to_string(),
         });
+        let payload_digest = self.flow_event_payload_digest(idempotency_key, &payload)?;
+        if self
+            .idempotent_flow_event(
+                workspace_id,
+                work_item_id,
+                "flow.transition_requested",
+                idempotency_key,
+                &payload_digest,
+            )?
+            .is_none()
+        {
+            self.preflight_flow_event(
+                boot_id,
+                workspace_id,
+                session_id,
+                work_item_id,
+                "flow.transition_requested",
+                input,
+                payload.clone(),
+                payload_digest,
+            )?;
+        }
         self.append_idempotent_flow_event(
             boot_id,
             workspace_id,
@@ -297,17 +321,24 @@ impl FlowSupervisor {
     /// Converts a typed decision into the bounded public flow projection.
     #[must_use]
     pub fn projection(decision: &FlowDecision) -> Value {
+        let state_revision = decision.snapshot().state_revision().get();
+        let decision_digest = decision.decision_digest().to_string();
         json!({
             "schemaVersion":"flow-decision/v1",
+            "decisionDigestVersion":"v2",
             "phase":phase_name(decision.snapshot().phase()),
-            "stateRevision":decision.snapshot().state_revision().get(),
+            "stateRevision":state_revision,
             "correctionCount":decision.snapshot().correction_count(),
             "pendingTransition":decision.pending_transition().map(phase_name),
             "requiredGates":decision.required_gates().iter().map(|gate| gate.as_str()).collect::<Vec<_>>(),
             "passedGates":decision.passed_gates().iter().map(|gate| gate.as_str()).collect::<Vec<_>>(),
             "health":health_value(decision.health()),
-            "nextAction":next_action_value(decision.next_action()),
-            "decisionDigest":decision.decision_digest().to_string(),
+            "nextAction":next_action_value(
+                decision.next_action(),
+                state_revision,
+                &decision_digest,
+            ),
+            "decisionDigest":decision_digest,
             "lastEventSeq":decision.last_cursor().map_or(0, |cursor| cursor.sequence().get()),
         })
     }
@@ -341,31 +372,15 @@ impl FlowSupervisor {
         idempotency_key: &str,
         payload: Value,
     ) -> RuntimeResult<DurableEvent> {
-        if idempotency_key.is_empty() || idempotency_key.len() > 256 {
-            return Err(RuntimeError::new(
-                StableErrorCode::OperationSchemaInvalid,
-                "flow event idempotencyKey is missing or oversized",
-            ));
-        }
-        let payload_bytes = serde_json::to_vec(&payload).map_err(|_| {
-            RuntimeError::new(
-                StableErrorCode::OperationSchemaInvalid,
-                "flow event payload is not canonical JSON",
-            )
-        })?;
-        let payload_digest = hex::encode(Sha256::digest(&payload_bytes));
-        for event in self.events_for_work_item(workspace_id, work_item_id)? {
-            if event.payload.get("idempotencyKey").and_then(Value::as_str) != Some(idempotency_key)
-            {
-                continue;
-            }
-            if event.kind == kind && event.payload_digest == payload_digest {
-                return Ok(event);
-            }
-            return Err(RuntimeError::new(
-                StableErrorCode::IdempotencyKeyReused,
-                "flow event idempotencyKey was reused with a different payload",
-            ));
+        let payload_digest = self.flow_event_payload_digest(idempotency_key, &payload)?;
+        if let Some(event) = self.idempotent_flow_event(
+            workspace_id,
+            work_item_id,
+            kind,
+            idempotency_key,
+            &payload_digest,
+        )? {
+            return Ok(event);
         }
         self.persistence.append_event(DurableEvent {
             event_store_id: self.persistence.event_store_id()?.to_string(),
@@ -378,6 +393,95 @@ impl FlowSupervisor {
             payload,
             payload_digest,
         })
+    }
+
+    fn flow_event_payload_digest(
+        &self,
+        idempotency_key: &str,
+        payload: &Value,
+    ) -> RuntimeResult<String> {
+        if idempotency_key.is_empty() || idempotency_key.len() > 256 {
+            return Err(RuntimeError::new(
+                StableErrorCode::OperationSchemaInvalid,
+                "flow event idempotencyKey is missing or oversized",
+            ));
+        }
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::OperationSchemaInvalid,
+                "flow event payload is not canonical JSON",
+            )
+        })?;
+        Ok(hex::encode(Sha256::digest(&payload_bytes)))
+    }
+
+    fn idempotent_flow_event(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        kind: &str,
+        idempotency_key: &str,
+        payload_digest: &str,
+    ) -> RuntimeResult<Option<DurableEvent>> {
+        for event in self.events_for_work_item(workspace_id, work_item_id)? {
+            if event.payload.get("idempotencyKey").and_then(Value::as_str) != Some(idempotency_key)
+            {
+                continue;
+            }
+            if event.kind == kind && event.payload_digest == payload_digest {
+                return Ok(Some(event));
+            }
+            return Err(RuntimeError::new(
+                StableErrorCode::IdempotencyKeyReused,
+                "flow event idempotencyKey was reused with a different payload",
+            ));
+        }
+        Ok(None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn preflight_flow_event(
+        &self,
+        boot_id: &str,
+        workspace_id: &str,
+        session_id: Option<&str>,
+        work_item_id: &str,
+        kind: &str,
+        input: FlowInput,
+        payload: Value,
+        payload_digest: String,
+    ) -> RuntimeResult<()> {
+        let event_seq = self
+            .persistence
+            .latest_event_sequence()?
+            .checked_add(1)
+            .filter(|sequence| *sequence != 0)
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "global event sequence overflow",
+                )
+            })?;
+        let candidate = DurableEvent {
+            event_store_id: self.persistence.event_store_id()?.to_string(),
+            event_seq,
+            boot_id: boot_id.to_owned(),
+            kind: kind.to_owned(),
+            workspace_id: Some(workspace_id.to_owned()),
+            session_id: session_id.map(str::to_owned),
+            work_item_id: Some(work_item_id.to_owned()),
+            payload,
+            payload_digest,
+        };
+        let mut events = self.load_flow_events(workspace_id, work_item_id, input)?;
+        events.push(flow_event_from_durable(&candidate, input)?);
+        FlowRuntime::replay(input, events).map_err(|error| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                format!("deterministic flow replay rejected proposed input: {error}"),
+            )
+        })?;
+        Ok(())
     }
 
     fn load_flow_events(
@@ -491,19 +595,72 @@ fn flow_event_from_durable(event: &DurableEvent, input: FlowInput) -> RuntimeRes
     Ok(FlowEvent::new(provenance, kind))
 }
 
-fn next_action_value(action: &NextAction) -> Value {
+fn next_action_value(action: &NextAction, state_revision: u64, decision_digest: &str) -> Value {
     match action {
         NextAction::AwaitAgentWork => json!({"kind":"await-agent-work"}),
         NextAction::EvaluateGates {
             target,
             required_gates,
-        } => json!({
-            "kind":"evaluate-gates",
-            "targetPhase":phase_name(*target),
-            "requiredGates":required_gates.iter().map(|gate| gate.as_str()).collect::<Vec<_>>(),
-        }),
+        } => {
+            let gate_ids = required_gates
+                .iter()
+                .map(|gate| gate.as_str())
+                .collect::<Vec<_>>();
+            json!({
+                "kind":"evaluate-gates",
+                "targetPhase":phase_name(*target),
+                "requiredGates":gate_ids.clone(),
+                // F-006: project the exact submit method and arguments so the
+                // caller does not have to infer that evaluate-gates means
+                // `gate.evaluate` with the projected gate IDs.
+                "submit":{
+                    "method":"gate.evaluate",
+                    "arguments":{
+                        "gateIds":gate_ids,
+                    }
+                }
+            })
+        }
         NextAction::ApplyTransition { target } => {
-            json!({"kind":"apply-transition","targetPhase":phase_name(*target)})
+            let target_phase = phase_name(*target);
+            let action_id = format!("flow:{decision_digest}:apply-transition");
+            json!({
+                "actionId":action_id,
+                "kind":"apply-transition",
+                "targetPhase":target_phase,
+                "preconditions":[
+                    {"code":"LEASE_REQUIRED","fact":"active-project-writer-lease"},
+                    {"code":"REVISION_CONFLICT","fact":state_revision}
+                ],
+                "submit":{
+                    "schemaVersion":1,
+                    "method":"operation.execute",
+                    "operation":"state.transition",
+                    "payload":{"targetPhase":target_phase},
+                    "requestContext":{
+                        "expectedRevision":state_revision,
+                        "requiresWorkspace":true,
+                        "requiresWorkItem":true,
+                        "requiresSession":true,
+                        "requiresLease":true,
+                        "requiresFencingToken":true
+                    },
+                    "idempotencyKey":format!("{action_id}:commit"),
+                    "deadlineMs":30_000,
+                    "confirmation":{
+                        "mode":"preflight-if-required",
+                        "preflight":"submit without confirmation",
+                        "bindingSource":"CONFIRMATION_REQUIRED.remediation",
+                        "commit":"retry with the daemon-issued binding"
+                    },
+                    "retry":{
+                        "sameKeySamePayload":true,
+                        "refreshProjectionOn":["REVISION_CONFLICT","STALE_FENCING_TOKEN"]
+                    }
+                },
+                "onSuccess":{"phase":target_phase,"next":"flow.next"},
+                "remediation":"acquire a current project lease, preserve the projected revision and idempotency key, and refresh flow.next after stale authority"
+            })
         }
         NextAction::ProvideCorrection => json!({"kind":"provide-correction"}),
         NextAction::RetryGate => json!({"kind":"retry-gate"}),
@@ -521,10 +678,16 @@ fn next_action_value(action: &NextAction) -> Value {
         NextAction::ExecuteApprovedSlice {
             active_ordinal,
             queue_digest,
+            capsule_digest,
+            active_slice_status,
+            next_slice_transition,
         } => json!({
             "kind":"execute-approved-slice",
             "activeOrdinal":active_ordinal,
             "queueDigest":queue_digest.to_string(),
+            "capsuleDigest":capsule_digest.to_string(),
+            "activeSliceStatus":execution_slice_status_name(*active_slice_status),
+            "nextSliceTransition":execution_slice_status_name(*next_slice_transition),
         }),
         NextAction::FinalizeExecutionEvidence => json!({"kind":"finalize-execution-evidence"}),
         NextAction::CollectReviewContributions => json!({"kind":"collect-review-contributions"}),
@@ -755,6 +918,19 @@ fn parse_phase(value: &str) -> RuntimeResult<ProcessPhase> {
         "completed" => Ok(ProcessPhase::Completed),
         "paused" => Ok(ProcessPhase::Paused),
         _ => Err(malformed_event("flow phase is invalid")),
+    }
+}
+
+const fn execution_slice_status_name(status: ExecutionSliceStatus) -> &'static str {
+    match status {
+        ExecutionSliceStatus::Pending => "pending",
+        ExecutionSliceStatus::Running => "running",
+        ExecutionSliceStatus::RedObserved => "red-observed",
+        ExecutionSliceStatus::Patched => "patched",
+        ExecutionSliceStatus::FocusedGreen => "focused-green",
+        ExecutionSliceStatus::EvidenceBound => "evidence-bound",
+        ExecutionSliceStatus::Completed => "completed",
+        ExecutionSliceStatus::Blocked => "blocked",
     }
 }
 

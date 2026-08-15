@@ -139,6 +139,16 @@ pub struct FieldSpec {
     pub name: &'static str,
     pub kind: FieldKind,
     pub required: bool,
+    /// Optional human-readable clarification of the field's accepted value
+    /// semantics. Used when the `FieldKind` name is ambiguous about what the
+    /// validator actually accepts (e.g. `StringOrObject` rejecting numeric
+    /// input). Surfaced by `operation.describe` so schema discovery cannot guide
+    /// a caller to an invalid payload.
+    pub note: Option<&'static str>,
+    /// Element kind for arrays, when the operation accepts a homogeneous shape.
+    pub item_kind: Option<FieldKind>,
+    /// Nested object fields when `item_kind` is `Object`.
+    pub items: Option<&'static [FieldSpec]>,
 }
 
 const fn field(name: &'static str, kind: FieldKind, required: bool) -> FieldSpec {
@@ -146,6 +156,42 @@ const fn field(name: &'static str, kind: FieldKind, required: bool) -> FieldSpec
         name,
         kind,
         required,
+        note: None,
+        item_kind: None,
+        items: None,
+    }
+}
+
+/// Build a `FieldSpec` whose accepted value semantics need an explicit note,
+/// such as a `StringOrObject` field that rejects numeric input (F-007).
+const fn field_note(
+    name: &'static str,
+    kind: FieldKind,
+    required: bool,
+    note: &'static str,
+) -> FieldSpec {
+    FieldSpec {
+        name,
+        kind,
+        required,
+        note: Some(note),
+        item_kind: None,
+        items: None,
+    }
+}
+
+const fn array_of_objects(
+    name: &'static str,
+    required: bool,
+    items: &'static [FieldSpec],
+) -> FieldSpec {
+    FieldSpec {
+        name,
+        kind: FieldKind::Array,
+        required,
+        note: None,
+        item_kind: Some(FieldKind::Object),
+        items: Some(items),
     }
 }
 
@@ -246,13 +292,24 @@ const ROUTE_DECIDE: &[FieldSpec] = &[
 const DOCUMENT_RESOLVE: &[FieldSpec] = &[
     field("intent", FieldKind::String, true),
     field("docId", FieldKind::String, false),
-    field("version", FieldKind::StringOrObject, false),
+    field_note(
+        "version",
+        FieldKind::StringOrObject,
+        false,
+        "numeric values are rejected; supply the version as a string (e.g. \"5\") or an object descriptor",
+    ),
 ];
 const DOCUMENT_SAVE: &[FieldSpec] = &[
     field("intent", FieldKind::String, true),
     field("contentFile", FieldKind::String, true),
+    field("keepDraft", FieldKind::Boolean, false),
     field("docId", FieldKind::String, false),
-    field("version", FieldKind::StringOrObject, false),
+    field_note(
+        "version",
+        FieldKind::StringOrObject,
+        false,
+        "numeric values are rejected; supply the version as a string (e.g. \"5\") or an object descriptor",
+    ),
     field("changelogNote", FieldKind::String, false),
 ];
 const EVIDENCE_RECORD: &[FieldSpec] = &[
@@ -267,10 +324,17 @@ const EVIDENCE_RECORD: &[FieldSpec] = &[
     field("logicalKey", FieldKind::String, false),
 ];
 const EXECUTION_PLAN_APPROVE: &[FieldSpec] = &[field("approvedBy", FieldKind::String, false)];
+const EXECUTION_PLAN_VERIFICATION_ITEM: &[FieldSpec] = &[
+    field("id", FieldKind::String, true),
+    field("acId", FieldKind::String, true),
+    field("boundary", FieldKind::String, true),
+    field("command", FieldKind::StringOrArray, true),
+    field("expected", FieldKind::String, true),
+];
 const EXECUTION_PLAN_SET: &[FieldSpec] = &[
     field("goal", FieldKind::String, true),
     field("changedPaths", FieldKind::Array, true),
-    field("verification", FieldKind::Array, true),
+    array_of_objects("verification", true, EXECUTION_PLAN_VERIFICATION_ITEM),
     field("risks", FieldKind::Array, false),
     field("sourceReads", FieldKind::Array, false),
 ];
@@ -392,7 +456,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
     spec(
         OperationName::ExecutionSliceRecord,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -401,7 +465,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
     spec(
         OperationName::ExecutionSliceStart,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -567,12 +631,23 @@ pub fn operation_schema_digest() -> String {
             u8::from(spec.requires_confirmation),
         ]);
         for field in spec.fields {
-            digest.update(field.name.as_bytes());
-            digest.update([0, field_kind_code(field.kind), u8::from(field.required)]);
+            digest_field(&mut digest, field);
         }
         digest.update([0xff]);
     }
     hex::encode(digest.finalize())
+}
+
+fn digest_field(digest: &mut Sha256, field: &FieldSpec) {
+    digest.update(field.name.as_bytes());
+    digest.update([0, field_kind_code(field.kind), u8::from(field.required)]);
+    digest.update([field.item_kind.map_or(0xff, field_kind_code)]);
+    if let Some(items) = field.items {
+        for item in items {
+            digest_field(digest, item);
+        }
+    }
+    digest.update([0xfe]);
 }
 
 const fn scope_code(scope: OperationScope) -> u8 {

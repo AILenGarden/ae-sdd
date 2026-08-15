@@ -159,6 +159,32 @@ fn document_planner_is_deterministic_and_does_not_write_project_files() {
 }
 
 #[test]
+fn document_planner_builds_delete_only_from_explicit_cleanup_policy() {
+    let target = ProjectRelativePath::new("ae-sdd-doc/Story/STORY-001.md").unwrap();
+    let draft = artifact("document-content", ".hermes/draft-STORY-001.md", b"draft");
+    let request = DocumentSaveRequest::new(
+        DocumentTxnId::new("txn.story.save.cleanup").unwrap(),
+        WorkItemId::new("STORY-001").unwrap(),
+        target,
+        draft.clone(),
+        None,
+        InputFingerprint::digest(b"save and cleanup"),
+    )
+    .unwrap()
+    .delete_source_after_save();
+
+    let plan = DocumentPlanner::save(&request).expect("save-plus-delete plan");
+
+    assert_eq!(plan.schema_version(), SchemaVersion::V2);
+    assert_eq!(plan.operations().len(), 2);
+    assert_eq!(plan.operations()[1].path(), draft.path());
+    assert_eq!(
+        plan.operations()[1].expected_before_digest(),
+        Some(draft.digest())
+    );
+}
+
+#[test]
 fn document_finalize_plan_binds_expected_digest() {
     let expected = ArtifactDigest::digest(b"final");
     let request = DocumentFinalizeRequest::new(

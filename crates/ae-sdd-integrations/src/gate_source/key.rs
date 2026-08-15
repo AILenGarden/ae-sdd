@@ -79,6 +79,7 @@ pub(super) struct GateContext {
 pub(super) struct ReviewAuthorityDenial {
     code: &'static str,
     message: String,
+    evidence_id: &'static str,
 }
 
 impl ReviewAuthorityDenial {
@@ -86,6 +87,15 @@ impl ReviewAuthorityDenial {
         Self {
             code,
             message: message.into(),
+            evidence_id: "review-authority-denied",
+        }
+    }
+
+    pub(super) fn context(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            evidence_id: "dr-context-missing",
         }
     }
 
@@ -94,7 +104,7 @@ impl ReviewAuthorityDenial {
     pub(super) fn evidence(&self, located: &LocatedState) -> Option<EvidenceRef> {
         let bytes = self.message.as_bytes();
         Some(EvidenceRef::new(
-            EvidenceId::new("review-authority-denied").ok()?,
+            EvidenceId::new(self.evidence_id).ok()?,
             VerificationId::new(denial_verification_id(self.code, &self.message)).ok()?,
             ProjectRelativePath::new(located.relative.clone()).ok()?,
             EvidenceDigest::digest(bytes),
@@ -789,6 +799,7 @@ fn collect_inputs(
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             if EXCLUDED_DIRS.contains(&name.as_str())
+                || (directory == root && name.starts_with("target-"))
                 || name == ".auto-engineering"
                 || relative.eq_ignore_ascii_case("apps/ae-sdd-monitor")
             {

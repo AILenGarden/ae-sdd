@@ -217,6 +217,7 @@ impl RouteLifecycle {
 pub struct ExecutionCursor {
     active_ordinal: u32,
     queue_digest: ArtifactDigest,
+    capsule_digest: ArtifactDigest,
     active_slice_status: ExecutionSliceStatus,
 }
 
@@ -225,11 +226,13 @@ impl ExecutionCursor {
     pub const fn new(
         active_ordinal: u32,
         queue_digest: ArtifactDigest,
+        capsule_digest: ArtifactDigest,
         active_slice_status: ExecutionSliceStatus,
     ) -> Self {
         Self {
             active_ordinal,
             queue_digest,
+            capsule_digest,
             active_slice_status,
         }
     }
@@ -242,6 +245,11 @@ impl ExecutionCursor {
     /// Returns the digest of the approved slice queue.
     pub const fn queue_digest(self) -> ArtifactDigest {
         self.queue_digest
+    }
+
+    /// Returns the digest of the approved execution capsule generation.
+    pub const fn capsule_digest(self) -> ArtifactDigest {
+        self.capsule_digest
     }
 
     /// Returns the machine status of the active slice.
@@ -486,6 +494,9 @@ pub enum NextAction {
     ExecuteApprovedSlice {
         active_ordinal: u32,
         queue_digest: ArtifactDigest,
+        capsule_digest: ArtifactDigest,
+        active_slice_status: ExecutionSliceStatus,
+        next_slice_transition: ExecutionSliceStatus,
     },
     /// Finalize the execution evidence ledger for the verified implementation.
     FinalizeExecutionEvidence,

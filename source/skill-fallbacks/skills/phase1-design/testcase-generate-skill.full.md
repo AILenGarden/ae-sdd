@@ -3,13 +3,13 @@ name: testcase-generate
 description: TestCase 系列 Step 2 generateSkill。采用有界风险驱动范式：先建立有限风险登记，再按行为等价类和最低充分层级选择用例，以停止条件和预算例外限制无价值边界扩张。
 ---
 
-# TestCase Generate — 测试设计能力（独立文档按需）
+# TestCase Generate — 测试设计能力（Story 路线必经）
 
-> **v3.12：** 默认把验证矩阵写入 Story，不生成独立 TestCase。仅当独立场景超过 20 条、存在合规交付要求或测试矩阵需要独立所有权时，才显式 `doc save --intent TESTCASE`。不生成 ComplianceReport/TestCaseReview Markdown。
+> **当前契约：** 只要路线存在 Story，就必须为该 Story 生成独立 TestCase Series 并通过 `doc save --intent TESTCASE` 落地；TestCase receipt 是该 Story 的 CodingPlan 前置条件。验证矩阵仍保留在 Story 中作为 AC 索引，但复杂度只影响 TestCase 场景深度，不影响其是否存在。micro/small 无 Story 路线不创建 TestCase Series。
 
 ## 与监管器 4 步的关系
 
-本文件只负责 **TestCase 系列 Step 2：generateSkill**。
+本文件只负责 **Story 绑定的 TestCase 系列 Step 2：generateSkill**；它不能自行把 TestCase 改为可选，也不能接受没有 Story identity 的调用。
 
 | 系列步骤 | 执行方 | 本文件职责 |
 |---|---|---|
@@ -24,12 +24,12 @@ description: TestCase 系列 Step 2 generateSkill。采用有界风险驱动范�
 
 必须读齐：
 
-- Story 主文档（AC/接口/数据/异常路径来源）
+- 已批准 Story 主文档及其唯一 Story identity（AC/接口/数据/异常路径来源）
 - 项目资产（测试工具与项目约定）
 - 项目约束（HTTP/DB/Mock/断言红线）
 - 测试策略 + 测试约束 + 测试模板（生成范式与输出格式）
 
-任一缺失，禁止进入生成。
+任一缺失，禁止进入生成；micro/small 路线不调度本 Series，而不是以空 TestCase 伪造通过。
 
 **🔴 机械门禁（v3.9.1，对齐 RA/Coding 三合一）：** prose 清单之外，必须跑：
 

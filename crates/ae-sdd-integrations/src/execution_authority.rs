@@ -3,7 +3,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 use ae_sdd_contracts::execution_runtime::{
-    ExecutionBudgetsV1, ExecutionCapsuleError, ExecutionCapsuleV1, SourceReadSpecV1,
+    ExecutionBudgetsV1, ExecutionCapsuleError, ExecutionCapsuleV1, MAX_SLICE_PATH_SCOPE,
+    SourceReadSpecV1,
 };
 use ae_sdd_domain::{
     ArtifactDigest, ArtifactKind, ArtifactRef, ExecutionSliceId, InventoryGeneration, PolicyDigest,
@@ -1036,7 +1037,10 @@ pub(crate) fn verify_committed_capsule(
             "executionRuntime schemaVersion is unsupported",
         ));
     }
-    if object.get("completionMilestone").and_then(Value::as_str) != Some("none") {
+    if !matches!(
+        object.get("completionMilestone").and_then(Value::as_str),
+        Some("none" | "implementation-verified" | "review-ready" | "governance-closed")
+    ) {
         return Err(capsule_stale(
             "executionRuntime completion milestone is unsupported",
         ));
@@ -1217,8 +1221,8 @@ fn constraints_bundle_ref(workspace_root: &Path) -> RuntimeResult<ArtifactRef> {
 }
 
 /// Derives one slice spec per approved-plan verification entry, in plan
-/// order, chained by dependency.  Source reads outside the writable path
-/// scope are dropped so the frozen scope contract holds.
+/// order, chained by dependency. Approved paths are distributed without
+/// widening authority, and source reads outside each slice scope are dropped.
 fn derive_slice_specs(
     plan: &Value,
     work_item_id: &str,
@@ -1228,23 +1232,28 @@ fn derive_slice_specs(
         .and_then(Value::as_array)
         .filter(|entries| !entries.is_empty())
         .ok_or_else(|| capsule_stale("approved executionPlan verification is missing"))?;
-    let path_scope = plan
-        .get("changedPaths")
-        .and_then(Value::as_array)
-        .ok_or_else(|| capsule_stale("approved executionPlan changedPaths is missing"))?
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .filter(|path| !path.trim().is_empty())
-                .ok_or_else(|| capsule_stale("approved executionPlan changedPaths must be strings"))
-                .and_then(|path| {
-                    ProjectRelativePath::new(path.to_owned())
-                        .map_err(|_| capsule_stale("approved executionPlan changedPath is unsafe"))
-                })
-        })
-        .collect::<RuntimeResult<Vec<_>>>()?;
-    let source_reads = plan
+    let path_scopes = distribute_path_scopes(
+        plan.get("changedPaths")
+            .and_then(Value::as_array)
+            .ok_or_else(|| capsule_stale("approved executionPlan changedPaths is missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|path| !path.trim().is_empty())
+                    .ok_or_else(|| {
+                        capsule_stale("approved executionPlan changedPaths must be strings")
+                    })
+                    .and_then(|path| {
+                        ProjectRelativePath::new(path.to_owned()).map_err(|_| {
+                            capsule_stale("approved executionPlan changedPath is unsafe")
+                        })
+                    })
+            })
+            .collect::<RuntimeResult<Vec<_>>>()?,
+        verification.len(),
+    )?;
+    let source_read_paths = plan
         .get("sourceReads")
         .and_then(Value::as_array)
         .map(|reads| {
@@ -1252,12 +1261,8 @@ fn derive_slice_specs(
                 .iter()
                 .filter_map(Value::as_str)
                 .filter_map(|read| ProjectRelativePath::new(read.to_owned()).ok())
-                .filter(|read| path_scope.iter().any(|scope| scope.contains(read)))
-                .map(|read| SourceReadSpecV1::new(read, None, None))
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Vec<_>>()
         })
-        .transpose()
-        .map_err(|_| capsule_stale("approved executionPlan sourceReads are invalid"))?
         .unwrap_or_default();
 
     let mut verification_ids = Vec::with_capacity(verification.len());
@@ -1275,11 +1280,25 @@ fn derive_slice_specs(
 
     let mut specs = Vec::with_capacity(verification.len());
     for (index, entry) in verification.iter().enumerate() {
+        let path_scope = path_scopes[index].clone();
+        let source_reads = source_read_paths
+            .iter()
+            .filter(|read| path_scope.iter().any(|scope| scope.contains(read)))
+            .cloned()
+            .map(|read| SourceReadSpecV1::new(read, None, None))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| capsule_stale("approved executionPlan sourceReads are invalid"))?;
         let verification_id = verification_ids[index].clone();
         let objective = entry
-            .get("expect")
+            .get("expected")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                entry
+                    .get("expect")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            })
             .or_else(|| {
                 entry
                     .get("command")
@@ -1306,8 +1325,8 @@ fn derive_slice_specs(
             ordinal,
             objective: objective.to_owned().into_boxed_str(),
             depends_on,
-            path_scope: path_scope.clone(),
-            source_reads: source_reads.clone(),
+            path_scope,
+            source_reads,
             focused_verification_id: verification_id.clone(),
             broad_verification_ids: verification_ids
                 .iter()
@@ -1319,6 +1338,33 @@ fn derive_slice_specs(
         });
     }
     Ok(specs)
+}
+
+fn distribute_path_scopes(
+    mut scopes: Vec<ProjectRelativePath>,
+    slice_count: usize,
+) -> RuntimeResult<Vec<Vec<ProjectRelativePath>>> {
+    scopes.sort_unstable();
+    scopes.dedup();
+    if scopes.is_empty() || slice_count == 0 {
+        return Err(capsule_stale(
+            "approved executionPlan requires changedPaths and verification entries",
+        ));
+    }
+    if scopes.len() > slice_count.saturating_mul(MAX_SLICE_PATH_SCOPE) {
+        return Err(capsule_stale(
+            "approved executionPlan changedPaths cannot fit the frozen v1 path-scope limit",
+        ));
+    }
+
+    let mut assignments = vec![Vec::new(); slice_count];
+    for (index, scope) in scopes.iter().cloned().enumerate() {
+        assignments[index % slice_count].push(scope);
+    }
+    for index in scopes.len()..slice_count {
+        assignments[index].push(scopes[index % scopes.len()].clone());
+    }
+    Ok(assignments)
 }
 
 /// Reads one committed execution artifact with containment and byte bounds,

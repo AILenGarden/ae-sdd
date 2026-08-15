@@ -24,14 +24,15 @@ use ae_sdd_domain::{
     InventoryGeneration, PolicyDigest, ProjectRelativePath, StateRevision, StoryId, VerificationId,
     WorkItemId,
 };
+use ae_sdd_execution::{ExecutionSupervisorCheckpointV1, FocusedTestStateV1};
 use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, HandshakeRequest, JsonRpcRequest, PROTOCOL_RANGE_V1,
     RequestParams, RpcMethod, SecretString, WorkspaceMode,
 };
 use ae_sdd_runtime::{
     BusinessOperationPort, BusinessWorkspace, ConnectionState, ContextProjectionInput,
-    DurableEvent, MemoryPersistence, PersistencePort, RuntimeConfig, RuntimeResult, RuntimeService,
-    SessionResult, WorkspaceResult,
+    DurableEvent, MemoryPersistence, PersistencePort, PreparedExecutionHookV1, RuntimeConfig,
+    RuntimeResult, RuntimeService, SessionResult, WorkspaceResult,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -224,6 +225,26 @@ impl ExecutionHarness {
 
     fn set_resume_response(&self, response: Value) {
         *self.business.resume_response.lock().expect("resume lock") = response;
+    }
+
+    fn restart(&self) -> Self {
+        let token = "endpoint-execution-test-restarted".to_owned();
+        let runtime = Arc::new(RuntimeService::new(
+            RuntimeConfig::default(),
+            BootId::from_uuid(Uuid::from_u128(73)),
+            token.clone(),
+            self.persistence.clone(),
+            Arc::new(TestClock::new(1_001)),
+            Arc::new(TestResolver),
+            self.business.clone(),
+        ));
+        runtime.recover().expect("restarted runtime recovers");
+        Self {
+            runtime,
+            business: self.business.clone(),
+            persistence: self.persistence.clone(),
+            token,
+        }
     }
 }
 
@@ -490,6 +511,38 @@ fn malformed_execution_event_fails_closed_before_any_decision() {
         ),
     );
     assert_eq!(stable_error(&wrong_shape), "OPERATION_SCHEMA_INVALID");
+
+    let absolute_path = harness.call(
+        &mut connection,
+        RpcMethod::HookPostTool,
+        hook_request(
+            &workspace,
+            &session,
+            "event-absolute-path",
+            json!({"executionEvent":{
+                "class":"source-read",
+                "path":"C:/outside/secret.txt",
+                "contentDigest":HEX_A,
+            }}),
+        ),
+    );
+    assert_eq!(stable_error(&absolute_path), "OPERATION_SCHEMA_INVALID");
+
+    let secret_digest = harness.call(
+        &mut connection,
+        RpcMethod::HookPostTool,
+        hook_request(
+            &workspace,
+            &session,
+            "event-secret-digest",
+            json!({"executionEvent":{
+                "class":"patch",
+                "resultDigest":"not-a-digest-secret-material",
+            }}),
+        ),
+    );
+    assert_eq!(stable_error(&secret_digest), "OPERATION_SCHEMA_INVALID");
+    assert!(harness.execution_events().is_empty());
 }
 
 #[test]
@@ -610,6 +663,94 @@ fn focused_green_then_broad_test_is_allowed_with_output_budget() {
     let directive = &broad["executionDirective"];
     assert_eq!(directive["decision"], "allow");
     assert_eq!(directive["outputBudgetBytes"], 65_536);
+}
+
+#[test]
+fn failed_main_receipt_replays_the_original_checkpoint_after_image() {
+    let harness = ExecutionHarness::new(resume_response_full(&test_capsule()));
+    let mut connection = harness.connection(ClientKind::Hook);
+    let (workspace, session) = engaged_session(&harness, &mut connection, "guard-after-image");
+    resume_execution(&harness, &mut connection, &workspace, &session);
+    harness.persistence.fail_commit_event_and_receipt_after(2);
+    let request = || {
+        hook_request(
+            &workspace,
+            &session,
+            "event-focused-green-repair",
+            json!({"executionEvent":{"class":"focused-test","outcome":"pass","outputBytes":128}}),
+        )
+    };
+
+    let failed = harness.call(&mut connection, RpcMethod::HookPostTool, request());
+    assert_eq!(stable_error(&failed), "EXTERNAL_STATE_CONFLICT", "{failed}");
+    let prepared_value = harness
+        .persistence
+        .load_record("prepared-execution-hook/v1", &session.session_id)
+        .expect("prepared record loads")
+        .expect("prepared record exists");
+    let prepared: PreparedExecutionHookV1 =
+        serde_json::from_value(prepared_value).expect("prepared record decodes");
+    assert!(!prepared.completed);
+    let checkpoint = ExecutionSupervisorCheckpointV1::try_from(
+        prepared
+            .checkpoint_after_image
+            .clone()
+            .expect("PostTool stores an after-image"),
+    )
+    .expect("after-image validates");
+    assert_eq!(checkpoint.focused_test(), FocusedTestStateV1::Green);
+    let original_response: Value =
+        serde_json::from_str(&prepared.response_json).expect("original response decodes");
+    assert_eq!(original_response["decision"], "allow");
+
+    let restarted = harness.restart();
+    drop(harness);
+    let mut restarted_connection = restarted.connection(ClientKind::Hook);
+    let restarted_session = open_engaged_root(
+        &restarted,
+        &mut restarted_connection,
+        &workspace,
+        "external",
+    );
+    assert_eq!(restarted_session.session_id, session.session_id);
+    resume_execution(
+        &restarted,
+        &mut restarted_connection,
+        &workspace,
+        &restarted_session,
+    );
+    let replay = result(&restarted.call(
+        &mut restarted_connection,
+        RpcMethod::HookPostTool,
+        hook_request(
+            &workspace,
+            &restarted_session,
+            "event-focused-green-repair",
+            json!({"executionEvent":{"class":"focused-test","outcome":"pass","outputBytes":128}}),
+        ),
+    ));
+    assert_eq!(replay["replayed"], true, "{replay}");
+    assert_eq!(replay["decision"], original_response["decision"]);
+    assert!(
+        restarted
+            .persistence
+            .load_record("prepared-execution-hook/v1", &session.session_id)
+            .expect("completed barrier lookup")
+            .is_none(),
+        "completed barriers are deleted instead of accumulating by session"
+    );
+
+    let broad = result(&restarted.call(
+        &mut restarted_connection,
+        RpcMethod::HookPreTool,
+        hook_request(
+            &workspace,
+            &restarted_session,
+            "event-broad-after-repair",
+            json!({"executionEvent":{"class":"broad-test","outputBytes":64}}),
+        ),
+    ));
+    assert_eq!(broad["decision"], "allow", "{broad}");
 }
 
 #[test]

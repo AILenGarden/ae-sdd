@@ -543,7 +543,44 @@ fn open_delegated_child(
                     && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
             "Root flow decision is not delegable: {flow}"
         );
-        json!({"flowDecisionDigest":flow["decisionDigest"]})
+        let decision_digest = flow["decisionDigest"]
+            .as_str()
+            .unwrap_or_else(|| panic!("delegable Root decision lacks decisionDigest: {flow}"));
+        let intent_key = format!(
+            "{}\0{}\0{}",
+            parent_identity.workspace_id, parent_identity.work_item_id, decision_digest
+        );
+        let intent = harness
+            .persistence
+            .load_record("flow-delegation-intent/v1", &intent_key)
+            .expect("flow delegation intent lookup")
+            .unwrap_or_else(|| panic!("flow.next did not persist its delegation intent: {flow}"));
+        assert_eq!(
+            intent["workspaceId"], parent_identity.workspace_id,
+            "{intent}"
+        );
+        assert_eq!(
+            intent["workItemId"], parent_identity.work_item_id,
+            "{intent}"
+        );
+        if flow["nextAction"]["kind"] == "delegate-series" {
+            assert_eq!(
+                intent["seriesKind"], flow["nextAction"]["seriesKind"],
+                "{intent}"
+            );
+        }
+        assert_eq!(intent["decisionDigest"], decision_digest, "{intent}");
+        assert_eq!(
+            intent["stateRevision"], flow["stateRevision"],
+            "flow delegation intent must bind the projected revision: {intent}"
+        );
+        assert!(
+            intent["inputFingerprint"]
+                .as_str()
+                .is_some_and(|value| value.len() == 64),
+            "flow delegation intent must bind a digest-shaped input: {intent}"
+        );
+        json!({"flowDecisionDigest":decision_digest})
     } else {
         json!({
             "childRole":child_role,
@@ -551,12 +588,17 @@ fn open_delegated_child(
             "inputRevision":input_revision,
             "inputFingerprint":input_fingerprint,
             "deadlineUnixMs":deadline_unix_ms,
-            "adapterId":adapter_id,
             "grant":grant
         })
     };
     let mut create = trusted_params(parent_identity, create_payload);
     create.idempotency_key = Some(format!("{key}-create"));
+    let create_wire = serde_json::to_value(&create).expect("delegation.create request serializes");
+    serde_json::from_value::<RequestParams<Value>>(create_wire.clone()).unwrap_or_else(|error| {
+        panic!(
+            "delegation.create RequestParams fail their own wire contract: {error}: {create_wire}"
+        )
+    });
     let created = success(&call(
         &harness.runtime,
         cli,
@@ -911,6 +953,25 @@ pub(super) fn install_completed_review_authority(
         _ => &["general"],
     };
 
+    // Some completion fixtures seed `code-reviewed` up front because the test
+    // is about terminal governance, not the preceding transition. A physical
+    // execution lineage must still be opened from an agent-work phase, so open
+    // it against the immediately preceding `test-running` projection and then
+    // restore the seeded after-image before evidence/review bind their inputs.
+    let seeded_state = read_state_value(harness);
+    let seeded_code_reviewed =
+        seeded_state["storyStates"][work_item_id]["phase"].as_str() == Some("code-reviewed");
+    if seeded_code_reviewed {
+        let mut delegable = seeded_state.clone();
+        delegable["storyStates"][work_item_id]["phase"] = json!("test-running");
+        delegable["storyStates"][work_item_id]["currentPhase"] = json!("test-running");
+        fs::write(
+            &harness.state_path,
+            serde_json::to_vec_pretty(&delegable).expect("delegable review fixture serializes"),
+        )
+        .expect("delegable review fixture");
+    }
+
     // The lineage opens first: the delegated author task drives the semantic
     // evidence operations the root orchestrator may no longer execute itself.
     let (author, reviewers) = open_review_lineage_for_specialties(
@@ -921,6 +982,13 @@ pub(super) fn install_completed_review_authority(
         specialties,
         key,
     );
+    if seeded_code_reviewed {
+        fs::write(
+            &harness.state_path,
+            serde_json::to_vec_pretty(&seeded_state).expect("seeded review state serializes"),
+        )
+        .expect("restore seeded review state");
+    }
     let author_identity = identity_for_work_item(
         workspace,
         &author,
@@ -1193,6 +1261,7 @@ pub(super) fn install_tier2_review_prerequisites(
     state["executionRuntime"] = json!({
         "schemaVersion":1,
         "queueDigest":format!("sha256:{}", "1".repeat(64)),
+        "capsuleDigest":format!("sha256:{}", "2".repeat(64)),
         "activeSliceOrdinal":1,
         "completionMilestone":"none"
     });

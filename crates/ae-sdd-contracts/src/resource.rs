@@ -93,6 +93,9 @@ pub enum ResourceContractError {
     /// A document plan's encoded digest did not match its canonical content.
     #[error("document transaction plan digest does not match canonical content")]
     DocumentPlanDigestMismatch,
+    /// Delete operations require the v2 document transaction wire contract.
+    #[error("document delete operations require schema version v2")]
+    DeleteRequiresV2,
     /// A compatibility save operation could not construct its fixed artifact kind.
     #[error("document save operation artifact kind is invalid")]
     InvalidDocumentArtifactKind,
@@ -543,6 +546,13 @@ pub enum DocumentTxnOperation {
         /// Digest expected at finalization.
         expected_digest: ArtifactDigest,
     },
+    /// Delete a document whose current digest is known.
+    Delete {
+        /// Project-relative document path.
+        path: ProjectRelativePath,
+        /// Digest that must be observed before applying the delete.
+        expected_before_digest: ArtifactDigest,
+    },
 }
 
 impl DocumentTxnOperation {
@@ -588,10 +598,20 @@ impl DocumentTxnOperation {
         }
     }
 
+    /// Constructs a compare-and-delete operation.
+    pub const fn delete(path: ProjectRelativePath, expected_before_digest: ArtifactDigest) -> Self {
+        Self::Delete {
+            path,
+            expected_before_digest,
+        }
+    }
+
     /// Returns the project-relative transaction target.
     pub const fn path(&self) -> &ProjectRelativePath {
         match self {
-            Self::Save { path, .. } | Self::Finalize { path, .. } => path,
+            Self::Save { path, .. } | Self::Finalize { path, .. } | Self::Delete { path, .. } => {
+                path
+            }
         }
     }
 
@@ -601,7 +621,7 @@ impl DocumentTxnOperation {
             Self::Save {
                 staged_content_ref, ..
             } => Some(staged_content_ref),
-            Self::Finalize { .. } => None,
+            Self::Finalize { .. } | Self::Delete { .. } => None,
         }
     }
 
@@ -615,6 +635,10 @@ impl DocumentTxnOperation {
             Self::Finalize {
                 expected_digest, ..
             } => Some(*expected_digest),
+            Self::Delete {
+                expected_before_digest,
+                ..
+            } => Some(*expected_before_digest),
         }
     }
 }
@@ -653,6 +677,12 @@ enum DocumentTxnOperationWire {
         #[serde(with = "serde_domain::artifact_digest")]
         expected_digest: ArtifactDigest,
     },
+    /// Wire representation of [`DocumentTxnOperation::Delete`].
+    Delete {
+        #[serde(with = "serde_domain::project_relative_path")]
+        path: ProjectRelativePath,
+        expected_before_digest: String,
+    },
 }
 
 impl TryFrom<DocumentTxnOperationWire> for DocumentTxnOperation {
@@ -675,6 +705,15 @@ impl TryFrom<DocumentTxnOperationWire> for DocumentTxnOperation {
                 path,
                 expected_digest,
             } => Ok(Self::finalize(path, expected_digest)),
+            DocumentTxnOperationWire::Delete {
+                path,
+                expected_before_digest,
+            } => {
+                let expected_before_digest = expected_before_digest
+                    .parse()
+                    .map_err(|_| ResourceContractError::InvalidExpectedBeforeDigest)?;
+                Ok(Self::delete(path, expected_before_digest))
+            }
         }
     }
 }
@@ -697,6 +736,13 @@ impl From<DocumentTxnOperation> for DocumentTxnOperationWire {
             } => Self::Finalize {
                 path,
                 expected_digest,
+            },
+            DocumentTxnOperation::Delete {
+                path,
+                expected_before_digest,
+            } => Self::Delete {
+                path,
+                expected_before_digest: expected_before_digest.to_string(),
             },
         }
     }
@@ -731,6 +777,13 @@ impl DocumentTxnPlan {
                 field: "operations",
                 max_items: MAX_DOCUMENT_OPERATIONS,
             });
+        }
+        if schema_version == SchemaVersion::V1
+            && operations
+                .iter()
+                .any(|operation| matches!(operation, DocumentTxnOperation::Delete { .. }))
+        {
+            return Err(ResourceContractError::DeleteRequiresV2);
         }
         let mut paths = BTreeSet::new();
         if operations
@@ -919,6 +972,14 @@ fn canonical_document_plan_digest(
                 push_field(&mut canonical, b"finalize");
                 push_field(&mut canonical, path.as_str().as_bytes());
                 canonical.extend_from_slice(expected_digest.as_bytes());
+            }
+            DocumentTxnOperation::Delete {
+                path,
+                expected_before_digest,
+            } => {
+                push_field(&mut canonical, b"delete");
+                push_field(&mut canonical, path.as_str().as_bytes());
+                canonical.extend_from_slice(expected_before_digest.as_bytes());
             }
         }
     }

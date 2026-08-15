@@ -31,7 +31,6 @@ use ae_sdd_protocol::{ClientKind, RpcMethod, WorkspaceMode};
 use ae_sdd_runtime::{BusinessWorkspace, PersistencePort};
 use review_authority::authoritative_review_workspace_input_fingerprint;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use support::*;
 
@@ -61,7 +60,7 @@ fn complete_prd_commits_and_replays_one_exact_project_mutation() {
         &mut cli,
         &workspace,
         STORY_ID,
-        "lifecycle-prd-root",
+        "lifecycle-story-root",
         "lifecycle-agent",
     );
     let story_identity =
@@ -129,9 +128,6 @@ fn complete_prd_commits_and_replays_one_exact_project_mutation() {
         "collect-review-contributions"
     );
 
-    // The Review cycle re-seals the recorded ledger entry against the current
-    // Review input; the append-only ledger keeps backing the cited evidence.
-    reseal_manifest_for_review(&harness, workspace.inventory_generation);
     install_completed_review_authority(
         &harness,
         &mut cli,
@@ -279,12 +275,27 @@ fn record_evidence(
     lease_id: &str,
     fencing: u64,
 ) -> String {
+    let workspace = BusinessWorkspace {
+        workspace_id: "00000000-0000-0000-0000-0000000000c1".to_owned(),
+        canonical_root: fs::canonicalize(harness.workspace_root.path())
+            .expect("workspace canonicalizes")
+            .to_string_lossy()
+            .into_owned(),
+        project_key: "typed-e2e".to_owned(),
+        mode: WorkspaceMode::RustCanary,
+        agent_role: Some(AgentRole::Root),
+        agent_grant: Some(ScopedGrant::new([], [], [ProjectPathScope::ProjectRoot])),
+        caller_kind: Some(ClientKind::Cli),
+        inventory_generation: 1,
+    };
+    let input = authoritative_review_workspace_input_fingerprint(&workspace, &read_state(harness))
+        .expect("authoritative review input fingerprint");
     let mut record = operation_params(
         identity,
         "evidence.record",
         json!({
             "artifactPath":"evidence/result.json",
-            "inputFingerprint":"lifecycle-verification-input",
+            "inputFingerprint":input.to_string(),
             "kind":"focused-test",
             "command":["cargo","test","-p","lifecycle"],
             "exitCode":0
@@ -369,53 +380,6 @@ fn release_lease(
         RpcMethod::OperationExecute,
         release,
     ));
-}
-
-/// Re-seals the finalized manifest against the current Review input
-/// fingerprint, exactly the way a Review-cycle evidence seal binds the
-/// already-recorded ledger entries to the current authority.
-fn reseal_manifest_for_review(harness: &Harness, inventory_generation: u64) {
-    let workspace = BusinessWorkspace {
-        workspace_id: "00000000-0000-0000-0000-0000000000c1".to_owned(),
-        canonical_root: fs::canonicalize(harness.workspace_root.path())
-            .expect("workspace canonicalizes")
-            .to_string_lossy()
-            .into_owned(),
-        project_key: "typed-e2e".to_owned(),
-        mode: WorkspaceMode::RustCanary,
-        agent_role: Some(AgentRole::Root),
-        agent_grant: Some(ScopedGrant::new([], [], [ProjectPathScope::ProjectRoot])),
-        caller_kind: Some(ClientKind::Cli),
-        inventory_generation,
-    };
-    let state = read_state(harness);
-    let input = authoritative_review_workspace_input_fingerprint(&workspace, &state)
-        .expect("authoritative review input fingerprint");
-    let path = harness
-        .workspace_root
-        .path()
-        .join(format!(".auto-engineering/{PRD_ID}/evidence/manifest.json"));
-    let mut manifest: Value = serde_json::from_slice(&fs::read(&path).expect("finalized manifest"))
-        .expect("manifest JSON");
-    for entry in manifest["entries"]
-        .as_array_mut()
-        .expect("manifest entries")
-    {
-        entry["inputFingerprint"] = json!(input.to_string());
-    }
-    let mut payload = manifest.clone();
-    payload
-        .as_object_mut()
-        .expect("manifest object")
-        .retain(|key, _| key != "contentHash" && !key.starts_with('_'));
-    manifest["contentHash"] = json!(format!(
-        "sha256:{}",
-        hex::encode(Sha256::digest(
-            serde_json::to_vec(&payload).expect("manifest canonical JSON")
-        ))
-    ));
-    fs::write(&path, serde_json::to_vec(&manifest).expect("manifest JSON"))
-        .expect("resealed manifest");
 }
 
 /// Drives one clean `review.record` per required tier-2 specialty through the
@@ -534,6 +498,17 @@ fn record_completion_intent_and_gates(
         decision["nextAction"]["kind"], "evaluate-gates",
         "GovernanceClosed must open the terminal Gate evaluation: {decision}"
     );
+    assert_eq!(
+        decision["nextAction"]["submit"]["method"], "gate.evaluate",
+        "evaluate-gates must project the exact submit method (F-006): {decision}"
+    );
+    let projected_gate_ids = decision["nextAction"]["submit"]["arguments"]["gateIds"]
+        .as_array()
+        .expect("evaluate-gates submit must carry the gateIds arguments (F-006)");
+    assert!(
+        !projected_gate_ids.is_empty(),
+        "evaluate-gates submit arguments must list the required gates: {decision}"
+    );
 
     for gate_id in ["G-00", "G-12", "G-13"] {
         let mut gate = trusted_params(identity, json!({"gateId":gate_id}));
@@ -544,6 +519,53 @@ fn record_completion_intent_and_gates(
     }
     let ready = flow_next_action(harness, cli, identity);
     assert_eq!(ready["kind"], "apply-transition", "{ready}");
+    assert_eq!(
+        ready["submit"]["schemaVersion"], 1,
+        "apply-transition must project the versioned executable submit contract: {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["method"], "operation.execute",
+        "apply-transition must name the exact RPC method (F-068): {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["operation"], "state.transition",
+        "apply-transition must name the typed transition operation (F-068): {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["payload"],
+        json!({"targetPhase":"completed"}),
+        "apply-transition must carry the exact typed payload: {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["requestContext"]["projectKey"], "typed-e2e",
+        "apply-transition must bind the authoritative project context: {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["requestContext"]["workItemId"], PRD_ID,
+        "apply-transition must bind the authoritative Work Item: {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["requestContext"]["expectedRevision"],
+        current_revision(harness),
+        "apply-transition must freeze the current revision: {ready}"
+    );
+    assert!(
+        ready["submit"]["requestContext"]["workspaceId"].is_string()
+            && ready["submit"]["requestContext"]["sessionId"].is_string(),
+        "apply-transition must carry exact workspace/session context: {ready}"
+    );
+    assert!(
+        ready["submit"]["idempotencyKey"].is_string(),
+        "apply-transition must provide a retry-stable key: {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["confirmation"]["mode"], "preflight-if-required",
+        "apply-transition must describe the lifecycle confirmation sequence: {ready}"
+    );
+    assert_eq!(
+        ready["submit"]["retry"]["sameKeySamePayload"], true,
+        "apply-transition retries must preserve the exact request identity: {ready}"
+    );
 }
 
 fn flow_next_action(
@@ -675,6 +697,7 @@ fn write_prd_state(harness: &Harness) {
             "schemaVersion":1,
             "queueRef":format!(".auto-engineering/{PRD_ID}/execution/queue.json"),
             "queueDigest":format!("sha256:{}", "1".repeat(64)),
+            "capsuleDigest":format!("sha256:{}", "2".repeat(64)),
             "activeSliceOrdinal":0,
             "completionMilestone":"none"
         },

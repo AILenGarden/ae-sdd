@@ -81,14 +81,35 @@ impl ValidatedOperationRequest {
         let spec = request.operation.spec();
         validate_preconditions(spec, &request)?;
         validate_payload(spec, &request.payload)?;
-        let canonical = serde_json::to_vec(&request.payload)
-            .map_err(OperationRequestError::CanonicalizePayload)?;
+        let payload_digest = Self::canonical_idempotency_digest(&request)?;
         Ok(Self {
             operation_id: OperationId::new(request.operation.as_str())
                 .expect("frozen operation names are valid domain IDs"),
             request,
-            payload_digest: Sha256::digest(canonical).into(),
+            payload_digest,
         })
+    }
+
+    /// Hashes every caller-controlled value that can change the authority of
+    /// a write while preserving the historical payload-only digest for
+    /// operations without a confirmation.
+    pub fn canonical_idempotency_digest(
+        request: &OperationRequest,
+    ) -> Result<[u8; 32], OperationRequestError> {
+        let canonical_value = match request.confirmation.as_ref() {
+            Some(confirmation) => serde_json::json!({
+                "confirmation": {
+                    "approvedAt": confirmation.approved_at(),
+                    "approvedBy": confirmation.approved_by(),
+                    "confirmationId": confirmation.confirmation_id(),
+                },
+                "payload": request.payload.clone(),
+            }),
+            None => request.payload.clone(),
+        };
+        let canonical = serde_json::to_vec(&canonical_value)
+            .map_err(OperationRequestError::CanonicalizePayload)?;
+        Ok(Sha256::digest(canonical).into())
     }
 
     #[must_use]
@@ -199,13 +220,150 @@ fn validate_payload(spec: &OperationSpec, payload: &Value) -> Result<(), Operati
             }
             None => {}
             Some(value) if field_matches(field.kind, value) => {
+                validate_top_level_field_semantics(field.kind, field.name, value)?;
                 validate_semantics(spec.operation, field.name, value)?;
+                validate_nested_shape(field, value, field.name)?;
             }
             Some(_) => return Err(OperationRequestError::PayloadFieldType(field.name)),
         }
     }
     if spec.operation == OperationName::WorkItemCreate {
         validate_workitem_create(object)?;
+    }
+    Ok(())
+}
+
+fn validate_nested_shape(
+    field: &crate::FieldSpec,
+    value: &Value,
+    path: &str,
+) -> Result<(), OperationRequestError> {
+    let Some(item_kind) = field.item_kind else {
+        return Ok(());
+    };
+    let Some(array) = value.as_array() else {
+        return Err(OperationRequestError::NestedPayloadSchema {
+            path: path.to_owned(),
+            problem: "field has the wrong type",
+        });
+    };
+
+    for (index, item) in array.iter().enumerate() {
+        let item_path = format!("{path}[{index}]");
+        if !field_matches(item_kind, item) {
+            return Err(OperationRequestError::NestedPayloadSchema {
+                path: item_path,
+                problem: "array item has the wrong type",
+            });
+        }
+        if let Some(fields) = field.items {
+            validate_nested_object(fields, item, &item_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_nested_object(
+    fields: &[crate::FieldSpec],
+    value: &Value,
+    path: &str,
+) -> Result<(), OperationRequestError> {
+    let Some(object) = value.as_object() else {
+        return Err(OperationRequestError::NestedPayloadSchema {
+            path: path.to_owned(),
+            problem: "field has the wrong type",
+        });
+    };
+    let allowed: BTreeSet<_> = fields.iter().map(|field| field.name).collect();
+    if let Some(unknown) = object
+        .keys()
+        .find(|field| !allowed.contains(field.as_str()))
+    {
+        return Err(OperationRequestError::NestedPayloadSchema {
+            path: format!("{path}.{unknown}"),
+            problem: "unknown field",
+        });
+    }
+
+    for field in fields {
+        let field_path = format!("{path}.{}", field.name);
+        match object.get(field.name) {
+            None if field.required => {
+                return Err(OperationRequestError::NestedPayloadSchema {
+                    path: field_path,
+                    problem: "required field is missing",
+                });
+            }
+            None => {}
+            Some(value) if field_matches(field.kind, value) => {
+                validate_nested_field_semantics(field.kind, value, &field_path)?;
+                validate_nested_shape(field, value, &field_path)?;
+            }
+            Some(_) => {
+                return Err(OperationRequestError::NestedPayloadSchema {
+                    path: field_path,
+                    problem: "field has the wrong type",
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_top_level_field_semantics(
+    kind: FieldKind,
+    field: &'static str,
+    value: &Value,
+) -> Result<(), OperationRequestError> {
+    if kind != FieldKind::StringOrArray {
+        return Ok(());
+    }
+    if value.as_str().is_some_and(str::is_empty) {
+        return Err(OperationRequestError::EmptyString(field));
+    }
+    if let Some(items) = value.as_array() {
+        if items.is_empty() {
+            return Err(OperationRequestError::EmptyArray(field));
+        }
+        if items
+            .iter()
+            .any(|item| item.as_str().is_none_or(str::is_empty))
+        {
+            return Err(OperationRequestError::PayloadFieldType(field));
+        }
+    }
+    Ok(())
+}
+
+fn validate_nested_field_semantics(
+    kind: FieldKind,
+    value: &Value,
+    path: &str,
+) -> Result<(), OperationRequestError> {
+    let invalid =
+        |path: String, problem| OperationRequestError::NestedPayloadSchema { path, problem };
+    if matches!(
+        kind,
+        FieldKind::String | FieldKind::StringOrArray | FieldKind::StringOrObject
+    ) && value.as_str().is_some_and(str::is_empty)
+    {
+        return Err(invalid(path.to_owned(), "field must be non-empty"));
+    }
+    if kind == FieldKind::StringOrArray
+        && let Some(items) = value.as_array()
+    {
+        if items.is_empty() {
+            return Err(invalid(path.to_owned(), "array must be non-empty"));
+        }
+        for (index, item) in items.iter().enumerate() {
+            let item_path = format!("{path}[{index}]");
+            let Some(item) = item.as_str() else {
+                return Err(invalid(item_path, "array item must be a string"));
+            };
+            if item.is_empty() {
+                return Err(invalid(item_path, "array item must be non-empty"));
+            }
+        }
     }
     Ok(())
 }
@@ -382,6 +540,8 @@ pub enum OperationRequestError {
     RequiredPayloadField(&'static str),
     #[error("operation payload field {0} has the wrong type")]
     PayloadFieldType(&'static str),
+    #[error("operation payload schema is invalid at {path}: {problem}")]
+    NestedPayloadSchema { path: String, problem: &'static str },
     #[error("operation payload string field {0} must not be empty")]
     EmptyString(&'static str),
     #[error("operation payload array field {0} must not be empty")]

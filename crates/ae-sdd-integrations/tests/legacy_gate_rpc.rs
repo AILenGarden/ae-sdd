@@ -350,6 +350,134 @@ fn ops_describe_filter_and_ops_next_reach_authoritative_business_runtime() {
 }
 
 #[test]
+fn operation_describe_projects_request_context_fields_for_lease_release() {
+    // F-008: `lease.release` rejects a duplicated payload `leaseId`; the lease
+    // authority (`leaseId`/`fencingToken`) belongs only in the top-level request
+    // context. `operation.describe` must project those request-context fields so
+    // callers never reverse-engineer the hidden prerequisite and never place
+    // `leaseId` in the payload (which unknown-field rejection catches).
+    let (_root, adapter, workspace) = setup("pub fn answer() -> u32 { 42 }\n");
+    let described = adapter
+        .execute(
+            RpcMethod::OperationDescribe,
+            &direct_params(json!({ "operation": "lease.release" }), &workspace),
+            None,
+        )
+        .expect("lease.release describe");
+    let entry = &described[0];
+    assert_eq!(entry["operation"], "lease.release");
+    let request_context = entry["requestContext"]
+        .as_array()
+        .expect("describe projects a requestContext field array");
+    let names: Vec<&str> = request_context
+        .iter()
+        .map(|value| value["name"].as_str().expect("named request-context field"))
+        .collect();
+    assert!(
+        names.contains(&"leaseId"),
+        "requestContext must name leaseId, got {names:?}"
+    );
+    assert!(
+        names.contains(&"fencingToken"),
+        "requestContext must name fencingToken, got {names:?}"
+    );
+    // The payload `fields[]` must NOT advertise leaseId/fencingToken: those are
+    // envelope fields, and placing them in the payload is exactly what F-008 hit.
+    let payload_names: Vec<&str> = entry["fields"]
+        .as_array()
+        .expect("payload fields array")
+        .iter()
+        .map(|value| value["name"].as_str().expect("named payload field"))
+        .collect();
+    assert!(
+        !payload_names.contains(&"leaseId"),
+        "leaseId must be request-context, not payload"
+    );
+}
+
+#[test]
+fn operation_describe_documents_version_field_rejects_numeric() {
+    // F-007: `operation.describe` advertises the document `version` field as
+    // `StringOrObject`, but numeric input is rejected at validation. Schema
+    // discovery must not guide a caller to `version: 5`; the field projection
+    // must state that numeric values are rejected.
+    let (_root, adapter, workspace) = setup("pub fn answer() -> u32 { 42 }\n");
+    let described = adapter
+        .execute(
+            RpcMethod::OperationDescribe,
+            &direct_params(json!({ "operation": "document.save" }), &workspace),
+            None,
+        )
+        .expect("document.save describe");
+    let version_field = described[0]["fields"]
+        .as_array()
+        .expect("payload fields array")
+        .iter()
+        .find(|field| field["name"] == "version")
+        .expect("document.save advertises a version field");
+    let note = version_field["note"]
+        .as_str()
+        .expect("version field carries a value-semantics note");
+    assert!(
+        note.to_lowercase().contains("numeric"),
+        "version note must warn that numeric input is rejected, got: {note}"
+    );
+}
+
+#[test]
+fn operation_describe_projects_optional_document_save_keep_draft() {
+    let (_root, adapter, workspace) = setup("pub fn answer() -> u32 { 42 }\n");
+    let described = adapter
+        .execute(
+            RpcMethod::OperationDescribe,
+            &direct_params(json!({ "operation": "document.save" }), &workspace),
+            None,
+        )
+        .expect("document.save describe");
+    let keep_draft = described[0]["fields"]
+        .as_array()
+        .expect("payload fields array")
+        .iter()
+        .find(|field| field["name"] == "keepDraft")
+        .expect("document.save keepDraft field");
+
+    assert_eq!(keep_draft["kind"], "Boolean");
+    assert_eq!(keep_draft["required"], false);
+}
+
+#[test]
+fn operation_describe_projects_nested_execution_plan_verification_schema() {
+    let (_root, adapter, workspace) = setup("pub fn answer() -> u32 { 42 }\n");
+    let described = adapter
+        .execute(
+            RpcMethod::OperationDescribe,
+            &direct_params(json!({ "operation": "execution.plan.set" }), &workspace),
+            None,
+        )
+        .expect("execution.plan.set describe");
+    let verification = described[0]["fields"]
+        .as_array()
+        .expect("payload fields array")
+        .iter()
+        .find(|field| field["name"] == "verification")
+        .expect("execution.plan.set verification field");
+
+    assert_eq!(verification["kind"], "Array");
+    assert_eq!(verification["itemKind"], "Object");
+    assert_eq!(
+        verification["items"],
+        json!([
+            {"name":"id","kind":"String","required":true},
+            {"name":"acId","kind":"String","required":true},
+            {"name":"boundary","kind":"String","required":true},
+            {"name":"command","kind":"StringOrArray","required":true},
+            {"name":"expected","kind":"String","required":true}
+        ]),
+        "wire discovery must expose every required verification item field"
+    );
+}
+
+#[test]
 fn operation_filter_and_flow_story_assertions_fail_closed() {
     let (root, adapter, workspace) = setup("pub fn answer() -> u32 { 42 }\n");
     let unknown = adapter

@@ -417,10 +417,26 @@ impl HostCoordinator {
             ));
         }
         let action = self.action(&ack.action_id)?;
+        if !matches!(ack.outcome.as_str(), "accepted" | "rejected") {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "unknown host ACK outcome",
+            ));
+        }
         if action.adapter_id != adapter_id || action.command_seq != ack.command_seq {
             return Err(RuntimeError::new(
                 StableErrorCode::DelegationAttestationFailed,
                 "host ACK does not correlate to adapter/action/command sequence",
+            ));
+        }
+        if action.kind == "create"
+            && ack.outcome == "accepted"
+            && (ack.host_task_id.as_deref().is_none_or(str::is_empty)
+                || ack.session_id.as_deref().is_none_or(str::is_empty))
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "accepted create ACK requires hostTaskId and child sessionId",
             ));
         }
         // One action carries at most one ACK. `recover` enforces this over the
@@ -733,7 +749,7 @@ mod tests {
         };
 
         coordinator
-            .acknowledge("host-a", ack("ack-first", None))
+            .acknowledge("host-a", ack("ack-first", Some("task-1")))
             .expect("the first ack is recorded");
         let error = coordinator
             .acknowledge("host-a", ack("ack-second", Some("task-1")))
@@ -741,7 +757,7 @@ mod tests {
         assert_eq!(error.code(), StableErrorCode::IdempotencyKeyReused);
 
         coordinator
-            .acknowledge("host-a", ack("ack-first", None))
+            .acknowledge("host-a", ack("ack-first", Some("task-1")))
             .expect("replaying the same ack stays idempotent");
         assert_eq!(
             coordinator

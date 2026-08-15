@@ -55,6 +55,8 @@ struct DurableDelegation {
     #[serde(default)]
     workspace_id: String,
     #[serde(default)]
+    work_item_id: String,
+    #[serde(default)]
     root_session_id: String,
     parent_session_id: String,
     parent_delegation_id: Option<String>,
@@ -121,6 +123,14 @@ struct DurableDelegation {
     artifact_receipt: Option<Value>,
     #[serde(default)]
     cleanup_receipt: Option<Value>,
+}
+
+enum ReportAdmission {
+    New {
+        report_digest: String,
+        result_digest: String,
+    },
+    Replay,
 }
 
 /// Derives the *stable* logical Series identity.
@@ -238,6 +248,7 @@ impl DelegationSupervisor {
                 schema_version: "delegation/v1".to_owned(),
                 delegation_id: typed.delegation_id.clone(),
                 workspace_id: typed.workspace_id.clone(),
+                work_item_id: typed.work_item_id.clone().unwrap_or_default(),
                 root_session_id: typed.root_session_id.clone(),
                 parent_session_id: typed.parent_session_id.clone(),
                 parent_delegation_id: typed.parent_delegation_id.clone(),
@@ -281,6 +292,9 @@ impl DelegationSupervisor {
             });
             if record.delegation_id != typed.delegation_id
                 || (!record.workspace_id.is_empty() && record.workspace_id != typed.workspace_id)
+                || typed.work_item_id.as_ref().is_some_and(|work_item_id| {
+                    !record.work_item_id.is_empty() && record.work_item_id != *work_item_id
+                })
                 || (!record.root_session_id.is_empty()
                     && record.root_session_id != typed.root_session_id)
                 || record.parent_session_id != typed.parent_session_id
@@ -306,6 +320,9 @@ impl DelegationSupervisor {
                 ));
             }
             record.workspace_id.clone_from(&typed.workspace_id);
+            if record.work_item_id.is_empty() {
+                record.work_item_id = typed.work_item_id.clone().unwrap_or_default();
+            }
             record.root_session_id.clone_from(&typed.root_session_id);
             record.child_session_id.clone_from(&typed.child_session_id);
             record.action_digest.clone_from(&binding.action_digest);
@@ -315,7 +332,51 @@ impl DelegationSupervisor {
             if matches!(record.status.as_str(), "spawning" | "running") {
                 record.status.clone_from(&typed.status);
             }
+            if record.status == "completed" {
+                self.save(&record)?;
+                self.bindings.release_by_delegation(
+                    &record.delegation_id,
+                    "collected",
+                    self.clock.now_unix_ms(),
+                )?;
+                continue;
+            }
+            let recovered_ack = self.host.ack_for_action(&record.action_id)?;
+            if matches!(record.status.as_str(), "spawning" | "cancelled")
+                && recovered_ack
+                    .as_ref()
+                    .is_some_and(|ack| ack.outcome == "rejected")
+            {
+                if record.status == "spawning" {
+                    record.status = "cancelled".to_owned();
+                }
+                self.save(&record)?;
+                self.bindings.release_by_delegation(
+                    &record.delegation_id,
+                    "cancelled",
+                    self.clock.now_unix_ms(),
+                )?;
+                continue;
+            }
+            let recovered_claim = if record.status == "spawning" && recovered_ack.is_none() {
+                let claim_id = Uuid::new_v4().to_string();
+                record.claim_digest = delegation_claim_digest(
+                    &claim_id,
+                    &record.workspace_id,
+                    &record.delegation_id,
+                    &record.action_id,
+                    record.child_role,
+                    &record.parent_session_id,
+                    record.deadline_unix_ms,
+                )?;
+                Some(claim_id)
+            } else {
+                None
+            };
             self.save(&record)?;
+            if let Some(claim_id) = recovered_claim {
+                self.host.attach_claim(&record.action_id, claim_id)?;
+            }
         }
         Ok(())
     }
@@ -325,6 +386,7 @@ impl DelegationSupervisor {
     pub fn create(
         &self,
         workspace_id: &str,
+        work_item_id: &str,
         parent_session_id: &str,
         parent_role: WireAgentRole,
         parent_grant: &ScopedGrant,
@@ -423,6 +485,7 @@ impl DelegationSupervisor {
             schema_version: "delegation/v1".to_owned(),
             delegation_id: delegation_id.clone(),
             workspace_id: workspace_id.to_owned(),
+            work_item_id: work_item_id.to_owned(),
             root_session_id: root_session_id.clone(),
             parent_session_id: parent_session_id.to_owned(),
             parent_delegation_id: payload.parent_delegation_id,
@@ -477,6 +540,7 @@ impl DelegationSupervisor {
                     delegation: Some(RuntimeDelegationRecord {
                         delegation_id: delegation_id.clone(),
                         workspace_id: workspace_id.to_owned(),
+                        work_item_id: Some(work_item_id.to_owned()),
                         root_session_id: root_session_id.clone(),
                         parent_session_id: parent_session_id.to_owned(),
                         child_session_id: None,
@@ -504,6 +568,27 @@ impl DelegationSupervisor {
                 },
                 committed_at_unix_ms: now_unix_ms,
             })?;
+        if committed.replayed {
+            let current = self.load(&delegation_id)?;
+            if current.workspace_id != workspace_id
+                || current.parent_session_id != parent_session_id
+                || current.action_id != published_action.action_id
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "replayed delegation create differs from durable operational state",
+                ));
+            }
+            if self
+                .host
+                .ack_for_action(&current.action_id)?
+                .is_some_and(|ack| ack.outcome == "rejected")
+            {
+                let projection = self.host_rejected(&delegation_id)?;
+                return Ok((projection, true));
+            }
+            return Ok((project_delegation(&current), true));
+        }
         self.save(&record)?;
         // §9.4 attach point 1: the delegation row is durable, so the binding
         // ledger may now record the spawning binding. Persisting after the
@@ -560,6 +645,18 @@ impl DelegationSupervisor {
                 "delegation claim belongs to another workspace",
             ));
         }
+        let authoritative_work_item = if record.work_item_id.is_empty() {
+            return Err(attestation_error(
+                "legacy delegation lacks a frozen Work Item authority",
+            ));
+        } else {
+            if work_item_id.is_some_and(|supplied| supplied != record.work_item_id) {
+                return Err(attestation_error(
+                    "caller Work Item differs from the delegation's frozen authority",
+                ));
+            }
+            record.work_item_id.as_str()
+        };
         if expires_at_unix_ms > record.deadline_unix_ms {
             return Err(attestation_error(
                 "delegation claim expiry exceeds the delegation deadline",
@@ -697,7 +794,7 @@ impl DelegationSupervisor {
                         parent_session_id: Some(record.parent_session_id.clone()),
                         delegation_id: Some(delegation_id.to_owned()),
                         engaged: false,
-                        current_work_item: work_item_id.map(str::to_owned),
+                        current_work_item: Some(authoritative_work_item.to_owned()),
                         grant: grant.clone(),
                         context_generation: 0,
                         expires_at_unix_ms,
@@ -708,6 +805,7 @@ impl DelegationSupervisor {
                     delegation: Some(RuntimeDelegationRecord {
                         delegation_id: delegation_id.to_owned(),
                         workspace_id: workspace_id.to_owned(),
+                        work_item_id: Some(authoritative_work_item.to_owned()),
                         root_session_id: record.root_session_id.clone(),
                         parent_session_id: record.parent_session_id.clone(),
                         child_session_id: Some(child_session_id.to_owned()),
@@ -757,6 +855,19 @@ impl DelegationSupervisor {
         Ok((projection, committed.replayed))
     }
 
+    /// Checks report identity and envelope invariants without changing delegation state.
+    pub(crate) fn preflight_report(
+        &self,
+        child_session_id: &str,
+        payload: &DelegationReportPayload,
+    ) -> RuntimeResult<bool> {
+        let record = self.load(&payload.delegation_id)?;
+        Ok(matches!(
+            validate_report_admission(&record, child_session_id, payload)?,
+            ReportAdmission::New { .. }
+        ))
+    }
+
     /// Stages a bounded child result without pretending artifact or memory validation succeeded.
     pub fn report(
         &self,
@@ -764,70 +875,49 @@ impl DelegationSupervisor {
         payload: DelegationReportPayload,
     ) -> RuntimeResult<DelegationResult> {
         let mut record = self.load(&payload.delegation_id)?;
-        if record.child_session_id.as_deref() != Some(child_session_id) {
-            return Err(RuntimeError::new(
-                StableErrorCode::RoleOperationForbidden,
-                "only the attested running child may report this delegation",
-            ));
-        }
-        if record.input_revision != payload.input_revision
-            || record.input_fingerprint != payload.input_fingerprint
-        {
-            return Err(RuntimeError::new(
-                StableErrorCode::ChildResultInvalid,
-                "child result input revision or fingerprint is stale",
-            ));
-        }
-        if payload.summary.is_empty() || payload.summary.len() > 8_192 {
-            return Err(RuntimeError::new(
-                StableErrorCode::ChildResultTooLarge,
-                "child result summary must be within 1..=8192 bytes",
-            ));
-        }
-        reject_transcript_fields(&payload.result)?;
-        let canonical = serde_json::to_vec(&payload).map_err(canonical_error)?;
-        if canonical.len() > 65_536 {
-            return Err(RuntimeError::new(
-                StableErrorCode::ChildResultTooLarge,
-                "canonical child result exceeds 65536 bytes",
-            ));
-        }
-        let report_digest = hex::encode(Sha256::digest(&canonical));
-        if record.status != "running" {
-            if matches!(
-                record.status.as_str(),
-                "result-staged" | "artifacts-validated" | "memory-cleaned" | "completed"
-            ) && record.report_digest.as_deref() == Some(report_digest.as_str())
-            {
-                return Ok(project_delegation(&record));
-            }
-            return Err(RuntimeError::new(
-                StableErrorCode::ChildResultInvalid,
-                "delegation is not accepting this child result",
-            ));
-        }
-        let memory_snapshot = payload
-            .result
-            .get("memorySnapshotDigest")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                RuntimeError::new(
-                    StableErrorCode::ChildResultInvalid,
-                    "child result requires a memorySnapshotDigest",
-                )
-            })?;
-        if !is_lower_hex_digest(memory_snapshot) {
-            return Err(RuntimeError::new(
-                StableErrorCode::ChildResultInvalid,
-                "memorySnapshotDigest must be lowercase sha256",
-            ));
-        }
-        let result_bytes = serde_json::to_vec(&payload.result).map_err(canonical_error)?;
-        record.result_digest = Some(hex::encode(Sha256::digest(result_bytes)));
+        let ReportAdmission::New {
+            report_digest,
+            result_digest,
+        } = validate_report_admission(&record, child_session_id, &payload)?
+        else {
+            return Ok(project_delegation(&record));
+        };
+        record.result_digest = Some(result_digest);
         record.summary = Some(payload.summary);
         record.report_digest = Some(report_digest);
         record.result = Some(payload.result);
         record.status = "result-staged".to_owned();
+        self.save(&record)?;
+        Ok(project_delegation(&record))
+    }
+
+    /// Commits a preflighted result and its artifact receipt in one delegation write.
+    pub(crate) fn report_validated(
+        &self,
+        child_session_id: &str,
+        payload: DelegationReportPayload,
+        receipt: Value,
+    ) -> RuntimeResult<DelegationResult> {
+        let mut record = self.load(&payload.delegation_id)?;
+        let ReportAdmission::New {
+            report_digest,
+            result_digest,
+        } = validate_report_admission(&record, child_session_id, &payload)?
+        else {
+            return Ok(project_delegation(&record));
+        };
+        if !artifact_receipt_binds(&receipt, &payload.delegation_id, &result_digest) {
+            return Err(RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "artifact validation receipt does not bind the child result",
+            ));
+        }
+        record.result_digest = Some(result_digest);
+        record.summary = Some(payload.summary);
+        record.report_digest = Some(report_digest);
+        record.result = Some(payload.result);
+        record.artifact_receipt = Some(receipt);
+        record.status = "artifacts-validated".to_owned();
         self.save(&record)?;
         Ok(project_delegation(&record))
     }
@@ -845,12 +935,12 @@ impl DelegationSupervisor {
             return Ok(project_delegation(&record));
         }
         if record.status != "result-staged"
-            || receipt.get("schemaVersion").and_then(Value::as_str)
-                != Some("delegation-artifact-validation/v1")
-            || receipt.get("delegationId").and_then(Value::as_str) != Some(delegation_id)
-            || receipt.get("resultDigest").and_then(Value::as_str)
-                != record.result_digest.as_deref()
-            || !receipt.get("artifacts").is_some_and(Value::is_array)
+            || !record
+                .result_digest
+                .as_deref()
+                .is_some_and(|result_digest| {
+                    artifact_receipt_binds(&receipt, delegation_id, result_digest)
+                })
         {
             return Err(RuntimeError::new(
                 StableErrorCode::ChildResultInvalid,
@@ -903,8 +993,168 @@ impl DelegationSupervisor {
         Ok(project_delegation(&record))
     }
 
+    /// Resolves immutable collect authority before receipt replay or mutation.
+    pub(crate) fn collect_work_item_authority(
+        &self,
+        workspace_id: &str,
+        parent_session_id: &str,
+        delegation_id: &str,
+        requested_work_item_id: Option<&str>,
+    ) -> RuntimeResult<String> {
+        let record = self.load(delegation_id)?;
+        if record.workspace_id != workspace_id || record.parent_session_id != parent_session_id {
+            return Err(attestation_error(
+                "collect caller does not match the delegation's durable authority",
+            ));
+        }
+        if record.work_item_id.is_empty() {
+            return Err(attestation_error(
+                "legacy delegation lacks a frozen Work Item authority",
+            ));
+        }
+        if requested_work_item_id.is_some_and(|requested| requested != record.work_item_id) {
+            return Err(attestation_error(
+                "caller Work Item differs from the delegation's frozen authority",
+            ));
+        }
+        Ok(record.work_item_id)
+    }
+
+    pub(crate) fn delegated_session_work_item_authority(
+        &self,
+        workspace_id: &str,
+        child_session_id: &str,
+        delegation_id: &str,
+        requested_work_item_id: Option<&str>,
+    ) -> RuntimeResult<String> {
+        let value = self
+            .persistence
+            .load_record("delegation/v1", delegation_id)?
+            .ok_or_else(|| {
+                attestation_error("child session does not match a durable delegation")
+            })?;
+        let record: DurableDelegation = serde_json::from_value(value).map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "durable delegation record is malformed",
+            )
+        })?;
+        if record.workspace_id != workspace_id
+            || record.child_session_id.as_deref() != Some(child_session_id)
+            || record.status != "running"
+        {
+            return Err(attestation_error(
+                "child session does not match the delegation's durable authority",
+            ));
+        }
+        if record.work_item_id.is_empty() {
+            return Err(attestation_error(
+                "legacy delegation lacks a frozen Work Item authority",
+            ));
+        }
+        if requested_work_item_id.is_some_and(|requested| requested != record.work_item_id) {
+            return Err(attestation_error(
+                "caller Work Item differs from the delegation's frozen authority",
+            ));
+        }
+        Ok(record.work_item_id)
+    }
+
+    pub(crate) fn is_root_series_boundary(&self, delegation_id: &str) -> RuntimeResult<bool> {
+        let record = self
+            .persistence
+            .load_record("delegation/v1", delegation_id)?
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ChildResultInvalid,
+                    "delegation record is missing",
+                )
+            })?;
+        Ok(is_root_series_boundary(&record))
+    }
+
+    pub(crate) fn collect_prerequisite(
+        &self,
+        workspace_id: &str,
+        requester_session_id: &str,
+        delegation_id: &str,
+        requested_work_item_id: Option<&str>,
+    ) -> RuntimeResult<Option<Value>> {
+        let wire = self
+            .persistence
+            .load_record("delegation/v1", delegation_id)?
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ChildResultInvalid,
+                    "delegation record is missing",
+                )
+            })?;
+        let record: DurableDelegation = serde_json::from_value(wire.clone()).map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "delegation record is malformed",
+            )
+        })?;
+        if record.parent_session_id != requester_session_id || record.status != "memory-cleaned" {
+            return Ok(None);
+        }
+        let work_item_id = self.collect_work_item_authority(
+            workspace_id,
+            requester_session_id,
+            delegation_id,
+            requested_work_item_id,
+        )?;
+        let root_series_boundary = is_root_series_boundary(&wire);
+        let root_project_lease_submit = root_series_boundary.then(|| {
+            json!({
+                "method":"operation.execute",
+                "payload":{
+                    "operation":"lease.acquire",
+                    "payload":{
+                        "owner":{"purpose":"delegation-collect"},
+                        "ttlSeconds":300
+                    }
+                },
+                "requestContext":{
+                    "workspaceId":workspace_id,
+                    "workItemId":work_item_id
+                }
+            })
+        });
+        let mut collect_request_context = json!({
+            "workspaceId":workspace_id,
+            "workItemId":work_item_id
+        });
+        if root_series_boundary {
+            let context = collect_request_context
+                .as_object_mut()
+                .expect("collect request context is an object");
+            context.insert(
+                "leaseIdFrom".to_owned(),
+                json!("rootProjectLeaseSubmit.result.data.leaseId"),
+            );
+            context.insert(
+                "fencingTokenFrom".to_owned(),
+                json!("rootProjectLeaseSubmit.result.data.fencingToken"),
+            );
+        }
+        Ok(Some(json!({
+            "requiresRootProjectLease":root_series_boundary,
+            "rootProjectLeaseRemediation":root_series_boundary.then_some(
+                "call operation.execute with operation=lease.acquire as the Root session before delegation.collect"
+            ),
+            "rootProjectLeaseSubmit":root_project_lease_submit,
+            "collectSubmit":{
+                "method":"delegation.collect",
+                "payload":{"delegationId":delegation_id},
+                "requestContext":collect_request_context
+            }
+        })))
+    }
+
     /// Completes and returns the bounded root projection only after validation and cleanup.
     pub fn collect(&self, parent_session_id: &str, delegation_id: &str) -> RuntimeResult<Value> {
+        let root_series_boundary = self.is_root_series_boundary(delegation_id)?;
         let mut record = self.load(delegation_id)?;
         if record.parent_session_id != parent_session_id {
             return Err(RuntimeError::new(
@@ -913,7 +1163,12 @@ impl DelegationSupervisor {
             ));
         }
         if record.status == "completed" {
-            return Ok(collect_projection(&record));
+            self.bindings.release_by_delegation(
+                delegation_id,
+                "collected",
+                self.clock.now_unix_ms(),
+            )?;
+            return Ok(collect_projection(&record, root_series_boundary));
         }
         if record.status != "memory-cleaned" {
             return Err(RuntimeError::new(
@@ -931,7 +1186,7 @@ impl DelegationSupervisor {
             "collected",
             self.clock.now_unix_ms(),
         )?;
-        Ok(collect_projection(&record))
+        Ok(collect_projection(&record, root_series_boundary))
     }
 
     /// Reads the durable delegation lifecycle projection.
@@ -950,6 +1205,44 @@ impl DelegationSupervisor {
             ));
         }
         Ok(project_delegation(&record))
+    }
+
+    /// Projects a parent-only renewal action when a running delegation is near expiry.
+    pub fn renewal_action(
+        &self,
+        requester_session_id: &str,
+        delegation_id: &str,
+        max_lifetime_ms: u64,
+        now_unix_ms: u64,
+    ) -> RuntimeResult<Option<Value>> {
+        let record = self.load(delegation_id)?;
+        if record.parent_session_id != requester_session_id {
+            return Ok(None);
+        }
+        if record.status != "running" || now_unix_ms >= record.deadline_unix_ms {
+            return Ok(None);
+        }
+        let initial_lifetime = record
+            .deadline_unix_ms
+            .saturating_sub(record.created_at_unix_ms);
+        let threshold_ms = (initial_lifetime / 5).min(120_000);
+        if record.deadline_unix_ms.saturating_sub(now_unix_ms) > threshold_ms {
+            return Ok(None);
+        }
+        let maximum_deadline = record.created_at_unix_ms.saturating_add(max_lifetime_ms);
+        let proposed_deadline = now_unix_ms
+            .saturating_add(initial_lifetime)
+            .min(maximum_deadline);
+        if proposed_deadline <= record.deadline_unix_ms {
+            return Ok(None);
+        }
+        Ok(Some(json!({
+            "kind":"renew-delegation",
+            "delegationId":record.delegation_id,
+            "currentDeadlineUnixMs":record.deadline_unix_ms,
+            "deadlineUnixMs":proposed_deadline,
+            "maximumDeadlineUnixMs":maximum_deadline,
+        })))
     }
 
     /// Reads the delegation's absolute deadline, gated by lineage access control.
@@ -1002,6 +1295,37 @@ impl DelegationSupervisor {
         // §9.4 attach point 3b: the unhappy terminal. Cancellation is terminal
         // for the binding just as collect is, so the binding is released with
         // the `cancelled` reason to keep the audit trail honest.
+        self.bindings.release_by_delegation(
+            delegation_id,
+            "cancelled",
+            self.clock.now_unix_ms(),
+        )?;
+        Ok(project_delegation(&record))
+    }
+
+    /// Terminates a spawning delegation after its bound Host rejects create.
+    pub fn host_rejected(&self, delegation_id: &str) -> RuntimeResult<DelegationResult> {
+        let mut record = self.load(delegation_id)?;
+        if record.status == "cancelled" {
+            // A prior attempt may have persisted the delegation row and failed
+            // before its Series projection. Replaying both writes is required
+            // before an ACK retry may be acknowledged as complete.
+            self.save(&record)?;
+            self.bindings.release_by_delegation(
+                delegation_id,
+                "cancelled",
+                self.clock.now_unix_ms(),
+            )?;
+            return Ok(project_delegation(&record));
+        }
+        if record.status != "spawning" {
+            return Err(RuntimeError::new(
+                StableErrorCode::DelegationAttestationFailed,
+                "Host rejection applies only to a spawning delegation",
+            ));
+        }
+        record.status = "cancelled".to_owned();
+        self.save(&record)?;
         self.bindings.release_by_delegation(
             delegation_id,
             "cancelled",
@@ -1284,8 +1608,27 @@ fn project_delegation(record: &DurableDelegation) -> DelegationResult {
     }
 }
 
-fn collect_projection(record: &DurableDelegation) -> Value {
+fn collect_projection(record: &DurableDelegation, root_series_boundary: bool) -> Value {
     let result = record.result.as_ref().unwrap_or(&Value::Null);
+    let root_project_lease_remediation = root_series_boundary.then_some(
+        "call operation.execute with operation=lease.acquire as the Root session before delegation.collect",
+    );
+    let root_project_lease_submit = root_series_boundary.then(|| {
+        json!({
+            "method":"operation.execute",
+            "operation":"lease.acquire",
+            "arguments":{
+                "owner":{"purpose":"delegation-collect"},
+                "ttlSeconds":300
+            }
+        })
+    });
+    let lease_binding = root_series_boundary.then(|| {
+        json!({
+            "leaseIdFrom":"rootProjectLeaseSubmit.result.data.leaseId",
+            "fencingTokenFrom":"rootProjectLeaseSubmit.result.data.fencingToken"
+        })
+    });
     json!({
         "delegationId": record.delegation_id,
         "status": record.status,
@@ -1299,7 +1642,110 @@ fn collect_projection(record: &DurableDelegation) -> Value {
         "artifacts":record.artifact_receipt.as_ref().and_then(|receipt| receipt.get("artifacts")).cloned().unwrap_or_else(|| json!([])),
         "artifactValidationReceipt":record.artifact_receipt,
         "memoryCleanupReceipt":record.cleanup_receipt,
+        "requiresRootProjectLease":root_series_boundary,
+        "rootProjectLeaseRemediation":root_project_lease_remediation,
+        "rootProjectLeaseSubmit":root_project_lease_submit,
+        "collectSubmit":{
+            "method":"delegation.collect",
+            "arguments":{"delegationId":record.delegation_id},
+            "leaseBinding":lease_binding
+        },
     })
+}
+
+fn is_root_series_boundary(record: &Value) -> bool {
+    record.get("childRole").and_then(Value::as_str) == Some("series")
+        && record.get("parentDelegationId").is_some_and(Value::is_null)
+}
+
+fn validate_report_admission(
+    record: &DurableDelegation,
+    child_session_id: &str,
+    payload: &DelegationReportPayload,
+) -> RuntimeResult<ReportAdmission> {
+    if record.child_session_id.as_deref() != Some(child_session_id) {
+        return Err(RuntimeError::new(
+            StableErrorCode::RoleOperationForbidden,
+            "only the attested running child may report this delegation",
+        ));
+    }
+    if record.input_revision != payload.input_revision {
+        return Err(RuntimeError::new(
+            StableErrorCode::ChildResultInvalid,
+            "child result inputRevision is stale",
+        )
+        .with_remediation(
+            "re-read the delegation's frozen inputRevision from the projection and \
+             retry delegation.report",
+        ));
+    }
+    if record.input_fingerprint != payload.input_fingerprint {
+        return Err(RuntimeError::new(
+            StableErrorCode::ChildResultInvalid,
+            "child result inputFingerprint is stale",
+        )
+        .with_remediation(
+            "delegation.report requires the frozen inputFingerprint (not decisionDigest); \
+             re-read it from the projection and retry",
+        ));
+    }
+    if payload.summary.is_empty() || payload.summary.len() > 8_192 {
+        return Err(RuntimeError::new(
+            StableErrorCode::ChildResultTooLarge,
+            "child result summary must be within 1..=8192 bytes",
+        ));
+    }
+    reject_transcript_fields(&payload.result)?;
+    let canonical = serde_json::to_vec(payload).map_err(canonical_error)?;
+    if canonical.len() > 65_536 {
+        return Err(RuntimeError::new(
+            StableErrorCode::ChildResultTooLarge,
+            "canonical child result exceeds 65536 bytes",
+        ));
+    }
+    let report_digest = hex::encode(Sha256::digest(&canonical));
+    if record.status != "running" {
+        if matches!(
+            record.status.as_str(),
+            "result-staged" | "artifacts-validated" | "memory-cleaned" | "completed"
+        ) && record.report_digest.as_deref() == Some(report_digest.as_str())
+        {
+            return Ok(ReportAdmission::Replay);
+        }
+        return Err(RuntimeError::new(
+            StableErrorCode::ChildResultInvalid,
+            "delegation is not accepting this child result",
+        ));
+    }
+    let memory_snapshot = payload
+        .result
+        .get("memorySnapshotDigest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "child result requires a memorySnapshotDigest",
+            )
+        })?;
+    if !is_lower_hex_digest(memory_snapshot) {
+        return Err(RuntimeError::new(
+            StableErrorCode::ChildResultInvalid,
+            "memorySnapshotDigest must be lowercase sha256",
+        ));
+    }
+    let result_bytes = serde_json::to_vec(&payload.result).map_err(canonical_error)?;
+    Ok(ReportAdmission::New {
+        report_digest,
+        result_digest: hex::encode(Sha256::digest(result_bytes)),
+    })
+}
+
+fn artifact_receipt_binds(receipt: &Value, delegation_id: &str, result_digest: &str) -> bool {
+    receipt.get("schemaVersion").and_then(Value::as_str)
+        == Some("delegation-artifact-validation/v1")
+        && receipt.get("delegationId").and_then(Value::as_str) == Some(delegation_id)
+        && receipt.get("resultDigest").and_then(Value::as_str) == Some(result_digest)
+        && receipt.get("artifacts").is_some_and(Value::is_array)
 }
 
 fn is_lower_hex_digest(value: &str) -> bool {

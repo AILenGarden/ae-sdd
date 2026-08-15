@@ -25,6 +25,7 @@ fn execution_input(status: ExecutionSliceStatus) -> FlowInput {
     .with_execution_cursor(ExecutionCursor::new(
         1,
         ArtifactDigest::digest(b"approved-queue-v1"),
+        ArtifactDigest::digest(b"approved-capsule-v1"),
         status,
     ));
     FlowInput::new(snapshot, environment)
@@ -62,21 +63,36 @@ fn execution_log_replay_digest_is_identical_across_runs_and_orderings() {
                 3,
                 b"approved-v1-running",
                 FlowEventKind::ExecutionQueueApproved {
-                    cursor: ExecutionCursor::new(1, queue_v1, ExecutionSliceStatus::Running),
+                    cursor: ExecutionCursor::new(
+                        1,
+                        queue_v1,
+                        ArtifactDigest::digest(b"capsule-v1"),
+                        ExecutionSliceStatus::Running,
+                    ),
                 },
             ),
             event(
                 5,
                 b"approved-v2-pending",
                 FlowEventKind::ExecutionQueueApproved {
-                    cursor: ExecutionCursor::new(2, queue_v2, ExecutionSliceStatus::Pending),
+                    cursor: ExecutionCursor::new(
+                        2,
+                        queue_v2,
+                        ArtifactDigest::digest(b"capsule-v2"),
+                        ExecutionSliceStatus::Pending,
+                    ),
                 },
             ),
             event(
                 8,
                 b"approved-v2-running",
                 FlowEventKind::ExecutionQueueApproved {
-                    cursor: ExecutionCursor::new(2, queue_v2, ExecutionSliceStatus::Running),
+                    cursor: ExecutionCursor::new(
+                        2,
+                        queue_v2,
+                        ArtifactDigest::digest(b"capsule-v2"),
+                        ExecutionSliceStatus::Running,
+                    ),
                 },
             ),
         ]
@@ -96,6 +112,9 @@ fn execution_log_replay_digest_is_identical_across_runs_and_orderings() {
         &NextAction::ExecuteApprovedSlice {
             active_ordinal: 2,
             queue_digest: queue_v2,
+            capsule_digest: ArtifactDigest::digest(b"capsule-v2"),
+            active_slice_status: ExecutionSliceStatus::Running,
+            next_slice_transition: ExecutionSliceStatus::RedObserved,
         }
     );
 }

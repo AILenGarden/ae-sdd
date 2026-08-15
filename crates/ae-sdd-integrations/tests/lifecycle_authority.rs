@@ -109,6 +109,52 @@ fn flat_route_root_can_plan_its_initial_lifecycle_transition() {
 }
 
 #[test]
+fn route_selected_preflight_uses_the_approved_candidate_before_freeze() {
+    let state = json!({
+        "stateMachineName":"ROUTE-RA-SELECT-001",
+        "entryNode":"ROUTE",
+        "activeStory":"ROUTE-RA-SELECT-001",
+        "revision":6,
+        "phase":"requirement-analyzed",
+        "currentPhase":"requirement-analyzed",
+        "currentStep":"requirement-analyzed",
+        "completedSteps":["initialized"],
+        "pendingOutputs":[],
+        "codingRound":1,
+        "routeCandidate":{
+            "scale":"large",
+            "designRoute":"dr"
+        },
+        "routeApprovalReceipt":{"confirmationId":"route:approved"},
+        "evidenceRefs":[{
+            "evidenceId":"route-flow-evidence",
+            "verificationId":"G-RA-FLOW-VIOLATION",
+            "path":".ae-sdd/evidence/route-flow.json",
+            "digest":"1111111111111111111111111111111111111111111111111111111111111111",
+            "byteLength":1
+        }]
+    });
+
+    let outcome = preflight_lifecycle_confirmation(
+        &state,
+        "ROUTE-RA-SELECT-001",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"route-selected"}),
+        StateRevision::new(6),
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("an approved route candidate supplies pre-freeze route authority");
+
+    assert_eq!(
+        outcome.disposition(),
+        LifecycleAuthorityDisposition::Permitted
+    );
+}
+
+#[test]
 fn flat_route_transition_normalizes_a_missing_current_step() {
     let state = json!({
         "stateMachineName":"ROUTE-10b6bd28",

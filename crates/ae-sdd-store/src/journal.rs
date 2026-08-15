@@ -11,18 +11,33 @@ use crate::{
     UtcTimestamp, model::WireRuntimePayload,
 };
 
-pub const MUTATION_JOURNAL_SCHEMA_VERSION: u32 = 1;
+const LEGACY_MUTATION_JOURNAL_SCHEMA_VERSION: u32 = 1;
+pub const MUTATION_JOURNAL_SCHEMA_VERSION: u32 = 2;
 pub const MAX_MUTATION_TARGETS: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MutationTarget {
-    path: ProjectRelativePath,
-    before_digest: Option<ArtifactDigest>,
-    after_bytes: Vec<u8>,
+pub enum MutationTarget {
+    Write {
+        path: ProjectRelativePath,
+        before_digest: Option<ArtifactDigest>,
+        after_bytes: Vec<u8>,
+    },
+    Delete {
+        path: ProjectRelativePath,
+        expected_before_digest: ArtifactDigest,
+    },
 }
 
 impl MutationTarget {
     pub fn new(
+        path: ProjectRelativePath,
+        before_digest: Option<ArtifactDigest>,
+        after_bytes: Vec<u8>,
+    ) -> Result<Self, StoreError> {
+        Self::write(path, before_digest, after_bytes)
+    }
+
+    pub fn write(
         path: ProjectRelativePath,
         before_digest: Option<ArtifactDigest>,
         after_bytes: Vec<u8>,
@@ -32,37 +47,122 @@ impl MutationTarget {
                 reason: "mutation target must not be empty".into(),
             });
         }
-        Ok(Self {
+        Ok(Self::Write {
             path,
             before_digest,
             after_bytes,
         })
     }
 
+    pub const fn delete(path: ProjectRelativePath, expected_before_digest: ArtifactDigest) -> Self {
+        Self::Delete {
+            path,
+            expected_before_digest,
+        }
+    }
+
     pub const fn path(&self) -> &ProjectRelativePath {
-        &self.path
+        match self {
+            Self::Write { path, .. } | Self::Delete { path, .. } => path,
+        }
     }
 
     pub const fn before_digest(&self) -> Option<ArtifactDigest> {
-        self.before_digest
+        match self {
+            Self::Write { before_digest, .. } => *before_digest,
+            Self::Delete {
+                expected_before_digest,
+                ..
+            } => Some(*expected_before_digest),
+        }
+    }
+
+    pub fn write_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Write { after_bytes, .. } => Some(after_bytes),
+            Self::Delete { .. } => None,
+        }
+    }
+
+    pub const fn is_delete(&self) -> bool {
+        matches!(self, Self::Delete { .. })
     }
 
     pub fn after_bytes(&self) -> &[u8] {
-        &self.after_bytes
+        self.write_bytes().unwrap_or_default()
     }
 
     pub fn after_digest(&self) -> ArtifactDigest {
-        ArtifactDigest::digest(&self.after_bytes)
+        ArtifactDigest::digest(self.after_bytes())
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TargetDescriptor {
-    pub path: ProjectRelativePath,
-    pub before_digest: Option<ArtifactDigest>,
-    pub after_digest: ArtifactDigest,
-    pub byte_length: u64,
-    pub staged_ref: ProjectRelativePath,
+pub enum TargetDescriptor {
+    Write {
+        path: ProjectRelativePath,
+        before_digest: Option<ArtifactDigest>,
+        after_digest: ArtifactDigest,
+        byte_length: u64,
+        staged_ref: ProjectRelativePath,
+    },
+    Delete {
+        path: ProjectRelativePath,
+        expected_before_digest: ArtifactDigest,
+    },
+}
+
+impl TargetDescriptor {
+    pub const fn write(
+        path: ProjectRelativePath,
+        before_digest: Option<ArtifactDigest>,
+        after_digest: ArtifactDigest,
+        byte_length: u64,
+        staged_ref: ProjectRelativePath,
+    ) -> Self {
+        Self::Write {
+            path,
+            before_digest,
+            after_digest,
+            byte_length,
+            staged_ref,
+        }
+    }
+
+    pub const fn delete(path: ProjectRelativePath, expected_before_digest: ArtifactDigest) -> Self {
+        Self::Delete {
+            path,
+            expected_before_digest,
+        }
+    }
+
+    pub const fn path(&self) -> &ProjectRelativePath {
+        match self {
+            Self::Write { path, .. } | Self::Delete { path, .. } => path,
+        }
+    }
+
+    pub const fn before_digest(&self) -> Option<ArtifactDigest> {
+        match self {
+            Self::Write { before_digest, .. } => *before_digest,
+            Self::Delete {
+                expected_before_digest,
+                ..
+            } => Some(*expected_before_digest),
+        }
+    }
+
+    pub const fn write_after(&self) -> Option<(ArtifactDigest, u64, &ProjectRelativePath)> {
+        match self {
+            Self::Write {
+                after_digest,
+                byte_length,
+                staged_ref,
+                ..
+            } => Some((*after_digest, *byte_length, staged_ref)),
+            Self::Delete { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -387,8 +487,37 @@ struct JournalWire {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TargetWire {
+#[serde(untagged)]
+enum TargetWire {
+    Tagged(TaggedTargetWire),
+    LegacyWrite(LegacyWriteTargetWire),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum TaggedTargetWire {
+    Write {
+        path: Box<str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        before_digest: Option<Box<str>>,
+        after_digest: Box<str>,
+        byte_length: u64,
+        staged_ref: Box<str>,
+    },
+    Delete {
+        path: Box<str>,
+        expected_before_digest: Box<str>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyWriteTargetWire {
     path: Box<str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     before_digest: Option<Box<str>>,
@@ -426,9 +555,171 @@ struct ReceiptWire {
     committed_at: Box<str>,
 }
 
+fn target_wire_from_descriptor(
+    schema_version: u32,
+    target: &TargetDescriptor,
+) -> Result<TargetWire, StoreError> {
+    let write_fields = |path: &ProjectRelativePath,
+                        before_digest: Option<ArtifactDigest>,
+                        after_digest: ArtifactDigest,
+                        byte_length: u64,
+                        staged_ref: &ProjectRelativePath| {
+        (
+            path.to_string().into_boxed_str(),
+            before_digest.map(|digest| digest.to_string().into_boxed_str()),
+            after_digest.to_string().into_boxed_str(),
+            byte_length,
+            staged_ref.to_string().into_boxed_str(),
+        )
+    };
+    match (schema_version, target) {
+        (
+            LEGACY_MUTATION_JOURNAL_SCHEMA_VERSION,
+            TargetDescriptor::Write {
+                path,
+                before_digest,
+                after_digest,
+                byte_length,
+                staged_ref,
+            },
+        ) => {
+            let (path, before_digest, after_digest, byte_length, staged_ref) = write_fields(
+                path,
+                *before_digest,
+                *after_digest,
+                *byte_length,
+                staged_ref,
+            );
+            Ok(TargetWire::LegacyWrite(LegacyWriteTargetWire {
+                path,
+                before_digest,
+                after_digest,
+                byte_length,
+                staged_ref,
+            }))
+        }
+        (
+            MUTATION_JOURNAL_SCHEMA_VERSION,
+            TargetDescriptor::Write {
+                path,
+                before_digest,
+                after_digest,
+                byte_length,
+                staged_ref,
+            },
+        ) => {
+            let (path, before_digest, after_digest, byte_length, staged_ref) = write_fields(
+                path,
+                *before_digest,
+                *after_digest,
+                *byte_length,
+                staged_ref,
+            );
+            Ok(TargetWire::Tagged(TaggedTargetWire::Write {
+                path,
+                before_digest,
+                after_digest,
+                byte_length,
+                staged_ref,
+            }))
+        }
+        (
+            MUTATION_JOURNAL_SCHEMA_VERSION,
+            TargetDescriptor::Delete {
+                path,
+                expected_before_digest,
+            },
+        ) => Ok(TargetWire::Tagged(TaggedTargetWire::Delete {
+            path: path.to_string().into_boxed_str(),
+            expected_before_digest: expected_before_digest.to_string().into_boxed_str(),
+        })),
+        (LEGACY_MUTATION_JOURNAL_SCHEMA_VERSION, TargetDescriptor::Delete { .. }) => {
+            Err(StoreError::InvalidJournal {
+                reason: "journal v1 cannot encode delete targets".into(),
+            })
+        }
+        (unsupported, _) => Err(StoreError::InvalidJournal {
+            reason: format!("unsupported schema version {unsupported}").into_boxed_str(),
+        }),
+    }
+}
+
+fn target_descriptor_from_wire(
+    schema_version: u32,
+    target: TargetWire,
+) -> Result<TargetDescriptor, StoreError> {
+    let parse_digest = |value: &str| {
+        ArtifactDigest::from_str(value).map_err(|error| StoreError::InvalidJournal {
+            reason: error.to_string().into_boxed_str(),
+        })
+    };
+    let write_descriptor = |target: LegacyWriteTargetWire| {
+        Ok::<TargetDescriptor, StoreError>(TargetDescriptor::write(
+            ProjectRelativePath::from_str(&target.path)?,
+            target
+                .before_digest
+                .as_deref()
+                .map(&parse_digest)
+                .transpose()?,
+            parse_digest(&target.after_digest)?,
+            target.byte_length,
+            ProjectRelativePath::from_str(&target.staged_ref)?,
+        ))
+    };
+    match (schema_version, target) {
+        (LEGACY_MUTATION_JOURNAL_SCHEMA_VERSION, TargetWire::LegacyWrite(target)) => {
+            write_descriptor(target)
+        }
+        (
+            MUTATION_JOURNAL_SCHEMA_VERSION,
+            TargetWire::Tagged(TaggedTargetWire::Write {
+                path,
+                before_digest,
+                after_digest,
+                byte_length,
+                staged_ref,
+            }),
+        ) => write_descriptor(LegacyWriteTargetWire {
+            path,
+            before_digest,
+            after_digest,
+            byte_length,
+            staged_ref,
+        }),
+        (
+            MUTATION_JOURNAL_SCHEMA_VERSION,
+            TargetWire::Tagged(TaggedTargetWire::Delete {
+                path,
+                expected_before_digest,
+            }),
+        ) => Ok(TargetDescriptor::delete(
+            ProjectRelativePath::from_str(&path)?,
+            parse_digest(&expected_before_digest)?,
+        )),
+        (LEGACY_MUTATION_JOURNAL_SCHEMA_VERSION, TargetWire::Tagged(_)) => {
+            Err(StoreError::InvalidJournal {
+                reason: "journal v1 target must use the legacy write shape".into(),
+            })
+        }
+        (MUTATION_JOURNAL_SCHEMA_VERSION, TargetWire::LegacyWrite(_)) => {
+            Err(StoreError::InvalidJournal {
+                reason: "journal v2 target must declare write or delete kind".into(),
+            })
+        }
+        (unsupported, _) => Err(StoreError::InvalidJournal {
+            reason: format!("unsupported schema version {unsupported}").into_boxed_str(),
+        }),
+    }
+}
+
 impl JournalWire {
     fn from_entry(entry: &MutationJournalEntry) -> Result<Self, StoreError> {
         let payload = WireRuntimePayload::from_payload(&entry.event.payload)?;
+        let target_files = entry
+            .target_files
+            .iter()
+            .map(|target| target_wire_from_descriptor(entry.schema_version, target))
+            .collect::<Result<Vec<_>, StoreError>>()?;
         Ok(Self {
             schema_version: entry.schema_version,
             mutation_id: entry.mutation_id.to_string().into_boxed_str(),
@@ -441,19 +732,7 @@ impl JournalWire {
             revision_before: entry.revision_before.get(),
             revision_after: entry.revision_after.get(),
             fencing_token: entry.fencing_token.get(),
-            target_files: entry
-                .target_files
-                .iter()
-                .map(|target| TargetWire {
-                    path: target.path.to_string().into_boxed_str(),
-                    before_digest: target
-                        .before_digest
-                        .map(|digest| digest.to_string().into_boxed_str()),
-                    after_digest: target.after_digest.to_string().into_boxed_str(),
-                    byte_length: target.byte_length,
-                    staged_ref: target.staged_ref.to_string().into_boxed_str(),
-                })
-                .collect(),
+            target_files,
             event: EventWire {
                 boot_id: entry.event.boot_id.to_string().into_boxed_str(),
                 session_id: entry
@@ -483,7 +762,10 @@ impl JournalWire {
     }
 
     fn into_entry(self) -> Result<MutationJournalEntry, StoreError> {
-        if self.schema_version != MUTATION_JOURNAL_SCHEMA_VERSION {
+        if !matches!(
+            self.schema_version,
+            LEGACY_MUTATION_JOURNAL_SCHEMA_VERSION | MUTATION_JOURNAL_SCHEMA_VERSION
+        ) {
             return Err(StoreError::InvalidJournal {
                 reason: format!("unsupported schema version {}", self.schema_version)
                     .into_boxed_str(),
@@ -492,25 +774,7 @@ impl JournalWire {
         let target_files = self
             .target_files
             .into_iter()
-            .map(|target| {
-                Ok(TargetDescriptor {
-                    path: ProjectRelativePath::from_str(&target.path)?,
-                    before_digest: target
-                        .before_digest
-                        .map(|value| ArtifactDigest::from_str(&value))
-                        .transpose()
-                        .map_err(|error| StoreError::InvalidJournal {
-                            reason: error.to_string().into_boxed_str(),
-                        })?,
-                    after_digest: ArtifactDigest::from_str(&target.after_digest).map_err(
-                        |error| StoreError::InvalidJournal {
-                            reason: error.to_string().into_boxed_str(),
-                        },
-                    )?,
-                    byte_length: target.byte_length,
-                    staged_ref: ProjectRelativePath::from_str(&target.staged_ref)?,
-                })
-            })
+            .map(|target| target_descriptor_from_wire(self.schema_version, target))
             .collect::<Result<Vec<_>, StoreError>>()?;
         if target_files.is_empty() || target_files.len() > MAX_MUTATION_TARGETS {
             return Err(StoreError::InvalidJournal {

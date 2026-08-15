@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 
 use ae_sdd_operations::{
     FieldKind, OPERATION_COUNT, OPERATION_REGISTRY, OperationName, operation_schema_digest,
+    validate_operation_payload,
 };
+use serde_json::{Value, json};
 
 const NAMES: [&str; OPERATION_COUNT] = [
     "document.resolve",
@@ -102,7 +104,7 @@ fn execution_supervisor_operations_have_frozen_preconditions_and_fields() {
     assert!(start.requires_workspace);
     assert!(start.requires_work_item);
     assert!(start.writes);
-    assert!(start.requires_lease);
+    assert!(!start.requires_lease);
     assert!(start.requires_revision);
     assert!(start.requires_idempotency);
     assert!(!start.requires_confirmation);
@@ -123,7 +125,7 @@ fn execution_supervisor_operations_have_frozen_preconditions_and_fields() {
     assert!(record.requires_workspace);
     assert!(record.requires_work_item);
     assert!(record.writes);
-    assert!(record.requires_lease);
+    assert!(!record.requires_lease);
     assert!(record.requires_revision);
     assert!(record.requires_idempotency);
     assert!(!record.requires_confirmation);
@@ -167,4 +169,151 @@ fn verification_plan_wrapper_requires_durable_toolset_authority() {
             ("persist", FieldKind::Boolean, true),
         ]
     );
+}
+
+#[test]
+fn execution_plan_verification_describes_its_nested_item_schema() {
+    let verification = OperationName::ExecutionPlanSet
+        .spec()
+        .fields
+        .iter()
+        .find(|field| field.name == "verification")
+        .expect("execution.plan.set verification field");
+
+    assert_eq!(verification.kind, FieldKind::Array);
+    assert_eq!(verification.item_kind, Some(FieldKind::Object));
+    assert_eq!(
+        verification
+            .items
+            .expect("verification object item fields")
+            .iter()
+            .map(|field| (field.name, field.kind, field.required))
+            .collect::<Vec<_>>(),
+        vec![
+            ("id", FieldKind::String, true),
+            ("acId", FieldKind::String, true),
+            ("boundary", FieldKind::String, true),
+            ("command", FieldKind::StringOrArray, true),
+            ("expected", FieldKind::String, true),
+        ]
+    );
+}
+
+#[test]
+fn execution_plan_verification_rejects_missing_nested_required_fields() {
+    let payload = |verification: Value| {
+        json!({
+            "goal": "Implement the approved slice",
+            "changedPaths": ["src/lib.rs"],
+            "verification": verification,
+        })
+    };
+    let invalid = [
+        (
+            "missing required field",
+            payload(json!([{
+                "id": "V-1",
+                "acId": "AC-1",
+                "command": "cargo test",
+                "expected": "tests pass",
+            }])),
+            "verification[0].boundary",
+        ),
+        (
+            "wrong nested field type",
+            payload(json!([{
+                "id": "V-1",
+                "acId": "AC-1",
+                "boundary": "unit",
+                "command": "cargo test",
+                "expected": false,
+            }])),
+            "verification[0].expected",
+        ),
+        (
+            "unknown nested field",
+            payload(json!([{
+                "id": "V-1",
+                "acId": "AC-1",
+                "boundary": "unit",
+                "command": "cargo test",
+                "expected": "tests pass",
+                "extra": true,
+            }])),
+            "verification[0].extra",
+        ),
+        (
+            "wrong array item type",
+            payload(json!(["not an object"])),
+            "verification[0]",
+        ),
+        (
+            "empty command array",
+            payload(json!([{
+                "id": "V-1",
+                "acId": "AC-1",
+                "boundary": "unit",
+                "command": [],
+                "expected": "tests pass",
+            }])),
+            "verification[0].command",
+        ),
+        (
+            "non-string command array",
+            payload(json!([{
+                "id": "V-1",
+                "acId": "AC-1",
+                "boundary": "unit",
+                "command": [1],
+                "expected": "tests pass",
+            }])),
+            "verification[0].command[0]",
+        ),
+        (
+            "mixed command array",
+            payload(json!([{
+                "id": "V-1",
+                "acId": "AC-1",
+                "boundary": "unit",
+                "command": ["cargo test", false],
+                "expected": "tests pass",
+            }])),
+            "verification[0].command[1]",
+        ),
+        (
+            "empty nested required string",
+            payload(json!([{
+                "id": "",
+                "acId": "AC-1",
+                "boundary": "unit",
+                "command": "cargo test",
+                "expected": "tests pass",
+            }])),
+            "verification[0].id",
+        ),
+    ];
+
+    for (case, payload, expected_path) in invalid {
+        let error = match validate_operation_payload(OperationName::ExecutionPlanSet, &payload) {
+            Ok(()) => panic!("{case} must be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains(expected_path),
+            "{case} must identify {expected_path:?}, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn document_save_describes_optional_keep_draft_boolean() {
+    let keep_draft = OperationName::DocumentSave
+        .spec()
+        .fields
+        .iter()
+        .find(|field| field.name == "keepDraft")
+        .expect("document.save keepDraft field");
+
+    assert_eq!(keep_draft.kind, FieldKind::Boolean);
+    assert!(!keep_draft.required);
 }

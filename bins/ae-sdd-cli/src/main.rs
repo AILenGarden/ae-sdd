@@ -83,8 +83,8 @@ enum TopLevel {
         #[arg(long)]
         manifest: Option<PathBuf>,
         /// End-to-end local IPC timeout.
-        #[arg(long, default_value_t = 250)]
-        timeout_ms: u64,
+        #[arg(long)]
+        timeout_ms: Option<u64>,
     },
     /// Resume an approved execution plan; the daemon owns every business rule.
     ResumeApprovedPlan {
@@ -422,6 +422,7 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             manifest,
             timeout_ms,
         } => {
+            let timeouts = hook_timeouts(timeout_ms);
             // `hook.subagent_start` is a CLI-local translation, not a protocol
             // `RpcMethod` (ROUTE-702d576a Task 2: Plan §Task 2 requires proving
             // the existing `delegation.accept`/`session.open` contracts cannot
@@ -451,11 +452,12 @@ async fn run(arguments: Arguments) -> Result<(), String> {
             let mut request = parsed.request.ok_or_else(|| {
                 "host Hook event could not be converted to a typed request".to_owned()
             })?;
-            let client = client(manifest, ClientKind::Hook, timeout_ms)?;
+            let bootstrap_activation = is_bootstrap_activation(method, &request);
+            let binding_client = client(manifest.clone(), ClientKind::Hook, timeouts.binding_ms)?;
             if parsed.host_input && (parsed.host_identity.is_some() || !host_binding_available()) {
                 // The daemon must exist before a binding can be resolved from it.
                 if recover_runtime {
-                    let _ = ensure_default_runtime(ClientKind::Hook, timeout_ms).await;
+                    let _ = ensure_default_runtime(ClientKind::Hook, timeouts.binding_ms).await;
                 }
                 let Some(identity) = parsed.host_identity.as_ref() else {
                     let reason = format!(
@@ -465,17 +467,16 @@ async fn run(arguments: Arguments) -> Result<(), String> {
                     report_hook_fail_closed(method, &reason);
                     return print_json(&host_fail_closed(method, &reason));
                 };
-                let bootstrap_activation = is_bootstrap_activation(method, &request);
                 let hook_event_id =
                     request.params.idempotency_key.as_deref().ok_or_else(|| {
                         "host Hook event lacks its idempotency identity".to_owned()
                     })?;
                 match bind_host_session(
-                    &client,
+                    &binding_client,
                     identity,
                     hook_event_id,
                     bootstrap_activation,
-                    timeout_ms,
+                    timeouts.binding_ms,
                 )
                 .await
                 {
@@ -495,11 +496,13 @@ async fn run(arguments: Arguments) -> Result<(), String> {
                 offline_capability: request.offline_capability,
                 now_unix_ms: request.now_unix_ms,
             };
+            let invocation_timeout_ms = hook_invocation_timeout(timeouts, bootstrap_activation);
+            let client = client(manifest, ClientKind::Hook, invocation_timeout_ms)?;
             let hook_client = HookClient::new(&client);
             let outcome = if recover_runtime {
                 hook_client
                     .invoke_with_recovery(invocation, || async move {
-                        ensure_default_runtime(ClientKind::Hook, timeout_ms)
+                        ensure_default_runtime(ClientKind::Hook, invocation_timeout_ms)
                             .await
                             .map(|_| ())
                             .map_err(|_| ClientError::DaemonUnavailable)
@@ -819,6 +822,35 @@ const HOST_BINDING_VARIABLES: [&str; 6] = [
 
 /// Default Agent identity for a host that does not name one.
 const DEFAULT_HOOK_AGENT_ID: &str = "host-hook";
+const DEFAULT_HOOK_RPC_TIMEOUT_MS: u64 = 250;
+const DEFAULT_HOOK_BINDING_TIMEOUT_MS: u64 = 2_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HookTimeouts {
+    rpc_ms: u64,
+    binding_ms: u64,
+}
+
+fn hook_timeouts(explicit_timeout_ms: Option<u64>) -> HookTimeouts {
+    explicit_timeout_ms.map_or(
+        HookTimeouts {
+            rpc_ms: DEFAULT_HOOK_RPC_TIMEOUT_MS,
+            binding_ms: DEFAULT_HOOK_BINDING_TIMEOUT_MS,
+        },
+        |timeout_ms| HookTimeouts {
+            rpc_ms: timeout_ms,
+            binding_ms: timeout_ms,
+        },
+    )
+}
+
+const fn hook_invocation_timeout(timeouts: HookTimeouts, bootstrap_activation: bool) -> u64 {
+    if bootstrap_activation {
+        timeouts.binding_ms
+    } else {
+        timeouts.rpc_ms
+    }
+}
 
 /// Binds a trusted typed session for one host Hook event.
 ///
@@ -1539,16 +1571,42 @@ fn empty_params(payload: Value, deadline_ms: u64) -> RequestParams<Value> {
 }
 
 fn read_json_argument<T: serde::de::DeserializeOwned>(argument: &str) -> Result<T, String> {
+    const MAX_JSON_INPUT_BYTES: usize = 1_048_576;
+
     let source = if argument == "-" {
-        let mut source = String::new();
+        let mut bytes = Vec::new();
         io::stdin()
-            .read_to_string(&mut source)
-            .map_err(|error| error.to_string())?;
-        source
+            .take((MAX_JSON_INPUT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("failed to read JSON stdin: {error}"))?;
+        bounded_utf8_json(bytes, MAX_JSON_INPUT_BYTES)?
+    } else if let Some(path) = argument.strip_prefix('@') {
+        if path.is_empty() {
+            return Err("JSON @file path is empty".to_owned());
+        }
+        let metadata = std::fs::metadata(path)
+            .map_err(|error| format!("failed to inspect JSON input file: {error}"))?;
+        if metadata.len() > MAX_JSON_INPUT_BYTES as u64 {
+            return Err("JSON input exceeds the 1048576-byte limit".to_owned());
+        }
+        let bytes = std::fs::read(path)
+            .map_err(|error| format!("failed to read JSON input file: {error}"))?;
+        bounded_utf8_json(bytes, MAX_JSON_INPUT_BYTES)?
     } else {
+        if argument.len() > MAX_JSON_INPUT_BYTES {
+            return Err("JSON input exceeds the 1048576-byte limit".to_owned());
+        }
         argument.to_owned()
     };
     serde_json::from_str(&source).map_err(|error| error.to_string())
+}
+
+fn bounded_utf8_json(bytes: Vec<u8>, maximum: usize) -> Result<String, String> {
+    if bytes.len() > maximum {
+        return Err("JSON input exceeds the 1048576-byte limit".to_owned());
+    }
+    let text = String::from_utf8(bytes).map_err(|_| "JSON input must be valid UTF-8".to_owned())?;
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned())
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<(), String> {
@@ -1582,6 +1640,75 @@ fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn json_input_path(suffix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ae-sdd-json-input-{}-{}-{suffix}",
+            std::process::id(),
+            now_unix_ms()
+        ))
+    }
+
+    #[test]
+    fn json_argument_reads_a_bounded_utf8_file() {
+        let path = json_input_path("valid.json");
+        std::fs::write(&path, br#"{"value":7}"#).expect("fixture writes");
+        let value: Value =
+            read_json_argument(&format!("@{}", path.display())).expect("@file JSON input parses");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(value, json!({"value":7}));
+    }
+
+    #[test]
+    fn json_argument_accepts_a_windows_utf8_bom_file() {
+        let path = json_input_path("utf8-bom.json");
+        let mut bytes = vec![0xef, 0xbb, 0xbf];
+        bytes.extend_from_slice(br#"{"value":7}"#);
+        std::fs::write(&path, bytes).expect("fixture writes");
+        let value: Value = read_json_argument(&format!("@{}", path.display()))
+            .expect("PowerShell UTF-8 BOM JSON input parses");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(value, json!({"value":7}));
+    }
+
+    #[test]
+    fn json_argument_rejects_an_oversized_file() {
+        let path = json_input_path("oversized.json");
+        std::fs::write(&path, vec![b' '; 1_048_577]).expect("fixture writes");
+        let error = read_json_argument::<Value>(&format!("@{}", path.display()))
+            .expect_err("oversized JSON input is rejected");
+        let _ = std::fs::remove_file(&path);
+        assert!(error.contains("1048576"), "bounded diagnostic: {error}");
+    }
+
+    #[test]
+    fn json_argument_rejects_non_utf8_without_echoing_bytes() {
+        let path = json_input_path("invalid-utf8.json");
+        std::fs::write(&path, [0xff, 0xfe, 0xfd]).expect("fixture writes");
+        let error = read_json_argument::<Value>(&format!("@{}", path.display()))
+            .expect_err("non-UTF-8 JSON input is rejected");
+        let _ = std::fs::remove_file(&path);
+        assert!(error.contains("UTF-8"), "typed diagnostic: {error}");
+        assert!(!error.contains("255"), "input bytes must not leak: {error}");
+    }
+
+    #[test]
+    fn default_hook_binding_budget_is_separate_from_the_fast_path() {
+        let defaults = hook_timeouts(None);
+        assert_eq!(defaults.rpc_ms, 250);
+        assert_eq!(defaults.binding_ms, 2_000);
+
+        let explicit = hook_timeouts(Some(700));
+        assert_eq!(explicit.rpc_ms, 700);
+        assert_eq!(explicit.binding_ms, 700);
+    }
+
+    #[test]
+    fn bootstrap_hook_invocation_uses_the_binding_budget() {
+        let defaults = hook_timeouts(None);
+        assert_eq!(hook_invocation_timeout(defaults, false), 250);
+        assert_eq!(hook_invocation_timeout(defaults, true), 2_000);
+    }
 
     #[test]
     fn rpc_can_negotiate_the_host_adapter_client_kind_explicitly() {

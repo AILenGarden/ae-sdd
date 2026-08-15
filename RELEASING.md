@@ -27,8 +27,8 @@ cargo build --workspace --locked --release
 cargo test --workspace --locked --release
 cargo run -p ae-sdd-build --locked --release -- compatibility-audit \
   --manifest tests/fixtures/compatibility/legacy-surface.v1.json \
-  --expected-commands 113 --expected-operations 24 \
-  --expected-gates 36 --expected-scanners 7 \
+  --expected-commands 113 --expected-operations 25 \
+  --expected-gates 36 --expected-scanners 10 \
   --exclude apps/ae-sdd-monitor/**
 cargo run -p ae-sdd-build --locked --release -- verify-release \
   --artifact-dir target/release --exclude apps/ae-sdd-monitor/**

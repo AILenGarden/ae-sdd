@@ -1488,6 +1488,57 @@ fn delegation_receipts_are_bound_before_collect_and_replay_idempotently() {
         .report(&fixture.child_session_id, stale)
         .expect_err("stale child input is rejected");
     assert_eq!(stale.code(), StableErrorCode::ChildResultInvalid);
+    assert!(
+        stale.message().to_lowercase().contains("revision"),
+        "stale inputRevision must be named in the diagnostic (F-045): {}",
+        stale.message()
+    );
+    assert!(
+        !stale.message().to_lowercase().contains("fingerprint"),
+        "stale inputRevision diagnostic must not also mention fingerprint (F-045): {}",
+        stale.message()
+    );
+
+    // F-045: a stale `inputFingerprint` must be diagnosed distinctly from
+    // `inputRevision`, and the remediation must distinguish `inputFingerprint`
+    // from `decisionDigest` so the caller knows which frozen value to re-read.
+    let mut stale_fingerprint = child_report(
+        &fixture,
+        "stale fingerprint",
+        json!({"memorySnapshotDigest":"a".repeat(64)}),
+    );
+    stale_fingerprint.input_fingerprint = "0".repeat(64);
+    let stale_fingerprint = supervisor
+        .report(&fixture.child_session_id, stale_fingerprint)
+        .expect_err("stale child input fingerprint is rejected");
+    assert_eq!(
+        stale_fingerprint.code(),
+        StableErrorCode::ChildResultInvalid
+    );
+    assert!(
+        stale_fingerprint
+            .message()
+            .to_lowercase()
+            .contains("fingerprint"),
+        "stale inputFingerprint must be named in the diagnostic (F-045): {}",
+        stale_fingerprint.message()
+    );
+    assert!(
+        !stale_fingerprint
+            .message()
+            .to_lowercase()
+            .contains("revision"),
+        "stale inputFingerprint diagnostic must not also mention revision (F-045): {}",
+        stale_fingerprint.message()
+    );
+    let fingerprint_remediation = stale_fingerprint.remediation().expect(
+        "stale inputFingerprint must carry remediation distinguishing it from decisionDigest (F-045)",
+    );
+    assert!(
+        fingerprint_remediation.contains("decisionDigest")
+            || fingerprint_remediation.contains("inputFingerprint"),
+        "remediation must distinguish inputFingerprint from decisionDigest (F-045): {fingerprint_remediation}"
+    );
 
     for summary in [String::new(), "x".repeat(8_193)] {
         let error = supervisor

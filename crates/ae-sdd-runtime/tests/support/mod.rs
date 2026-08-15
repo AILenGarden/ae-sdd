@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex};
 use ae_sdd_domain::{AgentRole, BootId, EventStoreId};
 use ae_sdd_protocol::{
     ClientKind, HandshakeRequest, JsonRpcRequest, PROTOCOL_RANGE_V1, PROTOCOL_VERSION_V1,
-    RequestParams, RpcMethod, SecretString, WorkspaceMode,
+    RequestParams, RpcMethod, SecretString, StableErrorCode, WorkspaceMode,
 };
 use ae_sdd_runtime::{
     BusinessOperationPort, BusinessWorkspace, ClockPort, ConnectionState, ContextProjectionInput,
-    MemoryPersistence, PersistencePort, ResolvedWorkspace, RuntimeConfig, RuntimeResult,
-    RuntimeService, SessionResult, WorkspaceParityEvidence, WorkspaceResolverPort, WorkspaceResult,
+    MemoryPersistence, PersistencePort, ResolvedWorkspace, RuntimeConfig, RuntimeError,
+    RuntimeResult, RuntimeService, SessionResult, WorkspaceParityEvidence, WorkspaceResolverPort,
+    WorkspaceResult,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -51,6 +52,7 @@ pub struct TestBusiness {
     pub operation_delay_ms: AtomicU64,
     pub projection_bytes: AtomicUsize,
     pub pass_guard: AtomicUsize,
+    pub artifact_validation_calls: AtomicUsize,
     pub series_completed_calls: AtomicUsize,
     flow_next_result: Mutex<Option<Value>>,
     persistence: Mutex<Option<Arc<MemoryPersistence>>>,
@@ -63,6 +65,7 @@ impl Default for TestBusiness {
             operation_delay_ms: AtomicU64::new(0),
             projection_bytes: AtomicUsize::new(0),
             pass_guard: AtomicUsize::new(0),
+            artifact_validation_calls: AtomicUsize::new(0),
             series_completed_calls: AtomicUsize::new(0),
             flow_next_result: Mutex::new(None),
             persistence: Mutex::new(None),
@@ -187,6 +190,18 @@ impl BusinessOperationPort for TestBusiness {
         delegation_id: &str,
         result: &Value,
     ) -> RuntimeResult<Value> {
+        self.artifact_validation_calls
+            .fetch_add(1, Ordering::AcqRel);
+        if result
+            .get("deliverables")
+            .and_then(Value::as_array)
+            .is_some_and(|deliverables| deliverables.iter().any(|item| !item.is_object()))
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::ChildResultInvalid,
+                "child deliverable must be an object",
+            ));
+        }
         Ok(json!({
             "schemaVersion":"delegation-artifact-validation/v1",
             "delegationId":delegation_id,

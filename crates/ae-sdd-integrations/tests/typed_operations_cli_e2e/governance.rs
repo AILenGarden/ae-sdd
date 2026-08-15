@@ -70,7 +70,13 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
     let plan_payload = json!({
         "goal":"  Implement governed operations  ",
         "changedPaths":["src\\lib.rs", "src/lib.rs", "  docs/story.md  "],
-        "verification":[{"id":"V-1","acId":"AC-1","command":"cargo test"}],
+        "verification":[{
+            "id":"V-1",
+            "acId":"AC-1",
+            "boundary":"unit",
+            "command":"cargo test",
+            "expected":"tests pass"
+        }],
         "risks":["  compatibility  ", "", "compatibility"],
         "sourceReads":["tools\\lib\\state.py", "tools/lib/state.py", "  "],
     });
@@ -92,6 +98,12 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
     assert_eq!(planned["data"]["approved"], false);
     assert!(planned["data"]["approvedAt"].is_null());
     assert!(planned["data"]["approvedBy"].is_null());
+    let plan_confirmation_binding = format!(
+        "plan:{}",
+        planned["receiptDigest"]
+            .as_str()
+            .expect("execution.plan.set receipt digest")
+    );
     let plan_replay = success(&raw_call(
         &harness.runtime,
         &mut cli,
@@ -107,7 +119,13 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
         json!({
             "goal":"different",
             "changedPaths":["src/lib.rs"],
-            "verification":[{"id":"V-1"}],
+            "verification":[{
+                "id":"V-1",
+                "acId":"AC-1",
+                "boundary":"unit",
+                "command":"cargo test",
+                "expected":"tests pass"
+            }],
         }),
     );
     bind_write(&mut conflicting, lease_id, fencing, 1, "set-governed-plan");
@@ -119,6 +137,66 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
     );
     assert_eq!(stable_error(&conflict), "IDEMPOTENCY_KEY_REUSED");
 
+    let mut missing_confirmation = operation_params(
+        &identity,
+        "execution.plan.approve",
+        json!({"approvedBy":"payload-forgery"}),
+    );
+    bind_write(
+        &mut missing_confirmation,
+        lease_id,
+        fencing,
+        2,
+        "approve-governed-plan-without-confirmation",
+    );
+    let confirmation_required = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        missing_confirmation,
+    );
+    assert_eq!(
+        stable_error(&confirmation_required),
+        "CONFIRMATION_REQUIRED",
+        "{confirmation_required}"
+    );
+
+    let before_wrong_binding =
+        fs::read(&harness.state_path).expect("state before wrong plan confirmation");
+    let mut wrong_binding = operation_params(
+        &identity,
+        "execution.plan.approve",
+        json!({"approvedBy":"payload-forgery"}),
+    );
+    bind_write(
+        &mut wrong_binding,
+        lease_id,
+        fencing,
+        2,
+        "approve-governed-plan",
+    );
+    wrong_binding.confirmation = Some(confirmation_ref(
+        &format!("plan:{}", "0".repeat(64)),
+        "user:trusted",
+        "2026-07-23T08:01:00Z",
+    ));
+    let wrong_binding_response = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        wrong_binding,
+    );
+    assert_eq!(
+        stable_error(&wrong_binding_response),
+        "OPERATION_SCHEMA_INVALID",
+        "{wrong_binding_response}"
+    );
+    assert_eq!(
+        fs::read(&harness.state_path).expect("state after wrong plan confirmation"),
+        before_wrong_binding,
+        "rejected plan approval must not mutate state bytes"
+    );
+
     let mut approve = operation_params(
         &identity,
         "execution.plan.approve",
@@ -126,21 +204,100 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
     );
     bind_write(&mut approve, lease_id, fencing, 2, "approve-governed-plan");
     approve.confirmation = Some(confirmation_ref(
-        "approve-governed-plan-confirmation",
+        &plan_confirmation_binding,
         "user:trusted",
         "2026-07-23T08:01:00Z",
     ));
-    let approved = success(&call(
+    let approve_wire = serde_json::to_value(&approve).expect("approve plan wire");
+    let approved = success(&raw_call(
         &harness.runtime,
         &mut cli,
         RpcMethod::OperationExecute,
-        approve,
+        approve_wire.clone(),
     ));
     assert_eq!(approved["revisionAfter"], 3);
     assert_eq!(approved["data"]["approved"], true);
     assert_eq!(approved["data"]["approvedBy"], "user:trusted");
     assert_eq!(approved["data"]["approvedAt"], "2026-07-23T08:01:00Z");
     assert!(approved["data"].get("approval").is_none());
+    let approved_replay = success(&raw_call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        approve_wire,
+    ));
+    assert_eq!(approved_replay["changed"], false);
+    assert_eq!(approved_replay["data"], approved["data"]);
+
+    let mut confirmation_conflict = operation_params(
+        &identity,
+        "execution.plan.approve",
+        json!({"approvedBy":"payload-forgery"}),
+    );
+    bind_write(
+        &mut confirmation_conflict,
+        lease_id,
+        fencing,
+        2,
+        "approve-governed-plan",
+    );
+    confirmation_conflict.confirmation = Some(confirmation_ref(
+        "plan:different-confirmation",
+        "user:trusted",
+        "2026-07-23T08:02:00Z",
+    ));
+    let confirmation_conflict_response = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        confirmation_conflict,
+    );
+    assert_eq!(
+        stable_error(&confirmation_conflict_response),
+        "IDEMPOTENCY_KEY_REUSED",
+        "{confirmation_conflict_response}"
+    );
+
+    let before_reapproval =
+        fs::read(&harness.state_path).expect("state before repeated plan approval");
+    let mut reapproval = operation_params(
+        &identity,
+        "execution.plan.approve",
+        json!({"approvedBy":"payload-forgery"}),
+    );
+    bind_write(
+        &mut reapproval,
+        lease_id,
+        fencing,
+        3,
+        "reapprove-governed-plan",
+    );
+    reapproval.confirmation = Some(confirmation_ref(
+        &format!(
+            "plan:{}",
+            approved["receiptDigest"]
+                .as_str()
+                .expect("approved execution plan receipt digest")
+        ),
+        "user:other",
+        "2026-07-23T08:03:00Z",
+    ));
+    let reapproval_response = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        reapproval,
+    );
+    assert_eq!(
+        stable_error(&reapproval_response),
+        "OPERATION_SCHEMA_INVALID",
+        "{reapproval_response}"
+    );
+    assert_eq!(
+        fs::read(&harness.state_path).expect("state after repeated plan approval"),
+        before_reapproval,
+        "an approved execution plan must not be approved again"
+    );
 
     assert_success(&invoke(
         &harness,
@@ -305,6 +462,75 @@ fn governance_mutations_are_normalized_trusted_and_retry_safe() {
 }
 
 #[test]
+fn execution_plan_rejects_incomplete_verification_item_without_mutation() {
+    let harness = Harness::new_realtime();
+    let mut cli = harness.connection(ClientKind::Cli);
+    let workspace = register_and_cut_over(&harness, &mut cli);
+    let root = open_root(
+        &harness,
+        &mut cli,
+        &workspace,
+        "nested-verification-root",
+        "nested-verification-agent",
+    );
+    let identity = identity(&workspace, &root, "nested-verification-agent");
+    let acquired = success(&invoke(
+        &harness,
+        &mut cli,
+        &identity,
+        "lease acquire",
+        args(&[
+            "--owner",
+            "{\"role\":\"root\"}",
+            "--ttl-seconds",
+            "300",
+            "--idempotency-key",
+            "nested-verification-lease",
+        ]),
+    ));
+    let lease_id = acquired["data"]["leaseId"].as_str().expect("lease id");
+    let fencing = acquired["data"]["fencingToken"]
+        .as_u64()
+        .expect("fencing token");
+    let before = fs::read(&harness.state_path).expect("state before rejected plan");
+
+    let mut request = operation_params(
+        &identity,
+        "execution.plan.set",
+        json!({
+            "goal":"reject incomplete verification",
+            "changedPaths":["src/lib.rs"],
+            "verification":[{
+                "id":"V-1",
+                "acId":"AC-1",
+                "command":"cargo test",
+                "expected":"tests pass"
+            }]
+        }),
+    );
+    bind_write(
+        &mut request,
+        lease_id,
+        fencing,
+        1,
+        "reject-incomplete-verification",
+    );
+    let rejected = call(
+        &harness.runtime,
+        &mut cli,
+        RpcMethod::OperationExecute,
+        request,
+    );
+
+    assert_eq!(stable_error(&rejected), "OPERATION_SCHEMA_INVALID");
+    assert_eq!(
+        fs::read(&harness.state_path).expect("state after rejected plan"),
+        before,
+        "nested schema rejection must happen before mutation"
+    );
+}
+
+#[test]
 fn state_transition_and_workitem_completion_require_durable_root_intent() {
     pause_transition_is_committed_and_replayed();
     completed_transition_rechecks_all_required_gates();
@@ -338,40 +564,11 @@ fn pause_transition_is_committed_and_replayed() {
         1,
         "pause-transition-commit",
     );
-    let confirmation_required = call(
-        &harness.runtime,
-        &mut cli,
-        RpcMethod::OperationExecute,
-        pending,
-    );
-    assert_eq!(
-        stable_error(&confirmation_required),
-        "CONFIRMATION_REQUIRED",
-        "{confirmation_required}"
-    );
-    let binding = confirmation_required["error"]["data"]["remediation"]
-        .as_str()
-        .and_then(|value| value.split_whitespace().last())
-        .expect("pause remediation carries the engine binding")
-        .to_owned();
-    let mut transition = operation_params(
-        &identity,
-        "state.transition",
-        json!({"targetPhase":"paused"}),
-    );
-    bind_write(
-        &mut transition,
-        &lease_id,
-        fencing,
-        1,
-        "pause-transition-commit",
-    );
-    transition.confirmation = Some(confirmation_ref(
-        &binding,
-        "user:trusted",
-        "2026-07-23T08:02:00Z",
-    ));
-    let wire = serde_json::to_value(&transition).expect("transition wire");
+    // `state.transition` is registry-declared `requiresConfirmation=false`.
+    // Pause is therefore authorized by the daemon-committed Flow intent plus
+    // lease/revision/idempotency; completion and route approval retain their
+    // own explicit confirmation contracts.
+    let wire = serde_json::to_value(&pending).expect("transition wire");
     let committed = success(&raw_call(
         &harness.runtime,
         &mut cli,
@@ -406,7 +603,13 @@ fn completed_transition_rechecks_all_required_gates() {
     state["executionPlan"] = json!({
         "goal":"complete",
         "changedPaths":["src/lib.rs"],
-        "verification":[{"id":"V-1","acId":"AC-1"}],
+        "verification":[{
+            "id":"V-1",
+            "acId":"AC-1",
+            "boundary":"unit",
+            "command":"cargo test",
+            "expected":"tests pass"
+        }],
         "sourceReads":["ae-sdd-doc/RA/x.md","ae-sdd-doc/DR/x.md","ae-sdd-doc/Story/x.md"],
         "approved":true,
     });

@@ -269,12 +269,12 @@ Code Review 结论：{STORY-ID}
 |--------|------|---------|
 | Story ID / 标题 | Story 元信息 | — |
 | 验收标准 AC | Story §AC 章节 | AC_ID + 描述 |
-| 接口契约 | Story §接口契约-SPI / §接口契约-REST | URL / 方法 / Request / Response / 错误码 |
+| 接口契约 | Story §接口契约（先按新增 / 复用与既有分组，组内使用 SPI-N / REST-N） | URL / 方法 / Request / Response / 错误码 |
 | 数据模型 | Story §数据模型 | 表名 / 字段 / 类型 / 索引 |
 | 异常流程 | Story §异常流程 | 错误码 / 异常路径 |
 | 主流程步骤 | Story §主流程 | 业务步骤 |
 | 实现任务映射 | Story §Task 列表 | Task_ID / 名称 / 涉及工程层 |
-| 前端契约 | Story §接口契约-REST（①bis 6 维度，v3.10.9 起归 REST 章节） | URL / 错误码 / 边界场景（①bis 已审过） |
+| 前端契约 | Story §接口契约中的对应 REST-N（①bis 6 维度） | URL / 错误码 / 边界场景（①bis 已审过） |
 
 ### 1.2 提取统一版 CodePlan 信息
 

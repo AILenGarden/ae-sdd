@@ -11,7 +11,12 @@ use ae_sdd_flow::{
 use support::{event, event_store};
 
 fn cursor(ordinal: u32, digest: ArtifactDigest, status: ExecutionSliceStatus) -> ExecutionCursor {
-    ExecutionCursor::new(ordinal, digest, status)
+    ExecutionCursor::new(
+        ordinal,
+        digest,
+        ArtifactDigest::digest(b"approved-capsule-v1"),
+        status,
+    )
 }
 
 fn execution_input(phase: ProcessPhase, cursor: ExecutionCursor) -> FlowInput {
@@ -40,6 +45,9 @@ fn coding_with_an_approved_queue_and_pending_slice_executes_the_approved_slice()
         &NextAction::ExecuteApprovedSlice {
             active_ordinal: 2,
             queue_digest,
+            capsule_digest: ArtifactDigest::digest(b"approved-capsule-v1"),
+            active_slice_status: ExecutionSliceStatus::Pending,
+            next_slice_transition: ExecutionSliceStatus::Running,
         }
     );
 }
@@ -99,6 +107,9 @@ fn reapproving_the_same_queue_digest_keeps_executing_the_active_slice() {
         &NextAction::ExecuteApprovedSlice {
             active_ordinal: 2,
             queue_digest,
+            capsule_digest: ArtifactDigest::digest(b"approved-capsule-v1"),
+            active_slice_status: ExecutionSliceStatus::Running,
+            next_slice_transition: ExecutionSliceStatus::RedObserved,
         }
     );
 }
@@ -106,12 +117,27 @@ fn reapproving_the_same_queue_digest_keeps_executing_the_active_slice() {
 #[test]
 fn an_open_mid_slice_status_keeps_executing_the_approved_slice() {
     let queue_digest = ArtifactDigest::digest(b"approved-queue-v1");
-    for status in [
-        ExecutionSliceStatus::Running,
-        ExecutionSliceStatus::RedObserved,
-        ExecutionSliceStatus::Patched,
-        ExecutionSliceStatus::FocusedGreen,
-        ExecutionSliceStatus::EvidenceBound,
+    for (status, next_status) in [
+        (
+            ExecutionSliceStatus::Running,
+            ExecutionSliceStatus::RedObserved,
+        ),
+        (
+            ExecutionSliceStatus::RedObserved,
+            ExecutionSliceStatus::Patched,
+        ),
+        (
+            ExecutionSliceStatus::Patched,
+            ExecutionSliceStatus::FocusedGreen,
+        ),
+        (
+            ExecutionSliceStatus::FocusedGreen,
+            ExecutionSliceStatus::EvidenceBound,
+        ),
+        (
+            ExecutionSliceStatus::EvidenceBound,
+            ExecutionSliceStatus::Completed,
+        ),
     ] {
         let input = execution_input(ProcessPhase::Coding, cursor(1, queue_digest, status));
         let decision = FlowRuntime::start(input);
@@ -120,6 +146,9 @@ fn an_open_mid_slice_status_keeps_executing_the_approved_slice() {
             &NextAction::ExecuteApprovedSlice {
                 active_ordinal: 1,
                 queue_digest,
+                capsule_digest: ArtifactDigest::digest(b"approved-capsule-v1"),
+                active_slice_status: status,
+                next_slice_transition: next_status,
             },
             "open status {status:?} must keep executing",
         );

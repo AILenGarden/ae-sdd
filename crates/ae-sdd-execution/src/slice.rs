@@ -18,6 +18,7 @@
 //! filesystem, a clock, randomness or any global state.
 
 use ae_sdd_contracts::execution_runtime::ExecutionSliceStatus;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ExecutionSliceTransitionError;
 
@@ -28,7 +29,8 @@ use crate::error::ExecutionSliceTransitionError;
 /// [`ExecutionSliceEvent::RefactorGreen`].  A slice whose refactor never
 /// started stays `Idle` and may bind evidence directly, keeping the
 /// pre-refactor lifecycle backward compatible.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RefactorCycleV1 {
     /// No refactor is open: either none started or the last one closed with
     /// its re-observed focused GREEN.

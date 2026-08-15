@@ -7,8 +7,10 @@ use serde_json::Value;
 
 use crate::{
     ContextProjectionInput, DurableEvent, ExecutionCheckpointRecord, ExecutionCheckpointScope,
-    IdempotencyReceipt, RuntimeError, RuntimeIdentityKind, RuntimeIdentitySnapshot,
-    RuntimeIdentityTransition, RuntimeJobRecord, RuntimeJobTransition, RuntimeResult,
+    ExecutionResourceLeaseOutcomeV1, ExecutionResourceLeaseRecordV1,
+    ExecutionResourceLeaseRequestV1, IdempotencyReceipt, PreparedExecutionHookV1, RuntimeError,
+    RuntimeIdentityKind, RuntimeIdentitySnapshot, RuntimeIdentityTransition, RuntimeJobRecord,
+    RuntimeJobTransition, RuntimeResult,
 };
 
 /// Clock used for deadlines, TTL, and deterministic tests.
@@ -99,6 +101,14 @@ pub trait PersistencePort: Send + Sync {
         event: DurableEvent,
         receipt: IdempotencyReceipt,
     ) -> RuntimeResult<(DurableEvent, IdempotencyReceipt)>;
+    /// Atomically commits one supervised execution event, its idempotency
+    /// receipt, and the per-session prepared Hook barrier record.
+    fn commit_prepared_execution_hook(
+        &self,
+        event: DurableEvent,
+        receipt: IdempotencyReceipt,
+        record: PreparedExecutionHookV1,
+    ) -> RuntimeResult<(DurableEvent, IdempotencyReceipt, PreparedExecutionHookV1)>;
     /// Reads an ordered bounded event page after a cursor.
     fn events_after(&self, after: u64, limit: usize) -> RuntimeResult<Vec<DurableEvent>>;
     /// Oldest available event sequence, or zero for an empty store.
@@ -113,6 +123,21 @@ pub trait PersistencePort: Send + Sync {
     fn list_records(&self, namespace: &str) -> RuntimeResult<Vec<(String, Value)>>;
     /// Atomically upserts one durable versioned aggregate projection.
     fn store_record(&self, namespace: &str, key: &str, value: &Value) -> RuntimeResult<()>;
+    /// Deletes one rebuildable runtime projection. Missing records are a
+    /// successful no-op.
+    fn delete_record(&self, namespace: &str, key: &str) -> RuntimeResult<()>;
+    /// Atomically acquires or re-enters one durable execution resource lease.
+    fn acquire_execution_resource_lease(
+        &self,
+        request: &ExecutionResourceLeaseRequestV1,
+    ) -> RuntimeResult<ExecutionResourceLeaseOutcomeV1>;
+    /// Releases a durable lease only when boot and session still match.
+    fn release_execution_resource_lease(
+        &self,
+        resource: &str,
+        boot_id: &str,
+        session_id: &str,
+    ) -> RuntimeResult<()>;
     /// Atomically commits a typed identity bundle and its durable receipt.
     fn commit_identity_bundle(
         &self,
@@ -323,6 +348,20 @@ impl BusinessOperationPort for RejectingBusinessPort {
 pub struct MemoryPersistence {
     event_store_id: EventStoreId,
     inner: Mutex<MemoryState>,
+    commit_failure_plan: Mutex<CommitFailurePlan>,
+    record_store_failure: Mutex<Option<RecordStoreFailure>>,
+}
+
+#[derive(Debug, Default)]
+struct CommitFailurePlan {
+    calls: usize,
+    fail_at: Option<usize>,
+}
+
+#[derive(Debug)]
+struct RecordStoreFailure {
+    namespace: String,
+    remaining_calls: usize,
 }
 
 #[derive(Debug, Default)]
@@ -335,6 +374,7 @@ struct MemoryState {
     jobs: BTreeMap<String, RuntimeJobRecord>,
     job_submissions: BTreeMap<(String, String), String>,
     execution_checkpoints: BTreeMap<(String, String, String), ExecutionCheckpointRecord>,
+    execution_resource_leases: BTreeMap<String, ExecutionResourceLeaseRecordV1>,
 }
 
 impl MemoryPersistence {
@@ -344,7 +384,32 @@ impl MemoryPersistence {
         Self {
             event_store_id,
             inner: Mutex::new(MemoryState::default()),
+            commit_failure_plan: Mutex::new(CommitFailurePlan::default()),
+            record_store_failure: Mutex::new(None),
         }
+    }
+
+    /// Injects one deterministic failure into a future event+receipt commit.
+    ///
+    /// This is a test seam for crash-consistency contracts; production SQLite
+    /// persistence has its own transaction fault tests.
+    pub fn fail_commit_event_and_receipt_after(&self, additional_calls: usize) {
+        let mut plan = self
+            .commit_failure_plan
+            .lock()
+            .expect("commit failure plan lock");
+        plan.fail_at = Some(plan.calls.saturating_add(additional_calls.max(1)));
+    }
+
+    /// Injects one deterministic failure into a future record write for a namespace.
+    pub fn fail_store_record_after(&self, namespace: &str, additional_calls: usize) {
+        *self
+            .record_store_failure
+            .lock()
+            .expect("record failure plan lock") = Some(RecordStoreFailure {
+            namespace: namespace.to_owned(),
+            remaining_calls: additional_calls.max(1),
+        });
     }
 
     fn lock(&self) -> RuntimeResult<std::sync::MutexGuard<'_, MemoryState>> {
@@ -354,6 +419,20 @@ impl MemoryPersistence {
                 "runtime metadata lock is poisoned",
             )
         })
+    }
+
+    fn consume_commit_failure(&self) -> bool {
+        let mut plan = self
+            .commit_failure_plan
+            .lock()
+            .expect("commit failure plan lock");
+        plan.calls = plan.calls.saturating_add(1);
+        if plan.fail_at == Some(plan.calls) {
+            plan.fail_at = None;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -393,6 +472,12 @@ impl PersistencePort for MemoryPersistence {
         mut event: DurableEvent,
         mut receipt: IdempotencyReceipt,
     ) -> RuntimeResult<(DurableEvent, IdempotencyReceipt)> {
+        if self.consume_commit_failure() {
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "injected event+receipt persistence failure",
+            ));
+        }
         let mut state = self.lock()?;
         let key = (receipt.scope.clone(), receipt.key.clone());
         if let Some(existing) = state.receipts.get(&key) {
@@ -431,6 +516,109 @@ impl PersistencePort for MemoryPersistence {
         state.events.push(event.clone());
         state.receipts.insert(key, receipt.clone());
         Ok((event, receipt))
+    }
+
+    fn commit_prepared_execution_hook(
+        &self,
+        mut event: DurableEvent,
+        mut receipt: IdempotencyReceipt,
+        record: PreparedExecutionHookV1,
+    ) -> RuntimeResult<(DurableEvent, IdempotencyReceipt, PreparedExecutionHookV1)> {
+        if self.consume_commit_failure() {
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "injected prepared execution persistence failure",
+            ));
+        }
+        let mut state = self.lock()?;
+        let record_key = (
+            "prepared-execution-hook/v1".to_owned(),
+            record.session_id.clone(),
+        );
+        if let Some(existing_value) = state.records.get(&record_key) {
+            let existing: PreparedExecutionHookV1 = serde_json::from_value(existing_value.clone())
+                .map_err(|_| {
+                    RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "prepared execution Hook record is malformed",
+                    )
+                })?;
+            if !existing.completed
+                && (existing.hook_event_id != record.hook_event_id
+                    || existing.request_digest != record.request_digest)
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "another execution Hook transition is still pending for this session",
+                ));
+            }
+            if !existing.completed {
+                let existing_receipt = state
+                    .receipts
+                    .get(&(receipt.scope.clone(), receipt.key.clone()))
+                    .cloned()
+                    .ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::ExternalStateConflict,
+                            "prepared execution Hook record lacks its receipt",
+                        )
+                    })?;
+                if existing_receipt.request_digest != receipt.request_digest {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "prepared execution Hook receipt conflicts with its record",
+                    ));
+                }
+                let existing_event = state
+                    .events
+                    .iter()
+                    .find(|item| item.event_seq == existing_receipt.event_seq)
+                    .cloned()
+                    .ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::ExternalStateConflict,
+                            "prepared execution Hook receipt lacks its event",
+                        )
+                    })?;
+                return Ok((existing_event, existing_receipt, existing));
+            }
+        }
+        let receipt_key = (receipt.scope.clone(), receipt.key.clone());
+        if let Some(existing) = state.receipts.get(&receipt_key) {
+            if existing.request_digest != receipt.request_digest {
+                return Err(RuntimeError::new(
+                    StableErrorCode::IdempotencyKeyReused,
+                    "idempotency key was reused with a different payload",
+                ));
+            }
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "execution receipt exists without an active prepared Hook record",
+            ));
+        }
+        let next = state
+            .events
+            .last()
+            .map_or(1, |previous| previous.event_seq.saturating_add(1));
+        if next == 0 {
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "global event sequence overflow",
+            ));
+        }
+        event.event_store_id = self.event_store_id.to_string();
+        event.event_seq = next;
+        receipt.event_seq = next;
+        let record_value = serde_json::to_value(&record).map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "prepared execution Hook record cannot be encoded",
+            )
+        })?;
+        state.events.push(event.clone());
+        state.receipts.insert(receipt_key, receipt.clone());
+        state.records.insert(record_key, record_value);
+        Ok((event, receipt, record))
     }
 
     fn events_after(&self, after: u64, limit: usize) -> RuntimeResult<Vec<DurableEvent>> {
@@ -495,9 +683,81 @@ impl PersistencePort for MemoryPersistence {
     }
 
     fn store_record(&self, namespace: &str, key: &str, value: &Value) -> RuntimeResult<()> {
+        let mut failure = self.record_store_failure.lock().map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "record failure plan lock is poisoned",
+            )
+        })?;
+        if let Some(plan) = failure.as_mut()
+            && plan.namespace == namespace
+        {
+            plan.remaining_calls -= 1;
+            if plan.remaining_calls == 0 {
+                *failure = None;
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "injected record persistence failure",
+                ));
+            }
+        }
+        drop(failure);
         self.lock()?
             .records
             .insert((namespace.to_owned(), key.to_owned()), value.clone());
+        Ok(())
+    }
+
+    fn delete_record(&self, namespace: &str, key: &str) -> RuntimeResult<()> {
+        self.lock()?
+            .records
+            .remove(&(namespace.to_owned(), key.to_owned()));
+        Ok(())
+    }
+
+    fn acquire_execution_resource_lease(
+        &self,
+        request: &ExecutionResourceLeaseRequestV1,
+    ) -> RuntimeResult<ExecutionResourceLeaseOutcomeV1> {
+        let mut state = self.lock()?;
+        if let Some(existing) = state.execution_resource_leases.get(&request.resource)
+            && existing.expires_at_unix_ms > request.now_unix_ms
+        {
+            if existing.boot_id == request.boot_id && existing.session_id == request.session_id {
+                return Ok(ExecutionResourceLeaseOutcomeV1::Reentered);
+            }
+            return Ok(ExecutionResourceLeaseOutcomeV1::Deferred {
+                retry_after_ms: request.retry_after_ms,
+            });
+        }
+        let record = ExecutionResourceLeaseRecordV1 {
+            schema_version: "execution-resource-lease/v1".to_owned(),
+            resource: request.resource.clone(),
+            boot_id: request.boot_id.clone(),
+            session_id: request.session_id.clone(),
+            acquired_at_unix_ms: request.now_unix_ms,
+            expires_at_unix_ms: request.now_unix_ms.saturating_add(request.ttl_ms),
+        };
+        state
+            .execution_resource_leases
+            .insert(request.resource.clone(), record);
+        Ok(ExecutionResourceLeaseOutcomeV1::Granted)
+    }
+
+    fn release_execution_resource_lease(
+        &self,
+        resource: &str,
+        boot_id: &str,
+        session_id: &str,
+    ) -> RuntimeResult<()> {
+        let mut state = self.lock()?;
+        if state
+            .execution_resource_leases
+            .get(resource)
+            .is_some_and(|lease| lease.boot_id == boot_id && lease.session_id == session_id)
+        {
+            state.execution_resource_leases.remove(resource);
+        }
         Ok(())
     }
 
@@ -835,4 +1095,37 @@ fn revision_conflict<T>() -> RuntimeResult<T> {
         StableErrorCode::RevisionConflict,
         "typed persistence expected value is stale",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, mpsc};
+
+    use ae_sdd_domain::EventStoreId;
+    use uuid::Uuid;
+
+    use super::MemoryPersistence;
+
+    #[test]
+    fn concurrent_commit_cannot_pass_between_failure_plan_installation_steps() {
+        let persistence = Arc::new(MemoryPersistence::new(EventStoreId::from_uuid(Uuid::nil())));
+        let mut plan = persistence
+            .commit_failure_plan
+            .lock()
+            .expect("commit failure plan lock");
+        let (started_tx, started_rx) = mpsc::channel();
+        let installer_persistence = Arc::clone(&persistence);
+        let installer = std::thread::spawn(move || {
+            started_tx.send(()).expect("signal installer start");
+            installer_persistence.fail_commit_event_and_receipt_after(1);
+        });
+
+        started_rx.recv().expect("installer started");
+        plan.calls += 1;
+        drop(plan);
+        installer.join().expect("installer joined");
+
+        assert!(persistence.consume_commit_failure());
+        assert!(!persistence.consume_commit_failure());
+    }
 }

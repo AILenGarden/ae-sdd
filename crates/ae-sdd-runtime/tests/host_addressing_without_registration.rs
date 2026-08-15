@@ -18,8 +18,8 @@ use ae_sdd_runtime::RuntimeConfig;
 use serde_json::{Value, json};
 
 use support::{
-    Harness, create_root_series_delegation, flow_decision_digest, open_root_session, params,
-    register_workspace, result, session_params, stable_error,
+    Harness, flow_decision_digest, open_root_session, params, register_workspace, result,
+    session_params, stable_error,
 };
 
 const ADAPTER: &str = "host-fresh";
@@ -99,17 +99,20 @@ fn handshake_alone_attaches_no_host() {
     register.idempotency_key = Some("handshake-only-register".to_owned());
     let _: Value = result(&harness.call(&mut host, RpcMethod::HostRegister, register));
 
-    let delegation = create_root_series_delegation(
-        &harness,
-        &mut root_connection,
+    let mut retry_create = session_params(
         &workspace,
         &root,
         "root-agent",
-        "WORK",
-        "requirement-analysis",
-        &["RA"],
-        "fresh-create",
+        json!({"flowDecisionDigest":decision_digest}),
+        1_000,
     );
+    retry_create.work_item_id = Some("WORK".to_owned());
+    retry_create.idempotency_key = Some("handshake-only-create".to_owned());
+    let delegation = result(&harness.call(
+        &mut root_connection,
+        RpcMethod::DelegationCreate,
+        retry_create,
+    ));
     let delegation_id = delegation["delegationId"]
         .as_str()
         .expect("delegation id")

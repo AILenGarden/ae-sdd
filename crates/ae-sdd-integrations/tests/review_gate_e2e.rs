@@ -614,6 +614,7 @@ fn commit_child_identity(
             delegation: Some(RuntimeDelegationRecord {
                 delegation_id: delegation_id.to_owned(),
                 workspace_id: WORKSPACE_ID.to_owned(),
+                work_item_id: Some(WORK_ITEM.to_owned()),
                 root_session_id: ROOT_SESSION.to_owned(),
                 parent_session_id: parent_session_id.to_owned(),
                 child_session_id: Some(session_id.to_owned()),

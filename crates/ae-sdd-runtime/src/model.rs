@@ -1,3 +1,4 @@
+use ae_sdd_execution::ExecutionSupervisorAfterImageV1;
 use ae_sdd_protocol::{HookDecision, WorkspaceMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,6 +33,8 @@ pub struct RuntimeStatus {
     pub session_count: usize,
     /// Current policy digest.
     pub policy_digest: String,
+    /// Canonical executable path of the daemon serving this boot.
+    pub daemon_path: String,
 }
 
 /// Stable wire representation of an Agent role.
@@ -122,6 +125,10 @@ pub struct SessionOpenPayload {
     /// Required physical delegation binding for non-root sessions.
     #[serde(default)]
     pub delegation_id: Option<String>,
+    /// Optional Root-to-Host adapter binding. The daemon verifies and stores
+    /// this binding; callers cannot override it on delegation creation.
+    #[serde(default)]
+    pub host_adapter_id: Option<String>,
     /// Optional precomputed role-aware context payload.
     #[serde(default)]
     pub context: Option<Value>,
@@ -301,6 +308,98 @@ pub struct IdempotencyReceipt {
     pub event_seq: u64,
 }
 
+/// Durable prepared after-image for one supervised Hook transition.
+///
+/// The record is keyed by physical session and acts as a barrier until the
+/// main Hook receipt is durable. It contains the original response and pure
+/// execution checkpoint after-image so recovery never recomputes against a
+/// later checkpoint.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreparedExecutionHookV1 {
+    /// Fixed record schema discriminator.
+    pub schema_version: String,
+    /// Authenticated workspace identity.
+    pub workspace_id: String,
+    /// Authenticated physical session identity and barrier key.
+    pub session_id: String,
+    /// Host event identity.
+    pub hook_event_id: String,
+    /// Canonical Hook request digest.
+    pub request_digest: String,
+    /// Namespace of the main Hook receipt.
+    pub hook_scope: String,
+    /// Durable main Hook event kind.
+    pub hook_kind: String,
+    /// Original response before its durable event sequence is projected.
+    pub response_json: String,
+    /// Work Item attribution for the main Hook event.
+    pub work_item_id: Option<String>,
+    /// Context digest whose delivery acknowledgement follows main commit.
+    pub delivered_context_digest: Option<String>,
+    /// Original daemon-owned turn identity.
+    pub turn_id: String,
+    /// Original daemon-owned turn sequence.
+    pub turn_seq: u64,
+    /// Pure checkpoint after-image for a PostTool transition.
+    pub checkpoint_after_image: Option<ExecutionSupervisorAfterImageV1>,
+    /// True when recovery must hold/reacquire Cargo before returning allow.
+    pub cargo_lease_required: bool,
+    /// True only after the main Hook receipt and in-memory after-images have
+    /// been reconciled.
+    pub completed: bool,
+}
+
+/// Durable lease acquire request used to preserve tool exclusion across a
+/// daemon restart without adding a schema migration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionResourceLeaseRequestV1 {
+    /// Stable resource key, currently `cargo`.
+    pub resource: String,
+    /// Daemon boot attempting the acquisition.
+    pub boot_id: String,
+    /// Authenticated session attempting the acquisition.
+    pub session_id: String,
+    /// Current Unix time in milliseconds.
+    pub now_unix_ms: u64,
+    /// Lease TTL in milliseconds.
+    pub ttl_ms: u64,
+    /// Bounded retry hint for a deferral.
+    pub retry_after_ms: u64,
+}
+
+/// Result of one atomic durable resource-lease acquisition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionResourceLeaseOutcomeV1 {
+    /// This request installed a new lease or replaced an expired lease.
+    Granted,
+    /// The same session re-entered a lease owned by the same daemon boot.
+    Reentered,
+    /// Another boot/session still owns the unexpired lease.
+    Deferred {
+        /// Bounded retry hint in milliseconds.
+        retry_after_ms: u64,
+    },
+}
+
+/// Durable runtime-record representation of one resource lease.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionResourceLeaseRecordV1 {
+    /// Fixed record schema discriminator.
+    pub schema_version: String,
+    /// Stable resource key.
+    pub resource: String,
+    /// Owning daemon boot.
+    pub boot_id: String,
+    /// Owning authenticated session.
+    pub session_id: String,
+    /// Acquisition time in Unix milliseconds.
+    pub acquired_at_unix_ms: u64,
+    /// Exclusive expiry time in Unix milliseconds.
+    pub expires_at_unix_ms: u64,
+}
+
 /// Aggregate family committed by the typed identity repository.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -381,6 +480,9 @@ pub struct RuntimeDelegationRecord {
     pub delegation_id: String,
     /// Owning workspace.
     pub workspace_id: String,
+    /// Work Item frozen when the delegation was created.
+    #[serde(default)]
+    pub work_item_id: Option<String>,
     /// Root orchestration session.
     pub root_session_id: String,
     /// Parent physical session.
@@ -792,6 +894,23 @@ pub struct HostAckPayload {
     pub session_id: Option<String>,
 }
 
+/// Complete Host ACK receipt used to resume child attestation exactly.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostActionAckResult {
+    /// Durable action fields preserved for wire compatibility.
+    #[serde(flatten)]
+    pub action: HostActionPayload,
+    /// Committed ACK identity.
+    pub ack_id: String,
+    /// Committed Host outcome.
+    pub outcome: String,
+    /// Physical Host task identity, when supplied.
+    pub host_task_id: Option<String>,
+    /// Physical child session identity, when supplied.
+    pub child_session_id: Option<String>,
+}
+
 /// Authenticated token pressure sample.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -820,6 +939,10 @@ pub struct AssetRefWire {
     pub path: String,
     /// Lowercase hex SHA-256 of the referenced content.
     pub sha256: String,
+    /// Referenced content size. Legacy durable refs may omit this field, but
+    /// newly frozen projections must provide it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byte_length: Option<u64>,
 }
 
 /// Delegation creation payload.
@@ -1181,6 +1304,14 @@ mod tests {
         assert!(decoded.briefing.is_none());
         assert!(decoded.asset_refs.is_none());
 
+        let legacy_ref: AssetRefWire = serde_json::from_value(json!({
+            "kind":"constraints-index",
+            "path":"constraints/README.md",
+            "sha256":"a".repeat(64),
+        }))
+        .expect("a durable legacy asset ref without byteLength remains readable");
+        assert_eq!(legacy_ref.byte_length, None);
+
         let enriched = json!({
             "childRole":"series",
             "parentDelegationId":null,
@@ -1193,6 +1324,7 @@ mod tests {
                 "kind":"constraints-index",
                 "path":"constraints/README.md",
                 "sha256":"b".repeat(64),
+                "byteLength":42,
             }],
         });
         let decoded: DelegationCreatePayload =
@@ -1208,6 +1340,7 @@ mod tests {
                 kind: "constraints-index".to_owned(),
                 path: "constraints/README.md".to_owned(),
                 sha256: "b".repeat(64),
+                byte_length: Some(42),
             }]
         );
     }

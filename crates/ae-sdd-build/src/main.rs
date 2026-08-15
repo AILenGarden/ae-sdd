@@ -123,11 +123,11 @@ enum Command {
         manifest: PathBuf,
         #[arg(long, default_value_t = 113)]
         expected_commands: usize,
-        #[arg(long, default_value_t = 24)]
+        #[arg(long, default_value_t = 25)]
         expected_operations: usize,
         #[arg(long, default_value_t = 36)]
         expected_gates: usize,
-        #[arg(long, default_value_t = 7)]
+        #[arg(long, default_value_t = 10)]
         expected_scanners: usize,
         #[arg(long)]
         json: bool,

@@ -2,6 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,14 +14,19 @@ use ae_sdd_scanners::{
 
 struct TempProject(PathBuf);
 
+static TEMP_PROJECT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 impl TempProject {
     fn new() -> Self {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("ae-sdd-scanner-test-{}-{nonce}", process::id()));
+        let sequence = TEMP_PROJECT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "ae-sdd-scanner-test-{}-{nonce}-{sequence}",
+            process::id()
+        ));
         fs::create_dir_all(&root).expect("create temp project");
         Self(root)
     }
@@ -271,6 +277,16 @@ fn assert_rule(text: &str, expected: &str) {
     );
 }
 
+fn finding_message(text: &str, expected_rule: &str) -> String {
+    parse_ra_specification(text)
+        .expect_err("mutated SRS must fail closed")
+        .into_iter()
+        .find(|finding| finding.rule.as_ref() == expected_rule)
+        .unwrap_or_else(|| panic!("expected finding {expected_rule:?}"))
+        .message
+        .into_string()
+}
+
 fn insert_before(text: &str, marker: &str, addition: &str) -> String {
     text.replacen(marker, &format!("{addition}{marker}"), 1)
 }
@@ -402,6 +418,95 @@ fn applicability_states_are_disjoint() {
     assert_ne!(applicable, not_applicable);
     assert_ne!(applicable, unknown);
     assert_ne!(not_applicable, unknown);
+}
+
+#[test]
+fn ra_v2_diagnostics_name_offending_tokens_and_canonical_vocabulary() {
+    let base = positive_text();
+    let canonical_lenses = [
+        "participants",
+        "scenarios",
+        "state_lifecycle",
+        "data_semantics",
+        "external_contracts",
+        "quality_security_compliance",
+        "compatibility_migration_operations",
+    ];
+
+    for invalid in ["actors", "participants,"] {
+        let text = base.replacen("| participants |", &format!("| {invalid} |"), 1);
+        let message = finding_message(&text, "applicability-unknown-lens");
+        assert!(
+            message.contains(invalid),
+            "missing offending token: {message}"
+        );
+        for canonical in canonical_lenses {
+            assert!(
+                message.contains(canonical),
+                "missing canonical lens {canonical:?}: {message}"
+            );
+        }
+    }
+
+    let invalid_dimension = "可观察行为与场景广度。";
+    let text = base.replacen("可观察行为与场景广度", invalid_dimension, 1);
+    let message = finding_message(&text, "closure-scale-unknown-dimension");
+    assert!(
+        message.contains(invalid_dimension),
+        "missing offending scale dimension: {message}"
+    );
+    for canonical in [
+        "可观察行为与场景广度",
+        "参与方、权限或业务域广度",
+        "状态、数据语义与不变量复杂度",
+        "外部契约与协调范围",
+        "性能、安全、合规、可用性等质量风险",
+        "兼容、迁移、回滚和运行影响",
+    ] {
+        assert!(
+            message.contains(canonical),
+            "missing canonical scale dimension {canonical:?}: {message}"
+        );
+    }
+
+    const VALID_RUBRIC: &str = "最高分 = 1 -> Scale = micro。";
+    const EXACT_GRAMMAR: &str = "最高分 = <1..4> -> Scale = micro|small|medium|large";
+    let malformed_rubrics = [
+        "最高分 = 1 => Scale = micro。",
+        "最高分 = 1 -> Scale = micro.",
+        "最高分 = 1 -> Scale = tiny。",
+    ];
+    for offending_line in malformed_rubrics {
+        let text = base.replacen(VALID_RUBRIC, offending_line, 1);
+        let message = finding_message(&text, "closure-scale-rubric-malformed");
+        assert!(
+            message.contains(offending_line),
+            "missing offending rubric line: {message}"
+        );
+        assert!(
+            message.contains(EXACT_GRAMMAR),
+            "missing exact rubric grammar: {message}"
+        );
+        for token in ["micro", "small", "medium", "large"] {
+            assert!(
+                message.contains(token),
+                "missing canonical scale token {token:?}: {message}"
+            );
+        }
+    }
+
+    let missing_rubric = base.replacen(VALID_RUBRIC, "", 1);
+    let message = finding_message(&missing_rubric, "closure-scale-rubric-missing");
+    assert!(
+        message.contains(EXACT_GRAMMAR),
+        "missing exact rubric grammar: {message}"
+    );
+    for token in ["micro", "small", "medium", "large"] {
+        assert!(
+            message.contains(token),
+            "missing canonical scale token {token:?}: {message}"
+        );
+    }
 }
 
 #[test]

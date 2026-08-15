@@ -197,16 +197,19 @@ impl HostExecutionBindingLedger {
             // from a malformed store. Activating nothing is the correct no-op.
             return Ok(());
         };
-        expire_if_needed(binding, now_unix_ms);
-        if binding.status != "spawning" {
+        let mut target = binding.clone();
+        expire_if_needed(&mut target, now_unix_ms);
+        if target.status != "spawning" {
+            self.persist(&target)?;
+            *binding = target;
             return Ok(());
         }
-        binding.status = "active".to_owned();
-        binding.active_at_unix_ms = Some(now_unix_ms);
-        binding.last_interaction_unix_ms = now_unix_ms;
-        let clone = binding.clone();
-        drop(bindings);
-        self.persist(&clone)
+        target.status = "active".to_owned();
+        target.active_at_unix_ms = Some(now_unix_ms);
+        target.last_interaction_unix_ms = now_unix_ms;
+        self.persist(&target)?;
+        *binding = target;
+        Ok(())
     }
 
     /// Marks a binding `released` with the given reason. Idempotent and no-op on
@@ -224,16 +227,18 @@ impl HostExecutionBindingLedger {
         let Some(binding) = bindings.get_mut(delegation_id) else {
             return Ok(());
         };
-        expire_if_needed(binding, now_unix_ms);
-        if binding.is_terminal() {
-            return Ok(());
+        let mut target = binding.clone();
+        if !matches!(target.status.as_str(), "released" | "preempted") {
+            target.status = "released".to_owned();
+            target.released_at_unix_ms = Some(now_unix_ms);
+            target.released_reason = Some(reason.to_owned());
         }
-        binding.status = "released".to_owned();
-        binding.released_at_unix_ms = Some(now_unix_ms);
-        binding.released_reason = Some(reason.to_owned());
-        let clone = binding.clone();
-        drop(bindings);
-        self.persist(&clone)
+        // Persist before publishing the terminal state in memory. If the
+        // durable write fails, a same-process retry must not mistake the
+        // mutation for a completed release and skip repair.
+        self.persist(&target)?;
+        *binding = target;
+        Ok(())
     }
 
     /// Refreshes `last_interaction_unix_ms` from any Hook event on the child
@@ -258,14 +263,17 @@ impl HostExecutionBindingLedger {
         // this very refresh becomes the expiry event. The caller still gets a
         // success (the session is interacting now), but the row transitions to
         // `expired` before the refresh lands so the audit trail is correct.
-        expire_if_needed(binding, now_unix_ms);
-        if binding.is_terminal() {
+        let mut target = binding.clone();
+        expire_if_needed(&mut target, now_unix_ms);
+        if target.is_terminal() {
+            self.persist(&target)?;
+            *binding = target;
             return Ok(());
         }
-        binding.last_interaction_unix_ms = now_unix_ms;
-        let clone = binding.clone();
-        drop(bindings);
-        self.persist(&clone)
+        target.last_interaction_unix_ms = now_unix_ms;
+        self.persist(&target)?;
+        *binding = target;
+        Ok(())
     }
 
     /// Resolves a claim under §1.4's three branches.
@@ -284,23 +292,24 @@ impl HostExecutionBindingLedger {
         let Some(binding) = bindings.get_mut(delegation_id) else {
             return Ok(ClaimOutcome::NotFound);
         };
-        expire_if_needed(binding, now_unix_ms);
-        if binding.is_terminal() {
+        let mut target = binding.clone();
+        expire_if_needed(&mut target, now_unix_ms);
+        if target.is_terminal() {
+            let binding_id = target.binding_id.clone();
+            self.persist(&target)?;
+            *binding = target;
             // Branch 1: released / preempted / expired → direct claim.
-            return Ok(ClaimOutcome::Claimed {
-                binding_id: binding.binding_id.clone(),
-            });
+            return Ok(ClaimOutcome::Claimed { binding_id });
         }
-        let stale = now_unix_ms.saturating_sub(binding.last_interaction_unix_ms) > STALE_WINDOW_MS;
+        let stale = now_unix_ms.saturating_sub(target.last_interaction_unix_ms) > STALE_WINDOW_MS;
         if stale {
             // Branch 2: live but past the stale window → preempt.
-            binding.status = "preempted".to_owned();
-            binding.released_at_unix_ms = Some(now_unix_ms);
-            binding.released_reason = Some(released_reason::PREEMPTED.to_owned());
-            let clone = binding.clone();
-            let binding_id = binding.binding_id.clone();
-            drop(bindings);
-            self.persist(&clone)?;
+            target.status = "preempted".to_owned();
+            target.released_at_unix_ms = Some(now_unix_ms);
+            target.released_reason = Some(released_reason::PREEMPTED.to_owned());
+            let binding_id = target.binding_id.clone();
+            self.persist(&target)?;
+            *binding = target;
             return Ok(ClaimOutcome::Claimed { binding_id });
         }
         // Branch 3: live and within the window → refuse.
@@ -442,6 +451,21 @@ mod tests {
     }
 
     #[test]
+    fn activate_retry_repairs_durable_state_after_a_store_failure() {
+        let (ledger, persistence) = ledger_with_memory();
+        ledger.spawn("bid", "ws", "root", "del", 1_000).unwrap();
+        persistence.fail_store_record_after(HOST_EXECUTION_BINDING_V1, 1);
+        assert!(ledger.activate("del", 2_000).is_err());
+        ledger.activate("del", 2_000).expect("activate retry");
+        let row = persistence
+            .load_record(HOST_EXECUTION_BINDING_V1, "bid")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row["status"], "active");
+        assert_eq!(row["activeAtUnixMs"], 2_000);
+    }
+
+    #[test]
     fn release_by_delegation_is_idempotent_and_noop_on_missing() {
         let (ledger, _persistence) = ledger_with_memory();
         // Missing row: no-op, no error.
@@ -469,6 +493,30 @@ mod tests {
     }
 
     #[test]
+    fn release_retry_repairs_durable_state_after_a_store_failure() {
+        let (ledger, persistence) = ledger_with_memory();
+        ledger.spawn("bid", "ws", "root", "del", 1_000).unwrap();
+        ledger.activate("del", 2_000).unwrap();
+        persistence.fail_store_record_after(HOST_EXECUTION_BINDING_V1, 1);
+
+        let first = ledger.release_by_delegation("del", released_reason::CANCELLED, 3_000);
+        assert_eq!(
+            first.expect_err("first release store fails").code(),
+            StableErrorCode::ExternalStateConflict
+        );
+        ledger
+            .release_by_delegation("del", released_reason::CANCELLED, 3_000)
+            .expect("same-process retry repairs durable state");
+
+        let row = persistence
+            .load_record(HOST_EXECUTION_BINDING_V1, "bid")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row["status"], "released");
+        assert_eq!(row["releasedReason"], "cancelled");
+    }
+
+    #[test]
     fn refresh_interaction_advances_timestamp_and_skips_root_sessions() {
         let (ledger, _persistence) = ledger_with_memory();
         // Root session: no delegation id → no-op.
@@ -483,7 +531,7 @@ mod tests {
 
     #[test]
     fn hard_timeout_sweeps_to_expired_on_the_next_touch() {
-        let (ledger, _persistence) = ledger_with_memory();
+        let (ledger, persistence) = ledger_with_memory();
         ledger.spawn("bid", "ws", "root", "del", 1_000).unwrap();
         ledger.activate("del", 2_000).unwrap();
         // 12h + 1ms later, the next interaction triggers expiry.
@@ -493,6 +541,13 @@ mod tests {
         let binding = bindings.get("del").unwrap();
         assert_eq!(binding.status, "expired");
         assert_eq!(binding.released_reason.as_deref(), Some("expired"));
+        drop(bindings);
+        let row = persistence
+            .load_record(HOST_EXECUTION_BINDING_V1, "bid")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row["status"], "expired");
+        assert_eq!(row["releasedReason"], "expired");
     }
 
     #[test]
@@ -528,6 +583,26 @@ mod tests {
         let bindings = ledger.bindings.lock().unwrap();
         let binding = bindings.get("del").unwrap();
         assert_eq!(binding.status, "preempted");
+    }
+
+    #[test]
+    fn preempt_retry_repairs_durable_state_after_a_store_failure() {
+        let (ledger, persistence) = ledger_with_memory();
+        ledger.spawn("bid", "ws", "root", "del", 1_000).unwrap();
+        ledger.activate("del", 2_000).unwrap();
+        let later = 2_000 + STALE_WINDOW_MS + 1;
+        persistence.fail_store_record_after(HOST_EXECUTION_BINDING_V1, 1);
+        assert!(ledger.claim_or_preempt("del", later).is_err());
+        assert!(matches!(
+            ledger.claim_or_preempt("del", later).unwrap(),
+            ClaimOutcome::Claimed { .. }
+        ));
+        let row = persistence
+            .load_record(HOST_EXECUTION_BINDING_V1, "bid")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row["status"], "preempted");
+        assert_eq!(row["releasedReason"], "preempted");
     }
 
     #[test]

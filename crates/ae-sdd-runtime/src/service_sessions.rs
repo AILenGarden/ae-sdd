@@ -29,6 +29,29 @@ impl RuntimeService {
                 "caller-supplied session context is not authoritative",
             ));
         }
+        let effective_work_item_id = match payload.role {
+            WireAgentRole::Root => params.work_item_id.clone(),
+            _ => {
+                let child_session_id = params.session_id.as_deref().ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::DelegationAttestationFailed,
+                        "child session requires its attested sessionId",
+                    )
+                })?;
+                let delegation_id = payload.delegation_id.as_deref().ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::DelegationAttestationFailed,
+                        "child session requires a physical delegation",
+                    )
+                })?;
+                Some(self.delegation.delegated_session_work_item_authority(
+                    &workspace_id,
+                    child_session_id,
+                    delegation_id,
+                    params.work_item_id.as_deref(),
+                )?)
+            }
+        };
         let external_key_hash = hex::encode(Sha256::digest(payload.external_key.as_bytes()));
         let key = require_idempotency(params)?;
         let scope = format!(
@@ -39,7 +62,7 @@ impl RuntimeService {
             "bootId":self.boot_id.to_string(),
             "workspaceId":workspace_id,
             "agentId":agent_id,
-            "workItemId":params.work_item_id,
+            "workItemId":effective_work_item_id,
             "externalKeyHash":external_key_hash,
             "payload":payload,
         }))?;
@@ -110,6 +133,48 @@ impl RuntimeService {
             SessionId::from_str(&session_id)
                 .map_err(|_| schema_error("sessionId is not a UUID"))?;
 
+            if let Some(adapter_id) = payload.host_adapter_id.as_deref() {
+                if payload.role != WireAgentRole::Root {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::RoleOperationForbidden,
+                        "host adapter binding is only valid for Root sessions",
+                    ));
+                }
+                self.host.require_registered(adapter_id)?;
+                if let Some(bound) = self
+                    .persistence
+                    .load_record("session-host-binding/v1", &session_id)?
+                {
+                    let bound_adapter =
+                        bound
+                            .get("adapterId")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                RuntimeError::new(
+                                    StableErrorCode::ExternalStateConflict,
+                                    "durable session host binding is malformed",
+                                )
+                            })?;
+                    if bound_adapter != adapter_id {
+                        return Err(RuntimeError::new(
+                            StableErrorCode::DelegationAttestationFailed,
+                            "root session is already bound to another Host adapter",
+                        ));
+                    }
+                }
+            }
+
+            if let Some(previous) = existing.as_ref().filter(|previous| {
+                previous.workspace_id == workspace_id && previous.result.role != WireAgentRole::Root
+            }) && (params.session_id.as_deref() != Some(previous.result.session_id.as_str())
+                || payload.delegation_id.as_deref() != previous.delegation_id.as_deref())
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::DelegationAttestationFailed,
+                    "child reattachment must present its exact durable sessionId and delegationId",
+                ));
+            }
+
             let authoritative_grant = match existing.as_ref() {
                 Some(previous) if previous.workspace_id == workspace_id => self
                     .validate_delegated_open(
@@ -130,7 +195,7 @@ impl RuntimeService {
                 existing.as_ref(),
                 &authoritative_grant,
                 engaged,
-                params.work_item_id.is_none(),
+                effective_work_item_id.is_none(),
             )?;
             if bootstrap_plan.steps().contains(&BootstrapStep::OpenSession) != existing.is_none() {
                 return Err(RuntimeError::new(
@@ -176,8 +241,10 @@ impl RuntimeService {
                 session.active = true;
                 session.grant = authoritative_grant;
                 session.result.engaged = engaged;
-                if params.work_item_id.is_some() {
-                    session.current_work_item = params.work_item_id.clone();
+                if effective_work_item_id.is_some() {
+                    session
+                        .current_work_item
+                        .clone_from(&effective_work_item_id);
                 }
                 session.result.expires_at_unix_ms = expires;
                 session.result.capability_token = self.sign_capability(CapabilitySignInput {
@@ -228,7 +295,7 @@ impl RuntimeService {
                     workspace_id: workspace_id.clone(),
                     agent_id,
                     external_key_hash: external_key_hash.clone(),
-                    current_work_item: params.work_item_id.clone(),
+                    current_work_item: effective_work_item_id.clone(),
                     result: result.clone(),
                     delegation_id: payload.delegation_id,
                     grant: authoritative_grant,
@@ -258,7 +325,7 @@ impl RuntimeService {
         if bootstrap_plan
             .steps()
             .contains(&BootstrapStep::ProjectContext)
-            && let Some(work_item_id) = params.work_item_id.as_deref()
+            && let Some(work_item_id) = effective_work_item_id.as_deref()
             && let Err(error) =
                 self.project_session_context(&workspace_id, &result.session_id, work_item_id)
         {
@@ -294,6 +361,20 @@ impl RuntimeService {
         } else {
             value
         };
+        if let Some(adapter_id) = payload.host_adapter_id.as_deref() {
+            self.persistence.store_record(
+                "session-host-binding/v1",
+                &result.session_id,
+                &json!({
+                    "schemaVersion":"session-host-binding/v1",
+                    "sessionId":result.session_id,
+                    "workspaceId":workspace_id.clone(),
+                    "adapterId":adapter_id,
+                    "boundBootId":self.boot_id.to_string(),
+                    "updatedAtUnixMs":now,
+                }),
+            )?;
+        }
         if !committed.replayed {
             self.append_runtime_event(
                 "session.opened",
@@ -872,16 +953,21 @@ impl RuntimeService {
                             "child session lacks its typed physical attestation",
                         )
                     })?;
-                if attestation.accepted_boot_id != self.boot_id.to_string()
-                    || self
-                        .delegation
-                        .deadline_unix_ms(session_id, delegation_id)?
-                        <= self.clock.now_unix_ms()
+                // `accepted_boot_id` identifies the daemon that established
+                // the immutable physical proof. It is historical evidence,
+                // not a requirement that the daemon may never restart. The
+                // capability returned below is freshly signed for the current
+                // boot; lineage, child identity, deadline, and grant equality
+                // remain the reattachment boundary.
+                if self
+                    .delegation
+                    .deadline_unix_ms(session_id, delegation_id)?
+                    <= self.clock.now_unix_ms()
                     || attestation.grant.normalized()? != projection.grant.normalized()?
                 {
                     return Err(RuntimeError::new(
                         StableErrorCode::DelegationAttestationFailed,
-                        "child session grant or boot differs from its physical attestation",
+                        "child session grant differs from its physical attestation or delegation deadline expired",
                     ));
                 }
                 let grant = attestation.grant.normalized()?;
@@ -1077,6 +1163,30 @@ impl RuntimeService {
         session.current_turn_id = Some(turn_id.clone());
         session.current_turn_seq = turn_seq;
         Ok((turn_id, turn_seq))
+    }
+
+    pub(super) fn hook_turn_snapshot(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<(Option<String>, u64)> {
+        let state = self.lock_state()?;
+        let session = state.sessions.get(session_id).ok_or_else(session_expired)?;
+        Ok((session.current_turn_id.clone(), session.current_turn_seq))
+    }
+
+    pub(super) fn restore_hook_turn(
+        &self,
+        session_id: &str,
+        snapshot: &(Option<String>, u64),
+    ) -> RuntimeResult<()> {
+        let mut state = self.lock_state()?;
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(session_expired)?;
+        session.current_turn_id = snapshot.0.clone();
+        session.current_turn_seq = snapshot.1;
+        Ok(())
     }
 
     /// Resolves the Work Item a Hook event is attributed to.

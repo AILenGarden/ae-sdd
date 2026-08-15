@@ -114,7 +114,19 @@ pub(super) fn predicate_value(
                 context.review_authority_denial(located),
             ));
         }
-        "context.dr.complete" => dr_context_complete(root, state, work_item),
+        "context.dr.complete" => {
+            let missing = dr_context_missing(root, state, work_item);
+            if missing.is_empty() {
+                return Ok(PredicateVerdict::plain(true));
+            }
+            return Ok(PredicateVerdict {
+                satisfied: false,
+                denial: Some(ReviewAuthorityDenial::context(
+                    "DR_CONTEXT_INCOMPLETE",
+                    format!("missing required DR context: {}", missing.join(", ")),
+                )),
+            });
+        }
         "context.story.complete" => story_context_complete(root, state, work_item),
         "context.testcase.complete" => context_complete(state, &["story", "constraints", "assets"]),
         "context.task.complete" => context_complete(state, &["story", "constraints"]),
@@ -142,12 +154,24 @@ fn project_assets_complete(root: &Path) -> bool {
             .any(|name| root.join(name).is_file())
 }
 
-fn dr_context_complete(root: &Path, state: &Value, work_item: &str) -> bool {
-    project_manifest_exists(root)
-        && indexed_constraints_complete(root)
-        && standards_complete(root)
-        && bound_document_exists(root, state, "RA")
-        && (is_route_state(state, work_item) || bound_document_exists(root, state, "PRD"))
+fn dr_context_missing(root: &Path, state: &Value, work_item: &str) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if !project_manifest_exists(root) {
+        missing.push("project-manifest");
+    }
+    if !indexed_constraints_complete(root) {
+        missing.push("constraints-index");
+    }
+    if !standards_complete(root) {
+        missing.push("standards");
+    }
+    if !bound_document_exists(root, state, "RA") {
+        missing.push("ra-document");
+    }
+    if !is_route_state(state, work_item) && !bound_document_exists(root, state, "PRD") {
+        missing.push("prd-document");
+    }
+    missing
 }
 
 fn project_manifest_exists(root: &Path) -> bool {
@@ -468,19 +492,20 @@ fn ra_route_binding(root: &Path, state: &Value, work_item: &str) -> bool {
     if conflicts.iter().any(RequirementConflict::blocks_routing) {
         return false;
     }
-    if matches!(phase, Some("route-selected" | "route_selected")) {
-        let Some(frozen) = state
-            .get("engineeringRoute")
-            .cloned()
-            .and_then(|value| serde_json::from_value::<EngineeringRoute>(value).ok())
-        else {
-            return false;
-        };
-        frozen.decision() == &candidate
-            && frozen.evidence() == binding.ra_evidence()
-            && frozen.approval_receipt() == &approval
-    } else {
-        state.get("engineeringRoute").is_none()
+    let frozen_value = state.get("engineeringRoute");
+    let frozen = frozen_value
+        .cloned()
+        .and_then(|value| serde_json::from_value::<EngineeringRoute>(value).ok());
+    if frozen_value.is_some() && frozen.is_none() {
+        return false;
+    }
+    match frozen {
+        Some(frozen) => {
+            frozen.decision() == &candidate
+                && frozen.evidence() == binding.ra_evidence()
+                && frozen.approval_receipt() == &approval
+        }
+        None => !matches!(phase, Some("route-selected" | "route_selected")),
     }
 }
 

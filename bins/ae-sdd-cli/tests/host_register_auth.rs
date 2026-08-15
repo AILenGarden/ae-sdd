@@ -423,6 +423,56 @@ fn physical_delegation_chain_needs_no_endpoint_credential() {
     assert_eq!(registered["adapterId"], adapter_id);
     transcripts.push(("host.register", output));
 
+    // A second attached Host makes global adapter selection ambiguous. Reopen
+    // the Root with an explicit durable binding before creating delegation;
+    // delegation.create itself remains caller-clean and carries no adapter ID.
+    let other_adapter_id = format!("{key}-other-host");
+    let other_register =
+        host_register_params(&other_adapter_id, &format!("{key}-other-host-register"));
+    let output = run_command(
+        rpc_command(
+            &manifest,
+            "host.register",
+            "host-adapter",
+            &other_register,
+            None,
+        ),
+        None,
+    );
+    let registered = parse_success_json(&output, "second chain host.register");
+    assert_eq!(registered["adapterId"], other_adapter_id);
+    transcripts.push(("second host.register", output));
+
+    let output = run_command(
+        rpc_command(
+            &manifest,
+            "session.open",
+            "cli",
+            &serde_json::to_string(&json!({
+                "protocolVersion": "1.0",
+                "workspaceId": workspace_id,
+                "agentId": root_agent,
+                "idempotencyKey": format!("{key}-bind-root-host"),
+                "deadlineMs": 10_000,
+                "payload": {
+                    "externalKey": hook_external_key,
+                    "role": "root",
+                    "engaged": true,
+                    "hostAdapterId": adapter_id,
+                },
+            }))
+            .expect("bound root session.open params serialize"),
+            None,
+        ),
+        None,
+    );
+    let rebound_root = parse_success_json(&output, "bound root session.open");
+    let root_capability = rebound_root["capabilityToken"]
+        .as_str()
+        .expect("rebound root session capability")
+        .to_owned();
+    transcripts.push(("bound root session.open", output));
+
     // delegation.create under the root session's daemon-minted capability.
     let output = run_command(
         rpc_command(

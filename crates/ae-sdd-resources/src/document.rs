@@ -108,6 +108,17 @@ pub struct DocumentSaveRequest {
     staged_content_ref: ArtifactRef,
     expected_before_digest: Option<ArtifactDigest>,
     input_fingerprint: InputFingerprint,
+    cleanup_policy: DocumentCleanupPolicy,
+}
+
+/// Source-draft cleanup selected explicitly by the document-save caller.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum DocumentCleanupPolicy {
+    /// Preserve the staged source after saving the destination.
+    #[default]
+    PreserveSource,
+    /// Delete the staged source in the same v2 transaction.
+    DeleteSource,
 }
 
 impl DocumentSaveRequest {
@@ -135,7 +146,14 @@ impl DocumentSaveRequest {
             staged_content_ref,
             expected_before_digest,
             input_fingerprint,
+            cleanup_policy: DocumentCleanupPolicy::PreserveSource,
         })
+    }
+
+    /// Selects source deletion in the same transaction as the destination save.
+    pub const fn delete_source_after_save(mut self) -> Self {
+        self.cleanup_policy = DocumentCleanupPolicy::DeleteSource;
+        self
     }
 
     /// Returns the stable transaction identity.
@@ -230,16 +248,27 @@ pub struct DocumentPlanner;
 impl DocumentPlanner {
     /// Creates a single-operation save plan without project mutation.
     pub fn save(request: &DocumentSaveRequest) -> Result<DocumentTxnPlan, DocumentPlanError> {
-        let operation = DocumentTxnOperation::save_staged(
+        let save = DocumentTxnOperation::save_staged(
             request.target_path.clone(),
             request.staged_content_ref.clone(),
             request.expected_before_digest,
         )?;
+        let mut operations = vec![save];
+        let schema_version = match request.cleanup_policy {
+            DocumentCleanupPolicy::PreserveSource => SchemaVersion::V1,
+            DocumentCleanupPolicy::DeleteSource => {
+                operations.push(DocumentTxnOperation::delete(
+                    request.staged_content_ref.path().clone(),
+                    request.staged_content_ref.digest(),
+                ));
+                SchemaVersion::V2
+            }
+        };
         Ok(DocumentTxnPlan::new(
-            SchemaVersion::V1,
+            schema_version,
             request.transaction_id.clone(),
             request.work_item_id.clone(),
-            vec![operation],
+            operations,
             request.input_fingerprint,
         )?)
     }

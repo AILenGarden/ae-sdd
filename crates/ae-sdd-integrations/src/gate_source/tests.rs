@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::{
     AuthoritativeGateRuntime, contracts::plan_contract_complete, gate_result_json,
-    predicate::ac_ids,
+    key::workspace_inputs, predicate::ac_ids,
 };
 
 fn workspace(root: &Path) -> BusinessWorkspace {
@@ -291,6 +291,29 @@ fn dr_context_fails_closed_when_any_route_context_is_missing() {
         assert!(
             matches!(result.outcome(), GateOutcome::Fail(_)),
             "missing {missing} must fail closed"
+        );
+        let rendered = gate_result_json(&result);
+        let evidence = rendered["outcome"]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .flat_map(|finding| finding["evidence"].as_array().into_iter().flatten())
+            .collect::<Vec<_>>();
+        let expected = match missing {
+            "ra" => "ra-document",
+            "constraints" => "constraints-index",
+            "assets" => "project-manifest",
+            "standards" => "standards",
+            _ => unreachable!(),
+        };
+        assert!(
+            evidence.iter().any(|item| {
+                item["evidenceId"] == "dr-context-missing"
+                    && item["verificationId"]
+                        .as_str()
+                        .is_some_and(|value| value.contains(expected))
+            }),
+            "missing {missing} must be named in the Gate evidence: {rendered}"
         );
     }
 }
@@ -902,6 +925,83 @@ fn flow_violation_gate_recomputes_the_typed_ra_route_binding() {
         mismatched_approval.outcome(),
         GateOutcome::Fail(_)
     ));
+}
+
+#[test]
+fn flow_violation_gate_accepts_route_frozen_by_confirmed_decision_before_phase_advance() {
+    let temp = TempDir::new().expect("temp");
+    install_route_binding_state(temp.path(), "route-selected");
+    let state_path = temp.path().join(".auto-engineering/work-item/state.json");
+    let route_selected: Value =
+        serde_json::from_slice(&fs::read(&state_path).expect("route-selected state bytes"))
+            .expect("route-selected state JSON");
+    let frozen = route_selected["engineeringRoute"].clone();
+
+    install_route_binding_state(temp.path(), "requirement-analyzed");
+    let mut requirement_analyzed: Value =
+        serde_json::from_slice(&fs::read(&state_path).expect("requirement-analyzed state bytes"))
+            .expect("requirement-analyzed state JSON");
+    requirement_analyzed["engineeringRoute"] = frozen;
+    fs::write(
+        &state_path,
+        serde_json::to_vec(&requirement_analyzed).expect("state JSON"),
+    )
+    .expect("confirmed route state");
+
+    let result = runtime(&temp)
+        .evaluate("G-RA-FLOW-VIOLATION", Duration::from_secs(1))
+        .expect("binding Gate");
+    assert!(matches!(result.outcome(), GateOutcome::Pass));
+}
+
+#[test]
+fn gate_workspace_inputs_exclude_named_cargo_target_directories() {
+    let temp = TempDir::new().expect("temp");
+    fs::create_dir_all(temp.path().join("src")).expect("source directory");
+    fs::write(temp.path().join("src/lib.rs"), "pub fn source() {}\n").expect("source file");
+    fs::create_dir_all(temp.path().join("target-friction-final-r29/debug"))
+        .expect("named target directory");
+    fs::write(
+        temp.path()
+            .join("target-friction-final-r29/debug/generated.rs"),
+        "pub fn generated() {}\n",
+    )
+    .expect("generated file");
+
+    let paths = workspace_inputs(temp.path())
+        .expect("workspace inputs")
+        .into_iter()
+        .map(|(relative, _)| relative)
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path == "src/lib.rs"));
+    assert!(
+        paths
+            .iter()
+            .all(|path| !path.starts_with("target-friction-final-r29/"))
+    );
+}
+
+#[test]
+fn coding_plan_gate_accepts_command_arrays_advertised_by_operation_describe() {
+    let plan = json!({
+        "goal":"release the validated daemon candidate",
+        "changedPaths":["src/lib.rs"],
+        "risks":["release regression"],
+        "sourceReads":["constraints/README.md"],
+        "approved":true,
+        "verification":[{
+            "id":"V-001",
+            "acId":"AC-001",
+            "boundary":"critical-coverage",
+            "command":[
+                "cargo llvm-cov -p ae-sdd-domain --fail-under-lines 90",
+                "cargo llvm-cov -p ae-sdd-policy --fail-under-lines 90"
+            ],
+            "expected":"both critical crates meet the coverage threshold"
+        }]
+    });
+
+    assert!(plan_contract_complete(&plan));
 }
 
 #[test]

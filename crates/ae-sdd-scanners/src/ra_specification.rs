@@ -22,6 +22,24 @@ use crate::{FindingSeverity, ScannerFinding};
 /// Upper bound on parsed input length, keeping the parser O(n) and bounded.
 const MAX_RA_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RA_LINES: usize = 20_000;
+const SCALE_TOKENS: [(&str, WorkScale); 4] = [
+    ("micro", WorkScale::Micro),
+    ("small", WorkScale::Small),
+    ("medium", WorkScale::Medium),
+    ("large", WorkScale::Large),
+];
+const SCALE_RUBRIC_HEADING: &str = "最高分";
+const SCALE_RUBRIC_SEPARATOR: &str = "->";
+const SCALE_RUBRIC_SCALE_MARKER: &str = "Scale = ";
+const SCALE_RUBRIC_GRAMMAR: &str = "最高分 = <1..4> -> Scale = micro|small|medium|large";
+const SCALE_DIMENSION_NAMES: [&str; 6] = [
+    "可观察行为与场景广度",
+    "参与方、权限或业务域广度",
+    "状态、数据语义与不变量复杂度",
+    "外部契约与协调范围",
+    "性能、安全、合规、可用性等质量风险",
+    "兼容、迁移、回滚和运行影响",
+];
 
 /// The seven conditional dimensions declared by the SRS §3 applicability table.
 ///
@@ -355,10 +373,20 @@ fn parse_ra_specification_at(
         &mut findings,
     ) {
         let Some(lens) = RaLens::from_key(row[0].trim()) else {
-            findings.push(finding(
+            findings.push(ScannerFinding::new(
+                FindingSeverity::Blocker,
                 "applicability-unknown-lens",
-                path,
-                "Applicability rows must name one of the seven canonical dimensions.",
+                path.clone(),
+                1,
+                format!(
+                    "Applicability dimension `{}` is not canonical; expected one of: {}.",
+                    row[0].trim(),
+                    RaLens::ALL
+                        .iter()
+                        .map(|lens| lens.as_key())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
             ));
             continue;
         };
@@ -605,14 +633,6 @@ fn parse_ra_specification_at(
     // §7 scale: six scores + rubric line "最高分 = N -> Scale = X".
     let scale_body = body_for(&sections, "7");
     let mut scale_scores: [u8; 6] = [0; 6];
-    let dimension_names = [
-        "可观察行为与场景广度",
-        "参与方、权限或业务域广度",
-        "状态、数据语义与不变量复杂度",
-        "外部契约与协调范围",
-        "性能、安全、合规、可用性等质量风险",
-        "兼容、迁移、回滚和运行影响",
-    ];
     let mut rubric_scale: Option<WorkScale> = None;
     let mut rubric_maximum = None;
     let score_rows = checked_rows(
@@ -632,11 +652,20 @@ fn parse_ra_specification_at(
     }
     let mut seen_dimensions = BTreeSet::new();
     for row in score_rows {
-        let Some(index) = dimension_names.iter().position(|name| *name == row[0]) else {
-            findings.push(finding(
+        let Some(index) = SCALE_DIMENSION_NAMES
+            .iter()
+            .position(|name| *name == row[0])
+        else {
+            findings.push(ScannerFinding::new(
+                FindingSeverity::Blocker,
                 "closure-scale-unknown-dimension",
-                path,
-                "Scale rubric contains an unknown dimension.",
+                path.clone(),
+                1,
+                format!(
+                    "Scale dimension `{}` is not canonical; expected one of: {}.",
+                    row[0],
+                    SCALE_DIMENSION_NAMES.join(", ")
+                ),
             ));
             continue;
         };
@@ -657,25 +686,29 @@ fn parse_ra_specification_at(
         }
     }
     for line in &scale_body {
-        if line.trim_start().starts_with("最高分") {
+        if line.trim_start().starts_with(SCALE_RUBRIC_HEADING) {
             match rubric_from_line(line) {
                 Some((maximum, rubric)) => {
                     rubric_maximum = Some(maximum);
                     rubric_scale = Some(rubric);
                 }
-                None => findings.push(finding(
+                None => findings.push(ScannerFinding::new(
+                    FindingSeverity::Blocker,
                     "closure-scale-rubric-malformed",
-                    path,
-                    "Scale rubric summary must declare maximum and scale.",
+                    path.clone(),
+                    1,
+                    scale_rubric_diagnostic(Some(line)),
                 )),
             }
         }
     }
     if rubric_scale.is_none() {
-        findings.push(finding(
+        findings.push(ScannerFinding::new(
+            FindingSeverity::Blocker,
             "closure-scale-rubric-missing",
-            path,
-            "Scale rubric summary is required.",
+            path.clone(),
+            1,
+            scale_rubric_diagnostic(None),
         ));
     }
     let actual_maximum = scale_scores.iter().copied().max().unwrap_or(0);
@@ -945,26 +978,38 @@ fn ids_in(text: &str, prefix: &str) -> Vec<String> {
 }
 
 fn parse_work_scale(value: &str) -> Option<WorkScale> {
-    match value.trim() {
-        "micro" => Some(WorkScale::Micro),
-        "small" => Some(WorkScale::Small),
-        "medium" => Some(WorkScale::Medium),
-        "large" => Some(WorkScale::Large),
-        _ => None,
-    }
+    SCALE_TOKENS
+        .iter()
+        .find_map(|(token, scale)| (*token == value.trim()).then_some(*scale))
 }
 
 /// Parse a rubric line like `最高分 = 4 -> Scale = large` into the declared scale.
 fn rubric_from_line(line: &str) -> Option<(u8, WorkScale)> {
-    let (maximum, scale) = line.split_once("->")?;
+    let (maximum, scale) = line.split_once(SCALE_RUBRIC_SEPARATOR)?;
     let maximum = maximum.split_once('=')?.1.trim().parse::<u8>().ok()?;
-    let marker = "Scale = ";
-    let position = scale.find(marker)?;
-    let token = scale[position + marker.len()..]
+    let position = scale.find(SCALE_RUBRIC_SCALE_MARKER)?;
+    let token = scale[position + SCALE_RUBRIC_SCALE_MARKER.len()..]
         .trim_start()
         .split([',', '。', '（', ' ', '\t'])
         .next()?;
     Some((maximum, parse_work_scale(token)?))
+}
+
+fn scale_rubric_diagnostic(offending_line: Option<&str>) -> String {
+    let tokens = SCALE_TOKENS
+        .iter()
+        .map(|(token, _)| *token)
+        .collect::<Vec<_>>()
+        .join(", ");
+    match offending_line {
+        Some(line) => format!(
+            "Scale rubric summary `{}` is malformed; expected exact grammar `{SCALE_RUBRIC_GRAMMAR}`; accepted scale tokens: {tokens}.",
+            line.trim()
+        ),
+        None => format!(
+            "Scale rubric summary is missing; add exact grammar `{SCALE_RUBRIC_GRAMMAR}`; accepted scale tokens: {tokens}."
+        ),
+    }
 }
 
 fn scale_from_score(score: u8) -> Option<WorkScale> {

@@ -9,10 +9,10 @@ use ae_sdd_domain::{
 use ae_sdd_integrations::{NativeBusinessAdapter, SqliteRuntimePersistence};
 use ae_sdd_operations::OperationName;
 use ae_sdd_protocol::{
-    ConfirmationRef, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode,
+    PROTOCOL_VERSION_V1, RequestParams, RpcMethod, StableErrorCode, WorkspaceMode,
 };
 use ae_sdd_runtime::{
-    BusinessOperationPort, BusinessWorkspace, MemoryPersistence, PersistencePort, RuntimeError,
+    BusinessOperationPort, BusinessWorkspace, MemoryPersistence, PersistencePort,
 };
 use ae_sdd_store::{
     LeaseOwner, ProjectMutationStore, ProjectStorePaths, SqliteRuntimeRepository,
@@ -112,20 +112,6 @@ fn params(payload: Value, key: Option<&str>) -> RequestParams<Value> {
         confirmation: None,
         deadline_ms: 1_000,
         payload,
-    }
-}
-
-fn lifecycle_confirmation(error: &RuntimeError) -> ConfirmationRef {
-    assert_eq!(error.code(), StableErrorCode::ConfirmationRequired);
-    let confirmation_id = error
-        .remediation()
-        .and_then(|value| value.split_whitespace().last())
-        .expect("lifecycle confirmation binding")
-        .to_owned();
-    ConfirmationRef {
-        confirmation_id,
-        approved_by: "user:test".to_owned(),
-        approved_at: "2026-07-23T03:00:00Z".to_owned(),
     }
 }
 
@@ -377,10 +363,6 @@ fn stored_pass_cannot_bypass_the_durable_transition_intent() {
     let events_before = persistence
         .latest_event_sequence()
         .expect("event cursor before transition");
-    let confirmation_required = adapter
-        .execute(RpcMethod::OperationExecute, &request, Some(&trusted))
-        .expect_err("lifecycle operation must expose its confirmation binding");
-    request.confirmation = Some(lifecycle_confirmation(&confirmation_required));
     let error = adapter
         .execute(RpcMethod::OperationExecute, &request, Some(&trusted))
         .expect_err("stored PASS without a durable root intent must fail closed");
@@ -472,10 +454,6 @@ fn fresh_native_gate_and_lease_commit_only_the_nested_story_phase() {
     transition.expected_revision = Some(7);
     transition.fencing_token = Some(lease.fencing_token().get());
     transition.lease_id = Some(lease_id.to_string());
-    let confirmation_required = adapter
-        .execute(RpcMethod::OperationExecute, &transition, Some(&trusted))
-        .expect_err("lifecycle operation must expose its confirmation binding");
-    transition.confirmation = Some(lifecycle_confirmation(&confirmation_required));
     let committed = adapter
         .execute(RpcMethod::OperationExecute, &transition, Some(&trusted))
         .expect("transition commit");
@@ -484,6 +462,16 @@ fn fresh_native_gate_and_lease_commit_only_the_nested_story_phase() {
     let events_after_commit = persistence
         .latest_event_sequence()
         .expect("event cursor after transition commit");
+    let mut narrowed = trusted.clone();
+    narrowed.agent_grant = Some(ScopedGrant::new(
+        [OperationId::new("workitem.get").expect("operation")],
+        [],
+        [ProjectPathScope::ProjectRoot],
+    ));
+    let denied = adapter
+        .execute(RpcMethod::OperationExecute, &transition, Some(&narrowed))
+        .expect_err("a narrowed grant cannot replay state.transition");
+    assert_eq!(denied.code(), StableErrorCode::RoleOperationForbidden);
     let replayed = adapter
         .execute(RpcMethod::OperationExecute, &transition, Some(&trusted))
         .expect("same transition replay");

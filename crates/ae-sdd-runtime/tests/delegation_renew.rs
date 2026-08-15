@@ -375,3 +375,122 @@ fn replaying_one_renewal_does_not_extend_twice() {
     );
     assert_eq!(replayed["deadlineUnixMs"], extended);
 }
+
+#[test]
+fn parent_status_projects_renewal_only_inside_the_expiry_window() {
+    let mut fixture = running_delegation("renew-projection", 5_000);
+    let status = |fixture: &mut Fixture| {
+        let mut request = session_params(
+            &fixture.workspace,
+            &fixture.root,
+            "root-agent",
+            json!({"delegationId": fixture.delegation_id}),
+            1_000,
+        );
+        request.work_item_id = Some("WORK".to_owned());
+        result(&fixture.harness.call(
+            &mut fixture.root_connection,
+            RpcMethod::DelegationStatus,
+            request,
+        ))
+    };
+
+    let early = status(&mut fixture);
+    assert!(early.get("nextAction").is_none());
+
+    fixture.harness.clock.set(fixture.created_deadline - 100);
+    let mut reopen = params(
+        json!({"externalKey":"root-external","role":"root","engaged":false}),
+        1_000,
+    );
+    reopen.workspace_id = Some(fixture.workspace.workspace_id.clone());
+    reopen.agent_id = Some("root-agent".to_owned());
+    reopen.session_id = Some(fixture.root.session_id.clone());
+    reopen.work_item_id = Some("WORK".to_owned());
+    reopen.idempotency_key = Some("renew-projection-root-reopen".to_owned());
+    fixture.root = serde_json::from_value(result(&fixture.harness.call(
+        &mut fixture.root_connection,
+        RpcMethod::SessionOpen,
+        reopen,
+    )))
+    .expect("root session reopens");
+    let near_expiry = status(&mut fixture);
+    assert_eq!(near_expiry["nextAction"]["kind"], "renew-delegation");
+    assert_eq!(
+        near_expiry["nextAction"]["delegationId"],
+        fixture.delegation_id
+    );
+    assert_eq!(
+        near_expiry["nextAction"]["currentDeadlineUnixMs"],
+        fixture.created_deadline
+    );
+    assert!(
+        near_expiry["nextAction"]["deadlineUnixMs"]
+            .as_u64()
+            .expect("proposed deadline")
+            > fixture.created_deadline
+    );
+}
+
+#[test]
+fn child_status_never_projects_parent_renewal_authority() {
+    let mut fixture = running_delegation("renew-child-projection", 5_000);
+    let mut child_open = params(
+        json!({
+            "externalKey":"child-projection-external",
+            "role":"series",
+            "engaged":false,
+            "delegationId":fixture.delegation_id
+        }),
+        1_000,
+    );
+    child_open.workspace_id = Some(fixture.workspace.workspace_id.clone());
+    child_open.agent_id = Some("child-projection-agent".to_owned());
+    child_open.session_id = Some(CHILD.to_owned());
+    child_open.work_item_id = Some("WORK".to_owned());
+    child_open.idempotency_key = Some("child-projection-open".to_owned());
+    let _child: ae_sdd_runtime::SessionResult =
+        serde_json::from_value(result(&fixture.harness.call(
+            &mut fixture.root_connection,
+            RpcMethod::SessionOpen,
+            child_open,
+        )))
+        .expect("child session decodes");
+
+    fixture.harness.clock.set(fixture.created_deadline - 100);
+    let mut child_reopen = params(
+        json!({
+            "externalKey":"child-projection-external",
+            "role":"series",
+            "engaged":false,
+            "delegationId":fixture.delegation_id
+        }),
+        1_000,
+    );
+    child_reopen.workspace_id = Some(fixture.workspace.workspace_id.clone());
+    child_reopen.agent_id = Some("child-projection-agent".to_owned());
+    child_reopen.session_id = Some(CHILD.to_owned());
+    child_reopen.work_item_id = Some("WORK".to_owned());
+    child_reopen.idempotency_key = Some("child-projection-reopen".to_owned());
+    let child: ae_sdd_runtime::SessionResult =
+        serde_json::from_value(result(&fixture.harness.call(
+            &mut fixture.root_connection,
+            RpcMethod::SessionOpen,
+            child_reopen,
+        )))
+        .expect("child session reopens");
+    let mut request = session_params(
+        &fixture.workspace,
+        &child,
+        "child-projection-agent",
+        json!({"delegationId":fixture.delegation_id}),
+        1_000,
+    );
+    request.work_item_id = Some("WORK".to_owned());
+    let status = result(&fixture.harness.call(
+        &mut fixture.root_connection,
+        RpcMethod::DelegationStatus,
+        request,
+    ));
+    assert!(status.get("nextAction").is_none());
+}

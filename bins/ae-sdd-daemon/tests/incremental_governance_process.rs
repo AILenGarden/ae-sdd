@@ -285,6 +285,7 @@ fn prepare_workspace(root: &Path) -> PathBuf {
         "executionRuntime": {
             "schemaVersion": 1,
             "queueDigest": format!("sha256:{}", "0".repeat(64)),
+            "capsuleDigest": format!("sha256:{}", "1".repeat(64)),
             "activeSliceOrdinal": 0,
             "completionMilestone": "none"
         },
