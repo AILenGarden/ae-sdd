@@ -30,11 +30,12 @@ const METHOD_NAMES: [&str; METHOD_COUNT] = [
     "delegation.create",
     "delegation.status",
     "delegation.accept",
+    "delegation.child_claim",
     "delegation.report",
     "delegation.collect",
     "delegation.cancel",
+    "delegation.renew",
     "host.register",
-    "host.capabilities",
     "host.action_next",
     "host.action_ack",
     "host.pressure_report",
@@ -160,20 +161,30 @@ fn method_precondition_flags_cover_bootstrap_hooks_and_typed_operations() {
             source: RequirementSource::Method,
         },
     );
-    assert_requirements(
+    // A Hook is Session-scoped, so it must not carry a Work Item precondition:
+    // `constraints/api.md` forbids locking session bootstrap behind Work Item
+    // requirements, and doing so made the first host turn unreachable.
+    for hook in [
+        RpcMethod::HookUserPrompt,
         RpcMethod::HookPreTool,
-        OperationScope::Session,
-        MethodRequirements {
-            requires_workspace: true,
-            requires_work_item: true,
-            writes: true,
-            requires_lease: false,
-            requires_revision: false,
-            requires_idempotency: true,
-            requires_confirmation: false,
-            source: RequirementSource::Method,
-        },
-    );
+        RpcMethod::HookPostTool,
+        RpcMethod::HookStop,
+    ] {
+        assert_requirements(
+            hook,
+            OperationScope::Session,
+            MethodRequirements {
+                requires_workspace: true,
+                requires_work_item: false,
+                writes: true,
+                requires_lease: false,
+                requires_revision: false,
+                requires_idempotency: true,
+                requires_confirmation: false,
+                source: RequirementSource::Method,
+            },
+        );
+    }
     assert_requirements(
         RpcMethod::RuntimeDrain,
         OperationScope::Runtime,
@@ -379,6 +390,7 @@ fn secret_debug_is_redacted_through_handshake_request() {
             endpoint_token: SecretString::new("wire-secret"),
             expected_boot_id: "boot-1".to_owned(),
             expected_policy_digest: "a".repeat(64),
+            adapter_id: None,
         },
     );
 
@@ -471,9 +483,18 @@ fn stable_errors_have_exact_wire_names_unique_numbers_and_no_combined_codes() {
     assert!(names.contains("EXECUTION_PROGRESS_REQUIRED"));
     assert!(names.contains("EXECUTION_RESOURCE_BUSY"));
     assert!(names.contains("EXECUTION_BUDGET_EXCEEDED"));
+    assert!(names.contains("CONCURRENT_DELEGATION_PENDING"));
     assert_eq!(
         serde_json::to_value(StableErrorCode::IdempotencyKeyReused).unwrap(),
         json!("IDEMPOTENCY_KEY_REUSED")
+    );
+    // A2 host-native delegation (single-pending-create invariant) reuses the
+    // headroom left inside the -32050..-32055 delegation-lifecycle group
+    // rather than opening a new group, consistent with the existing
+    // per-group headroom pattern (-32040/041 -> 050, -32070..072 -> 080).
+    assert_eq!(
+        StableErrorCode::ConcurrentDelegationPending.json_rpc_code(),
+        -32_056
     );
 
     let retryable = HashSet::from([
@@ -506,6 +527,7 @@ fn stable_errors_have_exact_wire_names_unique_numbers_and_no_combined_codes() {
         StableErrorCode::ExecutionProgressRequired,
         StableErrorCode::ExecutionResourceBusy,
         StableErrorCode::ExecutionBudgetExceeded,
+        StableErrorCode::ConcurrentDelegationPending,
     ]);
     for code in StableErrorCode::ALL {
         assert_eq!(

@@ -14,7 +14,15 @@
 
 use std::{fs, path::Path, sync::Arc};
 
-use ae_sdd_domain::{AgentRole, BootId, CapabilityId, OperationId, ProjectPathScope, ScopedGrant};
+use ae_sdd_contracts::{
+    DocumentId, EngineeringRoute, ReasonCode, ReceiptStatus, RequirementAnalysisEvidence,
+    RouteApprovalReceipt, RouteBindingInput, RouteDecision, RouteDecisionId, RouteDisposition,
+    RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind, SpecKind, TaskKind,
+};
+use ae_sdd_domain::{
+    AgentRole, ArtifactDigest, BootId, CapabilityId, DecisionDigest, DesignRoute, OperationId,
+    ProjectPathScope, ScopedGrant, StateRevision, WorkItemId, WorkScale,
+};
 use ae_sdd_gates::{GateRegistry, GateSchedulerStats};
 use ae_sdd_integrations::{NativeBusinessAdapter, SqliteRuntimePersistence};
 use ae_sdd_protocol::{
@@ -129,6 +137,12 @@ impl Fixture {
         business_workspace(self.workspace_root.path(), AgentRole::Root, root_grant())
     }
 
+    /// The delegated author task executes the semantic evidence operations the
+    /// root orchestrator may no longer run itself.
+    fn author_workspace(&self) -> BusinessWorkspace {
+        business_workspace(self.workspace_root.path(), AgentRole::Task, author_grant())
+    }
+
     fn reviewer_workspace(&self, reviewer: &Reviewer) -> BusinessWorkspace {
         business_workspace(
             self.workspace_root.path(),
@@ -200,44 +214,12 @@ impl Fixture {
         key: &str,
     ) -> Result<Value, ae_sdd_runtime::RuntimeError> {
         let mut params = operation_params(agent, session, operation, payload, key);
+        if operation == "review.contribute" {
+            params.work_item_id = Some(STORY.to_owned());
+        }
         params.expected_revision = Some(self.revision());
         self.adapter
             .execute(RpcMethod::OperationExecute, &params, Some(workspace))
-    }
-
-    /// Re-seals the finalized evidence manifest against the current Review
-    /// input fingerprint, exactly the way a Review-cycle evidence seal binds
-    /// the already-recorded ledger entries to the current authority. Only the
-    /// per-entry `inputFingerprint` binding changes; the ledger keeps backing
-    /// every cited evidence id.
-    fn reseal_manifest_for_review(&self) {
-        let workspace = self.reviewer_workspace(&BE_REVIEWER);
-        let state = read_state(&self.state_path);
-        let input = authoritative_review_workspace_input_fingerprint(&workspace, &state)
-            .expect("authoritative review input fingerprint");
-        let path = self.workspace_root.path().join(format!(
-            ".auto-engineering/{WORK_ITEM}/evidence/manifest.json"
-        ));
-        let mut manifest: Value =
-            serde_json::from_slice(&fs::read(&path).expect("finalized manifest"))
-                .expect("manifest JSON");
-        for entry in manifest["entries"]
-            .as_array_mut()
-            .expect("manifest entries")
-        {
-            entry["inputFingerprint"] = json!(input.to_string());
-        }
-        let mut payload = manifest.clone();
-        payload
-            .as_object_mut()
-            .expect("manifest object")
-            .retain(|key, _| key != "contentHash" && !key.starts_with('_'));
-        manifest["contentHash"] = json!(format!(
-            "sha256:{}",
-            digest(serde_json::to_vec(&payload).expect("manifest canonical JSON"))
-        ));
-        fs::write(&path, serde_json::to_vec(&manifest).expect("manifest JSON"))
-            .expect("resealed manifest");
     }
 }
 
@@ -292,11 +274,12 @@ fn execution_plan() -> Value {
 fn initial_state() -> Value {
     json!({
         "stateMachineName":WORK_ITEM,
-        "activeStory":WORK_ITEM,
+        "activeStory":STORY,
         "revision":1,
         "lastFencingToken":0,
+        "entryNode":"ROUTE",
+        "engineeringRoute":frozen_engineering_route(),
         "scale":"medium",
-        "selectedDesign":"Story",
         "phase":"code-reviewed",
         "currentPhase":"code-reviewed",
         "currentStep":"code-reviewed",
@@ -305,6 +288,7 @@ fn initial_state() -> Value {
             "schemaVersion":1,
             "queueRef":format!(".auto-engineering/{STORY}/execution/queue.json"),
             "queueDigest":format!("sha256:{}", digest("e2e-queue")),
+            "capsuleDigest":format!("sha256:{}", digest("e2e-capsule")),
             "activeSliceOrdinal":0,
             "completionMilestone":"none"
         },
@@ -334,6 +318,56 @@ fn initial_state() -> Value {
             "byteLength":1
         }]
     })
+}
+
+fn frozen_engineering_route() -> Value {
+    let evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new(WORK_ITEM).expect("work item id"),
+        SeriesId::new("SERIES-RA-E2E-COMPLETION").expect("series id"),
+        DocumentId::new("DOC-RA-E2E-COMPLETION").expect("document id"),
+        1,
+        ArtifactDigest::digest(b"e2e completion RA content"),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"e2e completion RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"e2e completion scale evidence"),
+        ArtifactDigest::digest(b"e2e completion RA closure receipts"),
+    );
+    let binding = RouteBindingInput::new(evidence, RouteMappingVersion::V1);
+    let decision = RouteDecision::new(
+        SchemaVersion::V2,
+        RouteDecisionId::new("route-e2e-completion-r1").expect("route decision id"),
+        WorkItemId::new(WORK_ITEM).expect("work item id"),
+        TaskKind::Implementation,
+        WorkScale::Medium,
+        DesignRoute::Story,
+        RouteDisposition::Approved,
+        vec![ReasonCode::new("route.ra-closed").expect("reason")],
+        vec![
+            SeriesKind::new("story").expect("series kind"),
+            SeriesKind::new("testcase").expect("series kind"),
+            SeriesKind::new("coding-plan").expect("series kind"),
+        ],
+        vec![SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        binding.fingerprint(),
+        None,
+        DecisionDigest::digest(b"e2e completion route decision"),
+    )
+    .expect("route decision");
+    let approval = RouteApprovalReceipt::new(
+        "route:e2e-completion-r1".to_owned(),
+        "user:test".to_owned(),
+        "2026-07-27T02:00:00Z".to_owned(),
+        binding.ra_evidence().document_id().clone(),
+        binding.ra_evidence().version(),
+        *binding.ra_evidence().ra_content_digest(),
+        binding.ra_evidence().scale(),
+        decision.decision_digest(),
+    );
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[])
+        .expect("verified RA and bound approval freeze the route");
+    serde_json::to_value(route).expect("engineering route JSON")
 }
 
 fn write_workspace(root: &Path, state_path: &Path) {
@@ -421,6 +455,22 @@ fn root_grant() -> ScopedGrant {
     )
 }
 
+fn author_grant() -> ScopedGrant {
+    ScopedGrant::new(
+        [
+            "document.save",
+            "evidence.finalize",
+            "evidence.record",
+            "lease.acquire",
+            "lease.release",
+        ]
+        .into_iter()
+        .map(|operation| OperationId::new(operation).expect("operation id")),
+        [],
+        [ProjectPathScope::ProjectRoot],
+    )
+}
+
 fn reviewer_wire_grant(specialty: &str) -> ScopedGrantWire {
     ScopedGrantWire::from_domain(&reviewer_domain_grant(specialty))
 }
@@ -488,8 +538,19 @@ fn seed_identity_authority(persistence: &SqliteRuntimePersistence, root: &Path, 
             parent_delegation_id: None,
             role: WireAgentRole::Series,
             grant: ScopedGrantWire {
-                operations: vec!["document.save".to_owned(), "lease.acquire".to_owned()],
-                capabilities: Vec::new(),
+                operations: vec![
+                    "document.save".to_owned(),
+                    "evidence.finalize".to_owned(),
+                    "evidence.record".to_owned(),
+                    "lease.acquire".to_owned(),
+                    "lease.release".to_owned(),
+                    "review.contribute".to_owned(),
+                ],
+                capabilities: vec![
+                    "review.specialty.be".to_owned(),
+                    "review.specialty.ar".to_owned(),
+                    "review.specialty.qa".to_owned(),
+                ],
                 paths: vec![ae_sdd_runtime::GrantPathWire::ProjectRoot],
             },
             sequence: 1,
@@ -507,7 +568,13 @@ fn seed_identity_authority(persistence: &SqliteRuntimePersistence, root: &Path, 
             parent_delegation_id: Some(SERIES_DELEGATION),
             role: WireAgentRole::Task,
             grant: ScopedGrantWire {
-                operations: vec!["document.save".to_owned()],
+                operations: vec![
+                    "document.save".to_owned(),
+                    "evidence.finalize".to_owned(),
+                    "evidence.record".to_owned(),
+                    "lease.acquire".to_owned(),
+                    "lease.release".to_owned(),
+                ],
                 capabilities: Vec::new(),
                 paths: vec![ae_sdd_runtime::GrantPathWire::ProjectRoot],
             },
@@ -616,6 +683,7 @@ fn commit_child_identity(
             delegation: Some(RuntimeDelegationRecord {
                 delegation_id: delegation_id.to_owned(),
                 workspace_id: WORKSPACE_ID.to_owned(),
+                work_item_id: session.current_work_item.clone(),
                 root_session_id: ROOT_SESSION.to_owned(),
                 parent_session_id: parent_session_id.to_owned(),
                 child_session_id: Some(session_id.to_owned()),
@@ -682,6 +750,11 @@ fn session_record(
     delegation_id: Option<&str>,
     grant: ScopedGrantWire,
 ) -> RuntimeSessionRecord {
+    let current_work_item = if matches!(role, WireAgentRole::Task | WireAgentRole::Reviewer) {
+        STORY
+    } else {
+        WORK_ITEM
+    };
     RuntimeSessionRecord {
         session_id: session_id.to_owned(),
         agent_id: agent_id.to_owned(),
@@ -692,7 +765,7 @@ fn session_record(
         parent_session_id: parent_session_id.map(str::to_owned),
         delegation_id: delegation_id.map(str::to_owned),
         engaged: true,
-        current_work_item: Some(WORK_ITEM.to_owned()),
+        current_work_item: Some(current_work_item.to_owned()),
         grant,
         context_generation: 0,
         expires_at_unix_ms: 4_102_444_800_000,
@@ -763,14 +836,21 @@ fn root_params(payload: &Value, key: &str) -> RequestParams<Value> {
     base_params("root-agent", ROOT_SESSION, payload.clone(), key)
 }
 
-fn acquire_root_lease(fixture: &Fixture, key: &str) -> (String, u64) {
+fn acquire_lease(
+    fixture: &Fixture,
+    workspace: &BusinessWorkspace,
+    agent: &str,
+    session: &str,
+    role_label: &str,
+    key: &str,
+) -> (String, u64) {
     let lease = fixture
         .operate(
-            &fixture.root_workspace(),
-            "root-agent",
-            ROOT_SESSION,
+            workspace,
+            agent,
+            session,
             "lease.acquire",
-            json!({"owner":{"role":"root"},"ttlSeconds":300}),
+            json!({"owner":{"role":role_label},"ttlSeconds":300}),
             key,
         )
         .unwrap_or_else(|error| panic!("{key} lease failed: {error:?}"));
@@ -785,12 +865,20 @@ fn acquire_root_lease(fixture: &Fixture, key: &str) -> (String, u64) {
     )
 }
 
-fn release_root_lease(fixture: &Fixture, lease: &(String, u64), key: &str) {
+fn release_lease(
+    fixture: &Fixture,
+    workspace: &BusinessWorkspace,
+    agent: &str,
+    session: &str,
+    role_label: &str,
+    lease: &(String, u64),
+    key: &str,
+) {
     let mut params = operation_params(
-        "root-agent",
-        ROOT_SESSION,
+        agent,
+        session,
         "lease.release",
-        json!({"owner":{"role":"root"}}),
+        json!({"owner":{"role":role_label}}),
         key,
     );
     params.lease_id = Some(lease.0.clone());
@@ -798,11 +886,7 @@ fn release_root_lease(fixture: &Fixture, lease: &(String, u64), key: &str) {
     params.expected_revision = Some(fixture.revision());
     fixture
         .adapter
-        .execute(
-            RpcMethod::OperationExecute,
-            &params,
-            Some(&fixture.root_workspace()),
-        )
+        .execute(RpcMethod::OperationExecute, &params, Some(workspace))
         .unwrap_or_else(|error| panic!("{key} release failed: {error:?}"));
 }
 
@@ -821,17 +905,32 @@ fn write_source(root: &Path, relative: &str, content: &str) {
 }
 
 /// Drives the milestone chain from `None` to `GovernanceClosed` through the
-/// real operations: green verification record, evidence finalize, two
-/// reviewer contributions and one root finalize.
+/// real operations: the delegated author task records and finalizes the green
+/// verification evidence, two reviewers contribute and the root finalizer
+/// aggregates them into `GovernanceClosed`.
 fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
-    let lease = acquire_root_lease(fixture, &format!("{key_prefix}-evidence-lease"));
+    let author = fixture.author_workspace();
+    let review_input_fingerprint = authoritative_review_workspace_input_fingerprint(
+        &fixture.reviewer_workspace(&BE_REVIEWER),
+        &read_state(&fixture.state_path),
+    )
+    .expect("authoritative review input fingerprint")
+    .to_string();
+    let lease = acquire_lease(
+        fixture,
+        &author,
+        "author-agent",
+        AUTHOR_SESSION,
+        "task",
+        &format!("{key_prefix}-evidence-lease"),
+    );
     let mut record = operation_params(
-        "root-agent",
-        ROOT_SESSION,
+        "author-agent",
+        AUTHOR_SESSION,
         "evidence.record",
         json!({
             "artifactPath":"results/focused.json",
-            "inputFingerprint":"e2e-verification-input",
+            "inputFingerprint":review_input_fingerprint.clone(),
             "kind":"focused-test",
             "command":["cargo","test","-p","slice"],
             "exitCode":0
@@ -843,11 +942,7 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
     record.expected_revision = Some(fixture.revision());
     let recorded = fixture
         .adapter
-        .execute(
-            RpcMethod::OperationExecute,
-            &record,
-            Some(&fixture.root_workspace()),
-        )
+        .execute(RpcMethod::OperationExecute, &record, Some(&author))
         .unwrap_or_else(|error| panic!("{key_prefix} evidence record failed: {error:?}"));
     assert_eq!(recorded["changed"], true, "{recorded}");
     let evidence_id = recorded["data"]["evidenceId"]
@@ -864,9 +959,36 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
         "finalize-execution-evidence"
     );
 
+    let mut second_record = operation_params(
+        "author-agent",
+        AUTHOR_SESSION,
+        "evidence.record",
+        json!({
+            "artifactPath":"results/focused.json",
+            "inputFingerprint":review_input_fingerprint,
+            "kind":"focused-test",
+            "command":["cargo","test","-p","slice"],
+            "exitCode":0,
+            "summary":{"sequence":2}
+        }),
+        &format!("{key_prefix}-evidence-record-2"),
+    );
+    second_record.lease_id = Some(lease.0.clone());
+    second_record.fencing_token = Some(lease.1);
+    second_record.expected_revision = Some(fixture.revision());
+    fixture
+        .adapter
+        .execute(RpcMethod::OperationExecute, &second_record, Some(&author))
+        .unwrap_or_else(|error| panic!("{key_prefix} second evidence record failed: {error:?}"));
+    assert_eq!(
+        fixture.milestone(),
+        "implementation-verified",
+        "every green evidence append must rebind ImplementationVerified to the latest manifest"
+    );
+
     let mut finalize = operation_params(
-        "root-agent",
-        ROOT_SESSION,
+        "author-agent",
+        AUTHOR_SESSION,
         "evidence.finalize",
         json!({}),
         &format!("{key_prefix}-evidence-finalize"),
@@ -876,11 +998,7 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
     finalize.expected_revision = Some(fixture.revision());
     let finalized = fixture
         .adapter
-        .execute(
-            RpcMethod::OperationExecute,
-            &finalize,
-            Some(&fixture.root_workspace()),
-        )
+        .execute(RpcMethod::OperationExecute, &finalize, Some(&author))
         .unwrap_or_else(|error| panic!("{key_prefix} evidence finalize failed: {error:?}"));
     assert_eq!(finalized["changed"], true, "{finalized}");
     assert_eq!(
@@ -892,11 +1010,16 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
         fixture.next_action(&format!("{key_prefix}-flow-ready"))["kind"],
         "collect-review-contributions"
     );
-    release_root_lease(fixture, &lease, &format!("{key_prefix}-evidence-release"));
+    release_lease(
+        fixture,
+        &author,
+        "author-agent",
+        AUTHOR_SESSION,
+        "task",
+        &lease,
+        &format!("{key_prefix}-evidence-release"),
+    );
 
-    // The Review cycle re-seals the recorded ledger entries against the
-    // current Review input; the ledger keeps backing the cited evidence id.
-    fixture.reseal_manifest_for_review();
     for reviewer in [&BE_REVIEWER, &AR_REVIEWER] {
         let contributed = fixture
             .operate(
@@ -922,7 +1045,14 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
         assert_eq!(contributed["data"]["status"], "pending", "{contributed}");
     }
 
-    let lease = acquire_root_lease(fixture, &format!("{key_prefix}-finalize-lease"));
+    let lease = acquire_lease(
+        fixture,
+        &fixture.root_workspace(),
+        "root-agent",
+        ROOT_SESSION,
+        "root",
+        &format!("{key_prefix}-finalize-lease"),
+    );
     let mut finalize = operation_params(
         "root-agent",
         ROOT_SESSION,
@@ -930,6 +1060,7 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
         json!({}),
         &format!("{key_prefix}-review-finalize"),
     );
+    finalize.work_item_id = Some(STORY.to_owned());
     finalize.lease_id = Some(lease.0.clone());
     finalize.fencing_token = Some(lease.1);
     finalize.expected_revision = Some(fixture.revision());
@@ -953,7 +1084,15 @@ fn drive_to_governance_closed(fixture: &Fixture, key_prefix: &str) {
         "governance-closed",
         "a terminal clean Review must close GovernanceClosed"
     );
-    release_root_lease(fixture, &lease, &format!("{key_prefix}-finalize-release"));
+    release_lease(
+        fixture,
+        &fixture.root_workspace(),
+        "root-agent",
+        ROOT_SESSION,
+        "root",
+        &lease,
+        &format!("{key_prefix}-finalize-release"),
+    );
 }
 
 /// Records the root completion intent and evaluates the three terminal Gates
@@ -1065,17 +1204,58 @@ fn three_slices_reach_completed_through_incremental_governance() {
 
     // The same-key replay returns the committed receipt without a second
     // mutation, exactly like the lifecycle control-plane replay.
-    let mut replay = operation_params(
-        "root-agent",
-        ROOT_SESSION,
-        "workitem.complete",
-        json!({}),
-        "chain-complete",
+    let stale_expected_revision = completion.expected_revision;
+    assert!(
+        stale_expected_revision < fixture.revision(),
+        "replay cases must exercise a stale expectedRevision"
     );
-    replay.lease_id = Some(completion.lease_id.clone());
-    replay.fencing_token = Some(completion.fencing_token);
-    replay.expected_revision = Some(completion.expected_revision);
-    replay.confirmation = Some(completion.confirmation.clone());
+    let replay_request = |confirmation| {
+        let mut request = operation_params(
+            "root-agent",
+            ROOT_SESSION,
+            "workitem.complete",
+            json!({}),
+            "chain-complete",
+        );
+        request.lease_id = Some(completion.lease_id.clone());
+        request.fencing_token = Some(completion.fencing_token);
+        request.expected_revision = Some(stale_expected_revision);
+        request.confirmation = confirmation;
+        request
+    };
+    let missing_confirmation = replay_request(None);
+    let missing = fixture
+        .adapter
+        .execute(
+            RpcMethod::OperationExecute,
+            &missing_confirmation,
+            Some(&fixture.root_workspace()),
+        )
+        .expect_err("protected replay without confirmation must be refused");
+    assert_eq!(
+        missing.code(),
+        StableErrorCode::ConfirmationRequired,
+        "{missing:?}"
+    );
+    let forged_confirmation = replay_request(Some(ae_sdd_protocol::ConfirmationRef {
+        confirmation_id: "0".repeat(64),
+        approved_by: completion.confirmation.approved_by.clone(),
+        approved_at: completion.confirmation.approved_at.clone(),
+    }));
+    let forged = fixture
+        .adapter
+        .execute(
+            RpcMethod::OperationExecute,
+            &forged_confirmation,
+            Some(&fixture.root_workspace()),
+        )
+        .expect_err("protected replay must retain its confirmation authority");
+    assert_eq!(
+        forged.code(),
+        StableErrorCode::OperationSchemaInvalid,
+        "{forged:?}"
+    );
+    let replay = replay_request(Some(completion.confirmation.clone()));
     let replayed = fixture
         .adapter
         .execute(
@@ -1100,7 +1280,14 @@ struct CompletedWorkItem {
 }
 
 fn complete_work_item(fixture: &Fixture, key_prefix: &str) -> CompletedWorkItem {
-    let lease = acquire_root_lease(fixture, &format!("{key_prefix}-complete-lease"));
+    let lease = acquire_lease(
+        fixture,
+        &fixture.root_workspace(),
+        "root-agent",
+        ROOT_SESSION,
+        "root",
+        &format!("{key_prefix}-complete-lease"),
+    );
     let expected_revision = fixture.revision();
     let mut complete = operation_params(
         "root-agent",
@@ -1217,7 +1404,14 @@ fn changed_path_after_review_invalidates_governance_close() {
 
     // The terminal mutation fails closed too: the denied intent can never
     // produce a pending transition with fresh terminal Gates.
-    let lease = acquire_root_lease(&fixture, "stale-complete-lease");
+    let lease = acquire_lease(
+        &fixture,
+        &fixture.root_workspace(),
+        "root-agent",
+        ROOT_SESSION,
+        "root",
+        "stale-complete-lease",
+    );
     let mut complete = operation_params(
         "root-agent",
         ROOT_SESSION,

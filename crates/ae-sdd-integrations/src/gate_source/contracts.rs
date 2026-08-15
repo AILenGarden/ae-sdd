@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
+use ae_sdd_domain::{ArtifactDigest, ProjectRelativePath};
 use serde_json::Value;
 
 use super::{
@@ -7,6 +8,11 @@ use super::{
     predicate::{ac_ids, story_document},
 };
 
+/// Plan completeness for G-08: the approved plan contract is fully spelled out
+/// (goal, changed paths, risks, source reads and a verification matrix whose
+/// rows all carry their boundary/command/expectation). The Story-AC coverage
+/// count is enforced by the predicate through `plan_story_aligned`, never by a
+/// hardcoded verification-row count here.
 pub(super) fn plan_contract_complete(plan: &Value) -> bool {
     nonempty_string(plan.get("goal"))
         && nonempty_array(plan.get("changedPaths"))
@@ -14,15 +20,35 @@ pub(super) fn plan_contract_complete(plan: &Value) -> bool {
             .get("verification")
             .and_then(Value::as_array)
             .is_some_and(|items| {
-                items.len() >= 14
+                !items.is_empty()
                     && items.iter().all(|item| {
-                        ["id", "acId", "boundary", "command", "expected"]
+                        ["id", "acId", "boundary", "expected"]
                             .iter()
                             .all(|field| nonempty_string(item.get(*field)))
+                            && verification_command_complete(item.get("command"))
                     })
             })
         && nonempty_array(plan.get("risks"))
+        && plan
+            .get("sourceReads")
+            .and_then(Value::as_array)
+            .is_some_and(|reads| {
+                !reads.is_empty() && reads.iter().all(|read| nonempty_string(Some(read)))
+            })
         && plan.get("approved").and_then(Value::as_bool) == Some(true)
+}
+
+fn verification_command_complete(value: Option<&Value>) -> bool {
+    value.is_some_and(|value| match value {
+        Value::String(command) => !command.trim().is_empty(),
+        Value::Array(commands) => {
+            !commands.is_empty()
+                && commands
+                    .iter()
+                    .all(|command| nonempty_string(Some(command)))
+        }
+        _ => false,
+    })
 }
 
 pub(super) fn http_contract_valid(plan: &Value) -> bool {
@@ -68,15 +94,23 @@ pub(super) fn plan_story_aligned(
     !story_acs.is_empty() && story_acs.is_subset(&plan_acs)
 }
 
+/// A plan's source trace is complete only when *every* declared read still
+/// resolves. Accepting any single surviving entry let a sibling answer for a
+/// deleted or relocated file, so a plan tracing several sources kept passing
+/// while its trace rotted — the failure `hash_source_reads` exists to surface.
+/// A non-string entry is treated as unresolvable rather than skipped, so a
+/// malformed `sourceReads` cannot pass by omission.
 pub(super) fn source_trace_complete(root: &Path, plan: &Value) -> bool {
     plan.get("sourceReads")
         .and_then(Value::as_array)
         .is_some_and(|reads| {
             !reads.is_empty()
-                && reads.iter().filter_map(Value::as_str).any(|path| {
-                    let candidate = Path::new(path);
-                    (candidate.is_absolute() && candidate.is_file())
-                        || root.join(candidate).is_file()
+                && reads.iter().all(|entry| {
+                    entry.as_str().is_some_and(|path| {
+                        let candidate = Path::new(path);
+                        (candidate.is_absolute() && candidate.is_file())
+                            || root.join(candidate).is_file()
+                    })
                 })
         })
 }
@@ -92,6 +126,9 @@ pub(super) fn structured_test_evidence(state: &Value, root: &Path) -> bool {
             })
     }) || (state.get("evidenceFinalized").and_then(Value::as_bool) == Some(true)
         && evidence_manifest_exists(root))
+        || state
+            .get("evidenceAuthority")
+            .is_some_and(|authority| evidence_authority_complete(authority, root))
 }
 
 pub(super) fn structured_coding_result(state: &Value) -> bool {
@@ -102,6 +139,56 @@ pub(super) fn structured_coding_result(state: &Value) -> bool {
             value.is_object()
                 && (nonempty_string(value.get("status")) || nonempty_array(value.get("artifacts")))
         })
+        || state.get("executionRuntime").is_some_and(|runtime| {
+            runtime.get("activeSliceStatus").and_then(Value::as_str) == Some("completed")
+                && authority_projection_complete(runtime, "capsuleRef", "capsuleDigest")
+                && authority_projection_complete(runtime, "ledgerRef", "ledgerDigest")
+        })
+}
+
+fn authority_projection_complete(authority: &Value, path: &str, digest: &str) -> bool {
+    authority
+        .get(path)
+        .and_then(Value::as_str)
+        .is_some_and(|path| ProjectRelativePath::new(path.to_owned()).is_ok())
+        && authority
+            .get(digest)
+            .and_then(Value::as_str)
+            .is_some_and(valid_authority_digest)
+}
+
+fn evidence_authority_complete(authority: &Value, root: &Path) -> bool {
+    if !authority_file_complete(authority, root, "manifestRef", "manifestDigest") {
+        return false;
+    }
+    match (
+        authority.get("ledgerRef").and_then(Value::as_str),
+        authority.get("ledgerDigest").and_then(Value::as_str),
+    ) {
+        (None, None) => true,
+        (Some(_), Some(_)) => authority_file_complete(authority, root, "ledgerRef", "ledgerDigest"),
+        _ => false,
+    }
+}
+
+fn authority_file_complete(authority: &Value, root: &Path, path: &str, digest: &str) -> bool {
+    let Some(path) = authority.get(path).and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(expected) = authority
+        .get(digest)
+        .and_then(Value::as_str)
+        .filter(|digest| valid_authority_digest(digest))
+    else {
+        return false;
+    };
+    safe_document_path(root, path)
+        && fs::read(root.join(path))
+            .is_ok_and(|bytes| expected == format!("sha256:{}", ArtifactDigest::digest(bytes)))
+}
+
+fn valid_authority_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(valid_digest)
 }
 
 pub(super) fn traceability_symmetric(state: &Value, plan: Option<&Value>) -> bool {
@@ -195,16 +282,6 @@ pub(super) fn context_complete(state: &Value, required: &[&str]) -> bool {
             })
         })
     })
-}
-
-pub(super) fn route_exempt(state: &Value) -> bool {
-    state
-        .get("scale")
-        .and_then(Value::as_str)
-        .is_some_and(|scale| {
-            matches!(scale.to_ascii_lowercase().as_str(), "micro" | "small")
-                || matches!(scale, "微" | "小")
-        })
 }
 
 pub(super) fn structured_status(value: Option<&Value>, expected: &str) -> bool {

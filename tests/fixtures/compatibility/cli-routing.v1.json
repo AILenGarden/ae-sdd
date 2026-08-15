@@ -2033,6 +2033,14 @@
     },
     {
       "surface": "operation",
+      "id": "workitem.create",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/src/business.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
       "id": "execution.slice.record",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
       "evidence": "crates/ae-sdd-runtime/tests/service_dispatch_matrix.rs",
@@ -2116,6 +2124,14 @@
       "id": "review.record",
       "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
       "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/governance.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "operation",
+      "id": "route.decide",
+      "fixture": "crates/ae-sdd-operations/tests/operation_registry.rs",
+      "evidence": "crates/ae-sdd-integrations/tests/typed_operations_cli_e2e/bootstrap.rs",
       "failClosed": true,
       "status": "implemented"
     },
@@ -2474,6 +2490,30 @@
     {
       "surface": "scanner",
       "id": "ra-authenticity-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "ra-applicability-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "ra-closure-scan",
+      "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
+      "failClosed": true,
+      "status": "implemented"
+    },
+    {
+      "surface": "scanner",
+      "id": "ra-core-scan",
       "fixture": "crates/ae-sdd-scanners/tests/native_scanners.rs",
       "evidence": "crates/ae-sdd-scanners/tests/native_scanners.rs",
       "failClosed": true,

@@ -43,6 +43,10 @@ pub enum FlowError {
     },
     /// The target is pending but its Gate/authorization decision is not ready.
     TransitionNotReady { target: ProcessPhase },
+    /// RouteSelected cannot be requested until RA has produced a candidate.
+    RouteCandidateMissing { target: ProcessPhase },
+    /// Downstream phases cannot consume a route that has not been frozen.
+    RouteNotFrozen { target: ProcessPhase },
     /// A commit must advance the authoritative state revision.
     NonMonotonicStateRevision {
         current: StateRevision,
@@ -94,6 +98,14 @@ impl fmt::Display for FlowError {
             Self::TransitionNotReady { target } => write!(
                 formatter,
                 "transition {target:?} was committed before all policy conditions passed"
+            ),
+            Self::RouteCandidateMissing { target } => write!(
+                formatter,
+                "transition {target:?} requires a requirement-analysis route candidate"
+            ),
+            Self::RouteNotFrozen { target } => write!(
+                formatter,
+                "transition {target:?} requires a frozen engineering route"
             ),
             Self::NonMonotonicStateRevision { current, committed } => write!(
                 formatter,

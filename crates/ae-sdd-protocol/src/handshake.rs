@@ -29,6 +29,13 @@ pub struct HandshakeRequest {
     pub expected_boot_id: String,
     /// Policy digest read from the same manifest snapshot as the token.
     pub expected_policy_digest: String,
+    /// Deprecated, decode-only. A legacy client may still send this; the
+    /// daemon accepts and discards it without attaching anything -- the
+    /// handshake dispatch reads no field of this name. Attaching a
+    /// HostAdapter connection is now only ever the explicit `host.register`
+    /// call. A new client must never serialize this field.
+    #[serde(default, skip_serializing)]
+    pub adapter_id: Option<String>,
 }
 
 /// Negotiated resource limits that let clients fail fast before sending work.

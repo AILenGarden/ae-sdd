@@ -171,3 +171,170 @@ fn missing_or_tampered_artifacts_and_bundle_digests_fail_closed() {
         Err(MethodologyError::FallbackMissing(_))
     ));
 }
+
+/// D-02 freezes `seriesKind` as a *main node* for entries that actually are a
+/// Series — that is, `activation: workflow` / `spawnPolicy: physical_series`.
+///
+/// The catalog already carries the discriminator: `activation: capability`
+/// entries (tooling like `git-insight`, `memory-management`) spawn inline, hold
+/// no `routePredicates`, and are not business Series at all. Requiring *them* to
+/// name a main node would be wrong, so this test scopes to workflow entries.
+///
+/// The resolver selects slices by exact `series_kind` equality
+/// (`resolver.rs`: `entry.series_kind == query.series_kind`). A catalog that
+/// spells the field `story-generate` therefore leaves the `story` main node with
+/// zero resolvable slices: `FlowRuntime` asks for the frozen main node and the
+/// filter matches nothing. `{kind}-generate`/`-review`/`-update` names a
+/// *sub-node activity*, which belongs in its own field — the two axes are
+/// disjoint per `ae-sdd-daemon-design.md` §11.1.
+///
+/// The compiler only checks that `seriesKind` is a well-formed portable id, so
+/// nothing caught this. This test is the missing constraint.
+#[test]
+fn every_catalog_entry_series_kind_is_a_frozen_main_node() {
+    let source = production_source();
+    let value: serde_json::Value = serde_json::from_slice(&source).expect("catalog JSON");
+    let entries = value["entries"].as_array().expect("entries array");
+
+    let offenders = entries
+        .iter()
+        .filter(|entry| entry["activation"].as_str() == Some("workflow"))
+        .filter_map(|entry| {
+            let kind = entry["seriesKind"].as_str()?;
+            (!ae_sdd_contracts::MAIN_NODE_SERIES_KINDS.contains(&kind))
+                .then(|| (entry["skillId"].as_str().unwrap_or("<missing>"), kind))
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        offenders.is_empty(),
+        "a workflow entry's seriesKind must be a frozen main node; {} violate it: {offenders:?}",
+        offenders.len()
+    );
+}
+
+/// The discriminator above is only trustworthy if it is actually two disjoint
+/// populations, so this pins the split itself.
+///
+/// A `capability` entry that acquired `routePredicates`, or a `workflow` entry
+/// that lost them, would silently move between the two rules above.
+#[test]
+fn activation_partitions_the_catalog_into_series_and_capabilities() {
+    let source = production_source();
+    let value: serde_json::Value = serde_json::from_slice(&source).expect("catalog JSON");
+    let entries = value["entries"].as_array().expect("entries array");
+
+    for entry in entries {
+        let skill = entry["skillId"].as_str().unwrap_or("<missing>");
+        let predicates = entry["routePredicates"]
+            .as_array()
+            .map_or(0, |values| values.len());
+        match entry["activation"].as_str() {
+            Some("workflow") if entry["seriesKind"] == "requirement-analysis" => assert_eq!(
+                predicates, 0,
+                "pre-route requirement-analysis must not require routePredicates"
+            ),
+            Some("workflow") => assert!(
+                predicates > 0,
+                "post-route {skill} is a Series, so it must carry routePredicates"
+            ),
+            Some("capability" | "deprecated") => assert_eq!(
+                predicates, 0,
+                "{skill} is not a Series, so it must not carry routePredicates"
+            ),
+            other => panic!("{skill} has an unrecognised activation: {other:?}"),
+        }
+    }
+}
+
+/// The contract above is only useful if it also holds in the other direction:
+/// every frozen main node must resolve to at least one slice.
+///
+/// Without this, a catalog could satisfy the per-entry check while still
+/// stranding a main node — and `FlowRuntime` would fail closed at the moment it
+/// tried to run that Series, not at catalog compile time.
+#[test]
+fn every_frozen_main_node_resolves_to_at_least_one_slice() {
+    let source = production_source();
+    let value: serde_json::Value = serde_json::from_slice(&source).expect("catalog JSON");
+    let entries = value["entries"].as_array().expect("entries array");
+
+    let stranded = ae_sdd_contracts::MAIN_NODE_SERIES_KINDS
+        .iter()
+        .filter(|main_node| {
+            !entries
+                .iter()
+                .any(|entry| entry["seriesKind"].as_str() == Some(**main_node))
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        stranded.is_empty(),
+        "every frozen main node needs a resolvable slice; stranded: {stranded:?}"
+    );
+}
+
+/// RA-first: the requirement-analysis entry must be runnable before any
+/// RouteDecision exists. Its only hard input is `requested-intent`; project
+/// constraints and thinking-engine are optional context that the pre-route
+/// planner may inject when available, never prerequisites that block RA from
+/// starting. It still declares exactly one deliverable kind.
+#[test]
+fn requirement_analysis_entry_runs_before_route_decision() {
+    let source = production_source();
+    let value: serde_json::Value = serde_json::from_slice(&source).expect("catalog JSON");
+    let entry = value["entries"]
+        .as_array()
+        .expect("entries array")
+        .iter()
+        .find(|entry| entry["seriesKind"].as_str() == Some("requirement-analysis"))
+        .expect("requirement-analysis entry exists");
+
+    assert_eq!(
+        value["catalogVersion"], "2.0.0",
+        "catalogVersion must identify the RA-first catalog contract"
+    );
+    assert!(
+        entry["routePredicates"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "pre-route RA must not depend on a RouteDecision predicate"
+    );
+
+    let required_inputs: Vec<&str> = entry["requiredInputs"]
+        .as_array()
+        .expect("requiredInputs array")
+        .iter()
+        .map(|value| value.as_str().expect("input key"))
+        .collect();
+    assert_eq!(
+        required_inputs,
+        ["requested-intent"],
+        "RA must only require requested-intent so it can run before route/constraints/engine exist; got {required_inputs:?}"
+    );
+
+    let deliverables: Vec<&str> = entry["deliverableKinds"]
+        .as_array()
+        .expect("deliverableKinds array")
+        .iter()
+        .map(|value| value.as_str().expect("deliverable kind"))
+        .collect();
+    assert_eq!(
+        deliverables,
+        ["requirement-analysis"],
+        "RA must declare a single deliverable kind; got {deliverables:?}"
+    );
+
+    // The entry version must be bumped to mark the RA-first contract change.
+    let version = entry["version"].as_str().expect("version");
+    let major: u8 = version
+        .split('.')
+        .next()
+        .expect("semver major")
+        .parse()
+        .expect("numeric major");
+    assert!(
+        major >= 2,
+        "requirement-analysis entry version must be >= 2.0.0 after the generality refactor; got {version}"
+    );
+}

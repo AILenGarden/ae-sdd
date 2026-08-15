@@ -1,14 +1,18 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use ae_sdd_contracts::{
+    RequirementAnalysisSeriesInput, SeriesInput, execution_runtime::ExecutionSliceStatus,
+};
 use ae_sdd_domain::{
-    AgentRole, CancellationCode, ErrorCode, EventSequence, EventStoreId, FindingCode,
-    FreshnessDimension, GateCancellation, GateError, GateFailure, GateFinding, GateOutcome,
-    GateTimeout, InputFingerprint, ProcessPhase, StaleGate, StateRevision,
+    AgentRole, ArtifactDigest, CancellationCode, ErrorCode, EventSequence, EventStoreId,
+    FindingCode, FreshnessDimension, GateCancellation, GateError, GateFailure, GateFinding,
+    GateOutcome, GateTimeout, InputFingerprint, ProcessPhase, StaleGate, StateRevision,
 };
 use ae_sdd_flow::{
-    EventCursor, EventProvenance, FlowDecision, FlowEvent, FlowEventKind, FlowInput, FlowRuntime,
-    NextAction, SupervisorDegradation, SupervisorFault, SupervisorHealth,
+    CompactAdviceReason, ControlAction, ControlDecision, ControlPlaneRuntime, EventCursor,
+    EventProvenance, FlowDecision, FlowEvent, FlowEventKind, FlowInput, FlowRuntime, NextAction,
+    SupervisorDegradation, SupervisorFault, SupervisorHealth,
 };
 use ae_sdd_policy::RequiredGate;
 use ae_sdd_protocol::StableErrorCode;
@@ -85,6 +89,28 @@ impl FlowSupervisor {
             "policyDigest":input.environment().policy_digest().to_string(),
             "inputFingerprint":input.environment().input_fingerprint().to_string(),
         });
+        let payload_digest = self.flow_event_payload_digest(idempotency_key, &payload)?;
+        if self
+            .idempotent_flow_event(
+                workspace_id,
+                work_item_id,
+                "flow.transition_requested",
+                idempotency_key,
+                &payload_digest,
+            )?
+            .is_none()
+        {
+            self.preflight_flow_event(
+                boot_id,
+                workspace_id,
+                session_id,
+                work_item_id,
+                "flow.transition_requested",
+                input,
+                payload.clone(),
+                payload_digest,
+            )?;
+        }
         self.append_idempotent_flow_event(
             boot_id,
             workspace_id,
@@ -164,6 +190,122 @@ impl FlowSupervisor {
         Ok(())
     }
 
+    /// Persists a collected Root-to-Series delegation boundary and returns the
+    /// resulting reducer decision, which carries an advisory compact
+    /// suggestion whenever no real work owns the action.
+    pub fn record_series_completed(
+        &self,
+        boot_id: &str,
+        workspace_id: &str,
+        session_id: Option<&str>,
+        work_item_id: &str,
+        idempotency_key: &str,
+        input: FlowInput,
+    ) -> RuntimeResult<FlowDecision> {
+        let payload = json!({
+            "schemaVersion":"flow.series-completed/v1",
+            "idempotencyKey":idempotency_key,
+            "policyDigest":input.environment().policy_digest().to_string(),
+            "inputFingerprint":input.environment().input_fingerprint().to_string(),
+        });
+        self.append_idempotent_flow_event(
+            boot_id,
+            workspace_id,
+            session_id,
+            work_item_id,
+            "flow.series_completed",
+            idempotency_key,
+            payload,
+        )?;
+        self.project(workspace_id, work_item_id, input)
+    }
+
+    /// Runs the pure control plane over a frozen Series input and persists the
+    /// resulting delegation-oriented decision as a durable checkpoint.
+    pub fn decide_control(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        catalog_digest: ArtifactDigest,
+        input: &SeriesInput,
+    ) -> RuntimeResult<ControlDecision> {
+        let decision = ControlPlaneRuntime::next(catalog_digest, input).map_err(|error| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                format!("deterministic control-plane decision rejected frozen input: {error}"),
+            )
+        })?;
+        self.persist_control_checkpoint(workspace_id, work_item_id, &decision)?;
+        Ok(decision)
+    }
+
+    /// Runs the pure pre-route RA control path and persists its checkpoint.
+    pub fn decide_requirement_analysis_control(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        catalog_digest: ArtifactDigest,
+        input: &RequirementAnalysisSeriesInput,
+    ) -> RuntimeResult<ControlDecision> {
+        let decision = ControlPlaneRuntime::next_requirement_analysis(catalog_digest, input)
+            .map_err(|error| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    format!("deterministic pre-route RA decision rejected frozen input: {error}"),
+                )
+            })?;
+        self.persist_control_checkpoint(workspace_id, work_item_id, &decision)?;
+        Ok(decision)
+    }
+
+    /// Reads the last durable control-plane checkpoint projection.
+    pub fn control_checkpoint(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+    ) -> RuntimeResult<Option<Value>> {
+        self.persistence.load_record(
+            "flow-control/v1",
+            &format!("{workspace_id}\0{work_item_id}"),
+        )
+    }
+
+    /// Converts a control decision into the bounded public delegation-oriented
+    /// projection; a `run-series` action directs the Root to delegate to a Series.
+    #[must_use]
+    pub fn control_projection(decision: &ControlDecision) -> Value {
+        let provenance = decision.provenance();
+        json!({
+            "schemaVersion":"flow-control/v1",
+            "action":control_action_value(decision.action()),
+            "provenance":{
+                "catalogDigest":provenance.catalog_digest().to_string(),
+                "routeDigest":provenance.route_digest().to_string(),
+                "seriesDigest":provenance.series_digest().to_string(),
+            },
+            "decisionDigest":decision.decision_digest().to_string(),
+        })
+    }
+
+    fn persist_control_checkpoint(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        decision: &ControlDecision,
+    ) -> RuntimeResult<()> {
+        let checkpoint = json!({
+            "schemaVersion":"flow-control-checkpoint/v1",
+            "workspaceId":workspace_id,
+            "workItemId":work_item_id,
+            "decision":Self::control_projection(decision),
+        });
+        self.persistence.store_record(
+            "flow-control/v1",
+            &format!("{workspace_id}\0{work_item_id}"),
+            &checkpoint,
+        )
+    }
+
     /// Reads the last durable checkpoint projection.
     pub fn checkpoint(
         &self,
@@ -179,17 +321,24 @@ impl FlowSupervisor {
     /// Converts a typed decision into the bounded public flow projection.
     #[must_use]
     pub fn projection(decision: &FlowDecision) -> Value {
+        let state_revision = decision.snapshot().state_revision().get();
+        let decision_digest = decision.decision_digest().to_string();
         json!({
             "schemaVersion":"flow-decision/v1",
+            "decisionDigestVersion":"v2",
             "phase":phase_name(decision.snapshot().phase()),
-            "stateRevision":decision.snapshot().state_revision().get(),
+            "stateRevision":state_revision,
             "correctionCount":decision.snapshot().correction_count(),
             "pendingTransition":decision.pending_transition().map(phase_name),
             "requiredGates":decision.required_gates().iter().map(|gate| gate.as_str()).collect::<Vec<_>>(),
             "passedGates":decision.passed_gates().iter().map(|gate| gate.as_str()).collect::<Vec<_>>(),
             "health":health_value(decision.health()),
-            "nextAction":next_action_value(decision.next_action()),
-            "decisionDigest":decision.decision_digest().to_string(),
+            "nextAction":next_action_value(
+                decision.next_action(),
+                state_revision,
+                &decision_digest,
+            ),
+            "decisionDigest":decision_digest,
             "lastEventSeq":decision.last_cursor().map_or(0, |cursor| cursor.sequence().get()),
         })
     }
@@ -223,31 +372,15 @@ impl FlowSupervisor {
         idempotency_key: &str,
         payload: Value,
     ) -> RuntimeResult<DurableEvent> {
-        if idempotency_key.is_empty() || idempotency_key.len() > 256 {
-            return Err(RuntimeError::new(
-                StableErrorCode::OperationSchemaInvalid,
-                "flow event idempotencyKey is missing or oversized",
-            ));
-        }
-        let payload_bytes = serde_json::to_vec(&payload).map_err(|_| {
-            RuntimeError::new(
-                StableErrorCode::OperationSchemaInvalid,
-                "flow event payload is not canonical JSON",
-            )
-        })?;
-        let payload_digest = hex::encode(Sha256::digest(&payload_bytes));
-        for event in self.events_for_work_item(workspace_id, work_item_id)? {
-            if event.payload.get("idempotencyKey").and_then(Value::as_str) != Some(idempotency_key)
-            {
-                continue;
-            }
-            if event.kind == kind && event.payload_digest == payload_digest {
-                return Ok(event);
-            }
-            return Err(RuntimeError::new(
-                StableErrorCode::IdempotencyKeyReused,
-                "flow event idempotencyKey was reused with a different payload",
-            ));
+        let payload_digest = self.flow_event_payload_digest(idempotency_key, &payload)?;
+        if let Some(event) = self.idempotent_flow_event(
+            workspace_id,
+            work_item_id,
+            kind,
+            idempotency_key,
+            &payload_digest,
+        )? {
+            return Ok(event);
         }
         self.persistence.append_event(DurableEvent {
             event_store_id: self.persistence.event_store_id()?.to_string(),
@@ -260,6 +393,95 @@ impl FlowSupervisor {
             payload,
             payload_digest,
         })
+    }
+
+    fn flow_event_payload_digest(
+        &self,
+        idempotency_key: &str,
+        payload: &Value,
+    ) -> RuntimeResult<String> {
+        if idempotency_key.is_empty() || idempotency_key.len() > 256 {
+            return Err(RuntimeError::new(
+                StableErrorCode::OperationSchemaInvalid,
+                "flow event idempotencyKey is missing or oversized",
+            ));
+        }
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|_| {
+            RuntimeError::new(
+                StableErrorCode::OperationSchemaInvalid,
+                "flow event payload is not canonical JSON",
+            )
+        })?;
+        Ok(hex::encode(Sha256::digest(&payload_bytes)))
+    }
+
+    fn idempotent_flow_event(
+        &self,
+        workspace_id: &str,
+        work_item_id: &str,
+        kind: &str,
+        idempotency_key: &str,
+        payload_digest: &str,
+    ) -> RuntimeResult<Option<DurableEvent>> {
+        for event in self.events_for_work_item(workspace_id, work_item_id)? {
+            if event.payload.get("idempotencyKey").and_then(Value::as_str) != Some(idempotency_key)
+            {
+                continue;
+            }
+            if event.kind == kind && event.payload_digest == payload_digest {
+                return Ok(Some(event));
+            }
+            return Err(RuntimeError::new(
+                StableErrorCode::IdempotencyKeyReused,
+                "flow event idempotencyKey was reused with a different payload",
+            ));
+        }
+        Ok(None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn preflight_flow_event(
+        &self,
+        boot_id: &str,
+        workspace_id: &str,
+        session_id: Option<&str>,
+        work_item_id: &str,
+        kind: &str,
+        input: FlowInput,
+        payload: Value,
+        payload_digest: String,
+    ) -> RuntimeResult<()> {
+        let event_seq = self
+            .persistence
+            .latest_event_sequence()?
+            .checked_add(1)
+            .filter(|sequence| *sequence != 0)
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "global event sequence overflow",
+                )
+            })?;
+        let candidate = DurableEvent {
+            event_store_id: self.persistence.event_store_id()?.to_string(),
+            event_seq,
+            boot_id: boot_id.to_owned(),
+            kind: kind.to_owned(),
+            workspace_id: Some(workspace_id.to_owned()),
+            session_id: session_id.map(str::to_owned),
+            work_item_id: Some(work_item_id.to_owned()),
+            payload,
+            payload_digest,
+        };
+        let mut events = self.load_flow_events(workspace_id, work_item_id, input)?;
+        events.push(flow_event_from_durable(&candidate, input)?);
+        FlowRuntime::replay(input, events).map_err(|error| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                format!("deterministic flow replay rejected proposed input: {error}"),
+            )
+        })?;
+        Ok(())
     }
 
     fn load_flow_events(
@@ -362,6 +584,7 @@ fn flow_event_from_durable(event: &DurableEvent, input: FlowInput) -> RuntimeRes
                     .ok_or_else(|| malformed_event("transition revision is missing"))?,
             ),
         },
+        "flow.series_completed" => FlowEventKind::SeriesCompleted,
         "flow.prompt_accepted" => FlowEventKind::PromptAccepted,
         "flow.background_recovered" => FlowEventKind::BackgroundRecovered,
         "flow.background_fault" => FlowEventKind::BackgroundFault(parse_fault(
@@ -372,19 +595,72 @@ fn flow_event_from_durable(event: &DurableEvent, input: FlowInput) -> RuntimeRes
     Ok(FlowEvent::new(provenance, kind))
 }
 
-fn next_action_value(action: &NextAction) -> Value {
+fn next_action_value(action: &NextAction, state_revision: u64, decision_digest: &str) -> Value {
     match action {
         NextAction::AwaitAgentWork => json!({"kind":"await-agent-work"}),
         NextAction::EvaluateGates {
             target,
             required_gates,
-        } => json!({
-            "kind":"evaluate-gates",
-            "targetPhase":phase_name(*target),
-            "requiredGates":required_gates.iter().map(|gate| gate.as_str()).collect::<Vec<_>>(),
-        }),
+        } => {
+            let gate_ids = required_gates
+                .iter()
+                .map(|gate| gate.as_str())
+                .collect::<Vec<_>>();
+            json!({
+                "kind":"evaluate-gates",
+                "targetPhase":phase_name(*target),
+                "requiredGates":gate_ids.clone(),
+                // F-006: project the exact submit method and arguments so the
+                // caller does not have to infer that evaluate-gates means
+                // `gate.evaluate` with the projected gate IDs.
+                "submit":{
+                    "method":"gate.evaluate",
+                    "arguments":{
+                        "gateIds":gate_ids,
+                    }
+                }
+            })
+        }
         NextAction::ApplyTransition { target } => {
-            json!({"kind":"apply-transition","targetPhase":phase_name(*target)})
+            let target_phase = phase_name(*target);
+            let action_id = format!("flow:{decision_digest}:apply-transition");
+            json!({
+                "actionId":action_id,
+                "kind":"apply-transition",
+                "targetPhase":target_phase,
+                "preconditions":[
+                    {"code":"LEASE_REQUIRED","fact":"active-project-writer-lease"},
+                    {"code":"REVISION_CONFLICT","fact":state_revision}
+                ],
+                "submit":{
+                    "schemaVersion":1,
+                    "method":"operation.execute",
+                    "operation":"state.transition",
+                    "payload":{"targetPhase":target_phase},
+                    "requestContext":{
+                        "expectedRevision":state_revision,
+                        "requiresWorkspace":true,
+                        "requiresWorkItem":true,
+                        "requiresSession":true,
+                        "requiresLease":true,
+                        "requiresFencingToken":true
+                    },
+                    "idempotencyKey":format!("{action_id}:commit"),
+                    "deadlineMs":30_000,
+                    "confirmation":{
+                        "mode":"preflight-if-required",
+                        "preflight":"submit without confirmation",
+                        "bindingSource":"CONFIRMATION_REQUIRED.remediation",
+                        "commit":"retry with the daemon-issued binding"
+                    },
+                    "retry":{
+                        "sameKeySamePayload":true,
+                        "refreshProjectionOn":["REVISION_CONFLICT","STALE_FENCING_TOKEN"]
+                    }
+                },
+                "onSuccess":{"phase":target_phase,"next":"flow.next"},
+                "remediation":"acquire a current project lease, preserve the projected revision and idempotency key, and refresh flow.next after stale authority"
+            })
         }
         NextAction::ProvideCorrection => json!({"kind":"provide-correction"}),
         NextAction::RetryGate => json!({"kind":"retry-gate"}),
@@ -402,14 +678,77 @@ fn next_action_value(action: &NextAction) -> Value {
         NextAction::ExecuteApprovedSlice {
             active_ordinal,
             queue_digest,
+            capsule_digest,
+            active_slice_status,
+            next_slice_transition,
         } => json!({
             "kind":"execute-approved-slice",
             "activeOrdinal":active_ordinal,
             "queueDigest":queue_digest.to_string(),
+            "capsuleDigest":capsule_digest.to_string(),
+            "activeSliceStatus":execution_slice_status_name(*active_slice_status),
+            "nextSliceTransition":execution_slice_status_name(*next_slice_transition),
         }),
         NextAction::FinalizeExecutionEvidence => json!({"kind":"finalize-execution-evidence"}),
         NextAction::CollectReviewContributions => json!({"kind":"collect-review-contributions"}),
         NextAction::FinalizeGovernance => json!({"kind":"finalize-governance"}),
+        NextAction::SuggestCompact { reason } => json!({
+            "kind":"suggest-compact",
+            "reason":compact_advice_reason_name(*reason),
+            "advisory":true,
+        }),
+    }
+}
+
+fn compact_advice_reason_name(reason: CompactAdviceReason) -> &'static str {
+    match reason {
+        CompactAdviceReason::SeriesBoundary => "series-boundary",
+    }
+}
+
+fn control_action_value(action: &ControlAction) -> Value {
+    match action {
+        ControlAction::AwaitRouteApproval {
+            idempotency_key,
+            decision_id,
+        } => json!({
+            "kind":"await-route-approval",
+            "idempotencyKey":idempotency_key.as_str(),
+            "routeDecisionId":decision_id.as_str(),
+        }),
+        ControlAction::RunSeries {
+            idempotency_key,
+            plan,
+        } => json!({
+            "kind":"run-series",
+            "idempotencyKey":idempotency_key.as_str(),
+            "seriesId":plan.series_id().as_str(),
+            "planDigest":plan.plan_digest().to_string(),
+        }),
+        ControlAction::AwaitSeries {
+            idempotency_key,
+            series_id,
+        } => json!({
+            "kind":"await-series",
+            "idempotencyKey":idempotency_key.as_str(),
+            "seriesId":series_id.as_str(),
+        }),
+        ControlAction::CollectSeries {
+            idempotency_key,
+            series_id,
+        } => json!({
+            "kind":"collect-series",
+            "idempotencyKey":idempotency_key.as_str(),
+            "seriesId":series_id.as_str(),
+        }),
+        ControlAction::Complete {
+            idempotency_key,
+            projection_digest,
+        } => json!({
+            "kind":"complete",
+            "idempotencyKey":idempotency_key.as_str(),
+            "projectionDigest":projection_digest.to_string(),
+        }),
     }
 }
 
@@ -582,6 +921,19 @@ fn parse_phase(value: &str) -> RuntimeResult<ProcessPhase> {
     }
 }
 
+const fn execution_slice_status_name(status: ExecutionSliceStatus) -> &'static str {
+    match status {
+        ExecutionSliceStatus::Pending => "pending",
+        ExecutionSliceStatus::Running => "running",
+        ExecutionSliceStatus::RedObserved => "red-observed",
+        ExecutionSliceStatus::Patched => "patched",
+        ExecutionSliceStatus::FocusedGreen => "focused-green",
+        ExecutionSliceStatus::EvidenceBound => "evidence-bound",
+        ExecutionSliceStatus::Completed => "completed",
+        ExecutionSliceStatus::Blocked => "blocked",
+    }
+}
+
 fn phase_name(phase: ProcessPhase) -> &'static str {
     match phase {
         ProcessPhase::Initialized => "initialized",
@@ -653,4 +1005,353 @@ fn required_payload_string<'a>(value: &'a Value, field: &str) -> RuntimeResult<&
 
 fn malformed_event(message: &str) -> RuntimeError {
     RuntimeError::new(StableErrorCode::ExternalStateConflict, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use ae_sdd_contracts::{
+        ContextBundleId, IdempotencyKey, MethodologyRef, MethodologyResolution, MethodologyVariant,
+        OverrideDisposition, OverrideLayer, OverrideTrace, ProcessSnapshot, ReasonCode,
+        RequirementAnalysisSeriesInput, RetryPolicy, RouteDecision, RouteDecisionId,
+        RouteDisposition, SchemaVersion, SeriesId, SeriesInput, SeriesKind, SeriesPlan, SkillId,
+        SpecKind, TaskKind, resource::ContextBundleRef,
+    };
+    use ae_sdd_domain::{
+        ArtifactDigest, ArtifactKind, ArtifactRef, ContextDigest, DecisionDigest,
+        DeliverableContract, DeliverableId, DeliverableRequirement, DesignRoute, OperationId,
+        ProjectPathScope, ProjectRelativePath, WorkItemId, WorkScale,
+    };
+    use ae_sdd_flow::{
+        CompactAdviceReason, ControlAction, EventCursor, EventProvenance, FlowEnvironment,
+        FlowRuntime, FlowSnapshot, RouteLifecycle, RouteSelection,
+    };
+    use ae_sdd_policy::TransitionPolicy;
+
+    use crate::MemoryPersistence;
+
+    use super::*;
+
+    fn event_store() -> EventStoreId {
+        EventStoreId::from_str("00000000-0000-0000-0000-000000000111")
+            .expect("fixed event store ID is valid")
+    }
+
+    fn flow_input() -> FlowInput {
+        let snapshot = FlowSnapshot::new(ProcessPhase::Initialized, StateRevision::new(7), 0);
+        let environment = FlowEnvironment::new(
+            event_store(),
+            InputFingerprint::digest(b"work-item-input-v1"),
+            RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Story)),
+        );
+        FlowInput::new(snapshot, environment)
+    }
+
+    fn series_completed_event(sequence: u64) -> FlowEvent {
+        FlowEvent::new(
+            EventProvenance::new(
+                EventCursor::new(event_store(), EventSequence::new(sequence)),
+                TransitionPolicy::digest(),
+                InputFingerprint::digest(b"work-item-input-v1"),
+                InputFingerprint::digest(b"series-collected"),
+            ),
+            FlowEventKind::SeriesCompleted,
+        )
+    }
+
+    #[test]
+    fn suggest_compact_projection_marks_the_advice_advisory() {
+        let decision = FlowRuntime::replay(flow_input(), [series_completed_event(1)])
+            .expect("series boundary reduces");
+
+        let projection = FlowSupervisor::projection(&decision);
+
+        assert_eq!(
+            projection["nextAction"],
+            json!({"kind":"suggest-compact","reason":"series-boundary","advisory":true})
+        );
+    }
+
+    #[test]
+    fn recorded_series_completion_projects_the_advisory_action() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = flow_input();
+
+        let decision = supervisor
+            .record_series_completed(
+                "boot-1",
+                "workspace-1",
+                None,
+                "STORY-1",
+                "collect-series-1",
+                input,
+            )
+            .expect("series completion records");
+
+        assert_eq!(
+            decision.next_action(),
+            &NextAction::SuggestCompact {
+                reason: CompactAdviceReason::SeriesBoundary,
+            }
+        );
+
+        let replayed = supervisor
+            .record_series_completed(
+                "boot-1",
+                "workspace-1",
+                None,
+                "STORY-1",
+                "collect-series-1",
+                input,
+            )
+            .expect("same-key replay is idempotent");
+        assert_eq!(replayed, decision);
+    }
+
+    #[test]
+    fn control_decision_persists_a_delegation_oriented_checkpoint() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = series_input();
+        let catalog_digest = ArtifactDigest::digest(b"catalog-v1");
+
+        let decision = supervisor
+            .decide_control("workspace-1", "STORY-FLOW-001", catalog_digest, &input)
+            .expect("control decision");
+
+        assert!(matches!(decision.action(), ControlAction::RunSeries { .. }));
+
+        let checkpoint = supervisor
+            .control_checkpoint("workspace-1", "STORY-FLOW-001")
+            .expect("checkpoint reads")
+            .expect("checkpoint persists");
+        assert_eq!(
+            checkpoint["decision"]["action"]["kind"],
+            json!("run-series")
+        );
+        assert_eq!(
+            checkpoint["decision"]["decisionDigest"],
+            json!(decision.decision_digest().to_string())
+        );
+    }
+
+    #[test]
+    fn pre_route_requirement_analysis_control_persists_without_route_input() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = requirement_analysis_series_input();
+        let catalog_digest = ArtifactDigest::digest(b"catalog-v1");
+
+        let decision = supervisor
+            .decide_requirement_analysis_control(
+                "workspace-1",
+                "ROUTE-FLOW-RA-001",
+                catalog_digest,
+                &input,
+            )
+            .expect("pre-route control decision");
+
+        assert!(matches!(decision.action(), ControlAction::RunSeries { .. }));
+        let checkpoint = supervisor
+            .control_checkpoint("workspace-1", "ROUTE-FLOW-RA-001")
+            .expect("checkpoint reads")
+            .expect("checkpoint persists");
+        assert_eq!(checkpoint["decision"]["action"]["kind"], "run-series");
+        assert_eq!(
+            checkpoint["decision"]["provenance"]["routeDigest"],
+            DecisionDigest::digest(b"pre-route-ra").to_string()
+        );
+    }
+
+    #[test]
+    fn control_decision_rejects_a_foreign_catalog_snapshot() {
+        let supervisor = FlowSupervisor::new(Arc::new(MemoryPersistence::new(event_store())));
+        let input = series_input();
+
+        let error = supervisor
+            .decide_control(
+                "workspace-1",
+                "STORY-FLOW-001",
+                ArtifactDigest::digest(b"catalog-v2"),
+                &input,
+            )
+            .expect_err("foreign catalog is rejected");
+
+        assert!(error.to_string().contains("Catalog digest mismatch"));
+    }
+
+    fn artifact(path: &str, contents: &[u8]) -> ArtifactRef {
+        ArtifactRef::new(
+            ArtifactKind::new("series-fixture").expect("artifact kind"),
+            ProjectRelativePath::new(path).expect("project-relative path"),
+            ArtifactDigest::digest(contents),
+            u64::try_from(contents.len()).expect("fixture length"),
+        )
+    }
+
+    fn candidate(
+        work_item_id: &WorkItemId,
+        kind: &str,
+        series_id: &str,
+        state_revision: StateRevision,
+        input_fingerprint: InputFingerprint,
+    ) -> (SeriesPlan, MethodologyResolution) {
+        let series_kind = SeriesKind::new(kind).expect("series kind");
+        let skill_id = SkillId::new(format!("phase.{kind}")).expect("skill id");
+        let methodology = MethodologyRef::new(
+            SchemaVersion::V1,
+            skill_id.clone(),
+            series_kind.clone(),
+            MethodologyVariant::new("builtin-v1").expect("variant"),
+            artifact(&format!("runtime/skills/{kind}/compact.md"), b"compact"),
+            None,
+            ArtifactDigest::digest(format!("entry:{kind}")),
+            ArtifactDigest::digest(b"catalog-v1"),
+        )
+        .expect("methodology ref");
+        let plan = SeriesPlan::new(
+            SchemaVersion::V1,
+            SeriesId::new(series_id).expect("series id"),
+            work_item_id.clone(),
+            None,
+            series_kind,
+            AgentRole::Series,
+            methodology.clone(),
+            ContextBundleRef::new(
+                SchemaVersion::V1,
+                ContextBundleId::new(format!("context-{series_id}")).expect("context id"),
+                work_item_id.clone(),
+                vec![artifact("ae-sdd-doc/Story/STORY-FLOW-001.md", b"story")],
+                ContextDigest::digest(format!("context:{kind}")),
+                5,
+            )
+            .expect("context ref"),
+            DeliverableContract::bounded_default([DeliverableRequirement::new(
+                DeliverableId::new(format!("deliverable-{kind}")).expect("deliverable id"),
+                ArtifactKind::new("document").expect("artifact kind"),
+                ProjectRelativePath::new(format!("ae-sdd-doc/{kind}.md"))
+                    .expect("deliverable path"),
+            )])
+            .expect("deliverable contract"),
+            vec![OperationId::new("document.save").expect("operation")],
+            vec![ProjectPathScope::Subtree(
+                ProjectRelativePath::new("ae-sdd-doc").expect("path scope"),
+            )],
+            Vec::new(),
+            state_revision,
+            input_fingerprint,
+            1_900_000_000_000,
+            RetryPolicy::new(2, 250, 2_000).expect("retry policy"),
+            DecisionDigest::digest(format!("plan:{kind}")),
+        )
+        .expect("series plan");
+        let resolution = MethodologyResolution::new(
+            SchemaVersion::V1,
+            methodology,
+            OverrideLayer::BuiltIn,
+            vec![OverrideTrace::new(
+                SchemaVersion::V1,
+                OverrideLayer::BuiltIn,
+                skill_id,
+                OverrideDisposition::Selected,
+                ReasonCode::new("methodology.builtin_selected").expect("reason"),
+                ArtifactDigest::digest(format!("entry:{kind}")),
+            )],
+            DecisionDigest::digest(format!("resolution:{kind}")),
+        )
+        .expect("resolution");
+        (plan, resolution)
+    }
+
+    fn series_input() -> SeriesInput {
+        let work_item_id = WorkItemId::new("STORY-FLOW-001").expect("work item");
+        let state_revision = StateRevision::new(7);
+        let input_fingerprint = InputFingerprint::digest(b"series input r7");
+        let (requirement_plan, requirement_resolution) = candidate(
+            &work_item_id,
+            "requirement-analysis",
+            "series-flow-ra-r7",
+            state_revision,
+            input_fingerprint,
+        );
+        let (story_plan, story_resolution) = candidate(
+            &work_item_id,
+            "story",
+            "series-flow-story-r7",
+            state_revision,
+            input_fingerprint,
+        );
+        let route = RouteDecision::new(
+            SchemaVersion::V1,
+            RouteDecisionId::new("route-flow-r7").expect("route id"),
+            work_item_id.clone(),
+            TaskKind::Implementation,
+            WorkScale::Medium,
+            DesignRoute::Story,
+            RouteDisposition::Approved,
+            vec![ReasonCode::new("route.medium_story").expect("reason")],
+            vec![
+                SeriesKind::new("requirement-analysis").expect("series kind"),
+                SeriesKind::new("story").expect("series kind"),
+            ],
+            vec![SpecKind::RequirementAnalysis, SpecKind::Story],
+            InputFingerprint::digest(b"route input"),
+            None,
+            DecisionDigest::digest(b"route decision"),
+        )
+        .expect("route decision");
+        SeriesInput::new(
+            SchemaVersion::V1,
+            route,
+            ProcessSnapshot::new(
+                SchemaVersion::V1,
+                work_item_id,
+                ProcessPhase::RequirementAnalyzed,
+                None,
+                state_revision,
+                ArtifactDigest::digest(b"state r7"),
+            ),
+            Vec::new(),
+            vec![requirement_resolution, story_resolution],
+            vec![requirement_plan, story_plan],
+            AgentRole::Root,
+            state_revision,
+            input_fingerprint,
+            IdempotencyKey::new("series-next-flow-r7").expect("idempotency key"),
+        )
+        .expect("series input")
+    }
+
+    fn requirement_analysis_series_input() -> RequirementAnalysisSeriesInput {
+        let work_item_id = WorkItemId::new("ROUTE-FLOW-RA-001").expect("work item");
+        let state_revision = StateRevision::new(3);
+        let input_fingerprint = InputFingerprint::digest(b"pre-route RA input r3");
+        let (plan, resolution) = candidate(
+            &work_item_id,
+            "requirement-analysis",
+            "series-flow-pre-route-ra-r3",
+            state_revision,
+            input_fingerprint,
+        );
+        RequirementAnalysisSeriesInput::new(
+            SchemaVersion::V1,
+            work_item_id.clone(),
+            ProcessSnapshot::new(
+                SchemaVersion::V1,
+                work_item_id,
+                ProcessPhase::Initialized,
+                None,
+                state_revision,
+                ArtifactDigest::digest(b"pre-route state r3"),
+            ),
+            InputFingerprint::digest(b"provisional intake facts r3"),
+            resolution,
+            plan,
+            None,
+            AgentRole::Root,
+            state_revision,
+            input_fingerprint,
+            IdempotencyKey::new("series-next-pre-route-ra-r3").expect("idempotency key"),
+        )
+        .expect("pre-route RA input")
+    }
 }

@@ -71,7 +71,7 @@ description: 代码生成能力库（v3.6.1 适配器注册加载）。提供"�
 
 ## §2 约束文件引用（9 项关键规则）
 
-> **能力定位：** 编码时必须对照的判断标准。通过 `document-storage-skill.get_constraints(projectKey)` 加载。
+> **能力定位：** 编码时必须对照的判断标准。直接读取 `constraints/` 目录（索引 `constraints/README.md`）加载。
 
 | 约束 name | 关键规则 |
 |---------|---------|
@@ -89,7 +89,7 @@ description: 代码生成能力库（v3.6.1 适配器注册加载）。提供"�
 
 ## §3 分层职责红线（写代码时反复对照，违反即阻断）
 
-> **能力定位：** 判断"这段代码属于哪层"的决策标准。完整清单见 `get_constraints(projectKey)["project-structure"]` 的「分层职责红线」节。
+> **能力定位：** 判断"这段代码属于哪层"的决策标准。完整清单见 `constraints/project-structure.md` 的「分层职责红线」节。
 
 **Domain 写领域逻辑，Application 写业务编排，Repository 只做数据存取。**
 
@@ -117,7 +117,7 @@ description: 代码生成能力库（v3.6.1 适配器注册加载）。提供"�
 | **调用** 外部服务 | 按 Task 外部依赖表格的超时/重试/降级填入；非幂等操作禁止自动重试，必须有幂等键 | Feign + `@HystrixCommand(fallbackMethod="...")` |
 | **转换** | 调用 Converter 静态方法（`XxxConverter.toXxx(source)`），禁止在 AppService/Controller 内手工 set 字段 | `XxxConverter.toVO(do)` |
 | **返回** | 明确返回值构造方式（从 DO 转换 / 直接返回布尔 / 包装成 ApiResult）；不得返回 null，空集合用 `Collections.emptyList()` | `return ApiResult.success(vo)` |
-| **抛异常** | 使用项目已有的业务异常类 + 错误码枚举（来源：Task 0 或 `get_constraints(projectKey)["code-style"]`）；禁止直接 throw new RuntimeException | `throw new BizException(ErrorCode.XXX)` |
+| **抛异常** | 使用项目已有的业务异常类 + 错误码枚举（来源：Task 0 或 `constraints/code-style.md`）；禁止直接 throw new RuntimeException | `throw new BizException(ErrorCode.XXX)` |
 | **组装** | 构造复合对象时，先列出所有必填字段来源，逐字段赋值；Builder 模式优先 | `XxxDO.builder().field(val).build()` |
 | **发送** MQ | 先写库（事务内），后发 MQ（事务外）；失败需有本地消息表或 DLQ 兜底 | 事务提交后在 `@TransactionalEventListener` 发送 |
 
@@ -240,9 +240,10 @@ public class Ticket {
 | 单文件完成 | 每写完一个文件 | `mvn -pl {module} compile` | BUILD SUCCESS |
 | 单层完成 | 每层完成 | `mvn -pl {module} -am compile` | BUILD SUCCESS |
 | 单 Task 完成 | 一个 Task 的所有文件完成 | `mvn -pl {module} -am test -Dtest={XxxTest}` | 全部 Pass |
-| 全量完成 | Coding 全部完成 | `mvn clean verify` | 全部 Pass + 无 `Tests in error` |
+| 增量收口 | Coding 全部完成 | `mvn test -pl {受影响模块} -Dtest={受影响测试类}` | 受影响用例全部 Pass |
 | 真实 HTTP 验证 | 涉及 Controller 的 Task 完成后 | `mvn -pl {interfaces} -am verify -Dtest={XxxIT}` | SpringBootTest 起服务 + 真实 HTTP 200 |
 
+> 🔴 开发回路与收口全程只做增量测试；全量 `mvn clean verify` 仅 release/分发门禁执行。
 > 🔴 不允许"写完所有代码再统一编译"——任何文件写完必须能独立编译。
 
 #### 章节 7：调试与回滚策略
@@ -601,7 +602,7 @@ grep -rn "^import static " --include="*.java" src/main/java/ | wc -l
 
 ```
 1. 读项目技术栈
-   调 ae-sdd assets read coding --project <projectKey>（或 get_constraints(projectKey)["technology-stack"]）
+   调 ae-sdd assets read coding --project <projectKey>（或直接读 `constraints/technology-stack.md`）
    取关键判据：语言（Java/Go/...）、框架（Spring Boot/...）、项目族（icec/...）
 
 2. 解析目标适配器 key

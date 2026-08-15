@@ -55,6 +55,22 @@ uuid_id!(BootId, "BootId");
 uuid_id!(EventStoreId, "EventStoreId");
 uuid_id!(WorkspaceId, "WorkspaceId");
 uuid_id!(SessionId, "SessionId");
+// `ae-sdd-daemon-design.md` §4.1: one main-flow run instance, minted by the
+// daemon as a time-ordered UUID so runs sort by creation. A retry never reuses
+// it; recovering the same run keeps it. Minting lives in the runtime layer
+// because `ae-sdd-domain` stays free of wall clock and randomness.
+uuid_id!(FlowRunId, "FlowRunId");
+// `ae-sdd-daemon-design.md` §4.1: one *physical* execution attempt of a Series.
+// A retry produces a new `SeriesRunId` while keeping the same logical
+// `SeriesId`, which is what lets attempts be queried independently.
+uuid_id!(SeriesRunId, "SeriesRunId");
+// One issued `InstructionEnvelope`. This identity comes from §10.2's field list
+// rather than §4.1's identity table, which does not enumerate it: §4.1 names the
+// durable business and run identities, while an instruction is a single issued
+// directive. It is still daemon-minted, because §10.2 requires the envelope be
+// verifiable and §9.3 forbids a child choosing its own `DelegationId` — letting a
+// child name the instruction it answers would reopen that same hole.
+uuid_id!(InstructionId, "InstructionId");
 uuid_id!(TurnId, "TurnId");
 uuid_id!(LeaseId, "LeaseId");
 uuid_id!(DelegationId, "DelegationId");
@@ -64,6 +80,13 @@ uuid_id!(CompactId, "CompactId");
 uuid_id!(ContextProjectionId, "ContextProjectionId");
 uuid_id!(JobId, "JobId");
 uuid_id!(ClaimId, "ClaimId");
+// `ae-sdd-daemon-design.md` §9.4: the daemon-minted UUID that records one
+// host-bound delegation's liveness bookkeeping. It is never an attestation
+// identity (the `ClaimId` chain owns authentication); it only answers "is the
+// binding this delegation opened still alive, or has it been
+// released/preempted/expired?". Minted deterministically alongside the
+// delegation so an idempotent replay of the same create recovers the same id.
+uuid_id!(HostExecutionBindingId, "HostExecutionBindingId");
 
 fn validate_string_id(
     kind: &'static str,

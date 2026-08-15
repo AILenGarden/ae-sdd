@@ -44,12 +44,12 @@ description: 审查 testcase-generate-skill 产出的测试用例，按 TC-1~TC-
 ae-sdd gates check --only G-TESTCASE-CTX
 ```
 
-`G-TESTCASE-CTX` 校验 `constraints/assets/Story` 三类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_constraints/get_assets` API + `paths.find_doc`）。未过 → **BLOCK，禁止进入 Review**。注：本门禁覆盖上下文加载维度；TC-1~TC-10 检查口径仍是 report-only。
+`G-TESTCASE-CTX` 校验 `constraints/assets/Story` 三类上下文已读齐（注册表 `CONTEXT_GATE_REGISTRY`，复用 `document-storage-skill` 的 `get_assets` API + `paths.find_doc`；约束直接读取 `constraints/` 目录，索引 `constraints/README.md`）。未过 → **BLOCK，禁止进入 Review**。注：本门禁覆盖上下文加载维度；TC-1~TC-10 检查口径仍是 report-only。
 
 **读取入口（v3.9.1 显式化）：**
 - Story：`ae-sdd doc resolve --intent STORY --story-id {S}`
 - TestCase：`ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}`
-- 项目资产/约束：`document-storage-skill.get_assets/get_constraints(projectKey)`
+- 项目资产/约束：`document-storage-skill.get_assets(projectKey)`；约束直接读取 `constraints/` 目录（索引 `constraints/README.md`）
 
 ## 流程
 

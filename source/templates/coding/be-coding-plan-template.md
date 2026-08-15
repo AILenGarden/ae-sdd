@@ -164,7 +164,7 @@ description: BE Code Plan 模板 — Coding 阶段 ④bis 产出物。含 Tier 1
 | 8 | `{module}-interfaces/.../{Resource}RestImpl.java` | 新增 | #6 | `mvn -pl {module}-interfaces compile` |
 | 9 | `{module}-bff/.../{Resource}{Action}AppService.java` | 新增 | #8 | - |
 | 10 | `{module}-bff/.../{Resource}RestImpl.java` | 新增 | #9 | `@SpringBootTest + TestRestTemplate` 真实 HTTP 集成测试通过 |
-| 11 | 各 module test | 新增 | #1-#10 | `mvn test` 全绿 |
+| 11 | 各 module test | 新增 | #1-#10 | `mvn test -pl {受影响模块} -Dtest={受影响测试类}` 全绿（全量套件仅 release/分发门禁执行） |
 
 ---
 
@@ -437,7 +437,9 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 
 ## 9. 编译与测试验证点
 
-> **至少 5 档验证：** 单文件 / 单层 / 单 Task / 全量 / 真实 HTTP。
+> **至少 5 档验证：** 单文件 / 单层 / 单 Task / 增量收口 / 真实 HTTP。
+>
+> **增量口径：** 开发回路与 Coding 收口全程只做增量测试（受影响模块/受影响测试类）；全量测试套件只在 release/分发门禁执行，收口不再跑全量。全量编译（`mvn clean install -DskipTests`）不属于本决议范围，保持不变。
 
 | 阶段 | 触发时机 | 验证命令 | 通过标准 |
 | --- | --- | --- | --- |
@@ -445,7 +447,7 @@ EXPLAIN SELECT ... FROM {table} WHERE {复杂条件};
 | 单层编译 | 写完一个 DDD 分层（如 -domain） | `mvn -pl {module}-{layer} compile` | exit 0 |
 | 单 Task | 完成一个 Task 的所有文件 | `mvn -pl {module} test -Dtest={Resource}Test` | 全绿 |
 | 全量编译 | ⑤ Coding 末 | `mvn clean install -DskipTests` | exit 0 |
-| 全量测试 | ⑤ Coding 末 | `mvn test` | 全绿 |
+| 增量收口测试 | ⑤ Coding 末 | `mvn test -pl {受影响模块} -Dtest={受影响测试类}` | 受影响用例全绿（全量套件仅 release/分发门禁执行） |
 | 真实 HTTP | BFF 完成时 | `mvn -pl {bff-module} test -Dtest={Resource}IT` | 真实 HTTP 集成测试通过 |
 | 服务启动 | 全部写完后 | `java -jar {bff-module}/target/*.jar` | 启动成功 + 注册到 Nacos |
 

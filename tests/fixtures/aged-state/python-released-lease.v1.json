@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "1",
+  "status": "released",
+  "leaseId": "f90f0c85-f34a-40e7-a144-ee2e6c653459",
+  "owner": {
+    "agentId": "codex-root",
+    "sessionId": "session-redacted",
+    "host": "HOST-REDACTED",
+    "pid": 1000
+  },
+  "fencingToken": 3,
+  "acquiredAt": "2026-07-21T01:12:17Z",
+  "heartbeatAt": "2026-07-21T01:12:17Z",
+  "expiresAt": "2026-07-21T02:12:17Z",
+  "ttlSeconds": 3600,
+  "acquireIdempotencyKey": "redacted-key",
+  "history": [
+    {
+      "event": "acquired",
+      "leaseId": "0099dbd5-5bc8-4448-a1e2-f15214bfe4de",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 1,
+      "at": "2026-07-20T09:20:44Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "0099dbd5-5bc8-4448-a1e2-f15214bfe4de",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 1,
+      "at": "2026-07-20T10:10:49Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "91a4d8ef-5cb4-4d4a-953e-37fd415806e5",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 2,
+      "at": "2026-07-20T10:10:49Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "91a4d8ef-5cb4-4d4a-953e-37fd415806e5",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 2,
+      "at": "2026-07-20T10:39:32Z",
+      "expiresAt": "2026-07-20T11:39:32Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "91a4d8ef-5cb4-4d4a-953e-37fd415806e5",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 2,
+      "at": "2026-07-21T01:12:17Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "f90f0c85-f34a-40e7-a144-ee2e6c653459",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 3,
+      "at": "2026-07-21T01:12:17Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "f90f0c85-f34a-40e7-a144-ee2e6c653459",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 3,
+      "at": "2026-07-21T01:33:45Z"
+    }
+  ],
+  "releasedAt": "2026-07-21T01:33:45Z"
+}

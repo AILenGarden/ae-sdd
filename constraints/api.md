@@ -92,10 +92,11 @@
 | --- | --- | --- | --- |
 | runtime | `runtime.handshake`, `runtime.status`, `runtime.drain` | daemon runtime | lifecycle/admin 权限分离 |
 | workspace | `workspace.register`, `workspace.snapshot` | WorkspaceActor | canonical root + project identity 幂等 |
+| workitem | `workitem.create`, `workitem.get`, `workitem.complete` | WorkItemActor | `workitem.create` workspace-scoped：`requiresWorkItem=false, requiresIdempotency=true, writes=true`；`entryNode` 仅 ROUTE/PRD/DR/STORY（BUG/CONFIG 拒绝）；统一 intake 下 `ROUTE` 是唯一的主流程起点，`/ae-sdd` bootstrap 即创建 `entryNode=ROUTE`；ROUTE 可携带可选 `requestedIntent=DR\|STORY\|CODING_PLAN`，该字段仅表达用户期望并按大写规范化，不能生成 `routeCandidate` 或 `engineeringRoute`，Requirement Analysis、route candidate、用户批准及 freeze 仍必须依序完成；PRD/DR/STORY 不再决定主流程起点，只作为输入与 Spec binding 提示，声明既有 Spec 容器布局；可省略 `workItemId`，由 daemon 铸造 `{entryNode}-{8 位小写 hex}`（如 `STORY-3f9a2c1e`）；成功后持久绑定 `session.current_work_item` 并安装 project context projection |
 | session/hook | `session.open`, `session.heartbeat`, `session.close`, `hook.user_prompt`, `hook.pre_tool`, `hook.post_tool`, `hook.stop` | SessionActor/policy | hookEventId 去重；engaged fail closed |
 | flow | `flow.snapshot`, `flow.next` | FlowRuntime | 只读 deterministic decision；role-aware |
 | delegation | `delegation.create`, `delegation.status`, `delegation.accept`, `delegation.report`, `delegation.collect`, `delegation.cancel` | DelegationService | role/lineage/grant/physical attestation |
-| host | `host.register`, `host.capabilities`, `host.action_next`, `host.action_ack`, `host.pressure_report` | HostRuntimeAdapter boundary | authenticated adapter；ACK 不等于 child claim；sample 与 generation 相关 |
+| host | `host.register`, `host.action_next`, `host.action_ack`, `host.pressure_report` | HostRuntimeAdapter boundary | authenticated adapter；ACK 不等于 child claim；sample 与 generation 相关 |
 | context/compact | `context.get`, `context.project`, `compact.request`, `compact.status` | ContextService/CompactManager | revision/delta/budget/pressure；ACK+rehydrate |
 | operation/gate | `operation.describe`, `operation.execute`, `gate.evaluate` | Operations/WorkItemActor | typed operation；fresh PASS only |
 | event/job | `events.subscribe`, `job.status`, `job.cancel` | runtime scheduler | ordered cursor；bounded subscriber |
@@ -104,7 +105,7 @@
 
 ## 五、写请求与并发前置条件
 
-operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/work_item/session/delegation/host）、`requiresWorkspace`, `requiresWorkItem`, `writes`, `requiresLease`, `requiresRevision`, `requiresIdempotency`, `requiresConfirmation`。字段前置条件由 registry 决定，不得由 method 名称、payload 是否出现或“所有 write”猜测。runtime/workspace/session bootstrap 不得被 Work Item 前置条件锁死。
+operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/work_item/session/delegation/host）、`requiresWorkspace`, `requiresWorkItem`, `writes`, `requiresLease`, `requiresRevision`, `requiresIdempotency`, `requiresConfirmation`。字段前置条件由 registry 决定，不得由 method 名称、payload 是否出现或“所有 write”猜测。runtime/workspace/session bootstrap 不得被 Work Item 前置条件锁死。`operation.execute` 的准入前置条件从 payload 的 `operation` 解析到该 TypedOperation 的 registry `OperationSpec`（registry-resolved admission），不再套用 method 级 blanket 默认值；未注册 operation 保持原 method 级 fail-closed 行为。
 
 | 字段 | 约束 |
 | --- | --- |
@@ -121,6 +122,10 @@ operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/wor
 - actor 排队前和 commit 前都必须验证 identity/role；Gate 返回后必须重新验证 revision/fencing/policy/inventory/input fingerprint。
 - response 只有在 project atomic write 和 COMMITTED journal 成功后才可包含 `revisionAfter`, `receipt`, `eventSeq`。
 - shadow mode 的 Rust method 只允许 read/compare；任何 mutation 返回稳定 mode 错误。
+- `operation.describe` 必须把 registry 的 `requires*` 标志投影成显式的 request-context（信封层）字段列表（`requiresLease`→`leaseId`/`fencingToken`、`requiresRevision`→`expectedRevision`、`requiresIdempotency`→`idempotencyKey`、`requiresConfirmation`→`confirmation`、`requiresWorkspace`→`workspaceId`/`projectKey`、`requiresWorkItem`→`workItemId`），使调用方能区分信封字段与 payload 字段，避免把 `leaseId`/`fencingToken` 放进 payload 触发 unknown-field 拒绝；`fields[]` 只描述 payload 字段。
+- `operation.describe` 的 `fields[]` 每个字段可携带可选 `note`，说明该字段接受的值语义；凡 `FieldKind` 名义上允许多形态但实际拒绝某形态（如 `StringOrObject` 的 document `version` 实际拒绝数值）必须在 `note` 中显式声明"数值不接受、须用字符串（如 `\"5\"`）或对象"，避免 schema 发现把调用方引导到非法 payload。
+- `operation.execute` must recursively enforce the exact nested schema returned by `operation.describe`, including array item types, object required fields, nested value types, and nested unknown-field rejection. `execution.plan.set.verification[]` requires `id`, `acId`, `boundary`, `command`, and `expected`; failures remain `OPERATION_SCHEMA_INVALID` and name the precise path such as `verification[0].boundary`.
+- `document.save.keepDraft` is an optional Boolean payload field. Omission means `false`; a committed non-dry-run save then deletes only the exact project-relative `contentFile` in the same journaled transaction. `keepDraft=true` and every dry run preserve the source. The response freezes `draftCleanup.status` as `deleted`, `preserved`, or `already-absent`, and idempotent replay returns the original receipt unchanged.
 
 ## 六、Gate、event 与长 job
 
@@ -128,18 +133,25 @@ operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/wor
 - `FAIL` 必须携带 findings；`ERROR` 携带 stable code/retryable；`TIMEOUT` 携带 deadline；`CANCELLED` 携带 reason；`STALE` 携带 changed dimensions。
 - 只有 fresh PASS 可放行，只有 fresh FAIL 可增加业务 correction；其他状态不可折叠。
 - 长 Gate/build/install/distribute 返回 `jobId`；Hook fast path 禁止同步等待长 job。
+- `flow.next` 投影的 `evaluate-gates` nextAction 必须携带 `submit`，显式给出确切 RPC `method`（`gate.evaluate`）与 `arguments`（至少含 `gateIds`），使调用方无需推断 Gate 提交方法与参数（F-006）。
 - `eventSeq` 是同一 `eventStoreId` 内跨 daemon restart 全局单调且不复用的序列；`bootId` 仅标识生产该事件的 daemon boot。cursor 为 `eventStoreId + eventSeq`，DB 重建或 gap 返回 `EVENT_CURSOR_GAP` 并要求 full snapshot。event notification 必须带 `eventStoreId + bootId + eventSeq + workspaceId + type + schemaVersion + payloadDigest`。
 
 ## 七、Delegation、ChildResult 与 context
 
-- `delegation.create` 的 role/lineage/grants 由 daemon 从 parent capability 派生；client 只能提交 assignment intent。
-- host action ACK 必须关联 `adapterId/actionId/commandSeq/requestDigest`；只有 child 使用一次性 claim 并通过 session attestation 后才能进入 running。
+- Root 调用 `delegation.create` 的 payload 固定为 `{"flowDecisionDigest":"<lowercase sha256>"}`，不得提交 `childRole`、`parentDelegationId`、`inputRevision`、`inputFingerprint`、`deadlineUnixMs`、`adapterId`、`grant` 或 `briefing`。digest 必须引用同 workspace/workItem 下已提交且可委派的 `flow.next` 决策；daemon 从该 intent 派生 Series role、空 parent lineage、revision/fingerprint、deadline、Host adapter、grant 与 briefing。当前可委派决策包括显式 `delegate-series`、`coding/test-running + await-agent-work` 以及 `coding + execute-approved-slice`；其他 action 必须 fail closed。
+- Series 调用 `delegation.create` 创建 Task/Reviewer 时仍提交完整 scoped child payload，但 daemon 必须校验 parent lineage、角色深度以及 grant 是 parent grant 的真子集；Task/Reviewer 禁止继续委派。
+- daemon 为每个 create action 生成一次性 opaque `claimId`。durable delegation/attestation 只保存绑定 workspaceId、delegationId、actionId、childRole、parentSessionId、deadline 的 claim digest；raw claim 只通过同 boot 的 `host.action_next` delivery 交给 Host，禁止出现在 Root create response、durable Host action、日志或 recovery 数据中。daemon restart 后未交付/未接受的 raw claim 不恢复，旧 create delivery必须 fail closed 并重新派发。
+- host action ACK 必须关联 `adapterId/actionId/commandSeq/requestDigest`；只有 child 使用 Host 交付的 claim 并通过 session attestation 后才能进入 running。caller 自造 UUID 或不匹配 claim 必须返回 `DELEGATION_ATTESTATION_FAILED`。
+- PID 不是 delegation/session/claim 的通用 wire identity，Root/Child 不得被要求提交 PID。具体 HostAdapter 可把它能从自身进程 API 可信观察到的 PID 作为可选、adapter-specific attestation evidence，但不得用 Agent 自报 PID替代 daemon claim、Host connection binding 或 child claim acceptance。
 - ChildResult canonical payload 默认最大 64 KiB、summary 最大 8 KiB；必须包含 delegationId、outcome、summary、findings、deliverables(path/hash/kind)、evidenceRefs、requestedAction、memorySnapshotHash。
 - ChildResult 禁止包含 transcript、源码全文、完整 stdout/stderr 或完整系列文档；超限内容必须成为 hash-addressed artifact ref。
-- root ContextProjection 默认最大 64 KiB；`context.get` 根据 `contextRevision + digest` 返回 full/delta/no-change，role/scope 由 trusted session 派生。
+- root ContextProjection 默认最大 64 KiB；该限制计算序列化投影本身。`assetRefs[].byteLength` 绑定外部引用文件的真实长度，但引用正文不内联、也不按外部文件长度之和重复计入引用型投影；正文被物化为 `ContextBundleRef` 时仍受其独立 64 KiB 预算约束。`context.get` 根据 `contextRevision + digest` 返回 full/delta/no-change，role/scope 由 trusted session 派生。
 - `compact.request` 只有匹配 session/generation 的宿主 ACK 和 rehydrate 完成后返回 `context-restored`；request dispatched 不等于成功。
+- advisory compact 仅是流程节点建议：系列边界（Root→Series delegation collect 提交）时 `delegation.collect` 响应可携带 `compactAdvice`，`flow.next` 可返回 advisory 的 `suggest-compact` action；它不启动 compact 周期、不改变 contextGeneration，宿主可忽略。
+- active compact 仍只能经 `compact.request` 或认证宿主 token-pressure 触发并由宿主执行；advisory compact 不得作为 compact 已发生或已授权的证据。
 - `host.pressure_report` 只接受 authenticated adapter 为具备 `observe_context_pressure` capability 的 session 提交的单调 sampleSeq、contextGeneration、usedTokens、contextWindowTokens、source 与 observedAt。自动 compact 默认需要同 generation 连续 2 个样本达到 800 permille high watermark，低于 600 permille 才解除滞回，并有 300 秒 cooldown；阈值属于 versioned policy，可配置但必须进入 policyDigest。
 - 缺少可信 token telemetry 时 daemon 只能返回 pressure unknown/manual remediation，不能用 projection bytes 伪装 token 使用率或宣称已主动 compact。
+- `delegation.report` 的 `inputRevision`/`inputFingerprint` 不匹配必须分别诊断：错误消息与 remediation 必须点名具体不匹配字段（`inputRevision` 或 `inputFingerprint`），且 `inputFingerprint` 的 remediation 须明确区分它不是 `decisionDigest`，使调用方知道该重读哪个冻结值（F-045）。
 
 ## 八、Hook 映射
 
@@ -169,3 +181,18 @@ operation registry 必须为每个 method 冻结 `scope`（runtime/workspace/wor
 - 禁止 method 使用位置参数数组、动态字符串 map 或未版本化 `serde_json::Value` 代替 typed DTO。
 - 禁止 client 通过自报 role、session lineage、WorkItem binding 或 ACK outcome 获得权限。
 - 禁止 protocol minor 在未 negotiation 时改变已有字段语义。
+
+## Bootstrap activation and session recovery
+
+`workspace.register` always creates or resolves a `Shadow` workspace. It must
+never create or promote `RustCanary`. Exact `/ae-sdd` activation uses the
+existing `workspace.mode_transition` RPC with the strict Hook-only payload
+`{"bootstrapActivation":true}` and command confirmation. That branch permits
+only `Shadow -> RustCanary`, emits `workspace.bootstrap_activated`, and cannot
+select a target mode, bypass later parity, enter sole-writer mode, or reverse a
+transition. Admin migration retains its drained/parity-checked contract.
+
+Each Host Hook event reopens `session.open` with an idempotency identity scoped
+to the external session plus the Hook event. A retry of the same event replays;
+a later event commits a refreshed durable expiry and boot capability while
+preserving Work Item, role, delegation, grant, and physical attestation.

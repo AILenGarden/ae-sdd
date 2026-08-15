@@ -24,7 +24,7 @@ pub fn generate_service_lifecycle_plan(
     if contains_forbidden_runtime(&descriptor_contents) {
         return Err(ServiceError::SecretInDescriptor);
     }
-    let descriptor_digest = digest(descriptor_contents.as_bytes());
+    let descriptor_digest = digest(&descriptor_bytes(request.platform, &descriptor_contents));
     let manager_commands = manager_commands(request, &descriptor_path);
     Ok(ServiceLifecyclePlan {
         schema_version: SERVICE_PLAN_SCHEMA,
@@ -224,11 +224,12 @@ fn render_windows(request: &ServiceLifecycleRequest, daemon_argv: &[String]) -> 
         .map(|value| quote_windows_argument(value))
         .collect::<Vec<_>>()
         .join(" ");
+    let restart_delay_minutes = request.restart_delay_seconds.div_ceil(60);
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Task version=\"1.4\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n  <RegistrationInfo><Description>{}</Description></RegistrationInfo>\n  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>\n  <Principals><Principal id=\"Author\"><UserId>{}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority><RestartOnFailure><Interval>PT{}S</Interval><Count>3</Count></RestartOnFailure></Settings>\n  <Actions Context=\"Author\"><Exec><Command>{}</Command><Arguments>{}</Arguments><WorkingDirectory>{}</WorkingDirectory></Exec></Actions>\n</Task>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n<Task version=\"1.4\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n  <RegistrationInfo><Description>{}</Description></RegistrationInfo>\n  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>\n  <Principals><Principal id=\"Author\"><UserId>{}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority><RestartOnFailure><Interval>PT{}M</Interval><Count>3</Count></RestartOnFailure></Settings>\n  <Actions Context=\"Author\"><Exec><Command>{}</Command><Arguments>{}</Arguments><WorkingDirectory>{}</WorkingDirectory></Exec></Actions>\n</Task>\n",
         escape_xml(DESCRIPTION),
         escape_xml(&request.user_identity),
-        request.restart_delay_seconds,
+        restart_delay_minutes,
         escape_xml(&request.executable.to_string_lossy()),
         escape_xml(&arguments),
         escape_xml(&request.working_directory.to_string_lossy()),
@@ -481,6 +482,19 @@ fn display(path: &Path) -> String {
 
 pub(super) fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+pub(super) fn descriptor_bytes(platform: ServicePlatform, contents: &str) -> Vec<u8> {
+    if platform != ServicePlatform::Windows {
+        return contents.as_bytes().to_vec();
+    }
+
+    let mut bytes = Vec::with_capacity(contents.len().saturating_mul(2).saturating_add(2));
+    bytes.extend_from_slice(&[0xff, 0xfe]);
+    for unit in contents.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
 }
 
 #[cfg(test)]

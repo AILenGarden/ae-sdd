@@ -177,6 +177,49 @@ impl LeaseLedger {
         self.end(proof, now, "released")
     }
 
+    /// Releases the active lease owned by `owner`, if any.
+    ///
+    /// Differs from `release` in that the caller need not hold a `LeaseProof`;
+    /// it is the correct entry point when a session closure is tearing down
+    /// all leases that session owned. Replaces the previous behaviour in
+    /// which an orphaned lease could permanently block `lease.acquire` on its
+    /// work item.
+    ///
+    /// Takes `now_ms` rather than a `UtcTimestamp` so the runtime can drive
+    /// the call from its injected `ClockPort` (which exposes Unix milliseconds)
+    /// without taking a hard dependency on `jiff`.
+    ///
+    /// Returns the tombstone if a release occurred, `None` if no active lease
+    /// matched.
+    pub fn release_by_owner(
+        &mut self,
+        owner: &LeaseOwner,
+        now_ms: u64,
+    ) -> Result<Option<LeaseTombstone>, StoreError> {
+        let now = UtcTimestamp::from_unix_ms(now_ms);
+        self.expire_if_needed(&now);
+        let Some(active) = self.active.take() else {
+            return Ok(None);
+        };
+        if active.owner != *owner {
+            // Wrong owner cannot release someone else's lease. Put the
+            // record back so the active lease stays intact and the call
+            // surfaces as `None` to the caller — the owner filter is the
+            // observable signal of the no-match case.
+            self.active = Some(active);
+            return Ok(None);
+        }
+        let tombstone = LeaseTombstone {
+            lease_id: active.lease_id,
+            owner: active.owner,
+            fencing_token: active.fencing_token,
+            ended_at: now,
+            reason: "session-closed".into(),
+        };
+        self.tombstones.push(tombstone.clone());
+        Ok(Some(tombstone))
+    }
+
     pub fn break_active(
         &mut self,
         actor: LeaseOwner,
@@ -219,9 +262,24 @@ impl LeaseLedger {
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self, StoreError> {
-        let wire: LeaseLedgerWire =
+        let value: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|error| StoreError::InvalidState {
                 reason: format!("lease ledger JSON is invalid: {error}").into_boxed_str(),
+            })?;
+        // `lastFencingToken` is the native discriminator. Ledgers written by the
+        // retired Python CLI carry the generation in `fencingToken`/`history`
+        // instead; they stay read-compatible here and gain the native shape on
+        // the next write, exactly as a legacy evidence manifest gains a ledger.
+        if value.get("lastFencingToken").is_some() {
+            let wire: LeaseLedgerWire =
+                serde_json::from_value(value).map_err(|error| StoreError::InvalidState {
+                    reason: format!("lease ledger JSON is invalid: {error}").into_boxed_str(),
+                })?;
+            return wire.try_into();
+        }
+        let wire: LegacyLeaseLedgerWire =
+            serde_json::from_value(value).map_err(|error| StoreError::InvalidState {
+                reason: format!("legacy lease ledger JSON is invalid: {error}").into_boxed_str(),
             })?;
         wire.try_into()
     }
@@ -293,6 +351,131 @@ struct LeaseTombstoneWire {
     fencing_token: u64,
     ended_at: Box<str>,
     reason: Box<str>,
+}
+
+/// Ledger shape written by the retired Python CLI. Read-only compatibility: it
+/// is never emitted, only accepted so that pre-Rust Work Items stay operable.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyLeaseLedgerWire {
+    status: Option<Box<str>>,
+    lease_id: Option<Box<str>>,
+    owner: Option<LegacyLeaseOwnerWire>,
+    fencing_token: Option<u64>,
+    acquired_at: Option<Box<str>>,
+    expires_at: Option<Box<str>>,
+    released_at: Option<Box<str>>,
+    #[serde(default)]
+    history: Vec<LegacyLeaseEventWire>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyLeaseEventWire {
+    event: Box<str>,
+    lease_id: Box<str>,
+    owner: LegacyLeaseOwnerWire,
+    fencing_token: u64,
+    at: Box<str>,
+}
+
+/// Python recorded the owner as four fields; Rust owns a single bounded string.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyLeaseOwnerWire {
+    agent_id: Box<str>,
+    session_id: Box<str>,
+}
+
+impl LegacyLeaseOwnerWire {
+    fn flatten(&self) -> Result<LeaseOwner, StoreError> {
+        let joined = format!("{}/{}", self.agent_id, self.session_id);
+        let bounded = joined
+            .char_indices()
+            .take_while(|(index, character)| index + character.len_utf8() <= LeaseOwner::MAX_BYTES)
+            .map(|(_, character)| character)
+            .collect::<String>();
+        LeaseOwner::new(bounded)
+    }
+}
+
+impl TryFrom<LegacyLeaseLedgerWire> for LeaseLedger {
+    type Error = StoreError;
+
+    fn try_from(wire: LegacyLeaseLedgerWire) -> Result<Self, Self::Error> {
+        let mut tombstones = Vec::with_capacity(wire.history.len());
+        for event in &wire.history {
+            // Only terminal events end a generation. `acquired` opens one and
+            // `renewed` extends one in place; recording either as a tombstone
+            // would invent a lease ending that never happened.
+            if !matches!(event.event.as_ref(), "released" | "expired" | "broken") {
+                continue;
+            }
+            tombstones.push(LeaseTombstone {
+                lease_id: LeaseId::from_str(&event.lease_id)?,
+                owner: event.owner.flatten()?,
+                fencing_token: FencingToken::new(event.fencing_token),
+                ended_at: UtcTimestamp::from_str(&event.at)?,
+                reason: event.event.clone(),
+            });
+        }
+        // A released or expired Python lease holds nothing; only a still-held
+        // one becomes an active record. `releasedAt` is authoritative because
+        // the legacy writer set it in the same write as the terminal status.
+        let held = wire.released_at.is_none()
+            && !matches!(
+                wire.status.as_deref(),
+                Some("released" | "expired" | "broken")
+            );
+        let active = match (
+            held,
+            &wire.lease_id,
+            &wire.owner,
+            &wire.acquired_at,
+            &wire.expires_at,
+        ) {
+            (true, Some(lease_id), Some(owner), Some(acquired_at), Some(expires_at)) => {
+                let acquired_at = UtcTimestamp::from_str(acquired_at)?;
+                let expires_at = UtcTimestamp::from_str(expires_at)?;
+                if expires_at <= acquired_at {
+                    return Err(StoreError::InvalidState {
+                        reason: "legacy lease expires before acquisition".into(),
+                    });
+                }
+                Some(LeaseRecord {
+                    lease_id: LeaseId::from_str(lease_id)?,
+                    owner: owner.flatten()?,
+                    fencing_token: FencingToken::new(wire.fencing_token.unwrap_or_default()),
+                    acquired_at,
+                    expires_at,
+                })
+            }
+            _ => None,
+        };
+        // The generation must not regress, or a stale proof from the Python era
+        // could validate again. Take the highest token the file mentions.
+        let last_fencing_token = FencingToken::new(
+            wire.fencing_token
+                .unwrap_or_default()
+                .max(
+                    wire.history
+                        .iter()
+                        .map(|event| event.fencing_token)
+                        .max()
+                        .unwrap_or_default(),
+                )
+                .max(
+                    active
+                        .as_ref()
+                        .map_or(0, |record| record.fencing_token.get()),
+                ),
+        );
+        Ok(Self {
+            last_fencing_token,
+            active,
+            tombstones,
+        })
+    }
 }
 
 impl From<&LeaseLedger> for LeaseLedgerWire {
@@ -495,5 +678,135 @@ mod tests {
             ledger.validate(&stale, &at("2026-07-23T00:02:30Z")),
             Err(StoreError::StaleFencingToken { .. })
         ));
+    }
+
+    /// Verbatim shape the retired Python CLI left in
+    /// `.auto-engineering/*/state.lease.json`: `schemaVersion` is a string,
+    /// there is no `lastFencingToken`, `owner` is an object, and lifecycle is
+    /// carried by `status`/`releasedAt` plus a `history` array.
+    const PYTHON_RELEASED_LEDGER: &str = r#"{
+      "schemaVersion": "1",
+      "status": "released",
+      "leaseId": "c2a0061b-790d-43a4-9d60-7e1e2fcf6827",
+      "owner": {"agentId":"ae-sdd-legacy-cli","sessionId":"state-write-37740",
+                "host":"CHINAMI-LAEJPRK","pid":37740},
+      "fencingToken": 9,
+      "acquiredAt": "2026-07-27T01:13:57Z",
+      "expiresAt": "2026-07-27T01:14:27Z",
+      "ttlSeconds": 30,
+      "acquireIdempotencyKey": "legacy-state-write-37740-lease",
+      "history": [
+        {"event":"acquired","leaseId":"6bea5578-e378-473d-b1d0-7e240356a77e",
+         "owner":{"agentId":"claude-code","sessionId":"cutover","host":"H","pid":1},
+         "fencingToken":8,"at":"2026-07-27T00:59:11Z"},
+        {"event":"released","leaseId":"6bea5578-e378-473d-b1d0-7e240356a77e",
+         "owner":{"agentId":"claude-code","sessionId":"cutover","host":"H","pid":1},
+         "fencingToken":8,"at":"2026-07-27T01:03:56Z"}
+      ],
+      "releasedAt": "2026-07-27T01:13:57Z"
+    }"#;
+
+    #[test]
+    fn release_by_owner_releases_only_when_owner_matches() {
+        let mut ledger = LeaseLedger::empty(FencingToken::new(7));
+        let owner = LeaseOwner::new("session-a").expect("owner is valid");
+        let other = LeaseOwner::new("session-b").expect("other is valid");
+        ledger
+            .acquire(
+                lease(1),
+                owner.clone(),
+                UtcTimestamp::from_unix_ms(0),
+                UtcTimestamp::from_unix_ms(120_000),
+            )
+            .expect("acquire");
+
+        let tombstone = ledger
+            .release_by_owner(&other, 60_000)
+            .expect("no ownership mismatch is an error");
+        assert!(tombstone.is_none(), "wrong owner must not release anything");
+        assert!(
+            ledger.active().is_some(),
+            "the active lease must remain when the owner does not match"
+        );
+
+        let tombstone = ledger
+            .release_by_owner(&owner, 60_000)
+            .expect("releasing the matching owner succeeds")
+            .expect("a tombstone is produced");
+        assert_eq!(tombstone.reason.as_ref(), "session-closed");
+        assert_eq!(tombstone.lease_id, lease(1));
+        assert!(ledger.active().is_none());
+        assert_eq!(ledger.tombstones().len(), 1);
+    }
+
+    #[test]
+    fn release_by_owner_after_expiry_is_a_noop() {
+        let mut ledger = LeaseLedger::empty(FencingToken::new(7));
+        let owner = LeaseOwner::new("session-a").expect("owner is valid");
+        // Acquire and release both use the same Unix-millisecond epoch so
+        // the sweep-vs-release boundary is unambiguous regardless of the
+        // fixture time.
+        ledger
+            .acquire(
+                lease(1),
+                owner.clone(),
+                UtcTimestamp::from_unix_ms(0),
+                UtcTimestamp::from_unix_ms(10),
+            )
+            .expect("acquire");
+        let initial_tombstones = ledger.tombstones().len();
+
+        let tombstone = ledger
+            .release_by_owner(&owner, 20)
+            .expect("release after expiry is well-defined");
+        assert!(
+            tombstone.is_none(),
+            "the sweep already happened; release_by_owner must report no-op"
+        );
+        assert!(ledger.active().is_none());
+        assert_eq!(
+            ledger.tombstones().len(),
+            initial_tombstones + 1,
+            "the sweep itself produced exactly one new tombstone"
+        );
+    }
+
+    #[test]
+    fn python_written_ledger_stays_readable_and_keeps_its_fencing_generation() {
+        let ledger = LeaseLedger::from_json(PYTHON_RELEASED_LEDGER.as_bytes())
+            .expect("a Python-era ledger must stay readable");
+        assert_eq!(ledger.last_fencing_token(), FencingToken::new(9));
+        assert!(
+            ledger.active().is_none(),
+            "a released Python ledger holds no active lease"
+        );
+    }
+
+    #[test]
+    fn a_python_ledger_grants_the_next_generation_without_reusing_a_token() {
+        let mut ledger = LeaseLedger::from_json(PYTHON_RELEASED_LEDGER.as_bytes())
+            .expect("a Python-era ledger must stay readable");
+        let granted = ledger
+            .acquire(
+                lease(11),
+                LeaseOwner::new("root-session").expect("owner is valid"),
+                at("2026-07-28T00:00:00Z"),
+                at("2026-07-28T00:05:00Z"),
+            )
+            .expect("acquire succeeds on a converted ledger");
+        assert_eq!(granted.fencing_token(), FencingToken::new(10));
+    }
+
+    #[test]
+    fn a_read_python_ledger_is_written_back_in_the_native_shape() {
+        let ledger = LeaseLedger::from_json(PYTHON_RELEASED_LEDGER.as_bytes())
+            .expect("a Python-era ledger must stay readable");
+        let bytes = ledger.to_canonical_json().expect("canonical encode");
+        let text = String::from_utf8(bytes).expect("canonical JSON is UTF-8");
+        assert!(
+            text.contains("\"lastFencingToken\":9") && text.contains("\"schemaVersion\":1"),
+            "write-time normalization must emit the native shape: {text}"
+        );
+        LeaseLedger::from_json(text.as_bytes()).expect("normalized output round-trips");
     }
 }

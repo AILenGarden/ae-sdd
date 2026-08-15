@@ -5,24 +5,23 @@ use ae_sdd_domain::{
     RequestId, ResultDigest, SessionId, StateRevision, WorkItemId, WorkspaceId,
 };
 use ae_sdd_store::{
-    IdempotencyKey, JournalEvent, JournalStatus, MutationJournalEntry, MutationTarget,
-    RuntimeEventPayload, StoreError, TargetDescriptor,
+    DurableFileSystem, IdempotencyKey, InMemoryFileSystem, JournalEvent, JournalStatus,
+    MutationJournalEntry, MutationTarget, RuntimeEventPayload, StdDurableFileSystem, StoreError,
+    TargetDescriptor,
 };
 use serde_json::Value;
 use uuid::Uuid;
 
 fn descriptor() -> TargetDescriptor {
-    TargetDescriptor {
-        path: ProjectRelativePath::new(".auto-engineering/WI-1/state.json")
+    TargetDescriptor::write(
+        ProjectRelativePath::new(".auto-engineering/WI-1/state.json")
             .expect("target path is valid"),
-        before_digest: Some(ArtifactDigest::digest(b"before")),
-        after_digest: ArtifactDigest::digest(b"after"),
-        byte_length: 5,
-        staged_ref: ProjectRelativePath::new(
-            ".auto-engineering/WI-1/mutation-journal/v1/staged/request/0.bin",
-        )
-        .expect("staged path is valid"),
-    }
+        Some(ArtifactDigest::digest(b"before")),
+        ArtifactDigest::digest(b"after"),
+        5,
+        ProjectRelativePath::new(".auto-engineering/WI-1/mutation-journal/v1/staged/request/0.bin")
+            .expect("staged path is valid"),
+    )
 }
 
 fn event(payload: RuntimeEventPayload) -> JournalEvent {
@@ -220,6 +219,42 @@ fn journal_lifecycle_enforces_target_revision_and_terminal_contracts() {
 }
 
 #[test]
+fn mutation_targets_distinguish_write_and_digest_bound_delete() {
+    let path = ProjectRelativePath::new("drafts/STORY-001.md").unwrap();
+    let before = ArtifactDigest::digest(b"draft");
+    let write = MutationTarget::write(path.clone(), Some(before), b"saved".to_vec()).unwrap();
+    assert_eq!(
+        write,
+        MutationTarget::new(path.clone(), Some(before), b"saved".to_vec()).unwrap()
+    );
+    assert_eq!(write.write_bytes(), Some(b"saved".as_slice()));
+    assert!(!write.is_delete());
+
+    let delete = MutationTarget::delete(path.clone(), before);
+    assert_eq!(delete.path(), &path);
+    assert_eq!(delete.before_digest(), Some(before));
+    assert_eq!(delete.write_bytes(), None);
+    assert!(delete.is_delete());
+}
+
+#[test]
+fn durable_file_removal_reports_removed_then_already_absent() {
+    let memory = InMemoryFileSystem::default();
+    let memory_path = std::path::Path::new("drafts/STORY-001.md");
+    memory.insert(memory_path, b"draft".to_vec());
+    assert!(memory.remove_file_durable(memory_path).unwrap());
+    assert!(!memory.remove_file_durable(memory_path).unwrap());
+
+    let workspace = tempfile::tempdir().unwrap();
+    let disk_path = workspace.path().join("drafts/STORY-001.md");
+    std::fs::create_dir_all(disk_path.parent().unwrap()).unwrap();
+    std::fs::write(&disk_path, b"draft").unwrap();
+    let disk = StdDurableFileSystem;
+    assert!(disk.remove_file_durable(&disk_path).unwrap());
+    assert!(!disk.remove_file_durable(&disk_path).unwrap());
+}
+
+#[test]
 fn journal_wire_round_trips_all_statuses_and_payload_variants() {
     let prepared_inline = prepared(RuntimeEventPayload::InlineJson(br#"{"ok":true}"#.to_vec()));
     let inline_bytes = prepared_inline
@@ -279,11 +314,55 @@ fn journal_wire_round_trips_all_statuses_and_payload_variants() {
 }
 
 #[test]
+fn journal_wire_reads_v1_and_round_trips_v2_tagged_targets() {
+    let mut v1 = json(&prepared(RuntimeEventPayload::InlineJson(
+        br#"{"ok":true}"#.to_vec(),
+    )));
+    v1["schemaVersion"] = 1.into();
+    v1["targetFiles"][0]
+        .as_object_mut()
+        .expect("legacy target is an object")
+        .remove("kind");
+    assert_eq!(v1["schemaVersion"], 1);
+    assert!(v1["targetFiles"][0].get("kind").is_none());
+    MutationJournalEntry::from_json(&serde_json::to_vec(&v1).unwrap())
+        .expect("legacy v1 write target remains readable");
+
+    let mut v2 = v1;
+    v2["schemaVersion"] = 2.into();
+    v2["targetFiles"][0]["kind"] = "write".into();
+    let deleted_path = "drafts/STORY-001.md";
+    let expected_before = ArtifactDigest::digest(b"draft");
+    v2["targetFiles"]
+        .as_array_mut()
+        .expect("targetFiles is an array")
+        .push(serde_json::json!({
+            "kind":"delete",
+            "path":deleted_path,
+            "expectedBeforeDigest":expected_before.to_string(),
+        }));
+
+    let parsed = MutationJournalEntry::from_json(&serde_json::to_vec(&v2).unwrap())
+        .expect("v2 tagged write/delete targets parse");
+    let round_trip = json(&parsed);
+    assert_eq!(round_trip["schemaVersion"], 2);
+    assert_eq!(round_trip["targetFiles"][0]["kind"], "write");
+    assert_eq!(round_trip["targetFiles"][1]["kind"], "delete");
+    assert_eq!(round_trip["targetFiles"][1]["path"], deleted_path);
+    assert_eq!(
+        round_trip["targetFiles"][1]["expectedBeforeDigest"],
+        expected_before.to_string()
+    );
+    assert!(round_trip["targetFiles"][1].get("stagedRef").is_none());
+    assert!(round_trip["targetFiles"][1].get("afterDigest").is_none());
+}
+
+#[test]
 fn journal_wire_rejects_invalid_identity_targets_payloads_and_terminal_fields() {
     let base = prepared(RuntimeEventPayload::InlineJson(br#"{"ok":true}"#.to_vec()));
 
     let mut invalid = json(&base);
-    invalid["schemaVersion"] = 2.into();
+    invalid["schemaVersion"] = 3.into();
     assert_invalid(invalid);
 
     let mut invalid = json(&base);

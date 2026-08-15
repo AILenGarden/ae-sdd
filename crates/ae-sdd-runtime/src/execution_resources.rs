@@ -43,6 +43,27 @@ pub enum ResourceDecision {
     },
 }
 
+/// Atomic lease effect returned with one arbitration decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceAcquisition {
+    /// The caller already held a live lease and merely re-entered it.
+    Reentered,
+    /// This acquire attempt installed a new lease, including a same-session
+    /// regrant after TTL expiry.
+    Granted,
+    /// No lease was installed for the caller.
+    Deferred,
+}
+
+/// One decision plus the lease effect observed under the arbiter mutex.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResourceAcquireOutcome {
+    /// Allow/defer decision exposed to the Hook policy.
+    pub decision: ResourceDecision,
+    /// Whether this exact attempt installed the lease.
+    pub acquisition: ResourceAcquisition,
+}
+
 /// One lease acquire attempt.
 #[derive(Clone, Copy, Debug)]
 pub struct CargoAcquireRequest<'a> {
@@ -146,11 +167,23 @@ impl CargoResourceArbiter {
     ///   queue is empty), keeping waiters FIFO;
     /// - everyone else defers with the bounded retry hint and is queued once,
     ///   bounded by `queue_capacity`.
+    #[allow(dead_code)]
     pub fn acquire(
         &self,
         kind: ResourceKind,
         request: &CargoAcquireRequest<'_>,
     ) -> ResourceDecision {
+        self.acquire_with_effect(kind, request).decision
+    }
+
+    /// Attempts to take the lease and atomically reports whether this call
+    /// installed it. Callers that compensate failed transactions must use
+    /// this method instead of inspecting the holder before acquisition.
+    pub fn acquire_with_effect(
+        &self,
+        kind: ResourceKind,
+        request: &CargoAcquireRequest<'_>,
+    ) -> ResourceAcquireOutcome {
         match kind {
             ResourceKind::Cargo => self.acquire_cargo(request),
         }
@@ -196,7 +229,7 @@ impl CargoResourceArbiter {
             .position(|queued| &**queued == session_id)
     }
 
-    fn acquire_cargo(&self, request: &CargoAcquireRequest<'_>) -> ResourceDecision {
+    fn acquire_cargo(&self, request: &CargoAcquireRequest<'_>) -> ResourceAcquireOutcome {
         let mut state = self.lock();
         if state.holder.as_ref().is_some_and(|holder| {
             request
@@ -210,7 +243,10 @@ impl CargoResourceArbiter {
         }
         if let Some(holder) = &state.holder {
             if &*holder.session_id == request.session_id {
-                return ResourceDecision::Allow;
+                return ResourceAcquireOutcome {
+                    decision: ResourceDecision::Allow,
+                    acquisition: ResourceAcquisition::Reentered,
+                };
             }
             return Self::queue_and_defer(&mut state, request);
         }
@@ -244,13 +280,16 @@ impl CargoResourceArbiter {
             acquired_at_unix_ms: request.now_unix_ms,
             _guard: guard,
         });
-        ResourceDecision::Allow
+        ResourceAcquireOutcome {
+            decision: ResourceDecision::Allow,
+            acquisition: ResourceAcquisition::Granted,
+        }
     }
 
     fn queue_and_defer(
         state: &mut CargoLeaseState,
         request: &CargoAcquireRequest<'_>,
-    ) -> ResourceDecision {
+    ) -> ResourceAcquireOutcome {
         if !state
             .queue
             .iter()
@@ -259,8 +298,11 @@ impl CargoResourceArbiter {
         {
             state.queue.push_back(request.session_id.into());
         }
-        ResourceDecision::Defer {
-            retry_after_ms: request.retry_after_ms,
+        ResourceAcquireOutcome {
+            decision: ResourceDecision::Defer {
+                retry_after_ms: request.retry_after_ms,
+            },
+            acquisition: ResourceAcquisition::Deferred,
         }
     }
 

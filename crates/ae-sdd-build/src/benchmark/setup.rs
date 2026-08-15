@@ -191,6 +191,62 @@ fn validate_authoritative_prompt(
     }
 }
 
+/// One `runtime.status` round trip. `DaemonClient::call` performs the handshake
+/// on the same connection as the typed call, so this is the warm-handshake cost
+/// `constraints/testing.md` budgets — there is no handshake-only RPC to time.
+pub(super) fn warm_handshake_call(client: &DaemonClient) -> Result<Value, BenchmarkError> {
+    call_sync(
+        client,
+        RpcMethod::RuntimeStatus,
+        request_params(json!({}), None, None, None, None),
+    )
+}
+
+/// One `context.get` round trip against a warm projection cache. This is the
+/// "cached read" `constraints/testing.md` budgets.
+pub(super) fn cached_context_read(
+    client: &DaemonClient,
+    session: &HookSession,
+) -> Result<Value, BenchmarkError> {
+    call_sync(
+        client,
+        RpcMethod::ContextGet,
+        session.read_params(json!({})),
+    )
+}
+
+/// One `hook.user_prompt` round trip on the invalidated path: a unique
+/// `hookEventId` and idempotency key, so the receipt cannot replay and the
+/// daemon must take the authoritative route — decide, deliver and durably
+/// commit a fresh receipt plus event.
+///
+/// This is the "invalidated non-external Hook" `constraints/testing.md`
+/// budgets: an engaged session in a `rust-canary` workspace whose projection
+/// the daemon has just recomputed off the fast path.
+pub(super) fn invalidated_hook_call(
+    client: &DaemonClient,
+    session: &HookSession,
+    event_id: &str,
+) -> Result<Value, BenchmarkError> {
+    call_sync(
+        client,
+        RpcMethod::HookUserPrompt,
+        session.params(
+            event_id,
+            json!({
+                "hookEventId": event_id,
+                "turnSeq": 1,
+                "hostPayload": {"prompt": "benchmark-invalidated"}
+            }),
+        ),
+    )
+}
+
+/// Reads the projection digest an engaged Hook reported, if it carried one.
+pub(super) fn hook_context_digest(result: &Value) -> Option<&str> {
+    result.get("contextDigest").and_then(Value::as_str)
+}
+
 pub(super) fn validate_controlled_hook(
     result: &Value,
     replayed: bool,
@@ -245,6 +301,23 @@ impl HookSession {
             Some(&self.session_id),
             Some(&self.capability_token),
             Some(idempotency_key),
+        );
+        params.agent_id = Some("benchmark-agent".to_owned());
+        params.turn_id = Some(self.turn_id.clone());
+        params.work_item_id = Some(self.work_item_id.clone());
+        params.deadline_ms = HOOK_DEADLINE_MS;
+        params
+    }
+
+    /// Read-only params: same identity, no idempotency key. Reads are not
+    /// mutations, so replaying one must not be deduplicated by key.
+    fn read_params(&self, payload: Value) -> RequestParams<Value> {
+        let mut params = request_params(
+            payload,
+            Some(&self.workspace_id),
+            Some(&self.session_id),
+            Some(&self.capability_token),
+            None,
         );
         params.agent_id = Some("benchmark-agent".to_owned());
         params.turn_id = Some(self.turn_id.clone());
@@ -342,7 +415,20 @@ impl BenchmarkWorkspace {
         &self,
         policy_digest: &str,
     ) -> Result<String, BenchmarkError> {
-        let (state, input_fingerprint) = authoritative_state(policy_digest)?;
+        self.write_authoritative_state_at(policy_digest, 1)
+    }
+
+    /// Writes a self-consistent authoritative state at `revision`.
+    ///
+    /// Moving the revision moves the projection the daemon recomputes off the
+    /// fast path, which is how the invalidated-Hook probe forces a real
+    /// reprojection instead of measuring a cache hit.
+    pub(super) fn write_authoritative_state_at(
+        &self,
+        policy_digest: &str,
+        revision: u64,
+    ) -> Result<String, BenchmarkError> {
+        let (state, input_fingerprint) = authoritative_state_at(policy_digest, revision)?;
         fs::write(&self.state_path, serde_json::to_vec_pretty(&state)?)
             .map_err(BenchmarkError::Io)?;
         Ok(input_fingerprint)
@@ -357,17 +443,25 @@ impl Drop for BenchmarkWorkspace {
     }
 }
 
+#[cfg(test)]
 pub(super) fn authoritative_state(policy_digest: &str) -> Result<(Value, String), BenchmarkError> {
+    authoritative_state_at(policy_digest, 1)
+}
+
+pub(super) fn authoritative_state_at(
+    policy_digest: &str,
+    revision: u64,
+) -> Result<(Value, String), BenchmarkError> {
     let mut state = json!({
         "stateMachineName": WORK_ITEM_ID,
         "currentWorkItem": WORK_ITEM_ID,
-        "revision": 1,
+        "revision": revision,
         "currentPhase": "coding",
     });
     let input_fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(&state)?));
     state["hookGuard"] = json!({
         "outcome": "PASS",
-        "stateRevision": 1,
+        "stateRevision": revision,
         "policyDigest": policy_digest,
         "inventoryGeneration": CANARY_INVENTORY_GENERATION,
         "inputFingerprint": input_fingerprint,

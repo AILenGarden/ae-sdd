@@ -186,7 +186,7 @@ A typed-operation iteration is complete only when all of the following are true:
 - Story has AC and verification scenarios, and `state.executionPlan` has implementation mapping plus user confirmation;
 - focused tests cover positive, invalid, stale, retry, corruption, scope, and concurrency behavior;
 - `ae-sdd update-check --affected <changed-files> --json` and the required full checks pass;
-- `cargo test --workspace --locked` passes when shared infrastructure changed;
+- `cargo test --workspace --locked` passes when shared infrastructure changed (named exception to the incremental-testing rule; the full suite otherwise runs only at release/distribution gates);
 - the `ae-sdd-build` compile job and `ae-sdd runtime verify --json` pass;
 - `ops describe` from the built runtime matches the source registry;
 - this protocol records compatibility classification, while tests and runtime verification record executable evidence;

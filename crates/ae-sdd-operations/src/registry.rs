@@ -4,7 +4,7 @@ use ae_sdd_protocol::OperationScope;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub const OPERATION_COUNT: usize = 23;
+pub const OPERATION_COUNT: usize = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
@@ -27,10 +27,12 @@ pub enum OperationName {
     ReviewContribute,
     ReviewFinalize,
     ReviewRecord,
+    RouteDecide,
     StateNextActions,
     StateTransition,
     VerificationPlan,
     WorkItemComplete,
+    WorkItemCreate,
     WorkItemGet,
 }
 
@@ -54,10 +56,12 @@ impl OperationName {
         Self::ReviewContribute,
         Self::ReviewFinalize,
         Self::ReviewRecord,
+        Self::RouteDecide,
         Self::StateNextActions,
         Self::StateTransition,
         Self::VerificationPlan,
         Self::WorkItemComplete,
+        Self::WorkItemCreate,
         Self::WorkItemGet,
     ];
 
@@ -82,10 +86,12 @@ impl OperationName {
             Self::ReviewContribute => "review.contribute",
             Self::ReviewFinalize => "review.finalize",
             Self::ReviewRecord => "review.record",
+            Self::RouteDecide => "route.decide",
             Self::StateNextActions => "state.next_actions",
             Self::StateTransition => "state.transition",
             Self::VerificationPlan => "verification.plan",
             Self::WorkItemComplete => "workitem.complete",
+            Self::WorkItemCreate => "workitem.create",
             Self::WorkItemGet => "workitem.get",
         }
     }
@@ -133,6 +139,16 @@ pub struct FieldSpec {
     pub name: &'static str,
     pub kind: FieldKind,
     pub required: bool,
+    /// Optional human-readable clarification of the field's accepted value
+    /// semantics. Used when the `FieldKind` name is ambiguous about what the
+    /// validator actually accepts (e.g. `StringOrObject` rejecting numeric
+    /// input). Surfaced by `operation.describe` so schema discovery cannot guide
+    /// a caller to an invalid payload.
+    pub note: Option<&'static str>,
+    /// Element kind for arrays, when the operation accepts a homogeneous shape.
+    pub item_kind: Option<FieldKind>,
+    /// Nested object fields when `item_kind` is `Object`.
+    pub items: Option<&'static [FieldSpec]>,
 }
 
 const fn field(name: &'static str, kind: FieldKind, required: bool) -> FieldSpec {
@@ -140,6 +156,42 @@ const fn field(name: &'static str, kind: FieldKind, required: bool) -> FieldSpec
         name,
         kind,
         required,
+        note: None,
+        item_kind: None,
+        items: None,
+    }
+}
+
+/// Build a `FieldSpec` whose accepted value semantics need an explicit note,
+/// such as a `StringOrObject` field that rejects numeric input (F-007).
+const fn field_note(
+    name: &'static str,
+    kind: FieldKind,
+    required: bool,
+    note: &'static str,
+) -> FieldSpec {
+    FieldSpec {
+        name,
+        kind,
+        required,
+        note: Some(note),
+        item_kind: None,
+        items: None,
+    }
+}
+
+const fn array_of_objects(
+    name: &'static str,
+    required: bool,
+    items: &'static [FieldSpec],
+) -> FieldSpec {
+    FieldSpec {
+        name,
+        kind: FieldKind::Array,
+        required,
+        note: None,
+        item_kind: Some(FieldKind::Object),
+        items: Some(items),
     }
 }
 
@@ -180,16 +232,84 @@ const fn spec(
     }
 }
 
+/// Spec for an operation that runs before its Work Item exists.
+///
+/// Every other operation in this registry acts on an already-resolvable Work
+/// Item, so `spec()` hardcodes `requires_work_item: true`. Creation cannot: the
+/// Work Item is its output, not its input. Lease and revision are likewise
+/// Work-Item-level preconditions with nothing to attach to yet, so the guard
+/// that remains is idempotency, which makes a retried create return the first
+/// result instead of a second directory.
+const fn workspace_spec(
+    operation: OperationName,
+    writes: bool,
+    requires_idempotency: bool,
+    fields: &'static [FieldSpec],
+) -> OperationSpec {
+    OperationSpec {
+        operation,
+        scope: OperationScope::Workspace,
+        requires_workspace: true,
+        requires_work_item: false,
+        writes,
+        requires_lease: false,
+        requires_revision: false,
+        requires_idempotency,
+        requires_confirmation: false,
+        fields,
+    }
+}
+
+/// The Work Item's business name MAY arrive as the request-level `workItemId`;
+/// a bootstrap caller has no Work Item yet and omits it, so the daemon mints
+/// `{entryNode}-{8 lowercase hex}` instead. That is why `workitem.create` is
+/// workspace-scoped and the payload carries only what shapes the new state.
+///
+/// `providedDocuments` registers caller-owned PRD/DR/Story documents at create
+/// time. Each entry is an object: `intent` (`PRD`|`DR`|`STORY`), `docId`,
+/// project-relative `path`, and an optional `parentDocId` pointing at another
+/// entry (a Story to its DR, a DR to its PRD). Adoption only records the
+/// mapping; the daemon never writes to or copies the referenced files.
+const WORKITEM_CREATE: &[FieldSpec] = &[
+    field("entryNode", FieldKind::String, true),
+    field("requestedIntent", FieldKind::String, false),
+    field("storyName", FieldKind::String, false),
+    field("providedDocuments", FieldKind::Array, false),
+];
+/// `taskKind` is required because §5.5 makes it one of the six facts the route
+/// decision freezes. It arrives as an input rather than being inferred: §5.3 keeps
+/// `BootstrapAssessment.task_kind_proposal` provisional until RA closes, so the
+/// caller reports what the assessment proposed and the decision promotes it. A
+/// route engine that invented the value would be fabricating the authoritative
+/// fact instead of freezing a reported one.
+const ROUTE_DECIDE: &[FieldSpec] = &[
+    field("requestedIntent", FieldKind::String, false),
+    field("taskKind", FieldKind::String, true),
+    field("availableArtifacts", FieldKind::Array, false),
+    field("impactFacts", FieldKind::Array, false),
+    field("classificationConfidenceBps", FieldKind::Integer, false),
+];
 const DOCUMENT_RESOLVE: &[FieldSpec] = &[
     field("intent", FieldKind::String, true),
     field("docId", FieldKind::String, false),
-    field("version", FieldKind::StringOrObject, false),
+    field_note(
+        "version",
+        FieldKind::StringOrObject,
+        false,
+        "numeric values are rejected; supply the version as a string (e.g. \"5\") or an object descriptor",
+    ),
 ];
 const DOCUMENT_SAVE: &[FieldSpec] = &[
     field("intent", FieldKind::String, true),
     field("contentFile", FieldKind::String, true),
+    field("keepDraft", FieldKind::Boolean, false),
     field("docId", FieldKind::String, false),
-    field("version", FieldKind::StringOrObject, false),
+    field_note(
+        "version",
+        FieldKind::StringOrObject,
+        false,
+        "numeric values are rejected; supply the version as a string (e.g. \"5\") or an object descriptor",
+    ),
     field("changelogNote", FieldKind::String, false),
 ];
 const EVIDENCE_RECORD: &[FieldSpec] = &[
@@ -204,10 +324,17 @@ const EVIDENCE_RECORD: &[FieldSpec] = &[
     field("logicalKey", FieldKind::String, false),
 ];
 const EXECUTION_PLAN_APPROVE: &[FieldSpec] = &[field("approvedBy", FieldKind::String, false)];
+const EXECUTION_PLAN_VERIFICATION_ITEM: &[FieldSpec] = &[
+    field("id", FieldKind::String, true),
+    field("acId", FieldKind::String, true),
+    field("boundary", FieldKind::String, true),
+    field("command", FieldKind::StringOrArray, true),
+    field("expected", FieldKind::String, true),
+];
 const EXECUTION_PLAN_SET: &[FieldSpec] = &[
     field("goal", FieldKind::String, true),
     field("changedPaths", FieldKind::Array, true),
-    field("verification", FieldKind::Array, true),
+    array_of_objects("verification", true, EXECUTION_PLAN_VERIFICATION_ITEM),
     field("risks", FieldKind::Array, false),
     field("sourceReads", FieldKind::Array, false),
 ];
@@ -329,7 +456,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
     spec(
         OperationName::ExecutionSliceRecord,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -338,7 +465,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
     spec(
         OperationName::ExecutionSliceStart,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -426,6 +553,15 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         REVIEW_RECORD,
     ),
     spec(
+        OperationName::RouteDecide,
+        true,
+        true,
+        true,
+        true,
+        false,
+        ROUTE_DECIDE,
+    ),
+    spec(
         OperationName::StateNextActions,
         false,
         false,
@@ -440,7 +576,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         true,
         true,
         true,
-        true,
+        false,
         STATE_TRANSITION,
     ),
     spec(
@@ -461,6 +597,7 @@ pub const OPERATION_REGISTRY: [OperationSpec; OPERATION_COUNT] = [
         true,
         NO_FIELDS,
     ),
+    workspace_spec(OperationName::WorkItemCreate, true, true, WORKITEM_CREATE),
     spec(
         OperationName::WorkItemGet,
         false,
@@ -494,12 +631,23 @@ pub fn operation_schema_digest() -> String {
             u8::from(spec.requires_confirmation),
         ]);
         for field in spec.fields {
-            digest.update(field.name.as_bytes());
-            digest.update([0, field_kind_code(field.kind), u8::from(field.required)]);
+            digest_field(&mut digest, field);
         }
         digest.update([0xff]);
     }
     hex::encode(digest.finalize())
+}
+
+fn digest_field(digest: &mut Sha256, field: &FieldSpec) {
+    digest.update(field.name.as_bytes());
+    digest.update([0, field_kind_code(field.kind), u8::from(field.required)]);
+    digest.update([field.item_kind.map_or(0xff, field_kind_code)]);
+    if let Some(items) = field.items {
+        for item in items {
+            digest_field(digest, item);
+        }
+    }
+    digest.update([0xfe]);
 }
 
 const fn scope_code(scope: OperationScope) -> u8 {

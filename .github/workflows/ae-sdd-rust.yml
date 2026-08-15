@@ -74,7 +74,7 @@ jobs:
           compatibility-audit
           --manifest tests/fixtures/compatibility/legacy-surface.v1.json
           --expected-commands 113
-          --expected-operations 18
+          --expected-operations 24
           --expected-gates 36
           --expected-scanners 7
           --exclude apps/ae-sdd-monitor/**

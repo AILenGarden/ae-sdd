@@ -114,6 +114,8 @@
 
 - 单 SQLite transaction 只能覆盖 daemon metadata；它不能假装与 project filesystem 构成原子分布式事务。
 - project mutation journal entry 是 versioned typed document，至少包含 `schemaVersion, mutationId, workspaceId, workItemId, operation, idempotencyKeyDigest, canonicalPayloadDigest, revisionBefore, revisionAfter, fencingToken, targetFiles[{path,beforeDigest,afterDigest,stagedRef}], event{type,schemaVersion,payload/payloadRef,digest,byteLen}, status, preparedAt, committedAt`；secret 与绝对越界路径不得进入。
+- Journal v1 remains readable with legacy untagged write items in `targetFiles`. Journal v2 retains the same top-level `targetFiles` field but tags each item: `write` carries project-relative path, before/after digests, byte length, and staged ref; `delete` carries project-relative path and the expected pre-delete digest. This wire-only v2 change consumes no SQLite migration number; migration `0016` remains unused.
+- A PREPARED v2 delete completes only when the current digest matches its expectation, is already complete when the path is absent, and enters `EXTERNAL_STATE_CONFLICT` on digest drift. Durable removal must fsync the parent directory. A destination write and source-draft delete share one PREPARED/COMMITTED journal and no receipt is visible before COMMITTED.
 - 提交顺序固定为：在跨进程锁内原子写/fsync `PREPARED` journal → 写并 fsync 同目录 staged targets → 逐项 atomic replace + directory fsync → 原子将 journal 替换为 `COMMITTED`（携带 receipt/event）并 fsync journal directory → 才向 SQLite 插入可重建 receipt/event index、推进 supervisor cursor并对外应答。任何阶段崩溃都按 journal target digest 完成或回滚到可证明状态，不得猜 committed。
 - `ABORTED` 只能在证明 project targets 均未提交或已安全回滚后写入；部分 target 无法证明时进入 `EXTERNAL_STATE_CONFLICT`。COMMITTED journal 在其 receipt/event/artifact 仍被 state/evidence/checkpoint 引用时不得清理。
 - event 只能在 project commit 成功后可见；SQLite rollback、disk full、fsync error 或 process crash 不得产生 fake committed/PASS。
@@ -133,7 +135,10 @@
 ## 八、保留、清理与隐私
 
 - runtime event、job、projection/cache 可按 versioned retention policy 清理；operation receipt、host/delegation/compact audit 在其引用有效期内不得提前删除。
+- Review session 的 `parent_review_id` 必须原样保存为业务 lineage 锚点，但不得外键依赖父 Review 投影行；父事件可能已按保留策略清理，或尚未在本次 daemon 世代重放。
 - cleanup 本身必须是有界 job、可取消、可审计，不得在 Hook request 中执行 VACUUM/大范围删除。
+- 本节只管 SQLite。daemon 诊断轨（Hook 留痕、节点变更、缺陷）是 state directory 下的
+  JSONL 文件，不入 SQLite，保留按字节轮转且无定时清理任务，规则见 `code-style.md` §八之二。
 - 禁止在 SQLite 存储 prompt、child transcript、源码、完整系列文档、endpoint token、claim token、credential 或无界 stdout/stderr。
 - artifact 正文应落在项目允许路径并以 hash ref 关联；root projection 只存有界摘要/引用。
 

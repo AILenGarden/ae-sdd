@@ -3,7 +3,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 use ae_sdd_contracts::execution_runtime::{
-    ExecutionBudgetsV1, ExecutionCapsuleError, ExecutionCapsuleV1, SourceReadSpecV1,
+    ExecutionBudgetsV1, ExecutionCapsuleError, ExecutionCapsuleV1, MAX_SLICE_PATH_SCOPE,
+    SourceReadSpecV1,
 };
 use ae_sdd_domain::{
     ArtifactDigest, ArtifactKind, ArtifactRef, ExecutionSliceId, InventoryGeneration, PolicyDigest,
@@ -59,6 +60,7 @@ struct ProjectToolsetReceipt {
     policy_digest: String,
     input_fingerprint: String,
     source_revision: u64,
+    committed_revision: u64,
     inventory_generation: u64,
     identity_digest: String,
     mutation_id: String,
@@ -87,6 +89,7 @@ struct ToolsetReceiptRef {
     manifest_digest: String,
     mutation_id: String,
     source_revision: u64,
+    committed_revision: u64,
 }
 
 /// Fully verified durable authority used to construct `verificationPlan`.
@@ -230,6 +233,7 @@ pub(crate) fn prepare_execution_plan_from_authority(
         project_digest,
         mutation_id,
         state_revision,
+        job.source_revision.ok_or_else(uncommitted_job_error)?,
     )?;
 
     let snapshot_bytes = read_project_file(workspace_root, locator, MAX_PROJECT_RECEIPT_BYTES)?;
@@ -339,7 +343,6 @@ fn validate_job(
         || job.workspace_id != workspace_id
         || job.work_item_id.as_deref() != Some(work_item_id)
         || job.entrypoint != "toolset.receipt.record"
-        || job.source_revision != Some(input.source_revision)
         || job.inventory_generation != inventory_generation
         || job.input_fingerprint.as_deref().is_none_or(|fingerprint| {
             normalize_input_fingerprint(fingerprint).ok()
@@ -373,7 +376,9 @@ fn validate_job(
         }
     }
     if result.get("validated").and_then(Value::as_bool) != Some(true)
-        || result.get("sourceRevision").and_then(Value::as_u64) != Some(input.source_revision)
+        || result.get("sourceRevision").and_then(Value::as_u64) != job.source_revision
+        || result.get("committedRevision").and_then(Value::as_u64) != Some(input.source_revision)
+        || result.get("revisionAfter").and_then(Value::as_u64) != Some(input.source_revision)
         || result.get("inventoryGeneration").and_then(Value::as_u64) != Some(inventory_generation)
         || result
             .get("inputFingerprint")
@@ -397,6 +402,7 @@ fn validate_state_ref(
     project_digest: &str,
     mutation_id: &str,
     state_revision: u64,
+    source_revision: u64,
 ) -> RuntimeResult<()> {
     validate_plain_digest(&state_ref.receipt_digest, "state receiptDigest")?;
     validate_plain_digest(
@@ -411,7 +417,8 @@ fn validate_state_ref(
         || state_ref.artifact_ref != locator
         || state_ref.project_receipt_digest != project_digest
         || state_ref.mutation_id != mutation_id
-        || state_ref.source_revision != state_revision
+        || state_ref.source_revision != source_revision
+        || state_ref.committed_revision != state_revision
     {
         return Err(external_conflict(
             "toolsetReceiptRef does not match the committed runtime job",
@@ -448,7 +455,8 @@ fn validate_project_receipt(
         || project.plan_digest != input.plan_digest
         || project.methodology_digest != input.methodology_digest
         || project.policy_digest != input.policy_digest
-        || project.source_revision != input.source_revision
+        || project.source_revision != job.source_revision.unwrap_or_default()
+        || project.committed_revision != input.source_revision
         || project.inventory_generation != inventory_generation
         || project.mutation_id != mutation_id
         || job.identity_digest.as_deref() != Some(project.identity_digest.as_str())
@@ -902,6 +910,7 @@ pub(crate) fn build_capsule_from_authority(
     state: &Value,
     work_item_id: &str,
     source_revision: StateRevision,
+    active_ordinal: u32,
     plan: &ApprovedPlanAuthority,
     bundle: &RequiredContextBundle,
     policy_digest: &str,
@@ -925,7 +934,7 @@ pub(crate) fn build_capsule_from_authority(
         queue_artifact_kind: artifact_kind("execution-queue")?,
         queue_artifact_path: locators.queue().clone(),
         slices: derive_slice_specs(plan.plan(), work_item_id)?,
-        active_ordinal: 1,
+        active_ordinal,
         budgets: ExecutionBudgetsV1::default(),
     };
     build_execution_capsule(&input).map_err(|error| match error {
@@ -980,6 +989,8 @@ pub(crate) fn execution_runtime_state_section(
         "ledgerRef": locators.ledger().as_str(),
         "ledgerDigest": format!("sha256:{ledger_digest}"),
         "activeSliceOrdinal": outcome.capsule().queue().active_ordinal(),
+        "activeSliceStatus": "pending",
+        "refactorCycle": "idle",
         "completionMilestone": "none",
     })
 }
@@ -1026,7 +1037,10 @@ pub(crate) fn verify_committed_capsule(
             "executionRuntime schemaVersion is unsupported",
         ));
     }
-    if object.get("completionMilestone").and_then(Value::as_str) != Some("none") {
+    if !matches!(
+        object.get("completionMilestone").and_then(Value::as_str),
+        Some("none" | "implementation-verified" | "review-ready" | "governance-closed")
+    ) {
         return Err(capsule_stale(
             "executionRuntime completion milestone is unsupported",
         ));
@@ -1207,8 +1221,8 @@ fn constraints_bundle_ref(workspace_root: &Path) -> RuntimeResult<ArtifactRef> {
 }
 
 /// Derives one slice spec per approved-plan verification entry, in plan
-/// order, chained by dependency.  Source reads outside the writable path
-/// scope are dropped so the frozen scope contract holds.
+/// order, chained by dependency. Approved paths are distributed without
+/// widening authority, and source reads outside each slice scope are dropped.
 fn derive_slice_specs(
     plan: &Value,
     work_item_id: &str,
@@ -1218,23 +1232,28 @@ fn derive_slice_specs(
         .and_then(Value::as_array)
         .filter(|entries| !entries.is_empty())
         .ok_or_else(|| capsule_stale("approved executionPlan verification is missing"))?;
-    let path_scope = plan
-        .get("changedPaths")
-        .and_then(Value::as_array)
-        .ok_or_else(|| capsule_stale("approved executionPlan changedPaths is missing"))?
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .filter(|path| !path.trim().is_empty())
-                .ok_or_else(|| capsule_stale("approved executionPlan changedPaths must be strings"))
-                .and_then(|path| {
-                    ProjectRelativePath::new(path.to_owned())
-                        .map_err(|_| capsule_stale("approved executionPlan changedPath is unsafe"))
-                })
-        })
-        .collect::<RuntimeResult<Vec<_>>>()?;
-    let source_reads = plan
+    let path_scopes = distribute_path_scopes(
+        plan.get("changedPaths")
+            .and_then(Value::as_array)
+            .ok_or_else(|| capsule_stale("approved executionPlan changedPaths is missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|path| !path.trim().is_empty())
+                    .ok_or_else(|| {
+                        capsule_stale("approved executionPlan changedPaths must be strings")
+                    })
+                    .and_then(|path| {
+                        ProjectRelativePath::new(path.to_owned()).map_err(|_| {
+                            capsule_stale("approved executionPlan changedPath is unsafe")
+                        })
+                    })
+            })
+            .collect::<RuntimeResult<Vec<_>>>()?,
+        verification.len(),
+    )?;
+    let source_read_paths = plan
         .get("sourceReads")
         .and_then(Value::as_array)
         .map(|reads| {
@@ -1242,12 +1261,8 @@ fn derive_slice_specs(
                 .iter()
                 .filter_map(Value::as_str)
                 .filter_map(|read| ProjectRelativePath::new(read.to_owned()).ok())
-                .filter(|read| path_scope.iter().any(|scope| scope.contains(read)))
-                .map(|read| SourceReadSpecV1::new(read, None, None))
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Vec<_>>()
         })
-        .transpose()
-        .map_err(|_| capsule_stale("approved executionPlan sourceReads are invalid"))?
         .unwrap_or_default();
 
     let mut verification_ids = Vec::with_capacity(verification.len());
@@ -1265,11 +1280,25 @@ fn derive_slice_specs(
 
     let mut specs = Vec::with_capacity(verification.len());
     for (index, entry) in verification.iter().enumerate() {
+        let path_scope = path_scopes[index].clone();
+        let source_reads = source_read_paths
+            .iter()
+            .filter(|read| path_scope.iter().any(|scope| scope.contains(read)))
+            .cloned()
+            .map(|read| SourceReadSpecV1::new(read, None, None))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| capsule_stale("approved executionPlan sourceReads are invalid"))?;
         let verification_id = verification_ids[index].clone();
         let objective = entry
-            .get("expect")
+            .get("expected")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                entry
+                    .get("expect")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            })
             .or_else(|| {
                 entry
                     .get("command")
@@ -1296,8 +1325,8 @@ fn derive_slice_specs(
             ordinal,
             objective: objective.to_owned().into_boxed_str(),
             depends_on,
-            path_scope: path_scope.clone(),
-            source_reads: source_reads.clone(),
+            path_scope,
+            source_reads,
             focused_verification_id: verification_id.clone(),
             broad_verification_ids: verification_ids
                 .iter()
@@ -1309,6 +1338,33 @@ fn derive_slice_specs(
         });
     }
     Ok(specs)
+}
+
+fn distribute_path_scopes(
+    mut scopes: Vec<ProjectRelativePath>,
+    slice_count: usize,
+) -> RuntimeResult<Vec<Vec<ProjectRelativePath>>> {
+    scopes.sort_unstable();
+    scopes.dedup();
+    if scopes.is_empty() || slice_count == 0 {
+        return Err(capsule_stale(
+            "approved executionPlan requires changedPaths and verification entries",
+        ));
+    }
+    if scopes.len() > slice_count.saturating_mul(MAX_SLICE_PATH_SCOPE) {
+        return Err(capsule_stale(
+            "approved executionPlan changedPaths cannot fit the frozen v1 path-scope limit",
+        ));
+    }
+
+    let mut assignments = vec![Vec::new(); slice_count];
+    for (index, scope) in scopes.iter().cloned().enumerate() {
+        assignments[index % slice_count].push(scope);
+    }
+    for index in scopes.len()..slice_count {
+        assignments[index].push(scopes[index % scopes.len()].clone());
+    }
+    Ok(assignments)
 }
 
 /// Reads one committed execution artifact with containment and byte bounds,

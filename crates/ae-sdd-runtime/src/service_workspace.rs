@@ -1,7 +1,11 @@
 use super::*;
 
 impl RuntimeService {
-    pub(super) fn workspace_register(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
+    pub(super) fn workspace_register(
+        &self,
+        params: &RequestParams<Value>,
+        _client_kind: Option<ClientKind>,
+    ) -> RuntimeResult<Value> {
         let payload: WorkspaceRegisterPayload = decode_value(params.payload.clone())?;
         if !matches!(payload.mode, None | Some(WorkspaceMode::Shadow)) {
             return Err(RuntimeError::new(
@@ -21,10 +25,11 @@ impl RuntimeService {
             "domain":"workspace.register/v1",
             "canonicalRoot":resolved.canonical_root,
         }))?;
+        let initial_mode = WorkspaceMode::Shadow;
         let request_digest = canonical_digest(&json!({
             "canonicalRoot":resolved.canonical_root,
             "projectKey":payload.project_key,
-            "mode":WorkspaceMode::Shadow,
+            "mode":initial_mode,
         }))?;
         let (result, expected_mode, expected_generation) = {
             let state = self.lock_state()?;
@@ -56,7 +61,7 @@ impl RuntimeService {
                         workspace_id: Uuid::new_v4().to_string(),
                         canonical_root: resolved.canonical_root.clone(),
                         project_key: payload.project_key.clone(),
-                        mode: WorkspaceMode::Shadow,
+                        mode: initial_mode,
                         inventory_generation: 1,
                     },
                     None,
@@ -142,6 +147,9 @@ impl RuntimeService {
         params: &RequestParams<Value>,
         client_kind: Option<ClientKind>,
     ) -> RuntimeResult<Value> {
+        if client_kind == Some(ClientKind::Hook) {
+            return self.workspace_bootstrap_activate(params);
+        }
         if client_kind != Some(ClientKind::Admin) {
             return Err(RuntimeError::new(
                 StableErrorCode::RoleOperationForbidden,
@@ -286,6 +294,115 @@ impl RuntimeService {
         }
         *self.lifecycle.write().map_err(lock_error)? = DaemonLifecycle::Running;
         Ok(committed.0)
+    }
+
+    /// Enrolls an exact `/ae-sdd` Hook bootstrap without exposing the admin
+    /// migration surface. This branch has one payload and one legal edge; it
+    /// cannot select a target, waive parity for a later cutover, reverse mode,
+    /// or invalidate already-bound sessions.
+    fn workspace_bootstrap_activate(&self, params: &RequestParams<Value>) -> RuntimeResult<Value> {
+        #[derive(Deserialize, serde::Serialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct BootstrapActivationPayload {
+            bootstrap_activation: bool,
+        }
+
+        let payload: BootstrapActivationPayload = decode_value(params.payload.clone())?;
+        if !payload.bootstrap_activation {
+            return Err(schema_error("bootstrapActivation must be true"));
+        }
+        let workspace_id = require(&params.workspace_id, "workspaceId")?.to_owned();
+        let key = require_idempotency(params)?;
+        let request_digest = canonical_digest(&payload)?;
+        let scope_digest = canonical_digest(&json!({
+            "domain":"workspace.bootstrap.activate/v1",
+            "workspaceId":workspace_id,
+        }))?;
+        let (result, expected_mode, expected_generation) = {
+            let state = self.lock_state()?;
+            let workspace = state
+                .workspaces
+                .get(&workspace_id)
+                .ok_or_else(|| project_mismatch("workspace is not registered"))?;
+            if workspace.result.mode != WorkspaceMode::Shadow {
+                return Err(RuntimeError::new(
+                    StableErrorCode::RoleOperationForbidden,
+                    "bootstrap activation permits only the shadow to rust-canary edge",
+                ));
+            }
+            let mut result = workspace.result.clone();
+            result.mode = WorkspaceMode::RustCanary;
+            result.inventory_generation = result
+                .inventory_generation
+                .checked_add(1)
+                .ok_or_else(|| schema_error("inventory generation overflow"))?;
+            (
+                result,
+                workspace.result.mode,
+                workspace.result.inventory_generation,
+            )
+        };
+        let now = self.clock.now_unix_ms();
+        let created_at = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Workspace)?
+            .into_iter()
+            .map(|snapshot| snapshot.workspace)
+            .find(|workspace| workspace.workspace_id == workspace_id)
+            .map_or(now, |workspace| workspace.created_at_unix_ms);
+        let value = to_value(&result)?;
+        let snapshot = self
+            .persistence
+            .commit_identity_bundle(RuntimeIdentityTransition {
+                operation: "workspace.bootstrap.activate".to_owned(),
+                scope_digest,
+                idempotency_key: key.to_owned(),
+                request_digest,
+                expected_workspace_mode: Some(expected_mode),
+                expected_inventory_generation: Some(expected_generation),
+                expected_session_status: None,
+                expected_delegation_status: None,
+                expected_context_generation: None,
+                snapshot: RuntimeIdentitySnapshot {
+                    identity_kind: RuntimeIdentityKind::Workspace,
+                    workspace: RuntimeWorkspaceRecord {
+                        workspace_id: result.workspace_id.clone(),
+                        canonical_root: result.canonical_root.clone(),
+                        project_key: result.project_key.clone(),
+                        mode: result.mode,
+                        inventory_generation: result.inventory_generation,
+                        dirty: false,
+                        created_at_unix_ms: created_at,
+                        updated_at_unix_ms: now,
+                    },
+                    session: None,
+                    delegation: None,
+                    host_action: None,
+                    attestation: None,
+                    response: value,
+                    replayed: false,
+                },
+                committed_at_unix_ms: now,
+            })?;
+        let committed: WorkspaceResult = decode_value(snapshot.response.clone())?;
+        {
+            let mut state = self.lock_state()?;
+            let workspace = state
+                .workspaces
+                .get_mut(&workspace_id)
+                .ok_or_else(|| project_mismatch("workspace is not registered"))?;
+            workspace.result = committed.clone();
+        }
+        if !snapshot.replayed {
+            self.append_runtime_event(
+                "workspace.bootstrap_activated",
+                json!({"workspaceId":workspace_id}),
+                Some(workspace_id),
+                None,
+                None,
+            )?;
+        }
+        Ok(snapshot.response)
     }
 }
 

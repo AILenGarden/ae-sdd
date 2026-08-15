@@ -6,7 +6,7 @@
 //! release a Review Gate, so each FAIL case tampers with exactly one authority
 //! dependency and asserts the Gate refuses.
 
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, path::Path, str::FromStr, sync::Arc};
 
 use ae_sdd_domain::{AgentRole, BootId, CapabilityId, OperationId, ProjectPathScope, ScopedGrant};
 use ae_sdd_integrations::{NativeBusinessAdapter, SqliteRuntimePersistence};
@@ -19,6 +19,7 @@ use ae_sdd_runtime::{
     RuntimeIdentityKind, RuntimeIdentitySnapshot, RuntimeIdentityTransition, RuntimeSessionRecord,
     RuntimeWorkspaceRecord, ScopedGrantWire, WireAgentRole,
 };
+use ae_sdd_store::UtcTimestamp;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -40,6 +41,7 @@ mod review_authority;
 use review_authority::authoritative_review_workspace_input_fingerprint;
 
 const WORK_ITEM: &str = "STORY-REVIEW-GATE-001";
+const ROUTE_WORK_ITEM: &str = "ROUTE-REVIEW-GATE-001";
 const PROJECT_KEY: &str = "review-gate";
 const INPUT: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const RULESET: &str = "2222222222222222222222222222222222222222222222222222222222222222";
@@ -113,6 +115,20 @@ impl Fixture {
             "ae-sdd-doc/Story/STORY-REVIEW-GATE-001.md",
             STORY_DOCUMENT,
         );
+        // The plan traces these two as well. They went uncreated while
+        // `source_trace_complete` accepted any single surviving entry, which is
+        // the leniency `G-CODEPLAN-SRC` exists to reject: a plan must not claim
+        // to have read a file that is not there.
+        write_source(
+            workspace_root.path(),
+            "ae-sdd-doc/RA/review-gate.md",
+            "# RA review-gate\n",
+        );
+        write_source(
+            workspace_root.path(),
+            "ae-sdd-doc/DR/review-gate.md",
+            "# DR review-gate\n",
+        );
 
         let runtime_root = TempDir::new().expect("runtime tempdir");
         let database = runtime_root.path().join("runtime.sqlite3");
@@ -170,10 +186,14 @@ impl Fixture {
     }
 
     fn evaluate_review_gates(&self, key: &str) -> Value {
+        self.evaluate_review_gates_for(WORK_ITEM, key)
+    }
+
+    fn evaluate_review_gates_for(&self, work_item_id: &str, key: &str) -> Value {
         self.adapter()
             .execute(
                 RpcMethod::GateEvaluate,
-                &gate_params(key),
+                &gate_params(work_item_id, key),
                 Some(&self.root_workspace()),
             )
             .expect("review Gates return typed outcomes")
@@ -250,6 +270,33 @@ impl Fixture {
         );
     }
 
+    fn seed_unrelated_unattested_delegation(&self, key: &str) {
+        let mut snapshot = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Delegation)
+            .expect("delegation snapshots load")
+            .into_iter()
+            .find(|snapshot| snapshot.delegation.is_some())
+            .expect("seeded delegation exists");
+        let delegation = snapshot.delegation.as_mut().expect("delegation record");
+        delegation.delegation_id = "10000000-0000-0000-0000-000000000099".to_owned();
+        delegation.child_session_id = None;
+        delegation.status = "cancelled".to_owned();
+        snapshot.session = None;
+        snapshot.host_action = None;
+        snapshot.attestation = None;
+        snapshot.response = json!({
+            "delegationId":delegation.delegation_id,
+            "status":"cancelled"
+        });
+        commit_identity(
+            self.persistence.as_ref(),
+            "delegation.cancel",
+            key,
+            snapshot,
+        );
+    }
+
     fn workspace_record(&self) -> RuntimeWorkspaceRecord {
         self.persistence
             .list_identity_snapshots(RuntimeIdentityKind::Workspace)
@@ -296,11 +343,12 @@ const STORY_DOCUMENT: &str = "# Story\n\nAC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-7\nAC-
 
 fn initial_state(scale: &str) -> Value {
     json!({
-        "stateMachineName":"PRD-REVIEW-GATE-001",
+        "stateMachineName":ROUTE_WORK_ITEM,
         "activeStory":WORK_ITEM,
         "revision":7,
         "lastFencingToken":0,
         "scale":scale,
+        "selectedDesign":"DR",
         "phase":"test-running",
         "currentPhase":"test-running",
         "inputFingerprint":INPUT,
@@ -566,6 +614,7 @@ fn commit_child_identity(
             delegation: Some(RuntimeDelegationRecord {
                 delegation_id: delegation_id.to_owned(),
                 workspace_id: WORKSPACE_ID.to_owned(),
+                work_item_id: Some(WORK_ITEM.to_owned()),
                 root_session_id: ROOT_SESSION.to_owned(),
                 parent_session_id: parent_session_id.to_owned(),
                 child_session_id: Some(session_id.to_owned()),
@@ -699,7 +748,7 @@ fn operation_params(
     }
 }
 
-fn gate_params(key: &str) -> RequestParams<Value> {
+fn gate_params(work_item_id: &str, key: &str) -> RequestParams<Value> {
     RequestParams {
         protocol_version: PROTOCOL_VERSION_V1.to_owned(),
         workspace_id: Some(WORKSPACE_ID.to_owned()),
@@ -707,7 +756,7 @@ fn gate_params(key: &str) -> RequestParams<Value> {
         session_id: Some(ROOT_SESSION.to_owned()),
         capability_token: None,
         turn_id: None,
-        work_item_id: Some(WORK_ITEM.to_owned()),
+        work_item_id: Some(work_item_id.to_owned()),
         lease_id: None,
         fencing_token: None,
         expected_revision: None,
@@ -915,6 +964,29 @@ fn complete_authoritative_review_authority_releases_all_review_gates() {
     assert_all(&fixture.evaluate_review_gates("tier1-gates"), "PASS");
 }
 
+/// A root Route lifecycle key resolves the Review authority anchored below its
+/// active Story instead of looking for a second projection under the Route id.
+#[test]
+fn route_work_item_resolves_active_story_review_projection() {
+    let fixture = passing_tier1_fixture();
+    assert_all(
+        &fixture.evaluate_review_gates_for(ROUTE_WORK_ITEM, "route-story-projection"),
+        "PASS",
+    );
+}
+
+/// An incomplete delegation outside the selected Root -> Series -> Reviewer
+/// lineage cannot poison live admission or terminal authority revalidation.
+#[test]
+fn unrelated_unattested_delegation_does_not_block_review() {
+    let fixture = Fixture::new("small");
+    fixture.seed_unrelated_unattested_delegation("unrelated-cancelled-delegation");
+    let lease = acquire_lease(&fixture, &GENERAL_REVIEWER, "unrelated-lease");
+    let committed = record_clean_review(&fixture, &GENERAL_REVIEWER, &lease, 7, "unrelated-clean");
+    assert_eq!(committed["changed"], true);
+    assert_all(&fixture.evaluate_review_gates("unrelated-gates"), "PASS");
+}
+
 /// (a) Valid project state with no SQLite Review projection must FAIL. Project
 /// state alone is never sufficient Review authority.
 #[test]
@@ -992,10 +1064,11 @@ fn workspace_source_change_after_a_clean_receipt_fails_as_stale() {
     assert_all_denied_with(&fixture.evaluate_review_gates("source-drift"), "stale");
 }
 
-/// (d) An expired reviewer session must FAIL: committed Review authority is only
-/// valid while the reviewer lineage it was minted from is still live.
+/// (d) Terminal Review authority remains valid after the short-lived reviewer
+/// session and delegation TTLs expire. Revalidation uses their durable identity
+/// structure; live contribution admission still requires current TTLs.
 #[test]
-fn expired_reviewer_session_fails_every_review_gate() {
+fn terminal_review_survives_expired_reviewer_identity_ttls() {
     let fixture = passing_tier1_fixture();
     assert_all(&fixture.evaluate_review_gates("lineage-baseline"), "PASS");
 
@@ -1003,7 +1076,56 @@ fn expired_reviewer_session_fails_every_review_gate() {
     expired.expires_at_unix_ms = 1_500;
     fixture.supersede_session(expired, "expired-reviewer-session");
 
-    assert_all(&fixture.evaluate_review_gates("expired-session"), "FAIL");
+    assert_all(
+        &fixture.evaluate_review_gates("expired-reviewer-identity-ttls"),
+        "PASS",
+    );
+    let state = read_state(&fixture.state_path);
+    review_authority::validate_review_gate_authority(
+        &fixture.database,
+        &fixture.root_workspace(),
+        &fixture.state_path,
+        &state,
+        WORK_ITEM,
+        fixture.persistence.as_ref(),
+        &fixture.boot_id.to_string(),
+        &UtcTimestamp::from_str("2201-01-01T00:00:00Z").expect("future timestamp"),
+    )
+    .expect("terminal Review revalidation ignores expired identity TTLs");
+}
+
+#[test]
+fn live_review_record_rejects_an_expired_reviewer_session() {
+    let fixture = Fixture::new("small");
+    let lease = acquire_lease(&fixture, &GENERAL_REVIEWER, "live-session-lease");
+    let mut expired = fixture.reviewer_session_record(&GENERAL_REVIEWER);
+    expired.expires_at_unix_ms = 1_500;
+    fixture.supersede_session(expired, "live-expired-reviewer-session");
+    fixture.seal_evidence("ev-live-expired-session");
+
+    let mut request = operation_params(
+        &GENERAL_REVIEWER,
+        "review.record",
+        json!({
+            "status":"passed",
+            "findings":[],
+            "reviewedPaths":["src/lib.rs"],
+            "evidenceIds":["ev-live-expired-session"]
+        }),
+        "live-expired-session-record",
+    );
+    request.lease_id = Some(lease.0);
+    request.fencing_token = Some(lease.1);
+    request.expected_revision = Some(7);
+    let error = fixture
+        .adapter()
+        .execute(
+            RpcMethod::OperationExecute,
+            &request,
+            Some(&fixture.reviewer_workspace(&GENERAL_REVIEWER)),
+        )
+        .expect_err("live Review admission must reject an expired session");
+    assert_eq!(error.code(), StableErrorCode::SessionExpired);
 }
 
 /// (d) A revoked physical delegation attestation must FAIL. The attestation is
@@ -1177,7 +1299,7 @@ fn complete_tier2_authority_releases_all_review_gates() {
 /// manifest and COMMITTED journal mutation. Without that proof the daemon
 /// refuses to record the terminal review at all, so no Gate can be released.
 #[test]
-fn tier3_without_full_verification_proof_cannot_release_review_gates() {
+fn tier3_without_final_verification_proof_cannot_release_review_gates() {
     let fixture = Fixture::new("large");
     let lease = acquire_lease(&fixture, &BE_REVIEWER, "tier3-lease");
     fixture.seal_evidence("ev-tier3-be");
@@ -1211,7 +1333,7 @@ fn tier3_without_full_verification_proof_cannot_release_review_gates() {
         json!(["be", "ar", "qa"])
     );
 
-    // Tier 3 is not complete and carries no full-verification proof, so every
+    // Tier 3 is not complete and carries no final-verification proof, so every
     // Review Gate must deny.
     assert_all(&fixture.evaluate_review_gates("tier3-no-proof"), "FAIL");
 }

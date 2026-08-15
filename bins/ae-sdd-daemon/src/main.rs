@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::time::Duration;
 
+use ae_sdd_contracts::diagnostics::{BugKind, DIAGNOSTICS_DIR};
 use ae_sdd_integrations::{
     DaemonLock, FileWorkspaceResolver, LocalIpcServer, NativeBusinessAdapter, RuntimePaths,
     SqliteRuntimePersistence, SystemClock, publish_endpoint_manifest,
@@ -14,7 +15,7 @@ use ae_sdd_protocol::{
 };
 use ae_sdd_runtime::{
     BusinessOperationPort, ClockPort, DaemonLifecycle, PersistencePort, RuntimeConfig,
-    RuntimeService, WorkspaceResolverPort,
+    RuntimeService, WorkspaceResolverPort, diagnostics,
 };
 use clap::{Parser, Subcommand};
 use uuid::Uuid;
@@ -67,6 +68,8 @@ async fn serve(
         None => RuntimePaths::per_user_default()?,
     };
     init_tracing(paths.log_file.clone());
+    diagnostics::init(paths.state_dir.join(DIAGNOSTICS_DIR));
+    install_panic_hook();
     tracing::info!(state_dir = %paths.state_dir.display(), "daemon starting");
     let startup_paths = paths.clone();
     let startup_roots = allowed_roots;
@@ -79,9 +82,20 @@ async fn serve(
             SqliteRuntimePersistence::open(&startup_paths.database)
                 .map_err(|error| error.to_string())?,
         );
-        sqlite
-            .integrity_check()
-            .map_err(|error| error.to_string())?;
+        sqlite.integrity_check().map_err(|error| {
+            // Recorded before the startup error propagates: this failure aborts
+            // the daemon, so without its own line the ops track would show only
+            // an unexplained absence of a daemon.
+            diagnostics::emit_bug(
+                BugKind::Store,
+                "bins/ae-sdd-daemon/src/main.rs",
+                &error.to_string(),
+                Vec::new(),
+                diagnostics::BugIds::default(),
+            );
+            diagnostics::flush(Duration::from_millis(500));
+            error.to_string()
+        })?;
         let resolver =
             Arc::new(FileWorkspaceResolver::new(startup_roots).map_err(|error| error.to_string())?);
         let server = LocalIpcServer::bind(&startup_paths.endpoint, 128, Duration::from_secs(30))
@@ -237,17 +251,33 @@ async fn serve(
     }
     match tokio::time::timeout(Duration::from_secs(5), job_worker).await {
         Ok(Ok(Ok(()))) => {}
-        Ok(Ok(Err(error))) => tracing::warn!(error = %error, "job worker stopped with an error"),
-        Ok(Err(_)) => tracing::warn!("job worker task failed"),
-        Err(_) => tracing::warn!("job worker drain deadline expired"),
+        Ok(Ok(Err(error))) => {
+            tracing::warn!(error = %error, "job worker stopped with an error");
+            record_worker_bug("job worker stopped with an error", &error);
+        }
+        Ok(Err(_)) => {
+            tracing::warn!("job worker task failed");
+            record_worker_bug("job worker task failed", "join error");
+        }
+        Err(_) => {
+            tracing::warn!("job worker drain deadline expired");
+            record_worker_bug("job worker drain deadline expired", "timeout");
+        }
     }
     match tokio::time::timeout(Duration::from_secs(5), context_worker).await {
         Ok(Ok(Ok(()))) => {}
         Ok(Ok(Err(error))) => {
-            tracing::warn!(error = %error, "context worker stopped with an error")
+            tracing::warn!(error = %error, "context worker stopped with an error");
+            record_worker_bug("context worker stopped with an error", &error);
         }
-        Ok(Err(_)) => tracing::warn!("context worker task failed"),
-        Err(_) => tracing::warn!("context worker drain deadline expired"),
+        Ok(Err(_)) => {
+            tracing::warn!("context worker task failed");
+            record_worker_bug("context worker task failed", "join error");
+        }
+        Err(_) => {
+            tracing::warn!("context worker drain deadline expired");
+            record_worker_bug("context worker drain deadline expired", "timeout");
+        }
     }
     drop(server);
     let manifest_path = paths.endpoint_manifest.clone();
@@ -259,7 +289,56 @@ async fn serve(
     .await
     .map_err(|_| "endpoint cleanup task failed")??;
     tracing::info!(boot_id = %boot_id, "daemon stopped");
+    // Drain before returning: the queued tail is exactly the run-up to shutdown,
+    // which is the part worth having when the shutdown itself is the problem.
+    diagnostics::flush(Duration::from_secs(2));
     Ok(())
+}
+
+/// Records a background worker failure on the diagnostic ops track.
+///
+/// Worker failures are genuine defects rather than policy outcomes, so unlike a
+/// denied operation they belong in the defect stream.
+fn record_worker_bug(message: &str, detail: &str) {
+    diagnostics::emit_bug(
+        BugKind::Worker,
+        "bins/ae-sdd-daemon/src/main.rs",
+        message,
+        vec![detail.to_owned()],
+        diagnostics::BugIds::default(),
+    );
+}
+
+/// Records a panic to the diagnostic ops track before the process unwinds.
+///
+/// The release profile aborts on panic, so an asynchronous write would usually
+/// lose the record: the process is gone before the writer thread runs.  This
+/// hook therefore flushes synchronously under a short deadline — a panic is the
+/// single most valuable defect record, and it would otherwise be the one most
+/// reliably lost.  The default hook still runs, so stderr output is unchanged.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let site = info.location().map_or_else(
+            || "unknown".to_owned(),
+            |location| format!("{}:{}", location.file(), location.line()),
+        );
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_owned())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic with a non-string payload".to_owned());
+        diagnostics::emit_bug(
+            BugKind::Panic,
+            &site,
+            &message,
+            Vec::new(),
+            diagnostics::BugIds::default(),
+        );
+        diagnostics::flush(Duration::from_millis(500));
+        default_hook(info);
+    }));
 }
 
 #[derive(Clone)]
@@ -294,7 +373,15 @@ fn init_tracing(log_file: PathBuf) {
                 .map_or(0, |metadata| metadata.len());
             while let Ok(message) = receiver.recv() {
                 if bytes.saturating_add(message.len() as u64) > MAX_LOG_BYTES {
-                    file = open_log(&log_file, true).ok();
+                    // Rotate rather than truncate: truncating discarded the whole
+                    // lifecycle history every time the file filled, so the log was
+                    // reliably empty of anything that happened before the last
+                    // couple of megabytes. The handle is closed first because
+                    // Windows refuses to rename a file that is still open.
+                    drop(file.take());
+                    let previous = log_file.with_extension("log.1");
+                    let _ = std::fs::rename(&log_file, &previous);
+                    file = open_log(&log_file, false).ok();
                     bytes = 0;
                 }
                 if let Some(handle) = file.as_mut()

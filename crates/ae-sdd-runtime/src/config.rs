@@ -76,6 +76,13 @@ pub struct RuntimeConfig {
     pub max_jobs: usize,
     /// Session heartbeat validity.
     pub session_ttl_ms: u64,
+    /// Maximum total delegation lifetime, measured from creation, that
+    /// `delegation.renew` may extend a deadline to.
+    ///
+    /// Measuring from creation rather than from the deadline in force is what
+    /// keeps repeated legal renewals from walking the deadline forward
+    /// indefinitely and holding the child's grant open.
+    pub max_delegation_lifetime_ms: u64,
     /// Maximum age of typed parity evidence accepted for a cutover.
     pub parity_evidence_ttl_ms: u64,
     /// Maximum retained source-read cache entries for one daemon boot.
@@ -113,7 +120,7 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            max_workspaces: 10,
+            max_workspaces: 256,
             max_sessions: 100,
             work_item_mailbox_capacity: 64,
             max_work_item_actors: 1_024,
@@ -127,6 +134,7 @@ impl Default for RuntimeConfig {
             max_event_batch: 256,
             max_jobs: 128,
             session_ttl_ms: 90_000,
+            max_delegation_lifetime_ms: 24 * 60 * 60 * 1_000,
             parity_evidence_ttl_ms: 300_000,
             source_read_cache_capacity: 256,
             cargo_lock_ttl_ms: 300_000,

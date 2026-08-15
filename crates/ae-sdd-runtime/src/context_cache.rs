@@ -44,6 +44,9 @@ struct CachedProjection {
     value: Value,
     bytes: usize,
     previous: Option<Box<HistoricalProjection>>,
+    /// Digest last delivered on the Hook fast path; `None` forces the next
+    /// Hook to deliver the full body (fresh projection or compact rehydrate).
+    hook_delivered_digest: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +54,20 @@ struct HistoricalProjection {
     context_revision: u64,
     digest: String,
     value: Value,
+}
+
+/// Hook fast-path projection view: the cached body plus whether this Hook
+/// turn must re-deliver it or may answer with a digest-only no-change.
+#[derive(Clone, Debug)]
+pub struct HookProjection {
+    /// Cached context revision.
+    pub context_revision: u64,
+    /// Digest of the cached projection body.
+    pub digest: String,
+    /// True when the body must be (re-)delivered to the host.
+    pub deliver: bool,
+    /// Cached projection body.
+    pub value: Value,
 }
 
 impl ContextCache {
@@ -165,6 +182,7 @@ impl ContextCache {
             value: projection.clone(),
             bytes,
             previous,
+            hook_delivered_digest: None,
         };
         projections.insert(stream_key.to_owned(), cached);
         Ok(ContextProjectResult {
@@ -237,14 +255,45 @@ impl ContextCache {
         })
     }
 
-    /// Returns only the precomputed projection body for the Hook fast path.
-    pub fn hook_projection(&self, session_id: &str) -> RuntimeResult<Option<Value>> {
+    /// Returns the precomputed projection for the Hook fast path together
+    /// with its delivery state.  A projection whose digest was already
+    /// delivered reports `deliver == false` so the Hook response can omit the
+    /// body and answer with a digest-only no-change.
+    pub fn hook_projection(&self, session_id: &str) -> RuntimeResult<Option<HookProjection>> {
         Ok(self
             .projections
             .lock()
             .map_err(lock_error)?
             .get(session_id)
-            .map(|cached| cached.value.clone()))
+            .map(|cached| HookProjection {
+                context_revision: cached.context_revision,
+                digest: cached.digest.clone(),
+                deliver: cached.hook_delivered_digest.as_deref() != Some(cached.digest.as_str()),
+                value: cached.value.clone(),
+            }))
+    }
+
+    /// Records that the Hook fast path delivered the projection carrying
+    /// `digest`; a stale mark naming a superseded digest is ignored.
+    pub fn mark_hook_delivered(&self, session_id: &str, digest: &str) -> RuntimeResult<()> {
+        let mut projections = self.projections.lock().map_err(lock_error)?;
+        if let Some(cached) = projections.get_mut(session_id)
+            && cached.digest == digest
+        {
+            cached.hook_delivered_digest = Some(digest.to_owned());
+        }
+        Ok(())
+    }
+
+    /// Forces the next Hook projection for the session to deliver the full
+    /// body again; a compact rehydrate replaces the host-side context window,
+    /// so the previously delivered body is gone even when the digest matches.
+    pub fn mark_hook_redelivery(&self, session_id: &str) -> RuntimeResult<()> {
+        let mut projections = self.projections.lock().map_err(lock_error)?;
+        if let Some(cached) = projections.get_mut(session_id) {
+            cached.hook_delivered_digest = None;
+        }
+        Ok(())
     }
 
     /// Removes a cached projection so engaged Hooks fail closed until reprojected.
@@ -328,4 +377,118 @@ fn lock_error<T>(_error: std::sync::PoisonError<T>) -> RuntimeError {
 
 fn invalid_pressure(message: &str) -> RuntimeError {
     RuntimeError::new(StableErrorCode::CompactAckInvalid, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(session_id: &str, source_revision: u64, projection: Value) -> ContextProjectionInput {
+        ContextProjectionInput {
+            session_id: session_id.to_owned(),
+            source_revision,
+            projection,
+        }
+    }
+
+    #[test]
+    fn hook_delivery_is_reported_once_until_the_projection_moves() {
+        let cache = ContextCache::new(65_536);
+        cache
+            .put(input("session", 1, json!({"phase":"coding"})))
+            .expect("initial projection");
+
+        let first = cache
+            .hook_projection("session")
+            .expect("hook projection")
+            .expect("cached projection");
+        assert!(first.deliver, "a fresh projection must be delivered");
+        cache
+            .mark_hook_delivered("session", &first.digest)
+            .expect("delivery mark");
+
+        let second = cache
+            .hook_projection("session")
+            .expect("hook projection")
+            .expect("cached projection");
+        assert!(
+            !second.deliver,
+            "an unchanged projection is not re-delivered"
+        );
+        assert_eq!(second.digest, first.digest);
+        assert_eq!(second.value, json!({"phase":"coding"}));
+
+        cache
+            .put(input("session", 2, json!({"phase":"test-running"})))
+            .expect("moved projection");
+        let third = cache
+            .hook_projection("session")
+            .expect("hook projection")
+            .expect("cached projection");
+        assert!(third.deliver, "a moved projection must be delivered again");
+        assert_ne!(third.digest, first.digest);
+    }
+
+    #[test]
+    fn stale_delivery_marks_are_ignored_and_redelivery_can_be_forced() {
+        let cache = ContextCache::new(65_536);
+        cache
+            .put(input("session", 1, json!({"phase":"coding"})))
+            .expect("initial projection");
+        let first = cache
+            .hook_projection("session")
+            .expect("hook projection")
+            .expect("cached projection");
+
+        cache
+            .mark_hook_delivered("session", "not-the-digest")
+            .expect("stale mark is a no-op");
+        let still_fresh = cache
+            .hook_projection("session")
+            .expect("hook projection")
+            .expect("cached projection");
+        assert!(
+            still_fresh.deliver,
+            "a mark for a foreign digest must not suppress delivery"
+        );
+
+        cache
+            .mark_hook_delivered("session", &first.digest)
+            .expect("delivery mark");
+        cache
+            .mark_hook_redelivery("session")
+            .expect("forced redelivery");
+        let forced = cache
+            .hook_projection("session")
+            .expect("hook projection")
+            .expect("cached projection");
+        assert!(
+            forced.deliver,
+            "a compact rehydrate forces one full redelivery of the same digest"
+        );
+        assert_eq!(forced.digest, first.digest);
+    }
+
+    #[test]
+    fn invalidate_drops_the_delivery_state_with_the_projection() {
+        let cache = ContextCache::new(65_536);
+        cache
+            .put(input("session", 1, json!({"phase":"coding"})))
+            .expect("initial projection");
+        let first = cache
+            .hook_projection("session")
+            .expect("hook projection")
+            .expect("cached projection");
+        cache
+            .mark_hook_delivered("session", &first.digest)
+            .expect("delivery mark");
+        cache.invalidate("session").expect("invalidate");
+        assert!(
+            cache
+                .hook_projection("session")
+                .expect("hook projection")
+                .is_none(),
+            "an invalidated session has no hook projection at all"
+        );
+    }
 }

@@ -118,6 +118,41 @@ fn cold_ensure_reuses_the_same_ready_daemon_until_stop() {
 }
 
 #[test]
+fn explicit_daemon_mismatch_fails_closed() {
+    let daemon = daemon_executable().expect(
+        "critical daemon identity regression requires the sibling ae-sddd.exe; run `cargo build -p ae-sdd-daemon` first",
+    );
+    let state = IsolatedState::new("explicit-daemon-mismatch");
+    let manifest = state.manifest();
+    let cleanup = DaemonCleanup::new(manifest.clone());
+    let alternate = state.path().join("alternate-ae-sddd.exe");
+    fs::copy(&daemon, &alternate).expect("alternate daemon binary is copied");
+
+    let first = parse_success_json(
+        &run_command(ensure_command(&daemon, state.path()), None),
+        "start explicitly selected daemon",
+    );
+    assert_eq!(first["disposition"], "started");
+
+    let mismatch = run_command(ensure_command(&alternate, state.path()), None);
+    assert_command_failed(&mismatch, "reuse with a different explicit daemon");
+    let diagnostics = command_diagnostics(&mismatch);
+    assert!(
+        diagnostics.contains("daemon executable mismatch"),
+        "explicit binary drift must fail closed:\n{diagnostics}"
+    );
+    assert_eq!(
+        read_manifest_identity(&manifest).boot_id,
+        first["status"]["bootId"],
+        "the mismatch check must not replace the running daemon"
+    );
+
+    stop_daemon(&manifest);
+    wait_for_manifest_removal(&manifest);
+    drop(cleanup);
+}
+
+#[test]
 fn pipe_captured_cold_ensure_returns_without_waiting_for_daemon_exit() {
     let Some(daemon) = daemon_executable() else {
         eprintln!("skipping pipe-capture bootstrap: no ae-sddd.exe is available");
@@ -469,16 +504,7 @@ fn repository_root() -> PathBuf {
 }
 
 fn daemon_executable() -> Option<PathBuf> {
-    let cli = PathBuf::from(env!("CARGO_BIN_EXE_ae-sdd"));
-    let root = repository_root();
-    [
-        cli.parent().map(|parent| parent.join("ae-sddd.exe")),
-        Some(root.join("target").join("debug").join("ae-sddd.exe")),
-        Some(root.join("target").join("release").join("ae-sddd.exe")),
-    ]
-    .into_iter()
-    .flatten()
-    .find(|candidate| candidate.is_file())
+    default_sibling_daemon()
 }
 
 fn default_sibling_daemon() -> Option<PathBuf> {

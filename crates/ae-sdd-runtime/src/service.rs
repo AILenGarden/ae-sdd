@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use ae_sdd_context::PressureDecision;
+use ae_sdd_contracts::diagnostics::{DiagnosticRecord, NodeRecord};
 use ae_sdd_domain::{
     AgentRole, BootId, CapabilityId, EventStoreId, GateOutcome, ScopedGrant, SessionId,
 };
@@ -22,6 +23,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::diagnostics;
 use crate::{
     BusinessOperationPort, BusinessWorkspace, ClockPort, CompactRequestPayload, CompactResult,
     ContextCache, ContextProjectPayload, DaemonLifecycle, DelegationAcceptPayload,
@@ -35,6 +37,28 @@ use crate::{
     WorkspaceModeTransitionPayload, WorkspaceParityEvidence, WorkspaceRegisterPayload,
     WorkspaceResolverPort, WorkspaceResult,
 };
+
+/// Typed operations that move a work item through the flow.
+///
+/// Deliberately a whitelist, not everything that writes: the point of the node
+/// history is to read how the work item advanced, so reads, queries and lease
+/// bookkeeping stay out.  `lease.break` is the exception that earns its place —
+/// it is a high-privilege override, and `constraints/security.md` requires its
+/// actor and confirmation to be recoverable.
+const NODE_OPERATIONS: &[&str] = &[
+    "state.transition",
+    "workitem.create",
+    "workitem.complete",
+    "execution.plan.set",
+    "execution.plan.approve",
+    "execution.slice.start",
+    "execution.slice.record",
+    "execution.resume",
+    "review.finalize",
+    "evidence.finalize",
+    "gate.check",
+    "lease.break",
+];
 
 #[path = "execution_supervisor.rs"]
 mod execution_supervisor;
@@ -173,7 +197,11 @@ impl RuntimeService {
         );
         let context = Arc::new(ContextCache::new(config.max_context_projection_bytes));
         let host = Arc::new(HostCoordinator::new(Arc::clone(&persistence)));
-        let delegation = DelegationSupervisor::new(Arc::clone(&persistence), Arc::clone(&host));
+        let delegation = DelegationSupervisor::new(
+            Arc::clone(&persistence),
+            Arc::clone(&host),
+            Arc::clone(&clock),
+        );
         let flow = FlowSupervisor::new(Arc::clone(&persistence));
         Self {
             config,
@@ -240,6 +268,9 @@ impl RuntimeService {
         state.jobs.clear();
         state.job_queue.clear();
         state.execution_bindings.clear();
+        // §9.4: rebuild the host-execution binding ledger from durable rows so
+        // a daemon restart observes the same liveness state it left behind.
+        self.delegation.bindings().recover(&*self.persistence)?;
         for snapshot in workspace_snapshots {
             let workspace = snapshot.workspace;
             let result = WorkspaceResult {
@@ -269,12 +300,10 @@ impl RuntimeService {
                     "typed session snapshot lacks its session row",
                 )
             })?;
-            if !state.workspaces.contains_key(&session.workspace_id)
-                || state.sessions.len() >= self.config.max_sessions
-            {
+            if !state.workspaces.contains_key(&session.workspace_id) {
                 return Err(RuntimeError::new(
                     StableErrorCode::ExternalStateConflict,
-                    "durable session projection is inconsistent or exceeds capacity",
+                    "durable session projection references an unknown workspace",
                 ));
             }
             let key = session.session_id.clone();
@@ -573,6 +602,10 @@ impl RuntimeService {
             let response = self.handshake(&handshake)?;
             connection.handshaken = true;
             connection.client_kind = Some(handshake.client_kind);
+            // `adapter_id` is decode-only here: a HostAdapter connection is
+            // attached solely by an explicit `host.register` call further
+            // down this dispatch, never as a side effect of the handshake
+            // that merely proves the boot credential.
             return encode_success(request.id, response);
         }
 
@@ -589,7 +622,11 @@ impl RuntimeService {
         let admin_lease_break =
             is_admin_lease_break(request.method, &params, connection.client_kind);
         if requires_session_capability(request.method) && !admin_lease_break {
-            let identity = self.session_identity(&params, is_hook(request.method))?;
+            // A Hook no longer has to carry a turn: it runs as a stateless host
+            // subprocess and the daemon allocates the turn during dispatch. This
+            // pre-dispatch pass only proves the session capability, so demanding
+            // a turn here would reject the very bootstrap event again.
+            let identity = self.session_identity(&params, false)?;
             if !capability_allows(&identity.capability_id, request.method) {
                 return Err(RuntimeError::new(
                     StableErrorCode::RoleOperationForbidden,
@@ -619,7 +656,7 @@ impl RuntimeService {
             RpcMethod::RuntimeHandshake => unreachable!("handshake handled before dispatch"),
             RpcMethod::RuntimeStatus => to_value(self.status()?),
             RpcMethod::RuntimeDrain => self.runtime_drain(params),
-            RpcMethod::WorkspaceRegister => self.workspace_register(params),
+            RpcMethod::WorkspaceRegister => self.workspace_register(params, client_kind),
             RpcMethod::WorkspaceModeTransition => {
                 self.workspace_mode_transition(params, client_kind)
             }
@@ -635,16 +672,17 @@ impl RuntimeService {
             RpcMethod::ContextGet => self.context_get(params),
             RpcMethod::ContextProject => self.context_project(params),
             RpcMethod::HostRegister => self.host_register(params),
-            RpcMethod::HostCapabilities => self.host_capabilities(params),
             RpcMethod::HostActionNext => self.host_action_next(params),
             RpcMethod::HostActionAck => self.host_action_ack(params),
             RpcMethod::HostPressureReport => self.host_pressure(params),
             RpcMethod::DelegationCreate => self.delegation_create(params),
             RpcMethod::DelegationStatus => self.delegation_status(params),
             RpcMethod::DelegationAccept => self.delegation_accept(params),
+            RpcMethod::DelegationChildClaim => self.delegation_child_claim(params),
             RpcMethod::DelegationReport => self.delegation_report(params),
             RpcMethod::DelegationCollect => self.delegation_collect(params),
             RpcMethod::DelegationCancel => self.delegation_cancel(params),
+            RpcMethod::DelegationRenew => self.delegation_renew(params),
             RpcMethod::CompactRequest => self.compact_request(params),
             RpcMethod::CompactStatus => self.compact_status(params),
             RpcMethod::FlowSnapshot
@@ -652,14 +690,81 @@ impl RuntimeService {
             | RpcMethod::OperationDescribe
             | RpcMethod::GateEvaluate => self.authoritative_business(method, params, client_kind),
             RpcMethod::OperationExecute => {
-                let value = self.authoritative_business(method, params, client_kind)?;
-                self.bind_execution_resume(params, &value)?;
-                Ok(value)
+                let started = Instant::now();
+                let result = self
+                    .authoritative_business(method, params, client_kind)
+                    .and_then(|value| {
+                        self.bind_execution_resume(params, &value)?;
+                        self.bind_created_work_item(params, &value)?;
+                        Ok(value)
+                    });
+                self.emit_node(params, result.as_ref(), started);
+                result
             }
             RpcMethod::JobSubmit => self.job_submit(params),
             RpcMethod::JobStatus => self.job_status(params),
             RpcMethod::JobCancel => self.job_cancel(params),
         }
+    }
+
+    /// Records a task node transition, when this operation is one.
+    ///
+    /// Reads and queries are filtered out here rather than at the reader: a node
+    /// file that also carries every `document.resolve` stops being a readable
+    /// history of how the work item moved.
+    fn emit_node(
+        &self,
+        params: &RequestParams<Value>,
+        result: Result<&Value, &RuntimeError>,
+        started: Instant,
+    ) {
+        let Some(operation) = params.payload.get("operation").and_then(Value::as_str) else {
+            return;
+        };
+        if !NODE_OPERATIONS.contains(&operation) {
+            return;
+        }
+        let inner = params.payload.get("payload");
+        let value = result.ok();
+        diagnostics::emit(DiagnosticRecord::Node(NodeRecord {
+            ts: diagnostics::now_ms(),
+            op: operation.to_owned(),
+            wsid: params.workspace_id.clone().unwrap_or_default(),
+            wid: params.work_item_id.clone(),
+            to: inner
+                .and_then(|inner| inner.get("targetPhase"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            sid: params.session_id.clone(),
+            tid: params.turn_id.clone(),
+            hid: None,
+            rev: value
+                .and_then(|value| value.get("revisionAfter"))
+                .and_then(Value::as_u64),
+            es: value
+                .and_then(|value| value.get("data"))
+                .and_then(|data| data.get("eventSeq"))
+                .and_then(Value::as_u64),
+            // Best effort: the capability is the daemon-verified actor, but a
+            // failure may be exactly that the identity could not be trusted, so
+            // an unresolvable identity records as absent rather than blocking
+            // the line that explains the failure.
+            actor: self
+                .session_identity(params, false)
+                .ok()
+                .map(|identity| identity.capability_id),
+            reason: params
+                .confirmation
+                .as_ref()
+                .map(|confirmation| confirmation.approved_by.clone()),
+            conf: params
+                .confirmation
+                .as_ref()
+                .map(|confirmation| confirmation.confirmation_id.clone()),
+            ok: result.is_ok(),
+            err: result.err().map(|error| format!("{:?}", error.code())),
+            ms: diagnostics::elapsed_ms(started),
+        }));
     }
 
     /// Exposes the flow supervisor to authoritative operation adapters.
@@ -714,7 +819,10 @@ fn requires_session_capability(method: RpcMethod) -> bool {
     matches!(
         method.spec().scope,
         OperationScope::Session | OperationScope::WorkItem | OperationScope::Delegation
-    ) && !matches!(method, RpcMethod::SessionOpen | RpcMethod::DelegationAccept)
+    ) && !matches!(
+        method,
+        RpcMethod::SessionOpen | RpcMethod::DelegationAccept | RpcMethod::DelegationChildClaim
+    )
 }
 
 fn is_admin_lease_break(
@@ -734,13 +842,13 @@ fn capability_allows(capability_id: &str, method: RpcMethod) -> bool {
 
 fn authorize_client_kind(client_kind: Option<ClientKind>, method: RpcMethod) -> RuntimeResult<()> {
     let authorized = match method {
-        RpcMethod::RuntimeDrain | RpcMethod::WorkspaceModeTransition => {
-            client_kind == Some(ClientKind::Admin)
+        RpcMethod::RuntimeDrain => client_kind == Some(ClientKind::Admin),
+        RpcMethod::WorkspaceModeTransition => {
+            matches!(client_kind, Some(ClientKind::Admin | ClientKind::Hook))
         }
-        RpcMethod::HostRegister
-        | RpcMethod::HostCapabilities
-        | RpcMethod::HostActionNext
-        | RpcMethod::HostActionAck => client_kind == Some(ClientKind::HostAdapter),
+        RpcMethod::HostRegister | RpcMethod::HostActionNext | RpcMethod::HostActionAck => {
+            client_kind == Some(ClientKind::HostAdapter)
+        }
         RpcMethod::JobSubmit | RpcMethod::JobStatus | RpcMethod::JobCancel => {
             matches!(client_kind, Some(ClientKind::Cli | ClientKind::Admin))
         }
@@ -763,10 +871,7 @@ fn authorize_host_connection(
 ) -> RuntimeResult<()> {
     let host_bound = matches!(
         method,
-        RpcMethod::HostCapabilities
-            | RpcMethod::HostActionNext
-            | RpcMethod::HostActionAck
-            | RpcMethod::HostPressureReport
+        RpcMethod::HostActionNext | RpcMethod::HostActionAck | RpcMethod::HostPressureReport
     );
     if !host_bound {
         return Ok(());

@@ -212,6 +212,14 @@ fn init_and_hook_kernels_write_only_frozen_files() {
     assert!(hooks.contains("hook --method hook.post_tool --request-json -"));
     assert!(hooks.contains("hook --method hook.stop --request-json -"));
     assert!(!hooks.to_ascii_lowercase().contains("python"));
+    // Codex has no live-verified `SubagentStart` equivalent (ROUTE-702d576a
+    // Task 0/1, Plan §0.7): the mapping must not appear until a host passes
+    // its own actuation/admission matrix.
+    assert!(!hooks.contains("SubagentStart"));
+    let claude_hooks =
+        fs::read_to_string(root.join(".claude/settings.json")).expect("Claude hooks");
+    assert!(claude_hooks.contains("SubagentStart"));
+    assert!(claude_hooks.contains("hook --method hook.subagent_start --request-json -"));
     assert!(matches!(
         execute_offline(&request(
             OfflineCommand::InitHooks {

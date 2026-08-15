@@ -4,11 +4,12 @@ use ae_sdd_domain::{
     AgentLineage, AgentRole, ArtifactDigest, ArtifactKind, ArtifactRef, BootId, CancellationCode,
     CapabilityId, ConfigDigest, DelegationId, DeliverableContract, DeliverableContractError,
     DeliverableId, DeliverableRequirement, ErrorCode, EvidenceDigest, EvidenceId, EvidenceRef,
-    FencingToken, FindingCode, GateCancellation, GateError, GateFailure, GateFinding,
+    FencingToken, FindingCode, FlowRunId, GateCancellation, GateError, GateFailure, GateFinding,
     GateFreshness, GateId, GateImplementationDigest, GateKey, GateOutcome, GateResult, GateTimeout,
     GrantViolation, InputFingerprint, InventoryGeneration, OperationId, PolicyDigest, ProjectKey,
     ProjectPathScope, ProjectRelativePath, ProjectRelativePathError, RequestId, ScopedGrant,
-    SessionId, StateRevision, StoryId, ToolchainDigest, VerificationId, WorkItemId, WorkspaceId,
+    SeriesRunId, SessionId, StateRevision, StoryId, ToolchainDigest, VerificationId, WorkItemId,
+    WorkspaceId,
 };
 use uuid::Uuid;
 
@@ -287,5 +288,45 @@ fn identifiers_digests_counters_and_paths_cover_conversion_boundaries() {
     assert_eq!(
         ProjectRelativePath::new("src/name."),
         Err(ProjectRelativePathError::NonPortableSuffix)
+    );
+}
+
+/// `ae-sdd-daemon-design.md` §4.1 freezes `FlowRunId` as one main-flow run
+/// instance and `SeriesRunId` as one physical execution attempt of a Series.
+/// Both are daemon-minted UUIDs, so they belong with the other UUID identities
+/// rather than being represented as bare strings at call sites.
+#[test]
+fn flow_run_and_series_run_are_uuid_identities() {
+    let flow = Uuid::from_u128(0x0192_3f5a_7b1c_7000_8000_0000_0000_0001);
+    let series = Uuid::from_u128(0x0192_3f5a_7b1c_7000_8000_0000_0000_0002);
+
+    let flow_run = FlowRunId::from_uuid(flow);
+    let series_run = SeriesRunId::from_uuid(series);
+
+    assert_eq!(flow_run.into_uuid(), flow, "FlowRunId round-trips its UUID");
+    assert_eq!(
+        series_run.into_uuid(),
+        series,
+        "SeriesRunId round-trips its UUID"
+    );
+    assert_eq!(
+        flow_run
+            .to_string()
+            .parse::<FlowRunId>()
+            .expect("FlowRunId"),
+        flow_run,
+        "FlowRunId parses back from its canonical text"
+    );
+    assert_eq!(
+        series_run
+            .to_string()
+            .parse::<SeriesRunId>()
+            .expect("SeriesRunId"),
+        series_run,
+        "SeriesRunId parses back from its canonical text"
+    );
+    assert!(
+        "not-a-uuid".parse::<FlowRunId>().is_err(),
+        "a non-UUID must not become a FlowRunId"
     );
 }

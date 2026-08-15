@@ -69,17 +69,17 @@ cargo test ... | grep "FAILED"; cargo test ... | grep "ok" | awk '{...}'
 
 **中文：**
 
-- 测试环境只跑增量：改动落在哪个 crate/模块，就只跑该 crate 的测试与对应测试文件。禁止在开发回路中跑全量套件。
-- 全量套件只在两个时点执行：任务收口交付前，以及 release/分发前。
+- 测试只跑增量：改动落在哪个 crate/模块，就只跑该 crate 的测试与对应测试文件。禁止在开发回路与任务收口跑全量套件。
+- 全量套件只在 release/分发门禁执行。
 - 基线对比只采集一次并落盘复用，不重复采集。
 
 **English：**
 
-- Test incrementally: run only the tests of the crate/module the change lands in, plus the matching test files. Never run a full suite inside the development loop.
-- Run the full suite at exactly two points: before task closure and before release/distribution.
+- Test incrementally: run only the tests of the crate/module the change lands in, plus the matching test files. Never run a full suite inside the development loop or at task closure.
+- Run the full suite only at release/distribution gates.
 - Collect a baseline once, persist it, and reuse it; never re-collect.
 
-**保留全量的理由（评审确认点）：** 本轮既有失败（11 项 Python + 1 项 Rust）只有全量才暴露，增量跑不到跨 crate 的契约测试。若要更激进（收口也只跑受影响范围，仅 release 门禁跑全量），需评审决定。
+**保留全量的理由（评审确认点，已决议）：** 2026-07-28 用户决议采纳更激进方案——收口也只跑增量，全量仅 release/分发门禁一处。原顾虑（本轮既有失败只有全量才暴露）由 release 门禁的全量阻断兜底。
 
 ### R2 昂贵命令单次产出（改写现有条目）
 
@@ -145,7 +145,7 @@ cargo test ... | grep "FAILED"; cargo test ... | grep "ok" | awk '{...}'
    python -m pytest tools/tests/test_l2_inject.py -q        # 注入切片
    ```
 
-   收口时再各跑一次全量，与已知基线逐项比对：Rust 1 项既有失败（`post_commit_and_harness_docs_use_rust_typed_argv_only`，`.githooks/post-commit:68` 注释含 "Python"），Python 11 项既有失败。
+   收口不再跑全量；全量套件仅在 release/分发门禁执行，届时与已知基线逐项比对：Rust 1 项既有失败（`post_commit_and_harness_docs_use_rust_typed_argv_only`，`.githooks/post-commit:68` 注释含 "Python"），Python 11 项既有失败。
 
 5. 分发：`build_dist.py` → `compile_skill_runtime.py` → `install.py`，各一次，输出落盘。
 
@@ -175,7 +175,7 @@ cargo test ... | grep "FAILED"; cargo test ... | grep "ok" | awk '{...}'
 
 ## 6. 评审确认点
 
-1. **R1 全量测试保留时点** —— 按本 Plan 为"收口前 + release 前"两处；是否要更激进（仅 release 门禁一处）？
+1. **R1 全量测试保留时点** —— 按本 Plan 为"收口前 + release 前"两处；是否要更激进（仅 release 门禁一处）？**已决议（2026-07-28 用户决议）：采纳更激进方案——收口也只跑增量，全量套件仅 release/分发门禁执行。**
 2. **daemon 是否立即起回** —— 或等注入完成后一并重启？
 
 ---

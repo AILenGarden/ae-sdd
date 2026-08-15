@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::OperationScope;
 
 /// Number of RPC methods frozen by protocol v1.
-pub const METHOD_COUNT: usize = 37;
+pub const METHOD_COUNT: usize = 38;
 
 /// Exact protocol-v1 RPC method identifier.
 ///
@@ -69,6 +69,13 @@ pub enum RpcMethod {
     /// Accept a claimed delegation from a child session.
     #[serde(rename = "delegation.accept")]
     DelegationAccept,
+    /// Child self-claim: the child itself presents the one-time claim (Plan §2).
+    /// Semantically a sibling of `delegation.accept` routed to the same
+    /// supervisor path; exists as its own wire method so the host-native (A2)
+    /// path keeps a distinct entry point when an external host adapter (A1)
+    /// reuses `delegation.accept`.
+    #[serde(rename = "delegation.child_claim")]
+    DelegationChildClaim,
     /// Submit a bounded child result.
     #[serde(rename = "delegation.report")]
     DelegationReport,
@@ -78,12 +85,12 @@ pub enum RpcMethod {
     /// Cancel a scoped delegation.
     #[serde(rename = "delegation.cancel")]
     DelegationCancel,
+    /// Extend the deadline of a running delegation.
+    #[serde(rename = "delegation.renew")]
+    DelegationRenew,
     /// Register an authenticated host runtime adapter.
     #[serde(rename = "host.register")]
     HostRegister,
-    /// Read the authenticated adapter capability matrix.
-    #[serde(rename = "host.capabilities")]
-    HostCapabilities,
     /// Pull the next durable host action.
     #[serde(rename = "host.action_next")]
     HostActionNext,
@@ -149,11 +156,12 @@ impl RpcMethod {
         Self::DelegationCreate,
         Self::DelegationStatus,
         Self::DelegationAccept,
+        Self::DelegationChildClaim,
         Self::DelegationReport,
         Self::DelegationCollect,
         Self::DelegationCancel,
+        Self::DelegationRenew,
         Self::HostRegister,
-        Self::HostCapabilities,
         Self::HostActionNext,
         Self::HostActionAck,
         Self::HostPressureReport,
@@ -192,11 +200,12 @@ impl RpcMethod {
             Self::DelegationCreate => "delegation.create",
             Self::DelegationStatus => "delegation.status",
             Self::DelegationAccept => "delegation.accept",
+            Self::DelegationChildClaim => "delegation.child_claim",
             Self::DelegationReport => "delegation.report",
             Self::DelegationCollect => "delegation.collect",
             Self::DelegationCancel => "delegation.cancel",
+            Self::DelegationRenew => "delegation.renew",
             Self::HostRegister => "host.register",
-            Self::HostCapabilities => "host.capabilities",
             Self::HostActionNext => "host.action_next",
             Self::HostActionAck => "host.action_ack",
             Self::HostPressureReport => "host.pressure_report",
@@ -432,11 +441,16 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         true,
         false,
     ),
+    // The four Hooks are Session-scoped: their trusted identity is the session
+    // capability, not a Work Item. Requiring `workItemId` locked the very
+    // bootstrap turn that is supposed to establish routing, so the first host
+    // event could never reach the daemon. The Work Item stays optional
+    // attribution resolved from the session binding when one exists.
     method(
         RpcMethod::HookUserPrompt,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -445,7 +459,7 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::HookPreTool,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -454,7 +468,7 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::HookPostTool,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -463,7 +477,7 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::HookStop,
         OperationScope::Session,
         true,
-        true,
+        false,
         true,
         true,
         false,
@@ -508,7 +522,16 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         RpcMethod::DelegationAccept,
         OperationScope::Delegation,
         true,
+        false,
         true,
+        true,
+        false,
+    ),
+    method(
+        RpcMethod::DelegationChildClaim,
+        OperationScope::Delegation,
+        true,
+        false,
         true,
         true,
         false,
@@ -541,21 +564,21 @@ pub const METHOD_REGISTRY: [MethodSpec; METHOD_COUNT] = [
         false,
     ),
     method(
+        RpcMethod::DelegationRenew,
+        OperationScope::Delegation,
+        true,
+        true,
+        true,
+        true,
+        false,
+    ),
+    method(
         RpcMethod::HostRegister,
         OperationScope::Host,
         false,
         false,
         true,
         true,
-        false,
-    ),
-    method(
-        RpcMethod::HostCapabilities,
-        OperationScope::Host,
-        false,
-        false,
-        false,
-        false,
         false,
     ),
     method(

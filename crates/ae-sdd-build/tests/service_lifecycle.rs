@@ -290,6 +290,46 @@ fn materialization_is_private_idempotent_and_detects_drift() {
 }
 
 #[test]
+fn windows_descriptor_materializes_as_task_scheduler_compatible_utf16le() {
+    let root = fixture_root("windows-utf16le");
+    let plan = generate_service_lifecycle_plan(&request(
+        &root,
+        ServicePlatform::Windows,
+        ServiceOperation::Install,
+    ))
+    .expect("windows install plan");
+
+    assert!(
+        plan.descriptor_contents
+            .starts_with("<?xml version=\"1.0\" encoding=\"UTF-16\"?>")
+    );
+    assert!(
+        plan.descriptor_contents
+            .contains("<Interval>PT1M</Interval>")
+    );
+    let first = materialize_service_descriptor(&plan).expect("first materialization");
+    assert!(first.created);
+    let bytes = fs::read(&plan.descriptor_path).expect("materialized descriptor");
+    assert_eq!(&bytes[..2], &[0xff, 0xfe]);
+    let units = bytes[2..]
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        String::from_utf16(&units).expect("UTF-16LE XML"),
+        plan.descriptor_contents
+    );
+    assert_eq!(
+        inspect_service_descriptor(&plan).expect("status").state,
+        ServiceDescriptorState::Matches
+    );
+
+    let replay = materialize_service_descriptor(&plan).expect("idempotent replay");
+    assert!(!replay.created);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn descriptor_rejects_secret_bearing_environment_and_non_absolute_paths() {
     let root = fixture_root("negative");
     let mut secret = request(&root, ServicePlatform::Linux, ServiceOperation::Install);

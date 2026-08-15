@@ -127,10 +127,59 @@ impl ScopedGrantWire {
     }
 }
 
+/// Project subtrees the root orchestrator may touch itself: specification
+/// documents, runtime state and evidence, and the engineering constraints it
+/// reads while coordinating. Everything else is delegated.
+const ROOT_ORCHESTRATION_PATHS: [&str; 4] =
+    [".ae-sdd", ".auto-engineering", "ae-sdd-doc", "constraints"];
+
+/// The root session is a pure orchestrator (Root Session Contract): its grant
+/// carries only flow, lease, read, and transition-request operations. Semantic
+/// work (`document.save`, `evidence.*`, `verification.plan`, review
+/// contributions) is delegated to the series/task/reviewer lineage, and
+/// `lease.break` stays administrative-only.
 pub(crate) fn root_grant() -> ScopedGrantWire {
     let operations = OperationName::ALL
         .into_iter()
+        .filter(|operation| {
+            !matches!(
+                operation,
+                OperationName::DocumentSave
+                    | OperationName::EvidenceFinalize
+                    | OperationName::EvidenceRecord
+                    | OperationName::LeaseBreak
+                    | OperationName::ReviewContribute
+                    | OperationName::ReviewRecord
+                    | OperationName::VerificationPlan
+            )
+        })
+        .filter_map(|operation| OperationId::new(operation.as_str()).ok());
+    let paths = ROOT_ORCHESTRATION_PATHS
+        .into_iter()
+        .filter_map(|path| ProjectRelativePath::new(path).ok())
+        .map(ProjectPathScope::Subtree);
+    ScopedGrantWire::from_domain(&ScopedGrant::new(operations, [], paths))
+}
+
+/// The envelope a root session may *delegate* from. The orchestration grant
+/// above narrows what root executes, never what it may pass on: a series
+/// lineage still receives semantic operations and review specialty
+/// capabilities, bounded by everything except administrative `lease.break`.
+fn root_delegation_envelope() -> ScopedGrant {
+    let operations = OperationName::ALL
+        .into_iter()
         .filter(|operation| *operation != OperationName::LeaseBreak)
+        .filter_map(|operation| OperationId::new(operation.as_str()).ok());
+    let capabilities = REVIEW_SPECIALTY_CAPABILITIES
+        .into_iter()
+        .filter_map(|capability| CapabilityId::new(capability).ok());
+    ScopedGrant::new(operations, capabilities, [ProjectPathScope::ProjectRoot])
+}
+
+pub(crate) fn semantic_series_grant() -> ScopedGrantWire {
+    let operations = OperationName::ALL
+        .into_iter()
+        .filter(|operation| role_may_receive(WireAgentRole::Series, *operation))
         .filter_map(|operation| OperationId::new(operation.as_str()).ok());
     let capabilities = REVIEW_SPECIALTY_CAPABILITIES
         .into_iter()
@@ -149,9 +198,18 @@ pub(crate) fn validate_child_grant(
 ) -> RuntimeResult<ScopedGrantWire> {
     let normalized = requested.normalized()?;
     let child = normalized.to_domain()?;
-    parent
-        .validate_child(&child)
-        .map_err(|_| grant_error("child scoped grant widens the parent grant"))?;
+    // Only root spawns a series, and root's own grant is narrowed to
+    // orchestration; the series lineage therefore narrows against the root
+    // delegation envelope. Deeper children narrow against their parent grant.
+    if child_role == WireAgentRole::Series {
+        root_delegation_envelope()
+            .validate_child(&child)
+            .map_err(|_| grant_error("child scoped grant widens the root delegation envelope"))?;
+    } else {
+        parent
+            .validate_child(&child)
+            .map_err(|_| grant_error("child scoped grant widens the parent grant"))?;
+    }
     for operation in child.operations() {
         let operation = OperationName::from_str(operation.as_str())
             .map_err(|_| grant_error("child scoped grant operation is not registered"))?;
@@ -310,6 +368,87 @@ mod tests {
     }
 
     #[test]
+    fn root_grant_carries_only_orchestration_operations() {
+        let root = root_grant();
+        for excluded in [
+            "document.save",
+            "evidence.finalize",
+            "evidence.record",
+            "lease.break",
+            "review.contribute",
+            "review.record",
+            "verification.plan",
+        ] {
+            assert!(
+                !root
+                    .operations
+                    .iter()
+                    .any(|operation| operation == excluded),
+                "root orchestrator must not execute {excluded}"
+            );
+        }
+        for kept in [
+            "document.resolve",
+            "execution.plan.approve",
+            "execution.plan.set",
+            "gate.check",
+            "lease.acquire",
+            "review.finalize",
+            "state.next_actions",
+            "state.transition",
+            "workitem.complete",
+            "workitem.create",
+        ] {
+            assert!(
+                root.operations.iter().any(|operation| operation == kept),
+                "root orchestration requires {kept}"
+            );
+        }
+        assert!(
+            root.capabilities.is_empty(),
+            "review specialty capabilities belong to the delegation envelope"
+        );
+        assert!(
+            !root
+                .paths
+                .iter()
+                .any(|path| matches!(path, GrantPathWire::ProjectRoot)),
+            "root paths are narrowed to the orchestration subtrees"
+        );
+    }
+
+    #[test]
+    fn root_delegates_semantic_work_from_the_policy_envelope() {
+        let root = root_grant().to_domain().expect("root grant");
+        let series = ScopedGrantWire {
+            operations: vec![
+                "document.save".to_owned(),
+                "evidence.finalize".to_owned(),
+                "evidence.record".to_owned(),
+                "lease.acquire".to_owned(),
+                "verification.plan".to_owned(),
+            ],
+            capabilities: Vec::new(),
+            paths: vec![GrantPathWire::ProjectRoot],
+        };
+        assert!(
+            validate_child_grant(&root, WireAgentRole::Series, &series).is_ok(),
+            "root delegates semantic work it may never execute itself"
+        );
+        let task = ScopedGrantWire {
+            operations: vec!["document.save".to_owned()],
+            capabilities: Vec::new(),
+            paths: vec![GrantPathWire::Subtree {
+                path: "crates".to_owned(),
+            }],
+        };
+        assert!(
+            validate_child_grant(&root, WireAgentRole::Task, &task).is_err(),
+            "only the series lineage narrows against the root envelope"
+        );
+    }
+
+    #[test]
     fn admin_only_lease_break_never_enters_an_agent_grant() {
         assert!(
             !root_grant()
@@ -335,14 +474,10 @@ mod tests {
     #[test]
     fn root_and_series_can_narrow_to_one_reviewer_specialty() {
         let root = root_grant().to_domain().expect("root grant");
-        for capability in REVIEW_SPECIALTY_CAPABILITIES {
-            assert!(
-                root_grant()
-                    .capabilities
-                    .iter()
-                    .any(|value| value == capability)
-            );
-        }
+        assert!(
+            root_grant().capabilities.is_empty(),
+            "the root orchestration grant carries no specialty capabilities"
+        );
         let series = ScopedGrantWire {
             operations: vec![
                 "lease.acquire".to_owned(),
@@ -414,11 +549,29 @@ mod tests {
             "the root/finalizer grant carries review.finalize"
         );
         assert!(
-            root.operations
+            !root
+                .operations
                 .iter()
                 .any(|operation| operation == OperationName::ReviewContribute.as_str()),
-            "the root grant carries review.contribute"
+            "the root orchestrator never contributes a review itself"
         );
+
+        // Reviewers hang off a series, so the contribute grant narrows from the
+        // series delegation the root envelope issued.
+        let series = validate_child_grant(
+            &root.to_domain().expect("root grant"),
+            WireAgentRole::Series,
+            &ScopedGrantWire {
+                operations: vec![
+                    "lease.acquire".to_owned(),
+                    "review.contribute".to_owned(),
+                    "review.record".to_owned(),
+                ],
+                capabilities: vec!["review.specialty.general".to_owned()],
+                paths: vec![GrantPathWire::ProjectRoot],
+            },
+        )
+        .expect("root narrows to a review-capable series");
 
         let reviewer = ScopedGrantWire {
             operations: vec![
@@ -431,14 +584,14 @@ mod tests {
         };
         assert!(
             validate_child_grant(
-                &root.to_domain().expect("root grant"),
+                &series.to_domain().expect("series grant"),
                 WireAgentRole::Reviewer,
                 &reviewer
             )
             .is_err(),
             "a reviewer can never receive review.finalize"
         );
-        let series = ScopedGrantWire {
+        let series_finalize = ScopedGrantWire {
             operations: vec!["review.finalize".to_owned()],
             capabilities: Vec::new(),
             paths: vec![GrantPathWire::ProjectRoot],
@@ -447,7 +600,7 @@ mod tests {
             validate_child_grant(
                 &root.to_domain().expect("root grant"),
                 WireAgentRole::Series,
-                &series
+                &series_finalize
             )
             .is_err(),
             "a series can never receive review.finalize"
@@ -460,7 +613,7 @@ mod tests {
         };
         assert!(
             validate_child_grant(
-                &root.to_domain().expect("root grant"),
+                &series.to_domain().expect("series grant"),
                 WireAgentRole::Reviewer,
                 &contribute_only,
             )

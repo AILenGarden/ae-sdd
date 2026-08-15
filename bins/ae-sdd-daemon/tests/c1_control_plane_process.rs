@@ -17,9 +17,10 @@ use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, JobStatus, PROTOCOL_VERSION_V1, RequestParams, RpcMethod,
     StableErrorCode, WorkspaceMode,
 };
+#[cfg(debug_assertions)]
+use ae_sdd_runtime::RuntimeJobStatus;
 use ae_sdd_runtime::{
-    PersistencePort, RuntimeJobRecord, RuntimeJobStatus, SessionResult, WorkspaceParityEvidence,
-    WorkspaceResult,
+    PersistencePort, RuntimeJobRecord, SessionResult, WorkspaceParityEvidence, WorkspaceResult,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -30,7 +31,9 @@ const PROJECT_KEY: &str = "c1-process-e2e";
 const AGENT_ID: &str = "c1-process-root";
 const EXTERNAL_SESSION_KEY: &str = "c1-process-root-session";
 const COMMIT_ABORT_ENV: &str = "AE_SDD_TEST_COMMIT_ABORT_AT";
+#[cfg(debug_assertions)]
 const ABORT_AFTER_PREPARED: &str = "after_prepared";
+#[cfg(debug_assertions)]
 const ABORT_AFTER_REPLACE_0: &str = "after_replace_0";
 const REVIEW_WORK_ITEM_ID: &str = "STORY-C1-REVIEW-PROCESS";
 const REVIEW_PROJECT_KEY: &str = "c1-review-process";
@@ -46,14 +49,37 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
 
     let workspace = register_and_cut_over(&cli, &admin, &fixture).await;
     let first_session = open_root(&cli, &workspace, "session-open-first").await;
-    let first_identity = Identity::new(&workspace, &first_session);
-    let (lease_id, fencing_token) = acquire_lease(&cli, &first_identity).await;
+    let first_identity = Identity::for_work_item(
+        &workspace,
+        &first_session,
+        WORK_ITEM_ID,
+        AGENT_ID,
+        fixture.state_path.clone(),
+    );
+    // `verification.plan` and the receipt job are semantic work, so a
+    // delegated author task drives them and owns the project lease; the
+    // tightened root role only opens the delegation lineage.
+    let first_lineage = open_review_lineage(
+        &cli,
+        &fixture.runtime_dir,
+        &workspace,
+        &first_identity,
+        "verification-lineage-first",
+    )
+    .await;
+    let (lease_id, fencing_token) = acquire_lease(
+        &cli,
+        &first_lineage.author,
+        "task",
+        "verification-lease-first",
+    )
+    .await;
 
     let plan = verification_plan();
     let plan_value = serde_json::to_value(&plan).expect("verification plan serializes");
     let before_forgery = fs::read(&fixture.state_path).expect("state before forged authority");
     let forged = verification_request(
-        &first_identity,
+        &first_lineage.author,
         &lease_id,
         fencing_token,
         1,
@@ -114,7 +140,7 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         .call::<Value>(
             RpcMethod::JobSubmit,
             job_submit_request(
-                &first_identity,
+                &first_lineage.author,
                 job_payload.clone(),
                 1,
                 "toolset-receipt-job-process-e2e",
@@ -126,8 +152,10 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         .as_str()
         .expect("submitted job id")
         .to_owned();
-    let completed = wait_for_job(&cli, &first_identity, &job_id).await;
+    let completed = wait_for_job(&cli, &first_lineage.author, &job_id).await;
     assert_eq!(completed["status"], "pass", "{completed}");
+    assert_eq!(completed["result"]["sourceRevision"], 1);
+    assert_eq!(completed["result"]["committedRevision"], 2);
     assert_eq!(completed["result"]["revisionBefore"], 1);
     assert_eq!(completed["result"]["revisionAfter"], 2);
 
@@ -135,7 +163,7 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         .call::<Value>(
             RpcMethod::JobSubmit,
             job_submit_request(
-                &first_identity,
+                &first_lineage.author,
                 job_payload,
                 1,
                 "toolset-receipt-job-process-e2e",
@@ -150,7 +178,7 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         "plan":plan_value,
         "receiptId":completed["result"]["receiptId"],
         "receiptDigest":completed["result"]["receiptDigest"],
-        "sourceRevision":completed["result"]["sourceRevision"],
+        "sourceRevision":completed["result"]["committedRevision"],
         "planDigest":completed["result"]["planDigest"],
         "methodologyDigest":completed["result"]["methodologyDigest"],
         "policyDigest":completed["result"]["policyDigest"],
@@ -162,7 +190,7 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         .call::<Value>(
             RpcMethod::OperationExecute,
             verification_request(
-                &first_identity,
+                &first_lineage.author,
                 &lease_id,
                 fencing_token,
                 2,
@@ -208,7 +236,7 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
     let old_capability = restarted_cli
         .call::<Value>(
             RpcMethod::JobStatus,
-            job_status_request(&first_identity, &job_id),
+            job_status_request(&first_lineage.author, &job_id),
         )
         .await
         .expect_err("the old boot capability must fail closed");
@@ -223,21 +251,37 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
         second_session.capability_token, first_session.capability_token,
         "restart must re-sign the stable session identity"
     );
-    let second_identity = Identity::new(&workspace, &second_session);
-    let recovered_job = restarted_cli
-        .call::<Value>(
-            RpcMethod::JobStatus,
-            job_status_request(&second_identity, &job_id),
-        )
-        .await
-        .expect("committed PASS job survives restart");
-    assert_eq!(recovered_job, completed);
+    let second_identity = Identity::for_work_item(
+        &workspace,
+        &second_session,
+        WORK_ITEM_ID,
+        AGENT_ID,
+        fixture.state_path.clone(),
+    );
+    // A delegated child session is bound to the accepting daemon boot, so the
+    // author lineage is re-established under the new boot identity before the
+    // same-key replay. The committed job stays bound to the first author's
+    // physical session, which no valid session can re-assume after the
+    // restart, so job survival is verified from the durable runtime store
+    // once the daemon is down instead of the session-bound job.status RPC.
+    let second_lineage = open_review_lineage(
+        &restarted_cli,
+        &fixture.runtime_dir,
+        &workspace,
+        &second_identity,
+        "verification-lineage-restart",
+    )
+    .await;
+    assert_ne!(
+        second_lineage.author_session_id, first_lineage.author_session_id,
+        "a rebuilt lineage must be a new physical author session"
+    );
 
     let replayed = restarted_cli
         .call::<Value>(
             RpcMethod::OperationExecute,
             verification_request(
-                &second_identity,
+                &second_lineage.author,
                 &lease_id,
                 fencing_token,
                 2,
@@ -262,8 +306,17 @@ async fn daemon_process_commits_and_replays_toolset_verification_exactly_once() 
     assert_event_once(&events_after_replay, "toolset.receipt.record");
     assert_event_once(&events_after_replay, "verification.plan");
     restarted.crash();
+
+    let recovered_job =
+        persisted_job_by_submission_key(&fixture.runtime_dir, "toolset-receipt-job-process-e2e");
+    assert_eq!(
+        serde_json::to_value(&recovered_job).expect("durable job serializes"),
+        completed,
+        "the committed PASS job survives the restart unchanged"
+    );
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
     let fixture = Fixture::new();
@@ -289,16 +342,39 @@ async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
     let mut restarted =
         DaemonProcess::start(&fixture.runtime_dir, fixture.allowed_root(), &policy_digest).await;
     let client = daemon_client(&fixture.runtime_dir, ClientKind::Cli);
+    // The crashed job stays bound to the author session that died with the
+    // commit-abort boot, so the stale diagnosis reads the durable runtime
+    // store: job.status would reject every session the new boot can open.
+    assert_session_expired_job(&live_job_wire(&fixture, &crashed.job_id));
+
     let session = open_root(&client, &crashed.workspace, "prepared-restart-session").await;
-    let identity = Identity::new(&crashed.workspace, &session);
-    let stale = client
-        .call::<Value>(
-            RpcMethod::JobStatus,
-            job_status_request(&identity, &crashed.job_id),
-        )
-        .await
-        .expect("old running job is diagnosable after restart");
-    assert_session_expired_job(&stale);
+    let identity = Identity::for_work_item(
+        &crashed.workspace,
+        &session,
+        WORK_ITEM_ID,
+        AGENT_ID,
+        fixture.state_path.clone(),
+    );
+    // The crashed author's lease is orphaned with its boot, so it is broken
+    // through the confirmed Admin path before the rebuilt author acquires
+    // the lease its job lease proof binds.
+    break_orphaned_lease(
+        &daemon_client(&fixture.runtime_dir, ClientKind::Admin),
+        &crashed.workspace,
+        WORK_ITEM_ID,
+        "prepared-recovery-break",
+    )
+    .await;
+    let lineage = open_review_lineage(
+        &client,
+        &fixture.runtime_dir,
+        &crashed.workspace,
+        &identity,
+        "prepared-recovery-lineage",
+    )
+    .await;
+    let (lease_id, fencing_token) =
+        acquire_lease(&client, &lineage.author, "task", "prepared-recovery-lease").await;
 
     let recovery_payload = toolset_receipt_job_payload(
         crashed.plan.clone(),
@@ -306,13 +382,18 @@ async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
         1,
         &policy_digest,
         &crashed.workspace,
-        &crashed.lease_id,
-        crashed.fencing_token,
+        &lease_id,
+        fencing_token,
     );
     let submitted = client
         .call::<Value>(
             RpcMethod::JobSubmit,
-            job_submit_request(&identity, recovery_payload, 1, "prepared-recovery-job"),
+            job_submit_request(
+                &lineage.author,
+                recovery_payload,
+                1,
+                "prepared-recovery-job",
+            ),
         )
         .await
         .expect("a fresh job triggers project recovery and is accepted");
@@ -320,7 +401,7 @@ async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
         .as_str()
         .expect("recovery job id")
         .to_owned();
-    let completed = wait_for_job(&client, &identity, &recovered_job_id).await;
+    let completed = wait_for_job(&client, &lineage.author, &recovered_job_id).await;
     assert_eq!(completed["status"], "pass", "{completed}");
     assert_eq!(completed["result"]["revisionBefore"], 1);
     assert_eq!(completed["result"]["revisionAfter"], 2);
@@ -355,9 +436,9 @@ async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
         .call::<Value>(
             RpcMethod::OperationExecute,
             verification_request(
-                &identity,
-                &crashed.lease_id,
-                crashed.fencing_token,
+                &lineage.author,
+                &lease_id,
+                fencing_token,
                 2,
                 "prepared-recovery-verification",
                 verification_payload,
@@ -375,6 +456,7 @@ async fn daemon_process_aborts_unapplied_prepared_receipt_without_fake_pass() {
     restarted.crash();
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_completes_partial_replace_but_keeps_runtime_job_non_pass() {
     let fixture = Fixture::new();
@@ -400,16 +482,36 @@ async fn daemon_process_completes_partial_replace_but_keeps_runtime_job_non_pass
     let mut restarted =
         DaemonProcess::start(&fixture.runtime_dir, fixture.allowed_root(), &policy_digest).await;
     let client = daemon_client(&fixture.runtime_dir, ClientKind::Cli);
+    // The crashed job stays bound to the author session that died with the
+    // commit-abort boot, so the stale diagnosis reads the durable runtime
+    // store: job.status would reject every session the new boot can open.
+    assert_session_expired_job(&live_job_wire(&fixture, &crashed.job_id));
+
     let session = open_root(&client, &crashed.workspace, "replace-restart-session").await;
-    let identity = Identity::new(&crashed.workspace, &session);
-    let stale = client
-        .call::<Value>(
-            RpcMethod::JobStatus,
-            job_status_request(&identity, &crashed.job_id),
-        )
-        .await
-        .expect("old running job is diagnosable after restart");
-    assert_session_expired_job(&stale);
+    let identity = Identity::for_work_item(
+        &crashed.workspace,
+        &session,
+        WORK_ITEM_ID,
+        AGENT_ID,
+        fixture.state_path.clone(),
+    );
+    break_orphaned_lease(
+        &daemon_client(&fixture.runtime_dir, ClientKind::Admin),
+        &crashed.workspace,
+        WORK_ITEM_ID,
+        "replace-recovery-break",
+    )
+    .await;
+    let lineage = open_review_lineage(
+        &client,
+        &fixture.runtime_dir,
+        &crashed.workspace,
+        &identity,
+        "replace-recovery-lineage",
+    )
+    .await;
+    let (lease_id, fencing_token) =
+        acquire_lease(&client, &lineage.author, "task", "replace-recovery-lease").await;
 
     let recovery_payload = toolset_receipt_job_payload(
         crashed.plan.clone(),
@@ -417,20 +519,25 @@ async fn daemon_process_completes_partial_replace_but_keeps_runtime_job_non_pass
         1,
         &policy_digest,
         &crashed.workspace,
-        &crashed.lease_id,
-        crashed.fencing_token,
+        &lease_id,
+        fencing_token,
     );
     let submitted = client
         .call::<Value>(
             RpcMethod::JobSubmit,
-            job_submit_request(&identity, recovery_payload, 1, "replace-recovery-trigger"),
+            job_submit_request(
+                &lineage.author,
+                recovery_payload,
+                1,
+                "replace-recovery-trigger",
+            ),
         )
         .await
         .expect("a fresh job triggers project recovery");
     let recovery_job_id = submitted["jobId"]
         .as_str()
         .expect("recovery trigger job id");
-    let recovery_job = wait_for_job(&client, &identity, recovery_job_id).await;
+    let recovery_job = wait_for_job(&client, &lineage.author, recovery_job_id).await;
     assert_eq!(recovery_job["status"], "error", "{recovery_job}");
     assert!(
         matches!(
@@ -468,9 +575,9 @@ async fn daemon_process_completes_partial_replace_but_keeps_runtime_job_non_pass
         .call::<Value>(
             RpcMethod::OperationExecute,
             verification_request(
-                &identity,
-                &crashed.lease_id,
-                crashed.fencing_token,
+                &lineage.author,
+                &lease_id,
+                fencing_token,
                 2,
                 "replace-recovery-verification-denied",
                 json!({
@@ -517,6 +624,7 @@ async fn daemon_process_completes_partial_replace_but_keeps_runtime_job_non_pass
 /// Scenario 1: the daemon dies right after the PREPARED journal, before any
 /// target was replaced. Restart must abort the unapplied mutation, and the retry
 /// must produce exactly one committed mutation, one event, and one projection.
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_aborts_unapplied_review_record_then_commits_once() {
     let policy_digest = "b".repeat(64);
@@ -601,6 +709,7 @@ async fn daemon_process_aborts_unapplied_review_record_then_commits_once() {
 /// journal was committed and before the SQLite projection was written. Restart
 /// must recover project state and the journal, and the same-key replay must
 /// restore the projection before reporting success.
+#[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_process_recovers_replaced_review_record_and_restores_projection() {
     let policy_digest = "b".repeat(64);
@@ -844,6 +953,7 @@ async fn daemon_process_repairs_deleted_review_projection_on_same_key_replay() {
 }
 
 /// State captured after a real daemon died inside a `review.record` commit.
+#[cfg(debug_assertions)]
 struct CrashedReviewRecord {
     workspace: WorkspaceResult,
     review_key: String,
@@ -859,6 +969,7 @@ struct CrashedReviewRecord {
 /// `lease.acquire` still commits: a delegated reviewer session is bound to the
 /// accepting daemon boot, so a reviewer-owned lease cannot be carried across a
 /// restart and must be acquired on the same boot that records the review.
+#[cfg(debug_assertions)]
 async fn crash_during_review_record(
     fixture: &Fixture,
     policy_digest: &str,
@@ -908,7 +1019,7 @@ async fn crash_during_review_record(
     let state_before = fs::read(&fixture.state_path).expect("state before the review crash");
 
     let review_key = format!("{key}-review");
-    let _ = cli
+    let outcome = cli
         .call::<Value>(
             RpcMethod::OperationExecute,
             review_record_request(
@@ -920,6 +1031,15 @@ async fn crash_during_review_record(
             ),
         )
         .await;
+    if let Err(error) = &outcome {
+        assert_eq!(
+            error.stable_code(),
+            StableErrorCode::DaemonUnavailable,
+            "review.record was rejected before reaching the armed commit point: {error:?}"
+        );
+    } else {
+        panic!("review.record committed instead of reaching the armed commit point: {outcome:?}");
+    }
     daemon.wait_for_crash(&fixture.runtime_dir).await;
 
     CrashedReviewRecord {
@@ -932,6 +1052,7 @@ async fn crash_during_review_record(
 
 /// Re-establishes a reviewer lineage plus lease on the current daemon boot and
 /// retries `review.record` under `review_key`.
+#[cfg(debug_assertions)]
 async fn retry_review_record(
     cli: &DaemonClient,
     admin: &DaemonClient,
@@ -940,7 +1061,13 @@ async fn retry_review_record(
     review_key: &str,
     key: &str,
 ) -> (Identity, Value) {
-    break_orphaned_lease(admin, workspace, &format!("{key}-break")).await;
+    break_orphaned_lease(
+        admin,
+        workspace,
+        REVIEW_WORK_ITEM_ID,
+        &format!("{key}-break"),
+    )
+    .await;
     let root_session =
         open_root_for_work_item(cli, workspace, REVIEW_WORK_ITEM_ID, &format!("{key}-root")).await;
     let root = Identity::for_work_item(
@@ -976,20 +1103,27 @@ async fn retry_review_record(
     (root, response)
 }
 
-/// Breaks the lease left behind by a reviewer session that died with its boot.
+/// Breaks the lease left behind by a delegated child session that died with
+/// its boot.
 ///
 /// A delegated reviewer session cannot be revived on a later boot, so its lease
 /// can only be reclaimed through the confirmed Admin `lease.break` path.
-async fn break_orphaned_lease(admin: &DaemonClient, workspace: &WorkspaceResult, key: &str) {
+#[cfg(debug_assertions)]
+async fn break_orphaned_lease(
+    admin: &DaemonClient,
+    workspace: &WorkspaceResult,
+    work_item_id: &str,
+    key: &str,
+) {
     let mut request = params(json!({
         "operation":"lease.break",
         "payload":{
             "actor":{"role":"admin"},
-            "reason":"reviewer session died with its daemon boot",
+            "reason":"delegated child session died with its daemon boot",
         },
     }));
     request.workspace_id = Some(workspace.workspace_id.clone());
-    request.work_item_id = Some(REVIEW_WORK_ITEM_ID.to_owned());
+    request.work_item_id = Some(work_item_id.to_owned());
     request.idempotency_key = Some(key.to_owned());
     request.confirmation = Some(confirmation(key));
     admin
@@ -999,6 +1133,7 @@ async fn break_orphaned_lease(admin: &DaemonClient, workspace: &WorkspaceResult,
 }
 
 /// Exactly one projection row per Review Batch v2 table.
+#[cfg(debug_assertions)]
 fn one_row_per_review_projection() -> ReviewProjectionCounts {
     ReviewProjectionCounts {
         sessions: 1,
@@ -1011,10 +1146,9 @@ fn one_row_per_review_projection() -> ReviewProjectionCounts {
     }
 }
 
+#[cfg(debug_assertions)]
 struct CrashedToolsetReceipt {
     workspace: WorkspaceResult,
-    lease_id: String,
-    fencing_token: u64,
     plan: Value,
     receipt: Value,
     job_id: String,
@@ -1022,6 +1156,7 @@ struct CrashedToolsetReceipt {
     event_store_id: String,
 }
 
+#[cfg(debug_assertions)]
 async fn crash_during_toolset_receipt(
     fixture: &Fixture,
     policy_digest: &str,
@@ -1033,14 +1168,6 @@ async fn crash_during_toolset_receipt(
     let bootstrap_client = daemon_client(&fixture.runtime_dir, ClientKind::Cli);
     let admin = daemon_client(&fixture.runtime_dir, ClientKind::Admin);
     let workspace = register_and_cut_over(&bootstrap_client, &admin, fixture).await;
-    let first_session = open_root(
-        &bootstrap_client,
-        &workspace,
-        &format!("{submission_key}-bootstrap-session"),
-    )
-    .await;
-    let first_identity = Identity::new(&workspace, &first_session);
-    let (lease_id, fencing_token) = acquire_lease(&bootstrap_client, &first_identity).await;
     let event_store_id = runtime_status(&bootstrap_client).await["eventStoreId"]
         .as_str()
         .expect("event store id")
@@ -1055,17 +1182,37 @@ async fn crash_during_toolset_receipt(
     )
     .await;
     let client = daemon_client(&fixture.runtime_dir, ClientKind::Cli);
-    let reopened = open_root(
+    let root_session = open_root(
         &client,
         &workspace,
         &format!("{submission_key}-failpoint-session"),
     )
     .await;
-    assert_eq!(
-        reopened.session_id, first_session.session_id,
-        "the project lease remains bound to the stable session identity"
+    let root = Identity::for_work_item(
+        &workspace,
+        &root_session,
+        WORK_ITEM_ID,
+        AGENT_ID,
+        fixture.state_path.clone(),
     );
-    let identity = Identity::new(&workspace, &reopened);
+    // The receipt job is semantic work, so a delegated author task submits
+    // it and owns the project lease its job lease proof binds. Both must
+    // live on the same boot: the lease owner is the physical session id.
+    let lineage = open_review_lineage(
+        &client,
+        &fixture.runtime_dir,
+        &workspace,
+        &root,
+        &format!("{submission_key}-lineage"),
+    )
+    .await;
+    let (lease_id, fencing_token) = acquire_lease(
+        &client,
+        &lineage.author,
+        "task",
+        &format!("{submission_key}-lease"),
+    )
+    .await;
     let plan = verification_plan();
     let receipt = plan
         .receipt(
@@ -1095,9 +1242,11 @@ async fn crash_during_toolset_receipt(
     let submission = client
         .call::<Value>(
             RpcMethod::JobSubmit,
-            job_submit_request(&identity, payload, 1, submission_key),
+            job_submit_request(&lineage.author, payload, 1, submission_key),
         )
-        .await;
+        .await
+        .expect("toolset receipt job is admitted before waiting for the commit abort");
+    assert_eq!(submission["status"], "queued", "{submission}");
     daemon.wait_for_crash(&fixture.runtime_dir).await;
 
     let persisted = persisted_job_by_submission_key(&fixture.runtime_dir, submission_key);
@@ -1108,14 +1257,10 @@ async fn crash_during_toolset_receipt(
     );
     assert!(persisted.result.is_none());
     assert!(persisted.error_code.is_none());
-    if let Ok(response) = submission {
-        assert_eq!(response["jobId"], persisted.job_id);
-    }
+    assert_eq!(submission["jobId"], persisted.job_id);
 
     CrashedToolsetReceipt {
         workspace,
-        lease_id,
-        fencing_token,
         plan,
         receipt,
         job_id: persisted.job_id,
@@ -1124,6 +1269,7 @@ async fn crash_during_toolset_receipt(
     }
 }
 
+#[cfg(debug_assertions)]
 fn toolset_receipt_job_payload(
     plan: Value,
     receipt: Value,
@@ -1149,13 +1295,14 @@ fn toolset_receipt_job_payload(
     })
 }
 
+#[cfg(debug_assertions)]
 fn verification_payload_from_job(job: &Value, plan: Value) -> Value {
     json!({
         "toolsetJobId":job["jobId"],
         "plan":plan,
         "receiptId":job["result"]["receiptId"],
         "receiptDigest":job["result"]["receiptDigest"],
-        "sourceRevision":job["result"]["sourceRevision"],
+        "sourceRevision":job["result"]["committedRevision"],
         "planDigest":job["result"]["planDigest"],
         "methodologyDigest":job["result"]["methodologyDigest"],
         "policyDigest":job["result"]["policyDigest"],
@@ -1177,6 +1324,52 @@ fn persisted_job_by_submission_key(state_dir: &Path, submission_key: &str) -> Ru
         .expect("submitted job is durable before process abort")
 }
 
+/// Reads one durable runtime job row while the daemon is still running.
+///
+/// A job submitted by a delegated child session stays bound to that physical
+/// session, which dies with its daemon boot, so no session the new boot can
+/// open passes the `job.status` session check. The stale diagnosis therefore
+/// reads the row through a read-only SQLite connection that never blocks the
+/// live writer, and shapes it like the wire job for the shared assertions.
+#[cfg(debug_assertions)]
+fn live_job_wire(fixture: &Fixture, job_id: &str) -> Value {
+    let connection = rusqlite::Connection::open_with_flags(
+        fixture.database(),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .expect("runtime SQLite opens read-only");
+    let (status, result_json, error_code, started_at, finished_at): (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = connection
+        .query_row(
+            "SELECT status,result_json,error_code,started_at,finished_at FROM runtime_job_v1 WHERE job_id=?1",
+            [job_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("durable job row is readable");
+    json!({
+        "status": status,
+        "result": result_json
+            .map(|json| serde_json::from_str::<Value>(&json).expect("job result JSON")),
+        "errorCode": error_code,
+        "startedAtUnixMs": started_at.map(|_| 1),
+        "finishedAtUnixMs": finished_at.map(|_| 1),
+    })
+}
+
+#[cfg(debug_assertions)]
 fn assert_session_expired_job(job: &Value) {
     assert_eq!(job["status"], "stale", "{job}");
     assert_eq!(
@@ -1188,6 +1381,7 @@ fn assert_session_expired_job(job: &Value) {
     assert!(job["finishedAtUnixMs"].as_u64().is_some(), "{job}");
 }
 
+#[cfg(debug_assertions)]
 fn read_project_receipt(root: &Path, state: &Value) -> Value {
     let relative = state["toolsetReceiptRef"]["artifactRef"]
         .as_str()
@@ -1198,6 +1392,7 @@ fn read_project_receipt(root: &Path, state: &Value) -> Value {
     .expect("project receipt JSON")
 }
 
+#[cfg(debug_assertions)]
 fn single_journal_with_status(
     journals: &BTreeMap<String, Vec<u8>>,
     operation: &str,
@@ -1220,6 +1415,7 @@ fn single_journal_with_status(
     journal
 }
 
+#[cfg(debug_assertions)]
 fn assert_journal_status_count(
     journals: &BTreeMap<String, Vec<u8>>,
     operation: &str,
@@ -1240,6 +1436,7 @@ fn assert_journal_status_count(
     );
 }
 
+#[cfg(debug_assertions)]
 fn assert_target_progress(
     root: &Path,
     journal: &Value,
@@ -1371,6 +1568,7 @@ impl DaemonProcess {
         Self::start_inner(state_dir, allowed_root, policy_digest, None).await
     }
 
+    #[cfg(debug_assertions)]
     async fn start_with_commit_abort(
         state_dir: &Path,
         allowed_root: &Path,
@@ -1439,8 +1637,9 @@ impl DaemonProcess {
     /// was merely slow". The failure text therefore carries how long the daemon
     /// stayed alive, how many polls elapsed, and the daemon log, so the next
     /// occurrence is diagnosable from the test output alone.
+    #[cfg(debug_assertions)]
     async fn wait_for_crash(&mut self, state_dir: &Path) {
-        const BUDGET: Duration = Duration::from_secs(15);
+        const BUDGET: Duration = Duration::from_secs(30);
         let started = Instant::now();
         let deadline = started + BUDGET;
         let mut polls = 0_u32;
@@ -1502,10 +1701,6 @@ struct Identity {
 }
 
 impl Identity {
-    fn new(workspace: &WorkspaceResult, session: &SessionResult) -> Self {
-        Self::for_work_item(workspace, session, WORK_ITEM_ID, AGENT_ID, PathBuf::new())
-    }
-
     fn for_work_item(
         workspace: &WorkspaceResult,
         session: &SessionResult,
@@ -1625,13 +1820,18 @@ async fn open_root_for_work_item(
         .expect("root session opens through the process")
 }
 
-async fn acquire_lease(client: &DaemonClient, identity: &Identity) -> (String, u64) {
+async fn acquire_lease(
+    client: &DaemonClient,
+    identity: &Identity,
+    owner_role: &str,
+    idempotency_key: &str,
+) -> (String, u64) {
     let mut request = operation_request(
         identity,
         "lease.acquire",
-        json!({"owner":{"role":"root"},"ttlSeconds":300}),
+        json!({"owner":{"role":owner_role},"ttlSeconds":300}),
     );
-    request.idempotency_key = Some("lease-acquire-process-e2e".to_owned());
+    request.idempotency_key = Some(idempotency_key.to_owned());
     let response = client
         .call::<Value>(RpcMethod::OperationExecute, request)
         .await
@@ -1909,6 +2109,8 @@ fn daemon_log(state_dir: &Path) -> String {
 /// lineage must be rebuilt after every real process restart. `session_seed`
 /// keeps each rebuild's identities distinct.
 struct ReviewLineage {
+    author: Identity,
+    author_session_id: String,
     reviewer: Identity,
     reviewer_session_id: String,
 }
@@ -1920,7 +2122,7 @@ async fn open_review_lineage(
     root: &Identity,
     key: &str,
 ) -> ReviewLineage {
-    let adapter_id = format!("{key}-host");
+    let adapter_id = "codex".to_owned();
     let host = HostAdapter::register(state_dir, &adapter_id, &format!("{key}-host-register")).await;
 
     let (series, series_delegation) = open_delegated_child(
@@ -1932,14 +2134,14 @@ async fn open_review_lineage(
         "series",
         None,
         json!({
-            "operations":["document.save","lease.acquire","review.record"],
+            "operations":["document.save","evidence.finalize","evidence.record","lease.acquire","lease.release","review.record","verification.plan"],
             "capabilities":["review.specialty.general"],
             "paths":[{"kind":"project_root"}],
         }),
         &format!("{key}-series"),
     )
     .await;
-    open_delegated_child(
+    let (author, _) = open_delegated_child(
         cli,
         &host,
         workspace,
@@ -1948,7 +2150,7 @@ async fn open_review_lineage(
         "task",
         Some(&series_delegation),
         json!({
-            "operations":["document.save"],
+            "operations":["document.save","evidence.finalize","evidence.record","lease.acquire","lease.release","verification.plan"],
             "capabilities":[],
             "paths":[{"kind":"project_root"}],
         }),
@@ -1972,6 +2174,8 @@ async fn open_review_lineage(
     )
     .await;
     ReviewLineage {
+        author_session_id: author.session_id.clone(),
+        author,
         reviewer_session_id: reviewer.session_id.clone(),
         reviewer,
     }
@@ -1983,7 +2187,7 @@ async fn open_delegated_child(
     host: &HostAdapter,
     workspace: &WorkspaceResult,
     parent: &Identity,
-    adapter_id: &str,
+    _adapter_id: &str,
     child_role: &str,
     parent_delegation_id: Option<&str>,
     grant: Value,
@@ -1997,15 +2201,30 @@ async fn open_delegated_child(
         .expect("delegation input revision");
     let input_fingerprint = InputFingerprint::digest(&state_bytes).to_string();
     let now = now_unix_ms();
-    let mut create = parent.params(json!({
-        "childRole":child_role,
-        "parentDelegationId":parent_delegation_id,
-        "inputRevision":input_revision,
-        "inputFingerprint":input_fingerprint,
-        "deadlineUnixMs":now.saturating_add(600_000),
-        "adapterId":adapter_id,
-        "grant":grant,
-    }));
+    let create_payload = if parent_delegation_id.is_none() {
+        let flow = cli
+            .call::<Value>(RpcMethod::FlowNext, parent.params(json!({})))
+            .await
+            .unwrap_or_else(|error| panic!("{key} flow decision is available: {error:?}"));
+        let kind = flow["nextAction"]["kind"].as_str();
+        assert!(
+            kind == Some("delegate-series")
+                || (kind == Some("await-agent-work")
+                    && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
+            "{key} flow decision is not delegable: {flow}"
+        );
+        json!({"flowDecisionDigest":flow["decisionDigest"]})
+    } else {
+        json!({
+            "childRole":child_role,
+            "parentDelegationId":parent_delegation_id,
+            "inputRevision":input_revision,
+            "inputFingerprint":input_fingerprint,
+            "deadlineUnixMs":now.saturating_add(600_000),
+            "grant":grant,
+        })
+    };
+    let mut create = parent.params(create_payload);
     create.idempotency_key = Some(format!("{key}-create"));
     let created = cli
         .call::<Value>(RpcMethod::DelegationCreate, create)
@@ -2034,7 +2253,7 @@ async fn open_delegated_child(
 
     let mut accept = params(json!({
         "delegationId":delegation_id,
-        "claimId":Uuid::new_v4().to_string(),
+        "claimId":action["claimId"],
         "actionId":action["actionId"],
         "childSessionId":child_session_id,
         "expiresAtUnixMs":now.saturating_add(500_000),
@@ -2094,7 +2313,7 @@ impl HostAdapter {
             adapter_id: adapter_id.to_owned(),
             register_key: register_key.to_owned(),
         };
-        adapter.call(RpcMethod::HostCapabilities, json!({})).await;
+        adapter.call(RpcMethod::HostActionNext, json!({})).await;
         adapter
     }
 
@@ -2259,7 +2478,7 @@ fn delete_review_projections(database: &Path) {
     // short-circuit on an exact receipt and leave the rows missing.
     transaction
         .execute(
-            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v2'",
+            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v3'",
             [],
         )
         .expect("review projection receipts are removable");

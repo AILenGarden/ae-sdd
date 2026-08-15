@@ -1,7 +1,7 @@
 mod support;
 
 use ae_sdd_domain::{DesignRoute, InputFingerprint, ProcessPhase, StateRevision, WorkScale};
-use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteSelection};
+use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteLifecycle, RouteSelection};
 use ae_sdd_protocol::{ClientKind, ConfirmationRef, RpcMethod, WorkspaceMode};
 use ae_sdd_runtime::RuntimeConfig;
 use serde_json::json;
@@ -96,7 +96,10 @@ fn admits_one_hundred_agents_across_bounded_workspaces_and_rejects_overflow() {
             FlowEnvironment::new(
                 store_id,
                 InputFingerprint::digest(format!("workspace-{index}").as_bytes()),
-                RouteSelection::new(WorkScale::Small, DesignRoute::CodingPlan),
+                RouteLifecycle::Frozen(RouteSelection::new(
+                    WorkScale::Small,
+                    DesignRoute::CodingPlan,
+                )),
             ),
         );
         harness
@@ -141,6 +144,41 @@ fn admits_one_hundred_agents_across_bounded_workspaces_and_rejects_overflow() {
     overflow.idempotency_key = Some("session-open-overflow".to_owned());
     let response = harness.call(&mut overflow_connection, RpcMethod::SessionOpen, overflow);
     assert_eq!(stable_error(&response), "SUBSCRIBER_BACKPRESSURE");
+}
+
+#[test]
+fn default_capacity_allows_an_eleventh_workspace_after_recovery() {
+    let seeded = Harness::new(RuntimeConfig::default());
+    let mut seed_connection = seeded.connection(ClientKind::Cli);
+    for index in 0..10 {
+        register_workspace(
+            &seeded,
+            &mut seed_connection,
+            &format!("historical-{index}"),
+        );
+    }
+
+    let recovered = Harness::with_persistence(
+        RuntimeConfig::default(),
+        seeded.persistence.clone(),
+        12,
+        "recovered-endpoint-token".to_owned(),
+    );
+    recovered.runtime.recover().expect("runtime recovery");
+    let mut recovered_connection = recovered.connection(ClientKind::Cli);
+    let workspace = register_workspace(
+        &recovered,
+        &mut recovered_connection,
+        "eleventh-after-recovery",
+    );
+
+    assert_eq!(workspace.project_key, "project-eleventh-after-recovery");
+    let status = result(&recovered.call(
+        &mut recovered_connection,
+        RpcMethod::RuntimeStatus,
+        params(json!({}), 1_000),
+    ));
+    assert_eq!(status["workspaceCount"], 11);
 }
 
 fn confirmation(index: usize) -> ConfirmationRef {

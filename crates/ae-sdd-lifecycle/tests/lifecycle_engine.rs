@@ -625,6 +625,39 @@ fn gate_evidence_is_required_for_policy_gates() {
 }
 
 #[test]
+fn daemon_gate_pass_satisfies_policy_without_file_evidence() {
+    // RA-first: RouteSelected is now the second step (after RequirementAnalyzed)
+    // and requires only G-RA-FLOW-VIOLATION. The transition starts from
+    // RequirementAnalyzed, not Initialized.
+    let input = input(
+        LifecycleCommand::Transition {
+            target_phase: ProcessPhase::RouteSelected,
+        },
+        ProcessPhase::RequirementAnalyzed,
+        None,
+        AgentRole::Root,
+        WorkScale::Large,
+        DesignRoute::Dr,
+        Vec::new(),
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .with_passed_gate_ids(vec![
+        VerificationId::new("G-RA-FLOW-VIOLATION").expect("Gate id"),
+    ])
+    .expect("bounded daemon Gate pass");
+
+    assert_eq!(
+        LifecycleEngine::plan(&input)
+            .expect("daemon Gate pass is valid lifecycle authority")
+            .disposition(),
+        LifecycleDisposition::Permitted
+    );
+}
+
+#[test]
 fn file_lock_owner_ttl_expiry_and_malformed_metadata_fail_closed() {
     let path = path("crates/ae-sdd-lifecycle/src/lib.rs");
     let owner = session(1);

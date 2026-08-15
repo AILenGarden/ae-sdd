@@ -29,6 +29,29 @@ impl RuntimeService {
                 "caller-supplied session context is not authoritative",
             ));
         }
+        let effective_work_item_id = match payload.role {
+            WireAgentRole::Root => params.work_item_id.clone(),
+            _ => {
+                let child_session_id = params.session_id.as_deref().ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::DelegationAttestationFailed,
+                        "child session requires its attested sessionId",
+                    )
+                })?;
+                let delegation_id = payload.delegation_id.as_deref().ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::DelegationAttestationFailed,
+                        "child session requires a physical delegation",
+                    )
+                })?;
+                Some(self.delegation.delegated_session_work_item_authority(
+                    &workspace_id,
+                    child_session_id,
+                    delegation_id,
+                    params.work_item_id.as_deref(),
+                )?)
+            }
+        };
         let external_key_hash = hex::encode(Sha256::digest(payload.external_key.as_bytes()));
         let key = require_idempotency(params)?;
         let scope = format!(
@@ -39,7 +62,7 @@ impl RuntimeService {
             "bootId":self.boot_id.to_string(),
             "workspaceId":workspace_id,
             "agentId":agent_id,
-            "workItemId":params.work_item_id,
+            "workItemId":effective_work_item_id,
             "externalKeyHash":external_key_hash,
             "payload":payload,
         }))?;
@@ -110,6 +133,48 @@ impl RuntimeService {
             SessionId::from_str(&session_id)
                 .map_err(|_| schema_error("sessionId is not a UUID"))?;
 
+            if let Some(adapter_id) = payload.host_adapter_id.as_deref() {
+                if payload.role != WireAgentRole::Root {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::RoleOperationForbidden,
+                        "host adapter binding is only valid for Root sessions",
+                    ));
+                }
+                self.host.require_registered(adapter_id)?;
+                if let Some(bound) = self
+                    .persistence
+                    .load_record("session-host-binding/v1", &session_id)?
+                {
+                    let bound_adapter =
+                        bound
+                            .get("adapterId")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                RuntimeError::new(
+                                    StableErrorCode::ExternalStateConflict,
+                                    "durable session host binding is malformed",
+                                )
+                            })?;
+                    if bound_adapter != adapter_id {
+                        return Err(RuntimeError::new(
+                            StableErrorCode::DelegationAttestationFailed,
+                            "root session is already bound to another Host adapter",
+                        ));
+                    }
+                }
+            }
+
+            if let Some(previous) = existing.as_ref().filter(|previous| {
+                previous.workspace_id == workspace_id && previous.result.role != WireAgentRole::Root
+            }) && (params.session_id.as_deref() != Some(previous.result.session_id.as_str())
+                || payload.delegation_id.as_deref() != previous.delegation_id.as_deref())
+            {
+                return Err(RuntimeError::new(
+                    StableErrorCode::DelegationAttestationFailed,
+                    "child reattachment must present its exact durable sessionId and delegationId",
+                ));
+            }
+
             let authoritative_grant = match existing.as_ref() {
                 Some(previous) if previous.workspace_id == workspace_id => self
                     .validate_delegated_open(
@@ -130,7 +195,7 @@ impl RuntimeService {
                 existing.as_ref(),
                 &authoritative_grant,
                 engaged,
-                params.work_item_id.is_none(),
+                effective_work_item_id.is_none(),
             )?;
             if bootstrap_plan.steps().contains(&BootstrapStep::OpenSession) != existing.is_none() {
                 return Err(RuntimeError::new(
@@ -154,16 +219,32 @@ impl RuntimeService {
                         "external session snapshot changed during bootstrap",
                     )
                 })?;
-                if session.agent_id != agent_id || session.result.role != payload.role {
+                // A session whose TTL has elapsed is recoverable exactly like one
+                // closed explicitly: `active` alone is not the liveness predicate,
+                // because nothing clears it on natural expiry. Treating expiry as
+                // inactive is what lets a root session be reattached under a new
+                // host-supplied agent label instead of deadlocking on turn mismatch.
+                let recoverable = !session.active || now >= session.result.expires_at_unix_ms;
+                let recovered_root_label_drift = recoverable
+                    && session.result.role == WireAgentRole::Root
+                    && payload.role == WireAgentRole::Root;
+                if session.result.role != payload.role
+                    || (session.agent_id != agent_id && !recovered_root_label_drift)
+                {
                     return Err(turn_mismatch(
                         "external session identity is bound to another agent or role",
                     ));
                 }
+                if recovered_root_label_drift {
+                    session.agent_id.clone_from(&agent_id);
+                }
                 session.active = true;
                 session.grant = authoritative_grant;
                 session.result.engaged = engaged;
-                if params.work_item_id.is_some() {
-                    session.current_work_item = params.work_item_id.clone();
+                if effective_work_item_id.is_some() {
+                    session
+                        .current_work_item
+                        .clone_from(&effective_work_item_id);
                 }
                 session.result.expires_at_unix_ms = expires;
                 session.result.capability_token = self.sign_capability(CapabilitySignInput {
@@ -214,7 +295,7 @@ impl RuntimeService {
                     workspace_id: workspace_id.clone(),
                     agent_id,
                     external_key_hash: external_key_hash.clone(),
-                    current_work_item: params.work_item_id.clone(),
+                    current_work_item: effective_work_item_id.clone(),
                     result: result.clone(),
                     delegation_id: payload.delegation_id,
                     grant: authoritative_grant,
@@ -244,58 +325,17 @@ impl RuntimeService {
         if bootstrap_plan
             .steps()
             .contains(&BootstrapStep::ProjectContext)
-            && let Some(work_item_id) = params.work_item_id.as_deref()
+            && let Some(work_item_id) = effective_work_item_id.as_deref()
+            && let Err(error) =
+                self.project_session_context(&workspace_id, &result.session_id, work_item_id)
         {
-            let workspace = {
-                let state = self.lock_state()?;
-                let record = state
-                    .workspaces
-                    .get(&workspace_id)
-                    .ok_or_else(|| project_mismatch("workspace is not registered"))?;
-                let grant = state
-                    .sessions
-                    .get(&result.session_id)
-                    .ok_or_else(session_expired)?
-                    .grant
-                    .to_domain()?;
-                BusinessWorkspace {
-                    workspace_id: record.result.workspace_id.clone(),
-                    canonical_root: record.result.canonical_root.clone(),
-                    project_key: record.result.project_key.clone(),
-                    mode: record.result.mode,
-                    agent_role: Some(AgentRole::from(result.role)),
-                    agent_grant: Some(grant),
-                    caller_kind: None,
-                    inventory_generation: record.result.inventory_generation,
-                }
-            };
-            let projection_result = self.business.project_context(
-                &workspace,
-                work_item_id,
+            self.rollback_open(
+                &workspace_id,
+                &external_key_hash,
                 &result.session_id,
-                AgentRole::from(result.role),
-            );
-            let projection = match projection_result {
-                Ok(projection) => projection,
-                Err(error) => {
-                    self.rollback_open(
-                        &workspace_id,
-                        &external_key_hash,
-                        &result.session_id,
-                        previous_record.as_ref(),
-                    )?;
-                    return Err(error);
-                }
-            };
-            if let Err(error) = self.context.put(projection) {
-                self.rollback_open(
-                    &workspace_id,
-                    &external_key_hash,
-                    &result.session_id,
-                    previous_record.as_ref(),
-                )?;
-                return Err(error);
-            }
+                previous_record.as_ref(),
+            )?;
+            return Err(error);
         }
         let committed = match self.commit_session_identity(
             "session.open",
@@ -321,6 +361,20 @@ impl RuntimeService {
         } else {
             value
         };
+        if let Some(adapter_id) = payload.host_adapter_id.as_deref() {
+            self.persistence.store_record(
+                "session-host-binding/v1",
+                &result.session_id,
+                &json!({
+                    "schemaVersion":"session-host-binding/v1",
+                    "sessionId":result.session_id,
+                    "workspaceId":workspace_id.clone(),
+                    "adapterId":adapter_id,
+                    "boundBootId":self.boot_id.to_string(),
+                    "updatedAtUnixMs":now,
+                }),
+            )?;
+        }
         if !committed.replayed {
             self.append_runtime_event(
                 "session.opened",
@@ -331,6 +385,101 @@ impl RuntimeService {
             )?;
         }
         Ok(response)
+    }
+
+    /// Installs the context projection a session holds for its bound Work Item.
+    ///
+    /// Shared by the `ProjectContext` bootstrap step in `session.open` and the
+    /// bind-after-create path, so a session that names its Work Item at open
+    /// and a session that creates it mid-flight hold the exact same
+    /// projection.
+    pub(super) fn project_session_context(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        work_item_id: &str,
+    ) -> RuntimeResult<()> {
+        let (workspace, role) = {
+            let state = self.lock_state()?;
+            let record = state
+                .workspaces
+                .get(workspace_id)
+                .ok_or_else(|| project_mismatch("workspace is not registered"))?;
+            let session = state.sessions.get(session_id).ok_or_else(session_expired)?;
+            (
+                BusinessWorkspace {
+                    workspace_id: record.result.workspace_id.clone(),
+                    canonical_root: record.result.canonical_root.clone(),
+                    project_key: record.result.project_key.clone(),
+                    mode: record.result.mode,
+                    agent_role: Some(AgentRole::from(session.result.role)),
+                    agent_grant: Some(session.grant.to_domain()?),
+                    caller_kind: None,
+                    inventory_generation: record.result.inventory_generation,
+                },
+                session.result.role,
+            )
+        };
+        let projection = self.business.project_context(
+            &workspace,
+            work_item_id,
+            session_id,
+            AgentRole::from(role),
+        )?;
+        self.context.put(projection).map(|_| ())
+    }
+
+    /// Binds the calling session to the Work Item a successful
+    /// `workitem.create` just created.
+    ///
+    /// `workitem.create` is Workspace-scoped: the Work Item is its output, so
+    /// the request cannot name it and the business authority mints the
+    /// business key. Without this binding the session that ran the bootstrap
+    /// create would stay unbound and every later Hook would be unattributed —
+    /// the first-turn deadlock. The binding persists through the same durable
+    /// session-identity path `session.open` uses and installs the same
+    /// context projection, so creating a Work Item and opening a session on
+    /// one become interchangeable.
+    ///
+    /// Binding never fails the underlying operation: the create already
+    /// committed in the business authority, so reporting a failure here would
+    /// tell the caller a created Work Item does not exist and invite a
+    /// duplicate retry. The in-memory binding stands on a degraded commit and
+    /// the next session identity write (heartbeat, reopen) repairs the
+    /// durable record. A caller without a session (admin/CLI) has nothing to
+    /// bind and is skipped.
+    pub(super) fn bind_created_work_item(
+        &self,
+        params: &RequestParams<Value>,
+        value: &Value,
+    ) -> RuntimeResult<()> {
+        let Some((session_id, work_item_id)) = created_work_item_binding(params, value) else {
+            return Ok(());
+        };
+        let workspace_id = {
+            let mut state = self.lock_state()?;
+            let Some(session) = state.sessions.get_mut(&session_id) else {
+                return Ok(());
+            };
+            session.current_work_item = Some(work_item_id.clone());
+            session.workspace_id.clone()
+        };
+        let committed = self
+            .persist_session(&session_id)
+            .and_then(|()| self.project_session_context(&workspace_id, &session_id, &work_item_id));
+        if let Err(error) = committed {
+            drop(self.append_runtime_event(
+                "session.work-item.bind-degraded",
+                json!({
+                    "errorCode":format!("{:?}", error.code()),
+                    "message":error.message(),
+                }),
+                Some(workspace_id),
+                Some(session_id),
+                Some(work_item_id),
+            ));
+        }
+        Ok(())
     }
 
     fn plan_session_bootstrap(
@@ -502,6 +651,19 @@ impl RuntimeService {
                 .ok_or_else(session_expired)?;
             let previous = session.clone();
             session.active = false;
+            // §9.4 attach point 4: an explicit session close ends the child's
+            // binding along with the session. Root sessions carry no
+            // delegation_id and resolve to a no-op. Releasing here (before the
+            // identity commit) means a failed commit rolls the binding back to
+            // its prior state too — `release_by_delegation` is idempotent, so a
+            // later retry does not double-stamp.
+            if let Some(delegation_id) = previous.delegation_id.as_deref() {
+                self.delegation.bindings().release_by_delegation(
+                    delegation_id,
+                    crate::host_execution_binding::released_reason::SESSION_CLOSED,
+                    self.clock.now_unix_ms(),
+                )?;
+            }
             (to_value(&session.result)?, previous)
         };
         let committed = match self.commit_session_identity(
@@ -652,6 +814,18 @@ impl RuntimeService {
             })
     }
 
+    /// Replays a stored session-identity receipt without restoring its
+    /// after-image.
+    ///
+    /// The receipt is historical: the session may have bound a Work Item,
+    /// refreshed its grant, or completed a compact since the receipt
+    /// committed. Writing the after-image back would roll those mutations off
+    /// the in-memory session — a replayed `session.open` would silently unbind
+    /// the Work Item a later `workitem.create` installed. The replay therefore
+    /// only re-checks the immutable identity and re-signs the capability from
+    /// the live record, so the returned proof matches the session's current
+    /// grant, engagement and expiry; the stored response body is returned
+    /// as-is apart from that fresh token.
     fn restore_replayed_session(&self, snapshot: &RuntimeIdentitySnapshot) -> RuntimeResult<Value> {
         let durable = snapshot.session.as_ref().ok_or_else(|| {
             RuntimeError::new(
@@ -659,17 +833,7 @@ impl RuntimeService {
                 "replayed session identity receipt lacks a session after-image",
             )
         })?;
-        let capability_token = self.sign_capability(CapabilitySignInput {
-            workspace_id: &durable.workspace_id,
-            session_id: &durable.session_id,
-            role: durable.role,
-            delegation_id: durable.delegation_id.as_deref(),
-            grant: &durable.grant,
-            engaged: durable.engaged,
-            issued_at: durable.updated_at_unix_ms,
-            expires_at: durable.expires_at_unix_ms,
-        })?;
-        {
+        let capability_token = {
             let mut state = self.lock_state()?;
             let session = state
                 .sessions
@@ -686,17 +850,22 @@ impl RuntimeService {
                     "replayed session identity differs from the in-memory session",
                 ));
             }
-            session.current_work_item = durable.current_work_item.clone();
-            session.grant = durable.grant.clone();
-            session.active = durable.status == "active";
-            session.result.engaged = durable.engaged;
-            session.result.context_generation = durable.context_generation;
-            session.result.expires_at_unix_ms = durable.expires_at_unix_ms;
+            let capability_token = self.sign_capability(CapabilitySignInput {
+                workspace_id: &session.workspace_id,
+                session_id: &session.result.session_id,
+                role: session.result.role,
+                delegation_id: session.delegation_id.as_deref(),
+                grant: &session.grant,
+                engaged: session.result.engaged,
+                issued_at: self.clock.now_unix_ms(),
+                expires_at: session.result.expires_at_unix_ms,
+            })?;
             session
                 .result
                 .capability_token
                 .clone_from(&capability_token);
-        }
+            capability_token
+        };
         let mut response = snapshot.response.clone();
         response
             .as_object_mut()
@@ -784,13 +953,21 @@ impl RuntimeService {
                             "child session lacks its typed physical attestation",
                         )
                     })?;
-                if attestation.accepted_boot_id != self.boot_id.to_string()
-                    || attestation.expires_at_unix_ms <= self.clock.now_unix_ms()
+                // `accepted_boot_id` identifies the daemon that established
+                // the immutable physical proof. It is historical evidence,
+                // not a requirement that the daemon may never restart. The
+                // capability returned below is freshly signed for the current
+                // boot; lineage, child identity, deadline, and grant equality
+                // remain the reattachment boundary.
+                if self
+                    .delegation
+                    .deadline_unix_ms(session_id, delegation_id)?
+                    <= self.clock.now_unix_ms()
                     || attestation.grant.normalized()? != projection.grant.normalized()?
                 {
                     return Err(RuntimeError::new(
                         StableErrorCode::DelegationAttestationFailed,
-                        "child session grant or boot differs from its physical attestation",
+                        "child session grant differs from its physical attestation or delegation deadline expired",
                     ));
                 }
                 let grant = attestation.grant.normalized()?;
@@ -953,6 +1130,117 @@ impl RuntimeService {
             )),
         }
     }
+
+    /// Allocates the turn for one Hook event when the host cannot name it.
+    ///
+    /// A Hook runs as a short-lived host subprocess with no durable state, so
+    /// it cannot know the monotonic turn sequence its own session is on. The
+    /// daemon owns that sequence, so it allocates here instead of rejecting the
+    /// event. `hook.user_prompt` is the turn boundary and opens a new turn;
+    /// the other three run inside a turn already in flight and join it. A Hook
+    /// that arrives before any prompt still gets turn 1 rather than a failure,
+    /// because a host may not implement `UserPromptSubmit` at all.
+    pub(super) fn allocate_turn(
+        &self,
+        session_id: &str,
+        method: RpcMethod,
+    ) -> RuntimeResult<(String, u64)> {
+        let mut state = self.lock_state()?;
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(session_expired)?;
+        let opens_turn = method == RpcMethod::HookUserPrompt || session.current_turn_id.is_none();
+        if !opens_turn {
+            let turn_id = session
+                .current_turn_id
+                .clone()
+                .ok_or_else(|| turn_mismatch("session has no turn in flight"))?;
+            return Ok((turn_id, session.current_turn_seq));
+        }
+        let turn_id = Uuid::new_v4().to_string();
+        let turn_seq = session.current_turn_seq.saturating_add(1);
+        session.current_turn_id = Some(turn_id.clone());
+        session.current_turn_seq = turn_seq;
+        Ok((turn_id, turn_seq))
+    }
+
+    pub(super) fn hook_turn_snapshot(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<(Option<String>, u64)> {
+        let state = self.lock_state()?;
+        let session = state.sessions.get(session_id).ok_or_else(session_expired)?;
+        Ok((session.current_turn_id.clone(), session.current_turn_seq))
+    }
+
+    pub(super) fn restore_hook_turn(
+        &self,
+        session_id: &str,
+        snapshot: &(Option<String>, u64),
+    ) -> RuntimeResult<()> {
+        let mut state = self.lock_state()?;
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(session_expired)?;
+        session.current_turn_id = snapshot.0.clone();
+        session.current_turn_seq = snapshot.1;
+        Ok(())
+    }
+
+    /// Resolves the Work Item a Hook event is attributed to.
+    ///
+    /// Hooks are Session-scoped, so the Work Item is attribution rather than
+    /// authority and stays absent until routing binds one. A caller may not
+    /// claim a Work Item that contradicts the session binding; omitting the
+    /// field always adopts the binding.
+    pub(super) fn resolve_hook_work_item(
+        &self,
+        session_id: &str,
+        requested: Option<&str>,
+    ) -> RuntimeResult<Option<String>> {
+        let state = self.lock_state()?;
+        let session = state.sessions.get(session_id).ok_or_else(session_expired)?;
+        let bound = session.current_work_item.clone();
+        match (requested.filter(|value| !value.trim().is_empty()), &bound) {
+            (Some(requested), Some(bound)) if requested != bound.as_str() => Err(turn_mismatch(
+                "Hook Work Item differs from the session binding",
+            )),
+            (Some(requested), _) => Ok(Some(requested.to_owned())),
+            (None, _) => Ok(bound),
+        }
+    }
+}
+
+/// Resolves the session-to-Work-Item binding a successful operation result
+/// implies, when it implies one.
+///
+/// Only `workitem.create` binds: every other Work Item operation already ran
+/// under the Work Item it names. The business authority's returned
+/// `data.workItemId` wins — it echoes an explicitly named item and is the
+/// only source for a daemon-minted one; the request field is the fallback for
+/// an adapter that omits the echo.
+fn created_work_item_binding(
+    params: &RequestParams<Value>,
+    value: &Value,
+) -> Option<(String, String)> {
+    let is_create = params
+        .payload
+        .get("operation")
+        .and_then(Value::as_str)
+        .and_then(|name| ae_sdd_operations::OperationName::from_str(name).ok())
+        == Some(ae_sdd_operations::OperationName::WorkItemCreate);
+    if !is_create {
+        return None;
+    }
+    let session_id = params.session_id.clone()?;
+    let work_item_id = value
+        .get("data")
+        .and_then(|data| data.get("workItemId"))
+        .and_then(Value::as_str)
+        .or(params.work_item_id.as_deref())?;
+    Some((session_id, work_item_id.to_owned()))
 }
 
 fn capability_grant_digest(
@@ -985,6 +1273,69 @@ fn capability_grant_digest(
 mod tests {
     use super::*;
     use crate::GrantPathWire;
+
+    fn operation_params(
+        operation: &str,
+        session_id: Option<&str>,
+        work_item_id: Option<&str>,
+    ) -> RequestParams<Value> {
+        RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: None,
+            agent_id: None,
+            session_id: session_id.map(str::to_owned),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: work_item_id.map(str::to_owned),
+            lease_id: None,
+            fencing_token: None,
+            expected_revision: None,
+            idempotency_key: None,
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({"operation":operation,"payload":{}}),
+        }
+    }
+
+    #[test]
+    fn only_a_workitem_create_result_implies_a_session_binding() {
+        let params = operation_params("state.transition", Some("session"), Some("WORK"));
+        let value = json!({"data":{"workItemId":"WORK"}});
+        assert_eq!(created_work_item_binding(&params, &value), None);
+    }
+
+    #[test]
+    fn a_create_without_a_session_binds_nothing() {
+        // An admin/CLI caller has no session to bind; the create still
+        // succeeds and the binding step skips it silently.
+        let params = operation_params("workitem.create", None, None);
+        let value = json!({"data":{"workItemId":"WORK-MINTED"}});
+        assert_eq!(created_work_item_binding(&params, &value), None);
+    }
+
+    #[test]
+    fn the_returned_business_key_wins_over_the_request_field() {
+        let params = operation_params("workitem.create", Some("session"), Some("WORK-NAMED"));
+        let value = json!({"data":{"workItemId":"WORK-ECHOED"}});
+        assert_eq!(
+            created_work_item_binding(&params, &value),
+            Some(("session".to_owned(), "WORK-ECHOED".to_owned()))
+        );
+    }
+
+    #[test]
+    fn the_request_field_is_the_fallback_when_the_result_omits_the_key() {
+        let params = operation_params("workitem.create", Some("session"), Some("WORK-NAMED"));
+        assert_eq!(
+            created_work_item_binding(&params, &json!({"ok":true})),
+            Some(("session".to_owned(), "WORK-NAMED".to_owned()))
+        );
+        let unnamed = operation_params("workitem.create", Some("session"), None);
+        assert_eq!(
+            created_work_item_binding(&unnamed, &json!({"ok":true})),
+            None
+        );
+    }
 
     #[test]
     fn capability_digest_binds_the_actual_operation_and_path_grant() {

@@ -117,7 +117,7 @@ impl Harness {
         let state_path = workspace_root
             .path()
             .join(".auto-engineering/typed-e2e/state.json");
-        let document_path = workspace_root.path().join("docs/story.md");
+        let document_path = workspace_root.path().join("ae-sdd-doc/Story/story.md");
         Self {
             runtime,
             persistence,
@@ -144,6 +144,7 @@ impl Harness {
                 endpoint_token: SecretString::new(self.endpoint_token.clone()),
                 expected_boot_id: self.runtime.boot_id().to_string(),
                 expected_policy_digest: self.runtime.policy_digest().to_owned(),
+                adapter_id: None,
             })
             .expect("handshake serializes"),
         );
@@ -197,11 +198,15 @@ impl CliIdentity {
 fn prepare_workspace(root: &TempDir) {
     let state_dir = root.path().join(".auto-engineering/typed-e2e");
     fs::create_dir_all(&state_dir).expect("state dir");
-    fs::create_dir_all(root.path().join("docs")).expect("docs dir");
+    fs::create_dir_all(root.path().join("ae-sdd-doc/Story")).expect("story doc dir");
     fs::create_dir_all(root.path().join("draft")).expect("draft dir");
     fs::create_dir_all(root.path().join("evidence")).expect("evidence dir");
     fs::create_dir_all(root.path().join("src")).expect("source dir");
-    fs::write(root.path().join("docs/story.md"), "# original story\n").expect("document");
+    fs::write(
+        root.path().join("ae-sdd-doc/Story/story.md"),
+        "# original story\n",
+    )
+    .expect("document");
     fs::write(root.path().join("draft/story.md"), "# updated story\n").expect("draft");
     fs::write(root.path().join("evidence/result.json"), "{\"ok\":true}\n").expect("evidence");
     fs::write(
@@ -240,7 +245,7 @@ fn prepare_workspace(root: &TempDir) {
                     "codingRound":1
                 }
             },
-            "documentPaths":{"STORY":"docs/story.md"}
+            "documentPaths":{"STORY":"ae-sdd-doc/Story/story.md"}
         }))
         .expect("state serializes"),
     )
@@ -434,8 +439,8 @@ pub(super) fn open_review_lineage_for_specialties(
         None,
         json!({
             // A child grant may never widen its parent, so the Series carries
-            // the lease release its Reviewer child needs.
-            "operations":["document.save","lease.acquire","lease.release","review.record"],
+            // every operation its author and Reviewer children execute.
+            "operations":["document.save","evidence.finalize","evidence.record","lease.acquire","lease.release","lease.renew","lease.status","review.record","verification.plan"],
             "capabilities":capabilities,
             "paths":[{"kind":"project_root"}]
         }),
@@ -457,7 +462,7 @@ pub(super) fn open_review_lineage_for_specialties(
         "task",
         Some(&series_delegation_id),
         json!({
-            "operations":["document.save"],
+            "operations":["document.save","evidence.finalize","evidence.record","lease.acquire","lease.release","lease.renew","lease.status","verification.plan"],
             "capabilities":[],
             "paths":[{"kind":"project_root"}]
         }),
@@ -518,26 +523,82 @@ fn open_delegated_child(
 ) -> (SessionResult, String) {
     let child_session_id = Uuid::new_v4().to_string();
     let ack_id = Uuid::new_v4().to_string();
-    let claim_id = Uuid::new_v4().to_string();
     let state_bytes = fs::read(&harness.state_path).expect("delegation state");
     let state: Value = serde_json::from_slice(&state_bytes).expect("delegation state JSON");
     let input_revision = state["revision"].as_u64().expect("delegation revision");
     let input_fingerprint = hex::encode(Sha256::digest(&state_bytes));
     let deadline_unix_ms = harness.now_unix_ms.saturating_add(60_000);
     let expires_at_unix_ms = harness.now_unix_ms.saturating_add(50_000);
-    let mut create = trusted_params(
-        parent_identity,
+    let create_payload = if parent_delegation_id.is_none() {
+        let flow = success(&call(
+            &harness.runtime,
+            cli,
+            RpcMethod::FlowNext,
+            trusted_params(parent_identity, json!({})),
+        ));
+        let kind = flow["nextAction"]["kind"].as_str();
+        assert!(
+            kind == Some("delegate-series")
+                || (kind == Some("await-agent-work")
+                    && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
+            "Root flow decision is not delegable: {flow}"
+        );
+        let decision_digest = flow["decisionDigest"]
+            .as_str()
+            .unwrap_or_else(|| panic!("delegable Root decision lacks decisionDigest: {flow}"));
+        let intent_key = format!(
+            "{}\0{}\0{}",
+            parent_identity.workspace_id, parent_identity.work_item_id, decision_digest
+        );
+        let intent = harness
+            .persistence
+            .load_record("flow-delegation-intent/v1", &intent_key)
+            .expect("flow delegation intent lookup")
+            .unwrap_or_else(|| panic!("flow.next did not persist its delegation intent: {flow}"));
+        assert_eq!(
+            intent["workspaceId"], parent_identity.workspace_id,
+            "{intent}"
+        );
+        assert_eq!(
+            intent["workItemId"], parent_identity.work_item_id,
+            "{intent}"
+        );
+        if flow["nextAction"]["kind"] == "delegate-series" {
+            assert_eq!(
+                intent["seriesKind"], flow["nextAction"]["seriesKind"],
+                "{intent}"
+            );
+        }
+        assert_eq!(intent["decisionDigest"], decision_digest, "{intent}");
+        assert_eq!(
+            intent["stateRevision"], flow["stateRevision"],
+            "flow delegation intent must bind the projected revision: {intent}"
+        );
+        assert!(
+            intent["inputFingerprint"]
+                .as_str()
+                .is_some_and(|value| value.len() == 64),
+            "flow delegation intent must bind a digest-shaped input: {intent}"
+        );
+        json!({"flowDecisionDigest":decision_digest})
+    } else {
         json!({
             "childRole":child_role,
             "parentDelegationId":parent_delegation_id,
             "inputRevision":input_revision,
             "inputFingerprint":input_fingerprint,
             "deadlineUnixMs":deadline_unix_ms,
-            "adapterId":adapter_id,
             "grant":grant
-        }),
-    );
+        })
+    };
+    let mut create = trusted_params(parent_identity, create_payload);
     create.idempotency_key = Some(format!("{key}-create"));
+    let create_wire = serde_json::to_value(&create).expect("delegation.create request serializes");
+    serde_json::from_value::<RequestParams<Value>>(create_wire.clone()).unwrap_or_else(|error| {
+        panic!(
+            "delegation.create RequestParams fail their own wire contract: {error}: {create_wire}"
+        )
+    });
     let created = success(&call(
         &harness.runtime,
         cli,
@@ -569,7 +630,7 @@ fn open_delegated_child(
     assert_success(&call(&harness.runtime, host, RpcMethod::HostActionAck, ack));
     let mut accept = plain_params(json!({
         "delegationId":delegation_id,
-        "claimId":claim_id,
+        "claimId":action["claimId"],
         "actionId":action["actionId"],
         "childSessionId":child_session_id,
         "expiresAtUnixMs":expires_at_unix_ms
@@ -736,10 +797,16 @@ pub(super) fn write_args(
     values
 }
 
-pub(super) fn lease_args(lease_id: &str, fencing: u64, key: &str, renew: bool) -> Vec<String> {
+pub(super) fn lease_args(
+    lease_id: &str,
+    fencing: u64,
+    key: &str,
+    renew: bool,
+    owner_role: &str,
+) -> Vec<String> {
     let mut values = args(&[
         "--owner",
-        "{\"role\":\"root\"}",
+        &format!("{{\"role\":\"{owner_role}\"}}"),
         "--lease-id",
         lease_id,
         "--fencing-token",
@@ -886,12 +953,28 @@ pub(super) fn install_completed_review_authority(
         _ => &["general"],
     };
 
-    // The completion milestone only closes after evidence.record and
-    // evidence.finalize, and the review must cite the evidence id those
-    // operations put in the ledger.
-    let evidence_id = close_evidence_milestones(harness, cli, workspace, root_identity, key);
+    // Some completion fixtures seed `code-reviewed` up front because the test
+    // is about terminal governance, not the preceding transition. A physical
+    // execution lineage must still be opened from an agent-work phase, so open
+    // it against the immediately preceding `test-running` projection and then
+    // restore the seeded after-image before evidence/review bind their inputs.
+    let seeded_state = read_state_value(harness);
+    let seeded_code_reviewed =
+        seeded_state["storyStates"][work_item_id]["phase"].as_str() == Some("code-reviewed");
+    if seeded_code_reviewed {
+        let mut delegable = seeded_state.clone();
+        delegable["storyStates"][work_item_id]["phase"] = json!("test-running");
+        delegable["storyStates"][work_item_id]["currentPhase"] = json!("test-running");
+        fs::write(
+            &harness.state_path,
+            serde_json::to_vec_pretty(&delegable).expect("delegable review fixture serializes"),
+        )
+        .expect("delegable review fixture");
+    }
 
-    let (_author, reviewers) = open_review_lineage_for_specialties(
+    // The lineage opens first: the delegated author task drives the semantic
+    // evidence operations the root orchestrator may no longer execute itself.
+    let (author, reviewers) = open_review_lineage_for_specialties(
         harness,
         cli,
         workspace,
@@ -899,6 +982,24 @@ pub(super) fn install_completed_review_authority(
         specialties,
         key,
     );
+    if seeded_code_reviewed {
+        fs::write(
+            &harness.state_path,
+            serde_json::to_vec_pretty(&seeded_state).expect("seeded review state serializes"),
+        )
+        .expect("restore seeded review state");
+    }
+    let author_identity = identity_for_work_item(
+        workspace,
+        &author,
+        work_item_id,
+        &format!("{key}-author-agent"),
+    );
+
+    // The completion milestone only closes after evidence.record and
+    // evidence.finalize, and the review must cite the evidence id those
+    // operations put in the ledger.
+    let evidence_id = close_evidence_milestones(harness, cli, workspace, &author_identity, key);
 
     for (index, (specialty, reviewer)) in specialties.iter().zip(reviewers.iter()).enumerate() {
         let lineage_key = format!("{key}-{specialty}");
@@ -929,8 +1030,6 @@ pub(super) fn install_completed_review_authority(
         let fencing = lease["data"]["fencingToken"]
             .as_u64()
             .expect("reviewer fencing token");
-
-        seal_review_evidence(harness, workspace, work_item_id);
 
         let mut record = operation_params(
             &reviewer_identity,
@@ -1006,9 +1105,10 @@ pub(super) fn install_completed_review_authority(
     }
 }
 
-/// Drives `evidence.record` then `evidence.finalize` as the Root, which is what
-/// advances the completion milestone `None -> ImplementationVerified ->
-/// ReviewReady`. Returns the daemon-derived evidence id the review must cite.
+/// Drives `evidence.record` then `evidence.finalize` as the delegated author
+/// task, which is what advances the completion milestone `None ->
+/// ImplementationVerified -> ReviewReady`. Returns the daemon-derived evidence
+/// id the review must cite.
 ///
 /// `Completed` may only be committed from `GovernanceClosed`, and that milestone
 /// is only reachable through this chain followed by `review.record`, so a
@@ -1017,13 +1117,13 @@ fn close_evidence_milestones(
     harness: &Harness,
     cli: &mut ConnectionState,
     workspace: &WorkspaceResult,
-    root_identity: &CliIdentity,
+    author_identity: &CliIdentity,
     key: &str,
 ) -> String {
     let mut lease_request = operation_params(
-        root_identity,
+        author_identity,
         "lease.acquire",
-        json!({"owner":{"role":"root"},"ttlSeconds":300}),
+        json!({"owner":{"role":"task"},"ttlSeconds":300}),
     );
     lease_request.idempotency_key = Some(format!("{key}-evidence-lease"));
     let lease = success(&call(
@@ -1042,7 +1142,7 @@ fn close_evidence_milestones(
 
     let input = authoritative_input_fingerprint(harness, workspace);
     let mut record = operation_params(
-        root_identity,
+        author_identity,
         "evidence.record",
         json!({
             "artifactPath":"evidence/result.json",
@@ -1066,7 +1166,7 @@ fn close_evidence_milestones(
         .unwrap_or_else(|| panic!("evidence.record returns its evidence id: {recorded}"))
         .to_owned();
 
-    let mut finalize = operation_params(root_identity, "evidence.finalize", json!({}));
+    let mut finalize = operation_params(author_identity, "evidence.finalize", json!({}));
     finalize.lease_id = Some(lease_id.clone());
     finalize.fencing_token = Some(fencing);
     finalize.expected_revision = Some(current_revision(harness));
@@ -1079,9 +1179,9 @@ fn close_evidence_milestones(
     ));
 
     let mut release = operation_params(
-        root_identity,
+        author_identity,
         "lease.release",
-        json!({"owner":{"role":"root"}}),
+        json!({"owner":{"role":"task"}}),
     );
     release.lease_id = Some(lease_id);
     release.fencing_token = Some(fencing);
@@ -1107,8 +1207,9 @@ const TIER2_STORY_DOCUMENT: &str = "# Story\n\nAC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-
 ///
 /// A Tier 2 clean batch is only sealed once the deterministic final proof
 /// (`G-CODEPLAN-SRC`, `G-14`, `G-08`) evaluates PASS, which requires an approved
-/// plan carrying the full 14-row verification matrix, AC ids that the Story
-/// document actually declares, and source reads that exist on disk.
+/// plan whose verification matrix covers every AC the Story document declares
+/// (this fixture uses 14 rows for its 14 ACs; no fixed row count is required),
+/// and source reads that exist on disk.
 pub(super) fn install_tier2_review_prerequisites(
     harness: &Harness,
     work_item_id: &str,
@@ -1160,6 +1261,7 @@ pub(super) fn install_tier2_review_prerequisites(
     state["executionRuntime"] = json!({
         "schemaVersion":1,
         "queueDigest":format!("sha256:{}", "1".repeat(64)),
+        "capsuleDigest":format!("sha256:{}", "2".repeat(64)),
         "activeSliceOrdinal":1,
         "completionMilestone":"none"
     });
@@ -1198,50 +1300,6 @@ fn authoritative_input_fingerprint(harness: &Harness, workspace: &WorkspaceResul
     authoritative_review_workspace_input_fingerprint(&business, &state)
         .expect("authoritative review input fingerprint")
         .to_string()
-}
-
-/// Re-pins the active entries of the sealed manifest to the current Review
-/// input, patching the manifest `evidence.finalize` projected from the ledger
-/// rather than replacing it.
-///
-/// A clean contribution rejects an entry whose fingerprint is stale, and every
-/// accepted mutation can move the input, so the pin is refreshed before each
-/// contribution. Only `inputFingerprint` and `contentHash` change: the
-/// completion milestone binds the manifest through `verification_digest`, which
-/// excludes exactly this field so a re-pin cannot roll the milestone back.
-fn seal_review_evidence(harness: &Harness, workspace: &WorkspaceResult, work_item_id: &str) {
-    let input = authoritative_input_fingerprint(harness, workspace);
-    let path = harness.workspace_root.path().join(format!(
-        ".auto-engineering/{work_item_id}/evidence/manifest.json"
-    ));
-    let mut manifest: Value =
-        serde_json::from_slice(&fs::read(&path).expect("finalized manifest bytes"))
-            .expect("finalized manifest JSON");
-    let entries = manifest["entries"]
-        .as_array_mut()
-        .expect("finalized manifest entries");
-    for entry in entries.iter_mut() {
-        let active = entry
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("active")
-            == "active";
-        if active {
-            entry["inputFingerprint"] = json!(input);
-        }
-    }
-    let mut canonical = manifest.clone();
-    canonical
-        .as_object_mut()
-        .expect("manifest object")
-        .retain(|key, _| key != "contentHash" && !key.starts_with('_'));
-    manifest["contentHash"] = json!(format!(
-        "sha256:{}",
-        hex::encode(Sha256::digest(
-            serde_json::to_vec(&canonical).expect("manifest canonical bytes")
-        ))
-    ));
-    fs::write(path, serde_json::to_vec(&manifest).expect("manifest JSON")).expect("manifest file");
 }
 
 fn current_revision(harness: &Harness) -> u64 {

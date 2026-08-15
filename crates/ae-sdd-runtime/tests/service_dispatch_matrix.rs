@@ -7,7 +7,7 @@ use ae_sdd_domain::{
     AgentRole, BootId, DesignRoute, EventStoreId, InputFingerprint, ProcessPhase, StateRevision,
     WorkScale,
 };
-use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteSelection};
+use ae_sdd_flow::{FlowEnvironment, FlowInput, FlowSnapshot, RouteLifecycle, RouteSelection};
 use ae_sdd_protocol::{
     ClientKind, HandshakeRequest, JsonRpcRequest, PROTOCOL_RANGE_V1, RequestParams, RpcMethod,
     SecretString, StableErrorCode, WorkspaceMode,
@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use support::{
-    Harness, TestClock, TestResolver, open_root_session, params, register_workspace, result,
-    session_params, stable_error,
+    Harness, TestClock, TestResolver, create_root_series_delegation, flow_decision_digest,
+    open_root_session, params, register_workspace, result, session_params, stable_error,
 };
 
 #[derive(Default)]
@@ -147,6 +147,7 @@ struct AcceptedDelegation {
     root: SessionResult,
     delegation_id: String,
     child_session_id: String,
+    input_fingerprint: String,
 }
 
 fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
@@ -171,24 +172,18 @@ fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
         &format!("delegation-root-{suffix}"),
         Some("WORK"),
     );
-    let mut create = session_params(
+    let create_key = format!("delegation-create-{suffix}");
+    let created = create_root_series_delegation(
+        &harness,
+        &mut connection,
         &workspace,
         &root,
         "delegation-root",
-        json!({
-            "childRole":"series",
-            "parentDelegationId":null,
-            "inputRevision":1,
-            "inputFingerprint":"a".repeat(64),
-            "deadlineUnixMs":2_000,
-            "adapterId":"host-delegation",
-            "grant":{"operations":[],"capabilities":[],"paths":[]}
-        }),
-        1_000,
+        "WORK",
+        "requirement-analysis",
+        &["RA"],
+        &create_key,
     );
-    create.work_item_id = Some("WORK".to_owned());
-    create.idempotency_key = Some(format!("delegation-create-{suffix}"));
-    let created = result(&harness.call(&mut connection, RpcMethod::DelegationCreate, create));
     let delegation_id = created["delegationId"]
         .as_str()
         .expect("delegation ID")
@@ -225,7 +220,7 @@ fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
     let mut accept = params(
         json!({
             "delegationId":delegation_id,
-            "claimId":"00000000-0000-0000-0000-000000009303",
+            "claimId":action["claimId"],
             "actionId":action_id,
             "childSessionId":child_session_id,
             "expiresAtUnixMs":1_900,
@@ -245,6 +240,7 @@ fn accepted_delegation(suffix: &str) -> AcceptedDelegation {
         root,
         delegation_id,
         child_session_id,
+        input_fingerprint: flow_decision_digest(&create_key),
     }
 }
 
@@ -256,7 +252,7 @@ fn child_report(
     DelegationReportPayload {
         delegation_id: fixture.delegation_id.clone(),
         input_revision: 1,
-        input_fingerprint: "a".repeat(64),
+        input_fingerprint: fixture.input_fingerprint.clone(),
         summary: summary.into(),
         result,
     }
@@ -301,6 +297,7 @@ impl ScriptHarness {
                 endpoint_token: SecretString::new(self.token.clone()),
                 expected_boot_id: self.runtime.boot_id().to_string(),
                 expected_policy_digest: self.runtime.policy_digest().to_owned(),
+                adapter_id: None,
             })
             .expect("scripted handshake serializes"),
         );
@@ -416,7 +413,7 @@ fn flow_input(store_id: EventStoreId) -> FlowInput {
         FlowEnvironment::new(
             store_id,
             InputFingerprint::digest(b"service-dispatch-matrix"),
-            RouteSelection::new(WorkScale::Large, DesignRoute::Dr),
+            RouteLifecycle::Frozen(RouteSelection::new(WorkScale::Large, DesignRoute::Dr)),
         ),
     )
 }
@@ -1491,6 +1488,57 @@ fn delegation_receipts_are_bound_before_collect_and_replay_idempotently() {
         .report(&fixture.child_session_id, stale)
         .expect_err("stale child input is rejected");
     assert_eq!(stale.code(), StableErrorCode::ChildResultInvalid);
+    assert!(
+        stale.message().to_lowercase().contains("revision"),
+        "stale inputRevision must be named in the diagnostic (F-045): {}",
+        stale.message()
+    );
+    assert!(
+        !stale.message().to_lowercase().contains("fingerprint"),
+        "stale inputRevision diagnostic must not also mention fingerprint (F-045): {}",
+        stale.message()
+    );
+
+    // F-045: a stale `inputFingerprint` must be diagnosed distinctly from
+    // `inputRevision`, and the remediation must distinguish `inputFingerprint`
+    // from `decisionDigest` so the caller knows which frozen value to re-read.
+    let mut stale_fingerprint = child_report(
+        &fixture,
+        "stale fingerprint",
+        json!({"memorySnapshotDigest":"a".repeat(64)}),
+    );
+    stale_fingerprint.input_fingerprint = "0".repeat(64);
+    let stale_fingerprint = supervisor
+        .report(&fixture.child_session_id, stale_fingerprint)
+        .expect_err("stale child input fingerprint is rejected");
+    assert_eq!(
+        stale_fingerprint.code(),
+        StableErrorCode::ChildResultInvalid
+    );
+    assert!(
+        stale_fingerprint
+            .message()
+            .to_lowercase()
+            .contains("fingerprint"),
+        "stale inputFingerprint must be named in the diagnostic (F-045): {}",
+        stale_fingerprint.message()
+    );
+    assert!(
+        !stale_fingerprint
+            .message()
+            .to_lowercase()
+            .contains("revision"),
+        "stale inputFingerprint diagnostic must not also mention revision (F-045): {}",
+        stale_fingerprint.message()
+    );
+    let fingerprint_remediation = stale_fingerprint.remediation().expect(
+        "stale inputFingerprint must carry remediation distinguishing it from decisionDigest (F-045)",
+    );
+    assert!(
+        fingerprint_remediation.contains("decisionDigest")
+            || fingerprint_remediation.contains("inputFingerprint"),
+        "remediation must distinguish inputFingerprint from decisionDigest (F-045): {fingerprint_remediation}"
+    );
 
     for summary in [String::new(), "x".repeat(8_193)] {
         let error = supervisor
@@ -1731,7 +1779,7 @@ fn delegation_cancel_and_spawn_depth_fail_closed() {
         StableErrorCode::ChildResultInvalid
     );
 
-    let mut invalid_depth = session_params(
+    let mut caller_selected_child_role = session_params(
         &fixture.workspace,
         &fixture.root,
         "delegation-root",
@@ -1741,20 +1789,19 @@ fn delegation_cancel_and_spawn_depth_fail_closed() {
             "inputRevision":1,
             "inputFingerprint":"a".repeat(64),
             "deadlineUnixMs":2_000,
-            "adapterId":"host-delegation",
             "grant":{"operations":[],"capabilities":[],"paths":[]}
         }),
         1_000,
     );
-    invalid_depth.work_item_id = Some("WORK".to_owned());
-    invalid_depth.idempotency_key = Some("invalid-spawn-depth".to_owned());
+    caller_selected_child_role.work_item_id = Some("WORK".to_owned());
+    caller_selected_child_role.idempotency_key = Some("invalid-spawn-depth".to_owned());
     assert_eq!(
         stable_error(&fixture.harness.call(
             &mut fixture.connection,
             RpcMethod::DelegationCreate,
-            invalid_depth,
+            caller_selected_child_role,
         )),
-        StableErrorCode::RunDepthExceeded.as_str()
+        StableErrorCode::OperationSchemaInvalid.as_str()
     );
 
     let missing = supervisor
@@ -1777,6 +1824,7 @@ fn handshake_publishes_execution_supervisor_capability_without_direct_rpc_method
             endpoint_token: SecretString::new("endpoint-test-token"),
             expected_boot_id: harness.runtime.boot_id().to_string(),
             expected_policy_digest: harness.runtime.policy_digest().to_owned(),
+            adapter_id: None,
         })
         .expect("handshake serializes"),
     );

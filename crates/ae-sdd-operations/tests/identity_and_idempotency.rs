@@ -32,6 +32,16 @@ fn transition(payload: serde_json::Value) -> OperationRequest {
     }
 }
 
+fn plan_approval(confirmation_id: &str) -> OperationRequest {
+    let mut request = transition(json!({"approvedBy":"payload"}));
+    request.operation = OperationName::ExecutionPlanApprove;
+    request.confirmation = Some(
+        Confirmation::new(confirmation_id, "user", "2026-07-23T00:00:00Z")
+            .expect("valid confirmation"),
+    );
+    request
+}
+
 #[test]
 fn canonical_payload_fingerprint_is_stable_and_changes_on_mutation() {
     let first = ValidatedOperationRequest::validate(transition(json!({
@@ -49,6 +59,23 @@ fn canonical_payload_fingerprint_is_stable_and_changes_on_mutation() {
 
     assert_eq!(first.payload_digest(), retry.payload_digest());
     assert_ne!(first.payload_digest(), mutated.payload_digest());
+}
+
+#[test]
+fn confirmation_is_part_of_canonical_operation_fingerprint() {
+    let first = ValidatedOperationRequest::validate(plan_approval("plan:first"))
+        .expect("valid first approval");
+    let retry = ValidatedOperationRequest::validate(plan_approval("plan:first"))
+        .expect("valid retry approval");
+    let changed = ValidatedOperationRequest::validate(plan_approval("plan:second"))
+        .expect("valid changed approval");
+
+    assert_eq!(first.payload_digest(), retry.payload_digest());
+    assert_ne!(
+        first.payload_digest(),
+        changed.payload_digest(),
+        "changing confirmation must change the idempotency fingerprint"
+    );
 }
 
 #[test]

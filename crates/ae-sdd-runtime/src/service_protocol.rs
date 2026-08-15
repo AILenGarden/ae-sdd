@@ -1,3 +1,6 @@
+use ae_sdd_operations::OperationName;
+use ae_sdd_protocol::{MethodRequirements, RequirementSource};
+
 use super::*;
 
 impl RuntimeService {
@@ -26,6 +29,11 @@ impl RuntimeService {
             )
             .with_remediation("atomically reread the endpoint manifest and reconnect"));
         }
+        // The handshake proves the boot credential and negotiates the
+        // protocol; it has no side effect on Host attach. `request.adapter_id`
+        // is deprecated, decode-only, and deliberately unread here -- a
+        // HostAdapter connection is attached only by an explicit,
+        // subsequent `host.register` call.
         let public_key = self.capability_signer.public_key();
         let capabilities = [
             "event-cursor-v1",
@@ -80,7 +88,7 @@ impl RuntimeService {
                 "deadline budget is zero or exceeds the negotiated maximum",
             ));
         }
-        let requirements = method.spec().requirements;
+        let requirements = admission_requirements(method, params);
         if requirements.requires_workspace && params.workspace_id.is_none() {
             return Err(schema_error("workspaceId is required"));
         }
@@ -117,5 +125,52 @@ impl RuntimeService {
             ));
         }
         Ok(())
+    }
+}
+
+/// Resolves the admission preconditions for one request.
+///
+/// Direct methods keep the flags frozen on their `MethodSpec`. A
+/// `TypedOperation` method (`operation.execute`) multiplexes every typed
+/// operation over one name, so constraints/api.md makes the selected
+/// operation's `OperationSpec` the authority instead: `workitem.create` is
+/// workspace-scoped because the Work Item is its output, and a blanket
+/// method-level `requiresWorkItem` would deadlock bootstrap — no session
+/// could ever create the first Work Item.
+///
+/// An unresolvable operation name keeps the blanket method requirements: the
+/// gate fails closed exactly as before and the dispatch stays the single
+/// authority on `OPERATION_NOT_REGISTERED`, so its error semantics are not
+/// duplicated here.
+fn admission_requirements(method: RpcMethod, params: &RequestParams<Value>) -> MethodRequirements {
+    let requirements = method.spec().requirements;
+    if requirements.source != RequirementSource::TypedOperation {
+        return requirements;
+    }
+    let Some(spec) = params
+        .payload
+        .get("operation")
+        .and_then(Value::as_str)
+        .and_then(|name| OperationName::from_str(name).ok())
+        .map(OperationName::spec)
+    else {
+        return requirements;
+    };
+    MethodRequirements {
+        requires_workspace: spec.requires_workspace,
+        requires_work_item: spec.requires_work_item,
+        writes: spec.writes,
+        requires_lease: spec.requires_lease,
+        requires_revision: spec.requires_revision,
+        requires_idempotency: spec.requires_idempotency,
+        // WHY: confirmation is a business-authority challenge that carries a
+        // confirmation binding in the remediated error, not a transport
+        // precondition. Adopting the registry flag here would reject
+        // `state.transition`/`workitem.complete` at admission with a bare
+        // CONFIRMATION_REQUIRED, making binding discovery unreachable and
+        // deadlocking those operations; the method-level value keeps the
+        // business authority the single issuer of the challenge.
+        requires_confirmation: requirements.requires_confirmation,
+        source: RequirementSource::TypedOperation,
     }
 }

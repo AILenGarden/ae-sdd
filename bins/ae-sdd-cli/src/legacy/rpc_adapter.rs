@@ -7,15 +7,7 @@ use serde_json::{Map, Value, json};
 
 use super::LegacyArgumentError;
 
-const RA_REQUIRED_GATES: [&str; 7] = [
-    "G-RA-1",
-    "G-RA-2",
-    "G-RA-3",
-    "G-RA-4",
-    "G-RA-FLOW-VIOLATION",
-    "G-RA-5",
-    "G-RA-6",
-];
+const RA_REQUIRED_GATES: [&str; 4] = ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"];
 
 /// Converts a frozen passthrough route into the strict payload accepted by its
 /// daemon method. A route without semantic parity is rejected before IPC.

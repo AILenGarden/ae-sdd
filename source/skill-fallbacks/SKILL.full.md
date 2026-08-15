@@ -147,19 +147,34 @@ logs, child scratch memory, or another role's projection.
 
 ## Route And Document Contract
 
-Route always precedes Requirement Analysis. Analysis determines whether the
-design continues through DR, Story, or directly to a compact execution plan.
+The Hook records only a provisional `BootstrapAssessment`; Requirement Analysis
+is the first business Series and produces one adaptive `ae-sdd-ra-srs/v2` SRS.
+`G-RA-1..4` close its verified content receipt at `RequirementAnalyzed`.
+`G-RA-FLOW-VIOLATION` then validates the SRS, receipt, scale evidence, route
+candidate, and approval binding before the daemon freezes the authoritative
+`EngineeringRoute` at `RouteSelected`, then selects whether the
+design continues through DR, Story, TestCase, CodingPlan, or a compact execution
+plan.
 
 | Route | Core design requirement |
 | --- | --- |
-| large | RA plus DR; Story when behavior/data/API contracts require it |
-| medium | RA plus Story |
-| small/micro | RA plus Story-lite or CodingPlan recorded in `executionPlan` |
+| large | RA -> DR -> N x (Story -> TestCase -> CodingPlan) -> approved `executionPlan` |
+| medium | RA -> Story -> TestCase -> CodingPlan -> approved `executionPlan` |
+| small | RA -> CodingPlan -> approved `executionPlan` |
+| micro | RA -> approved compact `state.executionPlan` |
+
+RA is the first business Series for every task; the Hook records only a
+provisional `BootstrapAssessment` and the authoritative `EngineeringRoute` is
+frozen only after the SRS-bound route Gate passes. `G-RA-5/6` are compatibility
+diagnostics and are not part of an automatic required set.
 
 RA, DR, and Story use templates resolved by the runtime. Story contains
 contracts, fields, main flow, data model, acceptance criteria, and an AC-to-test
-verification matrix. A separate TestCase exists only for a genuinely complex
-matrix. The user approves the compact `executionPlan` before Coding.
+verification matrix. Wherever a Story exists, each Story runs its own
+`Story -> TestCase -> CodingPlan` subchain and its TestCase receipt binds that
+Story's identity; TestCase is not optional and not conditional on matrix
+complexity. The small and micro routes have no Story and no TestCase. The user
+approves the compact `executionPlan` before Coding.
 
 Tests persist real evidence. Review persists only `status` and `findings`.
 Proposal, CodingReport, TestReport, CodeReview report, and changelog workflow

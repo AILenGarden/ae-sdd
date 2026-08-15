@@ -49,6 +49,7 @@ crates/ + bins/             -> 受约束的实现
 | crate/层/role/daemon/Monitor 边界 | `project-structure.md` + `layered-arch.md` | `implicit-constraints.md` 仅登记兼容不变量并引用 owner |
 | schema、journal、event/checkpoint 持久化 | `database.md` | API/Story 只镜像 contract 字段 |
 | test topology 与 evidence 门槛 | `testing.md` | Story verification matrix 绑定具体 AC/命令 |
+| 切片级 RED-GREEN-REFACTOR cadence 与其 evidence 要求 | `testing.md` | AGENTS.md/SKILL/Story 只能引用；生命周期状态机由 `crates/ae-sdd-execution` 实现 |
 
 同一规则在 DR/Story 中出现是正式设计合同镜像，不产生第二 owner；发生差异时停止 Coding并先按上表修正 owner 与正式文档。
 
@@ -64,4 +65,4 @@ crates/ + bins/             -> 受约束的实现
 - 所有 Agent 在首次写 Rust、schema、migration、build script 或测试前，必须通过 ae-sdd 加载本目录的当前 digest；对话中曾经读过旧副本不构成有效加载。
 - 多 Agent 并行时必须先冻结共享 contract 与 migration 编号，再分配互斥文件 owner；Part Agent 不得修改其他 Part 的 owned path。
 - pure control-plane crate 的 Review 必须检查 I/O/clock/random/global-state 依赖为 0，并用 replay/determinism test 证明相同输入产生 byte-identical decision。
-- 完成声明必须同时具备 `cargo fmt`、strict Clippy、目标 crate tests、workspace regression、真实 ae-sdd evidence 与无 blocker/major finding 的 Review；只编译成功不算完成。
+- 完成声明必须同时具备 `cargo fmt`、strict Clippy、受影响 crate/模块及对应测试文件的 focused/增量测试、真实 ae-sdd evidence 与无 blocker/major finding 的 Review；workspace 全量回归仅在 release/分发门禁要求；只编译成功不算完成。

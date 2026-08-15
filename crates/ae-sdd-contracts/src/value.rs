@@ -9,6 +9,9 @@ pub enum SchemaVersion {
     /// First stable contract schema.
     #[serde(rename = "v1")]
     V1,
+    /// RA-derived route binding and frozen engineering route contract.
+    #[serde(rename = "v2")]
+    V2,
 }
 
 /// Error returned when a published string value is not canonical.
@@ -145,6 +148,20 @@ portable_identifier!(HostTaskId, "host task id", 128);
 portable_identifier!(ExternalSessionKey, "external session key", 128);
 portable_identifier!(ContextBundleId, "context bundle id", 128);
 portable_identifier!(DocumentTxnId, "document transaction id", 128);
+// `ae-sdd-daemon-design.md` §4.1: the stable *logical* identity of a Spec,
+// minted or resolved by the daemon's document registry. It survives a path
+// change, which is why a path can never serve as a document identity.
+portable_identifier!(DocumentId, "document id", 128);
+// The identity of a Spec graph. This comes from §8.3 and §8.4, not §4.1: §4.1's
+// table freezes nine identities and a graph is not one of them. §8.3 makes Spec
+// relations a directed graph rather than a forced single-parent tree, and §8.4
+// rule 3 creates a new graph when a resolved `DocumentId` belongs to none — so
+// the graph is an addressable thing that outlives any one document, and needs an
+// identity separate from the documents it contains.
+//
+// Frozen ahead of the registry that will own it, so graph edges are addressable
+// before the storage exists.
+portable_identifier!(SpecGraphId, "spec graph id", 128);
 portable_identifier!(PrdId, "PRD id", 128);
 portable_identifier!(MutationIntentId, "mutation intent id", 128);
 portable_identifier!(LogicalNamespace, "logical namespace", 64);

@@ -17,14 +17,23 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ae_sdd_client::{DaemonClient, LocalIpcTransport};
-use ae_sdd_domain::InputFingerprint;
+use ae_sdd_client::{ClientTransport, DaemonClient, LocalIpcTransport};
+use ae_sdd_contracts::{
+    DocumentId, EngineeringRoute, ReasonCode, ReceiptStatus, RequirementAnalysisEvidence,
+    RouteApprovalReceipt, RouteBindingInput, RouteDecision, RouteDecisionId, RouteDisposition,
+    RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind, SpecKind, TaskKind,
+};
+use ae_sdd_domain::{
+    ArtifactDigest, DecisionDigest, DesignRoute, InputFingerprint, StateRevision, WorkItemId,
+    WorkScale,
+};
 use ae_sdd_protocol::{
     ClientKind, ConfirmationRef, PROTOCOL_VERSION_V1, RequestParams, RpcMethod, WorkspaceMode,
 };
 use ae_sdd_runtime::{SessionResult, WorkspaceParityEvidence, WorkspaceResult};
 use serde_json::{Value, json};
 use tempfile::TempDir;
+use uuid::Uuid;
 
 const WORK_ITEM_ID: &str = "STORY-GOV-PROCESS";
 const PROJECT_KEY: &str = "gov-process";
@@ -51,6 +60,18 @@ async fn daemon_process_enforces_milestone_chain_and_denies_premature_completion
     let workspace = register_and_cut_over(&cli, &admin, &fixture).await;
     let session = open_root(&cli, &workspace, "session-open-gov").await;
     let identity = Identity::new(&workspace, &session);
+    // Evidence record/finalize is semantic work the tightened root role no
+    // longer carries, so a delegated author task executes it while the root
+    // orchestrator keeps the flow intent and completion calls.
+    let author = open_task_lineage(
+        &cli,
+        &fixture.runtime_dir,
+        &workspace,
+        &identity,
+        &fixture.state_path,
+        "gov-lineage",
+    )
+    .await;
 
     // Write the three slice source files.
     for (i, path) in SLICES.iter().enumerate() {
@@ -63,12 +84,20 @@ async fn daemon_process_enforces_milestone_chain_and_denies_premature_completion
 
     // ── Milestone chain: evidence → ImplementationVerified → ReviewReady
     assert_eq!(milestone(&fixture), "none");
-    let lease = acquire_lease(&cli, &identity, "gov-evidence-lease").await;
-    let evidence_id = record_evidence(&cli, &identity, &fixture, &lease, "gov").await;
+    let lease = acquire_lease(&cli, &author, "task", "gov-evidence-lease").await;
+    let evidence_id = record_evidence(&cli, &author, &fixture, &lease, "gov").await;
     assert_eq!(milestone(&fixture), "implementation-verified");
-    finalize_evidence(&cli, &identity, &fixture, &lease, "gov").await;
+    finalize_evidence(&cli, &author, &fixture, &lease, "gov").await;
     assert_eq!(milestone(&fixture), "review-ready");
-    release_lease(&cli, &identity, &fixture, &lease, "gov-evidence-release").await;
+    release_lease(
+        &cli,
+        &author,
+        &fixture,
+        &lease,
+        "task",
+        "gov-evidence-release",
+    )
+    .await;
 
     // ── Premature completion is denied ──────────────────────────────
     // The milestone is ReviewReady (not GovernanceClosed), so the
@@ -86,7 +115,7 @@ async fn daemon_process_enforces_milestone_chain_and_denies_premature_completion
 
     // The terminal mutation also fails closed: workitem.complete without
     // the Review milestone is rejected.
-    let lease = acquire_lease(&cli, &identity, "gov-premature-lease").await;
+    let lease = acquire_lease(&cli, &identity, "root", "gov-premature-lease").await;
     let mut complete = identity.params(json!({
         "operation": "workitem.complete", "payload": {}
     }));
@@ -128,6 +157,15 @@ async fn daemon_process_denies_stale_completion_after_changed_path_edit() {
     let workspace = register_and_cut_over(&cli, &admin, &fixture).await;
     let session = open_root(&cli, &workspace, "session-open-stale").await;
     let identity = Identity::new(&workspace, &session);
+    let author = open_task_lineage(
+        &cli,
+        &fixture.runtime_dir,
+        &workspace,
+        &identity,
+        &fixture.state_path,
+        "stale-lineage",
+    )
+    .await;
 
     for (i, path) in SLICES.iter().enumerate() {
         write_source(
@@ -137,10 +175,18 @@ async fn daemon_process_denies_stale_completion_after_changed_path_edit() {
         );
     }
 
-    let lease = acquire_lease(&cli, &identity, "stale-evidence-lease").await;
-    record_evidence(&cli, &identity, &fixture, &lease, "stale").await;
-    finalize_evidence(&cli, &identity, &fixture, &lease, "stale").await;
-    release_lease(&cli, &identity, &fixture, &lease, "stale-evidence-release").await;
+    let lease = acquire_lease(&cli, &author, "task", "stale-evidence-lease").await;
+    record_evidence(&cli, &author, &fixture, &lease, "stale").await;
+    finalize_evidence(&cli, &author, &fixture, &lease, "stale").await;
+    release_lease(
+        &cli,
+        &author,
+        &fixture,
+        &lease,
+        "task",
+        "stale-evidence-release",
+    )
+    .await;
     assert_eq!(milestone(&fixture), "review-ready");
 
     // The stale edit rolls the effective milestone back.
@@ -219,7 +265,9 @@ fn prepare_workspace(root: &Path) -> PathBuf {
         "stateMachineName": "PRD-GOV-PROCESS",
         "activeStory": WORK_ITEM_ID,
         "revision": 1, "lastFencingToken": 0,
-        "scale": "medium", "selectedDesign": "Story",
+        "entryNode": "ROUTE",
+        "engineeringRoute": frozen_engineering_route(),
+        "scale": "medium",
         "phase": "code-reviewed", "currentPhase": "code-reviewed",
         "currentStep": "code-reviewed",
         "documentPaths": {"story": STORY_DOC},
@@ -237,6 +285,7 @@ fn prepare_workspace(root: &Path) -> PathBuf {
         "executionRuntime": {
             "schemaVersion": 1,
             "queueDigest": format!("sha256:{}", "0".repeat(64)),
+            "capsuleDigest": format!("sha256:{}", "1".repeat(64)),
             "activeSliceOrdinal": 0,
             "completionMilestone": "none"
         },
@@ -246,6 +295,56 @@ fn prepare_workspace(root: &Path) -> PathBuf {
     bytes.push(b'\n');
     fs::write(&state_path, bytes).expect("state fixture");
     state_path
+}
+
+fn frozen_engineering_route() -> Value {
+    let evidence = RequirementAnalysisEvidence::new(
+        WorkItemId::new(WORK_ITEM_ID).expect("work item id"),
+        SeriesId::new("SERIES-RA-GOV-PROCESS").expect("series id"),
+        DocumentId::new("DOC-RA-GOV-PROCESS").expect("document id"),
+        1,
+        ArtifactDigest::digest(b"governance process RA content"),
+        StateRevision::new(1),
+        ArtifactDigest::digest(b"governance process RA receipt"),
+        ReceiptStatus::Verified,
+        WorkScale::Medium,
+        ArtifactDigest::digest(b"governance process scale evidence"),
+        ArtifactDigest::digest(b"governance process RA closure receipts"),
+    );
+    let binding = RouteBindingInput::new(evidence, RouteMappingVersion::V1);
+    let decision = RouteDecision::new(
+        SchemaVersion::V2,
+        RouteDecisionId::new("route-gov-process-r1").expect("route decision id"),
+        WorkItemId::new(WORK_ITEM_ID).expect("work item id"),
+        TaskKind::Implementation,
+        WorkScale::Medium,
+        DesignRoute::Story,
+        RouteDisposition::Approved,
+        vec![ReasonCode::new("route.ra-closed").expect("reason")],
+        vec![
+            SeriesKind::new("story").expect("series kind"),
+            SeriesKind::new("testcase").expect("series kind"),
+            SeriesKind::new("coding-plan").expect("series kind"),
+        ],
+        vec![SpecKind::Story, SpecKind::TestCase, SpecKind::CodingPlan],
+        binding.fingerprint(),
+        None,
+        DecisionDigest::digest(b"governance process route decision"),
+    )
+    .expect("route decision");
+    let approval = RouteApprovalReceipt::new(
+        "route:gov-process-r1".to_owned(),
+        "user:test".to_owned(),
+        "2026-07-27T02:00:00Z".to_owned(),
+        binding.ra_evidence().document_id().clone(),
+        binding.ra_evidence().version(),
+        *binding.ra_evidence().ra_content_digest(),
+        binding.ra_evidence().scale(),
+        decision.decision_digest(),
+    );
+    let route = EngineeringRoute::freeze(SchemaVersion::V2, &binding, decision, &approval, &[])
+        .expect("verified RA and bound approval freeze the route");
+    serde_json::to_value(route).expect("engineering route JSON")
 }
 
 // ─── Daemon process ──────────────────────────────────────────────────
@@ -368,10 +467,15 @@ struct Lease {
     fencing: u64,
 }
 
-async fn acquire_lease(client: &DaemonClient, identity: &Identity, key: &str) -> Lease {
+async fn acquire_lease(
+    client: &DaemonClient,
+    identity: &Identity,
+    owner_role: &str,
+    key: &str,
+) -> Lease {
     let mut r = identity.params(json!({
         "operation": "lease.acquire",
-        "payload": {"owner":{"role":"root"},"ttlSeconds":300}
+        "payload": {"owner":{"role":owner_role},"ttlSeconds":300}
     }));
     r.idempotency_key = Some(key.to_owned());
     let result: Value = client
@@ -392,10 +496,11 @@ async fn release_lease(
     identity: &Identity,
     fixture: &Fixture,
     lease: &Lease,
+    owner_role: &str,
     key: &str,
 ) {
     let mut r = identity.params(json!({
-        "operation": "lease.release", "payload": {"owner":{"role":"root"}}
+        "operation": "lease.release", "payload": {"owner":{"role":owner_role}}
     }));
     bind_write(&mut r, lease, read_revision(fixture), key);
     let _: Value = client
@@ -464,6 +569,287 @@ fn bind_write(r: &mut RequestParams<Value>, lease: &Lease, revision: u64, key: &
     r.fencing_token = Some(lease.fencing);
     r.expected_revision = Some(revision);
     r.idempotency_key = Some(key.to_owned());
+}
+
+// ─── Delegation lineage ──────────────────────────────────────────────
+
+/// Root -> Series -> Task author lineage established through real daemon
+/// RPC: `host.register`, `delegation.create`, `host.action_next`,
+/// `host.action_ack`, `delegation.accept`, then `session.open`.
+///
+/// The tightened root role no longer carries the semantic work permissions
+/// (evidence record/finalize), so the milestone chain is executed by a
+/// delegated author task whose grant lists exactly those operations; the
+/// series grant carries the same set because a child grant may never widen
+/// its parent.
+async fn open_task_lineage(
+    cli: &DaemonClient,
+    state_dir: &Path,
+    workspace: &WorkspaceResult,
+    root: &Identity,
+    state_path: &Path,
+    key: &str,
+) -> Identity {
+    let adapter_id = "codex".to_owned();
+    let host = HostAdapter::register(state_dir, &adapter_id, &format!("{key}-host-register")).await;
+    let grant = json!({
+        "operations":["document.save","evidence.finalize","evidence.record","lease.acquire","lease.release"],
+        "capabilities":[],
+        "paths":[{"kind":"project_root"}],
+    });
+    let (series, series_delegation) = open_delegated_child(
+        cli,
+        &host,
+        workspace,
+        root,
+        state_path,
+        &adapter_id,
+        "series",
+        None,
+        grant.clone(),
+        &format!("{key}-series"),
+    )
+    .await;
+    open_delegated_child(
+        cli,
+        &host,
+        workspace,
+        &series,
+        state_path,
+        &adapter_id,
+        "task",
+        Some(&series_delegation),
+        grant,
+        &format!("{key}-author"),
+    )
+    .await
+    .0
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn open_delegated_child(
+    cli: &DaemonClient,
+    host: &HostAdapter,
+    workspace: &WorkspaceResult,
+    parent: &Identity,
+    state_path: &Path,
+    _adapter_id: &str,
+    child_role: &str,
+    parent_delegation_id: Option<&str>,
+    grant: Value,
+    key: &str,
+) -> (Identity, String) {
+    let child_session_id = Uuid::new_v4().to_string();
+    let state_bytes = fs::read(state_path).expect("delegation input state");
+    let state: Value = serde_json::from_slice(&state_bytes).expect("delegation input state JSON");
+    let input_revision = state["revision"]
+        .as_u64()
+        .expect("delegation input revision");
+    let input_fingerprint = InputFingerprint::digest(&state_bytes).to_string();
+    let now = now_unix_ms();
+    let create_payload = if parent_delegation_id.is_none() {
+        let flow = cli
+            .call::<Value>(RpcMethod::FlowNext, parent.params(json!({})))
+            .await
+            .unwrap_or_else(|error| panic!("{key} flow decision is available: {error:?}"));
+        let kind = flow["nextAction"]["kind"].as_str();
+        assert!(
+            kind == Some("delegate-series")
+                || (kind == Some("execute-approved-slice") && flow["phase"] == "coding")
+                || (kind == Some("await-agent-work")
+                    && matches!(flow["phase"].as_str(), Some("coding" | "test-running"))),
+            "{key} flow decision is not delegable: {flow}"
+        );
+        json!({"flowDecisionDigest":flow["decisionDigest"]})
+    } else {
+        json!({
+            "childRole":child_role,
+            "parentDelegationId":parent_delegation_id,
+            "inputRevision":input_revision,
+            "inputFingerprint":input_fingerprint,
+            "deadlineUnixMs":now.saturating_add(600_000),
+            "grant":grant,
+        })
+    };
+    let mut create = parent.params(create_payload);
+    create.idempotency_key = Some(format!("{key}-create"));
+    let created = cli
+        .call::<Value>(RpcMethod::DelegationCreate, create)
+        .await
+        .unwrap_or_else(|error| panic!("{key} delegation is created: {error:?}"));
+    let delegation_id = created["delegationId"]
+        .as_str()
+        .expect("child delegation id")
+        .to_owned();
+
+    let action = host.call(RpcMethod::HostActionNext, json!({})).await;
+    host.call(
+        RpcMethod::HostActionAck,
+        json!({
+            "ack":{
+                "ackId":Uuid::new_v4().to_string(),
+                "actionId":action["actionId"],
+                "commandSeq":action["commandSeq"],
+                "outcome":"accepted",
+                "hostTaskId":format!("{key}-host-task"),
+                "sessionId":child_session_id,
+            },
+        }),
+    )
+    .await;
+
+    let mut accept = params(json!({
+        "delegationId":delegation_id,
+        "claimId":action["claimId"],
+        "actionId":action["actionId"],
+        "childSessionId":child_session_id,
+        "expiresAtUnixMs":now.saturating_add(500_000),
+    }));
+    accept.workspace_id = Some(workspace.workspace_id.clone());
+    accept.work_item_id = Some(parent.work_item_id.clone());
+    accept.idempotency_key = Some(format!("{key}-accept"));
+    cli.call::<Value>(RpcMethod::DelegationAccept, accept)
+        .await
+        .unwrap_or_else(|error| panic!("{key} physical attestation is accepted: {error:?}"));
+
+    let agent_id = format!("{key}-agent");
+    let mut open = params(json!({
+        "externalKey":format!("{key}-external"),
+        "role":child_role,
+        "engaged":true,
+        "delegationId":delegation_id,
+    }));
+    open.workspace_id = Some(workspace.workspace_id.clone());
+    open.work_item_id = Some(parent.work_item_id.clone());
+    open.agent_id = Some(agent_id.clone());
+    open.session_id = Some(child_session_id);
+    open.idempotency_key = Some(format!("{key}-open"));
+    let session = cli
+        .call::<SessionResult>(RpcMethod::SessionOpen, open)
+        .await
+        .unwrap_or_else(|error| panic!("{key} child session opens: {error:?}"));
+    let identity = Identity {
+        workspace_id: workspace.workspace_id.clone(),
+        work_item_id: parent.work_item_id.clone(),
+        agent_id,
+        session_id: session.session_id.clone(),
+        capability_token: session.capability_token.clone(),
+    };
+    (identity, delegation_id)
+}
+
+/// Authenticated host-adapter caller.
+///
+/// The daemon binds `adapterId` to the connection that ran `host.register`, and
+/// `DaemonClient` opens one connection per call, so every host method is issued
+/// on a fresh connection that first replays the same `host.register` receipt to
+/// rebind that connection.
+struct HostAdapter {
+    manifest_path: PathBuf,
+    transport: LocalIpcTransport,
+    adapter_id: String,
+    register_key: String,
+}
+
+impl HostAdapter {
+    async fn register(state_dir: &Path, adapter_id: &str, register_key: &str) -> Self {
+        let adapter = Self {
+            manifest_path: state_dir.join("endpoint.v1.json"),
+            transport: LocalIpcTransport,
+            adapter_id: adapter_id.to_owned(),
+            register_key: register_key.to_owned(),
+        };
+        adapter.call(RpcMethod::HostActionNext, json!({})).await;
+        adapter
+    }
+
+    /// Runs `handshake`, `host.register`, then `method` on one connection and
+    /// returns the `method` result.
+    async fn call(&self, method: RpcMethod, extra: Value) -> Value {
+        let manifest = read_endpoint_manifest_json(&self.manifest_path);
+        let token = manifest["endpointToken"]
+            .as_str()
+            .expect("endpoint token")
+            .to_owned();
+        let handshake = json!({
+            "jsonrpc":"2.0",
+            "id":"host-handshake",
+            "method":RpcMethod::RuntimeHandshake,
+            "params":{
+                "protocolRange":manifest["protocolRange"],
+                "clientBuild":"gov-process-host-adapter",
+                "clientKind":ClientKind::HostAdapter,
+                "endpointToken":token,
+                "expectedBootId":manifest["bootId"],
+                "expectedPolicyDigest":manifest["policyDigest"],
+            },
+        });
+        let mut register = params(json!({
+            "adapterId":self.adapter_id,
+            "capabilities":["create","attest"],
+        }));
+        register.capability_token = Some(token.clone());
+        register.idempotency_key = Some(self.register_key.clone());
+        let mut payload = json!({"adapterId":self.adapter_id});
+        if let Some(fields) = extra.as_object() {
+            for (name, value) in fields {
+                payload[name] = value.clone();
+            }
+        }
+        let mut request = params(payload);
+        request.capability_token = Some(token);
+        request.idempotency_key = Some(format!(
+            "{}-{}-{}",
+            self.register_key,
+            method.as_str().replace('.', "-"),
+            Uuid::new_v4()
+        ));
+        let frames = [
+            serde_json::to_vec(&handshake).expect("handshake frame"),
+            serde_json::to_vec(&json!({
+                "jsonrpc":"2.0",
+                "id":"host-register",
+                "method":RpcMethod::HostRegister,
+                "params":register,
+            }))
+            .expect("register frame"),
+            serde_json::to_vec(&json!({
+                "jsonrpc":"2.0",
+                "id":"host-call",
+                "method":method,
+                "params":request,
+            }))
+            .expect("host call frame"),
+        ];
+        let responses = self
+            .transport
+            .exchange(
+                manifest["endpoint"].as_str().expect("endpoint address"),
+                &frames,
+                Duration::from_secs(10),
+            )
+            .await
+            .expect("host adapter connection exchanges frames");
+        assert_eq!(responses.len(), 3, "one response per host frame");
+        for (index, label) in ["handshake", "host.register"].into_iter().enumerate() {
+            let response: Value =
+                serde_json::from_slice(&responses[index]).expect("host response JSON");
+            assert!(
+                response.get("result").is_some(),
+                "{label} failed: {response}"
+            );
+        }
+        let response: Value = serde_json::from_slice(&responses[2]).expect("host response JSON");
+        response
+            .get("result")
+            .unwrap_or_else(|| panic!("{} failed: {response}", method.as_str()))
+            .clone()
+    }
+}
+
+fn read_endpoint_manifest_json(manifest_path: &Path) -> Value {
+    serde_json::from_slice(&fs::read(manifest_path).expect("endpoint manifest bytes"))
+        .expect("endpoint manifest JSON")
 }
 
 // ─── Wire helpers ────────────────────────────────────────────────────

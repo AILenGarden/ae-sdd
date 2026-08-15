@@ -78,6 +78,7 @@ impl Fixture {
                 "revision":7,
                 "lastFencingToken":0,
                 "scale":scale,
+                "selectedDesign":"DR",
                 "phase":"test-running",
                 "currentPhase":"test-running",
                 "inputFingerprint":INPUT,
@@ -453,6 +454,7 @@ fn commit_child_identity(
         delegation: Some(RuntimeDelegationRecord {
             delegation_id: delegation_id.to_owned(),
             workspace_id: WORKSPACE_ID.to_owned(),
+            work_item_id: Some(WORK_ITEM.to_owned()),
             root_session_id: ROOT_SESSION.to_owned(),
             parent_session_id: parent_session_id.to_owned(),
             child_session_id: Some(session_id.to_owned()),
@@ -841,9 +843,9 @@ fn remediation_projection_fails_closed_when_the_parent_findings_batch_does_not_j
         .expect("parent batch downgrade applies");
     let removed = connection
         .execute(
-            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v2' \
+            "DELETE FROM runtime_record_v1 WHERE namespace='review-projection-event/v3' \
              AND key=(SELECT ?1||':'||MAX(CAST(substr(key,length(?1)+2) AS INTEGER)) \
-                      FROM runtime_record_v1 WHERE namespace='review-projection-event/v2')",
+                      FROM runtime_record_v1 WHERE namespace='review-projection-event/v3')",
             rusqlite::params![WORKSPACE_ID],
         )
         .expect("child projection receipt removal applies");

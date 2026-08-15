@@ -1,0 +1,1374 @@
+{
+  "schemaVersion": "1",
+  "status": "active",
+  "leaseId": "c6df9649-f1e6-4132-b635-b488a8fec21f",
+  "owner": {
+    "agentId": "codex-root",
+    "sessionId": "session-redacted",
+    "host": "HOST-REDACTED",
+    "pid": 1000
+  },
+  "fencingToken": 45,
+  "acquiredAt": "2026-07-26T07:23:21Z",
+  "heartbeatAt": "2026-07-26T08:20:54Z",
+  "expiresAt": "2026-07-26T09:20:54Z",
+  "ttlSeconds": 3600,
+  "acquireIdempotencyKey": "redacted-key",
+  "history": [
+    {
+      "event": "acquired",
+      "leaseId": "f65e8424-c575-4791-a5f5-bca1369b9d95",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 1,
+      "at": "2026-07-22T10:26:36Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "f65e8424-c575-4791-a5f5-bca1369b9d95",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 1,
+      "at": "2026-07-22T10:26:36Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "0050b769-7053-4e15-8722-0a2c550594b3",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 2,
+      "at": "2026-07-22T10:48:04Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "0050b769-7053-4e15-8722-0a2c550594b3",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 2,
+      "at": "2026-07-22T10:48:04Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "5aae1925-c082-4cbd-bf0a-35e9d27e9a29",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 3,
+      "at": "2026-07-22T10:58:13Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "5aae1925-c082-4cbd-bf0a-35e9d27e9a29",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 3,
+      "at": "2026-07-22T10:58:13Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "6f1a14ae-86eb-4cad-ae76-57ff294eef3d",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 4,
+      "at": "2026-07-22T10:58:45Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "6f1a14ae-86eb-4cad-ae76-57ff294eef3d",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 4,
+      "at": "2026-07-22T10:58:45Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "f95439ef-f01b-40f8-a5d4-752906177037",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 5,
+      "at": "2026-07-22T10:59:46Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "f95439ef-f01b-40f8-a5d4-752906177037",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 5,
+      "at": "2026-07-22T11:01:59Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "98bcf0ce-5eeb-48d6-8530-f766fbc3db6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 6,
+      "at": "2026-07-22T18:45:37Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "98bcf0ce-5eeb-48d6-8530-f766fbc3db6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 6,
+      "at": "2026-07-22T18:47:41Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "8bd88bc0-1bce-4998-b699-203ff5640b01",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 7,
+      "at": "2026-07-22T20:06:01Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "8bd88bc0-1bce-4998-b699-203ff5640b01",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 7,
+      "at": "2026-07-22T20:36:36Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "45f7b60a-ccda-4d26-982d-2ccd9ab0d2f3",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 8,
+      "at": "2026-07-22T20:36:36Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "45f7b60a-ccda-4d26-982d-2ccd9ab0d2f3",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 8,
+      "at": "2026-07-22T21:08:41Z",
+      "expiresAt": "2026-07-22T22:08:41Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "45f7b60a-ccda-4d26-982d-2ccd9ab0d2f3",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 8,
+      "at": "2026-07-22T21:44:53Z",
+      "expiresAt": "2026-07-22T22:44:53Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "45f7b60a-ccda-4d26-982d-2ccd9ab0d2f3",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 8,
+      "at": "2026-07-22T22:25:57Z",
+      "expiresAt": "2026-07-22T23:25:57Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "45f7b60a-ccda-4d26-982d-2ccd9ab0d2f3",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 8,
+      "at": "2026-07-23T01:29:42Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "4e5f861c-ef4f-4242-9138-6d87e2e83a38",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 9,
+      "at": "2026-07-23T01:29:42Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "4e5f861c-ef4f-4242-9138-6d87e2e83a38",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 9,
+      "at": "2026-07-23T01:54:15Z",
+      "expiresAt": "2026-07-23T02:54:15Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "4e5f861c-ef4f-4242-9138-6d87e2e83a38",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 9,
+      "at": "2026-07-23T03:02:24Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "2fac100d-a9d3-44ba-938e-221edf3cfd6f",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 10,
+      "at": "2026-07-23T03:02:24Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "2fac100d-a9d3-44ba-938e-221edf3cfd6f",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 10,
+      "at": "2026-07-23T03:33:35Z",
+      "expiresAt": "2026-07-23T04:33:35Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "2fac100d-a9d3-44ba-938e-221edf3cfd6f",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 10,
+      "at": "2026-07-23T04:05:57Z",
+      "expiresAt": "2026-07-23T05:05:57Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "2fac100d-a9d3-44ba-938e-221edf3cfd6f",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 10,
+      "at": "2026-07-23T05:47:10Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "b0712f4b-5f48-4041-927e-570104886c6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 11,
+      "at": "2026-07-23T05:47:10Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "b0712f4b-5f48-4041-927e-570104886c6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 11,
+      "at": "2026-07-23T06:45:21Z",
+      "expiresAt": "2026-07-23T07:45:21Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "b0712f4b-5f48-4041-927e-570104886c6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 11,
+      "at": "2026-07-23T07:24:43Z",
+      "expiresAt": "2026-07-23T08:24:43Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "b0712f4b-5f48-4041-927e-570104886c6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 11,
+      "at": "2026-07-23T08:21:13Z",
+      "expiresAt": "2026-07-23T09:21:13Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "b0712f4b-5f48-4041-927e-570104886c6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 11,
+      "at": "2026-07-23T09:17:07Z",
+      "expiresAt": "2026-07-23T10:17:07Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "b0712f4b-5f48-4041-927e-570104886c6a",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 11,
+      "at": "2026-07-23T09:39:50Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "89579876-b463-4eaa-a6dc-2a088b82c188",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 12,
+      "at": "2026-07-23T09:44:57Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "89579876-b463-4eaa-a6dc-2a088b82c188",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 12,
+      "at": "2026-07-23T09:51:37Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "ffbf5ae7-234c-493a-b08b-8276d2a8a474",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 13,
+      "at": "2026-07-23T09:51:55Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "ffbf5ae7-234c-493a-b08b-8276d2a8a474",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 13,
+      "at": "2026-07-23T09:51:55Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "3bd9ddfb-2df8-4cd1-9600-753a22663125",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 14,
+      "at": "2026-07-23T10:01:13Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "3bd9ddfb-2df8-4cd1-9600-753a22663125",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 14,
+      "at": "2026-07-23T10:01:13Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "a7488158-ddad-4889-a432-f3e11ec1a5c7",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 15,
+      "at": "2026-07-23T10:01:23Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "a7488158-ddad-4889-a432-f3e11ec1a5c7",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 15,
+      "at": "2026-07-23T14:09:18Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "96cc5694-bbaa-4a7d-983f-41306869fb1c",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 16,
+      "at": "2026-07-23T14:09:18Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "96cc5694-bbaa-4a7d-983f-41306869fb1c",
+      "owner": {
+        "agentId": "codex",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 16,
+      "at": "2026-07-23T14:24:23Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "b290f1f0-ff40-4ee3-ba4e-0e97bfefca0a",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 17,
+      "at": "2026-07-23T16:28:58Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "b290f1f0-ff40-4ee3-ba4e-0e97bfefca0a",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 17,
+      "at": "2026-07-23T16:28:58Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "69e929bd-cd51-4081-bce2-0050351f6c26",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 18,
+      "at": "2026-07-23T16:31:48Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "69e929bd-cd51-4081-bce2-0050351f6c26",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 18,
+      "at": "2026-07-23T16:31:48Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "8f315e12-734e-46a1-998d-f77f722c29d0",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 19,
+      "at": "2026-07-23T16:33:01Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "8f315e12-734e-46a1-998d-f77f722c29d0",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 19,
+      "at": "2026-07-23T18:31:16Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "2184ff5e-fc01-4837-903e-a443a0f94832",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 20,
+      "at": "2026-07-23T18:31:16Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "2184ff5e-fc01-4837-903e-a443a0f94832",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 20,
+      "at": "2026-07-24T03:06:37Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "367cf1fd-7988-49c7-a9a6-c6028abf5023",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 21,
+      "at": "2026-07-24T03:06:37Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "367cf1fd-7988-49c7-a9a6-c6028abf5023",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 21,
+      "at": "2026-07-24T03:06:37Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "077c2d41-559b-4602-86d6-35ebd9b239da",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 22,
+      "at": "2026-07-24T03:06:45Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "077c2d41-559b-4602-86d6-35ebd9b239da",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 22,
+      "at": "2026-07-24T03:06:45Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "3c53baaf-83f3-4fe4-a975-d91432e72ed3",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 23,
+      "at": "2026-07-24T03:06:53Z"
+    },
+    {
+      "event": "broken",
+      "leaseId": "3c53baaf-83f3-4fe4-a975-d91432e72ed3",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "actor": {
+        "agentId": "codex-root",
+        "sessionId": "part-d-20260724",
+        "host": "zcode-desktop",
+        "pid": 24544
+      },
+      "reason": "Part D session takes over after user approved Part D executionPlan; part-c lease is stale residual from parallel session",
+      "fencingToken": 23,
+      "at": "2026-07-24T03:18:16Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "299859d0-5c93-428e-a2ed-5c3151c43167",
+      "owner": {
+        "agentId": "zcode-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 24,
+      "at": "2026-07-24T03:18:39Z"
+    },
+    {
+      "event": "broken",
+      "leaseId": "299859d0-5c93-428e-a2ed-5c3151c43167",
+      "owner": {
+        "agentId": "zcode-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "actor": {
+        "agentId": "zcode-root",
+        "sessionId": "part-d-20260724",
+        "host": "zcode-desktop",
+        "pid": 17320
+      },
+      "reason": "releasing long-lived lease so bind-story-doc CLI can acquire its own ephemeral lease",
+      "fencingToken": 24,
+      "at": "2026-07-24T03:23:30Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "f7d88256-0871-480b-8613-145bbc1aefce",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 25,
+      "at": "2026-07-24T03:23:43Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "f7d88256-0871-480b-8613-145bbc1aefce",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 25,
+      "at": "2026-07-24T03:23:43Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "5269bbc7-30a7-49d2-84c1-2644fad08d75",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 26,
+      "at": "2026-07-24T03:26:37Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "5269bbc7-30a7-49d2-84c1-2644fad08d75",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 26,
+      "at": "2026-07-24T03:26:37Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "1654468f-8e56-4626-b946-d2786811fbab",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 27,
+      "at": "2026-07-24T03:26:50Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "1654468f-8e56-4626-b946-d2786811fbab",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 27,
+      "at": "2026-07-24T03:26:50Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "1f1a8934-9175-45f3-9171-7beb1826943e",
+      "owner": {
+        "agentId": "zcode-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 28,
+      "at": "2026-07-24T03:32:46Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "1f1a8934-9175-45f3-9171-7beb1826943e",
+      "owner": {
+        "agentId": "zcode-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 28,
+      "at": "2026-07-24T05:36:45Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "14d11a50-0e0b-483b-9e21-80f09d7ec327",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 29,
+      "at": "2026-07-24T05:36:45Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "14d11a50-0e0b-483b-9e21-80f09d7ec327",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 29,
+      "at": "2026-07-24T05:36:45Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "b78e97d1-8932-4d4e-a394-6c5e95cd8010",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 30,
+      "at": "2026-07-24T05:37:13Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "b78e97d1-8932-4d4e-a394-6c5e95cd8010",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 30,
+      "at": "2026-07-24T05:37:13Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "8e91cede-3dd8-4029-8793-03a69781a2bc",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 31,
+      "at": "2026-07-24T05:37:21Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "8e91cede-3dd8-4029-8793-03a69781a2bc",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 31,
+      "at": "2026-07-24T05:37:21Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "c0209f89-fd7a-449b-9648-067a976dc600",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 32,
+      "at": "2026-07-24T06:10:00Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "c0209f89-fd7a-449b-9648-067a976dc600",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 32,
+      "at": "2026-07-24T06:28:49Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "afb89e04-6b3b-4596-bf80-ea66f802e88e",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 33,
+      "at": "2026-07-24T06:28:58Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "afb89e04-6b3b-4596-bf80-ea66f802e88e",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 33,
+      "at": "2026-07-24T06:28:58Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "7bfb196c-0298-4c4d-82bf-c9d5b5d18f3a",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 34,
+      "at": "2026-07-24T06:29:18Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "7bfb196c-0298-4c4d-82bf-c9d5b5d18f3a",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 34,
+      "at": "2026-07-24T06:29:18Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "9b302dd5-056d-4f84-a5e4-6e31792e283a",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 35,
+      "at": "2026-07-24T06:38:55Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "9b302dd5-056d-4f84-a5e4-6e31792e283a",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 35,
+      "at": "2026-07-24T06:46:05Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "c70e39c6-3547-46ba-92c8-4b8d4bacfb4e",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 36,
+      "at": "2026-07-25T08:40:40Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "c70e39c6-3547-46ba-92c8-4b8d4bacfb4e",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 36,
+      "at": "2026-07-25T09:03:54Z",
+      "expiresAt": "2026-07-25T10:03:54Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "c70e39c6-3547-46ba-92c8-4b8d4bacfb4e",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 36,
+      "at": "2026-07-25T10:05:19Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "85818762-0347-4383-a8f7-19852bfe2828",
+      "owner": {
+        "agentId": "claude-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 37,
+      "at": "2026-07-25T10:05:19Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "85818762-0347-4383-a8f7-19852bfe2828",
+      "owner": {
+        "agentId": "claude-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 37,
+      "at": "2026-07-25T10:06:32Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "dd54d3f2-1f88-4113-bff5-07b2b96571c6",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 38,
+      "at": "2026-07-25T10:06:38Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "dd54d3f2-1f88-4113-bff5-07b2b96571c6",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 38,
+      "at": "2026-07-25T10:06:38Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "39201d7b-6f4d-458f-b01d-82f1cf3258bb",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 39,
+      "at": "2026-07-25T10:06:50Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "39201d7b-6f4d-458f-b01d-82f1cf3258bb",
+      "owner": {
+        "agentId": "ae-sdd-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 39,
+      "at": "2026-07-25T10:06:50Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "0b8b87d6-b4db-4e50-abbe-a3b6b66b3456",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 40,
+      "at": "2026-07-25T10:06:56Z"
+    },
+    {
+      "event": "released",
+      "leaseId": "0b8b87d6-b4db-4e50-abbe-a3b6b66b3456",
+      "owner": {
+        "agentId": "ae-sdd-legacy-cli",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 40,
+      "at": "2026-07-25T10:06:56Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "c6467f3f-3ca5-4345-9b86-ac3c2d5239f5",
+      "owner": {
+        "agentId": "claude-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 41,
+      "at": "2026-07-25T10:08:55Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "c6467f3f-3ca5-4345-9b86-ac3c2d5239f5",
+      "owner": {
+        "agentId": "claude-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 41,
+      "at": "2026-07-25T14:42:13Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "f45fcd7b-d210-47c6-b06f-ed2013855704",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 42,
+      "at": "2026-07-25T14:42:13Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "f45fcd7b-d210-47c6-b06f-ed2013855704",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 42,
+      "at": "2026-07-25T16:54:35Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T16:54:35Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T17:31:01Z",
+      "expiresAt": "2026-07-25T18:31:01Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T17:48:47Z",
+      "expiresAt": "2026-07-25T18:48:47Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T18:05:59Z",
+      "expiresAt": "2026-07-25T19:05:59Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T18:42:11Z",
+      "expiresAt": "2026-07-25T19:42:11Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T19:07:24Z",
+      "expiresAt": "2026-07-25T20:07:24Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T19:10:51Z",
+      "expiresAt": "2026-07-25T20:10:51Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "7d1af516-c007-47d1-88f7-671e53252930",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 43,
+      "at": "2026-07-25T21:41:00Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "ea9434c9-047c-4f33-b231-d6f837cebf1c",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 44,
+      "at": "2026-07-25T21:41:00Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "ea9434c9-047c-4f33-b231-d6f837cebf1c",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 44,
+      "at": "2026-07-25T21:55:28Z",
+      "expiresAt": "2026-07-25T22:55:28Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "ea9434c9-047c-4f33-b231-d6f837cebf1c",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 44,
+      "at": "2026-07-25T22:19:58Z",
+      "expiresAt": "2026-07-25T23:19:58Z"
+    },
+    {
+      "event": "expired",
+      "leaseId": "ea9434c9-047c-4f33-b231-d6f837cebf1c",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 44,
+      "at": "2026-07-26T07:23:21Z"
+    },
+    {
+      "event": "acquired",
+      "leaseId": "c6df9649-f1e6-4132-b635-b488a8fec21f",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 45,
+      "at": "2026-07-26T07:23:21Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "c6df9649-f1e6-4132-b635-b488a8fec21f",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 45,
+      "at": "2026-07-26T07:46:59Z",
+      "expiresAt": "2026-07-26T08:46:59Z"
+    },
+    {
+      "event": "renewed",
+      "leaseId": "c6df9649-f1e6-4132-b635-b488a8fec21f",
+      "owner": {
+        "agentId": "codex-root",
+        "sessionId": "session-redacted",
+        "host": "HOST-REDACTED",
+        "pid": 1000
+      },
+      "fencingToken": 45,
+      "at": "2026-07-26T08:20:54Z",
+      "expiresAt": "2026-07-26T09:20:54Z"
+    }
+  ]
+}

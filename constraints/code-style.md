@@ -90,6 +90,44 @@ pub async fn execute_mutation(
 - 循环或高频 Hook 内禁止逐项 info；使用聚合 metric、sampling 或 trace level。
 - 日志脱敏和审计字段以 `security.md` 为准。
 
+## 八之二、daemon 诊断轨
+
+上一节管 `tracing` 生命周期日志。诊断轨是**另一条独立通路**，权威定义在
+`ae-sdd-contracts::diagnostics`，写入在 `ae-sdd-runtime::diagnostics`，读取在
+`ae-sdd runtime trace`。
+
+- 诊断轨不经 `tracing`，改用 typed record + serde 序列化为 JSONL。这不是违反上一节
+  的「禁止拼接 JSON 字符串日志」：字段由 struct/enum 在编译期固定，没有手写拼接。
+  用 struct 而非 `tracing` 宏是为了让字段清单成为编译期契约，宏漏字段编译器不管。
+- 轨道划分固定为两条：`trace`（Hook 调用与 daemon 答复）与 `ops`（任务节点变更与
+  缺陷）。分轨的唯一理由是防挤占——`trace` 占绝大多数字节，合并会让一阵 Hook 流量
+  把低频的缺陷记录挤出保留窗口。禁止把两轨合并为一个文件。
+- **`trace` 轨逐条记录每次 Hook 调用，是上一节「高频 Hook 内禁止逐项 info」的显式
+  例外。** 该禁令针对 `tracing` 的 info 级噪音；诊断轨不进 info、不进 `daemon.log`，
+  分轨已经达到禁令要保护的目的（低频关键信息不被高频流量淹没）。禁止以该禁令为由把
+  `trace` 轨改成采样或聚合：逐条是需求，缺一条即留痕断裂。
+- 每次 Hook 调用写 `hook.in` 与 `hook.out` 两条，共用 `hook_event_id` 配对。禁止合并
+  为一条：`hook.in` 无配对是 daemon 未返回（崩溃或线程丢失）的唯一廉价证据，合并后
+  该信号消失。`hook.in` 必须在做任何工作之前写入。
+- `turn_id` 是跨四类记录的主关联轴，凡能取到必须携带。诊断轨不要求 `request_id`：
+  Hook 侧的配对键是 `hook_event_id`，节点侧是 `idempotency_key`/`revision`。
+- 缺陷轨只收 panic、invariant、worker 异常、store/migration 故障、encode 故障。
+  **策略拒绝（role denial、blocker gate 失败、lease 冲突）不是缺陷**，禁止写入缺陷
+  轨——它们是系统按设计工作，混入会把真缺陷埋掉；它们通过其他记录的 `ok: false` 可查。
+- 同一缺陷按 `(kind, code_site, 归一化 message)` 指纹去重：首次写完整记录，其后只累加
+  计数。指纹表必须有上限，超限即落盘并重置——归一化只折叠数字串，带变化路径或 ID 的
+  消息会持续产生新指纹，无上限即内存泄漏。
+- 保留只用字节表达，禁止按时间过期，禁止后台定时清理任务。写满即轮转、固定保留段数、
+  挤掉最旧段。诊断轨是优化用的一次性诊断物，不是合规留存物；`security.md` 要求的不可变
+  evidence 由 receipt 与项目文件承载，不由诊断轨承载。当前上限：`trace` 4 MiB × 4 段、
+  `ops` 2 MiB × 3 段（含 live 段），合计约 22 MiB。
+- 轮转必须先关闭文件句柄再 rename。Windows 不允许 rename 仍被持有的文件，顺序写反的
+  表现是轮转静默失效、段文件无界增长，与原因毫无相似之处。
+- 诊断轨写入路径不得让 daemon 失败：writer 线程死亡、磁盘写满或队列饱和只能退化为丢行。
+  `ops` 轨阻塞等待而不丢；`trace` 轨可丢但必须累计并落盘丢弃计数，禁止静默丢弃。
+- 禁止把 context/projection 正文、prompt、transcript、tool 输出正文、token 或 secret
+  写入诊断轨；只允许有界标识、稳定 code 与 digest。脱敏边界同样以 `security.md` 为准。
+
 ## 九、进程、文件与 SQLite
 
 - 外部进程使用 program + args，不经过 shell；保留 exit code、有限 stdout/stderr digest、deadline 和 cancellation evidence。

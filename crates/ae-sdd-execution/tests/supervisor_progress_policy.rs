@@ -17,6 +17,7 @@ use ae_sdd_execution::{
     ExecutionDecisionV1, ExecutionProgressKindV1, ExecutionSliceEvent, ExecutionSupervisor,
     ExecutionSupervisorCheckpointV1, ExecutionSupervisorError, ExecutionSupervisorFault,
     ExecutionToolEventV1, ExecutionToolOutputV1, FocusedTestOutcomeV1, FocusedTestStateV1,
+    RefactorCycleV1,
 };
 use ae_sdd_protocol::StableErrorCode;
 use proptest::prelude::*;
@@ -958,6 +959,8 @@ fn completed_slice_denies_every_event_and_never_mutates() {
         ExecutionSliceEvent::RedObserved,
         ExecutionSliceEvent::PatchApplied,
         ExecutionSliceEvent::FocusedTestGreen,
+        ExecutionSliceEvent::RefactorStarted,
+        ExecutionSliceEvent::RefactorGreen,
         ExecutionSliceEvent::EvidenceBound,
         ExecutionSliceEvent::Completed,
         ExecutionSliceEvent::Blocked,
@@ -974,6 +977,132 @@ fn completed_slice_denies_every_event_and_never_mutates() {
         assert_eq!(error.error_code(), StableErrorCode::ExecutionSliceInvalid);
         assert_eq!(next, checkpoint, "completed slice must never mutate");
     }
+}
+
+fn slice(event: ExecutionSliceEvent) -> ExecutionToolEventV1 {
+    ExecutionToolEventV1::Slice(event)
+}
+
+fn assert_illegal_slice_event(
+    checkpoint: &ExecutionSupervisorCheckpointV1,
+    event: ExecutionSliceEvent,
+) {
+    let (decision, next) = ExecutionSupervisor::decide(checkpoint, &slice(event));
+    let ExecutionDecisionV1::Deny(error) = decision else {
+        panic!("{event:?} must be denied, got {decision:?}")
+    };
+    assert_eq!(error.fault(), ExecutionSupervisorFault::IllegalSliceEvent);
+    assert_eq!(
+        &next, checkpoint,
+        "a denied event must not mutate the checkpoint"
+    );
+}
+
+fn assert_slice_advance(
+    checkpoint: ExecutionSupervisorCheckpointV1,
+    event: ExecutionSliceEvent,
+) -> ExecutionSupervisorCheckpointV1 {
+    let (decision, next) = ExecutionSupervisor::decide(&checkpoint, &slice(event));
+    let ExecutionDecisionV1::Allow(allowance) = decision else {
+        panic!("{event:?} must be allowed, got {decision:?}")
+    };
+    assert_eq!(
+        allowance.progress(),
+        Some(ExecutionProgressKindV1::SliceAdvanced),
+        "{event:?} must count as slice progress"
+    );
+    next
+}
+
+#[test]
+fn refactor_start_after_focused_green_is_progress_and_blocks_evidence_binding() {
+    let checkpoint =
+        ExecutionSupervisorCheckpointV1::new(ExecutionSliceStatus::FocusedGreen, default_budgets());
+    assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Idle);
+    let checkpoint = assert_slice_advance(checkpoint, ExecutionSliceEvent::RefactorStarted);
+    assert_eq!(
+        checkpoint.slice_status(),
+        ExecutionSliceStatus::FocusedGreen
+    );
+    assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Open);
+
+    assert_illegal_slice_event(&checkpoint, ExecutionSliceEvent::EvidenceBound);
+}
+
+#[test]
+fn refactor_green_closes_the_loop_and_reopens_evidence_binding() {
+    let mut checkpoint =
+        ExecutionSupervisorCheckpointV1::new(ExecutionSliceStatus::Pending, default_budgets());
+    for event in [
+        ExecutionSliceEvent::Claimed,
+        ExecutionSliceEvent::RedObserved,
+        ExecutionSliceEvent::PatchApplied,
+        ExecutionSliceEvent::FocusedTestGreen,
+        ExecutionSliceEvent::RefactorStarted,
+        ExecutionSliceEvent::RefactorGreen,
+        ExecutionSliceEvent::EvidenceBound,
+    ] {
+        checkpoint = assert_slice_advance(checkpoint, event);
+    }
+    assert_eq!(
+        checkpoint.slice_status(),
+        ExecutionSliceStatus::EvidenceBound
+    );
+    assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Idle);
+}
+
+#[test]
+fn refactor_events_outside_their_window_are_denied() {
+    let running =
+        ExecutionSupervisorCheckpointV1::new(ExecutionSliceStatus::Running, default_budgets());
+    assert_illegal_slice_event(&running, ExecutionSliceEvent::RefactorStarted);
+    assert_illegal_slice_event(&running, ExecutionSliceEvent::RefactorGreen);
+
+    // Without an open refactor the refactor GREEN has no loop to close.
+    let green =
+        ExecutionSupervisorCheckpointV1::new(ExecutionSliceStatus::FocusedGreen, default_budgets());
+    assert_illegal_slice_event(&green, ExecutionSliceEvent::RefactorGreen);
+
+    // An open refactor cannot be started twice.
+    let opened = assert_slice_advance(green, ExecutionSliceEvent::RefactorStarted);
+    assert_illegal_slice_event(&opened, ExecutionSliceEvent::RefactorStarted);
+}
+
+#[test]
+fn blocked_refactor_stays_open_across_resume_and_must_still_close() {
+    let checkpoint =
+        ExecutionSupervisorCheckpointV1::new(ExecutionSliceStatus::FocusedGreen, default_budgets());
+    let mut checkpoint = assert_slice_advance(checkpoint, ExecutionSliceEvent::RefactorStarted);
+    checkpoint = assert_slice_advance(checkpoint, ExecutionSliceEvent::Blocked);
+    assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Open);
+    checkpoint = assert_slice_advance(checkpoint, ExecutionSliceEvent::Resumed);
+    assert_eq!(checkpoint.slice_status(), ExecutionSliceStatus::Running);
+    assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Open);
+
+    // The resume mirrors the RED re-observation rule: the loop must be walked
+    // again, and evidence stays denied until the refactor closes.
+    assert_illegal_slice_event(&checkpoint, ExecutionSliceEvent::RefactorGreen);
+    for event in [
+        ExecutionSliceEvent::RedObserved,
+        ExecutionSliceEvent::PatchApplied,
+        ExecutionSliceEvent::FocusedTestGreen,
+    ] {
+        checkpoint = assert_slice_advance(checkpoint, event);
+    }
+    assert_eq!(
+        checkpoint.slice_status(),
+        ExecutionSliceStatus::FocusedGreen
+    );
+    assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Open);
+    assert_illegal_slice_event(&checkpoint, ExecutionSliceEvent::EvidenceBound);
+
+    checkpoint = assert_slice_advance(checkpoint, ExecutionSliceEvent::RefactorGreen);
+    checkpoint = assert_slice_advance(checkpoint, ExecutionSliceEvent::EvidenceBound);
+    assert_eq!(
+        checkpoint.slice_status(),
+        ExecutionSliceStatus::EvidenceBound
+    );
+    assert_eq!(checkpoint.refactor_cycle(), RefactorCycleV1::Idle);
 }
 
 #[test]
@@ -1115,6 +1244,8 @@ fn arb_event() -> impl Strategy<Value = ExecutionToolEventV1> {
             ExecutionSliceEvent::RedObserved,
             ExecutionSliceEvent::PatchApplied,
             ExecutionSliceEvent::FocusedTestGreen,
+            ExecutionSliceEvent::RefactorStarted,
+            ExecutionSliceEvent::RefactorGreen,
             ExecutionSliceEvent::EvidenceBound,
             ExecutionSliceEvent::Completed,
             ExecutionSliceEvent::Blocked,
@@ -1179,6 +1310,31 @@ proptest! {
                 next.no_progress_batches(),
                 budgets.max_no_progress_batches()
             );
+            checkpoint = next;
+        }
+    }
+
+    #[test]
+    fn evidence_never_binds_while_a_refactor_loop_is_open(
+        script in prop::collection::vec(arb_event(), 0..24),
+    ) {
+        let mut checkpoint = ExecutionSupervisorCheckpointV1::new(
+            ExecutionSliceStatus::FocusedGreen,
+            default_budgets(),
+        );
+        for event in &script {
+            let (decision, next) = ExecutionSupervisor::decide(&checkpoint, event);
+            if matches!(
+                event,
+                ExecutionToolEventV1::Slice(ExecutionSliceEvent::EvidenceBound)
+            ) && matches!(decision, ExecutionDecisionV1::Allow(_))
+            {
+                prop_assert_eq!(
+                    checkpoint.refactor_cycle(),
+                    RefactorCycleV1::Idle,
+                    "evidence may only bind once no refactor loop is open"
+                );
+            }
             checkpoint = next;
         }
     }

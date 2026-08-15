@@ -5,7 +5,7 @@ mod secret;
 
 pub use action::{
     HostAck, HostAckOutcome, HostAction, HostActionError, HostActionKind, HostAdapterError,
-    HostAdapterId, HostCapability, HostCapabilitySet, HostRuntimeAdapter, HostTaskId,
+    HostAdapterId, HostRuntimeAdapter, HostTaskId,
 };
 pub use attestation::{AttestationError, ChildClaim, PhysicalSessionProof};
 pub use capability::{

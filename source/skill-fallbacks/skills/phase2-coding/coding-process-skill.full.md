@@ -8,9 +8,9 @@ description: |
   当 state.phase 走到 coding-process 或 coding 时触发；用户说“开始 Coding/写代码/实现 Story/
 ---
 
-# CodingProcess - executionPlan->Coding 全流程编排节点（流程与能力分离）
+# CodingProcess - CodingPlan/executionPlan->Coding 全流程编排节点（流程与能力分离）
 
-> **v3.12：** 不再生成 CodingPlan Markdown。将 goal/changedPaths/verification/risks/sourceReads 写入 `state.executionPlan`，在对话中渲染紧凑表格，用户确认后调用 `execution.plan.approve`。G-07/G-08/G-14/G-CODEPLAN-SRC 直接校验结构化状态。
+> **当前计划契约：** micro 将 goal/changedPaths/verification/risks/sourceReads 写入 `state.executionPlan`，不生成独立 CodingPlan Markdown。small 必须有正式 CodingPlan；medium/large 的每个 Story 必须在其绑定 TestCase 通过后有正式 CodingPlan。所有路线仍须把当前批准版本投影为 `state.executionPlan`，用户确认后调用 `execution.plan.approve`。G-07/G-08/G-14/G-CODEPLAN-SRC 校验结构化状态与所需 Spec 的绑定。
 
 > **🔴 v3.10.0 定位（砍 Task 后全流程化）：** 本 SKILL 持有 **CodePlan->Coding 全流程编排**。
 > - **流程职责（本 SKILL 持有）**：加载上下文 -> 骨架分解 -> 调能力做 CodeAnalysis -> 出 CodePlan -> Execute 写代码 -> 验证 -> 异常追溯
@@ -71,7 +71,7 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 | 参数 | 来源 |
 |------|------|
-| ① 项目约束文档 | `document-storage-skill.get_constraints(projectKey)` |
+| ① 项目约束文档 | 直接读取 `constraints/` 目录（索引 `constraints/README.md`） |
 | ② 技术约束 / CodingModel | `document-storage-skill.get_thinking_engine(projectKey)` |
 | ③ Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}`（微任务无）|
 | ④ TestCase 文档 | `ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}`（微任务无）|
@@ -100,28 +100,25 @@ ae-sdd memory exit --phase coding --story <STORY-ID>
 
 | 上下文 | 加载方式 | 缺失处置 |
 |--------|---------|---------|
-| ① 项目约束 | `document-storage-skill.get_constraints(projectKey)` 返回 9 项约束（清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
+| ① 项目约束 | 直接读取 `constraints/` 目录的约束文档（索引 `constraints/README.md`；清单见 [`coding-skill.md` §2](coding-skill.md)） | 空/缺关键约束 → 停止，走 project-assets-update-skill 生成 |
 | ② 技术约束 CodingModel | `document-storage-skill.get_thinking_engine(projectKey)`，产出 11 维决策（决策表见 [`coding-skill.md` §1](coding-skill.md)） | 任一维度结论空 → 停止，向上游追溯 |
 | ③ Story 文档 | `ae-sdd doc resolve --intent STORY --story-id {S}` 定位后读取，提取涉及工程/主流程伪代码/实现任务映射/接口契约/数据模型/偏离声明（微任务跳过，须标"无 Story 上下文，独立决策"） | — |
 | ④ TestCase 文档 | `ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}` 定位后读取，提取场景清单/测试分层/预期输入输出（微任务跳过） | — |
 
 > 项目资产读取已下沉到 §A2 调用 coding-skill 能力的内部步骤（要素1），不在本表重复列为独立上下文。
 
-### §A1.4 🆕 v3.10.2 micro 意图分流前置门（OPTIMIZE/CODE_REVIEW entry_node）
+### §A1.4 流程深度由权威 `EngineeringRoute` 决定，本 SKILL 不自行分流
 
-> **适用场景：** `/ae-sdd 优化这部分实现`（entryNode=OPTIMIZE）或误入本 SKILL 的 CODE_REVIEW。本门在 §A1.5 骨架分解之前判定，按意图裁剪流程深度。
+> **统一 intake（D-01/F-11）：** 本节曾按 `entry_node`（OPTIMIZE/CODE_REVIEW）在 SKILL 内部裁剪流程深度。该模型已删除，原因有二：
+>
+> 1. **入口不再决定流程起点。** 统一 intake 下 `ROUTE` 是唯一主流程起点，`entryNode` 的 PRD/DR/STORY 只是输入与 Spec binding 提示。`workitem.create` 接受的集合是 ROUTE/PRD/DR/STORY，`OPTIMIZE`/`CODE_REVIEW` 不在其中，按它们分流的前置门没有可判定的输入。
+>
+>    **两个同名字段要分清：** `OPTIMIZE`/`CODE_REVIEW` 这两个串仍存在于 legacy `classify` job（`jobs/misc.rs` 按 intent 关键词分类），但那是 job 结果 JSON 里的**建议值**，与 `workitem.create` 校验的 payload 字段是两个独立面，没有代码或文档把前者接到后者。本 SKILL 走的是后者，所以拿不到那两个值。legacy 通道本身的去留见 D-14。
+> 2. **裁剪深度不是 SKILL 的权限。** Requirement Analysis 是每个任务的第一个业务 Series；权威 `EngineeringRoute` 在 RA 闭合其材料冲突之后才冻结，并由 `FlowRuntime` 下发。SKILL 侧自行"免 Story/TestCase"或放行 `initialized→coding` 跨步跳跃，等于在 RA 之前替路线做决定。
 
-| entry_node | 流程裁剪 | 说明 |
-|-----------|---------|------|
-| **OPTIMIZE** | §A1 仅加载 ①②项目约束 + 用户指定代码（免 Story/TestCase）；**跳过 §A1.5 骨架分解**；直 §A2 CodeAnalysis（基于给定代码）→ §A3 轻量 CodePlan → §A4 审核 → §B Execute | 微-优化：目标是对**已有代码**做优化/重构，无需从 Story 派生骨架 |
-| **CODE_REVIEW** | **交棒 code-review-skill**，本 SKILL 不接管 | 微-审查：审查是只读出结论，不进 CodingProcess |
-| 其他（BUG/CONFIG/PRD/RA/None） | 走完整 §A1.5→§A2→§A3→§A4 | 原行为不变 |
+**本 SKILL 的实际契约：** 接受 `FlowRuntime` 已冻结的路线与其规定的输入，按 §A1.5→§A2→§A3→§A4 执行。是否存在 Story/TestCase 由路线决定并体现在下发的输入里，不由本节推断。
 
-**OPTIMIZE 路径 §A1 加载调整：** 上下文表 ③ Story / ④ TestCase 标"无 Story 上下文，独立决策"（与微任务一致），新增**⑤ 用户指定代码范围**（必读：用户指明的文件/类/方法）。
-
-**OPTIMIZE 路径 §A2 调整：** CodeAnalysis 输入从"§A1.5 骨架"改为"用户指定代码现状"，输出"优化后骨架 + 改动点清单"。
-
-> **gate 协同：** OPTIMIZE/CODE_REVIEW + scale=微 时，gate_intercept 跨步跳跃已放行（initialized→coding / initialized→code-reviewed）。本门只管"流程深度裁剪"，state 流转仍由 SKILL.md 状态机子链表定义。
+> 若用户意图是对既有代码做优化或重构，它同样先经 RA 产出权威路线，再由路线决定落到哪条链；这不是绕过 RA 的独立入口。
 
 ### §A1.5 骨架分解（🆕 v3.10.0 从 task-generate-skill 合并）
 
@@ -219,7 +216,7 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 
 **收集输入：** 复核 §A1 已加载的 4 上下文（不重新加载，已在 CodeAnalysis 阶段通过 `document-storage-skill` 定位）：
 
-- 约束文档：`get_constraints(projectKey)` 返回的 9 项（关键规则见 [`coding-skill.md` §2](coding-skill.md)）
+- 约束文档：`constraints/` 目录下的约束文档（索引 `constraints/README.md`；关键规则见 [`coding-skill.md` §2](coding-skill.md)）
 - Story 文档：`ae-sdd doc resolve --intent STORY --story-id {S}`，提取涉及工程/主流程伪代码分层骨架/实现任务映射/接口契约/数据模型/偏离声明
 - 骨架分解（§A1.5）：CodingPlan 骨架（类名/包路径/方法签名/伪代码），替代原 Task 文档
 - 测试用例文档：`ae-sdd doc resolve --intent TESTCASE --work-item {W} --story-id {S?}`，提取场景清单/测试分层/Mock点/预期输入输出/错误码断言
@@ -238,10 +235,15 @@ CodePlan 过门禁后，**必须等用户明确确认**（"确认/同意/可以�
 
 | 任务规模 | 生成依据 | 流程深度 |
 |---------|---------|---------|
-| **大任务** | Story + TestCase + CodingPlan（含骨架分解）| 全流程 |
-| **中任务** | Story + TestCase + CodingPlan | 全流程 |
-| **小任务** | Story + TestCase + 完整 CodingPlan | 全流程 |
-| **微任务** | Work Item 轻量 CodingPlan（无 Story/TestCase；类骨架按需）| 全流程 |
+| **大任务** | RA → DR → N×(Story → TestCase → CodingPlan)（含骨架分解）| 全流程 |
+| **中任务** | RA → Story → TestCase → CodingPlan | 全流程 |
+| **小任务** | RA → 完整 CodingPlan（无 Story，故无 TestCase）| 全流程 |
+| **微任务** | RA → 经批准的紧凑 `state.executionPlan`（不落独立 CodingPlan Markdown）| 全流程 |
+
+> **口径以 `source/SKILL.md` §Declared Routes 为准。** 三点易错处：
+> 小任务此前被写成"Story + TestCase + 完整 CodingPlan"，与权威路线冲突——小任务无 Story，因此不产生 TestCase；
+> 微任务不落独立 CodingPlan Markdown，只用经批准的 `state.executionPlan`；
+> 凡存在 Story，每个 Story 各跑独立 `Story → TestCase → CodingPlan` 子链，其 TestCase receipt 绑定该 Story identity，同路线其他 Story 的 TestCase 不能替它作答。TestCase 既非可选，也不取决于验证矩阵复杂度。
 
 **生成规则：**
 - **骨架填肉，按序展开**：CodingPlan §A1.5 骨架给方法签名+伪代码，按 [`coding-skill.md` §4 骨架展开规则](coding-skill.md) "填肉"，不自行发挥结构
@@ -318,7 +320,7 @@ cd {parent-project-root} && mvn compile
 
 **事务边界验证：** 事务内失败无污染/事务外操作不阻塞/调用链与 Story 一致。
 
-**所有测试 Pass：** `mvn test` → BUILD SUCCESS。
+**所有测试 Pass：** `mvn test -pl {受影响模块} -Dtest={受影响测试类}` → BUILD SUCCESS（开发回路与收口只做增量测试；全量 `mvn test` 仅 release/分发门禁执行）。
 
 ### §B5 Test 系列交接
 
@@ -518,7 +520,7 @@ Test 系列未通过时，按 `test-review-skill.md` 的缺陷分类回到 Test 
 | 条件 | 说明 |
 |------|------|
 | ✅ 编译通过 | `mvn compile` 无错误 |
-| ✅ 测试全部通过 | `mvn test` 所有用例 Pass |
+| ✅ 测试全部通过 | `mvn test -pl {受影响模块} -Dtest={受影响测试类}` 受影响用例全部 Pass（全量套件仅 release/分发门禁执行） |
 | ✅ 问题反馈闭环 | 异常路径中无 Open 状态的问题 |
 | ✅ 测试报告已出具 | 最终一轮测试报告已生成 |
 | ✅ 全切面一致性核查闸通过 | 无 🔴 漂移，核心落库路径有真实 DB 证据 |

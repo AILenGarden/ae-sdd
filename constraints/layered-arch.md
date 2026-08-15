@@ -128,3 +128,15 @@ request
 - 禁止把 host request/ACK、compact trigger、watcher event 或 process exit=0 单独当作业务完成。
 - 禁止无界 channel、无界 task spawn、无 deadline I/O 或在 Tokio core thread 执行 blocking 操作。
 - 禁止 shadow 阶段双写；workspace writer mode 必须经 drain 原子切换。
+
+## Bootstrap adapter/runtime boundary
+
+The CLI detects the exact `/ae-sdd` token but owns no migration decision. It
+first performs canonical Shadow registration, then requests the runtime's
+Hook-only bootstrap activation. Runtime owns the single legal enrollment edge,
+its durable identity transition, and its audit event.
+
+Per-event session reopen also belongs to this boundary: CLI supplies external
+session plus Hook-event identity; runtime preserves authoritative Work Item,
+role, delegation, grant, and physical attestation while refreshing durable TTL
+and the boot-scoped capability.

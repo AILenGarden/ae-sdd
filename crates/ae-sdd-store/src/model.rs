@@ -20,6 +20,16 @@ impl UtcTimestamp {
         Self(jiff::Timestamp::now())
     }
 
+    /// Builds a `UtcTimestamp` from a Unix-millisecond value. Lets the runtime
+    /// drive expiry checks from its injected clock port (which exposes
+    /// milliseconds) without depending on `jiff` directly.
+    pub fn from_unix_ms(unix_ms: u64) -> Self {
+        Self(
+            jiff::Timestamp::from_millisecond(unix_ms as i64)
+                .expect("u64 fits in i64 milliseconds"),
+        )
+    }
+
     pub const fn as_timestamp(&self) -> &jiff::Timestamp {
         &self.0
     }

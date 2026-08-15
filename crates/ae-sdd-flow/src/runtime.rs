@@ -1,6 +1,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
+use ae_sdd_contracts::execution_runtime::ExecutionSliceStatus;
 use ae_sdd_domain::{
     AgentRole, CompletionMilestone, DecisionDigest, DesignRoute, EventSequence, ProcessPhase,
     WorkScale,
@@ -11,8 +12,8 @@ use ae_sdd_policy::{
 };
 
 use crate::{
-    ExecutionCursor, FlowDecision, FlowError, FlowEvent, FlowEventKind, FlowInput, FlowSnapshot,
-    NextAction, SupervisorDegradation, SupervisorHealth, canonical,
+    CompactAdviceReason, ExecutionCursor, FlowDecision, FlowError, FlowEvent, FlowEventKind,
+    FlowInput, FlowSnapshot, NextAction, SupervisorDegradation, SupervisorHealth, canonical,
 };
 
 /// Pure deterministic flow reducer and replay entry point.
@@ -140,17 +141,39 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
         }
         FlowEventKind::TransitionRequested { actor_role, target } => {
             if let Some(pending) = decision.pending_transition {
+                if pending == *target && *actor_role == AgentRole::Root {
+                    return Ok(());
+                }
                 return Err(FlowError::TransitionAlreadyPending {
                     pending,
                     requested: *target,
                 });
             }
+            let current = decision.snapshot.phase();
+            let route = decision.environment.route();
+            if current == ProcessPhase::RequirementAnalyzed
+                && *target == ProcessPhase::RouteSelected
+                && matches!(route, crate::RouteLifecycle::Pending)
+            {
+                return Err(FlowError::RouteCandidateMissing { target: *target });
+            }
+            if phase_consumes_frozen_route(current)
+                && *target != ProcessPhase::Paused
+                && !matches!(route, crate::RouteLifecycle::Frozen(_))
+            {
+                return Err(FlowError::RouteNotFrozen { target: *target });
+            }
+            let selection = decision.environment.route().selection().unwrap_or_else(|| {
+                // TransitionPolicy ignores these sentinels for the route-less
+                // Initialized -> RequirementAnalyzed edge.
+                crate::RouteSelection::new(WorkScale::Micro, DesignRoute::CodingPlan)
+            });
             let context = TransitionContext {
                 actor_role: *actor_role,
                 current: decision.snapshot.phase(),
                 target: *target,
-                scale: decision.environment.route().scale(),
-                design_route: decision.environment.route().design_route(),
+                scale: selection.scale(),
+                design_route: selection.design_route(),
                 paused_from: decision.snapshot.paused_from(),
             };
             match TransitionPolicy::authorize(context) {
@@ -382,8 +405,35 @@ fn reduce_kind(decision: &mut FlowDecision, event: &FlowEventKind) -> Result<(),
         FlowEventKind::BackgroundRecovered => {
             decision.health = SupervisorHealth::Healthy;
         }
+        FlowEventKind::SeriesCompleted => {
+            // Advisory only: pending transitions, execution slices, and
+            // completion-chain work keep owning the action. The suggestion
+            // never starts a compact cycle by itself.
+            if decision.pending_transition.is_none()
+                && decision.next_action == NextAction::AwaitAgentWork
+            {
+                decision.next_action = NextAction::SuggestCompact {
+                    reason: CompactAdviceReason::SeriesBoundary,
+                };
+            }
+        }
     }
     Ok(())
+}
+
+const fn phase_consumes_frozen_route(phase: ProcessPhase) -> bool {
+    matches!(
+        phase,
+        ProcessPhase::RouteSelected
+            | ProcessPhase::DrGenerated
+            | ProcessPhase::StoryGenerated
+            | ProcessPhase::TestcaseGenerated
+            | ProcessPhase::CodingProcess
+            | ProcessPhase::Coding
+            | ProcessPhase::TestRunning
+            | ProcessPhase::CodeReviewed
+            | ProcessPhase::Completed
+    )
 }
 
 /// Derives the execution-surface action for the policy-owned execution phase.
@@ -395,13 +445,28 @@ fn execution_action(phase: ProcessPhase, cursor: Option<ExecutionCursor>) -> Opt
         return None;
     }
     let cursor = cursor?;
-    if !cursor.is_slice_open() {
-        return None;
-    }
+    let active_slice_status = cursor.active_slice_status();
+    let next_slice_transition = next_slice_transition(active_slice_status)?;
     Some(NextAction::ExecuteApprovedSlice {
         active_ordinal: cursor.active_ordinal(),
         queue_digest: cursor.queue_digest(),
+        capsule_digest: cursor.capsule_digest(),
+        active_slice_status,
+        next_slice_transition,
     })
+}
+
+/// Returns the sole legal forward transition for an open execution slice.
+const fn next_slice_transition(status: ExecutionSliceStatus) -> Option<ExecutionSliceStatus> {
+    match status {
+        ExecutionSliceStatus::Pending => Some(ExecutionSliceStatus::Running),
+        ExecutionSliceStatus::Running => Some(ExecutionSliceStatus::RedObserved),
+        ExecutionSliceStatus::RedObserved => Some(ExecutionSliceStatus::Patched),
+        ExecutionSliceStatus::Patched => Some(ExecutionSliceStatus::FocusedGreen),
+        ExecutionSliceStatus::FocusedGreen => Some(ExecutionSliceStatus::EvidenceBound),
+        ExecutionSliceStatus::EvidenceBound => Some(ExecutionSliceStatus::Completed),
+        ExecutionSliceStatus::Completed | ExecutionSliceStatus::Blocked => None,
+    }
 }
 
 /// Recomputes the idle action unless a pending transition owns the decision.
@@ -445,13 +510,24 @@ fn completion_action(
 
 fn digest_decision(previous: Option<DecisionDigest>, decision: &FlowDecision) -> DecisionDigest {
     let mut bytes = Vec::with_capacity(512);
-    bytes.extend_from_slice(b"ae-sdd-flow-decision/v1\0");
+    bytes.extend_from_slice(b"ae-sdd-flow-decision/v2\0");
     encode_option_digest(&mut bytes, previous);
     bytes.extend_from_slice(decision.environment.event_store_id().as_uuid().as_bytes());
     bytes.extend_from_slice(decision.environment.policy_digest().as_bytes());
     bytes.extend_from_slice(decision.environment.input_fingerprint().as_bytes());
-    bytes.push(scale_tag(decision.environment.route().scale()));
-    bytes.push(route_tag(decision.environment.route().design_route()));
+    match decision.environment.route() {
+        crate::RouteLifecycle::Pending => bytes.push(0),
+        crate::RouteLifecycle::Candidate(selection) => {
+            bytes.push(1);
+            bytes.push(scale_tag(selection.scale()));
+            bytes.push(route_tag(selection.design_route()));
+        }
+        crate::RouteLifecycle::Frozen(selection) => {
+            bytes.push(2);
+            bytes.push(scale_tag(selection.scale()));
+            bytes.push(route_tag(selection.design_route()));
+        }
+    }
     bytes.push(phase_tag(decision.snapshot.phase()));
     encode_optional_phase(&mut bytes, decision.snapshot.paused_from());
     bytes.extend_from_slice(&decision.snapshot.state_revision().get().to_be_bytes());
@@ -552,14 +628,31 @@ fn encode_action(bytes: &mut Vec<u8>, action: &NextAction) {
         NextAction::ExecuteApprovedSlice {
             active_ordinal,
             queue_digest,
+            capsule_digest,
+            active_slice_status,
+            next_slice_transition,
         } => {
             bytes.push(10);
             bytes.extend_from_slice(&active_ordinal.to_be_bytes());
             bytes.extend_from_slice(queue_digest.as_bytes());
+            bytes.extend_from_slice(capsule_digest.as_bytes());
+            bytes.push(canonical::execution_slice_status_tag(*active_slice_status));
+            bytes.push(canonical::execution_slice_status_tag(
+                *next_slice_transition,
+            ));
         }
         NextAction::FinalizeExecutionEvidence => bytes.push(11),
         NextAction::CollectReviewContributions => bytes.push(12),
         NextAction::FinalizeGovernance => bytes.push(13),
+        NextAction::SuggestCompact { reason } => {
+            bytes.extend_from_slice(&[14, compact_advice_reason_tag(*reason)]);
+        }
+    }
+}
+
+const fn compact_advice_reason_tag(reason: CompactAdviceReason) -> u8 {
+    match reason {
+        CompactAdviceReason::SeriesBoundary => 0,
     }
 }
 

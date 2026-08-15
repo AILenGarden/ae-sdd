@@ -8,6 +8,6 @@ mod flow_supervisor;
 mod host_coordinator;
 
 pub use context_cache::ContextCache;
-pub use delegation_supervisor::DelegationSupervisor;
+pub use delegation_supervisor::{DelegationSupervisor, series_identity};
 pub use flow_supervisor::FlowSupervisor;
 pub use host_coordinator::HostCoordinator;

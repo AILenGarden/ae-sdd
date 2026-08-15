@@ -17,7 +17,8 @@ use ae_sdd_contracts::{
     ReviewId,
 };
 use ae_sdd_domain::{
-    AgentRole, ArtifactDigest, DelegationId, GateOutcome, InputFingerprint, PolicyDigest, SessionId,
+    AgentRole, ArtifactDigest, DelegationId, GateOutcome, InputFingerprint, PolicyDigest,
+    SessionId, StoryId,
 };
 use ae_sdd_operations::{OperationName, ValidatedOperationRequest};
 use ae_sdd_protocol::StableErrorCode;
@@ -255,10 +256,11 @@ pub(crate) fn validate_review_gate_authority(
     }
 
     let authority = parse_review_gate_state(state)?;
+    let review_work_item_id = review_projection_work_item_id(state, work_item_id)?;
     let projection = load_review_authority_projection(
         database,
         &workspace.workspace_id,
-        work_item_id,
+        review_work_item_id,
         authority.session.review_id().as_str(),
     )?
     .ok_or_else(|| external_conflict("Review Gate SQLite projection is missing"))?;
@@ -266,7 +268,7 @@ pub(crate) fn validate_review_gate_authority(
         &authority,
         &projection,
         &workspace.workspace_id,
-        work_item_id,
+        review_work_item_id,
     )?;
 
     let current_input = authoritative_review_workspace_input_fingerprint(workspace, state)?;
@@ -304,7 +306,7 @@ pub(crate) fn validate_review_gate_authority(
     let committing_boot_id = committing_review_boot_id(
         persistence,
         &workspace.workspace_id,
-        work_item_id,
+        review_work_item_id,
         projection.last_event_sequence,
     )?;
     let boots = AttestationBoots::committed(boot_id, &committing_boot_id);
@@ -313,7 +315,7 @@ pub(crate) fn validate_review_gate_authority(
             contribution,
             &authority.session,
             workspace,
-            work_item_id,
+            review_work_item_id,
             persistence,
             boots,
             now_ms,
@@ -325,13 +327,44 @@ pub(crate) fn validate_review_gate_authority(
             workspace,
             state_path,
             state,
-            work_item_id,
+            review_work_item_id,
             persistence,
             &authority,
             observed_at,
         )?;
     }
     Ok(())
+}
+
+/// Resolves Review persistence below a root Route/PRD state to the active Story
+/// that owns the review session and projection. Direct Story Gate requests keep
+/// their explicit identity.
+fn review_projection_work_item_id<'a>(
+    state: &'a Value,
+    requested_work_item_id: &'a str,
+) -> RuntimeResult<&'a str> {
+    if requested_work_item_id.starts_with("STORY-") {
+        StoryId::new(requested_work_item_id.to_owned())
+            .map_err(|_| schema_error("Review Gate Story identity is invalid"))?;
+        return Ok(requested_work_item_id);
+    }
+    let active_story = state
+        .get("activeStory")
+        .and_then(Value::as_str)
+        .or_else(|| state.get("currentStory").and_then(Value::as_str))
+        .ok_or_else(|| gate_blocked("Review Gate root state has no active Story anchor"))?;
+    StoryId::new(active_story.to_owned())
+        .map_err(|_| schema_error("Review Gate active Story identity is invalid"))?;
+    if !state
+        .get("storyStates")
+        .and_then(Value::as_object)
+        .is_some_and(|stories| stories.contains_key(active_story))
+    {
+        return Err(external_conflict(
+            "Review Gate active Story is absent from authoritative storyStates",
+        ));
+    }
+    Ok(active_story)
 }
 
 /// Resolves the daemon boot that durably committed the review aggregation
@@ -389,7 +422,7 @@ fn validate_tier3_review_authority(
 ) -> RuntimeResult<()> {
     let observed = ReviewTimestamp::new(observed_at.to_string())
         .map_err(|_| schema_error("Review Gate timestamp is not canonical UTC"))?;
-    let material = latest_full_verification_authority(
+    let material = latest_final_verification_authority(
         persistence,
         workspace,
         state,
@@ -415,11 +448,11 @@ fn validate_tier3_review_authority(
             "Tier 3 Review project authority differs from the durable verification receipt",
         ));
     }
-    if authority.receipt.final_proof().kind() != ReviewFinalProofKind::FullVerification
+    if authority.receipt.final_proof().kind() != ReviewFinalProofKind::FinalVerification
         || authority.receipt.final_proof().digest() != Some(material.state_receipt_ref_digest)
     {
         return Err(gate_blocked(
-            "Tier 3 Review final proof is not bound to the full verification receipt",
+            "Tier 3 Review final proof is not bound to the final verification receipt",
         ));
     }
     require_committed_journal_mutation(
@@ -1479,6 +1512,7 @@ pub(crate) fn prepare_review_finalize(
         caller,
         AgentRole::Root,
     )?;
+    validate_state_bound_review_evidence(workspace, state, work_item_id)?;
     let input_fingerprint = authoritative_review_workspace_input_fingerprint(workspace, state)?;
     let policy_digest = PolicyDigest::from_str(policy_digest)
         .map_err(|_| schema_error("daemon policy digest is invalid"))?;
@@ -1735,6 +1769,10 @@ impl ReviewAdmission {
             }
         }
     }
+
+    const fn requires_live_ttl(self) -> bool {
+        !matches!(self, Self::Revalidate)
+    }
 }
 
 fn bind_reviewer(
@@ -1770,9 +1808,13 @@ fn bind_reviewer(
         let delegation = snapshot
             .delegation
             .ok_or_else(|| attestation_error("delegation snapshot lacks delegation authority"))?;
-        let attestation = snapshot
-            .attestation
-            .ok_or_else(|| attestation_error("delegation snapshot lacks physical attestation"))?;
+        let Some(attestation) = snapshot.attestation else {
+            // A cancelled or otherwise incomplete delegation elsewhere in the
+            // workspace is not part of this reviewer's physical lineage. The
+            // target lineage still fails closed below when its delegation is
+            // absent from this attested-authority map.
+            continue;
+        };
         if by_delegation
             .insert(delegation.delegation_id.clone(), (delegation, attestation))
             .is_some()
@@ -1781,11 +1823,12 @@ fn bind_reviewer(
         }
     }
 
-    let reviewer = active_session(
+    let reviewer = admitted_session(
         by_id
             .get(&caller.session_id().to_string())
             .ok_or_else(|| identity_error("reviewer session has no typed authority"))?,
         now_ms,
+        admission,
     )?;
     if reviewer.agent_id != caller.agent_id()
         || reviewer.workspace_id != workspace.workspace_id
@@ -1800,11 +1843,12 @@ fn bind_reviewer(
         .parent_session_id
         .as_deref()
         .ok_or_else(|| identity_error("reviewer session lacks its Series parent"))?;
-    let series = active_session(
+    let series = admitted_session(
         by_id
             .get(series_id)
             .ok_or_else(|| identity_error("reviewer Series parent has no typed authority"))?,
         now_ms,
+        admission,
     )?;
     if series.role != WireAgentRole::Series
         || series.root_session_id != reviewer.root_session_id
@@ -1814,11 +1858,12 @@ fn bind_reviewer(
             "reviewer lineage is not Root -> Series -> Reviewer",
         ));
     }
-    let root = active_session(
+    let root = admitted_session(
         by_id
             .get(&reviewer.root_session_id)
             .ok_or_else(|| identity_error("review root has no typed authority"))?,
         now_ms,
+        admission,
     )?;
     if root.role != WireAgentRole::Root
         || root.session_id != root.root_session_id
@@ -1828,9 +1873,9 @@ fn bind_reviewer(
         return Err(identity_error("review root session authority is invalid"));
     }
 
-    validate_child_authority(series, root, &by_delegation, boots, now_ms)?;
+    validate_child_authority(series, root, &by_delegation, boots, now_ms, admission)?;
     let reviewer_attestation =
-        validate_child_authority(reviewer, series, &by_delegation, boots, now_ms)?;
+        validate_child_authority(reviewer, series, &by_delegation, boots, now_ms, admission)?;
 
     let authors = by_id
         .values()
@@ -1842,7 +1887,7 @@ fn bind_reviewer(
                 && session.current_work_item.as_deref() == Some(work_item_id)
                 && session.engaged
                 && session.status == "active"
-                && session.expires_at_unix_ms > now_ms
+                && (!admission.requires_live_ttl() || session.expires_at_unix_ms > now_ms)
         })
         .collect::<Vec<_>>();
     let [author] = authors.as_slice() else {
@@ -1850,7 +1895,7 @@ fn bind_reviewer(
             "review requires exactly one active typed Task author session",
         ));
     };
-    validate_child_authority(author, series, &by_delegation, boots, now_ms)?;
+    validate_child_authority(author, series, &by_delegation, boots, now_ms, admission)?;
 
     let specialty = reviewer_specialty(&reviewer_attestation.grant)?;
     if reviewer.grant != reviewer_attestation.grant
@@ -1894,11 +1939,15 @@ fn bind_reviewer(
     })
 }
 
-fn active_session(
+fn admitted_session(
     session: &RuntimeSessionRecord,
     now_ms: u64,
+    admission: ReviewAdmission,
 ) -> RuntimeResult<&RuntimeSessionRecord> {
-    if !session.engaged || session.status != "active" || session.expires_at_unix_ms <= now_ms {
+    if !session.engaged
+        || session.status != "active"
+        || (admission.requires_live_ttl() && session.expires_at_unix_ms <= now_ms)
+    {
         return Err(RuntimeError::new(
             StableErrorCode::SessionExpired,
             "review identity session is inactive or expired",
@@ -1916,6 +1965,7 @@ fn validate_child_authority<'a>(
     >,
     boots: AttestationBoots<'_>,
     now_ms: u64,
+    admission: ReviewAdmission,
 ) -> RuntimeResult<&'a RuntimeDelegationAttestationRecord> {
     let delegation_id = child
         .delegation_id
@@ -1931,13 +1981,12 @@ fn validate_child_authority<'a>(
         || delegation.delegation_id != delegation_id
         || delegation.role != child.role
         || delegation.status != "running"
-        || delegation.deadline_unix_ms <= now_ms
+        || (admission.requires_live_ttl() && delegation.deadline_unix_ms <= now_ms)
         || attestation.workspace_id != child.workspace_id
         || attestation.delegation_id != delegation_id
         || attestation.physical_session_id != child.session_id
         || attestation.grant != child.grant
         || !boots.permits(&attestation.accepted_boot_id)
-        || attestation.expires_at_unix_ms <= now_ms
     {
         return Err(attestation_error(
             "child session, delegation, and physical attestation do not strictly join",
@@ -2179,6 +2228,19 @@ fn validate_session_identity(
         ));
     }
     Ok(())
+}
+
+pub(crate) fn review_session_reuses_lineage(
+    session: &ReviewSessionV2,
+    input_fingerprint: InputFingerprint,
+    ruleset_fingerprint: InputFingerprint,
+    policy_digest: PolicyDigest,
+    inventory_generation: u64,
+) -> bool {
+    session.input_fingerprint() == input_fingerprint
+        && session.ruleset_fingerprint() == ruleset_fingerprint
+        && session.policy_digest() == policy_digest
+        && session.inventory_generation() == inventory_generation
 }
 
 fn parse_existing_session(state: &Value) -> RuntimeResult<Option<ReviewSessionV2>> {
@@ -2466,7 +2528,15 @@ fn open_review_session(
 ) -> RuntimeResult<OpenedReviewSession> {
     let existing_session = parse_existing_session(state)?;
     let existing_batch = parse_existing_batch(state)?;
-    if let Some(session) = existing_session.as_ref() {
+    if let Some(session) = existing_session.as_ref().filter(|session| {
+        review_session_reuses_lineage(
+            session,
+            input_fingerprint,
+            ruleset_fingerprint,
+            policy_digest,
+            inventory_generation,
+        )
+    }) {
         validate_session_identity(session, bound)?;
     }
     let existing_review_id = existing_session
@@ -2589,8 +2659,8 @@ fn derive_final_proof(
             .map_err(|_| schema_error("deterministic Gate proof is invalid"))?;
             Ok((proof, None))
         }
-        ReviewFinalProofKind::FullVerification => {
-            let material = latest_full_verification_authority(
+        ReviewFinalProofKind::FinalVerification => {
+            let material = latest_final_verification_authority(
                 persistence,
                 workspace,
                 state,
@@ -2599,20 +2669,26 @@ fn derive_final_proof(
                 observed,
             )?;
             let proof = ReviewFinalProofV2::bound(
-                ReviewFinalProofKind::FullVerification,
+                ReviewFinalProofKind::FinalVerification,
                 material.state_receipt_ref_digest,
                 session.source_revision(),
                 session.input_fingerprint(),
                 session.ruleset_fingerprint(),
                 observed.clone(),
             )
-            .map_err(|_| schema_error("full verification proof is invalid"))?;
+            .map_err(|_| schema_error("final verification proof is invalid"))?;
             Ok((proof, Some(material)))
         }
     }
 }
 
-fn latest_full_verification_authority(
+/// Resolves the Tier 3 final verification authority: exactly one committed
+/// PASS `toolset.receipt.record` job bound to the session fingerprints and
+/// the active receipt/manifest/mutation locators. The verification scope is
+/// deliberately not inspected here — under the incremental-testing strategy
+/// it is incremental, with the full suite reserved for release/distribution
+/// gates.
+fn latest_final_verification_authority(
     persistence: &dyn PersistencePort,
     workspace: &BusinessWorkspace,
     state: &Value,
@@ -2641,6 +2717,42 @@ fn latest_full_verification_authority(
         .and_then(|value| value.get("artifactRef"))
         .and_then(Value::as_str)
         .ok_or_else(|| gate_blocked("Tier 3 toolset receipt has no immutable locator"))?;
+    let final_binding = state
+        .get("finalVerificationBinding")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            gate_blocked("Tier 3 requires daemon-bound final verification provenance")
+        })?;
+    let binding_string = |field: &str| {
+        final_binding
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| gate_blocked("final verification provenance is incomplete"))
+    };
+    let terminal_methodology =
+        ArtifactDigest::digest(b"ae-sdd/finalized-evidence-receipt/v1").to_string();
+    if binding_string("reviewId")? != session.review_id().as_str()
+        || binding_string("toolsetJobId")? != state_job_id
+        || binding_string("inputFingerprint")? != session.input_fingerprint().to_string()
+        || binding_string("rulesetFingerprint")? != session.ruleset_fingerprint().to_string()
+        || binding_string("policyDigest")? != session.policy_digest().to_string()
+        || binding_string("methodologyDigest")? != terminal_methodology
+        || final_binding.get("sourceRevision").and_then(Value::as_u64)
+            != Some(session.source_revision())
+        || final_binding
+            .get("inventoryGeneration")
+            .and_then(Value::as_u64)
+            != Some(workspace.inventory_generation)
+        || binding_string("receiptDigest")?
+            != state_ref
+                .and_then(|value| value.get("receiptDigest"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| gate_blocked("Tier 3 toolset receipt has no receipt digest"))?
+    {
+        return Err(gate_blocked(
+            "final verification provenance differs from the active Review binding",
+        ));
+    }
 
     let mut matches = persistence
         .list_jobs()?
@@ -2659,7 +2771,7 @@ fn latest_full_verification_authority(
         ));
     }
     let job = matches.pop().expect("length checked");
-    validate_full_verification_job(
+    validate_final_verification_job(
         &job,
         session,
         workspace.inventory_generation,
@@ -2667,12 +2779,16 @@ fn latest_full_verification_authority(
         state_manifest_digest,
         state_mutation_id,
         state_locator,
+        final_binding,
         observed,
     )
 }
 
+/// Binds the single PASS verification job to the session: revision,
+/// fingerprints, inventory generation, digests, and committed locators must
+/// all match. Test scope (incremental vs full) is not part of this contract.
 #[allow(clippy::too_many_arguments)]
-fn validate_full_verification_job(
+fn validate_final_verification_job(
     job: &RuntimeJobRecord,
     session: &ReviewSessionV2,
     inventory_generation: u64,
@@ -2680,6 +2796,7 @@ fn validate_full_verification_job(
     state_manifest_digest: &str,
     state_mutation_id: &str,
     state_locator: &str,
+    final_binding: &Map<String, Value>,
     observed: &ReviewTimestamp,
 ) -> RuntimeResult<ProjectAuthorityMaterial> {
     let result = job
@@ -2720,6 +2837,22 @@ fn validate_full_verification_job(
         || result_string("inputFingerprint")? != session.input_fingerprint().to_string()
         || result_string("projectReceiptDigest")? != project_digest
         || result_string("manifestDigest")? != state_manifest_digest
+        || result
+            .get("finalVerificationBinding")
+            .and_then(Value::as_object)
+            != Some(final_binding)
+        || result_string("planDigest")?
+            != final_binding
+                .get("planDigest")
+                .and_then(Value::as_str)
+                .ok_or_else(|| gate_blocked("final verification provenance has no plan digest"))?
+        || result_string("receiptDigest")?
+            != final_binding
+                .get("receiptDigest")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    gate_blocked("final verification provenance has no receipt digest")
+                })?
         || project_digest != state_receipt_digest
         || locator != state_locator
         || mutation_id != state_mutation_id
@@ -3078,7 +3211,7 @@ pub(crate) fn validate_clean_contribution_depth(
             ));
         }
     }
-    validate_review_evidence_manifest(&root, work_item_id, &evidence_ids, input_fingerprint)
+    validate_review_evidence_manifest(&root, state, work_item_id, &evidence_ids, input_fingerprint)
 }
 
 fn nonempty_unique_strings<'a>(
@@ -3136,13 +3269,13 @@ fn canonical_workspace_path(root: &Path, raw: &str) -> RuntimeResult<std::path::
 
 fn validate_review_evidence_manifest(
     root: &Path,
+    state: &Value,
     work_item_id: &str,
     evidence_ids: &[&str],
     input_fingerprint: InputFingerprint,
 ) -> RuntimeResult<()> {
-    let manifest_path = root.join(format!(
-        ".auto-engineering/{work_item_id}/evidence/manifest.json"
-    ));
+    let manifest_ref = format!(".auto-engineering/{work_item_id}/evidence/manifest.json");
+    let manifest_path = root.join(&manifest_ref);
     let bytes = fs::read(&manifest_path)
         .map_err(|_| gate_blocked("clean review requires a finalized evidence manifest"))?;
     if bytes.is_empty() || bytes.len() > REVIEW_MANIFEST_BYTE_LIMIT {
@@ -3150,6 +3283,7 @@ fn validate_review_evidence_manifest(
             "finalized evidence manifest exceeds its byte bound",
         ));
     }
+    validate_review_evidence_authority(root, state, work_item_id, &manifest_ref, &bytes)?;
     let manifest: Value = serde_json::from_slice(&bytes)
         .map_err(|_| external_conflict("finalized evidence manifest is malformed"))?;
     if manifest.get("schemaVersion").and_then(Value::as_u64) != Some(1)
@@ -3217,6 +3351,196 @@ fn validate_review_evidence_manifest(
     Ok(())
 }
 
+fn validate_review_evidence_authority(
+    root: &Path,
+    state: &Value,
+    work_item_id: &str,
+    manifest_ref: &str,
+    manifest_bytes: &[u8],
+) -> RuntimeResult<()> {
+    let Some(authority) = state.get("evidenceAuthority") else {
+        // Legacy states predate the projection. Their manifests retain the
+        // contentHash and optional ledger-chain checks below.
+        return Ok(());
+    };
+    let authority = authority
+        .as_object()
+        .ok_or_else(|| external_conflict("state evidence authority is malformed"))?;
+    let ledger_ref = format!(".auto-engineering/{work_item_id}/evidence/ledger.jsonl");
+    for (field, expected) in [
+        ("manifestRef", manifest_ref),
+        ("ledgerRef", ledger_ref.as_str()),
+    ] {
+        if authority.get(field).and_then(Value::as_str) != Some(expected) {
+            return Err(external_conflict(
+                "state evidence authority reference differs from the Review evidence path",
+            ));
+        }
+    }
+    let ledger_bytes = fs::read(root.join(&ledger_ref))
+        .map_err(|_| external_conflict("state-bound evidence ledger is missing"))?;
+    for (field, observed) in [
+        ("manifestDigest", manifest_bytes),
+        ("ledgerDigest", ledger_bytes.as_slice()),
+    ] {
+        let expected = authority
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| external_conflict("state evidence authority digest is missing"))?;
+        let actual = format!("sha256:{}", ArtifactDigest::digest(observed));
+        if expected != actual {
+            return Err(external_conflict(
+                "Review evidence digest differs from state evidence authority",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_state_bound_review_evidence(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+) -> RuntimeResult<()> {
+    if state.get("evidenceAuthority").is_none() {
+        return Ok(());
+    }
+    let root = Path::new(&workspace.canonical_root)
+        .canonicalize()
+        .map_err(|_| external_conflict("review workspace root cannot be canonicalized"))?;
+    let manifest_ref = format!(".auto-engineering/{work_item_id}/evidence/manifest.json");
+    let manifest_bytes = fs::read(root.join(&manifest_ref))
+        .map_err(|_| external_conflict("state-bound evidence manifest is missing"))?;
+    validate_review_evidence_authority(&root, state, work_item_id, &manifest_ref, &manifest_bytes)
+}
+
+pub(crate) fn validate_finalized_review_evidence(
+    workspace: &BusinessWorkspace,
+    state: &Value,
+    work_item_id: &str,
+    input_fingerprint: InputFingerprint,
+) -> RuntimeResult<Vec<u8>> {
+    let root = Path::new(&workspace.canonical_root)
+        .canonicalize()
+        .map_err(|_| external_conflict("review workspace root cannot be canonicalized"))?;
+    let manifest_ref = format!(".auto-engineering/{work_item_id}/evidence/manifest.json");
+    let manifest_bytes = fs::read(root.join(&manifest_ref)).map_err(|_| {
+        gate_blocked("terminal verification requires a finalized evidence manifest")
+    })?;
+    if manifest_bytes.is_empty() || manifest_bytes.len() > REVIEW_MANIFEST_BYTE_LIMIT {
+        return Err(gate_blocked(
+            "finalized evidence manifest exceeds its byte bound",
+        ));
+    }
+    let manifest: Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|_| external_conflict("finalized evidence manifest is malformed"))?;
+    let entries = manifest
+        .get("entries")
+        .and_then(Value::as_array)
+        .ok_or_else(|| external_conflict("finalized evidence entries are missing"))?;
+    let active = entries
+        .iter()
+        .filter(|entry| {
+            entry.get("status").and_then(Value::as_str) == Some("active")
+                && entry.get("kind").and_then(Value::as_str) != Some("red-observed")
+                && entry
+                    .get("inputFingerprint")
+                    .and_then(Value::as_str)
+                    .and_then(parse_manifest_input_fingerprint)
+                    == Some(input_fingerprint)
+        })
+        .collect::<Vec<_>>();
+    if active.is_empty()
+        || active
+            .iter()
+            .any(|entry| entry.get("exitCode").and_then(Value::as_i64) != Some(0))
+    {
+        return Err(gate_blocked(
+            "finalized evidence does not establish a successful verification result",
+        ));
+    }
+    let evidence_ids = active
+        .iter()
+        .map(|entry| {
+            entry
+                .get("evidenceId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| external_conflict("finalized evidenceId is missing"))
+        })
+        .collect::<RuntimeResult<Vec<_>>>()?;
+    validate_review_evidence_manifest(
+        &root,
+        state,
+        work_item_id,
+        &evidence_ids,
+        input_fingerprint,
+    )?;
+    let events = verify_review_evidence_ledger(&root, work_item_id)?
+        .ok_or_else(|| gate_blocked("terminal verification requires an evidence ledger"))?;
+    let finalized = events
+        .last()
+        .filter(|event| event.kind() == EvidenceLedgerEventKind::Finalized)
+        .ok_or_else(|| gate_blocked("terminal verification requires a finalized ledger event"))?;
+    let [manifest_artifact] = finalized.artifact_refs() else {
+        return Err(external_conflict(
+            "finalized ledger event must bind exactly one manifest artifact",
+        ));
+    };
+    let manifest_digest = ArtifactDigest::digest(&manifest_bytes);
+    if finalized.input_fingerprint() != InputFingerprint::digest(&manifest_bytes)
+        || manifest_artifact.path().as_str() != manifest_ref
+        || manifest_artifact.digest() != manifest_digest
+        || manifest_artifact.byte_length()
+            != u64::try_from(manifest_bytes.len()).unwrap_or(u64::MAX)
+    {
+        return Err(external_conflict(
+            "finalized ledger event does not bind the sealed manifest",
+        ));
+    }
+    for entry in active {
+        let artifacts = entry
+            .get("artifacts")
+            .and_then(Value::as_array)
+            .filter(|artifacts| !artifacts.is_empty())
+            .ok_or_else(|| gate_blocked("finalized evidence has no immutable artifact snapshot"))?;
+        for artifact in artifacts {
+            let snapshot_path = artifact
+                .get("snapshotPath")
+                .and_then(Value::as_str)
+                .ok_or_else(|| external_conflict("evidence snapshotPath is missing"))?;
+            let expected = artifact
+                .get("sha256")
+                .and_then(Value::as_str)
+                .and_then(|value| value.strip_prefix("sha256:").or(Some(value)))
+                .ok_or_else(|| external_conflict("evidence snapshot digest is missing"))?;
+            let snapshot = root
+                .join(snapshot_path)
+                .canonicalize()
+                .map_err(|_| external_conflict("evidence snapshot is missing"))?;
+            if !snapshot.starts_with(&root) || !snapshot.is_file() {
+                return Err(external_conflict(
+                    "evidence snapshot escaped the registered workspace",
+                ));
+            }
+            let bytes = fs::read(snapshot)
+                .map_err(|_| external_conflict("evidence snapshot is unreadable"))?;
+            if ArtifactDigest::digest(&bytes).to_string() != expected {
+                return Err(external_conflict(
+                    "evidence snapshot digest differs from the manifest",
+                ));
+            }
+            if let Some(expected_bytes) = artifact.get("byteLength").and_then(Value::as_u64)
+                && u64::try_from(bytes.len()).unwrap_or(u64::MAX) != expected_bytes
+            {
+                return Err(external_conflict(
+                    "evidence snapshot byteLength differs from the manifest",
+                ));
+            }
+        }
+    }
+    Ok(manifest_bytes)
+}
+
 /// Loads and verifies the append-only evidence ledger for one story, failing
 /// closed on any hash-chain, decode or canonical-form violation. Mirrors the
 /// owner implementation in `operation_semantics::evidence`; duplicated here so
@@ -3276,9 +3600,72 @@ fn review_manifest_content_hash(manifest: &Value) -> RuntimeResult<String> {
     Ok(format!("sha256:{}", ArtifactDigest::digest(bytes)))
 }
 
+#[derive(Clone, Copy)]
+enum ReviewStateProjectionPath {
+    Root,
+    PrdState,
+    DrState,
+    DrStates,
+    DrStateEntry,
+    StoryStates,
+    StoryStateEntry,
+    Other,
+}
+
+impl ReviewStateProjectionPath {
+    const fn is_lifecycle_projection(self) -> bool {
+        matches!(
+            self,
+            Self::Root
+                | Self::PrdState
+                | Self::DrState
+                | Self::DrStateEntry
+                | Self::StoryStateEntry
+        )
+    }
+
+    fn child(self, key: &str) -> Self {
+        match (self, key) {
+            (Self::Root, "prdState") => Self::PrdState,
+            (Self::Root, "drState") => Self::DrState,
+            (Self::Root, "drStates") => Self::DrStates,
+            (Self::Root, "storyStates")
+            | (Self::DrState, "storyStates")
+            | (Self::DrStateEntry, "storyStates") => Self::StoryStates,
+            (Self::DrStates, _) => Self::DrStateEntry,
+            (Self::StoryStates, _) => Self::StoryStateEntry,
+            _ => Self::Other,
+        }
+    }
+}
+
 fn strip_derived_review_fields(value: &mut Value) {
+    strip_derived_review_fields_at(value, ReviewStateProjectionPath::Root);
+}
+
+fn strip_derived_review_fields_at(value: &mut Value, path: ReviewStateProjectionPath) {
     match value {
         Value::Object(object) => {
+            // Lifecycle reducers advance these projections after Review gates
+            // pass. They describe workflow position, not reviewed source or
+            // design authority, so hashing them makes the permitted
+            // test-running -> code-reviewed transition invalidate the Review
+            // receipt required by the following completion gate. Only the
+            // lifecycle authority's explicit projection paths are excluded;
+            // similarly shaped semantic objects remain part of the input.
+            if path.is_lifecycle_projection() {
+                for field in [
+                    "phase",
+                    "currentPhase",
+                    "currentStep",
+                    "completedSteps",
+                    "pausedFromPhase",
+                    "pausedFrom",
+                    "pauseReason",
+                ] {
+                    object.remove(field);
+                }
+            }
             for field in [
                 "review",
                 "reviewSession",
@@ -3293,6 +3680,17 @@ fn strip_derived_review_fields(value: &mut Value) {
                 "revision",
                 "lastFencingToken",
                 "lastMutation",
+                // Evidence authority is validated independently by binding
+                // the finalized ledger/manifest bytes to its refs and digests.
+                // Including its projection here makes evidence.record and
+                // evidence.finalize invalidate the evidence they just wrote.
+                "evidenceAuthority",
+                // Final verification writes these daemon-owned projections
+                // after all reviewer contributions are bound. Their contents
+                // are validated as terminal provenance, but must not make the
+                // receipt invalidate the Review input it proves.
+                "toolsetReceiptRef",
+                "finalVerificationBinding",
                 // The execution runtime section is daemon-derived control-plane
                 // state, and `review.record` itself advances the completion
                 // milestone inside it. Hashing it would let a review invalidate
@@ -3304,13 +3702,13 @@ fn strip_derived_review_fields(value: &mut Value) {
             ] {
                 object.remove(field);
             }
-            for child in object.values_mut() {
-                strip_derived_review_fields(child);
+            for (key, child) in object.iter_mut() {
+                strip_derived_review_fields_at(child, path.child(key));
             }
         }
         Value::Array(values) => {
             for child in values {
-                strip_derived_review_fields(child);
+                strip_derived_review_fields_at(child, ReviewStateProjectionPath::Other);
             }
         }
         _ => {}

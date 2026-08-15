@@ -7,6 +7,7 @@
 //! and fails closed with `EXECUTION_CAPSULE_STALE` on an unapproved plan or
 //! any digest drift without writing an artifact.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
 
@@ -113,6 +114,159 @@ impl Fixture {
         )
     }
 
+    fn acquire_lease(&self, key: &str) -> (String, u64) {
+        let request = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: Some(Uuid::from_u128(11).to_string()),
+            agent_id: Some("agent-root".to_owned()),
+            session_id: Some(Uuid::from_u128(12).to_string()),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: Some(WORK_ITEM_ID.to_owned()),
+            lease_id: None,
+            fencing_token: None,
+            expected_revision: None,
+            idempotency_key: Some(key.to_owned()),
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({
+                "operation": "lease.acquire",
+                "payload": {"owner":{"role":"root"},"ttlSeconds":300},
+            }),
+        };
+        let response = self
+            .adapter
+            .execute(
+                RpcMethod::OperationExecute,
+                &request,
+                Some(&self.workspace()),
+            )
+            .expect("lease acquisition succeeds");
+        (
+            response["data"]["leaseId"]
+                .as_str()
+                .expect("lease id")
+                .to_owned(),
+            response["data"]["fencingToken"]
+                .as_u64()
+                .expect("fencing token"),
+        )
+    }
+
+    fn slice_operation(
+        &self,
+        operation: &str,
+        payload: Value,
+        lease: &(String, u64),
+        key: &str,
+    ) -> Result<Value, RuntimeError> {
+        let request = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: Some(Uuid::from_u128(11).to_string()),
+            agent_id: Some("agent-root".to_owned()),
+            session_id: Some(Uuid::from_u128(12).to_string()),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: Some(WORK_ITEM_ID.to_owned()),
+            lease_id: Some(lease.0.clone()),
+            fencing_token: Some(lease.1),
+            expected_revision: self.state()["revision"].as_u64(),
+            idempotency_key: Some(key.to_owned()),
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({"operation":operation,"payload":payload}),
+        };
+        self.adapter.execute(
+            RpcMethod::OperationExecute,
+            &request,
+            Some(&self.workspace()),
+        )
+    }
+
+    fn slice_operation_jit(
+        &self,
+        operation: &str,
+        payload: Value,
+        key: &str,
+    ) -> Result<Value, RuntimeError> {
+        let request = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: Some(Uuid::from_u128(11).to_string()),
+            agent_id: Some("agent-root".to_owned()),
+            session_id: Some(Uuid::from_u128(12).to_string()),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: Some(WORK_ITEM_ID.to_owned()),
+            lease_id: None,
+            fencing_token: None,
+            expected_revision: self.state()["revision"].as_u64(),
+            idempotency_key: Some(key.to_owned()),
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({"operation":operation,"payload":payload}),
+        };
+        self.adapter.execute(
+            RpcMethod::OperationExecute,
+            &request,
+            Some(&self.workspace()),
+        )
+    }
+
+    fn slice_operation_jit_dry_run(
+        &self,
+        operation: &str,
+        payload: Value,
+        key: &str,
+    ) -> Result<Value, RuntimeError> {
+        let request = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: Some(Uuid::from_u128(11).to_string()),
+            agent_id: Some("agent-root".to_owned()),
+            session_id: Some(Uuid::from_u128(12).to_string()),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: Some(WORK_ITEM_ID.to_owned()),
+            lease_id: None,
+            fencing_token: None,
+            expected_revision: self.state()["revision"].as_u64(),
+            idempotency_key: Some(key.to_owned()),
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({"operation":operation,"payload":payload,"dryRun":true}),
+        };
+        self.adapter.execute(
+            RpcMethod::OperationExecute,
+            &request,
+            Some(&self.workspace()),
+        )
+    }
+
+    fn lease_status(&self) -> Value {
+        let request = RequestParams {
+            protocol_version: PROTOCOL_VERSION_V1.to_owned(),
+            workspace_id: Some(Uuid::from_u128(11).to_string()),
+            agent_id: Some("agent-root".to_owned()),
+            session_id: Some(Uuid::from_u128(12).to_string()),
+            capability_token: None,
+            turn_id: None,
+            work_item_id: Some(WORK_ITEM_ID.to_owned()),
+            lease_id: None,
+            fencing_token: None,
+            expected_revision: None,
+            idempotency_key: None,
+            confirmation: None,
+            deadline_ms: 1_000,
+            payload: json!({"operation":"lease.status","payload":{}}),
+        };
+        self.adapter
+            .execute(
+                RpcMethod::OperationExecute,
+                &request,
+                Some(&self.workspace()),
+            )
+            .expect("lease status succeeds")
+    }
+
     fn state(&self) -> Value {
         let bytes = fs::read(
             self.root
@@ -172,14 +326,17 @@ fn approved_plan() -> Value {
                 "acId": "AC-003",
                 "boundary": "authority",
                 "command": "cargo test -p ae-sdd-integrations --test execution_capsule_authority",
-                "expect": "unapproved plan and drift fail closed; repeated resume is no-change"
+                "expected": "unapproved plan and drift fail closed; repeated resume is no-change"
             },
             {
                 "id": "V-EFF-001b",
                 "acId": "AC-001",
                 "boundary": "contract",
-                "command": "cargo test -p ae-sdd-contracts --test execution_capsule_contract",
-                "expect": "contract round trip passes"
+                "command": [
+                    "cargo test -p ae-sdd-contracts --test execution_capsule_contract",
+                    "cargo test -p ae-sdd-contracts --test resource_assurance_contract"
+                ],
+                "expected": "contract round trip passes"
             }
         ],
         "risks": [],
@@ -250,11 +407,22 @@ fn first_resume_seeds_project_authority_and_returns_the_full_capsule() {
         "V-EFF-003"
     );
     assert_eq!(
+        data["capsule"]["activeSlice"]["objective"],
+        "unapproved plan and drift fail closed; repeated resume is no-change"
+    );
+    assert_eq!(
         data["nextAction"],
         json!({
             "kind": "execute-approved-slice",
             "activeOrdinal": 1,
             "queueDigest": data["capsule"]["queue"]["queueDigest"],
+            "capsuleDigest": data["capsuleDigest"]
+                .as_str()
+                .expect("capsule digest")
+                .strip_prefix("sha256:")
+                .expect("prefixed capsule digest"),
+            "activeSliceStatus": "pending",
+            "nextSliceTransition": "running",
         })
     );
     let capsule_bytes = fixture.execution_artifact("capsule.json");
@@ -290,6 +458,44 @@ fn first_resume_seeds_project_authority_and_returns_the_full_capsule() {
         data["capsule"]["approvedPlanDigest"],
         plain_digest(&plan_bytes)
     );
+}
+
+#[test]
+fn resume_distributes_large_approved_path_sets_without_widening_authority() {
+    let fixture = Fixture::new();
+    let changed_paths = (0..40)
+        .map(|index| format!("crates/package-{}/src/file-{index}.rs", index / 10))
+        .collect::<Vec<_>>();
+    fixture.rewrite_state(|state| {
+        state["executionPlan"]["changedPaths"] = json!(changed_paths);
+    });
+
+    let response = fixture
+        .resume(json!({}))
+        .expect("a schema-valid large plan produces a bounded capsule");
+
+    let queue: Value = serde_json::from_slice(&fixture.execution_artifact("queue.json"))
+        .expect("queue artifact is valid JSON");
+    let slices = queue["slices"].as_array().expect("queue slices");
+    let approved = changed_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut assigned = BTreeSet::new();
+    for slice in slices {
+        let scopes = slice["pathScope"].as_array().expect("slice path scope");
+        assert!(!scopes.is_empty(), "every slice needs writable authority");
+        assert!(scopes.len() <= 32, "v1 path scope limit must be preserved");
+        for scope in scopes.iter().filter_map(Value::as_str) {
+            assert!(
+                approved.contains(scope),
+                "slice scope {scope} must be an exact approved changed path"
+            );
+            assigned.insert(scope);
+        }
+    }
+    assert_eq!(assigned, approved, "all approved paths must be assigned");
+    assert_eq!(response["data"]["capsule"]["queue"]["totalSlices"], 2);
 }
 
 #[test]
@@ -448,7 +654,7 @@ fn verification_drift_fails_closed_without_rewriting_artifacts() {
     fixture.resume(json!({})).expect("first resume succeeds");
     let capsule_after_first = fixture.execution_artifact("capsule.json");
     fixture.rewrite_state(|state| {
-        state["executionPlan"]["verification"][0]["expect"] =
+        state["executionPlan"]["verification"][0]["expected"] =
             json!("a different verification expectation");
     });
     let state_before = fixture.state_bytes();
@@ -463,4 +669,269 @@ fn verification_drift_fails_closed_without_rewriting_artifacts() {
         fixture.execution_artifact("capsule.json"),
         capsule_after_first
     );
+}
+
+#[test]
+fn slice_start_validates_the_authoritative_cursor_without_writing_on_mismatch() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest");
+    let lease = fixture.acquire_lease("slice-start-lease");
+    let before = fixture.state_bytes();
+
+    let wrong_ordinal = fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":2,"queueDigest":queue_digest}),
+            &lease,
+            "slice-start-wrong-ordinal",
+        )
+        .expect_err("a stale ordinal must fail closed");
+    assert_eq!(wrong_ordinal.code(), StableErrorCode::ExecutionSliceInvalid);
+    assert_eq!(fixture.state_bytes(), before);
+
+    let wrong_digest = fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":1,"queueDigest":"0".repeat(64)}),
+            &lease,
+            "slice-start-wrong-digest",
+        )
+        .expect_err("a stale queue digest must fail closed");
+    assert_eq!(wrong_digest.code(), StableErrorCode::ExecutionCapsuleStale);
+    assert_eq!(fixture.state_bytes(), before);
+}
+
+#[test]
+fn slice_transition_uses_and_releases_a_just_in_time_writer_lease() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest");
+
+    let started = fixture
+        .slice_operation_jit(
+            "execution.slice.start",
+            json!({"activeOrdinal":1,"queueDigest":queue_digest}),
+            "slice-jit-start",
+        )
+        .expect("JIT lease starts the projected slice");
+
+    assert_eq!(started["data"]["status"], "running");
+    assert_eq!(
+        fixture.state()["executionRuntime"]["activeSliceStatus"],
+        "running"
+    );
+    assert_eq!(fixture.lease_status()["data"]["active"], false);
+}
+
+#[test]
+fn committed_slice_replays_before_a_new_jit_lease_is_acquired() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest")
+        .to_owned();
+    let payload = json!({"activeOrdinal":1,"queueDigest":queue_digest});
+    let committed = fixture
+        .slice_operation_jit("execution.slice.start", payload.clone(), "slice-jit-replay")
+        .expect("JIT slice commits");
+    let _competing_lease = fixture.acquire_lease("slice-replay-competing-lease");
+
+    let replayed = fixture
+        .slice_operation_jit("execution.slice.start", payload, "slice-jit-replay")
+        .expect("committed slice replays despite a later active writer lease");
+
+    assert_eq!(replayed["changed"], false);
+    assert_eq!(replayed["data"], committed["data"]);
+    assert_eq!(replayed["receiptDigest"], committed["receiptDigest"]);
+    assert_eq!(replayed["revisionBefore"], committed["revisionBefore"]);
+    assert_eq!(replayed["revisionAfter"], committed["revisionAfter"]);
+}
+
+#[test]
+fn slice_transition_dry_run_has_no_jit_lease_side_effects() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest");
+    let state_before = fixture.state_bytes();
+    let lease_before = fixture.lease_status();
+
+    let rejected = fixture
+        .slice_operation_jit_dry_run(
+            "execution.slice.start",
+            json!({"activeOrdinal":1,"queueDigest":queue_digest}),
+            "slice-jit-dry-run",
+        )
+        .expect_err("a validation-only slice without a lease must fail closed");
+
+    assert_eq!(rejected.code(), StableErrorCode::LeaseRequired);
+    assert_eq!(fixture.state_bytes(), state_before);
+    assert_eq!(fixture.lease_status(), lease_before);
+}
+
+#[test]
+fn completed_slice_advances_the_authoritative_capsule_one_ordinal() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let first_capsule_digest = resumed["data"]["capsuleDigest"]
+        .as_str()
+        .expect("capsule digest")
+        .to_owned();
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest")
+        .to_owned();
+    let lease = fixture.acquire_lease("slice-progress-lease");
+
+    let started = fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":1,"queueDigest":queue_digest}),
+            &lease,
+            "slice-1-start",
+        )
+        .expect("active slice starts");
+    assert_eq!(started["data"]["status"], "running");
+    assert_eq!(
+        fixture.state()["executionRuntime"]["activeSliceStatus"],
+        "running"
+    );
+
+    let direct_completion = fixture
+        .slice_operation(
+            "execution.slice.record",
+            json!({
+                "sliceId":"slice-V-EFF-003",
+                "status":"completed",
+                "progressDigest":"1".repeat(64),
+            }),
+            &lease,
+            "slice-1-false-complete",
+        )
+        .expect_err("running cannot jump directly to completed");
+    assert_eq!(
+        direct_completion.code(),
+        StableErrorCode::ExecutionSliceInvalid
+    );
+
+    for (index, status) in [
+        "red-observed",
+        "patched",
+        "focused-green",
+        "evidence-bound",
+        "completed",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fixture
+            .slice_operation(
+                "execution.slice.record",
+                json!({
+                    "sliceId":"slice-V-EFF-003",
+                    "status":status,
+                    "progressDigest":format!("{:064x}", index + 1),
+                }),
+                &lease,
+                &format!("slice-1-{status}"),
+            )
+            .unwrap_or_else(|error| panic!("{status} commits: {error:?}"));
+    }
+
+    let state = fixture.state();
+    assert_eq!(state["executionRuntime"]["activeSliceOrdinal"], 2);
+    assert_eq!(state["executionRuntime"]["activeSliceStatus"], "pending");
+    assert_ne!(
+        state["executionRuntime"]["capsuleDigest"],
+        first_capsule_digest
+    );
+    let next = fixture.resume(json!({})).expect("next capsule resumes");
+    assert_eq!(next["data"]["capsule"]["queue"]["activeOrdinal"], 2);
+    assert_eq!(next["data"]["nextAction"]["kind"], "execute-approved-slice");
+    assert_eq!(next["data"]["nextAction"]["activeOrdinal"], 2);
+}
+
+#[test]
+fn final_completed_slice_closes_the_execution_cursor() {
+    let fixture = Fixture::new();
+    let resumed = fixture.resume(json!({})).expect("resume succeeds");
+    let queue_digest = resumed["data"]["capsule"]["queue"]["queueDigest"]
+        .as_str()
+        .expect("queue digest")
+        .to_owned();
+    let lease = fixture.acquire_lease("final-slice-lease");
+
+    complete_slice(
+        &fixture,
+        &lease,
+        1,
+        "slice-V-EFF-003",
+        &queue_digest,
+        "final-first",
+    );
+    complete_slice(
+        &fixture,
+        &lease,
+        2,
+        "slice-V-EFF-001b",
+        &queue_digest,
+        "final-second",
+    );
+
+    let state = fixture.state();
+    assert_eq!(state["executionRuntime"]["activeSliceOrdinal"], 2);
+    assert_eq!(state["executionRuntime"]["activeSliceStatus"], "completed");
+    let terminal = fixture.resume(json!({})).expect("terminal capsule resumes");
+    assert_ne!(
+        terminal["data"]["nextAction"]["kind"],
+        "execute-approved-slice"
+    );
+}
+
+fn complete_slice(
+    fixture: &Fixture,
+    lease: &(String, u64),
+    ordinal: u32,
+    slice_id: &str,
+    queue_digest: &str,
+    key_prefix: &str,
+) {
+    fixture
+        .slice_operation(
+            "execution.slice.start",
+            json!({"activeOrdinal":ordinal,"queueDigest":queue_digest}),
+            lease,
+            &format!("{key_prefix}-start"),
+        )
+        .unwrap_or_else(|error| panic!("slice {ordinal} starts: {error:?}"));
+    for (index, status) in [
+        "red-observed",
+        "patched",
+        "focused-green",
+        "evidence-bound",
+        "completed",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fixture
+            .slice_operation(
+                "execution.slice.record",
+                json!({
+                    "sliceId":slice_id,
+                    "status":status,
+                    "progressDigest":format!("{:064x}", ordinal * 10 + index as u32),
+                }),
+                lease,
+                &format!("{key_prefix}-{status}"),
+            )
+            .unwrap_or_else(|error| panic!("slice {ordinal} {status} commits: {error:?}"));
+    }
 }

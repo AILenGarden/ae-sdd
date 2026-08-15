@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::json;
@@ -56,74 +58,236 @@ fn repository_root() -> PathBuf {
         .expect("repository root")
 }
 
-fn sandbox() -> &'static Path {
-    static SANDBOX: OnceLock<PathBuf> = OnceLock::new();
-    SANDBOX
-        .get_or_init(|| {
-            let path = repository_root()
-                .join("target")
-                .join(format!("cli-process-contract-{}", std::process::id()));
-            fs::create_dir_all(&path).expect("process-test sandbox");
-            path
-        })
-        .as_path()
+static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+struct TempDir {
+    path: PathBuf,
 }
 
-fn isolated_cli() -> &'static Path {
-    static CLI: OnceLock<PathBuf> = OnceLock::new();
-    CLI.get_or_init(|| {
-        let source = PathBuf::from(env!("CARGO_BIN_EXE_ae-sdd"));
-        let destination =
-            sandbox().join(source.file_name().expect("CLI executable has a file name"));
-        fs::copy(&source, &destination).expect("copy instrumented CLI");
-        destination
-    })
-    .as_path()
+impl TempDir {
+    fn new(label: &str) -> Self {
+        let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::AcqRel);
+        let path =
+            std::env::temp_dir().join(format!("ae-sdd-{label}-{}-{sequence}", std::process::id()));
+        fs::create_dir(&path).expect("create isolated process-test TempDir");
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
-fn noop_build() -> &'static Path {
-    static BUILD: OnceLock<PathBuf> = OnceLock::new();
-    BUILD
-        .get_or_init(|| {
-            let source = sandbox().join("noop-build.rs");
-            let executable =
-                sandbox().join(format!("ae-sdd-build{}", std::env::consts::EXE_SUFFIX));
-            fs::write(&source, "fn main() {}\n").expect("write no-op build source");
-            let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-            let status = Command::new(rustc)
-                .arg(&source)
-                .arg("-o")
-                .arg(&executable)
-                .status()
-                .expect("compile no-op build boundary");
-            assert!(status.success(), "compile no-op build boundary");
-            executable
-        })
-        .as_path()
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match fs::remove_dir_all(&self.path) {
+                Ok(()) => return,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) if std::thread::panicking() => {
+                    eprintln!(
+                        "failed to clean process-test TempDir {}: {error}",
+                        self.path.display()
+                    );
+                    return;
+                }
+                Err(error) => panic!(
+                    "failed to clean process-test TempDir {}: {error}",
+                    self.path.display()
+                ),
+            }
+        }
+    }
+}
+
+struct ProcessFixture {
+    root: TempDir,
+    cli: OnceLock<PathBuf>,
+    noop_build: OnceLock<PathBuf>,
+}
+
+impl ProcessFixture {
+    fn new() -> Self {
+        Self {
+            root: TempDir::new("cli-process-fixture"),
+            cli: OnceLock::new(),
+            noop_build: OnceLock::new(),
+        }
+    }
+
+    fn root(&self) -> &Path {
+        self.root.path()
+    }
+
+    fn isolated_cli(&self) -> &Path {
+        self.cli
+            .get_or_init(|| {
+                let source = PathBuf::from(env!("CARGO_BIN_EXE_ae-sdd"));
+                let destination = self
+                    .root()
+                    .join(source.file_name().expect("CLI executable has a file name"));
+                fs::copy(&source, &destination).expect("copy instrumented CLI");
+                destination
+            })
+            .as_path()
+    }
+
+    fn noop_build(&self) -> &Path {
+        self.noop_build
+            .get_or_init(|| {
+                let source = self.root().join("noop-build.rs");
+                let executable = self
+                    .root()
+                    .join(format!("ae-sdd-build{}", std::env::consts::EXE_SUFFIX));
+                fs::write(&source, "fn main() {}\n").expect("write no-op build source");
+                let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+                let status = Command::new(rustc)
+                    .arg(&source)
+                    .arg("-o")
+                    .arg(&executable)
+                    .status()
+                    .expect("compile no-op build boundary");
+                assert!(status.success(), "compile no-op build boundary");
+                executable
+            })
+            .as_path()
+    }
+}
+
+thread_local! {
+    static PROCESS_FIXTURE: ProcessFixture = ProcessFixture::new();
+}
+
+fn fixture_root() -> PathBuf {
+    PROCESS_FIXTURE.with(|fixture| fixture.root().to_path_buf())
+}
+
+fn isolated_cli() -> PathBuf {
+    PROCESS_FIXTURE.with(|fixture| fixture.isolated_cli().to_path_buf())
+}
+
+fn noop_build() -> PathBuf {
+    PROCESS_FIXTURE.with(|fixture| fixture.noop_build().to_path_buf())
 }
 
 fn missing_manifest() -> String {
-    sandbox()
+    fixture_root()
         .join("missing-endpoint.json")
         .display()
         .to_string()
 }
 
-fn daemon_executable() -> Option<PathBuf> {
+struct DaemonBuildTarget {
+    target_dir: PathBuf,
+    profile: Box<str>,
+    executable: PathBuf,
+}
+
+fn daemon_build_target() -> DaemonBuildTarget {
     let cargo_cli = PathBuf::from(env!("CARGO_BIN_EXE_ae-sdd"));
-    let executable = format!("ae-sddd{}", std::env::consts::EXE_SUFFIX);
-    [
-        cargo_cli.parent().map(|parent| parent.join(&executable)),
-        Some(repository_root().join("target/debug").join(&executable)),
-        Some(repository_root().join("target/release").join(executable)),
-    ]
-    .into_iter()
-    .flatten()
-    .find(|candidate| candidate.is_file())
+    let profile_dir = cargo_cli
+        .parent()
+        .expect("Cargo CLI executable has a profile directory");
+    let profile = profile_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("Cargo CLI profile directory is UTF-8")
+        .to_owned();
+    assert!(
+        matches!(profile.as_str(), "debug" | "release"),
+        "unsupported Cargo profile directory for CLI process tests: {}",
+        profile_dir.display()
+    );
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                repository_root().join(path)
+            }
+        })
+        .unwrap_or_else(|| {
+            profile_dir
+                .parent()
+                .expect("Cargo CLI profile has a target directory")
+                .to_path_buf()
+        });
+    let executable = target_dir
+        .join(&profile)
+        .join(format!("ae-sddd{}", std::env::consts::EXE_SUFFIX));
+    DaemonBuildTarget {
+        target_dir,
+        profile: profile.into_boxed_str(),
+        executable,
+    }
+}
+
+fn daemon_executable() -> PathBuf {
+    if let Some(explicit) = std::env::var_os("AE_SDDD_BIN") {
+        let explicit = PathBuf::from(explicit);
+        assert!(
+            explicit.is_file(),
+            "AE_SDDD_BIN does not identify an existing file: {}",
+            explicit.display()
+        );
+        return explicit;
+    }
+
+    static BUILD: OnceLock<PathBuf> = OnceLock::new();
+    BUILD
+        .get_or_init(|| {
+            let target = daemon_build_target();
+            let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+            let mut arguments = vec![
+                "build".to_owned(),
+                "--locked".to_owned(),
+                "-p".to_owned(),
+                "ae-sdd-daemon".to_owned(),
+                "--bin".to_owned(),
+                "ae-sddd".to_owned(),
+                "--target-dir".to_owned(),
+                target.target_dir.display().to_string(),
+            ];
+            if target.profile.as_ref() == "release" {
+                arguments.push("--release".to_owned());
+            }
+            let command_text = format!(
+                "{} {}",
+                PathBuf::from(&cargo).display(),
+                arguments.join(" ")
+            );
+            let output = Command::new(&cargo)
+                .args(&arguments)
+                .current_dir(repository_root())
+                .output()
+                .unwrap_or_else(|error| {
+                    panic!("failed to execute daemon build command `{command_text}`: {error}")
+                });
+            assert!(
+                output.status.success(),
+                "daemon build command `{command_text}` failed with exit code {:?}\nstderr:\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                target.executable.is_file(),
+                "daemon build succeeded but executable is missing: {}",
+                target.executable.display()
+            );
+            target.executable
+        })
+        .clone()
 }
 
 struct DaemonGuard {
     manifest: PathBuf,
+    _authority_root: TempDir,
+    _project_root: TempDir,
 }
 
 impl Drop for DaemonGuard {
@@ -136,7 +300,140 @@ impl Drop for DaemonGuard {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while self.manifest.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
+    }
+}
+
+struct LiveProcessHarness {
+    _guard: DaemonGuard,
+    endpoint_manifest: PathBuf,
+    project_root: PathBuf,
+    workspace_id: String,
+    work_item_id: String,
+    session_id: String,
+    capability_token: String,
+}
+
+fn copy_live_fixture(project_root: &Path, relative: &str) {
+    let source = repository_root().join(relative);
+    let destination = project_root.join(relative);
+    fs::create_dir_all(destination.parent().expect("fixture parent"))
+        .expect("create live fixture directory");
+    fs::copy(&source, &destination)
+        .unwrap_or_else(|error| panic!("copy live fixture {relative}: {error}"));
+}
+
+fn prepare_live_project(project_root: &Path) {
+    for relative in [
+        "constraints/README.md",
+        "source/SKILL.md",
+        "source/skills/phase1-design/requirement-analysis-skill.md",
+        "source/skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md",
+    ] {
+        copy_live_fixture(project_root, relative);
+    }
+    let catalog = project_root.join("source/standards/runtime/methodology-catalog.v1.json");
+    fs::create_dir_all(catalog.parent().expect("catalog parent"))
+        .expect("create methodology catalog directory");
+    fs::write(
+        catalog,
+        serde_json::to_vec(&json!({
+            "schemaVersion":"ae-sdd-methodology-catalog/v1",
+            "catalogVersion":"1.0.0",
+            "entries":[{
+                "skillId":"phase1-design.requirement-analysis",
+                "seriesKind":"requirement-analysis",
+                "activity":"execute",
+                "variant":"cli-process-v1",
+                "version":"1.0.0",
+                "activation":"workflow",
+                "spawnPolicy":"physical_series",
+                "compactRef":"skills/phase1-design/requirement-analysis-skill.md",
+                "fallbackRef":"skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md",
+                "routePredicates":[],
+                "requiredInputs":["requested-intent"],
+                "deliverableKinds":["requirement-analysis"],
+                "requiredGates":[],
+                "toolDependencies":[]
+            }]
+        }))
+        .expect("serialize live methodology catalog"),
+    )
+    .expect("write live methodology catalog");
+
+    let project_key = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("isolated project root has an ASCII fixture name");
+    let asset = project_root
+        .join(".ae-sdd/assets")
+        .join(format!("{project_key}.assets.md"));
+    fs::create_dir_all(asset.parent().expect("asset parent"))
+        .expect("create project asset directory");
+    fs::write(
+        asset,
+        format!(
+            "# {project_key} Project Assets\n\
+             ## §A Outline\nfixture\n\
+             ## §B Modules\nfixture\n\
+             ## §C Fields\nfixture\n\
+             ## §D Components\nfixture\n\
+             ## §E API\nfixture\n\
+             ## §F Keywords\nfixture\n\
+             ## §G Read API\nfixture\n"
+        ),
+    )
+    .expect("write canonical project asset fixture");
+
+    fs::write(
+        project_root.join(".ae-sdd/config.yaml"),
+        format!(
+            "version: 1\nprojectKey: {project_key}\nautomation:\n  enabled: false\n  reviewerTier: 3\n  preflightInfoCollection: true\n  onConsensusStall: pause\n"
+        ),
+    )
+    .expect("write automation config fixture");
+    let database_profiles = project_root.join(".ae-sdd/secrets/db-connections.local.json");
+    fs::create_dir_all(
+        database_profiles
+            .parent()
+            .expect("database profiles parent"),
+    )
+    .expect("create database profiles directory");
+    fs::write(database_profiles, br#"{"profiles":[]}"#)
+        .expect("write empty database profiles fixture");
+
+    fs::write(
+        project_root.join("Cargo.toml"),
+        "[workspace]\nresolver = \"2\"\n",
+    )
+    .expect("write isolated Git fixture");
+    for arguments in [
+        &["init", "--quiet"][..],
+        &["config", "core.autocrlf", "false"][..],
+        &["add", "Cargo.toml"][..],
+        &[
+            "-c",
+            "user.name=ae-sdd-test",
+            "-c",
+            "user.email=ae-sdd@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ][..],
+    ] {
+        let status = Command::new("git")
+            .args(arguments)
+            .current_dir(project_root)
+            .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+            .status()
+            .expect("run isolated Git fixture command");
+        assert!(status.success(), "isolated Git fixture command failed");
     }
 }
 
@@ -313,9 +610,10 @@ fn add_passthrough_arguments(args: &mut Vec<String>, command_id: &str) {
 
 fn native_arguments(command_id: &str) -> Vec<String> {
     let root = repository_root().display().to_string();
-    let registry = sandbox().join("distributors.json").display().to_string();
-    let project = sandbox().join("new-project").display().to_string();
-    let plugins = sandbox().join("plugins").display().to_string();
+    let fixture = fixture_root();
+    let registry = fixture.join("distributors.json").display().to_string();
+    let project = fixture.join("new-project").display().to_string();
+    let plugins = fixture.join("plugins").display().to_string();
     match command_id {
         "assets generate" => vec![
             "--project-root".into(),
@@ -341,7 +639,7 @@ fn native_arguments(command_id: &str) -> Vec<String> {
             "--protocol".into(),
             "copytree".into(),
             "--target-path".into(),
-            sandbox().join("codex").display().to_string(),
+            fixture.join("codex").display().to_string(),
             "--registry-file".into(),
             registry,
         ],
@@ -437,7 +735,7 @@ fn every_native_route_builds_a_typed_request_and_stops_at_the_noop_boundary() {
         }
     }
 
-    let request = sandbox().join("version-request.json");
+    let request = fixture_root().join("version-request.json");
     fs::write(
         &request,
         serde_json::to_vec(&json!({
@@ -494,7 +792,7 @@ fn every_typed_operation_reaches_the_production_adapter_before_ipc() {
 
 #[test]
 fn every_rpc_route_reaches_its_command_specific_adapter_before_ipc() {
-    let operation_request = sandbox().join("operation-request.json");
+    let operation_request = fixture_root().join("operation-request.json");
     fs::write(
         &operation_request,
         serde_json::to_vec(&json!({
@@ -608,7 +906,7 @@ fn top_level_rpc_hook_runtime_and_stdin_paths_are_process_verified() {
         assert!(text(&output.stdout).contains(expected));
     }
 
-    let state_dir = sandbox().join("runtime-state");
+    let state_dir = fixture_root().join("runtime-state");
     fs::create_dir_all(&state_dir).expect("runtime state dir");
     fs::write(state_dir.join("daemon.log"), "one\ntwo\nthree\n").expect("daemon log");
     let logs = run_cli(
@@ -640,16 +938,19 @@ fn top_level_rpc_hook_runtime_and_stdin_paths_are_process_verified() {
     }
 }
 
-#[test]
-fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
-    let Some(daemon) = daemon_executable() else {
-        eprintln!("skipping live legacy RPC coverage: no ae-sddd executable is available");
-        return;
-    };
-    let state_dir = sandbox().join("live-legacy-rpc-state");
+fn start_live_process_harness(daemon: &Path, nonce: u128) -> LiveProcessHarness {
+    let authority_root = TempDir::new("cli-process-authority");
+    let project_temp = TempDir::new("cli-process-project");
+    prepare_live_project(project_temp.path());
+    let project_root = project_temp.path().to_path_buf();
+    let state_dir = authority_root.path().join("runtime");
     fs::create_dir_all(&state_dir).expect("live daemon state dir");
     let endpoint_manifest = state_dir.join("endpoint.v1.json");
-    let root = repository_root().display().to_string();
+    let root = project_root.display().to_string();
+    let project_key = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("isolated project root has an ASCII fixture name");
     let start = run_cli(
         &[
             "runtime".into(),
@@ -672,15 +973,17 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
         "start isolated daemon: {}",
         text(&start.stderr)
     );
-    let _guard = DaemonGuard {
+    let guard = DaemonGuard {
         manifest: endpoint_manifest.clone(),
+        _authority_root: authority_root,
+        _project_root: project_temp,
     };
 
     let register_params = json!({
         "protocolVersion":"1.0",
         "idempotencyKey":"cli-process-workspace-register",
         "deadlineMs":5000,
-        "payload":{"projectRoot":root,"projectKey":"cli-process-contract"}
+        "payload":{"projectRoot":root,"projectKey":project_key}
     });
     let register = run_cli(
         &[
@@ -707,18 +1010,53 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
         .as_str()
         .expect("workspace.register returns workspaceId")
         .to_owned();
-    let work_item_id = "PRD-AE-SDD-RUST-DAEMON-001";
+    let bootstrap_event = json!({
+        "hook_event_name":"UserPromptSubmit",
+        "prompt":"/ae-sdd",
+        "event_id":format!("cli-process-route-bootstrap-{nonce}"),
+        "session_id":format!("cli-process-contract-{nonce}"),
+        "cwd":root
+    });
+    let bootstrapped = run_cli(
+        &[
+            "hook".into(),
+            "--method".into(),
+            "hook.user_prompt".into(),
+            "--request-json".into(),
+            bootstrap_event.to_string(),
+            "--manifest".into(),
+            endpoint_manifest.display().to_string(),
+            "--timeout-ms".into(),
+            "5000".into(),
+        ],
+        None,
+    );
+    assert!(
+        bootstrapped.status.success(),
+        "bootstrap ROUTE work item: {}",
+        text(&bootstrapped.stderr)
+    );
+    let bootstrap_stderr = text(&bootstrapped.stderr);
+    let work_item_id = bootstrap_stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ae-sdd: hook.user_prompt bound workItemId: "))
+        .unwrap_or_else(|| {
+            panic!(
+                "/ae-sdd reports its daemon-minted workItemId; stdout={} stderr={bootstrap_stderr}",
+                text(&bootstrapped.stdout)
+            )
+        })
+        .to_owned();
     let open_session_params = json!({
         "protocolVersion":"1.0",
         "workspaceId":workspace_id,
-        "workItemId":work_item_id,
-        "agentId":"cli-process-root",
-        "idempotencyKey":"cli-process-session-open",
+        "agentId":"host-hook",
+        "idempotencyKey":"cli-process-session-reopen",
         "deadlineMs":5000,
         "payload":{
-            "externalKey":"cli-process-contract",
+            "externalKey":format!("cli-process-contract-{nonce}"),
             "role":"root",
-            "engaged":false
+            "engaged":true
         }
     });
     let open_session = run_cli(
@@ -737,7 +1075,7 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
     );
     assert!(
         open_session.status.success(),
-        "open isolated root session: {}",
+        "reopen isolated root session: {}",
         text(&open_session.stderr)
     );
     let session: serde_json::Value =
@@ -750,6 +1088,67 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
         .as_str()
         .expect("session.open returns capabilityToken")
         .to_owned();
+
+    LiveProcessHarness {
+        _guard: guard,
+        endpoint_manifest,
+        project_root,
+        workspace_id,
+        work_item_id,
+        session_id,
+        capability_token,
+    }
+}
+
+fn authority_contains(root: &Path, work_item_id: &str) -> bool {
+    let suffix = format!("-{work_item_id}");
+    fs::read_dir(root.join(".auto-engineering"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_dir())
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(&suffix))
+        })
+}
+
+#[test]
+fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
+    let daemon = daemon_executable();
+    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        let profile_dir = PathBuf::from(env!("CARGO_BIN_EXE_ae-sdd"))
+            .parent()
+            .expect("Cargo CLI executable has a profile directory")
+            .file_name()
+            .expect("Cargo CLI profile directory has a name")
+            .to_owned();
+        let target_dir = PathBuf::from(target_dir);
+        let target_dir = if target_dir.is_absolute() {
+            target_dir
+        } else {
+            repository_root().join(target_dir)
+        };
+        let expected = target_dir
+            .join(profile_dir)
+            .join(format!("ae-sddd{}", std::env::consts::EXE_SUFFIX));
+        assert_eq!(daemon, expected);
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after Unix epoch")
+        .as_nanos();
+    let LiveProcessHarness {
+        _guard,
+        endpoint_manifest,
+        workspace_id,
+        work_item_id,
+        session_id,
+        capability_token,
+        ..
+    } = start_live_process_harness(&daemon, nonce);
 
     for (command_id, trailing) in [
         ("health", Vec::<String>::new()),
@@ -853,11 +1252,11 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
             "--workspace-id".into(),
             workspace_id.clone(),
             "--work-item-id".into(),
-            work_item_id.into(),
+            work_item_id.clone(),
             "--session-id".into(),
             session_id.clone(),
             "--agent-id".into(),
-            "cli-process-root".into(),
+            "host-hook".into(),
             "--capability-token".into(),
             capability_token.clone(),
             "--idempotency-key".into(),
@@ -875,4 +1274,32 @@ fn successful_legacy_rpc_and_job_routes_flush_production_coverage() {
             text(&output.stderr)
         );
     }
+}
+
+#[test]
+fn concurrent_live_processes_keep_project_authority_isolated() {
+    let daemon = daemon_executable();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after Unix epoch")
+        .as_nanos();
+    let (left, right) = std::thread::scope(|scope| {
+        let left = scope.spawn(|| start_live_process_harness(&daemon, nonce));
+        let right = scope.spawn(|| start_live_process_harness(&daemon, nonce + 1));
+        (
+            left.join().expect("left live process harness"),
+            right.join().expect("right live process harness"),
+        )
+    });
+
+    assert_ne!(left.endpoint_manifest, right.endpoint_manifest);
+    assert_ne!(left.project_root, right.project_root);
+    assert_ne!(left.workspace_id, right.workspace_id);
+    assert_ne!(left.work_item_id, right.work_item_id);
+    assert!(authority_contains(&left.project_root, &left.work_item_id));
+    assert!(authority_contains(&right.project_root, &right.work_item_id));
+    assert!(!authority_contains(&left.project_root, &right.work_item_id));
+    assert!(!authority_contains(&right.project_root, &left.work_item_id));
+    assert_ne!(left.project_root, repository_root());
+    assert_ne!(right.project_root, repository_root());
 }

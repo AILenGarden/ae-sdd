@@ -220,6 +220,7 @@ pub(crate) fn validate_evidence(
                 .evidence
                 .iter()
                 .map(|item| item.verification_id.as_str())
+                .chain(projection.passed_gate_ids.iter().map(String::as_str))
                 .collect();
             let missing: Vec<_> = gates
                 .iter()

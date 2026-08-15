@@ -18,7 +18,7 @@ use ae_sdd_domain::{
     ArtifactDigest, ArtifactKind, ArtifactRef, CompactId, ContextGeneration, ProjectRelativePath,
     SessionId,
 };
-use ae_sdd_host::{HostAckOutcome, HostAdapterId, HostCapability, HostCapabilitySet};
+use ae_sdd_host::{HostAckOutcome, HostAdapterId};
 use ae_sdd_integrations::{
     BoundedCommandRunner, HostProcessAdapter, HostSupervisor, HostSupervisorError, IntegrationError,
 };
@@ -78,17 +78,6 @@ fn adapter_id(value: &str) -> HostAdapterId {
     HostAdapterId::new(value).expect("adapter id")
 }
 
-fn full_capabilities() -> HostCapabilitySet {
-    HostCapabilitySet::new([
-        HostCapability::Create,
-        HostCapability::Send,
-        HostCapability::Wait,
-        HostCapability::Cancel,
-        HostCapability::Attest,
-        HostCapability::Compact,
-    ])
-}
-
 fn compact_request(session_id: SessionId) -> CompactRequest {
     CompactRequest::new(
         SchemaVersion::V1,
@@ -114,12 +103,7 @@ fn compact_dispatches_through_a_real_subprocess_and_accepts_on_exit_zero() {
     let temp_dir = TempDir::new().expect("temp dir");
     let script = exit_code_script(temp_dir.path(), 0);
     let runner = BoundedCommandRunner::new(4096);
-    let adapter = HostProcessAdapter::new(
-        adapter_id("stub-adapter"),
-        full_capabilities(),
-        script,
-        runner,
-    );
+    let adapter = HostProcessAdapter::new(adapter_id("stub-adapter"), script, runner);
     let supervisor = HostSupervisor::new(adapter);
     let request = compact_request(SessionId::from_uuid(Uuid::new_v4()));
 
@@ -137,12 +121,7 @@ fn compact_maps_a_real_nonzero_exit_to_ok_rejected_summary() {
     let temp_dir = TempDir::new().expect("temp dir");
     let script = exit_code_script(temp_dir.path(), 3);
     let runner = BoundedCommandRunner::new(4096);
-    let adapter = HostProcessAdapter::new(
-        adapter_id("stub-adapter"),
-        full_capabilities(),
-        script,
-        runner,
-    );
+    let adapter = HostProcessAdapter::new(adapter_id("stub-adapter"), script, runner);
     let supervisor = HostSupervisor::new(adapter);
     let request = compact_request(SessionId::from_uuid(Uuid::new_v4()));
 
@@ -157,14 +136,14 @@ fn compact_maps_a_real_nonzero_exit_to_ok_rejected_summary() {
 }
 
 #[test]
-fn compact_rejects_capability_unsupported_without_spawning_a_process() {
-    // A non-existent executable path proves the precheck short-circuits
-    // before any spawn attempt: if `adapter.dispatch` were called, spawning
-    // this path would surface as `Unavailable`, not `CapabilityUnsupported`.
+fn compact_reports_an_unreachable_host_as_unavailable() {
+    // There is no precheck to short-circuit on any more: the errand is handed
+    // to the host and the answer comes back from the attempt. A host that
+    // cannot be launched at all never received it, so this is `Unavailable`
+    // rather than any statement about what the host can do.
     let runner = BoundedCommandRunner::new(4096);
     let adapter = HostProcessAdapter::new(
         adapter_id("stub-adapter"),
-        HostCapabilitySet::new([HostCapability::Send]),
         PathBuf::from("this-executable-does-not-exist-anywhere"),
         runner,
     );
@@ -173,7 +152,7 @@ fn compact_rejects_capability_unsupported_without_spawning_a_process() {
 
     let outcome = supervisor.compact(&request);
 
-    assert_eq!(outcome, Err(HostSupervisorError::CapabilityUnsupported));
+    assert_eq!(outcome, Err(HostSupervisorError::Unavailable));
 }
 
 /// Writes an executable fixture script that snapshots the child's own

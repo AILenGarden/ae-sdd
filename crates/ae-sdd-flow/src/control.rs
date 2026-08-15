@@ -1,7 +1,7 @@
 use std::{error::Error, fmt};
 
 use ae_sdd_contracts::{
-    IdempotencyKey, RouteDecisionId, SeriesId, SeriesPlan,
+    IdempotencyKey, RequirementAnalysisSeriesInput, RouteDecisionId, SeriesId, SeriesPlan,
     series::{SeriesInput, SeriesPlanDecision},
 };
 use ae_sdd_domain::{ArtifactDigest, DecisionDigest};
@@ -103,6 +103,28 @@ impl ControlDecision {
 pub struct ControlPlaneRuntime;
 
 impl ControlPlaneRuntime {
+    /// Computes the next pre-route RA action without inventing route provenance.
+    pub fn next_requirement_analysis(
+        catalog_digest: ArtifactDigest,
+        input: &RequirementAnalysisSeriesInput,
+    ) -> Result<ControlDecision, ControlPlaneError> {
+        if input.candidate_plan().methodology_ref().catalog_digest() != catalog_digest {
+            return Err(ControlPlaneError::CatalogDigestMismatch);
+        }
+        let series_decision = SeriesPlanner::next_requirement_analysis(input)?;
+        let series_digest = digest_requirement_analysis_series(input, &series_decision)?;
+        let provenance = ControlProvenance {
+            catalog_digest,
+            route_digest: DecisionDigest::digest(b"pre-route-ra"),
+            series_digest,
+        };
+        Ok(ControlDecision {
+            action: map_action(series_decision),
+            provenance,
+            decision_digest: digest_requirement_analysis_control(provenance),
+        })
+    }
+
     /// Computes the next control action and binds all upstream decision digests.
     pub fn next(
         catalog_digest: ArtifactDigest,
@@ -130,6 +152,31 @@ impl ControlPlaneRuntime {
             decision_digest,
         })
     }
+}
+
+fn digest_requirement_analysis_series(
+    input: &RequirementAnalysisSeriesInput,
+    decision: &SeriesPlanDecision,
+) -> Result<DecisionDigest, ControlPlaneError> {
+    let input_bytes = serde_json::to_vec(input).map_err(|_| ControlPlaneError::ContractEncoding)?;
+    let decision_bytes = crate::canonical::series_decision(decision)
+        .map_err(|_| ControlPlaneError::ContractEncoding)?;
+    let mut bytes = Vec::with_capacity(input_bytes.len() + decision_bytes.len() + 48);
+    bytes.extend_from_slice(b"ae-sdd-pre-route-ra-series/v1\0");
+    bytes.extend_from_slice(&(input_bytes.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(&input_bytes);
+    bytes.extend_from_slice(&(decision_bytes.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(&decision_bytes);
+    Ok(DecisionDigest::digest(bytes))
+}
+
+fn digest_requirement_analysis_control(provenance: ControlProvenance) -> DecisionDigest {
+    let mut bytes = Vec::with_capacity(128);
+    bytes.extend_from_slice(b"ae-sdd-pre-route-ra-control/v1\0");
+    bytes.extend_from_slice(provenance.catalog_digest.as_bytes());
+    bytes.extend_from_slice(provenance.route_digest.as_bytes());
+    bytes.extend_from_slice(provenance.series_digest.as_bytes());
+    DecisionDigest::digest(bytes)
 }
 
 fn map_action(decision: SeriesPlanDecision) -> ControlAction {

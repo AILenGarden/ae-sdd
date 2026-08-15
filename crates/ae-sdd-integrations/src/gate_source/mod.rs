@@ -15,6 +15,7 @@ mod contracts;
 mod key;
 mod outcome;
 mod predicate;
+pub(crate) mod ra_binding;
 mod scanner;
 
 use key::GateContext;

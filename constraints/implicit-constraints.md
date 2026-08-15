@@ -29,3 +29,14 @@
 - 重复 prompt 不得增加 correction；只有 fresh `FAIL` 是业务失败，`ERROR/TIMEOUT/CANCELLED/STALE` 必须保留各自语义。
 - compact request 不等于 compact 完成；只有匹配 session/generation 的宿主 ACK 加 rehydrate 成功后才推进 context generation。
 - 所有 slice 修改前必须重读 `git status`/diff；共享 dirty worktree 中不属于当前 owner 的修改一律保留。
+
+## Bootstrap and recovery boundary
+
+- `/ae-sdd` bootstrap enrollment is not a general writer-mode cutover.
+  Workspace registration remains `Shadow`; only an authenticated Hook carrying
+  the exact bootstrap payload and command confirmation may perform the single
+  `Shadow -> RustCanary` enrollment edge. It cannot reach sole-writer mode or
+  waive the admin drain/parity contract.
+- Host session recovery is event-scoped: the same Hook event is idempotent, but
+  every later event must durably refresh session expiry and boot capability
+  without replacing its Work Item, delegation lineage, grant, or attestation.

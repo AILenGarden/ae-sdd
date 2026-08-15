@@ -4,7 +4,9 @@
 
 ## 过程状态与文档边界
 
-`document_storage` 对 retired intent 保留 resolve/read 兼容，但 save/finalize 返回 E012；新写入只允许核心文档和显式可选文档。`state.json` 除 `executionPlan` 与 `review` 外，持有 `routeDecision` 与 `requirementSpec`，分别记录路由事实和需求说明书引用。新任务阶段为 `route-selected -> requirement-analyzed`，之后由 `routeDecision.selectedDesign` 选择 DR/Story/CodingPlan；旧 phase 仍兼容读取。evidence manifest 持有测试/交付证据。文档索引写入 `ae-sdd-doc/index.json`，不更新历史 `STORING.md`。
+目标流程语义以 [`ae-sdd-design.md`](ae-sdd-design.md) 和 [`ae-sdd-daemon-design.md`](ae-sdd-daemon-design.md) 为准：统一 intake 后记录 provisional `BootstrapAssessment`，所有任务先创建 RA SeriesRun，RA 完成并关闭冲突后才冻结 `EngineeringRoute`。规模子链为 micro `executionPlan`、small `CodingPlan`、medium `Story -> TestCase -> CodingPlan`、large `DR -> N x (Story -> TestCase -> CodingPlan)`；self-update 也先 RA。`state` 保存 execution projection、批准和稳定引用，Spec 正文由 document storage 以 `DocumentId/DocumentVersionId/contentDigest` 管理，测试/交付证据进入 evidence manifest。
+
+当前生产实现仍保留 `route-selected -> requirement-analyzed`、`routeDecision.selectedDesign=DR|STORY|CODING_PLAN`、entryNode/nested state 和路径型文档索引。这些是本轮迁移基线，不是目标 authority；详见 [`ae-sdd-daemon-audit-report.md`](ae-sdd-daemon-audit-report.md)。旧 phase/state 仅兼容读取，不能据此继续扩展新流程。
 
 ## 当前 Rust Runtime 实现基线
 
@@ -84,12 +86,13 @@ source/                         母版文档与方法论 SSOT
   standards/                    机器可读或人读标准
   templates/                    产物模板
 
-tools/                          CLI 工具链
-  bin/ae-sdd                    argparse 入口与命令分发
-  lib/                          业务实现模块
-  tests/                        工具链测试
-
-scripts/                        构建、安装、分发与运行时扫描脚本
+bins/                           三个原生二进制入口
+  ae-sdd-cli/                   薄 CLI/Hook/admin client
+  ae-sdd-daemon/                每用户单例 daemon（`ae-sddd`）
+  ae-sdd-worker/                隔离 build/test worker
+crates/                         业务与基础设施 crate，见上文 Crate 分层
+migrations/                     runtime store schema migration
+scripts/                        少量非 Rust 辅助脚本（hook 安装、文档迁移）
 dist/ae-sdd/                    编译后分发包，构建产物，不手工维护
   SKILL.md                      编译后主入口 bootloader
   skills/**/*.md                编译后子 SKILL bootloader，非原文
@@ -103,60 +106,58 @@ harness/                        派生适配层，不手工改生成物
 
 ```text
 用户/Agent 调用 ae-sdd
-  -> tools/bin/ae-sdd 解析命令
-  -> tools/lib/* 执行业务逻辑
-  -> G-RA: gates._resolve_selected_ra(state binding/latest formal)
-       -> scripts/ra_scan_scope.py 校验 authoritative file scope
-       -> scripts/*_scan.py --file <selected RA> 提供运行时扫描能力
-  -> .ae-sdd/state.json / memory / cache 持久化项目侧状态
-  -> output.py 输出结构化结果
+  -> ae-sdd-cli 读取受保护 endpoint manifest + runtime.handshake
+  -> Named Pipe/UDS 送入 ae-sddd（薄 client 不做业务判断）
+  -> RuntimeService 校验 role/lineage/schema/lease/revision/fencing/idempotency
+  -> ae-sdd-integrations: authoritative RA resolver 只解析当前 Work Item `/documentPaths/RA`
+       -> ae-sdd-gates/scanners 消费 RequirementAnalysis / RouteBinding typed selector
+  -> ae-sdd-store: mutation journal PREPARED -> atomic replace -> COMMITTED
+  -> 结构化 JSON 经同一连接回传，CLI 只做输出转换
 ```
 
-硬门禁判断以 CLI 输出为准。SKILL 文档可以声明流程纪律，但不能替代 `tools/lib/gates.py`、`tools/lib/state.py`、`tools/lib/update_graph.py` 等工具链实现。
+硬门禁判断以 daemon 返回为准。SKILL 文档可以声明流程纪律，但不能替代 `ae-sdd-gates`、`ae-sdd-policy`、`ae-sdd-store` 的实现；daemon 不可用时 CLI 返回结构化错误，engaged Hook 输出 deny/block，不在本地近似求解。
 
 ## 4. 模块职责
 
 | 子系统 | 主要文件 | 职责 | 变更要求 |
 | --- | --- | --- | --- |
-| CLI 入口 | `tools/bin/ae-sdd` | 命令注册、参数解析、输出模式分发 | 新命令必须补测试和 SKILL/README 引用 |
-| Windows CLI launchers | `tools/bin/ae-sdd.cmd` / `scripts/install_cli.py` / `%LOCALAPPDATA%/Programs/ae-sdd/ae-sdd.cmd` | 包内 `.cmd` 支持安全的完整路径调用；用户级 `.cmd` 支持裸命令并维护 PATH | 两者都转发到 Python + 无扩展名 CLI、透传参数和退出码；PATH 更新须大小写不敏感去重；不得创建抢占 `Start-Process` 的同名 `.ps1` |
-| 输出层 | `tools/lib/output.py` | stdout/stderr 约定、JSON 输出 | 不在业务模块手写不一致输出 |
-| 路径层 | `tools/lib/paths.py` | 母版、项目、state、文档路径定位 | 禁止各模块重复拼路径 |
-| 状态机 | `tools/lib/state.py` | phase、PRD/work item 状态、事件日志、StoryName/docPath 绑定 | 改状态字段需同步 gates/hook/tests；正文绑定只存指针 |
-| StateStore | `tools/lib/state_store.py` | Work Item allowed-root、exclusive create、lease、fencing、revision CAS、idempotency、atomic persistence | 所有 mutation 必须经 StateStore；state/lock/lease/temp 均做 resolved containment；并发/过期/损坏场景需 subprocess 与 fail-closed 测试 |
-| Typed operations | `tools/lib/operations.py` | LLM 可发现、可校验、可执行的 operation registry 与适配器 | 新 operation 必须有 schema、稳定错误码、CLI/文档和 focused tests |
-| 门禁 | `tools/lib/gates.py` | GATE_REGISTRY、check_all、单 gate 实现、Work Item-scoped CodingPlan profile 与 G-RA selected RA 选择 | 改门禁需同步 UC-02/UC-03/test_gates；G-RA-1~6/FLOW 不得各自猜 RA |
-| 场景推导 | `tools/lib/scenario_derivation.py` / `http_scenario.py` | CapabilityModel 推导、ScenarioManifest 校验、独立观察和字段/状态 finding | 禁止硬编码 CRUD 套餐；每条场景必须绑定独立失败机制和可重复命令 |
-| update-check | `tools/lib/update_graph.py` | UG/UC 检查、变更影响查询 | 改图谱需同步 JSON、锚点和测试 |
-| 对齐审计 | `tools/lib/alignment_audit.py` | UC-08~13 深度对齐验证 | report-only 与阻断语义需明确 |
-| 迭代检查 | `tools/lib/iteration_check.py` | IC-1~4 设计-实现一致性粗筛 | 不替代人工语义复核 |
-| 文档存取 | `tools/lib/document_storage.py` | intent 驱动的文档定位、保存、finalize；原生 StoryName 精确解析；只读 Story 资源定位、正文读取与 sha256 | SKILL 不应自行拼接或二次读取资源路径；禁止 fuzzy Story ID 选择；只读 intent 禁止写入 |
-| Story 章节解析 | `tools/lib/story_template_sections.py` | 对 Document Storage 返回的文本解析 section ID/layer、指南覆盖、导航锚点、Story ID 与历史精确迁移 | 保持纯函数，无文件 I/O、固定标题表或语义猜测 |
-| Review Batch | `tools/lib/review_batch.py` / `review_loop.py` | session/batch 状态、fingerprint、失败分类、预算、retry merge、legacy projection | 新状态字段需同步 state/gates/tests；`STALLED` 不得映射为 PASS；平台失败只重试缺失角色 |
-| 增量质量 | `tools/lib/baseline.py` / `verification_plan.py` / `evidence.py` | baseline delta、最小验证计划、成功证据 manifest、安全复用、HTTP local/test-env evidence 配对 | HTTP 双阶段须同 buildId、正确 URL/顺序、internalMocks=false；新版 evidence 还须覆盖 scenarioId、实质断言类型和 rerun command |
-| 资产索引 | `tools/lib/assets_index.py` | assets 读取、outline、section、query、stats | 缓存变更需测试缓存失效 |
-| Hook 层 | `gate_intercept.py` / `prompt_inject.py` / `stop_check.py` | 工具调用前、提示注入、响应后校验 | HARNESS 声明必须能追到实现 |
-| 源 SKILL 瘦身 | `scripts/slim_source_skills.py` / `source/skill-fallbacks/**` | 按标准识别源 SKILL 语义、渲染 slim entry、保留完整 fallback、校验模板一致性 | 已瘦身文件默认跳过；schema 升级必须从 fallback 重渲染，禁止二次摘要 |
-| Runtime 编译 | `scripts/compile_skill_runtime.py` / `tools/lib/runtime_verify.py` | 主入口 compact、全量子 SKILL bootloader、局部 runtime、fallback 原文生成与校验 | `SKILL.md`、`runtime/**`、`skills/**/*.md` 输出必须字节级幂等 |
-| 构建分发（发布期） | `crates/ae-sdd-build`（`post_commit.rs` / `managed_instructions.rs`） | compile -> verify -> distribute -> 托管 L2 指令注入 | 见 §8.1；不把手工改动写入 dist；发布链路禁 Python |
-| 构建分发（遗留/手工） | `scripts/build_dist.py` / `scripts/distribute.py` / `scripts/l2_inject.py` | source -> dist -> runtime 安装 | 仅手工与迁移 oracle 用；不得进发布 hook |
-| RA 扫描作用域 | `scripts/ra_scan_scope.py` | formal RA 分类、root discovery、explicit file containment、excluded reason、结构化错误 | 四个 RA scanner 与 gates 必须共享；变更触发 UG-29 |
-| 运行时扫描器 | `scripts/*_scan.py` | 静态扫描，输出 JSON 契约；RA scanner 支持 repeatable `--file` 与 filtered `--root` | 新 scanner/helper 需入 build_dist 白名单 |
+| CLI 入口 | `bins/ae-sdd-cli/src/main.rs` | 四个子命令（`runtime`/`rpc`/`hook`/`resume-approved-plan`）、manifest 读取、handshake、输出转换 | 保持薄入口；禁止在 CLI 侧做业务判断或本地 fallback |
+| daemon 入口 | `bins/ae-sdd-daemon/src/main.rs` | 单例守护、allowed-root 准入、endpoint manifest 发布、actor 装配 | 新 RPC method 必须先定 owner/schema/权限/deadline，见 `constraints/api.md` |
+| 协议层 | `crates/ae-sdd-protocol` | frame、handshake、capability token、RpcMethod 注册表、wire DTO | 字段变更须同步 operation schema digest 与 compatibility manifest |
+| 传输与 IPC | `crates/ae-sdd-integrations`（`ipc.rs` / `endpoint.rs`） | Named Pipe/UDS、endpoint token、连接准入 | 禁 TCP listener；token 不入日志/SQLite |
+| 流程控制 | `crates/ae-sdd-flow` + `crates/ae-sdd-policy/src/transition.rs` | 目标为 BootstrapAssessment、RA-first EngineeringRoute、typed SeriesPlan/SeriesRun 与合法 subnode transition；当前静态 phase/route 链是迁移基线 | 改流程须同步 contracts/gates/policy/store/context/delegation/tests，Story 分支固定 `Story -> TestCase -> CodingPlan` |
+| StateStore | `crates/ae-sdd-store`（`authority.rs` / `lease.rs` / `journal.rs`） | allowed-root、lease、fencing、revision CAS、idempotency、mutation journal、atomic persistence | 所有 mutation 必须经此层；并发/过期/损坏需 fail-closed 测试 |
+| Typed operations | `crates/ae-sdd-operations/src/registry.rs` | 23 个 operation 的 registry、schema、describe/execute | 新 operation 必须有 schema、稳定错误码、测试，并同步 manifest 计数 |
+| 门禁 | `crates/ae-sdd-gates`（`registry.rs` / `evaluator.rs` / `scheduler.rs`） | Gate 注册表、DAG、有界调度、RequirementAnalysis/RouteBinding selector 依赖 | 改门禁需同步 UC-02/UC-03 与 focused tests；G-RA-1~6/FLOW 不得各自猜 RA |
+| 扫描器 | `crates/ae-sdd-scanners`（`registry.rs` / `ra_specification.rs`） | bounded SRS v2 Core/Applicability/Closure 扫描与 JSON finding 契约 | 不选择文件、不读取 state；只消费 resolver 提供的单文件 bytes |
+| 诊断检查 | `crates/ae-sdd-integrations/src/jobs/diagnostics/` | `update-check`（UG 查询 + UC 语义检查）、`iteration-check`（IC-1~4）、doc-storage gate | 见 §11 实现度；新增 UC 必须同步 `update-graph.json` |
+| 文档与资源 | `crates/ae-sdd-resources`（`document.rs` / `assets.rs` / `resolver.rs`） | intent 驱动的文档 resolve/read/save/finalize、`.assets.md` 读取、outline/section/query/stats | 只读 intent 禁止写入；禁止 fuzzy Story ID 选择；缓存变更需测试失效路径 |
+| 生命周期 | `crates/ae-sdd-lifecycle` + `crates/ae-sdd-integrations/src/lifecycle_authority.rs` | WorkItem/Story/PRD typed 生命周期、projection、校验 | 新 intent 必须有 validation 与 focused test |
+| Review | `crates/ae-sdd-review`（`supervisor.rs` / `fingerprint.rs` / `policy.rs`） | Tier、角色独立、batch/round、fingerprint、预算、clean streak、retry/exit | `STALLED` 不得映射为 PASS；平台失败只重试缺失角色 |
+| 执行与证据 | `crates/ae-sdd-execution` + `crates/ae-sdd-contracts/src/evidence.rs` | executionPlan、slice、capsule、receipt、evidence manifest | evidence 只登记真实运行结果；禁止手写 PASS |
+| 上下文 | `crates/ae-sdd-context`（`projection.rs` / `compact.rs` / `pressure.rs`） | role-aware 投影、delta、LoadedContextProof、pressure 与 compact 周期 | 投影字节数不是 token 遥测；ACK 不得伪造 |
+| Hook 层 | `crates/ae-sdd-client/src/hook.rs` + `crates/ae-sdd-policy/src/hook.rs` | 四个 Hook method 的 fail-closed 宿主输出与 HookGuard 裁决 | engaged 传输失败仍须 deny/block；Hook 内不跑扫描或长任务 |
+| Methodology | `crates/ae-sdd-methodology`（`catalog.rs` / `compiler.rs` / `verifier.rs`） | Skill Catalog IR、版本/digest、plugin winner、compiled runtime 校验 | `SKILL.md`、`runtime/**`、`skills/**/*.md` 输出必须字节级幂等 |
+| 构建分发 | `crates/ae-sdd-build`（`post_commit.rs` / `managed_instructions.rs` / `release.rs`） | compile -> verify -> distribute -> 托管 L2 指令注入、compatibility audit、release scan、Hook benchmark | 见 §8.1；不把手工改动写入 dist；发布链路禁解释器 |
+| Host 适配 | `crates/ae-sdd-host` + `crates/ae-sdd-integrations/src/host_supervisor.rs` | spawn/send/wait/cancel/attest/compact 的受约束物理执行与 attestation | 凭证不进 state/manifest/log；不得伪造物理会话 |
 
 ## 5. CLI 入口规则
 
-`tools/bin/ae-sdd` 应保持为薄入口：
+`bins/ae-sdd-cli` 是薄入口，只有四个子命令：`runtime`、`rpc`、`hook`、
+`resume-approved-plan`。
 
-- argparse 注册命令和参数。
-- 命令函数可以做少量参数适配。
-- 业务逻辑下沉到 `tools/lib/`。
-- 新增子命令必须有 `--json` 契约测试。
-- 命令引用必须被 `update-check` 覆盖，避免文档声明幽灵命令。
-- PowerShell 或其他 shell 批量编排必须逐命令检查退出码；最终 process exit 只代表最后一条命令。不得用后续成功覆盖前序 `doc save`/gate 的失败。
-- Windows Hook 直接调用 `python.exe <absolute>/tools/bin/ae-sdd`；包内完整路径调用使用相邻 `tools/bin/ae-sdd.cmd`，裸命令、ShellExecute 和 `Start-Process` 使用用户级 `ae-sdd.cmd`。生成的主 `SKILL.md` 与 `runtime/boot.compact.md` 均声明此规则；无扩展名入口不得直接执行，也不得通过全局文件关联赋予执行语义。
-- `scripts/install_cli.py` 将 shim 目录写入 `HKCU\Environment\Path`，保留原注册表值类型并广播环境变化；当前父进程仍需重启才能继承。安装幂等覆盖 `.cmd`，并清理会抢占 PowerShell 命令解析的旧 `ae-sdd.ps1`；卸载反向移除自有 shim 和 PATH 条目。
-
-当前 `tools/bin/ae-sdd` 已承载较多命令函数，后续新能力应优先新增 `tools/lib/<capability>.py`，入口只做分发。
+- 业务逻辑全部在 daemon 内；CLI 只做 manifest 读取、handshake、framing 和宿主输出转换。
+- 每个业务请求都先成功读取受保护 endpoint manifest 并完成 `runtime.handshake`，校验
+  `bootId`、`policyDigest`、protocol range、limits 和 capability 公钥。
+- daemon 不可用或 endpoint 过期时返回结构化错误；engaged Hook 输出 deny/block。禁止
+  本地近似求解、本地 Gate 或本地 state mutation。
+- `rpc` 只接受精确注册的 method 名与完整 `RequestParams` 对象；未注册 method 直接拒绝。
+- 新增 method 必须先确定 owner、request/response schema、权限、幂等 key、deadline、
+  错误码和验证矩阵，禁止只加 CLI 分支。
+- PowerShell 或其他 shell 批量编排必须逐命令检查退出码；最终 process exit 只代表最后
+  一条命令。不得用后续成功覆盖前序失败。
+- Windows 上裸 `ae-sdd` 命中 `%LOCALAPPDATA%\Programs\ae-sdd\ae-sdd.exe`。安装期写入
+  `HKCU\Environment\Path` 并广播环境变化；当前父进程仍需重启才能继承。
 
 ## 6. Gate 与 Scanner 规则
 
@@ -164,25 +165,25 @@ harness/                        派生适配层，不手工改生成物
 
 | 层 | 位置 | 说明 |
 | --- | --- | --- |
-| gate 编排 | `tools/lib/gates.py::GATE_REGISTRY` / `check_all()` | gate ID、名称、强度、分发到具体检查 |
-| scanner 规则 | `scripts/*_scan.py` 或 `tools/lib/*` | 具体静态扫描与 findings 生成 |
+| gate 编排 | `crates/ae-sdd-gates/src/registry.rs` + `evaluator.rs` / `scheduler.rs` | gate ID、名称、强度、DAG 依赖、有界调度与分发 |
+| scanner 规则 | `crates/ae-sdd-scanners`（`registry.rs` / `engine.rs` / `scope.rs` / `report.rs`） | 具体静态扫描、authoritative scope 与 findings 生成 |
 
 规则：
 
-- `GATE_REGISTRY` 是门禁列表的代码权威。
-- `check_all()` 必须覆盖每个 gate，不能 stub-pass 掩盖缺口。
+- `ae-sdd-gates::registry` 是门禁列表的代码权威，当前 36 个 Gate。
+- 评估必须覆盖每个注册 gate，不能 stub-pass 掩盖缺口；`compatibility-audit` 校验计数。
 - G-PATH 的 SSOT 豁免按 scan root 下的严格相对路径识别，仅覆盖 canonical document-storage source entry、source full fallback 和 compiled runtime fallback；basename 相同但父目录错误的文件不得豁免。
 - G-PATH 项目侧只扫描 `.ae-sdd/memory/**/*.md`、顶层 `AGENTS.md`/`CLAUDE.md`/`MEMORY.md` 与 `.harness/memory/**/*.md`；`.ae-sdd/drafts/**/*.md` 属于过程产物，不纳入该 gate。`current_story` 不作为项目路径静默过滤条件。
-- scanner 输出 JSON 必须包含项目根 `root`、`status`、`scannedPaths`、顶层统计、同值 `reportStats` 和 `findings[]`；G-CODE-1 对路径安全/唯一性/scope 覆盖、exit/status、finding schema 及全部计数执行 fail-closed attestation。production eligibility 与 scanner 枚举使用同一文本代码边界：Java/Kotlin/XML/YAML/properties 加 `.py/.js/.ts`，生成目录、虚拟环境/site-packages、`__tests__` 和常规 Python/JS/TS test/spec 命名在两侧均排除。scanner 用 Python AST 只定位自身 `LINE_RULES` 与 metadata 常量赋值范围；业务代码同 URI 不豁免，真实 pom metadata 由 XML 解析确认；不提供通用 inline suppression。
-- `test_authenticity_scan.py` 在逐行规则之外执行文件级 HTTP 判定：MockMvc/application-context-bound WebTestClient 产生 `mock-http-boundary`；真实端口 marker 与内部 Service/Repository/Mapper/Application mock bean 共现产生 `http-internal-mock`。外部 Client stub 不被误分类为内部主链，但只可生成 supplemental evidence。
+- scanner 输出 JSON 必须包含项目根 `root`、`status`、`scannedPaths`、顶层统计、同值 `reportStats` 和 `findings[]`；G-CODE-1 对路径安全/唯一性/scope 覆盖、exit/status、finding schema 及全部计数执行 fail-closed attestation。production eligibility 与 scanner 枚举使用同一文本代码边界：Java/Kotlin/XML/YAML/properties 加 `.py/.js/.ts`，生成目录、虚拟环境/site-packages、`__tests__` 和常规 Python/JS/TS test/spec 命名在两侧均排除。scanner 的自身规则常量不参与业务判定；业务代码同 URI 不豁免，真实 pom metadata 由 `ae-sdd-scanners::parser` 的有界 XML 解析确认（拒绝 DTD 与畸形输入）；不提供通用 inline suppression。
+- `test-authenticity` scanner 在逐行规则之外执行文件级 HTTP 判定：MockMvc/application-context-bound WebTestClient 产生 `mock-http-boundary`；真实端口 marker 与内部 Service/Repository/Mapper/Application mock bean 共现产生 `http-internal-mock`。外部 Client stub 不被误分类为内部主链，但只可生成 supplemental evidence。
 - Coding scanner 仅在 XML 解析确认真实 Maven POM 根元素后豁免标准 `xmlns`/`xsi`/`schemaLocation` 元数据 URL；Java 或 XML 中的实际外部 endpoint 仍按 `hardcoded-external-url` 阻断。
-- G-RA-1~6/FLOW 共用 `_resolve_selected_ra()`：合法 `state.raDocPath`/active Story `raDocPath` 优先，否则从 `resolve_ra_scan_scope(root).files` 选择统一 latest formal RA。scanner gate 必须传 `--file <selected>`，details 必须包含 `selected_file`、`selection_source`、`scope_mode`；selected RA 自身有 blocker 时仍 fail closed。
-- RA scanner 显式 `--file` 是 caller-authoritative scope，但仍要求项目根 containment、普通 Markdown 文件和存在性；错误以 exit 2 + `INVALID_RA_SCAN_SCOPE` JSON 返回。未传 file 的 root audit 排除 `references/templates/CHANGELOG/dist`、依赖/缓存和 GeneratePlan/Impact/ReverseIssues/Review/Report 等 event sidecar，同时保留 canonical `ae-sdd-doc/RA` 与 legacy `design/**/RA-*`。
-- 新增 `scripts/*_scan.py` 必须加入 `scripts/build_dist.py` runtime_scripts 白名单。
-- 高频 scanner 应优先支持进程内调用，子进程 CLI 仅作为兼容入口。
-- Review Batch、baseline、VerificationPlan 和 evidence 均通过 `tools/lib/` 提供纯 Python API，CLI 只做参数适配；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。
+- G-RA-1~6/FLOW 共用 `crates/ae-sdd-integrations/src/gate_source/ra_binding.rs`：只读 `/documentPaths/RA` 标量，要求 `ae-sdd-doc/RA/` 前缀、单个 `.md` 普通路径、`Component::Normal` 和 `safe_document_path` containment。禁止 Story fallback、目录宽扫、首文件命中与空正文 existence fallback。
+- `RequirementAnalysis` selector hash Work Item、精确 path/bytes、validated receipt/source revision；`RouteBinding` hash candidate/approval/scale evidence/closure receipt/frozen route/blocking conflicts。scanner 不接受 root audit 作为 Work Item Gate 的替代 scope。
+- 新增 scanner 必须注册进 `ae-sdd-scanners::registry` 并同步 `compatibility-audit` 计数。
+- scanner 在 daemon 进程内以有界方式运行（文件数、事件数、字节数均有上限），不 spawn 子进程 CLI。
+- Review Batch、baseline、VerificationPlan 和 evidence 由 `ae-sdd-review`、`ae-sdd-execution` 与 `ae-sdd-contracts::evidence` 提供；所有 fingerprint 使用 canonical JSON，避免依赖 Git/mtime。状态写入保留 `reviewLoop` 兼容投影，门禁优先读取 `reviewSession`/batch v2。
 - `verification.plan` 先规范化项目内真实文件，再由 `StateStore` 以 lease + fencing token + revision CAS 原子写入 Work Item 绑定 plan；`dryRun` 不写任何状态文件。计划同时保留兼容 `inputFingerprint` 和专用 `evidenceInputFingerprint`，Evidence 命令不得使用 `planFingerprint`。G-09 与 G-CODE-1 共用 changedPaths containment、plan fingerprint 和 evidence/artifact hash 校验；G-CODE-1 再过滤测试/文档，只保留生产代码，要求 scanner `scannedPaths` 完整覆盖该 scope，空生产 scope 阻断，无 scope 保持全仓结果。evidence artifact 必须是项目内文件，record 复制到内容寻址 immutable snapshot；同 logical key 的旧 active entry 标记 superseded，finalize 只校验 active snapshot，旧 schema manifest 读取不静默改写。HTTP plan 由 G-09 调 `validate_http_acceptance_manifest()`，只接受 active `http-local`/`http-test-env`，校验 current input fingerprint、artifact、loopback/non-loopback URL、同 buildId、AC 覆盖和 local→test-env 顺序；`http-external-supplemental` 不计入完成度。
-- LLM 写入口统一由 `tools/lib/operations.py::OperationRegistry` 提供。`ops describe` 暴露 JSON Schema，`ops next` 暴露当前 revision/lease/nextActions，`ops execute` 执行显式 Work Item 的 typed operation；未知 operation、raw `state.patch`、项目根不匹配、路径越界和缺少 lease/revision/idempotency 均 fail closed。`ae-sdd state write` 仅保留为通过 StateStore 短租约的兼容 adapter。
+- LLM 写入口统一由 `crates/ae-sdd-operations::registry` 提供，经 `operation.describe` / `operation.execute` 两个 RPC 暴露。describe 返回 JSON Schema，execute 执行显式 Work Item 的 typed operation；未知 operation、raw state patch、项目根不匹配、路径越界和缺少 lease/revision/idempotency 均 fail closed。
 - G-13 的 DR exemption 只由 `entryNode=STORY && scale=中` 触发；实现继续校验 Story 本体与成熟阶段的 Task/CodingReport/CodeReview 存在及引用关系。
 - G-07/G-08/G-14/G-CODEPLAN-SRC 共用 `_resolve_codingplan_doc()`，通过 `document_storage.resolve_scoped_artifact()` 按显式 Work Item 优先定位，Story 仅作唯一兼容 fallback。G-08 根据 `state.scale` 选择 full 或 micro profile；G-14 仅对无 Story 的 standalone 微任务返回可审计 N/A。
 - G-02/G-14 共用 `_resolve_story_doc()`，底层 `resolve_story_document()` 按 bound path、精确非 glob StoryName、无 StoryName 时 Story-category-only ID 路径解析。Task/Coding 等同名文档不参与；canonical 多候选同样 ambiguity。正式文件反校验 `Story ID` 元数据；歧义、漂移和非法 basename 以稳定错误码阻断。
@@ -198,7 +199,7 @@ harness/                        派生适配层，不手工改生成物
 | `.ae-sdd/state.json` | 不再作为 active state、mirror 或 fallback；旧项目残留文件只能视为历史数据，不得参与新状态解析 |
 | `.ae-sdd/session-context/` | 会话级 work-item 绑定缓存；`UserPromptSubmit` 从当前 prompt/cwd 解析真实 work-item 并写入，`PreToolUse` 只用同一 session key 读取，禁止跨会话共享 |
 | `.ae-sdd/.hook-activity/` | session 级 turn token；只记录激活时间、最近时间和来源，不保存 prompt 正文；Stop 成功或普通新 prompt 清理；不参与 Work Item lease |
-| `.auto-engineering/{workItemKey}/state.json` | work item 独立状态机；新建入口为 `ae-sdd state new --id <ID> --entry-node <PRD\|DR\|STORY\|TASK>`，目录名为 R6 顶层名（🆕 v3.10.1 带随机 UUID 前缀，如 `{uuid}-PRD-001`）；v3.11.3 可保存 StoryName/docPath 正文指针 |
+| `.auto-engineering/{workItemKey}/state.json` | Work Item 业务状态、committed event/projection 与稳定 artifact refs。当前 `entryNode=PRD/DR/STORY`、`stateMachine*`、nested state 和 UUID 前缀命名保留为迁移兼容；目标由统一 intake 铸造 WorkItemId/FlowRunId，文档类别只形成 Spec binding hint，不决定路线 |
 | `.ae-sdd/memory/` | 分区 compact 记忆；task(L1) 默认任务级、project(L2) 跨任务复用，UserPromptSubmit 任务优先注入并只用 project 补充 |
 | `.ae-sdd/plugins/` | 项目层插件注册 |
 | `.ae-sdd/cache/` | 工具链缓存，新增缓存优先放这里 |
@@ -207,13 +208,17 @@ harness/                        派生适配层，不手工改生成物
 | `.ae-sdd/doc-aliases.json` | 旧文档路径到 canonical 正文的 alias registry | 只存指针，不存第二份正文 |
 | `.auto-engineering/{story}/evidence/manifest.json` | Story 验证证据索引与复用条件 | 保存 canonical content hash；失败证据、manifest/input/artifact hash 不一致均不可复用 |
 
-`PreToolUse` 解析 Work Item 时遵循“显式优先、隐式 fail-closed”：真实 `ae-sdd` Bash 命令携带 `--work-item` 时，先通过 `paths.find_work_item_state_path()` 定位该状态，再执行原有 phase、memory 与 gate 校验；目标不存在时直接拒绝，不得回退到其他候选。未携带显式目标时，才依次使用同 session 绑定和默认候选解析；多个活跃候选仍以歧义错误阻断。有效的显式目标可写入当前 session 绑定，使同一会话的后续 Write/Edit 继续落在该 Work Item 上。
+`PreToolUse` 解析 Work Item 时遵循“显式优先、隐式 fail-closed”：真实 `ae-sdd` Bash 命令携带 `--work-item` 时，先通过 `paths.find_work_item_state_path()` 定位该状态，再执行原有 phase、memory 与 gate 校验；目标不存在时直接拒绝，不得回退到其他候选。未携带显式目标时只使用同 session 绑定，缺失绑定即 fail-closed（constraints/api.md §五：`projectKey/workItemId` 精确匹配，不从唯一候选猜测）；绑定由 `workitem.create` 成功后 daemon 持久写入 `session.current_work_item` 建立，不做默认候选解析。有效的显式目标可写入当前 session 绑定，使同一会话的后续 Write/Edit 继续落在该 Work Item 上。
 
 `PreToolUse` 对 ae-sdd Bash 命令只维护一套 token-aware 前缀解析：接受直接 `ae-sdd ...`、`python C:/.../ae-sdd ...`、`python "C:/.../ae-sdd" ...`，以及带引号的 Python 可执行文件路径；各 state、memory、assets 与 readonly 分支消费同一组规范化参数。解析只确认命令身份，不负责放行；`_CHAIN_RE` 与 `_REDIRECT_RE` 仍在 fast path 外层拒绝链式、命令替换和重定向载荷。引号未闭合、解释器或脚本 basename 不精确匹配时返回“非 ae-sdd 命令”，不得猜测或前缀模糊匹配。
 
 Hook activation 与 Work Item state/lease 解耦：`prompt_inject` 仅在显式 `/ae-sdd` turn 创建 `.ae-sdd/.hook-activity/<session-hash>.json`，普通 prompt 先清理残留 token 后直接返回空 payload；`gate_intercept` 只对 active token 执行 phase/path/memory 门禁，并允许明确的 ae-sdd 写流程入口启动当前 turn；Stop CLI 在 active token 下执行 `stop_check`，成功或 fail-open 释放 token，阻断重试保留 token。旧 `.session-engaged` 文件不再作为激活依据。
 
-`tools/lib/state.py` 保留状态字段、phase 流程和终态不变量；`tools/lib/state_store.py` 是所有 Work Item mutation 的唯一并发所有者。StateStore 在构造、锁、lease、state 与临时替换文件处校验 resolved path 仍位于 allowed root；`create()` 在事务锁内独占创建，已有 state 不覆盖。mutation 在同一 Work Item 锁内二次读取 lease/state，检查 fencing token 与 revision CAS，再用临时文件 + fsync + atomic replace 写回；lease 过期接管会递增 fencing token，重复 idempotency key 返回原结果。`phase`/`history` 表示生命周期主状态；`currentPhase`、`currentStep`、`completedSteps`、`pendingOutputs`、`codingRound` 是工作流投影字段，不能独立滞留在旧步骤。`set_phase()` 和 `set_story_substate_phase()` 写入生命周期 phase 时必须级联同步投影；`write_state()` 落盘前执行终态不变量校验。Story 正文绑定在嵌套 state 使用 `storyStates[storyId].storyName/docPath`，扁平兼容 state 使用 `storyName/storyDocPath`；`state bind-story-doc` 在解析成功后通过短租约 mutation 写入，重复绑定不增加 revision；`state new --story-name` 吸收既有父 state 时把 Story add + binding 合并为一次 CAS，新 state 则以完整内存对象 exclusive-create，失败不留半状态。
+`crates/ae-sdd-store`（`authority.rs` / `lease.rs` / `journal.rs`）继续作为所有 Work Item mutation 的唯一并发所有者。store 在构造、锁、lease、state 与临时替换文件处校验 resolved path 仍位于 allowed root；独占创建在事务锁内完成，已有 state 不覆盖。mutation 在同一 Work Item 锁内二次读取 lease/state，检查 fencing token 与 revision CAS，先写 PREPARED journal，再用临时文件 + fsync + atomic replace 写回，最后落 COMMITTED receipt；lease 过期接管递增 fencing token，重复 idempotency key 返回原结果。这些能力原样保留。
+
+目标 reducer 从 committed event 投影 `currentMainNode/currentSeriesId/currentSeriesRunId/currentSubNode/pendingActions/pendingOutputs`；旧 `phase/history/currentPhase/currentStep/storyStates/storyName/docPath` 仅兼容读取或 UI projection。Spec binding 必须迁移为 DocumentId/DocumentVersionId 引用，执行流程树、Spec graph 与 delegation tree 分开持久化/投影。
+
+当前兼容字段 `routeDecision.selectedDesign` 的合法值仍是 `DR`、`STORY`、`CODING_PLAN`，读取侧继续规范化 `-`、`_` 和空格以读取旧 state。新写路径不得用该三值枚举表达完整路线；EngineeringRoute 必须输出 ordered typed Series plans，能区分 executionPlan、独立 CodingPlan、`Story -> TestCase -> CodingPlan`、`DR -> N` 个 Story 分支和 Update Series。
 
 新增项目侧文件必须说明是否可删、是否进入版本控制、是否参与 gate。
 
@@ -223,27 +228,28 @@ Hook activation 与 Work Item state/lease 解耦：`prompt_inject` 仅在显式 
 
 ```text
 source/
-  -> scripts/slim_source_skills.py
-  -> scripts/build_dist.py
-  -> scripts/compile_skill_runtime.py
+  -> ae-sdd-build post-commit: compile     # source/ -> dist/ae-sdd/
+  -> ae-sdd-build post-commit: verify      # 只读校验编译产物
   -> dist/ae-sdd/
-  -> scripts/install.py 或 scripts/distribute.py
+  -> ae-sdd-build post-commit: distribute  # -> 各 skill 目标目录
   -> Agent skills runtime
 ```
+
+阶段划分与权威边界见 §8.1，那里是发布链路的当前真相。
 
 规则：
 
 - `dist/ae-sdd/` 是构建产物，不手工维护。
 - `source/SKILL.md` 与 `source/skills/**/*.md` 可以是 slim entry，但必须符合 `ae-sdd-source-slim/v2`，完整原文必须在 `source/skill-fallbacks/**`。
-- `scripts/slim_source_skills.py --validate` 必须能验证 fallback 哈希、语义 inventory hash、标准/模板路径和模板重渲染一致性。
+- `ae-sdd-build post-commit` 的 verify 阶段必须校验 fallback 哈希、语义 inventory hash、标准/模板路径和模板重渲染一致性。
 - runtime compact 文件由编译器生成，不手改。
 - `dist/ae-sdd/SKILL.md` 必须是编译后的主入口 bootloader。
 - `dist/ae-sdd/skills/**/*.md` 必须是编译后的子 SKILL bootloader，不允许保留 `source/skills/**/*.md` 原文。
 - 子 SKILL 原文 fallback 只允许出现在 `runtime/skills/**/fallback/SKILL.full.md`。
 - `runtime/manifest.json` 必须记录 `subskills` 与 `extracts.subskill_count`，并与实际 `source/skills/**/*.md` 数量一致。
 - `runtime/subskills.compact.md` 是子 SKILL 入口索引，路由到每个子 SKILL 的局部 `manifest.json`、`boot.compact.md`、`outline.compact.md` 和 fallback。
-- 新增工具链模块放 `tools/lib/`，默认随 tools 复制。
-- 新增独立运行时脚本或被 scanner import 的共享 helper 放 `scripts/` 时，必须更新 `build_dist.py` 白名单；当前 RA scanner 依赖 `ra_scan_scope.py`，dist 缺失即构建失败。
+- 新增业务能力放对应 `crates/ae-sdd-*`，并在 `Cargo.toml` workspace members 与 `constraints/project-structure.md` 同步登记。
+- scanner 与 gate 的共享 scope 判定放 `ae-sdd-scanners::scope`，禁止各 scanner 自带一份；新增 scanner 必须进 `registry` 并同步 `compatibility-audit` 计数。
 - 分发器只能安装编译后 package，不能直接安装 `source/`。
 
 ### 8.1 Rust 发布期 post-commit 链路（当前真相）
@@ -267,7 +273,6 @@ L2 注入权威边界：
 | 正文 SSOT | `source/L2-DISCIPLINE.md`（发布期读编译产物 `dist/ae-sdd/L2-DISCIPLINE.md`） |
 | 发布期执行者 | `ae-sdd-build`（`crates/ae-sdd-build/src/managed_instructions.rs` 纯渲染 + `post_commit.rs` 编排） |
 | 落盘者 | 既有 native `Admin` job，entrypoint `post-commit.managed-instructions`，每 host 一次独立事务 |
-| `scripts/l2_inject.py` | 迁移/手工遗留工具与测试 oracle，不进发布 hook 与 Rust 运行时 |
 
 托管目标映射由 CLI 显式给出，禁止从 skill 目标目录字符串推断：
 
@@ -309,9 +314,9 @@ source/skills/**/*.md
 - 编译器只读取母版与工具注册表，不解释业务流程，不替代 `ae-sdd gates check`。
 - 源瘦身器负责修改 `source/SKILL.md` 与 `source/skills/**/*.md`，runtime 编译器不负责瘦身源文件。
 - runtime 编译器发现 `source_slimmed: true` 时，必须从 `source_fallback` 读取完整原文作为 runtime fallback 和 outline 抽取输入。
-- `scripts/build_dist.py` 负责把母版复制为 dist，再调用 `scripts/compile_skill_runtime.py` 生成 runtime。
-- `tools/lib/runtime_verify.py` 负责校验 installed package 是否为完整 compiled runtime；如果存在 source child SKILL 而缺少 compiled 子入口，必须报错。
-- `tools/lib/update_graph.py` 的 UC-15 必须把 `SKILL.md`、`runtime/**`、`skills/**/*.md` 都纳入幂等快照。
+- `ae-sdd-build post-commit` 的 compile 阶段把母版复制为 dist 并生成 runtime。
+- `crates/ae-sdd-methodology/src/verifier.rs` 负责校验 installed package 是否为完整 compiled runtime；如果存在 source child SKILL 而缺少 compiled 子入口，必须报错。
+- `ae-sdd runtime verify` 必须把 `SKILL.md`、`runtime/**`、`skills/**/*.md` 都纳入幂等快照。
 
 ## 9. Runtime Stats 架构
 
@@ -323,10 +328,10 @@ source/skills/**/*.md
 
 | 模块 | 职责 |
 | --- | --- |
-| `tools/lib/runtime_stats.py` | command/span 统计、JSONL 落盘、慢点汇总、敏感 argv 脱敏、`AE_SDD_STATS`/`AE_SDD_STATS_DIR` 环境开关、🆕 scale 探测与按 scale 分桶（B3） |
-| `tools/lib/runtime_exec.py` | 统一子进程执行、UTF-8、timeout、span 接入 |
-| `tools/bin/ae-sdd` | 在 `args.func(args, parser)` 外层记录命令事件；`perf report/doctor/clear` 查询、诊断、清理统计；🆕 `_perf_advice` 含 scale 比例失调规则与 lazy import 挂账提示（B2/B3） |
-| `tools/lib/gates.py` | `check_all()` 为每个 gate 增加 span，并在 `summarize()` 输出 `durationMs` 与 `slowest` |
+| `crates/ae-sdd-integrations/src/jobs/perf.rs` | `perf.report` / `perf.doctor` / `perf.clear` 三个 job entrypoint：读取 JSONL、慢点汇总、`byScale` 分桶与 `scaleRatios` |
+| `crates/ae-sdd-runtime/src/service_jobs.rs` | job 提交、授权与有界调度 |
+| `crates/ae-sdd-gates/src/evaluator.rs` | 为每个 gate 记录 span，输出 `durationMs` 与 `slowest` |
+| `crates/ae-sdd-build/src/benchmark.rs` | release profile 下的 Hook 延迟基准（p50/p95/p99/max/CPU/RSS） |
 
 统计存储与输出规则：
 
@@ -334,7 +339,7 @@ source/skills/**/*.md
 - 测试和临时环境可用 `AE_SDD_STATS_DIR=<dir>` 改写存储目录；`AE_SDD_STATS=0` 可关闭统计。
 - 统计不得污染业务 stdout；`--json` 业务输出保持可解析。查询统计必须显式调用 `ae-sdd perf report --json`。
 - `perf clear` 清理当前统计文件并抑制自身 command event，避免刚清理又写入一条 clear 记录。
-- 子进程调用默认注入 `PYTHONUTF8=1` 和 `PYTHONIOENCODING=utf-8`，并使用 `encoding="utf-8", errors="replace"` 解码。
+- 子进程调用统一走 `ae-sdd-integrations::command`，强制 UTF-8 解码、deadline、输出字节上限、环境变量 allowlist 与 process-tree 清理。
 - CLI 入口在导入业务模块前将 stdout/stderr `reconfigure(encoding="utf-8")`；回归测试会在父环境声明 `PYTHONIOENCODING=gbk` 时严格按 UTF-8 解码 gate 输出，防止 Windows 代码页回退。
 - 🆕 2026-07-03(B3)：`scale` 字段由 `start_command` 内部 `_detect_scale()` 从项目 state.json 读取（无则 null，不阻断业务），写入事件顶层；`summarize_events` 的 `byScale`/`scaleRatios` 用于 `perf doctor` 比例失调诊断。
 
@@ -342,7 +347,7 @@ source/skills/**/*.md
 
 ## 9.5 分发器注册表架构（🆕 2026-07-03 注册表模式）
 
-分发目标从「`__init__.py` 硬编码 Python 列表」改为「外部 JSON 注册表 + 协议模板」，支持注册/注销/扫描。
+分发目标由外部 JSON 注册表 + 协议枚举驱动，支持注册/注销/扫描，不在代码里硬编码目标列表。
 
 ### 注册表文件
 
@@ -352,12 +357,12 @@ source/skills/**/*.md
 
 ### 协议模板（内置，数据填参构造实例）
 
-| 协议 | 模板类 | 适用 | 复杂度 |
+| 协议 | 枚举值 | 适用 | 原生实现状态 |
 | --- | --- | --- | --- |
-| `copytree` | `CopytreeDistributor` | claude/codex/zcode/hermes 及同类 | 备份→复制→校验→清旧 .bak |
-| `harness_mount` | `HarnessMountDistributor` | harness 及同类 | compile(build_harness)→mount→verify→cleanup(-N 副本+sqlite) |
+| `copytree` | `DistributorProtocol::Copytree` | claude/codex/zcode/hermes 及同类 | 有。备份→复制→校验→清旧 .bak |
+| `harness_mount` | `DistributorProtocol::HarnessMount` | harness 及同类 | **无原生实现**。分发时报 `UnsupportedProtocol`，必须先 disable 该条目或补原生支持 |
 
-注册一个 Agent = 选协议模板 + 填 target_path/detect 参数构造实例；注销 = 注册表除名，实例不再构造。旧 5 个 `*.py` 子类降级为兼容 shim，逻辑迁入模板。
+注册一个 Agent = 选协议 + 填 target_path/detect 参数；注销 = 注册表除名。协议为枚举值，schema 版本不匹配、重复 host、空 target、`l2GlobalFile` 缺 `l2Language` 等均 fail closed。
 
 ### CLI 管理
 
@@ -367,15 +372,17 @@ source/skills/**/*.md
 
 ```
 ~/.ae-sdd/distributors.json (enabled + detect 过滤)
-  → _registry.get_active_distributors() 构造实例
-  → distribute.py 遍历实例调 install()
-  → CopytreeDistributor: copytree 编译后 dist
-  → HarnessMountDistributor: build_harness + harness mount
+  → ae-sdd-build::distributor_registry 解析并校验条目
+  → ae-sdd-build post-commit: distribute 遍历已解析 host
+  → copytree: 复制编译后 dist 到 target_path
+  → harness_mount: 无原生实现，报 UnsupportedProtocol
 ```
+
+六个 CLI 动词由 `crates/ae-sdd-build/src/offline/distributor.rs` 以 offline kernel 实现（`list`/`scan`/`register`/`unregister`/`set_enabled`），不经 daemon job——注册表是用户环境态，不属于项目 state。
 
 ### 边界
 
-注册表只管"分发到哪、用什么协议"，不管编译（编译在 `build_dist.py`，分发前的硬约束保留）。注册表是用户环境态，不进 git；母版不预置注册表，首次运行种子生成。
+注册表只管"分发到哪、用什么协议"，不管编译（编译在 `ae-sdd-build post-commit` 的 compile 阶段，分发前的硬约束保留）。注册表是用户环境态，不进 git；母版不预置注册表，首次运行种子生成。
 
 ## 10. ae-sdd Monitor 架构
 
@@ -428,24 +435,27 @@ Monitor 是本仓库下的独立桌面应用，位置为 `apps/ae-sdd-monitor/`�
 
 ## 11. 设计-实现对齐闭环
 
-| 防线 | 工具 | 覆盖 |
-| --- | --- | --- |
-| 快速同步检查 | `ae-sdd update-check` | 版本、命令、门禁、scanner 分发、runtime 编译一致性 |
-| 对齐审计 | `alignment_audit.py` 注入 UC-08~13 | 门禁承诺、state 字段、幽灵命令、注册完整性 |
-| 迭代检查 | `ae-sdd iteration-check` | HS 物理实现、过时描述、未接入模块粗筛 |
-| Runtime 校验 | `ae-sdd runtime verify` / UC-15 | compiled runtime manifest、load_order、全量子 SKILL compiled entry、`SKILL.md` + `runtime/**` + `skills/**/*.md` 幂等输出 |
-| 单元测试 | `tools/tests/` | 代码契约 |
+| 防线 | 工具 | 覆盖 | 当前实现度 |
+| --- | --- | --- | --- |
+| 快速同步检查 | `ae-sdd update-check` | `update-graph.json` 的 UG 依赖规则查询与 UC 语义检查 | **部分**。`--affected` 查询与 UC-01（版本一致性）可用；其余 UC 返回 `pass:false` + "not yet registered"，故不带 `--only` 的全量运行恒为 FAIL |
+| 迭代检查 | `ae-sdd iteration-check` | IC-1~4：过时描述、路由清单缺失、未接入模块粗筛 | 完整 |
+| Runtime 校验 | `ae-sdd runtime verify` | compiled runtime manifest、load_order、全量子 SKILL compiled entry、`SKILL.md` + `runtime/**` + `skills/**/*.md` 幂等输出 | 完整 |
+| 兼容盘点审计 | `ae-sdd-build compatibility-audit` | 113 command / 23 operation / 36 Gate / 7 scanner 三源计数与 owner/evidence 映射 | 完整 |
+| 单元与契约测试 | `cargo test --workspace` | 代码契约 | 完整 |
+
+原 `alignment_audit.py`（UC-08~13 深度对齐）随 Python 树一并删除，其审计对象（Python 门禁承诺、argparse 命令注册）已不存在。这部分覆盖面目前是空缺，不是由上表任一工具承接。
 
 重大实现变更流程：
 
 ```text
 1. 查 ae-sdd-design.md 确认能力语义
 2. 查本文件确认代码层落点
-3. ae-sdd update-check --affected <files>
+3. ae-sdd update-check --affected <files>     # UG 依赖查询，可用
 4. 修改代码/文档/测试
-5. ae-sdd update-check
-6. 跑相关 tools/tests
-7. 写 source/CHANGELOG
+5. ae-sdd update-check --only UC-01           # 全量运行恒 FAIL，见上表
+6. cargo test -p <受影响 crate>
+7. cargo fmt --all --check && cargo clippy --workspace -- -D warnings
+8. 写 source/CHANGELOG
 ```
 
 ## 12. 新实现设计写入规则

@@ -4,10 +4,13 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
 use ae_sdd_domain::HostAckId;
 use ae_sdd_host::{
-    HostAck, HostAckOutcome, HostAction, HostAdapterError, HostAdapterId, HostCapability,
-    HostCapabilitySet, HostRuntimeAdapter,
+    HostAck, HostAckOutcome, HostAction, HostActionKind, HostAdapterError, HostAdapterId,
+    HostRuntimeAdapter,
 };
 use uuid::Uuid;
 
@@ -67,17 +70,16 @@ fn apply_environment_allowlist(command: &mut Command) {
     }
 }
 
-/// Hides the console window and isolates the child into its own process
-/// group/job so a deadline timeout can clean up the whole subtree, not just
-/// the immediate child. `CREATE_NO_WINDOW` mirrors the constant already
-/// verified for the daemon launcher; `CREATE_NEW_PROCESS_GROUP` gives the
-/// timeout path a stable process-group root to target with `taskkill /T`.
+/// Hides the console window and suspends the child until it is assigned to a
+/// kill-on-close Job Object. Suspension closes the race where a fast wrapper
+/// could spawn a descendant before the parent was contained.
 #[cfg(windows)]
 fn apply_platform_hardening(command: &mut Command) {
     use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED,
+    };
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED);
 }
 
 /// Isolates the child into its own POSIX process group so a deadline
@@ -89,24 +91,120 @@ fn apply_platform_hardening(command: &mut Command) {
     command.process_group(0);
 }
 
-/// Best-effort process-tree cleanup after a deadline overrun. `child.kill()`
-/// only terminates the immediate process; grandchildren spawned by it (a
-/// shell, a build tool wrapper) would otherwise keep running past the
-/// caller's deadline. On Windows, `taskkill /T` walks the process tree from
-/// the child's PID. On Unix, signalling the negated PID reaches the whole
-/// process group `process_group(0)` created for the child at spawn time.
-/// Both cleanup commands are themselves program+args invocations (never a
-/// shell), consistent with `constraints/security.md` §四.
-fn kill_process_tree(child: &mut Child) {
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill.exe")
-            .args(["/T", "/F", "/PID", &child.id().to_string()])
-            .env_clear()
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+#[cfg(windows)]
+#[derive(Debug)]
+struct PlatformProcessTree {
+    job: OwnedHandle,
+}
+
+#[cfg(windows)]
+impl PlatformProcessTree {
+    #[allow(unsafe_code)]
+    fn attach(child: &Child) -> std::io::Result<Self> {
+        use std::mem::size_of;
+        use std::ptr;
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+        };
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+        };
+
+        // SAFETY: every raw handle is checked before conversion, transferred
+        // exactly once into OwnedHandle, and all FFI structs have their size
+        // fields initialized as required by the Win32 API.
+        unsafe {
+            let raw_job = CreateJobObjectW(ptr::null(), ptr::null());
+            if raw_job.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let job = OwnedHandle::from_raw_handle(raw_job);
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                ptr::from_ref(&limits).cast(),
+                u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
+                    .expect("job limit structure size fits u32"),
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            if AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            let raw_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if raw_snapshot == INVALID_HANDLE_VALUE {
+                return Err(std::io::Error::last_os_error());
+            }
+            let snapshot = OwnedHandle::from_raw_handle(raw_snapshot);
+            let mut entry = THREADENTRY32 {
+                dwSize: u32::try_from(size_of::<THREADENTRY32>())
+                    .expect("thread entry size fits u32"),
+                ..THREADENTRY32::default()
+            };
+            if Thread32First(snapshot.as_raw_handle(), &mut entry) == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            let mut resumed = 0_u32;
+            loop {
+                if entry.th32OwnerProcessID == child.id() {
+                    let raw_thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if raw_thread.is_null() {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    let thread = OwnedHandle::from_raw_handle(raw_thread);
+                    if ResumeThread(thread.as_raw_handle()) == u32::MAX {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    resumed = resumed.saturating_add(1);
+                }
+                if Thread32Next(snapshot.as_raw_handle(), &mut entry) == 0 {
+                    break;
+                }
+            }
+            if resumed == 0 {
+                return Err(std::io::Error::other(
+                    "suspended child had no resumable thread",
+                ));
+            }
+            Ok(Self { job })
+        }
     }
+
+    #[allow(unsafe_code)]
+    fn terminate(&self) {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+        // SAFETY: `job` remains owned and valid for the duration of the call.
+        let _ = unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) };
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct PlatformProcessTree;
+
+#[cfg(unix)]
+impl PlatformProcessTree {
+    fn attach(_child: &Child) -> std::io::Result<Self> {
+        Ok(Self)
+    }
+
+    fn terminate(&self) {}
+}
+
+/// Terminates the contained process tree and reaps the immediate child.
+fn kill_process_tree(process_tree: &PlatformProcessTree, child: &mut Child) {
+    process_tree.terminate();
     #[cfg(unix)]
     {
         let _ = Command::new("kill")
@@ -165,6 +263,14 @@ impl BoundedCommandRunner {
         apply_environment_allowlist(&mut command);
         apply_platform_hardening(&mut command);
         let mut child = command.spawn()?;
+        let process_tree = match PlatformProcessTree::attach(&child) {
+            Ok(process_tree) => process_tree,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(IntegrationError::Io(error));
+            }
+        };
         let stdout = child.stdout.take().ok_or_else(|| {
             IntegrationError::Io(std::io::Error::other("stdout pipe is unavailable"))
         })?;
@@ -187,11 +293,12 @@ impl BoundedCommandRunner {
                 break status;
             }
             if started.elapsed() >= deadline {
-                kill_process_tree(&mut child);
+                kill_process_tree(&process_tree, &mut child);
                 return Err(IntegrationError::CommandTimeout);
             }
             std::thread::sleep(Duration::from_millis(1));
         };
+        drop(process_tree);
         let mut stdout = None;
         let mut stderr = None;
         for _ in 0..2 {
@@ -295,7 +402,6 @@ impl ServiceAdapter {
 /// Host process adapter with a fixed executable and capability matrix.
 pub struct HostProcessAdapter {
     adapter_id: HostAdapterId,
-    capabilities: HostCapabilitySet,
     executable: PathBuf,
     runner: BoundedCommandRunner,
 }
@@ -305,13 +411,11 @@ impl HostProcessAdapter {
     #[must_use]
     pub fn new(
         adapter_id: HostAdapterId,
-        capabilities: HostCapabilitySet,
         executable: impl Into<PathBuf>,
         runner: BoundedCommandRunner,
     ) -> Self {
         Self {
             adapter_id,
-            capabilities,
             executable: executable.into(),
             runner,
         }
@@ -323,21 +427,9 @@ impl HostRuntimeAdapter for HostProcessAdapter {
         &self.adapter_id
     }
 
-    fn capabilities(&self) -> &HostCapabilitySet {
-        &self.capabilities
-    }
-
     fn dispatch(&self, action: &HostAction) -> Result<HostAck, HostAdapterError> {
-        if !self
-            .capabilities
-            .supports(action.kind().required_capability())
-        {
-            return Err(HostAdapterError::Unsupported(
-                action.kind().required_capability(),
-            ));
-        }
         let arguments = vec![
-            capability_name(action.kind().required_capability()).to_owned(),
+            action_verb(action.kind()).to_owned(),
             "--action-id".to_owned(),
             action.action_id().to_string(),
             "--command-seq".to_owned(),
@@ -373,15 +465,19 @@ impl HostRuntimeAdapter for HostProcessAdapter {
     }
 }
 
-const fn capability_name(value: HostCapability) -> &'static str {
+/// Subcommand the host executable is invoked with for an errand.
+///
+/// This used to be derived from the capability enum, which quietly made that
+/// enum serve two unrelated purposes: gating dispatch and naming the CLI verb.
+/// Only the verb was ever load-bearing.
+const fn action_verb(value: HostActionKind) -> &'static str {
     match value {
-        HostCapability::Create => "create",
-        HostCapability::Send => "send",
-        HostCapability::Wait => "wait",
-        HostCapability::Cancel => "cancel",
-        HostCapability::Attest => "attest",
-        HostCapability::Compact => "compact",
-        HostCapability::PressureTelemetry => "pressure",
+        HostActionKind::Create => "create",
+        HostActionKind::Send => "send",
+        HostActionKind::Wait => "wait",
+        HostActionKind::Cancel => "cancel",
+        HostActionKind::Attest => "attest",
+        HostActionKind::Compact => "compact",
     }
 }
 

@@ -67,6 +67,178 @@ fn stale_revision_is_reported_as_revision_conflict_during_preflight() {
 }
 
 #[test]
+fn flat_route_root_can_plan_its_initial_lifecycle_transition() {
+    let state = json!({
+        "stateMachineName":"ROUTE-10b6bd28",
+        "entryNode":"ROUTE",
+        "activeStory":"ROUTE-10b6bd28",
+        "revision":140,
+        "phase":"initialized",
+        "currentPhase":"initialized",
+        "currentStep":"initialized",
+        "completedSteps":[],
+        "pendingOutputs":[],
+        "codingRound":1,
+        "evidenceRefs":ra_gate_evidence()
+    });
+
+    let outcome = preflight_lifecycle_confirmation(
+        &state,
+        "ROUTE-10b6bd28",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"requirement-analyzed"}),
+        StateRevision::new(140),
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("a daemon-created flat ROUTE root is a lifecycle Work Item");
+
+    assert_eq!(
+        outcome.disposition(),
+        LifecycleAuthorityDisposition::Permitted
+    );
+    assert_eq!(
+        outcome
+            .into_permitted()
+            .expect("initial route transition is permitted")
+            .target_phase(),
+        Some(ProcessPhase::RequirementAnalyzed)
+    );
+}
+
+#[test]
+fn route_selected_preflight_uses_the_approved_candidate_before_freeze() {
+    let state = json!({
+        "stateMachineName":"ROUTE-RA-SELECT-001",
+        "entryNode":"ROUTE",
+        "activeStory":"ROUTE-RA-SELECT-001",
+        "revision":6,
+        "phase":"requirement-analyzed",
+        "currentPhase":"requirement-analyzed",
+        "currentStep":"requirement-analyzed",
+        "completedSteps":["initialized"],
+        "pendingOutputs":[],
+        "codingRound":1,
+        "routeCandidate":{
+            "scale":"large",
+            "designRoute":"dr"
+        },
+        "routeApprovalReceipt":{"confirmationId":"route:approved"},
+        "evidenceRefs":[{
+            "evidenceId":"route-flow-evidence",
+            "verificationId":"G-RA-FLOW-VIOLATION",
+            "path":".ae-sdd/evidence/route-flow.json",
+            "digest":"1111111111111111111111111111111111111111111111111111111111111111",
+            "byteLength":1
+        }]
+    });
+
+    let outcome = preflight_lifecycle_confirmation(
+        &state,
+        "ROUTE-RA-SELECT-001",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"route-selected"}),
+        StateRevision::new(6),
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("an approved route candidate supplies pre-freeze route authority");
+
+    assert_eq!(
+        outcome.disposition(),
+        LifecycleAuthorityDisposition::Permitted
+    );
+}
+
+#[test]
+fn flat_route_transition_normalizes_a_missing_current_step() {
+    let state = json!({
+        "stateMachineName":"ROUTE-10b6bd28",
+        "entryNode":"ROUTE",
+        "activeStory":"ROUTE-10b6bd28",
+        "revision":140,
+        "phase":"initialized",
+        "currentPhase":"initialized",
+        "evidenceRefs":ra_gate_evidence()
+    });
+
+    let permitted = prepare_lifecycle_mutation(
+        &state,
+        "ROUTE-10b6bd28",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"requirement-analyzed"}),
+        StateRevision::new(140),
+        None,
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("legacy flat ROUTE plans")
+    .into_permitted()
+    .expect("initial ROUTE transition is permitted");
+
+    let after = apply_exact_after_image(&state, "ROUTE-10b6bd28", &permitted)
+        .expect("missing progress fields are normalized");
+    assert_eq!(after["phase"], "requirement-analyzed");
+    assert_eq!(after["currentStep"], "requirement-analyzed");
+    assert_eq!(after["completedSteps"], json!(["initialized"]));
+}
+
+#[test]
+fn nested_dr_authority_is_not_shadowed_by_a_same_named_root_state() {
+    let state = json!({
+        "stateMachineName":"DR-C1-001",
+        "entryNode":"DR",
+        "revision":7,
+        "phase":"initialized",
+        "currentPhase":"initialized",
+        "currentStep":"initialized",
+        "completedSteps":[],
+        "pendingOutputs":[],
+        "codingRound":1,
+        "evidenceRefs":ra_gate_evidence(),
+        "drState":{
+            "drId":"DR-C1-001",
+            "phase":"initialized",
+            "currentPhase":"initialized",
+            "currentStep":"initialized",
+            "completedSteps":[],
+            "pendingOutputs":[],
+            "codingRound":1
+        }
+    });
+
+    let permitted = prepare_lifecycle_mutation(
+        &state,
+        "DR-C1-001",
+        OperationName::StateTransition,
+        &json!({"targetPhase":"requirement-analyzed"}),
+        StateRevision::new(7),
+        None,
+        None,
+        AgentRole::Root,
+        None,
+        EVALUATION_UNIX_MS,
+    )
+    .expect("the nested DR is the authoritative Work Item")
+    .into_permitted()
+    .expect("the initial DR transition is permitted");
+
+    let after = apply_exact_after_image(&state, "DR-C1-001", &permitted)
+        .expect("the nested DR after-image is valid");
+
+    assert_eq!(after["phase"], "initialized");
+    assert_eq!(after["currentPhase"], "initialized");
+    assert_eq!(after["drState"]["phase"], "requirement-analyzed");
+    assert_eq!(after["drState"]["currentPhase"], "requirement-analyzed");
+}
+
+#[test]
 fn missing_nested_target_does_not_fall_back_to_the_root_state() {
     let state = json!({
         "stateMachineName":"PRD-C1-ROOT",
@@ -427,13 +599,18 @@ fn transition_after_image_updates_steps_without_duplicates_and_normalizes_round(
 
 #[test]
 fn unprotected_transition_exposes_binding_and_validates_every_supplied_confirmation() {
-    let state = story_state("initialized", coding_gate_evidence());
+    let mut state = story_state("initialized", ra_gate_evidence());
+    state.as_object_mut().expect("state object").remove("scale");
+    state
+        .as_object_mut()
+        .expect("state object")
+        .remove("selectedDesign");
     let before = state.clone();
     let preflight = preflight_lifecycle_confirmation(
         &state,
         "STORY-C1-001",
         OperationName::StateTransition,
-        &json!({"targetPhase":"route-selected"}),
+        &json!({"targetPhase":"requirement-analyzed"}),
         StateRevision::new(7),
         // No completion milestone is projected by this fixture.
         None,
@@ -461,7 +638,7 @@ fn unprotected_transition_exposes_binding_and_validates_every_supplied_confirmat
         &state,
         "STORY-C1-001",
         OperationName::StateTransition,
-        &json!({"targetPhase":"route-selected"}),
+        &json!({"targetPhase":"requirement-analyzed"}),
         StateRevision::new(7),
         // No completion milestone is projected by this fixture.
         None,
@@ -473,7 +650,10 @@ fn unprotected_transition_exposes_binding_and_validates_every_supplied_confirmat
     .expect("digest-bound confirmation is accepted")
     .into_permitted()
     .expect("confirmed unprotected transition remains permitted");
-    assert_eq!(permitted.target_phase(), Some(ProcessPhase::RouteSelected));
+    assert_eq!(
+        permitted.target_phase(),
+        Some(ProcessPhase::RequirementAnalyzed)
+    );
 
     let arbitrary_confirmation = Confirmation::new(
         "not-the-engine-binding".to_owned(),
@@ -486,7 +666,7 @@ fn unprotected_transition_exposes_binding_and_validates_every_supplied_confirmat
         &state,
         "STORY-C1-001",
         OperationName::StateTransition,
-        &json!({"targetPhase":"route-selected"}),
+        &json!({"targetPhase":"requirement-analyzed"}),
         StateRevision::new(7),
         // No completion milestone is projected by this fixture.
         None,
@@ -649,6 +829,22 @@ fn coding_gate_evidence() -> Vec<Value> {
                 "verificationId":gate,
                 "path":format!(".ae-sdd/evidence/{index}.json"),
                 "digest":format!("{index:064x}"),
+                "byteLength":1
+            })
+        })
+        .collect()
+}
+
+fn ra_gate_evidence() -> Vec<Value> {
+    ["G-RA-1", "G-RA-2", "G-RA-3", "G-RA-4"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, gate)| {
+            json!({
+                "evidenceId":format!("ra-evidence-{index}"),
+                "verificationId":gate,
+                "path":format!(".ae-sdd/evidence/ra-{index}.json"),
+                "digest":format!("{:064x}", index + 10),
                 "byteLength":1
             })
         })

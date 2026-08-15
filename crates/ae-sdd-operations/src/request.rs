@@ -81,14 +81,35 @@ impl ValidatedOperationRequest {
         let spec = request.operation.spec();
         validate_preconditions(spec, &request)?;
         validate_payload(spec, &request.payload)?;
-        let canonical = serde_json::to_vec(&request.payload)
-            .map_err(OperationRequestError::CanonicalizePayload)?;
+        let payload_digest = Self::canonical_idempotency_digest(&request)?;
         Ok(Self {
             operation_id: OperationId::new(request.operation.as_str())
                 .expect("frozen operation names are valid domain IDs"),
             request,
-            payload_digest: Sha256::digest(canonical).into(),
+            payload_digest,
         })
+    }
+
+    /// Hashes every caller-controlled value that can change the authority of
+    /// a write while preserving the historical payload-only digest for
+    /// operations without a confirmation.
+    pub fn canonical_idempotency_digest(
+        request: &OperationRequest,
+    ) -> Result<[u8; 32], OperationRequestError> {
+        let canonical_value = match request.confirmation.as_ref() {
+            Some(confirmation) => serde_json::json!({
+                "confirmation": {
+                    "approvedAt": confirmation.approved_at(),
+                    "approvedBy": confirmation.approved_by(),
+                    "confirmationId": confirmation.confirmation_id(),
+                },
+                "payload": request.payload.clone(),
+            }),
+            None => request.payload.clone(),
+        };
+        let canonical = serde_json::to_vec(&canonical_value)
+            .map_err(OperationRequestError::CanonicalizePayload)?;
+        Ok(Sha256::digest(canonical).into())
     }
 
     #[must_use]
@@ -199,10 +220,170 @@ fn validate_payload(spec: &OperationSpec, payload: &Value) -> Result<(), Operati
             }
             None => {}
             Some(value) if field_matches(field.kind, value) => {
+                validate_top_level_field_semantics(field.kind, field.name, value)?;
                 validate_semantics(spec.operation, field.name, value)?;
+                validate_nested_shape(field, value, field.name)?;
             }
             Some(_) => return Err(OperationRequestError::PayloadFieldType(field.name)),
         }
+    }
+    if spec.operation == OperationName::WorkItemCreate {
+        validate_workitem_create(object)?;
+    }
+    Ok(())
+}
+
+fn validate_nested_shape(
+    field: &crate::FieldSpec,
+    value: &Value,
+    path: &str,
+) -> Result<(), OperationRequestError> {
+    let Some(item_kind) = field.item_kind else {
+        return Ok(());
+    };
+    let Some(array) = value.as_array() else {
+        return Err(OperationRequestError::NestedPayloadSchema {
+            path: path.to_owned(),
+            problem: "field has the wrong type",
+        });
+    };
+
+    for (index, item) in array.iter().enumerate() {
+        let item_path = format!("{path}[{index}]");
+        if !field_matches(item_kind, item) {
+            return Err(OperationRequestError::NestedPayloadSchema {
+                path: item_path,
+                problem: "array item has the wrong type",
+            });
+        }
+        if let Some(fields) = field.items {
+            validate_nested_object(fields, item, &item_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_nested_object(
+    fields: &[crate::FieldSpec],
+    value: &Value,
+    path: &str,
+) -> Result<(), OperationRequestError> {
+    let Some(object) = value.as_object() else {
+        return Err(OperationRequestError::NestedPayloadSchema {
+            path: path.to_owned(),
+            problem: "field has the wrong type",
+        });
+    };
+    let allowed: BTreeSet<_> = fields.iter().map(|field| field.name).collect();
+    if let Some(unknown) = object
+        .keys()
+        .find(|field| !allowed.contains(field.as_str()))
+    {
+        return Err(OperationRequestError::NestedPayloadSchema {
+            path: format!("{path}.{unknown}"),
+            problem: "unknown field",
+        });
+    }
+
+    for field in fields {
+        let field_path = format!("{path}.{}", field.name);
+        match object.get(field.name) {
+            None if field.required => {
+                return Err(OperationRequestError::NestedPayloadSchema {
+                    path: field_path,
+                    problem: "required field is missing",
+                });
+            }
+            None => {}
+            Some(value) if field_matches(field.kind, value) => {
+                validate_nested_field_semantics(field.kind, value, &field_path)?;
+                validate_nested_shape(field, value, &field_path)?;
+            }
+            Some(_) => {
+                return Err(OperationRequestError::NestedPayloadSchema {
+                    path: field_path,
+                    problem: "field has the wrong type",
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_top_level_field_semantics(
+    kind: FieldKind,
+    field: &'static str,
+    value: &Value,
+) -> Result<(), OperationRequestError> {
+    if kind != FieldKind::StringOrArray {
+        return Ok(());
+    }
+    if value.as_str().is_some_and(str::is_empty) {
+        return Err(OperationRequestError::EmptyString(field));
+    }
+    if let Some(items) = value.as_array() {
+        if items.is_empty() {
+            return Err(OperationRequestError::EmptyArray(field));
+        }
+        if items
+            .iter()
+            .any(|item| item.as_str().is_none_or(str::is_empty))
+        {
+            return Err(OperationRequestError::PayloadFieldType(field));
+        }
+    }
+    Ok(())
+}
+
+fn validate_nested_field_semantics(
+    kind: FieldKind,
+    value: &Value,
+    path: &str,
+) -> Result<(), OperationRequestError> {
+    let invalid =
+        |path: String, problem| OperationRequestError::NestedPayloadSchema { path, problem };
+    if matches!(
+        kind,
+        FieldKind::String | FieldKind::StringOrArray | FieldKind::StringOrObject
+    ) && value.as_str().is_some_and(str::is_empty)
+    {
+        return Err(invalid(path.to_owned(), "field must be non-empty"));
+    }
+    if kind == FieldKind::StringOrArray
+        && let Some(items) = value.as_array()
+    {
+        if items.is_empty() {
+            return Err(invalid(path.to_owned(), "array must be non-empty"));
+        }
+        for (index, item) in items.iter().enumerate() {
+            let item_path = format!("{path}[{index}]");
+            let Some(item) = item.as_str() else {
+                return Err(invalid(item_path, "array item must be a string"));
+            };
+            if item.is_empty() {
+                return Err(invalid(item_path, "array item must be non-empty"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_workitem_create(
+    payload: &serde_json::Map<String, Value>,
+) -> Result<(), OperationRequestError> {
+    let Some(requested_intent) = payload.get("requestedIntent").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let entry_node = payload
+        .get("entryNode")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    let normalized = requested_intent.trim().to_ascii_uppercase();
+    if entry_node != Some("ROUTE") || !matches!(normalized.as_str(), "DR" | "STORY" | "CODING_PLAN")
+    {
+        return Err(OperationRequestError::InvalidRequestedIntent(
+            requested_intent.to_owned(),
+        ));
     }
     Ok(())
 }
@@ -249,6 +430,97 @@ fn validate_semantics(
     {
         return Err(OperationRequestError::EmptyArray(field));
     }
+    if matches!(
+        (operation, field),
+        (OperationName::WorkItemCreate, "providedDocuments")
+    ) {
+        validate_provided_documents(value)?;
+    }
+    Ok(())
+}
+
+/// Maximum number of documents a single `workitem.create` may adopt.
+const MAX_PROVIDED_DOCUMENTS: usize = 64;
+
+/// Validates the JSON-level contract of a `workitem.create` adoption tree:
+/// entry shape, intent vocabulary, docId uniqueness, and parent references.
+/// Path traversal screening and file existence need the workspace root, so the
+/// create path enforces them separately.
+fn validate_provided_documents(value: &Value) -> Result<(), OperationRequestError> {
+    let invalid = |reason: &str| OperationRequestError::InvalidProvidedDocuments(reason.to_owned());
+    let entries = value
+        .as_array()
+        .ok_or_else(|| invalid("providedDocuments must be an array"))?;
+    if entries.len() > MAX_PROVIDED_DOCUMENTS {
+        return Err(invalid("providedDocuments is limited to 64 entries"));
+    }
+    let mut intents = Vec::with_capacity(entries.len());
+    let mut doc_ids = BTreeSet::new();
+    for entry in entries {
+        let entry = entry
+            .as_object()
+            .ok_or_else(|| invalid("each providedDocuments entry must be an object"))?;
+        if let Some(unknown) = entry
+            .keys()
+            .find(|key| !matches!(key.as_str(), "intent" | "docId" | "path" | "parentDocId"))
+        {
+            return Err(invalid(&format!(
+                "providedDocuments entry contains unknown field {unknown}"
+            )));
+        }
+        let intent = entry
+            .get("intent")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("providedDocuments.intent must be a string"))?;
+        if !matches!(intent, "PRD" | "DR" | "STORY") {
+            return Err(invalid(
+                "providedDocuments.intent must be PRD, DR, or STORY",
+            ));
+        }
+        let doc_id = entry
+            .get("docId")
+            .and_then(Value::as_str)
+            .filter(|doc_id| !doc_id.is_empty())
+            .ok_or_else(|| invalid("providedDocuments.docId must be non-empty text"))?;
+        if !doc_ids.insert(doc_id) {
+            return Err(invalid("providedDocuments.docId must be unique"));
+        }
+        if entry
+            .get("path")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return Err(invalid("providedDocuments.path must be non-empty text"));
+        }
+        let parent = entry.get("parentDocId");
+        if parent.is_some() && intent == "PRD" {
+            return Err(invalid("a PRD document cannot declare a parentDocId"));
+        }
+        if parent.is_some_and(|parent| parent.as_str().is_none_or(str::is_empty)) {
+            return Err(invalid(
+                "providedDocuments.parentDocId must be non-empty text",
+            ));
+        }
+        intents.push((intent, doc_id, parent.and_then(Value::as_str)));
+    }
+    for (intent, doc_id, parent) in &intents {
+        let Some(parent) = parent else {
+            continue;
+        };
+        let parent_intent = intents
+            .iter()
+            .find(|(_, parent_id, _)| parent_id == parent)
+            .map(|(intent, _, _)| *intent)
+            .ok_or_else(|| {
+                invalid("providedDocuments.parentDocId must reference a provided document")
+            })?;
+        let expected = if *intent == "STORY" { "DR" } else { "PRD" };
+        if parent_intent != expected {
+            return Err(invalid(&format!(
+                "providedDocuments.parentDocId of {doc_id} must reference a {expected} document"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -268,10 +540,18 @@ pub enum OperationRequestError {
     RequiredPayloadField(&'static str),
     #[error("operation payload field {0} has the wrong type")]
     PayloadFieldType(&'static str),
+    #[error("operation payload schema is invalid at {path}: {problem}")]
+    NestedPayloadSchema { path: String, problem: &'static str },
     #[error("operation payload string field {0} must not be empty")]
     EmptyString(&'static str),
     #[error("operation payload array field {0} must not be empty")]
     EmptyArray(&'static str),
+    #[error("operation payload field providedDocuments is invalid: {0}")]
+    InvalidProvidedDocuments(String),
+    #[error(
+        "operation payload requestedIntent must be DR, STORY, or CODING_PLAN and requires entryNode=ROUTE: {0}"
+    )]
+    InvalidRequestedIntent(String),
     #[error("lease TTL must be in 30..=3600 seconds")]
     InvalidLeaseTtl,
     #[error("failed to canonicalize operation payload: {0}")]

@@ -40,6 +40,21 @@ pub struct HookOutcome {
     /// Stable cause for an offline fail-closed outcome.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<StableErrorCode>,
+    /// Turn the daemon allocated for this event; absent for offline outcomes.
+    /// Optional so an older daemon response without the field still parses,
+    /// and skipped when unset so the wire shape is unchanged for consumers
+    /// that print the outcome verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// Monotonic sequence of `turnId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_seq: Option<u64>,
+    /// Work Item the daemon bound to the session. The daemon owns this
+    /// binding (e.g. after a bootstrap `workitem.create`); the client must
+    /// carry it through instead of dropping it, or later hooks lose the
+    /// identity the daemon already settled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
 }
 
 /// Thin Hook client with explicit online/offline policy.
@@ -190,6 +205,9 @@ impl<'a> HookClient<'a> {
                 event_seq: 0,
                 offline: true,
                 error_code: Some(error.stable_code()),
+                turn_id: None,
+                turn_seq: None,
+                work_item_id: None,
             }),
             Err(_) => Ok(fail_closed(method, StableErrorCode::SessionExpired, false)),
         }
@@ -237,6 +255,9 @@ fn fail_closed(method: RpcMethod, code: StableErrorCode, engaged: bool) -> HookO
         event_seq: 0,
         offline: true,
         error_code: Some(code),
+        turn_id: None,
+        turn_seq: None,
+        work_item_id: None,
     }
 }
 
@@ -342,7 +363,63 @@ mod tests {
         assert!(!is_recoverable(&ClientError::Remote {
             code: StableErrorCode::SessionExpired,
             message: "redacted".to_owned(),
+            remediation: None,
         }));
+    }
+
+    /// The daemon allocates the turn and binds the Work Item server-side and
+    /// returns both on the hook response. A client type that lacks those
+    /// fields lets serde silently discard them, forcing every later hook to
+    /// re-derive identity the daemon already settled.
+    #[test]
+    fn hook_outcome_round_trips_the_daemon_allocated_identity() {
+        let daemon_json = serde_json::json!({
+            "engaged": true,
+            "decision": "allow",
+            "eventSeq": 41,
+            "offline": false,
+            "turnId": "turn-7",
+            "turnSeq": 7,
+            "workItemId": "WI-20260728-bootstrap",
+        });
+
+        let outcome: HookOutcome =
+            serde_json::from_value(daemon_json).expect("daemon identity fields must parse");
+        assert_eq!(outcome.turn_id.as_deref(), Some("turn-7"));
+        assert_eq!(outcome.turn_seq, Some(7));
+        assert_eq!(
+            outcome.work_item_id.as_deref(),
+            Some("WI-20260728-bootstrap")
+        );
+
+        let serialized = serde_json::to_value(&outcome).expect("outcome serializes");
+        assert_eq!(serialized["turnId"], "turn-7");
+        assert_eq!(serialized["turnSeq"], 7);
+        assert_eq!(serialized["workItemId"], "WI-20260728-bootstrap");
+    }
+
+    /// Fields the daemon did not set must stay absent on the wire rather than
+    /// serialize as explicit nulls: the typed CLI prints the outcome verbatim,
+    /// and a changed response shape would break every consumer that pins it.
+    #[test]
+    fn hook_outcome_omits_unset_identity_fields_on_the_wire() {
+        let outcome = fail_closed(
+            RpcMethod::HookPreTool,
+            StableErrorCode::DaemonUnavailable,
+            true,
+        );
+
+        let serialized = serde_json::to_value(&outcome).expect("outcome serializes");
+        for key in ["turnId", "turnSeq", "workItemId"] {
+            assert!(
+                serialized.get(key).is_none(),
+                "{key} must stay absent when the daemon set no value"
+            );
+        }
+
+        let parsed: HookOutcome =
+            serde_json::from_value(serialized).expect("a response without identity re-parses");
+        assert_eq!(parsed, outcome);
     }
 
     #[test]

@@ -387,7 +387,7 @@ fn final_proof_valid(session: &ReviewSessionV2, attempt: &ReviewAttemptV2) -> bo
     }
     match proof.kind() {
         ReviewFinalProofKind::None => true,
-        ReviewFinalProofKind::DeterministicGates | ReviewFinalProofKind::FullVerification => {
+        ReviewFinalProofKind::DeterministicGates | ReviewFinalProofKind::FinalVerification => {
             proof.digest().is_some()
                 && proof.source_revision() == Some(session.source_revision())
                 && proof.input_fingerprint() == Some(session.input_fingerprint())

@@ -189,71 +189,6 @@
       "checks": ["UC-01", "UC-05", "UC-06"]
     },
     {
-      "id": "UG-13",
-      "name": "🆕 v3.5.8 RA 挖掘循环 review-loop 化",
-      "trigger": [
-        "source/skills/phase1-design/requirement-analysis-skill.md",
-        "source/skills/cross-cutting/review-loop-skill.md",
-        "source/standards/update-graph.json"
-      ],
-      "trigger_condition": "修改 RA 第七步 review-loop 闭环（反复挖掘 + 收敛判据 + 漏报升级）或 review-loop 节点配置表 RA 行任一",
-      "affected": [
-        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "第七步引用 review-loop 公共协议（协议 1/2/3）+ 7.0 骨架表 + 7.1 RA-G01~16 + 7.2 loop SOP + 7.3 漏报升级 + 7.4 循环记录；第二步循环对象含'8 维度穷尽度回扫'；整体流程图/执行清单/禁止事项/维护章节与重构一致", "auto_checkable": true},
-        {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "核心洞察含 RA；节点配置表含 RA 行（RAModel 12 维 + 8 维度 + 5 问 / RAGeneratePlan / RA-G01~16）；实施历史含 v3.5.8 条目", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "frontmatter version 含 v3.5.8；G-RA 门卫章节描述与 RA 第七步 loop 化一致（RA-G01~16 仍为 RA 专属检查项，loop 骨架引用 review-loop）", "auto_checkable": true},
-        {"path": "README.md", "action": "第 5 行版本行含 v3.5.8 + RA review-loop 化描述", "auto_checkable": true}
-      ],
-      "checks": ["UC-01", "UC-05", "UC-06"]
-    },
-    {
-      "id": "UG-14",
-      "name": "🆕 v3.5.9 RA 机械派生深度门禁（G-RA-5）",
-      "trigger": [
-        "crates/ae-sdd-scanners/src/**",
-        "crates/ae-sdd-gates/src/registry.rs",
-        "bins/ae-sdd-cli/src/**",
-        "source/SKILL.md",
-        "source/skills/phase1-design/requirement-analysis-skill.md",
-        "source/standards/update-graph.json"
-      ],
-      "trigger_condition": "修改 RA 机械派生深度扫描器 ra-depth / G-RA-5 门禁注册 / ra-depth-scan 子命令 / SKILL.md G-RA 章节任一",
-      "affected": [
-        {"path": "crates/ae-sdd-scanners/src/engine.rs", "action": "5 条机械派生规则 D1-D5 实现完整（§6.5/§8.5/§8.6/§9-bis/§9-ter 表格逐行核验 + 结构化输出契约）", "auto_checkable": false},
-        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 含 G-RA-5 且绑定 ScannerId::RaDepth", "auto_checkable": true},
-        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "门禁总数断言 + G-RA-5 用例", "auto_checkable": true},
-        {"path": "bins/ae-sdd-cli/src", "action": "ra-depth-scan 子命令注册", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "frontmatter version v3.5.9 + G-RA 规则表新增 G-RA-5 + §🛠️ 工具速查 ra-depth-scan", "auto_checkable": true},
-        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "§阶段 E.5/G.5/H.5/H.6 顶部加 G-RA-5 机器校验红框 + 7.1 RA-G08/09/12 判定 SOP 升级 + 禁止事项第 22 条 + 执行清单 8.5/10.5/11.6 补 G-RA-5", "auto_checkable": false},
-        {"path": "README.md", "action": "第 5 行版本行含 RA 机械派生深度门禁描述", "auto_checkable": true}
-      ],
-      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
-    },
-    {
-      "id": "UG-18",
-      "name": "🆕 v3.6.0 RA 实现视角完整性门禁（G-RA-6）",
-      "trigger": [
-        "crates/ae-sdd-scanners/src/**",
-        "crates/ae-sdd-gates/src/registry.rs",
-        "bins/ae-sdd-cli/src/**",
-        "source/SKILL.md",
-        "source/templates/design/ra-template.md",
-        "source/skills/phase1-design/requirement-analysis-skill.md",
-        "source/standards/update-graph.json"
-      ],
-      "trigger_condition": "修改 RA 实现视角七要素扫描器 ra-implementation / G-RA-6 门禁注册 / ra-implementation-scan 子命令 / RA §9-quater 模板或 skill 规范任一",
-      "affected": [
-        {"path": "crates/ae-sdd-scanners/src/engine.rs", "action": "I1-I7 七要素实现完整（数据源/数据流/定义不变量/复用证据/成本反驳/开发疑问/DR交接包 + 结构化输出契约）", "auto_checkable": false},
-        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "GATES 含 G-RA-6 且绑定 ScannerId::RaImplementation", "auto_checkable": true},
-        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "门禁总数断言 + G-RA-6 用例", "auto_checkable": true},
-        {"path": "bins/ae-sdd-cli/src", "action": "ra-implementation-scan 子命令注册 + gate ra-required 覆盖 G-RA-1~6 + FLOW", "auto_checkable": true},
-        {"path": "source/SKILL.md", "action": "G-RA 章节声明实现视角七要素 + 工具速查 ra-implementation-scan", "auto_checkable": true},
-        {"path": "source/templates/design/ra-template.md", "action": "新增 §9-quater 实现视角七要素（7 张表）+ §12/§13/§14 同步", "auto_checkable": false},
-        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "新增第一步 ter + RAGeneratePlan §2.5 + G-RA-6 强度声明 + 执行清单 11.7 + 禁止事项 23 + 维护条目", "auto_checkable": false},
-        {"path": "README.md", "action": "第 5 行版本行含 G-RA-6 描述", "auto_checkable": true}
-      ],
-      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05"]
-    },
-    {
       "id": "UG-15",
       "name": "🆕 v3.5.11 AA 全维对齐验证器（UC-08~14，根治「协议详尽 vs 工具链缺失」体系性病根）",
       "trigger": [
@@ -276,7 +211,7 @@
         {"path": "source/skills/phase1-design/dr-review-skill.md", "action": "顶部加🟠门禁强度声明（软门禁 report-only，硬门禁见 GATE_REGISTRY）", "auto_checkable": false},
         {"path": "source/skills/phase1-design/story-review-skill.md", "action": "顶部加🟠门禁强度声明（A-E HARD 清单为软门禁）", "auto_checkable": false},
         {"path": "source/skills/phase3-review/code-review-skill.md", "action": "顶部加🟠门禁强度声明（7 道闸为软门禁）", "auto_checkable": false},
-        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "顶部加🟠门禁强度声明（16 道质量闸为软门禁，G-RA-1~5+FLOW 为真硬门禁）+ 删除 run dr-review-skill 幽灵命令", "auto_checkable": false},
+        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "顶部门禁强度声明与当前 G-RA-1~4 内容 Gate、G-RA-FLOW-VIOLATION route boundary Gate 及 G-RA-5/6 compatibility aliases 同步；具体 RA 语义由 UG-33 唯一维护 + 删除 ghost command", "auto_checkable": false},
         {"path": "source/skills/phase2-task/task-generate-skill.md", "action": "顶部加🟠门禁强度声明（TC-1~9/TR-1~7 为软门禁）", "auto_checkable": false},
         {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "对齐审计章节 + UC-08~14 健康度清单项 + UG/UC 机器锚点", "auto_checkable": true},
         {"path": "README.md", "action": "第 5 行版本行含全维对齐审计描述", "auto_checkable": true}
@@ -469,7 +404,7 @@
         {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "同步 G-REVIEW-LOOP/G-CODE-1 policy outcome；STALLED、tampered、touched debt 不得伪装 PASS", "auto_checkable": true},
         {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "同步 batch schema、风险退出、失败角色重试和预算语义", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/phase3-review/code-review-skill.full.md", "action": "同步 canonical 聚合报告和 evidence manifest 引用", "auto_checkable": false},
-        {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "同步 VerificationPlan、evidence lookup 和最终全量只跑一次规则", "auto_checkable": false},
+        {"path": "source/skill-fallbacks/skills/phase3-review/test-generate-skill.full.md", "action": "同步 VerificationPlan、evidence lookup 和收口只做增量验证、全量套件仅 release 门禁规则", "auto_checkable": false},
         {"path": "crates/ae-sdd-review/tests/", "action": "覆盖状态转移、retry merge、fingerprint drift、budget 和 disposition", "auto_checkable": false},
         {"path": "crates/ae-sdd-integrations/tests/", "action": "覆盖 baseline integrity/touched debt、evidence freshness、alias ambiguity 和 provenance", "auto_checkable": false}
       ],
@@ -543,7 +478,7 @@
     },
     {
       "id": "UG-29",
-      "name": "RA authoritative scan scope 与 G-RA 单文件一致性",
+      "name": "legacy scanner file/root scope 一致性",
       "trigger": [
         "crates/ae-sdd-scanners/src/scope.rs",
         "crates/ae-sdd-scanners/src/engine.rs",
@@ -555,18 +490,18 @@
         "source/docs/ae-sdd-implementation-architecture.md",
         "source/standards/update-graph.json"
       ],
-      "trigger_condition": "正式 RA 候选分类、scanner --file/root 契约、G-RA selected RA resolver、CLI 转发、分发清单或 fail-fast 编排说明任一变化",
+      "trigger_condition": "legacy scanner --file/root scope 契约、CLI 转发、分发清单或 fail-fast 编排说明任一变化；RA SRS、resolver 与 Gate 语义明确排除并由 UG-33 唯一维护",
       "affected": [
-        {"path": "crates/ae-sdd-scanners/src/scope.rs", "action": "formal/event/non-authoritative 分类、explicit file containment、稳定排序与结构化错误契约保持统一", "auto_checkable": true},
-        {"path": "crates/ae-sdd-scanners/src/engine.rs", "action": "四个 RA scanner 共享 scope、repeatable file 输入、scope metadata 与错误 envelope 同步", "auto_checkable": true},
-        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "G-RA-1~6/FLOW 必须共享 state binding/latest formal resolver 并向 scanner 传单一 file", "auto_checkable": true},
-        {"path": "bins/ae-sdd-cli/src", "action": "四个 RA scanner 子命令暴露并转发 repeatable --file", "auto_checkable": true},
-        {"path": "crates/ae-sdd-scanners/tests/", "action": "覆盖 file/root/noise/error 契约", "auto_checkable": false},
-        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "覆盖 binding/latest formal 统一选择与 selected file 负例", "auto_checkable": false},
-        {"path": "crates/ae-sdd-integrations/tests/", "action": "覆盖 RA prerequisite 非零退出、零写入与草稿保留", "auto_checkable": false},
+        {"path": "crates/ae-sdd-scanners/src/scope.rs", "action": "legacy scanner file/root 候选分类、explicit file containment、稳定排序与结构化错误契约保持统一；不定义 RA SRS 或 authoritative resolver", "auto_checkable": true},
+        {"path": "crates/ae-sdd-scanners/src/engine.rs", "action": "legacy native scanner 共享 file/root scope、repeatable file 输入、scope metadata 与错误 envelope 同步；RA SRS scanner 语义由 UG-33 维护", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "legacy scanner-backed Gate 的 file/root 输入转发保持一致；RA resolver 与 Gate 语义明确排除并由 UG-33 维护", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src", "action": "legacy native scanner 子命令暴露并转发 repeatable --file/root；RA compatibility 入口语义由 UG-33 维护", "auto_checkable": true},
+        {"path": "crates/ae-sdd-scanners/tests/", "action": "覆盖 legacy scanner file/root/noise/error 契约；RA SRS scanner 契约由 UG-33 维护", "auto_checkable": false},
+        {"path": "crates/ae-sdd-gates/tests/gate_truth_table.rs", "action": "覆盖 legacy scanner-backed Gate 的 file/root 选择与 selected file 负例；不承载 RA Gate 语义", "auto_checkable": false},
+        {"path": "crates/ae-sdd-integrations/tests/", "action": "覆盖 legacy scanner prerequisite 非零退出、零写入与输入保留；RA resolver 语义由 UG-33 维护", "auto_checkable": false},
         {"path": "source/skill-fallbacks/skills/orchestration/ae-sdd-update-skill.full.md", "action": "机器同步锚点包含 UG-29", "auto_checkable": true},
-        {"path": "source/docs/ae-sdd-design.md", "action": "记录 Work Item RA scope 与逐命令 fail-fast 设计", "auto_checkable": false},
-        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 resolver→scanner file→gate details 数据流；验证结果由测试承载", "auto_checkable": false}
+        {"path": "source/docs/ae-sdd-design.md", "action": "记录 legacy scanner file/root scope 与逐命令 fail-fast 设计；RA SRS/resolver/Gate 语义引用 UG-33", "auto_checkable": false},
+        {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "记录 legacy scope→scanner file→gate details 数据流；RA authoritative 数据流由 UG-33 维护，验证结果由测试承载", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-06", "UC-14", "UC-20"]
     },
@@ -639,6 +574,48 @@
         {"path": "source/docs/ae-sdd-implementation-architecture.md", "action": "post-commit 五阶段链路与 L2 注入权威边界同步", "auto_checkable": false}
       ],
       "checks": ["UC-01", "UC-03", "UC-14"]
+    },
+    {
+      "id": "UG-33",
+      "name": "ra-srs-v2-alignment",
+      "trigger": [
+        "source/skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md",
+        "source/templates/design/ra-template.md",
+        "crates/ae-sdd-scanners/src/ra_specification.rs",
+        "crates/ae-sdd-gates/src/registry.rs",
+        "crates/ae-sdd-policy/src/transition.rs",
+        "crates/ae-sdd-flow/src/series.rs",
+        "crates/ae-sdd-flow/src/route.rs",
+        "crates/ae-sdd-contracts/src/engineering_route.rs",
+        "crates/ae-sdd-integrations/src/gate_source/key.rs",
+        "crates/ae-sdd-integrations/src/gate_source/ra_binding.rs",
+        "crates/ae-sdd-integrations/src/gate_source/predicate.rs",
+        "bins/ae-sdd-cli/src/legacy/rpc_adapter.rs",
+        "source/standards/runtime/methodology-catalog.v1.json"
+      ],
+      "trigger_condition": "RA 唯一自适应 SRS v2、RA-first transition、内容 Gate、route binding Gate 或兼容入口语义变化",
+      "affected": [
+        {"path": "source/skill-fallbacks/skills/phase1-design/requirement-analysis-skill.full.md", "action": "唯一 intent=RA 自适应 SRS、纯需求边界与一次最终批准语义同步", "auto_checkable": true},
+        {"path": "source/templates/design/ra-template.md", "action": "ae-sdd-ra-srs/v2、适用性、REQ/AC/REF/GAP 与六维规模裁定同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-scanners/src/ra_specification.rs", "action": "有界 SRS v2 parser 与精确诊断同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-gates/src/registry.rs", "action": "G-RA-1~4 内容 Gate、G-RA-5 与 G-RA-6 兼容入口、G-RA-FLOW-VIOLATION route binding Gate 同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-policy/src/transition.rs", "action": "Initialized -> RequirementAnalyzed -> RouteSelected required Gate 集合同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-flow/src/series.rs", "action": "pre-route RequirementAnalysis planner 与 post-route strict planner 边界同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-flow/src/route.rs", "action": "只从 verified RA evidence 生成四档 route candidate", "auto_checkable": true},
+        {"path": "crates/ae-sdd-contracts/src/engineering_route.rs", "action": "RA evidence、approval receipt 与 frozen EngineeringRoute 确定性绑定同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/gate_source/key.rs", "action": "RequirementAnalysis 与 RouteBinding selector 只绑定 authoritative 输入", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/gate_source/ra_binding.rs", "action": "documentPaths/RA authoritative path containment、verified RA evidence 读取与 RouteBindingInput 构造同步", "auto_checkable": true},
+        {"path": "crates/ae-sdd-integrations/src/gate_source/predicate.rs", "action": "ra.srs.bound 内容摘要绑定与 ra.route.binding 对 candidate、approval、conflicts 及 frozen EngineeringRoute 的 fail-closed predicate 同步", "auto_checkable": true},
+        {"path": "bins/ae-sdd-cli/src/legacy/rpc_adapter.rs", "action": "G-RA-1~4 batch 与 G-RA-5/6/FLOW 兼容入口真实诊断同步", "auto_checkable": true},
+        {"path": "source/standards/runtime/methodology-catalog.v1.json", "action": "pre-route RA Series 与 post-route scale mapping 同步", "auto_checkable": true},
+        {"path": "tests/fixtures/gates/ra-v2/**", "action": "跨领域正例与 fail-closed 反例同步", "auto_checkable": false},
+        {"path": "source/skills/phase1-design/requirement-analysis-skill.md", "action": "renderer 生成的 compact RA entry 同步", "auto_checkable": true},
+        {"path": "source/skills/cross-cutting/review-loop-skill.md", "action": "renderer 生成的通用 review loop entry 同步", "auto_checkable": true},
+        {"path": "source/skills/cross-cutting/ai-agent-self-audit-checklist.md", "action": "renderer 生成的自审 entry 同步", "auto_checkable": true},
+        {"path": "source/skills/orchestration/ae-sdd-update-skill.md", "action": "renderer 生成的 update entry 与 UG-33 同步", "auto_checkable": true},
+        {"path": "source/CHANGELOG/2026-08-08-ra-generality-srs-v2.md", "action": "记录 v1 correction、G-RA-5 与 G-RA-6 兼容语义及真实 route binding Gate", "auto_checkable": false}
+      ],
+      "checks": ["UC-01", "UC-02", "UC-03", "UC-04", "UC-05", "UC-06", "UC-14", "UC-20"]
     }
   ]
 }

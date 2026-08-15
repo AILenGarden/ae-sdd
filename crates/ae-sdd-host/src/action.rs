@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fmt;
 
 use ae_sdd_domain::{
@@ -44,32 +43,13 @@ impl HostTaskId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum HostCapability {
-    Create,
-    Send,
-    Wait,
-    Cancel,
-    Attest,
-    Compact,
-    PressureTelemetry,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct HostCapabilitySet(BTreeSet<HostCapability>);
-
-impl HostCapabilitySet {
-    #[must_use]
-    pub fn new(values: impl IntoIterator<Item = HostCapability>) -> Self {
-        Self(values.into_iter().collect())
-    }
-
-    #[must_use]
-    pub fn supports(&self, capability: HostCapability) -> bool {
-        self.0.contains(&capability)
-    }
-}
-
+/// Kind of pending work the daemon posts for a host to pick up.
+///
+/// These are errands, not daemon operations: the daemon enqueues them, the host
+/// pulls them and carries them out in its own process. Whether a host can carry
+/// one out is therefore not knowable in advance — the answer arrives as the ACK
+/// outcome. There is deliberately no capability declaration gating dispatch; a
+/// host's self-description could not be verified against anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostActionKind {
     Create,
@@ -78,20 +58,6 @@ pub enum HostActionKind {
     Cancel,
     Attest,
     Compact,
-}
-
-impl HostActionKind {
-    #[must_use]
-    pub const fn required_capability(self) -> HostCapability {
-        match self {
-            Self::Create => HostCapability::Create,
-            Self::Send => HostCapability::Send,
-            Self::Wait => HostCapability::Wait,
-            Self::Cancel => HostCapability::Cancel,
-            Self::Attest => HostCapability::Attest,
-            Self::Compact => HostCapability::Compact,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -294,21 +260,31 @@ impl HostAck {
 
 pub trait HostRuntimeAdapter: Send + Sync {
     fn adapter_id(&self) -> &HostAdapterId;
-    fn capabilities(&self) -> &HostCapabilitySet;
     /// Dispatches `action` to the host and returns its real result as a
     /// local [`HostAck`]. Exit 0 maps to `Ok(HostAck { outcome: Accepted, .. })`;
     /// a non-zero exit still maps to `Ok(HostAck { outcome: Rejected { error_code }, .. })`
     /// — both are host-delivered outcomes carrying full correlation
     /// (`action_id`/`adapter_id`/`command_seq`). Only conditions that mean the
-    /// action was never delivered (capability missing, spawn failure, timeout)
-    /// return `Err(HostAdapterError)`.
+    /// action was never delivered (spawn failure, timeout) return
+    /// `Err(HostAdapterError)`.
     fn dispatch(&self, action: &HostAction) -> Result<HostAck, HostAdapterError>;
 }
 
+// Contract added at commit fda... (ROUTE-a4574dca U-2):
+//
+// The ae-sdd review sub-flow (`G-REVIEW-DEPTH` and any later review gates
+// that read `state.reviewSession`) requires the host runtime to be able to
+// spawn a physically isolated child process with its own agentId and own
+// daemon connection, declare the issued identity itself, and execute
+// `review.record` from that child. The daemon never creates this child; it
+// only inspects the resulting `state.reviewSession`. A host that cannot
+// satisfy this requirement cannot complete any route that ends with a review
+// gate. ROUTE-a4574dca RA §6 U-2 records this as a handoff to a future D-7/D-8
+// that explicitly widens this trait with a review capability or adds it to
+// the host adapter onboarding standard.
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum HostAdapterError {
-    #[error("host capability {0:?} is unsupported")]
-    Unsupported(HostCapability),
     #[error("host rejected action dispatch: {0}")]
     Rejected(Box<str>),
     #[error("host action dispatch timed out")]
@@ -342,6 +318,8 @@ fn validate_opaque_id(kind: &'static str, value: &str) -> Result<(), HostActionE
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     fn adapter() -> HostAdapterId {

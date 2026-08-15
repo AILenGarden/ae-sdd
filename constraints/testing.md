@@ -96,6 +96,7 @@ Story 每个 AC 必须至少映射一个可执行验证入口和预期 evidence�
 
 ## 八、覆盖率与质量门槛
 
+- 增量测试策略：开发回路与任务收口全程只做增量测试——改动落在哪个 crate/模块，就只跑该 crate 的测试与对应测试文件；禁止在开发回路与任务收口跑全量套件，全量套件只在 release/分发门禁执行；基线对比只采集一次并落盘复用。
 - 新 Rust workspace 整体 line coverage 必须 >= 80%；`domain/policy/flow/store/delegation/context/protocol` 必须 >= 90%。
 - 覆盖率不能替代 AC/negative/property/crash 证据；critical transition/error branch 必须在 verification matrix 中显式命中。
 - `cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace --all-features`, `cargo llvm-cov`, `cargo audit`, `cargo deny check` 任一失败均阻断 release。
@@ -121,3 +122,11 @@ Story 每个 AC 必须至少映射一个可执行验证入口和预期 evidence�
 - 禁止使用 production 用户数据、runtime DB、endpoint token 或 Agent transcript 作为 fixture。
 - 禁止 snapshot 包含 secret、absolute user path、随机字段或无界日志。
 - 禁止 always-pass、ignored critical test、空 assertion、只覆盖 happy path 或用 retry 隐藏 race。
+
+## 十二、切片级 RED-GREEN-REFACTOR cadence
+
+- 每个实现切片必须按 `pending → running → red-observed → patched → focused-green → evidence-bound → completed` 推进；该生命周期与 refactor 环节的唯一机器权威是 `crates/ae-sdd-execution` 的 slice reducer 与 ExecutionSupervisor，本节只登记工程规则，不重定义状态机。
+- REFACTOR 环节：`focused-green` 之后允许进入 refactoring；一旦记录 refactor 开始事件，必须重新观察到 focused GREEN（refactor-green）闭环后才能进入 `evidence-bound`。
+- 无重构需求的切片（无重复逻辑、无命名/结构债、无新增抽象）允许省略 refactor，`focused-green` 直接进入 `evidence-bound`；省略结论必须可由 Review 通过该切片 diff 验证。
+- refactor 期间禁止改变测试期望与外部可观察行为；refactor-green 必须是重构完成后重新执行的 focused verification 真实 PASS evidence，复用重构前的 PASS 记录不算闭环。
+- blocked 恢复参照 red 重观察规则：切片回到 `running`，必须重新观察 RED 并重新走完 `patched → focused-green`；跨 block/resume 已开始的 refactor 仍保持打开，必须 refactor-green 闭环后才能绑定 evidence。

@@ -55,6 +55,15 @@ pub enum GateInputSelector {
     ReviewBatch,
     Toolchain,
     Inventory,
+    /// Binds only the current Work Item's bound RA document, its validated
+    /// receipt, and the single file at `/documentPaths/RA`. Replaces the broad
+    /// `ProjectAssets` scope used by legacy RA gates so foreign project assets
+    /// cannot make an RA gate stale.
+    RequirementAnalysis,
+    /// Binds the route candidate, approval receipt, frozen EngineeringRoute
+    /// evidence, open route-blocking conflicts, and scale evidence — used by
+    /// `G-RA-FLOW-VIOLATION` at the `RouteSelected` boundary.
+    RouteBinding,
 }
 
 /// Declarative incremental dependencies of one Gate: prerequisite Gates that
@@ -150,7 +159,7 @@ const GATES: [GateSpec; GATE_COUNT] = [
         name: "CodingPlan 14 门禁通过",
         severity: GateSeverity::Blocker,
         scope: "before coding execute",
-        pass_condition: "CodingPlan 14 gates are present",
+        pass_condition: "Approved CodingPlan has complete goal/paths/risks/source-reads and a verification row for every Story AC",
         failure_action: "BLOCK",
         rule: predicate("coding_plan.fourteen_gates.complete"),
     },
@@ -246,66 +255,66 @@ const GATES: [GateSpec; GATE_COUNT] = [
     },
     GateSpec {
         id: "G-RA-1",
-        name: "RA 文档存在",
+        name: "RA 唯一 SRS + receipt 绑定",
         severity: GateSeverity::Blocker,
-        scope: "before DR/Story/Task generation",
-        pass_condition: "RA document exists or route is exempt",
+        scope: "RequirementAnalyzed",
+        pass_condition: "single ae-sdd-ra-srs/v2 SRS bound with verified RA receipt",
         failure_action: "BLOCK",
-        rule: predicate("document.ra.exists_or_exempt"),
+        rule: predicate("ra.srs.bound"),
     },
     GateSpec {
         id: "G-RA-2",
-        name: "RA 8 维度完整",
+        name: "RA SRS Core 完整",
         severity: GateSeverity::Blocker,
-        scope: "before DR/Story/Task generation",
-        pass_condition: "RA dimensions and RAModel are complete",
+        scope: "RequirementAnalyzed",
+        pass_condition: "SRS core (schema, sections, ids) is complete and unique",
         failure_action: "BLOCK",
-        rule: predicate("ra.dimensions.complete"),
+        rule: NativeGateRule::Scanner(ScannerId::RaCore),
     },
     GateSpec {
         id: "G-RA-3",
-        name: "RA 衍生章节完整",
+        name: "RA 适用性与条件章节一致",
         severity: GateSeverity::Blocker,
-        scope: "before DR/Story/Task generation",
-        pass_condition: "RA derivative sections are complete",
+        scope: "RequirementAnalyzed",
+        pass_condition: "seven applicability dimensions judged and consistent",
         failure_action: "BLOCK",
-        rule: predicate("ra.derivatives.complete"),
+        rule: NativeGateRule::Scanner(ScannerId::RaApplicability),
     },
     GateSpec {
         id: "G-RA-4",
-        name: "RA 真实性扫描通过",
+        name: "RA 需求可追溯可验收并闭合",
         severity: GateSeverity::Blocker,
-        scope: "before DR/Story/Task generation",
-        pass_condition: "RA authenticity scanner passes",
+        scope: "RequirementAnalyzed",
+        pass_condition: "REQ traceable/acceptable, no blocking gap, scale consistent",
         failure_action: "BLOCK",
-        rule: NativeGateRule::Scanner(ScannerId::RaAuthenticity),
+        rule: NativeGateRule::Scanner(ScannerId::RaClosure),
     },
     GateSpec {
         id: "G-RA-FLOW-VIOLATION",
-        name: "RA 流程违规审计",
+        name: "RA -> Route 绑定门禁",
         severity: GateSeverity::Blocker,
-        scope: "before downstream generation",
-        pass_condition: "RA flow violation scanner passes",
+        scope: "RouteSelected",
+        pass_condition: "RA-first order, approval, receipt/digest/scale/route binding verified",
         failure_action: "BLOCK",
-        rule: NativeGateRule::Scanner(ScannerId::RaFlowViolation),
+        rule: predicate("ra.route.binding"),
     },
     GateSpec {
         id: "G-RA-5",
-        name: "RA 机械派生深度通过",
+        name: "RA 适用性检查兼容入口（别名 -> G-RA-3）",
         severity: GateSeverity::Blocker,
-        scope: "before DR/Story/Task generation",
-        pass_condition: "RA mechanical derivation scanner passes",
+        scope: "compatibility-only",
+        pass_condition: "returns the real G-RA-3 applicability diagnosis",
         failure_action: "BLOCK",
-        rule: NativeGateRule::Scanner(ScannerId::RaDepth),
+        rule: NativeGateRule::Scanner(ScannerId::RaApplicability),
     },
     GateSpec {
         id: "G-RA-6",
-        name: "RA 实现视角完整性通过",
+        name: "RA closure 检查兼容入口（别名 -> G-RA-4）",
         severity: GateSeverity::Blocker,
-        scope: "before DR/Story/Task generation",
-        pass_condition: "RA implementation-view scanner passes",
+        scope: "compatibility-only",
+        pass_condition: "returns the real G-RA-4 closure diagnosis",
         failure_action: "BLOCK",
-        rule: NativeGateRule::Scanner(ScannerId::RaImplementation),
+        rule: NativeGateRule::Scanner(ScannerId::RaClosure),
     },
     GateSpec {
         id: "G-CODE-1",
@@ -401,7 +410,7 @@ const GATES: [GateSpec; GATE_COUNT] = [
 
 use GateInputSelector::{
     ChangedPaths, Constraints, EvidenceLedger, ExecutionPlan, Inventory, ProjectAssets,
-    ReviewBatch, Story, ThinkingEngine, VerificationPlan,
+    RequirementAnalysis, ReviewBatch, RouteBinding, Story, ThinkingEngine, VerificationPlan,
 };
 
 const GATE_DEPENDENCIES: [GateDependencySpec; GATE_COUNT] = [
@@ -502,38 +511,38 @@ const GATE_DEPENDENCIES: [GateDependencySpec; GATE_COUNT] = [
     },
     GateDependencySpec {
         gate: "G-RA-1",
-        prerequisites: &["G-00"],
-        selectors: &[ProjectAssets],
+        prerequisites: &[],
+        selectors: &[RequirementAnalysis],
     },
     GateDependencySpec {
         gate: "G-RA-2",
         prerequisites: &["G-RA-1"],
-        selectors: &[ProjectAssets],
+        selectors: &[RequirementAnalysis],
     },
     GateDependencySpec {
         gate: "G-RA-3",
         prerequisites: &["G-RA-2"],
-        selectors: &[ProjectAssets],
+        selectors: &[RequirementAnalysis],
     },
     GateDependencySpec {
         gate: "G-RA-4",
         prerequisites: &["G-RA-3"],
-        selectors: &[ProjectAssets],
+        selectors: &[RequirementAnalysis],
     },
     GateDependencySpec {
         gate: "G-RA-FLOW-VIOLATION",
-        prerequisites: &["G-RA-3"],
-        selectors: &[ProjectAssets],
+        prerequisites: &[],
+        selectors: &[RequirementAnalysis, RouteBinding],
     },
     GateDependencySpec {
         gate: "G-RA-5",
-        prerequisites: &["G-RA-3"],
-        selectors: &[ProjectAssets],
+        prerequisites: &[],
+        selectors: &[RequirementAnalysis],
     },
     GateDependencySpec {
         gate: "G-RA-6",
-        prerequisites: &["G-RA-3"],
-        selectors: &[ProjectAssets],
+        prerequisites: &[],
+        selectors: &[RequirementAnalysis],
     },
     GateDependencySpec {
         gate: "G-CODE-1",

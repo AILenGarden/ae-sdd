@@ -355,7 +355,14 @@ impl<E: GateExecutor, F: GateFreshnessSource> GateScheduler<E, F> {
                 outcome
             };
 
-            if matches!(outcome, GateOutcome::Pass | GateOutcome::Fail(_)) {
+            let cacheable = match &outcome {
+                GateOutcome::Pass | GateOutcome::Fail(_) => true,
+                GateOutcome::Error(error) => !error.retryable(),
+                GateOutcome::Timeout(_) | GateOutcome::Cancelled(_) | GateOutcome::Stale(_) => {
+                    false
+                }
+            };
+            if cacheable {
                 lock(&inner.cache).insert(digest, key.gate_id().clone(), outcome.clone());
             }
             *lock(&flight.state) = Some(outcome);
@@ -608,6 +615,38 @@ mod tests {
         }
 
         assert_eq!(scheduler.cache_len(), 2);
+    }
+
+    #[test]
+    fn deterministic_errors_are_cached_but_retryable_errors_are_not() {
+        for (retryable, expected_evaluations) in [(false, 1), (true, 2)] {
+            let scheduler = GateScheduler::new(
+                CountingExecutor {
+                    calls: AtomicUsize::new(0),
+                    delay: Duration::ZERO,
+                    outcome: GateOutcome::Error(GateError::new(
+                        ErrorCode::new("SCANNER_SCOPE_EMPTY").expect("valid error code"),
+                        retryable,
+                    )),
+                },
+                EchoFreshness,
+            );
+            let key = tests_support::gate_key("G-14", 1);
+
+            for _ in 0..2 {
+                let result = scheduler.run(
+                    GateRunRequest::new(
+                        key.clone(),
+                        Duration::from_millis(250),
+                        CancellationToken::caller(),
+                    )
+                    .expect("valid request"),
+                );
+                assert!(matches!(result.outcome(), GateOutcome::Error(_)));
+            }
+
+            assert_eq!(scheduler.stats().gates_evaluated, expected_evaluations);
+        }
     }
 
     struct CooperativelyCancelledExecutor {

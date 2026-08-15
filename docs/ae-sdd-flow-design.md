@@ -5,6 +5,8 @@
 > **来源：** ae-sdd 核心设计会话  
 > **用途：** ae-sdd 主入口 SKILL 及主流程监管器的设计依据
 
+> **⚠️ 已废弃 / 历史文档（2026-07-28 标注）：** 本文是 ae-sdd 早期（Python/hook 时代）的设计记录，正文与当前 Rust 实现严重漂移——phase 链含实现中不存在的 `story-reviewed`/`testcase-reviewed`；TestCase 写成必经环节（实现中为可选）；路由描述为 LLM 裁定（实现为确定性 RouteEngine）；`correctionCounts`/B1-B4/「Review 最多 3 轮」等均与实现不符。**当前权威：`source/SKILL.md`（声明式契约）+ `constraints/`（工程约束 SSOT）+ `crates/`、`bins/` 的 Rust 实现**（FlowRuntime 拥有相位/门禁/转换；ContextProjection/CompactCycle 拥有上下文注入与压缩生命周期）。正文保留仅供历史参考，请勿据本文档实现、评审或排障。
+
 ---
 
 ## 概述

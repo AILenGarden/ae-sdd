@@ -6,7 +6,7 @@ use ae_sdd_domain::ExecutionSliceId;
 use ae_sdd_protocol::StableErrorCode;
 use thiserror::Error;
 
-use crate::slice::ExecutionSliceEvent;
+use crate::slice::{ExecutionSliceEvent, RefactorCycleV1};
 
 /// Specific reason a verification execution plan was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,11 +114,16 @@ pub enum ExecutionCapsuleBuildError {
 /// Error returned when an event does not legally advance the slice lifecycle.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ExecutionSliceTransitionError {
-    /// The event is not a legal transition from the current status.
-    #[error("illegal execution slice transition from {from:?} via {event:?}")]
+    /// The event is not a legal transition from the current status and
+    /// refactor-loop state.
+    #[error(
+        "illegal execution slice transition from {from:?} (refactor {refactor:?}) via {event:?}"
+    )]
     IllegalTransition {
         /// Current slice status.
         from: ExecutionSliceStatus,
+        /// Current refactor-loop state.
+        refactor: RefactorCycleV1,
         /// Rejected machine event.
         event: ExecutionSliceEvent,
     },
@@ -140,6 +145,22 @@ pub enum ExecutionSupervisorFault {
     IllegalSliceEvent,
     /// The slice is completed; no event may mutate the checkpoint anymore.
     SliceCompleted,
+}
+
+/// Error returned when a durable execution-supervisor after-image cannot be
+/// reconstructed through the domain validation boundary.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum ExecutionSupervisorAfterImageError {
+    /// One retained source path is not a canonical project-relative path.
+    #[error("execution checkpoint after-image contains an invalid project-relative path")]
+    InvalidProjectRelativePath,
+    /// One retained semantic digest is not canonical lower-case SHA-256 hex.
+    #[error("execution checkpoint after-image contains an invalid artifact digest")]
+    InvalidArtifactDigest,
+    /// Bounded counters or collections cannot have been produced by the
+    /// supervisor reducer under the frozen budgets.
+    #[error("execution checkpoint after-image violates supervisor invariants")]
+    InvalidCheckpointInvariant,
 }
 
 /// Rejection returned by the pure execution supervisor inside

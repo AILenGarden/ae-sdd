@@ -163,6 +163,49 @@ fn evidence_ledger_change_spares_ra_story_and_coding_plan_gates() {
     );
 }
 
+/// Task 7: RA content gates (`G-RA-1..4`) must form a linear chain
+/// `1 -> 2 -> 3 -> 4`, and `G-RA-FLOW-VIOLATION` must not be a descendant of
+/// `G-RA-3` (no cross-phase prerequisite). A `RequirementAnalysis` input change
+/// re-runs every RA gate; a `RouteBinding`-only change re-runs only
+/// `G-RA-FLOW-VIOLATION`.
+#[test]
+fn ra_content_gates_form_linear_chain_and_flow_is_isolated() {
+    let dag = GateDag::from_registry().expect("registry DAG must be acyclic");
+    let order = dag.topological_order();
+    let position = |id: &str| {
+        order
+            .iter()
+            .position(|gate| *gate == id)
+            .unwrap_or_else(|| panic!("{id} must be in the topological order"))
+    };
+    assert!(position("G-RA-1") < position("G-RA-2"));
+    assert!(position("G-RA-2") < position("G-RA-3"));
+    assert!(position("G-RA-3") < position("G-RA-4"));
+
+    let ra_affected = affected_set(&dag, &[GateInputSelector::RequirementAnalysis]);
+    for gate in [
+        "G-RA-1",
+        "G-RA-2",
+        "G-RA-3",
+        "G-RA-4",
+        "G-RA-5",
+        "G-RA-6",
+        "G-RA-FLOW-VIOLATION",
+    ] {
+        assert!(
+            ra_affected.contains(gate),
+            "{gate} must re-run when RequirementAnalysis inputs change"
+        );
+    }
+
+    let route_only = affected_set(&dag, &[GateInputSelector::RouteBinding]);
+    assert_eq!(
+        route_only,
+        ["G-RA-FLOW-VIOLATION"].into_iter().collect(),
+        "RouteBinding must only bust the RA -> Route binding gate"
+    );
+}
+
 #[test]
 fn review_batch_change_only_affects_review_and_completed_path() {
     let dag = GateDag::from_registry().expect("registry DAG must be acyclic");

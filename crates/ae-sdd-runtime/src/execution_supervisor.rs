@@ -33,8 +33,9 @@ use std::str::FromStr;
 use ae_sdd_contracts::execution_runtime::{ExecutionCapsuleV1, ExecutionSliceStatus};
 use ae_sdd_domain::{ArtifactDigest, ProjectRelativePath};
 use ae_sdd_execution::{
-    ExecutionDecisionV1, ExecutionSupervisor, ExecutionSupervisorCheckpointV1,
-    ExecutionToolEventV1, ExecutionToolOutputV1, FocusedTestOutcomeV1, FocusedTestStateV1,
+    ExecutionDecisionV1, ExecutionSupervisor, ExecutionSupervisorAfterImageV1,
+    ExecutionSupervisorCheckpointV1, ExecutionToolEventV1, ExecutionToolOutputV1,
+    FocusedTestOutcomeV1, FocusedTestStateV1,
 };
 use ae_sdd_policy::{
     ExecutionHookDenialReason, ExecutionHookGuard, ExecutionHookGuardInput, ExecutionHookToolClass,
@@ -42,7 +43,10 @@ use ae_sdd_policy::{
 };
 
 use super::*;
-use crate::{ExecutionHookDirective, ExecutionHookDirectiveDecision, ExecutionHookEvent};
+use crate::{
+    ExecutionHookDirective, ExecutionHookDirectiveDecision, ExecutionHookEvent,
+    PreparedExecutionHookV1,
+};
 
 /// Maximum accepted length of the `executionEvent.class` field.
 const MAX_CLASS_BYTES: usize = 32;
@@ -141,19 +145,19 @@ impl ExecutionSessionBinding {
 pub(crate) struct ClassifiedExecutionEvent {
     class: ExecutionHookToolClass,
     outcome: Option<bool>,
-    path: Option<String>,
-    content_digest: Option<String>,
-    query_digest: Option<String>,
-    result_digest: Option<String>,
-    event_digest: Option<String>,
+    path: Option<ProjectRelativePath>,
+    content_digest: Option<ArtifactDigest>,
+    query_digest: Option<ArtifactDigest>,
+    result_digest: Option<ArtifactDigest>,
+    event_digest: Option<ArtifactDigest>,
     output_bytes: Option<u32>,
-    output_digest: Option<String>,
+    output_digest: Option<ArtifactDigest>,
     start_line: Option<u32>,
     end_line: Option<u32>,
 }
 
 impl ClassifiedExecutionEvent {
-    const fn class(&self) -> ExecutionHookToolClass {
+    pub(crate) const fn class(&self) -> ExecutionHookToolClass {
         self.class
     }
 
@@ -262,33 +266,13 @@ fn classify_execution_event(wire: &ExecutionHookEvent) -> RuntimeResult<Classifi
     Ok(ClassifiedExecutionEvent {
         class,
         outcome,
-        path: bounded_opt(wire.path.as_deref(), MAX_PATH_FIELD_BYTES, "path")?,
-        content_digest: bounded_opt(
-            wire.content_digest.as_deref(),
-            MAX_DIGEST_FIELD_BYTES,
-            "contentDigest",
-        )?,
-        query_digest: bounded_opt(
-            wire.query_digest.as_deref(),
-            MAX_DIGEST_FIELD_BYTES,
-            "queryDigest",
-        )?,
-        result_digest: bounded_opt(
-            wire.result_digest.as_deref(),
-            MAX_DIGEST_FIELD_BYTES,
-            "resultDigest",
-        )?,
-        event_digest: bounded_opt(
-            wire.event_digest.as_deref(),
-            MAX_DIGEST_FIELD_BYTES,
-            "eventDigest",
-        )?,
+        path: parse_path_opt(wire.path.as_deref())?,
+        content_digest: parse_digest_opt(wire.content_digest.as_deref(), "contentDigest")?,
+        query_digest: parse_digest_opt(wire.query_digest.as_deref(), "queryDigest")?,
+        result_digest: parse_digest_opt(wire.result_digest.as_deref(), "resultDigest")?,
+        event_digest: parse_digest_opt(wire.event_digest.as_deref(), "eventDigest")?,
         output_bytes: wire.output_bytes,
-        output_digest: bounded_opt(
-            wire.output_digest.as_deref(),
-            MAX_DIGEST_FIELD_BYTES,
-            "outputDigest",
-        )?,
+        output_digest: parse_digest_opt(wire.output_digest.as_deref(), "outputDigest")?,
         start_line: wire.start_line,
         end_line: wire.end_line,
     })
@@ -304,9 +288,28 @@ fn bounded<'a>(value: &'a str, maximum: usize, field: &str) -> RuntimeResult<&'a
     Ok(value)
 }
 
-fn bounded_opt(value: Option<&str>, maximum: usize, field: &str) -> RuntimeResult<Option<String>> {
+fn parse_path_opt(value: Option<&str>) -> RuntimeResult<Option<ProjectRelativePath>> {
     value
-        .map(|value| bounded(value, maximum, field).map(str::to_owned))
+        .map(|value| {
+            bounded(value, MAX_PATH_FIELD_BYTES, "path")?;
+            ProjectRelativePath::new(value).map_err(|_| {
+                schema_error("hostPayload.executionEvent.path must be project-relative")
+            })
+        })
+        .transpose()
+}
+
+fn parse_digest_opt(value: Option<&str>, field: &str) -> RuntimeResult<Option<ArtifactDigest>> {
+    value
+        .map(|value| {
+            bounded(value, MAX_DIGEST_FIELD_BYTES, field)?;
+            ArtifactDigest::from_str(value).map_err(|_| {
+                RuntimeError::new(
+                    StableErrorCode::OperationSchemaInvalid,
+                    format!("hostPayload.executionEvent.{field} must be lowercase SHA-256 hex"),
+                )
+            })
+        })
         .transpose()
 }
 
@@ -362,12 +365,6 @@ fn directive_for(
     }
 }
 
-/// Parses one bounded host-reported digest field; unparseable or absent
-/// digests return `None` so the caller can degrade the event conservatively.
-fn parse_event_digest(value: Option<&String>) -> Option<ArtifactDigest> {
-    value.and_then(|value| ArtifactDigest::from_str(value).ok())
-}
-
 /// Maps one classified Hook event onto the bounded supervisor event.
 ///
 /// Events whose class-required facts are absent or unparseable degrade to
@@ -380,37 +377,30 @@ fn parse_event_digest(value: Option<&String>) -> Option<ArtifactDigest> {
 fn build_tool_event(event: &ClassifiedExecutionEvent) -> ExecutionToolEventV1 {
     let output = ExecutionToolOutputV1 {
         bytes: event.output_bytes.unwrap_or(0),
-        digest: parse_event_digest(event.output_digest.as_ref())
+        digest: event
+            .output_digest
             .unwrap_or_else(|| ArtifactDigest::digest(b"ae-sdd/execution-hook/no-output-digest")),
         locator: None,
     };
     match event.class() {
-        ExecutionHookToolClass::SourceRead => {
-            match (
-                event
-                    .path
-                    .as_deref()
-                    .and_then(|path| ProjectRelativePath::new(path).ok()),
-                parse_event_digest(event.content_digest.as_ref()),
-            ) {
-                (Some(path), Some(content_digest)) => ExecutionToolEventV1::SourceRead {
-                    path,
-                    content_digest,
-                    start_line: event.start_line,
-                    end_line: event.end_line,
-                    output,
-                },
-                _ => ExecutionToolEventV1::Other { output },
-            }
-        }
-        ExecutionHookToolClass::Search => match parse_event_digest(event.query_digest.as_ref()) {
+        ExecutionHookToolClass::SourceRead => match (&event.path, event.content_digest) {
+            (Some(path), Some(content_digest)) => ExecutionToolEventV1::SourceRead {
+                path: path.clone(),
+                content_digest,
+                start_line: event.start_line,
+                end_line: event.end_line,
+                output,
+            },
+            _ => ExecutionToolEventV1::Other { output },
+        },
+        ExecutionHookToolClass::Search => match event.query_digest {
             Some(query_digest) => ExecutionToolEventV1::Search {
                 query_digest,
                 output,
             },
             None => ExecutionToolEventV1::Other { output },
         },
-        ExecutionHookToolClass::Patch => match parse_event_digest(event.result_digest.as_ref()) {
+        ExecutionHookToolClass::Patch => match event.result_digest {
             Some(result_digest) => ExecutionToolEventV1::Patch {
                 result_digest,
                 output,
@@ -425,7 +415,7 @@ fn build_tool_event(event: &ClassifiedExecutionEvent) -> ExecutionToolEventV1 {
             ExecutionToolEventV1::FocusedTest { outcome, output }
         }
         ExecutionHookToolClass::BroadTest => ExecutionToolEventV1::BroadTest { output },
-        ExecutionHookToolClass::Evidence => match parse_event_digest(event.event_digest.as_ref()) {
+        ExecutionHookToolClass::Evidence => match event.event_digest {
             Some(event_digest) => ExecutionToolEventV1::Evidence {
                 event_digest,
                 output,
@@ -441,50 +431,134 @@ fn execution_event_payload(
     reason_code: Option<StableErrorCode>,
     event: Option<&ClassifiedExecutionEvent>,
 ) -> Value {
+    let tool_event = event.map(build_tool_event);
     let mut payload = json!({
         "schemaVersion": "execution-tool/v1",
-        "class": event.map_or("unclassified", |event| event.class().wire_name()),
+        "class": tool_event.as_ref().map_or("unclassified", execution_tool_event_class),
         "decision": disposition.event_label(),
     });
     if let Some(code) = reason_code {
         payload["reasonCode"] = Value::String(code.as_str().to_owned());
     }
-    if let Some(event) = event {
-        if let Some(bytes) = event.output_bytes {
-            payload["outputBytes"] = Value::from(bytes);
-        }
-        if let Some(path) = event.path.as_deref() {
-            payload["path"] = Value::String(path.to_owned());
-        }
-        if let Some(digest) = event.content_digest.as_deref() {
-            payload["contentDigest"] = Value::String(digest.to_owned());
-        }
-        if let Some(digest) = event.query_digest.as_deref() {
-            payload["queryDigest"] = Value::String(digest.to_owned());
-        }
-        if let Some(digest) = event.result_digest.as_deref() {
-            payload["resultDigest"] = Value::String(digest.to_owned());
-        }
-        if let Some(digest) = event.event_digest.as_deref() {
-            payload["eventDigest"] = Value::String(digest.to_owned());
-        }
-        if let Some(digest) = event.output_digest.as_deref() {
-            payload["outputDigest"] = Value::String(digest.to_owned());
-        }
-        if let Some(outcome) = event.outcome {
-            payload["outcome"] = Value::String(if outcome { "pass" } else { "fail" }.to_owned());
-        }
-        if let Some(start_line) = event.start_line {
-            payload["startLine"] = Value::from(start_line);
-        }
-        if let Some(end_line) = event.end_line {
-            payload["endLine"] = Value::from(end_line);
-        }
+    if let Some(event) = tool_event.as_ref() {
+        append_typed_execution_event(&mut payload, event);
     }
     payload
 }
 
+fn execution_tool_event_class(event: &ExecutionToolEventV1) -> &'static str {
+    match event {
+        ExecutionToolEventV1::SourceRead { .. } => "source-read",
+        ExecutionToolEventV1::Search { .. } => "search",
+        ExecutionToolEventV1::Patch { .. } => "patch",
+        ExecutionToolEventV1::FocusedTest { .. } => "focused-test",
+        ExecutionToolEventV1::BroadTest { .. } => "broad-test",
+        ExecutionToolEventV1::Evidence { .. } => "evidence",
+        ExecutionToolEventV1::Blocker { .. } => "blocker",
+        ExecutionToolEventV1::Slice(_) => "slice",
+        ExecutionToolEventV1::Other { .. } => "other",
+    }
+}
+
+fn append_typed_execution_event(payload: &mut Value, event: &ExecutionToolEventV1) {
+    let output = match event {
+        ExecutionToolEventV1::SourceRead {
+            path,
+            content_digest,
+            start_line,
+            end_line,
+            output,
+        } => {
+            payload["path"] = Value::String(path.as_str().to_owned());
+            payload["contentDigest"] = Value::String(content_digest.to_string());
+            if let Some(start_line) = start_line {
+                payload["startLine"] = Value::from(*start_line);
+            }
+            if let Some(end_line) = end_line {
+                payload["endLine"] = Value::from(*end_line);
+            }
+            Some(output)
+        }
+        ExecutionToolEventV1::Search {
+            query_digest,
+            output,
+        } => {
+            payload["queryDigest"] = Value::String(query_digest.to_string());
+            Some(output)
+        }
+        ExecutionToolEventV1::Patch {
+            result_digest,
+            output,
+        } => {
+            payload["resultDigest"] = Value::String(result_digest.to_string());
+            Some(output)
+        }
+        ExecutionToolEventV1::FocusedTest { outcome, output } => {
+            payload["outcome"] = Value::String(
+                match outcome {
+                    FocusedTestOutcomeV1::Pass => "pass",
+                    FocusedTestOutcomeV1::Fail => "fail",
+                }
+                .to_owned(),
+            );
+            Some(output)
+        }
+        ExecutionToolEventV1::BroadTest { output } | ExecutionToolEventV1::Other { output } => {
+            Some(output)
+        }
+        ExecutionToolEventV1::Evidence {
+            event_digest,
+            output,
+        } => {
+            payload["eventDigest"] = Value::String(event_digest.to_string());
+            Some(output)
+        }
+        ExecutionToolEventV1::Blocker { code, locator } => {
+            payload["blockerCode"] = Value::String(code.to_string());
+            payload["locatorDigest"] = Value::String(locator.digest().to_string());
+            None
+        }
+        ExecutionToolEventV1::Slice(_) => None,
+    };
+    if let Some(output) = output {
+        payload["outputBytes"] = Value::from(output.bytes);
+        payload["outputDigest"] = Value::String(output.digest.to_string());
+    }
+}
+
 impl RuntimeService {
+    /// Returns whether this session/Work Item currently has an execution
+    /// binding and therefore requires a secondary execution receipt.
+    pub(super) fn execution_hook_requires_record(
+        &self,
+        session_id: &str,
+        work_item_id: Option<&str>,
+    ) -> RuntimeResult<bool> {
+        let state = self.lock_state()?;
+        Ok(work_item_id.is_some_and(|work_item_id| {
+            state
+                .execution_bindings
+                .get(session_id)
+                .is_some_and(|binding| binding.work_item_id() == work_item_id)
+        }))
+    }
+
+    /// Returns whether the atomic execution bundle receipt is durable for one
+    /// Hook identity without recomputing a checkpoint transition.
+    pub(super) fn execution_hook_receipt_exists(
+        &self,
+        identity: &TrustedSession,
+        hook_event_id: &str,
+        request_digest: &str,
+    ) -> RuntimeResult<bool> {
+        let scope = format!(
+            "execution-hook\0{}\0{}",
+            identity.workspace_id, identity.session_id
+        );
+        self.replay_receipt(&scope, hook_event_id, request_digest)
+            .map(|receipt| receipt.is_some())
+    }
+
     /// Binds the capsule digest and supervisor checkpoint facts to the
     /// authenticated session after a successful `execution.resume`.
     ///
@@ -578,10 +652,15 @@ impl RuntimeService {
     /// to commit.  The `ae-sdd-policy` guard re-checks only its frozen
     /// broad-before-green boundary as a last-resort net — the supervisor
     /// reducer owns every progress and batch rule.
+    /// Arbitrates one Hook tool event against the session's execution binding.
+    ///
+    /// `work_item_id` is absent for a Hook whose session has no Work Item bound
+    /// yet. Such an event can match no binding, so it stays unclassified — the
+    /// same outcome an unbound shadow session already produced.
     pub(super) fn execution_hook_guard(
         &self,
         session_id: &str,
-        work_item_id: &str,
+        work_item_id: Option<&str>,
         method: RpcMethod,
         event: Option<&ClassifiedExecutionEvent>,
     ) -> RuntimeResult<ExecutionHookGuardOutcome> {
@@ -595,10 +674,12 @@ impl RuntimeService {
             });
         }
         let state = self.lock_state()?;
-        let binding = state
-            .execution_bindings
-            .get(session_id)
-            .filter(|binding| binding.work_item_id() == work_item_id);
+        let binding = work_item_id.and_then(|work_item_id| {
+            state
+                .execution_bindings
+                .get(session_id)
+                .filter(|binding| binding.work_item_id() == work_item_id)
+        });
         let (Some(binding), Some(event)) = (binding, event) else {
             return Ok(ExecutionHookGuardOutcome {
                 disposition: ExecutionHookDisposition::Unclassified,
@@ -663,36 +744,113 @@ impl RuntimeService {
         })
     }
 
-    /// Appends the bounded `execution.tool` event and commits the PostTool
-    /// supervisor checkpoint to the session binding.  Runs after the Hook
-    /// receipt committed so a replayed Hook event never double-records.
-    pub(super) fn record_execution_hook_event(
+    /// Atomically prepares the bounded `execution.tool` event, its receipt,
+    /// and the original checkpoint after-image before the main Hook receipt.
+    pub(super) fn prepare_execution_hook_event(
         &self,
         identity: &TrustedSession,
-        work_item_id: &str,
+        work_item_id: Option<&str>,
         outcome: &ExecutionHookGuardOutcome,
         event: Option<&ClassifiedExecutionEvent>,
-    ) -> RuntimeResult<()> {
+        mut prepared: PreparedExecutionHookV1,
+    ) -> RuntimeResult<Option<PreparedExecutionHookV1>> {
         if !outcome.record() {
-            return Ok(());
+            return Ok(None);
         }
-        if let Some(next) = outcome.next_checkpoint() {
+        let scope = format!(
+            "execution-hook\0{}\0{}",
+            identity.workspace_id, identity.session_id
+        );
+        let payload = execution_event_payload(outcome.disposition(), outcome.reason_code(), event);
+        let payload_bytes = serde_json::to_vec(&payload).map_err(canonical_error)?;
+        let event_record = DurableEvent {
+            event_store_id: self.persistence.event_store_id()?.to_string(),
+            event_seq: 0,
+            boot_id: self.boot_id.to_string(),
+            kind: "execution.tool".to_owned(),
+            workspace_id: Some(identity.workspace_id.clone()),
+            session_id: Some(identity.session_id.clone()),
+            work_item_id: work_item_id.map(str::to_owned),
+            payload,
+            payload_digest: hex::encode(Sha256::digest(payload_bytes)),
+        };
+        let receipt = IdempotencyReceipt {
+            scope,
+            key: prepared.hook_event_id.clone(),
+            request_digest: prepared.request_digest.clone(),
+            response_json: "{\"recorded\":true}".to_owned(),
+            event_seq: 0,
+        };
+        prepared.checkpoint_after_image = outcome
+            .next_checkpoint()
+            .map(ExecutionSupervisorAfterImageV1::from);
+        let (_, _, prepared) =
+            self.persistence
+                .commit_prepared_execution_hook(event_record, receipt, prepared)?;
+        Ok(Some(prepared))
+    }
+
+    /// Loads the one per-session durable Hook barrier, if present.
+    pub(super) fn load_prepared_execution_hook(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<Option<PreparedExecutionHookV1>> {
+        self.persistence
+            .load_record("prepared-execution-hook/v1", session_id)?
+            .map(|value| {
+                serde_json::from_value(value).map_err(|_| {
+                    RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "prepared execution Hook record is malformed",
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    /// Applies the exact prepared checkpoint/turn/context after-images and
+    /// marks the session barrier complete. Every step is idempotent so a
+    /// failed completion mark is reconciled on the next actor entry.
+    pub(super) fn finalize_prepared_execution_hook(
+        &self,
+        prepared: PreparedExecutionHookV1,
+    ) -> RuntimeResult<()> {
+        if let Some(after_image) = prepared.checkpoint_after_image.clone() {
+            let checkpoint =
+                ExecutionSupervisorCheckpointV1::try_from(after_image).map_err(|_| {
+                    RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "prepared execution checkpoint after-image is invalid",
+                    )
+                })?;
             let mut state = self.lock_state()?;
-            if let Some(binding) = state
+            let binding = state
                 .execution_bindings
-                .get_mut(identity.session_id.as_str())
-            {
-                binding.commit_checkpoint(next.clone());
+                .get_mut(prepared.session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "prepared execution checkpoint has no active session binding",
+                    )
+                })?;
+            if prepared.work_item_id.as_deref() != Some(binding.work_item_id()) {
+                return Err(RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "prepared execution checkpoint Work Item no longer matches the session binding",
+                ));
             }
-            drop(state);
+            binding.commit_checkpoint(checkpoint);
         }
-        self.append_runtime_event(
-            "execution.tool",
-            execution_event_payload(outcome.disposition(), outcome.reason_code(), event),
-            Some(identity.workspace_id.clone()),
-            Some(identity.session_id.clone()),
-            Some(work_item_id.to_owned()),
+        self.restore_hook_turn(
+            &prepared.session_id,
+            &(Some(prepared.turn_id.clone()), prepared.turn_seq),
         )?;
+        if let Some(digest) = prepared.delivered_context_digest.as_deref() {
+            self.context
+                .mark_hook_delivered(&prepared.session_id, digest)?;
+        }
+        self.persistence
+            .delete_record("prepared-execution-hook/v1", &prepared.session_id)?;
         Ok(())
     }
 }

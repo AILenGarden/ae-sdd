@@ -7,7 +7,8 @@ use ae_sdd_runtime::RuntimeConfig;
 use serde_json::json;
 
 use support::{
-    Harness, open_root_session, register_workspace, result, session_params, stable_error,
+    Harness, canary_workspace, open_root_session, register_workspace, result, session_params,
+    stable_error,
 };
 
 fn request(
@@ -157,5 +158,102 @@ fn execution_events_stay_on_the_bounded_business_free_fast_path() {
         business_calls(),
         before,
         "execution hook adjudication must not call the business authority or run Gates"
+    );
+}
+
+#[test]
+fn admitted_activation_finishes_with_a_replayable_receipt_after_slow_bootstrap() {
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut connection = harness.connection(ClientKind::Hook);
+    let workspace = canary_workspace(&harness, "deadline-admission");
+    let session = open_root_session(
+        &harness,
+        &mut connection,
+        &workspace,
+        "agent",
+        "external",
+        None,
+    );
+    harness
+        .business
+        .operation_delay_ms
+        .store(100, Ordering::Release);
+
+    let mut activation = session_params(
+        &workspace,
+        &session,
+        "agent",
+        json!({
+            "hookEventId":"slow-bootstrap",
+            "hostPayload":{"prompt":"/ae-sdd"},
+        }),
+        50,
+    );
+    activation.idempotency_key = Some("slow-bootstrap-request".to_owned());
+    let replay_activation =
+        serde_json::from_value(serde_json::to_value(&activation).expect("activation serializes"))
+            .expect("activation round-trips");
+
+    let first = result(&harness.call(&mut connection, RpcMethod::HookUserPrompt, activation));
+    assert_eq!(first["turnSeq"], 1, "{first}");
+    assert_eq!(first["workItemId"], "WORK-MINTED", "{first}");
+
+    let replay = result(&harness.call(
+        &mut connection,
+        RpcMethod::HookUserPrompt,
+        replay_activation,
+    ));
+    assert_eq!(replay["replayed"], true, "{replay}");
+    assert_eq!(replay["turnId"], first["turnId"], "{first}\n{replay}");
+    assert_eq!(replay["turnSeq"], first["turnSeq"], "{first}\n{replay}");
+}
+
+#[test]
+fn receipt_failure_restores_the_turn_and_bootstrap_retry_reuses_the_work_item() {
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut connection = harness.connection(ClientKind::Hook);
+    let workspace = canary_workspace(&harness, "receipt-failure");
+    let session = open_root_session(
+        &harness,
+        &mut connection,
+        &workspace,
+        "agent",
+        "external",
+        None,
+    );
+    harness.persistence.fail_commit_event_and_receipt_after(1);
+
+    let activation = || {
+        let mut request = session_params(
+            &workspace,
+            &session,
+            "agent",
+            json!({
+                "hookEventId":"receipt-failure-bootstrap",
+                "hostPayload":{"prompt":"/ae-sdd"},
+            }),
+            250,
+        );
+        request.idempotency_key = Some("receipt-failure-bootstrap-request".to_owned());
+        request
+    };
+
+    let failed = harness.call(&mut connection, RpcMethod::HookUserPrompt, activation());
+    assert_eq!(stable_error(&failed), "EXTERNAL_STATE_CONFLICT", "{failed}");
+
+    let recovered = result(&harness.call(&mut connection, RpcMethod::HookUserPrompt, activation()));
+    assert_eq!(recovered["turnSeq"], 1, "{recovered}");
+    assert_eq!(recovered["workItemId"], "WORK-MINTED", "{recovered}");
+    assert_eq!(
+        harness.business.operation_calls.load(Ordering::Acquire),
+        1,
+        "the Work Item create receipt is reused after runtime receipt failure"
+    );
+
+    let replay = result(&harness.call(&mut connection, RpcMethod::HookUserPrompt, activation()));
+    assert_eq!(replay["replayed"], true, "{replay}");
+    assert_eq!(
+        replay["turnId"], recovered["turnId"],
+        "{recovered}\n{replay}"
     );
 }

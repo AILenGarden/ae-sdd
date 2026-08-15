@@ -212,6 +212,7 @@ fn identity_bundle_receipt_is_atomic_and_replays_before_cas() {
     let delegation = RuntimeDelegationRecord {
         delegation_id: delegation_id.to_owned(),
         workspace_id: workspace_id.to_owned(),
+        work_item_id: Some("STORY-C1".to_owned()),
         root_session_id: root_session_id.to_owned(),
         parent_session_id: root_session_id.to_owned(),
         child_session_id: Some(child_session_id.to_owned()),

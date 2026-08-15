@@ -1,7 +1,7 @@
 use std::{error::Error, fmt};
 
 use ae_sdd_contracts::{
-    SchemaVersion,
+    RequirementAnalysisSeriesInput, SchemaVersion,
     series::{RouteDisposition, SeriesInput, SeriesPlanDecision, SeriesReceiptStatus},
 };
 use ae_sdd_domain::DecisionDigest;
@@ -12,6 +12,52 @@ use serde::Deserialize;
 pub struct SeriesPlanner;
 
 impl SeriesPlanner {
+    /// Selects the next pre-route Requirement Analysis action without route input.
+    pub fn next_requirement_analysis(
+        input: &RequirementAnalysisSeriesInput,
+    ) -> Result<SeriesPlanDecision, SeriesPlannerError> {
+        let plan = input.candidate_plan();
+        let Some(receipt) = input.existing_receipt() else {
+            return Ok(SeriesPlanDecision::RunSeries {
+                schema_version: SchemaVersion::V1,
+                idempotency_key: input.idempotency_key().clone(),
+                plan: Box::new(plan.clone()),
+            });
+        };
+        match receipt.status() {
+            SeriesReceiptStatus::Planned => Ok(SeriesPlanDecision::RunSeries {
+                schema_version: SchemaVersion::V1,
+                idempotency_key: input.idempotency_key().clone(),
+                plan: Box::new(plan.clone()),
+            }),
+            SeriesReceiptStatus::Running => Ok(SeriesPlanDecision::AwaitSeries {
+                schema_version: SchemaVersion::V1,
+                idempotency_key: input.idempotency_key().clone(),
+                series_id: plan.series_id().clone(),
+            }),
+            SeriesReceiptStatus::ResultStaged if receipt.is_collectable() => {
+                Ok(SeriesPlanDecision::CollectSeries {
+                    schema_version: SchemaVersion::V1,
+                    idempotency_key: input.idempotency_key().clone(),
+                    series_id: plan.series_id().clone(),
+                })
+            }
+            SeriesReceiptStatus::ResultStaged => Ok(SeriesPlanDecision::AwaitSeries {
+                schema_version: SchemaVersion::V1,
+                idempotency_key: input.idempotency_key().clone(),
+                series_id: plan.series_id().clone(),
+            }),
+            SeriesReceiptStatus::Collected => Ok(SeriesPlanDecision::Complete {
+                schema_version: SchemaVersion::V1,
+                idempotency_key: input.idempotency_key().clone(),
+                projection_digest: requirement_analysis_completion_digest(input)?,
+            }),
+            SeriesReceiptStatus::Cancelled | SeriesReceiptStatus::Failed => {
+                Err(SeriesPlannerError::TerminalReceipt)
+            }
+        }
+    }
+
     /// Selects the next route-ordered Series action without performing I/O.
     pub fn next(input: &SeriesInput) -> Result<SeriesPlanDecision, SeriesPlannerError> {
         let identity = series_identity(input)?;
@@ -115,6 +161,17 @@ impl SeriesPlanner {
             projection_digest: completion_digest(input)?,
         })
     }
+}
+
+fn requirement_analysis_completion_digest(
+    input: &RequirementAnalysisSeriesInput,
+) -> Result<DecisionDigest, SeriesPlannerError> {
+    let bytes = serde_json::to_vec(input).map_err(|_| SeriesPlannerError::ContractEncoding)?;
+    let mut canonical = Vec::with_capacity(bytes.len() + 32);
+    canonical.extend_from_slice(b"ae-sdd-pre-route-ra-complete/v1\0");
+    canonical.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+    canonical.extend_from_slice(&bytes);
+    Ok(DecisionDigest::digest(canonical))
 }
 
 #[derive(Deserialize)]

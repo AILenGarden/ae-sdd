@@ -1,3 +1,4 @@
+use ae_sdd_execution::ExecutionSupervisorAfterImageV1;
 use ae_sdd_protocol::{HookDecision, WorkspaceMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,6 +33,8 @@ pub struct RuntimeStatus {
     pub session_count: usize,
     /// Current policy digest.
     pub policy_digest: String,
+    /// Canonical executable path of the daemon serving this boot.
+    pub daemon_path: String,
 }
 
 /// Stable wire representation of an Agent role.
@@ -122,6 +125,10 @@ pub struct SessionOpenPayload {
     /// Required physical delegation binding for non-root sessions.
     #[serde(default)]
     pub delegation_id: Option<String>,
+    /// Optional Root-to-Host adapter binding. The daemon verifies and stores
+    /// this binding; callers cannot override it on delegation creation.
+    #[serde(default)]
+    pub host_adapter_id: Option<String>,
     /// Optional precomputed role-aware context payload.
     #[serde(default)]
     pub context: Option<Value>,
@@ -151,10 +158,24 @@ pub struct SessionResult {
 pub struct HookPayload {
     /// Session-unique Hook event identity.
     pub hook_event_id: String,
-    /// Monotonic turn sequence.
-    pub turn_seq: u64,
+    /// Monotonic turn sequence, required only alongside an explicit `turnId`.
+    ///
+    /// A Hook subprocess holds no durable state and cannot know the sequence its
+    /// session is on, so an omitted value asks the daemon to allocate the turn.
+    #[serde(default)]
+    pub turn_seq: Option<u64>,
     /// Host-specific bounded payload.
     pub host_payload: Value,
+    /// Optional client-held context cursor for delivery negotiation.
+    ///
+    /// When both cursor fields name the exact daemon revision/digest, the
+    /// Hook response may omit the projection body even on a first delivery;
+    /// absent or stale cursors change nothing.
+    #[serde(default)]
+    pub known_revision: Option<u64>,
+    /// Optional client-held projection digest for delivery negotiation.
+    #[serde(default)]
+    pub known_digest: Option<String>,
 }
 
 /// Strict `hostPayload.executionEvent` decode target.
@@ -253,6 +274,22 @@ pub struct HookResult {
     /// unbound events so old clients can ignore the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_directive: Option<ExecutionHookDirective>,
+    /// Context delivery kind (`full` or `no_change`) when the decision
+    /// evaluated a cached projection; absent when no projection exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_kind: Option<String>,
+    /// Digest of the projection the context decision is based on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_digest: Option<String>,
+    /// Turn this event was recorded under, allocated when the host omitted one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// Monotonic sequence of `turnId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_seq: Option<u64>,
+    /// Work Item the event was attributed to; absent until routing binds one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
 }
 
 /// Canonical idempotency receipt persisted before returning success.
@@ -269,6 +306,98 @@ pub struct IdempotencyReceipt {
     pub response_json: String,
     /// Durable event sequence associated with the response.
     pub event_seq: u64,
+}
+
+/// Durable prepared after-image for one supervised Hook transition.
+///
+/// The record is keyed by physical session and acts as a barrier until the
+/// main Hook receipt is durable. It contains the original response and pure
+/// execution checkpoint after-image so recovery never recomputes against a
+/// later checkpoint.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreparedExecutionHookV1 {
+    /// Fixed record schema discriminator.
+    pub schema_version: String,
+    /// Authenticated workspace identity.
+    pub workspace_id: String,
+    /// Authenticated physical session identity and barrier key.
+    pub session_id: String,
+    /// Host event identity.
+    pub hook_event_id: String,
+    /// Canonical Hook request digest.
+    pub request_digest: String,
+    /// Namespace of the main Hook receipt.
+    pub hook_scope: String,
+    /// Durable main Hook event kind.
+    pub hook_kind: String,
+    /// Original response before its durable event sequence is projected.
+    pub response_json: String,
+    /// Work Item attribution for the main Hook event.
+    pub work_item_id: Option<String>,
+    /// Context digest whose delivery acknowledgement follows main commit.
+    pub delivered_context_digest: Option<String>,
+    /// Original daemon-owned turn identity.
+    pub turn_id: String,
+    /// Original daemon-owned turn sequence.
+    pub turn_seq: u64,
+    /// Pure checkpoint after-image for a PostTool transition.
+    pub checkpoint_after_image: Option<ExecutionSupervisorAfterImageV1>,
+    /// True when recovery must hold/reacquire Cargo before returning allow.
+    pub cargo_lease_required: bool,
+    /// True only after the main Hook receipt and in-memory after-images have
+    /// been reconciled.
+    pub completed: bool,
+}
+
+/// Durable lease acquire request used to preserve tool exclusion across a
+/// daemon restart without adding a schema migration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionResourceLeaseRequestV1 {
+    /// Stable resource key, currently `cargo`.
+    pub resource: String,
+    /// Daemon boot attempting the acquisition.
+    pub boot_id: String,
+    /// Authenticated session attempting the acquisition.
+    pub session_id: String,
+    /// Current Unix time in milliseconds.
+    pub now_unix_ms: u64,
+    /// Lease TTL in milliseconds.
+    pub ttl_ms: u64,
+    /// Bounded retry hint for a deferral.
+    pub retry_after_ms: u64,
+}
+
+/// Result of one atomic durable resource-lease acquisition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionResourceLeaseOutcomeV1 {
+    /// This request installed a new lease or replaced an expired lease.
+    Granted,
+    /// The same session re-entered a lease owned by the same daemon boot.
+    Reentered,
+    /// Another boot/session still owns the unexpired lease.
+    Deferred {
+        /// Bounded retry hint in milliseconds.
+        retry_after_ms: u64,
+    },
+}
+
+/// Durable runtime-record representation of one resource lease.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionResourceLeaseRecordV1 {
+    /// Fixed record schema discriminator.
+    pub schema_version: String,
+    /// Stable resource key.
+    pub resource: String,
+    /// Owning daemon boot.
+    pub boot_id: String,
+    /// Owning authenticated session.
+    pub session_id: String,
+    /// Acquisition time in Unix milliseconds.
+    pub acquired_at_unix_ms: u64,
+    /// Exclusive expiry time in Unix milliseconds.
+    pub expires_at_unix_ms: u64,
 }
 
 /// Aggregate family committed by the typed identity repository.
@@ -351,6 +480,9 @@ pub struct RuntimeDelegationRecord {
     pub delegation_id: String,
     /// Owning workspace.
     pub workspace_id: String,
+    /// Work Item frozen when the delegation was created.
+    #[serde(default)]
+    pub work_item_id: Option<String>,
     /// Root orchestration session.
     pub root_session_id: String,
     /// Parent physical session.
@@ -687,13 +819,20 @@ pub struct ContextProjectResult {
     pub byte_length: usize,
 }
 
-/// Trusted host adapter registration payload.
+/// Host adapter addressing payload.
+///
+/// Registration only names a recipient. Hosts built against the older shape
+/// also send `capabilities`; that field is accepted and dropped rather than
+/// rejected, because such a host has done nothing wrong and the declaration was
+/// never verifiable in the first place. It is not echoed back, so nothing reads
+/// as though the daemon had acted on it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct HostRegisterPayload {
     /// Stable adapter identity.
     pub adapter_id: String,
-    /// Exact supported capability names.
+    /// Accepted for compatibility and never stored, read, or returned.
+    #[serde(default, skip_serializing)]
     pub capabilities: Vec<String>,
 }
 
@@ -721,6 +860,22 @@ pub struct HostActionPayload {
     pub deadline_unix_ms: u64,
 }
 
+/// Boot-local Host delivery envelope.
+///
+/// The durable action is flattened for wire compatibility. A create action
+/// additionally carries the daemon-issued child claim exactly once on the
+/// trusted Host lane; the raw claim is never part of the persisted action.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostActionDeliveryPayload {
+    /// Durable action fields.
+    #[serde(flatten)]
+    pub action: HostActionPayload,
+    /// Opaque child bootstrap claim, present only for a fresh create delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_id: Option<String>,
+}
+
 /// Host ACK wire payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -737,6 +892,23 @@ pub struct HostAckPayload {
     pub host_task_id: Option<String>,
     /// Host-injected child session identity.
     pub session_id: Option<String>,
+}
+
+/// Complete Host ACK receipt used to resume child attestation exactly.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostActionAckResult {
+    /// Durable action fields preserved for wire compatibility.
+    #[serde(flatten)]
+    pub action: HostActionPayload,
+    /// Committed ACK identity.
+    pub ack_id: String,
+    /// Committed Host outcome.
+    pub outcome: String,
+    /// Physical Host task identity, when supplied.
+    pub host_task_id: Option<String>,
+    /// Physical child session identity, when supplied.
+    pub child_session_id: Option<String>,
 }
 
 /// Authenticated token pressure sample.
@@ -757,6 +929,22 @@ pub struct HostPressurePayload {
     pub observed_at_unix_ms: u64,
 }
 
+/// Bounded asset reference: path, kind and content digest, never the body.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AssetRefWire {
+    /// Reference kind (for example `constraints-index` or `methodology-skill`).
+    pub kind: String,
+    /// Canonical project-relative path.
+    pub path: String,
+    /// Lowercase hex SHA-256 of the referenced content.
+    pub sha256: String,
+    /// Referenced content size. Legacy durable refs may omit this field, but
+    /// newly frozen projections must provide it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byte_length: Option<u64>,
+}
+
 /// Delegation creation payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -771,10 +959,50 @@ pub struct DelegationCreatePayload {
     pub input_fingerprint: String,
     /// Absolute claim/report deadline.
     pub deadline_unix_ms: u64,
-    /// Host adapter selected by policy.
-    pub adapter_id: String,
+    /// The `seriesRunId` this attempt replaces, when the create is a retry.
+    ///
+    /// Audit F-06 requires a retry to create a new run and a new delegation while
+    /// preserving `retryOf`. Only the prior *run* is named here; the new run
+    /// identity is minted by the daemon so a caller cannot forge continuity.
+    #[serde(default)]
+    pub retry_of_series_run_id: Option<String>,
+    /// The stable logical Series this delegation is an attempt of.
+    ///
+    /// Computed by the daemon from the committed flow intent, which is the only
+    /// place that holds both the Work Item and the Series kind.
+    #[serde(default)]
+    pub series_id: String,
+    /// The Flow Run this attempt belongs to (`ae-sdd-daemon-design.md` §4.2).
+    ///
+    /// Read from the committed flow intent, never from the caller: line 767 requires
+    /// the execution tree stay uncontaminated across retries, which a root-supplied
+    /// run identity could violate by attaching an attempt to another run.
+    ///
+    /// `Option` because project state written before run identity existed carries
+    /// none. D-03 item 6 forbids reading missing data as an empty value, so an older
+    /// delegation legitimately has no Flow Run rather than a blank one.
+    #[serde(default)]
+    pub flow_run_id: Option<String>,
     /// Parent-requested child scope, validated and narrowed by the daemon.
     pub grant: crate::ScopedGrantWire,
+    /// Optional bounded briefing the child series starts with.
+    #[serde(default)]
+    pub briefing: Option<String>,
+    /// Optional bounded asset references (no bodies) for the child series.
+    #[serde(default)]
+    pub asset_refs: Option<Vec<AssetRefWire>>,
+}
+
+/// Root request for one daemon-planned Series delegation.
+///
+/// All authority-bearing fields live in the committed flow intent. The Root
+/// echoes only its digest and cannot choose role, grant, revision, adapter, or
+/// deadline.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RootSeriesDelegationPayload {
+    /// Digest returned by the authoritative `flow.next` decision.
+    pub flow_decision_digest: String,
 }
 
 /// Child physical claim payload.
@@ -817,6 +1045,12 @@ pub struct DelegationResult {
     pub delegation_id: String,
     /// Lifecycle state.
     pub status: String,
+    /// Authoritative liveness upper bound, as extended by `delegation.renew`.
+    ///
+    /// Exposed so a caller can confirm a renewal actually took effect rather
+    /// than inferring it from the absence of an error.
+    #[serde(default)]
+    pub deadline_unix_ms: u64,
     /// Canonical daemon-validated scoped grant for the physical child.
     pub grant: crate::ScopedGrantWire,
     /// Child role.
@@ -827,6 +1061,12 @@ pub struct DelegationResult {
     pub child_session_id: Option<String>,
     /// Bounded result digest, once reported.
     pub result_digest: Option<String>,
+    /// Optional bounded briefing the child series was created with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<String>,
+    /// Optional bounded asset references the child series was created with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_refs: Option<Vec<AssetRefWire>>,
 }
 
 /// Explicit compact request.
@@ -1020,5 +1260,88 @@ impl ExecutionCheckpointRecord {
                 discard: stale,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn hook_payload_accepts_absent_and_present_known_context_cursor() {
+        let bare: HookPayload =
+            serde_json::from_value(json!({"hookEventId":"event","turnSeq":1,"hostPayload":{}}))
+                .expect("a payload without the negotiation cursor still decodes");
+        assert_eq!(bare.known_revision, None);
+        assert_eq!(bare.known_digest, None);
+
+        let negotiated: HookPayload = serde_json::from_value(json!({
+            "hookEventId":"event",
+            "turnSeq":1,
+            "hostPayload":{},
+            "knownRevision":3,
+            "knownDigest":"a".repeat(64),
+        }))
+        .expect("the negotiation cursor decodes");
+        assert_eq!(negotiated.known_revision, Some(3));
+        assert_eq!(negotiated.known_digest, Some("a".repeat(64)));
+    }
+
+    #[test]
+    fn delegation_create_payload_stays_wire_compatible_and_carries_a_briefing() {
+        let legacy = json!({
+            "childRole":"series",
+            "parentDelegationId":null,
+            "inputRevision":1,
+            "inputFingerprint":"f".repeat(64),
+            "deadlineUnixMs":2_000,
+            "grant":{"operations":["operation.execute"]},
+        });
+        let decoded: DelegationCreatePayload =
+            serde_json::from_value(legacy).expect("the legacy payload still decodes");
+        assert!(decoded.briefing.is_none());
+        assert!(decoded.asset_refs.is_none());
+
+        let legacy_ref: AssetRefWire = serde_json::from_value(json!({
+            "kind":"constraints-index",
+            "path":"constraints/README.md",
+            "sha256":"a".repeat(64),
+        }))
+        .expect("a durable legacy asset ref without byteLength remains readable");
+        assert_eq!(legacy_ref.byte_length, None);
+
+        let enriched = json!({
+            "childRole":"series",
+            "parentDelegationId":null,
+            "inputRevision":1,
+            "inputFingerprint":"f".repeat(64),
+            "deadlineUnixMs":2_000,
+            "grant":{"operations":["operation.execute"]},
+            "briefing":"implement the assigned slice only",
+            "assetRefs":[{
+                "kind":"constraints-index",
+                "path":"constraints/README.md",
+                "sha256":"b".repeat(64),
+                "byteLength":42,
+            }],
+        });
+        let decoded: DelegationCreatePayload =
+            serde_json::from_value(enriched).expect("the enriched payload decodes");
+        assert_eq!(
+            decoded.briefing.as_deref(),
+            Some("implement the assigned slice only")
+        );
+        let refs = decoded.asset_refs.expect("asset references decode");
+        assert_eq!(
+            refs,
+            vec![AssetRefWire {
+                kind: "constraints-index".to_owned(),
+                path: "constraints/README.md".to_owned(),
+                sha256: "b".repeat(64),
+                byte_length: Some(42),
+            }]
+        );
     }
 }
