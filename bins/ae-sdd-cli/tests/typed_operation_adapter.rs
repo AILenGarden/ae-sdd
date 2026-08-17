@@ -65,6 +65,8 @@ fn all_thirteen_typed_routes_build_registry_valid_operation_envelopes() {
             &[
                 "--intent",
                 "STORY",
+                "--doc-id",
+                "STORY-1",
                 "--content-file",
                 "draft.md",
                 "--lease-id",
@@ -204,6 +206,8 @@ fn mutation_preconditions_and_dry_run_control_fail_closed_before_ipc() {
         "00000000-0000-0000-0000-000000000002",
         "--intent",
         "STORY",
+        "--doc-id",
+        "STORY-1",
         "--content-file",
         "draft.md",
         "--idempotency-key",

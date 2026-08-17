@@ -1377,14 +1377,24 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                             "typed operations require a daemon-verified Agent role",
                         )
                     })?;
-                    RolePolicy::authorize(role, semantic_operation(role, operation)).map_err(
-                        |_| {
-                            RuntimeError::new(
-                                StableErrorCode::RoleOperationForbidden,
-                                "daemon-verified role forbids the typed operation",
-                            )
-                        },
-                    )?;
+                    let root_story_request =
+                        is_root_story_save(role, operation, &authorization_payload);
+                    let root_story_recovery = is_root_story_recovery(
+                        role,
+                        operation,
+                        &authorization_payload,
+                        &backend.state.value,
+                    );
+                    if !root_story_request && !root_story_recovery {
+                        RolePolicy::authorize(role, semantic_operation(role, operation)).map_err(
+                            |_| {
+                                RuntimeError::new(
+                                    StableErrorCode::RoleOperationForbidden,
+                                    "daemon-verified role forbids the typed operation",
+                                )
+                            },
+                        )?;
+                    }
                     let grant = workspace.agent_grant.as_ref().ok_or_else(|| {
                         RuntimeError::new(
                             StableErrorCode::RoleOperationForbidden,
@@ -1406,6 +1416,17 @@ impl BusinessOperationPort for NativeBusinessAdapter {
                         &backend.state,
                         workspace,
                     )?;
+                    if root_story_request {
+                        if let Some(response) = backend.replay_committed_state_mutation(&request)? {
+                            return Ok(response_value(response));
+                        }
+                        if !root_story_recovery {
+                            return Err(RuntimeError::new(
+                                StableErrorCode::RoleOperationForbidden,
+                                "Root document.save is restricted to exact Story recovery or receipt replay",
+                            ));
+                        }
+                    }
                     let lifecycle_operation = matches!(
                         operation,
                         OperationName::StateTransition | OperationName::WorkItemComplete
@@ -2483,6 +2504,28 @@ fn semantic_operation(role: AgentRole, operation: OperationName) -> RoleOperatio
         }
         _ => RoleOperation::ReadAuthorizedArtifacts,
     }
+}
+
+fn is_root_story_recovery(
+    role: AgentRole,
+    operation: OperationName,
+    payload: &Value,
+    state: &Value,
+) -> bool {
+    is_root_story_save(role, operation, payload)
+        && state.get("entryNode").and_then(Value::as_str) == Some("ROUTE")
+        && state
+            .get("routeDocuments")
+            .and_then(|documents| documents.get("STORY"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        && state.get("activeStory").is_some_and(Value::is_null)
+}
+
+fn is_root_story_save(role: AgentRole, operation: OperationName, payload: &Value) -> bool {
+    role == AgentRole::Root
+        && operation == OperationName::DocumentSave
+        && payload.get("intent").and_then(Value::as_str) == Some("STORY")
 }
 
 #[derive(Deserialize)]
@@ -7591,17 +7634,20 @@ fn apply_mutation(
                 // `activeStory` to the state machine name made every
                 // Story-scoped gate resolve the ROUTE machine as its Story.
                 let story_binding = if intent == "STORY" {
-                    request.request().payload["docId"]
-                        .as_str()
-                        .filter(|doc_id| doc_id.starts_with("STORY-"))
-                        .and_then(|doc_id| {
-                            StoryId::new(doc_id).ok().map(|_| {
-                                // Best-effort: without an authoritative STORY
-                                // destination mapping the docPath binding is
-                                // skipped instead of failing the mutation.
-                                (doc_id.to_owned(), document_path(state, "STORY").ok())
-                            })
-                        })
+                    let doc_id = request
+                        .request()
+                        .payload
+                        .get("docId")
+                        .and_then(Value::as_str)
+                        .filter(|doc_id| !doc_id.is_empty())
+                        .ok_or_else(|| schema_error("docId is required for STORY intent"))?;
+                    if !doc_id.starts_with("STORY-") || StoryId::new(doc_id).is_err() {
+                        return Err(schema_error("docId must be a valid STORY-* identifier"));
+                    }
+                    // Best-effort: without an authoritative STORY destination
+                    // mapping the docPath binding is skipped instead of
+                    // failing the mutation.
+                    Some((doc_id.to_owned(), document_path(state, "STORY").ok()))
                 } else {
                     None
                 };
@@ -9512,7 +9558,7 @@ mod tests {
     }
 
     #[test]
-    fn route_document_save_records_the_committed_series_artifact() {
+    fn route_story_document_save_requires_doc_id_before_state_mutation() {
         let root = tempfile::tempdir().expect("workspace root");
         let workspace = creation_workspace(root.path());
         let request = OperationRequest {
@@ -9556,13 +9602,12 @@ mod tests {
             dry_run: false,
             payload: json!({"intent":"STORY","contentFile":"story-input.md"}),
         };
-        let story_request =
-            ValidatedOperationRequest::validate(story_request).expect("valid Story save");
-        apply_mutation(&workspace, &mut state, &story_request, None).expect("Story scope commits");
-        assert_eq!(state["routeDocuments"]["STORY"], true);
-        // Without a `docId` the save must not invent a Story identity — in
-        // particular it must never bind the ROUTE state machine name.
-        assert_eq!(state["activeStory"], Value::Null);
+        let before = state.clone();
+        let error = ValidatedOperationRequest::validate(story_request)
+            .expect_err("Story save without docId must fail before state mutation");
+
+        assert!(error.to_string().contains("docId"));
+        assert_eq!(state, before);
     }
 
     struct DocumentSaveHarness {
@@ -10199,6 +10244,81 @@ mod tests {
             state["storyStates"]["STORY-ROUTE-TEST-001"]["currentPhase"],
             "testcase-generated"
         );
+    }
+
+    #[test]
+    fn root_story_recovery_is_exactly_bounded() {
+        let payload = json!({
+            "intent":"STORY",
+            "contentFile":"story.md",
+            "docId":"STORY-ROUTE-TEST-001"
+        });
+        let target = json!({
+            "entryNode":"ROUTE",
+            "routeDocuments":{"STORY":true},
+            "activeStory":null
+        });
+
+        assert!(is_root_story_recovery(
+            AgentRole::Root,
+            OperationName::DocumentSave,
+            &payload,
+            &target
+        ));
+
+        for (label, role, operation, payload, state) in [
+            (
+                "series role",
+                AgentRole::Series,
+                OperationName::DocumentSave,
+                payload.clone(),
+                target.clone(),
+            ),
+            (
+                "different operation",
+                AgentRole::Root,
+                OperationName::DocumentResolve,
+                payload.clone(),
+                target.clone(),
+            ),
+            (
+                "different intent",
+                AgentRole::Root,
+                OperationName::DocumentSave,
+                json!({"intent":"RA","contentFile":"ra.md"}),
+                target.clone(),
+            ),
+            (
+                "non-ROUTE state",
+                AgentRole::Root,
+                OperationName::DocumentSave,
+                payload.clone(),
+                json!({"entryNode":"PRD","routeDocuments":{"STORY":true},"activeStory":null}),
+            ),
+            (
+                "missing Story marker",
+                AgentRole::Root,
+                OperationName::DocumentSave,
+                payload.clone(),
+                json!({"entryNode":"ROUTE","routeDocuments":{},"activeStory":null}),
+            ),
+            (
+                "conflicting active Story",
+                AgentRole::Root,
+                OperationName::DocumentSave,
+                payload.clone(),
+                json!({
+                    "entryNode":"ROUTE",
+                    "routeDocuments":{"STORY":true},
+                    "activeStory":"STORY-OTHER"
+                }),
+            ),
+        ] {
+            assert!(
+                !is_root_story_recovery(role, operation, &payload, &state),
+                "{label} must not enter Root recovery"
+            );
+        }
     }
 
     #[test]
