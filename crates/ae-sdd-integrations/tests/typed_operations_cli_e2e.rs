@@ -444,6 +444,8 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
             &[
                 "--intent",
                 "STORY",
+                "--doc-id",
+                "STORY-TYPED-E2E",
                 "--content-file",
                 "draft/story.md",
                 "--dry-run",
@@ -487,7 +489,14 @@ fn twelve_typed_cli_routes_execute_through_the_authoritative_runtime() {
             fencing,
             1,
             "doc-save-e2e",
-            &["--intent", "STORY", "--content-file", "draft/story.md"],
+            &[
+                "--intent",
+                "STORY",
+                "--doc-id",
+                "STORY-TYPED-E2E",
+                "--content-file",
+                "draft/story.md",
+            ],
         ),
     );
     assert_eq!(success(&saved)["revisionAfter"], 2);
