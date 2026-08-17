@@ -317,3 +317,57 @@ fn document_save_describes_optional_keep_draft_boolean() {
     assert_eq!(keep_draft.kind, FieldKind::Boolean);
     assert!(!keep_draft.required);
 }
+
+#[test]
+fn document_save_keeps_doc_id_statically_optional() {
+    let doc_id = OperationName::DocumentSave
+        .spec()
+        .fields
+        .iter()
+        .find(|field| field.name == "docId")
+        .expect("document.save docId field");
+
+    assert_eq!(doc_id.kind, FieldKind::String);
+    assert!(!doc_id.required);
+}
+
+#[test]
+fn document_save_conditionally_requires_a_valid_story_doc_id() {
+    for (case, doc_id) in [
+        ("missing", None),
+        ("null", Some(Value::Null)),
+        ("empty", Some(json!(""))),
+        ("non-Story", Some(json!("DR-ROUTE-001"))),
+        ("missing suffix", Some(json!("STORY-"))),
+        ("illegal identifier", Some(json!("STORY-ROUTE/001"))),
+    ] {
+        let mut payload = json!({"intent":"STORY","contentFile":"story.md"});
+        if let Some(doc_id) = doc_id {
+            payload["docId"] = doc_id;
+        }
+
+        let error = match validate_operation_payload(OperationName::DocumentSave, &payload) {
+            Ok(()) => panic!("{case} Story docId must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("docId"), "{case}: {error}");
+    }
+
+    validate_operation_payload(
+        OperationName::DocumentSave,
+        &json!({
+            "intent":"STORY",
+            "contentFile":"story.md",
+            "docId":"STORY-ROUTE-001"
+        }),
+    )
+    .expect("valid Story docId");
+
+    for intent in ["RA", "DR", "TESTCASE", "CODING_PLAN"] {
+        validate_operation_payload(
+            OperationName::DocumentSave,
+            &json!({"intent":intent,"contentFile":"document.md"}),
+        )
+        .unwrap_or_else(|error| panic!("{intent} docId remains optional: {error}"));
+    }
+}

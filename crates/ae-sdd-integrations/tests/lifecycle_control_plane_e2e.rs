@@ -24,11 +24,11 @@ use ae_sdd_contracts::{
     RouteMappingVersion, SchemaVersion, SeriesId, SeriesKind, SpecKind, TaskKind,
 };
 use ae_sdd_domain::{
-    AgentRole, ArtifactDigest, DecisionDigest, DesignRoute, ProjectPathScope, ScopedGrant,
-    StateRevision, WorkItemId, WorkScale,
+    AgentRole, ArtifactDigest, DecisionDigest, DesignRoute, OperationId, ProjectPathScope,
+    ScopedGrant, StateRevision, WorkItemId, WorkScale,
 };
 use ae_sdd_protocol::{ClientKind, RpcMethod, WorkspaceMode};
-use ae_sdd_runtime::{BusinessWorkspace, PersistencePort};
+use ae_sdd_runtime::{BusinessOperationPort, BusinessWorkspace, PersistencePort};
 use review_authority::authoritative_review_workspace_input_fingerprint;
 use serde_json::{Value, json};
 
@@ -40,6 +40,251 @@ const STORY_DOC: &str = "ae-sdd-doc/Story/prd-c1-e2e.md";
 /// Declares every AC id the plan verification matrix cites, so the Tier 2
 /// deterministic proof can align the CodingPlan with the Story (`G-14`).
 const STORY_CONTENT: &str = "# Story\n\nAC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-7\nAC-8 AC-9 AC-10 AC-11 AC-12 AC-13 AC-14\n\n## verification\n";
+
+#[test]
+fn story_document_save_atomically_binds_active_story() {
+    const ROUTE_ID: &str = "ROUTE-STORY-ATOMIC-E2E";
+    const ACTIVE_STORY_ID: &str = "STORY-ROUTE-STORY-ATOMIC-E2E";
+
+    let harness = Harness::new_realtime();
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&json!({
+            "stateMachineName":ROUTE_ID,
+            "revision":1,
+            "lastFencingToken":0,
+            "entryNode":"ROUTE",
+            "activeStory":null,
+            "phase":"initialized",
+            "currentPhase":"initialized",
+            "currentStep":"initialized",
+            "routeDocuments":{},
+            "storyStates":{},
+            "documentPaths":{"STORY":"ae-sdd-doc/Story/story.md"}
+        }))
+        .expect("ROUTE state serializes"),
+    )
+    .expect("ROUTE state");
+
+    let mut cli = harness.connection(ClientKind::Cli);
+    let workspace = register_and_cut_over(&harness, &mut cli);
+    let root = open_root_for_work_item(
+        &harness,
+        &mut cli,
+        &workspace,
+        ROUTE_ID,
+        "story-atomic-root",
+        "story-atomic-agent",
+    );
+    let identity = identity_for_work_item(&workspace, &root, ROUTE_ID, "story-atomic-agent");
+    let (lease_id, fencing) =
+        acquire_lease(&harness, &mut cli, &identity, "root", "story-atomic-lease");
+    let mut save = operation_params(
+        &identity,
+        "document.save",
+        json!({
+            "intent":"STORY",
+            "docId":ACTIVE_STORY_ID,
+            "contentFile":"draft/story.md"
+        }),
+    );
+    bind_write(
+        &mut save,
+        &lease_id,
+        fencing,
+        current_revision(&harness),
+        "story-atomic-save",
+    );
+
+    let series_workspace = BusinessWorkspace {
+        workspace_id: workspace.workspace_id.clone(),
+        canonical_root: fs::canonicalize(harness.workspace_root.path())
+            .expect("workspace canonicalizes")
+            .to_string_lossy()
+            .into_owned(),
+        project_key: "typed-e2e".to_owned(),
+        mode: WorkspaceMode::RustCanary,
+        agent_role: Some(AgentRole::Series),
+        agent_grant: Some(ScopedGrant::new(
+            [OperationId::new("document.save").expect("operation")],
+            [],
+            [ProjectPathScope::ProjectRoot],
+        )),
+        caller_kind: Some(ClientKind::Cli),
+        inventory_generation: 1,
+    };
+    let saved = harness
+        .business_adapter()
+        .execute(RpcMethod::OperationExecute, &save, Some(&series_workspace))
+        .expect("Story document save commits");
+    assert_eq!(saved["changed"], true, "{saved}");
+
+    let state = read_state(&harness);
+    assert_eq!(state["routeDocuments"]["STORY"], true);
+    assert_eq!(state["activeStory"], ACTIVE_STORY_ID);
+    assert_eq!(
+        state["storyStates"][ACTIVE_STORY_ID]["docPath"],
+        "ae-sdd-doc/Story/story.md"
+    );
+}
+
+#[test]
+fn story_half_commit_root_recovery_is_idempotent_and_conflict_closed() {
+    const ROUTE_ID: &str = "ROUTE-STORY-RECOVERY-E2E";
+    const ACTIVE_STORY_ID: &str = "STORY-ROUTE-STORY-RECOVERY-E2E";
+    const CONFLICTING_STORY_ID: &str = "STORY-ROUTE-STORY-RECOVERY-OTHER";
+    const DRAFT: &str = "draft/story-recovery.md";
+
+    let harness = Harness::new_realtime();
+    fs::write(
+        &harness.state_path,
+        serde_json::to_vec_pretty(&json!({
+            "stateMachineName":ROUTE_ID,
+            "revision":1,
+            "lastFencingToken":0,
+            "entryNode":"ROUTE",
+            "activeStory":null,
+            "phase":"initialized",
+            "currentPhase":"initialized",
+            "currentStep":"initialized",
+            "routeDocuments":{"STORY":true},
+            "storyStates":{},
+            "documentPaths":{"STORY":"ae-sdd-doc/Story/story-recovery.md"}
+        }))
+        .expect("half-committed ROUTE state serializes"),
+    )
+    .expect("half-committed ROUTE state");
+    write_document(&harness, DRAFT, "# recovered Story\n");
+
+    let mut cli = harness.connection(ClientKind::Cli);
+    let workspace = register_and_cut_over(&harness, &mut cli);
+    let root = open_root_for_work_item(
+        &harness,
+        &mut cli,
+        &workspace,
+        ROUTE_ID,
+        "story-recovery-root",
+        "story-recovery-agent",
+    );
+    let identity = identity_for_work_item(&workspace, &root, ROUTE_ID, "story-recovery-agent");
+    let (lease_id, fencing) = acquire_lease(
+        &harness,
+        &mut cli,
+        &identity,
+        "root",
+        "story-recovery-lease",
+    );
+    let root_workspace = BusinessWorkspace {
+        workspace_id: workspace.workspace_id.clone(),
+        canonical_root: fs::canonicalize(harness.workspace_root.path())
+            .expect("workspace canonicalizes")
+            .to_string_lossy()
+            .into_owned(),
+        project_key: "typed-e2e".to_owned(),
+        mode: WorkspaceMode::RustCanary,
+        agent_role: Some(AgentRole::Root),
+        agent_grant: Some(ScopedGrant::new(
+            [OperationId::new("document.save").expect("operation")],
+            [],
+            [ProjectPathScope::ProjectRoot],
+        )),
+        caller_kind: Some(ClientKind::Cli),
+        inventory_generation: 1,
+    };
+    let mut save = operation_params(
+        &identity,
+        "document.save",
+        json!({
+            "intent":"STORY",
+            "docId":ACTIVE_STORY_ID,
+            "contentFile":DRAFT,
+            "keepDraft":true
+        }),
+    );
+    bind_write(
+        &mut save,
+        &lease_id,
+        fencing,
+        1,
+        "story-half-commit-root-recovery",
+    );
+
+    let saved = harness
+        .business_adapter()
+        .execute(RpcMethod::OperationExecute, &save, Some(&root_workspace))
+        .expect("Root repairs the exact historical half-commit");
+    assert_eq!(saved["changed"], true, "{saved}");
+    assert_eq!(current_revision(&harness), 2);
+
+    let replay_without_operation_grant = BusinessWorkspace {
+        workspace_id: root_workspace.workspace_id.clone(),
+        canonical_root: root_workspace.canonical_root.clone(),
+        project_key: root_workspace.project_key.clone(),
+        mode: root_workspace.mode,
+        agent_role: root_workspace.agent_role,
+        agent_grant: Some(ScopedGrant::new(
+            std::iter::empty::<OperationId>(),
+            [],
+            [ProjectPathScope::ProjectRoot],
+        )),
+        caller_kind: root_workspace.caller_kind,
+        inventory_generation: root_workspace.inventory_generation,
+    };
+    let error = harness
+        .business_adapter()
+        .execute(
+            RpcMethod::OperationExecute,
+            &save,
+            Some(&replay_without_operation_grant),
+        )
+        .expect_err("exact replay still requires the current scoped grant");
+    assert_eq!(
+        error.code(),
+        ae_sdd_protocol::StableErrorCode::RoleOperationForbidden
+    );
+
+    let replayed = harness
+        .business_adapter()
+        .execute(RpcMethod::OperationExecute, &save, Some(&root_workspace))
+        .expect("the exact Root recovery request replays");
+    assert_eq!(replayed["changed"], false, "{replayed}");
+    assert_eq!(current_revision(&harness), 2);
+
+    let mut conflict = operation_params(
+        &identity,
+        "document.save",
+        json!({
+            "intent":"STORY",
+            "docId":CONFLICTING_STORY_ID,
+            "contentFile":DRAFT,
+            "keepDraft":true
+        }),
+    );
+    bind_write(
+        &mut conflict,
+        &lease_id,
+        fencing,
+        2,
+        "story-half-commit-conflicting-identity",
+    );
+    let error = harness
+        .business_adapter()
+        .execute(
+            RpcMethod::OperationExecute,
+            &conflict,
+            Some(&root_workspace),
+        )
+        .expect_err("Root cannot replace the recovered Story identity");
+    assert_eq!(
+        error.code(),
+        ae_sdd_protocol::StableErrorCode::RoleOperationForbidden
+    );
+
+    let state = read_state(&harness);
+    assert_eq!(state["revision"], 2);
+    assert_eq!(state["activeStory"], ACTIVE_STORY_ID);
+    assert_eq!(state["routeDocuments"]["STORY"], true);
+}
 
 #[test]
 fn complete_prd_commits_and_replays_one_exact_project_mutation() {
