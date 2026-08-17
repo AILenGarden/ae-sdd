@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use ae_sdd_domain::{
-    FencingToken, LeaseId, OperationId, ProjectKey, SessionId, StateRevision, WorkItemId,
+    FencingToken, LeaseId, OperationId, ProjectKey, SessionId, StateRevision, StoryId, WorkItemId,
     WorkspaceId,
 };
 use serde_json::Value;
@@ -229,6 +229,31 @@ fn validate_payload(spec: &OperationSpec, payload: &Value) -> Result<(), Operati
     }
     if spec.operation == OperationName::WorkItemCreate {
         validate_workitem_create(object)?;
+    }
+    if spec.operation == OperationName::DocumentSave {
+        validate_document_save(object)?;
+    }
+    Ok(())
+}
+
+fn validate_document_save(
+    payload: &serde_json::Map<String, Value>,
+) -> Result<(), OperationRequestError> {
+    if payload.get("intent").and_then(Value::as_str) != Some("STORY") {
+        return Ok(());
+    }
+    let doc_id = payload
+        .get("docId")
+        .and_then(Value::as_str)
+        .ok_or(OperationRequestError::RequiredPayloadField("docId"))?;
+    if doc_id
+        .strip_prefix("STORY-")
+        .is_none_or(|suffix| suffix.is_empty())
+        || StoryId::new(doc_id).is_err()
+    {
+        return Err(OperationRequestError::InvalidStoryDocumentId(
+            doc_id.to_owned(),
+        ));
     }
     Ok(())
 }
@@ -552,8 +577,90 @@ pub enum OperationRequestError {
         "operation payload requestedIntent must be DR, STORY, or CODING_PLAN and requires entryNode=ROUTE: {0}"
     )]
     InvalidRequestedIntent(String),
+    #[error("operation payload field docId must be a valid STORY-* identifier: {0}")]
+    InvalidStoryDocumentId(String),
     #[error("lease TTL must be in 30..=3600 seconds")]
     InvalidLeaseTtl,
     #[error("failed to canonicalize operation payload: {0}")]
     CanonicalizePayload(serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::validate_operation_payload;
+    use crate::OperationName;
+
+    #[test]
+    fn story_document_save_requires_a_valid_story_doc_id() {
+        for (label, payload) in [
+            (
+                "missing",
+                json!({"intent":"STORY","contentFile":"story.md"}),
+            ),
+            (
+                "null",
+                json!({"intent":"STORY","contentFile":"story.md","docId":null}),
+            ),
+            (
+                "empty",
+                json!({"intent":"STORY","contentFile":"story.md","docId":""}),
+            ),
+            (
+                "wrong prefix",
+                json!({"intent":"STORY","contentFile":"story.md","docId":"DR-001"}),
+            ),
+            (
+                "missing suffix",
+                json!({"intent":"STORY","contentFile":"story.md","docId":"STORY-"}),
+            ),
+        ] {
+            let error = match validate_operation_payload(OperationName::DocumentSave, &payload) {
+                Ok(()) => panic!("{label} Story docId must fail"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("docId"), "{label}: {error}");
+        }
+
+        validate_operation_payload(
+            OperationName::DocumentSave,
+            &json!({
+                "intent":"STORY",
+                "contentFile":"story.md",
+                "docId":"STORY-ROUTE-001"
+            }),
+        )
+        .expect("valid Story identity");
+    }
+
+    #[test]
+    fn non_story_document_save_keeps_doc_id_optional() {
+        for intent in ["RA", "DR", "TESTCASE", "CODING_PLAN"] {
+            validate_operation_payload(
+                OperationName::DocumentSave,
+                &json!({"intent":intent,"contentFile":"document.md"}),
+            )
+            .unwrap_or_else(|error| panic!("{intent} docId remains optional: {error}"));
+        }
+    }
+
+    #[test]
+    fn story_admission_does_not_leak_doc_id_requirements_into_testcase() {
+        validate_operation_payload(
+            OperationName::DocumentSave,
+            &json!({
+                "intent":"STORY",
+                "contentFile":"story.md",
+                "docId":"STORY-ROUTE-001"
+            }),
+        )
+        .expect("Story identity is explicit");
+
+        validate_operation_payload(
+            OperationName::DocumentSave,
+            &json!({"intent":"TESTCASE","contentFile":"testcase.md"}),
+        )
+        .expect("TestCase remains scoped by authoritative activeStory state");
+    }
 }

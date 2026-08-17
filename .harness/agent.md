@@ -1,6 +1,6 @@
 # ae-sdd Agent Harness
 
-<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/SKILL.md" sha256="6de602571e92849b02a67b9f00421690afb7eb52ee41cfa983cdeee98bfdf096" -->
+<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/SKILL.md" sha256="e411042c965d3d7e0085b9f1ac6128d47e4e69b38e7b95dc5f28cb40e1ddc953" -->
 ---
 name: ae-sdd
 version: 4.0.0
@@ -223,7 +223,7 @@ real verification evidence is finalized, and review status/findings are
 committed. No Proposal, CodingReport, TestReport, CodeReview report, or changelog
 file is created by the runtime workflow.
 
-<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/HARNESS.md" sha256="089e08aeac87edd017dcbe20bd74af413549cce4d7355c73a8e370e10e50f5b1" -->
+<!-- ae-sdd:harness-source path="//?/D:/Item/ae-sdd/source/HARNESS.md" sha256="d94a87a4a366b974700aa135b4686d89f9cdcc1fe8b9e118b2a2dda05f895536" -->
 # ae-sdd Agent Harness
 
 This Harness connects an Agent host to the Rust ae-sdd daemon. It does not embed
