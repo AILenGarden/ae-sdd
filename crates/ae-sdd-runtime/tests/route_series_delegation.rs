@@ -1244,6 +1244,157 @@ fn series_capability_cannot_execute_root_transition() {
 }
 
 #[test]
+fn nested_delegation_inherits_root_host_adapter() {
+    const DEDICATED_ADAPTER: &str = "host-lineage-dedicated";
+    const SERIES_SESSION: &str = "00000000-0000-0000-0000-000000001401";
+
+    let harness = Harness::new(RuntimeConfig::default());
+    let mut default_host = harness.connection_as(ClientKind::HostAdapter, Some("codex"));
+    let mut dedicated_host =
+        harness.connection_as(ClientKind::HostAdapter, Some(DEDICATED_ADAPTER));
+    let mut connection = harness.connection(ClientKind::Hook);
+    let workspace = register_workspace(&harness, &mut connection, "nested-host-lineage");
+
+    let mut root_open = params(
+        json!({
+            "externalKey":"nested-host-lineage-root",
+            "role":"root",
+            "engaged":false,
+            "hostAdapterId":DEDICATED_ADAPTER
+        }),
+        1_000,
+    );
+    root_open.workspace_id = Some(workspace.workspace_id.clone());
+    root_open.agent_id = Some("nested-host-lineage-root-agent".to_owned());
+    root_open.work_item_id = Some(WORK_ITEM.to_owned());
+    root_open.idempotency_key = Some("nested-host-lineage-root-open".to_owned());
+    let root: SessionResult = serde_json::from_value(result(&harness.call(
+        &mut connection,
+        RpcMethod::SessionOpen,
+        root_open,
+    )))
+    .expect("root session decodes");
+
+    let series = create_root_series_delegation(
+        &harness,
+        &mut connection,
+        &workspace,
+        &root,
+        "nested-host-lineage-root-agent",
+        WORK_ITEM,
+        "coding-plan",
+        &["CODING_PLAN"],
+        "nested-host-lineage-series-create",
+    );
+    let series_action = result(&harness.call(
+        &mut dedicated_host,
+        RpcMethod::HostActionNext,
+        params(json!({"adapterId":DEDICATED_ADAPTER}), 1_000),
+    ));
+    assert_eq!(series_action["delegationId"], series["delegationId"]);
+    assert!(
+        result(&harness.call(
+            &mut default_host,
+            RpcMethod::HostActionNext,
+            params(json!({"adapterId":"codex"}), 1_000),
+        ))
+        .is_null(),
+        "the Root binding must override the global codex default"
+    );
+
+    let mut ack = params(
+        json!({
+            "adapterId":DEDICATED_ADAPTER,
+            "ack":{
+                "ackId":"00000000-0000-0000-0000-000000001402",
+                "actionId":series_action["actionId"],
+                "commandSeq":series_action["commandSeq"],
+                "outcome":"accepted",
+                "hostTaskId":"nested-host-lineage-series",
+                "sessionId":SERIES_SESSION
+            }
+        }),
+        1_000,
+    );
+    ack.idempotency_key = Some("nested-host-lineage-series-ack".to_owned());
+    result(&harness.call(&mut dedicated_host, RpcMethod::HostActionAck, ack));
+
+    let mut accept = params(
+        json!({
+            "delegationId":series["delegationId"],
+            "claimId":series_action["claimId"],
+            "actionId":series_action["actionId"],
+            "childSessionId":SERIES_SESSION,
+            "expiresAtUnixMs":series["deadlineUnixMs"].as_u64().expect("deadline") - 100
+        }),
+        1_000,
+    );
+    accept.workspace_id = Some(workspace.workspace_id.clone());
+    accept.work_item_id = Some(WORK_ITEM.to_owned());
+    accept.idempotency_key = Some("nested-host-lineage-series-accept".to_owned());
+    result(&harness.call(&mut connection, RpcMethod::DelegationAccept, accept));
+
+    let mut series_open = params(
+        json!({
+            "externalKey":"nested-host-lineage-series",
+            "role":"series",
+            "engaged":false,
+            "delegationId":series["delegationId"]
+        }),
+        1_000,
+    );
+    series_open.workspace_id = Some(workspace.workspace_id.clone());
+    series_open.agent_id = Some("nested-host-lineage-series-agent".to_owned());
+    series_open.session_id = Some(SERIES_SESSION.to_owned());
+    series_open.work_item_id = Some(WORK_ITEM.to_owned());
+    series_open.idempotency_key = Some("nested-host-lineage-series-open".to_owned());
+    let series_session: SessionResult = serde_json::from_value(result(&harness.call(
+        &mut connection,
+        RpcMethod::SessionOpen,
+        series_open,
+    )))
+    .expect("Series session decodes");
+
+    let mut task_create = session_params(
+        &workspace,
+        &series_session,
+        "nested-host-lineage-series-agent",
+        json!({
+            "childRole":"task",
+            "parentDelegationId":series["delegationId"],
+            "inputRevision":2,
+            "inputFingerprint":"d".repeat(64),
+            "deadlineUnixMs":4_500,
+            "grant":{"operations":[],"capabilities":[],"paths":[]},
+            "briefing":"prove nested Host adapter lineage"
+        }),
+        1_000,
+    );
+    task_create.work_item_id = Some(WORK_ITEM.to_owned());
+    task_create.idempotency_key = Some("nested-host-lineage-task-create".to_owned());
+    let task = result(&harness.call(&mut connection, RpcMethod::DelegationCreate, task_create));
+
+    let task_action = result(&harness.call(
+        &mut dedicated_host,
+        RpcMethod::HostActionNext,
+        params(json!({"adapterId":DEDICATED_ADAPTER}), 1_000),
+    ));
+    assert_eq!(
+        task_action["delegationId"], task["delegationId"],
+        "a nested Task must remain on the Root-bound Host adapter: {task_action}"
+    );
+    assert!(
+        result(&harness.call(
+            &mut default_host,
+            RpcMethod::HostActionNext,
+            params(json!({"adapterId":"codex"}), 1_000),
+        ))
+        .is_null(),
+        "the global codex adapter must not capture a nested Task"
+    );
+}
+
+#[test]
 fn root_can_delegate_daemon_committed_coding_work_without_supplying_authority() {
     let harness = Harness::new(RuntimeConfig::default());
     let _host = harness.connection_as(ClientKind::HostAdapter, Some(ADAPTER));
