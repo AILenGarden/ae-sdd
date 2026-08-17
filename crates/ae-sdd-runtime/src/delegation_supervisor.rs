@@ -27,7 +27,7 @@ use crate::host_execution_binding::{HOST_EXECUTION_BINDING_V1, HostExecutionBind
 
 use crate::{
     AssetRefWire, ClockPort, ContextProjectResult, ContextProjectionInput, DelegationCreatePayload,
-    DelegationReportPayload, DelegationResult, HostAckPayload, HostActionPayload,
+    DelegationReportPayload, DelegationResult, DurableEvent, HostAckPayload, HostActionPayload,
     HostPressurePayload, PersistencePort, RuntimeDelegationAttestationRecord,
     RuntimeDelegationHostActionRecord, RuntimeDelegationRecord, RuntimeError, RuntimeIdentityKind,
     RuntimeIdentitySnapshot, RuntimeIdentityTransition, RuntimeResult, RuntimeSessionRecord,
@@ -290,6 +290,21 @@ impl DelegationSupervisor {
                 artifact_receipt: None,
                 cleanup_receipt: None,
             });
+            // A renewal in the pre-fix release advanced only the rebuildable
+            // projection. Promote that value only when the committed event
+            // proves it came from the daemon's renewal path; otherwise keep
+            // recovery fail-closed on an unproven external mutation.
+            let mut authoritative_deadline = typed.deadline_unix_ms;
+            if record.deadline_unix_ms > authoritative_deadline {
+                let event = self.committed_renewal_event(&record)?.ok_or_else(|| {
+                    RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "operational delegation differs from typed identity authority",
+                    )
+                })?;
+                self.promote_recovered_renewal(&snapshot, &record, &event)?;
+                authoritative_deadline = record.deadline_unix_ms;
+            }
             if record.delegation_id != typed.delegation_id
                 || (!record.workspace_id.is_empty() && record.workspace_id != typed.workspace_id)
                 || typed.work_item_id.as_ref().is_some_and(|work_item_id| {
@@ -302,7 +317,7 @@ impl DelegationSupervisor {
                 || record.child_role != typed.role
                 || record.input_revision != typed.input_revision
                 || record.input_fingerprint != typed.input_fingerprint
-                || record.deadline_unix_ms != typed.deadline_unix_ms
+                || record.deadline_unix_ms > authoritative_deadline
                 || record.action_id != binding.host_action_id
                 || (!record.action_digest.is_empty()
                     && record.action_digest != binding.action_digest)
@@ -326,6 +341,7 @@ impl DelegationSupervisor {
             record.root_session_id.clone_from(&typed.root_session_id);
             record.child_session_id.clone_from(&typed.child_session_id);
             record.action_digest.clone_from(&binding.action_digest);
+            record.deadline_unix_ms = authoritative_deadline;
             if record.created_at_unix_ms == 0 {
                 record.created_at_unix_ms = typed.created_at_unix_ms;
             }
@@ -378,6 +394,143 @@ impl DelegationSupervisor {
                 self.host.attach_claim(&record.action_id, claim_id)?;
             }
         }
+        Ok(())
+    }
+
+    fn committed_renewal_event(
+        &self,
+        record: &DurableDelegation,
+    ) -> RuntimeResult<Option<DurableEvent>> {
+        const EVENT_PAGE_SIZE: usize = 4_096;
+        let expected_scope = format!("delegation-renew\0{}", record.delegation_id);
+        let mut after = 0;
+        let mut found = None;
+        loop {
+            let page = self.persistence.events_after(after, EVENT_PAGE_SIZE)?;
+            if page.is_empty() {
+                break;
+            }
+            for event in &page {
+                if event.kind != "delegation.renewed"
+                    || event.payload.get("scope").and_then(Value::as_str)
+                        != Some(expected_scope.as_str())
+                {
+                    continue;
+                }
+                if event.workspace_id.as_deref() != Some(record.workspace_id.as_str())
+                    || event.session_id.as_deref() != Some(record.parent_session_id.as_str())
+                {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "renewal event identity differs from the operational delegation",
+                    ));
+                }
+                let key = event
+                    .payload
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .filter(|key| !key.is_empty())
+                    .ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::ExternalStateConflict,
+                            "renewal event lacks its receipt key",
+                        )
+                    })?;
+                let receipt = self
+                    .persistence
+                    .load_receipt(&expected_scope, key)?
+                    .ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::ExternalStateConflict,
+                            "renewal event lacks its atomic receipt",
+                        )
+                    })?;
+                if receipt.event_seq != event.event_seq {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "renewal receipt points to a different durable event",
+                    ));
+                }
+                let response: Value =
+                    serde_json::from_str(&receipt.response_json).map_err(|_| {
+                        RuntimeError::new(
+                            StableErrorCode::ExternalStateConflict,
+                            "renewal receipt response is malformed",
+                        )
+                    })?;
+                if response.get("delegationId").and_then(Value::as_str)
+                    != Some(record.delegation_id.as_str())
+                {
+                    return Err(RuntimeError::new(
+                        StableErrorCode::ExternalStateConflict,
+                        "renewal receipt names a different delegation",
+                    ));
+                }
+                if response.get("deadlineUnixMs").and_then(Value::as_u64)
+                    == Some(record.deadline_unix_ms)
+                {
+                    found = Some(event.clone());
+                }
+            }
+            after = page.last().map_or(after, |event| event.event_seq);
+            if page.len() < EVENT_PAGE_SIZE {
+                break;
+            }
+        }
+        Ok(found)
+    }
+
+    fn promote_recovered_renewal(
+        &self,
+        snapshot: &RuntimeIdentitySnapshot,
+        record: &DurableDelegation,
+        event: &DurableEvent,
+    ) -> RuntimeResult<()> {
+        let mut delegation = snapshot.delegation.clone().ok_or_else(|| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "typed delegation snapshot lacks its delegation row",
+            )
+        })?;
+        delegation.deadline_unix_ms = record.deadline_unix_ms;
+        delegation.updated_at_unix_ms = self.clock.now_unix_ms();
+        let session = self.current_delegation_session(&delegation, snapshot.session.as_ref())?;
+        let mut response = snapshot.response.clone();
+        response
+            .as_object_mut()
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::ExternalStateConflict,
+                    "typed delegation response is malformed",
+                )
+            })?
+            .insert("deadlineUnixMs".to_owned(), json!(record.deadline_unix_ms));
+        let scope_digest = hex::encode(Sha256::digest(
+            format!("ae-sdd/recovery-renew/v1\0{}", record.delegation_id).as_bytes(),
+        ));
+        self.persistence
+            .commit_identity_bundle(RuntimeIdentityTransition {
+                operation: "delegation.renew.recover".to_owned(),
+                scope_digest,
+                idempotency_key: format!("recovery-renew-{}", event.event_seq),
+                request_digest: event.payload_digest.clone(),
+                expected_workspace_mode: None,
+                expected_inventory_generation: None,
+                expected_session_status: None,
+                expected_delegation_status: Some("running".to_owned()),
+                expected_context_generation: None,
+                snapshot: RuntimeIdentitySnapshot {
+                    identity_kind: RuntimeIdentityKind::Delegation,
+                    workspace: snapshot.workspace.clone(),
+                    session,
+                    delegation: Some(delegation),
+                    host_action: snapshot.host_action.clone(),
+                    attestation: snapshot.attestation.clone(),
+                    response,
+                    replayed: false,
+                },
+                committed_at_unix_ms: self.clock.now_unix_ms(),
+            })?;
         Ok(())
     }
 
@@ -1345,6 +1498,7 @@ impl DelegationSupervisor {
     /// would hold its grant for as long as it liked. The bound is a total
     /// lifetime measured from creation, so repeated renewals cannot walk the
     /// deadline forward without limit.
+    #[allow(clippy::too_many_arguments)]
     pub fn renew(
         &self,
         parent_session_id: &str,
@@ -1352,6 +1506,9 @@ impl DelegationSupervisor {
         deadline_unix_ms: u64,
         max_lifetime_ms: u64,
         now_unix_ms: u64,
+        scope_digest: &str,
+        idempotency_key: &str,
+        request_digest: &str,
     ) -> RuntimeResult<DelegationResult> {
         let mut record = self.load(delegation_id)?;
         if record.parent_session_id != parent_session_id {
@@ -1389,7 +1546,54 @@ impl DelegationSupervisor {
                 "renewal cannot shorten a delegation deadline",
             ));
         }
+        let prior = self.typed_delegation_snapshot(delegation_id)?;
+        let prior_delegation = prior.delegation.as_ref().ok_or_else(|| {
+            RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "typed delegation snapshot lacks its delegation row",
+            )
+        })?;
+        if prior_delegation.deadline_unix_ms != record.deadline_unix_ms {
+            if prior_delegation.deadline_unix_ms == deadline_unix_ms {
+                record.deadline_unix_ms = deadline_unix_ms;
+                self.save(&record)?;
+                return Ok(project_delegation(&record));
+            }
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "operational delegation differs from typed identity authority",
+            ));
+        }
         record.deadline_unix_ms = deadline_unix_ms;
+        let projection = project_delegation(&record);
+        let response = serde_json::to_value(&projection).map_err(canonical_error)?;
+        let mut delegation = prior_delegation.clone();
+        delegation.deadline_unix_ms = deadline_unix_ms;
+        delegation.updated_at_unix_ms = now_unix_ms;
+        let session = self.current_delegation_session(&delegation, prior.session.as_ref())?;
+        self.persistence
+            .commit_identity_bundle(RuntimeIdentityTransition {
+                operation: "delegation.renew".to_owned(),
+                scope_digest: scope_digest.to_owned(),
+                idempotency_key: idempotency_key.to_owned(),
+                request_digest: request_digest.to_owned(),
+                expected_workspace_mode: None,
+                expected_inventory_generation: None,
+                expected_session_status: None,
+                expected_delegation_status: Some("running".to_owned()),
+                expected_context_generation: None,
+                snapshot: RuntimeIdentitySnapshot {
+                    identity_kind: RuntimeIdentityKind::Delegation,
+                    workspace: prior.workspace,
+                    session,
+                    delegation: Some(delegation),
+                    host_action: prior.host_action,
+                    attestation: prior.attestation,
+                    response,
+                    replayed: false,
+                },
+                committed_at_unix_ms: now_unix_ms,
+            })?;
         self.save(&record)?;
         Ok(project_delegation(&record))
     }
@@ -1486,6 +1690,45 @@ impl DelegationSupervisor {
                     "typed delegation identity is missing",
                 )
             })
+    }
+
+    fn current_delegation_session(
+        &self,
+        delegation: &RuntimeDelegationRecord,
+        embedded: Option<&RuntimeSessionRecord>,
+    ) -> RuntimeResult<Option<RuntimeSessionRecord>> {
+        let Some(child_session_id) = delegation.child_session_id.as_deref() else {
+            return Ok(embedded.cloned());
+        };
+        let session = self
+            .persistence
+            .list_identity_snapshots(RuntimeIdentityKind::Session)?
+            .into_iter()
+            .filter_map(|snapshot| snapshot.session)
+            .find(|session| session.session_id == child_session_id)
+            .or_else(|| {
+                embedded
+                    .filter(|session| session.session_id == child_session_id)
+                    .cloned()
+            })
+            .ok_or_else(|| {
+                RuntimeError::new(
+                    StableErrorCode::DelegationAttestationFailed,
+                    "typed delegation references a missing child session",
+                )
+            })?;
+        if session.workspace_id != delegation.workspace_id
+            || session.role != delegation.role
+            || session.root_session_id != delegation.root_session_id
+            || session.parent_session_id.as_deref() != Some(delegation.parent_session_id.as_str())
+            || session.delegation_id.as_deref() != Some(delegation.delegation_id.as_str())
+        {
+            return Err(RuntimeError::new(
+                StableErrorCode::ExternalStateConflict,
+                "current child session differs from its delegation lineage",
+            ));
+        }
+        Ok(Some(session))
     }
 
     fn typed_delegation(&self, delegation_id: &str) -> RuntimeResult<RuntimeDelegationRecord> {

@@ -291,6 +291,21 @@ fn insert_before(text: &str, marker: &str, addition: &str) -> String {
     text.replacen(marker, &format!("{addition}{marker}"), 1)
 }
 
+fn remove_exact_line_once(text: &str, line_with_lf: &str) -> String {
+    let line = line_with_lf
+        .strip_suffix('\n')
+        .expect("fixture row must end with a line feed");
+    let crlf_row = format!("{line}\r\n");
+    let matches = text.matches(&crlf_row).count() + text.matches(line_with_lf).count();
+    assert_eq!(matches, 1, "fixture mutation must remove exactly one row");
+
+    if text.contains(&crlf_row) {
+        text.replacen(&crlf_row, "", 1)
+    } else {
+        text.replacen(line_with_lf, "", 1)
+    }
+}
+
 #[test]
 fn positive_srs_v2_micro_bug() {
     assert_positive_srs_v2("micro-bug.md");
@@ -655,39 +670,42 @@ fn core_rows_and_sections_require_basic_content_and_unique_risk_ids() {
 #[test]
 fn scale_requires_exact_dimensions_range_actual_max_and_confidence() {
     let base = positive_text();
-    let score_row = "| 可观察行为与场景广度 | 1 | 仅默认取值变更 |\n";
-    assert_rule(
-        &base.replacen(score_row, "", 1),
-        "closure-scale-dimension-count",
-    );
-    assert_rule(
-        &insert_before(&base, "最高分", score_row),
-        "closure-scale-dimension-count",
-    );
-    assert_rule(
-        &base.replacen(
-            "| 可观察行为与场景广度 | 1 |",
-            "| 可观察行为与场景广度 | 5 |",
-            1,
-        ),
-        "closure-scale-score-range",
-    );
-    assert_rule(
-        &base.replacen(
-            "| 可观察行为与场景广度 | 1 |",
-            "| 可观察行为与场景广度 | 4 |",
-            1,
-        ),
-        "closure-scale-inconsistent",
-    );
-    assert_rule(
-        &base.replace("最高分 = 1 ->", "最高分 = 4 ->"),
-        "closure-scale-maximum-mismatch",
-    );
-    assert_rule(
-        &base.replace("| Scale confidence | 88 |", "| Scale confidence | 101 |"),
-        "closure-confidence-range",
-    );
+    let line_feed = base.replace("\r\n", "\n");
+    for base in [&base, &line_feed] {
+        let score_row = "| 可观察行为与场景广度 | 1 | 仅默认取值变更 |\n";
+        assert_rule(
+            &remove_exact_line_once(base, score_row),
+            "closure-scale-dimension-count",
+        );
+        assert_rule(
+            &insert_before(base, "最高分", score_row),
+            "closure-scale-dimension-count",
+        );
+        assert_rule(
+            &base.replacen(
+                "| 可观察行为与场景广度 | 1 |",
+                "| 可观察行为与场景广度 | 5 |",
+                1,
+            ),
+            "closure-scale-score-range",
+        );
+        assert_rule(
+            &base.replacen(
+                "| 可观察行为与场景广度 | 1 |",
+                "| 可观察行为与场景广度 | 4 |",
+                1,
+            ),
+            "closure-scale-inconsistent",
+        );
+        assert_rule(
+            &base.replace("最高分 = 1 ->", "最高分 = 4 ->"),
+            "closure-scale-maximum-mismatch",
+        );
+        assert_rule(
+            &base.replace("| Scale confidence | 88 |", "| Scale confidence | 101 |"),
+            "closure-confidence-range",
+        );
+    }
 }
 
 #[test]

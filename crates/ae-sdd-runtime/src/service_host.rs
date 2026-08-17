@@ -239,9 +239,27 @@ impl RuntimeService {
                 "committed flow delegation intent has expired; rerun flow.next",
             ));
         }
+        let host_binding_session_id = if identity.role == WireAgentRole::Series {
+            let parent_delegation_id = {
+                let state = self.lock_state()?;
+                state
+                    .sessions
+                    .get(&identity.session_id)
+                    .and_then(|session| session.delegation_id.clone())
+                    .ok_or_else(|| {
+                        RuntimeError::new(
+                            StableErrorCode::DelegationAttestationFailed,
+                            "Series session is missing its delegation lineage",
+                        )
+                    })?
+            };
+            self.delegation.root_session_id(&parent_delegation_id)?
+        } else {
+            identity.session_id.clone()
+        };
         let adapter_id = if let Some(binding) = self
             .persistence
-            .load_record("session-host-binding/v1", &identity.session_id)?
+            .load_record("session-host-binding/v1", &host_binding_session_id)?
         {
             let bound_workspace = binding
                 .get("workspaceId")
@@ -663,12 +681,20 @@ impl RuntimeService {
         if let Some((value, _)) = self.replay_receipt(&scope, key, &digest)? {
             return Ok(value);
         }
+        let typed_scope_digest = canonical_digest(&json!({
+            "domain":"delegation.renew/v1",
+            "workspaceId":identity.workspace_id,
+            "delegationId":id,
+        }))?;
         let value = to_value(self.delegation.renew(
             &identity.session_id,
             id,
             payload.deadline_unix_ms,
             self.config.max_delegation_lifetime_ms,
             self.clock.now_unix_ms(),
+            &typed_scope_digest,
+            key,
+            &digest,
         )?)?;
         self.commit_receipt_event(
             &scope,

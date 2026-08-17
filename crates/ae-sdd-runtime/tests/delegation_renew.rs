@@ -13,9 +13,10 @@
 
 mod support;
 
-use ae_sdd_protocol::{ClientKind, RpcMethod};
-use ae_sdd_runtime::RuntimeConfig;
+use ae_sdd_protocol::{ClientKind, RpcMethod, StableErrorCode};
+use ae_sdd_runtime::{DurableEvent, IdempotencyReceipt, PersistencePort, RuntimeConfig};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use support::{
     Harness, create_root_series_delegation, open_root_session, params, register_workspace, result,
@@ -141,6 +142,55 @@ fn renew(fixture: &mut Fixture, deadline: u64, key: &str) -> Value {
         RpcMethod::DelegationRenew,
         request,
     )
+}
+
+fn commit_legacy_renewal(fixture: &Fixture, deadline: u64, key: &str) {
+    let scope = format!("delegation-renew\0{}", fixture.delegation_id);
+    let event_payload = json!({"scope":scope,"key":key});
+    let payload_digest = hex::encode(Sha256::digest(
+        serde_json::to_vec(&event_payload).expect("renewal event serializes"),
+    ));
+    let response = json!({
+        "delegationId":fixture.delegation_id,
+        "deadlineUnixMs":deadline
+    });
+    let request_digest = hex::encode(Sha256::digest(
+        serde_json::to_vec(&json!({
+            "delegationId":fixture.delegation_id,
+            "deadlineUnixMs":deadline
+        }))
+        .expect("renewal request serializes"),
+    ));
+    fixture
+        .harness
+        .persistence
+        .commit_event_and_receipt(
+            DurableEvent {
+                event_store_id: fixture
+                    .harness
+                    .persistence
+                    .event_store_id()
+                    .expect("event store identity")
+                    .to_string(),
+                event_seq: 0,
+                boot_id: fixture.harness.runtime.boot_id().to_string(),
+                kind: "delegation.renewed".to_owned(),
+                workspace_id: Some(fixture.workspace.workspace_id.clone()),
+                session_id: Some(fixture.root.session_id.clone()),
+                work_item_id: Some("WORK".to_owned()),
+                payload: event_payload,
+                payload_digest,
+            },
+            IdempotencyReceipt {
+                scope,
+                key: key.to_owned(),
+                request_digest,
+                response_json: serde_json::to_string(&response)
+                    .expect("renewal response serializes"),
+                event_seq: 0,
+            },
+        )
+        .expect("legacy renewal event and receipt commit atomically");
 }
 
 #[test]
@@ -374,6 +424,105 @@ fn replaying_one_renewal_does_not_extend_twice() {
         "the same idempotency key must return the same deadline"
     );
     assert_eq!(replayed["deadlineUnixMs"], extended);
+}
+
+#[test]
+fn recovery_preserves_the_current_child_session_status() {
+    let mut fixture = running_delegation("renew-recovery-session", 5_000);
+    let mut child_open = params(
+        json!({
+            "externalKey":"renew-recovery-child",
+            "role":"series",
+            "engaged":false,
+            "delegationId":fixture.delegation_id
+        }),
+        1_000,
+    );
+    child_open.workspace_id = Some(fixture.workspace.workspace_id.clone());
+    child_open.agent_id = Some("renew-recovery-child-agent".to_owned());
+    child_open.session_id = Some(CHILD.to_owned());
+    child_open.work_item_id = Some("WORK".to_owned());
+    child_open.idempotency_key = Some("renew-recovery-child-open".to_owned());
+    let _child: ae_sdd_runtime::SessionResult =
+        serde_json::from_value(result(&fixture.harness.call(
+            &mut fixture.root_connection,
+            RpcMethod::SessionOpen,
+            child_open,
+        )))
+        .expect("child session opens before recovery");
+
+    let extended = fixture.created_deadline + 60_000;
+    let mut operational = fixture
+        .harness
+        .persistence
+        .load_record("delegation/v1", &fixture.delegation_id)
+        .expect("operational delegation loads")
+        .expect("operational delegation exists");
+    operational["deadlineUnixMs"] = json!(extended);
+    fixture
+        .harness
+        .persistence
+        .store_record("delegation/v1", &fixture.delegation_id, &operational)
+        .expect("legacy operational renewal is staged");
+
+    commit_legacy_renewal(&fixture, extended, "legacy-renewal");
+
+    fixture
+        .harness
+        .runtime
+        .recover()
+        .expect("renewal recovery succeeds");
+
+    let mut child_reopen = params(
+        json!({
+            "externalKey":"renew-recovery-child",
+            "role":"series",
+            "engaged":false,
+            "delegationId":fixture.delegation_id
+        }),
+        1_000,
+    );
+    child_reopen.workspace_id = Some(fixture.workspace.workspace_id.clone());
+    child_reopen.agent_id = Some("renew-recovery-child-agent".to_owned());
+    child_reopen.session_id = Some(CHILD.to_owned());
+    child_reopen.work_item_id = Some("WORK".to_owned());
+    child_reopen.idempotency_key = Some("renew-recovery-child-reopen".to_owned());
+    let reopened = fixture.harness.call(
+        &mut fixture.root_connection,
+        RpcMethod::SessionOpen,
+        child_reopen,
+    );
+    let child: ae_sdd_runtime::SessionResult = serde_json::from_value(result(&reopened))
+        .expect("child session reopens after renewal recovery");
+    assert_eq!(child.session_id, CHILD);
+}
+
+#[test]
+fn recovery_rejects_an_operational_deadline_not_proven_by_the_receipt() {
+    let fixture = running_delegation("renew-recovery-conflict", 5_000);
+    let proven_deadline = fixture.created_deadline + 60_000;
+    commit_legacy_renewal(&fixture, proven_deadline, "legacy-renewal-conflict");
+
+    let unproven_deadline = proven_deadline + 1_000;
+    let mut operational = fixture
+        .harness
+        .persistence
+        .load_record("delegation/v1", &fixture.delegation_id)
+        .expect("operational delegation loads")
+        .expect("operational delegation exists");
+    operational["deadlineUnixMs"] = json!(unproven_deadline);
+    fixture
+        .harness
+        .persistence
+        .store_record("delegation/v1", &fixture.delegation_id, &operational)
+        .expect("external deadline mutation is staged");
+
+    let error = fixture
+        .harness
+        .runtime
+        .recover()
+        .expect_err("an unproven operational deadline must fail closed");
+    assert_eq!(error.code(), StableErrorCode::ExternalStateConflict);
 }
 
 #[test]
