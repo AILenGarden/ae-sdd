@@ -922,7 +922,7 @@ impl RuntimeService {
                 let legacy_to_v2 = current.decision_digest_version.is_none()
                     && decision_digest_version.as_deref() == Some("v2")
                     && input_fingerprint == current.input_fingerprint;
-                let same_series_boundary_refresh = if !legacy_to_v2
+                let permitted_boundary_refresh = if !legacy_to_v2
                     && decision_digest != current.decision_digest
                     && input_fingerprint != current.input_fingerprint
                 {
@@ -949,9 +949,16 @@ impl RuntimeService {
                         };
                     match (prior, next) {
                         (Some(prior), Some(next)) => {
+                            let same_series = prior.series_kind == next.series_kind
+                                && prior.required_artifacts == next.required_artifacts;
+                            let review_remediation = prior.series_kind == "review"
+                                && prior.required_artifacts.is_empty()
+                                && next.series_kind == "coding"
+                                && next.required_artifacts.is_empty()
+                                && action_kind == Some("await-agent-work")
+                                && result.get("phase").and_then(Value::as_str) == Some("coding");
                             prior.state_revision == next.state_revision
-                                && prior.series_kind == next.series_kind
-                                && prior.required_artifacts == next.required_artifacts
+                                && (same_series || review_remediation)
                         }
                         _ => false,
                     }
@@ -959,7 +966,7 @@ impl RuntimeService {
                     false
                 };
                 if !legacy_to_v2
-                    && !same_series_boundary_refresh
+                    && !permitted_boundary_refresh
                     && (decision_digest != current.decision_digest
                         || input_fingerprint != current.input_fingerprint)
                 {
@@ -968,7 +975,7 @@ impl RuntimeService {
                         "one state revision produced conflicting flow delegation intents",
                     ));
                 }
-                if !legacy_to_v2 && !same_series_boundary_refresh {
+                if !legacy_to_v2 && !permitted_boundary_refresh {
                     update_current = false;
                 }
             }
