@@ -472,6 +472,45 @@ pub struct RuntimeSessionRecord {
     pub updated_at_unix_ms: u64,
 }
 
+/// Secret-free current-boot session authority receipt.
+///
+/// Persisted atomically with typed session identity commits during reopen.
+/// Used to restore Review delegation lineage authority after daemon restart
+/// when the historical `accepted_boot_id` in attestation no longer matches
+/// the current boot.
+///
+/// SECURITY: Must not contain capability tokens, signing keys, or any
+/// replayable secret material. Only carries lineage identity dimensions
+/// and expiry for strict matching during Review live admission.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentBootSessionReceipt {
+    /// Current daemon boot identity.
+    pub boot_id: String,
+    /// Owning workspace.
+    pub workspace_id: String,
+    /// Physical session identity.
+    pub session_id: String,
+    /// Authenticated agent identity.
+    pub agent_id: String,
+    /// Daemon-derived role.
+    pub role: WireAgentRole,
+    /// Root orchestration session.
+    pub root_session_id: String,
+    /// Parent physical session for a child.
+    pub parent_session_id: Option<String>,
+    /// Delegation for a child.
+    pub delegation_id: Option<String>,
+    /// Current work item when bound.
+    pub work_item_id: Option<String>,
+    /// Canonical scoped grant at reopen time.
+    pub grant: crate::ScopedGrantWire,
+    /// Receipt expiry in Unix milliseconds.
+    pub expires_at_unix_ms: u64,
+    /// Receipt creation time in Unix milliseconds.
+    pub created_at_unix_ms: u64,
+}
+
 /// Typed durable delegation row.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -577,6 +616,9 @@ pub struct RuntimeIdentitySnapshot {
     pub host_action: Option<RuntimeDelegationHostActionRecord>,
     /// Optional physical attestation.
     pub attestation: Option<RuntimeDelegationAttestationRecord>,
+    /// Optional current-boot session authority receipt.
+    #[serde(default)]
+    pub current_boot_receipt: Option<CurrentBootSessionReceipt>,
     /// Secret-free operation response material.
     pub response: Value,
     /// True only on the returned value when a receipt was replayed.

@@ -24,9 +24,10 @@ use ae_sdd_operations::{OperationName, ValidatedOperationRequest};
 use ae_sdd_protocol::StableErrorCode;
 use ae_sdd_review::{ReviewSupervisor, ReviewSupervisorError, dedup_findings};
 use ae_sdd_runtime::{
-    BusinessWorkspace, PersistencePort, RuntimeDelegationAttestationRecord,
-    RuntimeDelegationRecord, RuntimeError, RuntimeIdentityKind, RuntimeJobRecord, RuntimeJobStatus,
-    RuntimeResult, RuntimeSessionRecord, ScopedGrantWire, WireAgentRole,
+    BusinessWorkspace, CurrentBootSessionReceipt, PersistencePort,
+    RuntimeDelegationAttestationRecord, RuntimeDelegationRecord, RuntimeError, RuntimeIdentityKind,
+    RuntimeJobRecord, RuntimeJobStatus, RuntimeResult, RuntimeSessionRecord, ScopedGrantWire,
+    WireAgentRole,
 };
 use ae_sdd_store::UtcTimestamp;
 use serde_json::{Map, Value, json};
@@ -1253,12 +1254,19 @@ pub(crate) fn prepare_review_record(
     let observed = review_observed_timestamp(observed_at)?;
     let now_ms = u64::try_from(observed_at.as_timestamp().as_millisecond())
         .map_err(|_| schema_error("daemon review timestamp predates the Unix epoch"))?;
+    let boots = boots_with_receipt_fallback(
+        boot_id,
+        persistence,
+        &workspace.workspace_id,
+        caller.session_id(),
+        now_ms,
+    );
     let bound = bind_reviewer(
         workspace,
         work_item_id,
         caller,
         persistence,
-        AttestationBoots::live(boot_id),
+        boots,
         now_ms,
         ReviewAdmission::Record,
     )?;
@@ -1362,12 +1370,19 @@ pub(crate) fn prepare_review_contribution(
     let observed = review_observed_timestamp(observed_at)?;
     let now_ms = u64::try_from(observed_at.as_timestamp().as_millisecond())
         .map_err(|_| schema_error("daemon review timestamp predates the Unix epoch"))?;
+    let boots = boots_with_receipt_fallback(
+        boot_id,
+        persistence,
+        &workspace.workspace_id,
+        caller.session_id(),
+        now_ms,
+    );
     let bound = bind_reviewer(
         workspace,
         work_item_id,
         caller,
         persistence,
-        AttestationBoots::live(boot_id),
+        boots,
         now_ms,
         ReviewAdmission::Contribute,
     )?;
@@ -1715,9 +1730,19 @@ fn finalize_review_attempt(
 /// journal is what proves that boot really was this daemon. Without that, every
 /// daemon restart would permanently destroy committed Review authority.
 #[derive(Clone, Copy, Debug)]
-struct AttestationBoots<'a> {
+pub(crate) struct AttestationBoots<'a> {
     current: &'a str,
-    committed: Option<&'a str>,
+    policy: BootPermitPolicy<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BootPermitPolicy<'a> {
+    /// Only current boot is permitted (used when receipts missing/invalid)
+    LiveCurrentOnly,
+    /// Any historical boot is permitted (used when all four receipts valid)
+    HistoricalReattachAuthorized,
+    /// Specific committed boot is permitted (used for event revalidation)
+    CommittedEventRevalidation(&'a str),
 }
 
 impl<'a> AttestationBoots<'a> {
@@ -1725,7 +1750,16 @@ impl<'a> AttestationBoots<'a> {
     const fn live(current: &'a str) -> Self {
         Self {
             current,
-            committed: None,
+            policy: BootPermitPolicy::LiveCurrentOnly,
+        }
+    }
+
+    /// Historical reattachment: any historical boot is allowed (when all
+    /// four session receipts are valid in current boot).
+    const fn historical_reattach(current: &'a str) -> Self {
+        Self {
+            current,
+            policy: BootPermitPolicy::HistoricalReattachAuthorized,
         }
     }
 
@@ -1734,14 +1768,216 @@ impl<'a> AttestationBoots<'a> {
     const fn committed(current: &'a str, committed: &'a str) -> Self {
         Self {
             current,
-            committed: Some(committed),
+            policy: BootPermitPolicy::CommittedEventRevalidation(committed),
         }
     }
 
-    fn permits(&self, accepted_boot_id: &str) -> bool {
-        !accepted_boot_id.is_empty()
-            && (accepted_boot_id == self.current || self.committed == Some(accepted_boot_id))
+    pub(crate) fn permits(&self, accepted_boot_id: &str) -> bool {
+        if accepted_boot_id.is_empty() {
+            return false;
+        }
+        // Current boot always allowed
+        if accepted_boot_id == self.current {
+            return true;
+        }
+        // Historical boot handling depends on policy
+        match self.policy {
+            BootPermitPolicy::LiveCurrentOnly => false,
+            BootPermitPolicy::HistoricalReattachAuthorized => true,
+            BootPermitPolicy::CommittedEventRevalidation(committed_boot) => {
+                accepted_boot_id == committed_boot
+            }
+        }
     }
+}
+
+/// Constructs AttestationBoots with receipt-based reattachment support.
+///
+/// Checks all four required lineage sessions (Root, Series, author Task, Reviewer)
+/// for valid current-boot receipts. If all receipts exist, match current boot,
+/// and have valid identity/lineage/grant/TTL, allows historical attestation.
+/// Otherwise returns live boots requiring current-boot attestations only.
+pub(crate) fn boots_with_receipt_fallback<'a>(
+    boot_id: &'a str,
+    persistence: &dyn PersistencePort,
+    workspace_id: &str,
+    reviewer_session_id: SessionId,
+    now_ms: u64,
+) -> AttestationBoots<'a> {
+    // Load all session snapshots once
+    let snapshots = match persistence.list_identity_snapshots(RuntimeIdentityKind::Session) {
+        Ok(snapshots) => snapshots,
+        Err(_) => return AttestationBoots::live(boot_id),
+    };
+
+    // Build receipt index by session ID
+    let mut receipt_index = std::collections::HashMap::new();
+    for snap in &snapshots {
+        if let Some(session) = &snap.session
+            && let Some(receipt) = &snap.current_boot_receipt
+        {
+            receipt_index.insert(session.session_id.as_str(), (session, receipt));
+        }
+    }
+
+    // Find reviewer session and extract lineage
+    let reviewer_session_id_str = reviewer_session_id.to_string();
+    let Some((reviewer_session, reviewer_receipt)) =
+        receipt_index.get(reviewer_session_id_str.as_str())
+    else {
+        return AttestationBoots::live(boot_id);
+    };
+
+    // Verify reviewer receipt matches current boot and basic identity
+    if !verify_receipt_match(
+        reviewer_receipt,
+        boot_id,
+        workspace_id,
+        &reviewer_session_id_str,
+        &reviewer_session.agent_id,
+        WireAgentRole::Reviewer,
+        &reviewer_session.root_session_id,
+        reviewer_session.parent_session_id.as_deref(),
+        reviewer_session.delegation_id.as_deref(),
+        reviewer_session.current_work_item.as_deref(),
+        &reviewer_session.grant,
+        now_ms,
+    ) {
+        return AttestationBoots::live(boot_id);
+    }
+
+    // Extract required lineage sessions
+    let root_session_id = &reviewer_session.root_session_id;
+    let Some(series_session_id) = reviewer_session.parent_session_id.as_deref() else {
+        return AttestationBoots::live(boot_id);
+    };
+
+    // Find and verify Root session receipt
+    let Some((root_session, root_receipt)) = receipt_index.get(root_session_id.as_str()) else {
+        return AttestationBoots::live(boot_id);
+    };
+    if !verify_receipt_match(
+        root_receipt,
+        boot_id,
+        workspace_id,
+        root_session_id,
+        &root_session.agent_id,
+        WireAgentRole::Root,
+        root_session_id,
+        None,
+        None,
+        root_session.current_work_item.as_deref(),
+        &root_session.grant,
+        now_ms,
+    ) {
+        return AttestationBoots::live(boot_id);
+    }
+
+    // Find and verify Series session receipt
+    let Some((series_session, series_receipt)) = receipt_index.get(series_session_id) else {
+        return AttestationBoots::live(boot_id);
+    };
+    if !verify_receipt_match(
+        series_receipt,
+        boot_id,
+        workspace_id,
+        series_session_id,
+        &series_session.agent_id,
+        WireAgentRole::Series,
+        root_session_id,
+        Some(root_session_id),
+        series_session.delegation_id.as_deref(),
+        series_session.current_work_item.as_deref(),
+        &series_session.grant,
+        now_ms,
+    ) {
+        return AttestationBoots::live(boot_id);
+    }
+
+    // Find author Task session from Series lineage (NOT from Reviewer delegation)
+    // The Reviewer's delegation_id points to Series→Reviewer, but we need Series→Task
+    let delegation_snapshots =
+        match persistence.list_identity_snapshots(RuntimeIdentityKind::Delegation) {
+            Ok(snapshots) => snapshots,
+            Err(_) => return AttestationBoots::live(boot_id),
+        };
+
+    // Find the Task delegation: parent is Series, role is Task, work_item matches
+    // current Review. Exactly one is required — zero or multiple candidates must
+    // fail closed rather than guess which Task session the historical attestation
+    // is allowed to bind.
+    let review_work_item_id = reviewer_session.current_work_item.as_deref();
+    let task_delegations = delegation_snapshots
+        .iter()
+        .filter_map(|snap| snap.delegation.as_ref())
+        .filter(|d| {
+            d.parent_session_id == series_session_id
+                && d.workspace_id == workspace_id
+                && d.role == WireAgentRole::Task
+                && d.work_item_id.as_deref() == review_work_item_id
+        })
+        .collect::<Vec<_>>();
+    let [task_delegation] = task_delegations.as_slice() else {
+        return AttestationBoots::live(boot_id);
+    };
+    let Some(author_session_id) = task_delegation.child_session_id.as_deref() else {
+        return AttestationBoots::live(boot_id);
+    };
+
+    // Find and verify author Task session receipt
+    let Some((author_session, author_receipt)) = receipt_index.get(author_session_id) else {
+        return AttestationBoots::live(boot_id);
+    };
+    if !verify_receipt_match(
+        author_receipt,
+        boot_id,
+        workspace_id,
+        author_session_id,
+        &author_session.agent_id,
+        WireAgentRole::Task,
+        root_session_id,
+        Some(series_session_id),
+        author_session.delegation_id.as_deref(),
+        author_session.current_work_item.as_deref(),
+        &author_session.grant,
+        now_ms,
+    ) {
+        return AttestationBoots::live(boot_id);
+    }
+
+    // All four receipts valid - allow any historical boot attestation.
+    // When all sessions have valid receipts in the current boot, the lineage
+    // is proven reconnected, so any historical accepted_boot_id is acceptable.
+    AttestationBoots::historical_reattach(boot_id)
+}
+
+/// Verifies a single session receipt matches expected identity, lineage, and TTL.
+#[allow(clippy::too_many_arguments)]
+fn verify_receipt_match(
+    receipt: &CurrentBootSessionReceipt,
+    expected_boot_id: &str,
+    expected_workspace_id: &str,
+    expected_session_id: &str,
+    expected_agent_id: &str,
+    expected_role: WireAgentRole,
+    expected_root_session_id: &str,
+    expected_parent_session_id: Option<&str>,
+    expected_delegation_id: Option<&str>,
+    expected_work_item_id: Option<&str>,
+    expected_grant: &ScopedGrantWire,
+    now_ms: u64,
+) -> bool {
+    receipt.boot_id == expected_boot_id
+        && receipt.workspace_id == expected_workspace_id
+        && receipt.session_id == expected_session_id
+        && receipt.agent_id == expected_agent_id
+        && receipt.role == expected_role
+        && receipt.root_session_id == expected_root_session_id
+        && receipt.parent_session_id.as_deref() == expected_parent_session_id
+        && receipt.delegation_id.as_deref() == expected_delegation_id
+        && receipt.work_item_id.as_deref() == expected_work_item_id
+        && receipt.grant == *expected_grant
+        && receipt.expires_at_unix_ms > now_ms
 }
 
 /// Which review operation a physical reviewer admission must be granted.
@@ -1982,6 +2218,7 @@ fn validate_child_authority<'a>(
         || delegation.role != child.role
         || delegation.status != "running"
         || (admission.requires_live_ttl() && delegation.deadline_unix_ms <= now_ms)
+        || delegation.work_item_id.as_deref() != child.current_work_item.as_deref()
         || attestation.workspace_id != child.workspace_id
         || attestation.delegation_id != delegation_id
         || attestation.physical_session_id != child.session_id
@@ -3211,7 +3448,8 @@ pub(crate) fn validate_clean_contribution_depth(
             ));
         }
     }
-    validate_review_evidence_manifest(&root, state, work_item_id, &evidence_ids, input_fingerprint)
+    let story_id = review_evidence_story_id(state, work_item_id)?;
+    validate_review_evidence_manifest(&root, state, story_id, &evidence_ids, input_fingerprint)
 }
 
 fn nonempty_unique_strings<'a>(
@@ -3270,11 +3508,11 @@ fn canonical_workspace_path(root: &Path, raw: &str) -> RuntimeResult<std::path::
 fn validate_review_evidence_manifest(
     root: &Path,
     state: &Value,
-    work_item_id: &str,
+    story_id: &str,
     evidence_ids: &[&str],
     input_fingerprint: InputFingerprint,
 ) -> RuntimeResult<()> {
-    let manifest_ref = format!(".auto-engineering/{work_item_id}/evidence/manifest.json");
+    let manifest_ref = format!(".auto-engineering/{story_id}/evidence/manifest.json");
     let manifest_path = root.join(&manifest_ref);
     let bytes = fs::read(&manifest_path)
         .map_err(|_| gate_blocked("clean review requires a finalized evidence manifest"))?;
@@ -3283,11 +3521,11 @@ fn validate_review_evidence_manifest(
             "finalized evidence manifest exceeds its byte bound",
         ));
     }
-    validate_review_evidence_authority(root, state, work_item_id, &manifest_ref, &bytes)?;
+    validate_review_evidence_authority(root, state, story_id, &manifest_ref, &bytes)?;
     let manifest: Value = serde_json::from_slice(&bytes)
         .map_err(|_| external_conflict("finalized evidence manifest is malformed"))?;
     if manifest.get("schemaVersion").and_then(Value::as_u64) != Some(1)
-        || manifest.get("storyId").and_then(Value::as_str) != Some(work_item_id)
+        || manifest.get("storyId").and_then(Value::as_str) != Some(story_id)
     {
         return Err(external_conflict(
             "finalized evidence manifest scope is invalid",
@@ -3334,7 +3572,7 @@ fn validate_review_evidence_manifest(
     // hash chain must verify and every cited evidenceId must be backed by a
     // recorded event. A legacy manifest without a ledger keeps the checks
     // above unchanged.
-    if let Some(events) = verify_review_evidence_ledger(root, work_item_id)? {
+    if let Some(events) = verify_review_evidence_ledger(root, story_id)? {
         let recorded = events
             .iter()
             .filter(|event| event.kind() == EvidenceLedgerEventKind::Recorded)
@@ -3354,7 +3592,7 @@ fn validate_review_evidence_manifest(
 fn validate_review_evidence_authority(
     root: &Path,
     state: &Value,
-    work_item_id: &str,
+    story_id: &str,
     manifest_ref: &str,
     manifest_bytes: &[u8],
 ) -> RuntimeResult<()> {
@@ -3366,7 +3604,7 @@ fn validate_review_evidence_authority(
     let authority = authority
         .as_object()
         .ok_or_else(|| external_conflict("state evidence authority is malformed"))?;
-    let ledger_ref = format!(".auto-engineering/{work_item_id}/evidence/ledger.jsonl");
+    let ledger_ref = format!(".auto-engineering/{story_id}/evidence/ledger.jsonl");
     for (field, expected) in [
         ("manifestRef", manifest_ref),
         ("ledgerRef", ledger_ref.as_str()),
@@ -3408,10 +3646,11 @@ pub(crate) fn validate_state_bound_review_evidence(
     let root = Path::new(&workspace.canonical_root)
         .canonicalize()
         .map_err(|_| external_conflict("review workspace root cannot be canonicalized"))?;
-    let manifest_ref = format!(".auto-engineering/{work_item_id}/evidence/manifest.json");
+    let story_id = review_evidence_story_id(state, work_item_id)?;
+    let manifest_ref = format!(".auto-engineering/{story_id}/evidence/manifest.json");
     let manifest_bytes = fs::read(root.join(&manifest_ref))
         .map_err(|_| external_conflict("state-bound evidence manifest is missing"))?;
-    validate_review_evidence_authority(&root, state, work_item_id, &manifest_ref, &manifest_bytes)
+    validate_review_evidence_authority(&root, state, story_id, &manifest_ref, &manifest_bytes)
 }
 
 pub(crate) fn validate_finalized_review_evidence(
@@ -3423,7 +3662,8 @@ pub(crate) fn validate_finalized_review_evidence(
     let root = Path::new(&workspace.canonical_root)
         .canonicalize()
         .map_err(|_| external_conflict("review workspace root cannot be canonicalized"))?;
-    let manifest_ref = format!(".auto-engineering/{work_item_id}/evidence/manifest.json");
+    let story_id = review_evidence_story_id(state, work_item_id)?;
+    let manifest_ref = format!(".auto-engineering/{story_id}/evidence/manifest.json");
     let manifest_bytes = fs::read(root.join(&manifest_ref)).map_err(|_| {
         gate_blocked("terminal verification requires a finalized evidence manifest")
     })?;
@@ -3468,14 +3708,8 @@ pub(crate) fn validate_finalized_review_evidence(
                 .ok_or_else(|| external_conflict("finalized evidenceId is missing"))
         })
         .collect::<RuntimeResult<Vec<_>>>()?;
-    validate_review_evidence_manifest(
-        &root,
-        state,
-        work_item_id,
-        &evidence_ids,
-        input_fingerprint,
-    )?;
-    let events = verify_review_evidence_ledger(&root, work_item_id)?
+    validate_review_evidence_manifest(&root, state, story_id, &evidence_ids, input_fingerprint)?;
+    let events = verify_review_evidence_ledger(&root, story_id)?
         .ok_or_else(|| gate_blocked("terminal verification requires an evidence ledger"))?;
     let finalized = events
         .last()
@@ -3539,6 +3773,21 @@ pub(crate) fn validate_finalized_review_evidence(
         }
     }
     Ok(manifest_bytes)
+}
+
+fn review_evidence_story_id<'a>(state: &'a Value, work_item_id: &'a str) -> RuntimeResult<&'a str> {
+    if state
+        .get("storyStates")
+        .and_then(Value::as_object)
+        .is_some_and(|stories| stories.contains_key(work_item_id))
+    {
+        return Ok(work_item_id);
+    }
+    ["activeStory", "currentStory"]
+        .into_iter()
+        .find_map(|field| state.get(field).and_then(Value::as_str))
+        .filter(|story| !story.is_empty())
+        .ok_or_else(|| schema_error("Review evidence requires an authoritative Story scope"))
 }
 
 /// Loads and verifies the append-only evidence ledger for one story, failing
@@ -3857,4 +4106,128 @@ fn external_conflict(message: &str) -> RuntimeError {
 
 fn attestation_error(message: &str) -> RuntimeError {
     RuntimeError::new(StableErrorCode::DelegationAttestationFailed, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ae_sdd_runtime::GrantPathWire;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn validate_child_authority_rejects_task_delegation_work_item_mismatch() {
+        let workspace_id = "ws-test";
+        let root_session_id = "root-123";
+        let series_session_id = "series-456";
+        let task_session_id = "task-789";
+        let delegation_id = "delegation-abc";
+        let boot_id = "boot-current";
+        let now_ms = 1_700_000_000_000u64;
+        let deadline_ms = now_ms + 3_600_000;
+
+        let correct_work_item = "STORY-CORRECT";
+        let wrong_work_item = "STORY-WRONG";
+
+        // Parent and delegation both use STORY-WRONG to match each other.
+        // Only child uses STORY-CORRECT, creating the single mismatch:
+        // delegation.work_item_id != child.current_work_item
+        let parent_session = RuntimeSessionRecord {
+            session_id: series_session_id.to_owned(),
+            agent_id: "series-agent".to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            external_key_hash: "hash-series".to_owned(),
+            role: WireAgentRole::Series,
+            root_session_id: root_session_id.to_owned(),
+            parent_session_id: Some(root_session_id.to_owned()),
+            delegation_id: Some("delegation-series".to_owned()),
+            engaged: true,
+            current_work_item: Some(wrong_work_item.to_owned()),
+            grant: ScopedGrantWire {
+                operations: vec!["flow.next".to_owned()],
+                capabilities: vec![],
+                paths: vec![GrantPathWire::ProjectRoot],
+            },
+            context_generation: 0,
+            expires_at_unix_ms: deadline_ms,
+            status: "active".to_owned(),
+            created_at_unix_ms: now_ms - 1000,
+            updated_at_unix_ms: now_ms,
+        };
+
+        let child_session = RuntimeSessionRecord {
+            session_id: task_session_id.to_owned(),
+            agent_id: "task-agent".to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            external_key_hash: "hash-task".to_owned(),
+            role: WireAgentRole::Task,
+            root_session_id: root_session_id.to_owned(),
+            parent_session_id: Some(series_session_id.to_owned()),
+            delegation_id: Some(delegation_id.to_owned()),
+            engaged: true,
+            current_work_item: Some(correct_work_item.to_owned()),
+            grant: ScopedGrantWire {
+                operations: vec!["workitem.read".to_owned()],
+                capabilities: vec![],
+                paths: vec![GrantPathWire::ProjectRoot],
+            },
+            context_generation: 0,
+            expires_at_unix_ms: deadline_ms,
+            status: "active".to_owned(),
+            created_at_unix_ms: now_ms - 500,
+            updated_at_unix_ms: now_ms,
+        };
+
+        let delegation = RuntimeDelegationRecord {
+            delegation_id: delegation_id.to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            work_item_id: Some(wrong_work_item.to_owned()),
+            root_session_id: root_session_id.to_owned(),
+            parent_session_id: series_session_id.to_owned(),
+            child_session_id: Some(task_session_id.to_owned()),
+            parent_delegation_id: Some("delegation-series".to_owned()),
+            role: WireAgentRole::Task,
+            input_revision: 7,
+            input_fingerprint: "fingerprint".to_owned(),
+            status: "running".to_owned(),
+            deadline_unix_ms: deadline_ms,
+            receipt_digest: "receipt".to_owned(),
+            created_at_unix_ms: now_ms - 500,
+            updated_at_unix_ms: now_ms,
+        };
+
+        let attestation = RuntimeDelegationAttestationRecord {
+            workspace_id: workspace_id.to_owned(),
+            delegation_id: delegation_id.to_owned(),
+            physical_session_id: task_session_id.to_owned(),
+            host_action_id: "action-001".to_owned(),
+            host_ack_id: "ack-001".to_owned(),
+            action_digest: "action".to_owned(),
+            ack_digest: "ack".to_owned(),
+            claim_digest: "claim".to_owned(),
+            grant: child_session.grant.clone(),
+            attestation_ref: "ref".to_owned(),
+            attestation_digest: "digest".to_owned(),
+            accepted_boot_id: boot_id.to_owned(),
+            accepted_at_unix_ms: now_ms - 500,
+            expires_at_unix_ms: deadline_ms,
+        };
+
+        let mut delegations = BTreeMap::new();
+        delegations.insert(delegation_id.to_owned(), (delegation, attestation));
+
+        let boots = AttestationBoots::live(boot_id);
+
+        let result = validate_child_authority(
+            &child_session,
+            &parent_session,
+            &delegations,
+            boots,
+            now_ms,
+            ReviewAdmission::Contribute,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), StableErrorCode::DelegationAttestationFailed);
+    }
 }
