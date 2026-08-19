@@ -6,6 +6,7 @@ use ae_sdd_session::{
 };
 
 use super::*;
+use crate::model::CurrentBootSessionReceipt;
 
 struct CapabilitySignInput<'a> {
     workspace_id: &'a str,
@@ -781,17 +782,17 @@ impl RuntimeService {
                         updated_at_unix_ms: now,
                     },
                     session: Some(RuntimeSessionRecord {
-                        session_id: session.result.session_id,
-                        agent_id: session.agent_id,
-                        workspace_id: session.workspace_id,
+                        session_id: session.result.session_id.clone(),
+                        agent_id: session.agent_id.clone(),
+                        workspace_id: session.workspace_id.clone(),
                         external_key_hash: session.external_key_hash,
                         role: session.result.role,
-                        root_session_id,
-                        parent_session_id,
-                        delegation_id: session.delegation_id,
+                        root_session_id: root_session_id.clone(),
+                        parent_session_id: parent_session_id.clone(),
+                        delegation_id: session.delegation_id.clone(),
                         engaged: session.result.engaged,
-                        current_work_item: session.current_work_item,
-                        grant: session.grant,
+                        current_work_item: session.current_work_item.clone(),
+                        grant: session.grant.clone(),
                         context_generation: session.result.context_generation,
                         expires_at_unix_ms: session.result.expires_at_unix_ms,
                         status: if session.active {
@@ -807,6 +808,20 @@ impl RuntimeService {
                     delegation: None,
                     host_action: None,
                     attestation: None,
+                    current_boot_receipt: Some(CurrentBootSessionReceipt {
+                        boot_id: self.boot_id.to_string(),
+                        workspace_id: session.workspace_id.clone(),
+                        session_id: session.result.session_id.clone(),
+                        agent_id: session.agent_id.clone(),
+                        role: session.result.role,
+                        root_session_id: root_session_id.clone(),
+                        parent_session_id: parent_session_id.clone(),
+                        delegation_id: session.delegation_id.clone(),
+                        work_item_id: session.current_work_item.clone(),
+                        grant: session.grant.clone(),
+                        expires_at_unix_ms: session.result.expires_at_unix_ms,
+                        created_at_unix_ms: now,
+                    }),
                     response: secret_free_response,
                     replayed: false,
                 },

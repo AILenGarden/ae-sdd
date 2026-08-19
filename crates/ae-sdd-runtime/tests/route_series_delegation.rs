@@ -2537,6 +2537,90 @@ fn same_revision_series_boundary_refreshes_the_same_semantic_delegation_intent()
 }
 
 #[test]
+fn same_revision_review_remediation_refreshes_the_coding_series_intent() {
+    const REVIEW_DECISION: &str =
+        "abababababababababababababababababababababababababababababababab";
+    let harness = Harness::new(RuntimeConfig::default());
+    let _host = harness.connection_as(ClientKind::HostAdapter, Some(ADAPTER));
+    let mut root_connection = harness.connection(ClientKind::Hook);
+    let workspace = register_workspace(&harness, &mut root_connection, "review-remediation");
+    let root = open_root_session(
+        &harness,
+        &mut root_connection,
+        &workspace,
+        "root-agent",
+        "root-external",
+        Some(WORK_ITEM),
+    );
+    harness.business.set_flow_next_result(json!({
+        "schemaVersion":"flow-decision/v1",
+        "decisionDigestVersion":"v2",
+        "decisionDigest":REVIEW_DECISION,
+        "inputFingerprint":"e".repeat(64),
+        "stateRevision":9,
+        "phase":"coding",
+        "nextAction":{"kind":"collect-review-contributions"}
+    }));
+    let mut review = session_params(&workspace, &root, "root-agent", json!({}), 1_000);
+    review.work_item_id = Some(WORK_ITEM.to_owned());
+    result(&harness.call(&mut root_connection, RpcMethod::FlowNext, review));
+
+    harness.business.set_flow_next_result(json!({
+        "schemaVersion":"flow-decision/v1",
+        "decisionDigestVersion":"v2",
+        "decisionDigest":DECISION,
+        "inputFingerprint":"f".repeat(64),
+        "stateRevision":9,
+        "phase":"coding",
+        "nextAction":{"kind":"await-agent-work"}
+    }));
+    let mut remediation = session_params(&workspace, &root, "root-agent", json!({}), 1_000);
+    remediation.work_item_id = Some(WORK_ITEM.to_owned());
+    let refreshed = result(&harness.call(&mut root_connection, RpcMethod::FlowNext, remediation));
+
+    assert_eq!(refreshed["decisionDigest"], DECISION);
+    let current = harness
+        .persistence
+        .load_record(
+            "flow-delegation-current/v1",
+            &format!("{}\0{}", workspace.workspace_id, WORK_ITEM),
+        )
+        .expect("current loads")
+        .expect("current exists");
+    assert_eq!(current["decisionDigest"], DECISION);
+    assert_eq!(current["inputFingerprint"], "f".repeat(64));
+
+    let create = |digest: &str, key: &str| {
+        let mut request = session_params(
+            &workspace,
+            &root,
+            "root-agent",
+            json!({"flowDecisionDigest":digest}),
+            1_000,
+        );
+        request.work_item_id = Some(WORK_ITEM.to_owned());
+        request.idempotency_key = Some(key.to_owned());
+        request
+    };
+    let stale = harness.call(
+        &mut root_connection,
+        RpcMethod::DelegationCreate,
+        create(REVIEW_DECISION, "stale-review-after-remediation"),
+    );
+    assert_eq!(stable_error(&stale), "DELEGATION_ATTESTATION_FAILED");
+
+    let coding = result(&harness.call(
+        &mut root_connection,
+        RpcMethod::DelegationCreate,
+        create(DECISION, "coding-remediation-series"),
+    ));
+    assert_eq!(
+        coding["briefing"],
+        "Execute the daemon-committed coding Series"
+    );
+}
+
+#[test]
 fn same_revision_cannot_replace_a_different_series_intent() {
     const FIRST_DECISION: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     let harness = Harness::new(RuntimeConfig::default());

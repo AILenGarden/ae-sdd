@@ -23,12 +23,12 @@ pub use error::{RuntimeError, RuntimeResult};
 pub use grant::{GrantPathWire, ScopedGrantWire};
 pub use model::{
     AssetRefWire, CompactAckPayload, CompactRequestPayload, CompactResult, ContextProjectPayload,
-    ContextProjectResult, ContextProjectionInput, DaemonLifecycle, DelegationAcceptPayload,
-    DelegationCreatePayload, DelegationReportPayload, DelegationResult, DurableEvent, EventBatch,
-    EventSubscriptionPayload, ExecutionAuthorityCursor, ExecutionCheckpointRecord,
-    ExecutionCheckpointRecovery, ExecutionCheckpointRecoveryInput, ExecutionCheckpointScope,
-    ExecutionHookDirective, ExecutionHookDirectiveDecision, ExecutionHookEvent,
-    ExecutionResourceLeaseOutcomeV1, ExecutionResourceLeaseRecordV1,
+    ContextProjectResult, ContextProjectionInput, CurrentBootSessionReceipt, DaemonLifecycle,
+    DelegationAcceptPayload, DelegationCreatePayload, DelegationReportPayload, DelegationResult,
+    DurableEvent, EventBatch, EventSubscriptionPayload, ExecutionAuthorityCursor,
+    ExecutionCheckpointRecord, ExecutionCheckpointRecovery, ExecutionCheckpointRecoveryInput,
+    ExecutionCheckpointScope, ExecutionHookDirective, ExecutionHookDirectiveDecision,
+    ExecutionHookEvent, ExecutionResourceLeaseOutcomeV1, ExecutionResourceLeaseRecordV1,
     ExecutionResourceLeaseRequestV1, HookPayload, HookResult, HostAckPayload,
     HostActionDeliveryPayload, HostActionPayload, HostPressurePayload, HostRegisterPayload,
     IdempotencyReceipt, PreparedExecutionHookV1, RootSeriesDelegationPayload,
