@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Evidence fixtures contain byte hashes; keep source and reference bytes stable.
+tests/fixtures/** text eol=lf

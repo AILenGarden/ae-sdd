@@ -1,7 +1,0 @@
-{
-  "name": "@nubase/config",
-  "version": "0.0.0",
-  "private": true,
-  "main": "./index.js",
-  "files": ["tailwind-preset.js", "index.js"]
-}

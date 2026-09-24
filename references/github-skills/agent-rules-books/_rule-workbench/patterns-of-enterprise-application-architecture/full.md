@@ -1,1 +1,0 @@
-../../patterns-of-enterprise-application-architecture/patterns-of-enterprise-application-architecture.md

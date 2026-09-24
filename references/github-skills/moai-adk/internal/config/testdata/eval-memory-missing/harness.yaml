@@ -1,3 +1,0 @@
-# 이 픽스처는 evaluator.memory_scope 키가 없는 경우를 테스트합니다
-harness:
-  evaluator: {}

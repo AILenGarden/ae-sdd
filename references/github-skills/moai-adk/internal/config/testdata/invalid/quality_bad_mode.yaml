@@ -1,4 +1,0 @@
-constitution:
-  development_mode: waterfall
-  enforce_quality: true
-  test_coverage_target: 85

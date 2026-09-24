@@ -1,0 +1,34 @@
+{
+  "id": "ae-sdd",
+  "name": "ae-sdd",
+  "version": "0.1.0+codex.20260922084755",
+  "description": "Unified AL engineering entry with built-in OKF project knowledge.",
+  "author": {
+    "name": "AILenGarden"
+  },
+  "license": "MIT",
+  "keywords": [
+    "agent",
+    "capability",
+    "skill-registry",
+    "engineering"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ae-sdd",
+    "shortDescription": "AL engineering and built-in project knowledge",
+    "longDescription": "Use ae-sdd for engineering work and OKF project knowledge. Knowledge instructions, evidence tools and templates are included in the plugin; no separate knowledge Skill installation is required.",
+    "developerName": "AILenGarden",
+    "category": "Programming",
+    "capabilities": [
+      "System capability routing",
+      "Built-in OKF project knowledge",
+      "AL Skill family registration",
+      "Managed installation and uninstall"
+    ],
+    "defaultPrompt": [
+      "Use ae-sdd to select the right AL capability for this task."
+    ],
+    "brandColor": "#1F8F86"
+  }
+}

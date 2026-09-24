@@ -1,1 +1,0 @@
-../../the-pragmatic-programmer/the-pragmatic-programmer.md

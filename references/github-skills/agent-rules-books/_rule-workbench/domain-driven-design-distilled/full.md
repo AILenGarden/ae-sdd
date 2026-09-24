@@ -1,1 +1,0 @@
-../../domain-driven-design-distilled/domain-driven-design-distilled.md

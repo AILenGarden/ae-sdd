@@ -1,8 +1,0 @@
-{
-  "adapter_version": "0.3.0",
-  "ae_sdd_version": "3.14.0",
-  "source_input_sha256": "556be6fb789e9844522edbaefe4aaa225188715de0dd2fff92e291cad25ae9af",
-  "source_commit": "b79bffea57e0895917ec16ac5e1776007c53e3ec",
-  "templateHash": "49757AC57F538302E2314C69C58FA6ED9726714D",
-  "converted_at": "2026-07-23T04:33:48Z"
-}

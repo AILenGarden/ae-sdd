@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "owner": "ae-sdd",
+  "source_capability": "al-knowledge",
+  "files": {
+    ".gitattributes": "f6ba7ce0c42349436b8f54d195d5dc91d17c555f8ccb060f0d76be2daf8fbfcd",
+    "references/concept-types.md": "027780b3658566e099b72baef0af9c770f9d013cd30209e65ab8d90830f4472f",
+    "references/consumption-contract.md": "93849d4d0f5bd157cca3fa98c58ecd0364982d14706a196d967e036b4b324b3c",
+    "references/knowledge-contract.md": "dd5b96b628b9e4790d60e8d9588a911140f3d075b69ce8c2a46e4edc1a2106fc",
+    "references/okf-profile.md": "80d5667ab8e6aa896861dadd509c68b0861d5497a93338d2078d5447b9755f0f",
+    "references/tooling.md": "b8fa24608b958261707e56d6d5efb67727a88a52d0f792baebd7d3985d99e11f",
+    "requirements.txt": "b4603b9468ade4d639d2c6f73b89d50e1fa5d227c73ab15be0382cca478513e6",
+    "scripts/knowledge.py": "90c01fe222bbe8e87c805810ca09d6e56da9120442de4ee5c997ca46e2bd666e",
+    "CAPABILITY.md": "e2d0845bafe19ab7f02f02b5202403c53603621ff4fb57300502559d568681a9",
+    "templates/concept.md": "fe9e765b7844f5107191cf237f24e3d65e40e30f0098536a691c632488b1988d",
+    "templates/project.md": "08fd6d3dadcdc71559ecdf0558034d943e2f65e9b854dde382782a481459c749",
+    "tests/fixtures/project/.al-knowledge/interfaces/cancel.md": "f454f24cd803dca14b460009243f050cae4b047c5daea2758a51dc4f4f43e762",
+    "tests/fixtures/project/.al-knowledge/project.md": "23629711f24573135b823c1f21e9ac08cd9115223d726bd8c8aae818adaa11a4",
+    "tests/fixtures/project/.al-knowledge/references/app.md": "197a4bdd4dbe283d20bd13655ccc4ea74d93327d17de6007b942e9101d7b7dd9",
+    "tests/fixtures/project/.al-knowledge/references/spec.md": "e8163fbb03fee2119e82b9209e1fc03b6a70a74e846b2c3a297aba6ed43c9f6c",
+    "tests/fixtures/project/.al-knowledge/specs/story.md": "2448773ffe14b218e1bb5e0bffdffb90f116364d718337d6e7003717d45f2b63",
+    "tests/fixtures/project/app.py": "086e8c1b88373d39140c1a051ff88c001dd25b40d19cc535ac9434b00b96f952",
+    "tests/fixtures/project/spec.md": "a3349f2e3226afc9f7448a9973efa1dbb7249e45b574f8defe1ac6bbcdf906a3",
+    "tests/test_knowledge.py": "03954b67af07762f19c3ec3e96a5d02a597a672bb7ed34d7d1f6ae9097a49b1a"
+  }
+}

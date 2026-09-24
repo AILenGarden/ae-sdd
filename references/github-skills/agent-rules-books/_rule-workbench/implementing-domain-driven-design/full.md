@@ -1,1 +1,0 @@
-../../implementing-domain-driven-design/implementing-domain-driven-design.md

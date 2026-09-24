@@ -1,1 +1,0 @@
-../../clean-architecture/clean-architecture.md
