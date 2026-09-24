@@ -51,7 +51,8 @@ python -m unittest discover -s skills/ae-sdd/capabilities/al-knowledge/tests -p 
 ```
 
 平台包生成：`scripts/pack-zcode-plugin.py`、`scripts/pack-claude-plugin.ps1`。
-`dist/` 与 `db-operator/bin/` 是源工作区里已跟踪的构建产物，随源保留以便按版本取用。
+`dist/` 与 `db-operator/bin/` 是源工作区里已跟踪的构建产物，仅保留当前版本，便于按版本取用；
+历史版本快照不进本仓库（在源工作区的归档与 git 历史中）。
 
 ## 贡献方式
 
