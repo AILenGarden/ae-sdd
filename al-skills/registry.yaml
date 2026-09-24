@@ -1,0 +1,80 @@
+apiVersion: ae-sdd.dev/v1
+kind: CapabilityRegistry
+schemaVersion: 1
+name: al-agent-workspace
+root: al-skills
+policy:
+  sourceOfTruth: single
+  resolveBy: explicit-path
+  runtimeCopiesAreSources: false
+  independentInstall: true
+ui:
+  style: apple-like
+  motion: natural
+  density: comfortable
+  interaction: human-centered
+  principles: [simple-geometry, clear-hierarchy, reversible-actions, progressive-disclosure]
+discovery:
+  codex:
+    mechanism: plugin-manifest
+    manifest: .codex-plugin/plugin.json
+  claude:
+    mechanism: skills-directory
+    manifest: null
+    note: >-
+      Claude Code discovers <skill-root>/<name>/SKILL.md directly and treats the
+      manifest as optional, so no .claude-plugin/plugin.json is maintained.
+      ae-sdd bundles knowledge privately; a full suite also resolves four other capability entries.
+      Management procedures remain references.
+capabilities:
+  - id: ae-sdd
+    kind: entry
+    enabled: true
+    packageRoot: coding/al/ae-sdd
+    pluginManifest: coding/al/ae-sdd/.codex-plugin/plugin.json
+    entrypoint: coding/al/ae-sdd/skills/ae-sdd/SKILL.md
+    description: Discover and route the AL engineering capability family.
+  - id: al-ra
+    kind: capability
+    enabled: true
+    packageRoot: coding/al/al-ra
+    pluginManifest: coding/al/al-ra/.codex-plugin/plugin.json
+    installable: true
+    entrypoint: coding/al/al-ra/SKILL.md
+    description: Requirements analysis and clarification.
+  - id: al-coding
+    kind: capability
+    enabled: true
+    packageRoot: coding/al/al-coding
+    pluginManifest: coding/al/al-coding/.codex-plugin/plugin.json
+    installable: true
+    entrypoint: coding/al/al-coding/SKILL.md
+    config: coding/al/al-coding/framework/registry.yaml
+    description: Coding design, implementation, review, and verification.
+  - id: al-spec
+    kind: capability
+    enabled: true
+    packageRoot: coding/al/al-spec
+    pluginManifest: coding/al/al-spec/.codex-plugin/plugin.json
+    installable: true
+    entrypoint: coding/al/al-spec/SKILL.md
+    config: coding/al/al-spec/framework/registry.yaml
+    description: Typed specification authoring and review.
+  - id: al-knowledge
+    kind: capability
+    enabled: true
+    packageRoot: coding/al/al-knowledge
+    owner: ae-sdd
+    delivery: bundled
+    installable: false
+    entrypoint: coding/al/al-knowledge/SKILL.md
+    bundledEntrypoint: capabilities/al-knowledge/CAPABILITY.md
+    description: OKF project concepts, evidence, traceability and incremental maintenance.
+  - id: db-operator
+    kind: capability
+    enabled: true
+    packageRoot: coding/al/db-operator
+    pluginManifest: coding/al/db-operator/.codex-plugin/plugin.json
+    installable: true
+    entrypoint: coding/al/db-operator/SKILL.md
+    description: Strictly read-only database inspection.

@@ -1,0 +1,35 @@
+{
+  "id": "al-coding",
+  "name": "al-coding",
+  "version": "0.5.3",
+  "description": "Cross-language coding design, evidence-based code review, and registered SKILL discovery.",
+  "author": {
+    "name": "AILenGarden"
+  },
+  "license": "MIT",
+  "keywords": [
+    "coding",
+    "code-review",
+    "skill-registry",
+    "software-engineering"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "al-coding",
+    "shortDescription": "Coding design and review",
+    "longDescription": "ALCoding provides a cross-language coding design core, evidence-based code review guidance, and registered SKILL discovery.",
+    "developerName": "AILenGarden",
+    "category": "Programming",
+    "capabilities": [
+      "Registered SKILL discovery",
+      "Coding design core",
+      "Evidence-based code review"
+    ],
+    "defaultPrompt": [
+      "Use $al-coding to design and implement this code change.",
+      "Use $al-coding to review this implementation with evidence.",
+      "Use $al-coding to discover relevant coding skills."
+    ],
+    "brandColor": "#1F8F86"
+  }
+}

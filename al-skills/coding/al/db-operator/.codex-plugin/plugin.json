@@ -1,0 +1,29 @@
+{
+  "id": "db-operator",
+  "name": "db-operator",
+  "version": "3.0.0",
+  "description": "Read-only by default database operations with explicitly scoped DML and DDL capabilities.",
+  "author": {
+    "name": "AILenGarden"
+  },
+  "license": "MIT",
+  "keywords": [
+    "engineering",
+    "capability",
+    "db-operator"
+  ],
+  "interface": {
+    "displayName": "db-operator",
+    "shortDescription": "Read-only by default database operations with explicitly scoped DML and DDL capabilities.",
+    "longDescription": "Read-only by default database operations with explicitly scoped DML and DDL capabilities.",
+    "developerName": "AILenGarden",
+    "category": "Programming",
+    "capabilities": [
+      "Read-only by default database operations with explicitly scoped DML and DDL capabilities."
+    ],
+    "defaultPrompt": [
+      "Use $db-operator for this capability."
+    ],
+    "brandColor": "#1F8F86"
+  }
+}

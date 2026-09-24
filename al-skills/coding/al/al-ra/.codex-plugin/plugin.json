@@ -1,0 +1,29 @@
+{
+  "id": "al-ra",
+  "name": "al-ra",
+  "version": "0.1.0",
+  "description": "Requirements analysis and clarification.",
+  "author": {
+    "name": "AILenGarden"
+  },
+  "license": "MIT",
+  "keywords": [
+    "engineering",
+    "capability",
+    "al-ra"
+  ],
+  "interface": {
+    "displayName": "al-ra",
+    "shortDescription": "Requirements analysis and clarification.",
+    "longDescription": "Requirements analysis and clarification.",
+    "developerName": "AILenGarden",
+    "category": "Programming",
+    "capabilities": [
+      "Requirements analysis and clarification."
+    ],
+    "defaultPrompt": [
+      "Use $al-ra for this capability."
+    ],
+    "brandColor": "#1F8F86"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "al-knowledge",
+  "name": "al-knowledge",
+  "version": "0.2.0",
+  "description": "OKF project knowledge, evidence and engineering traceability.",
+  "author": {
+    "name": "AILenGarden"
+  },
+  "license": "MIT",
+  "keywords": [
+    "engineering",
+    "capability",
+    "al-knowledge"
+  ],
+  "interface": {
+    "displayName": "al-knowledge",
+    "shortDescription": "OKF project knowledge, evidence and engineering traceability.",
+    "longDescription": "Build, query, verify and incrementally maintain OKF project concepts with source evidence, engineering relationships and generated views.",
+    "developerName": "AILenGarden",
+    "category": "Programming",
+    "capabilities": [
+      "Project knowledge and evidence",
+      "Specification and code traceability",
+      "Knowledge impact analysis"
+    ],
+    "defaultPrompt": [
+      "Use $al-knowledge to query or maintain the target project knowledge with verifiable sources."
+    ],
+    "brandColor": "#1F8F86"
+  }
+}

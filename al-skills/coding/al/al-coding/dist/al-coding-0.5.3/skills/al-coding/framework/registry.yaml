@@ -1,0 +1,82 @@
+# ALCoding capability table.
+#
+# This is the only registration surface. A record points at an existing SKILL;
+# ALCoding does not require or interpret a manifest inside that SKILL.
+
+schema_version: 3
+description: Registered SKILL references discoverable by ALCoding
+
+skills:
+  - id: enterprise-redlines
+    name: 企业级编码红线
+    type: global
+    scope: global
+    path: plugins/global/enterprise-redlines/SKILL.md
+    enabled: true
+    description: 企业级研发红线与通用质量要求
+    tags: [coding, review, enterprise]
+
+  - id: java-spring-coding
+    name: Java Spring 编码适配
+    type: language
+    scope: global
+    path: plugins/language/java-spring-coding/SKILL.md
+    enabled: true
+    description: Java and Spring implementation guidance
+    tags: [java, spring, coding]
+
+  - id: java-spring-review
+    name: Java Spring 评审适配
+    type: language
+    scope: global
+    path: plugins/language/java-spring-review/SKILL.md
+    enabled: true
+    description: Java and Spring review guidance
+    tags: [java, spring, review]
+
+  - id: ddd
+    name: DDD 架构指导
+    type: architecture
+    scope: global
+    path: plugins/architecture/ddd/SKILL.md
+    enabled: true
+    description: Domain-driven architecture guidance
+    tags: [ddd, architecture]
+
+  - id: mvc
+    name: MVC 架构指导
+    type: architecture
+    scope: global
+    path: plugins/architecture/mvc/SKILL.md
+    enabled: true
+    description: MVC architecture guidance
+    tags: [mvc, architecture]
+
+  - id: agent
+    name: Agent 应用架构指导
+    type: architecture
+    scope: global
+    path: plugins/architecture/agent/SKILL.md
+    enabled: true
+    description: Agent application architecture guidance
+    tags: [agent, architecture, draft]
+
+  - id: java-ddd-naming
+    name: Java DDD 命名规范
+    type: architecture
+    scope: project
+    project_id: icec-cloud-life
+    path: D:/al-agent-workspace/al-skills/coding/auto-engineering/java-ddd-naming/SKILL.md
+    enabled: true
+    description: Java DDD 四层架构命名规范（interfaces/application/domain/infrastructure）。覆盖 DO/PO/DTO/Command/Query/Intent/Param 位置判定、方法/字段/常量/枚举/数据库表字段/REST URL 命名。Command/Query 是领域概念，定义在 domain 层。
+    tags: [java, ddd, naming, architecture, coding, review]
+
+  - id: icec-cloud-life
+    name: icec-cloud-life 项目约束
+    type: project
+    scope: project
+    project_id: icec-cloud-life
+    path: plugins/project/icec-cloud-life/SKILL.md
+    enabled: true
+    description: Life 项目身份、技术栈、工程结构和权威约束文件指针
+    tags: [life, java, spring, ddd, project, coding, review]

@@ -1,0 +1,28 @@
+{
+  "id": "al-spec",
+  "name": "al-spec",
+  "version": "0.5.1",
+  "description": "ALSpec 总入口负责识别规格任务并分流到独立的 DR、Story、TestCase SKILL；各类型 SKILL 负责具体写作与审查。",
+  "author": {
+    "name": "AILenGarden"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ALSpec",
+    "shortDescription": "Create and discover engineering specifications",
+    "longDescription": "ALSpec provides a top-level routing SKILL plus three independent specification types: DR, Story, and TestCase. The entrypoint identifies the requested deliverable, selects exactly one type SKILL, and loads the canonical global or exact project template.",
+    "developerName": "AILenGarden",
+    "category": "Programming",
+    "capabilities": [
+      "Three independent specification types",
+      "Global and project specification layers",
+      "Embedded writing rules with mandatory template loading"
+    ],
+    "defaultPrompt": [
+      "Start with the top-level al-spec SKILL to classify the requested deliverable as DR, Story, or TestCase.",
+      "Load exactly one matching type SKILL and its canonical template; use an exact project template mapping only when the project ID is confirmed.",
+      "For review requests, identify the existing specification type and route to that type SKILL."
+    ],
+    "brandColor": "#C45A2A"
+  }
+}

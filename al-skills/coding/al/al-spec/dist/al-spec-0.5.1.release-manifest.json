@@ -1,0 +1,14 @@
+{
+  "name": "al-spec",
+  "version": "0.5.1",
+  "package": "al-spec-0.5.1.zip",
+  "package_sha256": "C464A6FA951B86DC4CC72A52AA104B4E5EC7F33A0B7FE7ACD930F1D4B1C2D73C",
+  "plugin_root": "al-spec-0.5.1/",
+  "manifest": "al-spec-0.5.1/.codex-plugin/plugin.json",
+  "file_count": 46,
+  "skills": [
+    "al-spec-0.5.1/skills/dr/SKILL.md",
+    "al-spec-0.5.1/skills/story/SKILL.md",
+    "al-spec-0.5.1/skills/testcase/SKILL.md"
+  ]
+}

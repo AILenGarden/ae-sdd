@@ -1,0 +1,4 @@
+interface:
+  display_name: "al-knowledge"
+  short_description: "构建与核查 OKF 项目知识，维护业务语义、设计依据和工程追溯关系"
+  default_prompt: "使用 $al-knowledge 查询或维护目标项目的 OKF 知识库，回源核实有关结论并说明覆盖范围与缺口。"
